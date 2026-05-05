@@ -1,3 +1,8 @@
+#![expect(
+    clippy::needless_raw_string_hashes,
+    reason = "generated Rust templates are kept as raw string blocks for copyable output"
+)]
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use melior::ir::block::BlockLike;
@@ -1926,7 +1931,8 @@ where
             got: proof.sumchecks.len(),
         });
     }
-    let mut store = super::common::ValueStore::with_opening_inputs(opening_inputs);
+    let mut store =
+        super::common::ValueStore::with_opening_inputs(opening_inputs, program.opening_inputs)?;
     store.seed_constants(program.field_constants);
     let mut artifacts = Stage5ExecutionArtifacts::default();
     for step in program.steps {
@@ -2345,9 +2351,10 @@ fn rust_str(value: &str) -> String {
 }
 
 fn rust_option_str(value: Option<&str>) -> String {
-    value
-        .map(|value| format!("Some({})", rust_str(value)))
-        .unwrap_or_else(|| "None".to_owned())
+    value.map_or_else(
+        || "None".to_owned(),
+        |value| format!("Some({})", rust_str(value)),
+    )
 }
 
 fn verify_count(kind: &str, symbol: &str, expected: usize, actual: usize) -> Result<(), EmitError> {

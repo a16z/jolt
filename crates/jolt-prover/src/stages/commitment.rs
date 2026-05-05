@@ -7,7 +7,7 @@ use jolt_field::{Field, Fr};
 use jolt_openings::CommitmentScheme as _;
 use jolt_poly::{EqPolynomial, MultilinearPoly};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
-use jolt_witness::{dense_i128_column_to_field, one_hot_chunk_address_major, optional_field_oracle};
+use jolt_witness::{dense_i128_column_to_field, one_hot_chunk_address_major, one_hot_chunk_indices, optional_field_oracle, CommitmentTraceSources};
 use rayon::prelude::*;
 
 pub type DefaultCommitmentTranscript = Blake2bTranscript<Fr>;
@@ -147,6 +147,24 @@ pub struct CommitmentOracleInputs<'a> {
     pub bytecode_indices: &'a [Option<u128>],
     pub untrusted_advice: Option<&'a [Fr]>,
     pub trusted_advice: Option<&'a [Fr]>,
+}
+
+impl<'a> CommitmentOracleInputs<'a> {
+    pub fn from_trace_sources(
+        sources: &'a CommitmentTraceSources,
+        untrusted_advice: Option<&'a [Fr]>,
+        trusted_advice: Option<&'a [Fr]>,
+    ) -> Self {
+        Self {
+            rd_inc: &sources.rd_inc,
+            ram_inc: &sources.ram_inc,
+            instruction_keys: &sources.instruction_keys,
+            ram_addresses: &sources.ram_addresses,
+            bytecode_indices: &sources.bytecode_indices,
+            untrusted_advice,
+            trusted_advice,
+        }
+    }
 }
 
 
@@ -351,17 +369,20 @@ impl<'a> SparseCommitmentInputs<'a> {
     ) -> Option<Vec<Option<u8>>> {
         let spec = self.one_hot_spec(oracle)?;
         let values = self.source_values(spec.source);
-        let chunk_domain = 1usize << spec.chunk_bits;
-        let shift = spec.chunk_bits * (spec.num_chunks - 1 - spec.chunk);
-        let mask = (chunk_domain - 1) as u128;
-        let mut indices = Vec::with_capacity(trace_len);
-        for cycle in 0..trace_len {
-            let value = values.get(cycle).copied().flatten().or(spec.padding);
-            indices.push(value.map(|value| ((value >> shift) & mask) as u8));
-        }
-        Some(indices)
+        Some(one_hot_chunk_indices(
+            values,
+            spec.chunk,
+            spec.num_chunks,
+            spec.chunk_bits,
+            trace_len,
+            spec.padding,
+        ))
     }
 
+    #[expect(
+        clippy::option_option,
+        reason = "distinguishes missing oracle from present optional oracle"
+    )]
     fn materialize_oracle(
         &self,
         oracle: &'static str,
@@ -420,6 +441,7 @@ impl<'a> SparseCommitmentInputs<'a> {
                 indices,
                 layout_num_vars,
             )?;
+            let _dory_commit_span = tracing::info_span!("bolt.commitment.dory_commit").entered();
             Ok(DoryScheme::commit(&poly, prover_setup))
         } else {
             let data = self
@@ -862,9 +884,11 @@ where
 {
     let mut artifacts = CommitmentArtifacts::default();
     for plan in program.batch_plans {
+        let _batch_span = tracing::info_span!("bolt.commitment.batch").entered();
         commit_batch(program, inputs, prover_setup, &mut artifacts, plan)?;
     }
     for plan in program.optional_plans {
+        let _optional_span = tracing::info_span!("bolt.commitment.optional").entered();
         commit_optional(program, inputs, prover_setup, &mut artifacts, plan)?;
     }
     absorb_transcript(program, &artifacts, transcript)?;
@@ -1006,6 +1030,7 @@ fn commit_with_layout(
     prover_setup: &DoryProverSetup,
 ) -> Result<(DoryCommitment, DoryHint), CommitmentPhaseError> {
     let row_len = target_len(layout_num_vars.div_ceil(2))?;
+    let _dory_commit_span = tracing::info_span!("bolt.commitment.dory_commit").entered();
     Ok(DoryScheme::commit_evaluations_with_row_len(
         data,
         row_len,

@@ -645,7 +645,8 @@ where
             got: proof.sumchecks.len(),
         });
     }
-    let mut store = super::common::ValueStore::with_opening_inputs(opening_inputs);
+    let mut store =
+        super::common::ValueStore::with_opening_inputs(opening_inputs, program.opening_inputs)?;
     store.seed_constants(program.field_constants);
     store.seed_point_zeros(program.point_zeros);
     let mut artifacts = Stage6ExecutionArtifacts::default();

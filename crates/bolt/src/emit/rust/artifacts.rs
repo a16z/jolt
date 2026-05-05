@@ -1,3 +1,8 @@
+#![expect(
+    clippy::format_push_string,
+    reason = "Rust artifact emission assembles generated source text from format templates"
+)]
+
 use std::path::{Component, Path};
 
 use crate::ir::Role;
@@ -127,6 +132,7 @@ pub struct ProtocolVerifierApiExtension {
     pub error_conversions: String,
     pub after_default_verify: String,
     pub with_programs_body_intro: String,
+    pub stage_verification_override: String,
     pub after_stage_verification: String,
     pub helper_items: String,
 }
@@ -487,8 +493,10 @@ fn standalone_dependency_entry(
         .standalone_dependency_overrides
         .iter()
         .find(|dependency| dependency.package == package)
-        .map(|dependency| dependency.manifest_entry.clone())
-        .unwrap_or_else(|| format!("{package} = {{ path = \"{dependency_root}/{package}\" }}"))
+        .map_or_else(
+            || format!("{package} = {{ path = \"{dependency_root}/{package}\" }}"),
+            |dependency| dependency.manifest_entry.clone(),
+        )
 }
 
 fn generated_lib(
@@ -500,7 +508,8 @@ fn generated_lib(
     let prefix = &config.type_prefix;
     let stage_apis = stage_apis(config, artifacts);
     let commitment_api = commitment_api(artifacts);
-    let extension = active_role_api_extension(config, &stage_apis, &commitment_api, artifacts);
+    let extension =
+        active_role_api_extension(config, &stage_apis, commitment_api.as_ref(), artifacts);
     let role_module = match (role, extension) {
         (Role::Prover, Some(extension)) => extension.prover.lib_module.clone(),
         (Role::Prover, None) => format!(
@@ -590,7 +599,7 @@ fn generated_verifier_api(
     let stages = stage_apis(config, artifacts);
     let modules = role_modules(artifacts);
     let commitment = commitment_api(artifacts);
-    let extension = active_role_api_extension(config, &stages, &commitment, artifacts);
+    let extension = active_role_api_extension(config, &stages, commitment.as_ref(), artifacts);
     let prefix = &config.type_prefix;
     let protocol_snake = config.protocol_snake();
     let field_type = config.field_type.ident();
@@ -815,7 +824,7 @@ fn generated_verifier_api(
     }
 
     source.push_str(&format!(
-        "pub fn verify_{protocol_snake}<T>(\n    proof: &{proof_type},\n    inputs: {verifier_inputs_type}<'_>,\n    transcript: &mut T,\n) -> Result<{verification_artifacts_type}, {verify_error_type}>\nwhere\n    T: {transcript_trait}<Challenge = {field_type}>,\n{{\n",
+        "pub fn verify_{protocol_snake}<T: {transcript_trait}<Challenge = {field_type}>>(proof: &{proof_type}, inputs: {verifier_inputs_type}<'_>, transcript: &mut T) -> Result<{verification_artifacts_type}, {verify_error_type}> {{\n",
     ));
     source.push_str(&format!(
         "    verify_{protocol_snake}_with_programs(proof, inputs, default_verifier_programs(), transcript)\n}}\n\n"
@@ -824,7 +833,7 @@ fn generated_verifier_api(
         source.push_str(&extension.verifier.after_default_verify);
     }
     source.push_str(&format!(
-        "pub fn verify_{protocol_snake}_with_programs<T>(\n    proof: &{proof_type},\n    inputs: {verifier_inputs_type}<'_>,\n    programs: {verifier_programs_type},\n    transcript: &mut T,\n) -> Result<{verification_artifacts_type}, {verify_error_type}>\nwhere\n    T: {transcript_trait}<Challenge = {field_type}>,\n{{\n",
+        "pub fn verify_{protocol_snake}_with_programs<T: {transcript_trait}<Challenge = {field_type}>>(proof: &{proof_type}, inputs: {verifier_inputs_type}<'_>, programs: {verifier_programs_type}, transcript: &mut T) -> Result<{verification_artifacts_type}, {verify_error_type}> {{\n",
     ));
     if let Some(extension) = extension {
         source.push_str(&extension.verifier.with_programs_body_intro);
@@ -854,7 +863,36 @@ fn generated_verifier_api(
             module = commitment.module_alias,
         ));
     }
+    if let Some(extension) = extension {
+        if !extension.verifier.stage_verification_override.is_empty() {
+            source.push_str(&extension.verifier.stage_verification_override);
+        } else {
+            emit_verifier_stage_calls(&mut source, &stages);
+        }
+    } else {
+        emit_verifier_stage_calls(&mut source, &stages);
+    }
+    if let Some(extension) = extension {
+        source.push_str(&extension.verifier.after_stage_verification);
+    }
+    source.push_str(&format!("\n    Ok({verification_artifacts_type} {{\n"));
+    if let Some(commitment) = &commitment {
+        source.push_str(&format!("        {},\n", commitment.field_name));
+    }
     for stage in &stages {
+        source.push_str(&format!("        {},\n", stage.field_name));
+    }
+    source.push_str("    })\n}\n\n");
+
+    if let Some(extension) = extension {
+        source.push_str(&extension.verifier.helper_items);
+    }
+
+    source
+}
+
+fn emit_verifier_stage_calls(source: &mut String, stages: &[StageRustApi]) {
+    for stage in stages {
         let verifier_fn = stage
             .with_program_verifier_fn
             .as_deref()
@@ -885,23 +923,6 @@ fn generated_verifier_api(
             args.join(", ")
         ));
     }
-    if let Some(extension) = extension {
-        source.push_str(&extension.verifier.after_stage_verification);
-    }
-    source.push_str(&format!("\n    Ok({verification_artifacts_type} {{\n"));
-    if let Some(commitment) = &commitment {
-        source.push_str(&format!("        {},\n", commitment.field_name));
-    }
-    for stage in &stages {
-        source.push_str(&format!("        {},\n", stage.field_name));
-    }
-    source.push_str("    })\n}\n\n");
-
-    if let Some(extension) = extension {
-        source.push_str(&extension.verifier.helper_items);
-    }
-
-    source
 }
 
 fn generated_prover_api(
@@ -913,7 +934,7 @@ fn generated_prover_api(
     let kernel_modules = unique_kernel_modules(&stages);
     let commitment = commitment_api(artifacts);
     let has_commitment = commitment.is_some();
-    let extension = active_role_api_extension(config, &stages, &commitment, artifacts);
+    let extension = active_role_api_extension(config, &stages, commitment.as_ref(), artifacts);
     let generic_params = prover_generic_params(&stages, has_commitment);
     let prefix = &config.type_prefix;
     let protocol_snake = config.protocol_snake();
@@ -944,8 +965,9 @@ fn generated_prover_api(
             let kernel_crate = config
                 .kernel_crate
                 .as_ref()
-                .map(|kernel_crate| kernel_crate.import.as_str())
-                .unwrap_or("missing_kernel_crate");
+                .map_or("missing_kernel_crate", |kernel_crate| {
+                    kernel_crate.import.as_str()
+                });
             source.push_str(&format!(
                 "use {kernel_crate}::{{{}}};\n",
                 kernel_modules.join(", ")
@@ -1292,7 +1314,7 @@ fn generated_prover_api(
             .as_deref()
             .unwrap_or(stage.module_alias.as_str());
         source.push_str(&format!(
-            "fn {field}_proof(artifacts: &{kernel}::{artifacts_ty}<{field_type}>) -> {stage_proof_type} {{\n    {stage_proof_type} {{\n        sumchecks: artifacts.sumchecks.iter().map({field}_sumcheck).collect(),\n    }}\n}}\n\n",
+            "pub fn {field}_proof(artifacts: &{kernel}::{artifacts_ty}<{field_type}>) -> {stage_proof_type} {{\n    {stage_proof_type} {{\n        sumchecks: artifacts.sumchecks.iter().map({field}_sumcheck).collect(),\n    }}\n}}\n\n",
             field = stage.field_name,
             kernel = kernel_module,
             artifacts_ty = stage.artifacts_type
@@ -1420,7 +1442,7 @@ fn commitment_api(artifacts: &[ProtocolRustArtifact]) -> Option<CommitmentRustAp
 fn active_role_api_extension<'a>(
     config: &'a ProtocolArtifactConfig,
     stages: &[StageRustApi],
-    commitment: &Option<CommitmentRustApi>,
+    commitment: Option<&CommitmentRustApi>,
     artifacts: &[ProtocolRustArtifact],
 ) -> Option<&'a ProtocolArtifactExtension> {
     let extension = config.role_api_extension.as_ref()?;

@@ -1313,7 +1313,7 @@ fn append_stage2_batched_sumcheck<'c, 'a>(
             point_arity: max_rounds,
             num_rounds: max_rounds,
             round_offset: 0,
-            point_order: "as_is",
+            point_order: "reverse",
             degree: RAM_RW_DEGREE,
         },
         point,

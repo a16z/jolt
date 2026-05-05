@@ -1409,6 +1409,7 @@ fn append_stage6_trace_instance_result<'c, 'a>(
     )
 }
 
+#[expect(clippy::too_many_arguments)]
 fn append_stage6_output_openings<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
@@ -1684,6 +1685,7 @@ fn append_stage6_output_openings<'c, 'a>(
     Ok(())
 }
 
+#[expect(clippy::too_many_arguments)]
 fn append_booleanity_output_opening<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
@@ -1991,6 +1993,7 @@ fn append_point_slice<'c, 'a>(
     first_result(op, "poly.point_slice")
 }
 
+#[expect(clippy::too_many_arguments)]
 fn append_padded_address_chunk<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,

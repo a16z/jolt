@@ -26,8 +26,8 @@ pub use super::common::{
     SumcheckEvalPlan as Stage2SumcheckEvalPlan,
     SumcheckInstanceResultPlan as Stage2SumcheckInstanceResultPlan,
     TranscriptSqueezePlan as Stage2TranscriptSqueezePlan,
-    VerifierSumcheckClaimPlan as Stage2SumcheckClaimPlan,
-    VerifierSumcheckDriverPlan as Stage2SumcheckDriverPlan,
+    SumcheckClaimPlan as Stage2SumcheckClaimPlan,
+    SumcheckDriverPlan as Stage2SumcheckDriverPlan,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -136,12 +136,12 @@ pub const STAGE2_FIELD_EXPRS: &[Stage2FieldExprPlan] = &[
     Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.claim_reduction.claim_expr", kind: "op", formula: "field.add", operands: "stage2.instruction_lookup.partial.LeftInstructionInput|stage2.instruction_lookup.term.RightInstructionInput" },
 ];
 pub const STAGE2_SUMCHECK_CLAIMS: &[Stage2SumcheckClaimPlan] = &[
-    Stage2SumcheckClaimPlan { symbol: "stage2.product_virtual.uniskip.input", stage: "stage2", domain: "jolt.stage2_uniskip_domain", num_rounds: 1, degree: 6, claim: "stage2.product_virtual.weighted_stage1_outputs", relation: "jolt.stage2.product_virtual.uniskip", claim_value: "stage2.product_virtual.uniskip.claim_expr", input_openings: "stage2.input.stage1.Product|stage2.input.stage1.ShouldBranch|stage2.input.stage1.ShouldJump" },
-    Stage2SumcheckClaimPlan { symbol: "stage2.ram_read_write.input", stage: "stage2", domain: "jolt.stage2_ram_rw_domain", num_rounds: 32, degree: 3, claim: "stage2.ram_read_write.weighted_values", relation: "jolt.stage2.ram.read_write", claim_value: "stage2.ram_read_write.claim_expr", input_openings: "stage2.input.stage1.RamReadValue|stage2.input.stage1.RamWriteValue" },
-    Stage2SumcheckClaimPlan { symbol: "stage2.product_virtual.remainder.input", stage: "stage2", domain: "jolt.trace_domain", num_rounds: 16, degree: 3, claim: "stage2.product_virtual.uniskip.opening", relation: "jolt.stage2.product_virtual.remainder", claim_value: "stage2.product_virtual.uniskip.eval.UnivariateSkip", input_openings: "stage2.product_virtual.uniskip.opening.UnivariateSkip" },
-    Stage2SumcheckClaimPlan { symbol: "stage2.instruction_lookup.claim_reduction.input", stage: "stage2", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage2.instruction_lookup.weighted_operands", relation: "jolt.stage2.instruction_lookup.claim_reduction", claim_value: "stage2.instruction_lookup.claim_reduction.claim_expr", input_openings: "stage2.input.stage1.LookupOutput|stage2.input.stage1.LeftLookupOperand|stage2.input.stage1.RightLookupOperand|stage2.input.stage1.LeftInstructionInput|stage2.input.stage1.RightInstructionInput" },
-    Stage2SumcheckClaimPlan { symbol: "stage2.ram_raf.input", stage: "stage2", domain: "jolt.ram_address_domain", num_rounds: 16, degree: 2, claim: "stage2.ram_raf.ram_address", relation: "jolt.stage2.ram.raf_evaluation", claim_value: "stage2.input.stage1.RamAddress", input_openings: "stage2.input.stage1.RamAddress" },
-    Stage2SumcheckClaimPlan { symbol: "stage2.ram_output.input", stage: "stage2", domain: "jolt.ram_address_domain", num_rounds: 16, degree: 3, claim: "zero", relation: "jolt.stage2.ram.output_check", claim_value: "stage2.ram_output.zero", input_openings: "" },
+    Stage2SumcheckClaimPlan { symbol: "stage2.product_virtual.uniskip.input", stage: "stage2", domain: "jolt.stage2_uniskip_domain", num_rounds: 1, degree: 6, claim: "stage2.product_virtual.weighted_stage1_outputs", kernel: None, relation: Some("jolt.stage2.product_virtual.uniskip"), claim_value: "stage2.product_virtual.uniskip.claim_expr", input_openings: "stage2.input.stage1.Product|stage2.input.stage1.ShouldBranch|stage2.input.stage1.ShouldJump" },
+    Stage2SumcheckClaimPlan { symbol: "stage2.ram_read_write.input", stage: "stage2", domain: "jolt.stage2_ram_rw_domain", num_rounds: 32, degree: 3, claim: "stage2.ram_read_write.weighted_values", kernel: None, relation: Some("jolt.stage2.ram.read_write"), claim_value: "stage2.ram_read_write.claim_expr", input_openings: "stage2.input.stage1.RamReadValue|stage2.input.stage1.RamWriteValue" },
+    Stage2SumcheckClaimPlan { symbol: "stage2.product_virtual.remainder.input", stage: "stage2", domain: "jolt.trace_domain", num_rounds: 16, degree: 3, claim: "stage2.product_virtual.uniskip.opening", kernel: None, relation: Some("jolt.stage2.product_virtual.remainder"), claim_value: "stage2.product_virtual.uniskip.eval.UnivariateSkip", input_openings: "stage2.product_virtual.uniskip.opening.UnivariateSkip" },
+    Stage2SumcheckClaimPlan { symbol: "stage2.instruction_lookup.claim_reduction.input", stage: "stage2", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage2.instruction_lookup.weighted_operands", kernel: None, relation: Some("jolt.stage2.instruction_lookup.claim_reduction"), claim_value: "stage2.instruction_lookup.claim_reduction.claim_expr", input_openings: "stage2.input.stage1.LookupOutput|stage2.input.stage1.LeftLookupOperand|stage2.input.stage1.RightLookupOperand|stage2.input.stage1.LeftInstructionInput|stage2.input.stage1.RightInstructionInput" },
+    Stage2SumcheckClaimPlan { symbol: "stage2.ram_raf.input", stage: "stage2", domain: "jolt.ram_address_domain", num_rounds: 16, degree: 2, claim: "stage2.ram_raf.ram_address", kernel: None, relation: Some("jolt.stage2.ram.raf_evaluation"), claim_value: "stage2.input.stage1.RamAddress", input_openings: "stage2.input.stage1.RamAddress" },
+    Stage2SumcheckClaimPlan { symbol: "stage2.ram_output.input", stage: "stage2", domain: "jolt.ram_address_domain", num_rounds: 16, degree: 3, claim: "zero", kernel: None, relation: Some("jolt.stage2.ram.output_check"), claim_value: "stage2.ram_output.zero", input_openings: "" },
 ];
 pub const STAGE2_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[
     1,
@@ -166,12 +166,12 @@ pub const STAGE2_SUMCHECK_DRIVER_1_ROUND_SCHEDULE: &[usize] = &[
 ];
 
 pub const STAGE2_SUMCHECK_DRIVERS: &[Stage2SumcheckDriverPlan] = &[
-    Stage2SumcheckDriverPlan { symbol: "stage2.product_virtual.uniskip.sumcheck", stage: "stage2", proof_slot: "stage2.product_virtual.uni_skip_first_round", relation: "jolt.stage2.product_virtual.uniskip", batch: "stage2.product_virtual.uniskip.batch", policy: "univariate_skip", round_schedule: STAGE2_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "uniskip_claim", round_label: "uniskip_poly", num_rounds: 1, degree: 6 },
-    Stage2SumcheckDriverPlan { symbol: "stage2.sumcheck", stage: "stage2", proof_slot: "stage2.sumcheck", relation: "jolt.stage2.batched", batch: "stage2.batch", policy: "jolt_core_stage2_aligned", round_schedule: STAGE2_SUMCHECK_DRIVER_1_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 32, degree: 3 },
+    Stage2SumcheckDriverPlan { symbol: "stage2.product_virtual.uniskip.sumcheck", stage: "stage2", proof_slot: "stage2.product_virtual.uni_skip_first_round", kernel: None, relation: Some("jolt.stage2.product_virtual.uniskip"), batch: "stage2.product_virtual.uniskip.batch", policy: "univariate_skip", round_schedule: STAGE2_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "uniskip_claim", round_label: "uniskip_poly", num_rounds: 1, degree: 6 },
+    Stage2SumcheckDriverPlan { symbol: "stage2.sumcheck", stage: "stage2", proof_slot: "stage2.sumcheck", kernel: None, relation: Some("jolt.stage2.batched"), batch: "stage2.batch", policy: "jolt_core_stage2_aligned", round_schedule: STAGE2_SUMCHECK_DRIVER_1_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 32, degree: 3 },
 ];
 pub const STAGE2_SUMCHECK_INSTANCE_RESULTS: &[Stage2SumcheckInstanceResultPlan] = &[
     Stage2SumcheckInstanceResultPlan { symbol: "stage2.product_virtual.uniskip.instance", source: "stage2.product_virtual.uniskip.sumcheck", claim: "stage2.product_virtual.uniskip.input", relation: "jolt.stage2.product_virtual.uniskip", index: 0, point_arity: 1, num_rounds: 1, round_offset: 0, point_order: "as_is", degree: 6 },
-    Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_read_write.instance", source: "stage2.sumcheck", claim: "stage2.ram_read_write.input", relation: "jolt.stage2.ram.read_write", index: 0, point_arity: 32, num_rounds: 32, round_offset: 0, point_order: "as_is", degree: 3 },
+    Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_read_write.instance", source: "stage2.sumcheck", claim: "stage2.ram_read_write.input", relation: "jolt.stage2.ram.read_write", index: 0, point_arity: 32, num_rounds: 32, round_offset: 0, point_order: "reverse", degree: 3 },
     Stage2SumcheckInstanceResultPlan { symbol: "stage2.product_virtual.remainder.instance", source: "stage2.sumcheck", claim: "stage2.product_virtual.remainder.input", relation: "jolt.stage2.product_virtual.remainder", index: 1, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "reverse", degree: 3 },
     Stage2SumcheckInstanceResultPlan { symbol: "stage2.instruction_lookup.claim_reduction.instance", source: "stage2.sumcheck", claim: "stage2.instruction_lookup.claim_reduction.input", relation: "jolt.stage2.instruction_lookup.claim_reduction", index: 2, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "reverse", degree: 2 },
     Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_raf.instance", source: "stage2.sumcheck", claim: "stage2.ram_raf.input", relation: "jolt.stage2.ram.raf_evaluation", index: 3, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "reverse", degree: 2 },
@@ -281,7 +281,7 @@ where
             got: proof.sumchecks.len(),
         });
     }
-    let mut store = Stage2ValueStore::with_opening_inputs(opening_inputs);
+    let mut store = Stage2ValueStore::with_opening_inputs(program, opening_inputs)?;
     store.seed_constants(program);
     let mut artifacts = Stage2ExecutionArtifacts::default();
     if program.steps.is_empty() {
@@ -362,7 +362,8 @@ where
         .ok_or(VerifyStage2Error::MissingProof {
             driver: driver.symbol,
         })?;
-    let output = match driver.relation {
+    let relation = driver.relation.unwrap_or("<missing>");
+    let output = match relation {
         "jolt.stage2.product_virtual.uniskip" => {
             verify_product_virtual_uniskip(program, driver, proof, store, transcript)?
         }
@@ -506,8 +507,14 @@ where
 }
 
 impl<F: Field> Stage2ValueStore<F> {
-    fn with_opening_inputs(inputs: &[Stage2OpeningInputValue<F>]) -> Self {
-        Self(super::common::ValueStore::with_opening_inputs(inputs))
+    fn with_opening_inputs(
+        program: &'static Stage2VerifierProgramPlan,
+        inputs: &[Stage2OpeningInputValue<F>],
+    ) -> Result<Self, VerifyStage2Error> {
+        Ok(Self(super::common::ValueStore::with_opening_inputs(
+            inputs,
+            program.opening_inputs,
+        )?))
     }
 
     fn seed_constants(&mut self, program: &'static Stage2VerifierProgramPlan) {

@@ -28,7 +28,7 @@ impl<'a, T: Transcript<Challenge = Fr>> JoltToDoryTranscript<'a, T> {
 
 impl<T: Transcript<Challenge = Fr>> Default for JoltToDoryTranscript<'_, T> {
     fn default() -> Self {
-        panic!("JoltToDoryTranscript must be constructed via JoltToDoryTranscript::new")
+        std::process::abort()
     }
 }
 
@@ -56,8 +56,9 @@ impl<T: Transcript<Challenge = Fr>> DoryTranscript for JoltToDoryTranscript<'_, 
     fn append_group<G: DoryGroup>(&mut self, _label: &[u8], g: &G) {
         // Matches jolt-core: transcript.append_bytes(b"dory_group", &buffer)
         let mut buffer = Vec::new();
-        g.serialize_compressed(&mut buffer)
-            .expect("group serialization should not fail");
+        if g.serialize_compressed(&mut buffer).is_err() {
+            std::process::abort();
+        }
         self.transcript
             .append(&LabelWithCount(b"dory_group", buffer.len() as u64));
         self.transcript.append_bytes(&buffer);
@@ -66,8 +67,9 @@ impl<T: Transcript<Challenge = Fr>> DoryTranscript for JoltToDoryTranscript<'_, 
     fn append_serde<S: DorySerialize>(&mut self, _label: &[u8], s: &S) {
         // Matches jolt-core: transcript.append_bytes(b"dory_serde", &buffer)
         let mut buffer = Vec::new();
-        s.serialize_compressed(&mut buffer)
-            .expect("DorySerialize serialization should not fail");
+        if s.serialize_compressed(&mut buffer).is_err() {
+            std::process::abort();
+        }
         self.transcript
             .append(&LabelWithCount(b"dory_serde", buffer.len() as u64));
         self.transcript.append_bytes(&buffer);
@@ -81,6 +83,6 @@ impl<T: Transcript<Challenge = Fr>> DoryTranscript for JoltToDoryTranscript<'_, 
     }
 
     fn reset(&mut self, _domain_label: &[u8]) {
-        panic!("reset is not supported on JoltToDoryTranscript")
+        std::process::abort()
     }
 }

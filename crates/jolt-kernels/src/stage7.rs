@@ -12,6 +12,7 @@ use jolt_field::Field;
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{Label, LabelWithCount, Transcript};
+use jolt_witness::Stage6WitnessSlices;
 
 pub use crate::stage6::{
     Stage6ChallengeVector as Stage7ChallengeVector,
@@ -21,6 +22,7 @@ pub use crate::stage6::{
     Stage6OpeningBatchPlan as Stage7OpeningBatchPlan,
     Stage6OpeningClaimEqualityPlan as Stage7OpeningClaimEqualityPlan,
     Stage6OpeningClaimPlan as Stage7OpeningClaimPlan,
+    Stage6OpeningClaimValue as Stage7OpeningClaimValue,
     Stage6OpeningInputPlan as Stage7OpeningInputPlan,
     Stage6OpeningInputValue as Stage7OpeningInputValue, Stage6Params as Stage7Params,
     Stage6PointConcatPlan as Stage7PointConcatPlan, Stage6PointSlicePlan as Stage7PointSlicePlan,
@@ -373,6 +375,22 @@ impl<'a, F: Field> Stage7ProverInputs<'a, F> {
     ) -> Self {
         self.hamming_weight_claim_reduction_indices = Some(witness);
         self
+    }
+
+    pub fn with_stage6_witness_indices(self, slices: &'a Stage6WitnessSlices<'a, F>) -> Self {
+        self.with_hamming_weight_claim_reduction_indices(
+            Stage7HammingWeightClaimReductionIndexWitness {
+                instruction_ra: Stage7RaIndexChunks {
+                    chunks: &slices.instruction_ra_index_chunks,
+                },
+                bytecode_ra: Stage7RaIndexChunks {
+                    chunks: &slices.bytecode_ra_index_chunks,
+                },
+                ram_ra: Stage7RaIndexChunks {
+                    chunks: &slices.ram_ra_index_chunks,
+                },
+            },
+        )
     }
 }
 
@@ -988,7 +1006,9 @@ where
 {
     match context.abi_kind()? {
         Stage7KernelAbi::Batched => prove_batched_stage7(context, inputs, store, transcript),
-        abi => Err(Stage7KernelError::KernelNotImplemented { abi: abi.name() }),
+        abi @ Stage7KernelAbi::HammingWeightClaimReduction => {
+            Err(Stage7KernelError::KernelNotImplemented { abi: abi.name() })
+        }
     }
 }
 
@@ -1004,7 +1024,9 @@ where
 {
     match context.abi_kind()? {
         Stage7KernelAbi::Batched => verify_batched_stage7(context, store, proof, transcript),
-        abi => Err(Stage7KernelError::KernelNotImplemented { abi: abi.name() }),
+        abi @ Stage7KernelAbi::HammingWeightClaimReduction => {
+            Err(Stage7KernelError::KernelNotImplemented { abi: abi.name() })
+        }
     }
 }
 
@@ -1114,11 +1136,12 @@ where
         });
     }
     store.observe_sumcheck_values(context.program, context.driver.symbol, &point, &evals)?;
-    append_opening_claims(context.program, &mut store, transcript, &evals)?;
+    let opening_claims = append_opening_claims(context.program, &mut store, transcript, &evals)?;
     Ok(Stage7SumcheckOutput {
         driver: context.driver.symbol,
         point,
         evals,
+        opening_claims,
         proof: SumcheckProof { round_polynomials },
     })
 }
@@ -1199,10 +1222,16 @@ where
         driver: context.driver.symbol,
         point,
         evals: proof.evals.clone(),
+        opening_claims: Vec::new(),
         proof: proof.proof.clone(),
     };
     store.observe_sumcheck_output(context.program, &output)?;
-    append_opening_claims(context.program, &mut store, &mut *transcript, &output.evals)?;
+    let opening_claims =
+        append_opening_claims(context.program, &mut store, &mut *transcript, &output.evals)?;
+    let output = Stage7SumcheckOutput {
+        opening_claims,
+        ..output
+    };
     Ok(output)
 }
 
@@ -1583,16 +1612,16 @@ impl<'a, F: Field> Stage7HammingWeightClaimReductionWitness<'a, F> {
                 .chunks
                 .iter()
                 .map(|chunk| Stage7RaChunk {
-                    evals: *chunk,
+                    evals: chunk,
                     layout: self.instruction_ra.layout,
                 }),
         );
         chunks.extend(self.bytecode_ra.chunks.iter().map(|chunk| Stage7RaChunk {
-            evals: *chunk,
+            evals: chunk,
             layout: self.bytecode_ra.layout,
         }));
         chunks.extend(self.ram_ra.chunks.iter().map(|chunk| Stage7RaChunk {
-            evals: *chunk,
+            evals: chunk,
             layout: self.ram_ra.layout,
         }));
         chunks
@@ -1610,19 +1639,19 @@ impl<'a> Stage7HammingWeightClaimReductionIndexWitness<'a> {
             self.instruction_ra
                 .chunks
                 .iter()
-                .map(|indices| Stage7RaIndexChunk { indices: *indices }),
+                .map(|indices| Stage7RaIndexChunk { indices }),
         );
         chunks.extend(
             self.bytecode_ra
                 .chunks
                 .iter()
-                .map(|indices| Stage7RaIndexChunk { indices: *indices }),
+                .map(|indices| Stage7RaIndexChunk { indices }),
         );
         chunks.extend(
             self.ram_ra
                 .chunks
                 .iter()
-                .map(|indices| Stage7RaIndexChunk { indices: *indices }),
+                .map(|indices| Stage7RaIndexChunk { indices }),
         );
         chunks
     }
@@ -1647,8 +1676,7 @@ fn pushforward_ra_chunk<F: Field>(
     let mut output = vec![F::zero(); address_len];
     match layout {
         Stage7RaChunkLayout::CycleMajor => {
-            for cycle in 0..cycle_len {
-                let weight = eq_cycle[cycle];
+            for (cycle, weight) in eq_cycle.iter().copied().enumerate().take(cycle_len) {
                 let row_start = cycle * address_len;
                 for address in 0..address_len {
                     output[address] += chunk[row_start + address] * weight;
@@ -1656,10 +1684,10 @@ fn pushforward_ra_chunk<F: Field>(
             }
         }
         Stage7RaChunkLayout::AddressMajor => {
-            for address in 0..address_len {
+            for (address, output_value) in output.iter_mut().enumerate().take(address_len) {
                 let row_start = address * cycle_len;
-                for cycle in 0..cycle_len {
-                    output[address] += chunk[row_start + cycle] * eq_cycle[cycle];
+                for (cycle, weight) in eq_cycle.iter().copied().enumerate().take(cycle_len) {
+                    *output_value += chunk[row_start + cycle] * weight;
                 }
             }
         }
@@ -1936,7 +1964,7 @@ fn append_opening_claims<F, T>(
     store: &mut Stage7ValueStore<F>,
     transcript: &mut T,
     evals: &[Stage7NamedEval<F>],
-) -> Result<(), Stage7KernelError>
+) -> Result<Vec<Stage7OpeningClaimValue<F>>, Stage7KernelError>
 where
     F: Field,
     T: Transcript<Challenge = F>,
@@ -1945,9 +1973,10 @@ where
         for eval in evals {
             append_labeled_scalar(transcript, "opening_claim", &eval.value);
         }
-        return Ok(());
+        return Ok(Vec::new());
     }
     let _ = store.evaluate_available_points(program)?;
+    let mut opening_claims = Vec::new();
     for batch in program.opening_batches {
         for symbol in batch.claim_operands {
             let claim =
@@ -1955,11 +1984,20 @@ where
                     batch: batch.symbol,
                     claim: symbol,
                 })?;
+            let point = store.point(claim.point_source)?.to_vec();
             let value = store.scalar(claim.eval_source)?;
             append_labeled_scalar(transcript, "opening_claim", &value);
+            opening_claims.push(Stage7OpeningClaimValue {
+                symbol: claim.symbol,
+                oracle: claim.oracle,
+                domain: claim.domain,
+                claim_kind: claim.claim_kind,
+                point,
+                eval: value,
+            });
         }
     }
-    Ok(())
+    Ok(opening_claims)
 }
 
 pub fn execute_stage7_program<F, T, E>(
@@ -2030,6 +2068,9 @@ where
                     }
                 };
                 executor.observe_sumcheck_output(&output)?;
+                artifacts
+                    .opening_claims
+                    .extend(output.opening_claims.clone());
                 artifacts.sumchecks.push(output);
             }
             _ => {
@@ -2412,6 +2453,115 @@ mod tests {
             &mut verifier_transcript,
         )
         .expect("stage7 replay succeeds");
+        assert_eq!(verified.sumchecks[0].point, artifacts.sumchecks[0].point);
+        assert_eq!(verifier_transcript.state(), prover_transcript.state());
+    }
+
+    #[test]
+    fn hamming_weight_claim_reduction_index_witness_matches_dense_witness() {
+        let r_bool = Fr::from_u64(5);
+        let r_cycle = Fr::from_u64(3);
+        let r_instr_virt = Fr::from_u64(7);
+        let r_ram_virt = Fr::from_u64(11);
+        let instruction_ra = vec![
+            Fr::from_u64(1),
+            Fr::from_u64(0),
+            Fr::from_u64(0),
+            Fr::from_u64(1),
+        ];
+        let ram_ra = vec![
+            Fr::from_u64(0),
+            Fr::from_u64(0),
+            Fr::from_u64(1),
+            Fr::from_u64(0),
+        ];
+        let bool_point = vec![r_bool, r_cycle];
+        let instr_virt_point = vec![r_instr_virt, r_cycle];
+        let ram_virt_point = vec![r_ram_virt, r_cycle];
+        let instr_bool = eval_full_cycle_major(&instruction_ra, &bool_point);
+        let ram_bool = eval_full_cycle_major(&ram_ra, &bool_point);
+        let instr_virt = eval_full_cycle_major(&instruction_ra, &instr_virt_point);
+        let ram_virt = eval_full_cycle_major(&ram_ra, &ram_virt_point);
+        let ram_hw = r_cycle;
+        let gamma = Fr::from_u64(2);
+        let gamma_powers = gamma_powers(gamma, 6);
+        let input_claim = gamma_powers[0] * Fr::from_u64(1)
+            + gamma_powers[1] * instr_bool
+            + gamma_powers[2] * instr_virt
+            + gamma_powers[3] * ram_hw
+            + gamma_powers[4] * ram_bool
+            + gamma_powers[5] * ram_virt;
+        let openings = vec![
+            Stage7OpeningInputValue {
+                symbol: "stage7.input.claim",
+                point: Vec::new(),
+                eval: input_claim,
+            },
+            Stage7OpeningInputValue {
+                symbol: "stage7.input.stage6.hamming_booleanity.HammingWeight",
+                point: vec![r_cycle],
+                eval: ram_hw,
+            },
+            Stage7OpeningInputValue {
+                symbol: "stage7.input.stage6.booleanity.InstructionRa_0",
+                point: bool_point.clone(),
+                eval: instr_bool,
+            },
+            Stage7OpeningInputValue {
+                symbol: "stage7.input.stage6.instruction_ra_virtual.InstructionRa_0",
+                point: instr_virt_point,
+                eval: instr_virt,
+            },
+            Stage7OpeningInputValue {
+                symbol: "stage7.input.stage6.booleanity.RamRa_0",
+                point: bool_point,
+                eval: ram_bool,
+            },
+            Stage7OpeningInputValue {
+                symbol: "stage7.input.stage6.ram_ra_virtual.RamRa_0",
+                point: ram_virt_point,
+                eval: ram_virt,
+            },
+        ];
+        let instruction_indices = vec![Some(0), Some(1)];
+        let ram_indices = vec![None, Some(0)];
+        let instruction_chunks: Vec<&[Option<u8>]> = vec![&instruction_indices];
+        let ram_chunks: Vec<&[Option<u8>]> = vec![&ram_indices];
+        let inputs = Stage7ProverInputs::new(&openings)
+            .with_hamming_weight_claim_reduction_indices(
+                Stage7HammingWeightClaimReductionIndexWitness {
+                    instruction_ra: Stage7RaIndexChunks {
+                        chunks: &instruction_chunks,
+                    },
+                    bytecode_ra: Stage7RaIndexChunks { chunks: &[] },
+                    ram_ra: Stage7RaIndexChunks {
+                        chunks: &ram_chunks,
+                    },
+                },
+            );
+        let mut prover = Stage7ProverKernelExecutor::new(inputs);
+        let mut prover_transcript = Blake2bTranscript::<Fr>::new(b"stage7-test");
+        let artifacts = execute_stage7_program(
+            &PROGRAM,
+            Stage7ExecutionMode::Prover,
+            &mut prover,
+            &mut prover_transcript,
+        )
+        .expect("stage7 index prover succeeds");
+        assert_eq!(artifacts.sumchecks.len(), 1);
+
+        let proof = Stage7Proof {
+            sumchecks: artifacts.sumchecks.clone(),
+        };
+        let mut verifier = Stage7ProofCarryingKernelExecutor::new(&proof, &openings);
+        let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage7-test");
+        let verified = execute_stage7_program(
+            &PROGRAM,
+            Stage7ExecutionMode::Verifier,
+            &mut verifier,
+            &mut verifier_transcript,
+        )
+        .expect("stage7 index replay succeeds");
         assert_eq!(verified.sumchecks[0].point, artifacts.sumchecks[0].point);
         assert_eq!(verifier_transcript.state(), prover_transcript.state());
     }

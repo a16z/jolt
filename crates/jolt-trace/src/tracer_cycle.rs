@@ -466,16 +466,24 @@ fn instruction_inputs(cycle: &impl CycleRow, iflags: InstructionFlagSet) -> (u64
     (left, right as u64 as u128)
 }
 
-fn static_circuit_flags(instr: &Instruction) -> CircuitFlagSet {
+pub fn instruction_circuit_flags(instr: &Instruction) -> CircuitFlagSet {
     with_isa_struct!(instr, |i| Flags::circuit_flags(&i), noop => {
         CircuitFlagSet::default().set(CircuitFlags::DoNotUpdateUnexpandedPC)
     })
 }
 
-fn static_instruction_flags(instr: &Instruction) -> InstructionFlagSet {
+pub fn instruction_instruction_flags(instr: &Instruction) -> InstructionFlagSet {
     with_isa_struct!(instr, |i| Flags::instruction_flags(&i), noop => {
         InstructionFlagSet::default().set(InstructionFlags::IsNoop)
     })
+}
+
+fn static_circuit_flags(instr: &Instruction) -> CircuitFlagSet {
+    instruction_circuit_flags(instr)
+}
+
+fn static_instruction_flags(instr: &Instruction) -> InstructionFlagSet {
+    instruction_instruction_flags(instr)
 }
 
 #[inline]

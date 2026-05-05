@@ -41,11 +41,24 @@ core.setup
 core.prove
 core.verify
 bolt.setup
+bolt.prove
 bolt.commitment
+bolt.commitment.batch
+bolt.commitment.dory_commit
 bolt.stage1 ... bolt.stage8
 bolt.evaluate
+bolt.evaluate.claims
+bolt.evaluate.materialize_joint_polynomial
+bolt.evaluate.joint_opening_hint
+bolt.evaluate.dory_open
 bolt.verify
+bolt.verify.evaluation_state
+bolt.verify.dory_verify
 ```
+
+`setup_tracing` also records observed span names in-process so perf gates can
+check the spans that actually ran, independent of whether Chrome trace output is
+enabled.
 
 Perf harnesses should live near the semantic oracle or CI job that owns their
 protocol details. This crate owns the reusable measurement and tracing

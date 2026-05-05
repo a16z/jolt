@@ -30,48 +30,44 @@ fn generated_role_crates_expose_matching_stage_prefix() {
 
     assert!(!jolt_prover::stages::commitment::TRANSCRIPT_PLAN.is_empty());
     assert!(!jolt_verifier::stages::commitment::TRANSCRIPT_PLAN.is_empty());
-    assert!(!jolt_prover::stages::stage1_outer::STAGE1_PROGRAM
-        .drivers
-        .is_empty());
-    assert!(!jolt_verifier::stages::stage1_outer::STAGE1_PROGRAM
-        .drivers
-        .is_empty());
-    assert!(!jolt_prover::stages::stage2::STAGE2_PROGRAM
-        .drivers
-        .is_empty());
-    assert!(!jolt_verifier::stages::stage2::STAGE2_PROGRAM
-        .drivers
-        .is_empty());
-    assert!(!jolt_prover::stages::stage3::STAGE3_PROGRAM
-        .drivers
-        .is_empty());
-    assert!(!jolt_verifier::stages::stage3::STAGE3_PROGRAM
-        .drivers
-        .is_empty());
-    assert!(!jolt_prover::stages::stage4::STAGE4_PROGRAM
-        .drivers
-        .is_empty());
-    assert!(!jolt_verifier::stages::stage4::STAGE4_PROGRAM
-        .drivers
-        .is_empty());
-    assert!(!jolt_prover::stages::stage5::STAGE5_PROGRAM
-        .drivers
-        .is_empty());
-    assert!(!jolt_verifier::stages::stage5::STAGE5_PROGRAM
-        .drivers
-        .is_empty());
-    assert!(!jolt_prover::stages::stage6::STAGE6_PROGRAM
-        .drivers
-        .is_empty());
-    assert!(!jolt_verifier::stages::stage6::STAGE6_PROGRAM
-        .drivers
-        .is_empty());
-    assert!(!jolt_prover::stages::stage7::STAGE7_PROGRAM
-        .drivers
-        .is_empty());
-    assert!(!jolt_verifier::stages::stage7::STAGE7_PROGRAM
-        .drivers
-        .is_empty());
+    macro_rules! assert_stage_drivers {
+        ($(($prover:expr, $verifier:expr)),+ $(,)?) => {
+            $(
+            assert!(!$prover.drivers.is_empty());
+            assert!(!$verifier.drivers.is_empty());
+            )+
+        };
+    }
+    assert_stage_drivers!(
+        (
+            jolt_prover::stages::stage1_outer::STAGE1_PROGRAM,
+            jolt_verifier::stages::stage1_outer::STAGE1_PROGRAM
+        ),
+        (
+            jolt_prover::stages::stage2::STAGE2_PROGRAM,
+            jolt_verifier::stages::stage2::STAGE2_PROGRAM
+        ),
+        (
+            jolt_prover::stages::stage3::STAGE3_PROGRAM,
+            jolt_verifier::stages::stage3::STAGE3_PROGRAM
+        ),
+        (
+            jolt_prover::stages::stage4::STAGE4_PROGRAM,
+            jolt_verifier::stages::stage4::STAGE4_PROGRAM
+        ),
+        (
+            jolt_prover::stages::stage5::STAGE5_PROGRAM,
+            jolt_verifier::stages::stage5::STAGE5_PROGRAM
+        ),
+        (
+            jolt_prover::stages::stage6::STAGE6_PROGRAM,
+            jolt_verifier::stages::stage6::STAGE6_PROGRAM
+        ),
+        (
+            jolt_prover::stages::stage7::STAGE7_PROGRAM,
+            jolt_verifier::stages::stage7::STAGE7_PROGRAM
+        ),
+    );
     assert!(!jolt_prover::stages::stage8::STAGE8_PROGRAM
         .opening_claims
         .is_empty());

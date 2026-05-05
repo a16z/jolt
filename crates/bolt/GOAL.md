@@ -26,9 +26,11 @@ verifier.rs:              649 LOC
 Current locked cleanup baseline:
 
 ```text
-generated jolt-verifier: 14,092 LOC
-stage6 + stage7:         7,346 LOC
-verifier.rs:               492 LOC
+generated jolt-verifier total:     7,755 LOC
+generated verifier surface:        5,966 LOC
+shared verifier runtime:           1,789 LOC
+stage6 + stage7:                   1,669 LOC
+verifier.rs:                         487 LOC
 ```
 
 Target:
@@ -323,10 +325,10 @@ Semantic gates:
 ```bash
 cargo fmt --check
 cargo check -p bolt -p jolt-verifier -p jolt-prover -p jolt-equivalence --quiet
-cargo test -p bolt --test verifier_cleanup -- --nocapture
-cargo test -p bolt --test commitment_ir --quiet
-cargo test -p jolt-equivalence --test generated_role_crates --quiet
-cargo test -p jolt-equivalence --test bolt_commitment -- --nocapture
+cargo nextest run -p bolt --test verifier_cleanup --no-capture
+cargo nextest run -p bolt --test commitment_ir --cargo-quiet
+cargo nextest run -p jolt-equivalence --test generated_role_crates --cargo-quiet
+cargo nextest run -p jolt-equivalence --test bolt_commitment --no-capture
 ```
 
 Required semantic outcomes:

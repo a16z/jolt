@@ -25,6 +25,7 @@ pub use jolt_riscv::{
     NUM_INSTRUCTION_FLAGS,
 };
 pub use r1cs_witness::{build_r1cs_witness, r1cs_cycle_witness};
+pub use tracer_cycle::{instruction_circuit_flags, instruction_instruction_flags};
 
 use std::path::{Path, PathBuf};
 

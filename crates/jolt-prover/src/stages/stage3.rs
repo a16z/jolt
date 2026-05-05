@@ -180,9 +180,9 @@ pub const STAGE3_SUMCHECK_CLAIM_2_INPUT_OPENINGS: &[&str] = &[
 ];
 
 pub const STAGE3_SUMCHECK_CLAIMS: &[Stage3SumcheckClaimPlan] = &[
-    Stage3SumcheckClaimPlan { symbol: "stage3.spartan_shift.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage3.spartan_shift.weighted_next_values", kernel: "jolt.cpu.stage3.spartan_shift", claim_value: "stage3.spartan_shift.claim_expr", input_openings: STAGE3_SUMCHECK_CLAIM_0_INPUT_OPENINGS },
-    Stage3SumcheckClaimPlan { symbol: "stage3.instruction_input.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 3, claim: "stage3.instruction_input.weighted_inputs", kernel: "jolt.cpu.stage3.instruction_input", claim_value: "stage3.instruction_input.claim_expr", input_openings: STAGE3_SUMCHECK_CLAIM_1_INPUT_OPENINGS },
-    Stage3SumcheckClaimPlan { symbol: "stage3.registers_claim_reduction.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage3.registers.weighted_register_values", kernel: "jolt.cpu.stage3.registers_claim_reduction", claim_value: "stage3.registers.claim_expr", input_openings: STAGE3_SUMCHECK_CLAIM_2_INPUT_OPENINGS },
+    Stage3SumcheckClaimPlan { symbol: "stage3.spartan_shift.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage3.spartan_shift.weighted_next_values", kernel: Some("jolt.cpu.stage3.spartan_shift"), relation: None, claim_value: "stage3.spartan_shift.claim_expr", input_openings: STAGE3_SUMCHECK_CLAIM_0_INPUT_OPENINGS },
+    Stage3SumcheckClaimPlan { symbol: "stage3.instruction_input.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 3, claim: "stage3.instruction_input.weighted_inputs", kernel: Some("jolt.cpu.stage3.instruction_input"), relation: None, claim_value: "stage3.instruction_input.claim_expr", input_openings: STAGE3_SUMCHECK_CLAIM_1_INPUT_OPENINGS },
+    Stage3SumcheckClaimPlan { symbol: "stage3.registers_claim_reduction.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage3.registers.weighted_register_values", kernel: Some("jolt.cpu.stage3.registers_claim_reduction"), relation: None, claim_value: "stage3.registers.claim_expr", input_openings: STAGE3_SUMCHECK_CLAIM_2_INPUT_OPENINGS },
 ];
 pub const STAGE3_SUMCHECK_BATCH_0_ORDERED_CLAIMS: &[&str] = &[
     "stage3.spartan_shift.input",
@@ -208,7 +208,7 @@ pub const STAGE3_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[
 ];
 
 pub const STAGE3_SUMCHECK_DRIVERS: &[Stage3SumcheckDriverPlan] = &[
-    Stage3SumcheckDriverPlan { symbol: "stage3.sumcheck", stage: "stage3", proof_slot: "stage3.sumcheck", kernel: "jolt.cpu.stage3.batched", batch: "stage3.batch", policy: "jolt_core_stage3_aligned", round_schedule: STAGE3_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 16, degree: 3 },
+    Stage3SumcheckDriverPlan { symbol: "stage3.sumcheck", stage: "stage3", proof_slot: "stage3.sumcheck", kernel: Some("jolt.cpu.stage3.batched"), relation: None, batch: "stage3.batch", policy: "jolt_core_stage3_aligned", round_schedule: STAGE3_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 16, degree: 3 },
 ];
 pub const STAGE3_SUMCHECK_INSTANCE_RESULTS: &[Stage3SumcheckInstanceResultPlan] = &[
     Stage3SumcheckInstanceResultPlan { symbol: "stage3.spartan_shift.instance", source: "stage3.sumcheck", claim: "stage3.spartan_shift.input", relation: "jolt.stage3.spartan_shift", index: 0, point_arity: 16, num_rounds: 16, round_offset: 0, point_order: "reverse", degree: 2 },

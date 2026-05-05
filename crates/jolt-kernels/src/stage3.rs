@@ -1,5 +1,10 @@
 //! Stage 3 coarse-kernel ABI used by Bolt-generated Jolt prover code.
 
+#![expect(
+    clippy::too_many_arguments,
+    reason = "kernel constructors mirror generated staged protocol inputs"
+)]
+
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
@@ -153,7 +158,8 @@ pub struct Stage3SumcheckClaimPlan {
     pub num_rounds: usize,
     pub degree: usize,
     pub claim: &'static str,
-    pub kernel: &'static str,
+    pub kernel: Option<&'static str>,
+    pub relation: Option<&'static str>,
     pub claim_value: &'static str,
     pub input_openings: &'static [&'static str],
 }
@@ -177,7 +183,8 @@ pub struct Stage3SumcheckDriverPlan {
     pub symbol: &'static str,
     pub stage: &'static str,
     pub proof_slot: &'static str,
-    pub kernel: &'static str,
+    pub kernel: Option<&'static str>,
+    pub relation: Option<&'static str>,
     pub batch: &'static str,
     pub policy: &'static str,
     pub round_schedule: &'static [usize],
@@ -320,6 +327,7 @@ pub struct Stage3SumcheckOutput<F: Field> {
     pub driver: &'static str,
     pub point: Vec<F>,
     pub evals: Vec<Stage3NamedEval<F>>,
+    pub opening_claims: Vec<Stage3OpeningClaimValue<F>>,
     pub proof: SumcheckProof<F>,
 }
 
@@ -330,9 +338,20 @@ pub struct Stage3ChallengeVector<F: Field> {
 }
 
 #[derive(Clone, Debug)]
+pub struct Stage3OpeningClaimValue<F: Field> {
+    pub symbol: &'static str,
+    pub oracle: &'static str,
+    pub domain: &'static str,
+    pub claim_kind: &'static str,
+    pub point: Vec<F>,
+    pub eval: F,
+}
+
+#[derive(Clone, Debug)]
 pub struct Stage3ExecutionArtifacts<F: Field> {
     pub challenge_vectors: Vec<Stage3ChallengeVector<F>>,
     pub sumchecks: Vec<Stage3SumcheckOutput<F>>,
+    pub opening_claims: Vec<Stage3OpeningClaimValue<F>>,
     pub opening_batches: Vec<&'static Stage3OpeningBatchPlan>,
 }
 
@@ -341,6 +360,7 @@ impl<F: Field> Default for Stage3ExecutionArtifacts<F> {
         Self {
             challenge_vectors: Vec::new(),
             sumchecks: Vec::new(),
+            opening_claims: Vec::new(),
             opening_batches: Vec::new(),
         }
     }
@@ -1383,11 +1403,12 @@ where
         });
     }
     store.observe_sumcheck_values(context.program, context.driver.symbol, &point, &evals)?;
-    append_opening_claims(context.program, &mut store, transcript, &evals)?;
+    let opening_claims = append_opening_claims(context.program, &mut store, transcript, &evals)?;
     Ok(Stage3SumcheckOutput {
         driver: context.driver.symbol,
         point,
         evals,
+        opening_claims,
         proof: SumcheckProof { round_polynomials },
     })
 }
@@ -1463,11 +1484,13 @@ where
         });
     }
     store.observe_sumcheck_values(context.program, context.driver.symbol, &point, &proof.evals)?;
-    append_opening_claims(context.program, &mut store, transcript, &proof.evals)?;
+    let opening_claims =
+        append_opening_claims(context.program, &mut store, transcript, &proof.evals)?;
     Ok(Stage3SumcheckOutput {
         driver: context.driver.symbol,
         point,
         evals: proof.evals.clone(),
+        opening_claims,
         proof: proof.proof.clone(),
     })
 }
@@ -1639,19 +1662,19 @@ impl<F: Field> SumOfProductsState<F> {
     }
 
     fn round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
+        let Some(split_eq) = self.split_eq.as_ref() else {
+            std::process::abort();
+        };
         match self.kind {
             SumOfProductsKind::InstructionInput => round_poly_from_instruction_input(
                 &self.factors,
                 &self.terms,
-                self.split_eq.as_ref().expect("instruction input split eq"),
+                split_eq,
                 previous_claim,
             ),
-            SumOfProductsKind::Registers => round_poly_from_registers(
-                &self.factors,
-                &self.terms,
-                self.split_eq.as_ref().expect("registers split eq"),
-                previous_claim,
-            ),
+            SumOfProductsKind::Registers => {
+                round_poly_from_registers(&self.factors, &self.terms, split_eq, previous_claim)
+            }
         }
     }
 
@@ -2549,9 +2572,17 @@ fn claim_relation(
     program: &'static Stage3CpuProgramPlan,
     claim: &Stage3SumcheckClaimPlan,
 ) -> Result<Stage3Relation, Stage3KernelError> {
-    let kernel = find_kernel(program, claim.kernel).ok_or(Stage3KernelError::MissingKernel {
+    if let Some(relation) = claim.relation {
+        return Stage3Relation::from_symbol(relation)
+            .ok_or(Stage3KernelError::UnknownRelation { relation });
+    }
+    let kernel_symbol = claim.kernel.ok_or(Stage3KernelError::MissingKernel {
         driver: claim.symbol,
-        kernel: claim.kernel,
+        kernel: "<missing>",
+    })?;
+    let kernel = find_kernel(program, kernel_symbol).ok_or(Stage3KernelError::MissingKernel {
+        driver: claim.symbol,
+        kernel: kernel_symbol,
     })?;
     kernel.relation_kind()
 }
@@ -3066,7 +3097,7 @@ fn append_opening_claims<F, T>(
     store: &mut Stage3ValueStore<F>,
     transcript: &mut T,
     evals: &[Stage3NamedEval<F>],
-) -> Result<(), Stage3KernelError>
+) -> Result<Vec<Stage3OpeningClaimValue<F>>, Stage3KernelError>
 where
     F: Field,
     T: Transcript<Challenge = F>,
@@ -3075,9 +3106,10 @@ where
         for eval in evals {
             append_labeled_scalar(transcript, "opening_claim", &eval.value);
         }
-        return Ok(());
+        return Ok(Vec::new());
     }
     let _ = store.evaluate_available_points(program)?;
+    let mut opening_claims = Vec::new();
     let mut seen = seed_stage3_opening_aliases(store, program);
     for batch in program.opening_batches {
         for symbol in batch.claim_operands {
@@ -3087,15 +3119,23 @@ where
                     claim: symbol,
                 })?;
             let point = store.point(claim.point_source)?.to_vec();
-            if has_seen_opening(&seen, claim.claim_kind, claim.oracle, &point) {
-                continue;
-            }
             let value = store.scalar(claim.eval_source)?;
-            append_labeled_scalar(transcript, "opening_claim", &value);
-            seen.push((claim.claim_kind, claim.oracle, point));
+            let duplicate = has_seen_opening(&seen, claim.claim_kind, claim.oracle, &point);
+            if !duplicate {
+                append_labeled_scalar(transcript, "opening_claim", &value);
+                seen.push((claim.claim_kind, claim.oracle, point.clone()));
+            }
+            opening_claims.push(Stage3OpeningClaimValue {
+                symbol: claim.symbol,
+                oracle: claim.oracle,
+                domain: claim.domain,
+                claim_kind: claim.claim_kind,
+                point: point.clone(),
+                eval: value,
+            });
         }
     }
-    Ok(())
+    Ok(opening_claims)
 }
 
 fn seed_stage3_opening_aliases<F: Field>(
@@ -3212,9 +3252,13 @@ where
     E: Stage3KernelExecutor<F>,
     T: Transcript<Challenge = F>,
 {
-    let kernel = find_kernel(program, driver.kernel).ok_or(Stage3KernelError::MissingKernel {
+    let kernel_symbol = driver.kernel.ok_or(Stage3KernelError::MissingKernel {
         driver: driver.symbol,
-        kernel: driver.kernel,
+        kernel: "<missing>",
+    })?;
+    let kernel = find_kernel(program, kernel_symbol).ok_or(Stage3KernelError::MissingKernel {
+        driver: driver.symbol,
+        kernel: kernel_symbol,
     })?;
     let batch = find_batch(program, driver.batch).ok_or(Stage3KernelError::MissingBatch {
         driver: driver.symbol,
@@ -3232,6 +3276,9 @@ where
         Stage3ExecutionMode::Verifier => executor.verify_sumcheck(context, transcript)?,
     };
     executor.observe_sumcheck_output(&output)?;
+    artifacts
+        .opening_claims
+        .extend(output.opening_claims.clone());
     artifacts.sumchecks.push(output);
     Ok(())
 }
@@ -3689,7 +3736,8 @@ mod tests {
                 symbol: "stage3.sumcheck",
                 stage: "stage3",
                 proof_slot: "stage3.sumcheck",
-                kernel: "jolt.cpu.stage3.batched",
+                kernel: Some("jolt.cpu.stage3.batched"),
+                relation: None,
                 batch: "stage3.batch",
                 policy: "jolt_core_stage3_aligned",
                 round_schedule: leak_slice(vec![2]),
@@ -3939,7 +3987,8 @@ mod tests {
             num_rounds: 2,
             degree,
             claim: symbol,
-            kernel,
+            kernel: Some(kernel),
+            relation: None,
             claim_value,
             input_openings: leak_slice(input_openings),
         }

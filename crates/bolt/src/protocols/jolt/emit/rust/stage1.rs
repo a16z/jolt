@@ -826,7 +826,7 @@ impl Stage1CpuProgram {
                 .as_deref()
                 .ok_or_else(|| missing_role_binding("prover claim kernel", &claim.symbol))?;
             claims.push(format!(
-                    "    Stage1SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: {}, claim_value: {}, input_openings: STAGE1_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS }},",
+                    "    Stage1SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: Some({}), relation: None, claim_value: {}, input_openings: STAGE1_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS }},",
                     rust_str(&claim.symbol),
                     rust_str(&claim.stage),
                     rust_str(&claim.domain),
@@ -942,7 +942,7 @@ impl Stage1CpuProgram {
                 .as_deref()
                 .ok_or_else(|| missing_role_binding("prover driver kernel", &driver.symbol))?;
             drivers.push(format!(
-                    "    Stage1SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, kernel: {}, batch: {}, policy: {}, round_schedule: STAGE1_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
+                    "    Stage1SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, kernel: Some({}), relation: None, batch: {}, policy: {}, round_schedule: STAGE1_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
                     rust_str(&driver.symbol),
                     rust_str(&driver.stage),
                     rust_str(&driver.proof_slot),
@@ -1088,8 +1088,8 @@ pub use super::common::{
     SumcheckBatchPlan as Stage1SumcheckBatchPlan, SumcheckEvalPlan as Stage1SumcheckEvalPlan,
     SumcheckInstanceResultPlan as Stage1SumcheckInstanceResultPlan,
     TranscriptSqueezePlan as Stage1TranscriptSqueezePlan,
-    VerifierSumcheckClaimPlan as Stage1SumcheckClaimPlan,
-    VerifierSumcheckDriverPlan as Stage1SumcheckDriverPlan,
+    SumcheckClaimPlan as Stage1SumcheckClaimPlan,
+    SumcheckDriverPlan as Stage1SumcheckDriverPlan,
 };
 
 #[derive(Debug)]
@@ -1154,7 +1154,7 @@ pub enum VerifyStage1Error {
                 .as_deref()
                 .ok_or_else(|| missing_role_binding("verifier claim relation", &claim.symbol))?;
             claims.push(format!(
-                    "    Stage1SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, relation: {}, claim_value: {}, input_openings: {} }},",
+                    "    Stage1SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: None, relation: Some({}), claim_value: {}, input_openings: {} }},",
                     rust_str(&claim.symbol),
                     rust_str(&claim.stage),
                     rust_str(&claim.domain),
@@ -1187,7 +1187,7 @@ pub enum VerifyStage1Error {
                 .as_deref()
                 .ok_or_else(|| missing_role_binding("verifier driver relation", &driver.symbol))?;
             drivers.push(format!(
-                    "    Stage1SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, relation: {}, batch: {}, policy: {}, round_schedule: STAGE1_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
+                    "    Stage1SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, kernel: None, relation: Some({}), batch: {}, policy: {}, round_schedule: STAGE1_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
                     rust_str(&driver.symbol),
                     rust_str(&driver.stage),
                     rust_str(&driver.proof_slot),
@@ -1307,7 +1307,8 @@ where
             reason: "driver symbol mismatch",
         });
     }
-    match driver.relation {
+    let relation = driver.relation.unwrap_or("<missing>");
+    match relation {
         "jolt.stage1.outer.uniskip" => verify_outer_uniskip(program, driver, proof, transcript),
         "jolt.stage1.outer.remaining" => {
             verify_outer_remaining(program, driver, proof, completed, transcript)

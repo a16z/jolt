@@ -1,15 +1,26 @@
 //! Stage 4 coarse-kernel ABI used by Bolt-generated Jolt prover code.
 
+#![expect(
+    clippy::large_enum_variant,
+    reason = "kernel states stay inline to avoid boxing hot prover state"
+)]
+#![expect(
+    clippy::too_many_arguments,
+    reason = "kernel constructors mirror generated staged protocol inputs"
+)]
+
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::mem::MaybeUninit;
 
 use crate::dense::{bind_dense_evals_reuse, DENSE_BIND_PAR_THRESHOLD};
 use crate::split_eq::SplitEqState;
+use crate::stage2::Stage2RamAccess;
 use jolt_field::{Field, FieldAccumulator};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{Label, LabelWithCount, Transcript};
+use jolt_witness::{stage4_5_sparse_trace_witness, Stage45SparseTraceWitness};
 use rayon::prelude::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -318,6 +329,7 @@ pub struct Stage4SumcheckOutput<F: Field> {
     pub driver: &'static str,
     pub point: Vec<F>,
     pub evals: Vec<Stage4NamedEval<F>>,
+    pub opening_claims: Vec<Stage4OpeningClaimValue<F>>,
     pub proof: SumcheckProof<F>,
 }
 
@@ -328,9 +340,20 @@ pub struct Stage4ChallengeVector<F: Field> {
 }
 
 #[derive(Clone, Debug)]
+pub struct Stage4OpeningClaimValue<F: Field> {
+    pub symbol: &'static str,
+    pub oracle: &'static str,
+    pub domain: &'static str,
+    pub claim_kind: &'static str,
+    pub point: Vec<F>,
+    pub eval: F,
+}
+
+#[derive(Clone, Debug)]
 pub struct Stage4ExecutionArtifacts<F: Field> {
     pub challenge_vectors: Vec<Stage4ChallengeVector<F>>,
     pub sumchecks: Vec<Stage4SumcheckOutput<F>>,
+    pub opening_claims: Vec<Stage4OpeningClaimValue<F>>,
     pub opening_batches: Vec<&'static Stage4OpeningBatchPlan>,
 }
 
@@ -339,6 +362,7 @@ impl<F: Field> Default for Stage4ExecutionArtifacts<F> {
         Self {
             challenge_vectors: Vec::new(),
             sumchecks: Vec::new(),
+            opening_claims: Vec::new(),
             opening_batches: Vec::new(),
         }
     }
@@ -396,6 +420,26 @@ pub struct Stage4RegisterAccess {
     pub rd: Option<Stage4RegisterWrite>,
 }
 
+pub fn stage4_5_sparse_trace_witness_from_accesses<F: Field>(
+    register_accesses: &[Stage4RegisterAccess],
+    ram_accesses: &[Stage2RamAccess],
+) -> Stage45SparseTraceWitness<F> {
+    stage4_5_sparse_trace_witness(
+        register_accesses.iter().map(|access| {
+            access
+                .rd
+                .map(|rd| (rd.address, rd.pre_value, rd.post_value))
+        }),
+        ram_accesses.iter().map(|access| {
+            (
+                access.remapped_address,
+                access.read_value,
+                access.write_value,
+            )
+        }),
+    )
+}
+
 #[derive(Clone, Copy)]
 pub struct Stage4RamWitness<'a, F: Field> {
     pub ram_k: usize,
@@ -437,6 +481,54 @@ impl<'a, F: Field> Stage4ProverInputs<'a, F> {
     pub fn with_ram(mut self, ram: Stage4RamWitness<'a, F>) -> Self {
         self.ram = Some(ram);
         self
+    }
+
+    pub fn with_sparse_trace_witness(
+        self,
+        register_count: usize,
+        trace_len: usize,
+        ram_k: usize,
+        register_accesses: &'a [Stage4RegisterAccess],
+        rd_inc: &'a [F],
+        write_address_indices: &'a [Option<usize>],
+        ram_inc: &'a [F],
+    ) -> Self {
+        self.with_registers(Stage4RegistersWitness {
+            register_count,
+            trace_len,
+            registers_val: &[],
+            rs1_ra: &[],
+            rs2_ra: &[],
+            rd_wa: &[],
+            accesses: Some(register_accesses),
+            rd_inc,
+        })
+        .with_ram(Stage4RamWitness {
+            ram_k,
+            trace_len,
+            ram_ra: &[],
+            write_address_indices: Some(write_address_indices),
+            ram_inc,
+        })
+    }
+
+    pub fn with_stage45_sparse_trace_witness(
+        self,
+        register_count: usize,
+        trace_len: usize,
+        ram_k: usize,
+        register_accesses: &'a [Stage4RegisterAccess],
+        witness: &'a Stage45SparseTraceWitness<F>,
+    ) -> Self {
+        self.with_sparse_trace_witness(
+            register_count,
+            trace_len,
+            ram_k,
+            register_accesses,
+            &witness.rd_inc,
+            &witness.ram_addresses,
+            &witness.ram_inc,
+        )
     }
 }
 
@@ -1195,6 +1287,9 @@ where
                     }
                 };
                 executor.observe_sumcheck_output(&output)?;
+                artifacts
+                    .opening_claims
+                    .extend(output.opening_claims.clone());
                 artifacts.sumchecks.push(output);
             }
             _ => {
@@ -1368,11 +1463,12 @@ where
         });
     }
     store.observe_sumcheck_values(context.program, context.driver.symbol, &point, &evals)?;
-    append_opening_claims(context.program, &mut store, transcript, &evals)?;
+    let opening_claims = append_opening_claims(context.program, &mut store, transcript, &evals)?;
     Ok(Stage4SumcheckOutput {
         driver: context.driver.symbol,
         point,
         evals,
+        opening_claims,
         proof: SumcheckProof { round_polynomials },
     })
 }
@@ -1451,10 +1547,16 @@ where
         driver: context.driver.symbol,
         point,
         evals: proof.evals.clone(),
+        opening_claims: Vec::new(),
         proof: proof.proof.clone(),
     };
     store.observe_sumcheck_output(context.program, &output)?;
-    append_opening_claims(context.program, &mut store, transcript, &output.evals)?;
+    let opening_claims =
+        append_opening_claims(context.program, &mut store, transcript, &output.evals)?;
+    let output = Stage4SumcheckOutput {
+        opening_claims,
+        ..output
+    };
     Ok(output)
 }
 
@@ -3227,7 +3329,7 @@ fn append_opening_claims<F, T>(
     store: &mut Stage4ValueStore<F>,
     transcript: &mut T,
     evals: &[Stage4NamedEval<F>],
-) -> Result<(), Stage4KernelError>
+) -> Result<Vec<Stage4OpeningClaimValue<F>>, Stage4KernelError>
 where
     F: Field,
     T: Transcript<Challenge = F>,
@@ -3236,9 +3338,10 @@ where
         for eval in evals {
             append_labeled_scalar(transcript, "opening_claim", &eval.value);
         }
-        return Ok(());
+        return Ok(Vec::new());
     }
     let _ = store.evaluate_available_points(program)?;
+    let mut opening_claims = Vec::new();
     let mut seen = seed_stage4_opening_aliases(store, program);
     for batch in program.opening_batches {
         for symbol in batch.claim_operands {
@@ -3248,15 +3351,23 @@ where
                     claim: symbol,
                 })?;
             let point = store.point(claim.point_source)?.to_vec();
-            if has_seen_opening(&seen, claim.claim_kind, claim.oracle, &point) {
-                continue;
-            }
             let value = store.scalar(claim.eval_source)?;
-            append_labeled_scalar(transcript, "opening_claim", &value);
-            seen.push((claim.claim_kind, claim.oracle, point));
+            let duplicate = has_seen_opening(&seen, claim.claim_kind, claim.oracle, &point);
+            if !duplicate {
+                append_labeled_scalar(transcript, "opening_claim", &value);
+                seen.push((claim.claim_kind, claim.oracle, point.clone()));
+            }
+            opening_claims.push(Stage4OpeningClaimValue {
+                symbol: claim.symbol,
+                oracle: claim.oracle,
+                domain: claim.domain,
+                claim_kind: claim.claim_kind,
+                point: point.clone(),
+                eval: value,
+            });
         }
     }
-    Ok(())
+    Ok(opening_claims)
 }
 
 fn seed_stage4_opening_aliases<F: Field>(
@@ -3782,6 +3893,37 @@ mod tests {
         .expect_err("tampered proof is rejected");
 
         assert!(matches!(error, Stage4KernelError::InvalidProof { .. }));
+    }
+
+    #[test]
+    fn sparse_trace_witness_from_accesses_groups_stage4_and_stage2_accesses() {
+        let register_accesses = [
+            Stage4RegisterAccess {
+                rd: Some(Stage4RegisterWrite {
+                    address: 2,
+                    pre_value: 5,
+                    post_value: 9,
+                }),
+                ..Stage4RegisterAccess::default()
+            },
+            Stage4RegisterAccess::default(),
+        ];
+        let ram_accesses = [
+            Stage2RamAccess {
+                remapped_address: Some(7),
+                read_value: 11,
+                write_value: 3,
+            },
+            Stage2RamAccess::noop(),
+        ];
+
+        let witness =
+            stage4_5_sparse_trace_witness_from_accesses::<Fr>(&register_accesses, &ram_accesses);
+
+        assert_eq!(witness.rd_inc, vec![Fr::from_u64(4), Fr::from_u64(0)]);
+        assert_eq!(witness.rd_write_addresses, vec![Some(2), None]);
+        assert_eq!(witness.ram_addresses, vec![Some(7), None]);
+        assert_eq!(witness.ram_inc, vec![-Fr::from_u64(8), Fr::from_u64(0)]);
     }
 
     #[derive(Clone)]

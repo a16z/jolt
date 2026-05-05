@@ -26,8 +26,8 @@ pub use super::common::{
     SumcheckBatchPlan as Stage3SumcheckBatchPlan, SumcheckEvalPlan as Stage3SumcheckEvalPlan,
     SumcheckInstanceResultPlan as Stage3SumcheckInstanceResultPlan,
     TranscriptSqueezePlan as Stage3TranscriptSqueezePlan,
-    VerifierSumcheckClaimPlan as Stage3SumcheckClaimPlan,
-    VerifierSumcheckDriverPlan as Stage3SumcheckDriverPlan,
+    SumcheckClaimPlan as Stage3SumcheckClaimPlan,
+    SumcheckDriverPlan as Stage3SumcheckDriverPlan,
 };
 
 #[derive(Debug)]
@@ -105,9 +105,9 @@ pub const STAGE3_FIELD_EXPRS: &[Stage3FieldExprPlan] = &[
     Stage3FieldExprPlan { symbol: "stage3.registers.claim_expr", kind: "op", formula: "field.add", operands: "stage3.registers.partial.RdWriteValueRs1Value|stage3.registers.term.Rs2Value" },
 ];
 pub const STAGE3_SUMCHECK_CLAIMS: &[Stage3SumcheckClaimPlan] = &[
-    Stage3SumcheckClaimPlan { symbol: "stage3.spartan_shift.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage3.spartan_shift.weighted_next_values", relation: "jolt.stage3.spartan_shift", claim_value: "stage3.spartan_shift.claim_expr", input_openings: "stage3.input.stage1.NextUnexpandedPC|stage3.input.stage1.NextPC|stage3.input.stage1.NextIsVirtual|stage3.input.stage1.NextIsFirstInSequence|stage3.input.stage2.product_virtual.NextIsNoop" },
-    Stage3SumcheckClaimPlan { symbol: "stage3.instruction_input.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 3, claim: "stage3.instruction_input.weighted_inputs", relation: "jolt.stage3.instruction_input", claim_value: "stage3.instruction_input.claim_expr", input_openings: "stage3.input.stage2.product_virtual.RightInstructionInput|stage3.input.stage2.product_virtual.LeftInstructionInput" },
-    Stage3SumcheckClaimPlan { symbol: "stage3.registers_claim_reduction.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage3.registers.weighted_register_values", relation: "jolt.stage3.registers_claim_reduction", claim_value: "stage3.registers.claim_expr", input_openings: "stage3.input.stage1.RdWriteValue|stage3.input.stage1.Rs1Value|stage3.input.stage1.Rs2Value" },
+    Stage3SumcheckClaimPlan { symbol: "stage3.spartan_shift.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage3.spartan_shift.weighted_next_values", kernel: None, relation: Some("jolt.stage3.spartan_shift"), claim_value: "stage3.spartan_shift.claim_expr", input_openings: "stage3.input.stage1.NextUnexpandedPC|stage3.input.stage1.NextPC|stage3.input.stage1.NextIsVirtual|stage3.input.stage1.NextIsFirstInSequence|stage3.input.stage2.product_virtual.NextIsNoop" },
+    Stage3SumcheckClaimPlan { symbol: "stage3.instruction_input.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 3, claim: "stage3.instruction_input.weighted_inputs", kernel: None, relation: Some("jolt.stage3.instruction_input"), claim_value: "stage3.instruction_input.claim_expr", input_openings: "stage3.input.stage2.product_virtual.RightInstructionInput|stage3.input.stage2.product_virtual.LeftInstructionInput" },
+    Stage3SumcheckClaimPlan { symbol: "stage3.registers_claim_reduction.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage3.registers.weighted_register_values", kernel: None, relation: Some("jolt.stage3.registers_claim_reduction"), claim_value: "stage3.registers.claim_expr", input_openings: "stage3.input.stage1.RdWriteValue|stage3.input.stage1.Rs1Value|stage3.input.stage1.Rs2Value" },
 ];
 pub const STAGE3_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[
     16,
@@ -121,7 +121,7 @@ pub const STAGE3_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[
 ];
 
 pub const STAGE3_SUMCHECK_DRIVERS: &[Stage3SumcheckDriverPlan] = &[
-    Stage3SumcheckDriverPlan { symbol: "stage3.sumcheck", stage: "stage3", proof_slot: "stage3.sumcheck", relation: "jolt.stage3.batched", batch: "stage3.batch", policy: "jolt_core_stage3_aligned", round_schedule: STAGE3_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 16, degree: 3 },
+    Stage3SumcheckDriverPlan { symbol: "stage3.sumcheck", stage: "stage3", proof_slot: "stage3.sumcheck", kernel: None, relation: Some("jolt.stage3.batched"), batch: "stage3.batch", policy: "jolt_core_stage3_aligned", round_schedule: STAGE3_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 16, degree: 3 },
 ];
 pub const STAGE3_SUMCHECK_INSTANCE_RESULTS: &[Stage3SumcheckInstanceResultPlan] = &[
     Stage3SumcheckInstanceResultPlan { symbol: "stage3.spartan_shift.instance", source: "stage3.sumcheck", claim: "stage3.spartan_shift.input", relation: "jolt.stage3.spartan_shift", index: 0, point_arity: 16, num_rounds: 16, round_offset: 0, point_order: "reverse", degree: 2 },
@@ -227,7 +227,8 @@ where
             got: proof.sumchecks.len(),
         });
     }
-    let mut store = super::common::ValueStore::with_opening_inputs(opening_inputs);
+    let mut store =
+        super::common::ValueStore::with_opening_inputs(opening_inputs, program.opening_inputs)?;
     store.seed_constants(program.field_constants);
     let mut artifacts = Stage3ExecutionArtifacts::default();
     for step in program.steps {
@@ -309,13 +310,14 @@ where
         .ok_or(VerifyStage3Error::MissingProof {
             driver: driver.symbol,
         })?;
-    let output = match driver.relation {
+    let relation = driver.relation.unwrap_or("<missing>");
+    let output = match relation {
         "jolt.stage3.batched" => {
             verify_batched_stage3(program, driver, proof, store, transcript)?
         }
         _ => {
             return Err(VerifyStage3Error::UnsupportedRelation {
-                relation: driver.relation,
+                relation,
             });
         }
     };

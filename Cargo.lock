@@ -2960,6 +2960,7 @@ dependencies = [
  "num-traits",
  "postcard",
  "rayon",
+ "serde",
  "strum 0.28.0",
  "tracer",
  "tracing",
@@ -3149,7 +3150,9 @@ dependencies = [
  "jolt-poly",
  "jolt-r1cs",
  "jolt-sumcheck",
+ "jolt-trace",
  "jolt-transcript",
+ "jolt-witness",
  "rayon",
  "tracing",
 ]
@@ -3361,6 +3364,7 @@ dependencies = [
  "jolt-poly",
  "jolt-sumcheck",
  "jolt-transcript",
+ "serde",
  "tracing",
 ]
 
@@ -3369,6 +3373,7 @@ name = "jolt-witness"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "jolt-poly",
 ]
 
 [[package]]

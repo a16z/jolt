@@ -954,8 +954,8 @@ pub use super::common::{
     SumcheckEvalPlan as Stage2SumcheckEvalPlan,
     SumcheckInstanceResultPlan as Stage2SumcheckInstanceResultPlan,
     TranscriptSqueezePlan as Stage2TranscriptSqueezePlan,
-    VerifierSumcheckClaimPlan as Stage2SumcheckClaimPlan,
-    VerifierSumcheckDriverPlan as Stage2SumcheckDriverPlan,
+    SumcheckClaimPlan as Stage2SumcheckClaimPlan,
+    SumcheckDriverPlan as Stage2SumcheckDriverPlan,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -1268,7 +1268,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage2Error);
                     .as_deref()
                     .ok_or_else(|| missing_role_binding("prover claim kernel", &claim.symbol))?;
                 claims.push(format!(
-                        "    Stage2SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: {}, claim_value: {}, input_openings: STAGE2_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS }},",
+                        "    Stage2SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: Some({}), relation: None, claim_value: {}, input_openings: STAGE2_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS }},",
                         rust_str(&claim.symbol),
                         rust_str(&claim.stage),
                         rust_str(&claim.domain),
@@ -1283,7 +1283,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage2Error);
                     missing_role_binding("verifier claim relation", &claim.symbol)
                 })?;
                 claims.push(format!(
-                        "    Stage2SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, relation: {}, claim_value: {}, input_openings: {} }},",
+                        "    Stage2SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: None, relation: Some({}), claim_value: {}, input_openings: {} }},",
                         rust_str(&claim.symbol),
                         rust_str(&claim.stage),
                         rust_str(&claim.domain),
@@ -1410,7 +1410,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage2Error);
                     .as_deref()
                     .ok_or_else(|| missing_role_binding("prover driver kernel", &driver.symbol))?;
                 drivers.push(format!(
-                        "    Stage2SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, kernel: {}, batch: {}, policy: {}, round_schedule: STAGE2_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
+                        "    Stage2SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, kernel: Some({}), relation: None, batch: {}, policy: {}, round_schedule: STAGE2_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
                         rust_str(&driver.symbol),
                         rust_str(&driver.stage),
                         rust_str(&driver.proof_slot),
@@ -1427,7 +1427,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage2Error);
                     missing_role_binding("verifier driver relation", &driver.symbol)
                 })?;
                 drivers.push(format!(
-                        "    Stage2SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, relation: {}, batch: {}, policy: {}, round_schedule: STAGE2_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
+                        "    Stage2SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, kernel: None, relation: Some({}), batch: {}, policy: {}, round_schedule: STAGE2_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
                         rust_str(&driver.symbol),
                         rust_str(&driver.stage),
                         rust_str(&driver.proof_slot),
@@ -1715,7 +1715,7 @@ where
             got: proof.sumchecks.len(),
         });
     }
-    let mut store = Stage2ValueStore::with_opening_inputs(opening_inputs);
+    let mut store = Stage2ValueStore::with_opening_inputs(program, opening_inputs)?;
     store.seed_constants(program);
     let mut artifacts = Stage2ExecutionArtifacts::default();
     if program.steps.is_empty() {
@@ -1796,7 +1796,8 @@ where
         .ok_or(VerifyStage2Error::MissingProof {
             driver: driver.symbol,
         })?;
-    let output = match driver.relation {
+    let relation = driver.relation.unwrap_or("<missing>");
+    let output = match relation {
         "jolt.stage2.product_virtual.uniskip" => {
             verify_product_virtual_uniskip(program, driver, proof, store, transcript)?
         }
@@ -1940,8 +1941,14 @@ where
 }
 
 impl<F: Field> Stage2ValueStore<F> {
-    fn with_opening_inputs(inputs: &[Stage2OpeningInputValue<F>]) -> Self {
-        Self(super::common::ValueStore::with_opening_inputs(inputs))
+    fn with_opening_inputs(
+        program: &'static Stage2VerifierProgramPlan,
+        inputs: &[Stage2OpeningInputValue<F>],
+    ) -> Result<Self, VerifyStage2Error> {
+        Ok(Self(super::common::ValueStore::with_opening_inputs(
+            inputs,
+            program.opening_inputs,
+        )?))
     }
 
     fn seed_constants(&mut self, program: &'static Stage2VerifierProgramPlan) {

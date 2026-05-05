@@ -14,3 +14,4 @@ pub mod stage4;
 pub mod stage5;
 pub mod stage6;
 pub mod stage7;
+pub mod trace;

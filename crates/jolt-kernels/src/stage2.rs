@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -184,7 +185,8 @@ pub struct Stage2SumcheckClaimPlan {
     pub num_rounds: usize,
     pub degree: usize,
     pub claim: &'static str,
-    pub kernel: &'static str,
+    pub kernel: Option<&'static str>,
+    pub relation: Option<&'static str>,
     pub claim_value: &'static str,
     pub input_openings: &'static [&'static str],
 }
@@ -208,7 +210,8 @@ pub struct Stage2SumcheckDriverPlan {
     pub symbol: &'static str,
     pub stage: &'static str,
     pub proof_slot: &'static str,
-    pub kernel: &'static str,
+    pub kernel: Option<&'static str>,
+    pub relation: Option<&'static str>,
     pub batch: &'static str,
     pub policy: &'static str,
     pub round_schedule: &'static [usize],
@@ -348,6 +351,7 @@ pub struct Stage2SumcheckOutput<F: Field> {
     pub driver: &'static str,
     pub point: Vec<F>,
     pub evals: Vec<Stage2NamedEval<F>>,
+    pub opening_claims: Vec<Stage2OpeningClaimValue<F>>,
     pub proof: SumcheckProof<F>,
 }
 
@@ -358,9 +362,20 @@ pub struct Stage2ChallengeVector<F: Field> {
 }
 
 #[derive(Clone, Debug)]
+pub struct Stage2OpeningClaimValue<F: Field> {
+    pub symbol: &'static str,
+    pub oracle: &'static str,
+    pub domain: &'static str,
+    pub claim_kind: &'static str,
+    pub point: Vec<F>,
+    pub eval: F,
+}
+
+#[derive(Clone, Debug)]
 pub struct Stage2ExecutionArtifacts<F: Field> {
     pub challenge_vectors: Vec<Stage2ChallengeVector<F>>,
     pub sumchecks: Vec<Stage2SumcheckOutput<F>>,
+    pub opening_claims: Vec<Stage2OpeningClaimValue<F>>,
     pub opening_batches: Vec<&'static Stage2OpeningBatchPlan>,
 }
 
@@ -369,6 +384,7 @@ impl<F: Field> Default for Stage2ExecutionArtifacts<F> {
         Self {
             challenge_vectors: Vec::new(),
             sumchecks: Vec::new(),
+            opening_claims: Vec::new(),
             opening_batches: Vec::new(),
         }
     }
@@ -1014,10 +1030,10 @@ impl<F: Field> Stage2KernelExecutor<F> for UnsupportedStage2KernelExecutor {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Stage2ProverInputs<'a, F: Field> {
     pub opening_inputs: &'a [Stage2OpeningInputValue<F>],
-    pub product_uniskip_extended_evals: Option<&'a [F]>,
+    pub product_uniskip_extended_evals: Option<Cow<'a, [F]>>,
     pub product_virtual_cycles: Option<&'a [Stage2ProductVirtualCycle]>,
     pub instruction_lookup_cycles: Option<&'a [Stage2InstructionLookupCycle]>,
     pub ram: Option<&'a Stage2RamData<'a>>,
@@ -1045,7 +1061,7 @@ impl<'a, F: Field> Stage2ProverInputs<'a, F> {
     }
 
     pub fn with_product_uniskip_extended_evals(mut self, evaluations: &'a [F]) -> Self {
-        self.product_uniskip_extended_evals = Some(evaluations);
+        self.product_uniskip_extended_evals = Some(Cow::Borrowed(evaluations));
         self
     }
 
@@ -1065,6 +1081,26 @@ impl<'a, F: Field> Stage2ProverInputs<'a, F> {
     pub fn with_ram_data(mut self, ram: &'a Stage2RamData<'a>) -> Self {
         self.ram = Some(ram);
         self
+    }
+}
+
+impl<'a> Stage2ProverInputs<'a, Fr> {
+    pub fn with_product_virtual_witness(
+        mut self,
+        cycles: &'a [Stage2ProductVirtualCycle],
+    ) -> Result<Self, Stage2KernelError> {
+        let tau_low = self
+            .opening_inputs
+            .iter()
+            .find(|input| input.symbol == "stage2.input.stage1.Product")
+            .map(|input| input.point.as_slice())
+            .ok_or(Stage2KernelError::MissingValue {
+                symbol: "stage2.input.stage1.Product",
+            })?;
+        let extended_evals = product_virtual_uniskip_extended_evals(cycles, tau_low)?;
+        self.product_uniskip_extended_evals = Some(Cow::Owned(extended_evals.to_vec()));
+        self.product_virtual_cycles = Some(cycles);
+        Ok(self)
     }
 }
 
@@ -1499,13 +1535,12 @@ where
             })?;
     let input_claim = store.claim_value(context.program, claim)?;
     let base_evals = product_uniskip_base_evals(&store)?;
-    let extended_evals =
-        inputs
-            .product_uniskip_extended_evals
-            .ok_or(Stage2KernelError::MissingKernelInput {
-                kernel: context.kernel.abi,
-                input: "product_uniskip_extended_evals",
-            })?;
+    let extended_evals = inputs.product_uniskip_extended_evals.as_deref().ok_or(
+        Stage2KernelError::MissingKernelInput {
+            kernel: context.kernel.abi,
+            input: "product_uniskip_extended_evals",
+        },
+    )?;
     let poly = build_product_uniskip_poly(
         &base_evals,
         extended_evals,
@@ -1525,6 +1560,7 @@ where
         driver: context.driver.symbol,
         point: vec![r0],
         evals: driver_evals(context, eval),
+        opening_claims: Vec::new(),
         proof: SumcheckProof {
             round_polynomials: vec![poly],
         },
@@ -1591,6 +1627,7 @@ where
         driver: context.driver.symbol,
         point: vec![r0],
         evals,
+        opening_claims: Vec::new(),
         proof: proof.proof.clone(),
     })
 }
@@ -1702,11 +1739,12 @@ where
         });
     }
     store.observe_sumcheck_values(context.program, context.driver.symbol, &point, &evals)?;
-    append_opening_claims(context.program, &mut store, transcript, &evals)?;
+    let opening_claims = append_opening_claims(context.program, &mut store, transcript, &evals)?;
     Ok(Stage2SumcheckOutput {
         driver: context.driver.symbol,
         point,
         evals,
+        opening_claims,
         proof: SumcheckProof { round_polynomials },
     })
 }
@@ -1790,11 +1828,13 @@ where
         });
     }
     store.observe_sumcheck_values(context.program, context.driver.symbol, &point, &proof.evals)?;
-    append_opening_claims(context.program, &mut store, transcript, &proof.evals)?;
+    let opening_claims =
+        append_opening_claims(context.program, &mut store, transcript, &proof.evals)?;
     Ok(Stage2SumcheckOutput {
         driver: context.driver.symbol,
         point,
         evals: proof.evals.clone(),
+        opening_claims,
         proof: proof.proof.clone(),
     })
 }
@@ -3864,9 +3904,17 @@ fn claim_relation(
     program: &'static Stage2CpuProgramPlan,
     claim: &Stage2SumcheckClaimPlan,
 ) -> Result<Stage2Relation, Stage2KernelError> {
-    let kernel = find_kernel(program, claim.kernel).ok_or(Stage2KernelError::MissingKernel {
+    if let Some(relation) = claim.relation {
+        return Stage2Relation::from_symbol(relation)
+            .ok_or(Stage2KernelError::UnknownRelation { relation });
+    }
+    let kernel_symbol = claim.kernel.ok_or(Stage2KernelError::MissingKernel {
         driver: claim.symbol,
-        kernel: claim.kernel,
+        kernel: "<missing>",
+    })?;
+    let kernel = find_kernel(program, kernel_symbol).ok_or(Stage2KernelError::MissingKernel {
+        driver: claim.symbol,
+        kernel: kernel_symbol,
     })?;
     kernel.relation_kind()
 }
@@ -4265,7 +4313,7 @@ fn append_opening_claims<F, T>(
     store: &mut Stage2ValueStore<F>,
     transcript: &mut T,
     evals: &[Stage2NamedEval<F>],
-) -> Result<(), Stage2KernelError>
+) -> Result<Vec<Stage2OpeningClaimValue<F>>, Stage2KernelError>
 where
     F: Field,
     T: Transcript<Challenge = F>,
@@ -4274,9 +4322,10 @@ where
         for eval in evals {
             append_labeled_scalar(transcript, "opening_claim", &eval.value);
         }
-        return Ok(());
+        return Ok(Vec::new());
     }
     let _ = store.evaluate_available_points(program)?;
+    let mut opening_claims = Vec::new();
     let mut seen = seed_stage2_opening_aliases(store, program);
     for batch in program.opening_batches {
         for symbol in batch.claim_operands {
@@ -4286,15 +4335,23 @@ where
                     claim: symbol,
                 })?;
             let point = store.point(claim.point_source)?.to_vec();
-            if has_seen_opening(&seen, claim.claim_kind, claim.oracle, &point) {
-                continue;
-            }
             let value = store.scalar(claim.eval_source)?;
-            append_labeled_scalar(transcript, "opening_claim", &value);
-            seen.push((claim.claim_kind, claim.oracle, point));
+            let duplicate = has_seen_opening(&seen, claim.claim_kind, claim.oracle, &point);
+            if !duplicate {
+                append_labeled_scalar(transcript, "opening_claim", &value);
+                seen.push((claim.claim_kind, claim.oracle, point.clone()));
+            }
+            opening_claims.push(Stage2OpeningClaimValue {
+                symbol: claim.symbol,
+                oracle: claim.oracle,
+                domain: claim.domain,
+                claim_kind: claim.claim_kind,
+                point: point.clone(),
+                eval: value,
+            });
         }
     }
-    Ok(())
+    Ok(opening_claims)
 }
 
 fn seed_stage2_opening_aliases<F: Field>(
@@ -4455,9 +4512,13 @@ where
     E: Stage2KernelExecutor<F>,
     T: Transcript<Challenge = F>,
 {
-    let kernel = find_kernel(program, driver.kernel).ok_or(Stage2KernelError::MissingKernel {
+    let kernel_symbol = driver.kernel.ok_or(Stage2KernelError::MissingKernel {
         driver: driver.symbol,
-        kernel: driver.kernel,
+        kernel: "<missing>",
+    })?;
+    let kernel = find_kernel(program, kernel_symbol).ok_or(Stage2KernelError::MissingKernel {
+        driver: driver.symbol,
+        kernel: kernel_symbol,
     })?;
     let batch = find_batch(program, driver.batch).ok_or(Stage2KernelError::MissingBatch {
         driver: driver.symbol,
@@ -4475,6 +4536,9 @@ where
         Stage2ExecutionMode::Verifier => executor.verify_sumcheck(context, transcript)?,
     };
     executor.observe_sumcheck_output(&output)?;
+    artifacts
+        .opening_claims
+        .extend(output.opening_claims.clone());
     artifacts.sumchecks.push(output);
     Ok(())
 }
@@ -4725,7 +4789,8 @@ mod tests {
                 num_rounds: 1,
                 degree: 3,
                 claim: "claim",
-                kernel: "kernel",
+                kernel: Some("kernel"),
+                relation: None,
                 claim_value: "ram_expr",
                 input_openings: &["read", "write"],
             }],
@@ -4791,6 +4856,7 @@ mod tests {
                 oracle: "Oracle",
                 value: Fr::from_u64(11),
             }],
+            opening_claims: Vec::new(),
             proof: SumcheckProof::default(),
         };
         let mut store = Stage2ValueStore::new();
@@ -4954,6 +5020,52 @@ mod tests {
         assert_eq!(evals, expected);
     }
 
+    #[test]
+    fn product_virtual_witness_builder_uses_product_opening_point() {
+        let cycles = [
+            Stage2ProductVirtualCycle {
+                instruction_left_input: 7,
+                instruction_right_input: -3,
+                should_branch_lookup_output: 11,
+                write_lookup_output_to_rd_flag: true,
+                jump_flag: false,
+                should_branch_flag: true,
+                not_next_noop: true,
+                virtual_instruction_flag: false,
+            },
+            Stage2ProductVirtualCycle {
+                instruction_left_input: 13,
+                instruction_right_input: 5,
+                should_branch_lookup_output: 17,
+                write_lookup_output_to_rd_flag: false,
+                jump_flag: true,
+                should_branch_flag: false,
+                not_next_noop: false,
+                virtual_instruction_flag: true,
+            },
+        ];
+        let opening_inputs = [Stage2OpeningInputValue {
+            symbol: "stage2.input.stage1.Product",
+            point: vec![Fr::from_u64(19)],
+            eval: Fr::from_u64(11),
+        }];
+        let expected = product_virtual_uniskip_extended_evals(&cycles, &[Fr::from_u64(19)])
+            .expect("extended evals compute");
+
+        let inputs = Stage2ProverInputs::new(&opening_inputs)
+            .with_product_virtual_witness(&cycles)
+            .expect("builder derives product virtual witness");
+
+        assert_eq!(inputs.product_virtual_cycles, Some(cycles.as_slice()));
+        assert_eq!(
+            inputs
+                .product_uniskip_extended_evals
+                .as_deref()
+                .expect("extended evals"),
+            expected.as_slice()
+        );
+    }
+
     fn minimal_program(
         transcript_squeezes: Vec<Stage2TranscriptSqueezePlan>,
         field_constants: Vec<Stage2FieldConstantPlan>,
@@ -5037,7 +5149,8 @@ mod tests {
                 num_rounds: 1,
                 degree: 6,
                 claim: "stage2.product_virtual.weighted_stage1_outputs",
-                kernel: "jolt.cpu.stage2.product_virtual.uniskip",
+                kernel: Some("jolt.cpu.stage2.product_virtual.uniskip"),
+                relation: None,
                 claim_value: "stage2.product_virtual.uniskip.claim_expr",
                 input_openings: &[
                     "stage2.input.stage1.Product",
@@ -5061,7 +5174,8 @@ mod tests {
                 symbol: "stage2.product_virtual.uniskip.sumcheck",
                 stage: "stage2",
                 proof_slot: "stage2.product_virtual.uni_skip_first_round",
-                kernel: "jolt.cpu.stage2.product_virtual.uniskip",
+                kernel: Some("jolt.cpu.stage2.product_virtual.uniskip"),
+                relation: None,
                 batch: "stage2.product_virtual.uniskip.batch",
                 policy: "univariate_skip",
                 round_schedule: &[1],

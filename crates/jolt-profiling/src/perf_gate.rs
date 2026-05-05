@@ -15,7 +15,10 @@ pub const CORE_VS_BOLT_REQUIRED_SPANS: &[&str] = &[
     "core.prove",
     "core.verify",
     "bolt.setup",
+    "bolt.prove",
     "bolt.commitment",
+    "bolt.commitment.batch",
+    "bolt.commitment.dory_commit",
     "bolt.stage1",
     "bolt.stage2",
     "bolt.stage3",
@@ -25,7 +28,13 @@ pub const CORE_VS_BOLT_REQUIRED_SPANS: &[&str] = &[
     "bolt.stage7",
     "bolt.stage8",
     "bolt.evaluate",
+    "bolt.evaluate.claims",
+    "bolt.evaluate.materialize_joint_polynomial",
+    "bolt.evaluate.joint_opening_hint",
+    "bolt.evaluate.dory_open",
     "bolt.verify",
+    "bolt.verify.evaluation_state",
+    "bolt.verify.dory_verify",
 ];
 
 /// Path measured by a paired core-vs-Bolt perf gate.

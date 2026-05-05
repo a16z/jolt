@@ -982,8 +982,8 @@ pub use super::common::{
     SumcheckBatchPlan as Stage3SumcheckBatchPlan, SumcheckEvalPlan as Stage3SumcheckEvalPlan,
     SumcheckInstanceResultPlan as Stage3SumcheckInstanceResultPlan,
     TranscriptSqueezePlan as Stage3TranscriptSqueezePlan,
-    VerifierSumcheckClaimPlan as Stage3SumcheckClaimPlan,
-    VerifierSumcheckDriverPlan as Stage3SumcheckDriverPlan,
+    SumcheckClaimPlan as Stage3SumcheckClaimPlan,
+    SumcheckDriverPlan as Stage3SumcheckDriverPlan,
 };
 
 #[derive(Debug)]
@@ -1271,7 +1271,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
                     .as_deref()
                     .ok_or_else(|| missing_role_binding("prover claim kernel", &claim.symbol))?;
                 claims.push(format!(
-                        "    Stage3SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: {}, claim_value: {}, input_openings: STAGE3_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS }},",
+                        "    Stage3SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: Some({}), relation: None, claim_value: {}, input_openings: STAGE3_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS }},",
                         rust_str(&claim.symbol),
                         rust_str(&claim.stage),
                         rust_str(&claim.domain),
@@ -1286,7 +1286,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
                     missing_role_binding("verifier claim relation", &claim.symbol)
                 })?;
                 claims.push(format!(
-                        "    Stage3SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, relation: {}, claim_value: {}, input_openings: {} }},",
+                        "    Stage3SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: None, relation: Some({}), claim_value: {}, input_openings: {} }},",
                         rust_str(&claim.symbol),
                         rust_str(&claim.stage),
                         rust_str(&claim.domain),
@@ -1413,7 +1413,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
                     .as_deref()
                     .ok_or_else(|| missing_role_binding("prover driver kernel", &driver.symbol))?;
                 drivers.push(format!(
-                        "    Stage3SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, kernel: {}, batch: {}, policy: {}, round_schedule: STAGE3_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
+                        "    Stage3SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, kernel: Some({}), relation: None, batch: {}, policy: {}, round_schedule: STAGE3_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
                         rust_str(&driver.symbol),
                         rust_str(&driver.stage),
                         rust_str(&driver.proof_slot),
@@ -1430,7 +1430,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
                     missing_role_binding("verifier driver relation", &driver.symbol)
                 })?;
                 drivers.push(format!(
-                        "    Stage3SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, relation: {}, batch: {}, policy: {}, round_schedule: STAGE3_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
+                        "    Stage3SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, kernel: None, relation: Some({}), batch: {}, policy: {}, round_schedule: STAGE3_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
                         rust_str(&driver.symbol),
                         rust_str(&driver.stage),
                         rust_str(&driver.proof_slot),
@@ -1734,7 +1734,8 @@ where
             got: proof.sumchecks.len(),
         });
     }
-    let mut store = super::common::ValueStore::with_opening_inputs(opening_inputs);
+    let mut store =
+        super::common::ValueStore::with_opening_inputs(opening_inputs, program.opening_inputs)?;
     store.seed_constants(program.field_constants);
     let mut artifacts = Stage3ExecutionArtifacts::default();
     for step in program.steps {
@@ -1816,13 +1817,14 @@ where
         .ok_or(VerifyStage3Error::MissingProof {
             driver: driver.symbol,
         })?;
-    let output = match driver.relation {
+    let relation = driver.relation.unwrap_or("<missing>");
+    let output = match relation {
         "jolt.stage3.batched" => {
             verify_batched_stage3(program, driver, proof, store, transcript)?
         }
         _ => {
             return Err(VerifyStage3Error::UnsupportedRelation {
-                relation: driver.relation,
+                relation,
             });
         }
     };

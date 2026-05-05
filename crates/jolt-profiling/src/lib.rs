@@ -74,7 +74,10 @@ pub use perf_gate::{
     PerfGateThresholds, PerfGateViolation, PerfMetric, PerfMetrics, PerfPath,
     CORE_VS_BOLT_REQUIRED_SPANS,
 };
-pub use setup::{setup_tracing, TracingFormat, TracingGuards};
+pub use setup::{
+    observed_span_names, observed_span_names_with_prefix, setup_tracing, TracingFormat,
+    TracingGuards,
+};
 pub use units::{format_memory_size, BYTES_PER_GIB, BYTES_PER_MIB};
 
 #[cfg(not(target_arch = "wasm32"))]

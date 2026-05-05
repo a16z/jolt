@@ -1,9 +1,15 @@
+#![expect(
+    clippy::too_many_arguments,
+    reason = "generated verifier helpers mirror staged protocol ABIs"
+)]
+
 use jolt_field::{Field, Fr};
 use jolt_poly::EqPolynomial;
 use jolt_sumcheck::{
     CompressedLabeledRoundPoly, SumcheckClaim, SumcheckError, SumcheckProof, SumcheckVerifier,
 };
 use jolt_transcript::{Label, Transcript};
+use serde::Serialize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StageParams {
@@ -103,34 +109,6 @@ pub struct SumcheckDriverPlan {
     pub proof_slot: &'static str,
     pub kernel: Option<&'static str>,
     pub relation: Option<&'static str>,
-    pub batch: &'static str,
-    pub policy: &'static str,
-    pub round_schedule: &'static [usize],
-    pub claim_label: &'static str,
-    pub round_label: &'static str,
-    pub num_rounds: usize,
-    pub degree: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct VerifierSumcheckClaimPlan {
-    pub symbol: &'static str,
-    pub stage: &'static str,
-    pub domain: &'static str,
-    pub num_rounds: usize,
-    pub degree: usize,
-    pub claim: &'static str,
-    pub relation: &'static str,
-    pub claim_value: &'static str,
-    pub input_openings: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct VerifierSumcheckDriverPlan {
-    pub symbol: &'static str,
-    pub stage: &'static str,
-    pub proof_slot: &'static str,
-    pub relation: &'static str,
     pub batch: &'static str,
     pub policy: &'static str,
     pub round_schedule: &'static [usize],
@@ -272,9 +250,9 @@ pub struct StageVerifierProgramPlan {
     pub opening_inputs: &'static [OpeningInputPlan],
     pub field_constants: &'static [FieldConstantPlan],
     pub field_exprs: &'static [FieldExprPlan],
-    pub claims: &'static [VerifierSumcheckClaimPlan],
+    pub claims: &'static [SumcheckClaimPlan],
     pub batches: &'static [SumcheckBatchPlan],
-    pub drivers: &'static [VerifierSumcheckDriverPlan],
+    pub drivers: &'static [SumcheckDriverPlan],
     pub instance_results: &'static [SumcheckInstanceResultPlan],
     pub evals: &'static [SumcheckEvalPlan],
     pub point_slices: &'static [PointSlicePlan],
@@ -292,9 +270,9 @@ pub struct StageVerifierProgramPlanNoEqualities {
     pub opening_inputs: &'static [OpeningInputPlan],
     pub field_constants: &'static [FieldConstantPlan],
     pub field_exprs: &'static [FieldExprPlan],
-    pub claims: &'static [VerifierSumcheckClaimPlan],
+    pub claims: &'static [SumcheckClaimPlan],
     pub batches: &'static [SumcheckBatchPlan],
-    pub drivers: &'static [VerifierSumcheckDriverPlan],
+    pub drivers: &'static [SumcheckDriverPlan],
     pub instance_results: &'static [SumcheckInstanceResultPlan],
     pub evals: &'static [SumcheckEvalPlan],
     pub point_slices: &'static [PointSlicePlan],
@@ -307,23 +285,23 @@ pub struct StageVerifierProgramPlanNoEqualities {
 pub struct VerifierProgramPlanMinimal {
     pub params: StageParams,
     pub transcript_squeezes: &'static [TranscriptSqueezePlan],
-    pub claims: &'static [VerifierSumcheckClaimPlan],
+    pub claims: &'static [SumcheckClaimPlan],
     pub batches: &'static [SumcheckBatchPlan],
-    pub drivers: &'static [VerifierSumcheckDriverPlan],
+    pub drivers: &'static [SumcheckDriverPlan],
     pub instance_results: &'static [SumcheckInstanceResultPlan],
     pub evals: &'static [SumcheckEvalPlan],
     pub opening_claims: &'static [OpeningClaimPlan],
     pub opening_batches: &'static [OpeningBatchPlan],
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct StageNamedEval<F: Field> {
     pub name: &'static str,
     pub oracle: &'static str,
     pub value: F,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct StageSumcheckOutput<F: Field> {
     pub driver: &'static str,
     pub point: Vec<F>,
@@ -354,7 +332,7 @@ impl<F: Field> Default for StageExecutionArtifacts<F> {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct StageProof<F: Field> {
     pub sumchecks: Vec<StageSumcheckOutput<F>>,
 }
@@ -459,19 +437,7 @@ impl SymbolPlan for SumcheckClaimPlan {
     }
 }
 
-impl SymbolPlan for VerifierSumcheckClaimPlan {
-    fn symbol(&self) -> &'static str {
-        self.symbol
-    }
-}
-
 impl SymbolPlan for SumcheckDriverPlan {
-    fn symbol(&self) -> &'static str {
-        self.symbol
-    }
-}
-
-impl SymbolPlan for VerifierSumcheckDriverPlan {
     fn symbol(&self) -> &'static str {
         self.symbol
     }
@@ -489,16 +455,6 @@ pub trait SumcheckClaimInfo: SymbolPlan {
 }
 
 impl SumcheckClaimInfo for SumcheckClaimPlan {
-    fn num_rounds(&self) -> usize {
-        self.num_rounds
-    }
-
-    fn claim_value(&self) -> &'static str {
-        self.claim_value
-    }
-}
-
-impl SumcheckClaimInfo for VerifierSumcheckClaimPlan {
     fn num_rounds(&self) -> usize {
         self.num_rounds
     }
@@ -533,24 +489,6 @@ impl SumcheckDriverInfo for SumcheckDriverPlan {
     }
 }
 
-impl SumcheckDriverInfo for VerifierSumcheckDriverPlan {
-    fn batch(&self) -> &'static str {
-        self.batch
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.num_rounds
-    }
-
-    fn degree(&self) -> usize {
-        self.degree
-    }
-
-    fn round_label(&self) -> &'static str {
-        self.round_label
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct ValueStore<F: Field> {
     scalars: Vec<(&'static str, F)>,
@@ -558,13 +496,45 @@ pub struct ValueStore<F: Field> {
 }
 
 impl<F: Field> ValueStore<F> {
-    pub fn with_opening_inputs(inputs: &[StageOpeningInputValue<F>]) -> Self {
+    pub fn with_opening_inputs(
+        inputs: &[StageOpeningInputValue<F>],
+        expected_inputs: &[OpeningInputPlan],
+    ) -> Result<Self, RuntimePlanError> {
+        if inputs.len() != expected_inputs.len() {
+            return Err(RuntimePlanError::InvalidInputLength {
+                input: "opening_inputs",
+                expected: expected_inputs.len(),
+                actual: inputs.len(),
+            });
+        }
+        for expected in expected_inputs {
+            let matching_count = inputs
+                .iter()
+                .filter(|input| input.symbol == expected.symbol)
+                .count();
+            if matching_count != 1 {
+                return Err(RuntimePlanError::InvalidInputLength {
+                    input: expected.symbol,
+                    expected: 1,
+                    actual: matching_count,
+                });
+            }
+            if let Some(input) = inputs.iter().find(|input| input.symbol == expected.symbol) {
+                if input.point.len() != expected.point_arity {
+                    return Err(RuntimePlanError::InvalidInputLength {
+                        input: expected.symbol,
+                        expected: expected.point_arity,
+                        actual: input.point.len(),
+                    });
+                }
+            }
+        }
         let mut store = Self::default();
         for input in inputs {
             store.insert_scalar(input.symbol, input.eval);
             store.insert_point(input.symbol, input.point.clone());
         }
-        store
+        Ok(store)
     }
 
     pub fn seed_constants(&mut self, constants: &[FieldConstantPlan]) {
@@ -1364,7 +1334,10 @@ pub fn expected_stage67_booleanity(
             actual: combined_r.len(),
         });
     }
-    let eq_eval = EqPolynomial::<Fr>::mle(local_point, &combined_r);
+    let mut verifier_point = combined_r[..log_k_chunk].to_vec();
+    verifier_point.reverse();
+    verifier_point.extend(combined_r[log_k_chunk..].iter().rev().copied());
+    let eq_eval = EqPolynomial::<Fr>::mle(local_point, &verifier_point);
 
     let gamma = store_scalar(store, symbols.booleanity_gamma)?;
     let gamma_sq = gamma.square();
@@ -1718,7 +1691,7 @@ fn stage67_register_prefix_point<'a>(
 }
 
 pub fn operand_polynomial_eval(point: &[Fr], left: bool) -> Fr {
-    let stride_offset = if left { 0 } else { 1 };
+    let stride_offset = usize::from(!left);
     let operand_bits = point.len() / 2;
     (0..operand_bits)
         .map(|index| point[2 * index + stride_offset].mul_pow_2(operand_bits - 1 - index))

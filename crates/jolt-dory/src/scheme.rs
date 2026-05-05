@@ -174,18 +174,27 @@ impl CommitmentScheme for DoryScheme {
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
-        let (proof, _blind) =
-            dory::prove::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _, _, Transparent>(
-                &adapter,
-                &ark_point,
-                row_commitments,
-                <ArkFr as DoryField>::zero(),
-                nu,
-                sigma,
-                &setup.0,
-                &mut dory_transcript,
-            )
-            .expect("Dory proof generation should not fail");
+        let (proof, _blind) = match dory::prove::<
+            ArkFr,
+            InnerBN254,
+            JoltG1Routines,
+            JoltG2Routines,
+            _,
+            _,
+            Transparent,
+        >(
+            &adapter,
+            &ark_point,
+            row_commitments,
+            <ArkFr as DoryField>::zero(),
+            nu,
+            sigma,
+            &setup.0,
+            &mut dory_transcript,
+        ) {
+            Ok(proof) => proof,
+            Err(_) => std::process::abort(),
+        };
 
         DoryProof(proof)
     }
@@ -291,21 +300,36 @@ impl ZkOpeningScheme for DoryScheme {
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
-        let (proof, y_blinding) =
-            dory::prove::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _, _, dory::mode::ZK>(
-                &adapter,
-                &ark_point,
-                row_commitments,
-                <ArkFr as DoryField>::zero(),
-                nu,
-                sigma,
-                &setup.0,
-                &mut dory_transcript,
-            )
-            .expect("Dory ZK proof generation should not fail");
+        let (proof, y_blinding) = match dory::prove::<
+            ArkFr,
+            InnerBN254,
+            JoltG1Routines,
+            JoltG2Routines,
+            _,
+            _,
+            dory::mode::ZK,
+        >(
+            &adapter,
+            &ark_point,
+            row_commitments,
+            <ArkFr as DoryField>::zero(),
+            nu,
+            sigma,
+            &setup.0,
+            &mut dory_transcript,
+        ) {
+            Ok(proof) => proof,
+            Err(_) => std::process::abort(),
+        };
 
-        let y_com = ark_to_jolt_g1(proof.y_com.expect("ZK proof must contain y_com"));
-        let blinding = ark_to_jolt_fr(&y_blinding.expect("ZK proof must return y_blinding"));
+        let Some(proof_y_com) = proof.y_com else {
+            std::process::abort();
+        };
+        let Some(y_blinding) = y_blinding else {
+            std::process::abort();
+        };
+        let y_com = ark_to_jolt_g1(proof_y_com);
+        let blinding = ark_to_jolt_fr(&y_blinding);
 
         (DoryProof(proof), y_com, blinding)
     }

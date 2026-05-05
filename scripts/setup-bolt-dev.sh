@@ -13,6 +13,7 @@ Jolt-on-Bolt perf oracle checks on macOS:
 
   - Homebrew llvm
   - rustup components: rust-src, rustfmt, clippy
+  - cargo-nextest
   - .bolt-dev-env with MLIR_SYS_220_PREFIX, PATH, SDKROOT, and bindgen flags
 
 After it finishes, run:
@@ -69,6 +70,10 @@ rustup is not installed. Install Rust from https://rustup.rs, then rerun this
 script so it can add rust-src, rustfmt, and clippy.
 EOF
   exit 1
+fi
+
+if ! cargo nextest --version >/dev/null 2>&1; then
+  cargo install cargo-nextest --locked
 fi
 
 llvm_prefix="$(brew --prefix llvm)"

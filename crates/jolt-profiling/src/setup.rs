@@ -5,16 +5,70 @@
 //! and closes trace files.
 
 use std::any::Any;
-use std::sync::OnceLock;
+use std::collections::BTreeSet;
+use std::sync::{Mutex, OnceLock};
 
+use tracing::Subscriber;
 use tracing_chrome::ChromeLayerBuilder;
-use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
+use tracing_subscriber::{
+    fmt::format::FmtSpan,
+    layer::{Context, Layer},
+    prelude::*,
+    EnvFilter,
+};
 
 /// Thread-safe storage for the pprof output prefix.
 ///
 /// Initialized once during [`setup_tracing`] and read by [`PprofGuard`](crate::PprofGuard)
 /// on drop. Avoids `std::env::set_var` which is unsound in multi-threaded contexts.
 pub(crate) static PPROF_PREFIX: OnceLock<String> = OnceLock::new();
+
+static OBSERVED_SPANS: OnceLock<Mutex<BTreeSet<String>>> = OnceLock::new();
+
+#[derive(Default)]
+struct ObservedSpanLayer;
+
+impl<S> Layer<S> for ObservedSpanLayer
+where
+    S: Subscriber,
+{
+    fn on_new_span(
+        &self,
+        attrs: &tracing::span::Attributes<'_>,
+        _id: &tracing::span::Id,
+        _ctx: Context<'_, S>,
+    ) {
+        record_observed_span_name(attrs.metadata().name());
+    }
+}
+
+fn record_observed_span_name(name: &str) {
+    let mut spans = OBSERVED_SPANS
+        .get_or_init(|| Mutex::new(BTreeSet::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _ = spans.insert(name.to_owned());
+}
+
+/// Returns the tracing span names observed since [`setup_tracing`] installed
+/// the global subscriber.
+pub fn observed_span_names() -> Vec<String> {
+    OBSERVED_SPANS
+        .get_or_init(|| Mutex::new(BTreeSet::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .iter()
+        .cloned()
+        .collect()
+}
+
+/// Returns observed tracing span names matching `prefix`.
+pub fn observed_span_names_with_prefix(prefix: &str) -> Vec<String> {
+    observed_span_names()
+        .into_iter()
+        .filter(|span| span.starts_with(prefix))
+        .collect()
+}
 
 /// Output format for tracing subscribers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +109,8 @@ pub fn setup_tracing(formats: &[TracingFormat], trace_name: &str) -> TracingGuar
     });
 
     let mut layers = Vec::new();
+
+    layers.push(ObservedSpanLayer.boxed());
 
     let log_layer = tracing_subscriber::fmt::layer()
         .compact()

@@ -32,8 +32,19 @@ prover/verifier APIs.
 
 ## Current Prefix
 
-The active Bolt prefix covers commitment, Stage 1, Stage 2, and in-progress
-Stage 3 work. After the upstream sync, commitment real-data parity is green;
-Stage 1/2 real-data tests compile and run but currently fail on proof
-coefficient/core-acceptance parity. Those failures are the next correctness
-blocker before Stage 3 can be considered for completion.
+The active Bolt prefix covers the full standard non-zk path: commitment,
+Stages 1-7, and Stage 8 evaluation/opening proof construction. The focused
+real-trace oracle runs generated prover and verifier artifacts against
+`jolt-core`, checks staged and monolithic verifier agreement, compares public
+proof artifacts and transcript checkpoints, and requires representative
+tampering to be rejected.
+
+The always-on equivalence gates are:
+
+```bash
+cargo nextest run -p jolt-equivalence --test generated_role_crates --cargo-quiet
+cargo nextest run -p jolt-equivalence --test bolt_commitment --cargo-quiet
+```
+
+The larger SHA2-chain perf oracles live in `tests/bolt_perf.rs` and are run by
+the dedicated Bolt perf workflow.

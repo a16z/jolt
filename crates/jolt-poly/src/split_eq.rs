@@ -32,7 +32,7 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
         match binding_order {
             BindingOrder::LowToHigh => {
                 let split = w.len() / 2;
-                let (_w_last, w_prime) = w.split_last().expect("non-empty point");
+                let w_prime = &w[..w.len() - 1];
                 let (w_out, w_in) = w_prime.split_at(split);
                 let (e_out_vec, e_in_vec) = join_or_serial(
                     || EqPolynomial::evals_cached(w_out, None),
@@ -48,7 +48,7 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
                 }
             }
             BindingOrder::HighToLow => {
-                let (_w_first, w_prime) = w.split_first().expect("non-empty point");
+                let w_prime = &w[1..];
                 let split = w.len() / 2;
                 let (w_in, w_out) = w_prime.split_at(split);
                 let (e_in_vec, e_out_vec) = join_or_serial(
@@ -86,6 +86,11 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
     }
 
     #[inline]
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
+    #[inline]
     pub fn num_bound_vars(&self) -> usize {
         match self.binding_order {
             BindingOrder::LowToHigh => self.w.len() - self.current_index,
@@ -105,51 +110,47 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
 
     #[inline]
     pub fn e_in_current(&self) -> &[F] {
-        self.e_in_vec.last().expect("split eq e_in invariant")
+        &self.e_in_vec[self.e_in_vec.len() - 1]
     }
 
     #[inline]
     pub fn e_out_current(&self) -> &[F] {
-        self.e_out_vec.last().expect("split eq e_out invariant")
+        &self.e_out_vec[self.e_out_vec.len() - 1]
     }
 
     pub fn e_out_in_for_window(&self, window_size: usize) -> (&[F], &[F]) {
-        match self.binding_order {
-            BindingOrder::LowToHigh => {
-                let num_unbound = self.current_index;
-                let window_size = window_size.min(num_unbound);
-                let head_len = num_unbound.saturating_sub(window_size);
-                let split = self.w.len() / 2;
-                let head_out_bits = head_len.min(split);
-                let head_in_bits = head_len.saturating_sub(head_out_bits);
-                (&self.e_out_vec[head_out_bits], &self.e_in_vec[head_in_bits])
-            }
-            BindingOrder::HighToLow => {
-                unimplemented!("streaming windows are not defined for high-to-low split eq")
-            }
-        }
+        assert_eq!(
+            self.binding_order,
+            BindingOrder::LowToHigh,
+            "streaming windows are not defined for high-to-low split eq"
+        );
+        let num_unbound = self.current_index;
+        let window_size = window_size.min(num_unbound);
+        let head_len = num_unbound.saturating_sub(window_size);
+        let split = self.w.len() / 2;
+        let head_out_bits = head_len.min(split);
+        let head_in_bits = head_len.saturating_sub(head_out_bits);
+        (&self.e_out_vec[head_out_bits], &self.e_in_vec[head_in_bits])
     }
 
     pub fn e_active_for_window(&self, window_size: usize) -> Vec<F> {
         if window_size <= 1 {
             return vec![F::one()];
         }
-        match self.binding_order {
-            BindingOrder::LowToHigh => {
-                let num_unbound = self.current_index;
-                if window_size > num_unbound {
-                    return vec![F::one()];
-                }
-                let remaining_w = &self.w[..num_unbound];
-                let window_start = remaining_w.len() - window_size;
-                let (_head, w_window) = remaining_w.split_at(window_start);
-                let (w_active, _w_current) = w_window.split_at(window_size - 1);
-                EqPolynomial::<F>::evals(w_active, None)
-            }
-            BindingOrder::HighToLow => {
-                unimplemented!("streaming windows are not defined for high-to-low split eq")
-            }
+        assert_eq!(
+            self.binding_order,
+            BindingOrder::LowToHigh,
+            "streaming windows are not defined for high-to-low split eq"
+        );
+        let num_unbound = self.current_index;
+        if window_size > num_unbound {
+            return vec![F::one()];
         }
+        let remaining_w = &self.w[..num_unbound];
+        let window_start = remaining_w.len() - window_size;
+        let (_head, w_window) = remaining_w.split_at(window_start);
+        let (w_active, _w_current) = w_window.split_at(window_size - 1);
+        EqPolynomial::<F>::evals(w_active, None)
     }
 
     #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::bind")]
@@ -300,7 +301,7 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
 
         #[cfg(feature = "parallel")]
         {
-            (0..e_out.len())
+            let result = (0..e_out.len())
                 .into_par_iter()
                 .map(|x_out| {
                     let mut inner_acc = make_inner();
@@ -310,8 +311,13 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
                     }
                     outer_step(x_out, e_out[x_out], inner_acc)
                 })
-                .reduce_with(merge)
-                .expect("split eq e_out invariant")
+                .reduce_with(merge);
+            if let Some(result) = result {
+                result
+            } else {
+                assert!(!e_out.is_empty(), "split eq e_out invariant");
+                std::process::abort();
+            }
         }
 
         #[cfg(not(feature = "parallel"))]

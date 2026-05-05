@@ -5,8 +5,15 @@ use std::fmt::{self, Display, Formatter};
 
 use crate::dense::{bind_dense_evals_reuse, DENSE_BIND_PAR_THRESHOLD};
 use jolt_field::Field;
-use jolt_poly::{EqPolynomial, UnivariatePoly};
+use jolt_poly::{
+    BindingOrder, EqPolynomial, ExpandingTable, GruenSplitEqPolynomial, UnivariatePoly,
+};
 use jolt_transcript::{Label, LabelWithCount, Transcript};
+pub use jolt_witness::Stage6WitnessParams;
+use jolt_witness::{
+    stage6_witness_polynomials, CycleInput, Stage6OpeningInputRef, Stage6WitnessInputs,
+    Stage6WitnessPolynomials, Stage6WitnessSlices,
+};
 use rayon::prelude::*;
 
 pub use crate::stage4::{
@@ -17,6 +24,7 @@ pub use crate::stage4::{
     Stage4OpeningBatchPlan as Stage6OpeningBatchPlan,
     Stage4OpeningClaimEqualityPlan as Stage6OpeningClaimEqualityPlan,
     Stage4OpeningClaimPlan as Stage6OpeningClaimPlan,
+    Stage4OpeningClaimValue as Stage6OpeningClaimValue,
     Stage4OpeningInputPlan as Stage6OpeningInputPlan,
     Stage4OpeningInputValue as Stage6OpeningInputValue, Stage4Params as Stage6Params,
     Stage4PointConcatPlan as Stage6PointConcatPlan, Stage4PointSlicePlan as Stage6PointSlicePlan,
@@ -351,6 +359,7 @@ impl Error for Stage6KernelError {}
 #[derive(Clone, Copy)]
 pub struct Stage6BooleanityWitness<'a, F: Field> {
     pub chunks: &'a [&'a [F]],
+    pub index_chunks: Option<&'a [&'a [Option<u8>]]>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -376,6 +385,56 @@ pub struct Stage6BytecodeReadRafData<'a, F: Field> {
     pub entries: &'a [Stage6BytecodeEntry<F>],
     pub entry_bytecode_index: usize,
     pub num_lookup_tables: usize,
+}
+
+impl<F: Field> From<jolt_witness::Stage6BytecodeEntry<F>> for Stage6BytecodeEntry<F> {
+    fn from(entry: jolt_witness::Stage6BytecodeEntry<F>) -> Self {
+        Self {
+            address: entry.address,
+            imm: entry.imm,
+            circuit_flags: entry.circuit_flags,
+            rd: entry.rd,
+            rs1: entry.rs1,
+            rs2: entry.rs2,
+            lookup_table: entry.lookup_table,
+            is_interleaved: entry.is_interleaved,
+            is_branch: entry.is_branch,
+            left_is_rs1: entry.left_is_rs1,
+            left_is_pc: entry.left_is_pc,
+            right_is_rs2: entry.right_is_rs2,
+            right_is_imm: entry.right_is_imm,
+            is_noop: entry.is_noop,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Stage6BytecodeReadRafDataStorage<F: Field> {
+    entries: Vec<Stage6BytecodeEntry<F>>,
+    entry_bytecode_index: usize,
+    num_lookup_tables: usize,
+}
+
+impl<F: Field> Stage6BytecodeReadRafDataStorage<F> {
+    pub fn from_witness_entries(
+        entries: &[jolt_witness::Stage6BytecodeEntry<F>],
+        entry_bytecode_index: usize,
+        num_lookup_tables: usize,
+    ) -> Self {
+        Self {
+            entries: entries.iter().copied().map(Into::into).collect(),
+            entry_bytecode_index,
+            num_lookup_tables,
+        }
+    }
+
+    pub fn as_input(&self) -> Stage6BytecodeReadRafData<'_, F> {
+        Stage6BytecodeReadRafData {
+            entries: &self.entries,
+            entry_bytecode_index: self.entry_bytecode_index,
+            num_lookup_tables: self.num_lookup_tables,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -404,6 +463,25 @@ pub struct Stage6RamRaVirtualWitness<'a, F: Field> {
 pub struct Stage6InstructionRaVirtualWitness<'a, F: Field> {
     pub instruction_ra_chunks: &'a [&'a [F]],
     pub virtual_count: usize,
+}
+
+pub fn stage6_witness_from_opening_inputs<F: Field>(
+    params: Stage6WitnessParams,
+    cycle_inputs: &[CycleInput],
+    opening_inputs: &[Stage6OpeningInputValue<F>],
+) -> Stage6WitnessPolynomials<F> {
+    let opening_refs = opening_inputs
+        .iter()
+        .map(|input| Stage6OpeningInputRef {
+            symbol: input.symbol,
+            point: input.point.as_slice(),
+        })
+        .collect::<Vec<_>>();
+    stage6_witness_polynomials(Stage6WitnessInputs {
+        params,
+        cycle_inputs,
+        opening_inputs: &opening_refs,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -483,6 +561,37 @@ impl<'a, F: Field> Stage6ProverInputs<'a, F> {
         self.instruction_ra_virtual = Some(instruction_ra_virtual);
         self
     }
+
+    pub fn with_stage6_witness(
+        self,
+        bytecode_data: Stage6BytecodeReadRafData<'a, F>,
+        witness: &'a Stage6WitnessPolynomials<F>,
+        slices: &'a Stage6WitnessSlices<'a, F>,
+        instruction_ra_virtual_count: usize,
+    ) -> Self {
+        self.with_bytecode_read_raf(Stage6BytecodeReadRafWitness {
+            data: bytecode_data,
+            bytecode_ra_chunks: &slices.bytecode_ra_read_raf_chunks,
+        })
+        .with_booleanity(Stage6BooleanityWitness {
+            chunks: &slices.booleanity_chunks,
+            index_chunks: Some(&slices.booleanity_index_chunks),
+        })
+        .with_hamming_booleanity(Stage6HammingBooleanityWitness {
+            hamming_weight: &witness.hamming_weight,
+        })
+        .with_ram_ra_virtual(Stage6RamRaVirtualWitness {
+            ram_ra_chunks: &slices.ram_ra_virtual_chunks,
+        })
+        .with_instruction_ra_virtual(Stage6InstructionRaVirtualWitness {
+            instruction_ra_chunks: &slices.instruction_ra_virtual_chunks,
+            virtual_count: instruction_ra_virtual_count,
+        })
+        .with_inc_claim_reduction(Stage6IncClaimReductionWitness {
+            ram_inc: &witness.ram_inc,
+            rd_inc: &witness.rd_inc,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -533,6 +642,13 @@ pub trait Stage6KernelExecutor<F: Field> {
         _output: &Stage6SumcheckOutput<F>,
     ) -> Result<(), Stage6KernelError> {
         Ok(())
+    }
+
+    fn opening_claim_values(
+        &self,
+        _program: &'static Stage6CpuProgramPlan,
+    ) -> Result<Vec<Stage6OpeningClaimValue<F>>, Stage6KernelError> {
+        Ok(Vec::new())
     }
 
     fn prove_sumcheck<T>(
@@ -631,6 +747,13 @@ impl<F: Field> Stage6KernelExecutor<F> for Stage6ProverKernelExecutor<'_, F> {
     ) -> Result<(), Stage6KernelError> {
         self.completed_sumchecks.push(output.clone());
         Ok(())
+    }
+
+    fn opening_claim_values(
+        &self,
+        program: &'static Stage6CpuProgramPlan,
+    ) -> Result<Vec<Stage6OpeningClaimValue<F>>, Stage6KernelError> {
+        self.value_store(program)?.opening_claim_values(program)
     }
 
     fn prove_sumcheck<T>(
@@ -745,6 +868,13 @@ impl<F: Field> Stage6KernelExecutor<F> for Stage6ProofCarryingKernelExecutor<'_,
         Ok(())
     }
 
+    fn opening_claim_values(
+        &self,
+        program: &'static Stage6CpuProgramPlan,
+    ) -> Result<Vec<Stage6OpeningClaimValue<F>>, Stage6KernelError> {
+        self.value_store(program)?.opening_claim_values(program)
+    }
+
     fn prove_sumcheck<T>(
         &mut self,
         context: Stage6KernelContext<'_>,
@@ -851,9 +981,10 @@ impl<F: Field> Stage6ValueStore<F> {
                 })?
                 .to_vec();
             match instance.point_order {
-                "as_is" | "stage6_booleanity" => {}
+                "as_is" => {}
                 "reverse" => point.reverse(),
                 "bytecode_read_raf" => point = normalize_bytecode_read_raf_point(program, &point)?,
+                "stage6_booleanity" => point = normalize_stage6_booleanity_point(program, &point)?,
                 "instruction_read_raf" => point = normalize_instruction_read_raf_point(&point)?,
                 _ => {
                     return Err(Stage6KernelError::InvalidProof {
@@ -1068,6 +1199,28 @@ impl<F: Field> Stage6ValueStore<F> {
         }
         Some(point)
     }
+
+    fn opening_claim_values(
+        mut self,
+        program: &'static Stage6CpuProgramPlan,
+    ) -> Result<Vec<Stage6OpeningClaimValue<F>>, Stage6KernelError> {
+        let _ = self.evaluate_available_points(program)?;
+        let _ = self.evaluate_available_field_exprs(program)?;
+        program
+            .opening_claims
+            .iter()
+            .map(|claim| {
+                Ok(Stage6OpeningClaimValue {
+                    symbol: claim.symbol,
+                    oracle: claim.oracle,
+                    domain: claim.domain,
+                    claim_kind: claim.claim_kind,
+                    point: self.point(claim.point_source)?.to_vec(),
+                    eval: self.scalar(claim.eval_source)?,
+                })
+            })
+            .collect()
+    }
 }
 
 fn value_store_from_observations<F: Field>(
@@ -1249,10 +1402,10 @@ where
         });
     }
     store.observe_sumcheck_values(context.program, context.driver.symbol, &point, &evals)?;
-    append_opening_claims(context.program, &mut store, transcript, &evals)?;
+    let opening_claims = append_opening_claims(context.program, &mut store, transcript, &evals)?;
     if timing_enabled {
         for (relation, init_nanos, round_nanos, bind_nanos) in timing_stats {
-            eprintln!(
+            tracing::info!(
                 "[stage6 timings] relation={} init_ms={:.3} round_ms={:.3} bind_ms={:.3}",
                 relation.symbol(),
                 init_nanos as f64 / 1_000_000.0,
@@ -1265,6 +1418,7 @@ where
         driver: context.driver.symbol,
         point,
         evals,
+        opening_claims,
         proof: jolt_sumcheck::SumcheckProof { round_polynomials },
     })
 }
@@ -1353,10 +1507,16 @@ where
         driver: context.driver.symbol,
         point,
         evals: proof.evals.clone(),
+        opening_claims: Vec::new(),
         proof: proof.proof.clone(),
     };
     store.observe_sumcheck_output(context.program, &output)?;
-    append_opening_claims(context.program, &mut store, transcript, &output.evals)?;
+    let opening_claims =
+        append_opening_claims(context.program, &mut store, transcript, &output.evals)?;
+    let output = Stage6SumcheckOutput {
+        opening_claims,
+        ..output
+    };
     Ok(output)
 }
 
@@ -1496,7 +1656,10 @@ fn expected_booleanity<F: Field>(
         local_point.len(),
         combined_r.len(),
     )?;
-    let eq_eval = EqPolynomial::<F>::mle(local_point, &combined_r);
+    let mut verifier_point = combined_r[..log_k_chunk].to_vec();
+    verifier_point.reverse();
+    verifier_point.extend(combined_r[log_k_chunk..].iter().rev().copied());
+    let eq_eval = EqPolynomial::<F>::mle(local_point, &verifier_point);
 
     let gamma = store.scalar("stage6.booleanity.gamma")?;
     let gamma_sq = gamma.square();
@@ -1637,6 +1800,7 @@ impl<F: Field> Stage6BatchedInstance<'_, F> {
 
 enum Stage6ProverInstanceState<F: Field> {
     Booleanity(BooleanityStage6State<F>),
+    CoreBooleanity(CoreBooleanityStage6State<F>),
     BytecodeReadRaf(BytecodeReadRafStage6State<F>),
     Dense(DenseStage6State<F>),
 }
@@ -1654,7 +1818,7 @@ impl<F: Field> Stage6ProverInstanceState<F> {
                 bytecode_read_raf_state(program, claim, inputs, store, active_scale)
             }
             Stage6Relation::Booleanity => {
-                booleanity_state(program, claim, inputs, store, active_scale).map(Self::Booleanity)
+                booleanity_state(program, claim, inputs, store, active_scale)
             }
             Stage6Relation::HammingBooleanity => {
                 hamming_booleanity_state(program, claim, inputs, store, active_scale)
@@ -1684,6 +1848,7 @@ impl<F: Field> Stage6ProverInstanceState<F> {
     ) -> Result<UnivariatePoly<F>, Stage6KernelError> {
         match self {
             Self::Booleanity(state) => state.round_poly(previous_claim, relation),
+            Self::CoreBooleanity(state) => state.round_poly(previous_claim, relation),
             Self::BytecodeReadRaf(state) => state.round_poly(previous_claim, relation),
             Self::Dense(state) => state.round_poly(previous_claim, relation),
         }
@@ -1692,6 +1857,7 @@ impl<F: Field> Stage6ProverInstanceState<F> {
     fn ingest_challenge(&mut self, challenge: F) {
         match self {
             Self::Booleanity(state) => state.bind(challenge),
+            Self::CoreBooleanity(state) => state.bind(challenge),
             Self::BytecodeReadRaf(state) => state.bind(challenge),
             Self::Dense(state) => state.bind(challenge),
         }
@@ -1700,6 +1866,7 @@ impl<F: Field> Stage6ProverInstanceState<F> {
     fn final_relation_eval(&self, relation: Stage6Relation) -> Result<F, Stage6KernelError> {
         match self {
             Self::Booleanity(state) => state.final_relation_eval(relation),
+            Self::CoreBooleanity(state) => state.final_relation_eval(relation),
             Self::BytecodeReadRaf(state) => state.final_relation_eval(relation),
             Self::Dense(state) => state.final_relation_eval(relation),
         }
@@ -1711,6 +1878,7 @@ impl<F: Field> Stage6ProverInstanceState<F> {
     ) -> Result<Vec<Stage6NamedEval<F>>, Stage6KernelError> {
         match self {
             Self::Booleanity(state) => state.final_evals(relation),
+            Self::CoreBooleanity(state) => state.final_evals(relation),
             Self::BytecodeReadRaf(state) => state.final_evals(relation),
             Self::Dense(state) => state.final_evals(relation),
         }
@@ -1746,7 +1914,7 @@ struct BytecodeReadRafStage6State<F: Field> {
 }
 
 impl<F: Field> BytecodeReadRafStage6State<F> {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn new(
         data: Stage6BytecodeReadRafData<'_, F>,
         bytecode_ra_chunks: &[&[F]],
@@ -2050,9 +2218,9 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                 ra_product *= pair_linear_eval(factor, row, point);
             }
             let mut weighted_value = F::zero();
-            for stage in 0..BYTECODE_READ_RAF_STAGE_COUNT {
+            for (stage, bound_stage_value) in bound_stage_values.iter().enumerate() {
                 weighted_value += self.gamma_powers[stage]
-                    * bound_stage_values[stage]
+                    * *bound_stage_value
                     * pair_linear_eval(&self.cycle_eqs[stage], row, point);
             }
             weighted_value += self.gamma_powers[7]
@@ -2161,9 +2329,9 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                 })?;
         }
         let mut weighted_value = F::zero();
-        for stage in 0..BYTECODE_READ_RAF_STAGE_COUNT {
+        for (stage, bound_stage_value) in bound_stage_values.iter().enumerate() {
             weighted_value += self.gamma_powers[stage]
-                * bound_stage_values[stage]
+                * *bound_stage_value
                 * self.cycle_eqs[stage].first().copied().ok_or(
                     Stage6KernelError::InvalidProof {
                         driver: relation.symbol(),
@@ -2476,6 +2644,297 @@ impl<F: Field> BooleanityStage6State<F> {
     }
 }
 
+struct CoreBooleanityStage6State<F: Field> {
+    log_k_chunk: usize,
+    address_round: usize,
+    b: GruenSplitEqPolynomial<F>,
+    d: GruenSplitEqPolynomial<F>,
+    f_table: ExpandingTable<F>,
+    eq_r_r: F,
+    g: Vec<Vec<F>>,
+    indices: Vec<Vec<Option<u8>>>,
+    h: Option<Vec<Vec<F>>>,
+    h_scratch: Vec<Vec<F>>,
+    gamma_powers: Vec<F>,
+    gamma_powers_inv: Vec<F>,
+    gamma_powers_square: Vec<F>,
+    outputs: Vec<FactorOutput>,
+    active_scale: F,
+}
+
+impl<F: Field> CoreBooleanityStage6State<F> {
+    fn new(
+        r_address: &[F],
+        r_cycle: &[F],
+        indices: Vec<Vec<Option<u8>>>,
+        gamma: F,
+        outputs: Vec<FactorOutput>,
+        active_scale: F,
+    ) -> Result<Self, Stage6KernelError> {
+        let log_k_chunk = r_address.len();
+        let chunk_domain = 1usize << log_k_chunk;
+        let trace_len = 1usize << r_cycle.len();
+        if indices.iter().any(|chunk| chunk.len() != trace_len) {
+            return Err(Stage6KernelError::InvalidProof {
+                driver: Stage6Relation::Booleanity.symbol(),
+                reason: "booleanity index chunks have inconsistent trace lengths",
+            });
+        }
+
+        let eq_cycle = EqPolynomial::<F>::evals(r_cycle, None);
+        let mut g = (0..indices.len())
+            .map(|_| vec![F::zero(); chunk_domain])
+            .collect::<Vec<_>>();
+        for (chunk_index, chunk) in indices.iter().enumerate() {
+            for (cycle, index) in chunk.iter().enumerate() {
+                let Some(index) = index else {
+                    continue;
+                };
+                let index = usize::from(*index);
+                if index >= chunk_domain {
+                    return Err(Stage6KernelError::InvalidProof {
+                        driver: Stage6Relation::Booleanity.symbol(),
+                        reason: "booleanity index exceeds chunk domain",
+                    });
+                }
+                g[chunk_index][index] += eq_cycle[cycle];
+            }
+        }
+
+        let mut gamma_powers = Vec::with_capacity(indices.len());
+        let mut gamma_powers_inv = Vec::with_capacity(indices.len());
+        let mut gamma_powers_square = Vec::with_capacity(indices.len());
+        let mut gamma_power = F::one();
+        let gamma_square = gamma.square();
+        let mut gamma_square_power = F::one();
+        for _ in 0..indices.len() {
+            gamma_powers.push(gamma_power);
+            gamma_powers_inv.push(gamma_power.inverse().ok_or(
+                Stage6KernelError::InvalidProof {
+                    driver: Stage6Relation::Booleanity.symbol(),
+                    reason: "booleanity gamma power is not invertible",
+                },
+            )?);
+            gamma_powers_square.push(gamma_square_power);
+            gamma_power *= gamma;
+            gamma_square_power *= gamma_square;
+        }
+
+        let mut f_table = ExpandingTable::new(chunk_domain, BindingOrder::LowToHigh);
+        f_table.reset(F::one());
+
+        Ok(Self {
+            log_k_chunk,
+            address_round: 0,
+            b: GruenSplitEqPolynomial::new(r_address, BindingOrder::LowToHigh),
+            d: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
+            f_table,
+            eq_r_r: F::zero(),
+            g,
+            indices,
+            h: None,
+            h_scratch: Vec::new(),
+            gamma_powers,
+            gamma_powers_inv,
+            gamma_powers_square,
+            outputs,
+            active_scale,
+        })
+    }
+
+    fn round_poly(
+        &self,
+        previous_claim: F,
+        relation: Stage6Relation,
+    ) -> Result<UnivariatePoly<F>, Stage6KernelError> {
+        if relation != Stage6Relation::Booleanity {
+            return Err(Stage6KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "wrong relation for core booleanity state",
+            });
+        }
+        let mut poly = if self.h.is_none() {
+            self.address_round_poly(previous_claim)
+        } else {
+            self.cycle_round_poly(previous_claim)?
+        };
+        if self.active_scale != F::one() {
+            poly *= self.active_scale;
+        }
+        if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != previous_claim {
+            return Err(Stage6KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "stage6 booleanity input claim mismatch",
+            });
+        }
+        Ok(poly)
+    }
+
+    fn address_round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
+        let m = self.address_round + 1;
+        let f_values = self.f_table.values();
+        let quadratic_coeffs = self.b.fold_out_in(
+            || [F::zero(); 2],
+            |inner, k_prime, _x_in, e_in| {
+                let block_start = k_prime << m;
+                let block_end = block_start + (1 << m);
+                for (index, g_i) in self.g.iter().enumerate() {
+                    let mut eval_0 = F::zero();
+                    let mut eval_infty = F::zero();
+                    for (local, &g_k) in g_i[block_start..block_end].iter().enumerate() {
+                        let k_m = local >> (m - 1);
+                        let f_k = f_values[local & ((1 << (m - 1)) - 1)];
+                        let g_times_f = g_k * f_k;
+                        let eval_inf = g_times_f * f_k;
+                        if k_m == 0 {
+                            eval_0 += eval_inf - g_times_f;
+                        }
+                        eval_infty += eval_inf;
+                    }
+                    inner[0] += e_in * self.gamma_powers_square[index] * eval_0;
+                    inner[1] += e_in * self.gamma_powers_square[index] * eval_infty;
+                }
+            },
+            |_x_out, e_out, inner| [e_out * inner[0], e_out * inner[1]],
+            |left, right| [left[0] + right[0], left[1] + right[1]],
+        );
+        self.b
+            .gruen_poly_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
+    }
+
+    fn cycle_round_poly(&self, previous_claim: F) -> Result<UnivariatePoly<F>, Stage6KernelError> {
+        let h = self.h.as_ref().ok_or(Stage6KernelError::InvalidProof {
+            driver: Stage6Relation::Booleanity.symbol(),
+            reason: "booleanity cycle state is missing",
+        })?;
+        let quadratic_coeffs = self.d.fold_out_in(
+            || [F::zero(); 2],
+            |inner, j_prime, _x_in, e_in| {
+                for (index, h_i) in h.iter().enumerate() {
+                    let h_0 = h_i[2 * j_prime];
+                    let h_1 = h_i[2 * j_prime + 1];
+                    let delta = h_1 - h_0;
+                    let rho = self.gamma_powers[index];
+                    inner[0] += e_in * h_0 * (h_0 - rho);
+                    inner[1] += e_in * delta.square();
+                }
+            },
+            |_x_out, e_out, inner| [e_out * inner[0], e_out * inner[1]],
+            |left, right| [left[0] + right[0], left[1] + right[1]],
+        );
+        let adjusted_claim = previous_claim
+            * self
+                .eq_r_r
+                .inverse()
+                .ok_or(Stage6KernelError::InvalidProof {
+                    driver: Stage6Relation::Booleanity.symbol(),
+                    reason: "booleanity address equality scalar is not invertible",
+                })?;
+        Ok(self
+            .d
+            .gruen_poly_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], adjusted_claim)
+            * self.eq_r_r)
+    }
+
+    fn bind(&mut self, challenge: F) {
+        if self.h.is_none() {
+            self.b.bind(challenge);
+            self.f_table.update(challenge);
+            self.address_round += 1;
+            if self.address_round == self.log_k_chunk {
+                self.eq_r_r = self.b.current_scalar();
+                let base_eq = self.f_table.clone_values();
+                let h = self
+                    .indices
+                    .iter()
+                    .enumerate()
+                    .map(|(chunk_index, chunk)| {
+                        let rho = self.gamma_powers[chunk_index];
+                        chunk
+                            .iter()
+                            .map(|index| {
+                                index.map_or(F::zero(), |index| rho * base_eq[usize::from(index)])
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                self.h_scratch = (0..h.len()).map(|_| Vec::new()).collect();
+                self.h = Some(h);
+            }
+        } else {
+            self.d.bind(challenge);
+            if let Some(h) = &mut self.h {
+                for (chunk, scratch) in h.iter_mut().zip(&mut self.h_scratch) {
+                    bind_dense_evals_reuse(chunk, scratch, challenge);
+                }
+            }
+        }
+    }
+
+    fn factor_eval(&self, index: usize, relation: Stage6Relation) -> Result<F, Stage6KernelError> {
+        self.h
+            .as_ref()
+            .and_then(|h| h.get(index))
+            .and_then(|values| values.first())
+            .copied()
+            .map(|value| value * self.gamma_powers_inv[index])
+            .ok_or(Stage6KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "empty core booleanity factor",
+            })
+    }
+
+    fn final_relation_eval(&self, relation: Stage6Relation) -> Result<F, Stage6KernelError> {
+        if relation != Stage6Relation::Booleanity {
+            return Err(Stage6KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "wrong relation for core booleanity state",
+            });
+        }
+        let eq = self.d.current_scalar() * self.eq_r_r;
+        let h = self.h.as_ref().ok_or(Stage6KernelError::InvalidProof {
+            driver: relation.symbol(),
+            reason: "booleanity cycle state is missing",
+        })?;
+        let mut booleanity = F::zero();
+        for (index, h_i) in h.iter().enumerate() {
+            let scaled = h_i
+                .first()
+                .copied()
+                .ok_or(Stage6KernelError::InvalidProof {
+                    driver: relation.symbol(),
+                    reason: "empty core booleanity factor",
+                })?;
+            booleanity += scaled * (scaled - self.gamma_powers[index]);
+        }
+        Ok(eq * booleanity)
+    }
+
+    fn final_evals(
+        &self,
+        relation: Stage6Relation,
+    ) -> Result<Vec<Stage6NamedEval<F>>, Stage6KernelError> {
+        self.outputs
+            .iter()
+            .map(|output| {
+                let factor =
+                    output
+                        .factor
+                        .checked_sub(1)
+                        .ok_or(Stage6KernelError::InvalidProof {
+                            driver: relation.symbol(),
+                            reason: "booleanity output factor underflow",
+                        })?;
+                Ok(named_eval(
+                    output.name,
+                    output.oracle,
+                    self.factor_eval(factor, relation)?,
+                ))
+            })
+            .collect()
+    }
+}
+
 struct DenseStage6State<F: Field> {
     factors: Vec<Vec<F>>,
     factor_scratch: Vec<Vec<F>>,
@@ -2717,7 +3176,7 @@ fn bytecode_read_raf_state<F: Field>(
     .map(Stage6ProverInstanceState::Dense)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn bytecode_read_raf_dense_state<F: Field>(
     program: &'static Stage6CpuProgramPlan,
     claim: &Stage6SumcheckClaimPlan,
@@ -2765,7 +3224,7 @@ fn booleanity_state<F: Field>(
     inputs: &Stage6ProverInputs<'_, F>,
     store: &Stage6ValueStore<F>,
     active_scale: F,
-) -> Result<BooleanityStage6State<F>, Stage6KernelError> {
+) -> Result<Stage6ProverInstanceState<F>, Stage6KernelError> {
     let witness = inputs
         .booleanity
         .ok_or(Stage6KernelError::MissingKernelInput {
@@ -2827,7 +3286,29 @@ fn booleanity_state<F: Field>(
         combined_r.len(),
     )?;
 
-    let eq_point = reverse_slice(&combined_r);
+    if let Some(index_chunks) = witness.index_chunks {
+        require_operand_count(
+            "stage6.booleanity.index_chunks",
+            witness.chunks.len(),
+            index_chunks.len(),
+        )?;
+        let r_address = &combined_r[..log_k_chunk];
+        let r_cycle = &combined_r[log_k_chunk..];
+        return CoreBooleanityStage6State::new(
+            r_address,
+            r_cycle,
+            index_chunks.iter().map(|chunk| (*chunk).to_vec()).collect(),
+            store.scalar("stage6.booleanity.gamma")?,
+            booleanity_output_plans(program, index_chunks.len())?,
+            active_scale,
+        )
+        .map(Stage6ProverInstanceState::CoreBooleanity);
+    }
+
+    let mut eq_point = combined_r[..log_k_chunk].to_vec();
+    eq_point.reverse();
+    eq_point.extend(combined_r[log_k_chunk..].iter().rev().copied());
+    eq_point.reverse();
     let eq = EqPolynomial::<F>::evals(&eq_point, None);
     require_operand_count("stage6.booleanity.eq", domain_len, eq.len())?;
 
@@ -2852,6 +3333,7 @@ fn booleanity_state<F: Field>(
         active_scale,
         claim.degree,
     )
+    .map(Stage6ProverInstanceState::Booleanity)
 }
 
 fn hamming_booleanity_state<F: Field>(
@@ -3243,7 +3725,7 @@ fn append_opening_claims<F, T>(
     store: &mut Stage6ValueStore<F>,
     transcript: &mut T,
     evals: &[Stage6NamedEval<F>],
-) -> Result<(), Stage6KernelError>
+) -> Result<Vec<Stage6OpeningClaimValue<F>>, Stage6KernelError>
 where
     F: Field,
     T: Transcript<Challenge = F>,
@@ -3252,9 +3734,10 @@ where
         for eval in evals {
             append_labeled_scalar(transcript, "opening_claim", &eval.value);
         }
-        return Ok(());
+        return Ok(Vec::new());
     }
     let _ = store.evaluate_available_points(program)?;
+    let mut opening_claims = Vec::new();
     let mut seen = program
         .opening_inputs
         .iter()
@@ -3272,17 +3755,25 @@ where
                     claim: symbol,
                 })?;
             let point = store.point(claim.point_source)?.to_vec();
-            if seen.iter().any(|(kind, oracle, seen_point)| {
+            let duplicate = seen.iter().any(|(kind, oracle, seen_point)| {
                 *kind == claim.claim_kind && *oracle == claim.oracle && seen_point == &point
-            }) {
-                continue;
-            }
+            });
             let value = store.scalar(claim.eval_source)?;
-            append_labeled_scalar(transcript, "opening_claim", &value);
-            seen.push((claim.claim_kind, claim.oracle, point));
+            if !duplicate {
+                append_labeled_scalar(transcript, "opening_claim", &value);
+                seen.push((claim.claim_kind, claim.oracle, point.clone()));
+            }
+            opening_claims.push(Stage6OpeningClaimValue {
+                symbol: claim.symbol,
+                oracle: claim.oracle,
+                domain: claim.domain,
+                claim_kind: claim.claim_kind,
+                point: point.clone(),
+                eval: value,
+            });
         }
     }
-    Ok(())
+    Ok(opening_claims)
 }
 
 fn find_opening_claim<'a>(
@@ -3569,6 +4060,10 @@ fn normalized_bytecode_row_bits<F: Field>(
     Ok((raw_bits, cycle_bits))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "bytecode stage evaluator mirrors generated stage challenge layout"
+)]
 fn bytecode_entry_stage_values<F: Field>(
     entry: &Stage6BytecodeEntry<F>,
     num_lookup_tables: usize,
@@ -3714,8 +4209,8 @@ fn index_bits<F: Field>(index: usize, len: usize) -> Result<Vec<F>, Stage6Kernel
 
 fn bits_to_index<F: Field>(bits: &[F]) -> usize {
     bits.iter().fold(0usize, |index, bit| {
-        let bit = if *bit == F::zero() { 0 } else { 1 };
-        (index << 1) | bit
+        let bit_value = usize::from(*bit != F::zero());
+        (index << 1) | bit_value
     })
 }
 
@@ -3765,6 +4260,25 @@ fn normalize_bytecode_read_raf_point<F: Field>(
         .checked_sub(log_t)
         .ok_or(Stage6KernelError::InvalidInputLength {
             input: "stage6.bytecode_read_raf.point",
+            expected: log_t,
+            actual: point.len(),
+        })?;
+    let mut normalized = point.to_vec();
+    normalized[..log_k].reverse();
+    normalized[log_k..].reverse();
+    Ok(normalized)
+}
+
+fn normalize_stage6_booleanity_point<F: Field>(
+    program: &'static Stage6CpuProgramPlan,
+    point: &[F],
+) -> Result<Vec<F>, Stage6KernelError> {
+    let log_t = stage6_trace_rounds(program)?;
+    let log_k = point
+        .len()
+        .checked_sub(log_t)
+        .ok_or(Stage6KernelError::InvalidInputLength {
+            input: "stage6.booleanity.point",
             expected: log_t,
             actual: point.len(),
         })?;
@@ -4279,6 +4793,9 @@ where
                     }
                 };
                 executor.observe_sumcheck_output(&output)?;
+                artifacts
+                    .opening_claims
+                    .extend(output.opening_claims.clone());
                 artifacts.sumchecks.push(output);
             }
             _ => {
@@ -4292,6 +4809,7 @@ where
     artifacts
         .opening_batches
         .extend(program.opening_batches.iter());
+    artifacts.opening_claims = executor.opening_claim_values(program)?;
     Ok(artifacts)
 }
 
@@ -5524,8 +6042,11 @@ mod tests {
             point: stage5_point,
             eval: Fr::from_u64(0),
         }];
-        let prover_inputs = Stage6ProverInputs::new(&opening_inputs)
-            .with_booleanity(Stage6BooleanityWitness { chunks: &chunks });
+        let prover_inputs =
+            Stage6ProverInputs::new(&opening_inputs).with_booleanity(Stage6BooleanityWitness {
+                chunks: &chunks,
+                index_chunks: None,
+            });
         let mut prover = Stage6ProverKernelExecutor::new(prover_inputs);
         let mut prover_transcript = Blake2bTranscript::<Fr>::new(b"stage6_test");
         let artifacts = execute_stage6_program(
@@ -5571,8 +6092,11 @@ mod tests {
             point: stage5_point,
             eval: Fr::from_u64(0),
         }];
-        let prover_inputs = Stage6ProverInputs::new(&opening_inputs)
-            .with_booleanity(Stage6BooleanityWitness { chunks: &chunks });
+        let prover_inputs =
+            Stage6ProverInputs::new(&opening_inputs).with_booleanity(Stage6BooleanityWitness {
+                chunks: &chunks,
+                index_chunks: None,
+            });
         let mut prover = Stage6ProverKernelExecutor::new(prover_inputs);
         let mut prover_transcript = Blake2bTranscript::<Fr>::new(b"stage6_test");
         let mut artifacts = execute_stage6_program(
@@ -5651,6 +6175,47 @@ mod tests {
             named_eval_values(&artifacts.sumchecks[0].evals),
             named_eval_values(&verified.sumchecks[0].evals)
         );
+    }
+
+    #[test]
+    fn stage6_witness_helper_adapts_kernel_opening_inputs() {
+        let params = Stage6WitnessParams {
+            trace_len: 2,
+            log_k_chunk: 1,
+            log_k_bytecode: 1,
+            log_k_ram: 1,
+            lookups_ra_virtual_log_k_chunk: 1,
+            instruction_d: 1,
+            instruction_ra_virtual_d: 1,
+            bytecode_d: 1,
+            ram_d: 1,
+        };
+        let cycle_inputs = [
+            CycleInput {
+                dense: [2, 3],
+                one_hot: [Some(1), Some(0), Some(1)],
+            },
+            CycleInput::PADDING,
+        ];
+        let opening_inputs = [
+            Stage6OpeningInputValue {
+                symbol: "stage6.input.stage5.ram_ra_claim_reduction.RamRa",
+                point: frs(&[5]),
+                eval: Fr::from_u64(0),
+            },
+            Stage6OpeningInputValue {
+                symbol: "stage6.input.stage5.instruction_read_raf.InstructionRa_0",
+                point: frs(&[7]),
+                eval: Fr::from_u64(0),
+            },
+        ];
+
+        let witness = stage6_witness_from_opening_inputs(params, &cycle_inputs, &opening_inputs);
+
+        assert_eq!(witness.ram_ra_virtual.len(), 1);
+        assert_eq!(witness.instruction_ra_virtual.len(), 1);
+        assert_eq!(witness.rd_inc, vec![Fr::from_u64(2), Fr::from_u64(0)]);
+        assert_eq!(witness.ram_inc, vec![Fr::from_u64(3), Fr::from_u64(0)]);
     }
 
     #[test]
@@ -6180,6 +6745,7 @@ mod tests {
                 driver: "stage6.sumcheck",
                 point,
                 evals: Vec::new(),
+                opening_claims: Vec::new(),
                 proof: jolt_sumcheck::SumcheckProof {
                     round_polynomials: vec![round_poly],
                 },
