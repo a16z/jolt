@@ -678,9 +678,9 @@ The right indexing is therefore:
 
 This PR should not contort the code to satisfy a specific extractor immediately. It should keep the extraction-critical core small, pure, dependency-light, and well-specified so a follow-up PR can run Hax/Aeneas and then address concrete tool feedback without reopening the architecture.
 
-#### Extraction-Native Follow-Up
+#### Compiler-Native Follow-Up
 
-The crate boundary introduced by this spec makes `jolt-program::expand` the right formalization target, but an extraction-native production rewrite is large enough to require separate review. See `specs/extraction-native-bytecode-expansion.md` for a follow-up proposal that compares PR #1490 at `a3448e6da44f` against a production design based on owned expansion state, shallow family lowering, explicit work-stack recursion, bitset allocation, and bounded per-source buffers.
+The crate boundary introduced by this spec makes `jolt-program::expand` the right formalization target, but a compiler-native production rewrite is large enough to require separate review. See `specs/compiler-native-bytecode-expansion.md` for a follow-up proposal that compares PR #1490 at `a3448e6da44f` against a production design based on owned expansion state, shallow family lowering, explicit work-stack recursion, bitset allocation, bounded per-source buffers, and MLIR-ready lowering concepts.
 
 ### Alternatives Considered
 

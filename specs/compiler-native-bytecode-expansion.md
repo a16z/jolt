@@ -1,4 +1,4 @@
-# Spec: Extraction-Native Bytecode Expansion
+# Spec: Compiler-Native Bytecode Expansion
 
 | Field       | Value                                                                 |
 |-------------|-----------------------------------------------------------------------|
@@ -20,7 +20,7 @@ PR #1490 moves bytecode expansion out of `tracer` and into `jolt-program::expand
 - metadata is stamped by mutating a finished slice;
 - inline expansion is a trait callback inside the core dispatch path.
 
-This spec proposes a second-phase rewrite of `jolt-program::expand` into an extraction-native production implementation. The goal is not to add a proof-only model next to production code. The production expander itself should become a first-order state machine over explicit data transitions, while preserving byte-for-byte output and keeping runtime performance the same or better.
+This spec proposes a second-phase rewrite of `jolt-program::expand` into a compiler-native, extraction-friendly production implementation. The goal is not to add a proof-only model next to production code. The production expander itself should become a first-order lowering pipeline over explicit data transitions, while preserving byte-for-byte output and keeping runtime performance the same or better.
 
 This rewrite should also align with the MLIR-shaped Jolt work in the
 `refactor/crates` branch, which currently treats Bolt as a compiler pipeline
@@ -63,6 +63,7 @@ Decoded NormalizedInstruction
 - Do not change instruction semantics.
 - Do not change bytecode preprocessing, RAM preprocessing, or proof-system APIs except for call-site adjustments needed by the new expansion API.
 - Do not formalize tracer custom inline registries in this phase.
+- Do not port registered `jolt-inlines` recipes or advice builders into the grammar in the next implementation pass.
 - Do not make Aeneas/Hax extraction a hard CI requirement in the implementation PR unless maintainers explicitly ask for it.
 - Do not keep the current recursive `InstrAssembler<'a>` implementation as a compatibility layer once the rewrite lands. This branch owns the new `jolt-program` implementation, so the rewrite should be a full cutover.
 
@@ -344,7 +345,7 @@ emit-rust
 ```
 
 The current implementation conflates most of these passes inside
-`InstrAssembler::emit`. The extraction-native rewrite should separate them in
+`InstrAssembler::emit`. The compiler-native rewrite should separate them in
 the data model even if the initial Rust implementation fuses several passes for
 performance.
 
@@ -1295,6 +1296,246 @@ For this phase, the practical rule is:
 - `image = ["dep:object"]` should remain outside the extraction target;
 - Hax/Aeneas experiments should start from provider-free `expand` core functions, not public image/execution adapters.
 
+## Next Implementation Pass Scope
+
+Decision: the next implementation pass should rewrite provider-free
+`jolt-program::expand` only. It should design and preserve the inline seam, but
+it should not migrate registered `jolt-inlines` recipes, advice generation, or
+guest SDK registration into the grammar.
+
+This is one compiler design, but two implementation passes:
+
+1. **Pass 1: provider-free bytecode expansion.** Convert the current
+   `jolt-program::expand` families into the compiler-native grammar, central
+   worklist driver, symbolic temp materialization, bounded buffers, and explicit
+   metadata policy.
+2. **Pass 2: inline extension dialect.** Move generic inline infrastructure and
+   selected concrete inline recipes onto the same grammar discipline, including
+   advice plans and extension-dialect registration.
+
+Do not combine these passes. Inlines have a different dependency shape from
+ordinary bytecode expansion: they involve guest SDK encoding, link-time
+registration, host advice computation, tracer CPU/memory access, inline-only
+virtual-register reset policy, and much larger sequence capacities. Combining
+them with the provider-free rewrite would make review and parity debugging too
+wide. The bytecode pass should instead build the target dialect and resource
+materialization rules that the inline pass will later reuse.
+
+### In Scope For Pass 1
+
+Pass 1 should include the following production changes:
+
+- Use compiler-native vocabulary in docs and code where appropriate.
+  Extraction remains a key acceptance signal, but the implementation shape is a
+  compiler lowering pipeline.
+- Add `expand::grammar` with inspectable recipe data:
+  - `RegRef`, `ImmExprId`, `CondExprId`, and fixed expression tables;
+  - `RowSpec` / `SequenceRow` for raw rows, literal rows, and metadata policy;
+  - `LowerStmt::{Seq, If, WithTemp, Emit, Fragment, Release, Literal}`;
+  - `RegisterPool::{Instruction, Inline}` even if Pass 1 only materializes the
+    instruction pool in provider-free core.
+- Add `expand::core` with concrete, non-generic entry points:
+  - `expand_one_core(source: SourceRow, state: &mut ExpansionState)`;
+  - a depth-first work stack of `ExpansionOp`;
+  - source and target legality predicates;
+  - rank/fuel validation generated from recipe dependencies or checked against
+    a visible rank table.
+- Replace the production recursive `InstrAssembler<'a>` with shallow family
+  lowerers that only return recipe data or bounded `ExpansionOp` buffers.
+- Materialize symbolic temps through `ExpansionAllocator` at `WithTemp`
+  boundaries, preserving current first-fit virtual-register numbering and
+  release order.
+- Replace heap-backed per-source sequence construction in the core with bounded
+  buffers and explicit overflow errors.
+- Preserve current metadata behavior exactly, including pass-through rows,
+  synthetic sequence stamping, `is_compressed` placement, literal rows, and
+  known baseline quirks such as `csr == 0`.
+- Keep public expansion APIs available to current call sites, but route them
+  through the new core. Ergonomic iterator wrappers may stay outside the
+  extraction-critical module graph.
+- Preserve inline support as an adapter outside provider-free core:
+  `InstructionKind::Inline` remains illegal for `expand_one_core`, while
+  `expand_instruction_with_provider` can still delegate to an
+  `InlineExpansionProvider` that returns finalized `NormalizedInstruction` rows.
+
+Pass 1 should also include the following tests and checks:
+
+- A test-only parity harness that compares the new provider-free expander
+  against the current PR output while porting families. The final production
+  code should have one expander; the old assembler may remain only as a
+  temporary test reference during the rewrite.
+- Fixture coverage for every provider-free source-only instruction kind with
+  representative operand aliases, `rd = x0`, compressed metadata, CSR edge
+  cases, branch/control-flow immediates, load/store offsets, AMO/LR/SC cases,
+  and division/remainder variants.
+- Capacity tests that assert observed final row count, shallow op count, and
+  work-stack depth stay below the chosen constants.
+- Dependency checks showing no `tracer` dependency from `jolt-program` or
+  `jolt-riscv`.
+- Hax/Aeneas reruns on metadata stamping, allocator transitions, ADDIW shallow
+  lowering, and provider-free `expand_one_core`.
+- Standard repo verification for code changes:
+  - `cargo fmt -q`;
+  - `cargo clippy --all --features host -q --all-targets -- -D warnings`;
+  - `cargo clippy --all --features host,zk -q --all-targets -- -D warnings`;
+  - focused `cargo nextest run -p jolt-program --cargo-quiet`;
+  - `cargo nextest run -p jolt-core muldiv --cargo-quiet --features host`;
+  - `cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk`.
+
+### Concrete Pass 1 Milestones
+
+The next implementation pass should be reviewable as one focused production
+rewrite of `jolt-program::expand`, with the following milestones:
+
+1. **Freeze the behavioral baseline.**
+   - Add golden/parity coverage for the current PR behavior before deleting the
+     recursive assembler path.
+   - Treat the old assembler as a temporary test oracle only while the rewrite is
+     in flight. It should not survive as a compatibility layer or second
+     production expander.
+   - Capture row-for-row parity for metadata, virtual register allocation,
+     helper-row recursion order, `rd = x0`, compressed source rows, and known
+     quirks such as `csr == 0`.
+
+2. **Introduce the compiler data model.**
+   - Add `SourceRow`, `TargetRow`, `RowSpec`, `LowerStmt`, expression ids,
+     symbolic temp ids, register-pool ids, and recipe fragments.
+   - Keep the model first-order: no borrowed assembler state, no recursive
+     callback into public expansion APIs, no trait-object dispatch in the
+     provider-free core.
+   - Add validators for source legality, target legality, recipe rank/fuel, temp
+     liveness, and bounded row capacity.
+
+3. **Build the new core driver behind the existing public API.**
+   - Implement `ExpansionState`, the bitset allocator, bounded row buffers, the
+     explicit work stack, and the single metadata materialization pass.
+   - Route public provider-free expansion through the new core as soon as the
+     first family is ported, while keeping test-only parity checks available for
+     families not yet ported.
+   - Keep iterator conveniences and inline-provider adapters outside the
+     extraction-critical modules.
+
+4. **Port one small family end to end.**
+   - Start with ADDIW/ADDW/SUBW or a similarly small arithmetic slice.
+   - Validate byte-for-byte output parity against the old path.
+   - Run Hax/Aeneas on the new allocator transitions, metadata stamping,
+     shallow lowering, and `expand_one_core` slice before porting larger
+     families.
+
+5. **Port all provider-free expansion families.**
+   - Move arithmetic, shifts, memory, division, control-flow, fragment helpers,
+     AMO/LR/SC, CSR, and literal/pass-through behavior onto recipes.
+   - Delete the recursive production assembler once the last provider-free family
+     has parity coverage.
+   - Preserve the inline boundary as an adapter returning finalized rows, with
+     `InstructionKind::Inline` still illegal in provider-free `expand_one_core`.
+
+6. **Close with extraction and repo verification.**
+   - Re-run the narrow Hax/Aeneas experiments and record which modules now
+     extract, which still fail, and whether failures are semantic or tool-level.
+   - Run the repo checks listed above.
+   - Land the pass only if production behavior is single-path, parity-tested,
+     dependency-light, and no slower on the expansion hot path.
+
+The expected review scope is therefore: "replace the provider-free expansion
+engine with a compiler-native lowering core." It is not: "also redesign all
+inline packages."
+
+### Out Of Scope For Pass 1
+
+Pass 1 should not:
+
+- introduce a Melior/MLIR dependency;
+- create `jolt-inline-ir` or a new inline registry crate;
+- port SHA2, Keccak, Blake, BigInt, Secp, Grumpkin, or P-256 inline recipes;
+- replace `inventory` registration;
+- redesign guest inline SDK assembly macros;
+- model inline advice as a grammar;
+- change tracer execution semantics;
+- change bytecode/RAM preprocessing semantics;
+- feature-gate `serde` or `ark-serialize` unless extraction still pulls those
+  impls after the compiler-native rewrite.
+
+### Pass 1 File-Level Shape
+
+The intended end state inside `crates/jolt-program/src/expand` is:
+
+```text
+allocator.rs       deterministic bitset allocator and reset tracking
+buffer.rs          bounded buffers used by core lowering
+core.rs            worklist driver, legality, source/target module wrappers
+grammar.rs         typed recipe grammar and validators
+metadata.rs        sequence metadata materialization
+operands.rs        operand decoding helpers
+lower/
+  arithmetic.rs    shallow recipe definitions
+  control_flow.rs
+  division.rs
+  memory.rs
+  shifts.rs
+  fragments.rs     shared helper recipes such as amo_pre64/amo_post64
+inline.rs          adapter boundary only, outside provider-free core
+mod.rs             public API glue
+```
+
+The exact file names can shift during implementation, but ownership should not:
+`core + grammar + allocator + buffer + metadata + lower` form the
+compiler-native target; `inline + public ergonomic wrappers` stay outside the
+first extraction target.
+
+## Follow-Up Inline Extension Pass
+
+The inline pass should start after Pass 1 has stabilized the target bytecode
+grammar and materialization rules. Its goal is not "make current Rust inline
+builders extract." Its goal is to make inlines extension dialects that legalize
+into the same `expand` and `jolt.bytecode` target.
+
+The likely crate split is:
+
+```text
+jolt-inline-ir
+  Generic InlineId, InlineOpDef, InlineRecipe, AdviceRecipe, validators.
+
+jolt-program
+  Consumes inline definitions and lowers source rows to final bytecode.
+  Still has no tracer dependency.
+
+jolt-inlines-{sha2,keccak256,bigint,...}
+  Concrete extension dialects: guest SDK encoding plus typed inline defs.
+
+jolt-inline-registry
+  Optional feature-selected registry crate collecting chosen inline packages.
+
+tracer
+  Runtime adapter: executes final bytecode and evaluates advice plans against Cpu.
+```
+
+The first inline implementation slice should port one representative inline,
+not all of them. A good first candidate is an inline with large but regular
+memory/register structure, such as `bigint.mul256`, because it stresses static
+loops, symbolic inline temp arrays, memory loads/stores, and reset rows without
+also requiring the full hash/advice surface. A later slice can port an
+advice-bearing modular arithmetic inline, then a hash compression inline with
+static round schedules.
+
+The inline grammar should add:
+
+- `InlineOpDef { id, name, operands, effects, recipe, advice }`;
+- `InlineOperandSpec` that makes `rs3` a memory output pointer, not a normal
+  architectural `rd`;
+- static loops and recipe fragments with alpha-renamed temps;
+- symbolic inline temp arrays over `RegisterPool::Inline`;
+- explicit memory effect metadata;
+- explicit `VirtualAdvice(slot)` rows tied to an `AdviceRecipe`;
+- reset policy that checks all inline temps are dead before materializing
+  `ADDI temp, x0, 0` rows.
+
+In MLIR terms, inlines should become extension ops such as
+`jolt.inline.sha2.compress` or `jolt.inline.bigint.mul256`, not opaque Rust
+callbacks. The compiler should legalize those ops into `expand` ops and then
+into final `jolt.bytecode` rows using the same target legality, metadata, and
+resource materialization machinery as provider-free expansion.
+
 ## Migration Plan
 
 1. Add the typed expansion grammar, validator, compiler-phase vocabulary, and baseline-quirk fixtures.
@@ -1303,7 +1544,7 @@ For this phase, the practical rule is:
 4. Port one small family, such as ADDIW/ADDW/SUBW, to grammar-backed shallow lowering and prove parity against the current output.
 5. Port arithmetic, shifts, memory, division, and control-flow families.
 6. Replace `InstrAssembler<'a>` in production expansion code.
-7. Update tracer inline adapter to produce explicit inline expansion rows or explicit reset rows.
+7. Preserve tracer inline adapter support as finalized rows outside provider-free core.
 8. Delete the old recursive assembler once all parity tests pass.
 9. Run Hax/Aeneas again on:
    - metadata stamping,
@@ -1410,7 +1651,7 @@ The adapter must preserve the existing `rd = x0` remapping behavior before dispa
 
 ### Serialization Derives
 
-Decision for the rewrite PR: do not feature-gate `serde` or `ark-serialize` as part of the first extraction-native rewrite. Keep the extraction start set rooted in `expand::grammar`, `expand::core`, `expand::allocator`, `expand::buffer`, and `expand::metadata`, and retest Hax/Aeneas after the call graph no longer goes through `InstrAssembler<'a>`.
+Decision for the rewrite PR: do not feature-gate `serde` or `ark-serialize` as part of the first compiler-native rewrite. Keep the extraction start set rooted in `expand::grammar`, `expand::core`, `expand::allocator`, `expand::buffer`, and `expand::metadata`, and retest Hax/Aeneas after the call graph no longer goes through `InstrAssembler<'a>`.
 
 Current `jolt-riscv` has unconditional `serde` and `ark_serialize` derives on `InstructionKind`, `NormalizedInstruction`, and `NormalizedOperands`; `jolt-program` also depends on both unconditionally. Feature-gating those derives may still be useful, but it is a workspace-facing dependency cleanup rather than the core bytecode-expansion redesign. If Hax/Aeneas still pull serialization impls after the grammar rewrite, make this the next narrow change:
 
@@ -1438,6 +1679,6 @@ Both are modeled by placing `Release` exactly after the last emitted row that ma
 
 Decision for no-behavior-change parity: preserve the current `csr == 0` behavior exactly in the rewrite and test it as a baseline quirk.
 
-At `a3448e6da44f`, `expand_csrrw` and `expand_csrrs` return `NormalizedInstruction::default()` when `csr == 0`, bypassing the normal assembler finalizer at the source level. Whether that is desirable is a separate semantic cleanup question. It should not be silently changed in the extraction-native rewrite.
+At `a3448e6da44f`, `expand_csrrw` and `expand_csrrs` return `NormalizedInstruction::default()` when `csr == 0`, bypassing the normal assembler finalizer at the source level. Whether that is desirable is a separate semantic cleanup question. It should not be silently changed in the compiler-native rewrite.
 
-Sharpened follow-up question: after the extraction-native rewrite lands, should `csr == 0` be normalized to an explicit source-addressed no-op or rejected earlier as malformed/unsupported? That should be its own reviewable behavior change with bytecode/preprocess tests.
+Sharpened follow-up question: after the compiler-native rewrite lands, should `csr == 0` be normalized to an explicit source-addressed no-op or rejected earlier as malformed/unsupported? That should be its own reviewable behavior change with bytecode/preprocess tests.
