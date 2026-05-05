@@ -173,6 +173,26 @@ Current progress on this branch:
 - Stage 6/7 ordered witness-slice views moved into `jolt-witness` via
   `Stage6WitnessSlices`; `bolt_oracle.rs` no longer assembles Booleanity,
   read-RAF, virtual RA, or hamming-weight index chunk ordering by hand.
+- Stage 6 witness construction no longer materializes dense RA Booleanity
+  one-hot polynomials for the normal sparse/indexed Booleanity path. The
+  generated prover now supplies sparse index chunks through `jolt-witness`, and
+  `jolt-kernels` derives the Booleanity domain from the sparse path when
+  indices are present. On SHA2-chain `2^20`, this moved
+  `bolt.prove.inputs.stage6_witness` from roughly `5.46s` to roughly `0.24s`
+  and reduced Bolt prove time from roughly `28.9s` to `22.6-22.8s`.
+- Stage 6 bytecode read-RAF now consumes the sparse bytecode RA index chunks
+  already produced by `jolt-witness` when initializing its cycle phase, while
+  retaining the dense one-hot fallback for synthetic callers. On SHA2-chain
+  `2^20`, this reduced the bytecode read-RAF Stage 6 bucket from roughly
+  `4.3s` to roughly `1.6s` per Stage 6 execution and moved Bolt prove time to
+  roughly `19.4-19.9s` (`~1.97-2.00x` core). The SHA2-chain `2^16` prove ratio
+  is now `1.174x`, inside the 20% target.
+- Stage 6 bytecode read-RAF witness construction no longer materializes dense
+  address-major bytecode RA chunks in the generated prover path. `jolt-witness`
+  now carries bytecode RA chunk lengths alongside sparse bytecode RA indices,
+  and `jolt-kernels` can run bytecode read-RAF from sparse indices plus chunk
+  lengths with no dense chunk input. The dense chunk fallback remains covered
+  by synthetic kernel tests.
 - Stage 6/7 witness-slice-to-kernel input wiring moved onto `jolt-kernels`
   public builder methods: `Stage6ProverInputs::with_stage6_witness` and
   `Stage7ProverInputs::with_stage6_witness_indices`. The equivalence harness
@@ -1079,6 +1099,236 @@ Acceptance gates:
 - Perf failures report stage-level timing, heavy computation spans, proof
   bytes, and peak RSS.
 - Ignored/local perf tests can be run manually with one documented command.
+
+### Slice 6: SHA2-Chain Perf Closure
+
+Objective:
+
+```text
+Bring Jolt-on-Bolt SHA2-chain proving overhead within 20% of jolt-core while
+keeping the equivalence crate a thin oracle/gate and keeping all semantic
+changes in Bolt codegen, generated artifacts, jolt-kernels, or jolt-witness.
+```
+
+Current measured baseline:
+
+```text
+sha2-chain 2^16:
+  prove_ms:     core=1987.685, bolt=2523.469, ratio=1.270x
+  verify_ms:    core=89.220,   bolt=118.322,  ratio=1.326x
+  proof_bytes:  core=80209,    bolt=111198,   ratio=1.386x
+  peak_rss_mb:  core=209,      bolt=1248,     ratio=5.971x
+
+sha2-chain 2^20:
+  prove_ms:     core ~= 9.9s,  bolt ~= 22.6-22.8s, ratio ~= 2.29-2.30x
+  verify_ms:    core ~= 0.11s, bolt ~= 0.13s,      ratio ~= 1.18-1.26x
+  proof_bytes:  core=89041,    bolt=121398,        ratio=1.363x
+  peak_rss_mb:  core ~= 1.84GB, bolt ~= 6.1-6.3GB, ratio ~= 3.3-3.4x
+```
+
+Perfetto/tracing overhead is not the cause of the 2^20 regression. Traced and
+untraced runs landed in the same ratio band.
+
+Current post-witness-fix 2^20 hotspot shape:
+
+```text
+bolt.stage6:       ~10.6s
+  bytecode_read_raf:        ~4.3s
+  instruction_ra_virtual:   ~2.9s
+  booleanity:               ~2.6s
+bolt.commitment:   ~5.3s
+bolt.stage8:       ~3.8s
+  joint_opening_hint:       ~1.4s
+  dory_open:                ~1.9s
+```
+
+Current post-bytecode-sparse 2^20 shape:
+
+```text
+sha2-chain 2^16:
+  prove_ms:     core=2020.866, bolt=2373.067, ratio=1.174x
+  verify_ms:    core=90.403,   bolt=118.888,  ratio=1.315x
+  proof_bytes:  core=80209,    bolt=111198,   ratio=1.386x
+  peak_rss_mb:  core=207,      bolt=1109,     ratio=5.357x
+
+sha2-chain 2^20:
+  prove_ms:     core=9825.685, bolt=19381.338, ratio=1.973x
+  verify_ms:    core=104.379,  bolt=132.872,   ratio=1.273x
+  proof_bytes:  core=89041,    bolt=121398,    ratio=1.363x
+  peak_rss_mb:  core=1839,     bolt=6094,      ratio=3.314x
+
+Stage 6 per execution:
+  bytecode_read_raf:        ~1.58s
+  instruction_ra_virtual:   ~2.75-3.32s
+  booleanity:               ~2.31-2.44s
+```
+
+The final dense bytecode read-RAF witness allocation removal was verified by
+`jolt-witness`, focused Stage 6 kernel tests, kernel/witness clippy, and full
+`jolt-equivalence`. Its 2^20 perf rerun was intentionally stopped during
+laptop handoff, so the latest measured perf numbers above are from the sparse
+kernel path before that allocation-only cleanup. Re-run the 2^20 perf gate
+before judging any memory/setup movement from the allocation cleanup.
+
+#### Handoff Plan Of Attack
+
+Retained optimization:
+
+- Bytecode read-RAF now uses sparse bytecode RA index chunks plus explicit
+  chunk lengths. This is a core-equivalent direction and belongs in
+  `jolt-witness`/`jolt-kernels`, not `jolt-equivalence`.
+- Dense bytecode RA read-RAF materialization is removed from normal
+  `stage6_witness_polynomials` output; callers that still provide dense chunks
+  continue through the dense fallback.
+
+Rejected experiment:
+
+- Parallelizing indexed Booleanity cycle-state construction and dense binds
+  made the 2^20 run slower (`prove_ms` about `25.5s`, ratio `2.13x`) and was
+  reverted. Do not reapply that shape without a more targeted profile.
+
+Next targets:
+
+1. Port `instruction_ra_virtual` from generic dense product terms toward the
+   core `RaPolynomial`/split-eq sum-of-products algorithm. This is now the
+   largest Stage 6 bucket, roughly `2.7-3.3s` per Stage 6 execution.
+2. Improve indexed Booleanity with an algorithmic change rather than broad
+   parallel binding. Current bucket is roughly `2.3-2.4s` per Stage 6
+   execution.
+3. Re-run the post-allocation-cleanup 2^20 perf gate and record setup/prove/RSS
+   movement. The interrupted command was stopped deliberately before commit.
+4. After Stage 6 is no longer dominant, attack `bolt.commitment` (`~5.3s`) and
+   Stage 8/Dory opening (`~3.8s`) with generated spans intact.
+5. Tighten the perf thresholds from disabled diagnostic ratios to the actual
+   target gates once 2^20 prove is within `1.20x`.
+
+Primary target:
+
+```text
+sha2-chain 2^16 prove_ms ratio <= 1.20x
+sha2-chain 2^20 prove_ms ratio <= 1.20x
+```
+
+Secondary targets:
+
+```text
+sha2-chain 2^16 verify_ms ratio <= 1.35x
+sha2-chain 2^20 verify_ms ratio <= 1.35x
+sha2-chain 2^16 proof_bytes ratio <= 1.40x
+sha2-chain 2^20 proof_bytes ratio <= 1.40x
+sha2-chain 2^16 peak_rss_mb <= 1.25GB
+sha2-chain 2^20 peak_rss_mb <= 6.30GB, and should continue decreasing unless
+a documented protocol change explains the tradeoff.
+```
+
+Required work:
+
+- Port the remaining Stage 6 RA-heavy prover paths toward core-equivalent
+  sparse/specialized algorithms instead of dense generic `DenseStage6State`
+  products. The first targets are bytecode read-RAF, instruction RA virtual,
+  and Booleanity.
+- Keep semantic parity in `jolt-kernels`, `jolt-witness`, Bolt IR/codegen, or
+  checked-in generated artifacts. Do not add perf-specific reconstruction or
+  shortcuts to `jolt-equivalence`.
+- Keep instrumentation code-generated when it concerns generated
+  `jolt-prover`/`jolt-verifier` code. Direct runtime/kernel spans belong in
+  the owning shared crate.
+- Preserve the existing `bolt.prove`, `bolt.commitment`, `bolt.stage*`,
+  `bolt.evaluate.*`, and verifier perf span contract so regressions remain
+  attributable in CI.
+- Treat `setup_ms`, commitment, and Stage 8/Dory opening work as follow-on
+  targets after Stage 6 is no longer the dominant gap.
+
+Acceptance gates:
+
+- Both ignored SHA2-chain perf oracle tests pass with `prove_ms <= 1.20x`.
+- The 2^20 perf report identifies no single uninstrumented Bolt prover bucket
+  larger than `500ms`.
+- `jolt-equivalence` contains no new stage-semantic reconstruction for the perf
+  fix.
+- Focused Stage 6 kernel tests pass.
+- The full `jolt-equivalence` suite passes.
+- Generated artifacts are regenerated from Bolt when generated code changes.
+
+#### Active Goal Contract
+
+Goal:
+
+```text
+Close the SHA2-chain Jolt-on-Bolt prover regression to <= 20% overhead versus
+jolt-core at both 2^16 and 2^20, without moving Jolt semantics into the
+equivalence harness.
+```
+
+Why this matters:
+
+```text
+The equivalence crate is supposed to be an oracle/gate. If Bolt is slower or
+semantically different, the fix must land in Bolt-generated code,
+jolt-kernels, jolt-witness, or shared runtime code. The harness may measure and
+compare; it must not compensate for missing prover semantics.
+```
+
+Non-negotiable scope:
+
+- Do not hand-edit generated `jolt-prover` or `jolt-verifier` behavior. Change
+  Bolt/codegen/templates/shared crates and regenerate.
+- Do not add perf-specific witness reconstruction, opening reconstruction, or
+  stage-specific semantic shortcuts to `jolt-equivalence`.
+- Do not weaken correctness, tamper, proof-size, verifier, or perf gates to
+  make the goal pass.
+- Keep generated prover/verifier spans code-generated when the work being
+  measured is generated code.
+- Keep runtime/kernel spans in the crate that owns the runtime/kernel work.
+- Treat Perfetto overhead as negligible unless a repeat measurement proves
+  otherwise; the current traced and untraced runs agree on the 2^20 gap.
+
+Current blocking regression:
+
+```text
+2^16 prove: core 2.02s, Bolt 2.37s, 1.174x
+2^20 prove: core about 9.8s, Bolt about 19.4s, 1.97x
+```
+
+The current evidence points at Stage 6 first, then commitment and Stage 8:
+
+```text
+bolt.stage6:     still dominant, with instruction_ra_virtual and booleanity largest
+bolt.commitment: about 5.3s
+bolt.stage8:     about 3.8s
+```
+
+Stage 6 subtargets, in priority order:
+
+```text
+instruction_ra_virtual about 2.7-3.3s per Stage 6 execution
+booleanity             about 2.3-2.4s per Stage 6 execution
+bytecode_read_raf      about 1.6s per Stage 6 execution after sparse-index port
+```
+
+Implementation direction:
+
+- Prefer core-equivalent sparse/indexed paths over dense generic bind loops for
+  RA-heavy Stage 6 work.
+- Use `jolt-witness` for reusable prover-side witness/index/chunk material
+  that is not inherently Bolt-codegen-specific.
+- Use `jolt-kernels` for core-equivalent relation execution and specialized
+  prover algorithms.
+- Use Bolt artifact generation for generated prover/verifier APIs and spans.
+- Keep `jolt-equivalence` changes limited to metric collection, reporting,
+  thresholds, and thin public-artifact comparison.
+
+Completion evidence required:
+
+- Run the 2^16 and 2^20 SHA2-chain perf gates and report:
+  `setup_ms`, `prove_ms`, `verify_ms`, `proof_bytes`, peak RSS, and top spans.
+- Re-run any surprising perf result at least once before treating it as real.
+- Show no uninstrumented Bolt prover bucket larger than `500ms` at 2^20.
+- Run focused Stage 6 kernel tests.
+- Run the full `jolt-equivalence` suite.
+- Run `cargo fmt --check` and `git diff --check`.
+- If generated artifacts changed, show the generator command used to regenerate
+  them.
 
 ## Strict Per-Slice Gates
 

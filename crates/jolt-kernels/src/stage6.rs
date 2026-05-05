@@ -441,6 +441,8 @@ impl<F: Field> Stage6BytecodeReadRafDataStorage<F> {
 pub struct Stage6BytecodeReadRafWitness<'a, F: Field> {
     pub data: Stage6BytecodeReadRafData<'a, F>,
     pub bytecode_ra_chunks: &'a [&'a [F]],
+    pub bytecode_ra_chunk_lens: Option<&'a [usize]>,
+    pub bytecode_ra_index_chunks: Option<&'a [&'a [Option<u8>]]>,
 }
 
 #[derive(Clone, Copy)]
@@ -572,6 +574,8 @@ impl<'a, F: Field> Stage6ProverInputs<'a, F> {
         self.with_bytecode_read_raf(Stage6BytecodeReadRafWitness {
             data: bytecode_data,
             bytecode_ra_chunks: &slices.bytecode_ra_read_raf_chunks,
+            bytecode_ra_chunk_lens: Some(&slices.bytecode_ra_read_raf_chunk_lens),
+            bytecode_ra_index_chunks: Some(&slices.bytecode_ra_index_chunks),
         })
         .with_booleanity(Stage6BooleanityWitness {
             chunks: &slices.booleanity_chunks,
@@ -1896,6 +1900,7 @@ struct BytecodeReadRafStage6State<F: Field> {
     log_t: usize,
     chunk_lens: Vec<usize>,
     bytecode_ra_chunks: Vec<Vec<F>>,
+    bytecode_ra_indices: Option<Vec<Vec<Option<u8>>>>,
     stage_factors: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
     stage_values: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
     entry_trace: Vec<F>,
@@ -1918,6 +1923,7 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
     fn new(
         data: Stage6BytecodeReadRafData<'_, F>,
         bytecode_ra_chunks: &[&[F]],
+        bytecode_ra_index_chunks: Option<&[&[Option<u8>]]>,
         bytecode_cycle_indices: Vec<usize>,
         chunk_lens: Vec<usize>,
         store: &Stage6ValueStore<F>,
@@ -1927,7 +1933,7 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
         degree_bound: usize,
         outputs: Vec<FactorOutput>,
     ) -> Result<Self, Stage6KernelError> {
-        if degree_bound < 2 || degree_bound < bytecode_ra_chunks.len() + 1 {
+        if degree_bound < 2 || degree_bound < chunk_lens.len() + 1 {
             return Err(Stage6KernelError::InvalidProof {
                 driver: Stage6Relation::BytecodeReadRaf.symbol(),
                 reason: "bytecode read RAF degree bound is too small",
@@ -1968,6 +1974,13 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                 actual: expected_entries + 1,
             });
         }
+        let bytecode_ra_indices = match bytecode_ra_index_chunks {
+            Some(chunks) if !chunks.is_empty() => {
+                validate_bytecode_ra_index_chunks(chunks, &chunk_lens, log_t)?;
+                Some(chunks.iter().map(|chunk| (*chunk).to_vec()).collect())
+            }
+            _ => None,
+        };
 
         let gamma = store.scalar("stage6.bytecode_read_raf.gamma")?;
         let gamma_powers = bytecode_gamma_powers(gamma);
@@ -2042,6 +2055,7 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                 .iter()
                 .map(|chunk| (*chunk).to_vec())
                 .collect(),
+            bytecode_ra_indices,
             stage_factors,
             stage_values,
             entry_trace,
@@ -2261,8 +2275,52 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
         let mut address_point = self.address_challenges.clone();
         address_point.reverse();
 
-        self.cycle_factors = self
-            .bytecode_ra_chunks
+        self.cycle_factors = if let Some(bytecode_ra_indices) = &self.bytecode_ra_indices {
+            self.sparse_cycle_factors(bytecode_ra_indices, &address_point)
+        } else {
+            self.dense_cycle_factors(&address_point)
+        };
+
+        self.bound_stage_values = Some(bound_stage_values);
+        self.bound_entry_expected = Some(bound_entry_expected);
+        self.stage_factors = std::array::from_fn(|_| Vec::new());
+        self.stage_values = std::array::from_fn(|_| Vec::new());
+        self.entry_trace.clear();
+        self.entry_expected.clear();
+        self.phase = BytecodeReadRafPhase::Cycle;
+    }
+
+    fn sparse_cycle_factors(
+        &self,
+        bytecode_ra_indices: &[Vec<Option<u8>>],
+        address_point: &[F],
+    ) -> Vec<Vec<F>> {
+        let trace_len = 1usize << self.log_t;
+        bytecode_ra_indices
+            .iter()
+            .zip(&self.chunk_lens)
+            .scan(0usize, |offset, (indices, &chunk_len)| {
+                let start = *offset;
+                *offset += chunk_len;
+                Some((indices, start, chunk_len))
+            })
+            .map(|(indices, offset, chunk_len)| {
+                let eq_chunk =
+                    EqPolynomial::<F>::evals(&address_point[offset..offset + chunk_len], None);
+                indices
+                    .iter()
+                    .take(trace_len)
+                    .map(|index| match index {
+                        Some(index) => eq_chunk[usize::from(*index)],
+                        None => F::zero(),
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn dense_cycle_factors(&self, address_point: &[F]) -> Vec<Vec<F>> {
+        self.bytecode_ra_chunks
             .iter()
             .zip(&self.chunk_lens)
             .scan(0usize, |offset, (chunk, &chunk_len)| {
@@ -2284,15 +2342,7 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                     })
                     .collect()
             })
-            .collect();
-
-        self.bound_stage_values = Some(bound_stage_values);
-        self.bound_entry_expected = Some(bound_entry_expected);
-        self.stage_factors = std::array::from_fn(|_| Vec::new());
-        self.stage_values = std::array::from_fn(|_| Vec::new());
-        self.entry_trace.clear();
-        self.entry_expected.clear();
-        self.phase = BytecodeReadRafPhase::Cycle;
+            .collect()
     }
 
     fn bind_cycle(&mut self, challenge: F) {
@@ -3078,7 +3128,9 @@ fn bytecode_read_raf_state<F: Field>(
             kernel: "jolt_stage6_batched",
             input: "bytecode_read_raf",
         })?;
-    if witness.bytecode_ra_chunks.is_empty() {
+    if witness.bytecode_ra_chunks.is_empty()
+        && matches!(witness.bytecode_ra_index_chunks, None | Some([]))
+    {
         return Err(Stage6KernelError::InvalidInputLength {
             input: "stage6.bytecode_read_raf.BytecodeRa",
             expected: 1,
@@ -3124,18 +3176,31 @@ fn bytecode_read_raf_state<F: Field>(
         });
     }
 
-    let mut chunk_lens = Vec::with_capacity(witness.bytecode_ra_chunks.len());
-    for chunk in witness.bytecode_ra_chunks {
-        let rounds = log2_exact(chunk.len(), "stage6.bytecode_read_raf.BytecodeRa")?;
-        let chunk_len = rounds
-            .checked_sub(log_t)
+    let chunk_lens = if witness.bytecode_ra_chunks.is_empty() {
+        witness
+            .bytecode_ra_chunk_lens
             .ok_or(Stage6KernelError::InvalidInputLength {
                 input: "stage6.bytecode_read_raf.BytecodeRa",
-                expected: log_t,
-                actual: rounds,
-            })?;
-        chunk_lens.push(chunk_len);
-    }
+                expected: 1,
+                actual: 0,
+            })?
+            .to_vec()
+    } else {
+        let mut chunk_lens = Vec::with_capacity(witness.bytecode_ra_chunks.len());
+        for chunk in witness.bytecode_ra_chunks {
+            let rounds = log2_exact(chunk.len(), "stage6.bytecode_read_raf.BytecodeRa")?;
+            let chunk_len =
+                rounds
+                    .checked_sub(log_t)
+                    .ok_or(Stage6KernelError::InvalidInputLength {
+                        input: "stage6.bytecode_read_raf.BytecodeRa",
+                        expected: log_t,
+                        actual: rounds,
+                    })?;
+            chunk_lens.push(chunk_len);
+        }
+        chunk_lens
+    };
     let covered_address_len = chunk_lens.iter().sum::<usize>();
     require_operand_count(
         "stage6.bytecode_read_raf.address_chunks",
@@ -3143,13 +3208,23 @@ fn bytecode_read_raf_state<F: Field>(
         covered_address_len,
     )?;
 
-    if let Some(bytecode_cycle_indices) =
+    let sparse_cycle_indices = match witness.bytecode_ra_index_chunks {
+        Some(chunks) if !chunks.is_empty() => Some(bytecode_cycle_indices_from_sparse_chunks(
+            chunks,
+            &chunk_lens,
+            log_t,
+        )?),
+        _ => None,
+    };
+
+    if let Some(bytecode_cycle_indices) = sparse_cycle_indices.or_else(|| {
         bytecode_cycle_indices_from_one_hot(witness.bytecode_ra_chunks, &chunk_lens, log_t)
-    {
-        let outputs = bytecode_read_raf_output_plans(program, witness.bytecode_ra_chunks.len())?;
+    }) {
+        let outputs = bytecode_read_raf_output_plans(program, chunk_lens.len())?;
         return BytecodeReadRafStage6State::new(
             witness.data,
             witness.bytecode_ra_chunks,
+            witness.bytecode_ra_index_chunks,
             bytecode_cycle_indices,
             chunk_lens,
             store,
@@ -3231,6 +3306,47 @@ fn booleanity_state<F: Field>(
             kernel: "jolt_stage6_batched",
             input: "booleanity",
         })?;
+    let log_t = stage6_trace_rounds(program)?;
+    if let Some(index_chunks) = witness.index_chunks {
+        if index_chunks.is_empty() {
+            return Err(Stage6KernelError::InvalidInputLength {
+                input: "stage6.booleanity.index_chunks",
+                expected: 1,
+                actual: 0,
+            });
+        }
+        let trace_len = 1usize << log_t;
+        for chunk in index_chunks {
+            require_operand_count("stage6.booleanity.index_chunk", trace_len, chunk.len())?;
+        }
+        let log_k_chunk =
+            claim
+                .num_rounds
+                .checked_sub(log_t)
+                .ok_or(Stage6KernelError::InvalidInputLength {
+                    input: "stage6.booleanity.input",
+                    expected: log_t,
+                    actual: claim.num_rounds,
+                })?;
+        let combined_r = booleanity_combined_point(store, log_t, log_k_chunk)?;
+        require_operand_count(
+            "stage6.booleanity.combined_point",
+            claim.num_rounds,
+            combined_r.len(),
+        )?;
+        let r_address = &combined_r[..log_k_chunk];
+        let r_cycle = &combined_r[log_k_chunk..];
+        return CoreBooleanityStage6State::new(
+            r_address,
+            r_cycle,
+            index_chunks.iter().map(|chunk| (*chunk).to_vec()).collect(),
+            store.scalar("stage6.booleanity.gamma")?,
+            booleanity_output_plans(program, index_chunks.len())?,
+            active_scale,
+        )
+        .map(Stage6ProverInstanceState::CoreBooleanity);
+    }
+
     if witness.chunks.is_empty() {
         return Err(Stage6KernelError::InvalidInputLength {
             input: "stage6.booleanity.Ra",
@@ -3248,8 +3364,6 @@ fn booleanity_state<F: Field>(
     for chunk in witness.chunks {
         require_operand_count("stage6.booleanity.Ra", domain_len, chunk.len())?;
     }
-
-    let log_t = stage6_trace_rounds(program)?;
     let log_k_chunk =
         booleanity_rounds
             .checked_sub(log_t)
@@ -3258,53 +3372,7 @@ fn booleanity_state<F: Field>(
                 expected: log_t,
                 actual: booleanity_rounds,
             })?;
-    let stage5_point = store.point("stage6.input.stage5.instruction_read_raf.InstructionRa_0")?;
-    let stage5_address_len =
-        stage5_point
-            .len()
-            .checked_sub(log_t)
-            .ok_or(Stage6KernelError::InvalidInputLength {
-                input: "stage6.input.stage5.instruction_read_raf.InstructionRa_0",
-                expected: log_t,
-                actual: stage5_point.len(),
-            })?;
-    if stage5_address_len < log_k_chunk {
-        return Err(Stage6KernelError::InvalidInputLength {
-            input: "stage6.input.stage5.instruction_read_raf.InstructionRa_0",
-            expected: log_k_chunk + log_t,
-            actual: stage5_point.len(),
-        });
-    }
-
-    let mut stage5_addr = stage5_point[..stage5_address_len].to_vec();
-    stage5_addr.reverse();
-    let mut combined_r = stage5_addr[stage5_address_len - log_k_chunk..].to_vec();
-    combined_r.extend(stage5_point[stage5_address_len..].iter().rev().copied());
-    require_operand_count(
-        "stage6.booleanity.combined_point",
-        booleanity_rounds,
-        combined_r.len(),
-    )?;
-
-    if let Some(index_chunks) = witness.index_chunks {
-        require_operand_count(
-            "stage6.booleanity.index_chunks",
-            witness.chunks.len(),
-            index_chunks.len(),
-        )?;
-        let r_address = &combined_r[..log_k_chunk];
-        let r_cycle = &combined_r[log_k_chunk..];
-        return CoreBooleanityStage6State::new(
-            r_address,
-            r_cycle,
-            index_chunks.iter().map(|chunk| (*chunk).to_vec()).collect(),
-            store.scalar("stage6.booleanity.gamma")?,
-            booleanity_output_plans(program, index_chunks.len())?,
-            active_scale,
-        )
-        .map(Stage6ProverInstanceState::CoreBooleanity);
-    }
-
+    let combined_r = booleanity_combined_point(store, log_t, log_k_chunk)?;
     let mut eq_point = combined_r[..log_k_chunk].to_vec();
     eq_point.reverse();
     eq_point.extend(combined_r[log_k_chunk..].iter().rev().copied());
@@ -3334,6 +3402,41 @@ fn booleanity_state<F: Field>(
         claim.degree,
     )
     .map(Stage6ProverInstanceState::Booleanity)
+}
+
+fn booleanity_combined_point<F: Field>(
+    store: &Stage6ValueStore<F>,
+    log_t: usize,
+    log_k_chunk: usize,
+) -> Result<Vec<F>, Stage6KernelError> {
+    let stage5_point = store.point("stage6.input.stage5.instruction_read_raf.InstructionRa_0")?;
+    let stage5_address_len =
+        stage5_point
+            .len()
+            .checked_sub(log_t)
+            .ok_or(Stage6KernelError::InvalidInputLength {
+                input: "stage6.input.stage5.instruction_read_raf.InstructionRa_0",
+                expected: log_t,
+                actual: stage5_point.len(),
+            })?;
+    if stage5_address_len < log_k_chunk {
+        return Err(Stage6KernelError::InvalidInputLength {
+            input: "stage6.input.stage5.instruction_read_raf.InstructionRa_0",
+            expected: log_k_chunk + log_t,
+            actual: stage5_point.len(),
+        });
+    }
+
+    let mut stage5_addr = stage5_point[..stage5_address_len].to_vec();
+    stage5_addr.reverse();
+    let mut combined_r = stage5_addr[stage5_address_len - log_k_chunk..].to_vec();
+    combined_r.extend(stage5_point[stage5_address_len..].iter().rev().copied());
+    require_operand_count(
+        "stage6.booleanity.combined_point",
+        log_k_chunk + log_t,
+        combined_r.len(),
+    )?;
+    Ok(combined_r)
 }
 
 fn hamming_booleanity_state<F: Field>(
@@ -4045,6 +4148,95 @@ fn bytecode_cycle_indices_from_one_hot<F: Field>(
         }
     }
     Some(indices)
+}
+
+fn bytecode_cycle_indices_from_sparse_chunks(
+    chunks: &[&[Option<u8>]],
+    chunk_lens: &[usize],
+    log_t: usize,
+) -> Result<Vec<usize>, Stage6KernelError> {
+    validate_bytecode_ra_index_chunks(chunks, chunk_lens, log_t)?;
+    let trace_len =
+        1usize
+            .checked_shl(log_t as u32)
+            .ok_or(Stage6KernelError::InvalidInputLength {
+                input: "stage6.bytecode_read_raf.BytecodeRaIndex",
+                expected: usize::BITS as usize,
+                actual: log_t,
+            })?;
+    let mut indices = vec![0usize; trace_len];
+    let mut remaining_address_bits = chunk_lens.iter().sum::<usize>();
+    for (chunk, &chunk_len) in chunks.iter().zip(chunk_lens) {
+        remaining_address_bits = remaining_address_bits.checked_sub(chunk_len).ok_or(
+            Stage6KernelError::InvalidInputLength {
+                input: "stage6.bytecode_read_raf.BytecodeRaIndex",
+                expected: chunk_len,
+                actual: remaining_address_bits,
+            },
+        )?;
+        for (cycle, index) in chunk.iter().enumerate() {
+            let Some(index) = *index else {
+                return Err(Stage6KernelError::InvalidProof {
+                    driver: Stage6Relation::BytecodeReadRaf.symbol(),
+                    reason: "bytecode read RAF sparse index is missing",
+                });
+            };
+            indices[cycle] |= usize::from(index) << remaining_address_bits;
+        }
+    }
+    Ok(indices)
+}
+
+fn validate_bytecode_ra_index_chunks(
+    chunks: &[&[Option<u8>]],
+    chunk_lens: &[usize],
+    log_t: usize,
+) -> Result<(), Stage6KernelError> {
+    require_operand_count(
+        "stage6.bytecode_read_raf.BytecodeRaIndex",
+        chunk_lens.len(),
+        chunks.len(),
+    )?;
+    let trace_len =
+        1usize
+            .checked_shl(log_t as u32)
+            .ok_or(Stage6KernelError::InvalidInputLength {
+                input: "stage6.bytecode_read_raf.BytecodeRaIndex",
+                expected: usize::BITS as usize,
+                actual: log_t,
+            })?;
+    for (chunk, &chunk_len) in chunks.iter().zip(chunk_lens) {
+        require_operand_count(
+            "stage6.bytecode_read_raf.BytecodeRaIndex",
+            trace_len,
+            chunk.len(),
+        )?;
+        let chunk_domain =
+            1usize
+                .checked_shl(chunk_len as u32)
+                .ok_or(Stage6KernelError::InvalidInputLength {
+                    input: "stage6.bytecode_read_raf.BytecodeRaIndex",
+                    expected: usize::BITS as usize,
+                    actual: chunk_len,
+                })?;
+        for index in *chunk {
+            let Some(index) = *index else {
+                return Err(Stage6KernelError::InvalidProof {
+                    driver: Stage6Relation::BytecodeReadRaf.symbol(),
+                    reason: "bytecode read RAF sparse index is missing",
+                });
+            };
+            let index = usize::from(index);
+            if index >= chunk_domain {
+                return Err(Stage6KernelError::InvalidInputLength {
+                    input: "stage6.bytecode_read_raf.BytecodeRaIndex",
+                    expected: chunk_domain,
+                    actual: index + 1,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn normalized_bytecode_row_bits<F: Field>(
@@ -5936,6 +6128,8 @@ mod tests {
             Stage6BytecodeReadRafWitness {
                 data,
                 bytecode_ra_chunks: &bytecode_ra_chunks,
+                bytecode_ra_chunk_lens: None,
+                bytecode_ra_index_chunks: None,
             },
         );
         let mut prover = Stage6ProverKernelExecutor::new(prover_inputs);
@@ -5973,6 +6167,75 @@ mod tests {
     }
 
     #[test]
+    fn bytecode_read_raf_prover_accepts_sparse_index_chunks() {
+        let entries = bytecode_entries();
+        let data = Stage6BytecodeReadRafData {
+            entries: &entries,
+            entry_bytecode_index: 2,
+            num_lookup_tables: 2,
+        };
+        let bytecode_ra_0 = frs(&[0, 1, 1, 0]);
+        let bytecode_ra_1 = frs(&[1, 0, 0, 1]);
+        let bytecode_ra_chunks: [&[Fr]; 2] = [&bytecode_ra_0, &bytecode_ra_1];
+        let bytecode_ra_index_0 = [Some(1u8), Some(0u8)];
+        let bytecode_ra_index_1 = [Some(0u8), Some(1u8)];
+        let bytecode_ra_index_chunks: [&[Option<u8>]; 2] =
+            [&bytecode_ra_index_0, &bytecode_ra_index_1];
+        let bytecode_ra_chunk_lens = [1usize, 1usize];
+        let sparse_only_bytecode_ra_chunks: [&[Fr]; 0] = [];
+        let mut opening_inputs = bytecode_opening_inputs();
+        let input_claim = bytecode_read_raf_claim(data, &bytecode_ra_chunks, &opening_inputs);
+        opening_inputs.push(Stage6OpeningInputValue {
+            symbol: "stage6.input.bytecode_read_raf_claim",
+            point: Vec::new(),
+            eval: input_claim,
+        });
+        let prover_inputs = Stage6ProverInputs::new(&opening_inputs).with_bytecode_read_raf(
+            Stage6BytecodeReadRafWitness {
+                data,
+                bytecode_ra_chunks: &sparse_only_bytecode_ra_chunks,
+                bytecode_ra_chunk_lens: Some(&bytecode_ra_chunk_lens),
+                bytecode_ra_index_chunks: Some(&bytecode_ra_index_chunks),
+            },
+        );
+        let mut prover = Stage6ProverKernelExecutor::new(prover_inputs);
+        let mut prover_transcript = Blake2bTranscript::<Fr>::new(b"stage6_test");
+        let artifacts = execute_stage6_program(
+            &BYTECODE_PROGRAM,
+            Stage6ExecutionMode::Prover,
+            &mut prover,
+            &mut prover_transcript,
+        )
+        .expect("bytecode read RAF prover accepts sparse index chunks");
+
+        assert_eq!(
+            bytecode_cycle_indices_from_sparse_chunks(&bytecode_ra_index_chunks, &[1, 1], 1)
+                .expect("sparse bytecode indices are valid"),
+            vec![2, 1]
+        );
+
+        let proof = Stage6Proof {
+            sumchecks: artifacts.sumchecks.clone(),
+        };
+        let mut verifier = Stage6ProofCarryingKernelExecutor::new(&proof, &opening_inputs)
+            .with_bytecode_read_raf_data(data);
+        let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage6_test");
+        let verified = execute_stage6_program(
+            &BYTECODE_PROGRAM,
+            Stage6ExecutionMode::Verifier,
+            &mut verifier,
+            &mut verifier_transcript,
+        )
+        .expect("proof-carrying verifier accepts sparse bytecode read RAF output");
+
+        assert_eq!(artifacts.sumchecks[0].point, verified.sumchecks[0].point);
+        assert_eq!(
+            named_eval_values(&artifacts.sumchecks[0].evals),
+            named_eval_values(&verified.sumchecks[0].evals)
+        );
+    }
+
+    #[test]
     fn bytecode_read_raf_verifier_rejects_bad_final_eval() {
         let entries = bytecode_entries();
         let data = Stage6BytecodeReadRafData {
@@ -5994,6 +6257,8 @@ mod tests {
             Stage6BytecodeReadRafWitness {
                 data,
                 bytecode_ra_chunks: &bytecode_ra_chunks,
+                bytecode_ra_chunk_lens: None,
+                bytecode_ra_index_chunks: None,
             },
         );
         let mut prover = Stage6ProverKernelExecutor::new(prover_inputs);
