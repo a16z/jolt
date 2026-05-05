@@ -53,7 +53,8 @@ where
             got: proof.sumchecks.len(),
         });
     }
-    let mut store = super::common::ValueStore::with_opening_inputs(opening_inputs);
+    let mut store =
+        super::common::ValueStore::with_opening_inputs(opening_inputs, program.opening_inputs)?;
     store.seed_constants(program.field_constants);
     let mut artifacts = Stage3ExecutionArtifacts::default();
     for step in program.steps {
@@ -135,13 +136,14 @@ where
         .ok_or(VerifyStage3Error::MissingProof {
             driver: driver.symbol,
         })?;
-    let output = match driver.relation {
+    let relation = driver.relation.unwrap_or("<missing>");
+    let output = match relation {
         "jolt.stage3.batched" => {
             verify_batched_stage3(program, driver, proof, store, transcript)?
         }
         _ => {
             return Err(VerifyStage3Error::UnsupportedRelation {
-                relation: driver.relation,
+                relation,
             });
         }
     };

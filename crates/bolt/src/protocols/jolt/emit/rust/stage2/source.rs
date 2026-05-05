@@ -58,7 +58,7 @@ where
             got: proof.sumchecks.len(),
         });
     }
-    let mut store = Stage2ValueStore::with_opening_inputs(opening_inputs);
+    let mut store = Stage2ValueStore::with_opening_inputs(program, opening_inputs)?;
     store.seed_constants(program);
     let mut artifacts = Stage2ExecutionArtifacts::default();
     if program.steps.is_empty() {
@@ -139,7 +139,8 @@ where
         .ok_or(VerifyStage2Error::MissingProof {
             driver: driver.symbol,
         })?;
-    let output = match driver.relation {
+    let relation = driver.relation.unwrap_or("<missing>");
+    let output = match relation {
         "jolt.stage2.product_virtual.uniskip" => {
             verify_product_virtual_uniskip(program, driver, proof, store, transcript)?
         }
@@ -283,8 +284,14 @@ where
 }
 
 impl<F: Field> Stage2ValueStore<F> {
-    fn with_opening_inputs(inputs: &[Stage2OpeningInputValue<F>]) -> Self {
-        Self(super::common::ValueStore::with_opening_inputs(inputs))
+    fn with_opening_inputs(
+        program: &'static Stage2VerifierProgramPlan,
+        inputs: &[Stage2OpeningInputValue<F>],
+    ) -> Result<Self, VerifyStage2Error> {
+        Ok(Self(super::common::ValueStore::with_opening_inputs(
+            inputs,
+            program.opening_inputs,
+        )?))
     }
 
     fn seed_constants(&mut self, program: &'static Stage2VerifierProgramPlan) {

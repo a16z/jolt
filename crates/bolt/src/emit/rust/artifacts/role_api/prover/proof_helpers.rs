@@ -14,7 +14,7 @@ pub(super) fn push_proof_helpers(
             .as_deref()
             .unwrap_or(stage.module_alias.as_str());
         source.push_str(&format!(
-            "fn {field}_proof(artifacts: &{kernel}::{artifacts_ty}<{field_type}>) -> {stage_proof_type} {{\n    {stage_proof_type} {{\n        sumchecks: artifacts.sumchecks.iter().map({field}_sumcheck).collect(),\n    }}\n}}\n\n",
+            "pub fn {field}_proof(artifacts: &{kernel}::{artifacts_ty}<{field_type}>) -> {stage_proof_type} {{\n    {stage_proof_type} {{\n        sumchecks: artifacts.sumchecks.iter().map({field}_sumcheck).collect(),\n    }}\n}}\n\n",
             field = stage.field_name,
             kernel = kernel_module,
             artifacts_ty = stage.artifacts_type

@@ -9,12 +9,6 @@ pub(in crate::pass) const COMPUTE_TRANSCRIPT_STATE_RESULT_TYPES: &[&str] =
     &["!compute.transcript_state"];
 pub(in crate::pass) const CPU_TRANSCRIPT_STATE_RESULT_TYPES: &[&str] = &["!cpu.transcript_state"];
 
-pub(crate) fn transcript_squeeze_protocol_result_type(
-    kind: &str,
-) -> Result<&'static str, MlirError> {
-    transcript_squeeze_value_type(kind, "!poly.point", "!field.scalar")
-}
-
 pub(in crate::pass) fn transcript_squeeze_compute_result_types(
     operation: OperationRef<'_, '_>,
 ) -> Result<[&'static str; 2], MlirError> {

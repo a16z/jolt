@@ -3,9 +3,10 @@ pub(in crate::protocols::jolt::emit::rust) fn rust_str(value: &str) -> String {
 }
 
 pub(in crate::protocols::jolt::emit::rust) fn rust_option_str(value: Option<&str>) -> String {
-    value
-        .map(|value| format!("Some({})", rust_str(value)))
-        .unwrap_or_else(|| "None".to_owned())
+    value.map_or_else(
+        || "None".to_owned(),
+        |value| format!("Some({})", rust_str(value)),
+    )
 }
 
 pub(in crate::protocols::jolt::emit::rust) fn rust_str_array(values: &[String]) -> String {

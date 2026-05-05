@@ -1,3 +1,8 @@
+#![expect(
+    clippy::needless_raw_string_hashes,
+    reason = "generated Rust templates are kept as raw string blocks for copyable output"
+)]
+
 mod constants;
 mod parse;
 mod source;

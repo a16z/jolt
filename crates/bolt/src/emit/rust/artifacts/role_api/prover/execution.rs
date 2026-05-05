@@ -15,13 +15,19 @@ pub(super) fn push_with_programs_body(
     proof_type: &str,
     prover_artifacts_type: &str,
     extension: Option<&ProtocolArtifactExtension>,
+    instrumentation_prefix: Option<&str>,
 ) {
     source.push_str("{\n");
+    if let Some(prefix) = instrumentation_prefix {
+        source.push_str(&format!(
+            "    let _prove_span = tracing::info_span!(\"{prefix}.prove\").entered();\n"
+        ));
+    }
     if let Some(commitment) = commitment {
-        push_commitment_execution(source, commitment);
+        push_commitment_execution(source, commitment, instrumentation_prefix);
     }
     for stage in stages {
-        push_stage_execution(source, stage);
+        push_stage_execution(source, stage, instrumentation_prefix);
     }
     if let Some(extension) = extension {
         source.push_str(&extension.prover.after_stage_execution);

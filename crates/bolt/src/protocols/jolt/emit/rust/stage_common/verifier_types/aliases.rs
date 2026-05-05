@@ -27,8 +27,8 @@ pub(in crate::protocols::jolt::emit::rust) fn stage23_verifier_type_aliases(
     SumcheckBatchPlan as Stage{stage}SumcheckBatchPlan, SumcheckEvalPlan as Stage{stage}SumcheckEvalPlan,
     SumcheckInstanceResultPlan as Stage{stage}SumcheckInstanceResultPlan,
     TranscriptSqueezePlan as Stage{stage}TranscriptSqueezePlan,
-    VerifierSumcheckClaimPlan as Stage{stage}SumcheckClaimPlan,
-    VerifierSumcheckDriverPlan as Stage{stage}SumcheckDriverPlan,
+    SumcheckClaimPlan as Stage{stage}SumcheckClaimPlan,
+    SumcheckDriverPlan as Stage{stage}SumcheckDriverPlan,
 }};
 "#
         )
@@ -43,8 +43,8 @@ pub(in crate::protocols::jolt::emit::rust) fn stage23_verifier_type_aliases(
     SumcheckEvalPlan as Stage{stage}SumcheckEvalPlan,
     SumcheckInstanceResultPlan as Stage{stage}SumcheckInstanceResultPlan,
     TranscriptSqueezePlan as Stage{stage}TranscriptSqueezePlan,
-    VerifierSumcheckClaimPlan as Stage{stage}SumcheckClaimPlan,
-    VerifierSumcheckDriverPlan as Stage{stage}SumcheckDriverPlan,
+    SumcheckClaimPlan as Stage{stage}SumcheckClaimPlan,
+    SumcheckDriverPlan as Stage{stage}SumcheckDriverPlan,
 }};
 "#
         )

@@ -7,4 +7,5 @@ pub(in crate::emit::rust::artifacts::role_api::verifier) struct VerifierEntryTyp
     pub verifier_programs_type: &'a str,
     pub verification_artifacts_type: &'a str,
     pub verify_error_type: &'a str,
+    pub instrumentation_prefix: Option<&'a str>,
 }

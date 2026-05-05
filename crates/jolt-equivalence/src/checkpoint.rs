@@ -3,30 +3,15 @@
 //! Wraps any [`Transcript`] and records every append/squeeze operation as
 //! a [`TranscriptEvent`]. Two event logs can then be compared element by
 //! element to find the *exact* operation where two systems diverge.
-//!
-//! # Usage
-//!
-//! ```ignore
-//! // 1. Record the golden reference from jolt-core.
-//! let mut golden = CheckpointTranscript::<Blake2bTranscript<Fr>>::new(LABEL);
-//! // ...run jolt-core prover with `golden` as the transcript...
-//! let golden_log = golden.into_log();
-//!
-//! // 2. Record the candidate from jolt-zkvm.
-//! let mut candidate = CheckpointTranscript::<Blake2bTranscript<Fr>>::new(LABEL);
-//! // ...run jolt-zkvm prover with `candidate` as the transcript...
-//! let candidate_log = candidate.into_log();
-//!
-//! // 3. Compare.
-//! let divergence = find_divergence(&golden_log, &candidate_log);
-//! ```
+
+#![expect(clippy::panic, reason = "checkpoint assertions are test gates")]
 
 use std::fmt;
 
 use jolt_transcript::Transcript;
 
 /// A single transcript operation.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum TranscriptEvent {
     /// Raw bytes were appended to the transcript.
     Append {
@@ -70,33 +55,17 @@ impl fmt::Debug for TranscriptEvent {
 
 /// Wraps a concrete transcript, recording every operation.
 ///
-/// Implements [`Transcript`] so it can be used as a drop-in replacement.
-/// After the protocol runs, call [`into_log`](Self::into_log) to extract
-/// the event sequence.
+/// Implements [`Transcript`] so it can be used as a drop-in replacement. After
+/// the protocol runs, call [`log`](Self::log) to inspect the event sequence.
 pub struct CheckpointTranscript<T: Transcript> {
     inner: T,
     log: Vec<TranscriptEvent>,
 }
 
 impl<T: Transcript> CheckpointTranscript<T> {
-    /// Consume the wrapper and return the recorded event log.
-    pub fn into_log(self) -> Vec<TranscriptEvent> {
-        self.log
-    }
-
     /// Borrow the event log without consuming.
     pub fn log(&self) -> &[TranscriptEvent] {
         &self.log
-    }
-
-    /// Number of events recorded so far.
-    pub fn len(&self) -> usize {
-        self.log.len()
-    }
-
-    /// Whether the log is empty.
-    pub fn is_empty(&self) -> bool {
-        self.log.is_empty()
     }
 }
 
@@ -230,7 +199,7 @@ pub fn find_divergence(
 }
 
 /// Compare two logs and panic with a detailed message on divergence.
-#[allow(clippy::print_stderr)]
+#[expect(clippy::print_stderr)]
 pub fn assert_transcripts_match(reference: &[TranscriptEvent], candidate: &[TranscriptEvent]) {
     if let Err(div) = find_divergence(reference, candidate) {
         // Print context: a few events before the divergence point.
@@ -250,4 +219,55 @@ pub fn assert_transcripts_match(reference: &[TranscriptEvent], candidate: &[Tran
         }
         panic!("{div}");
     }
+}
+
+/// Extracts the transcript state after each recorded operation.
+fn transcript_states(log: &[TranscriptEvent]) -> Vec<[u8; 32]> {
+    log.iter()
+        .map(|event| match event {
+            TranscriptEvent::Append { state_after, .. }
+            | TranscriptEvent::Squeeze { state_after } => *state_after,
+        })
+        .collect()
+}
+
+fn assert_state_prefix(expected: &[[u8; 32]], actual: &[[u8; 32]]) {
+    for index in 0..expected.len() {
+        assert_eq!(
+            expected[index], actual[index],
+            "transcript state mismatch at op #{index}"
+        );
+    }
+}
+
+/// Compare full transcript state histories.
+pub fn assert_state_history_match(
+    expected_log: &[TranscriptEvent],
+    actual_log: &[TranscriptEvent],
+) {
+    let expected = transcript_states(expected_log);
+    let actual = transcript_states(actual_log);
+    let min_len = expected.len().min(actual.len());
+    assert_state_prefix(&expected[..min_len], &actual[..min_len]);
+    assert_eq!(
+        expected.len(),
+        actual.len(),
+        "transcript state count mismatch"
+    );
+}
+
+/// Compare an expected transcript state prefix against a full actual history.
+pub(crate) fn assert_state_history_prefix_match(
+    expected_prefix_log: &[TranscriptEvent],
+    actual_log: &[TranscriptEvent],
+) {
+    let expected_prefix = transcript_states(expected_prefix_log);
+    let actual = transcript_states(actual_log);
+    assert!(
+        actual.len() >= expected_prefix.len(),
+        "transcript state count mismatch: expected at least {}, got {}",
+        expected_prefix.len(),
+        actual.len()
+    );
+    assert_state_prefix(&expected_prefix, &actual);
 }

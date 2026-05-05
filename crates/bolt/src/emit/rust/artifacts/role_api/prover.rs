@@ -89,6 +89,7 @@ pub(super) fn generated_prover_api(
             prover_programs_type: role_names.programs,
             prover_artifacts_type: role_names.artifacts,
             prove_error_type: role_names.error,
+            instrumentation_prefix: config.instrumentation_prefix.as_deref(),
         },
         context.extension,
     );

@@ -10,7 +10,7 @@ impl CommitmentCpuProgram {
     }
 
     fn emit_prover_entrypoint() -> &'static str {
-        r"pub fn prove_commitment_phase<I, T>(
+        r#"pub fn prove_commitment_phase<I, T>(
     inputs: &mut I,
     prover_setup: &DoryProverSetup,
     transcript: &mut T,
@@ -34,9 +34,11 @@ where
 {
     let mut artifacts = CommitmentArtifacts::default();
     for plan in program.batch_plans {
+        let _batch_span = tracing::info_span!("bolt.commitment.batch").entered();
         commit_batch(program, inputs, prover_setup, &mut artifacts, plan)?;
     }
     for plan in program.optional_plans {
+        let _optional_span = tracing::info_span!("bolt.commitment.optional").entered();
         commit_optional(program, inputs, prover_setup, &mut artifacts, plan)?;
     }
     absorb_transcript(program, &artifacts, transcript)?;
@@ -178,6 +180,7 @@ fn commit_with_layout(
     prover_setup: &DoryProverSetup,
 ) -> Result<(DoryCommitment, DoryHint), CommitmentPhaseError> {
     let row_len = target_len(layout_num_vars.div_ceil(2))?;
+    let _dory_commit_span = tracing::info_span!("bolt.commitment.dory_commit").entered();
     Ok(DoryScheme::commit_evaluations_with_row_len(
         data,
         row_len,
@@ -220,7 +223,7 @@ where
     }
     Ok(())
 }
-"
+"#
     }
 
     fn emit_verifier_entrypoint() -> &'static str {

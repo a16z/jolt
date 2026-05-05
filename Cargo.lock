@@ -2832,45 +2832,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-bench"
-version = "0.1.0"
-dependencies = [
- "ark-bn254",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
- "bincode 2.0.1",
- "bolt",
- "clap",
- "common",
- "jolt-core",
- "jolt-dory",
- "jolt-field",
- "jolt-inlines-keccak256",
- "jolt-inlines-sha2",
- "jolt-kernels",
- "jolt-openings",
- "jolt-poly",
- "jolt-profiling",
- "jolt-prover",
- "jolt-r1cs",
- "jolt-riscv",
- "jolt-trace",
- "jolt-transcript",
- "jolt-verifier",
- "jolt-witness",
- "memory-stats",
- "mimalloc",
- "num-traits",
- "postcard",
- "rayon",
- "serde",
- "serde_json",
- "strum 0.28.0",
- "tracer",
- "tracing",
-]
-
-[[package]]
 name = "jolt-blindfold"
 version = "0.1.0"
 
@@ -2983,10 +2944,12 @@ dependencies = [
  "jolt-core",
  "jolt-dory",
  "jolt-field",
+ "jolt-inlines-sha2",
  "jolt-kernels",
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
+ "jolt-profiling",
  "jolt-prover",
  "jolt-r1cs",
  "jolt-sumcheck",
@@ -2997,8 +2960,10 @@ dependencies = [
  "num-traits",
  "postcard",
  "rayon",
+ "serde",
  "strum 0.28.0",
  "tracer",
+ "tracing",
 ]
 
 [[package]]
@@ -3185,7 +3150,9 @@ dependencies = [
  "jolt-poly",
  "jolt-r1cs",
  "jolt-sumcheck",
+ "jolt-trace",
  "jolt-transcript",
+ "jolt-witness",
  "rayon",
  "tracing",
 ]
@@ -3290,6 +3257,7 @@ dependencies = [
  "jolt-verifier",
  "jolt-witness",
  "rayon",
+ "tracing",
 ]
 
 [[package]]
@@ -3396,6 +3364,8 @@ dependencies = [
  "jolt-poly",
  "jolt-sumcheck",
  "jolt-transcript",
+ "serde",
+ "tracing",
 ]
 
 [[package]]
@@ -3403,6 +3373,7 @@ name = "jolt-witness"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "jolt-poly",
 ]
 
 [[package]]
@@ -3512,15 +3483,6 @@ name = "libm"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
-
-[[package]]
-name = "libmimalloc-sys"
-version = "0.1.47"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d1eacfa31c33ec25e873c136ba5669f00f9866d0688bea7be4d3f7e43067df6"
-dependencies = [
- "cc",
-]
 
 [[package]]
 name = "libredox"
@@ -3722,15 +3684,6 @@ dependencies = [
  "merkle-tree-guest",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "mimalloc"
-version = "0.1.50"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3627c4272df786b9260cabaa46aec1d59c93ede723d4c3ef646c503816b0640"
-dependencies = [
- "libmimalloc-sys",
 ]
 
 [[package]]

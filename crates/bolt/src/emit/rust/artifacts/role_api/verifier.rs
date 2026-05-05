@@ -93,6 +93,7 @@ pub(super) fn generated_verifier_api(
             verifier_programs_type: role_names.programs,
             verification_artifacts_type: role_names.artifacts,
             verify_error_type: role_names.error,
+            instrumentation_prefix: config.instrumentation_prefix.as_deref(),
         },
         context.extension,
     );

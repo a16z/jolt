@@ -15,5 +15,4 @@ pub use roles::{
     derive_prover_role, derive_verifier_role, project_party, project_prover_party,
     project_verifier_party,
 };
-pub(crate) use support::{string_attr, transcript_squeeze_protocol_result_type};
 pub use verify::{verify_concrete_transcript, VerifyError};

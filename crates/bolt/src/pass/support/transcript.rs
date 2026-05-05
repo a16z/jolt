@@ -16,7 +16,6 @@ use crate::schema::operation_name;
 
 pub(in crate::pass) use compute::classify_compute_transcript_op;
 pub(in crate::pass) use family::TranscriptOpFamily;
-pub(crate) use result_types::transcript_squeeze_protocol_result_type;
 pub(in crate::pass) use result_types::{
     transcript_squeeze_compute_result_types, transcript_squeeze_cpu_result_types,
     COMPUTE_TRANSCRIPT_STATE_RESULT_TYPES, CPU_TRANSCRIPT_STATE_RESULT_TYPES,

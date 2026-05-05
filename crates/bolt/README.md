@@ -20,8 +20,6 @@ security-hardened, and driven by explicit MLIR-derived plan data
 generic over protocol packages instead of Jolt-shaped. `JOLT_PROTOCOL_IMPLEMENTATION.md`
 keeps the durable compiler-boundary rules. `TESTING.md` lists the LOC,
 readability, equivalence, import, MLIR, and tamper gates for this cleanup track.
-`CODE_QUALITY.md` captures the Rust compiler-project idioms Bolt should borrow
-as the implementation is tightened and de-duplicated.
 
 ## Compiler Shape
 
@@ -56,7 +54,7 @@ no jolt-prover dependency
 no jolt-kernels dependency
 no jolt-core dependency
 no jolt-equivalence dependency
-no jolt-bench dependency
+no jolt-profiling dependency
 no tracer internals
 ```
 
@@ -91,6 +89,16 @@ not import verifier stage internals.
 
 ## Local MLIR Toolchain
 
+The easiest setup path on macOS is:
+
+```bash
+make bolt-dev-setup
+source .bolt-dev-env
+```
+
+The helper installs Homebrew LLVM, Rust components used by CI, and writes the
+local environment required by `mlir-sys`.
+
 On macOS with Homebrew LLVM:
 
 ```bash
@@ -98,7 +106,7 @@ brew install llvm
 export MLIR_SYS_220_PREFIX=/opt/homebrew/opt/llvm
 export PATH="/opt/homebrew/opt/llvm/bin:$PATH"
 export SDKROOT="$(xcrun --show-sdk-path)"
-export BINDGEN_EXTRA_CLANG_ARGS="-isysroot $(xcrun --show-sdk-path)"
+export BINDGEN_EXTRA_CLANG_ARGS="-isysroot$(xcrun --show-sdk-path)"
 ```
 
 Do not set `MLIR_SYS_LINK_SHARED=1` with the Homebrew LLVM 22 bottle; it does

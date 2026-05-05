@@ -56,6 +56,7 @@ pub struct ProtocolVerifierApiExtension {
     pub error_conversions: String,
     pub after_default_verify: String,
     pub with_programs_body_intro: String,
+    pub stage_verification_override: String,
     pub after_stage_verification: String,
     pub helper_items: String,
 }

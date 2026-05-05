@@ -279,7 +279,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
                 },
             );
 
-        #[cfg(debug_assertions)]
+        #[cfg(test)]
         {
             // Verify that for each stage i: sum(val_i[k] * F_i[k] * eq_i[k]) = rv_claim_i
             for i in 0..N_STAGES {
@@ -300,27 +300,6 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
                     params.rv_claims[i]
                 );
             }
-            // Dump F and Val data for comparison with jolt-zkvm
-            for i in 0..N_STAGES {
-                let f_sum: F = F[i].iter().copied().sum();
-                let v_first4: Vec<F> = (0..4.min(params.K))
-                    .map(|k| params.val_polys[i].get_bound_coeff(k))
-                    .collect();
-                let f_first4: Vec<F> = F[i][..4.min(params.K)].to_vec();
-                eprintln!(
-                    "[BC_RAF init] stage {i}: F_sum={f_sum:?}, F[0..4]={f_first4:?}, Val[0..4]={v_first4:?}"
-                );
-            }
-            eprintln!(
-                "[BC_RAF init] K={}, log_K={}, log_T={}, entry_idx={}",
-                params.K, params.log_K, params.log_T, params.entry_bytecode_index
-            );
-            eprintln!("[BC_RAF init] gamma_powers={:?}", &params.gamma_powers);
-            eprintln!("[BC_RAF init] input_claim={:?}", params.input_claim);
-            eprintln!(
-                "[BC_RAF init] r_cycle_1[..4]={:?}",
-                &params.r_cycles[0][..4.min(params.r_cycles[0].len())]
-            );
         }
 
         let F = F.map(MultilinearPolynomial::from);
@@ -460,31 +439,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn compute_message(&mut self, round: usize, _previous_claim: F) -> UniPoly<F> {
         if round < self.params.log_K {
             const DEGREE: usize = 2;
-            #[cfg(debug_assertions)]
-            if (9..=10).contains(&round) {
-                let buf_len = self.params.val_polys[0].len();
-                eprintln!("[core bc_raf_addr] round={round} buf_len={buf_len}");
-                for s in 0..5 {
-                    let f_vals: Vec<F> = (0..std::cmp::min(4, self.F[s].len()))
-                        .map(|i| self.F[s].get_coeff(i))
-                        .collect();
-                    eprintln!("[core bc_raf_addr] round={round} F[{s}] first4={f_vals:?}");
-                }
-                for s in 0..5 {
-                    let v_vals: Vec<F> = (0..std::cmp::min(4, self.params.val_polys[s].len()))
-                        .map(|i| self.params.val_polys[s].get_coeff(i))
-                        .collect();
-                    eprintln!("[core bc_raf_addr] round={round} Val[{s}] first4={v_vals:?}");
-                }
-                let trace_vals: Vec<F> = (0..std::cmp::min(4, self.f_entry_trace.len()))
-                    .map(|i| self.f_entry_trace.get_coeff(i))
-                    .collect();
-                eprintln!("[core bc_raf_addr] round={round} f_entry_trace first4={trace_vals:?}");
-                let exp_vals: Vec<F> = (0..std::cmp::min(4, self.f_entry_expected.len()))
-                    .map(|i| self.f_entry_expected.get_coeff(i))
-                    .collect();
-                eprintln!("[core bc_raf_addr] round={round} f_entry_expected first4={exp_vals:?}");
-            }
 
             // Evaluation at [0, 2] for each stage plus the entry term.
             let (eval_per_stage, entry_evals): ([[F; DEGREE]; N_STAGES], [F; DEGREE]) =
@@ -561,37 +515,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             let entry_at_1 = self.prev_entry_claim - entry_at_0;
             let entry_round_poly = UniPoly::from_evals(&[entry_at_0, entry_at_1, entry_at_2]);
             agg_round_poly += &(&entry_round_poly * self.params.entry_gamma);
-
-            #[cfg(debug_assertions)]
-            if round == 0 {
-                eprintln!("[BC_RAF] round 0 per-stage evals and claims:");
-                for (s, evals) in eval_per_stage.iter().enumerate() {
-                    let weighted = self.prev_round_claims[s] * self.params.gamma_powers[s];
-                    eprintln!(
-                        "  stage {s}: e0={:?} e2={:?} claim={:?} weighted={weighted:?}",
-                        evals[0], evals[1], self.prev_round_claims[s]
-                    );
-                }
-                let entry_weighted = self.prev_entry_claim * self.params.entry_gamma;
-                eprintln!(
-                    "  entry: e0={:?} e2={:?} claim={:?} weighted={entry_weighted:?}",
-                    entry_at_0, entry_at_2, self.prev_entry_claim
-                );
-                let full_check: F = self
-                    .prev_round_claims
-                    .iter()
-                    .zip(&self.params.gamma_powers)
-                    .map(|(&c, &g)| c * g)
-                    .sum::<F>()
-                    + entry_weighted;
-                eprintln!(
-                    "  full_check={full_check:?} input_claim={:?} match={}",
-                    self.params.input_claim,
-                    full_check == self.params.input_claim
-                );
-                eprintln!("  gamma_powers={:?}", &self.params.gamma_powers);
-                eprintln!("  agg coeffs: {:?}", agg_round_poly.coeffs);
-            }
             self.prev_entry_poly = Some(entry_round_poly);
 
             self.prev_round_polys = Some(round_polys);
@@ -706,10 +629,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
-        #[cfg(debug_assertions)]
-        if (9..=10).contains(&round) {
-            eprintln!("[core bc_raf ingest] round={round} r_j={r_j:?}");
-        }
         if let Some(prev_round_polys) = self.prev_round_polys.take() {
             self.prev_round_claims = prev_round_polys.map(|poly| poly.evaluate(&r_j));
         }

@@ -1,5 +1,14 @@
 //! Stage 5 coarse-kernel ABI used by Bolt-generated Jolt prover code.
 
+#![expect(
+    clippy::large_enum_variant,
+    reason = "kernel states stay inline to avoid boxing hot prover state"
+)]
+#![expect(
+    clippy::too_many_arguments,
+    reason = "kernel constructors mirror generated staged protocol inputs"
+)]
+
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -15,7 +24,10 @@ use jolt_lookup_tables::{
 };
 use jolt_poly::{bind_high_to_low, EqPolynomial, UnivariatePoly};
 use jolt_transcript::{Label, LabelWithCount, Transcript};
+use jolt_witness::Stage45SparseTraceWitness;
 use rayon::prelude::*;
+
+type PrefixPairEvals<F> = ([PrefixEval<F>; NUM_PREFIXES], [PrefixEval<F>; NUM_PREFIXES]);
 
 pub use crate::stage4::{
     Stage4ChallengeVector as Stage5ChallengeVector, Stage4CpuProgramPlan as Stage5CpuProgramPlan,
@@ -25,6 +37,7 @@ pub use crate::stage4::{
     Stage4NamedEval as Stage5NamedEval, Stage4OpeningBatchPlan as Stage5OpeningBatchPlan,
     Stage4OpeningClaimEqualityPlan as Stage5OpeningClaimEqualityPlan,
     Stage4OpeningClaimPlan as Stage5OpeningClaimPlan,
+    Stage4OpeningClaimValue as Stage5OpeningClaimValue,
     Stage4OpeningInputPlan as Stage5OpeningInputPlan,
     Stage4OpeningInputValue as Stage5OpeningInputValue, Stage4Params as Stage5Params,
     Stage4PointConcatPlan as Stage5PointConcatPlan, Stage4PointSlicePlan as Stage5PointSlicePlan,
@@ -337,6 +350,66 @@ impl<'a, F: Field> Stage5ProverInputs<'a, F> {
     pub fn with_registers_val(mut self, registers_val: Stage5RegistersValWitness<'a, F>) -> Self {
         self.registers_val = Some(registers_val);
         self
+    }
+
+    pub fn with_sparse_trace_witness(
+        self,
+        trace_len: usize,
+        ram_k: usize,
+        register_count: usize,
+        lookup_indices: &'a [u128],
+        lookup_table_indices: &'a [Option<usize>],
+        is_interleaved_operands: &'a [bool],
+        ra_virtual_log_k_chunk: usize,
+        remapped_addresses: &'a [Option<usize>],
+        rd_inc: &'a [F],
+        rd_write_addresses: &'a [Option<usize>],
+    ) -> Self {
+        self.with_instruction_read_raf(Stage5InstructionReadRafWitness {
+            trace_len,
+            lookup_indices,
+            lookup_table_indices,
+            is_interleaved_operands,
+            ra_virtual_log_k_chunk,
+        })
+        .with_ram_ra(Stage5RamRaWitness {
+            ram_k,
+            trace_len,
+            ram_ra: &[],
+            remapped_addresses: Some(remapped_addresses),
+        })
+        .with_registers_val(Stage5RegistersValWitness {
+            register_count,
+            trace_len,
+            rd_inc,
+            rd_wa: &[],
+            rd_write_addresses: Some(rd_write_addresses),
+        })
+    }
+
+    pub fn with_stage45_sparse_trace_witness(
+        self,
+        trace_len: usize,
+        ram_k: usize,
+        register_count: usize,
+        lookup_indices: &'a [u128],
+        lookup_table_indices: &'a [Option<usize>],
+        is_interleaved_operands: &'a [bool],
+        ra_virtual_log_k_chunk: usize,
+        witness: &'a Stage45SparseTraceWitness<F>,
+    ) -> Self {
+        self.with_sparse_trace_witness(
+            trace_len,
+            ram_k,
+            register_count,
+            lookup_indices,
+            lookup_table_indices,
+            is_interleaved_operands,
+            ra_virtual_log_k_chunk,
+            &witness.ram_addresses,
+            &witness.rd_inc,
+            &witness.rd_write_addresses,
+        )
     }
 }
 
@@ -1121,11 +1194,12 @@ where
         });
     }
     store.observe_sumcheck_values(context.program, context.driver.symbol, &point, &evals)?;
-    append_opening_claims(context.program, &mut store, transcript, &evals)?;
+    let opening_claims = append_opening_claims(context.program, &mut store, transcript, &evals)?;
     Ok(Stage5SumcheckOutput {
         driver: context.driver.symbol,
         point,
         evals,
+        opening_claims,
         proof: jolt_sumcheck::SumcheckProof { round_polynomials },
     })
 }
@@ -1206,10 +1280,16 @@ where
         driver: context.driver.symbol,
         point,
         evals: proof.evals.clone(),
+        opening_claims: Vec::new(),
         proof: proof.proof.clone(),
     };
     store.observe_sumcheck_output(context.program, &output)?;
-    append_opening_claims(context.program, &mut store, transcript, &output.evals)?;
+    let opening_claims =
+        append_opening_claims(context.program, &mut store, transcript, &output.evals)?;
+    let output = Stage5SumcheckOutput {
+        opening_claims,
+        ..output
+    };
     Ok(output)
 }
 
@@ -1479,10 +1559,9 @@ impl<F: Field> InstructionReadRafStage5State<F> {
     ) -> Result<UnivariatePoly<F>, Stage5KernelError> {
         if self.round < Self::LOG_K {
             self.ensure_address_phase();
-            let address_phase = self
-                .address_phase
-                .as_ref()
-                .expect("address phase initialized");
+            let Some(address_phase) = self.address_phase.as_ref() else {
+                std::process::abort();
+            };
             let (read, raf_components) = if address_phase.left_operand_prefix.len() <= 32 {
                 (
                     address_phase.read_table_round_evals(),
@@ -1512,10 +1591,10 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         if self.cycle_state.is_none() {
             self.cycle_state = Some(self.materialize_cycle_state()?);
         }
-        self.cycle_state
-            .as_ref()
-            .expect("cycle state materialized")
-            .round_poly(previous_claim, self.active_scale, relation)
+        let Some(cycle_state) = self.cycle_state.as_ref() else {
+            std::process::abort();
+        };
+        cycle_state.round_poly(previous_claim, self.active_scale, relation)
     }
 
     fn bind(&mut self, challenge: F) {
@@ -1843,8 +1922,7 @@ impl<F: Field> InstructionReadRafStage5State<F> {
                 .into_par_iter()
                 .map(|cycle| {
                     let table_value = self.lookup_table_indices[cycle]
-                        .map(|table_index| table_values_at_address[table_index])
-                        .unwrap_or_else(F::zero);
+                        .map_or_else(F::zero, |table_index| table_values_at_address[table_index]);
                     let raf_value = if self.is_interleaved_operands[cycle] {
                         raf_interleaved
                     } else {
@@ -2107,7 +2185,7 @@ impl<F: Field> InstructionReadRafAddressPhase<F> {
 fn read_table_component_eval<F: Field>(
     read_table: &InstructionReadRafReadTablePhase<F>,
     half: usize,
-    prefix_evals: &[([PrefixEval<F>; NUM_PREFIXES], [PrefixEval<F>; NUM_PREFIXES])],
+    prefix_evals: &[PrefixPairEvals<F>],
 ) -> [F; 2] {
     let mut eval_0 = F::zero();
     let mut eval_2_left = F::zero();
@@ -2144,14 +2222,12 @@ fn prefix_suffix_round_evals<F: Field>(prefix: Option<&[F]>, q0: &[F], q1: &[F])
     let mut eval_2_left = F::zero();
     let mut eval_2_right = F::zero();
     for row in 0..half {
-        let (prefix_0, prefix_2) = prefix
-            .map(|poly| {
-                debug_assert_eq!(poly.len(), len);
-                let low = poly[row];
-                let high = poly[row + half];
-                (low, high + high - low)
-            })
-            .unwrap_or((F::one(), F::one()));
+        let (prefix_0, prefix_2) = prefix.map_or((F::one(), F::one()), |poly| {
+            debug_assert_eq!(poly.len(), len);
+            let low = poly[row];
+            let high = poly[row + half];
+            (low, high + high - low)
+        });
         eval_0 += prefix_0 * q0[row] + q1[row];
         eval_2_left += prefix_2 * q0[row] + q1[row];
         eval_2_right += prefix_2 * q0[row + half] + q1[row + half];
@@ -2289,8 +2365,7 @@ fn accumulate_cycle_row_coefficients<F: Field, const N: usize>(
 ) {
     let mut coefficients = [F::zero(); N];
     coefficients[0] = F::one();
-    let mut current_degree = 0;
-    for factor in factors {
+    for (current_degree, factor) in factors.iter().enumerate() {
         let low = factor[2 * row];
         let diff = factor[2 * row + 1] - low;
         coefficients[current_degree + 1] = F::zero();
@@ -2299,7 +2374,6 @@ fn accumulate_cycle_row_coefficients<F: Field, const N: usize>(
             coefficients[coefficient_index + 1] += coefficient * diff;
             coefficients[coefficient_index] = coefficient * low;
         }
-        current_degree += 1;
     }
     for coefficient_index in 0..=degree {
         sums[coefficient_index] += coefficients[coefficient_index];
@@ -2343,7 +2417,8 @@ fn instruction_read_raf_state<F: Field>(
         witness.trace_len,
         witness.is_interleaved_operands.len(),
     )?;
-    if witness.ra_virtual_log_k_chunk == 0 || LOG_K % witness.ra_virtual_log_k_chunk != 0 {
+    if witness.ra_virtual_log_k_chunk == 0 || !LOG_K.is_multiple_of(witness.ra_virtual_log_k_chunk)
+    {
         return Err(Stage5KernelError::InvalidInputLength {
             input: "stage5.instruction_read_raf.ra_virtual_log_k_chunk",
             expected: LOG_K,
@@ -2434,15 +2509,15 @@ fn instruction_read_raf_lookup_groups<F: Field>(
         std::collections::HashMap::with_capacity(witness.trace_len);
     let mut groups = Vec::<InstructionReadRafLookupGroup<F>>::new();
     let mut group_indices_by_cycle = Vec::with_capacity(witness.trace_len);
-    for cycle in 0..witness.trace_len {
+    for (cycle, u_eval) in u_evals.iter().copied().enumerate().take(witness.trace_len) {
         let key = (
             witness.lookup_indices[cycle],
             witness.lookup_table_indices[cycle],
             witness.is_interleaved_operands[cycle],
         );
         if let Some(&group_index) = index_by_key.get(&key) {
-            groups[group_index].u_eval_sum += u_evals[cycle];
-            groups[group_index].phase_u_eval_sum += u_evals[cycle];
+            groups[group_index].u_eval_sum += u_eval;
+            groups[group_index].phase_u_eval_sum += u_eval;
             group_indices_by_cycle.push(group_index);
         } else {
             let group_index = groups.len();
@@ -2451,8 +2526,8 @@ fn instruction_read_raf_lookup_groups<F: Field>(
                 lookup_index: key.0,
                 lookup_table_index: key.1,
                 is_interleaved_operands: key.2,
-                u_eval_sum: u_evals[cycle],
-                phase_u_eval_sum: u_evals[cycle],
+                u_eval_sum: u_eval,
+                phase_u_eval_sum: u_eval,
             });
             group_indices_by_cycle.push(group_index);
         }
@@ -2968,7 +3043,8 @@ pub fn instruction_read_raf_output_evals<F: Field>(
         witness.trace_len,
         witness.is_interleaved_operands.len(),
     )?;
-    if witness.ra_virtual_log_k_chunk == 0 || LOG_K % witness.ra_virtual_log_k_chunk != 0 {
+    if witness.ra_virtual_log_k_chunk == 0 || !LOG_K.is_multiple_of(witness.ra_virtual_log_k_chunk)
+    {
         return Err(Stage5KernelError::InvalidInputLength {
             input: "stage5.instruction_read_raf.ra_virtual_log_k_chunk",
             expected: LOG_K,
@@ -3420,7 +3496,7 @@ fn append_opening_claims<F, T>(
     store: &mut Stage5ValueStore<F>,
     transcript: &mut T,
     evals: &[Stage5NamedEval<F>],
-) -> Result<(), Stage5KernelError>
+) -> Result<Vec<Stage5OpeningClaimValue<F>>, Stage5KernelError>
 where
     F: Field,
     T: Transcript<Challenge = F>,
@@ -3429,9 +3505,10 @@ where
         for eval in evals {
             append_labeled_scalar(transcript, "opening_claim", &eval.value);
         }
-        return Ok(());
+        return Ok(Vec::new());
     }
     let _ = store.evaluate_available_points(program)?;
+    let mut opening_claims = Vec::new();
     let mut seen = program
         .opening_inputs
         .iter()
@@ -3449,17 +3526,25 @@ where
                     claim: symbol,
                 })?;
             let point = store.point(claim.point_source)?.to_vec();
-            if seen.iter().any(|(kind, oracle, seen_point)| {
+            let duplicate = seen.iter().any(|(kind, oracle, seen_point)| {
                 *kind == claim.claim_kind && *oracle == claim.oracle && seen_point == &point
-            }) {
-                continue;
-            }
+            });
             let value = store.scalar(claim.eval_source)?;
-            append_labeled_scalar(transcript, "opening_claim", &value);
-            seen.push((claim.claim_kind, claim.oracle, point));
+            if !duplicate {
+                append_labeled_scalar(transcript, "opening_claim", &value);
+                seen.push((claim.claim_kind, claim.oracle, point.clone()));
+            }
+            opening_claims.push(Stage5OpeningClaimValue {
+                symbol: claim.symbol,
+                oracle: claim.oracle,
+                domain: claim.domain,
+                claim_kind: claim.claim_kind,
+                point: point.clone(),
+                eval: value,
+            });
         }
     }
-    Ok(())
+    Ok(opening_claims)
 }
 
 fn find_opening_claim<'a>(
@@ -3572,7 +3657,7 @@ fn lt_evals_big_endian<F: Field>(point: &[F]) -> Vec<F> {
 }
 
 fn operand_polynomial_eval<F: Field>(point: &[F], left: bool) -> F {
-    let stride_offset = if left { 0 } else { 1 };
+    let stride_offset = usize::from(!left);
     let operand_bits = point.len() / 2;
     (0..operand_bits)
         .map(|index| point[2 * index + stride_offset].mul_pow_2(operand_bits - 1 - index))
@@ -3719,6 +3804,9 @@ where
                     }
                 };
                 executor.observe_sumcheck_output(&output)?;
+                artifacts
+                    .opening_claims
+                    .extend(output.opening_claims.clone());
                 artifacts.sumchecks.push(output);
             }
             _ => {
@@ -4242,6 +4330,7 @@ mod tests {
                 driver: context.driver.symbol,
                 point: vec![Fr::from_u64(7)],
                 evals: Vec::new(),
+                opening_claims: Vec::new(),
                 proof: SumcheckProof {
                     round_polynomials: Vec::new(),
                 },

@@ -21,6 +21,7 @@ pub struct ProtocolArtifactConfig {
     pub common_dependencies: Vec<String>,
     pub prover_dependencies: Vec<String>,
     pub verifier_dependencies: Vec<String>,
+    pub instrumentation_prefix: Option<String>,
     pub prover_forbidden_imports: Vec<String>,
     pub verifier_forbidden_imports: Vec<String>,
     pub kernel_crate: Option<ProtocolCrateRef>,

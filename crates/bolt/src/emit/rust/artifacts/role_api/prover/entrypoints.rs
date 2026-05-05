@@ -46,5 +46,6 @@ pub(super) fn push_entrypoints(
         types.proof_type,
         types.prover_artifacts_type,
         extension,
+        types.instrumentation_prefix,
     );
 }

@@ -91,7 +91,6 @@ impl<F: Field> ExpandingTable<F> {
                     *right = *left * challenge;
                     *left -= *right;
                 });
-            return;
         }
 
         #[cfg(not(feature = "parallel"))]
@@ -116,7 +115,6 @@ impl<F: Field> ExpandingTable<F> {
                     dest[1] = eval_1;
                 });
             std::mem::swap(&mut self.values, &mut self.scratch_space);
-            return;
         }
 
         #[cfg(not(feature = "parallel"))]

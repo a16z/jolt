@@ -1,15 +1,23 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
+use melior::ir::block::BlockLike;
 use melior::ir::operation::OperationRef;
+use melior::ir::operation::{OperationLike, OperationResult};
 use melior::ir::Value;
 
-use crate::ir::{BoltModule, Compute, Party, Protocol};
+use crate::ir::{BoltModule, Compute, Party, Protocol, Role};
 use crate::mlir::{verify_module, MeliorContext, MlirError};
-use crate::schema::{verify_protocol_schema, SchemaError};
+use crate::schema::{
+    operation_name, symbol_attr, verify_compute_schema, verify_party_schema,
+    verify_protocol_schema, SchemaError,
+};
 
 use super::super::oracles;
 use super::super::params::JoltProtocolParams;
-use super::lowering::{lower_party_to_compute, transcript_squeeze_protocol_result_type};
+use super::lowering::{
+    copy_attrs, field_lowering_attrs as field_compute_attrs, string_attr,
+    transcript_squeeze_compute_result_types, transcript_squeeze_protocol_result_type,
+};
 
 const PRODUCT_UNISKIP_DEGREE_BOUND: usize = 6;
 const PRODUCT_UNISKIP_DOMAIN_START: isize = -1;
@@ -146,7 +154,386 @@ pub fn lower_stage2_to_compute<'c>(
     context: &'c MeliorContext,
     module: &BoltModule<'c, Party>,
 ) -> Result<BoltModule<'c, Compute>, MlirError> {
-    lower_party_to_compute(context, module, "jolt.stage2", "jolt.stage2", "stage2")
+    verify_party_schema(module)?;
+    let role = module
+        .role()
+        .ok_or_else(|| schema_error("stage2 lowering requires party role"))?;
+    let params = stage_params(module)?;
+    let compute = context.new_module::<Compute>(&module.name(), Some(role.clone()));
+    context.append_op_with_owned_attrs(
+        &compute,
+        "compute.params",
+        Some("jolt.compute_params"),
+        &[
+            ("field".to_owned(), symbol_ref(&params.field)),
+            ("pcs".to_owned(), symbol_ref(&params.pcs)),
+            ("transcript".to_owned(), symbol_ref(&params.transcript)),
+        ],
+    )?;
+    context.append_op(
+        &compute,
+        "compute.function",
+        Some("jolt.stage2"),
+        &[("source", "@jolt.stage2")],
+    )?;
+
+    let mut value_map = BTreeMap::new();
+    let mut operation = module.as_mlir_module().body().first_operation();
+    while let Some(op) = operation {
+        operation = op.next_in_block();
+        match operation_name(op).as_str() {
+            "piop.relation" => {
+                let attrs = copy_attrs(
+                    op,
+                    &["kind", "domain", "num_rounds", "degree", "output_count"],
+                )?;
+                let symbol = string_attr(op, "sym_name")?;
+                context.append_op_with_owned_attrs(
+                    &compute,
+                    "compute.relation",
+                    Some(&symbol),
+                    &attrs,
+                )?;
+            }
+            "transcript.state" => {
+                let attrs = copy_attrs(op, &["scheme"])?;
+                let symbol = string_attr(op, "sym_name")?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.transcript_init",
+                    Some(&symbol),
+                    &attrs,
+                    &[],
+                    &["!compute.transcript_state"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "transcript.absorb_bytes" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["label", "payload"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.transcript_absorb_bytes",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.transcript_state"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "transcript.squeeze" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["label", "kind", "count"])?;
+                let result_types = transcript_squeeze_compute_result_types(op)?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.transcript_squeeze",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &result_types,
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+                insert_result_mapping(&mut value_map, op, operation, 1, 1)?;
+            }
+            "field.const" => {
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["field", "value"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.field_const",
+                    Some(&symbol),
+                    &attrs,
+                    &[],
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "field.zero" | "field.one" => {
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["field"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    &format!("compute.{}", operation_name(op).replace('.', "_")),
+                    Some(&symbol),
+                    &attrs,
+                    &[],
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "field.add" | "field.sub" | "field.mul" | "field.neg" | "field.pow" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = field_compute_attrs(op)?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    &format!("compute.{}", operation_name(op).replace('.', "_")),
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "poly.lagrange_basis_eval" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["domain_start", "domain_size", "index"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.poly_lagrange_basis_eval",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "piop.opening_input" => {
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "source_stage",
+                        "source_claim",
+                        "oracle",
+                        "domain",
+                        "point_arity",
+                        "claim_kind",
+                    ],
+                )?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.opening_input",
+                    Some(&symbol),
+                    &attrs,
+                    &[],
+                    &[
+                        "!compute.point",
+                        "!compute.field_value",
+                        "!compute.opening_claim_type",
+                    ],
+                )?;
+                for index in 0..3 {
+                    insert_result_mapping(&mut value_map, op, operation, index, index)?;
+                }
+            }
+            "poly.point_slice" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["source", "offset", "length"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.point_slice",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.point"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "poly.point_concat" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["layout", "arity"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.point_concat",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.point"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "piop.sumcheck_claim" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "stage",
+                        "domain",
+                        "num_rounds",
+                        "degree",
+                        "claim",
+                        "relation",
+                    ],
+                )?;
+                let target_op = match &role {
+                    Role::Prover => "compute.sumcheck_claim",
+                    Role::Verifier => "compute.sumcheck_verify_claim",
+                };
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    target_op,
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.sumcheck_claim_type"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "piop.sumcheck_batch" => {
+                let operands = lowered_operands(op, &value_map, 1)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "stage",
+                        "proof_slot",
+                        "policy",
+                        "count",
+                        "ordered_claims",
+                        "claim_label",
+                        "round_label",
+                        "round_schedule",
+                    ],
+                )?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.sumcheck_batch",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.sumcheck_batch_type"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "piop.sumcheck" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "stage",
+                        "proof_slot",
+                        "relation",
+                        "policy",
+                        "round_schedule",
+                        "claim_label",
+                        "round_label",
+                        "num_rounds",
+                        "degree",
+                    ],
+                )?;
+                let target_op = match &role {
+                    Role::Prover => "compute.sumcheck_driver",
+                    Role::Verifier => "compute.sumcheck_verify",
+                };
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    target_op,
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &[
+                        "!compute.transcript_state",
+                        "!compute.point",
+                        "!compute.sumcheck_result_type",
+                        "!compute.sumcheck_proof_type",
+                    ],
+                )?;
+                for index in 0..4 {
+                    insert_result_mapping(&mut value_map, op, operation, index, index)?;
+                }
+            }
+            "piop.sumcheck_eval" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["source", "name", "index", "oracle"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.sumcheck_eval",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "piop.sumcheck_instance_result" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "source",
+                        "claim",
+                        "relation",
+                        "index",
+                        "point_arity",
+                        "num_rounds",
+                        "round_offset",
+                        "point_order",
+                        "degree",
+                    ],
+                )?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.sumcheck_instance_result",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.point", "!compute.sumcheck_result_type"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+                insert_result_mapping(&mut value_map, op, operation, 1, 1)?;
+            }
+            "piop.opening_claim" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["oracle", "domain", "point_arity", "claim_kind"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.opening_claim",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.opening_claim_type"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "piop.opening_claim_equal" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["mode"])?;
+                let _operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.opening_claim_equal",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &[],
+                )?;
+            }
+            "piop.opening_batch" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(
+                    op,
+                    &["stage", "proof_slot", "policy", "count", "ordered_claims"],
+                )?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.opening_batch",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.opening_batch_type"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            _ => {}
+        }
+    }
+
+    verify_module(&compute)?;
+    verify_compute_schema(&compute)?;
+    Ok(compute)
 }
 
 fn append_stage2_domains<'c>(
@@ -926,7 +1313,7 @@ fn append_stage2_batched_sumcheck<'c, 'a>(
             point_arity: max_rounds,
             num_rounds: max_rounds,
             round_offset: 0,
-            point_order: "as_is",
+            point_order: "reverse",
             degree: RAM_RW_DEGREE,
         },
         point,
@@ -1445,6 +1832,110 @@ fn result<'c, 'a>(
         .result(index)
         .map(Into::into)
         .map_err(|_| schema_error(format!("{operation_name} requires result {index}")))
+}
+
+#[derive(Clone, Debug)]
+struct StageParamsAst {
+    field: String,
+    pcs: String,
+    transcript: String,
+}
+
+fn stage_params(module: &BoltModule<'_, Party>) -> Result<StageParamsAst, MlirError> {
+    let mut operation = module.as_mlir_module().body().first_operation();
+    while let Some(op) = operation {
+        operation = op.next_in_block();
+        if operation_name(op) == "protocol.params" {
+            return Ok(StageParamsAst {
+                field: symbol_attr(op, "field")?,
+                pcs: symbol_attr(op, "pcs")?,
+                transcript: symbol_attr(op, "transcript")?,
+            });
+        }
+    }
+    Err(schema_error("stage2 lowering requires protocol.params"))
+}
+
+fn operation_result_key_at(
+    operation: OperationRef<'_, '_>,
+    index: usize,
+) -> Result<String, MlirError> {
+    let result = operation.result(index).map_err(|_| {
+        schema_error(format!(
+            "{} requires result {index}",
+            operation_name(operation)
+        ))
+    })?;
+    result_key(result.owner(), result.result_number())
+}
+
+fn result_key(operation: OperationRef<'_, '_>, result_number: usize) -> Result<String, MlirError> {
+    Ok(format!(
+        "{}#{result_number}",
+        string_attr(operation, "sym_name")?
+    ))
+}
+
+fn operand_key(operation: OperationRef<'_, '_>, index: usize) -> Result<String, MlirError> {
+    let operand = operation.operand(index).map_err(|_| {
+        schema_error(format!(
+            "{} requires operand {index}",
+            operation_name(operation)
+        ))
+    })?;
+    let owner = OperationResult::try_from(operand).map_err(|_| {
+        schema_error(format!(
+            "{} operand {index} must be an op result",
+            operation_name(operation)
+        ))
+    })?;
+    result_key(owner.owner(), owner.result_number()).map_err(|_| {
+        schema_error(format!(
+            "{} operand {index} owner missing sym_name",
+            operation_name(operation)
+        ))
+    })
+}
+
+fn lowered_operands<'c, 'a>(
+    operation: OperationRef<'_, '_>,
+    value_map: &BTreeMap<String, Value<'c, 'a>>,
+    start_index: usize,
+) -> Result<Vec<Value<'c, 'a>>, MlirError> {
+    (start_index..operation.operand_count())
+        .map(|index| {
+            let key = operand_key(operation, index)?;
+            value_map.get(&key).copied().ok_or_else(|| {
+                schema_error(format!(
+                    "{} operand {index} was not lowered",
+                    operation_name(operation)
+                ))
+            })
+        })
+        .collect()
+}
+
+fn insert_result_mapping<'c, 'a>(
+    value_map: &mut BTreeMap<String, Value<'c, 'a>>,
+    source: OperationRef<'_, '_>,
+    target: OperationRef<'c, 'a>,
+    source_index: usize,
+    target_index: usize,
+) -> Result<(), MlirError> {
+    let key = operation_result_key_at(source, source_index)?;
+    let value = target.result(target_index).map(Into::into).map_err(|_| {
+        schema_error(format!(
+            "{} requires result {target_index}",
+            operation_name(target)
+        ))
+    })?;
+    let inserted = value_map.insert(key, value);
+    debug_assert!(inserted.is_none());
+    Ok(())
+}
+
+fn symbol_ref(symbol: &str) -> String {
+    format!("@{symbol}")
 }
 
 fn stage2_max_rounds(params: &JoltProtocolParams) -> usize {

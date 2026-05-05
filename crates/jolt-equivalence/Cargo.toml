@@ -9,8 +9,9 @@ description = "Cross-system equivalence testing between jolt-core and Bolt-gener
 workspace = true
 
 [dependencies]
-# jolt-core reference prover/verifier.
-jolt-core = { path = "../../jolt-core", features = ["host"] }
+# jolt-core reference prover/verifier. Equivalence tests compare against the
+# generated full-field Fiat-Shamir path.
+jolt-core = { path = "../../jolt-core", features = ["host", "challenge-254-bit"] }
 ark-bn254.workspace = true
 ark-ff.workspace = true
 ark-serialize.workspace = true
@@ -26,10 +27,12 @@ jolt-prover = { path = "../jolt-prover" }
 jolt-verifier = { path = "../jolt-verifier" }
 jolt-trace = { path = "../jolt-trace" }
 jolt-dory = { path = "../jolt-dory" }
+jolt-inlines-sha2.workspace = true
 jolt-kernels = { path = "../jolt-kernels" }
 jolt-lookup-tables = { path = "../jolt-lookup-tables" }
 jolt-openings = { path = "../jolt-openings", features = ["test-utils"] }
 jolt-poly = { path = "../jolt-poly" }
+jolt-profiling = { path = "../jolt-profiling" }
 jolt-r1cs = { path = "../jolt-r1cs" }
 jolt-sumcheck = { path = "../jolt-sumcheck" }
 jolt-witness = { path = "../jolt-witness" }
@@ -37,4 +40,6 @@ tracer = { path = "../../tracer" }
 num-traits.workspace = true
 blake2.workspace = true
 rayon.workspace = true
+serde.workspace = true
 strum.workspace = true
+tracing.workspace = true

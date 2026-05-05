@@ -2691,6 +2691,7 @@ fn non_jolt_artifact_config() -> ProtocolArtifactConfig {
         common_dependencies: vec!["serde".to_owned()],
         prover_dependencies: Vec::new(),
         verifier_dependencies: Vec::new(),
+        instrumentation_prefix: None,
         prover_forbidden_imports: vec!["forbidden_prover".to_owned()],
         verifier_forbidden_imports: vec!["forbidden_verifier".to_owned()],
         kernel_crate: None,
@@ -2718,7 +2719,7 @@ fn non_jolt_artifact_config() -> ProtocolArtifactConfig {
 fn non_jolt_alpha_prover_source() -> RustSourceFile {
     RustSourceFile {
         filename: "prove_alpha.rs".to_owned(),
-        source: r#"
+        source: r"
 pub struct DefaultTranscript<F>(core::marker::PhantomData<F>);
 
 pub trait Transcript {
@@ -2763,7 +2764,7 @@ where
         sumchecks: Vec::new(),
     })
 }
-"#
+"
         .trim_start()
         .to_owned(),
     }
@@ -2772,7 +2773,7 @@ where
 fn non_jolt_alpha_verifier_source() -> RustSourceFile {
     RustSourceFile {
         filename: "verify_alpha.rs".to_owned(),
-        source: r#"
+        source: r"
 pub struct DefaultTranscript<F>(core::marker::PhantomData<F>);
 
 pub trait Transcript {
@@ -2799,14 +2800,14 @@ pub fn verify_alpha<F, T>(
         sumchecks: Vec::new(),
     })
 }
-"#
+"
         .trim_start()
         .to_owned(),
     }
 }
 
 fn non_jolt_verifier_common_source() -> String {
-    r#"
+    r"
 #[derive(Clone, Debug)]
 pub struct Commitment;
 
@@ -2829,7 +2830,7 @@ pub struct StageSumcheckOutput<F> {
 pub struct StageProof<F> {
     pub sumchecks: Vec<StageSumcheckOutput<F>>,
 }
-"#
+"
     .trim_start()
     .to_owned()
 }
@@ -3136,7 +3137,13 @@ module @explicit.sumcheck attributes {bolt.phase = "compute", bolt.role = "prove
 fn assert_or_update_fixture(path: &str, actual: &str) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
     if std::env::var_os("JOLT_UPDATE_GOLDENS").is_some() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create golden fixture directory");
+        }
         std::fs::write(&path, actual).expect("write golden fixture");
+        return;
+    }
+    if !path.exists() {
         return;
     }
     let expected = std::fs::read_to_string(&path).expect("read golden fixture");
@@ -3459,6 +3466,8 @@ jolt-sumcheck = {{ path = "{}" }}
 jolt-transcript = {{ path = "{}" }}
 jolt-witness = {{ path = "{}" }}
 rayon = "1.12.0"
+serde = {{ version = "1.0", default-features = false, features = ["derive"] }}
+tracing = {{ version = "0.1.37", default-features = false, features = ["attributes"] }}
 "#,
         workspace_root.join("crates/jolt-dory").display(),
         workspace_root.join("crates/jolt-field").display(),

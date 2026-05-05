@@ -98,7 +98,8 @@ where
             reason: "driver symbol mismatch",
         });
     }
-    match driver.relation {
+    let relation = driver.relation.unwrap_or("<missing>");
+    match relation {
         "jolt.stage1.outer.uniskip" => verify_outer_uniskip(program, driver, proof, transcript),
         "jolt.stage1.outer.remaining" => {
             verify_outer_remaining(program, driver, proof, completed, transcript)

@@ -79,7 +79,8 @@ pub struct Stage1SumcheckClaimPlan {
     pub num_rounds: usize,
     pub degree: usize,
     pub claim: &'static str,
-    pub kernel: &'static str,
+    pub kernel: Option<&'static str>,
+    pub relation: Option<&'static str>,
     pub claim_value: &'static str,
     pub input_openings: &'static [&'static str],
 }
@@ -103,7 +104,8 @@ pub struct Stage1SumcheckDriverPlan {
     pub symbol: &'static str,
     pub stage: &'static str,
     pub proof_slot: &'static str,
-    pub kernel: &'static str,
+    pub kernel: Option<&'static str>,
+    pub relation: Option<&'static str>,
     pub batch: &'static str,
     pub policy: &'static str,
     pub round_schedule: &'static [usize],
@@ -1144,10 +1146,14 @@ where
         });
     }
     for driver in program.drivers {
+        let kernel_symbol = driver.kernel.ok_or(Stage1KernelError::MissingKernel {
+            driver: driver.symbol,
+            kernel: "<missing>",
+        })?;
         let kernel =
-            find_kernel(program, driver.kernel).ok_or(Stage1KernelError::MissingKernel {
+            find_kernel(program, kernel_symbol).ok_or(Stage1KernelError::MissingKernel {
                 driver: driver.symbol,
-                kernel: driver.kernel,
+                kernel: kernel_symbol,
             })?;
         let batch = find_batch(program, driver.batch).ok_or(Stage1KernelError::MissingBatch {
             driver: driver.symbol,
@@ -1699,7 +1705,7 @@ fn build_outer_uniskip_poly<F: Field>(
     }
 
     let mut t1_values = vec![F::zero(); OUTER_UNISKIP_EXTENDED_SIZE];
-    for (value, target) in extended_evals.iter().zip(uniskip_targets()) {
+    for (value, target) in extended_evals.iter().zip(outer_uniskip_targets()) {
         let index = (target - OUTER_UNISKIP_EXTENDED_START) as usize;
         t1_values[index] = *value;
     }
@@ -1721,7 +1727,9 @@ fn build_outer_uniskip_poly<F: Field>(
     Ok(UnivariatePoly::new(coefficients))
 }
 
-fn uniskip_targets() -> [i64; OUTER_UNISKIP_DEGREE] {
+/// Returns the off-domain targets used by the Stage 1 outer univariate-skip
+/// round polynomial.
+pub fn outer_uniskip_targets() -> [i64; OUTER_UNISKIP_DEGREE] {
     let ext_left = OUTER_UNISKIP_EXTENDED_START;
     let ext_right = OUTER_UNISKIP_DEGREE as i64;
     let base_left = OUTER_UNISKIP_BASE_START;
@@ -1752,6 +1760,27 @@ fn uniskip_targets() -> [i64; OUTER_UNISKIP_DEGREE] {
         positive += 1;
     }
     targets
+}
+
+/// Recovers the Stage 1 outer univariate-skip extended evaluations from a
+/// first-round proof polynomial.
+pub fn outer_uniskip_extended_evals_from_round_poly<F: Field>(
+    round_poly: &UnivariatePoly<F>,
+    tau_high: F,
+) -> Vec<F> {
+    outer_uniskip_targets()
+        .into_iter()
+        .map(|target| {
+            let y = F::from_i64(target);
+            let kernel = lagrange_kernel_eval(
+                OUTER_UNISKIP_BASE_START,
+                OUTER_UNISKIP_DOMAIN_SIZE,
+                tau_high,
+                y,
+            );
+            round_poly.evaluate(y) / kernel
+        })
+        .collect()
 }
 
 fn boolean_index<F: Field>(point: &[F]) -> Option<usize> {
@@ -2248,7 +2277,8 @@ mod tests {
         num_rounds: 1,
         degree: OUTER_UNISKIP_DEGREE_BOUND,
         claim: "zero",
-        kernel: "kernel",
+        kernel: Some("kernel"),
+        relation: None,
         claim_value: "zero",
         input_openings: &[],
     }];
@@ -2310,7 +2340,7 @@ mod tests {
 
     #[test]
     fn uniskip_integer_coefficients_match_lagrange_weights() {
-        for (target, coefficients) in uniskip_targets()
+        for (target, coefficients) in outer_uniskip_targets()
             .into_iter()
             .zip(OUTER_UNISKIP_TARGET_COEFFS)
         {
@@ -2363,7 +2393,8 @@ mod tests {
             num_rounds: 1,
             degree: OUTER_UNISKIP_DEGREE_BOUND,
             claim: "zero",
-            kernel: "uniskip_kernel",
+            kernel: Some("uniskip_kernel"),
+            relation: None,
             claim_value: "zero",
             input_openings: &[],
         },
@@ -2374,7 +2405,8 @@ mod tests {
             num_rounds: 2,
             degree: OUTER_REMAINING_DEGREE_BOUND,
             claim: "stage1.uniskip.opening",
-            kernel: "remaining_kernel",
+            kernel: Some("remaining_kernel"),
+            relation: None,
             claim_value: "stage1.uniskip.eval",
             input_openings: &["stage1.uniskip.opening"],
         },
@@ -2409,7 +2441,8 @@ mod tests {
         symbol: "driver",
         stage: "stage",
         proof_slot: "proof",
-        kernel: "kernel",
+        kernel: Some("kernel"),
+        relation: None,
         batch: "batch",
         policy: "single",
         round_schedule: &[1],
@@ -2423,7 +2456,8 @@ mod tests {
             symbol: "stage1.uniskip.sumcheck",
             stage: "stage",
             proof_slot: "uniskip_proof",
-            kernel: "uniskip_kernel",
+            kernel: Some("uniskip_kernel"),
+            relation: None,
             batch: "uniskip_batch",
             policy: "univariate_skip",
             round_schedule: &[1],
@@ -2436,7 +2470,8 @@ mod tests {
             symbol: "stage1.outer_remaining.sumcheck",
             stage: "stage",
             proof_slot: "remaining_proof",
-            kernel: "remaining_kernel",
+            kernel: Some("remaining_kernel"),
+            relation: None,
             batch: "remaining_batch",
             policy: "jolt_core_front_loaded",
             round_schedule: &[2],

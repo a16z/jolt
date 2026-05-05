@@ -56,7 +56,6 @@ pub(super) use sumcheck_proofs::{
     CPU_SUMCHECK_DRIVER_RESULT_TYPES, SUMCHECK_KERNEL_CLAIM_SOURCE_ATTRS,
     SUMCHECK_KERNEL_DRIVER_SOURCE_ATTRS,
 };
-pub(crate) use transcript::transcript_squeeze_protocol_result_type;
 pub(super) use transcript::{
     classify_compute_transcript_op, lower_transcript_op, transcript_squeeze_compute_result_types,
     transcript_squeeze_cpu_result_types, TranscriptDialect, TranscriptOpFamily,

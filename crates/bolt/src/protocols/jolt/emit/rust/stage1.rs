@@ -216,8 +216,8 @@ pub use super::common::{
     SumcheckBatchPlan as Stage1SumcheckBatchPlan, SumcheckEvalPlan as Stage1SumcheckEvalPlan,
     SumcheckInstanceResultPlan as Stage1SumcheckInstanceResultPlan,
     TranscriptSqueezePlan as Stage1TranscriptSqueezePlan,
-    VerifierSumcheckClaimPlan as Stage1SumcheckClaimPlan,
-    VerifierSumcheckDriverPlan as Stage1SumcheckDriverPlan,
+    SumcheckClaimPlan as Stage1SumcheckClaimPlan,
+    SumcheckDriverPlan as Stage1SumcheckDriverPlan,
 };
 
 #[derive(Debug)]

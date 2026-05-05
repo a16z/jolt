@@ -246,7 +246,7 @@ impl Stage3CpuProgram {
                         missing_role_binding("prover claim kernel", &claim.symbol)
                     })?;
                     claims.push(format!(
-                        "    Stage3SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: {}, claim_value: {}, input_openings: STAGE3_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS }},",
+                        "    Stage3SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: Some({}), relation: None, claim_value: {}, input_openings: STAGE3_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS }},",
                         rust_str(&claim.symbol),
                         rust_str(&claim.stage),
                         rust_str(&claim.domain),
@@ -262,7 +262,7 @@ impl Stage3CpuProgram {
                         missing_role_binding("verifier claim relation", &claim.symbol)
                     })?;
                     claims.push(format!(
-                        "    Stage3SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, relation: {}, claim_value: {}, input_openings: {} }},",
+                        "    Stage3SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: None, relation: Some({}), claim_value: {}, input_openings: {} }},",
                         rust_str(&claim.symbol),
                         rust_str(&claim.stage),
                         rust_str(&claim.domain),
@@ -372,7 +372,7 @@ impl Stage3CpuProgram {
                         missing_role_binding("prover driver kernel", &driver.symbol)
                     })?;
                     drivers.push(format!(
-                        "    Stage3SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, kernel: {}, batch: {}, policy: {}, round_schedule: STAGE3_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
+                        "    Stage3SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, kernel: Some({}), relation: None, batch: {}, policy: {}, round_schedule: STAGE3_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
                         rust_str(&driver.symbol),
                         rust_str(&driver.stage),
                         rust_str(&driver.proof_slot),
@@ -390,7 +390,7 @@ impl Stage3CpuProgram {
                         missing_role_binding("verifier driver relation", &driver.symbol)
                     })?;
                     drivers.push(format!(
-                        "    Stage3SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, relation: {}, batch: {}, policy: {}, round_schedule: STAGE3_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
+                        "    Stage3SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, kernel: None, relation: Some({}), batch: {}, policy: {}, round_schedule: STAGE3_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
                         rust_str(&driver.symbol),
                         rust_str(&driver.stage),
                         rust_str(&driver.proof_slot),

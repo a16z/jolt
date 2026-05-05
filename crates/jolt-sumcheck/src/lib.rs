@@ -1,9 +1,9 @@
 //! Sumcheck protocol: claims, proofs, and verification.
 //!
 //! Verifier-side types and logic for the sumcheck protocol, used by the Jolt
-//! zkVM. This crate is **verifier-only** and **backend-agnostic**: any field and
-//! transcript can be plugged in. Proving is handled by `jolt-zkvm`'s runtime,
-//! which drives sumcheck rounds via `ComputeBackend` primitives.
+//! zkVM. This crate is **verifier-side** and **backend-agnostic**: any field and
+//! transcript can be plugged in. Prover-side code drives sumcheck rounds and
+//! emits proof data that these verifier primitives check.
 //!
 //! # Protocol overview
 //!

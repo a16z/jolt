@@ -8,4 +8,5 @@ pub(in crate::emit::rust::artifacts::role_api::prover) struct ProverEntryTypes<'
     pub prover_programs_type: &'a str,
     pub prover_artifacts_type: &'a str,
     pub prove_error_type: &'a str,
+    pub instrumentation_prefix: Option<&'a str>,
 }
