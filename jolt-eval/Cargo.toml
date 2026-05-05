@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 jolt-core = { workspace = true, features = ["host"] }
+jolt-program = { workspace = true }
+jolt-riscv = { workspace = true }
 jolt-field = { workspace = true }
 common = { workspace = true, features = ["std"] }
 tracer = { workspace = true }
@@ -56,6 +58,10 @@ harness = false
 
 [[bench]]
 name = "field_mul_u64"
+harness = false
+
+[[bench]]
+name = "decode_expand"
 harness = false
 
 [[bench]]

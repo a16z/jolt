@@ -373,13 +373,16 @@ impl Program {
         trusted_advice: &[u8],
     ) -> ProgramSummary {
         let (bytecode, init_memory_state, _, _) = self.decode();
-        let (_, trace, _, io_device) = self.trace(inputs, untrusted_advice, trusted_advice);
+        let mut backend = tracer::TracerBackend::new();
+        let trace_output = self
+            .trace_with_backend(&mut backend, inputs, untrusted_advice, trusted_advice)
+            .expect("failed to trace program with default tracer backend");
 
         ProgramSummary {
-            trace,
+            trace: trace_output.trace.into_rows(),
             bytecode,
             memory_init: init_memory_state,
-            io_device,
+            io_device: trace_output.device,
         }
     }
 

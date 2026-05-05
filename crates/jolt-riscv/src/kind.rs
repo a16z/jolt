@@ -68,6 +68,19 @@ macro_rules! define_instruction_kind {
                 Ok(())
             }
         }
+
+        impl InstructionKind {
+            pub const fn name(self) -> &'static str {
+                match self {
+                    Self::NoOp => "NoOp",
+                    Self::Unimpl => "Unimpl",
+                    $(
+                        Self::$instr => stringify!($instr),
+                    )*
+                    Self::Inline => "Inline",
+                }
+            }
+        }
     };
 }
 

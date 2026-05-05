@@ -5,7 +5,7 @@ use crate::preprocess::{
     bytecode::BytecodePreprocessing, ram::RAMPreprocessing, PreprocessingError,
 };
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct JoltProgramPreprocessing {
     pub bytecode: BytecodePreprocessing,
     pub ram: RAMPreprocessing,

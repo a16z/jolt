@@ -5,6 +5,8 @@ use common::constants::BYTES_PER_INSTRUCTION;
     Default,
     Debug,
     Clone,
+    PartialEq,
+    Eq,
     CanonicalSerialize,
     CanonicalDeserialize,
     serde::Serialize,

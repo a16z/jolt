@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use jolt_program::execution::{
-    ExecutableProgram, ExecutionBackend, OwnedTrace, RamAccess as ProgramRamAccess, RamRead,
-    RamWrite, RegisterRead, RegisterState, RegisterWrite, TraceError, TraceInputs, TraceOutput,
-    TraceRow,
+    ExecutableProgram, ExecutionBackend, MemoryImage, OwnedTrace, RamAccess as ProgramRamAccess,
+    RamRead, RamWrite, RegisterRead, RegisterState, RegisterWrite, TraceError, TraceInputs,
+    TraceOutput, TraceRow,
 };
 use jolt_riscv::NormalizedInstruction;
 
@@ -38,7 +38,7 @@ impl ExecutionBackend for TracerBackend {
             return Err(TraceError::MissingElfBytes);
         }
 
-        let (_lazy_trace, cycles, _final_memory, device, _advice_tape) = crate::trace(
+        let (_lazy_trace, cycles, final_memory, device, _advice_tape) = crate::trace(
             program.elf_bytes(),
             self.elf_path.as_ref(),
             &inputs.inputs,
@@ -49,7 +49,13 @@ impl ExecutionBackend for TracerBackend {
         );
 
         let rows = cycles.into_iter().map(trace_row_from_cycle).collect();
-        Ok(TraceOutput::new(OwnedTrace::new(rows), device, None))
+        Ok(TraceOutput::new(
+            OwnedTrace::new(rows),
+            device,
+            Some(MemoryImage {
+                bytes: final_memory.materialized_nonzero_bytes(),
+            }),
+        ))
     }
 }
 

@@ -2810,6 +2810,8 @@ dependencies = [
  "jolt-field",
  "jolt-inlines-secp256k1",
  "jolt-inlines-sha2",
+ "jolt-program",
+ "jolt-riscv",
  "postcard",
  "rand 0.8.5",
  "rust-code-analysis",
@@ -3081,10 +3083,12 @@ dependencies = [
  "common",
  "jolt-core",
  "jolt-platform",
+ "jolt-program",
  "jolt-sdk-macros",
  "postcard",
  "riscv 0.16.0",
  "serde",
+ "tracer",
  "zeroos",
 ]
 
