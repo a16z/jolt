@@ -3,26 +3,8 @@ name: Bolt perf oracle
 on:
   pull_request:
     branches: [main]
-    paths:
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "crates/bolt/**"
-      - "crates/jolt-equivalence/**"
-      - "crates/jolt-profiling/**"
-      - "crates/jolt-prover/**"
-      - "crates/jolt-verifier/**"
-      - "crates/jolt-kernels/**"
   push:
     branches: [main]
-    paths:
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "crates/bolt/**"
-      - "crates/jolt-equivalence/**"
-      - "crates/jolt-profiling/**"
-      - "crates/jolt-prover/**"
-      - "crates/jolt-verifier/**"
-      - "crates/jolt-kernels/**"
   schedule:
     - cron: "23 8 * * *"
   workflow_dispatch:
@@ -75,7 +57,7 @@ jobs:
   sha2-chain-2-20:
     name: sha2-chain 2^20 core-vs-Bolt
     runs-on: macos-latest
-    if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.include_large == 'true')
+    if: github.event_name != 'workflow_dispatch' || inputs.include_large == 'true'
     steps:
       - uses: actions/checkout@v6
       - uses: actions-rust-lang/setup-rust-toolchain@v1

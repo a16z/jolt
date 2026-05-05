@@ -5,23 +5,6 @@
 //! element to find the *exact* operation where two systems diverge.
 
 #![expect(clippy::panic, reason = "checkpoint assertions are test gates")]
-//!
-//! # Usage
-//!
-//! ```ignore
-//! // 1. Record the golden reference from jolt-core.
-//! let mut golden = CheckpointTranscript::<Blake2bTranscript<Fr>>::new(LABEL);
-//! // ...run jolt-core prover with `golden` as the transcript...
-//! let golden_log = golden.into_log();
-//!
-//! // 2. Record the candidate from the generated Jolt path.
-//! let mut candidate = CheckpointTranscript::<Blake2bTranscript<Fr>>::new(LABEL);
-//! // ...run the generated prover with `candidate` as the transcript...
-//! let candidate_log = candidate.into_log();
-//!
-//! // 3. Compare.
-//! let divergence = find_divergence(&golden_log, &candidate_log);
-//! ```
 
 use std::fmt;
 

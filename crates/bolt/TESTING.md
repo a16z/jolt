@@ -185,8 +185,8 @@ bolt.verify.dory_verify
 The checked-in CI smoke programs are:
 
 ```text
-PR gate:          bolt_sha2_chain_2_16_core_vs_bolt_perf_oracle
-scheduled/manual: bolt_sha2_chain_2_20_core_vs_bolt_perf_oracle
+PR gate: bolt_sha2_chain_2_16_core_vs_bolt_perf_oracle
+PR gate: bolt_sha2_chain_2_20_core_vs_bolt_perf_oracle
 ```
 
 Both tests live in `jolt-equivalence/tests/bolt_perf.rs` because they reuse the
