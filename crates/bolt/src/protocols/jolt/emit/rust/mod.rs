@@ -1,4 +1,7 @@
+mod checks;
 mod commitment;
+mod mlir;
+mod source;
 mod stage1;
 mod stage2;
 mod stage3;
@@ -7,6 +10,7 @@ mod stage5;
 mod stage6;
 mod stage7;
 mod stage8;
+mod stage_common;
 
 pub use commitment::{
     commitment_cpu_program, emit_commitment_rust, CommitmentBatchPlan, CommitmentCpuProgram,

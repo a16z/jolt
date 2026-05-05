@@ -19,8 +19,10 @@ pub use ir::{
 };
 pub use mlir::{MeliorContext, MlirError};
 pub use pass::{
-    derive_prover_role, derive_verifier_role, lower_piop_and_fiat_shamir, project_party,
-    project_prover_party, project_verifier_party, verify_concrete_transcript, VerifyError,
+    derive_prover_role, derive_verifier_role, lower_compute_to_cpu, lower_party_to_compute,
+    lower_piop_and_fiat_shamir, project_party, project_prover_party, project_verifier_party,
+    resolve_compute_kernels_with, verify_concrete_transcript, ComputeKernelSpec, KernelRegistry,
+    PartyToComputeLowering, VerifyError,
 };
 pub use schema::{
     verify_compute_schema, verify_concrete_schema, verify_cpu_schema, verify_party_schema,

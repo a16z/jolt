@@ -342,7 +342,7 @@ fn generic_compiler_rejects_jolt_protocol_strings() {
 fn jolt_artifact_apis_are_quarantined_out_of_generic_exports() {
     let root = workspace_root();
     let artifact_source =
-        std::fs::read_to_string(root.join("crates/bolt/src/emit/rust/artifacts.rs"))
+        std::fs::read_to_string(root.join("crates/bolt/src/emit/rust/artifacts/mod.rs"))
             .expect("read generic artifact assembly");
     for pattern in [
         "JoltProtocolStage",
@@ -378,6 +378,36 @@ fn jolt_artifact_apis_are_quarantined_out_of_generic_exports() {
         !lib_source.contains("pub use protocols::jolt"),
         "root bolt exports must keep Jolt APIs under bolt::protocols::jolt"
     );
+}
+
+#[test]
+fn jolt_rust_emitters_live_under_protocol_package() {
+    let root = workspace_root();
+    for file_name in [
+        "commitment.rs",
+        "stage1.rs",
+        "stage2.rs",
+        "stage3.rs",
+        "stage4.rs",
+        "stage5.rs",
+        "stage6.rs",
+        "stage7.rs",
+        "stage8.rs",
+    ] {
+        assert!(
+            !root
+                .join("crates/bolt/src/emit/rust")
+                .join(file_name)
+                .exists(),
+            "Jolt Rust emitter `{file_name}` must not live in generic emit/rust"
+        );
+        assert!(
+            root.join("crates/bolt/src/protocols/jolt/emit/rust")
+                .join(file_name)
+                .exists(),
+            "Jolt Rust emitter `{file_name}` is missing from protocols/jolt/emit/rust"
+        );
+    }
 }
 
 fn verifier_cleanup_metrics(verifier_src: &Path) -> VerifierCleanupMetrics {

@@ -20,6 +20,8 @@ security-hardened, and driven by explicit MLIR-derived plan data
 generic over protocol packages instead of Jolt-shaped. `JOLT_PROTOCOL_IMPLEMENTATION.md`
 keeps the durable compiler-boundary rules. `TESTING.md` lists the LOC,
 readability, equivalence, import, MLIR, and tamper gates for this cleanup track.
+`CODE_QUALITY.md` captures the Rust compiler-project idioms Bolt should borrow
+as the implementation is tightened and de-duplicated.
 
 ## Compiler Shape
 
