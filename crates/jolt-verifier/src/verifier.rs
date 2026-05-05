@@ -164,14 +164,7 @@ impl From<OpeningsError> for JoltEvaluationProofError {
     }
 }
 
-pub fn verify_jolt<T>(
-    proof: &JoltProof,
-    inputs: JoltVerifierInputs<'_>,
-    transcript: &mut T,
-) -> Result<JoltVerificationArtifacts, JoltVerifyError>
-where
-    T: Transcript<Challenge = Fr>,
-{
+pub fn verify_jolt<T: Transcript<Challenge = Fr>>(proof: &JoltProof, inputs: JoltVerifierInputs<'_>, transcript: &mut T) -> Result<JoltVerificationArtifacts, JoltVerifyError> {
     verify_jolt_with_programs(proof, inputs, default_verifier_programs(), transcript)
 }
 
@@ -183,15 +176,7 @@ pub fn verify_jolt_through_stage6<T: Transcript<Challenge = Fr>>(proof: &JoltPro
 
 pub fn verify_jolt_through_stage7<T: Transcript<Challenge = Fr>>(proof: &JoltProof, inputs: JoltVerifierInputs<'_>, transcript: &mut T) -> Result<JoltVerificationArtifacts, JoltVerifyError> { verify_jolt_through_stage7_with_programs(proof, inputs, default_verifier_programs(), transcript) }
 
-pub fn verify_jolt_with_programs<T>(
-    proof: &JoltProof,
-    inputs: JoltVerifierInputs<'_>,
-    programs: JoltVerifierPrograms,
-    transcript: &mut T,
-) -> Result<JoltVerificationArtifacts, JoltVerifyError>
-where
-    T: Transcript<Challenge = Fr>,
-{
+pub fn verify_jolt_with_programs<T: Transcript<Challenge = Fr>>(proof: &JoltProof, inputs: JoltVerifierInputs<'_>, programs: JoltVerifierPrograms, transcript: &mut T) -> Result<JoltVerificationArtifacts, JoltVerifyError> {
     verify_jolt_with_programs_inner(proof, inputs, programs, transcript, JoltVerifierTarget::Full)
 }
 
