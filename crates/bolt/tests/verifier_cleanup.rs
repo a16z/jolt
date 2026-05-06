@@ -356,7 +356,7 @@ fn generic_compiler_rejects_jolt_protocol_strings() {
 fn jolt_artifact_apis_are_quarantined_out_of_generic_exports() {
     let root = workspace_root();
     let artifact_source =
-        std::fs::read_to_string(root.join("crates/bolt/src/emit/rust/artifacts/mod.rs"))
+        std::fs::read_to_string(root.join("crates/bolt/src/emit/rust/artifacts.rs"))
             .expect("read generic artifact assembly");
     for pattern in [
         "JoltProtocolStage",
