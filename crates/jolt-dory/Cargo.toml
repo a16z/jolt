@@ -5,6 +5,9 @@ edition = "2021"
 license = "MIT"
 description = "Dory commitment scheme implementation for the Jolt zkVM"
 
+[features]
+zk = []
+
 [lints]
 workspace = true
 

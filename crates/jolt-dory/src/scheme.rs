@@ -8,6 +8,7 @@
 )]
 
 use dory::backends::arkworks::{ArkworksProverSetup, G1Routines, G2Routines};
+#[cfg(not(feature = "zk"))]
 use dory::mode::Transparent;
 use dory::primitives::arithmetic::{
     DoryRoutines, Field as DoryField, Group as DoryGroup, PairingCurve,
@@ -77,6 +78,30 @@ pub(crate) fn ark_to_jolt_g1(ark: ArkG1) -> Bn254G1 {
     unsafe { std::mem::transmute(ark) }
 }
 
+/// Blinds `tier_2` in ZK mode (feature = "zk"); no-op otherwise.
+/// Returns the (possibly masked) commitment and the blinding scalar (zero in non-ZK mode).
+// ZK::mask consumes `tier_2` via GT arithmetic, so both variants take it by value.
+#[expect(
+    clippy::large_types_passed_by_value,
+    reason = "ZK::mask(value, ...) requires GT by value; both variants share the signature"
+)]
+#[cfg(feature = "zk")]
+fn maybe_blind(setup: &ArkworksProverSetup, tier_2: ArkGT) -> (ArkGT, Fr) {
+    use dory::mode::{Mode, ZK};
+    let blind_ark = <ZK as Mode>::sample::<ArkFr>();
+    let blinded = <ZK as Mode>::mask(tier_2, &setup.ht, &blind_ark);
+    (blinded, ark_to_jolt_fr(&blind_ark))
+}
+
+#[expect(
+    clippy::large_types_passed_by_value,
+    reason = "symmetric signature with the ZK variant"
+)]
+#[cfg(not(feature = "zk"))]
+fn maybe_blind(_setup: &ArkworksProverSetup, tier_2: ArkGT) -> (ArkGT, Fr) {
+    (tier_2, Fr::default())
+}
+
 #[derive(Clone)]
 pub struct DoryScheme;
 
@@ -91,6 +116,40 @@ impl DoryScheme {
     pub fn setup_verifier(max_num_vars: usize) -> DoryVerifierSetup {
         let prover_setup = Self::setup_prover(max_num_vars);
         DoryVerifierSetup(prover_setup.0.to_verifier_setup())
+    }
+
+    /// Streaming counterpart to [`CommitmentScheme::commit`] that also returns the
+    /// opening hint (including the commit blind). Use this instead of
+    /// [`StreamingCommitment::finish`] when a subsequent `open_zk` call is needed.
+    #[tracing::instrument(skip_all, name = "DoryScheme::finish_with_hint")]
+    pub fn finish_with_hint(
+        partial: crate::types::DoryPartialCommitment,
+        setup: &DoryProverSetup,
+    ) -> (DoryCommitment, DoryHint) {
+        use dory::primitives::arithmetic::PairingCurve;
+        let num_rows = partial.row_commitments.len();
+        assert!(
+            num_rows.is_power_of_two(),
+            "streaming: row count ({num_rows}) must be a power of two",
+        );
+        assert!(
+            num_rows <= setup.0.g2_vec.len(),
+            "streaming: row count ({}) exceeds Dory SRS size ({})",
+            num_rows,
+            setup.0.g2_vec.len(),
+        );
+        let ark_rows = jolt_g1_vec_to_ark(partial.row_commitments);
+        let g2_bases = &setup.0.g2_vec[..num_rows];
+        let tier_2 = <InnerBN254 as PairingCurve>::multi_pair_g2_setup(&ark_rows, g2_bases);
+        let (tier_2, commit_blind) = maybe_blind(&setup.0, tier_2);
+        let row_commitments = ark_to_jolt_g1_vec(ark_rows);
+        (
+            DoryCommitment(ark_to_jolt_gt(&tier_2)),
+            DoryHint {
+                row_commitments,
+                commit_blind,
+            },
+        )
     }
 }
 
@@ -149,10 +208,14 @@ impl CommitmentScheme for DoryScheme {
 
         let g2_bases = &setup.0.g2_vec[..row_commitments.len()];
         let tier_2 = <InnerBN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
+        let (tier_2, commit_blind) = maybe_blind(&setup.0, tier_2);
 
         (
             DoryCommitment(ark_to_jolt_gt(&tier_2)),
-            DoryHint(ark_to_jolt_g1_vec(row_commitments)),
+            DoryHint {
+                row_commitments: ark_to_jolt_g1_vec(row_commitments),
+                commit_blind,
+            },
         )
     }
 
@@ -172,21 +235,37 @@ impl CommitmentScheme for DoryScheme {
         let num_cols = 1usize << sigma;
         let num_rows = 1usize << nu;
 
-        let row_commitments = match hint {
-            Some(h) => jolt_g1_vec_to_ark(h.0),
-            None if poly.is_sparse() => commit_rows_sparse(poly, num_rows, num_cols, &setup.0),
-            None => commit_rows_dense(poly, sigma, &setup.0),
+        let (row_commitments, commit_blind) = match hint {
+            Some(h) => (
+                jolt_g1_vec_to_ark(h.row_commitments),
+                jolt_fr_to_ark(&h.commit_blind),
+            ),
+            None if poly.is_sparse() => (
+                commit_rows_sparse(poly, num_rows, num_cols, &setup.0),
+                <ArkFr as DoryField>::zero(),
+            ),
+            None => (
+                commit_rows_dense(poly, sigma, &setup.0),
+                <ArkFr as DoryField>::zero(),
+            ),
         };
 
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
+        // When the commitment is blinded (ZK feature), the opening proof must also
+        // use ZK mode so dory::prove accounts for the non-zero commit_blind correctly.
+        #[cfg(feature = "zk")]
+        type OpenMode = dory::mode::ZK;
+        #[cfg(not(feature = "zk"))]
+        type OpenMode = Transparent;
+
         let (proof, _blind) =
-            dory::prove::<ArkFr, InnerBN254, G1Routines, G2Routines, _, _, Transparent>(
+            dory::prove::<ArkFr, InnerBN254, G1Routines, G2Routines, _, _, OpenMode>(
                 &adapter,
                 &ark_point,
                 row_commitments,
-                <ArkFr as DoryField>::zero(),
+                commit_blind,
                 nu,
                 sigma,
                 &setup.0,
@@ -255,24 +334,35 @@ impl AdditivelyHomomorphic for DoryScheme {
         assert_eq!(hints.len(), scalars.len());
         assert!(!hints.is_empty(), "combine_hints: empty hint set");
 
-        let num_rows = hints[0].0.len();
+        let num_rows = hints[0].row_commitments.len();
         assert!(
-            hints.iter().all(|h| h.0.len() == num_rows),
+            hints.iter().all(|h| h.row_commitments.len() == num_rows),
             "combine_hints: ragged hint lengths",
         );
 
-        let combined: Vec<Bn254G1> = (0..num_rows)
+        let combined_rows: Vec<Bn254G1> = (0..num_rows)
             .into_par_iter()
             .map(|row| {
                 let mut acc = Bn254G1::default();
                 for (hint, &scalar) in hints.iter().zip(scalars.iter()) {
-                    acc += hint.0[row].scalar_mul(&scalar);
+                    acc += hint.row_commitments[row].scalar_mul(&scalar);
                 }
                 acc
             })
             .collect();
 
-        DoryHint(combined)
+        // Homomorphic blind combination: combined = Σ scalar_i * blind_i
+        let combined_blind = hints
+            .iter()
+            .zip(scalars.iter())
+            .fold(Fr::default(), |acc, (hint, &scalar)| {
+                acc + scalar * hint.commit_blind
+            });
+
+        DoryHint {
+            row_commitments: combined_rows,
+            commit_blind: combined_blind,
+        }
     }
 }
 
@@ -296,10 +386,19 @@ impl ZkOpeningScheme for DoryScheme {
         let num_cols = 1usize << sigma;
         let num_rows = 1usize << nu;
 
-        let row_commitments = match hint {
-            Some(h) => jolt_g1_vec_to_ark(h.0),
-            None if poly.is_sparse() => commit_rows_sparse(poly, num_rows, num_cols, &setup.0),
-            None => commit_rows_dense(poly, sigma, &setup.0),
+        let (row_commitments, commit_blind) = match hint {
+            Some(h) => (
+                jolt_g1_vec_to_ark(h.row_commitments),
+                jolt_fr_to_ark(&h.commit_blind),
+            ),
+            None if poly.is_sparse() => (
+                commit_rows_sparse(poly, num_rows, num_cols, &setup.0),
+                <ArkFr as DoryField>::zero(),
+            ),
+            None => (
+                commit_rows_dense(poly, sigma, &setup.0),
+                <ArkFr as DoryField>::zero(),
+            ),
         };
 
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
@@ -310,7 +409,7 @@ impl ZkOpeningScheme for DoryScheme {
                 &adapter,
                 &ark_point,
                 row_commitments,
-                <ArkFr as DoryField>::zero(),
+                commit_blind,
                 nu,
                 sigma,
                 &setup.0,
@@ -498,6 +597,11 @@ mod tests {
         assert!(result.is_ok(), "Verification failed: {result:?}");
     }
 
+    // In ZK mode each commit() draws a fresh random blind, so commit(a+b) ≠
+    // commit(a) + commit(b) in GT.  The opening-proof path verifies correctly
+    // because combine_hints() propagates the combined blind; this test only
+    // covers the non-ZK (transparent) case where determinism is exact.
+    #[cfg(not(feature = "zk"))]
     #[test]
     fn combine_commitments_homomorphic() {
         let num_vars = 2;
@@ -568,6 +672,18 @@ mod tests {
             &mut verify_transcript,
         );
         assert!(result.is_ok(), "ZK verification failed: {result:?}");
+    }
+
+    #[cfg(feature = "zk")]
+    #[test]
+    fn zk_commit_is_non_deterministic() {
+        let num_vars = 4;
+        let prover_setup = DoryScheme::setup_prover(num_vars);
+        let mut rng = ChaCha20Rng::seed_from_u64(999);
+        let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let (c1, _) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+        let (c2, _) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+        assert_ne!(c1, c2, "ZK mode must produce non-deterministic commitments");
     }
 
     #[test]

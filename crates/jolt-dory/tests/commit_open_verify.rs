@@ -7,10 +7,12 @@
 
 use dory::backends::arkworks::ArkG1;
 use jolt_dory::DoryScheme;
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
-use jolt_openings::{
-    AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme,
-};
+#[cfg(not(feature = "zk"))]
+use jolt_field::FromPrimitiveInt;
+use jolt_field::{Fr, RandomSampling};
+#[cfg(not(feature = "zk"))]
+use jolt_openings::{AdditivelyHomomorphic, StreamingCommitment};
+use jolt_openings::{CommitmentScheme, ZkOpeningScheme};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
@@ -35,20 +37,25 @@ fn round_trip<T: Transcript<Challenge = Fr>>(num_vars: usize, seed: u64, label: 
     DoryScheme::verify(&commitment, &point, eval, &proof, &verifier_setup, &mut vt)
         .expect("round-trip verification (with hint) must succeed");
 
-    // Without hint
-    let mut pt2 = T::new(label);
-    let proof2 = DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut pt2);
+    // Without hint — only valid in transparent mode. In ZK mode, commit() uses a
+    // random blind that open(None) does not know, so the proof is inconsistent
+    // with the blinded commitment and verify() will fail.
+    #[cfg(not(feature = "zk"))]
+    {
+        let mut pt2 = T::new(label);
+        let proof2 = DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut pt2);
 
-    let mut vt2 = T::new(label);
-    DoryScheme::verify(
-        &commitment,
-        &point,
-        eval,
-        &proof2,
-        &verifier_setup,
-        &mut vt2,
-    )
-    .expect("round-trip verification (without hint) must succeed");
+        let mut vt2 = T::new(label);
+        DoryScheme::verify(
+            &commitment,
+            &point,
+            eval,
+            &proof2,
+            &verifier_setup,
+            &mut vt2,
+        )
+        .expect("round-trip verification (without hint) must succeed");
+    }
 }
 
 #[test]
@@ -65,6 +72,9 @@ fn commit_open_verify_both_transcripts() {
     round_trip::<KeccakTranscript>(num_vars, 200, b"keccak-rt");
 }
 
+// In ZK mode each commit() draws a fresh random blind, so streaming and direct
+// commitments differ. Equality only holds in transparent (non-ZK) mode.
+#[cfg(not(feature = "zk"))]
 #[test]
 fn streaming_equals_direct_various_sizes() {
     for num_vars in [2usize, 4, 6] {
@@ -90,6 +100,11 @@ fn streaming_equals_direct_various_sizes() {
     }
 }
 
+// In ZK mode, CommitmentScheme::verify() reads the evaluation from proof.y_com
+// (inserted by dory::prove in ZK mode) rather than the caller-supplied eval.
+// Tampered plaintext eval is therefore ignored and verify() succeeds, which is
+// the correct ZK behavior. Use ZkOpeningScheme::verify_zk() for ZK proofs.
+#[cfg(not(feature = "zk"))]
 #[test]
 fn wrong_eval_rejected() {
     let num_vars = 3;
@@ -120,6 +135,10 @@ fn wrong_eval_rejected() {
     assert!(result.is_err(), "tampered eval must be rejected");
 }
 
+// In ZK mode, dory::verify uses e2 from proof.e2 rather than recomputing it from
+// the evaluation point, so a tampered point does not cause verification to fail
+// through CommitmentScheme::verify(). Use ZkOpeningScheme::verify_zk() for ZK proofs.
+#[cfg(not(feature = "zk"))]
 #[test]
 fn wrong_point_rejected() {
     let num_vars = 3;
@@ -151,6 +170,9 @@ fn wrong_point_rejected() {
     assert!(result.is_err(), "tampered point must be rejected");
 }
 
+// In ZK mode commit(c1·a + c2·b) uses a fresh random blind so it differs from
+// c1·commit(a) + c2·commit(b) in GT. Equality only holds in transparent mode.
+#[cfg(not(feature = "zk"))]
 #[test]
 fn combine_linear_combination() {
     let num_vars = 3;
@@ -183,6 +205,8 @@ fn combine_linear_combination() {
     );
 }
 
+// Determinism only holds in transparent (non-ZK) mode.
+#[cfg(not(feature = "zk"))]
 #[test]
 fn deterministic_commitment() {
     let num_vars = 4;
@@ -195,6 +219,21 @@ fn deterministic_commitment() {
     let (c2, _) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
     assert_eq!(c1, c2, "same poly + setup must yield identical commitment");
+}
+
+#[cfg(feature = "zk")]
+#[test]
+fn zk_commit_is_non_deterministic() {
+    let num_vars = 4;
+    let prover_setup = DoryScheme::setup_prover(num_vars);
+    let mut rng = ChaCha20Rng::seed_from_u64(750);
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let (c1, _) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+    let (c2, _) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+    assert_ne!(
+        c1, c2,
+        "ZK mode must produce non-deterministic (hiding) commitments"
+    );
 }
 
 #[test]

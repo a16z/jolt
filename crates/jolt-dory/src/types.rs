@@ -7,6 +7,7 @@ use dory::backends::arkworks::{
     ArkDoryProof, ArkG1, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
 };
 use jolt_crypto::{Bn254G1, Bn254GT, HomomorphicCommitment};
+use jolt_field::Fr;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -85,11 +86,19 @@ impl<'de> Deserialize<'de> for DoryVerifierSetup {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct DoryHint(pub Vec<Bn254G1>);
+pub struct DoryHint {
+    /// Per-row Pedersen commitments (tier-1), reused in the opening proof.
+    pub row_commitments: Vec<Bn254G1>,
+    /// GT-level blinding scalar applied to the tier-2 commitment.
+    /// Zero in non-ZK mode; random in ZK mode (feature = "zk").
+    pub commit_blind: Fr,
+}
 
 #[derive(Clone)]
 pub struct DoryPartialCommitment {
     pub row_commitments: Vec<Bn254G1>,
+    /// GT-level blinding scalar, sampled once in `DoryScheme::begin` in ZK mode.
+    pub commit_blind: Fr,
 }
 
 fn canonical_serialize<T: CanonicalSerialize, S: Serializer>(
@@ -217,16 +226,24 @@ mod tests {
             .collect();
         let eval = poly.evaluate(&point);
 
+        // Commit first to capture the hint (including the blind in ZK mode).
+        // The hint must be passed to open() so the proof is consistent with the commitment.
+        let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
+        let (commitment, hint) = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
+
         let mut transcript = jolt_transcript::Blake2bTranscript::new(b"serde-bp");
-        let proof =
-            crate::DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut transcript);
+        let proof = crate::DoryScheme::open(
+            &poly,
+            &point,
+            eval,
+            &prover_setup,
+            Some(hint),
+            &mut transcript,
+        );
 
         let serialized = serde_json::to_vec(&proof).expect("serialize proof");
         let deserialized: DoryProof =
             serde_json::from_slice(&serialized).expect("deserialize proof");
-
-        let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
-        let (commitment, _) = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
 
         let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"serde-bp");
         let result = crate::DoryScheme::verify(
