@@ -34,14 +34,14 @@ The target design:
 
 ```text
 Decoded NormalizedInstruction
-  -> SourceRow
-  -> declarative lowering grammar
+  -> Source(NormalizedInstruction)
+  -> syntactic expansion recipe / shallow lowerer
   -> rd=x0 normalization
   -> depth-first work stack of ExpansionOp
-  -> shallow family lowering
   -> explicit temp release/reset operations
   -> bounded per-source output buffer
-  -> single metadata stamping pass
+  -> Expanded(NormalizedInstruction)
+  -> Stamped(NormalizedInstruction)
   -> top-level Vec extension
 ```
 
@@ -52,8 +52,8 @@ Decoded NormalizedInstruction
 - Preserve `rd = x0` behavior for all source and helper rows.
 - Preserve virtual-register numbering, allocation reuse, reserved registers, and inline reset behavior.
 - Preserve sequence metadata: source address, `virtual_sequence_remaining`, `is_first_in_sequence`, and compressed-instruction metadata.
-- Make the expansion recipe a typed grammar that can drive production Rust, Lean extraction/model generation, docs, and parity fixtures from one source of truth.
-- Keep the grammar MLIR-ready: represent instructions, temps, metadata, and reset behavior as typed ops/attrs/regions that can later be moved into an MLIR dialect without changing the semantics.
+- Make expansion recipes syntactic and inspectable enough to drive production Rust, Lean extraction/model generation, docs, and parity fixtures from one source of truth.
+- Keep the recipe representation MLIR-ready: represent instruction emission, temps, metadata, and reset behavior as typed ops/attrs/regions that can later be moved into an MLIR dialect without changing expansion behavior.
 - Keep `jolt-program::expand` free of tracer, CPU, memory-device, advice-tape, prover, transcript, ELF parser, and PCS dependencies.
 - Make Hax/Aeneas extraction of provider-free RV64 expansion straightforward enough that the first real extraction target is the production core, not a hand-written mirror.
 - Avoid performance regressions by removing recursive per-instruction heap allocation and using bounded stack-resident buffers for per-source expansion.
@@ -61,9 +61,10 @@ Decoded NormalizedInstruction
 ## Non-Goals
 
 - Do not change instruction semantics.
+- Do not define a structured grammar for instruction execution semantics in Pass 1. The expansion grammar is only a syntactic lowering language: it says that a source row such as `DIV` maps to a sequence of bytecode rows, but it does not define the operational meaning of `DIV` or of those target rows. A separate semantics track should handle execution meaning and expansion-correctness theorems.
 - Do not change bytecode preprocessing, RAM preprocessing, or proof-system APIs except for call-site adjustments needed by the new expansion API.
 - Do not formalize tracer custom inline registries in this phase.
-- Do not port registered `jolt-inlines` recipes or advice builders into the grammar in the next implementation pass.
+- Do not port registered `jolt-inlines` recipes or advice builders into the grammar in the next implementation pass. Advice handling is explicitly unresolved for the grammar; provider-owned inline/advice behavior stays behind the adapter boundary in this phase.
 - Do not make Aeneas/Hax extraction a hard CI requirement in the implementation PR unless maintainers explicitly ask for it.
 - Do not keep the current recursive `InstrAssembler<'a>` implementation as a compatibility layer once the rewrite lands. This branch owns the new `jolt-program` implementation, so the rewrite should be a full cutover.
 
@@ -201,13 +202,13 @@ These errors come from the shape of the extracted call graph, not from bytecode 
 
 | Concern | Current PR at `a3448e6da44f` | Target shape |
 |---------|-------------------------------|--------------|
-| Source of truth | Arbitrary Rust functions using an imperative assembler API | Typed expansion grammar interpreted or compiled into production lowerers |
+| Source of truth | Arbitrary Rust functions using an imperative assembler API | Inspectable syntactic expansion recipes or shallow lowerers |
 | Expansion state | Split between `InstrAssembler<'a>` and borrowed `&mut ExpansionAllocator` | One owned `ExpansionState` containing allocator, work stack, and output buffer |
 | Family lowering | Expander calls `asm.emit_*`; each emit recursively expands immediately | Expander appends shallow `ExpansionOp` values only |
 | Recursion | Hidden inside `InstrAssembler::emit` | One central depth-first driver |
 | Temp lifetime | Encoded by Rust control flow and post-`finalize()` releases | Explicit `ExpansionOp::Release(register)` markers |
 | Output allocation | Per-source `Vec` plus recursive helper `Vec`s | Bounded per-source buffer plus one top-level program `Vec` |
-| Metadata | Mutate `&mut [NormalizedInstruction]` after synthetic sequences are built; non-expanded source rows pass through unchanged | Explicit output policy: source pass-through versus stamped synthetic sequence |
+| Metadata | Mutate `&mut [NormalizedInstruction]` after synthetic sequences are built; non-expanded source rows pass through unchanged | Explicit stage policy: source pass-through, expanded helper rows, stamped synthetic sequence |
 | Allocator | `[bool; N]` plus `Vec<u8>` reset list | Bitsets for live registers and inline reset set |
 | Inline expansion | Trait callback inside core dispatcher | Adapter outside provider-free core |
 | API ergonomics | `impl IntoIterator`, trait generic provider path | Concrete slice/state core; ergonomic wrappers outside |
@@ -220,9 +221,9 @@ Suggested module layout:
 ```text
 crates/jolt-program/src/expand/
   mod.rs             public adapters and compatibility API
-  grammar.rs         typed expansion grammar and checked recipes
-  core.rs            SourceRow, RawRow, ExpansionOp, ExpansionState, driver
-  lower.rs           dispatch from RawRow to shallow lowerers/grammar interpreter
+  grammar.rs         syntactic recipe data and checked helpers
+  core.rs            RowStage, ExpansionOp, ExpansionState, driver
+  lower.rs           dispatch from helper rows to shallow lowerers/recipe interpreter
   lower/
     arithmetic.rs
     control_flow.rs
@@ -249,14 +250,14 @@ generic lowering path as:
 protocol -> concrete -> party -> compute -> cpu -> Rust
 ```
 
-The key rule is that semantic facts live in dialect ops, validators, lowering
+The key rule is that compiler facts live in dialect ops, validators, lowering
 passes, or typed plan data before Rust emission. Generated Rust is the final
 artifact, not where protocol meaning should be rediscovered by string matching
 or ad hoc helper logic. The Bolt paper draft in
 `/Users/quang.dao/Documents/SNARKs/bolt` makes the same architectural point:
 dialects are domain vocabularies of typed operations and attributes, passes are
 partial functions between modules, and each lowering pass should state the
-invariants and semantics it preserves.
+invariants it preserves.
 
 Bytecode expansion should use the same mental model:
 
@@ -275,19 +276,11 @@ mechanical lift rather than another rewrite.
 
 ### Source And Target
 
-Today source and target are both represented by `NormalizedInstruction`, which
-blurs the compiler boundary. The next design should define them by legality
-predicates instead of only by Rust type:
+Today source and target are both represented by `NormalizedInstruction`, and
+that should stay true. The compiler boundary should be defined by legality
+predicates and stage policy rather than by a new family of row wrapper types:
 
 ```rust
-pub(crate) struct SourceModule<'a> {
-    rows: &'a [NormalizedInstruction],
-}
-
-pub(crate) struct BytecodeModule {
-    rows: Vec<NormalizedInstruction>,
-}
-
 pub(crate) fn is_source_row(row: NormalizedInstruction) -> bool;
 pub(crate) fn is_target_bytecode_row(row: NormalizedInstruction) -> bool;
 ```
@@ -302,19 +295,131 @@ system: every row is legal for the final bytecode relation, internal virtual
 register use has been materialized, sequence metadata is correct, and
 pass-through or literal rows preserve their baseline metadata policy.
 
-The semantic contract is observational, not byte-for-byte at the machine-state
-level. A source row and its target sequence must have the same architectural
-effect on RV64-visible registers, memory, control flow, advice/trap behavior,
-and PC mapping. The target may use virtual registers and extra assertions
-internally, but those internal resources are not source-level observations.
-For this PR branch, parity against the current Rust output remains the first
-acceptance test except where this PR intentionally fixes a documented baseline
-bug. Semantic equivalence is the proof-oriented contract that explains why that
-output is the right thing to generate.
+The expansion contract is syntactic. This module says which bytecode rows are
+emitted for a decoded source row and how virtual registers, recursive helper
+expansion, and sequence metadata are materialized. It does not define the
+execution semantics of the source instruction or of the target instructions.
+Those semantics can be hand-modeled separately if needed. For this PR branch,
+row-for-row parity against the current Rust output remains the first acceptance
+test except where this PR intentionally fixes a documented baseline bug.
+
+### Execution Semantics Track
+
+Execution semantics should be a separate artifact from bytecode expansion.
+Today production execution lives in `tracer`, but `tracer` is an emulator with
+CPU state, memory devices, advice plumbing, inline registries, and host
+conveniences. It is the implementation to test against, not the cleanest
+semantic source of truth.
+
+The coherent split is:
+
+```text
+Expansion recipe:
+  source NormalizedInstruction -> target bytecode rows
+
+Execution semantics:
+  instruction + abstract machine state -> next abstract machine state
+
+Expansion correctness:
+  executing the expanded target sequence refines executing the source row
+```
+
+The recommended first semantics pass is hand-modeled Lean, not MLIR and not
+extraction from `tracer`. Define a small abstract machine state and a transition
+relation for a provider-free instruction slice:
+
+```text
+step : NormalizedInstruction -> MachineState -> Result MachineState Trap
+```
+
+Then prove or test the expansion theorem for that slice:
+
+```text
+exec_seq (expand instr) (extend state)
+  projects_to
+step instr state
+```
+
+Start with a narrow family such as `ADDI`, `ADD`, shifts, loads/stores, and one
+virtual helper instruction. That slice should reveal whether hand-modeled Lean
+stays manageable or whether a separate semantic DSL is worth building.
+
+If a semantic DSL becomes useful, it should be a different language from the
+expansion grammar. It would describe effects such as register reads/writes,
+memory reads/writes, branches, traps, and advice reads, and could generate a
+Rust reference interpreter, Lean definitions, and MLIR op interfaces or
+documentation. MLIR should act as a carrier for dialect structure, legality,
+lowering, and op metadata; it should not be the first source of proof
+semantics.
+
+Existing RISC-V formal models such as Sail may be useful for the base ISA, but
+they will not cover Jolt virtual helper instructions or Jolt-specific execution
+conventions. Even if Sail is used for RV64 semantics, Jolt still needs its own
+semantic layer for target bytecode rows.
+
+### Advice Boundary
+
+Advice should also be split by phase. The current code uses "advice" for three
+different channels, and the compiler-native rewrite should preserve them while
+naming the boundaries more precisely.
+
+1. **Advice-load source instructions.**
+   `AdviceLB`, `AdviceLH`, `AdviceLW`, and `AdviceLD` are decoded guest/source
+   instructions. Provider-free expansion owns their syntactic lowering:
+
+   ```text
+   AdviceLB rd -> VirtualAdviceLoad rd, 1; SLLI rd, rd, 56; SRAI rd, rd, 56
+   AdviceLH rd -> VirtualAdviceLoad rd, 2; SLLI rd, rd, 48; SRAI rd, rd, 48
+   AdviceLW rd -> VirtualAdviceLoad rd, 4; SLLI rd, rd, 32; SRAI rd, rd, 32
+   AdviceLD rd -> VirtualAdviceLoad rd, 8
+   ```
+
+   `VirtualAdviceLoad` execution reads bytes from the runtime advice tape and
+   writes the result to `rd`. Expansion emits the row and byte length; it does
+   not produce the tape contents.
+
+2. **Trace-time advice payloads.**
+   `VirtualAdvice` is a target bytecode row whose concrete tracer instruction
+   carries an extra `advice: u64` payload. That payload is not part of
+   `NormalizedInstruction`. Today it is patched by tracer-side logic, including
+   registered inline `build_advice` functions and LR/SC success-bit handling for
+   `SCW`/`SCD`.
+
+   Expansion may emit `VirtualAdvice`, but provider-free expansion must not
+   assign its payload. Inline/provider code may continue returning finalized
+   rows for this phase, and tracer may continue patching concrete
+   `VirtualAdvice` instructions during trace construction.
+
+3. **Committed advice memory.**
+   `trusted_advice` and `untrusted_advice` are byte arrays placed in Jolt device
+   memory and committed as advice polynomials by the prover. This is
+   preprocessing/proof behavior, not bytecode expansion behavior. The expansion
+   rewrite should not move or reinterpret those commitments.
+
+The better long-term shape is:
+
+```text
+ExpansionRecipe:
+  emits bytecode rows, including VirtualAdvice and VirtualAdviceLoad
+
+AdvicePlan:
+  describes how trace-time VirtualAdvice payloads or advice-tape bytes are produced
+
+ExecutionSemantics:
+  defines how advice-consuming rows read those payloads/tape bytes
+```
+
+For the semantics follow-up, advice should first be modeled abstractly as an
+oracle or tape in the Lean machine state. A concrete `AdvicePlan` or advice DSL
+should be introduced only after one advice-bearing slice shows what state the
+plan must observe and how slots/tape positions should be named. MLIR can carry
+effect metadata such as `reads_advice_tape(byte_len)` or
+`requires_trace_advice(slot)`, but it should not hide the source of advice
+values inside expansion recipes.
 
 ### Lowering Pipeline
 
-The proposed grammar should map onto ordinary compiler passes:
+The proposed recipe/driver shape should map onto ordinary compiler passes:
 
 ```text
 decode/uncompress
@@ -363,15 +468,15 @@ The rewrite is using standard compiler ideas under different names:
 | Source-only vs final kinds | Legalization target | Expansion is a conversion from illegal source ops to legal target ops. |
 | `LowerStmt::Emit` | Rewrite pattern / conversion pattern | A recipe replaces one op with a sequence of lower-level ops. |
 | Recursive helper expansion | Conversion driver / worklist legalization | Emitted helper ops must themselves be legalized until all target ops are legal. |
-| `ExpansionRank` and fuel | Termination measure | Legalization needs a proof or test that rewrites cannot cycle. |
+| Work fuel / recursion depth | Termination guard | Legalization needs a simple bound so accidental cycles become errors. |
 | `Seq`, `If`, `WithTemp` | Structured regions/control flow | Recipes need regions instead of arbitrary Rust control flow. |
 | `Fragment` | Symbolic helper / inlining | Shared lowering snippets should be named regions with explicit arguments and alpha-renamed locals. |
-| `RegExpr`, `ImmExpr`, `CondExpr` | Pure SSA/dataflow expressions | Pure computations should be separate from stateful expansion effects. |
+| Operand refs and conditions | Pure row syntax | Operand selection should be separate from stateful expansion effects. |
 | `TempId` | Virtual register / temporary SSA value | Recipes should name symbolic temps before concrete register allocation. |
 | `ExpansionAllocator` | Register allocation / bufferization | Concrete virtual-register numbers are resource materialization, not semantic lowering. |
 | `Release` | Lifetime end / deallocation | Reuse requires explicit lifetime boundaries and validation. |
-| `SequenceRow::Raw` vs `Literal` | Attribute/materialization policy | Metadata is an emitted attribute policy, not an incidental mutation. |
-| Grammar validator | IR verifier/schema validation | Bad recipes should be rejected structurally before codegen. |
+| `RowStage::{Source, Expanded, Stamped}` | Attribute/materialization policy | Metadata is an emitted attribute policy, not an incidental mutation. |
+| Recipe checks | IR verifier/schema validation | Bad recipes should be rejected structurally where practical. |
 | `expand_program_slice` | Compiler driver | The public API orchestrates passes and emits the final artifact. |
 
 The most important adjustment to the previous grammar proposal is to treat
@@ -408,7 +513,7 @@ pass that uses the same first-fit policy as today's Rust allocator.
 
 ### MLIR-Ready Shape
 
-The Rust grammar should avoid choices that would be awkward in MLIR:
+The Rust recipe surface should avoid choices that would be awkward in MLIR:
 
 - Prefer named ops with typed operands/attrs over free-form closures.
 - Prefer explicit regions (`Seq`, `If`, `WithTemp`) over Rust call-stack
@@ -469,34 +574,31 @@ Useful compiler concepts to read alongside this design:
 
 ## Declarative Expansion Grammar
 
-Ari's [`Lost in Translation`](https://randomwalks.xyz/blog/translations/) reaches the right general conclusion for Jolt verification: arbitrary Rust is the wrong semantic source of truth. A small typed grammar is easier to translate, easier to validate, and harder to accidentally misuse. His article applies that idea to instruction execution semantics by splitting pure expressions from state-changing statements. Bytecode expansion needs the same move, but the grammar here is different: it is not a CPU-state semantics AST. It is an expansion-time transition language for turning one normalized source row into zero or more Jolt bytecode rows while preserving allocation, recursive helper expansion, and metadata behavior.
+Ari's [`Lost in Translation`](https://randomwalks.xyz/blog/translations/) reaches the right general conclusion for Jolt verification: arbitrary Rust is the wrong long-term source of truth. His article applies that idea to instruction execution semantics. This spec is narrower. It does not propose a CPU-state semantics AST or an execution-semantics DSL. The bytecode expansion grammar is an expansion-time syntax transformer: it turns one `NormalizedInstruction` source row into zero or more `NormalizedInstruction` bytecode rows while preserving allocation, recursive helper expansion, and metadata behavior.
 
-The grammar must be expressive enough to model the current implementation, including the inconvenient parts:
+The recipe surface must be expressive enough to model the current implementation, including the inconvenient parts:
 
 - Emitted helper rows are not final output immediately. They go back through the central expansion driver, exactly like `InstrAssembler::emit` currently calls `expand_instruction`.
 - Some source rows are pass-through rows, not synthetic sequences. A source `ADD` currently returns the input `NormalizedInstruction` unchanged; it does not get `virtual_sequence_remaining = Some(0)` or `is_first_in_sequence = true`.
 - Synthetic sequences do get finalized metadata. Current family expanders use `InstrAssembler::finalize`, which rewrites every row's sequence metadata and puts `is_compressed` only on the last row.
 - `rd = x0` has two separate behaviors: side-effect-free rows become a direct ADDI no-op, while side-effecting rows are recursively expanded after rewriting `rd` to a temporary register and releasing that temporary after expansion.
-- Temporary-register allocation order is observable through emitted register numbers. The grammar must expose symbolic temp lifetimes at precise points, and the materialization pass must preserve today's deterministic allocation order.
+- Temporary-register allocation order is observable through emitted register numbers. Recipes or lowerer outputs must expose temp lifetimes at precise points, and the materialization pass must preserve today's deterministic allocation order.
 - Temporary-register release timing matters for reuse inside longer expansions such as `SCD`, `SCW`, CSR updates, and division.
 - Some branches depend on decoded operands or expansion parameters, for example `rd == rs1`, `rs1 == x0`, `csr == 0`, `word`, `signed`, `min`, and `remainder_output`.
 - Shared snippets such as `amo_pre64` and `amo_post64` are real grammar fragments with parameters, not arbitrary Rust helper functions.
-- Errors are semantic outcomes. Missing operands, unsupported CSRs, virtual-register exhaustion, and inline-provider requirements should be explicit grammar/driver results.
-- Baseline quirks and deliberate baseline fixes must both be made visible. The historical `CSRRW`/`CSRRS` behavior for `csr == 0` returned `NormalizedInstruction::default()` directly, bypassing assembler finalization and producing an address-zero row that could be skipped by bytecode PC mapping. This PR intentionally rejects that source row as `UnsupportedCsr(0)`, so the compiler-native rewrite should model the case as a source validation failure or grammar `Fail`, not as a literal default row to preserve.
+- Errors are expansion outcomes. Missing operands, unsupported CSRs, virtual-register exhaustion, and inline-provider requirements should be explicit recipe/driver results.
+- Baseline quirks and deliberate baseline fixes must both be made visible. The historical `CSRRW`/`CSRRS` behavior for `csr == 0` returned `NormalizedInstruction::default()` directly, bypassing assembler finalization and producing an address-zero row that could be skipped by bytecode PC mapping. This PR intentionally rejects that source row as `UnsupportedCsr(0)`, so the compiler-native rewrite should model the case as a source validation failure or recipe `Fail`, not as a literal default row to preserve.
 
-The key design rule is the same as in Ari's article: do not put every construct into one enum. Separate pure operand computations from expansion-time statements so invalid trees are unrepresentable or caught by one small grammar validator.
+The key design rule is to keep the recipe surface first-order and inspectable,
+not to pre-commit to a large expression language. Separate pure operand
+selection from expansion-time statements where that buys clarity, but introduce
+only the expression forms that real expansion families need.
 
-Suggested type layers:
+The minimal durable grammar is likely closer to:
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ImmExprId(u8);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct CondExprId(u8);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RegExpr {
+pub(crate) enum RegRef {
     Zero,
     SourceRd,
     SourceRs1,
@@ -507,75 +609,52 @@ pub(crate) enum RegExpr {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ImmExpr {
+pub(crate) enum ImmRef {
     SourceImm,
     Const(i128),
-    FormatIImm(ImmExprId),
-    And(ImmExprId, i128),
-    Add(ImmExprId, ImmExprId),
-    OneShl(ImmExprId),
-    RightShiftBitmask { shift: ImmExprId, len: u32 },
+    Derived(DerivedImm),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CondExpr {
+pub(crate) enum Cond {
     RdEqZero,
     Rs1EqZero,
     RdEqRs1,
     CsrEq(u16),
+    CsrSupported,
     Param(ExpansionParam),
-    Not(CondExprId),
 }
 ```
 
-`RegExpr`, `ImmExpr`, and `CondExpr` are pure. They may inspect the `SourceRow`, recipe parameters, named temps, and reserved-register map, but they cannot allocate, release, emit rows, or mutate output.
+`RegRef`, `ImmRef`, and `Cond` are pure. They may inspect the current source
+row, recipe parameters, named temps, and reserved-register map, but they cannot
+allocate, release, emit rows, or mutate output.
 
-Recursive pure expressions should use small recipe-local expression tables, referenced by `ImmExprId` or `CondExprId`, rather than heap-backed `Box` trees. That keeps the grammar first-order and copyable for extraction. Constructor helpers can still make recipes readable by interning constants and expression nodes into those fixed tables.
+If a family truly needs compound immediate or condition expressions, add the
+smallest first-order representation that covers that family. Avoid heap-backed
+`Box` trees and Rust closures in the extraction-critical core. Constructor
+helpers can still make recipes readable, but `finish()` should return ordinary
+data that tests and extractors can inspect.
 
 Rows are also pure specifications:
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RowSpec {
+pub(crate) enum RowTemplate {
     R {
         kind: InstructionKind,
-        rd: RegExpr,
-        rs1: RegExpr,
-        rs2: RegExpr,
+        rd: RegRef,
+        rs1: RegRef,
+        rs2: RegRef,
     },
     I {
         kind: InstructionKind,
-        rd: RegExpr,
-        rs1: RegExpr,
-        imm: ImmExprId,
+        rd: RegRef,
+        rs1: RegRef,
+        imm: ImmRef,
     },
-    S {
-        kind: InstructionKind,
-        rs1: RegExpr,
-        rs2: RegExpr,
-        imm: ImmExprId,
-    },
-    B {
-        kind: InstructionKind,
-        rs1: RegExpr,
-        rs2: RegExpr,
-        imm: ImmExprId,
-    },
-    J {
-        kind: InstructionKind,
-        rd: RegExpr,
-        imm: ImmExprId,
-    },
-    U {
-        kind: InstructionKind,
-        rd: RegExpr,
-        imm: ImmExprId,
-    },
-    Align {
-        kind: InstructionKind,
-        rs1: RegExpr,
-        imm: ImmExprId,
-    },
+    // Add S/B/J/U/Align variants only if direct row construction helpers are
+    // not enough for the families being ported.
 }
 ```
 
@@ -585,32 +664,37 @@ Expansion-time statements are the only layer that changes allocator or output st
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LowerStmt {
     Seq(&'static [LowerStmt]),
-    Emit(RowSpec),
+    Emit(RowTemplate),
     WithTemp {
         temp: TempId,
         pool: RegisterPool,
         body: &'static LowerStmt,
     },
     If {
-        cond: CondExpr,
+        cond: Cond,
         then_body: &'static LowerStmt,
         else_body: &'static LowerStmt,
-    },
-    MatchCsr {
-        unsupported: ExpansionErrorKind,
-        body: &'static LowerStmt,
     },
     Fragment {
         fragment: FragmentId,
         args: FragmentArgs,
     },
+    Release(TempId),
     ReturnLiteral(LiteralRow),
     Fail(ExpansionErrorKind),
     ResetInlineRegisters,
 }
 ```
 
-`Emit(RowSpec)` means "push a `RawRow` back through the expansion driver." It does not mean "append this final instruction to output." This distinction is what preserves current recursive behavior without recursive Rust calls.
+This enum is a sketch, not a required minimum surface. During implementation,
+pare it down aggressively. `Seq`, `Emit`, `WithTemp`, `If`, `Fragment`,
+`ReturnLiteral`, `Fail`, and reset/release markers are the concepts that seem
+stable; the exact helper enums should follow the code.
+
+`Emit(RowTemplate)` means "push a helper row back through the expansion
+driver." It does not mean "append this final instruction to output." This
+distinction is what preserves current recursive behavior without recursive Rust
+calls.
 
 `WithTemp` introduces a symbolic temp whose live range is exactly the statement body. The current Rust interpreter may materialize the concrete virtual register when entering the statement and lower to an explicit `Release` operation after the body. Nested `WithTemp` blocks are the grammar form for current mid-sequence release/reuse patterns:
 
@@ -641,13 +725,12 @@ pub(crate) const ADDIW_RECIPE: LowerStmt = Seq(&[
 A parameterized family becomes either a recipe with parameters or a small recipe builder whose output is still grammar, not arbitrary emit calls:
 
 ```rust
-pub(crate) fn advice_load_recipe(
-    byte_len: i128,
+pub(crate) fn load_recipe(
+    kind: InstructionKind,
     sign_extension_shift: Option<i128>,
 ) -> Recipe {
     let mut recipe = RecipeBuilder::new();
-    let byte_len = recipe.imm_const(byte_len);
-    recipe.emit(j(VirtualAdviceLoad, SourceRd, byte_len));
+    recipe.emit(i(kind, SourceRd, SourceRs1, SourceImm));
 
     if let Some(shift) = sign_extension_shift {
         let shift = recipe.imm_const(shift);
@@ -659,17 +742,21 @@ pub(crate) fn advice_load_recipe(
 }
 ```
 
-The exact Rust surface may differ, but the semantic requirement is that the output is still inspected as grammar. A builder that can perform arbitrary Rust-side emission recreates the current problem.
+The exact Rust surface may differ, but the extraction requirement is that the
+output is still inspected as recipe data or shallow operations. A builder that
+can perform arbitrary Rust-side emission recreates the current problem.
 
-Complex branches should be direct grammar, not hidden in helper code. For example, CSR update behavior needs to preserve the current branch structure:
+Complex branches should be visible either as recipe data or as shallow lowerer
+control flow that produces inspectable operations. For example, CSR update
+behavior needs to preserve the current branch structure:
 
 ```rust
 pub(crate) const CSRRW_RECIPE: LowerStmt = If {
     cond: CsrEq(0),
     then_body: &Fail(ExpansionErrorKind::UnsupportedCsr),
-    else_body: &MatchCsr {
-        unsupported: ExpansionErrorKind::UnsupportedCsr,
-        body: &If {
+    else_body: &If {
+        cond: CsrSupported,
+        then_body: &If {
             cond: RdEqZero,
             then_body: &Emit(i(ADDI, Reserved(CsrTarget), SourceRs1, Const(0))),
             else_body: &If {
@@ -681,6 +768,7 @@ pub(crate) const CSRRW_RECIPE: LowerStmt = If {
                 ]),
             },
         },
+        else_body: &Fail(ExpansionErrorKind::UnsupportedCsr),
     },
 };
 ```
@@ -705,97 +793,95 @@ pub(crate) const AMO_PRE64: Fragment = Fragment::new(
 
 This keeps `amo_pre64` reusable without making extraction depend on arbitrary Rust helper control flow.
 
-The grammar should have a validator that runs in normal Rust tests:
+Recipe checks should run in normal Rust tests where practical:
 
 - all temp uses are inside a live temp scope;
 - no temp is released twice;
 - every `Emit` row has the operands required by its row shape;
-- fragments are acyclic or have an explicit fuel/rank proof;
-- emitted instruction kinds have strictly lower expansion rank unless a local termination measure is documented;
+- fragments are acyclic when that can be checked from recipe data;
 - every `ReturnLiteral` is named in a baseline-quirks test;
 - maximum shallow ops, work-stack depth, and final rows stay within fixed capacities for the curated corpus.
 
 There are two plausible implementation strategies:
 
-1. Ordinary Rust grammar definitions interpreted by `expand::lower`. This is the best first implementation because Hax/Aeneas see a small interpreter plus data-shaped recipes, not proc-macro syntax.
-2. A proc-macro DSL for ergonomics, later. This can use `syn` the way Ari describes, but the macro must emit the same checked grammar definitions rather than opaque hand-coded lowerers. Proc macros parse syntax, not Rust types, so any type-dependent behavior must be explicit in the grammar or delegated to small typed interfaces outside the extraction-critical core.
+1. Ordinary Rust recipe definitions interpreted by `expand::lower`, or shallow
+   lowerers that return bounded `ExpansionOp` buffers. This is the best first
+   implementation because Hax/Aeneas see a small driver plus data-shaped
+   recipes/ops, not proc-macro syntax.
+2. A proc-macro DSL for ergonomics, later. This can use `syn` the way Ari
+   describes, but the macro must emit the same checked recipe definitions rather
+   than opaque hand-coded lowerers. Proc macros parse syntax, not Rust types, so
+   any type-dependent behavior must be explicit in the recipe data or delegated
+   to small typed interfaces outside the extraction-critical core.
 
-The production Rust path should be an interpreter or generated interpreter-specialized code over this grammar. The Lean path should consume the same grammar definitions. Hax/Aeneas then become one extraction path for the interpreter and core state machine, not the only way to recover semantics from arbitrary Rust.
+The production Rust path can be an interpreter, generated
+interpreter-specialized code, or shallow lowerers that return the same operation
+data. The Lean path should consume the same syntactic expansion definitions.
+Hax/Aeneas then become one extraction path for the driver and core state
+machine, not the only way to recover expansion behavior from arbitrary Rust.
 
 ## Core Data Model
 
-The grammar compiles or interprets into this runtime data model.
-
-`SourceRow` is the decoded source instruction plus source metadata shared by every row in the final expanded sequence:
+Keep the runtime data model smaller than the first draft. `NormalizedInstruction`
+is already the canonical row type, and most proposed types were wrappers around
+it. The core should distinguish row stages and metadata policy without creating
+a parallel instruction representation.
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct SourceRow {
-    pub original: NormalizedInstruction,
-    pub kind: InstructionKind,
-    pub operands: NormalizedOperands,
-    pub address: usize,
-    pub is_compressed: bool,
-}
-
-impl From<NormalizedInstruction> for SourceRow {
-    fn from(row: NormalizedInstruction) -> Self {
-        Self {
-            original: row,
-            kind: row.instruction_kind,
-            operands: row.operands,
-            address: row.address,
-            is_compressed: row.is_compressed,
-        }
-    }
+pub(crate) enum RowStage {
+    Source(NormalizedInstruction),
+    Expanded(NormalizedInstruction),
+    Stamped(NormalizedInstruction),
 }
 ```
 
-`RawRow` is a bytecode row before source metadata is stamped:
+The exact enum name can change, but the phase distinction should stay explicit:
+
+- `Source` rows are decoded inputs or helper rows that still need expansion
+  canonicalization.
+- `Expanded` rows are final bytecode rows before sequence metadata has been
+  stamped.
+- `Stamped` rows are ready to append to the top-level bytecode vector.
+
+The current implementation does not stamp every input row. It stamps only
+synthetic sequences built through `InstrAssembler::finalize`; rows that do not
+expand are returned unchanged. Preserve that policy explicitly. It can be
+represented by a small result enum, but avoid introducing separate `SourceRow`,
+`RawRow`, `SequenceRow`, `ExpandedRows`, and `SourcePlan` types unless the
+implementation demonstrates that the extra names buy real clarity.
+
+A minimal result enum is enough:
 
 ```rust
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RawRow {
-    pub kind: InstructionKind,
-    pub operands: NormalizedOperands,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SequenceRow {
-    Raw(RawRow),
+pub(crate) enum ExpansionResult {
+    PassThrough(NormalizedInstruction),
     Literal(NormalizedInstruction),
+    Synthetic(ExpansionBuffer<NormalizedInstruction>),
+}
+
+pub(crate) enum InitialExpansion {
+    Direct(ExpansionResult),
+    Work(OpBuffer),
 }
 ```
 
-Most synthetic output should be `SequenceRow::Raw`, which constructs final metadata from the source row. `SequenceRow::Literal` exists only for baseline quirks where the current implementation places a full `NormalizedInstruction` into a sequence before finalization and the rewrite intentionally preserves that behavior. The former CSR-zero default row is not such a literal anymore; it is an `UnsupportedCsr(0)` error. The finalizer should mutate only the sequence metadata fields and last-row compressed flag on any remaining literals, matching current `InstrAssembler::finalize`.
-
-Family lowerers produce operations, not normalized rows:
+Family lowerers produce operations, not recursively finalized `Vec`s:
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ExpansionOp {
-    Row(RawRow),
+    Row(NormalizedInstruction),
     Release(u8),
     ResetInlineRegisters,
 }
 ```
 
-Expansion result metadata needs an explicit policy. The current implementation does not stamp every input row. It stamps only synthetic sequences built through `InstrAssembler::finalize`; rows that do not expand are returned unchanged.
-
-```rust
-pub(crate) enum ExpandedRows {
-    PassThrough(NormalizedInstruction),
-    Literal(NormalizedInstruction),
-    Synthetic(ExpansionBuffer<SequenceRow>),
-}
-
-pub(crate) enum SourcePlan {
-    Direct(ExpandedRows),
-    Synthetic(OpBuffer),
-}
-```
-
-`PassThrough` is for source rows that are already final Jolt bytecode. `Literal` is for deliberate baseline literals such as the current `rd = x0` no-op. `Synthetic` is for rows produced by a lowering recipe and later stamped as one virtual sequence. Historical CSR-zero default-row behavior is excluded from this policy because the PR now rejects it before row materialization.
+`ExpansionOp::Row` carries a row that must go back through the central expansion
+driver. It is not final output until the driver decides the kind is legal target
+bytecode and the metadata policy has been applied. Historical CSR-zero
+default-row behavior is excluded from the stage model because the PR now rejects
+that row before materialization.
 
 The driver owns all mutable state:
 
@@ -803,7 +889,7 @@ The driver owns all mutable state:
 pub(crate) struct ExpansionState {
     allocator: ExpansionAllocator,
     work: WorkStack<ExpansionOp>,
-    output: ExpansionBuffer<SequenceRow>,
+    output: ExpansionBuffer<NormalizedInstruction>,
     fuel: u32,
 }
 ```
@@ -816,14 +902,14 @@ The driver is the only recursive component. It should be implemented as an itera
 
 ```rust
 pub(crate) fn expand_one_core(
-    source: SourceRow,
+    source: NormalizedInstruction,
     state: &mut ExpansionState,
-) -> Result<ExpandedRows, ExpansionError> {
+) -> Result<ExpansionResult, ExpansionError> {
     state.reset_for_source();
 
     let initial_ops = match prepare_source(source, state)? {
-        SourcePlan::Direct(rows) => return Ok(rows),
-        SourcePlan::Synthetic(initial_ops) => initial_ops,
+        InitialExpansion::Direct(rows) => return Ok(rows),
+        InitialExpansion::Work(initial_ops) => initial_ops,
     };
     state.start_synthetic_sequence();
     state.push_ops_reversed(initial_ops.as_slice())?;
@@ -837,7 +923,7 @@ pub(crate) fn expand_one_core(
         }
     }
 
-    Ok(ExpandedRows::Synthetic(state.output.clone()))
+    Ok(ExpansionResult::Synthetic(state.output.clone()))
 }
 ```
 
@@ -845,12 +931,12 @@ pub(crate) fn expand_one_core(
 
 ```rust
 fn process_row(
-    source: SourceRow,
-    row: RawRow,
+    source: NormalizedInstruction,
+    row: NormalizedInstruction,
     state: &mut ExpansionState,
 ) -> Result<(), ExpansionError> {
-    if row.operands.rd == Some(0) && !handles_rd_zero_internally(row.kind) {
-        if has_side_effects(row.kind) {
+    if row.operands.rd == Some(0) && !handles_rd_zero_internally(row.instruction_kind) {
+        if has_side_effects(row.instruction_kind) {
             let tmp = state.allocator.allocate_instruction()?;
             let rewritten = row.with_rd(tmp);
             state.push_ops_reversed(&[
@@ -859,12 +945,12 @@ fn process_row(
             ])?;
             return Ok(());
         }
-        state.output.push(SequenceRow::Raw(noop_raw()))?;
+        state.output.push(noop_for_source(source))?;
         return Ok(());
     }
 
-    if is_final_kind(row.kind) {
-        state.output.push(SequenceRow::Raw(row))?;
+    if is_final_kind(row.instruction_kind) {
+        state.output.push(strip_sequence_metadata(row))?;
     } else {
         let ops = lower::lower(row, &mut state.allocator)?;
         state.push_ops_reversed(ops.as_slice())?;
@@ -877,31 +963,31 @@ fn process_row(
 
 ```rust
 fn prepare_source(
-    source: SourceRow,
+    source: NormalizedInstruction,
     state: &mut ExpansionState,
-) -> Result<SourcePlan, ExpansionError> {
-    if source.operands.rd == Some(0) && !handles_rd_zero_internally(source.kind) {
-        if has_side_effects(source.kind) {
+) -> Result<InitialExpansion, ExpansionError> {
+    if source.operands.rd == Some(0) && !handles_rd_zero_internally(source.instruction_kind) {
+        if has_side_effects(source.instruction_kind) {
             let tmp = state.allocator.allocate_instruction()?;
             let rewritten = source.with_rd(tmp);
-            if is_final_kind(rewritten.kind) {
-                let row = rewritten.original;
+            if is_final_kind(rewritten.instruction_kind) {
+                let row = rewritten;
                 state.allocator.release(tmp)?;
-                return Ok(SourcePlan::Direct(ExpandedRows::Literal(row)));
+                return Ok(InitialExpansion::Direct(ExpansionResult::Literal(row)));
             }
-            return Ok(SourcePlan::Synthetic(ops(&[
-                ExpansionOp::Row(rewritten.raw_row()),
+            return Ok(InitialExpansion::Work(ops(&[
+                ExpansionOp::Row(rewritten),
                 ExpansionOp::Release(tmp),
             ])));
         }
-        return Ok(SourcePlan::Direct(ExpandedRows::Literal(noop_for_source(source))));
+        return Ok(InitialExpansion::Direct(ExpansionResult::Literal(noop_for_source(source))));
     }
 
-    if is_final_kind(source.kind) {
-        return Ok(SourcePlan::Direct(ExpandedRows::PassThrough(source.original)));
+    if is_final_kind(source.instruction_kind) {
+        return Ok(InitialExpansion::Direct(ExpansionResult::PassThrough(source)));
     }
 
-    Ok(SourcePlan::Synthetic(ops(&[ExpansionOp::Row(source.raw_row())])))
+    Ok(InitialExpansion::Work(ops(&[ExpansionOp::Row(source)])))
 }
 ```
 
@@ -924,7 +1010,7 @@ Target ADDIW:
 
 ```rust
 pub(crate) fn lower_addiw(
-    row: RawRow,
+    row: NormalizedInstruction,
     out: &mut OpBuffer,
 ) -> Result<(), ExpansionError> {
     let rd = operands::rd(row)?;
@@ -935,11 +1021,12 @@ pub(crate) fn lower_addiw(
 }
 ```
 
-For functions with temporary registers, releases become explicit operations at the same semantic point:
+For functions with temporary registers, releases become explicit operations at
+the same sequence point:
 
 ```rust
 pub(crate) fn lower_mulh(
-    row: RawRow,
+    row: NormalizedInstruction,
     allocator: &mut ExpansionAllocator,
     out: &mut OpBuffer,
 ) -> Result<(), ExpansionError> {
@@ -1073,14 +1160,16 @@ pub(crate) struct FixedVec<T: Copy, const N: usize> {
 }
 ```
 
-`RawRow`, `SequenceRow`, `ExpansionOp`, and `NormalizedInstruction` are `Copy`, so this can avoid `MaybeUninit` in the extraction-critical core. Overflow returns `ExpansionError::ExpansionBufferExceeded { capacity: N }`.
+`ExpansionOp` and `NormalizedInstruction` are `Copy`, so this can avoid
+`MaybeUninit` in the extraction-critical core. Overflow returns
+`ExpansionError::ExpansionBufferExceeded { capacity: N }`.
 
 Suggested buffers:
 
 ```rust
 pub(crate) type WorkStack = FixedVec<ExpansionOp, MAX_WORK_OPS_PER_SOURCE>;
 pub(crate) type OpBuffer = FixedVec<ExpansionOp, MAX_SHALLOW_OPS_PER_LOWERING>;
-pub(crate) type ExpansionBuffer = FixedVec<SequenceRow, MAX_FINAL_ROWS_PER_SOURCE>;
+pub(crate) type ExpansionBuffer = FixedVec<NormalizedInstruction, MAX_FINAL_ROWS_PER_SOURCE>;
 ```
 
 The exact capacities should be set from observed maximum expansion lengths plus margin, then guarded by tests over the curated parity corpus. This is not merely for extraction: bounded buffers remove recursive heap allocation from the runtime hot path.
@@ -1094,7 +1183,7 @@ pub fn expand_program_slice(
     let mut state = ExpansionState::new();
     let mut expanded = Vec::with_capacity(estimate_expanded_len(instructions));
     for instruction in instructions {
-        let rows = core::expand_one_core(SourceRow::from(*instruction), &mut state)?;
+        let rows = core::expand_one_core(*instruction, &mut state)?;
         metadata::append_expanded_rows(rows, &mut expanded)?;
     }
     Ok(expanded)
@@ -1105,12 +1194,14 @@ Ergonomic `impl IntoIterator` wrappers can remain outside the extraction target.
 
 ## Metadata Stamping
 
-Rows inside synthetic sequences should not be partially initialized with placeholder metadata. The finalizer should construct or update `NormalizedInstruction` rows from `SequenceRow` values:
+Rows inside synthetic sequences should not be partially initialized with
+placeholder metadata. The finalizer should construct or update
+`NormalizedInstruction` rows from expanded rows:
 
 ```rust
 pub(crate) fn stamp_row(
-    source: SourceRow,
-    row: SequenceRow,
+    source: NormalizedInstruction,
+    mut row: NormalizedInstruction,
     index: usize,
     len: usize,
 ) -> Result<NormalizedInstruction, ExpansionError> {
@@ -1120,17 +1211,7 @@ pub(crate) fn stamp_row(
     let remaining = u16::try_from(remaining)
         .map_err(|_| ExpansionError::ExpansionTooLong { len })?;
 
-    let mut row = match row {
-        SequenceRow::Raw(row) => NormalizedInstruction {
-            instruction_kind: row.kind,
-            address: source.address,
-            operands: row.operands,
-            virtual_sequence_remaining: None,
-            is_first_in_sequence: false,
-            is_compressed: false,
-        },
-        SequenceRow::Literal(row) => row,
-    };
+    row.address = source.address;
     row.virtual_sequence_remaining = Some(remaining);
     row.is_first_in_sequence = index == 0;
     row.is_compressed = index + 1 == len && source.is_compressed;
@@ -1138,9 +1219,18 @@ pub(crate) fn stamp_row(
 }
 ```
 
-This stamping function is for `ExpandedRows::Synthetic` only. `ExpandedRows::PassThrough` returns the original source row unchanged, matching the current behavior for already-final rows. Root-level `ExpandedRows::Literal` returns an explicitly constructed literal row without stamping and must be covered by a baseline-quirk or normalization test.
+This stamping function is for `ExpansionResult::Synthetic` only.
+`ExpansionResult::PassThrough` returns the original source row unchanged,
+matching the current behavior for already-final rows. Root-level
+`ExpansionResult::Literal` returns an explicitly constructed literal row without
+stamping and must be covered by a baseline-quirk or normalization test.
 
-For a side-effect-free `rd = x0` source no-op, current behavior returns an ADDI no-op with the source address and compressed flag, but with `virtual_sequence_remaining = None` and `is_first_in_sequence = false`. That should be represented as `ExpandedRows::Literal(noop_for_source(source))`, not as a one-row synthetic sequence, unless maintainers intentionally approve the metadata behavior change.
+For a side-effect-free `rd = x0` source no-op, current behavior returns an ADDI
+no-op with the source address and compressed flag, but with
+`virtual_sequence_remaining = None` and `is_first_in_sequence = false`. That
+should be represented as `ExpansionResult::Literal(noop_for_source(source))`,
+not as a one-row synthetic sequence, unless maintainers intentionally approve
+the metadata behavior change.
 
 ## Inline Handling
 
@@ -1161,7 +1251,7 @@ The provider-taking API should sit outside the extracted core:
 pub trait InlineExpansionProvider {
     fn expand_inline(
         &mut self,
-        source: SourceRow,
+        source: NormalizedInstruction,
     ) -> Result<InlineExpansion, ExpansionError>;
 }
 
@@ -1170,47 +1260,32 @@ pub struct InlineExpansion {
 }
 ```
 
-The adapter can intercept inline source rows, ask tracer's registry for the normalized inline sequence, and push those rows into the same core driver. If provider-owned inline allocation needs reset rows, the provider should return explicit reset rows or an explicit reset operation. The core should not call a trait object while processing provider-free RV64 rows.
+The adapter can intercept inline source rows and ask tracer's registry for the
+normalized inline sequence. For this phase, that sequence may remain finalized
+provider output rather than `ExpansionOp` data. If provider-owned inline
+allocation needs reset rows, the provider should include those rows before
+returning. The provider-free core should not call a trait object while
+processing ordinary RV64 rows.
 
 This preserves the dependency boundary from PR #1490: `jolt-program` still does not depend on `tracer`, inventory, CPU state, or advice tapes.
 
-## Termination And Expansion Classes
+## Termination And Recursion Bound
 
-The current recursive implementation relies on the absence of cycles in helper expansion. The new driver should make this explicit.
+The current recursive implementation relies on the absence of cycles in helper
+expansion. The new driver should make accidental cycles explicit without
+requiring a full rank system in Pass 1.
 
-Add an expansion classification:
-
-```rust
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum ExpansionRank {
-    Final = 0,
-    VirtualHelper = 1,
-    ShallowSynthetic = 2,
-    SourceOnly = 3,
-}
-
-pub(crate) const fn expansion_rank(kind: InstructionKind) -> ExpansionRank {
-    match kind {
-        InstructionKind::ADDIW
-        | InstructionKind::ADDW
-        | InstructionKind::DIV
-        | InstructionKind::LW
-        | InstructionKind::SW => ExpansionRank::SourceOnly,
-        ...
-        _ => ExpansionRank::Final,
-    }
-}
-```
-
-Every shallow lowerer should emit rows with strictly lower rank than the row being lowered, or a test should document the alternative termination measure for that family. Add tests that collect emitted kinds from each lowerer over representative operands and assert the expansion graph is acyclic.
-
-The driver should also enforce a fuel bound:
+The driver should enforce a fuel or recursion-depth bound:
 
 ```rust
 const MAX_EXPANSION_OPS_PER_SOURCE: u32 = 4096;
 ```
 
 Fuel exhaustion should be treated as an internal malformed-expansion error and should never occur in parity fixtures.
+
+If the recipe surface later becomes declarative enough to build a useful
+dependency graph, a rank or acyclicity validator can be added as a follow-up.
+It is not required for the first compiler-native rewrite.
 
 ## Performance Expectations
 
@@ -1251,9 +1326,9 @@ The extraction-critical API should be concrete:
 
 ```rust
 pub(crate) fn expand_one_core(
-    source: SourceRow,
+    source: NormalizedInstruction,
     state: &mut ExpansionState,
-) -> Result<ExpandedRows, ExpansionError>;
+) -> Result<ExpansionResult, ExpansionError>;
 
 pub fn expand_program_slice(
     instructions: &[NormalizedInstruction],
@@ -1283,7 +1358,7 @@ where
     let mut state = ExpansionState::new();
     let mut expanded = Vec::new();
     for instruction in instructions {
-        let rows = core::expand_one_core(SourceRow::from(instruction), &mut state)?;
+        let rows = core::expand_one_core(instruction, &mut state)?;
         metadata::append_expanded_rows(rows, &mut expanded)?;
     }
     Ok(expanded)
@@ -1312,20 +1387,22 @@ guest SDK registration into the grammar.
 This is one compiler design, but two implementation passes:
 
 1. **Pass 1: provider-free bytecode expansion.** Convert the current
-   `jolt-program::expand` families into the compiler-native grammar, central
-   worklist driver, symbolic temp materialization, bounded buffers, and explicit
-   metadata policy.
-2. **Pass 2: inline extension dialect.** Move generic inline infrastructure and
-   selected concrete inline recipes onto the same grammar discipline, including
-   advice plans and extension-dialect registration.
+   `jolt-program::expand` families into syntactic recipes or shallow lowerers,
+   a central worklist driver, explicit temp materialization, bounded buffers,
+   and explicit metadata policy.
+2. **Pass 2: inline extension/advice design.** Decide how generic inline
+   infrastructure, selected concrete inline recipes, and advice generation
+   should relate to the same expansion machinery. This may become an extension
+   dialect, but that is not settled in this spec.
 
 Do not combine these passes. Inlines have a different dependency shape from
 ordinary bytecode expansion: they involve guest SDK encoding, link-time
 registration, host advice computation, tracer CPU/memory access, inline-only
 virtual-register reset policy, and much larger sequence capacities. Combining
 them with the provider-free rewrite would make review and parity debugging too
-wide. The bytecode pass should instead build the target dialect and resource
-materialization rules that the inline pass will later reuse.
+wide. The bytecode pass should instead build the target recipe surface and
+resource materialization rules that a later inline pass can reuse if that proves
+to be the right design.
 
 ### In Scope For Pass 1
 
@@ -1334,23 +1411,29 @@ Pass 1 should include the following production changes:
 - Use compiler-native vocabulary in docs and code where appropriate.
   Extraction remains a key acceptance signal, but the implementation shape is a
   compiler lowering pipeline.
-- Add `expand::grammar` with inspectable recipe data:
-  - `RegRef`, `ImmExprId`, `CondExprId`, and fixed expression tables;
-  - `RowSpec` / `SequenceRow` for raw rows, literal rows, and metadata policy;
-  - `LowerStmt::{Seq, If, WithTemp, Emit, Fragment, Release, Literal}`;
-  - `RegisterPool::{Instruction, Inline}` even if Pass 1 only materializes the
-    instruction pool in provider-free core.
+- Add a small `expand::grammar` or equivalent recipe module with inspectable
+  syntactic expansion data:
+  - use `NormalizedInstruction` as the row representation, with a small
+    `RowStage`/`ExpansionResult` policy for source, expanded, and stamped rows;
+  - include only the operand-reference, condition, and statement forms that real
+    expansion families need;
+  - keep `WithTemp`/nested temp scopes or an equivalent explicit lifetime
+    construct for recipes that need more than one temporary register;
+  - keep `RegisterPool::{Instruction, Inline}` only if it is useful for the
+    provider-free core and the inline adapter boundary.
 - Add `expand::core` with concrete, non-generic entry points:
-  - `expand_one_core(source: SourceRow, state: &mut ExpansionState)`;
+  - `expand_one_core(source: NormalizedInstruction, state: &mut ExpansionState)`;
   - a depth-first work stack of `ExpansionOp`;
   - source and target legality predicates;
-  - rank/fuel validation generated from recipe dependencies or checked against
-    a visible rank table.
+  - a fuel or recursion-depth bound that returns an explicit error on runaway
+    expansion.
 - Replace the production recursive `InstrAssembler<'a>` with shallow family
   lowerers that only return recipe data or bounded `ExpansionOp` buffers.
-- Materialize symbolic temps through `ExpansionAllocator` at `WithTemp`
+- Materialize temps through `ExpansionAllocator` at explicit lifetime
   boundaries, preserving current first-fit virtual-register numbering and
-  release order.
+  release order. Nested `WithTemp` scopes are the default representation for
+  multi-temp sequences, but the implementation may use an equivalent explicit
+  operation form if it is simpler.
 - Replace heap-backed per-source sequence construction in the core with bounded
   buffers and explicit overflow errors.
 - Preserve current metadata behavior exactly, including pass-through rows,
@@ -1364,6 +1447,10 @@ Pass 1 should include the following production changes:
   `InstructionKind::Inline` remains illegal for `expand_one_core`, while
   `expand_instruction_with_provider` can still delegate to an
   `InlineExpansionProvider` that returns finalized `NormalizedInstruction` rows.
+- Preserve current advice-channel behavior:
+  provider-free expansion lowers `AdviceLB/LH/LW/LD` into `VirtualAdviceLoad`
+  sequences, does not assign `VirtualAdvice` payloads, and does not move
+  trusted/untrusted advice commitments out of preprocessing/proof code.
 
 Pass 1 should also include the following tests and checks:
 
@@ -1372,11 +1459,11 @@ Pass 1 should also include the following tests and checks:
   code should have one expander; the old assembler may remain only as a
   temporary test reference during the rewrite. Once tracer delegates to
   `jolt-program::expand`, tracer bridge tests are circular and should not be
-  treated as semantic oracles.
+  treated as expansion oracles.
 - Fixture coverage for every provider-free source-only instruction kind with
   representative operand aliases, `rd = x0`, compressed metadata, CSR edge
   cases, branch/control-flow immediates, load/store offsets, AMO/LR/SC cases,
-  and division/remainder variants.
+  advice-load cases, and division/remainder variants.
 - Capacity tests that assert observed final row count, shallow op count, and
   work-stack depth stay below the chosen constants.
 - Dependency checks showing no `tracer` dependency from `jolt-program` or
@@ -1407,13 +1494,17 @@ rewrite of `jolt-program::expand`, with the following milestones:
      quirks, and documented fixes such as CSR address `0` rejection.
 
 2. **Introduce the compiler data model.**
-   - Add `SourceRow`, `TargetRow`, `RowSpec`, `LowerStmt`, expression ids,
-     symbolic temp ids, register-pool ids, and recipe fragments.
+   - Keep `NormalizedInstruction` as the row type and add only the minimal
+     stage/result wrappers needed to distinguish source rows, expanded helper
+     rows, stamped rows, pass-through rows, and deliberate literals.
+   - Add syntactic recipe data or shallow operation buffers with explicit temp
+     ids, register-pool ids where useful, and recipe fragments where they
+     reduce duplication.
    - Keep the model first-order: no borrowed assembler state, no recursive
      callback into public expansion APIs, no trait-object dispatch in the
      provider-free core.
-   - Add validators for source legality, target legality, recipe rank/fuel, temp
-     liveness, and bounded row capacity.
+   - Add validators/checks for source legality, target legality, fuel/depth,
+     temp liveness where represented as recipe data, and bounded row capacity.
 
 3. **Build the new core driver behind the existing public API.**
    - Implement `ExpansionState`, the bitset allocator, bounded row buffers, the
@@ -1433,7 +1524,8 @@ rewrite of `jolt-program::expand`, with the following milestones:
 
 5. **Port all provider-free expansion families.**
    - Move arithmetic, shifts, memory, division, control-flow, fragment helpers,
-     AMO/LR/SC, CSR, and literal/pass-through behavior onto recipes.
+     AMO/LR/SC, CSR, and literal/pass-through behavior onto recipes or shallow
+     lowerers that return inspectable operations.
    - Delete the recursive production assembler once the last provider-free family
      has parity coverage.
    - Preserve the inline boundary as an adapter returning finalized rows, with
@@ -1441,7 +1533,8 @@ rewrite of `jolt-program::expand`, with the following milestones:
 
 6. **Close with extraction and repo verification.**
    - Re-run the narrow Hax/Aeneas experiments and record which modules now
-     extract, which still fail, and whether failures are semantic or tool-level.
+     extract, which still fail, and whether failures are due to expansion-core
+     structure or extractor/tool limitations.
    - Run the repo checks listed above.
    - Land the pass only if production behavior is single-path, parity-tested,
      dependency-light, and no slower on the expansion hot path.
@@ -1460,6 +1553,10 @@ Pass 1 should not:
 - replace `inventory` registration;
 - redesign guest inline SDK assembly macros;
 - model inline advice as a grammar;
+- assign `VirtualAdvice` payloads in provider-free expansion;
+- change runtime advice-tape behavior for `VirtualAdviceLoad` or
+  `VirtualAdviceLen`;
+- move trusted/untrusted advice memory commitments into `jolt-program::expand`;
 - change tracer execution semantics;
 - change bytecode/RAM preprocessing semantics;
 - feature-gate `serde` or `ark-serialize` unless extraction still pulls those
@@ -1472,12 +1569,12 @@ The intended end state inside `crates/jolt-program/src/expand` is:
 ```text
 allocator.rs       deterministic bitset allocator and reset tracking
 buffer.rs          bounded buffers used by core lowering
-core.rs            worklist driver, legality, source/target module wrappers
-grammar.rs         typed recipe grammar and validators
+core.rs            worklist driver, legality, staged row policy
+grammar.rs         small syntactic recipe data and validators/checks
 metadata.rs        sequence metadata materialization
 operands.rs        operand decoding helpers
 lower/
-  arithmetic.rs    shallow recipe definitions
+  arithmetic.rs    shallow recipe/lowering definitions
   control_flow.rs
   division.rs
   memory.rs
@@ -1488,22 +1585,28 @@ mod.rs             public API glue
 ```
 
 The exact file names can shift during implementation, but ownership should not:
-`core + grammar + allocator + buffer + metadata + lower` form the
+`core + grammar/recipe + allocator + buffer + metadata + lower` form the
 compiler-native target; `inline + public ergonomic wrappers` stay outside the
 first extraction target.
 
 ## Follow-Up Inline Extension Pass
 
-The inline pass should start after Pass 1 has stabilized the target bytecode
-grammar and materialization rules. Its goal is not "make current Rust inline
-builders extract." Its goal is to make inlines extension dialects that legalize
-into the same `expand` and `jolt.bytecode` target.
+This section is separate from the execution-semantics track above. Inlines add
+both expansion complexity and advice/execution questions, so their design should
+not be used as the first semantics modeling slice.
 
-The likely crate split is:
+The inline pass should start after Pass 1 has stabilized the target bytecode
+recipe surface and materialization rules. Its goal is not "make current Rust
+inline builders extract." The exact advice model is still unresolved. A future
+inline spec should decide whether inlines become extension dialects, remain
+adapter-provided finalized rows, or split bytecode expansion from advice
+generation more explicitly.
+
+One possible crate split is:
 
 ```text
 jolt-inline-ir
-  Generic InlineId, InlineOpDef, InlineRecipe, AdviceRecipe, validators.
+  Generic InlineId, InlineOpDef, InlineRecipe, placeholder AdviceModel, validators.
 
 jolt-program
   Consumes inline definitions and lowers source rows to final bytecode.
@@ -1527,7 +1630,7 @@ also requiring the full hash/advice surface. A later slice can port an
 advice-bearing modular arithmetic inline, then a hash compression inline with
 static round schedules.
 
-The inline grammar should add:
+A future inline grammar may need:
 
 - `InlineOpDef { id, name, operands, effects, recipe, advice }`;
 - `InlineOperandSpec` that makes `rs3` a memory output pointer, not a normal
@@ -1535,7 +1638,7 @@ The inline grammar should add:
 - static loops and recipe fragments with alpha-renamed temps;
 - symbolic inline temp arrays over `RegisterPool::Inline`;
 - explicit memory effect metadata;
-- explicit `VirtualAdvice(slot)` rows tied to an `AdviceRecipe`;
+- explicit `VirtualAdvice(slot)` rows tied to whatever advice model the follow-up spec chooses;
 - reset policy that checks all inline temps are dead before materializing
   `ADDI temp, x0, 0` rows.
 
@@ -1547,10 +1650,10 @@ resource materialization machinery as provider-free expansion.
 
 ## Migration Plan
 
-1. Add the typed expansion grammar, validator, compiler-phase vocabulary, and baseline-quirk fixtures.
+1. Add the small syntactic expansion recipe surface, compiler-phase vocabulary, and baseline-quirk fixtures.
 2. Add new `core`, `buffer`, and bitset `allocator` internals under `jolt-program::expand`.
-3. Represent recipe temps symbolically and materialize them through the allocator at `WithTemp` boundaries.
-4. Port one small family, such as ADDIW/ADDW/SUBW, to grammar-backed shallow lowering and prove parity against the current output.
+3. Represent temp lifetimes explicitly and materialize them through the allocator at `WithTemp` or equivalent boundaries.
+4. Port one small family, such as ADDIW/ADDW/SUBW, to recipe-backed shallow lowering and prove parity against the current output.
 5. Port arithmetic, shifts, memory, division, and control-flow families.
 6. Replace `InstrAssembler<'a>` in production expansion code.
 7. Preserve tracer inline adapter support as finalized rows outside provider-free core.
@@ -1560,17 +1663,22 @@ resource materialization machinery as provider-free expansion.
    - allocator transitions,
    - ADDIW shallow lowering,
    - provider-free `expand_one_core`.
-10. Run formatting, clippy, host tests, ZK tests, and dependency checks.
+10. Record the separate semantics follow-up: a hand-modeled Lean transition
+    relation for a small provider-free slice, plus an expansion-correctness
+    statement comparing source-row execution with target-sequence execution.
+11. Run formatting, clippy, host tests, ZK tests, and dependency checks.
 
 Do not leave both expanders in production. A temporary test-only reference path is acceptable during the rewrite, but the final branch should have one canonical production expander.
 
 ## Acceptance Criteria
 
 - [ ] `jolt-program::expand` no longer has a production `InstrAssembler<'a>` that stores a borrowed allocator.
-- [ ] Expansion recipes are represented in a typed grammar that separates pure register/immediate/condition expressions from expansion-time statements.
+- [ ] Expansion recipes are represented as syntactic lowering data or shallow operations; the grammar does not model instruction execution semantics.
+- [ ] The spec keeps execution semantics on a separate track, starting with a hand-modeled Lean abstract machine slice and expansion-correctness theorem rather than extraction from `tracer` or MLIR-as-semantics.
 - [ ] The spec names source, intermediate, and target phases with MLIR-ready legality predicates, even while Rust remains the implementation substrate.
-- [ ] Recipe temps are symbolic in the grammar and materialized into concrete virtual registers by a deterministic allocation/resource-materialization step.
-- [ ] The grammar validator rejects temp use outside live scopes, invalid operand shapes, unchecked literal rows, and cyclic fragment/lowering dependencies.
+- [ ] `NormalizedInstruction` remains the core row type, with only minimal stage/result wrappers for source, expanded, stamped, pass-through, and literal policies.
+- [ ] Recipe temps have explicit lifetimes and are materialized into concrete virtual registers by a deterministic allocation/resource-materialization step.
+- [ ] Recipe checks reject invalid operand shapes, unchecked literal rows, bounded-capacity overflow, and temp-lifetime mistakes where temp scopes are represented as data.
 - [ ] Family lowerers are shallow and do not call `expand_instruction`.
 - [ ] Recursive expansion happens in one central depth-first driver.
 - [ ] Temporary-register release and inline reset are explicit expansion operations.
@@ -1578,8 +1686,15 @@ Do not leave both expanders in production. A temporary test-only reference path 
 - [ ] Per-source expansion uses bounded buffers, with explicit overflow errors.
 - [ ] Synthetic sequence metadata is stamped during final row construction, not by mutating already-built rows.
 - [ ] Source pass-through rows and deliberate literal rows preserve the current metadata policy exactly, with tests for the weird cases.
-- [ ] Provider-free core expansion has a concrete, non-generic entry point over `SourceRow` and `ExpansionState`.
+- [ ] Provider-free core expansion has a concrete, non-generic entry point over `NormalizedInstruction` and `ExpansionState`.
 - [ ] Inline provider support is an adapter outside the provider-free core.
+- [ ] Provider-free expansion preserves advice-load lowering exactly:
+      `AdviceLB/LH/LW/LD` emit `VirtualAdviceLoad` plus sign extension where
+      needed.
+- [ ] `VirtualAdvice` payload assignment remains outside provider-free
+      expansion; `NormalizedInstruction` does not grow an advice payload field.
+- [ ] Trusted/untrusted advice memory and polynomial commitments remain
+      preprocessing/proof responsibilities, not expansion responsibilities.
 - [ ] Expansion output matches PR #1490 baseline fixtures exactly.
 - [ ] Hax and Aeneas can extract metadata stamping and at least one shallow family lowerer without pulling in execution/preprocess/serialization modules.
 - [ ] Dependency checks still show no `tracer` dependency from `jolt-program` or `jolt-riscv`.
@@ -1598,7 +1713,11 @@ const MAX_WORK_OPS_PER_SOURCE: usize = 128;
 
 A throwaway measurement against the current `expand_instruction` implementation on representative provider-free rows found the largest final expansion was `SCW` at 37 rows. The next largest cases were word AMO min/max at 24 rows, `DIV`/`REM` at 24 rows, `DIVW`/`REMW` at 21 rows, word AMO arithmetic at 19 rows, and `AMOSWAPW` at 18 rows.
 
-These constants are intentionally not tight. They leave room for the grammar driver to carry explicit `Release` operations and for small future edits without immediately changing stack layout. The implementation PR should still add a fixture test that expands every provider-free source-only kind with representative operands and asserts:
+These constants are intentionally not tight. They leave room for the worklist
+driver to carry explicit `Release` operations and for small future edits without
+immediately changing stack layout. The implementation PR should still add a
+fixture test that expands every provider-free source-only kind with
+representative operands and asserts:
 
 - final row count is below `MAX_FINAL_ROWS_PER_SOURCE`;
 - maximum shallow recipe output is below `MAX_SHALLOW_OPS_PER_LOWERING`;
@@ -1608,39 +1727,86 @@ Inline expansion should not use these provider-free constants until inline recip
 
 ### Grammar Surface
 
-Decision: start with ordinary Rust data plus a small `RecipeBuilder`; do not start with a proc macro.
+Decision: start with ordinary Rust data or shallow lowerers plus a small
+`RecipeBuilder` only where it pays for itself; do not start with a proc macro.
 
-Plain data is the extraction-friendly source of truth. A builder is acceptable only if `finish()` returns an inspectable recipe made of `LowerStmt`, `RowSpec`, expression tables, and fragment references. The builder must not be a new imperative assembler whose methods hide arbitrary emission logic.
+Plain data is the extraction-friendly source of truth, but the first
+implementation should not overbuild the grammar. A builder is acceptable only
+if `finish()` returns inspectable syntactic expansion data or bounded
+`ExpansionOp` buffers. The builder must not be a new imperative assembler whose
+methods hide arbitrary recursive emission logic.
 
-A proc-macro DSL can be a later ergonomics layer, but only if it emits the same checked grammar definitions. That keeps Ari's article's lesson without inheriting the main proc-macro drawback: `syn` sees syntax, not Rust types. Type-dependent behavior should stay in the grammar or in small typed adapters outside the extraction-critical core.
+Start with the smallest surface that covers the ported families. `Seq`,
+`Emit`, `If`, `WithTemp`/explicit lifetime markers, `Fragment`, `Release`,
+`ReturnLiteral`, and `Fail` are likely useful concepts. `RegRef`, `ImmRef`, and
+`Cond` should be pared down to the forms actually needed by provider-free
+expansion. Do not preserve the larger `RegExpr`/`ImmExpr`/`CondExpr` sketch just
+because it appears in this spec.
+
+A proc-macro DSL can be a later ergonomics layer, but only if it emits the same checked recipe definitions. That keeps Ari's article's lesson without inheriting the main proc-macro drawback: `syn` sees syntax, not Rust types. Type-dependent behavior should stay in the recipe data or in small typed adapters outside the extraction-critical core.
 
 ### MLIR Boundary
 
 Decision: keep the immediate rewrite Rust-first, but make the Rust data model
-MLIR-ready.
+MLIR-ready without implying an execution-semantics IR.
 
 The implementation PR should not add a Melior/MLIR dependency to
 `jolt-program::expand`. That would make an already large rewrite harder to
 review and would move the extraction experiment into compiler-infrastructure
-integration before the expansion semantics are clean. The right near-term target
-is a small typed Rust IR with explicit source/intermediate/target legality
-checks, declarative rewrite recipes, symbolic temps, resource materialization,
-and validators.
+integration before the expansion behavior is clean. The right near-term target
+is a small Rust expansion IR with explicit source/intermediate/target legality
+checks, syntactic rewrite recipes or shallow lowerers, explicit temp lifetimes,
+resource materialization, and focused validators/checks.
 
 Those concepts should be named and shaped as if they may later become MLIR
 dialects or ops. In particular, avoid recipe APIs that depend on Rust closures,
 trait-object callbacks, hidden mutation, or call-stack effects. A future MLIR
 version should be able to represent the same phases as `riscv.norm`,
-`expand`, and `jolt.bytecode` dialects without changing the semantic contract
+`expand`, and `jolt.bytecode` dialects without changing the expansion contract
 or the parity fixtures.
+
+For execution semantics, MLIR should be treated as a carrier for op structure,
+legality interfaces, lowering passes, and documentation, not as the first proof
+semantics source. The first proof semantics source should be a Lean transition
+relation over an abstract machine state. If a later semantic DSL is introduced,
+it should be able to emit Lean definitions, a Rust reference interpreter, and
+MLIR op metadata from the same effect descriptions.
+
+### Execution Semantics Follow-Up
+
+Decision: make instruction semantics a separate follow-up spec rather than
+folding it into bytecode expansion.
+
+The first follow-up should hand-model a provider-free slice in Lean:
+
+- define an abstract `MachineState` with architectural registers, memory,
+  program counter, trap state, and any Jolt target-state components needed by
+  virtual helper rows;
+- define `step` for a small source/target instruction slice;
+- define `exec_seq` for target bytecode rows;
+- define the projection from Jolt target state back to architectural state;
+- prove or test one expansion-correctness theorem of the form "executing the
+  expanded sequence refines executing the source row";
+- differentially test the Lean/reference semantics against `tracer` for the
+  same slice.
+
+Only after that slice should the project decide whether a semantic DSL is worth
+the cost. The DSL option is attractive if it can generate Lean semantics and a
+Rust reference interpreter, but it should be driven by the hand-modeled slice
+rather than designed in the abstract.
 
 ### Expansion Rank
 
-Decision: generate or validate expansion ranks from the declarative grammar, rather than maintaining a purely manual rank table forever.
+Decision: do not require `ExpansionRank` in Pass 1.
 
-The implementation can bootstrap with a manual `expansion_rank(kind)` function while families are being ported. Before the old assembler is deleted, the grammar validator should build the emitted-kind dependency graph from recipes/fragments and assert acyclicity. The rank table can then be generated from that graph or kept as a checked cache.
+The central driver should enforce a fuel or recursion-depth bound and return an
+explicit error on runaway expansion. That is sufficient for the next rewrite and
+is much simpler to review.
 
-The important invariant is not the representation of the rank table. It is that every `Emit` edge is visible as data, so termination is checked globally instead of inferred from hand-written Rust call structure.
+If the recipe surface becomes declarative enough later, a dependency-graph or
+rank validator can be added as a follow-up. The important Pass 1 invariant is
+that recursive expansion goes through one bounded driver instead of being hidden
+inside hand-written Rust call structure.
 
 ### Inline Provider Output
 
@@ -1657,6 +1823,29 @@ pub enum InlineExpansion {
 ```
 
 The adapter must preserve the existing `rd = x0` remapping behavior before dispatching to the provider.
+
+### Advice Channels
+
+Decision: preserve today's three advice channels but name them separately.
+
+Provider-free expansion owns only the `AdviceLB/LH/LW/LD` syntactic lowering to
+`VirtualAdviceLoad` plus sign extension. `VirtualAdviceLoad` reads from the
+runtime advice tape during execution; expansion records only the byte length.
+
+`VirtualAdvice` is different: it is a target row whose concrete tracer
+instruction carries a trace-time `advice: u64` payload. That payload is patched
+by tracer/inline/LR-SC logic today and should remain outside provider-free
+expansion. Do not add an advice payload to `NormalizedInstruction` in this
+rewrite.
+
+Trusted and untrusted advice bytes are a third channel: they are Jolt device
+memory regions committed as advice polynomials by the prover. They should stay
+in preprocessing/proof code and should not be folded into bytecode expansion.
+
+The later semantics/advice follow-up can introduce an `AdvicePlan` if needed.
+For now, model advice abstractly as an oracle/tape in the execution semantics
+track and keep expansion responsible only for emitting the rows that consume
+advice.
 
 ### Serialization Derives
 
