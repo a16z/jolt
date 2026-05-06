@@ -187,9 +187,8 @@ mod tests {
         // satp = 0x180 — valid RISC-V supervisor CSR but not modelled by Jolt.
         // Encoding: 0x180 << 20 | 5 << 15 | 1 << 12 | 0 << 7 | 0x73
         let instr: u32 = (0x180 << 20) | (5 << 15) | (1 << 12) | 0x73;
-        let err = Instruction::decode(instr, 0x1000, false).expect_err(
-            "decode must reject unsupported CSR (satp) with an Err, not panic",
-        );
+        let err = Instruction::decode(instr, 0x1000, false)
+            .expect_err("decode must reject unsupported CSR (satp) with an Err, not panic");
         assert!(err.contains("CSR"), "error should mention CSR: {err}");
     }
 
