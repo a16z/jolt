@@ -7,34 +7,43 @@
 
 use ark_std::test_rng;
 use jolt_field::signed::*;
-use jolt_field::{Field, FieldAccumulator, Fr, Limbs, NaiveAccumulator, OptimizedMul};
+use jolt_field::{
+    AdditiveAccumulator, FixedBytes, Fr, FromPrimitiveInt, Limbs, MulPow2, NaiveAccumulator,
+    OptimizedMul, RandomSampling, RingAccumulator,
+};
 use num_traits::{One, Zero};
 
 #[test]
 fn naive_accumulator_fmadd() {
-    let a = <Fr as Field>::from_u64(7);
-    let b = <Fr as Field>::from_u64(11);
-    let c = <Fr as Field>::from_u64(3);
-    let d = <Fr as Field>::from_u64(5);
+    let a = <Fr as FromPrimitiveInt>::from_u64(7);
+    let b = <Fr as FromPrimitiveInt>::from_u64(11);
+    let c = <Fr as FromPrimitiveInt>::from_u64(3);
+    let d = <Fr as FromPrimitiveInt>::from_u64(5);
 
     let mut acc = NaiveAccumulator::<Fr>::default();
     acc.fmadd(a, b);
     acc.fmadd(c, d);
     // 7*11 + 3*5 = 77 + 15 = 92
-    assert_eq!(acc.reduce(), <Fr as Field>::from_u64(92));
+    assert_eq!(acc.reduce(), <Fr as FromPrimitiveInt>::from_u64(92));
 }
 
 #[test]
 fn naive_accumulator_merge() {
     let mut acc1 = NaiveAccumulator::<Fr>::default();
-    acc1.fmadd(<Fr as Field>::from_u64(2), <Fr as Field>::from_u64(3));
+    acc1.fmadd(
+        <Fr as FromPrimitiveInt>::from_u64(2),
+        <Fr as FromPrimitiveInt>::from_u64(3),
+    );
 
     let mut acc2 = NaiveAccumulator::<Fr>::default();
-    acc2.fmadd(<Fr as Field>::from_u64(4), <Fr as Field>::from_u64(5));
+    acc2.fmadd(
+        <Fr as FromPrimitiveInt>::from_u64(4),
+        <Fr as FromPrimitiveInt>::from_u64(5),
+    );
 
     acc1.merge(acc2);
     // 2*3 + 4*5 = 6 + 20 = 26
-    assert_eq!(acc1.reduce(), <Fr as Field>::from_u64(26));
+    assert_eq!(acc1.reduce(), <Fr as FromPrimitiveInt>::from_u64(26));
 }
 
 #[test]
@@ -47,12 +56,12 @@ fn naive_accumulator_reduce_empty() {
 fn wide_accumulator_fmadd() {
     use jolt_field::WideAccumulator;
 
-    let a = <Fr as Field>::from_u64(13);
-    let b = <Fr as Field>::from_u64(17);
+    let a = <Fr as FromPrimitiveInt>::from_u64(13);
+    let b = <Fr as FromPrimitiveInt>::from_u64(17);
 
     let mut acc = WideAccumulator::default();
     acc.fmadd(a, b);
-    assert_eq!(acc.reduce(), <Fr as Field>::from_u64(13 * 17));
+    assert_eq!(acc.reduce(), <Fr as FromPrimitiveInt>::from_u64(13 * 17));
 }
 
 #[test]
@@ -60,14 +69,20 @@ fn wide_accumulator_merge() {
     use jolt_field::WideAccumulator;
 
     let mut acc1 = WideAccumulator::default();
-    acc1.fmadd(<Fr as Field>::from_u64(10), <Fr as Field>::from_u64(20));
+    acc1.fmadd(
+        <Fr as FromPrimitiveInt>::from_u64(10),
+        <Fr as FromPrimitiveInt>::from_u64(20),
+    );
 
     let mut acc2 = WideAccumulator::default();
-    acc2.fmadd(<Fr as Field>::from_u64(30), <Fr as Field>::from_u64(40));
+    acc2.fmadd(
+        <Fr as FromPrimitiveInt>::from_u64(30),
+        <Fr as FromPrimitiveInt>::from_u64(40),
+    );
 
     acc1.merge(acc2);
     // 10*20 + 30*40 = 200 + 1200 = 1400
-    assert_eq!(acc1.reduce(), <Fr as Field>::from_u64(1400));
+    assert_eq!(acc1.reduce(), <Fr as FromPrimitiveInt>::from_u64(1400));
 }
 
 #[test]
@@ -86,8 +101,8 @@ fn wide_accumulator_many_fmadds() {
     let mut expected = Fr::zero();
     let mut rng = test_rng();
     for _ in 0..500 {
-        let a: Fr = Field::random(&mut rng);
-        let b: Fr = Field::random(&mut rng);
+        let a: Fr = <Fr as RandomSampling>::random(&mut rng);
+        let b: Fr = <Fr as RandomSampling>::random(&mut rng);
         acc.fmadd(a, b);
         expected += a * b;
     }
@@ -97,8 +112,8 @@ fn wide_accumulator_many_fmadds() {
 #[test]
 fn optimized_mul_blanket_impl() {
     let mut rng = test_rng();
-    let a: Fr = Field::random(&mut rng);
-    let b: Fr = Field::random(&mut rng);
+    let a: Fr = <Fr as RandomSampling>::random(&mut rng);
+    let b: Fr = <Fr as RandomSampling>::random(&mut rng);
 
     // mul_0_optimized: both nonzero
     assert_eq!(a.mul_0_optimized(b), a * b);
@@ -132,35 +147,41 @@ fn optimized_mul_blanket_impl() {
 
 #[test]
 fn field_from_bool_edge() {
-    assert_eq!(<Fr as Field>::from_bool(true), Fr::one());
-    assert_eq!(<Fr as Field>::from_bool(false), Fr::zero());
+    assert_eq!(<Fr as FromPrimitiveInt>::from_bool(true), Fr::one());
+    assert_eq!(<Fr as FromPrimitiveInt>::from_bool(false), Fr::zero());
 }
 
 #[test]
 fn field_from_small_types_boundary() {
-    assert_eq!(<Fr as Field>::from_u8(0), Fr::zero());
-    assert_eq!(<Fr as Field>::from_u8(255), <Fr as Field>::from_u64(255));
-    assert_eq!(<Fr as Field>::from_u16(0), Fr::zero());
+    assert_eq!(<Fr as FromPrimitiveInt>::from_u8(0), Fr::zero());
     assert_eq!(
-        <Fr as Field>::from_u16(65535),
-        <Fr as Field>::from_u64(65535)
+        <Fr as FromPrimitiveInt>::from_u8(255),
+        <Fr as FromPrimitiveInt>::from_u64(255)
     );
-    assert_eq!(<Fr as Field>::from_u32(0), Fr::zero());
+    assert_eq!(<Fr as FromPrimitiveInt>::from_u16(0), Fr::zero());
     assert_eq!(
-        <Fr as Field>::from_u32(u32::MAX),
-        <Fr as Field>::from_u64(u32::MAX as u64)
+        <Fr as FromPrimitiveInt>::from_u16(65535),
+        <Fr as FromPrimitiveInt>::from_u64(65535)
+    );
+    assert_eq!(<Fr as FromPrimitiveInt>::from_u32(0), Fr::zero());
+    assert_eq!(
+        <Fr as FromPrimitiveInt>::from_u32(u32::MAX),
+        <Fr as FromPrimitiveInt>::from_u64(u32::MAX as u64)
     );
 }
 
 #[test]
 fn field_mul_pow_2_boundary() {
-    let f = <Fr as Field>::from_u64(1);
+    let f = <Fr as FromPrimitiveInt>::from_u64(1);
     // pow=0 -> f * 1 = f
-    assert_eq!(<Fr as Field>::mul_pow_2(&f, 0), f);
+    assert_eq!(<Fr as MulPow2>::mul_pow_2(&f, 0), f);
     // pow=1 -> f * 2
-    assert_eq!(<Fr as Field>::mul_pow_2(&f, 1), <Fr as Field>::from_u64(2));
+    assert_eq!(
+        <Fr as MulPow2>::mul_pow_2(&f, 1),
+        <Fr as FromPrimitiveInt>::from_u64(2)
+    );
     // pow=64 -> goes through while loop at least once
-    let result = <Fr as Field>::mul_pow_2(&f, 64);
+    let result = <Fr as MulPow2>::mul_pow_2(&f, 64);
     let mut expected = f;
     for _ in 0..64 {
         expected = expected + expected;
@@ -171,8 +192,8 @@ fn field_mul_pow_2_boundary() {
 #[test]
 #[should_panic(expected = "pow > 255")]
 fn field_mul_pow_2_overflow() {
-    let f = <Fr as Field>::from_u64(1);
-    let _ = <Fr as Field>::mul_pow_2(&f, 256);
+    let f = <Fr as FromPrimitiveInt>::from_u64(1);
+    let _ = <Fr as MulPow2>::mul_pow_2(&f, 256);
 }
 
 #[test]
@@ -936,8 +957,8 @@ fn fr_neg() {
 fn fr_inner_roundtrip() {
     // Test Fr(ark_bn254::Fr) -> ark_bn254::Fr conversion (inner type)
     let a = Fr::from_u64(12345);
-    let bytes = a.to_bytes();
-    let b = Fr::from_bytes(&bytes);
+    let bytes = a.to_bytes_array();
+    let b = Fr::from_bytes_array(&bytes);
     assert_eq!(a, b);
 }
 

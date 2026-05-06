@@ -355,7 +355,7 @@ impl<F: Field, S: MultilinearPoly<F>> MultilinearPoly<F> for RlcSource<F, S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Fr;
+    use jolt_field::{Fr, RandomSampling};
     use num_traits::Zero;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;

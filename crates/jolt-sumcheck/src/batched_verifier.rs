@@ -7,12 +7,12 @@
 //! earlier rounds. Each claim is scaled by $2^{N - n_i}$ where $N$ is the
 //! maximum `num_vars` across all claims.
 
-use jolt_field::Field;
 use jolt_transcript::{AppendToTranscript, Transcript};
 
 use crate::claim::{EvaluationClaim, SumcheckClaim};
 use crate::error::SumcheckError;
 use crate::round_proof::RoundProof;
+use crate::scalar::SumcheckScalar;
 
 /// Batched sumcheck verifier.
 ///
@@ -38,7 +38,7 @@ impl BatchedSumcheckVerifier {
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        F: Field,
+        F: SumcheckScalar,
         T: Transcript<Challenge = F>,
         P: RoundProof<F>,
     {

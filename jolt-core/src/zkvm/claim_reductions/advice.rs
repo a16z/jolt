@@ -329,14 +329,17 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
         let opening_point = self.normalize_opening_point(sumcheck_challenges);
         let eq_eval = EqPolynomial::mle(&opening_point.r, &self.r_val.r);
 
-        let gap_len =
-            if self.cycle_phase_row_rounds.is_empty() || self.cycle_phase_col_rounds.is_empty() {
-                0
-            } else {
-                self.cycle_phase_row_rounds.start - self.cycle_phase_col_rounds.end
-            };
+        let total_cycle_phase_rounds = if !self.cycle_phase_row_rounds.is_empty() {
+            self.cycle_phase_row_rounds.end - self.cycle_phase_col_rounds.start
+        } else {
+            self.cycle_phase_col_rounds.len()
+        };
+        let active_cycle_phase_rounds =
+            self.cycle_phase_col_rounds.len() + self.cycle_phase_row_rounds.len();
+        let dummy_rounds = total_cycle_phase_rounds.saturating_sub(active_cycle_phase_rounds);
+
         let two_inv = F::from_u64(2).inverse().unwrap();
-        let scale = (0..gap_len).fold(F::one(), |acc, _| acc * two_inv);
+        let scale = (0..dummy_rounds).fold(F::one(), |acc, _| acc * two_inv);
 
         eq_eval * scale
     }
@@ -679,5 +682,43 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
             }
             ReductionPhase::AddressVariables => 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_bn254::Fr;
+
+    type Challenge = <Fr as JoltField>::Challenge;
+
+    #[test]
+    fn final_advice_output_scale_counts_leading_dummy_rounds_when_col_range_is_empty() {
+        let challenges = [11, 12, 0]
+            .map(|value| Challenge::from(value as u128))
+            .to_vec();
+        let active_opening_point =
+            OpeningPoint::<LITTLE_ENDIAN, Fr>::new(challenges[2..3].to_vec()).match_endianness();
+        let params = AdviceClaimReductionParams {
+            kind: AdviceKind::Trusted,
+            phase: ReductionPhase::CycleVariables,
+            log_k_chunk: 2,
+            log_t: 6,
+            advice_col_vars: 1,
+            advice_row_vars: 1,
+            main_col_vars: 4,
+            main_row_vars: 4,
+            cycle_phase_col_rounds: 0..0,
+            cycle_phase_row_rounds: 2..3,
+            r_val: active_opening_point,
+            cycle_var_challenges: vec![],
+        };
+
+        let two_inv = Fr::from_u64(2).inverse().unwrap();
+
+        assert_eq!(
+            params.final_advice_output_scale(&challenges),
+            two_inv * two_inv
+        );
     }
 }
