@@ -1,9 +1,7 @@
-#![allow(unused_results)]
-
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use jolt_crypto::Bn254;
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, RandomSampling};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
 use jolt_poly::Polynomial;
@@ -27,7 +25,7 @@ fn bench_commit(c: &mut Criterion) {
     for num_vars in [8, 10, 12, 14] {
         let n = 1 << num_vars;
         let (pk, _) = make_setup(n);
-        group.bench_with_input(
+        let _ = group.bench_with_input(
             BenchmarkId::from_parameter(num_vars),
             &num_vars,
             |b, &nv| {
@@ -50,7 +48,7 @@ fn bench_open(c: &mut Criterion) {
     for num_vars in [8, 10, 12, 14] {
         let n = 1 << num_vars;
         let (pk, _) = make_setup(n);
-        group.bench_with_input(
+        let _ = group.bench_with_input(
             BenchmarkId::from_parameter(num_vars),
             &num_vars,
             |b, &nv| {
@@ -58,8 +56,7 @@ fn bench_open(c: &mut Criterion) {
                     || {
                         let mut rng = ChaCha20Rng::seed_from_u64(0);
                         let poly = Polynomial::<Fr>::random(nv, &mut rng);
-                        let point: Vec<Fr> =
-                            (0..nv).map(|_| <Fr as Field>::random(&mut rng)).collect();
+                        let point: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
                         let eval = poly.evaluate(&point);
                         (poly, point, eval)
                     },
@@ -87,7 +84,7 @@ fn bench_verify(c: &mut Criterion) {
     for num_vars in [8, 10, 12, 14] {
         let n = 1 << num_vars;
         let (pk, vk) = make_setup(n);
-        group.bench_with_input(
+        let _ = group.bench_with_input(
             BenchmarkId::from_parameter(num_vars),
             &num_vars,
             |b, &nv| {
@@ -95,8 +92,7 @@ fn bench_verify(c: &mut Criterion) {
                     || {
                         let mut rng = ChaCha20Rng::seed_from_u64(0);
                         let poly = Polynomial::<Fr>::random(nv, &mut rng);
-                        let point: Vec<Fr> =
-                            (0..nv).map(|_| <Fr as Field>::random(&mut rng)).collect();
+                        let point: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
                         let eval = poly.evaluate(&point);
                         let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
                         let mut transcript =
@@ -148,7 +144,7 @@ fn bench_combine(c: &mut Criterion) {
             .collect();
         let scalars: Vec<Fr> = (0..count).map(|_| Fr::random(&mut rng)).collect();
 
-        group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
+        let _ = group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
             b.iter(|| TestScheme::combine(&commitments, &scalars));
         });
     }
@@ -159,7 +155,7 @@ fn bench_setup(c: &mut Criterion) {
     let mut group = c.benchmark_group("hyperkzg_setup");
     for num_vars in [8, 10, 12] {
         let n = 1 << num_vars;
-        group.bench_with_input(BenchmarkId::from_parameter(num_vars), &num_vars, |b, _| {
+        let _ = group.bench_with_input(BenchmarkId::from_parameter(num_vars), &num_vars, |b, _| {
             b.iter(|| {
                 let mut rng = ChaCha20Rng::seed_from_u64(0xbe0c);
                 let g1 = Bn254::g1_generator();

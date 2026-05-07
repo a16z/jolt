@@ -3,8 +3,6 @@
 //! These are the building blocks consumed by the HyperKZG protocol.
 //! All operations are generic over `P: PairingGroup`.
 
-#![allow(non_snake_case)]
-
 use jolt_crypto::{JoltGroup, PairingGroup};
 use jolt_field::Field;
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -142,6 +140,10 @@ where
 {
     let k = com.len();
 
+    if wit.len() != 3 || u.len() != 3 || v.len() != 3 || v.iter().any(|row| row.len() != k) {
+        return false;
+    }
+
     // Absorb evaluations
     for row in v {
         for val in row {
@@ -158,12 +160,6 @@ where
     }
     let d_0: P::ScalarField = transcript.challenge();
     let d_1 = d_0 * d_0;
-
-    assert_eq!(
-        wit.len(),
-        3,
-        "HyperKZG requires exactly 3 evaluation points"
-    );
 
     // q_power_multiplier = 1 + d_0 + d_1
     let q_power_multiplier = P::ScalarField::one() + d_0 + d_1;
@@ -221,7 +217,7 @@ pub(crate) fn challenge_powers<F: Field>(c: F, n: usize) -> Vec<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Fr;
+    use jolt_field::{Fr, FromPrimitiveInt};
     use num_traits::Zero;
 
     #[test]

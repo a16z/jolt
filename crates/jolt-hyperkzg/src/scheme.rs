@@ -11,7 +11,7 @@
 use std::marker::PhantomData;
 
 use jolt_crypto::{Commitment, DeriveSetup, JoltGroup, PairingGroup, PedersenSetup};
-use jolt_field::Field;
+use jolt_field::{FromPrimitiveInt, RandomSampling};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
 use jolt_poly::Polynomial;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
@@ -50,7 +50,11 @@ where
         Self::setup_from_secret(beta, max_degree, g1, g2)
     }
 
-    /// Generates SRS from a known secret (for deterministic testing).
+    /// Generates SRS from a known secret.
+    ///
+    /// WARNING: this is only appropriate for deterministic tests or trusted
+    /// setup tooling that destroys `beta`; anyone who knows `beta` can break
+    /// KZG binding.
     pub fn setup_from_secret(
         beta: P::ScalarField,
         max_degree: usize,
@@ -151,24 +155,13 @@ where
     ) -> Result<(), HyperKZGError> {
         let ell = point.len();
 
-        let mut com = proof.com.clone();
-
-        // Absorb intermediate commitments
-        for c in &com {
-            transcript.append(c);
-        }
-        let r: P::ScalarField = transcript.challenge();
-
-        if r.is_zero() {
-            return Err(HyperKZGError::VerificationFailed);
+        if proof.com.len() + 1 != ell {
+            return Err(HyperKZGError::InvalidProof(
+                "com must contain ell - 1 intermediate commitments",
+            ));
         }
 
-        // Prepend the original commitment as C_0
-        com.insert(0, commitment.point);
-
-        let u = vec![r, -r, r * r];
-
-        // Validate proof dimensions
+        // Validate proof dimensions before mutating the transcript.
         let v = &proof.v;
         if v.len() != 3 {
             return Err(HyperKZGError::InvalidProof("v must have 3 evaluation rows"));
@@ -178,6 +171,28 @@ where
                 "each v row must have ell entries",
             ));
         }
+        if proof.w.len() != 3 {
+            return Err(HyperKZGError::InvalidProof(
+                "w must have 3 witness commitments",
+            ));
+        }
+
+        // Absorb intermediate commitments
+        for c in &proof.com {
+            transcript.append(c);
+        }
+        let r: P::ScalarField = transcript.challenge();
+
+        if r.is_zero() {
+            return Err(HyperKZGError::VerificationFailed);
+        }
+
+        // Prepend the original commitment as C_0
+        let mut com = Vec::with_capacity(ell);
+        com.push(commitment.point);
+        com.extend_from_slice(&proof.com);
+
+        let u = vec![r, -r, r * r];
 
         let ypos = &v[0]; // evaluations at r
         let yneg = &v[1]; // evaluations at -r
@@ -245,11 +260,9 @@ where
     fn setup(
         (max_num_vars, g1, g2): Self::SetupParams,
     ) -> (Self::ProverSetup, Self::VerifierSetup) {
-        use rand_chacha::{rand_core::SeedableRng, ChaCha20Rng};
-        let mut rng = ChaCha20Rng::seed_from_u64(0);
+        let mut rng = rand_core::OsRng;
         let max_degree = 1usize << max_num_vars;
-        let prover =
-            HyperKZGScheme::setup_from_secret(P::ScalarField::random(&mut rng), max_degree, g1, g2);
+        let prover = HyperKZGScheme::setup(&mut rng, max_degree, g1, g2);
         let verifier = Self::verifier_setup(&prover);
         (prover, verifier)
     }
@@ -420,6 +433,89 @@ mod tests {
             &mut verifier_transcript,
         );
         assert!(result.is_err(), "wrong evaluation should be rejected");
+    }
+
+    #[test]
+    fn missing_intermediate_commitment_rejects() {
+        let ell = 4;
+        let n = 1 << ell;
+        let mut rng = ChaCha20Rng::seed_from_u64(43);
+        let (pk, vk) = test_setup(n);
+
+        let poly = Polynomial::<Fr>::random(ell, &mut rng);
+        let point: Vec<Fr> = (0..ell).map(|_| Fr::random(&mut rng)).collect();
+        let eval = poly.evaluate(&point);
+
+        let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
+
+        let mut prover_transcript = Blake2bTranscript::new(b"test-missing-com");
+        let mut proof = <TestScheme as CommitmentScheme>::open(
+            &poly,
+            &point,
+            eval,
+            &pk,
+            None,
+            &mut prover_transcript,
+        );
+        let _ = proof.com.pop();
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"test-missing-com");
+        let result = TestScheme::verify(
+            &vk,
+            &commitment,
+            &point,
+            &eval,
+            &proof,
+            &mut verifier_transcript,
+        );
+        assert!(matches!(result, Err(HyperKZGError::InvalidProof(_))));
+    }
+
+    #[test]
+    fn malformed_witness_commitments_reject_without_panic() {
+        let ell = 4;
+        let n = 1 << ell;
+        let mut rng = ChaCha20Rng::seed_from_u64(44);
+        let (pk, vk) = test_setup(n);
+
+        let poly = Polynomial::<Fr>::random(ell, &mut rng);
+        let point: Vec<Fr> = (0..ell).map(|_| Fr::random(&mut rng)).collect();
+        let eval = poly.evaluate(&point);
+
+        let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
+
+        let mut prover_transcript = Blake2bTranscript::new(b"test-short-w");
+        let mut proof = <TestScheme as CommitmentScheme>::open(
+            &poly,
+            &point,
+            eval,
+            &pk,
+            None,
+            &mut prover_transcript,
+        );
+        let _ = proof.w.pop();
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"test-short-w");
+        let result = TestScheme::verify(
+            &vk,
+            &commitment,
+            &point,
+            &eval,
+            &proof,
+            &mut verifier_transcript,
+        );
+        assert!(matches!(result, Err(HyperKZGError::InvalidProof(_))));
+    }
+
+    #[test]
+    fn trait_setup_uses_fresh_randomness() {
+        let g1 = Bn254::g1_generator();
+        let g2 = Bn254::g2_generator();
+
+        let (_pk1, vk1) = <TestScheme as CommitmentScheme>::setup((4, g1, g2));
+        let (_pk2, vk2) = <TestScheme as CommitmentScheme>::setup((4, g1, g2));
+
+        assert_ne!(vk1.beta_g2, vk2.beta_g2);
     }
 
     #[test]

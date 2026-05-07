@@ -19,7 +19,7 @@ tracing.workspace = true
 num-traits = { workspace = true }
 rayon = { workspace = true }
 thiserror = { workspace = true }
-rand_core = { workspace = true }
+rand_core = { workspace = true, features = ["getrandom"] }
 rand_chacha = { workspace = true }
 
 [dev-dependencies]
