@@ -302,7 +302,7 @@ num-derive = "0.4.2"
 num-traits = { version = "0.2.19", default-features = false }
 
 # System and Platform
-sysinfo = "0.38"
+sysinfo = "0.39"
 memory-stats = { version = "1.0.0", features = ["always_use_statm"] }
 
 # Parallel Processing
