@@ -80,6 +80,66 @@ macro_rules! define_instruction_kind {
                     Self::Inline => "Inline",
                 }
             }
+
+            pub const fn has_side_effects(self) -> bool {
+                matches!(
+                    self,
+                    Self::AdviceLB
+                        | Self::AdviceLD
+                        | Self::AdviceLH
+                        | Self::AdviceLW
+                        | Self::AMOADDD
+                        | Self::AMOADDW
+                        | Self::AMOANDD
+                        | Self::AMOANDW
+                        | Self::AMOMAXD
+                        | Self::AMOMAXUD
+                        | Self::AMOMAXUW
+                        | Self::AMOMAXW
+                        | Self::AMOMIND
+                        | Self::AMOMINUD
+                        | Self::AMOMINUW
+                        | Self::AMOMINW
+                        | Self::AMOORD
+                        | Self::AMOORW
+                        | Self::AMOSWAPD
+                        | Self::AMOSWAPW
+                        | Self::AMOXORD
+                        | Self::AMOXORW
+                        | Self::BEQ
+                        | Self::BGE
+                        | Self::BGEU
+                        | Self::BLT
+                        | Self::BLTU
+                        | Self::BNE
+                        | Self::CSRRS
+                        | Self::CSRRW
+                        | Self::EBREAK
+                        | Self::ECALL
+                        | Self::Inline
+                        | Self::JAL
+                        | Self::JALR
+                        | Self::LB
+                        | Self::LBU
+                        | Self::LD
+                        | Self::LH
+                        | Self::LHU
+                        | Self::LRD
+                        | Self::LRW
+                        | Self::LW
+                        | Self::LWU
+                        | Self::MRET
+                        | Self::SB
+                        | Self::SCD
+                        | Self::SCW
+                        | Self::SD
+                        | Self::SH
+                        | Self::SW
+                        | Self::VirtualAdviceLoad
+                        | Self::VirtualHostIO
+                        | Self::VirtualSW
+                )
+            }
         }
     };
 }

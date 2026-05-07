@@ -1,5 +1,4 @@
-use jolt_riscv::JoltInstruction;
-use jolt_trace::JoltCycle;
+use jolt_riscv::{JoltCycle, JoltInstruction};
 
 #[cfg(feature = "test-utils")]
 use crate::instruction::format::InstructionFormat;

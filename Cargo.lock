@@ -2955,7 +2955,6 @@ version = "0.1.0"
 dependencies = [
  "jolt-field",
  "jolt-riscv",
- "jolt-trace",
  "rand 0.8.5",
  "serde",
  "strum 0.28.0",
@@ -3068,6 +3067,7 @@ name = "jolt-riscv"
 version = "0.1.0"
 dependencies = [
  "ark-serialize 0.5.0",
+ "rand 0.8.5",
  "serde",
  "strum 0.28.0",
 ]
@@ -3112,14 +3112,6 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tracing",
-]
-
-[[package]]
-name = "jolt-trace"
-version = "0.1.0"
-dependencies = [
- "jolt-riscv",
- "rand 0.8.5",
 ]
 
 [[package]]
@@ -5748,7 +5740,6 @@ dependencies = [
  "jolt-platform",
  "jolt-program",
  "jolt-riscv",
- "jolt-trace",
  "object 0.39.1",
  "paste",
  "postcard",

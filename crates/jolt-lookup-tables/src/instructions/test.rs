@@ -3,7 +3,7 @@
 use std::any::TypeId;
 
 use jolt_riscv::NormalizedInstruction;
-use jolt_trace::{Flags, InstructionFlags, JoltCycle, JoltInstruction};
+use jolt_riscv::{Flags, InstructionFlags, JoltCycle, JoltInstruction};
 use rand::prelude::*;
 use tracer::emulator::{cpu::Cpu, terminal::DummyTerminal};
 use tracer::instruction::{jal::JAL, jalr::JALR, Cycle, RISCVCycle, RISCVTrace};

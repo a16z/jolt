@@ -9,7 +9,7 @@
 
 ## Summary
 
-Jolt's bytecode expansion logic is still owned by the `tracer` crate even though `jolt-trace` now exposes host-facing program decoding, tracing, and bytecode preprocessing APIs. This spec proposes strengthening the existing `jolt-riscv` crate as the shared instruction vocabulary and normalized-row crate, plus one new `jolt-program` crate that owns program-image decoding, bytecode expansion, materialized Jolt program preprocessing, and the backend-neutral execution contract behind separate internal modules.
+Jolt's bytecode expansion logic was historically owned by the `tracer` crate and partially surfaced through host-facing trace/preprocessing APIs. This spec proposes strengthening the existing `jolt-riscv` crate as the shared instruction vocabulary, normalized-row, and tracer-free cycle-view crate, plus one new `jolt-program` crate that owns program-image decoding, bytecode expansion, materialized Jolt program preprocessing, and the backend-neutral execution contract behind separate internal modules.
 
 The target is a modular program-construction pipeline from ELF bytes to expanded bytecode and program preprocessing, plus a stable trait boundary that lets host/SDK code invoke a tracer without making lower `jolt-*` crates depend on tracer internals. CPU execution, memory-device emulation, advice I/O, concrete trace production, PCS setup, and commitment derivation stay out of the verifier-facing program dependency graph.
 
@@ -33,7 +33,7 @@ ELF bytes
   -> JoltProgramPreprocessing
 ```
 
-`tracer`, `jolt-trace`, `jolt-sdk`, and `jolt-core` should become consumers of these program-construction APIs instead of owners of bytecode expansion or materialized program preprocessing semantics. `tracer` should also become an implementation of the execution backend trait rather than a crate whose concrete internals leak into `jolt-program`, `jolt-riscv`, or proof-system APIs.
+`tracer`, `jolt-sdk`, and `jolt-core` should become consumers of these program-construction APIs instead of owners of bytecode expansion or materialized program preprocessing semantics. `tracer` should also become an implementation of the execution backend trait rather than a crate whose concrete internals leak into `jolt-program`, `jolt-riscv`, or proof-system APIs.
 
 ### Invariants
 
@@ -94,8 +94,8 @@ Keep the implementation PR's new checks focused on targeted `jolt-program`, `tra
 - [x] The expansion-critical `jolt-program::expand` module does not depend on CPU execution, lazy tracing, memory-device emulation, advice I/O, prover-only witness generation, transcripts, or ELF/object parsing.
 - [x] Any ELF/object parsing dependency is feature-gated and isolated to `jolt-program::image` so `jolt-program::expand` and `jolt-program::preprocess` remain usable without an object-file parser dependency.
 - [x] `tracer` no longer owns the canonical recursive bytecode expansion algorithm; it calls `jolt-program::expand` for expansion during trace execution and trace length accounting.
-- [x] `jolt-trace::decode` no longer performs expansion by directly calling `Instruction::inline_sequence` from `tracer`; `jolt-trace` is now a tracer-free trait crate and no longer owns a decode path.
-- [x] `jolt-trace` does not depend on `tracer`; tracing APIs that need a default tracer backend move to `jolt-sdk` or another host SDK layer that imports `tracer`.
+- [x] `jolt-trace::decode` no longer performs expansion by directly calling `Instruction::inline_sequence` from `tracer`; decode ownership has moved to `jolt-program`.
+- [x] The former `jolt-trace` cycle trait has been folded into `jolt-riscv`, so tracing APIs that need a default tracer backend move to `jolt-sdk` or another host SDK layer that imports `tracer`.
 - [x] `InstrAssembler`, `VirtualRegisterAllocator`, or their minimal expansion-facing equivalents live behind the `jolt-program::expand` module boundary.
 - [x] `InstrAssembler` borrows `&mut ExpansionAllocator` during emission and does not own, clone, or hide allocator state behind shared ownership.
 - [x] Expansion APIs return explicit errors for allocation or malformed-expansion failures instead of introducing new panics in the core expansion path.
@@ -211,9 +211,8 @@ jolt-program
     -> ExecutionBackend and TraceSource traits
     -> backend-neutral trace rows, trace inputs, trace outputs, and trace errors
 
-jolt-trace
-  -> owns tracer-free trace traits and instruction/cycle-facing helper APIs
-  -> may call jolt-program APIs only for tracer-free program utilities
+jolt-riscv::trace
+  -> owns JoltCycle and any tracer-free instruction/cycle-facing helper APIs
 
 tracer
   -> executes instructions and produces traces
@@ -239,7 +238,7 @@ jolt-program
   execution traits
         ^
         |
-jolt-core, jolt-sdk, jolt-trace, tracer
+jolt-core, jolt-sdk, tracer
         ^            ^
         |            |
  proof setup   default tracer backend selected here
@@ -269,7 +268,7 @@ The broader program boundary should be evaluated in the same design pass:
 
 #### Crate Placement And Dependency Direction
 
-New library code should live under `crates/jolt-program` and be added to the root workspace `members` and `[workspace.dependencies]`, matching the newer crate layout used by `jolt-trace`, `jolt-riscv`, `jolt-openings`, and related libraries. Existing top-level crates such as `tracer`, `common`, `jolt-core`, `jolt-trace`, and `jolt-sdk` can depend on `jolt-program` through workspace dependencies. `jolt-riscv` already exists and should be refactored in place rather than replaced by a sibling instruction crate.
+New library code should live under `crates/jolt-program` and be added to the root workspace `members` and `[workspace.dependencies]`, matching the newer crate layout used by `jolt-riscv`, `jolt-openings`, and related libraries. Existing top-level crates such as `tracer`, `common`, `jolt-core`, and `jolt-sdk` can depend on `jolt-program` through workspace dependencies. `jolt-riscv` already exists and should be refactored in place rather than replaced by a sibling instruction crate.
 
 It is acceptable for `tracer` to import `jolt-program`, but only if `jolt-program` does not depend back on `tracer`. That import should have two narrow purposes: consume `jolt-program` program-construction APIs and implement `jolt_program::execution::ExecutionBackend` for the tracer backend. The current code does not yet satisfy that shape: the concrete `Instruction`, `Cycle`, `RISCVInstruction`, `NormalizedInstruction`, and per-instruction structs live in `tracer`, and `crates/jolt-riscv/Cargo.toml` has a direct `tracer = { workspace = true, features = ["std"] }` dependency for those types. Therefore `jolt-program::expand` cannot both depend on `tracer::instruction::*` and be imported by `tracer` without creating a dependency cycle.
 
@@ -318,14 +317,14 @@ jolt-riscv
 jolt-program
         ^
         |
-jolt-core, jolt-sdk, jolt-trace, tracer
+jolt-core, jolt-sdk, tracer
 ```
 
 This direction keeps `tracer` as an execution engine while allowing it to reuse the same bytecode expansion module as program preprocessing. It also gives formal verification tools a target that is not downstream of the emulator.
 
 The intended stability invariant is stronger than "there is no dependency cycle": tracer-internal implementation changes should be isolated to `tracer`. `jolt-program::execution` is the contract tracer implements, so lower `jolt-*` crates should change only when the normalized program row, `JoltProgram` input, or execution backend contract changes intentionally. In particular, renaming tracer's `Cycle`, changing lazy trace iteration internals, reorganizing CPU state, or altering memory-device implementation details should not require edits to `jolt-riscv`, `jolt-program`, `jolt-core`, or SDK macro generation.
 
-`jolt-trace` should also be upstream of tracer in the target design. It should own tracer-free trace traits and instruction/cycle-facing helper APIs, but it should not select or import the concrete tracer backend. Default backend selection belongs in `jolt-sdk`, which is already the user-facing host API layer and can import both `jolt-program` and `tracer`.
+Tracer-free cycle traits now live in `jolt-riscv::trace`, next to the static instruction vocabulary used by lookup-table code. Default backend selection belongs in `jolt-sdk`, which is already the user-facing host API layer and can import both `jolt-program` and `tracer`.
 
 #### Proposed Workspace Layout
 
@@ -509,8 +508,7 @@ This module is the answer to the "changing tracer should not touch lower crates"
 `tracer` remains the execution engine:
 
 - keeps `Cpu`, `Memory`, `LazyTraceIterator`, `Cycle`, execution semantics, advice tape plumbing, trace-to-file support, and `jolt-emu`;
-- imports `jolt-riscv` for instruction data;
-- imports `jolt-trace` only to implement tracer adapters for tracer-local cycle types;
+- imports `jolt-riscv` for instruction data and tracer-free cycle traits;
 - imports `jolt-program::expand` for trace-time expansion and trace length accounting;
 - imports `jolt-program::image` for ELF decode where tracing from ELF is needed.
 - implements `jolt_program::execution::ExecutionBackend` and adapts tracer-local `Cycle`/lazy trace output to `TraceRow`/`TraceOutput` at the crate boundary.
@@ -521,17 +519,17 @@ This module is the answer to the "changing tracer should not touch lower crates"
 - keeps prover/verifier protocols, sumchecks, commitments, witness generation, and proof serialization;
 - should not import `tracer` just to name bytecode preprocessing artifacts.
 
-`jolt-trace` remains a tracer-free trace trait crate:
+`jolt-riscv::trace` owns the tracer-free cycle view:
 
 - owns `JoltCycle` and any tracer-free instruction/cycle-facing helper APIs;
 - does not depend on `tracer` and does not choose a concrete execution backend;
-- deletes or moves APIs that return tracer `Cycle`, `LazyTraceIterator`, tracer `Memory`, or tracer-backed `ProgramSummary`. Those APIs belong in `jolt-sdk` if they need the default tracer backend, or in `jolt-program`/`jolt-trace` only if rewritten over tracer-free data.
+- keeps runtime cycle traits next to the canonical static instruction vocabulary used by lookup-table code.
 
 `jolt-sdk` remains the macro and user-facing SDK layer:
 
 - generated prove/analyze/preprocess code should build or receive a `JoltProgram` through `jolt-program`;
 - generated host APIs should be generic over `B: ExecutionBackend` where practical;
-- `jolt-sdk` owns the default host backend selection and may import `tracer` to construct the default `TracerBackend`, while keeping tracer concrete types out of `jolt-riscv`, `jolt-program`, `jolt-trace`, and verifier-facing preprocessing types.
+- `jolt-sdk` owns the default host backend selection and may import `tracer` to construct the default `TracerBackend`, while keeping tracer concrete types out of `jolt-riscv`, `jolt-program`, and verifier-facing preprocessing types.
 
 #### Dependency Table
 
@@ -539,12 +537,11 @@ Target dependency edges:
 
 | Crate | May depend on | Must not depend on |
 |-------|---------------|--------------------|
-| `jolt-riscv` | `common`, `jolt-platform`, `serde`, `ark-serialize`, `strum`, `paste`, `derive_more` | `tracer`, `jolt-core`, `jolt-trace`, `jolt-program`, `object` |
-| `jolt-program` | `jolt-riscv`, `common`, `ark-serialize`, `blake2`, `thiserror`, `serde`, optional `object` and `tracing` behind image/host features | `tracer`, `jolt-core`, `jolt-trace`, PCS implementations, Dory setup, prover-only modules |
-| `tracer` | `jolt-riscv`, `jolt-program`, `jolt-trace` for cycle-trait adapter impls, `common`, `jolt-platform` | `jolt-core` |
+| `jolt-riscv` | `common`, `jolt-platform`, `serde`, `ark-serialize`, `strum`, `paste`, `derive_more`, optional test utilities | `tracer`, `jolt-core`, `jolt-program`, `object` |
+| `jolt-program` | `jolt-riscv`, `common`, `ark-serialize`, `blake2`, `thiserror`, `serde`, optional `object` and `tracing` behind image/host features | `tracer`, `jolt-core`, PCS implementations, Dory setup, prover-only modules |
+| `tracer` | `jolt-riscv`, `jolt-program`, `common`, `jolt-platform` | `jolt-core` |
 | `jolt-core` | `jolt-riscv`, `jolt-program`, proof-system crates, `common` | `tracer` for program preprocessing types |
-| `jolt-trace` | `jolt-program`, `common`, `jolt-riscv` as needed for program rows | `tracer`, owning canonical expansion semantics, or owning the execution backend contract |
-| `jolt-sdk` | `jolt-program`, `jolt-core`, `tracer` for default host backend wiring | making `jolt-riscv`, `jolt-program`, `jolt-trace`, or verifier-facing generated types depend on tracer concrete internals |
+| `jolt-sdk` | `jolt-program`, `jolt-core`, `tracer` for default host backend wiring | making `jolt-riscv`, `jolt-program`, or verifier-facing generated types depend on tracer concrete internals |
 
 The implementation PR must not introduce a new cycle. Its final state should remove the `tracer -> jolt-program -> tracer` cycle risk entirely by moving shared instruction vocabulary and metadata below both crates.
 
@@ -566,9 +563,9 @@ Root `Cargo.toml` changes:
 
 Existing crate `Cargo.toml` updates:
 
-- `tracer/Cargo.toml`: add `jolt-riscv`, `jolt-program`, and `jolt-trace` for tracer-local adapter impls.
+- `tracer/Cargo.toml`: add `jolt-riscv` and `jolt-program` for tracer-local adapter impls and program construction.
 - `crates/jolt-riscv/Cargo.toml`: remove the direct dependency on `tracer`; keep only lower-level dependencies needed by static instruction data, flags, decoding, and serialization.
-- `crates/jolt-trace/Cargo.toml`: add `jolt-program`; remove `tracer`.
+- `crates/jolt-riscv/Cargo.toml`: expose a `test-utils` feature for randomized `JoltCycle` test helpers without adding a production tracer dependency.
 - `jolt-sdk/Cargo.toml`: import `tracer` for default host backend wiring.
 - `jolt-core/Cargo.toml`: add `jolt-riscv` and `jolt-program`; remove program-preprocessing dependence on `tracer` where feasible.
 - `jolt-sdk/Cargo.toml` and `jolt-sdk/macros/Cargo.toml`: update imports only as needed for generated preprocessing functions.
@@ -795,8 +792,7 @@ Update the Jolt book only if the crate is exposed to users or changes contributo
 - `crates/jolt-riscv/src/instructions/**`: keep existing Jolt instruction kind wrappers and pure instruction metadata; do not import tracer concrete instruction structs.
 - `crates/jolt-riscv/src/normalized.rs`: define `NormalizedInstruction` with an `instruction_kind` field.
 - `crates/jolt-riscv/src/jolt_instruction.rs`: remove the blanket impl over `tracer::instruction::RISCVInstruction`; define only the marker/conversion trait without depending on tracer.
-- `crates/jolt-trace/Cargo.toml`: add `jolt-program`; remove `tracer`.
-- `crates/jolt-trace/src/program.rs`, `analyze.rs`, `ram.rs`, and tracer-backed `bytecode.rs`: remove or move tracer-backed APIs to `jolt-sdk`; reintroduce only tracer-free versions over `jolt-program` or `jolt_program::execution`.
+- `crates/jolt-riscv/src/trace.rs`: own `JoltCycle` and any tracer-free cycle-view helpers used by lookup-table code.
 - `jolt-core/Cargo.toml`: add `jolt-riscv` and `jolt-program`.
 - `jolt-core/src/zkvm/bytecode/mod.rs`: move or reexport materialized bytecode preprocessing from `jolt-program::preprocess`.
 - `jolt-core/src/zkvm/ram/mod.rs`: move or reexport pure RAM preprocessing from `jolt-program::preprocess`; leave prover/verifier sumcheck modules in `jolt-core`.
@@ -825,14 +821,14 @@ Do not delete tracer's concrete instruction structs, instruction-format structs,
 5. [x] Move RV64 opcode decode into `jolt-program::image` and RV64 compressed-instruction decompression helpers into `jolt-riscv`; reject RV32/ELF32 in the new program pipeline.
 6. [x] Export the canonical instruction-kind list from `jolt-riscv` as a macro such as `jolt_riscv::for_each_instruction_kind!`, and use it from `tracer` to generate its concrete `Instruction`, `Cycle`, and `RISCVCycle<T>`.
 7. [x] Remove the `JoltInstruction` blanket impl over `tracer::instruction::RISCVInstruction`; add concrete tracer adapter impls only in `tracer` if needed.
-8. [x] Update `tracer`, `jolt-core`, and `jolt-trace` imports to compile against the strengthened `jolt-riscv` normalized row and `jolt-program` pipeline.
+8. [x] Update `tracer` and `jolt-core` imports to compile against the strengthened `jolt-riscv` normalized row and `jolt-program` pipeline.
 9. [x] Add `jolt_program::image::decode_elf` by moving the non-execution logic from `tracer::decode`.
 10. [x] Update all call sites of `tracer::decode` that only need ELF decoding to call `jolt_program::image::decode_elf`; keep `tracer::decode` only if it remains a tracer-specific execution API rather than a compatibility shim.
 11. [x] Move `VirtualRegisterAllocator`, `InstrAssembler`, recursive `add_to_sequence`, and per-instruction inline expansion logic into `jolt-program::expand`, with `InstrAssembler` borrowing `&mut ExpansionAllocator`.
 12. [x] Implement `expand_instruction` and `expand_program`.
 13. [x] Update `tracer` trace-time expansion and trace length accounting to use `jolt-program::expand`.
-14. [x] Update `jolt-trace::decode` to call `jolt_program::image::decode_elf` followed by `jolt_program::expand::expand_program`; completed by removing `jolt-trace` decode ownership entirely.
-15. [x] Remove `jolt-trace`'s dependency on `tracer`; move tracer-backed trace convenience APIs to `jolt-sdk` or rewrite them over `ExecutionBackend`.
+14. [x] Move decode ownership to `jolt-program`; remove the former `jolt-trace` decode path entirely.
+15. [x] Fold the remaining `jolt-trace` cycle trait into `jolt-riscv::trace`; move tracer-backed trace convenience APIs to `jolt-sdk` or rewrite them over `ExecutionBackend`.
 16. [x] Move `BytecodePreprocessing`, `BytecodePCMapper`, pure `RAMPreprocessing`, and `JoltProgramPreprocessing` into `jolt-program::preprocess`.
 17. [x] Keep `compute_min_ram_K` in `jolt-core` if moving it would pull prover-only or proof-system dependencies into `jolt-program::preprocess`.
 18. [x] Add `JoltProgram` or the final equivalent built-program artifact that packages decoded image data, expanded bytecode, and preprocessing inputs for execution backends.
@@ -863,11 +859,10 @@ cargo nextest run -p jolt-program --cargo-quiet
 cargo tree -p tracer
 cargo tree -p jolt-riscv
 cargo tree -p jolt-program
-cargo tree -p jolt-trace
 cargo tree -p jolt-sdk --features host
 ```
 
-The dependency checks should confirm that `jolt-riscv`, `jolt-program`, and `jolt-trace` do not depend on `tracer`, that the default or no-ELF feature path for `jolt-program` does not pull object parsing into `jolt-program::expand` or `jolt-program::preprocess`, and that any `jolt-sdk` tracer edge is confined to host/default-backend wiring rather than verifier-facing generated types.
+The dependency checks should confirm that `jolt-riscv` and `jolt-program` do not depend on `tracer`, that the default or no-ELF feature path for `jolt-program` does not pull object parsing into `jolt-program::expand` or `jolt-program::preprocess`, and that any `jolt-sdk` tracer edge is confined to host/default-backend wiring rather than verifier-facing generated types.
 
 ## References
 

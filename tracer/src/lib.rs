@@ -22,7 +22,7 @@ use object::{Object, ObjectSection, SectionKind};
 pub mod emulator;
 pub mod execution_backend;
 pub mod instruction;
-mod jolt_trace_adapter;
+mod jolt_cycle_adapter;
 pub mod utils;
 
 pub use common::jolt_device::JoltDevice;

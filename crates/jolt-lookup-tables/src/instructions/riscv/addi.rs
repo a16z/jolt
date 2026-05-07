@@ -1,7 +1,7 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
-use jolt_trace::instructions::Addi;
-use jolt_trace::JoltCycle;
+use jolt_riscv::instructions::Addi;
+use jolt_riscv::JoltCycle;
 
 impl_lookup_table!(Addi, Some(RangeCheck));
 

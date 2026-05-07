@@ -63,7 +63,7 @@ pub fn expand_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
     if instruction.operands.rd == Some(0)
         && !handles_rd_zero_internally(instruction.instruction_kind)
     {
-        if has_side_effects(instruction.instruction_kind) {
+        if instruction.instruction_kind.has_side_effects() {
             let virtual_register = allocator.allocate()?;
             let mut rewritten = *instruction;
             rewritten.operands.rd = Some(virtual_register);

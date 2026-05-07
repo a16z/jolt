@@ -1,4 +1,4 @@
-//! Jolt's RISC-V instruction kinds and the flag types that describe them.
+//! Jolt's RISC-V instruction kinds, metadata, and tracer-free cycle views.
 //!
 //! Each unit struct in [`instructions`] represents one instruction kind (real
 //! RV64I/M opcode or virtual sequence helper). [`Flags`] exposes its static
@@ -12,6 +12,7 @@ mod jolt_instruction;
 mod kind;
 mod normalized;
 mod operands;
+pub mod trace;
 mod uncompress;
 
 #[macro_export]
@@ -58,6 +59,7 @@ pub use jolt_instruction::JoltInstruction;
 pub use kind::InstructionKind;
 pub use normalized::NormalizedInstruction;
 pub use operands::NormalizedOperands;
+pub use trace::JoltCycle;
 pub use uncompress::uncompress_rv64_instruction;
 
 /// Declares a Jolt RISC-V instruction kind and (optionally) its `Flags` impl.

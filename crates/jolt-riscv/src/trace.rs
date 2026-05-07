@@ -1,11 +1,11 @@
-//! `JoltCycle`: dynamic, runtime view of a single executed instruction.
+//! Tracer-free runtime views of executed Jolt instructions.
 //!
-//! Pairs the static [`JoltInstruction`] (defined in `jolt-riscv`) with
-//! register and RAM state captured during tracing, so lookup-table code can
-//! operate on any concrete cycle representation without depending on tracer's
-//! types directly.
+//! [`JoltCycle`] pairs the static [`JoltInstruction`](crate::JoltInstruction)
+//! vocabulary with register and RAM values captured during execution, so lookup
+//! table code can operate on cycle data without depending on tracer's concrete
+//! cycle types.
 
-use jolt_riscv::JoltInstruction;
+use crate::JoltInstruction;
 
 /// Dynamic cycle view: a populated instruction plus runtime register state.
 pub trait JoltCycle {
