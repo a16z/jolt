@@ -5,7 +5,7 @@
 //! - [`MultilinearEvaluation`]: Read-only point evaluation — `num_vars()`, `len()`, `evaluate(point)`
 //! - [`MultilinearBinding`]: In-place variable binding for sumcheck — `bind(scalar)`
 //! - [`MultilinearPoly`]: Streaming matrix-view access for PCS — `for_each_row`, `fold_rows`,
-//!   `is_sparse`, `for_each_nonzero`
+//!   `is_one_hot`, `for_each_one`
 //!
 //! [`RlcSource`] composes multiple polynomials via random linear combination
 //! without materializing the combined table. Its [`fold_rows`](MultilinearPoly::fold_rows)
@@ -67,8 +67,8 @@ pub trait MultilinearBinding<F: Field>: Send + Sync {
 /// - [`num_vars`](Self::num_vars) / [`evaluate`](Self::evaluate): metadata and point evaluation
 /// - [`for_each_row`](Self::for_each_row): row-wise iteration (streaming commit, row-based MSM)
 /// - [`fold_rows`](Self::fold_rows): matrix-vector product $v \cdot M$ (opening protocols)
-/// - [`is_sparse`](Self::is_sparse) / [`for_each_nonzero`](Self::for_each_nonzero): sparsity
-///   hints for PCS commit optimization (e.g., batch addition instead of MSM)
+/// - [`is_one_hot`](Self::is_one_hot) / [`for_each_one`](Self::for_each_one): unit-entry
+///   one-hot hints for PCS commit optimization (e.g., batch addition instead of MSM)
 pub trait MultilinearPoly<F: Field>: Send + Sync {
     /// Number of variables $n$. The polynomial has $2^n$ evaluations.
     fn num_vars(&self) -> usize;
@@ -114,33 +114,22 @@ pub trait MultilinearPoly<F: Field>: Send + Sync {
         result
     }
 
-    /// Whether this polynomial has sparse structure that allows more efficient
-    /// commitment (e.g., batch affine addition instead of full MSM).
+    /// Whether this polynomial is represented as unit-valued one-hot entries.
     ///
-    /// When true, PCS backends should use [`for_each_nonzero`](Self::for_each_nonzero)
-    /// to access only the nonzero entries.
-    fn is_sparse(&self) -> bool {
+    /// When true, PCS backends may use [`for_each_one`](Self::for_each_one) to
+    /// access the positions whose value is exactly `F::one()`. This is not a
+    /// general sparse-polynomial contract: weighted sparse entries must return
+    /// false here and use the dense row interface.
+    fn is_one_hot(&self) -> bool {
         false
     }
 
-    /// Iterates over nonzero entries as `(flat_index, value)` pairs.
+    /// Iterates over positions whose value is exactly `F::one()`.
     ///
-    /// For dense polynomials, the default scans the full table. Structured
-    /// sparse types (e.g., [`OneHotPolynomial`](crate::OneHotPolynomial)) yield only O(T) entries.
-    fn for_each_nonzero(&self, f: &mut dyn FnMut(usize, F)) {
-        let n = self.num_vars();
-        let num_cols = 1usize << n;
-        // sigma = n: single row containing the full evaluation table,
-        // so row_idx is always 0 and column index equals flat index.
-        self.for_each_row(n, &mut |row_idx, row| {
-            let base = row_idx * num_cols;
-            for (col, &val) in row.iter().enumerate() {
-                if !val.is_zero() {
-                    f(base + col, val);
-                }
-            }
-        });
-    }
+    /// Only implementations that return true from [`is_one_hot`](Self::is_one_hot)
+    /// should override this method. The default is a no-op for non-one-hot
+    /// polynomials.
+    fn for_each_one(&self, _f: &mut dyn FnMut(usize)) {}
 }
 
 // ---------------------------------------------------------------------------
