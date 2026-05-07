@@ -35,3 +35,8 @@ doc = false
 name = "batched_sumcheck_verifier"
 path = "fuzz_targets/batched_sumcheck_verifier.rs"
 doc = false
+
+[[bin]]
+name = "valid_prefix_proof"
+path = "fuzz_targets/valid_prefix_proof.rs"
+doc = false
