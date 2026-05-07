@@ -23,7 +23,7 @@ impl crate::DoryScheme {
         let (tier_2, commit_blind) = commit_rows_tier_2::<dory::ZK>(&ark_rows, setup);
         (
             DoryCommitment(ark_to_jolt_gt(&tier_2)),
-            DoryHint(row_commitments, ark_to_jolt_fr(&commit_blind)),
+            DoryHint::new(row_commitments, ark_to_jolt_fr(&commit_blind)),
         )
     }
 }

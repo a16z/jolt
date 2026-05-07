@@ -104,7 +104,7 @@ impl DoryScheme {
 
         (
             DoryCommitment(ark_to_jolt_gt(&tier_2)),
-            DoryHint(
+            DoryHint::new(
                 ark_to_jolt_g1_vec(row_commitments),
                 ark_to_jolt_fr(&commit_blind),
             ),
@@ -256,16 +256,16 @@ impl AdditivelyHomomorphic for DoryScheme {
         assert_eq!(hints.len(), scalars.len());
         assert!(!hints.is_empty(), "combine_hints: empty hint set");
 
-        let num_rows = hints[0].0.len();
+        let num_rows = hints[0].row_commitments.len();
         assert!(
-            hints.iter().all(|h| h.0.len() == num_rows),
+            hints.iter().all(|h| h.row_commitments.len() == num_rows),
             "combine_hints: ragged hint lengths",
         );
 
         let combined_blind = hints
             .iter()
             .zip(scalars.iter())
-            .map(|(hint, &scalar)| scalar * hint.1)
+            .map(|(hint, &scalar)| scalar * hint.commit_blind)
             .sum();
 
         let combined: Vec<Bn254G1> = (0..num_rows)
@@ -273,13 +273,13 @@ impl AdditivelyHomomorphic for DoryScheme {
             .map(|row| {
                 let mut acc = Bn254G1::default();
                 for (hint, &scalar) in hints.iter().zip(scalars.iter()) {
-                    acc += hint.0[row].scalar_mul(&scalar);
+                    acc += hint.row_commitments[row].scalar_mul(&scalar);
                 }
                 acc
             })
             .collect();
 
-        DoryHint(combined, combined_blind)
+        DoryHint::new(combined, combined_blind)
     }
 }
 
@@ -438,7 +438,10 @@ pub(crate) fn commit_rows_tier_2<M: Mode>(
 
 impl DoryHint {
     fn into_ark_parts(self) -> (Vec<ArkG1>, ArkFr) {
-        (jolt_g1_vec_to_ark(self.0), jolt_fr_to_ark(&self.1))
+        (
+            jolt_g1_vec_to_ark(self.row_commitments),
+            jolt_fr_to_ark(&self.commit_blind),
+        )
     }
 }
 

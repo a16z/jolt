@@ -86,7 +86,19 @@ impl<'de> Deserialize<'de> for DoryVerifierSetup {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct DoryHint(pub Vec<Bn254G1>, pub Fr);
+pub struct DoryHint {
+    pub(crate) row_commitments: Vec<Bn254G1>,
+    pub(crate) commit_blind: Fr,
+}
+
+impl DoryHint {
+    pub(crate) fn new(row_commitments: Vec<Bn254G1>, commit_blind: Fr) -> Self {
+        Self {
+            row_commitments,
+            commit_blind,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct DoryPartialCommitment {
