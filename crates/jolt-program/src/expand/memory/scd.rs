@@ -8,6 +8,7 @@ pub(in crate::expand) fn expand_scd(
     let v_reservation_w = allocator.reservation_w_register();
     let mut asm =
         assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
+    super::shared::emit_ram_region_assertion(&mut asm, rs1(instruction)?)?;
 
     let v_success = asm.allocator().allocate()?;
     asm.emit_j(InstructionKind::VirtualAdvice, v_success, 0)?;

@@ -52,10 +52,17 @@ impl RISCVTrace for SCW {
         let mut inline_sequence =
             Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
 
-        // VirtualAdvice is at index 0 — advise v_success (1=success, 0=failure)
-        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
-            instr.advice = success as u64;
-        }
+        // Patch v_success (1=success, 0=failure) into the first VirtualAdvice
+        // in the sequence. Locating it by type avoids fragility against
+        // changes to the sequence's prelude.
+        let advice = inline_sequence
+            .iter_mut()
+            .find_map(|i| match i {
+                Instruction::VirtualAdvice(v) => Some(v),
+                _ => None,
+            })
+            .expect("SC.W inline sequence must contain a VirtualAdvice");
+        advice.advice = success as u64;
 
         let mut trace = trace;
         for instr in inline_sequence {
@@ -317,6 +324,34 @@ mod tests {
             loaded, 0xDEAD0001CDF4DCC0,
             "after sc.w (word store), ld should see init high + stored low; got 0x{loaded:016x}"
         );
+    }
+
+    /// SC.W to a non-RAM (I/O) address must be rejected by the
+    /// inline-sequence RAM-range constraint. Without this constraint, the
+    /// failure-path store would flip the device's panic flag via the
+    /// byte-level store handler, mutating the proof's public I/O.
+    #[test]
+    #[should_panic(expected = "assertion failed")]
+    fn test_scw_to_io_rejected() {
+        let mut cpu = setup_cpu();
+        let panic_addr = cpu
+            .get_mut_mmu()
+            .jolt_device
+            .as_ref()
+            .unwrap()
+            .memory_layout
+            .panic;
+
+        cpu.x[11] = panic_addr as i64; // rs1 points at the panic byte
+        cpu.x[12] = 0x12345678;
+
+        let decoded = Instruction::decode(encode_scw(13, 11, 12), 0x1000, false).unwrap();
+        let Instruction::SCW(scw) = decoded else {
+            panic!("Expected SCW");
+        };
+
+        let mut trace = Vec::new();
+        scw.trace(&mut cpu, Some(&mut trace));
     }
 
     /// Regression test: SC.W with rd=x0 must still succeed when a reservation

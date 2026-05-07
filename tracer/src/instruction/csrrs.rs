@@ -81,6 +81,18 @@ mod tests {
         }
     }
 
+    /// `decode` must reject unsupported CSRs with a typed error instead of
+    /// letting them reach the inline-sequence path.
+    #[test]
+    fn test_csrrs_unsupported_csr_rejected_at_decode() {
+        // satp = 0x180 — valid RISC-V supervisor CSR but not modelled by Jolt.
+        // Encoding: 0x180 << 20 | 0 << 15 | 2 << 12 | 5 << 7 | 0x73
+        let instr: u32 = (0x180 << 20) | (2 << 12) | (5 << 7) | 0x73;
+        let err = Instruction::decode(instr, 0x1000, false)
+            .expect_err("decode must reject unsupported CSR (satp) with an Err, not panic");
+        assert!(err.contains("CSR"), "error should mention CSR: {err}");
+    }
+
     /// Test decoding with rs1 != 0 (full csrrs)
     #[test]
     fn test_csrrs_with_rs1() {

@@ -51,3 +51,52 @@ impl RISCVTrace for LRD {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::emulator::{cpu::Cpu, default_terminal::DefaultTerminal};
+    use crate::instruction::{Instruction, RISCVTrace};
+
+    const TEST_MEM_SIZE: u64 = 1024 * 1024;
+
+    fn setup_cpu() -> Cpu {
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+        let memory_config = common::jolt_device::MemoryConfig {
+            heap_size: TEST_MEM_SIZE,
+            program_size: Some(1024),
+            ..Default::default()
+        };
+        cpu.get_mut_mmu().jolt_device = Some(common::jolt_device::JoltDevice::new(&memory_config));
+        cpu.get_mut_mmu().init_memory(TEST_MEM_SIZE);
+        cpu
+    }
+
+    fn encode_lrd(rd: u8, rs1: u8) -> u32 {
+        (0b00010 << 27) | ((rs1 as u32) << 15) | (0b011 << 12) | ((rd as u32) << 7) | 0x2F
+    }
+
+    /// LR.D to a non-RAM (I/O) address is rejected by the RAM-range
+    /// constraint. Mirrors SC.D coverage.
+    #[test]
+    #[should_panic(expected = "assertion failed")]
+    fn test_lrd_to_io_rejected() {
+        let mut cpu = setup_cpu();
+        let panic_addr = cpu
+            .get_mut_mmu()
+            .jolt_device
+            .as_ref()
+            .unwrap()
+            .memory_layout
+            .panic;
+
+        cpu.x[11] = panic_addr as i64;
+
+        let decoded = Instruction::decode(encode_lrd(10, 11), 0x1000, false).unwrap();
+        let Instruction::LRD(lrd) = decoded else {
+            panic!("Expected LRD");
+        };
+
+        let mut trace = Vec::new();
+        lrd.trace(&mut cpu, Some(&mut trace));
+    }
+}

@@ -1,4 +1,22 @@
+use common::constants::RAM_START_ADDRESS;
+
 use super::*;
+
+pub(in crate::expand) fn emit_ram_region_assertion(
+    asm: &mut assembler::InstrAssembler<'_>,
+    address_register: u8,
+) -> Result<(), ExpansionError> {
+    let ram_start = asm.allocator().allocate()?;
+    asm.emit_u(InstructionKind::LUI, ram_start, RAM_START_ADDRESS as i128)?;
+    asm.emit_b(
+        InstructionKind::VirtualAssertLTE,
+        ram_start,
+        address_register,
+        0,
+    )?;
+    asm.allocator().release(ram_start)?;
+    Ok(())
+}
 
 pub(in crate::expand) fn expand_byte_load(
     instruction: &NormalizedInstruction,

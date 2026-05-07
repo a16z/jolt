@@ -1,5 +1,7 @@
 use super::*;
 
+use common::constants::RAM_START_ADDRESS;
+
 fn instruction(
     instruction_kind: InstructionKind,
     rd: Option<u8>,
@@ -87,6 +89,53 @@ fn csr_zero_is_rejected() {
             Err(ExpansionError::UnsupportedCsr(0))
         ));
     }
+}
+
+#[test]
+fn lr_sc_expansions_restrict_address_to_ram() -> Result<(), ExpansionError> {
+    for instruction_kind in [
+        InstructionKind::LRW,
+        InstructionKind::LRD,
+        InstructionKind::SCW,
+        InstructionKind::SCD,
+    ] {
+        let mut allocator = ExpansionAllocator::new();
+        let expanded = expand_instruction(
+            &instruction(instruction_kind, Some(3), false),
+            &mut allocator,
+        )?;
+
+        assert_eq!(expanded[0].instruction_kind, InstructionKind::LUI);
+        assert_eq!(expanded[0].operands.rd, Some(40));
+        assert_eq!(expanded[0].operands.imm, RAM_START_ADDRESS as i128);
+        assert_eq!(
+            expanded[1].instruction_kind,
+            InstructionKind::VirtualAssertLTE
+        );
+        assert_eq!(expanded[1].operands.rs1, Some(40));
+        assert_eq!(expanded[1].operands.rs2, Some(1));
+    }
+    Ok(())
+}
+
+#[test]
+fn sc_success_advice_is_not_position_dependent() -> Result<(), ExpansionError> {
+    for instruction_kind in [InstructionKind::SCW, InstructionKind::SCD] {
+        let mut allocator = ExpansionAllocator::new();
+        let expanded = expand_instruction(
+            &instruction(instruction_kind, Some(3), false),
+            &mut allocator,
+        )?;
+        let advice_position = expanded
+            .iter()
+            .position(|instruction| instruction.instruction_kind == InstructionKind::VirtualAdvice);
+
+        assert!(
+            matches!(advice_position, Some(position) if position > 1),
+            "RAM-region prelude should precede success advice, got {advice_position:?}"
+        );
+    }
+    Ok(())
 }
 
 #[test]
