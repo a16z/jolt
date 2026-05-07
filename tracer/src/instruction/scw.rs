@@ -13,8 +13,7 @@ declare_riscv_instr!(
     mask   = 0xf800707f,
     match  = 0x1800202f,
     format = FormatR,
-    ram    = RAMWrite,
-    side_effects = true
+    ram    = RAMWrite
 );
 
 impl SCW {

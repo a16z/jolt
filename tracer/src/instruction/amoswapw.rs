@@ -11,8 +11,7 @@ declare_riscv_instr!(
     mask   = 0xf800707f,
     match  = 0x0800202f,
     format = FormatAMO,
-    ram    = RAMWrite,
-    side_effects = true
+    ram    = RAMWrite
 );
 
 impl AMOSWAPW {

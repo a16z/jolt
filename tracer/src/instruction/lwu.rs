@@ -9,8 +9,7 @@ declare_riscv_instr!(
     mask   = 0x0000707f,
     match  = 0x00006003,
     format = FormatLoad,
-    ram    = super::RAMRead,
-    side_effects = true
+    ram    = super::RAMRead
 );
 
 impl LWU {

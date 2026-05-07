@@ -5,21 +5,11 @@ macro_rules! declare_riscv_instr {
       mask    = $mask:expr,
       match   = $match_:expr,
       format  = $format:ty,
-      ram     = $ram:ty,
-      side_effects = true
+      ram     = $ram:ty $(,)?
   ) => {
-        declare_riscv_instr!(@inner $name, $mask, $match_, $format, $ram, true);
+        declare_riscv_instr!(@inner $name, $mask, $match_, $format, $ram);
     };
-    (
-      name    = $name:ident,
-      mask    = $mask:expr,
-      match   = $match_:expr,
-      format  = $format:ty,
-      ram     = $ram:ty
-  ) => {
-        declare_riscv_instr!(@inner $name, $mask, $match_, $format, $ram, false);
-    };
-    (@inner $name:ident, $mask:expr, $match_:expr, $format:ty, $ram:ty, $se:expr) => {
+    (@inner $name:ident, $mask:expr, $match_:expr, $format:ty, $ram:ty) => {
         #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
         pub struct $name {
             pub address: u64,
@@ -79,10 +69,6 @@ macro_rules! declare_riscv_instr {
 
             fn execute(&self, cpu: &mut $crate::emulator::cpu::Cpu, ram: &mut Self::RAMAccess) {
                 self.exec(cpu, ram)
-            }
-
-            fn has_side_effects(&self) -> bool {
-                $se
             }
         }
 

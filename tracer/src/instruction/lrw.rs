@@ -13,8 +13,7 @@ declare_riscv_instr!(
     mask   = 0xf9f0707f,
     match  = 0x1000202f,
     format = FormatR,
-    ram    = RAMRead,
-    side_effects = true
+    ram    = RAMRead
 );
 
 impl LRW {

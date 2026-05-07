@@ -13,8 +13,7 @@ declare_riscv_instr!(
     mask   = 0,
     match  = 0,
     format = FormatAdviceLoadI,
-    ram    = (),
-    side_effects = true
+    ram    = ()
 );
 
 impl AdviceLH {

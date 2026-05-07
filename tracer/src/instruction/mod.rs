@@ -385,7 +385,8 @@ pub trait RISCVInstruction:
     fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess);
 
     fn has_side_effects(&self) -> bool {
-        false
+        let instruction: NormalizedInstruction = (*self).into();
+        instruction.instruction_kind.has_side_effects()
     }
 }
 

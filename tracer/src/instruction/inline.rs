@@ -172,10 +172,6 @@ impl RISCVInstruction for INLINE {
     fn execute(&self, cpu: &mut Cpu, ram: &mut Self::RAMAccess) {
         self.exec(cpu, ram)
     }
-
-    fn has_side_effects(&self) -> bool {
-        true
-    }
 }
 
 impl INLINE {

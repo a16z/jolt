@@ -10,8 +10,7 @@ declare_riscv_instr!(
     mask   = 0xf800707f,
     match  = 0x4000202f,
     format = FormatAMO,
-    ram    = RAMWrite,
-    side_effects = true
+    ram    = RAMWrite
 );
 
 impl AMOORW {
