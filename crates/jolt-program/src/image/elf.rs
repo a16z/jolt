@@ -5,11 +5,20 @@ use std::collections::BTreeMap;
 
 use crate::ProgramError;
 
+/// Contents decoded directly from an RV64 ELF program image.
+///
+/// The instruction rows here match the executable text after RV64 decoding and
+/// compressed-instruction normalization. They have not been expanded into Jolt
+/// bytecode yet.
 #[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DecodedProgramImage {
+    /// Source instruction rows decoded from executable text sections.
     pub instructions: Vec<NormalizedInstruction>,
+    /// Initial byte values for memory-backed ELF sections.
     pub memory_init: Vec<(u64, u8)>,
+    /// End address of the loaded program image.
     pub program_end: u64,
+    /// ELF entry point.
     pub entry_address: u64,
 }
 

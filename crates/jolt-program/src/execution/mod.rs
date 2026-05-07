@@ -20,7 +20,11 @@ pub use trace::{
 pub fn build_executable(elf_bytes: &[u8]) -> Result<ExecutableProgram, ProgramError> {
     let image = decode_elf(elf_bytes)?;
     let expanded_bytecode = expand_program(image.instructions.iter().copied())?;
-    executable_from_image(elf_bytes, expanded_bytecode, image)
+    Ok(ExecutableProgram::from_decoded_image(
+        elf_bytes.to_vec(),
+        expanded_bytecode,
+        image,
+    ))
 }
 
 #[cfg(feature = "image")]
@@ -31,21 +35,10 @@ pub fn build_executable_with_inline_provider<P: InlineExpansionProvider + ?Sized
     let image = decode_elf(elf_bytes)?;
     let expanded_bytecode =
         expand_program_with_provider(image.instructions.iter().copied(), inline_provider)?;
-    executable_from_image(elf_bytes, expanded_bytecode, image)
-}
-
-#[cfg(feature = "image")]
-fn executable_from_image(
-    elf_bytes: &[u8],
-    expanded_bytecode: Vec<jolt_riscv::NormalizedInstruction>,
-    image: crate::image::DecodedProgramImage,
-) -> Result<ExecutableProgram, ProgramError> {
-    Ok(ExecutableProgram::from_parts(
+    Ok(ExecutableProgram::from_decoded_image(
         elf_bytes.to_vec(),
         expanded_bytecode,
-        image.memory_init,
-        image.program_end,
-        image.entry_address,
+        image,
     ))
 }
 

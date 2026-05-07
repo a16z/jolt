@@ -3,12 +3,21 @@ use jolt_riscv::NormalizedInstruction;
 
 use super::{ExecutionBackend, TraceError, TraceSource};
 
+/// Program data prepared for execution and preprocessing.
+///
+/// This is the stage after `DecodedProgramImage`: decoded instruction rows have
+/// been expanded into the final Jolt bytecode, while the original ELF bytes are
+/// still kept for execution backends that run the program from its ELF image.
 #[derive(Debug, Clone, Default)]
 pub struct ExecutableProgram {
     elf_bytes: Vec<u8>,
+    /// Bytecode after expanding decoded RV64 instructions into executable Jolt rows.
     pub expanded_bytecode: Vec<NormalizedInstruction>,
+    /// Initial byte values for memory-backed ELF sections.
     pub memory_init: Vec<(u64, u8)>,
+    /// End address of the loaded program image.
     pub program_end: u64,
+    /// ELF entry point.
     pub entry_address: u64,
 }
 
@@ -37,6 +46,26 @@ impl ExecutableProgram {
             program_end,
             entry_address,
         }
+    }
+
+    /// Creates an executable from a decoded program image and its expanded bytecode.
+    ///
+    /// `DecodedProgramImage` contains the rows and memory decoded directly from
+    /// the ELF. The caller supplies `expanded_bytecode`, which is the result of
+    /// expanding those decoded rows into the bytecode used by Jolt.
+    #[cfg(feature = "image")]
+    pub fn from_decoded_image(
+        elf_bytes: Vec<u8>,
+        expanded_bytecode: Vec<NormalizedInstruction>,
+        image: crate::image::DecodedProgramImage,
+    ) -> Self {
+        Self::from_parts(
+            elf_bytes,
+            expanded_bytecode,
+            image.memory_init,
+            image.program_end,
+            image.entry_address,
+        )
     }
 
     pub fn elf_bytes(&self) -> &[u8] {
