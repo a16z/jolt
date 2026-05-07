@@ -9,7 +9,7 @@ use common::constants::{
 };
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_program::execution::{ExecutionBackend, TraceError, TraceInputs, TraceOutput};
-use jolt_program::{ExecutableProgram, ProgramError};
+use jolt_program::{JoltProgram, ProgramError};
 use jolt_riscv::NormalizedInstruction;
 use std::fs::File;
 use std::io;
@@ -263,24 +263,22 @@ impl Program {
         }
     }
 
-    pub fn executable_program(&mut self) -> Result<ExecutableProgram, ProgramError> {
+    pub fn jolt_program(&mut self) -> Result<JoltProgram, ProgramError> {
         self.build(DEFAULT_TARGET_DIR);
         let elf_contents = self
             .get_elf_contents()
             .expect("ELF contents should be available after building the guest");
         let mut inline_provider = tracer::TracerInlineExpansionProvider::new();
-        jolt_program::build_executable_with_inline_provider(&elf_contents, &mut inline_provider)
+        jolt_program::build_jolt_program_with_inline_provider(&elf_contents, &mut inline_provider)
     }
 
     pub fn decode(&mut self) -> (Vec<NormalizedInstruction>, Vec<(u64, u8)>, u64, u64) {
-        let executable = self
-            .executable_program()
-            .expect("failed to build executable program");
+        let program = self.jolt_program().expect("failed to build Jolt program");
         (
-            executable.expanded_bytecode,
-            executable.memory_init,
-            executable.program_end - RAM_START_ADDRESS,
-            executable.entry_address,
+            program.expanded_bytecode,
+            program.memory_init,
+            program.program_end - RAM_START_ADDRESS,
+            program.entry_address,
         )
     }
 
@@ -291,10 +289,10 @@ impl Program {
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
     ) -> Result<TraceOutput<B::Trace>, TraceError> {
-        let executable = self.executable_program()?;
+        let program = self.jolt_program()?;
         let memory_config =
-            self.memory_config_with_program_size(executable.program_end - RAM_START_ADDRESS);
-        executable.trace_with(
+            self.memory_config_with_program_size(program.program_end - RAM_START_ADDRESS);
+        program.trace_with(
             backend,
             TraceInputs::new(
                 inputs.to_vec(),

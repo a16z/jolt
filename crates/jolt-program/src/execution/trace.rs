@@ -3,15 +3,16 @@ use jolt_riscv::NormalizedInstruction;
 
 use super::{ExecutionBackend, TraceError, TraceSource};
 
-/// Program data prepared for execution and preprocessing.
+/// A Jolt-ready program built from an RV64 ELF image.
 ///
-/// This is the stage after `DecodedProgramImage`: decoded instruction rows have
-/// been expanded into the final Jolt bytecode, while the original ELF bytes are
-/// still kept for execution backends that run the program from its ELF image.
+/// This is the stage after `Rv64ProgramImage`: decoded RV64 instruction rows
+/// have been expanded into the bytecode used by Jolt preprocessing, while the
+/// original ELF bytes are still kept for backends that run the source program
+/// from its ELF image.
 #[derive(Debug, Clone, Default)]
-pub struct ExecutableProgram {
+pub struct JoltProgram {
     elf_bytes: Vec<u8>,
-    /// Bytecode after expanding decoded RV64 instructions into executable Jolt rows.
+    /// Final Jolt bytecode rows after expanding decoded RV64 instructions.
     pub expanded_bytecode: Vec<NormalizedInstruction>,
     /// Initial byte values for memory-backed ELF sections.
     pub memory_init: Vec<(u64, u8)>,
@@ -21,7 +22,7 @@ pub struct ExecutableProgram {
     pub entry_address: u64,
 }
 
-impl ExecutableProgram {
+impl JoltProgram {
     pub fn from_elf_bytes(elf_bytes: Vec<u8>) -> Self {
         Self {
             elf_bytes,
@@ -48,16 +49,16 @@ impl ExecutableProgram {
         }
     }
 
-    /// Creates an executable from a decoded program image and its expanded bytecode.
+    /// Creates a Jolt program from an RV64 program image and its expanded bytecode.
     ///
-    /// `DecodedProgramImage` contains the rows and memory decoded directly from
+    /// `Rv64ProgramImage` contains the rows and memory decoded directly from
     /// the ELF. The caller supplies `expanded_bytecode`, which is the result of
     /// expanding those decoded rows into the bytecode used by Jolt.
     #[cfg(feature = "image")]
-    pub fn from_decoded_image(
+    pub fn from_rv64_image(
         elf_bytes: Vec<u8>,
         expanded_bytecode: Vec<NormalizedInstruction>,
-        image: crate::image::DecodedProgramImage,
+        image: crate::image::Rv64ProgramImage,
     ) -> Self {
         Self::from_parts(
             elf_bytes,

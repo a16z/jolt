@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use jolt_program::execution::{
-    ExecutableProgram, ExecutionBackend, MemoryImage, OwnedTrace, RamAccess as ProgramRamAccess,
-    RamRead, RamWrite, RegisterRead, RegisterState, RegisterWrite, TraceError, TraceInputs,
-    TraceOutput, TraceRow,
+    ExecutionBackend, JoltProgram, MemoryImage, OwnedTrace, RamAccess as ProgramRamAccess, RamRead,
+    RamWrite, RegisterRead, RegisterState, RegisterWrite, TraceError, TraceInputs, TraceOutput,
+    TraceRow,
 };
 use jolt_riscv::NormalizedInstruction;
 
@@ -31,7 +31,7 @@ impl ExecutionBackend for TracerBackend {
 
     fn trace(
         &mut self,
-        program: &ExecutableProgram,
+        program: &JoltProgram,
         inputs: TraceInputs,
     ) -> Result<TraceOutput<Self::Trace>, TraceError> {
         if program.elf_bytes().is_empty() {

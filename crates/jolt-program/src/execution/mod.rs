@@ -12,15 +12,15 @@ use crate::{
 pub use backend::{ExecutionBackend, TraceSource};
 pub use error::TraceError;
 pub use trace::{
-    ExecutableProgram, MemoryImage, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead,
+    JoltProgram, MemoryImage, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead,
     RegisterState, RegisterWrite, TraceInputs, TraceOutput, TraceRow,
 };
 
 #[cfg(feature = "image")]
-pub fn build_executable(elf_bytes: &[u8]) -> Result<ExecutableProgram, ProgramError> {
+pub fn build_jolt_program(elf_bytes: &[u8]) -> Result<JoltProgram, ProgramError> {
     let image = decode_elf(elf_bytes)?;
     let expanded_bytecode = expand_program(image.instructions.iter().copied())?;
-    Ok(ExecutableProgram::from_decoded_image(
+    Ok(JoltProgram::from_rv64_image(
         elf_bytes.to_vec(),
         expanded_bytecode,
         image,
@@ -28,14 +28,14 @@ pub fn build_executable(elf_bytes: &[u8]) -> Result<ExecutableProgram, ProgramEr
 }
 
 #[cfg(feature = "image")]
-pub fn build_executable_with_inline_provider<P: InlineExpansionProvider + ?Sized>(
+pub fn build_jolt_program_with_inline_provider<P: InlineExpansionProvider + ?Sized>(
     elf_bytes: &[u8],
     inline_provider: &mut P,
-) -> Result<ExecutableProgram, ProgramError> {
+) -> Result<JoltProgram, ProgramError> {
     let image = decode_elf(elf_bytes)?;
     let expanded_bytecode =
         expand_program_with_provider(image.instructions.iter().copied(), inline_provider)?;
-    Ok(ExecutableProgram::from_decoded_image(
+    Ok(JoltProgram::from_rv64_image(
         elf_bytes.to_vec(),
         expanded_bytecode,
         image,
@@ -43,20 +43,22 @@ pub fn build_executable_with_inline_provider<P: InlineExpansionProvider + ?Sized
 }
 
 #[cfg(not(feature = "image"))]
-pub fn build_executable(elf_bytes: &[u8]) -> Result<ExecutableProgram, ProgramError> {
+pub fn build_jolt_program(elf_bytes: &[u8]) -> Result<JoltProgram, ProgramError> {
     let _ = elf_bytes;
     Err(ProgramError::MalformedImage(
-        "building an executable from ELF bytes requires the jolt-program image feature",
+        "building a Jolt program from ELF bytes requires the jolt-program image feature",
     ))
 }
 
 #[cfg(not(feature = "image"))]
-pub fn build_executable_with_inline_provider<P: crate::expand::InlineExpansionProvider + ?Sized>(
+pub fn build_jolt_program_with_inline_provider<
+    P: crate::expand::InlineExpansionProvider + ?Sized,
+>(
     elf_bytes: &[u8],
     inline_provider: &mut P,
-) -> Result<ExecutableProgram, ProgramError> {
+) -> Result<JoltProgram, ProgramError> {
     let _ = (elf_bytes, inline_provider);
     Err(ProgramError::MalformedImage(
-        "building an executable from ELF bytes requires the jolt-program image feature",
+        "building a Jolt program from ELF bytes requires the jolt-program image feature",
     ))
 }

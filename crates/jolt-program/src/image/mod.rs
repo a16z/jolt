@@ -7,4 +7,4 @@
 pub mod decode;
 pub mod elf;
 
-pub use elf::{decode_elf, DecodedProgramImage};
+pub use elf::{decode_elf, Rv64ProgramImage};

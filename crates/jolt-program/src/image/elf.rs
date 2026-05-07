@@ -11,7 +11,7 @@ use crate::ProgramError;
 /// compressed-instruction normalization. They have not been expanded into Jolt
 /// bytecode yet.
 #[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct DecodedProgramImage {
+pub struct Rv64ProgramImage {
     /// Source instruction rows decoded from executable text sections.
     pub instructions: Vec<NormalizedInstruction>,
     /// Initial byte values for memory-backed ELF sections.
@@ -22,7 +22,7 @@ pub struct DecodedProgramImage {
     pub entry_address: u64,
 }
 
-pub fn decode_elf(elf: &[u8]) -> Result<DecodedProgramImage, ProgramError> {
+pub fn decode_elf(elf: &[u8]) -> Result<Rv64ProgramImage, ProgramError> {
     let obj =
         object::File::parse(elf).map_err(|_| ProgramError::MalformedImage("invalid ELF object"))?;
     if let object::File::Elf32(_) = &obj {
@@ -74,7 +74,7 @@ pub fn decode_elf(elf: &[u8]) -> Result<DecodedProgramImage, ProgramError> {
         decode_text_section(start, &raw_data, &mut instructions)?;
     }
 
-    Ok(DecodedProgramImage {
+    Ok(Rv64ProgramImage {
         instructions,
         memory_init,
         program_end,

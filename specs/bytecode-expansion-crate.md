@@ -28,7 +28,7 @@ The new crate should own the path:
 
 ```text
 ELF bytes
-  -> DecodedProgramImage
+  -> Rv64ProgramImage
   -> expanded bytecode
   -> JoltProgramPreprocessing
 ```
@@ -75,10 +75,10 @@ Keep the implementation PR's new checks focused on targeted `jolt-program`, `tra
 - [x] The existing `crates/jolt-riscv` crate owns the shared instruction vocabulary, canonical `NormalizedInstruction` row, `JoltInstruction` conversion marker trait, and static metadata required by decoding, expansion, tracing, bytecode preprocessing, and verifier checks.
 - [x] `crates/jolt-riscv` no longer depends on `tracer`; `tracer` depends on `jolt-riscv` for static instruction data instead.
 - [x] `crates/jolt-program` exists and is a workspace member.
-- [x] `jolt-program::image` exposes deterministic ELF decoding into a `DecodedProgramImage` without depending on `tracer`.
+- [x] `jolt-program::image` exposes deterministic ELF decoding into a `Rv64ProgramImage` without depending on `tracer`.
 - [x] `jolt-program::expand` provides a pure RV64 expansion API over decoded `NormalizedInstruction` values.
 - [x] `jolt-program::image` rejects ELF32/RV32 inputs with an explicit unsupported-architecture error.
-- [x] `jolt-program` exposes an `ExecutableProgram` or equivalent built program artifact that packages decoded image data, expanded bytecode, and program preprocessing inputs without depending on `tracer`.
+- [x] `jolt-program` exposes a `JoltProgram` or equivalent built program artifact that packages decoded image data, expanded bytecode, and program preprocessing inputs without depending on `tracer`.
 - [x] `jolt-program::execution` defines backend-neutral `ExecutionBackend`, `TraceSource`, `TraceInputs`, `TraceRow`, `TraceOutput`, and trace error types without importing `tracer`, `Cpu`, `Cycle`, `RISCVCycle<T>`, `LazyTraceIterator`, concrete memory-device internals, or advice-tape implementation details.
 - [x] `TraceRow` and related execution contract types use `jolt-riscv` normalized instruction rows plus backend-neutral register/RAM/device data, not tracer concrete cycle types.
 - [x] `tracer` implements `jolt_program::execution::ExecutionBackend` inside the `tracer` crate and adapts its concrete CPU/cycle/lazy-trace machinery to the neutral trace contract at its boundary.
@@ -102,7 +102,7 @@ Keep the implementation PR's new checks focused on targeted `jolt-program`, `tra
 - [x] `jolt-program::expand` exposes an `InlineExpansionProvider` trait and provider-taking expansion entry points for registered Jolt inline source opcodes, without depending on `tracer`, `inventory`, `Cpu`, advice tape internals, or concrete inline crates.
 - [x] The default/provider-free expansion path returns an explicit unsupported-inline error for `InstructionKind::Inline` rows instead of silently treating them as already-expanded bytecode.
 - [x] `tracer` implements the provider by adapting its existing inline registry and sequence builders to normalized `jolt-program` rows; inline advice generation remains trace-time execution behavior for this PR.
-- [x] A program-preprocessing path is implemented as `ELF bytes -> DecodedProgramImage -> expanded bytecode -> JoltProgramPreprocessing`, and prover/verifier setup wraps that program preprocessing without re-decoding or re-expanding the program.
+- [x] A program-preprocessing path is implemented as `ELF bytes -> Rv64ProgramImage -> expanded bytecode -> JoltProgramPreprocessing`, and prover/verifier setup wraps that program preprocessing without re-decoding or re-expanding the program.
 - [x] The verifier-facing path does not depend on CPU execution, lazy tracing, memory-device emulation, advice I/O, or prover-only witness generation.
 - [x] `cargo tree -p tracer` shows `tracer` depending on `jolt-riscv` and `jolt-program`, but neither lower-level crate depending back on `tracer`.
 - [x] `cargo tree -p jolt-program` shows no dependency on `tracer` while still compiling the execution trait module.
@@ -207,7 +207,7 @@ jolt-program
     -> JoltProgramPreprocessing
 
   execution
-    -> ExecutableProgram
+    -> JoltProgram
     -> ExecutionBackend and TraceSource traits
     -> backend-neutral trace rows, trace inputs, trace outputs, and trace errors
 
@@ -259,7 +259,7 @@ The broader program boundary should be evaluated in the same design pass:
 | RAM preprocessing from ELF memory bytes | Yes; verifier checks RAM initialization claims against program preprocessing or future program-image commitments | `jolt-program::preprocess` |
 | Memory layout from program size and I/O limits | Yes; verifier validates public I/O sizes and RAM bounds | `common` plus `jolt-program::preprocess` |
 | Program preprocessing digest and serialization | Yes; verifier binds preprocessing or its committed digest to the proof context | `jolt-program::preprocess` |
-| Built executable program artifact used as a backend input | No for verification from serialized preprocessing; yes for host proving/tracing | `jolt-program` root or `jolt-program::execution` |
+| Jolt-ready program artifact used as a backend input | No for verification from serialized preprocessing; yes for host proving/tracing | `jolt-program` root or `jolt-program::execution` |
 | Stable execution backend trait and neutral trace row contract | No for proof verification; yes for host/SDK dependency isolation | `jolt-program::execution` |
 | PCS verifier setup and optional BlindFold setup | Yes, but these are proof-system setup artifacts rather than program artifacts | stay in `jolt-core` verifier or a proof-system setup crate |
 | CPU execution and trace production | No | `tracer` |
@@ -323,7 +323,7 @@ jolt-core, jolt-sdk, jolt-trace, tracer
 
 This direction keeps `tracer` as an execution engine while allowing it to reuse the same bytecode expansion module as program preprocessing. It also gives formal verification tools a target that is not downstream of the emulator.
 
-The intended stability invariant is stronger than "there is no dependency cycle": tracer-internal implementation changes should be isolated to `tracer`. `jolt-program::execution` is the contract tracer implements, so lower `jolt-*` crates should change only when the normalized program row, executable-program input, or execution backend contract changes intentionally. In particular, renaming tracer's `Cycle`, changing lazy trace iteration internals, reorganizing CPU state, or altering memory-device implementation details should not require edits to `jolt-riscv`, `jolt-program`, `jolt-core`, or SDK macro generation.
+The intended stability invariant is stronger than "there is no dependency cycle": tracer-internal implementation changes should be isolated to `tracer`. `jolt-program::execution` is the contract tracer implements, so lower `jolt-*` crates should change only when the normalized program row, `JoltProgram` input, or execution backend contract changes intentionally. In particular, renaming tracer's `Cycle`, changing lazy trace iteration internals, reorganizing CPU state, or altering memory-device implementation details should not require edits to `jolt-riscv`, `jolt-program`, `jolt-core`, or SDK macro generation.
 
 `jolt-trace` should also be upstream of tracer in the target design. It should own tracer-free trace traits and instruction/cycle-facing helper APIs, but it should not select or import the concrete tracer backend. Default backend selection belongs in `jolt-sdk`, which is already the user-facing host API layer and can import both `jolt-program` and `tracer`.
 
@@ -452,7 +452,7 @@ and expose provider-taking entry points such as `expand_instruction_with_provide
 
 - `image/elf.rs`: move the non-execution part of `tracer::decode`: parse ELF, reject ELF32/RV32, compute entry address, collect RAM image bytes, decode `.text` into RV64 `NormalizedInstruction` values, and compute `program_end`.
 - `image/decode.rs` or an equivalent module: own RV64 opcode decoding into `NormalizedInstruction` using `jolt-riscv`'s `InstructionKind`, `NormalizedOperands`, and decode helpers.
-- `image/mod.rs`: expose `DecodedProgramImage` and `decode_elf`.
+- `image/mod.rs`: expose `Rv64ProgramImage` and `decode_elf`.
 - `error.rs`: replace warnings/panics in decode with explicit `ProgramError` or `DecodeError` values where possible. If current behavior must preserve `UNIMPL` insertion for invalid words, encode that policy explicitly.
 
 The `object` dependency should be feature-gated and used only by `jolt-program::image`. The pure expansion and preprocessing modules should still be usable in builds that operate on decoded instructions or serialized preprocessing rather than ELF bytes.
@@ -481,7 +481,7 @@ This module is intentionally program-level rather than verifier-only. The curren
 `jolt-program::execution` owns the backend-neutral tracing contract, not a tracer implementation:
 
 - `execution/backend.rs`: define `ExecutionBackend`, `TraceSource`, and any adapter traits needed by SDK/host APIs.
-- `execution/trace.rs`: define `ExecutableProgram`, `TraceInputs`, `TraceRow`, `TraceOutput<T>`, and backend-neutral register/RAM/memory-image data needed by prover setup.
+- `execution/trace.rs`: define `JoltProgram`, `TraceInputs`, `TraceRow`, `TraceOutput<T>`, and backend-neutral register/RAM/memory-image data needed by prover setup.
 - `execution/error.rs`: define `TraceError` or a small error enum wrapping backend failures without exposing tracer concrete types.
 
 The execution contract should make the conceptual boundary concrete:
@@ -492,7 +492,7 @@ pub trait ExecutionBackend {
 
     fn trace(
         &mut self,
-        program: &ExecutableProgram,
+        program: &JoltProgram,
         inputs: TraceInputs,
     ) -> Result<TraceOutput<Self::Trace>, TraceError>;
 }
@@ -502,7 +502,7 @@ pub trait TraceSource {
 }
 ```
 
-The exact field names can change, but `TraceRow` should be expressed in terms of `NormalizedInstruction` plus backend-neutral register and RAM access data. It should not expose `tracer::Cycle`, `tracer::RISCVCycle<T>`, `Cpu`, `LazyTraceIterator`, concrete memory-device state, or advice-tape internals. The `ExecutableProgram` input should be built from `jolt-program::image`, `jolt-program::expand`, and preprocessing inputs so host code can pass one stable program artifact to any backend.
+The exact field names can change, but `TraceRow` should be expressed in terms of `NormalizedInstruction` plus backend-neutral register and RAM access data. It should not expose `tracer::Cycle`, `tracer::RISCVCycle<T>`, `Cpu`, `LazyTraceIterator`, concrete memory-device state, or advice-tape internals. The `JoltProgram` input should be built from `jolt-program::image`, `jolt-program::expand`, and preprocessing inputs so host code can pass one stable program artifact to any backend.
 
 This module is the answer to the "changing tracer should not touch lower crates" concern. `jolt-program` defines what execution must provide; `tracer` implements it. If tracer reorganizes its CPU, cycle enum, lazy iterator, or memory-device implementation without changing the contract, those edits should stay in `tracer`.
 
@@ -529,7 +529,7 @@ This module is the answer to the "changing tracer should not touch lower crates"
 
 `jolt-sdk` remains the macro and user-facing SDK layer:
 
-- generated prove/analyze/preprocess code should build or receive an `ExecutableProgram` through `jolt-program`;
+- generated prove/analyze/preprocess code should build or receive a `JoltProgram` through `jolt-program`;
 - generated host APIs should be generic over `B: ExecutionBackend` where practical;
 - `jolt-sdk` owns the default host backend selection and may import `tracer` to construct the default `TracerBackend`, while keeping tracer concrete types out of `jolt-riscv`, `jolt-program`, `jolt-trace`, and verifier-facing preprocessing types.
 
@@ -591,7 +591,7 @@ The exact type names can change during implementation, but the API should make s
 The program-image and preprocessing APIs should be explicit about their inputs:
 
 ```rust
-pub struct DecodedProgramImage {
+pub struct Rv64ProgramImage {
     pub instructions: Vec<NormalizedInstruction>,
     pub memory_init: Vec<(u64, u8)>,
     pub program_end: u64,
@@ -610,13 +610,13 @@ pub fn preprocess_program(
 The program crate should also expose a built-program artifact and execution contract that host/SDK code can use without naming tracer concrete types:
 
 ```rust
-pub struct ExecutableProgram {
-    pub image: DecodedProgramImage,
+pub struct JoltProgram {
+    pub image: Rv64ProgramImage,
     pub expanded_bytecode: Vec<NormalizedInstruction>,
     pub program_preprocessing: JoltProgramPreprocessing,
 }
 
-pub fn build_executable(elf: &[u8]) -> Result<ExecutableProgram, ProgramError>;
+pub fn build_jolt_program(elf: &[u8]) -> Result<JoltProgram, ProgramError>;
 
 pub struct TraceInputs {
     /* public inputs, private inputs, and device/advice handles in neutral form */
@@ -639,7 +639,7 @@ pub trait ExecutionBackend {
 
     fn trace(
         &mut self,
-        program: &ExecutableProgram,
+        program: &JoltProgram,
         inputs: TraceInputs,
     ) -> Result<TraceOutput<Self::Trace>, TraceError>;
 }
@@ -735,7 +735,7 @@ The CSR cutover exposed one intentional behavior correction rather than a compat
 
 RV64 ELF decode has one additional boundary to keep explicit. Registered custom inline opcodes carry dispatch metadata in `opcode`, `funct3`, and `funct7`; a generic `InstructionKind::Inline` row alone is not enough to reconstruct the concrete tracer instruction. The normalized inline row should therefore preserve this dispatch metadata, while the registered-inline sequence/advice registry can remain a separate execution-boundary question until it is intentionally moved out of tracer.
 
-The execution-backend cutover should proceed incrementally. The implementation now provides the stable lower hook: `jolt-core::host::Program` can build a `jolt_program::ExecutableProgram` and run it through any `jolt_program::execution::ExecutionBackend`, while existing tracer-returning host convenience APIs remain available for compatibility. A follow-up SDK pass should move generated default host tracing/proving conveniences onto that hook, constructing `tracer::TracerBackend` in SDK wiring rather than asking lower program/preprocessing layers to name tracer internals.
+The execution-backend cutover should proceed incrementally. The implementation now provides the stable lower hook: `jolt-core::host::Program` can build a `jolt_program::JoltProgram` and run it through any `jolt_program::execution::ExecutionBackend`, while existing tracer-returning host convenience APIs remain available for compatibility. A follow-up SDK pass should move generated default host tracing/proving conveniences onto that hook, constructing `tracer::TracerBackend` in SDK wiring rather than asking lower program/preprocessing layers to name tracer internals.
 
 ## Documentation
 
@@ -835,7 +835,7 @@ Do not delete tracer's concrete instruction structs, instruction-format structs,
 15. [x] Remove `jolt-trace`'s dependency on `tracer`; move tracer-backed trace convenience APIs to `jolt-sdk` or rewrite them over `ExecutionBackend`.
 16. [x] Move `BytecodePreprocessing`, `BytecodePCMapper`, pure `RAMPreprocessing`, and `JoltProgramPreprocessing` into `jolt-program::preprocess`.
 17. [x] Keep `compute_min_ram_K` in `jolt-core` if moving it would pull prover-only or proof-system dependencies into `jolt-program::preprocess`.
-18. [x] Add `ExecutableProgram` or the final equivalent built-program artifact that packages decoded image data, expanded bytecode, and preprocessing inputs for execution backends.
+18. [x] Add `JoltProgram` or the final equivalent built-program artifact that packages decoded image data, expanded bytecode, and preprocessing inputs for execution backends.
 19. [x] Add `jolt-program::execution` with `ExecutionBackend`, `TraceSource`, `TraceInputs`, `TraceRow`, `TraceOutput`, and trace error types expressed without tracer concrete types.
 20. [x] Implement `ExecutionBackend` in `tracer`, adapting `Cpu`, `Cycle`, `LazyTraceIterator`, register state, RAM accesses, device output, and final memory into the neutral execution contract at the tracer boundary.
 21. [x] Update `jolt-core` prover/verifier code to consume the moved preprocessing types.

@@ -5,7 +5,7 @@ pub trait ExecutionBackend {
 
     fn trace(
         &mut self,
-        program: &super::ExecutableProgram,
+        program: &super::JoltProgram,
         inputs: TraceInputs,
     ) -> Result<TraceOutput<Self::Trace>, TraceError>;
 }
