@@ -107,15 +107,16 @@ impl RISCVTrace for CSRRW {
     ) -> Vec<Instruction> {
         let csr_addr = self.csr_address();
 
-        // Validate CSR address is supported
-        // CSR 0 is never valid - return no-op for default-constructed instructions
+        // CSR 0 is never valid - return no-op for default-constructed instructions.
+        // Other unsupported CSRs are rejected at decode time (see Instruction::decode),
+        // so the trace path should never see one.
         match csr_addr {
             0 => {
                 warn!("CSRRW with CSR address 0 is invalid, returning NoOp");
                 return vec![Instruction::NoOp];
             }
             CSR_MSTATUS | CSR_MTVEC | CSR_MSCRATCH | CSR_MEPC | CSR_MCAUSE | CSR_MTVAL => {}
-            _ => panic!("CSRRW: Unsupported CSR 0x{csr_addr:03x}"),
+            _ => unreachable!("Unsupported CSR 0x{csr_addr:03x}; decode should have rejected it"),
         };
 
         // Map CSR address to virtual register
@@ -176,6 +177,19 @@ mod tests {
             }
             _ => panic!("Expected CSRRW instruction, got {decoded:?}"),
         }
+    }
+
+    /// `decode` must reject unsupported CSRs with a typed error instead of
+    /// letting them reach the inline-sequence path, which would previously
+    /// panic the prover process.
+    #[test]
+    fn test_csrrw_unsupported_csr_rejected_at_decode() {
+        // satp = 0x180 — valid RISC-V supervisor CSR but not modelled by Jolt.
+        // Encoding: 0x180 << 20 | 5 << 15 | 1 << 12 | 0 << 7 | 0x73
+        let instr: u32 = (0x180 << 20) | (5 << 15) | (1 << 12) | 0x73;
+        let err = Instruction::decode(instr, 0x1000, false)
+            .expect_err("decode must reject unsupported CSR (satp) with an Err, not panic");
+        assert!(err.contains("CSR"), "error should mention CSR: {err}");
     }
 
     /// Test decoding with rd != 0 (full csrrw, not just csrw pseudo-instruction)

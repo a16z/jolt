@@ -1,3 +1,4 @@
+use common::constants::RAM_START_ADDRESS;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -10,6 +11,7 @@ use crate::{
 use super::add::ADD;
 use super::addi::ADDI;
 use super::format::format_r::FormatR;
+use super::lui::LUI;
 use super::lw::LW;
 use super::mul::MUL;
 use super::sub::SUB;
@@ -66,10 +68,17 @@ impl RISCVTrace for SCW {
 
         let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
 
-        // VirtualAdvice is at index 0 — advise v_success (1=success, 0=failure)
-        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
-            instr.advice = success as u64;
-        }
+        // Patch v_success (1=success, 0=failure) into the first VirtualAdvice
+        // in the sequence. Locating it by type avoids fragility against
+        // changes to the sequence's prelude.
+        let advice = inline_sequence
+            .iter_mut()
+            .find_map(|i| match i {
+                Instruction::VirtualAdvice(v) => Some(v),
+                _ => None,
+            })
+            .expect("SC.W inline sequence must contain a VirtualAdvice");
+        advice.advice = success as u64;
 
         let mut trace = trace;
         for instr in inline_sequence {
@@ -102,24 +111,36 @@ impl SCW {
         let v_reservation_d = allocator.reservation_d_register();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
 
-        // 0: Prover supplies success flag (1=success, 0=failure)
+        // Restrict SC.W to the RAM region (rs1 >= RAM_START_ADDRESS). The
+        // failure path of the inline sequence still emits a store of the
+        // loaded value back to rs1; for I/O addresses below RAM, the device
+        // store handler has value-independent side effects (flips the panic
+        // flag, extends the output buffer), so a failed SC into the I/O
+        // region would diverge from native SC semantics and let a malicious
+        // prover mutate the proof's public I/O.
+        let v_ram_start = allocator.allocate();
+        asm.emit_u::<LUI>(*v_ram_start, RAM_START_ADDRESS);
+        asm.emit_b::<VirtualAssertLTE>(*v_ram_start, self.operands.rs1, 0);
+        drop(v_ram_start);
+
+        // Prover supplies success flag (1=success, 0=failure)
         let v_success = allocator.allocate();
         asm.emit_j::<VirtualAdvice>(*v_success, 0);
 
-        // 1-2: Constrain v_success ∈ {0, 1}
+        // Constrain v_success ∈ {0, 1}
         let v_one = allocator.allocate();
         asm.emit_i::<ADDI>(*v_one, 0, 1);
         asm.emit_b::<VirtualAssertLTE>(*v_success, *v_one, 0);
         drop(v_one);
 
-        // 3-5: success → reservation must match
+        // success → reservation must match
         let v_addr_diff = allocator.allocate();
         asm.emit_r::<SUB>(*v_addr_diff, v_reservation, self.operands.rs1);
         asm.emit_r::<MUL>(*v_addr_diff, *v_success, *v_addr_diff);
         asm.emit_b::<VirtualAssertEQ>(*v_addr_diff, 0, 0);
         drop(v_addr_diff);
 
-        // 6-10: Conditional store (VirtualLW/VirtualSW for 32-bit mode)
+        // Conditional store (VirtualLW/VirtualSW for 32-bit mode)
         let v_mem = allocator.allocate();
         asm.emit_i::<VirtualLW>(*v_mem, self.operands.rs1, 0);
 
@@ -145,6 +166,15 @@ impl SCW {
         let v_reservation = allocator.reservation_w_register();
         let v_reservation_d = allocator.reservation_d_register();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, allocator);
+
+        // Restrict SC.W to the RAM region (rs1 >= RAM_START_ADDRESS). See
+        // inline_sequence_32 for rationale: the unconditional store cycle on
+        // the failure path would otherwise mutate the device's public state
+        // (panic flag / output buffer) on stores below RAM.
+        let v_ram_start = allocator.allocate();
+        asm.emit_u::<LUI>(*v_ram_start, RAM_START_ADDRESS);
+        asm.emit_b::<VirtualAssertLTE>(*v_ram_start, self.operands.rs1, 0);
+        drop(v_ram_start);
 
         // 0: Prover supplies success flag (1=success, 0=failure)
         let v_success = allocator.allocate();
@@ -447,6 +477,34 @@ mod tests {
             loaded, 0xDEAD0001CDF4DCC0,
             "after sc.w (word store), ld should see init high + stored low; got 0x{loaded:016x}"
         );
+    }
+
+    /// SC.W to a non-RAM (I/O) address must be rejected by the
+    /// inline-sequence RAM-range constraint. Without this constraint, the
+    /// failure-path store would flip the device's panic flag via the
+    /// byte-level store handler, mutating the proof's public I/O.
+    #[test]
+    #[should_panic(expected = "assertion failed")]
+    fn test_scw_to_io_rejected() {
+        let mut cpu = setup_cpu();
+        let panic_addr = cpu
+            .get_mut_mmu()
+            .jolt_device
+            .as_ref()
+            .unwrap()
+            .memory_layout
+            .panic;
+
+        cpu.x[11] = panic_addr as i64; // rs1 points at the panic byte
+        cpu.x[12] = 0x12345678;
+
+        let decoded = Instruction::decode(encode_scw(13, 11, 12), 0x1000, false).unwrap();
+        let Instruction::SCW(scw) = decoded else {
+            panic!("Expected SCW");
+        };
+
+        let mut trace = Vec::new();
+        scw.trace(&mut cpu, Some(&mut trace));
     }
 
     /// Regression test: SC.W with rd=x0 must still succeed when a reservation

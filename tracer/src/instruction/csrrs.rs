@@ -95,9 +95,13 @@ impl RISCVTrace for CSRRS {
             return vec![Instruction::NoOp];
         }
 
+        // Other unsupported CSRs are rejected at decode time (see
+        // Instruction::decode), so the trace path should never see one.
         let virtual_reg = allocator
             .csr_to_virtual_register(csr_addr)
-            .unwrap_or_else(|| panic!("CSRRS: Unsupported CSR 0x{csr_addr:03x}"));
+            .unwrap_or_else(|| {
+                unreachable!("Unsupported CSR 0x{csr_addr:03x}; decode should have rejected it")
+            });
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
@@ -146,6 +150,18 @@ mod tests {
             }
             _ => panic!("Expected CSRRS instruction, got {decoded:?}"),
         }
+    }
+
+    /// `decode` must reject unsupported CSRs with a typed error instead of
+    /// letting them reach the inline-sequence path.
+    #[test]
+    fn test_csrrs_unsupported_csr_rejected_at_decode() {
+        // satp = 0x180 — valid RISC-V supervisor CSR but not modelled by Jolt.
+        // Encoding: 0x180 << 20 | 0 << 15 | 2 << 12 | 5 << 7 | 0x73
+        let instr: u32 = (0x180 << 20) | (2 << 12) | (5 << 7) | 0x73;
+        let err = Instruction::decode(instr, 0x1000, false)
+            .expect_err("decode must reject unsupported CSR (satp) with an Err, not panic");
+        assert!(err.contains("CSR"), "error should mention CSR: {err}");
     }
 
     /// Test decoding with rs1 != 0 (full csrrs)
