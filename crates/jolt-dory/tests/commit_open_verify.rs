@@ -11,7 +11,7 @@ use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
 use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme,
 };
-use jolt_poly::Polynomial;
+use jolt_poly::{OneHotPolynomial, Polynomial};
 use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -88,6 +88,31 @@ fn streaming_equals_direct_various_sizes() {
             "streaming and direct must match for num_vars={num_vars}"
         );
     }
+}
+
+#[test]
+fn one_hot_commitment_matches_dense() {
+    let num_vars = 4;
+    let k = 4;
+    let indices = vec![Some(2), None, Some(0), Some(3)];
+    let mut evals = vec![Fr::from_u64(0); 1 << num_vars];
+    for (row, col) in indices.iter().enumerate() {
+        if let Some(col) = col {
+            evals[row * k + *col as usize] = Fr::from_u64(1);
+        }
+    }
+
+    let one_hot = OneHotPolynomial::new(k, indices);
+    let dense = Polynomial::new(evals);
+    let prover_setup = DoryScheme::setup_prover(num_vars);
+
+    let (one_hot_commitment, _) = DoryScheme::commit(&one_hot, &prover_setup);
+    let (dense_commitment, _) = DoryScheme::commit(dense.evaluations(), &prover_setup);
+
+    assert_eq!(
+        one_hot_commitment, dense_commitment,
+        "one-hot commitment must match the equivalent dense table"
+    );
 }
 
 #[test]

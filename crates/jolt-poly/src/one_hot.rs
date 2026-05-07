@@ -133,14 +133,14 @@ impl<F: Field> MultilinearPoly<F> for OneHotPolynomial {
     }
 
     #[inline]
-    fn is_sparse(&self) -> bool {
+    fn is_one_hot(&self) -> bool {
         true
     }
 
-    fn for_each_nonzero(&self, f: &mut dyn FnMut(usize, F)) {
+    fn for_each_one(&self, f: &mut dyn FnMut(usize)) {
         for (cycle, &opt_col) in self.indices.iter().enumerate() {
             if let Some(col) = opt_col {
-                f(cycle * self.k + col as usize, F::one());
+                f(cycle * self.k + col as usize);
             }
         }
     }
@@ -150,7 +150,7 @@ impl<F: Field> MultilinearPoly<F> for OneHotPolynomial {
 mod tests {
     use super::*;
     use crate::Polynomial;
-    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+    use jolt_field::{Fr, RandomSampling};
     use num_traits::Zero;
     use rand_chacha::ChaCha20Rng;
     use rand_core::{RngCore, SeedableRng};
@@ -229,26 +229,25 @@ mod tests {
     }
 
     #[test]
-    fn for_each_nonzero_yields_correct_entries() {
+    fn for_each_one_yields_correct_entries() {
         let k = 4;
         let indices = vec![Some(2), None, Some(0), Some(3)];
         let oh = make_one_hot(k, &indices);
 
         let mut entries = Vec::new();
-        oh.for_each_nonzero(&mut |idx, val: Fr| entries.push((idx, val)));
+        <OneHotPolynomial as MultilinearPoly<Fr>>::for_each_one(&oh, &mut |idx| entries.push(idx));
 
         assert_eq!(entries.len(), 3);
         // cycle 0, col 2; cycle 2, col 0; cycle 3, col 3
-        assert_eq!(entries[0].0, 2);
-        assert_eq!(entries[1].0, 2 * 4);
-        assert_eq!(entries[2].0, 3 * 4 + 3);
-        assert!(entries.iter().all(|(_, v)| *v == Fr::from_u64(1)));
+        assert_eq!(entries[0], 2);
+        assert_eq!(entries[1], 2 * 4);
+        assert_eq!(entries[2], 3 * 4 + 3);
     }
 
     #[test]
-    fn is_sparse_returns_true() {
+    fn is_one_hot_returns_true() {
         let oh = make_one_hot(4, &[Some(0), Some(1), Some(2), Some(3)]);
-        assert!(MultilinearPoly::<Fr>::is_sparse(&oh));
+        assert!(MultilinearPoly::<Fr>::is_one_hot(&oh));
     }
 
     #[test]
