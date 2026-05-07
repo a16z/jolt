@@ -109,14 +109,15 @@ impl<F: JoltField> RamValCheckSumcheckParams<F> {
         let (r_address, r_cycle) = r.split_at(K.log_2());
 
         // After Stage 2 alignment, OutputCheck's opening point should use the same address rounds
-        // as RW-check, so these addresses coincide.
-        #[cfg(debug_assertions)]
+        // as RW-check, so these addresses coincide. Runtime check (not debug_assert) because
+        // breaking this alignment silently in release builds would de-sync the unified RAM
+        // sumcheck's claim space.
         {
             let (r_out, _) = opening_accumulator.get_virtual_polynomial_opening(
                 VirtualPolynomial::RamValFinal,
                 SumcheckId::RamOutputCheck,
             );
-            debug_assert_eq!(r_out.r, r_address.r);
+            assert_eq!(r_out.r, r_address.r);
         }
 
         let val_init: MultilinearPolynomial<F> =
@@ -171,7 +172,6 @@ impl<F: JoltField> RamValCheckSumcheckParams<F> {
         );
         let (r_address, r_cycle) = r.split_at(ram_K.log_2());
 
-        #[cfg(debug_assertions)]
         {
             let r_out = opening_accumulator
                 .get_virtual_polynomial_opening(
@@ -179,7 +179,7 @@ impl<F: JoltField> RamValCheckSumcheckParams<F> {
                     SumcheckId::RamOutputCheck,
                 )
                 .0;
-            debug_assert_eq!(r_out.r, r_address.r);
+            assert_eq!(r_out.r, r_address.r);
         }
 
         let n_memory_vars = ram_K.log_2();
