@@ -13,8 +13,9 @@
 //! # Public API
 //!
 //! - [`DoryScheme`] — implements the four PCS traits. Static methods:
-//!   `setup_prover`, `setup_verifier`, and `commit_zk` for hiding commitments.
-//!   Also implements
+//!   `setup_prover` and `setup_verifier`. Use
+//!   [`ZkOpeningScheme::commit_zk`](jolt_openings::ZkOpeningScheme::commit_zk)
+//!   for hiding commitments. Also implements
 //!   [`DeriveSetup<DoryProverSetup>`](jolt_crypto::DeriveSetup) for
 //!   [`PedersenSetup<Bn254G1>`](jolt_crypto::PedersenSetup) (use
 //!   `PedersenSetup::derive(&prover_setup, capacity)`).

@@ -94,14 +94,6 @@ impl DoryScheme {
         DoryVerifierSetup(prover_setup.0.to_verifier_setup())
     }
 
-    #[tracing::instrument(skip_all, name = "DoryScheme::commit_zk")]
-    pub fn commit_zk<P: MultilinearPoly<Fr> + ?Sized>(
-        poly: &P,
-        setup: &DoryProverSetup,
-    ) -> (DoryCommitment, DoryHint) {
-        Self::commit_with_mode::<P, dory::ZK>(poly, setup)
-    }
-
     fn commit_with_mode<P, M>(poly: &P, setup: &DoryProverSetup) -> (DoryCommitment, DoryHint)
     where
         P: MultilinearPoly<Fr> + ?Sized,
@@ -299,7 +291,7 @@ impl ZkOpeningScheme for DoryScheme {
         poly: &P,
         setup: &Self::ProverSetup,
     ) -> (Self::Output, Self::OpeningHint) {
-        DoryScheme::commit_zk(poly, setup)
+        Self::commit_with_mode::<P, dory::ZK>(poly, setup)
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::open_zk")]
@@ -318,7 +310,7 @@ impl ZkOpeningScheme for DoryScheme {
         let (row_commitments, commit_blind) = if let Some(h) = hint {
             h.into_ark_parts()
         } else {
-            let (_, hint) = DoryScheme::commit_zk(poly, setup);
+            let (_, hint) = Self::commit_with_mode::<Self::Polynomial, dory::ZK>(poly, setup);
             hint.into_ark_parts()
         };
 
