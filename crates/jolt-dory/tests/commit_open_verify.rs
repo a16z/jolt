@@ -117,7 +117,7 @@ fn one_hot_commitment_matches_dense() {
 
 #[test]
 fn streaming_zk_commitment_is_blinded_and_verifies() {
-    let num_vars = 4;
+    let num_vars = 4usize;
     let sigma = num_vars.div_ceil(2);
     let num_cols = 1usize << sigma;
     let mut rng = ChaCha20Rng::seed_from_u64(350);

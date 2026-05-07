@@ -181,7 +181,10 @@ impl CommitmentScheme for DoryScheme {
 
         let (row_commitments, commit_blind) = match hint {
             Some(h) => h.into_ark_parts(),
-            None => (compute_row_commitments(poly, setup), <ArkFr as DoryField>::zero()),
+            None => (
+                compute_row_commitments(poly, setup),
+                <ArkFr as DoryField>::zero(),
+            ),
         };
 
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
@@ -312,12 +315,11 @@ impl ZkOpeningScheme for DoryScheme {
         let adapter = DorySourceAdapter::new(poly);
         let sigma = num_vars.div_ceil(2);
         let nu = num_vars - sigma;
-        let (row_commitments, commit_blind) = match hint {
-            Some(h) => h.into_ark_parts(),
-            None => {
-                let (_, hint) = DoryScheme::commit_zk(poly, setup);
-                hint.into_ark_parts()
-            }
+        let (row_commitments, commit_blind) = if let Some(h) = hint {
+            h.into_ark_parts()
+        } else {
+            let (_, hint) = DoryScheme::commit_zk(poly, setup);
+            hint.into_ark_parts()
         };
 
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
