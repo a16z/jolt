@@ -234,14 +234,7 @@ fn bench_open_zk(c: &mut Criterion) {
                     |(poly, point, eval, hint)| {
                         let mut transcript =
                             jolt_transcript::Blake2bTranscript::new(b"bench-open-zk");
-                        DoryScheme::open_zk(
-                            &poly,
-                            &point,
-                            eval,
-                            &setup,
-                            Some(hint),
-                            &mut transcript,
-                        )
+                        DoryScheme::open_zk(&poly, &point, eval, &setup, hint, &mut transcript)
                     },
                     criterion::BatchSize::SmallInput,
                 );
@@ -272,14 +265,8 @@ fn bench_verify_zk(c: &mut Criterion) {
                             <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &setup);
                         let mut transcript =
                             jolt_transcript::Blake2bTranscript::new(b"bench-verify-zk");
-                        let (proof, _eval_com, _blind) = DoryScheme::open_zk(
-                            &poly,
-                            &point,
-                            eval,
-                            &setup,
-                            Some(hint),
-                            &mut transcript,
-                        );
+                        let (proof, _eval_com, _blind) =
+                            DoryScheme::open_zk(&poly, &point, eval, &setup, hint, &mut transcript);
                         (commitment, point, proof)
                     },
                     |(commitment, point, proof)| {

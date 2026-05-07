@@ -116,12 +116,14 @@ pub trait ZkOpeningScheme: CommitmentScheme {
         Self::commit(poly, setup)
     }
 
+    /// Open a ZK/hiding commitment using the opening hint returned by
+    /// [`commit_zk`](Self::commit_zk).
     fn open_zk(
         poly: &Self::Polynomial,
         point: &[Self::Field],
         eval: Self::Field,
         setup: &Self::ProverSetup,
-        hint: Option<Self::OpeningHint>,
+        hint: Self::OpeningHint,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> (Self::Proof, Self::HidingCommitment, Self::Blind);
 

@@ -300,19 +300,14 @@ impl ZkOpeningScheme for DoryScheme {
         point: &[Fr],
         _eval: Fr,
         setup: &Self::ProverSetup,
-        hint: Option<Self::OpeningHint>,
+        hint: Self::OpeningHint,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
         let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
         let sigma = num_vars.div_ceil(2);
         let nu = num_vars - sigma;
-        let (row_commitments, commit_blind) = if let Some(h) = hint {
-            h.into_ark_parts()
-        } else {
-            let (_, hint) = Self::commit_with_mode::<Self::Polynomial, dory::ZK>(poly, setup);
-            hint.into_ark_parts()
-        };
+        let (row_commitments, commit_blind) = hint.into_ark_parts();
 
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
@@ -601,7 +596,7 @@ mod tests {
             &point,
             eval,
             &prover_setup,
-            Some(hint),
+            hint,
             &mut prove_transcript,
         );
 
