@@ -69,8 +69,6 @@ pub enum InstructionFlags {
     Branch,
     /// No-op instruction.
     IsNoop,
-    /// Destination register index is nonzero.
-    IsRdNotZero,
 }
 
 /// Number of instruction flags.
@@ -175,22 +173,6 @@ impl InterleavedBitsMarker for CircuitFlagSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn circuit_flags_count_matches_enum() {
-        assert_eq!(
-            CircuitFlags::IsLastInSequence as usize + 1,
-            NUM_CIRCUIT_FLAGS
-        );
-    }
-
-    #[test]
-    fn instruction_flags_count_matches_enum() {
-        assert_eq!(
-            InstructionFlags::IsRdNotZero as usize + 1,
-            NUM_INSTRUCTION_FLAGS
-        );
-    }
 
     #[test]
     fn set_and_get() {

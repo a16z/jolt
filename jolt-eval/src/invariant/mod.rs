@@ -1,3 +1,4 @@
+pub mod field_mul_scalar;
 #[cfg(test)]
 mod macro_tests;
 pub mod soundness;
@@ -133,6 +134,7 @@ pub trait InvariantTargets {
 pub enum JoltInvariants {
     SplitEqBindLowHigh(split_eq_bind::SplitEqBindLowHighInvariant),
     SplitEqBindHighLow(split_eq_bind::SplitEqBindHighLowInvariant),
+    FieldMulScalar(field_mul_scalar::FieldMulScalarInvariant),
     Soundness(soundness::SoundnessInvariant),
 }
 
@@ -141,6 +143,7 @@ macro_rules! dispatch {
         match $self {
             JoltInvariants::SplitEqBindLowHigh($inv) => $body,
             JoltInvariants::SplitEqBindHighLow($inv) => $body,
+            JoltInvariants::FieldMulScalar($inv) => $body,
             JoltInvariants::Soundness($inv) => $body,
         }
     };
@@ -151,6 +154,7 @@ impl JoltInvariants {
         vec![
             Self::SplitEqBindLowHigh(split_eq_bind::SplitEqBindLowHighInvariant),
             Self::SplitEqBindHighLow(split_eq_bind::SplitEqBindHighLowInvariant),
+            Self::FieldMulScalar(field_mul_scalar::FieldMulScalarInvariant),
             Self::Soundness(soundness::SoundnessInvariant),
         ]
     }

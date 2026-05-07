@@ -7,16 +7,18 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
-use crate::XLEN;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct VirtualXORROTTable<const ROTATION: u32>;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct VirtualXORROTTable<const XLEN: usize, const ROTATION: u32>;
 
-impl<const ROTATION: u32> LookupTable for VirtualXORROTTable<ROTATION> {
+impl<const XLEN: usize, const ROTATION: u32> LookupTable for VirtualXORROTTable<XLEN, ROTATION> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         let xor_result = x ^ y;
-        xor_result.rotate_right(ROTATION)
+        let r = (ROTATION as usize) % XLEN;
+        let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
+        let v = (xor_result & mask) as u128;
+        (((v >> r) | (v << (XLEN - r))) as u64) & mask
     }
 
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
@@ -38,7 +40,9 @@ impl<const ROTATION: u32> LookupTable for VirtualXORROTTable<ROTATION> {
     }
 }
 
-impl<const ROTATION: u32> PrefixSuffixDecomposition for VirtualXORROTTable<ROTATION> {
+impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
+    for VirtualXORROTTable<XLEN, ROTATION>
+{
     fn suffixes(&self) -> &'static [Suffixes] {
         debug_assert_eq!(XLEN, 64);
         match ROTATION {
@@ -68,46 +72,67 @@ impl<const ROTATION: u32> PrefixSuffixDecomposition for VirtualXORROTTable<ROTAT
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
     fn mle_random_rot32() {
-        mle_random_test::<Fr, VirtualXORROTTable<32>>();
+        mle_random_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 32>>();
     }
 
     #[test]
     fn prefix_suffix_rot32() {
-        prefix_suffix_test::<Fr, VirtualXORROTTable<32>>();
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 32>>();
     }
 
     #[test]
     fn mle_random_rot24() {
-        mle_random_test::<Fr, VirtualXORROTTable<24>>();
+        mle_random_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 24>>();
     }
 
     #[test]
     fn prefix_suffix_rot24() {
-        prefix_suffix_test::<Fr, VirtualXORROTTable<24>>();
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 24>>();
     }
 
     #[test]
     fn mle_random_rot16() {
-        mle_random_test::<Fr, VirtualXORROTTable<16>>();
+        mle_random_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 16>>();
     }
 
     #[test]
     fn prefix_suffix_rot16() {
-        prefix_suffix_test::<Fr, VirtualXORROTTable<16>>();
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 16>>();
     }
 
     #[test]
     fn mle_random_rot63() {
-        mle_random_test::<Fr, VirtualXORROTTable<63>>();
+        mle_random_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 63>>();
     }
 
     #[test]
     fn prefix_suffix_rot63() {
-        prefix_suffix_test::<Fr, VirtualXORROTTable<63>>();
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 63>>();
+    }
+
+    #[test]
+    fn mle_full_hypercube_rot16() {
+        mle_full_hypercube_test::<8, Fr, VirtualXORROTTable<8, 16>>();
+    }
+
+    #[test]
+    fn mle_full_hypercube_rot24() {
+        mle_full_hypercube_test::<8, Fr, VirtualXORROTTable<8, 24>>();
+    }
+
+    #[test]
+    fn mle_full_hypercube_rot32() {
+        mle_full_hypercube_test::<8, Fr, VirtualXORROTTable<8, 32>>();
+    }
+
+    #[test]
+    fn mle_full_hypercube_rot63() {
+        mle_full_hypercube_test::<8, Fr, VirtualXORROTTable<8, 63>>();
     }
 }

@@ -34,15 +34,13 @@ impl Flags for VirtualChangeDivisorW {
 
 impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualChangeDivisorW> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        // Always treat as 32-bit values for W instructions
-        (
-            self.register_state.rs1 as u32 as u64,
-            self.register_state.rs2 as u32 as i128,
-        )
+        (self.register_state.rs1, self.register_state.rs2 as i128)
     }
 
     fn to_lookup_output(&self) -> u64 {
         let (dividend, divisor) = LookupQuery::<XLEN>::to_instruction_inputs(self);
+        // `as i32` truncates to the low 32 bits of each operand — the
+        // `W` semantics.
         let dividend = dividend as i32;
         let divisor = divisor as i32;
 

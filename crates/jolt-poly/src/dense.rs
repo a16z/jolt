@@ -518,8 +518,8 @@ impl<F: Field> Neg for Polynomial<F> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use jolt_field::Field;
     use jolt_field::Fr;
+    use jolt_field::{FromPrimitiveInt, RandomSampling};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;

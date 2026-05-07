@@ -1,0 +1,122 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/riscv/riscv-unified-db/main/spec/schemas/config_schema.json
+---
+# UDB (Unified Discovery Base) config for Jolt's DUT: RV64IMAC.
+#
+# Consumed by ACT4's Ruby-based UDB validator to enumerate implemented
+# extensions and set extension-specific test parameters. The schema is
+# defined by riscv/riscv-unified-db — see config_schema.json.
+#
+# Adapted from config/cores/cvw/cvw-rv32imc/cvw-rv32imc.yaml in upstream
+# riscv/riscv-arch-test (the closest unprivileged-only example). Key
+# differences:
+#   - MXLEN / UXLEN / MTVAL_WIDTH raised 32 → 64.
+#   - Added A family (A, Zaamo, Zalrsc, Za64rs) with minimal params.
+#   - Dropped F/D and Zfh/Zfhmin (spec Non-Goals).
+#
+# U + Sm are declared because the UDB schema requires at least a machine-
+# mode spec even for "unprivileged" cores. Privileged-mode tests generated
+# from these are skipped via tests/arch-tests/skip.txt.
+
+$schema: config_schema.json#
+kind: architecture configuration
+type: fully configured
+name: jolt-rv64imac
+description: Jolt zkVM — RV64IMAC, unprivileged-only
+
+implemented_extensions:
+  - { name: I, version: "= 2.1" }
+  - { name: M, version: "= 2.0" }
+  - { name: A, version: "= 2.1.0" }
+  - { name: C, version: "= 2.0" }
+  - { name: Zaamo, version: "= 1.0.0" }
+  - { name: Zalrsc, version: "= 1.0.0" }
+  - { name: Za64rs, version: "= 1.0.0" }
+  - { name: Za128rs, version: "= 1.0.0" }
+  - { name: Zca, version: "= 1.0.0" }
+  - { name: Zicntr, version: "= 2.0" }
+  - { name: Zicsr, version: "= 2.0" }
+  - { name: Zihpm, version: "= 2.0.0" }
+  - { name: Zmmul, version: "= 1.0.0" }
+  - { name: U, version: "= 1.0.0" }
+  - { name: Sm, version: "= 1.12.0" }
+
+params:
+  # A params
+  MISALIGNED_AMO: false
+  LRSC_RESERVATION_STRATEGY: "reserve exactly enough to cover the access"
+  LRSC_FAIL_ON_VA_SYNONYM: false
+  LRSC_MISALIGNED_BEHAVIOR: "always raise access fault"
+  LRSC_FAIL_ON_NON_EXACT_LRSC: false
+  MUTABLE_MISA_A: false
+  # M params
+  MUTABLE_MISA_M: false
+  # C params
+  MUTABLE_MISA_C: false
+  # Zicntr params
+  TIME_CSR_IMPLEMENTED: true
+  # U params
+  MUTABLE_MISA_U: false
+  U_MODE_ENDIANNESS: little
+  UXLEN: [64]
+  TRAP_ON_ECALL_FROM_U: true
+  # Sm params
+  MXLEN: 64
+  PRECISE_SYNCHRONOUS_EXCEPTIONS: true
+  TRAP_ON_ECALL_FROM_M: true
+  TRAP_ON_EBREAK: true
+  # Jolt does not implement marchid / mimpid CSRs. UDB's schema enforces
+  # that *_VALUE keys are ONLY defined when the matching *_IMPLEMENTED flag
+  # is true, so both value keys are omitted here. VENDOR_ID_BANK / _OFFSET
+  # don't have a matching "implemented" flag in UDB — upstream expresses
+  # "mvendorid not implemented" by bank=offset=0 but the schema apparently
+  # rejects that; keep non-zero placeholders (they only appear in the
+  # mvendorid CSR, which Jolt doesn't expose).
+  MARCHID_IMPLEMENTED: false
+  MIMPID_IMPLEMENTED: false
+  VENDOR_ID_BANK: 0x1
+  VENDOR_ID_OFFSET: 0x1
+  MISALIGNED_LDST: false
+  MISALIGNED_LDST_EXCEPTION_PRIORITY: high
+  TRAP_ON_ILLEGAL_WLRL: false
+  TRAP_ON_UNIMPLEMENTED_INSTRUCTION: true
+  TRAP_ON_RESERVED_INSTRUCTION: true
+  TRAP_ON_UNIMPLEMENTED_CSR: true
+  REPORT_VA_IN_MTVAL_ON_BREAKPOINT: true
+  REPORT_VA_IN_MTVAL_ON_LOAD_MISALIGNED: true
+  REPORT_VA_IN_MTVAL_ON_STORE_AMO_MISALIGNED: true
+  REPORT_VA_IN_MTVAL_ON_INSTRUCTION_MISALIGNED: true
+  REPORT_VA_IN_MTVAL_ON_LOAD_ACCESS_FAULT: true
+  REPORT_VA_IN_MTVAL_ON_STORE_AMO_ACCESS_FAULT: true
+  REPORT_VA_IN_MTVAL_ON_INSTRUCTION_ACCESS_FAULT: true
+  REPORT_ENCODING_IN_MTVAL_ON_ILLEGAL_INSTRUCTION: true
+  MTVAL_WIDTH: 64
+  CONFIG_PTR_ADDRESS: 0
+  PMA_GRANULARITY: 12
+  PHYS_ADDR_WIDTH: 56
+  M_MODE_ENDIANNESS: little
+  MISA_CSR_IMPLEMENTED: true
+  MTVEC_ACCESS: rw
+  MTVEC_MODES: [0, 1]
+  MTVEC_BASE_ALIGNMENT_DIRECT: 4
+  MTVEC_BASE_ALIGNMENT_VECTORED: 4
+  MTVEC_ILLEGAL_WRITE_BEHAVIOR: retain
+  HPM_COUNTER_EN: [
+    false, false, false, true, true, true, true, true,
+    true,  true,  true,  true, true, true, true, true,
+    true,  true,  true,  true, true, true, true, true,
+    true,  true,  true,  true, true, true, true, true,
+  ]
+  HPM_EVENTS: [0]
+  COUNTINHIBIT_EN: [
+    true, false, true, true, true, true, true, true,
+    true, true,  true, true, true, true, true, true,
+    true, true,  true, true, true, true, true, true,
+    true, true,  true, true, true, true, true, true,
+  ]
+  MCOUNTENABLE_EN: [
+    true, true, true, true, true, true, true, true,
+    true, true, true, true, true, true, true, true,
+    true, true, true, true, true, true, true, true,
+    true, true, true, true, true, true, true, true,
+  ]
+  NUM_PMP_ENTRIES: 0

@@ -34,7 +34,9 @@ impl SCD {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         let value = cpu.x[self.operands.rs2 as usize] as u64;
 
-        if cpu.has_reservation(address, ReservationWidth::Doubleword) {
+        // Per RISC-V A spec, SC.D needs the reservation set to cover the 8
+        // bytes being written. LR.D (8-byte) qualifies; LR.W (4-byte) does not.
+        if cpu.reservation_covers(address, ReservationWidth::Doubleword) {
             let result = cpu.mmu.store_doubleword(address, value);
 
             match result {
@@ -55,7 +57,8 @@ impl SCD {
 impl RISCVTrace for SCD {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
-        let success = cpu.has_reservation(address, ReservationWidth::Doubleword);
+        // See SCD::exec — SC.D needs an 8-byte reservation set.
+        let success = cpu.reservation_covers(address, ReservationWidth::Doubleword);
 
         let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
 

@@ -76,6 +76,26 @@ mod tests {
         (prover_setup, verifier_setup)
     }
 
+    #[cfg(feature = "zk")]
+    #[test]
+    #[serial]
+    fn test_dory_commitment_is_blinded_in_zk() {
+        let num_vars = 10;
+        let (prover_setup, _) = setup_dory_for_test(num_vars);
+
+        let mut rng = thread_rng();
+        let coeffs: Vec<Fr> = (0..(1 << num_vars)).map(|_| Fr::rand(&mut rng)).collect();
+        let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs));
+
+        let (commitment_a, _) = DoryCommitmentScheme::commit(&poly, &prover_setup);
+        let (commitment_b, _) = DoryCommitmentScheme::commit(&poly, &prover_setup);
+
+        assert_ne!(
+            commitment_a, commitment_b,
+            "ZK Dory commitments should use fresh blinding"
+        );
+    }
+
     #[test]
     #[serial]
     fn test_dory_large_scalars() {
@@ -654,7 +674,9 @@ mod tests {
         let (direct_commitment, direct_hint) =
             DoryCommitmentScheme::commit(&combined_poly, &prover_setup);
 
-        // The commitments should match
+        // In transparent mode the RLC commitment is deterministic. In ZK mode, direct_commitment
+        // has a fresh Dory blind, so equality with the homomorphic RLC is not expected.
+        #[cfg(not(feature = "zk"))]
         assert_eq!(
             combined_commitment, direct_commitment,
             "Homomorphically combined commitment should match direct commitment to RLC"
@@ -810,10 +832,15 @@ mod tests {
         let poly2 = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs));
         let (commitment_addr_major, _) = DoryCommitmentScheme::commit(&poly2, &prover_setup);
 
+        #[cfg(not(feature = "zk"))]
         assert_eq!(
             commitment_cycle_major, commitment_addr_major,
             "Dense polynomials should produce the same commitment with any layout"
         );
+        #[cfg(feature = "zk")]
+        {
+            let _ = (commitment_cycle_major, commitment_addr_major);
+        }
         DoryGlobals::set_layout(DoryLayout::CycleMajor);
     }
 

@@ -28,8 +28,11 @@ members = [
   "crates/jolt-trace",
   "crates/jolt-poly",
   "crates/jolt-lookup-tables",
+  "crates/jolt-r1cs",
+  "crates/jolt-sumcheck",
+  "crates/jolt-openings",
+  "crates/jolt-dory",
   "crates/jolt-riscv",
-  "crates/jolt-riscv-derive",
   "crates/jolt-transcript",
   "crates/jolt-profiling",
   "crates/jolt-field",
@@ -246,7 +249,7 @@ ark-serialize-derive = { version = "0.5.0", default-features = false }
 ark-std = { version = "0.5.0", default-features = false }
 sha2 = "0.11"
 sha3 = "0.11"
-blake2 = "0.11.0-rc.5"
+blake2 = "0.11.0-rc.6"
 blake3 = { version = "1.5.0" }
 light-poseidon = "0.4"
 digest = "0.11"
@@ -255,10 +258,11 @@ dory = { package = "dory-pcs", version = "0.3.0", features = [
   "backends",
   "cache",
   "disk-persistence",
+  "zk",
 ] }
 
 # Core Utilities
-clap = { version = "4.6.0", features = ["derive"] }
+clap = { version = "4.6.1", features = ["derive"] }
 eyre = "0.6.12"
 anyhow = "1.0.97"
 thiserror = "2.0.18"
@@ -302,14 +306,14 @@ sysinfo = "0.38"
 memory-stats = { version = "1.0.0", features = ["always_use_statm"] }
 
 # Parallel Processing
-rayon = { version = "^1.8.0" }
+rayon = { version = "^1.12.0" }
 
 # Tracing and Profiling
 tracing = { version = "0.1.37", default-features = false, features = [
   "attributes",
 ] }
 tracing-chrome = "0.7.1"
-tracing-subscriber = { version = "0.3.20", features = ["fmt", "env-filter"] }
+tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }
 inferno = { version = "0.12.3" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 pprof = { version = "0.15", features = [
@@ -326,11 +330,11 @@ proc-macro2 = "1.0.79"
 
 # Platform-specific
 fnv = { version = "1.0.7", default-features = false }
-object = { version = "0.39.0", features = [
+object = { version = "0.39.1", features = [
   "build_core",
   "elf",
 ], default-features = false }
-addr2line = "0.26.0"
+addr2line = "0.26.1"
 getrandom = { version = "0.2.16", default-features = false }
 getrandom_v02 = { version = "0.2.16", package = "getrandom", default-features = false }
 getrandom_v03 = { version = "0.3.3", package = "getrandom", default-features = false }
@@ -359,12 +363,9 @@ riscv = { version = "0.16", default-features = false }
 
 # Ethereum/Crypto (for sig-recovery example)
 alloy-primitives = "1"
-alloy-consensus = "1"
-alloy-eips = "1"
-reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", features = [
-  "rayon",
-  "serde",
-] }
+alloy-consensus = "2"
+alloy-eips = "2"
+reth-primitives-traits = { version = "0.3", features = ["rayon", "serde"] }
 reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", features = [
   "serde",
 ] }
@@ -374,9 +375,14 @@ secp256k1 = { version = "0.31", features = ["recovery", "rand"] }
 common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
 jolt-core = { path = "./jolt-core", default-features = false }
+jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-field = { path = "./crates/jolt-field" }
+jolt-openings = { path = "./crates/jolt-openings" }
+jolt-poly = { path = "./crates/jolt-poly" }
+jolt-transcript = { path = "./crates/jolt-transcript" }
+jolt-sumcheck = { path = "./crates/jolt-sumcheck" }
 jolt-riscv = { path = "./crates/jolt-riscv" }
-jolt-riscv-derive = { path = "./crates/jolt-riscv-derive" }
+jolt-trace = { path = "./crates/jolt-trace" }
 jolt-lookup-tables = { path = "./crates/jolt-lookup-tables" }
 jolt-platform = { path = "./jolt-platform", default-features = false }
 jolt-sdk = { path = "./jolt-sdk", default-features = false }

@@ -40,23 +40,46 @@ fn debug_disable_dory_setup_cache() -> bool {
 pub struct DoryCommitmentScheme;
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct DoryOpeningProofHint(Vec<ArkG1>);
+pub struct DoryOpeningProofHint {
+    row_commitments: Vec<ArkG1>,
+    commit_blind: ArkFr,
+}
 
 impl DoryOpeningProofHint {
-    fn new(row_commitments: Vec<ArkG1>) -> Self {
-        Self(row_commitments)
+    fn new(row_commitments: Vec<ArkG1>, commit_blind: ArkFr) -> Self {
+        Self {
+            row_commitments,
+            commit_blind,
+        }
     }
 
     pub fn empty() -> Self {
-        Self(Vec::new())
+        Self {
+            row_commitments: Vec::new(),
+            commit_blind: <ArkFr as DoryField>::zero(),
+        }
     }
 
     pub fn rows(&self) -> &[ArkG1] {
-        &self.0
+        &self.row_commitments
     }
 
-    fn into_rows(self) -> Vec<ArkG1> {
-        self.0
+    fn into_parts(self) -> (Vec<ArkG1>, ArkFr) {
+        (self.row_commitments, self.commit_blind)
+    }
+}
+
+fn maybe_blind_commitment(setup: &ArkworksProverSetup, commitment: ArkGT) -> (ArkGT, ArkFr) {
+    #[cfg(feature = "zk")]
+    {
+        let commit_blind = <dory::ZK as dory::Mode>::sample::<ArkFr>();
+        let commitment = <dory::ZK as dory::Mode>::mask(commitment, &setup.ht, &commit_blind);
+        (commitment, commit_blind)
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        let _ = setup;
+        (commitment, <ArkFr as DoryField>::zero())
     }
 }
 
@@ -148,15 +171,23 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let sigma = num_cols.log_2();
         let nu = num_rows.log_2();
 
-        let (tier_2, row_commitments, _commit_blind) =
+        #[cfg(feature = "zk")]
+        type DoryMode = dory::ZK;
+        #[cfg(not(feature = "zk"))]
+        type DoryMode = dory::Transparent;
+
+        let (tier_2, row_commitments, commit_blind) =
             <MultilinearPolynomial<ark_bn254::Fr> as Polynomial<ArkFr>>::commit::<
                 BN254,
-                dory::Transparent,
+                DoryMode,
                 JoltG1Routines,
             >(poly, nu, sigma, setup)
             .expect("commitment should succeed");
 
-        (tier_2, DoryOpeningProofHint::new(row_commitments))
+        (
+            tier_2,
+            DoryOpeningProofHint::new(row_commitments, commit_blind),
+        )
     }
 
     fn batch_commit<U>(
@@ -184,10 +215,10 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let _span = trace_span!("DoryCommitmentScheme::prove").entered();
 
         let (row_commitments, commit_blind) = hint
-            .map(|h| (h.into_rows(), DoryField::zero()))
+            .map(DoryOpeningProofHint::into_parts)
             .unwrap_or_else(|| {
-                let (_commitment, row_commitments) = Self::commit(poly, setup);
-                (row_commitments.into_rows(), DoryField::zero())
+                let (_commitment, hint) = Self::commit(poly, setup);
+                hint.into_parts()
             });
 
         let num_cols = DoryGlobals::get_num_columns();
@@ -281,13 +312,20 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let num_rows = DoryGlobals::get_max_num_rows();
 
         let mut rlc_hint = vec![ArkG1(G1Projective::zero()); num_rows];
-        for (coeff, mut hint) in coeffs.iter().zip(hints.into_iter()) {
-            hint.0.resize(num_rows, ArkG1(G1Projective::zero()));
+        let mut rlc_commit_blind = <ArkFr as DoryField>::zero();
+        for (coeff, hint) in coeffs.iter().zip(hints.into_iter()) {
+            let DoryOpeningProofHint {
+                mut row_commitments,
+                commit_blind,
+            } = hint;
+            row_commitments.resize(num_rows, ArkG1(G1Projective::zero()));
+            let ark_coeff = jolt_to_ark(coeff);
+            rlc_commit_blind = rlc_commit_blind + ark_coeff * commit_blind;
 
-            let row_commitments: &mut [G1Projective] = unsafe {
+            let row_commitment_projects: &mut [G1Projective] = unsafe {
                 std::slice::from_raw_parts_mut(
-                    hint.0.as_mut_ptr() as *mut G1Projective,
-                    hint.0.len(),
+                    row_commitments.as_mut_ptr() as *mut G1Projective,
+                    row_commitments.len(),
                 )
             };
 
@@ -299,15 +337,15 @@ impl CommitmentScheme for DoryCommitmentScheme {
             let _enter = _span.enter();
 
             jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
-                row_commitments,
+                row_commitment_projects,
                 *coeff,
                 rlc_row_commitments,
             );
 
-            let _ = std::mem::replace(&mut rlc_hint, hint.0);
+            let _ = std::mem::replace(&mut rlc_hint, row_commitments);
         }
 
-        DoryOpeningProofHint::new(rlc_hint)
+        DoryOpeningProofHint::new(rlc_hint, rlc_commit_blind)
     }
 
     /// Homomorphically combines multiple commitments using a random linear combination.
@@ -420,8 +458,12 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
             } else {
                 <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases)
             };
+            let (tier_2, commit_blind) = maybe_blind_commitment(setup, tier_2);
 
-            (tier_2, DoryOpeningProofHint::new(row_commitments))
+            (
+                tier_2,
+                DoryOpeningProofHint::new(row_commitments, commit_blind),
+            )
         } else {
             let row_commitments: Vec<ArkG1> =
                 chunks.iter().flat_map(|chunk| chunk.clone()).collect();
@@ -432,8 +474,12 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
             } else {
                 <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases)
             };
+            let (tier_2, commit_blind) = maybe_blind_commitment(setup, tier_2);
 
-            (tier_2, DoryOpeningProofHint::new(row_commitments))
+            (
+                tier_2,
+                DoryOpeningProofHint::new(row_commitments, commit_blind),
+            )
         }
     }
 }

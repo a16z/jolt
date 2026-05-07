@@ -1,2 +1,8 @@
-riscof_work/
-*.pyc
+# ACT4 smoke-test build artifact (see tests/arch-tests/smoke/fail.S and the
+# arch-tests-smoke Makefile target). The upstream ACT4 build output lives
+# under third-party/riscv-arch-test/ and is ignored via the submodule.
+smoke/*.elf
+smoke/*.o
+
+# The root .gitignore excludes *.txt globally; un-ignore the ACT4 skip list.
+!skip.txt

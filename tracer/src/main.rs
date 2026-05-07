@@ -59,7 +59,7 @@ fn main() {
     };
     emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(JoltDevice::new(&memory_config));
 
-    emulator.run_test(args.trace.unwrap_or(false), args.disassemble);
+    let endcode = emulator.run_test(args.trace.unwrap_or(false), args.disassemble);
 
     // If signature file is specified, write the signature with specified granularity
     if let Some(sig_path) = args.signature {
@@ -69,4 +69,11 @@ fn main() {
             exit(1);
         }
     }
+
+    // Propagate pass/fail to the shell as the process exit status so the
+    // ACT4 runner (tests/arch-tests/run.sh) can detect it reliably. We
+    // collapse the HTIF endcode to 0 or 1 — on Unix `exit()` truncates to
+    // the low 8 bits, so returning the raw endcode would map any multiple
+    // of 256 to kernel exit 0 and silently look like a pass.
+    exit(if endcode == 0 { 0 } else { 1 });
 }

@@ -36,7 +36,10 @@ impl SCW {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         let value = cpu.x[self.operands.rs2 as usize] as u32;
 
-        if cpu.has_reservation(address, ReservationWidth::Word) {
+        // Per RISC-V A spec, SC.W succeeds if the reservation set covers the 4
+        // bytes being written. An LR.D reservation (8 bytes) at the same
+        // address qualifies; an LR.W reservation (4 bytes) does too.
+        if cpu.reservation_covers(address, ReservationWidth::Word) {
             let result = cpu.mmu.store_word(address, value);
 
             match result {
@@ -57,7 +60,9 @@ impl SCW {
 impl RISCVTrace for SCW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
-        let success = cpu.has_reservation(address, ReservationWidth::Word);
+        // See SCW::exec — SC.W succeeds for any reservation (word or
+        // doubleword) whose set covers the 4 bytes being written.
+        let success = cpu.reservation_covers(address, ReservationWidth::Word);
 
         let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
 
@@ -320,8 +325,9 @@ mod tests {
     }
 
     /// Verify that SC.W's inline sequence clears BOTH reservation registers (vr32 and vr33).
-    /// This catches the cross-width cleanup bug: without clearing vr33, a subsequent SC.D
-    /// could succeed against a stale reservation left by a prior LR.D.
+    /// This guards against leaking a stale reservation across SCs: SC always invalidates
+    /// the reservation regardless of success, so both `v_reservation_w` and
+    /// `v_reservation_d` must be zeroed.
     #[test]
     fn test_scw_inline_sequence_clears_both_reservation_registers() {
         let mut cpu = setup_cpu();
@@ -329,7 +335,8 @@ mod tests {
         cpu.mmu.store_doubleword(addr, 0xDEADBEEF_CAFEBABE).unwrap();
         cpu.x[11] = addr as i64;
 
-        // LR.D sets reservation_d (vr33)
+        // LR.D sets reservation_d (vr33) and (with the spec-correct fix)
+        // reservation_w (vr32) too, so SC.W after LR.D succeeds.
         let decoded = Instruction::decode(encode_lrd(10, 11), 0x1000, false).unwrap();
         let Instruction::LRD(lrd) = decoded else {
             panic!("Expected LRD");
@@ -337,7 +344,8 @@ mod tests {
         let mut trace = Vec::new();
         lrd.trace(&mut cpu, Some(&mut trace));
 
-        // SC.W fails (width mismatch), but must clear BOTH vr32 and vr33
+        // SC.W succeeds (reservation set covers its 4-byte write); both
+        // reservation registers must still be cleared afterwards.
         cpu.x[12] = 0x12345678;
         let decoded = Instruction::decode(encode_scw(13, 11, 12), 0x1004, false).unwrap();
         let Instruction::SCW(scw) = decoded else {
@@ -364,15 +372,21 @@ mod tests {
         );
     }
 
+    /// SC.W after LR.D at the same address should SUCCEED per the RISC-V A
+    /// spec: LR.D reserves 8 bytes, which contains the 4 bytes SC.W writes.
+    /// ACT4's Zalrsc-sc.w-00.S cp_custom_sc_lrsc_prev_lr_lr_d case exercises
+    /// this. Prior tracer behavior (strict width-match) diverged from Sail
+    /// and caused that test to fail; this test locks in the spec-correct
+    /// behavior.
     #[test]
-    fn test_scw_after_lrd_fails_mixed_width() {
+    fn test_scw_after_lrd_succeeds() {
         let mut cpu = setup_cpu();
         let addr = DRAM_BASE;
         cpu.mmu.store_doubleword(addr, 0xDEADBEEF_CAFEBABE).unwrap();
 
         cpu.x[11] = addr as i64;
 
-        // LR.D sets a doubleword reservation
+        // LR.D sets an 8-byte reservation.
         let decoded = Instruction::decode(encode_lrd(10, 11), 0x1000, false).unwrap();
         let Instruction::LRD(lrd) = decoded else {
             panic!("Expected LRD");
@@ -380,8 +394,10 @@ mod tests {
         let mut trace = Vec::new();
         lrd.trace(&mut cpu, Some(&mut trace));
 
-        // SC.W to same address should fail (width mismatch)
-        cpu.x[12] = 0x12345678;
+        // SC.W at same address should succeed because the 4-byte write fits
+        // inside the 8-byte reservation set.
+        let store_val: u32 = 0x12345678;
+        cpu.x[12] = store_val as i64;
         let decoded = Instruction::decode(encode_scw(13, 11, 12), 0x1004, false).unwrap();
         let Instruction::SCW(scw) = decoded else {
             panic!("Expected SCW");
@@ -389,9 +405,47 @@ mod tests {
         let mut trace = Vec::new();
         scw.trace(&mut cpu, Some(&mut trace));
 
+        assert_eq!(cpu.x[13], 0, "SC.W after LR.D should succeed (rd=0)");
+        let (val, _) = cpu.mmu.load_word(addr).unwrap();
         assert_eq!(
-            cpu.x[13], 1,
-            "SC.W after LR.D should fail (mixed width, rd=1)"
+            val, store_val,
+            "memory at addr should contain x12's low 32 bits after sc.w"
+        );
+    }
+
+    /// Reproduces the first test case from ACT4's Zalrsc-sc.w-00.S, executed
+    /// via the emulator's .execute() path (what jolt-emu's run_test uses by
+    /// default, not the .trace() path exercised by the other tests in this
+    /// file). Writes the exact scratch init pattern, runs lr.w→sc.w→ld,
+    /// verifies x26 and the subsequent ld match what Sail produces.
+    #[test]
+    fn test_scw_act4_first_case_exec_path() {
+        let mut cpu = setup_cpu();
+        let addr = DRAM_BASE;
+        // Initial scratch word per rvtest_setup.h:283:
+        //   .dword 0xDEAD0001FFFEBEEF, 0xDEAD0002FFFDBEEF, ...
+        cpu.mmu.store_doubleword(addr, 0xDEAD0001FFFEBEEF).unwrap();
+
+        cpu.x[1] = addr as i64;
+        cpu.x[12] = 0x0f2091f8cdf4dcc0_u64 as i64;
+
+        // lr.w x0, (x1) — establish reservation; x0 write is discarded.
+        let decoded = Instruction::decode(encode_lrw(0, 1), 0x1000, false).unwrap();
+        decoded.execute(&mut cpu);
+
+        // sc.w x26, x12, (x1) — store 32-bit low half of x12 at (x1); x26 = 0.
+        let decoded = Instruction::decode(encode_scw(26, 1, 12), 0x1004, false).unwrap();
+        decoded.execute(&mut cpu);
+
+        assert_eq!(cpu.x[26], 0, "sc.w should succeed after matching lr.w");
+
+        // LREG on RV64 is ld — load 8 bytes, little-endian. Upper 4 bytes
+        // should be unchanged from the scratch init; low 4 bytes should be
+        // x12[31:0] = 0xcdf4dcc0.
+        let (loaded, _) = cpu.mmu.load_doubleword(addr).unwrap();
+        assert_eq!(
+            loaded, 0xDEAD0001CDF4DCC0,
+            "after sc.w (word store), ld should see init high + stored low; got 0x{loaded:016x}"
         );
     }
 

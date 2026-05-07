@@ -7,12 +7,11 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
-use crate::XLEN;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ValidUnsignedRemainderTable;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct ValidUnsignedRemainderTable<const XLEN: usize>;
 
-impl LookupTable for ValidUnsignedRemainderTable {
+impl<const XLEN: usize> LookupTable for ValidUnsignedRemainderTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (remainder, divisor) = uninterleave_bits(index);
         (divisor == 0 || remainder < divisor).into()
@@ -39,7 +38,7 @@ impl LookupTable for ValidUnsignedRemainderTable {
     }
 }
 
-impl PrefixSuffixDecomposition for ValidUnsignedRemainderTable {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ValidUnsignedRemainderTable<XLEN> {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[
             Suffixes::One,
@@ -61,16 +60,22 @@ impl PrefixSuffixDecomposition for ValidUnsignedRemainderTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
+    fn mle_full_hypercube() {
+        mle_full_hypercube_test::<8, Fr, ValidUnsignedRemainderTable<8>>();
+    }
+
+    #[test]
     fn mle_random() {
-        mle_random_test::<Fr, ValidUnsignedRemainderTable>();
+        mle_random_test::<XLEN, Fr, ValidUnsignedRemainderTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, ValidUnsignedRemainderTable>();
+        prefix_suffix_test::<XLEN, Fr, ValidUnsignedRemainderTable<XLEN>>();
     }
 }

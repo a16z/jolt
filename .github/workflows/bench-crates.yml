@@ -51,7 +51,7 @@ jobs:
       # On PR: compare against baseline
       - name: Download baseline
         if: github.event_name == 'pull_request'
-        uses: dawidd6/action-download-artifact@v20
+        uses: dawidd6/action-download-artifact@v21
         with:
           name: criterion-baseline
           path: target/criterion/
@@ -82,7 +82,8 @@ jobs:
           fi
 
       - name: Post benchmark comparison
-        if: github.event_name == 'pull_request' && steps.critcmp.outputs.comparison != ''
+        if: github.event_name == 'pull_request' && steps.critcmp.outputs.comparison != '' && github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
         uses: actions/github-script@v9
         with:
           script: |
