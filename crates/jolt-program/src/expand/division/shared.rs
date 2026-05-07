@@ -1,20 +1,6 @@
 use super::*;
 
-pub(super) fn expand_div(
-    instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    expand_signed_div_rem(instruction, allocator, false, false)
-}
-
-pub(super) fn expand_rem(
-    instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    expand_signed_div_rem(instruction, allocator, false, true)
-}
-
-pub(super) fn expand_signed_div_rem(
+pub(in crate::expand) fn expand_signed_div_rem(
     instruction: &NormalizedInstruction,
     allocator: &mut ExpansionAllocator,
     word: bool,
@@ -139,101 +125,7 @@ pub(super) fn expand_signed_div_rem(
     Ok(sequence)
 }
 
-pub(super) fn expand_divu(
-    instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v0 = allocator.allocate()?;
-    let v1 = allocator.allocate()?;
-    let mut asm =
-        assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
-    asm.emit_j(InstructionKind::VirtualAdvice, v0, 0)?;
-    asm.emit_b(
-        InstructionKind::VirtualAssertValidDiv0,
-        rs2(instruction)?,
-        v0,
-        0,
-    )?;
-    asm.emit_b(
-        InstructionKind::VirtualAssertMulUNoOverflow,
-        v0,
-        rs2(instruction)?,
-        0,
-    )?;
-    asm.emit_r(InstructionKind::MUL, v1, v0, rs2(instruction)?)?;
-    asm.emit_b(InstructionKind::VirtualAssertLTE, v1, rs1(instruction)?, 0)?;
-    asm.emit_r(InstructionKind::SUB, v1, rs1(instruction)?, v1)?;
-    asm.emit_b(
-        InstructionKind::VirtualAssertValidUnsignedRemainder,
-        v1,
-        rs2(instruction)?,
-        0,
-    )?;
-    asm.emit_i(InstructionKind::ADDI, rd(instruction)?, v0, 0)?;
-    let sequence = asm.finalize()?;
-    allocator.release(v0)?;
-    allocator.release(v1)?;
-    Ok(sequence)
-}
-
-pub(super) fn expand_remu(
-    instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v0 = allocator.allocate()?;
-    let mut asm =
-        assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
-    asm.emit_j(InstructionKind::VirtualAdvice, v0, 0)?;
-    asm.emit_b(
-        InstructionKind::VirtualAssertMulUNoOverflow,
-        v0,
-        rs2(instruction)?,
-        0,
-    )?;
-    asm.emit_r(InstructionKind::MUL, v0, v0, rs2(instruction)?)?;
-    asm.emit_b(InstructionKind::VirtualAssertLTE, v0, rs1(instruction)?, 0)?;
-    asm.emit_r(InstructionKind::SUB, v0, rs1(instruction)?, v0)?;
-    asm.emit_b(
-        InstructionKind::VirtualAssertValidUnsignedRemainder,
-        v0,
-        rs2(instruction)?,
-        0,
-    )?;
-    asm.emit_i(InstructionKind::ADDI, rd(instruction)?, v0, 0)?;
-    let sequence = asm.finalize()?;
-    allocator.release(v0)?;
-    Ok(sequence)
-}
-
-pub(super) fn expand_divw(
-    instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    expand_signed_div_rem(instruction, allocator, true, false)
-}
-
-pub(super) fn expand_remw(
-    instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    expand_signed_div_rem(instruction, allocator, true, true)
-}
-
-pub(super) fn expand_divuw(
-    instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    expand_unsigned_word_div_rem(instruction, allocator, false)
-}
-
-pub(super) fn expand_remuw(
-    instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    expand_unsigned_word_div_rem(instruction, allocator, true)
-}
-
-pub(super) fn expand_unsigned_word_div_rem(
+pub(in crate::expand) fn expand_unsigned_word_div_rem(
     instruction: &NormalizedInstruction,
     allocator: &mut ExpansionAllocator,
     remainder_output: bool,

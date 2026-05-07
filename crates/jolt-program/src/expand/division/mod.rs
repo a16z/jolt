@@ -1,0 +1,18 @@
+use super::*;
+mod div;
+mod divu;
+mod divuw;
+mod divw;
+mod rem;
+mod remu;
+mod remuw;
+mod remw;
+mod shared;
+pub(super) use div::expand_div;
+pub(super) use divu::expand_divu;
+pub(super) use divuw::expand_divuw;
+pub(super) use divw::expand_divw;
+pub(super) use rem::expand_rem;
+pub(super) use remu::expand_remu;
+pub(super) use remuw::expand_remuw;
+pub(super) use remw::expand_remw;

@@ -88,44 +88,28 @@ pub fn expand_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
         InstructionKind::LHU => expand_lhu(instruction, allocator),
         InstructionKind::LW => expand_lw(instruction, allocator),
         InstructionKind::LWU => expand_lwu(instruction, allocator),
-        InstructionKind::AdviceLB => expand_advice_load(instruction, 1, Some(56), allocator),
-        InstructionKind::AdviceLH => expand_advice_load(instruction, 2, Some(48), allocator),
-        InstructionKind::AdviceLW => expand_advice_load(instruction, 4, Some(32), allocator),
-        InstructionKind::AdviceLD => expand_advice_load(instruction, 8, None, allocator),
-        InstructionKind::AMOADDD => expand_amo_d(instruction, InstructionKind::ADD, allocator),
-        InstructionKind::AMOANDD => expand_amo_d(instruction, InstructionKind::AND, allocator),
-        InstructionKind::AMOORD => expand_amo_d(instruction, InstructionKind::OR, allocator),
-        InstructionKind::AMOXORD => expand_amo_d(instruction, InstructionKind::XOR, allocator),
+        InstructionKind::AdviceLB => expand_advice_lb(instruction, allocator),
+        InstructionKind::AdviceLH => expand_advice_lh(instruction, allocator),
+        InstructionKind::AdviceLW => expand_advice_lw(instruction, allocator),
+        InstructionKind::AdviceLD => expand_advice_ld(instruction, allocator),
+        InstructionKind::AMOADDD => expand_amoaddd(instruction, allocator),
+        InstructionKind::AMOANDD => expand_amoandd(instruction, allocator),
+        InstructionKind::AMOORD => expand_amoord(instruction, allocator),
+        InstructionKind::AMOXORD => expand_amoxord(instruction, allocator),
         InstructionKind::AMOSWAPD => expand_amoswapd(instruction, allocator),
-        InstructionKind::AMOMAXD => {
-            expand_amo_minmax_d(instruction, InstructionKind::SLT, false, allocator)
-        }
-        InstructionKind::AMOMAXUD => {
-            expand_amo_minmax_d(instruction, InstructionKind::SLTU, false, allocator)
-        }
-        InstructionKind::AMOMIND => {
-            expand_amo_minmax_d(instruction, InstructionKind::SLT, true, allocator)
-        }
-        InstructionKind::AMOMINUD => {
-            expand_amo_minmax_d(instruction, InstructionKind::SLTU, true, allocator)
-        }
-        InstructionKind::AMOADDW => expand_amo_w(instruction, InstructionKind::ADD, allocator),
-        InstructionKind::AMOANDW => expand_amo_w(instruction, InstructionKind::AND, allocator),
-        InstructionKind::AMOORW => expand_amo_w(instruction, InstructionKind::OR, allocator),
-        InstructionKind::AMOXORW => expand_amo_w(instruction, InstructionKind::XOR, allocator),
+        InstructionKind::AMOMAXD => expand_amomaxd(instruction, allocator),
+        InstructionKind::AMOMAXUD => expand_amomaxud(instruction, allocator),
+        InstructionKind::AMOMIND => expand_amomind(instruction, allocator),
+        InstructionKind::AMOMINUD => expand_amominud(instruction, allocator),
+        InstructionKind::AMOADDW => expand_amoaddw(instruction, allocator),
+        InstructionKind::AMOANDW => expand_amoandw(instruction, allocator),
+        InstructionKind::AMOORW => expand_amoorw(instruction, allocator),
+        InstructionKind::AMOXORW => expand_amoxorw(instruction, allocator),
         InstructionKind::AMOSWAPW => expand_amoswapw(instruction, allocator),
-        InstructionKind::AMOMAXW => {
-            expand_amo_minmax_w(instruction, InstructionKind::SLT, false, true, allocator)
-        }
-        InstructionKind::AMOMAXUW => {
-            expand_amo_minmax_w(instruction, InstructionKind::SLTU, false, false, allocator)
-        }
-        InstructionKind::AMOMINW => {
-            expand_amo_minmax_w(instruction, InstructionKind::SLT, true, true, allocator)
-        }
-        InstructionKind::AMOMINUW => {
-            expand_amo_minmax_w(instruction, InstructionKind::SLTU, true, false, allocator)
-        }
+        InstructionKind::AMOMAXW => expand_amomaxw(instruction, allocator),
+        InstructionKind::AMOMAXUW => expand_amomaxuw(instruction, allocator),
+        InstructionKind::AMOMINW => expand_amominw(instruction, allocator),
+        InstructionKind::AMOMINUW => expand_amominuw(instruction, allocator),
         InstructionKind::LRD => expand_lrd(instruction, allocator),
         InstructionKind::LRW => expand_lrw(instruction, allocator),
         InstructionKind::DIV => expand_div(instruction, allocator),
