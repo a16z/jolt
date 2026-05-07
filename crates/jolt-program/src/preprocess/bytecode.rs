@@ -85,19 +85,12 @@ impl BytecodePCMapper {
 
             last_pc += 1;
             let bytecode_index = Self::get_index(instruction.address);
-            let new_sequence = instruction.virtual_sequence_remaining.unwrap_or(0);
-            if indices[bytecode_index]
-                .iter()
-                .any(|(sequence, _)| *sequence == new_sequence)
-            {
-                return Err(PreprocessingError::NonDecreasingInlineSequence {
-                    bytecode_index,
-                    address: instruction.address,
-                    previous_max_sequence: new_sequence,
-                    new_sequence,
-                });
-            }
-            indices[bytecode_index].push((new_sequence, last_pc));
+            indices[bytecode_index]
+                .push((instruction.virtual_sequence_remaining.unwrap_or(0), last_pc));
+        }
+
+        for (bytecode_index, entries) in indices.iter().enumerate() {
+            Self::validate_indices(bytecode_index, entries)?;
         }
 
         Ok(Self { indices })
@@ -115,6 +108,34 @@ impl BytecodePCMapper {
         assert!(address >= RAM_START_ADDRESS as usize);
         assert!(address.is_multiple_of(ALIGNMENT_FACTOR_BYTECODE));
         (address - RAM_START_ADDRESS as usize) / ALIGNMENT_FACTOR_BYTECODE + 1
+    }
+
+    const fn address_for_index(index: usize) -> usize {
+        if index == 0 {
+            0
+        } else {
+            RAM_START_ADDRESS as usize + (index - 1) * ALIGNMENT_FACTOR_BYTECODE
+        }
+    }
+
+    fn validate_indices(
+        bytecode_index: usize,
+        entries: &[(u16, usize)],
+    ) -> Result<(), PreprocessingError> {
+        for window in entries.windows(2) {
+            let [(previous_sequence, _), (new_sequence, _)] = window else {
+                unreachable!("windows(2) always yields two entries");
+            };
+            if previous_sequence <= new_sequence {
+                return Err(PreprocessingError::NonDecreasingInlineSequence {
+                    bytecode_index,
+                    address: Self::address_for_index(bytecode_index),
+                    previous_max_sequence: *previous_sequence,
+                    new_sequence: *new_sequence,
+                });
+            }
+        }
+        Ok(())
     }
 
     fn index_count(bytecode: &[NormalizedInstruction]) -> usize {

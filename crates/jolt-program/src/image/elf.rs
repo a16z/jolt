@@ -105,7 +105,7 @@ fn decode_text_section(
         let first_halfword = u16::from_le_bytes([raw_data[offset], raw_data[offset + 1]]);
         if (first_halfword & 0b11) != 0b11 {
             if first_halfword != 0 {
-                let word = uncompress_rv64_instruction(first_halfword as u32);
+                let word = uncompress_rv64_instruction(first_halfword);
                 let instruction = super::decode::decode_instruction(word, address, true)?;
                 instructions.push(instruction);
             }

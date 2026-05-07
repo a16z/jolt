@@ -1,7 +1,7 @@
 use common::constants::{RISCV_REGISTER_COUNT, VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT};
 use jolt_riscv::{InstructionKind, NormalizedInstruction, NormalizedOperands};
 
-use crate::expand::{allocator::ExpansionAllocator, expand_instruction, metadata, ExpansionError};
+use crate::expand::{allocator::ExpansionAllocator, expand_instruction, ExpansionError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Value {
@@ -228,12 +228,21 @@ fn finalize_sequence(
 
     let len = sequence.len();
     for (index, instruction) in sequence.iter_mut().enumerate() {
-        metadata::set_sequence_metadata(instruction, index == 0, Some((len - index - 1) as u16));
+        set_sequence_metadata(instruction, index == 0, Some((len - index - 1) as u16));
     }
     if let Some(last) = sequence.last_mut() {
         last.is_compressed = is_compressed;
     }
     Ok(())
+}
+
+fn set_sequence_metadata(
+    instruction: &mut NormalizedInstruction,
+    is_first_in_sequence: bool,
+    virtual_sequence_remaining: Option<u16>,
+) {
+    instruction.is_first_in_sequence = is_first_in_sequence;
+    instruction.virtual_sequence_remaining = virtual_sequence_remaining;
 }
 
 #[cfg(test)]

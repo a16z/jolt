@@ -171,8 +171,18 @@ mod flags {
         let (bytecode, _, _, _) = program.decode();
 
         for normalized in bytecode {
-            let _circuit_flags = normalized.circuit_flags();
-            let _instruction_flags = normalized.instruction_flags();
+            let concrete = Instruction::try_from_normalized(normalized)
+                .expect("expanded bytecode should convert to a concrete instruction");
+            assert_eq!(
+                normalized.circuit_flags(),
+                concrete.circuit_flags(),
+                "circuit flags differ for {normalized:?}"
+            );
+            assert_eq!(
+                normalized.instruction_flags(),
+                concrete.instruction_flags(),
+                "instruction flags differ for {normalized:?}"
+            );
         }
     }
 

@@ -1,6 +1,7 @@
 use super::*;
 
 pub(super) fn noop_for(instruction: NormalizedInstruction) -> NormalizedInstruction {
+    debug_assert_eq!(instruction.operands.rd, Some(0));
     NormalizedInstruction {
         instruction_kind: InstructionKind::ADDI,
         address: instruction.address,

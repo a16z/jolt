@@ -26,6 +26,7 @@ pub const CSR_MTVAL: u16 = 0x343;
 #[derive(Debug, Clone)]
 pub struct ExpansionAllocator {
     allocated: [bool; NUM_VIRTUAL_REGISTERS],
+    /// Inline-only virtual registers that must be reset before finalizing an inline sequence.
     pending_clearing_inline: Vec<u8>,
 }
 

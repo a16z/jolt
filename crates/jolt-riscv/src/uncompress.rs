@@ -5,7 +5,8 @@
 /// rejects ELF32/RV32 at the image boundary; tracer may keep legacy RV32 paths
 /// until its own cleanup lands.
 #[inline]
-pub fn uncompress_rv64_instruction(halfword: u32) -> u32 {
+pub fn uncompress_rv64_instruction(halfword: u16) -> u32 {
+    let halfword = u32::from(halfword);
     let op = halfword & 0x3;
     let funct3 = (halfword >> 13) & 0x7;
 

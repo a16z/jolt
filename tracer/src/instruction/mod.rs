@@ -168,7 +168,7 @@ pub(crate) fn fill_virtual_advice(sequence: &mut [Instruction], values: &[u64]) 
     for instruction in sequence {
         if let Instruction::VirtualAdvice(advice) = instruction {
             let Some(value) = values.get(filled) else {
-                return;
+                panic!("inline sequence did not contain enough virtual advice instructions");
             };
             advice.advice = *value;
             filled += 1;
@@ -670,7 +670,7 @@ macro_rules! define_rv32im_enums {
                     )*
                     InstructionKind::Inline => {
                         let metadata = instruction.operands.imm as u32;
-                        let mut inline = INLINE {
+                        let inline = INLINE {
                             opcode: metadata & 0x7f,
                             funct3: (metadata >> 7) & 0x7,
                             funct7: (metadata >> 10) & 0x7f,
@@ -680,8 +680,6 @@ macro_rules! define_rv32im_enums {
                             is_first_in_sequence: instruction.is_first_in_sequence,
                             is_compressed: instruction.is_compressed,
                         };
-                        inline.virtual_sequence_remaining = instruction.virtual_sequence_remaining;
-                        inline.is_first_in_sequence = instruction.is_first_in_sequence;
                         Ok(inline.into())
                     }
                 }
