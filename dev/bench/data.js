@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778176379247,
+  "lastUpdate": 1778181789560,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -96646,6 +96646,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 860824,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "60024285+wstran@users.noreply.github.com",
+            "name": "Wilson Tran",
+            "username": "wstran"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "be1ea26f7694331634add0eb501dc3f675331128",
+          "message": "feat(jolt-sumcheck): add fuzz crate for verifier panic coverage (#1493)\n\n* feat(jolt-sumcheck): add fuzz crate for verifier panic coverage\n\nAdds a `fuzz/` sub-workspace to `jolt-sumcheck` with two libFuzzer targets,\nmatching the pattern already established for `jolt-crypto`, `jolt-field`,\n`jolt-poly`, and `jolt-transcript`.\n\n## Targets\n\n* `sumcheck_verifier` — drives `SumcheckVerifier::verify` with attacker-\n  controlled `SumcheckClaim` (num_vars 0..=8, degree 1..=6, arbitrary\n  claimed_sum) and a fuzzer-chosen sequence of `UnivariatePoly<Fr>`\n  round polynomials whose lengths are independently controlled per\n  round (0..=degree+1). Asserts the verifier returns `Ok(_)` or a typed\n  `SumcheckError` and never panics.\n\n* `batched_sumcheck_verifier` — same panic-guard for\n  `BatchedSumcheckVerifier::verify`, exercising the front-loaded\n  batching path: variable `num_claims` (including 0, which must\n  surface as `EmptyClaims`), per-claim `num_vars` mismatches, and\n  `mul_pow_2` scaling.\n\n## CI\n\n* Adds `jolt-sumcheck` to the matrix in `.github/workflows/fuzz-crates.yml`.\n\n## Why\n\n`jolt-sumcheck` is verifier-only and protocol-critical: a panic on a\nmalformed proof would let a malicious prover crash the verifier rather\nthan receive a clean rejection. This is the same threat model that\nPR #1408 hardened in `jolt-core` (`catch_unwind` around the verifier)\nand that `verify_tampered` in `jolt-dory` and the `tampered_proof`\ntarget in `jolt-hyperkzg` (#1488) cover for the PCS layer. The existing\nunit tests in `crates/jolt-sumcheck/src/tests.rs` cover honest-prover\nsoundness; this crate covers the dual property — adversarial-input\nrobustness — with coverage-guided exploration.\n\n## Local validation\n\n* `cargo +nightly fuzz build` (apple-darwin) — clean\n* `cargo +nightly fuzz run sumcheck_verifier -- -max_total_time=15` —\n  2.66M runs, no crashes\n* `cargo +nightly fuzz run batched_sumcheck_verifier -- -max_total_time=15` —\n  3.06M runs, no crashes\n* `cargo nextest run -p jolt-sumcheck` — 40/40 pass\n\nThe fuzz sub-workspace re-applies the root workspace's\n`[patch.crates-io]` for the arkworks fork, mirroring the existing\n`jolt-transcript/fuzz` and `jolt-crypto/fuzz` setup, since fuzz\nsub-workspaces do not inherit the root workspace patches.\n\n* fuzz(jolt-sumcheck): add valid_prefix_proof target\n\nAddress review feedback on PR #1493 from @0xAndoroid: extend the\nverifier panic-guard fuzzing to cover proofs whose first `K` round\npolynomials are constructed to satisfy the sum-check invariant, so the\nverifier proceeds past round 0 and exercises the Fiat-Shamir transcript\nchain end-to-end.\n\nThe existing `sumcheck_verifier` and `batched_sumcheck_verifier`\ntargets feed raw fuzz bytes; most iterations fail the verifier's\nround-0 sum check and return `Err` early, leaving every later\n`append_to_transcript` / `challenge` / `evaluate` call uncovered.\n\n`valid_prefix_proof` lets the fuzzer pick:\n  - `num_vars` (0..=8), `degree` (1..=6), `claimed_sum` (any field elt)\n  - `valid_rounds` ∈ [0, num_vars]: how many leading rounds are valid\n    by construction\n\nFor valid rounds, the target reads `c_0` and `c_2 .. c_d` from the\nfuzz stream and derives `c_1` from the sum-check invariant\n`s(0) + s(1) = running_sum`, mirroring the standard compressed-unipoly\nformat. It then mirrors the verifier's `append_to_transcript /\nchallenge / evaluate` pipeline prover-side so the running sum the\nverifier will check against is known. Tail rounds (after `valid_rounds`)\nuse raw random bytes as before.\n\nInvariants:\n  - `verify` must never panic on any fuzzer input.\n  - When `valid_rounds == num_vars` the proof is fully valid by\n    construction, so `verify` MUST return `Ok(EvaluationClaim)` whose\n    `value` equals the prover-side running sum and whose `point`\n    length equals `num_vars`.\n\nLocal validation:\n  - `cargo +nightly fuzz build` clean\n  - `cargo +nightly fuzz run valid_prefix_proof -- -max_total_time=15`\n    — 742k runs, no crash\n  - `cargo +nightly fuzz run sumcheck_verifier -- -max_total_time=8`\n    — 1.46M runs, no crash (regression-checked)\n  - `cargo +nightly fuzz run batched_sumcheck_verifier -- -max_total_time=8`\n    — 1.22M runs, no crash (regression-checked)\n  - `cargo nextest run -p jolt-sumcheck` — 42/42 pass\n  - `cargo clippy -p jolt-poly --all-targets -- -D warnings` clean\n\n---------\n\nCo-authored-by: wstran <wstran@Wilson-Tran.local>",
+          "timestamp": "2026-05-07T14:21:45-04:00",
+          "tree_id": "8b5d1b49aab86c5eb290d614ff8c2cb9fcc9b1be",
+          "url": "https://github.com/a16z/jolt/commit/be1ea26f7694331634add0eb501dc3f675331128"
+        },
+        "date": 1778181786014,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.2102,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 864220,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3894,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 500920,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498368,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 498684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7526,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498340,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6121,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 500744,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.8851,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 498408,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 6.2121,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 232288,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.5372,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 862452,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5921,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500436,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4831,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 500944,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 23.4093,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 498504,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.2261,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 496328,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 34.4608,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1011100,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 15.7665,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 657856,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 92.3519,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2128524,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.6042,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 500512,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6481,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 500980,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 16.2625,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 862412,
             "unit": "KB",
             "extra": ""
           }
