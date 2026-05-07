@@ -13,6 +13,7 @@ use dory::primitives::arithmetic::{
     DoryRoutines, Field as DoryField, Group as DoryGroup, PairingCurve,
 };
 use dory::primitives::poly::{MultilinearLagrange, Polynomial as DoryPolynomial};
+use dory::Mode;
 use jolt_crypto::{Bn254G1, Bn254GT, Commitment, DeriveSetup, JoltGroup, PedersenSetup};
 use jolt_field::Fr;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
@@ -92,6 +93,31 @@ impl DoryScheme {
         let prover_setup = Self::setup_prover(max_num_vars);
         DoryVerifierSetup(prover_setup.0.to_verifier_setup())
     }
+
+    #[tracing::instrument(skip_all, name = "DoryScheme::commit_zk")]
+    pub fn commit_zk<P: MultilinearPoly<Fr> + ?Sized>(
+        poly: &P,
+        setup: &DoryProverSetup,
+    ) -> (DoryCommitment, DoryHint) {
+        Self::commit_with_mode::<P, dory::ZK>(poly, setup)
+    }
+
+    fn commit_with_mode<P, M>(poly: &P, setup: &DoryProverSetup) -> (DoryCommitment, DoryHint)
+    where
+        P: MultilinearPoly<Fr> + ?Sized,
+        M: Mode,
+    {
+        let row_commitments = compute_row_commitments(poly, setup);
+        let (tier_2, commit_blind) = commit_rows_tier_2::<M>(&row_commitments, setup);
+
+        (
+            DoryCommitment(ark_to_jolt_gt(&tier_2)),
+            DoryHint(
+                ark_to_jolt_g1_vec(row_commitments),
+                ark_to_jolt_fr(&commit_blind),
+            ),
+        )
+    }
 }
 
 impl DeriveSetup<DoryProverSetup> for PedersenSetup<Bn254G1> {
@@ -136,24 +162,7 @@ impl CommitmentScheme for DoryScheme {
         poly: &P,
         setup: &Self::ProverSetup,
     ) -> (Self::Output, Self::OpeningHint) {
-        let num_vars = poly.num_vars();
-        let sigma = num_vars.div_ceil(2);
-        let num_cols = 1usize << sigma;
-        let num_rows = 1usize << (num_vars - sigma);
-
-        let row_commitments = if poly.is_one_hot() {
-            commit_rows_one_hot(poly, num_rows, num_cols, &setup.0)
-        } else {
-            commit_rows_dense(poly, sigma, &setup.0)
-        };
-
-        let g2_bases = &setup.0.g2_vec[..row_commitments.len()];
-        let tier_2 = <InnerBN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
-
-        (
-            DoryCommitment(ark_to_jolt_gt(&tier_2)),
-            DoryHint(ark_to_jolt_g1_vec(row_commitments)),
-        )
+        Self::commit_with_mode::<P, Transparent>(poly, setup)
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::open")]
@@ -169,13 +178,10 @@ impl CommitmentScheme for DoryScheme {
         let adapter = DorySourceAdapter::new(poly);
         let sigma = num_vars.div_ceil(2);
         let nu = num_vars - sigma;
-        let num_cols = 1usize << sigma;
-        let num_rows = 1usize << nu;
 
-        let row_commitments = match hint {
-            Some(h) => jolt_g1_vec_to_ark(h.0),
-            None if poly.is_one_hot() => commit_rows_one_hot(poly, num_rows, num_cols, &setup.0),
-            None => commit_rows_dense(poly, sigma, &setup.0),
+        let (row_commitments, commit_blind) = match hint {
+            Some(h) => h.into_ark_parts(),
+            None => (compute_row_commitments(poly, setup), <ArkFr as DoryField>::zero()),
         };
 
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
@@ -186,7 +192,7 @@ impl CommitmentScheme for DoryScheme {
                 &adapter,
                 &ark_point,
                 row_commitments,
-                <ArkFr as DoryField>::zero(),
+                commit_blind,
                 nu,
                 sigma,
                 &setup.0,
@@ -261,6 +267,12 @@ impl AdditivelyHomomorphic for DoryScheme {
             "combine_hints: ragged hint lengths",
         );
 
+        let combined_blind = hints
+            .iter()
+            .zip(scalars.iter())
+            .map(|(hint, &scalar)| scalar * hint.1)
+            .sum();
+
         let combined: Vec<Bn254G1> = (0..num_rows)
             .into_par_iter()
             .map(|row| {
@@ -272,13 +284,20 @@ impl AdditivelyHomomorphic for DoryScheme {
             })
             .collect();
 
-        DoryHint(combined)
+        DoryHint(combined, combined_blind)
     }
 }
 
 impl ZkOpeningScheme for DoryScheme {
     type HidingCommitment = Bn254G1;
     type Blind = Fr;
+
+    fn commit_zk<P: MultilinearPoly<Fr> + ?Sized>(
+        poly: &P,
+        setup: &Self::ProverSetup,
+    ) -> (Self::Output, Self::OpeningHint) {
+        DoryScheme::commit_zk(poly, setup)
+    }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::open_zk")]
     fn open_zk(
@@ -293,13 +312,12 @@ impl ZkOpeningScheme for DoryScheme {
         let adapter = DorySourceAdapter::new(poly);
         let sigma = num_vars.div_ceil(2);
         let nu = num_vars - sigma;
-        let num_cols = 1usize << sigma;
-        let num_rows = 1usize << nu;
-
-        let row_commitments = match hint {
-            Some(h) => jolt_g1_vec_to_ark(h.0),
-            None if poly.is_one_hot() => commit_rows_one_hot(poly, num_rows, num_cols, &setup.0),
-            None => commit_rows_dense(poly, sigma, &setup.0),
+        let (row_commitments, commit_blind) = match hint {
+            Some(h) => h.into_ark_parts(),
+            None => {
+                let (_, hint) = DoryScheme::commit_zk(poly, setup);
+                hint.into_ark_parts()
+            }
         };
 
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
@@ -310,7 +328,7 @@ impl ZkOpeningScheme for DoryScheme {
                 &adapter,
                 &ark_point,
                 row_commitments,
-                <ArkFr as DoryField>::zero(),
+                commit_blind,
                 nu,
                 sigma,
                 &setup.0,
@@ -400,6 +418,39 @@ fn commit_rows_one_hot<P: MultilinearPoly<Fr> + ?Sized>(
                 })
         })
         .collect()
+}
+
+fn compute_row_commitments<P: MultilinearPoly<Fr> + ?Sized>(
+    poly: &P,
+    setup: &DoryProverSetup,
+) -> Vec<ArkG1> {
+    let num_vars = poly.num_vars();
+    let sigma = num_vars.div_ceil(2);
+    let num_cols = 1usize << sigma;
+    let num_rows = 1usize << (num_vars - sigma);
+
+    if poly.is_one_hot() {
+        commit_rows_one_hot(poly, num_rows, num_cols, &setup.0)
+    } else {
+        commit_rows_dense(poly, sigma, &setup.0)
+    }
+}
+
+pub(crate) fn commit_rows_tier_2<M: Mode>(
+    row_commitments: &[ArkG1],
+    setup: &DoryProverSetup,
+) -> (ArkGT, ArkFr) {
+    let g2_bases = &setup.0.g2_vec[..row_commitments.len()];
+    let tier_2 = <InnerBN254 as PairingCurve>::multi_pair_g2_setup(row_commitments, g2_bases);
+    let commit_blind = M::sample::<ArkFr>();
+    let tier_2 = M::mask(tier_2, &setup.0.ht, &commit_blind);
+    (tier_2, commit_blind)
+}
+
+impl DoryHint {
+    fn into_ark_parts(self) -> (Vec<ArkG1>, ArkFr) {
+        (jolt_g1_vec_to_ark(self.0), jolt_fr_to_ark(&self.1))
+    }
 }
 
 /// Bridges [`MultilinearPoly<Fr>`] to dory-pcs's polynomial traits
@@ -547,7 +598,8 @@ mod tests {
             .collect();
         let eval = poly.evaluate(&point);
 
-        let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+        let (commitment, hint) =
+            <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup);
 
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"zk-test");
         let (proof, _eval_com, _blinding) = DoryScheme::open_zk(

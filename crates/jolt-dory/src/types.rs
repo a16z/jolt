@@ -7,6 +7,7 @@ use dory::backends::arkworks::{
     ArkDoryProof, ArkG1, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
 };
 use jolt_crypto::{Bn254G1, Bn254GT, HomomorphicCommitment};
+use jolt_field::Fr;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -85,7 +86,7 @@ impl<'de> Deserialize<'de> for DoryVerifierSetup {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct DoryHint(pub Vec<Bn254G1>);
+pub struct DoryHint(pub Vec<Bn254G1>, pub Fr);
 
 #[derive(Clone)]
 pub struct DoryPartialCommitment {
