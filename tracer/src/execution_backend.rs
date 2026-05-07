@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use jolt_program::execution::{
-    ExecutionBackend, JoltProgram, MemoryImage, OwnedTrace, RamAccess as ProgramRamAccess, RamRead,
-    RamWrite, RegisterRead, RegisterState, RegisterWrite, TraceError, TraceInputs, TraceOutput,
-    TraceRow,
+    ExecutionBackend, JoltProgram, MemoryImage, OwnedTrace, RamAccess as ProgramRamAccess,
+    RamRead as ProgramRamRead, RamWrite as ProgramRamWrite, RegisterRead, RegisterState,
+    RegisterWrite, TraceError, TraceInputs, TraceOutput, TraceRow,
 };
 use jolt_riscv::NormalizedInstruction;
 
@@ -63,7 +63,7 @@ fn trace_row_from_cycle(cycle: Cycle) -> TraceRow {
     TraceRow {
         instruction: normalized_instruction(&cycle),
         registers: register_state(&cycle),
-        ram_access: ram_access(cycle.ram_access()),
+        ram_access: cycle.ram_access().into(),
     }
 }
 
@@ -90,17 +90,19 @@ fn register_state(cycle: &Cycle) -> RegisterState {
     }
 }
 
-fn ram_access(access: RAMAccess) -> ProgramRamAccess {
-    match access {
-        RAMAccess::Read(read) => ProgramRamAccess::Read(RamRead {
-            address: read.address,
-            value: read.value,
-        }),
-        RAMAccess::Write(write) => ProgramRamAccess::Write(RamWrite {
-            address: write.address,
-            pre_value: write.pre_value,
-            post_value: write.post_value,
-        }),
-        RAMAccess::NoOp => ProgramRamAccess::NoOp,
+impl From<RAMAccess> for ProgramRamAccess {
+    fn from(access: RAMAccess) -> Self {
+        match access {
+            RAMAccess::Read(read) => Self::Read(ProgramRamRead {
+                address: read.address,
+                value: read.value,
+            }),
+            RAMAccess::Write(write) => Self::Write(ProgramRamWrite {
+                address: write.address,
+                pre_value: write.pre_value,
+                post_value: write.post_value,
+            }),
+            RAMAccess::NoOp => Self::NoOp,
+        }
     }
 }
