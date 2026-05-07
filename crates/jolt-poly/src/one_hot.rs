@@ -150,7 +150,7 @@ impl<F: Field> MultilinearPoly<F> for OneHotPolynomial {
 mod tests {
     use super::*;
     use crate::Polynomial;
-    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+    use jolt_field::{Fr, RandomSampling};
     use num_traits::Zero;
     use rand_chacha::ChaCha20Rng;
     use rand_core::{RngCore, SeedableRng};
