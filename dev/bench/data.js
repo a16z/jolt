@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778181789560,
+  "lastUpdate": 1778185506580,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -96898,6 +96898,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 862412,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "107961892+sagar-a16z@users.noreply.github.com",
+            "name": "Sagar Dhawan",
+            "username": "sagar-a16z"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a832f6c84df861b9af7ea88b02922c0e54443b08",
+          "message": "fix: reject unsupported CSRs and restrict LR/SC addresses to RAM region (#1503)\n\n* fix: restrict LR/SC trace path to RAM region\n\nAdds a constraint at the start of the LR.W/LR.D/SC.W/SC.D inline\nsequences asserting rs1 >= RAM_START_ADDRESS, so atomics targeted at\nthe I/O region below RAM are unprovable.\n\nThe SC failure path emits an unconditional store of the loaded value\nback to rs1; the device's byte-level store handler has value-\nindependent side effects (flips the panic flag, extends the output\nbuffer), so a failed SC into I/O could mutate the proof's public I/O\neven though native SC semantics do not store on failure.\n\nAddresses FJ-ACT-H-03 from the audit.\n\n* chore: drop audit IDs from in-code comments\n\n* fix: reject unsupported CSRs at decode time\n\nPreviously, CSRRW/CSRRS for any CSR outside the modelled set\n(mstatus, mtvec, mscratch, mepc, mcause, mtval) reached the\ninline-sequence path and panicked the prover process. A guest ELF\ncontaining e.g. `csrw satp, rs1` (a valid RISC-V supervisor CSR but\nnot modelled here) is enough to trigger this — relevant for any\nservice that traces user-supplied programs.\n\nMove the rejection to Instruction::decode so unsupported CSRs return\na typed Err before tracing starts. The inline-sequence branches that\nformerly panicked become unreachable!() with an explanatory message.\n\nAdds is_supported_csr() in virtual_registers as the single source of\ntruth for which CSRs Jolt models, used by both the decoder and the\nexisting csr_to_virtual_register lookup.\n\nAddresses FJ-ACT-M-07.\n\n* fmt\n\n* skip Zihpm-csrrs-00 (Zihpm not supported by Jolt)",
+          "timestamp": "2026-05-07T15:22:44-04:00",
+          "tree_id": "51c502d35e10915ee6fed3b3b6b6ba820fe80f2c",
+          "url": "https://github.com/a16z/jolt/commit/a832f6c84df861b9af7ea88b02922c0e54443b08"
+        },
+        "date": 1778185504062,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.6451,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 862332,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3968,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 498820,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 500176,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 500708,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7751,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 504156,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6233,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 498588,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.0644,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 498116,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.0456,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 232016,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.5275,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 864692,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6042,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500608,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4804,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 500480,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 22.1171,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 496624,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.0157,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 498248,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 32.1074,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1011996,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.89,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 652568,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 88.4355,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2118584,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5625,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 500508,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5933,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 496536,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.3293,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 862112,
             "unit": "KB",
             "extra": ""
           }
