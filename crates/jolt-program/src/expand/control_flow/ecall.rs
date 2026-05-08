@@ -12,10 +12,12 @@ pub(in crate::expand) fn expand_ecall(
     let vr_mtval = allocator.mtval_register();
     let vr_mstatus = allocator.mstatus_register();
 
-    let ecall_addr = allocator.allocate()?;
-    let three = allocator.allocate()?;
-    let jalr_rd = allocator.allocate()?;
-    core::ExpansionState::new(allocator).materialize_ops(
+    let mut state = core::ExpansionState::new(allocator);
+    let mut sequence = core::ExpansionSequence::new(instruction);
+
+    let ecall_addr = state.allocator().allocate()?;
+    state.materialize_ops_into(
+        &mut sequence,
         instruction,
         [
             grammar::ExpansionOp::Row(grammar::RowTemplate::u(
@@ -42,19 +44,35 @@ pub(in crate::expand) fn expand_ecall(
                 0,
                 0,
             )),
+        ],
+    )?;
+
+    let three = state.allocator().allocate()?;
+    state.materialize_ops_into(
+        &mut sequence,
+        instruction,
+        [
             grammar::ExpansionOp::Row(grammar::RowTemplate::i(
                 JoltInstructionKind::ADDI,
                 three,
                 0,
                 3,
             )),
-            grammar::ExpansionOp::Row(grammar::RowTemplate::i(
-                JoltInstructionKind::VirtualMULI,
+            grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+                JoltInstructionKind::SLLI,
                 vr_mstatus,
                 three,
-                1 << 11,
+                11,
             )),
             grammar::ExpansionOp::Release(three),
+        ],
+    )?;
+
+    let jalr_rd = state.allocator().allocate()?;
+    state.materialize_ops_into(
+        &mut sequence,
+        instruction,
+        [
             grammar::ExpansionOp::Row(grammar::RowTemplate::i(
                 JoltInstructionKind::JALR,
                 jalr_rd,
@@ -63,5 +81,7 @@ pub(in crate::expand) fn expand_ecall(
             )),
             grammar::ExpansionOp::Release(jalr_rd),
         ],
-    )
+    )?;
+
+    sequence.finish()
 }

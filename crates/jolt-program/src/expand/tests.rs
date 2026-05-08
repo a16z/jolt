@@ -1,6 +1,14 @@
 use super::*;
 
 use common::constants::RAM_START_ADDRESS;
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+struct ExpansionParityCase {
+    name: String,
+    input: NormalizedInstruction,
+    output: Vec<NormalizedInstruction>,
+}
 
 fn instruction(
     instruction_kind: JoltInstructionKind,
@@ -179,5 +187,22 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
 
     assert_eq!(provider.captured, Some(expected));
     assert_eq!(expanded, vec![expected]);
+    Ok(())
+}
+
+#[test]
+fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Error>> {
+    // Golden rows generated from baseline main commit 51d81a36e. This catches
+    // recursive expansion order and virtual-register reuse regressions.
+    let cases: Vec<ExpansionParityCase> =
+        serde_json::from_str(include_str!("fixtures/main_expand_parity.json"))?;
+
+    for case in cases {
+        let mut allocator = ExpansionAllocator::new();
+        let expanded = expand_instruction(&case.input, &mut allocator)?;
+
+        assert_eq!(expanded, case.output, "{}", case.name);
+    }
+
     Ok(())
 }

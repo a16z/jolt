@@ -331,16 +331,22 @@ pub(in crate::expand) fn expand_amo_minmax_w(
     let v_rd = allocator.allocate()?;
     let v_dword = allocator.allocate()?;
     let v_shift = allocator.allocate()?;
-    let mut ops = amo_pre64_ops(rs1(instruction)?, v_rd, v_dword, v_shift);
+    let mut state = core::ExpansionState::new(allocator);
+    let mut sequence = core::ExpansionSequence::new(instruction);
+    state.materialize_ops_into(
+        &mut sequence,
+        instruction,
+        amo_pre64_ops(rs1(instruction)?, v_rd, v_dword, v_shift),
+    )?;
 
-    let v_rs2 = allocator.allocate()?;
-    let v0 = allocator.allocate()?;
+    let v_rs2 = state.allocator().allocate()?;
+    let v0 = state.allocator().allocate()?;
     let extend_op = if signed {
         JoltInstructionKind::VirtualSignExtendWord
     } else {
         JoltInstructionKind::VirtualZeroExtendWord
     };
-    ops.extend([
+    let mut ops = vec![
         grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
             extend_op,
             v_rs2,
@@ -348,7 +354,7 @@ pub(in crate::expand) fn expand_amo_minmax_w(
             0,
         )),
         grammar::ExpansionOp::Expand(grammar::RowTemplate::i(extend_op, v0, v_rd, 0)),
-    ]);
+    ];
     let (cmp_rs1, cmp_rs2) = if min { (v_rs2, v0) } else { (v0, v_rs2) };
     ops.extend([
         grammar::ExpansionOp::Expand(grammar::RowTemplate::r(compare_op, v0, cmp_rs1, cmp_rs2)),
@@ -387,7 +393,8 @@ pub(in crate::expand) fn expand_amo_minmax_w(
         grammar::ExpansionOp::Release(v_rs2),
         grammar::ExpansionOp::Release(v0),
     ]);
-    core::ExpansionState::new(allocator).materialize_ops(instruction, ops)
+    state.materialize_ops_into(&mut sequence, instruction, ops)?;
+    sequence.finish()
 }
 
 pub(in crate::expand) fn amo_pre64_ops(

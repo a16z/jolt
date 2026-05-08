@@ -34,6 +34,16 @@ impl<'a> ExpansionState<'a> {
         ops: impl IntoIterator<Item = ExpansionOp>,
     ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
         let mut sequence = ExpansionSequence::new(source);
+        self.materialize_ops_into(&mut sequence, source, ops)?;
+        sequence.finish()
+    }
+
+    pub(super) fn materialize_ops_into(
+        &mut self,
+        sequence: &mut ExpansionSequence,
+        source: &NormalizedInstruction,
+        ops: impl IntoIterator<Item = ExpansionOp>,
+    ) -> Result<(), ExpansionError> {
         for op in ops {
             match op {
                 ExpansionOp::Row(row) => sequence.emit(row.instruction_kind, row.operands),
@@ -44,7 +54,7 @@ impl<'a> ExpansionState<'a> {
                 ExpansionOp::Release(register) => self.allocator.release(register)?,
             }
         }
-        sequence.finish()
+        Ok(())
     }
 }
 

@@ -3045,6 +3045,7 @@ dependencies = [
  "jolt-riscv",
  "object 0.39.1",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
