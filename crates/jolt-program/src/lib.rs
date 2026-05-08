@@ -1,8 +1,7 @@
 //! Program image, bytecode expansion, and preprocessing pipeline for Jolt.
 //!
 //! This crate's program-construction pipeline is RV64-only. ELF32/RV32 inputs
-//! are rejected at the image boundary; historical RV32 execution code may remain
-//! in `tracer`, but it is not part of the verifier-facing `jolt-program` path.
+//! are rejected at the image boundary.
 
 pub mod error;
 pub mod execution;

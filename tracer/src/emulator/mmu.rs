@@ -34,7 +34,6 @@ pub struct Mmu {
 #[derive(Clone, Debug, Copy)]
 pub enum AddressingMode {
     None,
-    SV32,
     SV39,
     SV48, // @TODO: Implement
 }
@@ -48,7 +47,6 @@ enum MemoryAccessType {
 fn _get_addressing_mode_name(mode: &AddressingMode) -> &'static str {
     match mode {
         AddressingMode::None => "None",
-        AddressingMode::SV32 => "SV32",
         AddressingMode::SV39 => "SV39",
         AddressingMode::SV48 => "SV48",
     }
@@ -74,7 +72,7 @@ impl Mmu {
         }
     }
 
-    /// Updates XLEN, 32-bit or 64-bit
+    /// Updates XLEN.
     ///
     /// # Arguments
     /// * `xlen`
@@ -129,10 +127,8 @@ impl Mmu {
     }
 
     fn get_effective_address(&self, address: u64) -> u64 {
-        match self.xlen {
-            Xlen::Bit32 => address & 0xffffffff,
-            Xlen::Bit64 => address,
-        }
+        let _ = self.xlen;
+        address
     }
 
     #[inline]
@@ -531,10 +527,7 @@ impl Mmu {
     /// state is used in Jolt to construct the witnesses in `read_write_memory.rs`.
     fn trace_load(&mut self, effective_address: u64) -> RAMRead {
         let word_address = (effective_address >> 2) << 2;
-        let bytes = match self.xlen {
-            Xlen::Bit32 => 4,
-            Xlen::Bit64 => 8,
-        };
+        let bytes = 8;
         if word_address < DRAM_BASE {
             let mut value_bytes = [0u8; 8];
             for i in 0..bytes {
@@ -565,10 +558,7 @@ impl Mmu {
     /// construct the witnesses in `read_write_memory.rs`.
     fn trace_store_byte(&mut self, effective_address: u64, value: u64) -> RAMWrite {
         self.assert_effective_store_address(effective_address);
-        let bytes = match self.xlen {
-            Xlen::Bit32 => 4,
-            Xlen::Bit64 => 8,
-        };
+        let bytes = 8;
         let word_address = (effective_address >> 2) << 2;
 
         let pre_value = if effective_address < DRAM_BASE {
@@ -610,10 +600,7 @@ impl Mmu {
     /// construct the witnesses in `read_write_memory.rs`.
     fn trace_store_halfword(&mut self, effective_address: u64, value: u64) -> RAMWrite {
         self.assert_effective_store_address(effective_address);
-        let bytes = match self.xlen {
-            Xlen::Bit32 => 4,
-            Xlen::Bit64 => 8,
-        };
+        let bytes = 8;
         let word_address = (effective_address >> 2) << 2;
 
         let pre_value = if effective_address < DRAM_BASE {
@@ -655,10 +642,7 @@ impl Mmu {
     /// in `read_write_memory.rs`.
     fn trace_store(&mut self, effective_address: u64, value: u64) -> RAMWrite {
         self.assert_effective_store_address(effective_address);
-        let bytes = match self.xlen {
-            Xlen::Bit32 => 4,
-            Xlen::Bit64 => 8,
-        };
+        let bytes = 8;
 
         if effective_address < DRAM_BASE {
             let mut pre_value_bytes = [0u8; 8];
@@ -902,37 +886,8 @@ impl Mmu {
         let address = self.get_effective_address(v_address);
         let p_address = match self.addressing_mode {
             AddressingMode::None => Ok(address),
-            AddressingMode::SV32 => match self.privilege_mode {
-                // @TODO: Optimize
-                PrivilegeMode::Machine => match access_type {
-                    MemoryAccessType::Execute => Ok(address),
-                    // @TODO: Remove magic number
-                    _ => match (self.mstatus >> 17) & 1 {
-                        0 => Ok(address),
-                        _ => {
-                            let privilege_mode = get_privilege_mode((self.mstatus >> 11) & 3);
-                            match privilege_mode {
-                                PrivilegeMode::Machine => Ok(address),
-                                _ => {
-                                    let current_privilege_mode = self.privilege_mode;
-                                    self.update_privilege_mode(privilege_mode);
-                                    let result = self.translate_address(v_address, access_type);
-                                    self.update_privilege_mode(current_privilege_mode);
-                                    result
-                                }
-                            }
-                        }
-                    },
-                },
-                PrivilegeMode::User | PrivilegeMode::Supervisor => {
-                    let vpns = [(address >> 12) & 0x3ff, (address >> 22) & 0x3ff];
-                    self.traverse_page(address, 2 - 1, self.ppn, &vpns, access_type)
-                }
-                _ => Ok(address),
-            },
             AddressingMode::SV39 => match self.privilege_mode {
                 // @TODO: Optimize
-                // @TODO: Remove duplicated code with SV32
                 PrivilegeMode::Machine => match access_type {
                     MemoryAccessType::Execute => Ok(address),
                     // @TODO: Remove magic number
@@ -979,21 +934,11 @@ impl Mmu {
         access_type: &MemoryAccessType,
     ) -> Result<u64, ()> {
         let pagesize = 4096;
-        let ptesize = match self.addressing_mode {
-            AddressingMode::SV32 => 4,
-            _ => 8,
-        };
+        let ptesize = 8;
         let pte_address = parent_ppn * pagesize + vpns[level as usize] * ptesize;
-        let pte = match self.addressing_mode {
-            AddressingMode::SV32 => self.load_word_raw(pte_address) as u64,
-            _ => self.load_doubleword_raw(pte_address),
-        };
-        let ppn = match self.addressing_mode {
-            AddressingMode::SV32 => (pte >> 10) & 0x3fffff,
-            _ => (pte >> 10) & 0xfffffffffff,
-        };
+        let pte = self.load_doubleword_raw(pte_address);
+        let ppn = (pte >> 10) & 0xfffffffffff;
         let ppns = match self.addressing_mode {
-            AddressingMode::SV32 => [(pte >> 10) & 0x3ff, (pte >> 20) & 0xfff, 0 /*dummy*/],
             AddressingMode::SV39 => [
                 (pte >> 10) & 0x1ff,
                 (pte >> 19) & 0x1ff,
@@ -1038,10 +983,7 @@ impl Mmu {
                     MemoryAccessType::Write => 1 << 7,
                     _ => 0,
                 });
-            match self.addressing_mode {
-                AddressingMode::SV32 => self.store_word_raw(pte_address, new_pte as u32),
-                _ => self.store_doubleword_raw(pte_address, new_pte),
-            };
+            self.store_doubleword_raw(pte_address, new_pte);
         }
 
         match access_type {
@@ -1064,33 +1006,21 @@ impl Mmu {
 
         let offset = v_address & 0xfff; // [11:0]
                                         // @TODO: Optimize
-        let p_address = match self.addressing_mode {
-            AddressingMode::SV32 => match level {
-                1 => {
-                    if ppns[0] != 0 {
-                        return Err(());
-                    }
-                    (ppns[1] << 22) | (vpns[0] << 12) | offset
+        let p_address = match level {
+            2 => {
+                if ppns[1] != 0 || ppns[0] != 0 {
+                    return Err(());
                 }
-                0 => (ppn << 12) | offset,
-                _ => panic!(), // Shouldn't happen
-            },
-            _ => match level {
-                2 => {
-                    if ppns[1] != 0 || ppns[0] != 0 {
-                        return Err(());
-                    }
-                    (ppns[2] << 30) | (vpns[1] << 21) | (vpns[0] << 12) | offset
+                (ppns[2] << 30) | (vpns[1] << 21) | (vpns[0] << 12) | offset
+            }
+            1 => {
+                if ppns[0] != 0 {
+                    return Err(());
                 }
-                1 => {
-                    if ppns[0] != 0 {
-                        return Err(());
-                    }
-                    (ppns[2] << 30) | (ppns[1] << 21) | (vpns[0] << 12) | offset
-                }
-                0 => (ppn << 12) | offset,
-                _ => panic!(), // Shouldn't happen
-            },
+                (ppns[2] << 30) | (ppns[1] << 21) | (vpns[0] << 12) | offset
+            }
+            0 => (ppn << 12) | offset,
+            _ => panic!(), // Shouldn't happen
         };
 
         // println!("PA:{:X}", p_address);

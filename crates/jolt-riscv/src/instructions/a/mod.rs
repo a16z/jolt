@@ -1,4 +1,4 @@
-//! RV32A and RV64A atomic memory operations.
+//! Atomic memory operations.
 
 pub mod amoaddd;
 pub mod amoaddw;

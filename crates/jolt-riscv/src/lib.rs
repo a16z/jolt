@@ -75,7 +75,7 @@ pub use uncompress::uncompress_rv64_instruction;
 ///
 /// // No flag config — struct only, no `Flags` impl:
 /// jolt_instruction!(
-///     /// RV32I (Zicsr) CSRRS: atomic CSR read+set bits.
+///     /// Zicsr CSRRS: atomic CSR read+set bits.
 ///     Csrrs
 /// );
 /// ```

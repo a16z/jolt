@@ -1,7 +1,7 @@
 //! RV64 bytecode expansion from decoded source rows into final Jolt bytecode.
 //!
 //! Expansion intentionally has no `Xlen` parameter: the `jolt-program` pipeline
-//! only supports RV64. RV32/ELF32 inputs should be rejected before this module is
+//! only supports RV64. RV32/ELF32 inputs are rejected before this module is
 //! called.
 
 pub mod allocator;

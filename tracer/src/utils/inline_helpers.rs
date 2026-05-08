@@ -29,7 +29,6 @@ use crate::instruction::add::ADD;
 use crate::instruction::addi::ADDI;
 use crate::instruction::and::AND;
 use crate::instruction::andi::ANDI;
-use crate::instruction::srli::SRLI;
 use crate::instruction::srliw::SRLIW;
 
 use crate::instruction::format::format_assert_align::FormatAssert;
@@ -455,10 +454,8 @@ impl InstrAssembler {
         }
         match rs1 {
             Reg(rs1) => {
-                match self.xlen {
-                    Xlen::Bit32 => self.emit_i::<SRLI>(rd, rs1, shamt as u64),
-                    Xlen::Bit64 => self.emit_i::<SRLIW>(rd, rs1, (shamt & 0x1f) as u64),
-                }
+                let _ = self.xlen;
+                self.emit_i::<SRLIW>(rd, rs1, (shamt & 0x1f) as u64);
                 Reg(rd)
             }
             Imm(val) => Imm(((val as u32) >> shamt) as u64),
@@ -475,10 +472,8 @@ impl InstrAssembler {
         let mask = ones << shamt;
         match rs1 {
             Reg(rs1_reg) => {
-                match self.xlen {
-                    Xlen::Bit32 => self.emit_vshift_i::<VirtualROTRI>(rd, rs1_reg, mask),
-                    Xlen::Bit64 => self.emit_vshift_i::<VirtualROTRIW>(rd, rs1_reg, mask),
-                }
+                let _ = self.xlen;
+                self.emit_vshift_i::<VirtualROTRIW>(rd, rs1_reg, mask);
                 Reg(rd)
             }
             Imm(val) => Imm(((val as u32).rotate_right(shamt)) as u64),

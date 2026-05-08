@@ -265,11 +265,8 @@ impl Emulator {
         // Detected whether the elf file is riscv-tests.
         // Setting up CPU and Memory depending on it.
 
-        self.cpu.update_xlen(match header.e_width {
-            32 => Xlen::Bit32,
-            64 => Xlen::Bit64,
-            _ => panic!("No happen"),
-        });
+        assert_eq!(header.e_width, 64, "tracer only supports RV64 ELF inputs");
+        self.cpu.update_xlen(Xlen::Bit64);
 
         if self.tohost_addr != 0 {
             self.is_test = true;

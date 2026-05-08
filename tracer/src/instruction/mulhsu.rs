@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{format::format_r::FormatR, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
@@ -19,18 +16,9 @@ impl MULHSU {
     fn exec(&self, cpu: &mut Cpu, _: &mut <MULHSU as RISCVInstruction>::RAMAccess) {
         cpu.write_register(
             self.operands.rd as usize,
-            match cpu.xlen {
-                Xlen::Bit32 => cpu.sign_extend(
-                    cpu.x[self.operands.rs1 as usize]
-                        .wrapping_mul(cpu.x[self.operands.rs2 as usize] as u32 as i64)
-                        >> 32,
-                ),
-                Xlen::Bit64 => {
-                    ((cpu.x[self.operands.rs1 as usize] as i128 as u128)
-                        .wrapping_mul(cpu.x[self.operands.rs2 as usize] as u64 as u128)
-                        >> 64) as i64
-                }
-            },
+            ((cpu.x[self.operands.rs1 as usize] as i128 as u128)
+                .wrapping_mul(cpu.x[self.operands.rs2 as usize] as u64 as u128)
+                >> 64) as i64,
         );
     }
 }
@@ -58,7 +46,10 @@ impl RISCVTrace for MULHSU {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emulator::{cpu::Cpu, default_terminal::DefaultTerminal};
+    use crate::emulator::{
+        cpu::{Cpu, Xlen},
+        default_terminal::DefaultTerminal,
+    };
 
     /// Regression test: MULHSU with negative rs1.
     ///

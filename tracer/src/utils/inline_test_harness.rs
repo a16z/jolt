@@ -79,9 +79,6 @@ impl InlineTestHarness {
     pub fn new(layout: InlineMemoryLayout, xlen: Xlen) -> Self {
         let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
         cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
-        if xlen == Xlen::Bit32 {
-            cpu.update_xlen(Xlen::Bit32);
-        }
         Self { cpu, layout, xlen }
     }
 

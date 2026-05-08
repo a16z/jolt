@@ -1,9 +1,8 @@
 /// Expand a 16-bit RVC instruction into the RV64 32-bit instruction word that
 /// Jolt's decoder expects.
 ///
-/// This helper deliberately has no RV32 mode. The new `jolt-program` pipeline
-/// rejects ELF32/RV32 at the image boundary; tracer may keep legacy RV32 paths
-/// until its own cleanup lands.
+/// This helper deliberately has no RV32 mode. Program image decoding rejects
+/// ELF32/RV32 before compressed-instruction normalization.
 #[inline]
 pub fn uncompress_rv64_instruction(halfword: u16) -> u32 {
     let halfword = u32::from(halfword);

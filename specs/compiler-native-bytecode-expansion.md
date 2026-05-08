@@ -1,4 +1,4 @@
-# Spec: Compiler-Native Bytecode Expansion
+# Spec: RV64-Only Instruction Phases And Compiler-Native Bytecode Expansion
 
 | Field       | Value                                                                 |
 |-------------|-----------------------------------------------------------------------|
@@ -6,12 +6,42 @@
 | Created     | 2026-05-05                                                           |
 | Status      | draft                                                                 |
 | Related PR  | [#1490](https://github.com/a16z/jolt/pull/1490)                      |
-| Baseline    | `quang/bytecode-expand-spec` at `a3448e6da44f`                        |
+| Baseline    | `main` after [#1490](https://github.com/a16z/jolt/pull/1490), merge commit `51d81a36e` |
 | Depends on  | `specs/bytecode-expansion-crate.md`                                   |
 
 ## Summary
 
-PR #1490 moves bytecode expansion out of `tracer` and into `jolt-program::expand`. That crate boundary is the right direction for formal verification, but the current implementation at `a3448e6da44f` still uses an idiomatic recursive Rust assembler shape that is hard for Hax and Aeneas to extract:
+PR #1490 moves bytecode expansion out of `tracer` and into
+`jolt-program::expand`. That crate boundary is the right direction for formal
+verification, but the merged implementation still leaves two cleanup/design
+issues ahead of the compiler-native rewrite:
+
+1. `jolt-program` is RV64-only, but `tracer` still carries historical RV32
+   execution, decode, uncompression, `Xlen::Bit32`, and documentation paths.
+2. `InstructionKind` is a flat row identity while `JoltInstructions<T>` is a
+   typed enum with a different and currently confusing meaning. The next pass
+   should name source RISC-V kinds, expanded Jolt bytecode kinds, and
+   lookup-backed kinds explicitly before baking the ambiguity into the
+   extraction-oriented expander.
+
+This spec therefore prioritizes the next PR sequence as:
+
+```text
+Phase 1: remove historical RV32 support from tracer and stale docs
+Phase 2: split instruction phase identities
+Phase 3: rewrite provider-free jolt-program::expand as a compiler-native core
+```
+
+Phase 1 should come first because it deletes width-dependent branches from the
+emulator, decoder, virtual helpers, and expansion call sites before Phase 2
+names the RV64 source/target row universe. Phase 2 should come before the
+compiler-native rewrite because legality predicates and recipe boundaries are
+clearer once source rows, expanded bytecode rows, and lookup-backed rows have
+separate names.
+
+After those two setup phases, the current `jolt-program::expand` implementation
+still uses an idiomatic recursive Rust assembler shape that is hard for Hax and
+Aeneas to extract:
 
 - family expanders build `Vec<NormalizedInstruction>` values;
 - `InstrAssembler<'a>` owns a sequence while borrowing `&'a mut ExpansionAllocator`;
@@ -20,7 +50,12 @@ PR #1490 moves bytecode expansion out of `tracer` and into `jolt-program::expand
 - metadata is stamped by mutating a finished slice;
 - inline expansion is a trait callback inside the core dispatch path.
 
-This spec proposes a second-phase rewrite of `jolt-program::expand` into a compiler-native, extraction-friendly production implementation. The goal is not to add a proof-only model next to production code. The production expander itself should become a first-order lowering pipeline over explicit data transitions, while preserving byte-for-byte output and keeping runtime performance the same or better.
+The compiler-native phase proposes a rewrite of `jolt-program::expand` into an
+extraction-friendly production implementation. The goal is not to add a
+proof-only model next to production code. The production expander itself should
+become a first-order lowering pipeline over explicit data transitions, while
+preserving byte-for-byte output and keeping runtime performance the same or
+better.
 
 This rewrite should also align with the MLIR-shaped Jolt work in the
 `refactor/crates` branch, which currently treats Bolt as a compiler pipeline
@@ -47,7 +82,15 @@ Decoded NormalizedInstruction
 
 ## Goals
 
-- Preserve expansion behavior exactly relative to PR #1490 at `a3448e6da44f`.
+- Remove historical RV32 support from `tracer` and stale dual-width docs so the
+  host/tracer/program stack is consistently RV64IMAC-only.
+- Split instruction identity by phase:
+  - source RISC-V instruction kinds decoded from an RV64 program;
+  - expanded Jolt bytecode row kinds consumed by preprocessing/proving;
+  - lookup-backed instruction kinds used by lookup-table routing.
+- Preserve expansion behavior exactly relative to `main` after PR #1490, except
+  for changes that are explicit consequences of RV32 deletion or the
+  instruction-kind phase split.
 - Preserve recursive expansion order exactly.
 - Preserve `rd = x0` behavior for all source and helper rows.
 - Preserve virtual-register numbering, allocation reuse, reserved registers, and inline reset behavior.
@@ -61,16 +104,28 @@ Decoded NormalizedInstruction
 ## Non-Goals
 
 - Do not change instruction semantics.
-- Do not define a structured grammar for instruction execution semantics in Pass 1. The expansion grammar is only a syntactic lowering language: it says that a source row such as `DIV` maps to a sequence of bytecode rows, but it does not define the operational meaning of `DIV` or of those target rows. A separate semantics track should handle execution meaning and expansion-correctness theorems.
+- Do not add a new RV32 compatibility layer, aliases, or migration shims.
+- Do not change committed bytecode/proof semantics merely to rename instruction
+  kinds. The split should make phase boundaries explicit while preserving the
+  current RV64 expanded rows and lookup behavior.
+- Do not define a structured grammar for instruction execution semantics in the
+  compiler-native expansion phase. The expansion grammar is only a syntactic
+  lowering language: it says that a source row such as `DIV` maps to a sequence
+  of bytecode rows, but it does not define the operational meaning of `DIV` or
+  of those target rows. A separate semantics track should handle execution
+  meaning and expansion-correctness theorems.
 - Do not change bytecode preprocessing, RAM preprocessing, or proof-system APIs except for call-site adjustments needed by the new expansion API.
 - Do not formalize tracer custom inline registries in this phase.
-- Do not port registered `jolt-inlines` recipes or advice builders into the grammar in the next implementation pass. Advice handling is explicitly unresolved for the grammar; provider-owned inline/advice behavior stays behind the adapter boundary in this phase.
+- Do not port registered `jolt-inlines` recipes or advice builders into the
+  grammar in this implementation sequence. Advice handling is explicitly
+  unresolved for the grammar; provider-owned inline/advice behavior stays
+  behind the adapter boundary in this phase.
 - Do not make Aeneas/Hax extraction a hard CI requirement in the implementation PR unless maintainers explicitly ask for it.
 - Do not keep the current recursive `InstrAssembler<'a>` implementation as a compatibility layer once the rewrite lands. This branch owns the new `jolt-program` implementation, so the rewrite should be a full cutover.
 
-## Baseline: Current PR Shape At `a3448e6da44f`
+## Baseline: Post-#1490 Expand Shape
 
-The current PR implementation lives under:
+The merged #1490 implementation lives under:
 
 - `crates/jolt-program/src/expand/mod.rs`
 - `crates/jolt-program/src/expand/allocator.rs`
@@ -200,7 +255,7 @@ These errors come from the shape of the extracted call graph, not from bytecode 
 
 ## Current Vs Target Shape
 
-| Concern | Current PR at `a3448e6da44f` | Target shape |
+| Concern | Current post-#1490 shape | Target shape |
 |---------|-------------------------------|--------------|
 | Source of truth | Arbitrary Rust functions using an imperative assembler API | Inspectable syntactic expansion recipes or shallow lowerers |
 | Expansion state | Split between `InstrAssembler<'a>` and borrowed `&mut ExpansionAllocator` | One owned `ExpansionState` containing allocator, work stack, and output buffer |
@@ -1273,7 +1328,7 @@ This preserves the dependency boundary from PR #1490: `jolt-program` still does 
 
 The current recursive implementation relies on the absence of cycles in helper
 expansion. The new driver should make accidental cycles explicit without
-requiring a full rank system in Pass 1.
+requiring a full rank system in the compiler-native expansion phase.
 
 The driver should enforce a fuel or recursion-depth bound:
 
@@ -1281,11 +1336,12 @@ The driver should enforce a fuel or recursion-depth bound:
 const MAX_EXPANSION_OPS_PER_SOURCE: u32 = 4096;
 ```
 
-Fuel exhaustion should be treated as an internal malformed-expansion error and should never occur in parity fixtures.
+Fuel exhaustion should be treated as an internal malformed-expansion error and
+should never occur in parity fixtures.
 
 If the recipe surface later becomes declarative enough to build a useful
 dependency graph, a rank or acyclicity validator can be added as a follow-up.
-It is not required for the first compiler-native rewrite.
+It is not required for the compiler-native expansion phase.
 
 ## Performance Expectations
 
@@ -1306,7 +1362,8 @@ Benchmark expectations:
 
 - no measurable regression in decode-plus-expansion for representative guests;
 - no measurable regression in trace length accounting;
-- allocation count during expansion should drop relative to `a3448e6da44f`.
+- allocation count during expansion should drop relative to the post-#1490
+  expansion engine.
 
 Suggested measurements:
 
@@ -1379,34 +1436,127 @@ For this phase, the practical rule is:
 
 ## Next Implementation Pass Scope
 
-Decision: the next implementation pass should rewrite provider-free
-`jolt-program::expand` only. It should design and preserve the inline seam, but
-it should not migrate registered `jolt-inlines` recipes, advice generation, or
-guest SDK registration into the grammar.
+Decision: the next implementation sequence should prioritize RV64-only cleanup
+and instruction phase names before rewriting the provider-free expander. The
+compiler-native rewrite remains the main extraction goal, but doing it after
+these two setup phases makes the legality predicates, source/target split, and
+review surface clearer.
 
-This is one compiler design, but two implementation passes:
+The next PR may implement all three phases if it stays reviewable, but the
+ordered scope is:
 
-1. **Pass 1: provider-free bytecode expansion.** Convert the current
-   `jolt-program::expand` families into syntactic recipes or shallow lowerers,
-   a central worklist driver, explicit temp materialization, bounded buffers,
-   and explicit metadata policy.
-2. **Pass 2: inline extension/advice design.** Decide how generic inline
+1. **Phase 1: fully remove historical RV32 support from `tracer`.**
+   `jolt-program` already rejects ELF32/RV32. Finish the cutover by deleting
+   live `tracer` RV32 execution/decode/uncompression paths and stale docs.
+2. **Phase 2: introduce phase-specific instruction identities.** Keep a flat
+   committed row identity where proof code needs it, but stop asking one name to
+   mean source RISC-V op, expanded Jolt bytecode row, and lookup-backed row.
+3. **Phase 3: provider-free compiler-native bytecode expansion.** Convert the
+   current `jolt-program::expand` families into syntactic recipes or shallow
+   lowerers, a central worklist driver, explicit temp materialization, bounded
+   buffers, and explicit metadata policy.
+4. **Later pass: inline extension/advice design.** Decide how generic inline
    infrastructure, selected concrete inline recipes, and advice generation
    should relate to the same expansion machinery. This may become an extension
    dialect, but that is not settled in this spec.
 
-Do not combine these passes. Inlines have a different dependency shape from
-ordinary bytecode expansion: they involve guest SDK encoding, link-time
-registration, host advice computation, tracer CPU/memory access, inline-only
-virtual-register reset policy, and much larger sequence capacities. Combining
-them with the provider-free rewrite would make review and parity debugging too
-wide. The bytecode pass should instead build the target recipe surface and
-resource materialization rules that a later inline pass can reuse if that proves
-to be the right design.
+Do not combine the inline/advice pass with the three phases above. Inlines have
+a different dependency shape from ordinary bytecode expansion: they involve
+guest SDK encoding, link-time registration, host advice computation, tracer
+CPU/memory access, inline-only virtual-register reset policy, and much larger
+sequence capacities. Combining them with the provider-free rewrite would make
+review and parity debugging too wide. The bytecode pass should instead build
+the target recipe surface and resource materialization rules that a later inline
+pass can reuse if that proves to be the right design.
 
-### In Scope For Pass 1
+### In Scope For Phase 1: RV32 Removal
 
-Pass 1 should include the following production changes:
+Phase 1 should include the following production changes:
+
+- Delete `Xlen::Bit32` as a live execution mode from `tracer`, or replace
+  `Xlen` with a single RV64 marker/API where keeping a name is useful for
+  documentation.
+- Reject ELF32/RV32 at the tracer image/load boundary with a typed or explicit
+  error instead of configuring the CPU/MMU for 32-bit execution.
+- Remove RV32 branches from tracer decode/uncompression, compressed-instruction
+  handling, ALU/div/rem helpers, MMU address normalization, trap-cause width,
+  virtual helper instructions, and inline length accounting.
+- Remove or rewrite tests that exist solely to validate RV32 behavior. Keep
+  tests that validate RV64 word operations such as `ADDW`, `DIVW`, `REMUW`,
+  word AMOs, and compressed RV64 encodings.
+- Update stale comments and docs that describe RV32, ELF32, or dual-width
+  expansion as supported behavior.
+- Keep `jolt-program::image`'s existing ELF32/RV32 rejection and add tracer-side
+  coverage so both program construction paths agree.
+
+Phase 1 should include these tests and checks:
+
+- focused tracer tests for ELF32/RV32 rejection;
+- existing RV64 compressed-instruction tests;
+- existing RV64 word-op, AMO/LR/SC, and inline-sequence tests;
+- `cargo fmt -q`;
+- `cargo clippy --all --features host -q --all-targets -- -D warnings`;
+- `cargo nextest run -p tracer --cargo-quiet`;
+- `cargo nextest run -p jolt-core muldiv --cargo-quiet --features host`.
+
+### In Scope For Phase 2: Instruction Phase Split
+
+Phase 2 should introduce names that reflect the actual pipeline:
+
+- `RiscvInstructionKind`: source-level RV64 program instruction identity. This
+  includes source instructions that may expand away before proving, such as
+  `DIV`, `REM`, atomics, CSR ops, advice-load source ops, and Jolt inline source
+  opcodes.
+- `JoltInstructionKind`: expanded executable Jolt bytecode row identity. These
+  are the rows legal after bytecode expansion and before preprocessing/proving.
+  Some rows are ordinary RISC-V-looking rows; some are Jolt virtual helper rows.
+- `LookupInstructionKind`: the subset of expanded Jolt bytecode rows routed
+  through instruction lookup tables.
+
+The exact Rust spelling can change during implementation, but the split should
+make these boundaries explicit. A Rust enum shaped as
+`InstructionKind::{Riscv(...), Jolt(...), Lookup(...)}` is probably not the
+right committed representation because bytecode rows, serialization, and lookup
+indexing need stable flat discriminants. Prefer phase-specific public types plus
+conversion/metadata APIs:
+
+```rust
+impl RiscvInstructionKind {
+    pub const fn expands_to_jolt(self) -> bool;
+}
+
+impl JoltInstructionKind {
+    pub const fn lookup_kind(self) -> Option<LookupInstructionKind>;
+}
+```
+
+Phase 2 should decide what happens to the existing names:
+
+- either rename the current flat `InstructionKind` to `JoltInstructionKind` and
+  introduce `RiscvInstructionKind` for decoded source rows;
+- or keep `InstructionKind` only as an internal/stable flat row discriminant and
+  expose phase-specific newtypes/enums around it.
+
+The PR should not leave `JoltInstructions<T>` and `InstructionKind` with
+overlapping unclear meanings. Either `JoltInstructions<T>` becomes a typed view
+over the chosen Jolt bytecode kind, or it is renamed/narrowed so it no longer
+sounds like "all instructions provable by Jolt" when it actually contains a
+mixed subset.
+
+Phase 2 should include these tests and checks:
+
+- compile-time or unit tests showing source-only rows such as `DIV`/`REM` and
+  atomics are distinguished from final expanded rows where appropriate;
+- tests for `JoltInstructionKind::lookup_kind()` covering lookup-backed rows,
+  memory/system-ish rows that are legal bytecode but not lookup-backed, and
+  virtual helper rows;
+- dependency checks showing `jolt-riscv` remains tracer-free;
+- existing `jolt-program`, `jolt-lookup-tables`, `tracer`, and `jolt-core`
+  instruction tests.
+
+### In Scope For Phase 3: Compiler-Native Provider-Free Expansion
+
+Phase 3 should include the following production changes:
 
 - Use compiler-native vocabulary in docs and code where appropriate.
   Extraction remains a key acceptance signal, but the implementation shape is a
@@ -1452,7 +1602,7 @@ Pass 1 should include the following production changes:
   sequences, does not assign `VirtualAdvice` payloads, and does not move
   trusted/untrusted advice commitments out of preprocessing/proof code.
 
-Pass 1 should also include the following tests and checks:
+Phase 3 should also include the following tests and checks:
 
 - A test-only parity harness that compares the new provider-free expander
   against the current PR output while porting families. The final production
@@ -1478,10 +1628,10 @@ Pass 1 should also include the following tests and checks:
   - `cargo nextest run -p jolt-core muldiv --cargo-quiet --features host`;
   - `cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk`.
 
-### Concrete Pass 1 Milestones
+### Concrete Phase 3 Milestones
 
-The next implementation pass should be reviewable as one focused production
-rewrite of `jolt-program::expand`, with the following milestones:
+The compiler-native expansion phase should be reviewable as one focused
+production rewrite of `jolt-program::expand`, with the following milestones:
 
 1. **Freeze the behavioral baseline.**
    - Add golden/parity coverage for the current PR behavior before deleting the
@@ -1539,13 +1689,14 @@ rewrite of `jolt-program::expand`, with the following milestones:
    - Land the pass only if production behavior is single-path, parity-tested,
      dependency-light, and no slower on the expansion hot path.
 
-The expected review scope is therefore: "replace the provider-free expansion
-engine with a compiler-native lowering core." It is not: "also redesign all
-inline packages."
+The expected review scope for Phase 3 is therefore: "replace the provider-free
+expansion engine with a compiler-native lowering core." It is not: "also
+redesign all inline packages."
 
-### Out Of Scope For Pass 1
+### Out Of Scope For The Three-Phase PR
 
-Pass 1 should not:
+The RV32 removal, instruction phase split, and compiler-native provider-free
+expansion work should not:
 
 - introduce a Melior/MLIR dependency;
 - create `jolt-inline-ir` or a new inline registry crate;
@@ -1557,12 +1708,12 @@ Pass 1 should not:
 - change runtime advice-tape behavior for `VirtualAdviceLoad` or
   `VirtualAdviceLen`;
 - move trusted/untrusted advice memory commitments into `jolt-program::expand`;
-- change tracer execution semantics;
+- change RV64 tracer execution semantics;
 - change bytecode/RAM preprocessing semantics;
 - feature-gate `serde` or `ark-serialize` unless extraction still pulls those
   impls after the compiler-native rewrite.
 
-### Pass 1 File-Level Shape
+### Phase 3 File-Level Shape
 
 The intended end state inside `crates/jolt-program/src/expand` is:
 
@@ -1587,7 +1738,7 @@ mod.rs             public API glue
 The exact file names can shift during implementation, but ownership should not:
 `core + grammar/recipe + allocator + buffer + metadata + lower` form the
 compiler-native target; `inline + public ergonomic wrappers` stay outside the
-first extraction target.
+extraction target.
 
 ## Follow-Up Inline Extension Pass
 
@@ -1595,7 +1746,7 @@ This section is separate from the execution-semantics track above. Inlines add
 both expansion complexity and advice/execution questions, so their design should
 not be used as the first semantics modeling slice.
 
-The inline pass should start after Pass 1 has stabilized the target bytecode
+The inline pass should start after Phase 3 has stabilized the target bytecode
 recipe surface and materialization rules. Its goal is not "make current Rust
 inline builders extract." The exact advice model is still unresolved. A future
 inline spec should decide whether inlines become extension dialects, remain
@@ -1650,28 +1801,62 @@ resource materialization machinery as provider-free expansion.
 
 ## Migration Plan
 
-1. Add the small syntactic expansion recipe surface, compiler-phase vocabulary, and baseline-quirk fixtures.
-2. Add new `core`, `buffer`, and bitset `allocator` internals under `jolt-program::expand`.
-3. Represent temp lifetimes explicitly and materialize them through the allocator at `WithTemp` or equivalent boundaries.
-4. Port one small family, such as ADDIW/ADDW/SUBW, to recipe-backed shallow lowering and prove parity against the current output.
-5. Port arithmetic, shifts, memory, division, and control-flow families.
-6. Replace `InstrAssembler<'a>` in production expansion code.
-7. Preserve tracer inline adapter support as finalized rows outside provider-free core.
-8. Delete the old recursive assembler once all parity tests pass.
-9. Run Hax/Aeneas again on:
+1. Remove historical RV32 support from `tracer`, including live `Xlen::Bit32`
+   paths, RV32 decode/uncompression behavior, RV32-only tests, and stale docs.
+2. Add tracer-side RV32/ELF32 rejection coverage and keep `jolt-program::image`
+   RV32/ELF32 rejection coverage green.
+3. Introduce phase-specific instruction identities:
+   `RiscvInstructionKind`, `JoltInstructionKind`, and `LookupInstructionKind`
+   or equivalent names with the same semantics.
+4. Decide the final relationship between `InstructionKind` and
+   `JoltInstructions<T>` so the code no longer has two overlapping names for
+   different slices of the instruction universe.
+5. Update decode, expansion, preprocessing, lookup-table routing, tracer
+   adapters, and proof call sites to use the phase-specific types or explicit
+   conversion APIs.
+6. Freeze the provider-free expansion behavioral baseline after the RV32 and
+   instruction-kind work is complete.
+7. Add the small syntactic expansion recipe surface, compiler-phase vocabulary,
+   and baseline-quirk fixtures.
+8. Add new `core`, `buffer`, and bitset `allocator` internals under
+   `jolt-program::expand`.
+9. Represent temp lifetimes explicitly and materialize them through the
+   allocator at `WithTemp` or equivalent boundaries.
+10. Port one small family, such as ADDIW/ADDW/SUBW, to recipe-backed shallow
+    lowering and prove parity against the current output.
+11. Port arithmetic, shifts, memory, division, and control-flow families.
+12. Replace `InstrAssembler<'a>` in production expansion code.
+13. Preserve tracer inline adapter support as finalized rows outside
+    provider-free core.
+14. Delete the old recursive assembler once all parity tests pass.
+15. Run Hax/Aeneas again on:
    - metadata stamping,
    - allocator transitions,
    - ADDIW shallow lowering,
    - provider-free `expand_one_core`.
-10. Record the separate semantics follow-up: a hand-modeled Lean transition
+16. Record the separate semantics follow-up: a hand-modeled Lean transition
     relation for a small provider-free slice, plus an expansion-correctness
     statement comparing source-row execution with target-sequence execution.
-11. Run formatting, clippy, host tests, ZK tests, and dependency checks.
+17. Run formatting, clippy, host tests, ZK tests, and dependency checks.
 
 Do not leave both expanders in production. A temporary test-only reference path is acceptable during the rewrite, but the final branch should have one canonical production expander.
 
 ## Acceptance Criteria
 
+- [ ] `tracer` no longer has a live RV32 execution mode, `Xlen::Bit32`, or
+      RV32 decode/uncompression path.
+- [ ] ELF32/RV32 inputs are rejected explicitly by both `jolt-program::image`
+      and the remaining tracer image/load boundary.
+- [ ] RV32-only tests and stale docs/comments are removed or rewritten, while
+      RV64 word-op and RV64 compressed-instruction coverage remains.
+- [ ] Source-level instruction identity, expanded Jolt bytecode row identity,
+      and lookup-backed instruction identity have distinct names/types or
+      explicit conversion APIs.
+- [ ] The `InstructionKind` / `JoltInstructions<T>` relationship is resolved so
+      the code no longer has two overlapping concepts with unclear phase
+      ownership.
+- [ ] Lookup-table routing uses `LookupInstructionKind` or an equivalent
+      explicit subset API such as `JoltInstructionKind::lookup_kind()`.
 - [ ] `jolt-program::expand` no longer has a production `InstrAssembler<'a>` that stores a borrowed allocator.
 - [ ] Expansion recipes are represented as syntactic lowering data or shallow operations; the grammar does not model instruction execution semantics.
 - [ ] The spec keeps execution semantics on a separate track, starting with a hand-modeled Lean abstract machine slice and expansion-correctness theorem rather than extraction from `tracer` or MLIR-as-semantics.
@@ -1797,14 +1982,15 @@ rather than designed in the abstract.
 
 ### Expansion Rank
 
-Decision: do not require `ExpansionRank` in Pass 1.
+Decision: do not require `ExpansionRank` in the compiler-native expansion
+phase.
 
 The central driver should enforce a fuel or recursion-depth bound and return an
 explicit error on runaway expansion. That is sufficient for the next rewrite and
 is much simpler to review.
 
 If the recipe surface becomes declarative enough later, a dependency-graph or
-rank validator can be added as a follow-up. The important Pass 1 invariant is
+rank validator can be added as a follow-up. The important Phase 3 invariant is
 that recursive expansion goes through one bounded driver instead of being hidden
 inside hand-written Rust call structure.
 
@@ -1877,6 +2063,11 @@ Both are modeled by placing `Release` exactly after the last emitted row that ma
 
 Decision for this PR: reject `CSRRW`/`CSRRS` with CSR address `0` as `ExpansionError::UnsupportedCsr(0)`.
 
-At `a3448e6da44f`, `expand_csrrw` and `expand_csrrs` returned `NormalizedInstruction::default()` when `csr == 0`, bypassing the normal assembler finalizer at the source level. The bug hunt found that this is not a harmless no-op once expansion is owned by `jolt-program`: the default row's address is `0`, and `BytecodePCMapper` skips address-zero rows, so a decoded CSR-zero source row can fail to receive an entry-bytecode index.
+Before the final #1490 fixes, `expand_csrrw` and `expand_csrrs` returned
+`NormalizedInstruction::default()` when `csr == 0`, bypassing the normal
+assembler finalizer at the source level. The bug hunt found that this is not a
+harmless no-op once expansion is owned by `jolt-program`: the default row's
+address is `0`, and `BytecodePCMapper` skips address-zero rows, so a decoded
+CSR-zero source row can fail to receive an entry-bytecode index.
 
 The compiler-native rewrite should therefore make this a first-class source validation rule, not a legacy literal. The recipe may express it as an explicit `If { cond: CsrEq(0), then_body: Fail(UnsupportedCsr), ... }`, or the validator may reject it before recipe interpretation. Either way, tests should assert the public error is `UnsupportedCsr(0)` and should not include CSR-zero in parity fixtures that preserve historical output.

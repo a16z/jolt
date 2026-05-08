@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{format::format_r::FormatR, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
@@ -17,10 +14,7 @@ declare_riscv_instr!(
 
 impl SRA {
     fn exec(&self, cpu: &mut Cpu, _: &mut <SRA as RISCVInstruction>::RAMAccess) {
-        let mask = match cpu.xlen {
-            Xlen::Bit32 => 0x1f,
-            Xlen::Bit64 => 0x3f,
-        };
+        let mask = 0x3f;
         cpu.write_register(
             self.operands.rd as usize,
             cpu.sign_extend(

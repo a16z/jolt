@@ -58,16 +58,10 @@ pub fn normalize_register_value(cpu: &Cpu, reg: usize) -> u64 {
         }
         _ => cpu.x[reg],
     };
-    let xlen = cpu.xlen;
-    match xlen {
-        Xlen::Bit32 => value as u32 as u64,
-        Xlen::Bit64 => value as u64,
-    }
+    let _ = cpu.xlen;
+    value as u64
 }
 
-pub fn normalize_imm(imm: u64, xlen: &Xlen) -> i64 {
-    match xlen {
-        Xlen::Bit32 => imm as i32 as i64,
-        Xlen::Bit64 => imm as i64,
-    }
+pub fn normalize_imm(imm: u64, _xlen: &Xlen) -> i64 {
+    imm as i64
 }

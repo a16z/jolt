@@ -150,10 +150,8 @@ pub fn write_inline_trace(
         inline_info.name, inline_info.opcode, inline_info.funct3, inline_info.funct7
     )?;
 
-    let xlen = match sequence_inputs.xlen {
-        Xlen::Bit32 => "32",
-        Xlen::Bit64 => "64",
-    };
+    let _ = sequence_inputs.xlen;
+    let xlen = "64";
 
     writeln!(
         file,

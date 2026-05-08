@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{
     fill_virtual_advice, format::format_r::FormatR, Cycle, Instruction, RISCVInstruction,
@@ -42,17 +39,10 @@ impl RISCVTrace for REMUW {
         let x = cpu.x[self.operands.rs1 as usize] as u32;
         let y = cpu.x[self.operands.rs2 as usize] as u32;
 
-        let quotient = match cpu.xlen {
-            Xlen::Bit32 => {
-                panic!("REMUW is invalid in 32b mode");
-            }
-            Xlen::Bit64 => {
-                if y == 0 {
-                    u32::MAX as u64 // 32-bit operation: quotient is u32::MAX
-                } else {
-                    (x / y) as u64
-                }
-            }
+        let quotient = if y == 0 {
+            u32::MAX as u64
+        } else {
+            (x / y) as u64
         };
 
         let mut inline_sequence =

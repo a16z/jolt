@@ -11,13 +11,12 @@ use tracing::{error, info};
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
 
-use common::{self, constants::RAM_START_ADDRESS, jolt_device::MemoryConfig};
+use common::{self, jolt_device::MemoryConfig};
 use emulator::{
     cpu::{self, Xlen},
     default_terminal::DefaultTerminal,
 };
 use instruction::{Cycle, Instruction};
-use object::{Object, ObjectSection, SectionKind};
 
 pub mod emulator;
 pub mod execution_backend;
@@ -32,12 +31,9 @@ pub use instruction::inline::{
     list_registered_inlines, InlineRegistration, TracerInlineExpansionProvider,
 };
 
-use crate::{
-    emulator::{
-        memory::{Memory, MemoryData},
-        Emulator,
-    },
-    instruction::uncompress_instruction,
+use crate::emulator::{
+    memory::{Memory, MemoryData},
+    Emulator,
 };
 
 /// Executes a RISC-V program and generates its execution trace along with emulator state checkpoints.
@@ -658,125 +654,32 @@ impl LazyTracer for CheckpointingTracer {
 #[tracing::instrument(skip_all)]
 pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64, Xlen) {
     let obj = object::File::parse(elf).unwrap();
-    if !matches!(&obj, object::File::Elf32(_)) {
-        let image =
-            jolt_program::image::decode_elf(elf).expect("jolt-program ELF64 decoding failed");
-        let instructions = image
-            .instructions
-            .into_iter()
-            .map(|instruction| {
-                Instruction::try_from_normalized(instruction)
-                    .expect("jolt-program image decoder produced an unknown tracer row")
-            })
-            .collect();
-        return (
-            instructions,
-            image.memory_init,
-            image.program_end,
-            image.entry_address,
-            Xlen::Bit64,
-        );
+    if matches!(&obj, object::File::Elf32(_)) {
+        panic!("tracer only supports RV64 ELF inputs");
     }
 
-    decode_legacy(elf)
-}
-
-fn decode_legacy(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64, Xlen) {
-    let obj = object::File::parse(elf).unwrap();
-    let e_entry = obj.entry();
-    let mut xlen = Xlen::Bit64;
-    if let object::File::Elf32(_) = &obj {
-        xlen = Xlen::Bit32;
-    }
-
-    let sections = obj
-        .sections()
-        .filter(|s| s.address() >= RAM_START_ADDRESS)
-        .collect::<Vec<_>>();
-
-    let mut instructions = Vec::new();
-    let mut data = Vec::new();
-
-    // keeps track of the highest address used in the program as the end address
-    let mut program_end = RAM_START_ADDRESS;
-    for section in sections {
-        let start = section.address();
-        let length = section.size();
-        let end = start + length;
-        program_end = program_end.max(end);
-
-        let raw_data = section.data().unwrap();
-
-        if let SectionKind::Text = section.kind() {
-            let mut offset = 0;
-            while offset < raw_data.len() {
-                let address = section.address() + offset as u64;
-
-                // Check if we have at least 2 bytes
-                if offset + 1 >= raw_data.len() {
-                    break;
-                }
-
-                // Read first 2 bytes to determine instruction length
-                let first_halfword = u16::from_le_bytes([raw_data[offset], raw_data[offset + 1]]);
-
-                // Check if it's a compressed instruction (lowest 2 bits != 11)
-                if (first_halfword & 0b11) != 0b11 {
-                    // Compressed 16-bit instruction
-                    let compressed_inst = first_halfword;
-                    if compressed_inst == 0x0000 {
-                        offset += 2;
-                        continue;
-                    }
-
-                    if let Ok(inst) = Instruction::decode(
-                        uncompress_instruction(compressed_inst as u32, xlen),
-                        address,
-                        true,
-                    ) {
-                        instructions.push(inst);
-                    } else {
-                        eprintln!("Warning: compressed instruction {compressed_inst:04X} at address: {address:08X} failed to decode.");
-                        instructions.push(Instruction::UNIMPL);
-                    }
-                    offset += 2;
-                } else {
-                    // Standard 32-bit instruction
-                    if offset + 3 >= raw_data.len() {
-                        eprintln!("Warning: incomplete instruction at address: {address:08X}");
-                        break;
-                    }
-
-                    let word = u32::from_le_bytes([
-                        raw_data[offset],
-                        raw_data[offset + 1],
-                        raw_data[offset + 2],
-                        raw_data[offset + 3],
-                    ]);
-
-                    if let Ok(inst) = Instruction::decode(word, address, false) {
-                        instructions.push(inst);
-                    } else {
-                        eprintln!("Warning: word: {word:08X} at address: {address:08X} is not recognized as a valid instruction.");
-                        instructions.push(Instruction::UNIMPL);
-                    }
-                    offset += 4;
-                }
-            }
-        }
-        let address = section.address();
-        for (offset, byte) in raw_data.iter().enumerate() {
-            data.push((address + offset as u64, *byte));
-        }
-    }
-    (instructions, data, program_end, e_entry, xlen)
+    let image = jolt_program::image::decode_elf(elf).expect("jolt-program ELF64 decoding failed");
+    let instructions = image
+        .instructions
+        .into_iter()
+        .map(|instruction| {
+            Instruction::try_from_normalized(instruction)
+                .expect("jolt-program image decoder produced an unknown tracer row")
+        })
+        .collect();
+    (
+        instructions,
+        image.memory_init,
+        image.program_end,
+        image.entry_address,
+        Xlen::Bit64,
+    )
 }
 
 fn get_xlen() -> Xlen {
     match common::constants::XLEN {
-        32 => cpu::Xlen::Bit32,
         64 => cpu::Xlen::Bit64,
-        _ => panic!("Emulator only supports 32 / 64 bit registers."),
+        _ => panic!("Emulator only supports 64-bit registers."),
     }
 }
 
@@ -823,6 +726,27 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00,
             0x38, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ]
+    }
+
+    fn minimal_elf32() -> Vec<u8> {
+        let mut elf = vec![0; 52];
+        elf[0..4].copy_from_slice(b"\x7fELF");
+        elf[4] = 1; // ELFCLASS32
+        elf[5] = 1; // little endian
+        elf[6] = 1; // current ELF version
+        elf[16..18].copy_from_slice(&2u16.to_le_bytes()); // executable
+        elf[18..20].copy_from_slice(&243u16.to_le_bytes()); // RISC-V
+        elf[20..24].copy_from_slice(&1u32.to_le_bytes());
+        elf[40..42].copy_from_slice(&52u16.to_le_bytes());
+        elf[42..44].copy_from_slice(&32u16.to_le_bytes());
+        elf[46..48].copy_from_slice(&40u16.to_le_bytes());
+        elf
+    }
+
+    #[test]
+    #[should_panic(expected = "tracer only supports RV64 ELF inputs")]
+    fn decode_rejects_elf32() {
+        decode(&minimal_elf32());
     }
 
     #[test]

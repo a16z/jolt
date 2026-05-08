@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{
     fill_virtual_advice, format::format_r::FormatR, Cycle, Instruction, RISCVInstruction,
@@ -45,29 +42,14 @@ impl RISCVTrace for REM {
         let x = cpu.x[self.operands.rs1 as usize];
         let y = cpu.x[self.operands.rs2 as usize];
 
-        let (quotient, remainder) = match cpu.xlen {
-            Xlen::Bit32 => {
-                if y == 0 {
-                    (u32::MAX as u64, (x as i32).unsigned_abs() as u64)
-                } else if x == cpu.most_negative() && y == -1 {
-                    (x as u32 as u64, 0)
-                } else {
-                    let quotient = x as i32 / y as i32;
-                    let remainder = (x as i32 % y as i32).unsigned_abs();
-                    (quotient as u32 as u64, remainder as u64)
-                }
-            }
-            Xlen::Bit64 => {
-                if y == 0 {
-                    (u64::MAX, x.unsigned_abs())
-                } else if x == cpu.most_negative() && y == -1 {
-                    (x as u64, 0)
-                } else {
-                    let quotient = x / y;
-                    let remainder = x % y;
-                    (quotient as u64, remainder.unsigned_abs())
-                }
-            }
+        let (quotient, remainder) = if y == 0 {
+            (u64::MAX, x.unsigned_abs())
+        } else if x == cpu.most_negative() && y == -1 {
+            (x as u64, 0)
+        } else {
+            let quotient = x / y;
+            let remainder = x % y;
+            (quotient as u64, remainder.unsigned_abs())
         };
 
         let mut inline_sequence =

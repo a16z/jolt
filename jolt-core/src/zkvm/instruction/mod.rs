@@ -302,7 +302,7 @@ fn instruction_flags_from_riscv(flags: RiscvInstructionFlagSet) -> [bool; NUM_IN
     converted
 }
 
-macro_rules! define_rv32im_trait_impls {
+macro_rules! define_rv64imac_trait_impls {
     (
         instructions: [$($instr:ident),* $(,)?]
     ) => {
@@ -422,7 +422,7 @@ macro_rules! define_rv32im_trait_impls {
     };
 }
 
-define_rv32im_trait_impls! {
+define_rv64imac_trait_impls! {
     instructions: [
         ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
         EBREAK, ECALL, FENCE, JAL, JALR, LUI, LD, MUL, MULHU, OR, ORI,

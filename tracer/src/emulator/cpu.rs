@@ -163,8 +163,6 @@ pub struct Cpu {
     pub(crate) xlen: Xlen,
     pub(crate) privilege_mode: PrivilegeMode,
     wfi: bool,
-    // using only lower 32bits of x, pc, and csr registers
-    // for 32-bit mode
     pub x: [i64; REGISTER_COUNT as usize],
     #[allow(dead_code)]
     f: [f64; 32],
@@ -189,8 +187,7 @@ pub struct Cpu {
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Xlen {
-    Bit32,
-    Bit64, // @TODO: Support Bit128
+    Bit64,
 }
 
 /// Width of an LR/SC reservation set. Ordered `Word < Doubleword` so
@@ -302,7 +299,6 @@ fn _get_trap_type_name(trap_type: &TrapType) -> &'static str {
 
 fn get_trap_cause(trap: &Trap, xlen: &Xlen) -> u64 {
     let interrupt_bit = match xlen {
-        Xlen::Bit32 => 0x80000000_u64,
         Xlen::Bit64 => 0x8000000000000000_u64,
     };
     match trap.trap_type {
@@ -380,14 +376,13 @@ impl Cpu {
         self.pc = value;
     }
 
-    /// Updates XLEN, 32-bit or 64-bit
+    /// Updates XLEN.
     ///
     /// # Arguments
     /// * `xlen`
     pub fn update_xlen(&mut self, xlen: Xlen) {
         self.xlen = xlen;
         self.unsigned_data_mask = match xlen {
-            Xlen::Bit32 => 0xffffffff,
             Xlen::Bit64 => 0xffffffffffffffff,
         };
         self.mmu.update_xlen(xlen);
@@ -892,7 +887,6 @@ impl Cpu {
     // SSTATUS, SIE, and SIP are subsets of MSTATUS, MIE, and MIP
     pub fn read_csr_raw(&self, address: u16) -> u64 {
         match address {
-            // @TODO: Mask should consider of 32-bit mode
             CSR_FFLAGS_ADDRESS => self.csr[CSR_FCSR_ADDRESS as usize] & 0x1f,
             CSR_FRM_ADDRESS => (self.csr[CSR_FCSR_ADDRESS as usize] >> 5) & 0x7,
             CSR_SSTATUS_ADDRESS => self.csr[CSR_MSTATUS_ADDRESS as usize] & 0x80000003000de162,
@@ -968,10 +962,6 @@ impl Cpu {
     #[allow(dead_code)]
     fn update_addressing_mode(&mut self, value: u64) {
         let addressing_mode = match self.xlen {
-            Xlen::Bit32 => match value & 0x80000000 {
-                0 => AddressingMode::None,
-                _ => AddressingMode::SV32,
-            },
             Xlen::Bit64 => match value >> 60 {
                 0 => AddressingMode::None,
                 8 => AddressingMode::SV39,
@@ -984,7 +974,6 @@ impl Cpu {
             },
         };
         let ppn = match self.xlen {
-            Xlen::Bit32 => value & 0x3fffff,
             Xlen::Bit64 => value & 0xfffffffffff,
         };
         self.mmu.update_addressing_mode(addressing_mode);
@@ -994,7 +983,6 @@ impl Cpu {
     // @TODO: Rename to better name?
     pub(crate) fn sign_extend(&self, value: i64) -> i64 {
         match self.xlen {
-            Xlen::Bit32 => value as i32 as i64,
             Xlen::Bit64 => value,
         }
     }
@@ -1007,7 +995,6 @@ impl Cpu {
     // @TODO: Rename to better name?
     pub(crate) fn most_negative(&self) -> i64 {
         match self.xlen {
-            Xlen::Bit32 => i32::MIN as i64,
             Xlen::Bit64 => i64::MIN,
         }
     }
@@ -1243,7 +1230,6 @@ pub fn get_register_name(num: usize) -> &'static str {
 
 fn normalize_u64(value: u64, width: &Xlen) -> u64 {
     match width {
-        Xlen::Bit32 => value as u32 as u64,
         Xlen::Bit64 => value,
     }
 }
@@ -1271,18 +1257,6 @@ mod test_cpu {
         assert_eq!(1, cpu.read_pc());
         cpu.update_pc(0xffffffffffffffff);
         assert_eq!(0xffffffffffffffff, cpu.read_pc());
-    }
-
-    #[test]
-    fn update_xlen() {
-        let mut cpu = create_cpu();
-        assert!(matches!(cpu.xlen, Xlen::Bit64));
-        cpu.update_xlen(Xlen::Bit32);
-        assert!(matches!(cpu.xlen, Xlen::Bit32));
-        cpu.update_xlen(Xlen::Bit64);
-        assert!(matches!(cpu.xlen, Xlen::Bit64));
-        // Note: cpu.update_xlen() updates cpu.mmu.xlen, too.
-        // The test for mmu.xlen should be in Mmu?
     }
 
     #[test]

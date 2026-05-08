@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
 
@@ -17,13 +14,8 @@ declare_riscv_instr!(
 
 impl VirtualRev8W {
     fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualRev8W as RISCVInstruction>::RAMAccess) {
-        match cpu.xlen {
-            Xlen::Bit64 => {
-                let v = cpu.x[self.operands.rs1 as usize] as u64;
-                cpu.write_register(self.operands.rd as usize, rev8w(v) as i64);
-            }
-            Xlen::Bit32 => unimplemented!(),
-        }
+        let v = cpu.x[self.operands.rs1 as usize] as u64;
+        cpu.write_register(self.operands.rd as usize, rev8w(v) as i64);
     }
 }
 
