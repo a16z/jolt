@@ -6,6 +6,7 @@ const NUM_VIRTUAL_REGISTERS: usize = VIRTUAL_REGISTER_COUNT as usize;
 const NUM_VIRTUAL_INSTRUCTION_REGISTERS: usize = 8;
 const RISCV_REGISTER_BASE: u8 = RISCV_REGISTER_COUNT;
 const NUM_RESERVED_VIRTUAL_REGISTERS: usize = 8;
+const MAX_RECURSION_DEPTH: usize = 128;
 
 const RESERVATION_W_REGISTER: u8 = RISCV_REGISTER_BASE;
 const RESERVATION_D_REGISTER: u8 = RISCV_REGISTER_BASE + 1;
@@ -27,6 +28,7 @@ pub const CSR_MTVAL: u16 = 0x343;
 pub struct ExpansionAllocator {
     allocated: u128,
     pending_clearing_inline: u128,
+    recursion_depth: usize,
 }
 
 impl ExpansionAllocator {
@@ -34,6 +36,7 @@ impl ExpansionAllocator {
         Self {
             allocated: 0,
             pending_clearing_inline: 0,
+            recursion_depth: 0,
         }
     }
 
@@ -119,6 +122,20 @@ impl ExpansionAllocator {
         let pending = self.pending_clearing_inline;
         self.pending_clearing_inline = 0;
         Ok(Self::registers_in_mask(pending))
+    }
+
+    pub(super) fn enter_expansion(&mut self) -> Result<(), ExpansionError> {
+        if self.recursion_depth == MAX_RECURSION_DEPTH {
+            return Err(ExpansionError::RecursionDepthExceeded {
+                max_depth: MAX_RECURSION_DEPTH,
+            });
+        }
+        self.recursion_depth += 1;
+        Ok(())
+    }
+
+    pub(super) fn exit_expansion(&mut self) {
+        self.recursion_depth -= 1;
     }
 
     fn allocate_in_range(

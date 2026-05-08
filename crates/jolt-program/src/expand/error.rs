@@ -14,6 +14,8 @@ pub enum ExpansionError {
     EmptySequence,
     #[error("expansion produced {actual} rows, exceeding the per-source capacity {capacity}")]
     CapacityExceeded { actual: usize, capacity: usize },
+    #[error("expansion recursion depth exceeded {max_depth}")]
+    RecursionDepthExceeded { max_depth: usize },
     #[error("malformed normalized instruction: {0}")]
     MalformedInstruction(&'static str),
     #[error("unsupported CSR 0x{0:03x}")]

@@ -22,7 +22,10 @@ impl<'a> ExpansionState<'a> {
         &mut self,
         instruction: &NormalizedInstruction,
     ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-        expand_instruction_core(instruction, self)
+        self.allocator.enter_expansion()?;
+        let result = expand_instruction_core(instruction, self);
+        self.allocator.exit_expansion();
+        result
     }
 }
 
