@@ -2,7 +2,7 @@ use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands}
 
 use crate::expand::{
     allocator::ExpansionAllocator, buffer::ExpansionBuffer, expand_instruction_core,
-    metadata::stamp_sequence, ExpansionError,
+    grammar::ExpansionOp, metadata::stamp_sequence, ExpansionError,
 };
 
 pub(super) struct ExpansionState<'a> {
@@ -57,6 +57,18 @@ impl ExpansionSequence {
             is_first_in_sequence: false,
             is_compressed: false,
         });
+    }
+
+    pub(super) fn emit_op(&mut self, op: ExpansionOp) {
+        match op {
+            ExpansionOp::Row(row) => self.emit(row.instruction_kind, row.operands),
+        }
+    }
+
+    pub(super) fn emit_ops(&mut self, ops: impl IntoIterator<Item = ExpansionOp>) {
+        for op in ops {
+            self.emit_op(op);
+        }
     }
 
     pub(super) fn emit_r(

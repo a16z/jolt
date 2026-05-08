@@ -11,6 +11,7 @@ mod control_flow;
 mod core;
 mod division;
 pub mod error;
+mod grammar;
 mod memory;
 mod metadata;
 mod operands;
