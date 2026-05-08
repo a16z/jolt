@@ -7,11 +7,11 @@ pub(in crate::expand) fn expand_srai(
     let shift = instruction.operands.imm & 0x3f;
     let bitmask = super::shared::right_shift_bitmask(shift as u32, 64);
     let mut sequence = core::ExpansionSequence::new(instruction);
-    sequence.emit_i(
+    sequence.emit_op(grammar::ExpansionOp::Row(grammar::RowTemplate::i(
         JoltInstructionKind::VirtualSRAI,
         rd(instruction)?,
         rs1(instruction)?,
         bitmask as i128,
-    );
+    )));
     sequence.finish()
 }

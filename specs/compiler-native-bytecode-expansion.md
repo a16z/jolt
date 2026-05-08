@@ -1853,20 +1853,22 @@ resource materialization machinery as provider-free expansion.
 16. Add an explicit recursion-depth/fuel guard to provider-free expansion.
 17. Add the initial `expand::grammar` operation layer and route the simplest
     arithmetic word lowerings through row templates.
-18. Port arithmetic, shifts, memory, division, and control-flow families.
-19. Replace `InstrAssembler<'a>` in production expansion code.
-20. Preserve tracer inline adapter support as finalized rows outside
+18. Extend row-template lowering to additional shallow arithmetic and shift
+    families.
+19. Port arithmetic, shifts, memory, division, and control-flow families.
+20. Replace `InstrAssembler<'a>` in production expansion code.
+21. Preserve tracer inline adapter support as finalized rows outside
     provider-free core.
-21. Delete the old recursive assembler once all parity tests pass.
-22. Run Hax/Aeneas again on:
+22. Delete the old recursive assembler once all parity tests pass.
+23. Run Hax/Aeneas again on:
    - metadata stamping,
    - allocator transitions,
    - ADDIW shallow lowering,
    - provider-free `expand_one_core`.
-23. Record the separate semantics follow-up: a hand-modeled Lean transition
+24. Record the separate semantics follow-up: a hand-modeled Lean transition
     relation for a small provider-free slice, plus an expansion-correctness
     statement comparing source-row execution with target-sequence execution.
-24. Run formatting, clippy, host tests, ZK tests, and dependency checks.
+25. Run formatting, clippy, host tests, ZK tests, and dependency checks.
 
 Do not leave both expanders in production. A temporary test-only reference path is acceptable during the rewrite, but the final branch should have one canonical production expander.
 
