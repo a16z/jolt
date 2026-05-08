@@ -1438,7 +1438,7 @@ where
             }
         }
         append_compressed_univariate_poly(transcript, context.driver.round_label, &batched_poly);
-        let challenge = transcript.challenge();
+        let challenge = transcript.challenge_optimized();
         point.push(challenge);
         batched_claim = batched_poly.evaluate(challenge);
         for (instance, poly) in instances.iter_mut().zip(individual_polys) {
@@ -1525,7 +1525,7 @@ where
             });
         }
         append_compressed_univariate_poly(transcript, context.driver.round_label, poly);
-        let challenge = transcript.challenge();
+        let challenge = transcript.challenge_optimized();
         running_claim = poly.evaluate(challenge);
         point.push(challenge);
     }

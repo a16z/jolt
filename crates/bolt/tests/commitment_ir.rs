@@ -1173,7 +1173,9 @@ fn stage2_rust_targets_extract_and_compile() {
     assert!(!verifier_source.source.contains("jolt_kernels"));
     assert!(verifier_source.source.contains("Stage2VerifierProgramPlan"));
     assert!(verifier_source.source.contains("pub fn verify_stage2"));
-    assert!(verifier_source.source.contains("SumcheckVerifier::verify"));
+    assert!(verifier_source
+        .source
+        .contains("SumcheckVerifier::verify_optimized"));
     assert_or_update_fixture("tests/fixtures/prove_stage2.rs", &prover_source.source);
     assert_or_update_fixture("tests/fixtures/verify_stage2.rs", &verifier_source.source);
     assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
@@ -3189,6 +3191,7 @@ fn assert_rust_source_compiles(_filename: &str, source: &str) {
         .arg("--manifest-path")
         .arg(dir.join("Cargo.toml"))
         .arg("-q")
+        .env_remove("RUSTFLAGS")
         .env("CARGO_TARGET_DIR", dir.join("target"))
         .output()
         .expect("run cargo check");
@@ -3334,6 +3337,7 @@ fn assert_generated_commitment_self_parity_runs(
         .arg("--manifest-path")
         .arg(dir.join("Cargo.toml"))
         .arg("-q")
+        .env_remove("RUSTFLAGS")
         .env("CARGO_TARGET_DIR", dir.join("target"))
         .output()
         .expect("run generated self-parity crate");
@@ -3385,6 +3389,7 @@ fn assert_generated_stage1_self_parity_runs(
         .arg("--manifest-path")
         .arg(dir.join("Cargo.toml"))
         .arg("-q")
+        .env_remove("RUSTFLAGS")
         .env("CARGO_TARGET_DIR", dir.join("target"))
         .output()
         .expect("run generated stage1 self-parity crate");
@@ -3432,6 +3437,7 @@ fn assert_generated_jolt_chain_self_parity_runs(files: &[&RustSourceFile], main_
         .arg("--manifest-path")
         .arg(dir.join("Cargo.toml"))
         .arg("-q")
+        .env_remove("RUSTFLAGS")
         .env("CARGO_TARGET_DIR", dir.join("target"))
         .output()
         .expect("run generated chain self-parity crate");

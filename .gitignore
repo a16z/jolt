@@ -45,6 +45,7 @@ temp_file
 # act executable
 bin/act
 .notes/
+.bolt-dev-env
 
 # Inline Traces
 *.joltinline

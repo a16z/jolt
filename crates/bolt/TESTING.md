@@ -63,7 +63,8 @@ This is the main semantic oracle. It should continue to prove:
 - Representative tampering is rejected by the generated verifier.
 
 The `Bolt equivalence` workflow runs the generated role parity and real-data
-tamper gates on pull requests. It also has an optional full
+tamper gates on pull requests, including stacked modular PRs whose base is not
+`main`. It also has an optional full
 `jolt-equivalence` sweep that runs on the nightly schedule, or manually through
 `workflow_dispatch` with `include_full_sweep=true`:
 
@@ -200,7 +201,9 @@ Both tests live in `jolt-equivalence/tests/bolt_perf.rs` because they reuse the
 real semantic oracle fixture and pass paired `PerfMetrics` into
 `jolt-profiling`'s `check_core_vs_bolt_gate`. The workflow sets
 `JOLT_BOLT_PERF_TRACE=1` so the same run writes Perfetto JSON traces under
-`benchmark-runs/perfetto_traces/`.
+`benchmark-runs/perfetto_traces/`. The perf workflow runs on pull requests,
+including stacked modular PRs, so core-vs-Bolt regressions gate before the
+stack lands in `main`.
 
 To run them locally after `source .bolt-dev-env`:
 

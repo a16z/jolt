@@ -1370,7 +1370,7 @@ where
             });
         }
         append_compressed_univariate_poly(transcript, context.driver.round_label, &batched_poly);
-        let challenge = transcript.challenge();
+        let challenge = transcript.challenge_optimized();
         point.push(challenge);
         batched_claim = batched_poly.evaluate(challenge);
         for (index, (instance, poly)) in instances.iter_mut().zip(individual_polys).enumerate() {
@@ -1481,7 +1481,7 @@ where
             });
         }
         append_compressed_univariate_poly(transcript, context.driver.round_label, poly);
-        let challenge = transcript.challenge();
+        let challenge = transcript.challenge_optimized();
         running_claim = poly.evaluate(challenge);
         point.push(challenge);
     }
@@ -4936,7 +4936,11 @@ where
                     find_squeeze(program, step.symbol).ok_or(Stage6KernelError::MissingValue {
                         symbol: step.symbol,
                     })?;
-                let values = transcript.challenge_vector(squeeze.count);
+                let values = if squeeze.symbol == "stage6.booleanity.gamma" {
+                    transcript.challenge_vector_optimized(squeeze.count)
+                } else {
+                    transcript.challenge_vector(squeeze.count)
+                };
                 executor.observe_challenge_vector(squeeze, &values)?;
                 artifacts.challenge_vectors.push(Stage6ChallengeVector {
                     symbol: squeeze.symbol,
@@ -7009,7 +7013,7 @@ mod tests {
         let claimed_sum = input_claim * batching_coeff;
         let round_poly = UnivariatePoly::new(vec![claimed_sum, -claimed_sum]);
         append_compressed_univariate_poly(&mut transcript, "sumcheck_poly", &round_poly);
-        let point = vec![transcript.challenge()];
+        let point = vec![transcript.challenge_optimized()];
         let proof = Stage6Proof {
             sumchecks: vec![Stage6SumcheckOutput {
                 driver: "stage6.sumcheck",

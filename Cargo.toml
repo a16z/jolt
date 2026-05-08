@@ -40,6 +40,7 @@ members = [
   "crates/jolt-kernels",
   "crates/jolt-prover",
   "crates/jolt-verifier",
+  "crates/jolt-equivalence",
   "crates/jolt-profiling",
   "crates/jolt-field",
   "jolt-core",
@@ -395,6 +396,7 @@ bolt = { path = "./crates/bolt" }
 jolt-kernels = { path = "./crates/jolt-kernels" }
 jolt-prover = { path = "./crates/jolt-prover" }
 jolt-verifier = { path = "./crates/jolt-verifier" }
+jolt-equivalence = { path = "./crates/jolt-equivalence" }
 jolt-riscv = { path = "./crates/jolt-riscv", default-features = false }
 jolt-program = { path = "./crates/jolt-program", default-features = false }
 jolt-lookup-tables = { path = "./crates/jolt-lookup-tables" }

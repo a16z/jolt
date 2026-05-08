@@ -711,7 +711,11 @@ fn verify_stage6_squeeze<T>(
 where
     T: Transcript<Challenge = Fr>,
 {
-    let values = transcript.challenge_vector(squeeze.count);
+    let values = if squeeze.symbol == "stage6.booleanity.gamma" {
+        transcript.challenge_vector_optimized(squeeze.count)
+    } else {
+        transcript.challenge_vector(squeeze.count)
+    };
     store.observe_challenge_vector(squeeze, &values, |input, expected, actual| {
         VerifyStage6Error::InvalidInputLength {
             input,

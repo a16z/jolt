@@ -1169,7 +1169,7 @@ where
             });
         }
         append_compressed_univariate_poly(transcript, context.driver.round_label, &batched_poly);
-        let challenge = transcript.challenge();
+        let challenge = transcript.challenge_optimized();
         point.push(challenge);
         batched_claim = batched_poly.evaluate(challenge);
         for (instance, poly) in instances.iter_mut().zip(individual_polys) {
@@ -1257,7 +1257,7 @@ where
             });
         }
         append_compressed_univariate_poly(transcript, context.driver.round_label, poly);
-        let challenge = transcript.challenge();
+        let challenge = transcript.challenge_optimized();
         running_claim = poly.evaluate(challenge);
         point.push(challenge);
     }
@@ -1404,6 +1404,7 @@ struct InstructionReadRafOutputPlan {
 
 struct InstructionReadRafStage5State<F: Field> {
     trace_len: usize,
+    table_count: usize,
     lookup_indices: Vec<u128>,
     lookup_table_indices: Vec<Option<usize>>,
     is_interleaved_operands: Vec<bool>,
@@ -1794,6 +1795,7 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         let read_suffix_polys = tables
             .par_iter()
             .enumerate()
+            .take(self.table_count)
             .filter_map(|(table_index, table)| {
                 if self.lookup_groups_by_table[table_index].is_empty() {
                     return None;
@@ -1906,6 +1908,7 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         let table_values_at_address = tables
             .par_iter()
             .enumerate()
+            .take(self.table_count)
             .map(|(table_index, table)| {
                 if self.lookup_groups_by_table[table_index].is_empty() {
                     F::zero()
@@ -1980,8 +1983,7 @@ impl<F: Field> InstructionReadRafStage5State<F> {
             self.trace_len,
         )?;
 
-        let tables = LookupTableKind::<64>::all();
-        let table_count = tables.len();
+        let table_count = self.table_count;
         let cycle_eq = EqPolynomial::<F>::evals(cycle_point, None);
         require_operand_count(
             "stage5.instruction_read_raf.eq_cycle",
@@ -2190,24 +2192,18 @@ fn read_table_component_eval<F: Field>(
     let mut eval_0 = F::zero();
     let mut eval_2_left = F::zero();
     let mut eval_2_right = F::zero();
+    let suffix_count = read_table.suffix_polys.len();
+    let mut suffixes_left = vec![F::zero(); suffix_count];
+    let mut suffixes_right = vec![F::zero(); suffix_count];
     for row in 0..half {
         let (prefixes_0, prefixes_2) = &prefix_evals[row];
-        let mut suffixes_left = [F::zero(); 4];
-        let mut suffixes_right = [F::zero(); 4];
         for (suffix_index, poly) in read_table.suffix_polys.iter().enumerate() {
             suffixes_left[suffix_index] = poly[row];
             suffixes_right[suffix_index] = poly[row + half];
         }
-        let suffix_count = read_table.suffix_polys.len();
-        eval_0 += read_table
-            .table
-            .combine(prefixes_0, &suffixes_left[..suffix_count]);
-        eval_2_left += read_table
-            .table
-            .combine(prefixes_2, &suffixes_left[..suffix_count]);
-        eval_2_right += read_table
-            .table
-            .combine(prefixes_2, &suffixes_right[..suffix_count]);
+        eval_0 += read_table.table.combine(prefixes_0, &suffixes_left);
+        eval_2_left += read_table.table.combine(prefixes_2, &suffixes_left);
+        eval_2_right += read_table.table.combine(prefixes_2, &suffixes_right);
     }
     [eval_0, eval_2_right + eval_2_right - eval_2_left]
 }
@@ -2426,7 +2422,15 @@ fn instruction_read_raf_state<F: Field>(
         });
     }
 
-    let table_count = LookupTableKind::<XLEN>::all().len();
+    let available_table_count = LookupTableKind::<XLEN>::all().len();
+    let table_count = instruction_read_raf_table_count(program, claim)?;
+    if table_count == 0 || table_count > available_table_count {
+        return Err(Stage5KernelError::InvalidInputLength {
+            input: "stage5.instruction_read_raf.lookup_table_count",
+            expected: available_table_count,
+            actual: table_count,
+        });
+    }
     for table_index in witness.lookup_table_indices.iter().flatten() {
         if *table_index >= table_count {
             return Err(Stage5KernelError::InvalidInputLength {
@@ -2465,9 +2469,9 @@ fn instruction_read_raf_state<F: Field>(
             lookup_groups_by_table[table_index].push(group_index);
         }
     }
-
     Ok(InstructionReadRafStage5State {
         trace_len: witness.trace_len,
+        table_count,
         lookup_indices: witness.lookup_indices.to_vec(),
         lookup_table_indices: witness.lookup_table_indices.to_vec(),
         is_interleaved_operands: witness.is_interleaved_operands.to_vec(),
@@ -2493,6 +2497,40 @@ fn instruction_read_raf_state<F: Field>(
         cycle_state: None,
         outputs,
     })
+}
+
+fn instruction_read_raf_table_count(
+    program: &'static Stage5CpuProgramPlan,
+    claim: &Stage5SumcheckClaimPlan,
+) -> Result<usize, Stage5KernelError> {
+    let instance = program
+        .instance_results
+        .iter()
+        .find(|instance| {
+            instance.claim == claim.symbol
+                && instance.relation == Stage5Relation::InstructionReadRaf.symbol()
+        })
+        .ok_or(Stage5KernelError::MissingClaim {
+            batch: "stage5.instruction_read_raf.outputs",
+            claim: claim.symbol,
+        })?;
+    program
+        .evals
+        .iter()
+        .filter(|eval| eval.source == instance.source)
+        .filter_map(|eval| {
+            eval.name
+                .strip_prefix("stage5.instruction_read_raf.eval.LookupTableFlag_")
+        })
+        .map(|suffix| {
+            parse_instruction_read_raf_eval_index(
+                suffix,
+                "stage5.instruction_read_raf.eval.LookupTableFlag_",
+            )
+        })
+        .try_fold(0usize, |count, index| {
+            index.map(|index| count.max(index + 1))
+        })
 }
 
 fn instruction_read_raf_lookup_groups<F: Field>(
@@ -2975,15 +3013,13 @@ fn expected_instruction_read_raf<F: Field>(
     let right_operand_eval = operand_polynomial_eval(r_address_prime, false);
     let identity_poly_eval = identity_polynomial_eval(r_address_prime);
 
+    let table_flag_claims =
+        indexed_evals_by_prefix_any(evals, "stage5.instruction_read_raf.eval.LookupTableFlag_")?;
     let table_values = LookupTableKind::<XLEN>::all()
         .iter()
+        .take(table_flag_claims.len())
         .map(|table| table.evaluate_mle::<F, F>(r_address_prime))
         .collect::<Vec<_>>();
-    let table_flag_claims = indexed_evals_by_prefix(
-        evals,
-        "stage5.instruction_read_raf.eval.LookupTableFlag_",
-        table_values.len(),
-    )?;
     let val_claim = table_values
         .into_iter()
         .zip(table_flag_claims)
@@ -3391,36 +3427,6 @@ fn accumulate_cubic_coefficients<F: Field>(
     coefficients[2].fmadd(scaled_first_delta, second0_third_delta);
     coefficients[2].fmadd(scaled_first0, second_delta_third_delta);
     coefficients[3].fmadd(scaled_first_delta, second_delta_third_delta);
-}
-
-fn indexed_evals_by_prefix<F: Field>(
-    evals: &[Stage5NamedEval<F>],
-    prefix: &'static str,
-    count: usize,
-) -> Result<Vec<F>, Stage5KernelError> {
-    let mut values = vec![None; count];
-    for eval in evals {
-        let Some(suffix) = eval.name.strip_prefix(prefix) else {
-            continue;
-        };
-        let index = suffix
-            .parse::<usize>()
-            .map_err(|_| Stage5KernelError::InvalidProof {
-                driver: prefix,
-                reason: "invalid indexed eval suffix",
-            })?;
-        if index >= count || values[index].is_some() {
-            return Err(Stage5KernelError::InvalidProof {
-                driver: prefix,
-                reason: "invalid indexed eval",
-            });
-        }
-        values[index] = Some(eval.value);
-    }
-    values
-        .into_iter()
-        .map(|value| value.ok_or(Stage5KernelError::MissingValue { symbol: prefix }))
-        .collect()
 }
 
 fn indexed_evals_by_prefix_any<F: Field>(

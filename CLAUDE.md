@@ -8,6 +8,19 @@ Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V (RV64IMAC) that effic
 
 ## Essential Commands
 
+### Local Bolt/MLIR Environment
+
+```bash
+# Required before Bolt, generated-role, and jolt-equivalence checks.
+scripts/setup-bolt-dev.sh
+source .bolt-dev-env
+```
+
+Always source `.bolt-dev-env` before running repository commands that touch the
+Bolt MLIR path, generated role crates, or `jolt-equivalence`. The setup script
+installs/configures LLVM/MLIR, `cargo-nextest`, and the local `jolt` CLI used by
+core-backed equivalence harnesses.
+
 ### Linting and Formatting
 
 ```bash
@@ -41,20 +54,6 @@ cargo build -p jolt-core -q
 # After pulling changes, reinstall the jolt CLI or guest builds may fail.
 cargo install --path . --locked
 ```
-
-### Local Bolt/MLIR Environment
-
-Before running Bolt MLIR/codegen checks locally, generate and source the Bolt
-dev environment:
-
-```bash
-scripts/setup-bolt-dev.sh
-source .bolt-dev-env
-```
-
-Agents should source `.bolt-dev-env` before any Bolt, generated-role, or
-Jolt-on-Bolt equivalence command so `llvm-config`, `MLIR_SYS_220_PREFIX`, and
-the local `jolt` CLI all resolve consistently.
 
 ### Profiling
 

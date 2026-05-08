@@ -8,8 +8,8 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/setup-bolt-dev.sh
 
-Installs/configures the local dependencies needed by Bolt MLIR/codegen checks
-on macOS:
+Installs/configures the local dependencies needed by Bolt MLIR/codegen and
+Jolt-on-Bolt perf oracle checks on macOS:
 
   - Homebrew llvm
   - rustup components: rust-src, rustfmt, clippy
@@ -98,5 +98,5 @@ Wrote ${env_file}
 Run:
   source .bolt-dev-env
 
-Then Bolt checks can find llvm-config and MLIR_SYS_220_PREFIX.
+Then Bolt/equivalence checks can find llvm-config and MLIR_SYS_220_PREFIX.
 EOF

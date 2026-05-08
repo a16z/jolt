@@ -495,6 +495,67 @@ fn zk_combined_commitment_and_hint_verify() {
 }
 
 #[test]
+fn combined_hints_zero_extend_shorter_row_layouts() {
+    let short_num_vars = 2;
+    let joint_num_vars = 4;
+    let mut rng = ChaCha20Rng::seed_from_u64(1512);
+
+    let prover_setup = DoryScheme::setup_prover(joint_num_vars);
+    let verifier_setup = DoryScheme::setup_verifier(joint_num_vars);
+
+    let short_poly = Polynomial::<Fr>::random(short_num_vars, &mut rng);
+    let long_poly = Polynomial::<Fr>::random(joint_num_vars, &mut rng);
+    let joint_row_len = 1usize << joint_num_vars.div_ceil(2);
+    let (short_commitment, short_hint) = DoryScheme::commit_evaluations_with_row_len(
+        short_poly.evaluations(),
+        joint_row_len,
+        &prover_setup,
+    );
+    let (long_commitment, long_hint) = DoryScheme::commit(long_poly.evaluations(), &prover_setup);
+
+    let c_short = <Fr as RandomSampling>::random(&mut rng);
+    let c_long = <Fr as RandomSampling>::random(&mut rng);
+    let combined_commitment =
+        DoryScheme::combine(&[short_commitment, long_commitment], &[c_short, c_long]);
+    let combined_hint = DoryScheme::combine_hints(vec![short_hint, long_hint], &[c_short, c_long]);
+
+    let mut joint_evals = long_poly
+        .evaluations()
+        .iter()
+        .map(|value| c_long * *value)
+        .collect::<Vec<_>>();
+    for (joint, short) in joint_evals.iter_mut().zip(short_poly.evaluations()) {
+        *joint += c_short * *short;
+    }
+    let joint_poly = Polynomial::new(joint_evals);
+    let point = (0..joint_num_vars)
+        .map(|_| <Fr as RandomSampling>::random(&mut rng))
+        .collect::<Vec<_>>();
+    let eval = joint_poly.evaluate(&point);
+
+    let mut pt = Blake2bTranscript::new(b"combined-ragged-hints");
+    let proof = DoryScheme::open(
+        &joint_poly,
+        &point,
+        eval,
+        &prover_setup,
+        Some(combined_hint),
+        &mut pt,
+    );
+
+    let mut vt = Blake2bTranscript::new(b"combined-ragged-hints");
+    DoryScheme::verify(
+        &combined_commitment,
+        &point,
+        eval,
+        &proof,
+        &verifier_setup,
+        &mut vt,
+    )
+    .expect("combined hint with zero-extended shorter rows must verify");
+}
+
+#[test]
 fn wrong_eval_commitment_rejected_zk() {
     let num_vars = 3;
     let mut rng = ChaCha20Rng::seed_from_u64(1600);

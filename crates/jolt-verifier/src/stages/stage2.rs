@@ -335,7 +335,14 @@ fn verify_stage2_squeeze<T>(
 where
     T: Transcript<Challenge = Fr>,
 {
-    let values = transcript.challenge_vector(squeeze.count);
+    let values = if matches!(
+        squeeze.symbol,
+        "stage2.product_virtual.tau_high" | "stage2.ram_output.r_address"
+    ) {
+        transcript.challenge_vector_optimized(squeeze.count)
+    } else {
+        transcript.challenge_vector(squeeze.count)
+    };
     store.observe_challenge_vector(program, squeeze, &values)?;
     artifacts.challenge_vectors.push(Stage2ChallengeVector {
         symbol: squeeze.symbol,
@@ -413,7 +420,7 @@ where
         });
     }
     append_univariate_poly(transcript, driver.round_label, poly);
-    let r0 = transcript.challenge();
+    let r0 = transcript.challenge_optimized();
     if !proof.point.is_empty() && proof.point != [r0] {
         return Err(VerifyStage2Error::InvalidProof {
             driver: driver.symbol,
@@ -467,7 +474,7 @@ where
         .iter()
         .map(|poly| CompressedLabeledRoundPoly::new(poly, driver.round_label.as_bytes()))
         .collect::<Vec<_>>();
-    let output = SumcheckVerifier::verify(&claim, &round_proofs, transcript)
+    let output = SumcheckVerifier::verify_optimized(&claim, &round_proofs, transcript)
         .map_err(|error| VerifyStage2Error::Sumcheck {
             driver: driver.symbol,
             error,

@@ -309,11 +309,11 @@ impl AdditivelyHomomorphic for DoryScheme {
         assert_eq!(hints.len(), scalars.len());
         assert!(!hints.is_empty(), "combine_hints: empty hint set");
 
-        let num_rows = hints[0].row_commitments.len();
-        assert!(
-            hints.iter().all(|h| h.row_commitments.len() == num_rows),
-            "combine_hints: ragged hint lengths",
-        );
+        let num_rows = hints
+            .iter()
+            .map(|hint| hint.row_commitments.len())
+            .max()
+            .expect("combine_hints checked for non-empty hint set");
 
         let combined_blind = hints
             .iter()
@@ -326,7 +326,11 @@ impl AdditivelyHomomorphic for DoryScheme {
             .map(|row| {
                 let mut acc = Bn254G1::default();
                 for (hint, &scalar) in hints.iter().zip(scalars.iter()) {
-                    acc += hint.row_commitments[row].scalar_mul(&scalar);
+                    // Shorter row layouts represent the same polynomial zero-extended
+                    // into the larger joint opening domain.
+                    if let Some(commitment) = hint.row_commitments.get(row) {
+                        acc += commitment.scalar_mul(&scalar);
+                    }
                 }
                 acc
             })

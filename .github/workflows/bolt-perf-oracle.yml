@@ -1,0 +1,95 @@
+name: Bolt perf oracle
+
+on:
+  pull_request:
+    branches: ["**", main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 8 * * *"
+  workflow_dispatch:
+    inputs:
+      include_large:
+        description: "Run the sha2-chain 2^20 gate"
+        required: false
+        default: "true"
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  sha2-chain-2-16:
+    name: sha2-chain 2^16 core-vs-Bolt
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rust-src
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Install LLVM
+        run: brew install llvm
+      - name: Configure LLVM
+        run: |
+          llvm_prefix="$(brew --prefix llvm)"
+          sdkroot="$(xcrun --show-sdk-path)"
+          echo "MLIR_SYS_220_PREFIX=${llvm_prefix}" >> "$GITHUB_ENV"
+          echo "${llvm_prefix}/bin" >> "$GITHUB_PATH"
+          echo "SDKROOT=${sdkroot}" >> "$GITHUB_ENV"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-isysroot${sdkroot}" >> "$GITHUB_ENV"
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force
+      - name: Run perf oracle
+        env:
+          JOLT_BOLT_PERF_TRACE: "1"
+        run: >
+          cargo nextest run -p jolt-equivalence --test bolt_perf --release
+          --cargo-quiet --run-ignored only --no-capture
+          bolt_sha2_chain_2_16_core_vs_bolt_perf_oracle
+      - name: Upload Perfetto trace
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bolt-perf-oracle-sha2-chain-2-16
+          path: benchmark-runs/perfetto_traces/*.json
+          if-no-files-found: warn
+
+  sha2-chain-2-20:
+    name: sha2-chain 2^20 core-vs-Bolt
+    runs-on: macos-latest
+    if: github.event_name != 'workflow_dispatch' || inputs.include_large == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rust-src
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Install LLVM
+        run: brew install llvm
+      - name: Configure LLVM
+        run: |
+          llvm_prefix="$(brew --prefix llvm)"
+          sdkroot="$(xcrun --show-sdk-path)"
+          echo "MLIR_SYS_220_PREFIX=${llvm_prefix}" >> "$GITHUB_ENV"
+          echo "${llvm_prefix}/bin" >> "$GITHUB_PATH"
+          echo "SDKROOT=${sdkroot}" >> "$GITHUB_ENV"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-isysroot${sdkroot}" >> "$GITHUB_ENV"
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force
+      - name: Run perf oracle
+        env:
+          JOLT_BOLT_PERF_TRACE: "1"
+        run: >
+          cargo nextest run -p jolt-equivalence --test bolt_perf --release
+          --cargo-quiet --run-ignored only --no-capture
+          bolt_sha2_chain_2_20_core_vs_bolt_perf_oracle
+      - name: Upload Perfetto trace
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bolt-perf-oracle-sha2-chain-2-20
+          path: benchmark-runs/perfetto_traces/*.json
+          if-no-files-found: warn
