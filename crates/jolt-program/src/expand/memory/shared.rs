@@ -295,18 +295,14 @@ pub(in crate::expand) fn expand_amo_w(
     let v_mask = allocator.allocate()?;
     let v_dword = allocator.allocate()?;
     let v_shift = allocator.allocate()?;
-    let mut sequence = core::ExpansionSequence::new(instruction);
-    amo_pre64(
-        &mut sequence,
-        rs1(instruction)?,
+    let mut ops = amo_pre64_ops(rs1(instruction)?, v_rd, v_dword, v_shift);
+    ops.push(grammar::ExpansionOp::Expand(grammar::RowTemplate::r(
+        op,
+        v_rs2,
         v_rd,
-        v_dword,
-        v_shift,
-        allocator,
-    )?;
-    sequence.emit_r_expanded(op, v_rs2, v_rd, rs2(instruction)?, allocator)?;
-    amo_post64(
-        &mut sequence,
+        rs2(instruction)?,
+    )));
+    ops.extend(amo_post64_ops(
         rs1(instruction)?,
         v_rs2,
         v_dword,
@@ -314,9 +310,15 @@ pub(in crate::expand) fn expand_amo_w(
         v_mask,
         rd(instruction)?,
         v_rd,
-        allocator,
-    )?;
-    sequence.finish_releasing(allocator, [v_rd, v_rs2, v_mask, v_dword, v_shift])
+    ));
+    ops.extend([
+        grammar::ExpansionOp::Release(v_rd),
+        grammar::ExpansionOp::Release(v_rs2),
+        grammar::ExpansionOp::Release(v_mask),
+        grammar::ExpansionOp::Release(v_dword),
+        grammar::ExpansionOp::Release(v_shift),
+    ]);
+    core::ExpansionState::new(allocator).materialize_ops(instruction, ops)
 }
 
 pub(in crate::expand) fn expand_amo_minmax_w(
@@ -329,15 +331,7 @@ pub(in crate::expand) fn expand_amo_minmax_w(
     let v_rd = allocator.allocate()?;
     let v_dword = allocator.allocate()?;
     let v_shift = allocator.allocate()?;
-    let mut sequence = core::ExpansionSequence::new(instruction);
-    amo_pre64(
-        &mut sequence,
-        rs1(instruction)?,
-        v_rd,
-        v_dword,
-        v_shift,
-        allocator,
-    )?;
+    let mut ops = amo_pre64_ops(rs1(instruction)?, v_rd, v_dword, v_shift);
 
     let v_rs2 = allocator.allocate()?;
     let v0 = allocator.allocate()?;
@@ -346,21 +340,38 @@ pub(in crate::expand) fn expand_amo_minmax_w(
     } else {
         JoltInstructionKind::VirtualZeroExtendWord
     };
-    sequence.emit_i_expanded(extend_op, v_rs2, rs2(instruction)?, 0, allocator)?;
-    sequence.emit_i_expanded(extend_op, v0, v_rd, 0, allocator)?;
+    ops.extend([
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+            extend_op,
+            v_rs2,
+            rs2(instruction)?,
+            0,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::i(extend_op, v0, v_rd, 0)),
+    ]);
     let (cmp_rs1, cmp_rs2) = if min { (v_rs2, v0) } else { (v0, v_rs2) };
-    sequence.emit_r_expanded(compare_op, v0, cmp_rs1, cmp_rs2, allocator)?;
-    sequence.emit_r_expanded(
-        JoltInstructionKind::SUB,
-        v_rs2,
-        rs2(instruction)?,
-        v_rd,
-        allocator,
-    )?;
-    sequence.emit_r_expanded(JoltInstructionKind::MUL, v_rs2, v_rs2, v0, allocator)?;
-    sequence.emit_r_expanded(JoltInstructionKind::ADD, v_rs2, v_rs2, v_rd, allocator)?;
-    amo_post64(
-        &mut sequence,
+    ops.extend([
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::r(compare_op, v0, cmp_rs1, cmp_rs2)),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::r(
+            JoltInstructionKind::SUB,
+            v_rs2,
+            rs2(instruction)?,
+            v_rd,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::r(
+            JoltInstructionKind::MUL,
+            v_rs2,
+            v_rs2,
+            v0,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::r(
+            JoltInstructionKind::ADD,
+            v_rs2,
+            v_rs2,
+            v_rd,
+        )),
+    ]);
+    ops.extend(amo_post64_ops(
         rs1(instruction)?,
         v_rs2,
         v_dword,
@@ -368,41 +379,57 @@ pub(in crate::expand) fn expand_amo_minmax_w(
         v0,
         rd(instruction)?,
         v_rd,
-        allocator,
-    )?;
-    sequence.finish_releasing(allocator, [v_rd, v_dword, v_shift, v_rs2, v0])
+    ));
+    ops.extend([
+        grammar::ExpansionOp::Release(v_rd),
+        grammar::ExpansionOp::Release(v_dword),
+        grammar::ExpansionOp::Release(v_shift),
+        grammar::ExpansionOp::Release(v_rs2),
+        grammar::ExpansionOp::Release(v0),
+    ]);
+    core::ExpansionState::new(allocator).materialize_ops(instruction, ops)
 }
 
-pub(in crate::expand) fn amo_pre64(
-    sequence: &mut core::ExpansionSequence,
+pub(in crate::expand) fn amo_pre64_ops(
     rs1: u8,
     v_rd: u8,
     v_dword: u8,
     v_shift: u8,
-    allocator: &mut ExpansionAllocator,
-) -> Result<(), ExpansionError> {
-    sequence.emit_align_expanded(
-        JoltInstructionKind::VirtualAssertWordAlignment,
-        rs1,
-        0,
-        allocator,
-    )?;
-    sequence.emit_i_expanded(
-        JoltInstructionKind::ANDI,
-        v_shift,
-        rs1,
-        format_i_imm(-8),
-        allocator,
-    )?;
-    sequence.emit_i_expanded(JoltInstructionKind::LD, v_dword, v_shift, 0, allocator)?;
-    sequence.emit_i_expanded(JoltInstructionKind::SLLI, v_shift, rs1, 3, allocator)?;
-    sequence.emit_r_expanded(JoltInstructionKind::SRL, v_rd, v_dword, v_shift, allocator)?;
-    Ok(())
+) -> Vec<grammar::ExpansionOp> {
+    vec![
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::address(
+            JoltInstructionKind::VirtualAssertWordAlignment,
+            rs1,
+            0,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+            JoltInstructionKind::ANDI,
+            v_shift,
+            rs1,
+            format_i_imm(-8),
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+            JoltInstructionKind::LD,
+            v_dword,
+            v_shift,
+            0,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+            JoltInstructionKind::SLLI,
+            v_shift,
+            rs1,
+            3,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::r(
+            JoltInstructionKind::SRL,
+            v_rd,
+            v_dword,
+            v_shift,
+        )),
+    ]
 }
 
-#[expect(clippy::too_many_arguments)]
-pub(in crate::expand) fn amo_post64(
-    sequence: &mut core::ExpansionSequence,
+pub(in crate::expand) fn amo_post64_ops(
     rs1: u8,
     v_rs2: u8,
     v_dword: u8,
@@ -410,55 +437,69 @@ pub(in crate::expand) fn amo_post64(
     v_mask: u8,
     rd: u8,
     v_rd: u8,
-    allocator: &mut ExpansionAllocator,
-) -> Result<(), ExpansionError> {
-    sequence.emit_i_expanded(
-        JoltInstructionKind::ORI,
-        v_mask,
-        0,
-        format_i_imm(-1),
-        allocator,
-    )?;
-    sequence.emit_i_expanded(JoltInstructionKind::SRLI, v_mask, v_mask, 32, allocator)?;
-    sequence.emit_r_expanded(JoltInstructionKind::SLL, v_mask, v_mask, v_shift, allocator)?;
-    sequence.emit_r_expanded(JoltInstructionKind::SLL, v_shift, v_rs2, v_shift, allocator)?;
-    sequence.emit_r_expanded(
-        JoltInstructionKind::XOR,
-        v_shift,
-        v_dword,
-        v_shift,
-        allocator,
-    )?;
-    sequence.emit_r_expanded(
-        JoltInstructionKind::AND,
-        v_shift,
-        v_shift,
-        v_mask,
-        allocator,
-    )?;
-    sequence.emit_r_expanded(
-        JoltInstructionKind::XOR,
-        v_dword,
-        v_dword,
-        v_shift,
-        allocator,
-    )?;
-    sequence.emit_i_expanded(
-        JoltInstructionKind::ANDI,
-        v_mask,
-        rs1,
-        format_i_imm(-8),
-        allocator,
-    )?;
-    sequence.emit_s_expanded(JoltInstructionKind::SD, v_mask, v_dword, 0, allocator)?;
-    sequence.emit_i_expanded(
-        JoltInstructionKind::VirtualSignExtendWord,
-        rd,
-        v_rd,
-        0,
-        allocator,
-    )?;
-    Ok(())
+) -> Vec<grammar::ExpansionOp> {
+    vec![
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+            JoltInstructionKind::ORI,
+            v_mask,
+            0,
+            format_i_imm(-1),
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+            JoltInstructionKind::SRLI,
+            v_mask,
+            v_mask,
+            32,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::r(
+            JoltInstructionKind::SLL,
+            v_mask,
+            v_mask,
+            v_shift,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::r(
+            JoltInstructionKind::SLL,
+            v_shift,
+            v_rs2,
+            v_shift,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::r(
+            JoltInstructionKind::XOR,
+            v_shift,
+            v_dword,
+            v_shift,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::r(
+            JoltInstructionKind::AND,
+            v_shift,
+            v_shift,
+            v_mask,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::r(
+            JoltInstructionKind::XOR,
+            v_dword,
+            v_dword,
+            v_shift,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+            JoltInstructionKind::ANDI,
+            v_mask,
+            rs1,
+            format_i_imm(-8),
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::s(
+            JoltInstructionKind::SD,
+            v_mask,
+            v_dword,
+            0,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+            JoltInstructionKind::VirtualSignExtendWord,
+            rd,
+            v_rd,
+            0,
+        )),
+    ]
 }
 
 pub(in crate::expand) fn expand_narrow_store(
