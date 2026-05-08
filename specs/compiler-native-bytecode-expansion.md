@@ -1868,20 +1868,21 @@ resource materialization machinery as provider-free expansion.
 27. Move simple doubleword atomic swap lowering onto ordered expansion ops.
 28. Move load-reserved lowerings onto ordered expansion ops.
 29. Move advice-load lowerings onto ordered expansion ops.
-30. Port arithmetic, shifts, memory, division, and control-flow families.
-31. Replace `InstrAssembler<'a>` in production expansion code.
-32. Preserve tracer inline adapter support as finalized rows outside
+30. Move simple doubleword AMO lowerings onto ordered expansion ops.
+31. Port arithmetic, shifts, memory, division, and control-flow families.
+32. Replace `InstrAssembler<'a>` in production expansion code.
+33. Preserve tracer inline adapter support as finalized rows outside
     provider-free core.
-33. Delete the old recursive assembler once all parity tests pass.
-34. Run Hax/Aeneas again on:
+34. Delete the old recursive assembler once all parity tests pass.
+35. Run Hax/Aeneas again on:
    - metadata stamping,
    - allocator transitions,
    - ADDIW shallow lowering,
    - provider-free `expand_one_core`.
-35. Record the separate semantics follow-up: a hand-modeled Lean transition
+36. Record the separate semantics follow-up: a hand-modeled Lean transition
     relation for a small provider-free slice, plus an expansion-correctness
     statement comparing source-row execution with target-sequence execution.
-36. Run formatting, clippy, host tests, ZK tests, and dependency checks.
+37. Run formatting, clippy, host tests, ZK tests, and dependency checks.
 
 Do not leave both expanders in production. A temporary test-only reference path is acceptable during the rewrite, but the final branch should have one canonical production expander.
 

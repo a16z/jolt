@@ -148,30 +148,37 @@ pub(in crate::expand) fn expand_amo_d(
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     let v_rs2 = allocator.allocate()?;
     let v_rd = allocator.allocate()?;
-    let mut sequence = core::ExpansionSequence::new(instruction);
-    sequence.emit_i_expanded(
-        JoltInstructionKind::LD,
-        v_rd,
-        rs1(instruction)?,
-        0,
-        allocator,
-    )?;
-    sequence.emit_r_expanded(op, v_rs2, v_rd, rs2(instruction)?, allocator)?;
-    sequence.emit_s_expanded(
-        JoltInstructionKind::SD,
-        rs1(instruction)?,
-        v_rs2,
-        0,
-        allocator,
-    )?;
-    sequence.emit_i_expanded(
-        JoltInstructionKind::ADDI,
-        rd(instruction)?,
-        v_rd,
-        0,
-        allocator,
-    )?;
-    sequence.finish_releasing(allocator, [v_rs2, v_rd])
+    core::ExpansionState::new(allocator).materialize_ops(
+        instruction,
+        [
+            grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+                JoltInstructionKind::LD,
+                v_rd,
+                rs1(instruction)?,
+                0,
+            )),
+            grammar::ExpansionOp::Expand(grammar::RowTemplate::r(
+                op,
+                v_rs2,
+                v_rd,
+                rs2(instruction)?,
+            )),
+            grammar::ExpansionOp::Expand(grammar::RowTemplate::s(
+                JoltInstructionKind::SD,
+                rs1(instruction)?,
+                v_rs2,
+                0,
+            )),
+            grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+                JoltInstructionKind::ADDI,
+                rd(instruction)?,
+                v_rd,
+                0,
+            )),
+            grammar::ExpansionOp::Release(v_rs2),
+            grammar::ExpansionOp::Release(v_rd),
+        ],
+    )
 }
 
 pub(in crate::expand) fn expand_amo_minmax_d(
