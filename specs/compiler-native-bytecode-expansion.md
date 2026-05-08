@@ -1837,7 +1837,9 @@ resource materialization machinery as provider-free expansion.
     control-flow/CSR lowerings off the borrowed `InstrAssembler<'a>` path. The
     memory family now also uses owned sequence emission with explicit recursive
     helper expansion, and division has been ported while preserving delayed
-    temporary allocation for signed 64-bit div/rem.
+    temporary allocation for signed 64-bit div/rem. The obsolete
+    `jolt-program::expand::assembler` module has been removed from the
+    provider-free path.
 11. Port arithmetic, shifts, memory, division, and control-flow families.
 12. Replace `InstrAssembler<'a>` in production expansion code.
 13. Preserve tracer inline adapter support as finalized rows outside
