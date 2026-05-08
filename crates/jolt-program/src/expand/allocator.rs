@@ -25,16 +25,15 @@ pub const CSR_MTVAL: u16 = 0x343;
 
 #[derive(Debug, Clone)]
 pub struct ExpansionAllocator {
-    allocated: [bool; NUM_VIRTUAL_REGISTERS],
-    /// Inline-only virtual registers that must be reset before finalizing an inline sequence.
-    pending_clearing_inline: Vec<u8>,
+    allocated: u128,
+    pending_clearing_inline: u128,
 }
 
 impl ExpansionAllocator {
     pub const fn new() -> Self {
         Self {
-            allocated: [false; NUM_VIRTUAL_REGISTERS],
-            pending_clearing_inline: Vec::new(),
+            allocated: 0,
+            pending_clearing_inline: 0,
         }
     }
 
@@ -96,31 +95,30 @@ impl ExpansionAllocator {
             NUM_VIRTUAL_REGISTERS,
             "inline",
         )?;
-        if !self.pending_clearing_inline.contains(&register) {
-            self.pending_clearing_inline.push(register);
-        }
+        self.pending_clearing_inline |= Self::register_bit(register)?;
         Ok(register)
     }
 
     pub fn release(&mut self, register: u8) -> Result<(), ExpansionError> {
-        let index = Self::virtual_index(register)?;
-        if !self.allocated[index] {
+        let bit = Self::register_bit(register)?;
+        if self.allocated & bit == 0 {
             return Err(ExpansionError::UnallocatedVirtualRegister { register });
         }
-        self.allocated[index] = false;
+        self.allocated &= !bit;
         Ok(())
     }
 
     pub fn take_registers_for_reset(&mut self) -> Result<Vec<u8>, ExpansionError> {
-        if self
-            .allocated
-            .iter()
-            .skip(NUM_RESERVED_VIRTUAL_REGISTERS + NUM_VIRTUAL_INSTRUCTION_REGISTERS)
-            .any(|allocated| *allocated)
-        {
+        let inline_mask = Self::range_mask(
+            NUM_RESERVED_VIRTUAL_REGISTERS + NUM_VIRTUAL_INSTRUCTION_REGISTERS,
+            NUM_VIRTUAL_REGISTERS,
+        );
+        if self.allocated & inline_mask != 0 {
             return Err(ExpansionError::InlineRegistersStillAllocated);
         }
-        Ok(std::mem::take(&mut self.pending_clearing_inline))
+        let pending = self.pending_clearing_inline;
+        self.pending_clearing_inline = 0;
+        Ok(Self::registers_in_mask(pending))
     }
 
     fn allocate_in_range(
@@ -129,9 +127,11 @@ impl ExpansionAllocator {
         end: usize,
         pool: &'static str,
     ) -> Result<u8, ExpansionError> {
+        let allocated = self.allocated;
         for index in start..end {
-            if !self.allocated[index] {
-                self.allocated[index] = true;
+            let bit = 1u128 << index;
+            if allocated & bit == 0 {
+                self.allocated |= bit;
                 return Ok(RISCV_REGISTER_BASE + index as u8);
             }
         }
@@ -147,6 +147,27 @@ impl ExpansionAllocator {
             return Err(ExpansionError::InvalidVirtualRegister { register });
         }
         Ok(index)
+    }
+
+    fn register_bit(register: u8) -> Result<u128, ExpansionError> {
+        Ok(1u128 << Self::virtual_index(register)?)
+    }
+
+    fn range_mask(start: usize, end: usize) -> u128 {
+        let len = end - start;
+        ((1u128 << len) - 1) << start
+    }
+
+    fn registers_in_mask(mask: u128) -> Vec<u8> {
+        (0..NUM_VIRTUAL_REGISTERS)
+            .filter_map(|index| {
+                if mask & (1u128 << index) == 0 {
+                    None
+                } else {
+                    Some(RISCV_REGISTER_BASE + index as u8)
+                }
+            })
+            .collect()
     }
 }
 

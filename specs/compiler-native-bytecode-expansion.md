@@ -1840,20 +1840,22 @@ resource materialization machinery as provider-free expansion.
     temporary allocation for signed 64-bit div/rem. The obsolete
     `jolt-program::expand::assembler` module has been removed from the
     provider-free path.
-11. Port arithmetic, shifts, memory, division, and control-flow families.
-12. Replace `InstrAssembler<'a>` in production expansion code.
-13. Preserve tracer inline adapter support as finalized rows outside
+11. Replace allocator boolean arrays and heap-backed inline reset tracking with
+    bitsets while preserving first-fit register allocation order.
+12. Port arithmetic, shifts, memory, division, and control-flow families.
+13. Replace `InstrAssembler<'a>` in production expansion code.
+14. Preserve tracer inline adapter support as finalized rows outside
     provider-free core.
-14. Delete the old recursive assembler once all parity tests pass.
-15. Run Hax/Aeneas again on:
+15. Delete the old recursive assembler once all parity tests pass.
+16. Run Hax/Aeneas again on:
    - metadata stamping,
    - allocator transitions,
    - ADDIW shallow lowering,
    - provider-free `expand_one_core`.
-16. Record the separate semantics follow-up: a hand-modeled Lean transition
+17. Record the separate semantics follow-up: a hand-modeled Lean transition
     relation for a small provider-free slice, plus an expansion-correctness
     statement comparing source-row execution with target-sequence execution.
-17. Run formatting, clippy, host tests, ZK tests, and dependency checks.
+18. Run formatting, clippy, host tests, ZK tests, and dependency checks.
 
 Do not leave both expanders in production. A temporary test-only reference path is acceptable during the rewrite, but the final branch should have one canonical production expander.
 
