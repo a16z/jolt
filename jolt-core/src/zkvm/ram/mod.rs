@@ -144,6 +144,24 @@ pub fn compute_min_ram_K(
     bytecode_end.max(io_end).next_power_of_two()
 }
 
+/// Computes the maximum valid `ram_K` from the memory layout.
+///
+/// The emulator confines all RAM accesses (advice, I/O, bytecode, stack, heap)
+/// to the byte range `[memory_layout.get_lowest_address(), memory_layout.heap_end)`.
+/// `remap_address` divides by 8, so the count of addressable words is
+/// `(heap_end - lowest_address) / 8`. Any honest `ram_K` is the smallest power
+/// of two that fits this count.
+///
+/// Verifiers MUST reject proof-supplied `ram_K` values exceeding this bound:
+/// `gen_ram_initial_memory_state` allocates a dense `Vec<u64>` of length
+/// `ram_K`, so an unbounded `ram_K` would let an untrusted proof force
+/// arbitrarily large allocations on the verifier. All inputs come from the
+/// trusted `MemoryLayout` carried in preprocessing, never the proof.
+pub fn compute_max_ram_K(memory_layout: &MemoryLayout) -> usize {
+    let total_words = (memory_layout.heap_end - memory_layout.get_lowest_address()) / 8;
+    (total_words as usize).next_power_of_two()
+}
+
 /// Returns Some(address) if there was read/write
 /// Returns None if there was no read/write
 #[inline(always)]
@@ -946,5 +964,51 @@ mod tests {
         let fast_eval = eval_initial_ram_mle::<F>(&ram_pp, &program_io, &r);
 
         assert_eq!(dense_eval, fast_eval);
+    }
+
+    /// `compute_max_ram_K` must bound the honest `ram_K` derivable from the
+    /// memory layout while rejecting much larger values that would drive
+    /// `gen_ram_initial_memory_state` to allocate gigabytes of zeroed memory.
+    #[test]
+    fn compute_max_ram_K_bounds_honest_layout() {
+        let memory_config = MemoryConfig {
+            program_size: Some(4096),
+            ..Default::default()
+        };
+        let layout = common::jolt_device::MemoryLayout::new(&memory_config);
+
+        let max_ram_K = compute_max_ram_K(&layout);
+
+        // The bound is a power of two (required by ram_K invariants).
+        assert!(
+            max_ram_K.is_power_of_two(),
+            "max_ram_K must be a power of two"
+        );
+
+        // Every reachable byte (advice + I/O + bytecode + stack + heap) fits
+        // in the bound when divided into 8-byte words.
+        let reachable_words = (layout.heap_end - layout.get_lowest_address()) as usize / 8;
+        assert!(
+            max_ram_K >= reachable_words,
+            "max_ram_K = {max_ram_K} fails to cover reachable_words = {reachable_words}"
+        );
+
+        // The bound is tight: halving it would no longer cover every reachable
+        // word — i.e., the verifier doesn't grant gratuitous slack.
+        if max_ram_K > 1 {
+            assert!(
+                max_ram_K / 2 < reachable_words,
+                "max_ram_K = {max_ram_K} grants more slack than necessary; \
+                 reachable_words = {reachable_words}"
+            );
+        }
+
+        // A pathologically large `ram_K` (2^40 -> ~8 TiB of u64s) is rejected
+        // by the same predicate the verifier uses.
+        let oversized_ram_K = 1usize << 40;
+        assert!(
+            oversized_ram_K > max_ram_K,
+            "oversized ram_K = 2^40 must exceed the layout-derived max"
+        );
     }
 }
