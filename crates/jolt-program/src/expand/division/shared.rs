@@ -173,86 +173,94 @@ pub(in crate::expand) fn expand_unsigned_word_div_rem(
     } else {
         allocator.allocate()?
     };
-    let mut sequence = core::ExpansionSequence::new(instruction);
-    sequence.emit_i_expanded(
-        JoltInstructionKind::VirtualZeroExtendWord,
-        rs1_extended,
-        rs1(instruction)?,
-        0,
-        allocator,
-    )?;
-    sequence.emit_i_expanded(
-        JoltInstructionKind::VirtualZeroExtendWord,
-        rs2_extended,
-        rs2(instruction)?,
-        0,
-        allocator,
-    )?;
-    sequence.emit_j_expanded(JoltInstructionKind::VirtualAdvice, quotient, 0, allocator)?;
-    sequence.emit_b_expanded(
-        JoltInstructionKind::VirtualAssertMulUNoOverflow,
-        quotient,
-        rs2_extended,
-        0,
-        allocator,
-    )?;
-    sequence.emit_r_expanded(
-        JoltInstructionKind::MUL,
-        tmp,
-        quotient,
-        rs2_extended,
-        allocator,
-    )?;
-    sequence.emit_b_expanded(
-        JoltInstructionKind::VirtualAssertLTE,
-        tmp,
-        rs1_extended,
-        0,
-        allocator,
-    )?;
-    sequence.emit_r_expanded(JoltInstructionKind::SUB, tmp, rs1_extended, tmp, allocator)?;
-    sequence.emit_b_expanded(
-        JoltInstructionKind::VirtualAssertValidUnsignedRemainder,
-        tmp,
-        rs2_extended,
-        0,
-        allocator,
-    )?;
-    if remainder_output {
-        sequence.emit_i_expanded(
-            JoltInstructionKind::VirtualSignExtendWord,
-            rd(instruction)?,
-            tmp,
+
+    let mut ops = vec![
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+            JoltInstructionKind::VirtualZeroExtendWord,
+            rs1_extended,
+            rs1(instruction)?,
             0,
-            allocator,
-        )?;
-    } else {
-        sequence.emit_i_expanded(
-            JoltInstructionKind::VirtualSignExtendWord,
-            tmp,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+            JoltInstructionKind::VirtualZeroExtendWord,
+            rs2_extended,
+            rs2(instruction)?,
+            0,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::j(
+            JoltInstructionKind::VirtualAdvice,
             quotient,
             0,
-            allocator,
-        )?;
-        sequence.emit_b_expanded(
-            JoltInstructionKind::VirtualAssertValidDiv0,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::b(
+            JoltInstructionKind::VirtualAssertMulUNoOverflow,
+            quotient,
             rs2_extended,
-            tmp,
             0,
-            allocator,
-        )?;
-        sequence.emit_i_expanded(
-            JoltInstructionKind::ADDI,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::r(
+            JoltInstructionKind::MUL,
+            tmp,
+            quotient,
+            rs2_extended,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::b(
+            JoltInstructionKind::VirtualAssertLTE,
+            tmp,
+            rs1_extended,
+            0,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::r(
+            JoltInstructionKind::SUB,
+            tmp,
+            rs1_extended,
+            tmp,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::b(
+            JoltInstructionKind::VirtualAssertValidUnsignedRemainder,
+            tmp,
+            rs2_extended,
+            0,
+        )),
+    ];
+
+    if remainder_output {
+        ops.push(grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+            JoltInstructionKind::VirtualSignExtendWord,
             rd(instruction)?,
             tmp,
             0,
-            allocator,
-        )?;
+        )));
+    } else {
+        ops.extend([
+            grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+                JoltInstructionKind::VirtualSignExtendWord,
+                tmp,
+                quotient,
+                0,
+            )),
+            grammar::ExpansionOp::Expand(grammar::RowTemplate::b(
+                JoltInstructionKind::VirtualAssertValidDiv0,
+                rs2_extended,
+                tmp,
+                0,
+            )),
+            grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+                JoltInstructionKind::ADDI,
+                rd(instruction)?,
+                tmp,
+                0,
+            )),
+        ]);
     }
 
-    let mut released = vec![rs1_extended, rs2_extended, quotient];
+    ops.extend([
+        grammar::ExpansionOp::Release(rs1_extended),
+        grammar::ExpansionOp::Release(rs2_extended),
+        grammar::ExpansionOp::Release(quotient),
+    ]);
     if !remainder_output {
-        released.push(tmp);
+        ops.push(grammar::ExpansionOp::Release(tmp));
     }
-    sequence.finish_releasing(allocator, released)
+    core::ExpansionState::new(allocator).materialize_ops(instruction, ops)
 }
