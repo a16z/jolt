@@ -221,25 +221,6 @@ impl ExpansionSequence {
         )
     }
 
-    pub(super) fn emit_align_expanded(
-        &mut self,
-        instruction_kind: JoltInstructionKind,
-        rs1: u8,
-        imm: i128,
-        allocator: &mut ExpansionAllocator,
-    ) -> Result<(), ExpansionError> {
-        self.emit_expanded(
-            instruction_kind,
-            NormalizedOperands {
-                rd: None,
-                rs1: Some(rs1),
-                rs2: None,
-                imm,
-            },
-            allocator,
-        )
-    }
-
     pub(super) fn finish(self) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
         self.rows.check_capacity()?;
         stamp_sequence(self.rows.into_vec(), self.is_compressed)
