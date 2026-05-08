@@ -1847,20 +1847,23 @@ resource materialization machinery as provider-free expansion.
 13. Add an explicit `expand::buffer` boundary for per-source row storage.
 14. Split sequence metadata stamping into a dedicated `expand::metadata`
     boundary.
-15. Port arithmetic, shifts, memory, division, and control-flow families.
-16. Replace `InstrAssembler<'a>` in production expansion code.
-17. Preserve tracer inline adapter support as finalized rows outside
+15. Add `ExpansionState` and route provider-free recursive helper expansion
+    through the core entry point while keeping inline provider handling outside
+    that core.
+16. Port arithmetic, shifts, memory, division, and control-flow families.
+17. Replace `InstrAssembler<'a>` in production expansion code.
+18. Preserve tracer inline adapter support as finalized rows outside
     provider-free core.
-18. Delete the old recursive assembler once all parity tests pass.
-19. Run Hax/Aeneas again on:
+19. Delete the old recursive assembler once all parity tests pass.
+20. Run Hax/Aeneas again on:
    - metadata stamping,
    - allocator transitions,
    - ADDIW shallow lowering,
    - provider-free `expand_one_core`.
-20. Record the separate semantics follow-up: a hand-modeled Lean transition
+21. Record the separate semantics follow-up: a hand-modeled Lean transition
     relation for a small provider-free slice, plus an expansion-correctness
     statement comparing source-row execution with target-sequence execution.
-21. Run formatting, clippy, host tests, ZK tests, and dependency checks.
+22. Run formatting, clippy, host tests, ZK tests, and dependency checks.
 
 Do not leave both expanders in production. A temporary test-only reference path is acceptable during the rewrite, but the final branch should have one canonical production expander.
 

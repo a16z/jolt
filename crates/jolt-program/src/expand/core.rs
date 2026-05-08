@@ -1,9 +1,30 @@
 use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
 
 use crate::expand::{
-    allocator::ExpansionAllocator, buffer::ExpansionBuffer, expand_instruction,
+    allocator::ExpansionAllocator, buffer::ExpansionBuffer, expand_instruction_core,
     metadata::stamp_sequence, ExpansionError,
 };
+
+pub(super) struct ExpansionState<'a> {
+    allocator: &'a mut ExpansionAllocator,
+}
+
+impl<'a> ExpansionState<'a> {
+    pub(super) fn new(allocator: &'a mut ExpansionAllocator) -> Self {
+        Self { allocator }
+    }
+
+    pub(super) fn allocator(&mut self) -> &mut ExpansionAllocator {
+        self.allocator
+    }
+
+    pub(super) fn expand_one_core(
+        &mut self,
+        instruction: &NormalizedInstruction,
+    ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+        expand_instruction_core(instruction, self)
+    }
+}
 
 pub(super) struct ExpansionSequence {
     address: usize,
@@ -110,7 +131,7 @@ impl ExpansionSequence {
             is_compressed: false,
         };
         self.rows
-            .extend(expand_instruction(&instruction, allocator)?)
+            .extend(ExpansionState::new(allocator).expand_one_core(&instruction)?)
     }
 
     pub(super) fn emit_r_expanded(
