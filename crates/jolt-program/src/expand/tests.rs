@@ -2,12 +2,13 @@ use super::*;
 
 use common::constants::RAM_START_ADDRESS;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Deserialize)]
 struct ExpansionParityCase {
     name: String,
     input: NormalizedInstruction,
-    output: Vec<NormalizedInstruction>,
+    output_sha256: String,
 }
 
 fn instruction(
@@ -192,16 +193,19 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
 
 #[test]
 fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Error>> {
-    // Golden rows generated from baseline main commit 51d81a36e. This catches
-    // recursive expansion order and virtual-register reuse regressions.
+    // Expected hashes generated from baseline main commit 51d81a36e. This catches
+    // recursive expansion order and virtual-register reuse regressions without
+    // checking a giant expanded-row fixture into the repository.
     let cases: Vec<ExpansionParityCase> =
-        serde_json::from_str(include_str!("fixtures/main_expand_parity.json"))?;
+        serde_json::from_str(include_str!("fixtures/main_expand_parity_hashes.json"))?;
 
     for case in cases {
         let mut allocator = ExpansionAllocator::new();
         let expanded = expand_instruction(&case.input, &mut allocator)?;
+        let encoded = serde_json::to_vec(&expanded)?;
+        let output_sha256 = hex::encode(Sha256::digest(encoded));
 
-        assert_eq!(expanded, case.output, "{}", case.name);
+        assert_eq!(output_sha256, case.output_sha256, "{}", case.name);
     }
 
     Ok(())
