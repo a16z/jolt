@@ -5,10 +5,8 @@ pub(in crate::expand) fn expand_mret(
     allocator: &mut ExpansionAllocator,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     let mepc_vr = allocator.mepc_register();
-    let mut asm =
-        assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
-    let jalr_rd = asm.allocator().allocate()?;
-    asm.emit_i(JoltInstructionKind::JALR, jalr_rd, mepc_vr, 0)?;
-    asm.allocator().release(jalr_rd)?;
-    asm.finalize()
+    let jalr_rd = allocator.allocate()?;
+    let mut sequence = core::ExpansionSequence::new(instruction);
+    sequence.emit_i(JoltInstructionKind::JALR, jalr_rd, mepc_vr, 0);
+    sequence.finish_releasing(allocator, [jalr_rd])
 }

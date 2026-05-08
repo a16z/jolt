@@ -11,30 +11,28 @@ pub(in crate::expand) fn expand_ecall(
     let vr_mcause = allocator.mcause_register();
     let vr_mtval = allocator.mtval_register();
     let vr_mstatus = allocator.mstatus_register();
-    let mut asm =
-        assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
+    let mut sequence = core::ExpansionSequence::new(instruction);
 
-    let ecall_addr = asm.allocator().allocate()?;
-    asm.emit_u(JoltInstructionKind::AUIPC, ecall_addr, 0)?;
-    asm.emit_i(JoltInstructionKind::ADDI, vr_mepc, ecall_addr, 0)?;
-    asm.allocator().release(ecall_addr)?;
+    let ecall_addr = allocator.allocate()?;
+    sequence.emit_u(JoltInstructionKind::AUIPC, ecall_addr, 0);
+    sequence.emit_i(JoltInstructionKind::ADDI, vr_mepc, ecall_addr, 0);
+    allocator.release(ecall_addr)?;
 
-    asm.emit_i(
+    sequence.emit_i(
         JoltInstructionKind::ADDI,
         vr_mcause,
         0,
         MCAUSE_ECALL_FROM_MMODE,
-    )?;
-    asm.emit_i(JoltInstructionKind::ADDI, vr_mtval, 0, 0)?;
+    );
+    sequence.emit_i(JoltInstructionKind::ADDI, vr_mtval, 0, 0);
 
-    let three = asm.allocator().allocate()?;
-    asm.emit_i(JoltInstructionKind::ADDI, three, 0, 3)?;
-    asm.emit_i(JoltInstructionKind::SLLI, vr_mstatus, three, 11)?;
-    asm.allocator().release(three)?;
+    let three = allocator.allocate()?;
+    sequence.emit_i(JoltInstructionKind::ADDI, three, 0, 3);
+    sequence.emit_i(JoltInstructionKind::VirtualMULI, vr_mstatus, three, 1 << 11);
+    allocator.release(three)?;
 
-    let jalr_rd = asm.allocator().allocate()?;
-    asm.emit_i(JoltInstructionKind::JALR, jalr_rd, v_trap_handler_reg, 0)?;
-    asm.allocator().release(jalr_rd)?;
+    let jalr_rd = allocator.allocate()?;
+    sequence.emit_i(JoltInstructionKind::JALR, jalr_rd, v_trap_handler_reg, 0);
 
-    asm.finalize()
+    sequence.finish_releasing(allocator, [jalr_rd])
 }

@@ -1833,8 +1833,8 @@ resource materialization machinery as provider-free expansion.
 10. Port one small family, such as ADDIW/ADDW/SUBW, to recipe-backed shallow
     lowering and prove parity against the current output.
     Started in this PR by introducing an owned `ExpansionSequence` and moving
-    ADDIW/ADDW/SUBW, MULW/MULH/MULHSU, and shift-family lowerings off the
-    borrowed `InstrAssembler<'a>` path.
+    ADDIW/ADDW/SUBW, MULW/MULH/MULHSU, shift-family lowerings, and simple
+    control-flow/CSR lowerings off the borrowed `InstrAssembler<'a>` path.
 11. Port arithmetic, shifts, memory, division, and control-flow families.
 12. Replace `InstrAssembler<'a>` in production expansion code.
 13. Preserve tracer inline adapter support as finalized rows outside

@@ -68,6 +68,30 @@ impl ExpansionSequence {
         );
     }
 
+    pub(super) fn emit_j(&mut self, instruction_kind: JoltInstructionKind, rd: u8, imm: i128) {
+        self.emit(
+            instruction_kind,
+            NormalizedOperands {
+                rd: Some(rd),
+                rs1: None,
+                rs2: None,
+                imm,
+            },
+        );
+    }
+
+    pub(super) fn emit_u(&mut self, instruction_kind: JoltInstructionKind, rd: u8, imm: i128) {
+        self.emit(
+            instruction_kind,
+            NormalizedOperands {
+                rd: Some(rd),
+                rs1: None,
+                rs2: None,
+                imm,
+            },
+        );
+    }
+
     pub(super) fn finish(mut self) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
         if self.rows.is_empty() {
             return Err(ExpansionError::EmptySequence);
