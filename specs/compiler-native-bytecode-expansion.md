@@ -1836,7 +1836,8 @@ resource materialization machinery as provider-free expansion.
     ADDIW/ADDW/SUBW, MULW/MULH/MULHSU, shift-family lowerings, and simple
     control-flow/CSR lowerings off the borrowed `InstrAssembler<'a>` path. The
     memory family now also uses owned sequence emission with explicit recursive
-    helper expansion.
+    helper expansion, and division has been ported while preserving delayed
+    temporary allocation for signed 64-bit div/rem.
 11. Port arithmetic, shifts, memory, division, and control-flow families.
 12. Replace `InstrAssembler<'a>` in production expansion code.
 13. Preserve tracer inline adapter support as finalized rows outside
