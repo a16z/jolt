@@ -1,8 +1,10 @@
-use jolt_riscv::{JoltInstructionKind, NormalizedOperands};
+use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ExpansionOp {
     Row(RowTemplate),
+    Expand(RowTemplate),
+    Release(u8),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,6 +40,17 @@ impl RowTemplate {
                 rs2: None,
                 imm,
             },
+        }
+    }
+
+    pub(super) fn instruction_at(self, address: usize) -> NormalizedInstruction {
+        NormalizedInstruction {
+            instruction_kind: self.instruction_kind,
+            address,
+            operands: self.operands,
+            virtual_sequence_remaining: Some(0),
+            is_first_in_sequence: false,
+            is_compressed: false,
         }
     }
 }

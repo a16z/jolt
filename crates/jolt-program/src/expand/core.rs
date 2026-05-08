@@ -27,6 +27,25 @@ impl<'a> ExpansionState<'a> {
         self.allocator.exit_expansion();
         result
     }
+
+    pub(super) fn materialize_ops(
+        &mut self,
+        source: &NormalizedInstruction,
+        ops: impl IntoIterator<Item = ExpansionOp>,
+    ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+        let mut sequence = ExpansionSequence::new(source);
+        for op in ops {
+            match op {
+                ExpansionOp::Row(row) => sequence.emit(row.instruction_kind, row.operands),
+                ExpansionOp::Expand(row) => {
+                    let instruction = row.instruction_at(source.address);
+                    sequence.extend(self.expand_one_core(&instruction)?)?;
+                }
+                ExpansionOp::Release(register) => self.allocator.release(register)?,
+            }
+        }
+        sequence.finish()
+    }
 }
 
 pub(super) struct ExpansionSequence {
@@ -62,7 +81,16 @@ impl ExpansionSequence {
     pub(super) fn emit_op(&mut self, op: ExpansionOp) {
         match op {
             ExpansionOp::Row(row) => self.emit(row.instruction_kind, row.operands),
+            ExpansionOp::Expand(row) => self.emit(row.instruction_kind, row.operands),
+            ExpansionOp::Release(_) => {}
         }
+    }
+
+    pub(super) fn extend(
+        &mut self,
+        rows: impl IntoIterator<Item = NormalizedInstruction>,
+    ) -> Result<(), ExpansionError> {
+        self.rows.extend(rows)
     }
 
     pub(super) fn emit_ops(&mut self, ops: impl IntoIterator<Item = ExpansionOp>) {
