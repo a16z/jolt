@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778185506580,
+  "lastUpdate": 1778262474163,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -97150,6 +97150,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 862112,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "quang.dao@layerzerolabs.org",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "51d81a36efaa411143b572da6bd1fedae19be2b5",
+          "message": "Move bytecode expansion into jolt-program and fix CSR-zero handling (#1490)\n\n* docs: add bytecode expansion crate spec\n\n* docs: clarify bytecode parity cutover testing\n\n* docs: add formal verification readiness guidance\n\n* docs(spec): refine preprocessing scope\n\nLock the crate split around jolt-program-preprocess as materialized program preprocessing.\n\nClarify that PCS setup, commitment derivation, prover/verifier preprocessing keys, and bytecode commitment integration remain out of scope for this PR. Capture refactor/crates and bytecode commitment branches as future integration context.\n\n* docs(spec): add PR references\n\nFill in the spec PR field for #1490 and link related PR references.\n\nAlso update the status to in review and name bytecode-commitment PR #1344 precisely in non-goals and future integration notes.\n\n* docs(spec): polish implementation guidance\n\nLock the final JoltProgramPreprocessing name throughout the spec.\n\nClarify that InstrAssembler should borrow the expansion allocator mutably and document the dependency-light fallback for compute_min_ram_K.\n\n* docs(spec): reuse jolt-riscv for instructions\n\nRefactor the crate split spec to strengthen the existing jolt-riscv crate instead of introducing jolt-riscv-instructions.\n\nUpdate dependency direction, workspace layout, file lists, verification commands, and implementation checklist so the PR adds three new crates while moving static instruction data below tracer into jolt-riscv.\n\n* docs(spec): fuse program crate design\n\n* docs(spec): lock implementation constraints\n\n* docs(spec): clarify instruction boundary\n\n* docs(spec): move program row to jolt-program\n\n* docs(spec): use normalized instruction row\n\n* refactor: introduce normalized instruction row\n\n* docs(spec): add execution backend boundary\n\n* refactor(trace): isolate tracer backend boundary\n\nAdd the jolt-program execution contract and move tracer-specific adapters into tracer. Keep jolt-trace tracer-free, with default backend selection specified for the SDK layer.\n\n* feat(program): add bytecode expansion crate\n\nMove RV64 program image decoding, bytecode expansion, and program preprocessing into jolt-program/jolt-riscv boundaries. Wire jolt-core through normalized preprocessing rows and keep tracer as the execution backend adapter.\n\nAdd InlineExpansionProvider as a deliberate pivot from the approved spec so registered Jolt inline source opcodes can still flow through jolt-program expansion without making jolt-program depend on tracer or inline advice internals.\n\n* refactor(program): expose host execution backend hook\n\nAdd a backend-neutral tracing hook on jolt-core host Program by building a jolt_program::ExecutableProgram and executing it through ExecutionBackend.\n\nKeep existing tracer-returning host conveniences intact while documenting the SDK default-backend cutover as the next integration step.\n\n* feat(program): finish expansion boundary spec\n\nComplete the remaining program-boundary work by routing generated SDK trace APIs through ExecutionBackend with TracerBackend selected in jolt-sdk, making analysis summaries use neutral trace rows, and returning final memory through the tracer backend adapter.\n\nAdd jolt-eval bytecode expansion invariants and a decode_expand benchmark, then mark the spec acceptance checklist and implementation checklist complete with the documented prover-witness boundary caveat.\n\n* fix bytecode inline expansion alignment\n\n* refactor bytecode expansion modules\n\n* refactor(tracer): remove legacy expansion bodies\n\nRoute tracer-side expanded execution through the jolt-program bytecode expansion bridge and remove the stale concrete per-instruction expansion implementations. Keep custom inline expansion as the tracer-owned provider path, and fill division advice by scanning generated virtual advice rows instead of relying on old concrete indexes.\n\n* fix(ci): update expansion call sites\n\n* refactor: trim bytecode expansion cleanup\n\n* fix(ci): avoid tracer test unused import\n\n* docs(expand): add extraction-native spec\n\nDocument a follow-up production rewrite of jolt-program bytecode expansion for Hax/Aeneas friendliness, anchored to PR #1490 at a3448e6da44f.\n\nThe spec compares the current recursive assembler shape against an owned-state, shallow-lowering design with explicit work-stack recursion, bitset allocation, bounded buffers, and metadata stamping.\n\n* docs(expand): refine extraction grammar spec\n\n* docs(expand): align spec with MLIR lowering\n\nFrame bytecode expansion as a compiler lowering pipeline with explicit source, target, legality, and resource materialization phases.\n\nDocument the near-term Rust-first boundary while keeping the grammar MLIR-ready for future dialect work.\n\n* docs(expand): define compiler-native pass scope\n\n* fix(expand): reject zero CSR rows\n\nReject CSRRW/CSRRS rows with CSR address 0 instead of emitting a default normalized row that can be skipped by bytecode PC mapping.\n\nRemove the circular tracer expansion bridge test now that tracer delegates to jolt-program expansion, and update both bytecode expansion specs to document the CSR-zero correction and the non-circular testing strategy.\n\n* docs(bytecode): refine expansion follow-up spec\n\n* fix(program): address expansion review nits\n\nTighten bytecode PC mapper validation, make the expanded-bytecode flag test assert parity, and apply small API cleanups from review. Also ignore Lake build artifacts when embedding zklean templates so workspace clippy is not affected by local .lake directories.\n\n* refactor(program): split expansion modules by instruction\n\nMove jolt-program expansion implementations out of broad category files and into per-instruction modules, keeping shared lowering helpers in local shared modules. No expansion behavior changes intended.\n\n* docs(program): clarify executable image stages\n\n* refactor(program): rename built program artifacts\n\n* refactor(tracer): adapt RAM access at boundary\n\n* refactor(riscv): fold trace traits into catalog\n\n* refactor(tracer): use riscv side effect metadata\n\n* refactor(program): address latest expansion review comments",
+          "timestamp": "2026-05-08T12:40:59-04:00",
+          "tree_id": "9bd8d75e6756d8d711515465475b8a868971799d",
+          "url": "https://github.com/a16z/jolt/commit/51d81a36efaa411143b572da6bd1fedae19be2b5"
+        },
+        "date": 1778262471633,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.0068,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 862064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3086,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 498676,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498228,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 498604,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7075,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498932,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5907,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 500728,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8954,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 498044,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.5056,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 192144,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4136,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 866032,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5648,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 498764,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4668,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 498844,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.1941,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 500188,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.8253,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 500756,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.536,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1050660,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 13.4327,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 668484,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 104.1214,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2111884,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4723,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 498664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5148,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 500608,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.4282,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 864240,
             "unit": "KB",
             "extra": ""
           }
