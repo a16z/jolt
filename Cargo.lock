@@ -2893,6 +2893,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-equivalence"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "ark-std 0.5.0",
+ "blake2 0.11.0-rc.6",
+ "bolt",
+ "common",
+ "jolt-core",
+ "jolt-dory",
+ "jolt-field",
+ "jolt-inlines-sha2",
+ "jolt-kernels",
+ "jolt-lookup-tables",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-profiling",
+ "jolt-prover",
+ "jolt-r1cs",
+ "jolt-sumcheck",
+ "jolt-trace",
+ "jolt-transcript",
+ "jolt-verifier",
+ "jolt-witness",
+ "num-traits",
+ "postcard",
+ "rayon",
+ "serde",
+ "strum 0.28.0",
+ "tracer",
+ "tracing",
+]
+
+[[package]]
 name = "jolt-eval"
 version = "0.1.0"
 dependencies = [
