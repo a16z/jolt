@@ -5,7 +5,15 @@ pub(in crate::expand) fn expand_ebreak(
     allocator: &mut ExpansionAllocator,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     let discard = allocator.allocate()?;
-    let mut sequence = core::ExpansionSequence::new(instruction);
-    sequence.emit_j(JoltInstructionKind::JAL, discard, 0);
-    sequence.finish_releasing(allocator, [discard])
+    core::ExpansionState::new(allocator).materialize_ops(
+        instruction,
+        [
+            grammar::ExpansionOp::Row(grammar::RowTemplate::j(
+                JoltInstructionKind::JAL,
+                discard,
+                0,
+            )),
+            grammar::ExpansionOp::Release(discard),
+        ],
+    )
 }

@@ -11,28 +11,57 @@ pub(in crate::expand) fn expand_ecall(
     let vr_mcause = allocator.mcause_register();
     let vr_mtval = allocator.mtval_register();
     let vr_mstatus = allocator.mstatus_register();
-    let mut sequence = core::ExpansionSequence::new(instruction);
 
     let ecall_addr = allocator.allocate()?;
-    sequence.emit_u(JoltInstructionKind::AUIPC, ecall_addr, 0);
-    sequence.emit_i(JoltInstructionKind::ADDI, vr_mepc, ecall_addr, 0);
-    allocator.release(ecall_addr)?;
-
-    sequence.emit_i(
-        JoltInstructionKind::ADDI,
-        vr_mcause,
-        0,
-        MCAUSE_ECALL_FROM_MMODE,
-    );
-    sequence.emit_i(JoltInstructionKind::ADDI, vr_mtval, 0, 0);
-
     let three = allocator.allocate()?;
-    sequence.emit_i(JoltInstructionKind::ADDI, three, 0, 3);
-    sequence.emit_i(JoltInstructionKind::VirtualMULI, vr_mstatus, three, 1 << 11);
-    allocator.release(three)?;
-
     let jalr_rd = allocator.allocate()?;
-    sequence.emit_i(JoltInstructionKind::JALR, jalr_rd, v_trap_handler_reg, 0);
-
-    sequence.finish_releasing(allocator, [jalr_rd])
+    core::ExpansionState::new(allocator).materialize_ops(
+        instruction,
+        [
+            grammar::ExpansionOp::Row(grammar::RowTemplate::u(
+                JoltInstructionKind::AUIPC,
+                ecall_addr,
+                0,
+            )),
+            grammar::ExpansionOp::Row(grammar::RowTemplate::i(
+                JoltInstructionKind::ADDI,
+                vr_mepc,
+                ecall_addr,
+                0,
+            )),
+            grammar::ExpansionOp::Release(ecall_addr),
+            grammar::ExpansionOp::Row(grammar::RowTemplate::i(
+                JoltInstructionKind::ADDI,
+                vr_mcause,
+                0,
+                MCAUSE_ECALL_FROM_MMODE,
+            )),
+            grammar::ExpansionOp::Row(grammar::RowTemplate::i(
+                JoltInstructionKind::ADDI,
+                vr_mtval,
+                0,
+                0,
+            )),
+            grammar::ExpansionOp::Row(grammar::RowTemplate::i(
+                JoltInstructionKind::ADDI,
+                three,
+                0,
+                3,
+            )),
+            grammar::ExpansionOp::Row(grammar::RowTemplate::i(
+                JoltInstructionKind::VirtualMULI,
+                vr_mstatus,
+                three,
+                1 << 11,
+            )),
+            grammar::ExpansionOp::Release(three),
+            grammar::ExpansionOp::Row(grammar::RowTemplate::i(
+                JoltInstructionKind::JALR,
+                jalr_rd,
+                v_trap_handler_reg,
+                0,
+            )),
+            grammar::ExpansionOp::Release(jalr_rd),
+        ],
+    )
 }

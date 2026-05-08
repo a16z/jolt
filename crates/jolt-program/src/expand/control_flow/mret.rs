@@ -6,7 +6,16 @@ pub(in crate::expand) fn expand_mret(
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     let mepc_vr = allocator.mepc_register();
     let jalr_rd = allocator.allocate()?;
-    let mut sequence = core::ExpansionSequence::new(instruction);
-    sequence.emit_i(JoltInstructionKind::JALR, jalr_rd, mepc_vr, 0);
-    sequence.finish_releasing(allocator, [jalr_rd])
+    core::ExpansionState::new(allocator).materialize_ops(
+        instruction,
+        [
+            grammar::ExpansionOp::Row(grammar::RowTemplate::i(
+                JoltInstructionKind::JALR,
+                jalr_rd,
+                mepc_vr,
+                0,
+            )),
+            grammar::ExpansionOp::Release(jalr_rd),
+        ],
+    )
 }

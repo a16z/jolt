@@ -43,6 +43,30 @@ impl RowTemplate {
         }
     }
 
+    pub(super) const fn j(instruction_kind: JoltInstructionKind, rd: u8, imm: i128) -> Self {
+        Self {
+            instruction_kind,
+            operands: NormalizedOperands {
+                rd: Some(rd),
+                rs1: None,
+                rs2: None,
+                imm,
+            },
+        }
+    }
+
+    pub(super) const fn u(instruction_kind: JoltInstructionKind, rd: u8, imm: i128) -> Self {
+        Self {
+            instruction_kind,
+            operands: NormalizedOperands {
+                rd: Some(rd),
+                rs1: None,
+                rs2: None,
+                imm,
+            },
+        }
+    }
+
     pub(super) fn instruction_at(self, address: usize) -> NormalizedInstruction {
         NormalizedInstruction {
             instruction_kind: self.instruction_kind,
