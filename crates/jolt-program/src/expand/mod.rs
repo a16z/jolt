@@ -26,6 +26,7 @@ use arithmetic::*;
 use control_flow::*;
 use core::ExpansionState;
 use division::*;
+use grammar::ExpansionBuilder;
 use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
 use memory::*;
 use operands::*;

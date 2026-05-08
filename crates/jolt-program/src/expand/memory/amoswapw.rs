@@ -8,21 +8,25 @@ pub(in crate::expand) fn expand_amoswapw(
     let v_dword = allocator.allocate()?;
     let v_shift = allocator.allocate()?;
     let v_rd = allocator.allocate()?;
-    let mut ops = super::shared::amo_pre64_ops(rs1(instruction)?, v_rd, v_dword, v_shift);
-    ops.extend(super::shared::amo_post64_ops(
-        rs1(instruction)?,
-        rs2(instruction)?,
-        v_dword,
-        v_shift,
-        v_mask,
-        rd(instruction)?,
-        v_rd,
-    ));
-    ops.extend([
-        grammar::ExpansionOp::Release(v_mask),
-        grammar::ExpansionOp::Release(v_dword),
-        grammar::ExpansionOp::Release(v_shift),
-        grammar::ExpansionOp::Release(v_rd),
-    ]);
-    core::ExpansionState::new(allocator).materialize_ops(instruction, ops)
+    let mut asm = ExpansionBuilder::new(instruction, allocator);
+
+    super::shared::emit_amo_pre64(&mut asm, rs1(instruction)?, v_rd, v_dword, v_shift)?;
+    super::shared::emit_amo_post64(
+        &mut asm,
+        super::shared::AmoPost64 {
+            rs1: rs1(instruction)?,
+            v_rs2: rs2(instruction)?,
+            v_dword,
+            v_shift,
+            v_mask,
+            rd: rd(instruction)?,
+            v_rd,
+        },
+    )?;
+    asm.release(v_mask)?;
+    asm.release(v_dword)?;
+    asm.release(v_shift)?;
+    asm.release(v_rd)?;
+
+    asm.finalize()
 }

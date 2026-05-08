@@ -2,7 +2,7 @@ use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands}
 
 use crate::expand::{
     allocator::ExpansionAllocator, buffer::ExpansionBuffer, expand_instruction_core,
-    grammar::ExpansionOp, metadata::stamp_sequence, ExpansionError,
+    metadata::stamp_sequence, ExpansionError,
 };
 
 pub(super) struct ExpansionState<'a> {
@@ -26,35 +26,6 @@ impl<'a> ExpansionState<'a> {
         let result = expand_instruction_core(instruction, self);
         self.allocator.exit_expansion();
         result
-    }
-
-    pub(super) fn materialize_ops(
-        &mut self,
-        source: &NormalizedInstruction,
-        ops: impl IntoIterator<Item = ExpansionOp>,
-    ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-        let mut sequence = ExpansionSequence::new(source);
-        self.materialize_ops_into(&mut sequence, source, ops)?;
-        sequence.finish()
-    }
-
-    pub(super) fn materialize_ops_into(
-        &mut self,
-        sequence: &mut ExpansionSequence,
-        source: &NormalizedInstruction,
-        ops: impl IntoIterator<Item = ExpansionOp>,
-    ) -> Result<(), ExpansionError> {
-        for op in ops {
-            match op {
-                ExpansionOp::Row(row) => sequence.emit(row.instruction_kind, row.operands),
-                ExpansionOp::Expand(row) => {
-                    let instruction = row.instruction_at(source.address);
-                    sequence.extend(self.expand_one_core(&instruction)?)?;
-                }
-                ExpansionOp::Release(register) => self.allocator.release(register)?,
-            }
-        }
-        Ok(())
     }
 }
 

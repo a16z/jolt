@@ -12,76 +12,28 @@ pub(in crate::expand) fn expand_ecall(
     let vr_mtval = allocator.mtval_register();
     let vr_mstatus = allocator.mstatus_register();
 
-    let mut state = core::ExpansionState::new(allocator);
-    let mut sequence = core::ExpansionSequence::new(instruction);
+    let mut asm = ExpansionBuilder::new(instruction, allocator);
 
-    let ecall_addr = state.allocator().allocate()?;
-    state.materialize_ops_into(
-        &mut sequence,
-        instruction,
-        [
-            grammar::ExpansionOp::Row(grammar::RowTemplate::u(
-                JoltInstructionKind::AUIPC,
-                ecall_addr,
-                0,
-            )),
-            grammar::ExpansionOp::Row(grammar::RowTemplate::i(
-                JoltInstructionKind::ADDI,
-                vr_mepc,
-                ecall_addr,
-                0,
-            )),
-            grammar::ExpansionOp::Release(ecall_addr),
-            grammar::ExpansionOp::Row(grammar::RowTemplate::i(
-                JoltInstructionKind::ADDI,
-                vr_mcause,
-                0,
-                MCAUSE_ECALL_FROM_MMODE,
-            )),
-            grammar::ExpansionOp::Row(grammar::RowTemplate::i(
-                JoltInstructionKind::ADDI,
-                vr_mtval,
-                0,
-                0,
-            )),
-        ],
-    )?;
+    let ecall_addr = asm.allocate()?;
+    asm.emit_u(JoltInstructionKind::AUIPC, ecall_addr, 0);
+    asm.emit_i(JoltInstructionKind::ADDI, vr_mepc, ecall_addr, 0);
+    asm.release(ecall_addr)?;
+    asm.emit_i(
+        JoltInstructionKind::ADDI,
+        vr_mcause,
+        0,
+        MCAUSE_ECALL_FROM_MMODE,
+    );
+    asm.emit_i(JoltInstructionKind::ADDI, vr_mtval, 0, 0);
 
-    let three = state.allocator().allocate()?;
-    state.materialize_ops_into(
-        &mut sequence,
-        instruction,
-        [
-            grammar::ExpansionOp::Row(grammar::RowTemplate::i(
-                JoltInstructionKind::ADDI,
-                three,
-                0,
-                3,
-            )),
-            grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
-                JoltInstructionKind::SLLI,
-                vr_mstatus,
-                three,
-                11,
-            )),
-            grammar::ExpansionOp::Release(three),
-        ],
-    )?;
+    let three = asm.allocate()?;
+    asm.emit_i(JoltInstructionKind::ADDI, three, 0, 3);
+    asm.expand_i(JoltInstructionKind::SLLI, vr_mstatus, three, 11)?;
+    asm.release(three)?;
 
-    let jalr_rd = state.allocator().allocate()?;
-    state.materialize_ops_into(
-        &mut sequence,
-        instruction,
-        [
-            grammar::ExpansionOp::Row(grammar::RowTemplate::i(
-                JoltInstructionKind::JALR,
-                jalr_rd,
-                v_trap_handler_reg,
-                0,
-            )),
-            grammar::ExpansionOp::Release(jalr_rd),
-        ],
-    )?;
+    let jalr_rd = asm.allocate()?;
+    asm.emit_i(JoltInstructionKind::JALR, jalr_rd, v_trap_handler_reg, 0);
+    asm.release(jalr_rd)?;
 
-    sequence.finish()
+    asm.finalize()
 }

@@ -9,39 +9,33 @@ pub(in crate::expand) fn expand_lrw(
     let v_reservation_w = allocator.reservation_w_register();
     let v_reservation_d = allocator.reservation_d_register();
     let ram_start = allocator.allocate()?;
-    core::ExpansionState::new(allocator).materialize_ops(
-        instruction,
-        [
-            grammar::ExpansionOp::Expand(grammar::RowTemplate::u(
-                JoltInstructionKind::LUI,
-                ram_start,
-                RAM_START_ADDRESS as i128,
-            )),
-            grammar::ExpansionOp::Expand(grammar::RowTemplate::b(
-                JoltInstructionKind::VirtualAssertLTE,
-                ram_start,
-                rs1(instruction)?,
-                0,
-            )),
-            grammar::ExpansionOp::Release(ram_start),
-            grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
-                JoltInstructionKind::ADDI,
-                v_reservation_w,
-                rs1(instruction)?,
-                0,
-            )),
-            grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
-                JoltInstructionKind::ADDI,
-                v_reservation_d,
-                0,
-                0,
-            )),
-            grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
-                JoltInstructionKind::LW,
-                rd(instruction)?,
-                rs1(instruction)?,
-                0,
-            )),
-        ],
-    )
+    let mut asm = ExpansionBuilder::new(instruction, allocator);
+
+    asm.expand_u(
+        JoltInstructionKind::LUI,
+        ram_start,
+        RAM_START_ADDRESS as i128,
+    )?;
+    asm.expand_b(
+        JoltInstructionKind::VirtualAssertLTE,
+        ram_start,
+        rs1(instruction)?,
+        0,
+    )?;
+    asm.release(ram_start)?;
+    asm.expand_i(
+        JoltInstructionKind::ADDI,
+        v_reservation_w,
+        rs1(instruction)?,
+        0,
+    )?;
+    asm.expand_i(JoltInstructionKind::ADDI, v_reservation_d, 0, 0)?;
+    asm.expand_i(
+        JoltInstructionKind::LW,
+        rd(instruction)?,
+        rs1(instruction)?,
+        0,
+    )?;
+
+    asm.finalize()
 }

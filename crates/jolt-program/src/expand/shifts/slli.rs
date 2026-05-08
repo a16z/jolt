@@ -5,13 +5,14 @@ pub(in crate::expand) fn expand_slli(
     allocator: &mut ExpansionAllocator,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     let shift = instruction.operands.imm & 0x3f;
-    core::ExpansionState::new(allocator).materialize_ops(
-        instruction,
-        [grammar::ExpansionOp::Row(grammar::RowTemplate::i(
-            JoltInstructionKind::VirtualMULI,
-            rd(instruction)?,
-            rs1(instruction)?,
-            1i128 << shift,
-        ))],
-    )
+    let mut asm = ExpansionBuilder::new(instruction, allocator);
+
+    asm.emit_i(
+        JoltInstructionKind::VirtualMULI,
+        rd(instruction)?,
+        rs1(instruction)?,
+        1i128 << shift,
+    );
+
+    asm.finalize()
 }

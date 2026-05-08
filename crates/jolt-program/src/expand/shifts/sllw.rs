@@ -5,28 +5,27 @@ pub(in crate::expand) fn expand_sllw(
     allocator: &mut ExpansionAllocator,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     let v_pow2 = allocator.allocate()?;
-    core::ExpansionState::new(allocator).materialize_ops(
-        instruction,
-        [
-            grammar::ExpansionOp::Row(grammar::RowTemplate::i(
-                JoltInstructionKind::VirtualPow2W,
-                v_pow2,
-                rs2(instruction)?,
-                0,
-            )),
-            grammar::ExpansionOp::Row(grammar::RowTemplate::r(
-                JoltInstructionKind::MUL,
-                rd(instruction)?,
-                rs1(instruction)?,
-                v_pow2,
-            )),
-            grammar::ExpansionOp::Row(grammar::RowTemplate::i(
-                JoltInstructionKind::VirtualSignExtendWord,
-                rd(instruction)?,
-                rd(instruction)?,
-                0,
-            )),
-            grammar::ExpansionOp::Release(v_pow2),
-        ],
-    )
+    let mut asm = ExpansionBuilder::new(instruction, allocator);
+
+    asm.emit_i(
+        JoltInstructionKind::VirtualPow2W,
+        v_pow2,
+        rs2(instruction)?,
+        0,
+    );
+    asm.emit_r(
+        JoltInstructionKind::MUL,
+        rd(instruction)?,
+        rs1(instruction)?,
+        v_pow2,
+    );
+    asm.emit_i(
+        JoltInstructionKind::VirtualSignExtendWord,
+        rd(instruction)?,
+        rd(instruction)?,
+        0,
+    );
+    asm.release(v_pow2)?;
+
+    asm.finalize()
 }

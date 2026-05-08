@@ -1,11 +1,10 @@
 use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ExpansionOp {
-    Row(RowTemplate),
-    Expand(RowTemplate),
-    Release(u8),
-}
+use crate::expand::{
+    allocator::ExpansionAllocator,
+    core::{ExpansionSequence, ExpansionState},
+    ExpansionError,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct RowTemplate {
@@ -122,6 +121,142 @@ impl RowTemplate {
             is_first_in_sequence: false,
             is_compressed: false,
         }
+    }
+}
+
+pub(super) struct ExpansionBuilder<'a, 'b> {
+    source: &'b NormalizedInstruction,
+    state: ExpansionState<'a>,
+    sequence: ExpansionSequence,
+}
+
+impl<'a, 'b> ExpansionBuilder<'a, 'b> {
+    pub(super) fn new(
+        source: &'b NormalizedInstruction,
+        allocator: &'a mut ExpansionAllocator,
+    ) -> Self {
+        Self {
+            source,
+            state: ExpansionState::new(allocator),
+            sequence: ExpansionSequence::new(source),
+        }
+    }
+
+    pub(super) fn allocate(&mut self) -> Result<u8, ExpansionError> {
+        self.state.allocator().allocate()
+    }
+
+    pub(super) fn emit_r(
+        &mut self,
+        instruction_kind: JoltInstructionKind,
+        rd: u8,
+        rs1: u8,
+        rs2: u8,
+    ) {
+        self.emit(RowTemplate::r(instruction_kind, rd, rs1, rs2));
+    }
+
+    pub(super) fn emit_i(
+        &mut self,
+        instruction_kind: JoltInstructionKind,
+        rd: u8,
+        rs1: u8,
+        imm: i128,
+    ) {
+        self.emit(RowTemplate::i(instruction_kind, rd, rs1, imm));
+    }
+
+    pub(super) fn emit_j(&mut self, instruction_kind: JoltInstructionKind, rd: u8, imm: i128) {
+        self.emit(RowTemplate::j(instruction_kind, rd, imm));
+    }
+
+    pub(super) fn emit_u(&mut self, instruction_kind: JoltInstructionKind, rd: u8, imm: i128) {
+        self.emit(RowTemplate::u(instruction_kind, rd, imm));
+    }
+
+    pub(super) fn expand_r(
+        &mut self,
+        instruction_kind: JoltInstructionKind,
+        rd: u8,
+        rs1: u8,
+        rs2: u8,
+    ) -> Result<(), ExpansionError> {
+        self.expand(RowTemplate::r(instruction_kind, rd, rs1, rs2))
+    }
+
+    pub(super) fn expand_i(
+        &mut self,
+        instruction_kind: JoltInstructionKind,
+        rd: u8,
+        rs1: u8,
+        imm: i128,
+    ) -> Result<(), ExpansionError> {
+        self.expand(RowTemplate::i(instruction_kind, rd, rs1, imm))
+    }
+
+    pub(super) fn expand_j(
+        &mut self,
+        instruction_kind: JoltInstructionKind,
+        rd: u8,
+        imm: i128,
+    ) -> Result<(), ExpansionError> {
+        self.expand(RowTemplate::j(instruction_kind, rd, imm))
+    }
+
+    pub(super) fn expand_u(
+        &mut self,
+        instruction_kind: JoltInstructionKind,
+        rd: u8,
+        imm: i128,
+    ) -> Result<(), ExpansionError> {
+        self.expand(RowTemplate::u(instruction_kind, rd, imm))
+    }
+
+    pub(super) fn expand_b(
+        &mut self,
+        instruction_kind: JoltInstructionKind,
+        rs1: u8,
+        rs2: u8,
+        imm: i128,
+    ) -> Result<(), ExpansionError> {
+        self.expand(RowTemplate::b(instruction_kind, rs1, rs2, imm))
+    }
+
+    pub(super) fn expand_s(
+        &mut self,
+        instruction_kind: JoltInstructionKind,
+        rs1: u8,
+        rs2: u8,
+        imm: i128,
+    ) -> Result<(), ExpansionError> {
+        self.expand(RowTemplate::s(instruction_kind, rs1, rs2, imm))
+    }
+
+    pub(super) fn expand_address(
+        &mut self,
+        instruction_kind: JoltInstructionKind,
+        rs1: u8,
+        imm: i128,
+    ) -> Result<(), ExpansionError> {
+        self.expand(RowTemplate::address(instruction_kind, rs1, imm))
+    }
+
+    pub(super) fn release(&mut self, register: u8) -> Result<(), ExpansionError> {
+        self.state.allocator().release(register)
+    }
+
+    pub(super) fn finalize(self) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+        self.sequence.finish()
+    }
+
+    fn emit(&mut self, row: RowTemplate) {
+        self.sequence.emit(row.instruction_kind, row.operands);
+    }
+
+    fn expand(&mut self, row: RowTemplate) -> Result<(), ExpansionError> {
+        let instruction = row.instruction_at(self.source.address);
+        self.sequence
+            .extend(self.state.expand_one_core(&instruction)?)
     }
 }
 
