@@ -153,26 +153,6 @@ impl ExpansionSequence {
         )
     }
 
-    pub(super) fn emit_s_expanded(
-        &mut self,
-        instruction_kind: JoltInstructionKind,
-        rs1: u8,
-        rs2: u8,
-        imm: i128,
-        allocator: &mut ExpansionAllocator,
-    ) -> Result<(), ExpansionError> {
-        self.emit_expanded(
-            instruction_kind,
-            NormalizedOperands {
-                rd: None,
-                rs1: Some(rs1),
-                rs2: Some(rs2),
-                imm,
-            },
-            allocator,
-        )
-    }
-
     pub(super) fn emit_b_expanded(
         &mut self,
         instruction_kind: JoltInstructionKind,
@@ -194,25 +174,6 @@ impl ExpansionSequence {
     }
 
     pub(super) fn emit_j_expanded(
-        &mut self,
-        instruction_kind: JoltInstructionKind,
-        rd: u8,
-        imm: i128,
-        allocator: &mut ExpansionAllocator,
-    ) -> Result<(), ExpansionError> {
-        self.emit_expanded(
-            instruction_kind,
-            NormalizedOperands {
-                rd: Some(rd),
-                rs1: None,
-                rs2: None,
-                imm,
-            },
-            allocator,
-        )
-    }
-
-    pub(super) fn emit_u_expanded(
         &mut self,
         instruction_kind: JoltInstructionKind,
         rd: u8,

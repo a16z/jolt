@@ -2,27 +2,24 @@ use common::constants::RAM_START_ADDRESS;
 
 use super::*;
 
-pub(in crate::expand) fn emit_ram_region_assertion(
-    sequence: &mut core::ExpansionSequence,
+pub(in crate::expand) fn ram_region_assertion_ops(
     address_register: u8,
-    allocator: &mut ExpansionAllocator,
-) -> Result<(), ExpansionError> {
-    let ram_start = allocator.allocate()?;
-    sequence.emit_u_expanded(
-        JoltInstructionKind::LUI,
-        ram_start,
-        RAM_START_ADDRESS as i128,
-        allocator,
-    )?;
-    sequence.emit_b_expanded(
-        JoltInstructionKind::VirtualAssertLTE,
-        ram_start,
-        address_register,
-        0,
-        allocator,
-    )?;
-    allocator.release(ram_start)?;
-    Ok(())
+    ram_start: u8,
+) -> [grammar::ExpansionOp; 3] {
+    [
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::u(
+            JoltInstructionKind::LUI,
+            ram_start,
+            RAM_START_ADDRESS as i128,
+        )),
+        grammar::ExpansionOp::Expand(grammar::RowTemplate::b(
+            JoltInstructionKind::VirtualAssertLTE,
+            ram_start,
+            address_register,
+            0,
+        )),
+        grammar::ExpansionOp::Release(ram_start),
+    ]
 }
 
 pub(in crate::expand) fn expand_byte_load(
