@@ -190,32 +190,56 @@ pub(in crate::expand) fn expand_amo_minmax_d(
     let v0 = allocator.allocate()?;
     let v1 = allocator.allocate()?;
     let v2 = allocator.allocate()?;
-    let mut sequence = core::ExpansionSequence::new(instruction);
-    sequence.emit_i_expanded(JoltInstructionKind::LD, v0, rs1(instruction)?, 0, allocator)?;
     let (cmp_rs1, cmp_rs2) = if min {
         (rs2(instruction)?, v0)
     } else {
         (v0, rs2(instruction)?)
     };
-    sequence.emit_r_expanded(compare_op, v1, cmp_rs1, cmp_rs2, allocator)?;
-    sequence.emit_r_expanded(
-        JoltInstructionKind::SUB,
-        v2,
-        rs2(instruction)?,
-        v0,
-        allocator,
-    )?;
-    sequence.emit_r_expanded(JoltInstructionKind::MUL, v2, v2, v1, allocator)?;
-    sequence.emit_r_expanded(JoltInstructionKind::ADD, v1, v0, v2, allocator)?;
-    sequence.emit_s_expanded(JoltInstructionKind::SD, rs1(instruction)?, v1, 0, allocator)?;
-    sequence.emit_i_expanded(
-        JoltInstructionKind::ADDI,
-        rd(instruction)?,
-        v0,
-        0,
-        allocator,
-    )?;
-    sequence.finish_releasing(allocator, [v0, v1, v2])
+    core::ExpansionState::new(allocator).materialize_ops(
+        instruction,
+        [
+            grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+                JoltInstructionKind::LD,
+                v0,
+                rs1(instruction)?,
+                0,
+            )),
+            grammar::ExpansionOp::Expand(grammar::RowTemplate::r(compare_op, v1, cmp_rs1, cmp_rs2)),
+            grammar::ExpansionOp::Expand(grammar::RowTemplate::r(
+                JoltInstructionKind::SUB,
+                v2,
+                rs2(instruction)?,
+                v0,
+            )),
+            grammar::ExpansionOp::Expand(grammar::RowTemplate::r(
+                JoltInstructionKind::MUL,
+                v2,
+                v2,
+                v1,
+            )),
+            grammar::ExpansionOp::Expand(grammar::RowTemplate::r(
+                JoltInstructionKind::ADD,
+                v1,
+                v0,
+                v2,
+            )),
+            grammar::ExpansionOp::Expand(grammar::RowTemplate::s(
+                JoltInstructionKind::SD,
+                rs1(instruction)?,
+                v1,
+                0,
+            )),
+            grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+                JoltInstructionKind::ADDI,
+                rd(instruction)?,
+                v0,
+                0,
+            )),
+            grammar::ExpansionOp::Release(v0),
+            grammar::ExpansionOp::Release(v1),
+            grammar::ExpansionOp::Release(v2),
+        ],
+    )
 }
 
 pub(in crate::expand) fn expand_amo_w(
