@@ -20,6 +20,7 @@ serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 ark-serialize = { workspace = true }
 ark-bn254 = { workspace = true, features = ["curve"] }
+ark-ec = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

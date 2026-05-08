@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 
 use jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme};
-use jolt_field::{Field, Fr};
+use jolt_field::{Field, FieldAccumulator, Fr};
 use jolt_openings::CommitmentScheme as _;
 use jolt_poly::{EqPolynomial, MultilinearPoly};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
@@ -128,6 +128,48 @@ pub trait CommitmentInputProvider {
     ) -> bool {
         false
     }
+
+    fn add_scaled_to_joint_batch(
+        &mut self,
+        requests: &[JointContribution],
+        joint: &mut [Fr],
+    ) -> Vec<bool> {
+        requests
+            .iter()
+            .map(|request| {
+                self.add_scaled_to_joint(
+                    request.oracle,
+                    joint,
+                    request.num_vars,
+                    request.limit,
+                    request.scalar,
+                )
+            })
+            .collect()
+    }
+
+    fn open_joint_polynomial<T>(
+        &mut self,
+        _requests: &[JointContribution],
+        _opening_point: &[Fr],
+        _joint_claim: Fr,
+        _prover_setup: &DoryProverSetup,
+        hint: DoryHint,
+        _transcript: &mut T,
+    ) -> Result<jolt_dory::DoryProof, DoryHint>
+    where
+        T: Transcript<Challenge = Fr>,
+    {
+        Err(hint)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct JointContribution {
+    pub oracle: &'static str,
+    pub num_vars: usize,
+    pub limit: usize,
+    pub scalar: Fr,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -139,6 +181,7 @@ pub enum CommitmentPhaseError {
     TargetSizeOverflow { num_vars: usize },
 }
 
+#[derive(Clone, Copy)]
 pub struct CommitmentOracleInputs<'a> {
     pub rd_inc: &'a [i128],
     pub ram_inc: &'a [i128],
@@ -379,6 +422,82 @@ impl<'a> SparseCommitmentInputs<'a> {
         ))
     }
 
+    fn add_one_hot_batch(
+        &self,
+        requests: &[JointContribution],
+        joint: &mut [Fr],
+        handled: &mut [bool],
+        source: OneHotSource,
+    ) {
+        let mut entries = Vec::new();
+        for (request_index, request) in requests.iter().enumerate() {
+            if handled[request_index] {
+                continue;
+            }
+            let Some(spec) = self.one_hot_spec(request.oracle) else {
+                continue;
+            };
+            if spec.source != source {
+                continue;
+            }
+            let Some(trace_num_vars) = request.num_vars.checked_sub(spec.chunk_bits) else {
+                continue;
+            };
+            let Ok(trace_len) = target_len(trace_num_vars) else {
+                continue;
+            };
+            let Ok(chunk_domain) = target_len(spec.chunk_bits) else {
+                continue;
+            };
+            let Some(active_len) = trace_len.checked_mul(chunk_domain) else {
+                continue;
+            };
+            let values = self.source_values(source);
+            if values.len() > trace_len || spec.chunk_bits > u8::BITS as usize {
+                continue;
+            }
+            let shift = spec.chunk_bits * (spec.num_chunks - 1 - spec.chunk);
+            if shift >= u128::BITS as usize || spec.chunk_bits * spec.num_chunks > u128::BITS as usize
+            {
+                continue;
+            }
+            entries.push((
+                shift,
+                (chunk_domain - 1) as u128,
+                trace_len,
+                request.limit.min(joint.len()).min(active_len),
+                spec.padding,
+                request.scalar,
+            ));
+            handled[request_index] = true;
+        }
+        if entries.is_empty() {
+            return;
+        }
+
+        let values = self.source_values(source);
+        let max_trace_len = entries
+            .iter()
+            .map(|(_, _, trace_len, _, _, _)| *trace_len)
+            .max()
+            .unwrap_or(0);
+        for cycle in 0..max_trace_len {
+            for (shift, mask, trace_len, max_flat, padding, scalar) in &entries {
+                if cycle >= *trace_len {
+                    continue;
+                }
+                let value = values.get(cycle).copied().flatten().or(*padding);
+                let Some(value) = value else {
+                    continue;
+                };
+                let flat = (((value >> *shift) & *mask) as usize) * *trace_len + cycle;
+                if flat < *max_flat {
+                    joint[flat] += *scalar;
+                }
+            }
+        }
+    }
+
     #[expect(
         clippy::option_option,
         reason = "distinguishes missing oracle from present optional oracle"
@@ -563,6 +682,450 @@ impl CommitmentInputProvider for SparseCommitmentInputs<'_> {
             }
         }
         true
+    }
+
+    fn add_scaled_to_joint_batch(
+        &mut self,
+        requests: &[JointContribution],
+        joint: &mut [Fr],
+    ) -> Vec<bool> {
+        let mut handled = vec![false; requests.len()];
+        for (index, request) in requests.iter().enumerate() {
+            let dense = match request.oracle {
+                "RdInc" => Some(self.inputs.rd_inc),
+                "RamInc" => Some(self.inputs.ram_inc),
+                _ => None,
+            };
+            if let Some(values) = dense {
+                let Ok(target_len) = target_len(request.num_vars) else {
+                    continue;
+                };
+                let len = request.limit.min(joint.len()).min(values.len()).min(target_len);
+                for (dst, &value) in joint.iter_mut().take(len).zip(values.iter()) {
+                    if value != 0 {
+                        *dst += Fr::from_i128(value) * request.scalar;
+                    }
+                }
+                handled[index] = true;
+            }
+        }
+
+        self.add_one_hot_batch(requests, joint, &mut handled, OneHotSource::InstructionKeys);
+        self.add_one_hot_batch(requests, joint, &mut handled, OneHotSource::RamAddresses);
+        self.add_one_hot_batch(requests, joint, &mut handled, OneHotSource::BytecodeIndices);
+        handled
+    }
+
+    fn open_joint_polynomial<T>(
+        &mut self,
+        requests: &[JointContribution],
+        opening_point: &[Fr],
+        joint_claim: Fr,
+        prover_setup: &DoryProverSetup,
+        hint: DoryHint,
+        transcript: &mut T,
+    ) -> Result<jolt_dory::DoryProof, DoryHint>
+    where
+        T: Transcript<Challenge = Fr>,
+    {
+        let poly = SparseJointPolynomial {
+            inputs: self.inputs,
+            chunk_counts: self.chunk_counts,
+            requests: requests.to_vec(),
+            num_vars: opening_point.len(),
+            claimed_eval: joint_claim,
+        };
+        Ok(DoryScheme::open_poly(
+            &poly,
+            opening_point,
+            joint_claim,
+            prover_setup,
+            Some(hint),
+            transcript,
+        ))
+    }
+}
+
+struct SparseJointPolynomial<'a> {
+    inputs: CommitmentOracleInputs<'a>,
+    chunk_counts: OneHotChunkCounts,
+    requests: Vec<JointContribution>,
+    num_vars: usize,
+    claimed_eval: Fr,
+}
+
+impl SparseJointPolynomial<'_> {
+    fn one_hot_spec(&self, oracle: &'static str) -> Option<OneHotSpec> {
+        let (prefix, num_chunks, values, padding) =
+            if let Some(suffix) = oracle.strip_prefix("InstructionRa_") {
+                (
+                    suffix,
+                    self.chunk_counts.instruction,
+                    OneHotSource::InstructionKeys,
+                    Some(0),
+                )
+            } else if let Some(suffix) = oracle.strip_prefix("RamRa_") {
+                (
+                    suffix,
+                    self.chunk_counts.ram,
+                    OneHotSource::RamAddresses,
+                    None,
+                )
+            } else if let Some(suffix) = oracle.strip_prefix("BytecodeRa_") {
+                (
+                    suffix,
+                    self.chunk_counts.bytecode,
+                    OneHotSource::BytecodeIndices,
+                    Some(0),
+                )
+            } else {
+                return None;
+            };
+        let chunk = prefix.parse::<usize>().ok()?;
+        if chunk >= num_chunks {
+            return None;
+        }
+        Some(OneHotSpec {
+            source: values,
+            chunk,
+            num_chunks,
+            chunk_bits: 4,
+            padding,
+        })
+    }
+
+    fn source_values(&self, source: OneHotSource) -> &[Option<u128>] {
+        match source {
+            OneHotSource::InstructionKeys => self.inputs.instruction_keys,
+            OneHotSource::RamAddresses => self.inputs.ram_addresses,
+            OneHotSource::BytecodeIndices => self.inputs.bytecode_indices,
+        }
+    }
+
+    fn dense_values(&self, oracle: &'static str) -> Option<&[i128]> {
+        match oracle {
+            "RdInc" => Some(self.inputs.rd_inc),
+            "RamInc" => Some(self.inputs.ram_inc),
+            _ => None,
+        }
+    }
+
+    fn fold_rows_slow(&self, left: &[Fr], sigma: usize) -> Vec<Fr> {
+        let num_cols = 1usize << sigma;
+        let num_rows = 1usize << self.num_vars.saturating_sub(sigma);
+        let mut result_accs = vec![<Fr as Field>::Accumulator::default(); num_cols];
+        for request in &self.requests {
+            if let Some(values) = self.dense_values(request.oracle) {
+                let len = request.limit.min(values.len()).min(num_rows * num_cols);
+                for (flat, value) in values.iter().copied().enumerate().take(len) {
+                    if value == 0 {
+                        continue;
+                    }
+                    let row = flat / num_cols;
+                    let col = flat % num_cols;
+                    result_accs[col].fmadd(left[row] * request.scalar, Fr::from_i128(value));
+                }
+                continue;
+            }
+            let Some(spec) = self.one_hot_spec(request.oracle) else {
+                continue;
+            };
+            let Some(trace_num_vars) = request.num_vars.checked_sub(spec.chunk_bits) else {
+                continue;
+            };
+            let Ok(trace_len) = target_len(trace_num_vars) else {
+                continue;
+            };
+            let Ok(chunk_domain) = target_len(spec.chunk_bits) else {
+                continue;
+            };
+            let Some(active_len) = trace_len.checked_mul(chunk_domain) else {
+                continue;
+            };
+            let max_flat = request.limit.min(active_len).min(num_rows * num_cols);
+            let values = self.source_values(spec.source);
+            let shift = spec.chunk_bits * (spec.num_chunks - 1 - spec.chunk);
+            let mask = (chunk_domain - 1) as u128;
+            for (cycle, value) in values.iter().take(trace_len).enumerate() {
+                let value = (*value).or(spec.padding);
+                let Some(value) = value else {
+                    continue;
+                };
+                let flat = (((value >> shift) & mask) as usize) * trace_len + cycle;
+                if flat >= max_flat {
+                    continue;
+                }
+                let row = flat / num_cols;
+                let col = flat % num_cols;
+                result_accs[col].fmadd(left[row], request.scalar);
+            }
+        }
+        result_accs.into_iter().map(FieldAccumulator::reduce).collect()
+    }
+}
+
+impl MultilinearPoly<Fr> for SparseJointPolynomial<'_> {
+    fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    fn evaluate(&self, _point: &[Fr]) -> Fr {
+        self.claimed_eval
+    }
+
+    fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[Fr])) {
+        let num_cols = 1usize << sigma;
+        let num_rows = 1usize << self.num_vars.saturating_sub(sigma);
+        let mut row = vec![Fr::from_u64(0); num_cols];
+        for row_index in 0..num_rows {
+            row.fill(Fr::from_u64(0));
+            let base = row_index * num_cols;
+            for request in &self.requests {
+                if let Some(values) = self.dense_values(request.oracle) {
+                    let end = request.limit.min(values.len()).min(base + num_cols);
+                    for flat in base..end {
+                        let value = values[flat];
+                        if value != 0 {
+                            row[flat - base] += Fr::from_i128(value) * request.scalar;
+                        }
+                    }
+                    continue;
+                }
+                let Some(spec) = self.one_hot_spec(request.oracle) else {
+                    continue;
+                };
+                let Some(trace_num_vars) = request.num_vars.checked_sub(spec.chunk_bits) else {
+                    continue;
+                };
+                let Ok(trace_len) = target_len(trace_num_vars) else {
+                    continue;
+                };
+                let Ok(chunk_domain) = target_len(spec.chunk_bits) else {
+                    continue;
+                };
+                let Some(active_len) = trace_len.checked_mul(chunk_domain) else {
+                    continue;
+                };
+                let max_flat = request.limit.min(active_len);
+                let values = self.source_values(spec.source);
+                let shift = spec.chunk_bits * (spec.num_chunks - 1 - spec.chunk);
+                let mask = (chunk_domain - 1) as u128;
+                for (cycle, value) in values.iter().take(trace_len).enumerate() {
+                    let value = (*value).or(spec.padding);
+                    let Some(value) = value else {
+                        continue;
+                    };
+                    let flat = (((value >> shift) & mask) as usize) * trace_len + cycle;
+                    if flat >= max_flat || flat < base || flat >= base + num_cols {
+                        continue;
+                    }
+                    row[flat - base] += request.scalar;
+                }
+            }
+            f(row_index, &row);
+        }
+    }
+
+    fn fold_rows(&self, left: &[Fr], sigma: usize) -> Vec<Fr> {
+        struct DenseEntry<'a> {
+            values: &'a [i128],
+            limit: usize,
+            scalar: Fr,
+        }
+
+        struct OneHotEntry {
+            shift: usize,
+            mask: u128,
+            table: Vec<Fr>,
+        }
+
+        struct OneHotGroup<'a> {
+            values: &'a [Option<u128>],
+            padding: Option<u128>,
+            entries: Vec<OneHotEntry>,
+            cache: std::collections::HashMap<u128, Fr>,
+        }
+
+        impl<'a> OneHotGroup<'a> {
+            fn new(values: &'a [Option<u128>], padding: Option<u128>) -> Self {
+                Self {
+                    values,
+                    padding,
+                    entries: Vec::new(),
+                    cache: std::collections::HashMap::new(),
+                }
+            }
+
+            fn contribution(&mut self, value: u128) -> Fr {
+                if self.entries.len() <= 16 {
+                    let mut contribution = Fr::from_u64(0);
+                    for entry in &self.entries {
+                        let k = ((value >> entry.shift) & entry.mask) as usize;
+                        if k < entry.table.len() {
+                            contribution += entry.table[k];
+                        }
+                    }
+                    return contribution;
+                }
+                if let Some(contribution) = self.cache.get(&value) {
+                    return *contribution;
+                }
+                let mut contribution = Fr::from_u64(0);
+                for entry in &self.entries {
+                    let k = ((value >> entry.shift) & entry.mask) as usize;
+                    if k < entry.table.len() {
+                        contribution += entry.table[k];
+                    }
+                }
+                let _ = self.cache.insert(value, contribution);
+                contribution
+            }
+        }
+
+        let _span = tracing::info_span!("SparseJointPolynomial::fold_rows").entered();
+        let num_cols = 1usize << sigma;
+        let num_rows = 1usize << self.num_vars.saturating_sub(sigma);
+        let mut trace_len = None;
+        let mut dense_entries = Vec::new();
+        let mut one_hot_specs = Vec::new();
+        for request in &self.requests {
+            if let Some(values) = self.dense_values(request.oracle) {
+                if trace_len
+                    .replace(request.limit.min(values.len()))
+                    .is_some_and(|previous| previous != request.limit.min(values.len()))
+                {
+                    return self.fold_rows_slow(left, sigma);
+                }
+                dense_entries.push(DenseEntry {
+                    values,
+                    limit: request.limit,
+                    scalar: request.scalar,
+                });
+                continue;
+            }
+            let Some(spec) = self.one_hot_spec(request.oracle) else {
+                continue;
+            };
+            let Some(trace_num_vars) = request.num_vars.checked_sub(spec.chunk_bits) else {
+                continue;
+            };
+            let Ok(len) = target_len(trace_num_vars) else {
+                continue;
+            };
+            if trace_len
+                .replace(len)
+                .is_some_and(|previous| previous != len)
+            {
+                return self.fold_rows_slow(left, sigma);
+            }
+            one_hot_specs.push((request, spec));
+        }
+        let Some(trace_len) = trace_len else {
+            return vec![Fr::from_u64(0); num_cols];
+        };
+        if trace_len == 0 || trace_len % num_cols != 0 {
+            return self.fold_rows_slow(left, sigma);
+        }
+        let rows_per_k = trace_len / num_cols;
+        if rows_per_k == 0 || !num_rows.is_multiple_of(rows_per_k) {
+            return self.fold_rows_slow(left, sigma);
+        }
+        let k_domain = num_rows / rows_per_k;
+
+        let mut row_factors = vec![Fr::from_u64(0); rows_per_k];
+        let mut eq_k = vec![Fr::from_u64(0); k_domain];
+        for (k, eq) in eq_k.iter_mut().enumerate() {
+            let base = k * rows_per_k;
+            for row in 0..rows_per_k {
+                let value = left[base + row];
+                row_factors[row] += value;
+                *eq += value;
+            }
+        }
+
+        let mut instruction =
+            OneHotGroup::new(self.source_values(OneHotSource::InstructionKeys), Some(0));
+        let mut bytecode =
+            OneHotGroup::new(self.source_values(OneHotSource::BytecodeIndices), Some(0));
+        let mut ram = OneHotGroup::new(self.source_values(OneHotSource::RamAddresses), None);
+        for (request, spec) in one_hot_specs {
+            let Ok(chunk_domain) = target_len(spec.chunk_bits) else {
+                continue;
+            };
+            let shift = spec.chunk_bits * (spec.num_chunks - 1 - spec.chunk);
+            if shift >= u128::BITS as usize
+                || spec.chunk_bits * spec.num_chunks > u128::BITS as usize
+            {
+                continue;
+            }
+            let mut table = vec![Fr::from_u64(0); k_domain];
+            for k in 0..k_domain.min(chunk_domain) {
+                table[k] = request.scalar * eq_k[k];
+            }
+            let entry = OneHotEntry {
+                shift,
+                mask: (chunk_domain - 1) as u128,
+                table,
+            };
+            match spec.source {
+                OneHotSource::InstructionKeys => instruction.entries.push(entry),
+                OneHotSource::RamAddresses => ram.entries.push(entry),
+                OneHotSource::BytecodeIndices => bytecode.entries.push(entry),
+            }
+        }
+
+        let mut result_accs = vec![<Fr as Field>::Accumulator::default(); num_cols];
+        for cycle in 0..trace_len {
+            let row = cycle / num_cols;
+            let col = cycle % num_cols;
+            let dense_weight = left[row];
+            for entry in &dense_entries {
+                if cycle >= entry.limit || cycle >= entry.values.len() {
+                    continue;
+                }
+                let value = entry.values[cycle];
+                if value != 0 {
+                    result_accs[col].fmadd(dense_weight * entry.scalar, Fr::from_i128(value));
+                }
+            }
+
+            let row_factor = row_factors[row];
+            if row_factor == Fr::from_u64(0) {
+                continue;
+            }
+            let mut inner = Fr::from_u64(0);
+            if !instruction.entries.is_empty() {
+                if let Some(value) = instruction
+                    .values
+                    .get(cycle)
+                    .copied()
+                    .flatten()
+                    .or(instruction.padding)
+                {
+                    inner += instruction.contribution(value);
+                }
+            }
+            if !bytecode.entries.is_empty() {
+                if let Some(value) = bytecode
+                    .values
+                    .get(cycle)
+                    .copied()
+                    .flatten()
+                    .or(bytecode.padding)
+                {
+                    inner += bytecode.contribution(value);
+                }
+            }
+            if !ram.entries.is_empty() {
+                if let Some(value) = ram.values.get(cycle).copied().flatten().or(ram.padding) {
+                    inner += ram.contribution(value);
+                }
+            }
+            if inner != Fr::from_u64(0) {
+                result_accs[col].fmadd(row_factor, inner);
+            }
+        }
+        result_accs.into_iter().map(FieldAccumulator::reduce).collect()
     }
 }
 

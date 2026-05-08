@@ -23,6 +23,8 @@ impl crate::DoryScheme {
         assert!(row_len > 0, "Dory row length must be nonzero");
 
         let g1_bases = &setup.0.g1_vec[..row_len];
+        let _rows_span =
+            tracing::info_span!("DoryScheme::commit_evaluations.row_commitments").entered();
         let row_commitments: Vec<_> = data
             .par_chunks(row_len)
             .map(|chunk| {
@@ -30,9 +32,12 @@ impl crate::DoryScheme {
                 G1Routines::msm(&g1_bases[..chunk.len()], &scalars)
             })
             .collect();
+        drop(_rows_span);
 
+        let _tier2_span = tracing::info_span!("DoryScheme::commit_evaluations.tier2").entered();
         let g2_bases = &setup.0.g2_vec[..row_commitments.len()];
         let tier_2 = <InnerBN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
+        drop(_tier2_span);
         (
             DoryCommitment(ark_to_jolt_gt(&tier_2)),
             DoryHint(ark_to_jolt_g1_vec(row_commitments)),

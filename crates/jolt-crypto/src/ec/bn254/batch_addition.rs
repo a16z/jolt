@@ -79,14 +79,7 @@ pub fn batch_g1_additions_multi(bases: &[Bn254G1], indices_sets: &[Vec<usize>]) 
         return vec![];
     }
 
-    // SAFETY: Bn254G1 is #[repr(transparent)] over G1Projective — identical layout.
-    let projective: &[ark_bn254::G1Projective] = unsafe {
-        std::slice::from_raw_parts(
-            bases.as_ptr().cast::<ark_bn254::G1Projective>(),
-            bases.len(),
-        )
-    };
-    let affines = ark_bn254::G1Projective::normalize_batch(projective);
+    let affines = normalize_g1_bases(bases);
 
     batch_g1_additions_multi_affine_inner(&affines, indices_sets)
         .into_iter()
@@ -95,6 +88,17 @@ pub fn batch_g1_additions_multi(bases: &[Bn254G1], indices_sets: &[Vec<usize>]) 
             Bn254G1::from(proj)
         })
         .collect()
+}
+
+pub fn normalize_g1_bases(bases: &[Bn254G1]) -> Vec<G1Affine> {
+    // SAFETY: Bn254G1 is #[repr(transparent)] over G1Projective — identical layout.
+    let projective: &[ark_bn254::G1Projective] = unsafe {
+        std::slice::from_raw_parts(
+            bases.as_ptr().cast::<ark_bn254::G1Projective>(),
+            bases.len(),
+        )
+    };
+    ark_bn254::G1Projective::normalize_batch(projective)
 }
 
 /// Same as [`batch_g1_additions_multi`] but operates directly on affine points.

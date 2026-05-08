@@ -12,6 +12,7 @@ pub mod checkpoint;
 pub mod checks;
 pub mod commitment_oracle;
 pub mod core_conversion;
+mod core_opening_ids;
 pub mod core_oracle;
 pub mod perf;
 pub mod plan_adapters;

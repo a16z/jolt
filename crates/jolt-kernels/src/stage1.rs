@@ -1954,9 +1954,15 @@ impl<F: Field> DenseOuterState<F> {
 
     #[tracing::instrument(skip_all, name = "DenseOuterState::bind")]
     fn bind(&mut self, challenge: F) {
-        bind_dense_evals_reuse(&mut self.eq, &mut self.eq_scratch, challenge);
-        bind_dense_evals_reuse(&mut self.az, &mut self.az_scratch, challenge);
-        bind_dense_evals_reuse(&mut self.bz, &mut self.bz_scratch, challenge);
+        rayon::join(
+            || bind_dense_evals_reuse(&mut self.eq, &mut self.eq_scratch, challenge),
+            || {
+                rayon::join(
+                    || bind_dense_evals_reuse(&mut self.az, &mut self.az_scratch, challenge),
+                    || bind_dense_evals_reuse(&mut self.bz, &mut self.bz_scratch, challenge),
+                );
+            },
+        );
     }
 }
 

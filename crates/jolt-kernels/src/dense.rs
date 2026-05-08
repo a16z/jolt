@@ -30,3 +30,20 @@ pub(crate) fn bind_dense_evals_reuse<F: Field>(
     std::mem::swap(values, scratch);
     scratch.clear();
 }
+
+#[inline]
+pub(crate) fn bind_dense_evals_reuse_serial<F: Field>(
+    values: &mut Vec<F>,
+    scratch: &mut Vec<F>,
+    challenge: F,
+) {
+    let half = values.len() / 2;
+    scratch.resize(half, F::zero());
+    for (index, output) in scratch.iter_mut().enumerate() {
+        let low = values[index << 1];
+        let high = values[(index << 1) + 1];
+        *output = low + challenge * (high - low);
+    }
+    std::mem::swap(values, scratch);
+    scratch.clear();
+}

@@ -538,6 +538,40 @@ pub struct Stage6WitnessParams {
     pub ram_d: usize,
 }
 
+pub const STAGE6_BOOLEANITY_MAX_POLYS: usize = 64;
+
+struct Stage6OneHotIndices {
+    instruction: Vec<Vec<Option<u8>>>,
+    bytecode: Vec<Vec<Option<u8>>>,
+    ram: Vec<Vec<Option<u8>>>,
+    booleanity_rows: Vec<Stage6BooleanityRow>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stage6BooleanityRow {
+    values: [u8; STAGE6_BOOLEANITY_MAX_POLYS],
+    present_mask: u64,
+}
+
+impl Stage6BooleanityRow {
+    pub fn empty() -> Self {
+        Self {
+            values: [0; STAGE6_BOOLEANITY_MAX_POLYS],
+            present_mask: 0,
+        }
+    }
+
+    pub fn set(&mut self, index: usize, value: u8) {
+        self.values[index] = value;
+        self.present_mask |= 1u64 << index;
+    }
+
+    #[inline]
+    pub fn get(&self, index: usize) -> Option<u8> {
+        ((self.present_mask & (1u64 << index)) != 0).then_some(self.values[index])
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Stage6BytecodeEntry<F: Field> {
     pub address: F,
@@ -574,6 +608,7 @@ pub struct Stage6WitnessPolynomials<F: Field> {
     pub instruction_ra_indices: Vec<Vec<Option<u8>>>,
     pub bytecode_ra_indices: Vec<Vec<Option<u8>>>,
     pub ram_ra_indices: Vec<Vec<Option<u8>>>,
+    pub booleanity_rows: Vec<Stage6BooleanityRow>,
     pub instruction_ra_booleanity: Vec<Vec<F>>,
     pub bytecode_ra_booleanity: Vec<Vec<F>>,
     pub ram_ra_booleanity: Vec<Vec<F>>,
@@ -590,6 +625,7 @@ pub struct Stage6WitnessPolynomials<F: Field> {
 pub struct Stage6WitnessSlices<'a, F: Field> {
     pub booleanity_chunks: Vec<&'a [F]>,
     pub booleanity_index_chunks: Vec<&'a [Option<u8>]>,
+    pub booleanity_rows: &'a [Stage6BooleanityRow],
     pub bytecode_ra_read_raf_chunks: Vec<&'a [F]>,
     pub bytecode_ra_read_raf_chunk_lens: Vec<usize>,
     pub ram_ra_virtual_chunks: Vec<&'a [F]>,
@@ -613,6 +649,7 @@ impl<F: Field> Stage6WitnessPolynomials<F> {
         Stage6WitnessSlices {
             booleanity_chunks,
             booleanity_index_chunks,
+            booleanity_rows: &self.booleanity_rows,
             bytecode_ra_read_raf_chunks: field_slices(&self.bytecode_ra_read_raf),
             bytecode_ra_read_raf_chunk_lens: self.bytecode_ra_read_raf_chunk_lens.clone(),
             ram_ra_virtual_chunks: field_slices(&self.ram_ra_virtual),
@@ -635,46 +672,7 @@ pub fn stage6_witness_polynomials<F: Field>(
         inputs.cycle_inputs.len()
     );
 
-    let instruction_keys = one_hot_cycle_column(inputs.cycle_inputs, 0);
-    let bytecode_indices_source = one_hot_cycle_column(inputs.cycle_inputs, 1);
-    let ram_addresses = one_hot_cycle_column(inputs.cycle_inputs, 2);
-
-    let instruction_indices = (0..params.instruction_d)
-        .map(|index| {
-            one_hot_chunk_indices(
-                &instruction_keys,
-                index,
-                params.instruction_d,
-                params.log_k_chunk,
-                trace_len,
-                Some(0),
-            )
-        })
-        .collect::<Vec<_>>();
-    let bytecode_indices = (0..params.bytecode_d)
-        .map(|index| {
-            one_hot_chunk_indices(
-                &bytecode_indices_source,
-                index,
-                params.bytecode_d,
-                params.log_k_chunk,
-                trace_len,
-                Some(0),
-            )
-        })
-        .collect::<Vec<_>>();
-    let ram_indices = (0..params.ram_d)
-        .map(|index| {
-            one_hot_chunk_indices(
-                &ram_addresses,
-                index,
-                params.ram_d,
-                params.log_k_chunk,
-                trace_len,
-                None,
-            )
-        })
-        .collect::<Vec<_>>();
+    let one_hot_indices = stage6_indices_and_booleanity_rows(params, inputs.cycle_inputs);
 
     let bytecode_ra_read_raf_chunk_lens =
         msb_chunk_bit_widths(params.log_k_bytecode, params.log_k_chunk, params.bytecode_d);
@@ -685,7 +683,8 @@ pub fn stage6_witness_polynomials<F: Field>(
         params.ram_d,
         "RAM Stage 6 address chunk count mismatch"
     );
-    let ram_ra_virtual = ram_indices
+    let ram_ra_virtual = one_hot_indices
+        .ram
         .iter()
         .zip(&ram_address_chunks)
         .map(|(indices, point)| one_hot_evals_at_chunk_point(indices, point))
@@ -698,16 +697,18 @@ pub fn stage6_witness_polynomials<F: Field>(
         params.instruction_d,
         "instruction Stage 6 address chunk count mismatch"
     );
-    let instruction_ra_virtual = instruction_indices
+    let instruction_ra_virtual = one_hot_indices
+        .instruction
         .iter()
         .zip(&instruction_address_chunks)
         .map(|(indices, point)| one_hot_evals_at_chunk_point(indices, point))
         .collect::<Vec<_>>();
 
     Stage6WitnessPolynomials {
-        instruction_ra_indices: instruction_indices,
-        bytecode_ra_indices: bytecode_indices,
-        ram_ra_indices: ram_indices,
+        instruction_ra_indices: one_hot_indices.instruction,
+        bytecode_ra_indices: one_hot_indices.bytecode,
+        ram_ra_indices: one_hot_indices.ram,
+        booleanity_rows: one_hot_indices.booleanity_rows,
         instruction_ra_booleanity: Vec::new(),
         bytecode_ra_booleanity: Vec::new(),
         ram_ra_booleanity: Vec::new(),
@@ -727,6 +728,90 @@ fn field_slices<F: Field>(values: &[Vec<F>]) -> Vec<&[F]> {
 
 fn index_slices(values: &[Vec<Option<u8>>]) -> Vec<&[Option<u8>]> {
     values.iter().map(Vec::as_slice).collect()
+}
+
+fn stage6_indices_and_booleanity_rows(
+    params: Stage6WitnessParams,
+    cycle_inputs: &[CycleInput],
+) -> Stage6OneHotIndices {
+    let total_chunks = params.instruction_d + params.bytecode_d + params.ram_d;
+    assert!(
+        total_chunks <= STAGE6_BOOLEANITY_MAX_POLYS,
+        "Stage 6 booleanity has {total_chunks} chunks, max {STAGE6_BOOLEANITY_MAX_POLYS}"
+    );
+    let instruction_keys = one_hot_cycle_column(cycle_inputs, 0);
+    let bytecode_indices_source = one_hot_cycle_column(cycle_inputs, 1);
+    let ram_addresses = one_hot_cycle_column(cycle_inputs, 2);
+
+    let instruction_indices = (0..params.instruction_d)
+        .map(|index| {
+            one_hot_chunk_indices(
+                &instruction_keys,
+                index,
+                params.instruction_d,
+                params.log_k_chunk,
+                params.trace_len,
+                Some(0),
+            )
+        })
+        .collect::<Vec<_>>();
+    let bytecode_indices = (0..params.bytecode_d)
+        .map(|index| {
+            one_hot_chunk_indices(
+                &bytecode_indices_source,
+                index,
+                params.bytecode_d,
+                params.log_k_chunk,
+                params.trace_len,
+                Some(0),
+            )
+        })
+        .collect::<Vec<_>>();
+    let ram_indices = (0..params.ram_d)
+        .map(|index| {
+            one_hot_chunk_indices(
+                &ram_addresses,
+                index,
+                params.ram_d,
+                params.log_k_chunk,
+                params.trace_len,
+                None,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let mut booleanity_rows = vec![Stage6BooleanityRow::empty(); params.trace_len];
+    fill_booleanity_rows(&mut booleanity_rows, 0, &instruction_indices);
+    fill_booleanity_rows(
+        &mut booleanity_rows,
+        params.instruction_d,
+        &bytecode_indices,
+    );
+    fill_booleanity_rows(
+        &mut booleanity_rows,
+        params.instruction_d + params.bytecode_d,
+        &ram_indices,
+    );
+    Stage6OneHotIndices {
+        instruction: instruction_indices,
+        bytecode: bytecode_indices,
+        ram: ram_indices,
+        booleanity_rows,
+    }
+}
+
+fn fill_booleanity_rows(
+    rows: &mut [Stage6BooleanityRow],
+    chunk_offset: usize,
+    chunk_indices: &[Vec<Option<u8>>],
+) {
+    for (chunk, indices) in chunk_indices.iter().enumerate() {
+        for (cycle, index) in indices.iter().enumerate() {
+            if let Some(index) = index {
+                rows[cycle].set(chunk_offset + chunk, *index);
+            }
+        }
+    }
 }
 
 fn one_hot_cycle_column(cycle_inputs: &[CycleInput], slot: usize) -> Vec<Option<u128>> {
@@ -1021,6 +1106,7 @@ mod tests {
             instruction_ra_indices: vec![vec![Some(1)]],
             bytecode_ra_indices: vec![vec![Some(2)]],
             ram_ra_indices: vec![vec![None]],
+            booleanity_rows: vec![Stage6BooleanityRow::empty()],
             instruction_ra_booleanity: vec![vec![fr(10)]],
             bytecode_ra_booleanity: vec![vec![fr(20)]],
             ram_ra_booleanity: vec![vec![fr(30)]],
@@ -1050,6 +1136,7 @@ mod tests {
                 witness.ram_ra_indices[0].as_slice(),
             ]
         );
+        assert_eq!(slices.booleanity_rows, witness.booleanity_rows.as_slice());
         assert_eq!(
             slices.bytecode_ra_read_raf_chunks,
             vec![witness.bytecode_ra_read_raf[0].as_slice()]

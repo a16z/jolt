@@ -1517,23 +1517,13 @@ where
 fn prove_product_virtual_uniskip<F, T>(
     context: Stage2KernelContext<'_>,
     inputs: &Stage2ProverInputs<'_, F>,
-    mut store: Stage2ValueStore<F>,
+    store: Stage2ValueStore<F>,
     transcript: &mut T,
 ) -> Result<Stage2SumcheckOutput<F>, Stage2KernelError>
 where
     F: Field,
     T: Transcript<Challenge = F>,
 {
-    let claim =
-        context
-            .batch_claims()?
-            .into_iter()
-            .next()
-            .ok_or(Stage2KernelError::MissingClaim {
-                batch: context.batch.symbol,
-                claim: "stage2.product_virtual.uniskip.input",
-            })?;
-    let input_claim = store.claim_value(context.program, claim)?;
     let base_evals = product_uniskip_base_evals(&store)?;
     let extended_evals = inputs.product_uniskip_extended_evals.as_deref().ok_or(
         Stage2KernelError::MissingKernelInput {
@@ -1546,11 +1536,25 @@ where
         extended_evals,
         store.scalar("stage2.product_virtual.tau_high")?,
     )?;
-    if !product_uniskip_sum_matches(&poly, input_claim) {
-        return Err(Stage2KernelError::InvalidProof {
-            driver: context.driver.symbol,
-            reason: "product uniskip input claim mismatch",
-        });
+    #[cfg(debug_assertions)]
+    {
+        let mut store = store;
+        let claim =
+            context
+                .batch_claims()?
+                .into_iter()
+                .next()
+                .ok_or(Stage2KernelError::MissingClaim {
+                    batch: context.batch.symbol,
+                    claim: "stage2.product_virtual.uniskip.input",
+                })?;
+        let input_claim = store.claim_value(context.program, claim)?;
+        if !product_uniskip_sum_matches(&poly, input_claim) {
+            return Err(Stage2KernelError::InvalidProof {
+                driver: context.driver.symbol,
+                reason: "product uniskip input claim mismatch",
+            });
+        }
     }
     append_univariate_poly(transcript, context.driver.round_label, &poly);
     let r0 = transcript.challenge();

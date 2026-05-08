@@ -1,5 +1,10 @@
 //! Dory PCS implementing the `jolt-openings` trait hierarchy.
 
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, OnceLock},
+};
+
 use dory::backends::arkworks::{ArkworksProverSetup, G1Routines};
 use dory::mode::Transparent;
 use dory::primitives::arithmetic::{
@@ -7,7 +12,7 @@ use dory::primitives::arithmetic::{
 };
 use dory::primitives::poly::{MultilinearLagrange, Polynomial as DoryPolynomial};
 use jolt_crypto::{Bn254G1, Bn254GT, Commitment, DeriveSetup, JoltGroup, PedersenSetup};
-use jolt_field::Fr;
+use jolt_field::{Field, Fr};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
@@ -25,6 +30,9 @@ pub(crate) type ArkG2 = dory::backends::arkworks::ArkG2;
 pub(crate) type ArkGT = dory::backends::arkworks::ArkGT;
 type InnerBN254 = dory::backends::arkworks::BN254;
 
+type ArkG1Affine = ark_bn254::G1Affine;
+type AffineBaseCache = Mutex<HashMap<(usize, usize), Arc<Vec<ArkG1Affine>>>>;
+
 // All conversion functions below rely on repr(transparent) layout identity
 // between jolt and dory-pcs wrappers over the same arkworks inner type.
 
@@ -38,6 +46,18 @@ pub(crate) fn jolt_fr_to_ark(f: &Fr) -> ArkFr {
 pub(crate) fn ark_to_jolt_fr(ark: &ArkFr) -> Fr {
     // SAFETY: same layout as jolt_fr_to_ark.
     unsafe { std::mem::transmute_copy(ark) }
+}
+
+#[inline]
+fn ark_fr_slice_to_jolt(slice: &[ArkFr]) -> &[Fr] {
+    // SAFETY: Fr and ArkFr are both repr(transparent) over ark_bn254::Fr.
+    unsafe { std::slice::from_raw_parts(slice.as_ptr().cast::<Fr>(), slice.len()) }
+}
+
+#[inline]
+fn jolt_fr_vec_to_ark(vec: Vec<Fr>) -> Vec<ArkFr> {
+    // SAFETY: Fr and ArkFr have identical size/alignment and transparent layout.
+    unsafe { std::mem::transmute(vec) }
 }
 
 #[inline]
@@ -75,6 +95,34 @@ pub(crate) fn ark_to_jolt_g1_vec(v: Vec<ArkG1>) -> Vec<Bn254G1> {
 pub(crate) fn ark_to_jolt_g1(ark: ArkG1) -> Bn254G1 {
     // SAFETY: Bn254G1 and ArkG1 are both repr(transparent) over G1Projective.
     unsafe { std::mem::transmute(ark) }
+}
+
+fn cached_affine_g1_bases(g1_bases: &[ArkG1]) -> Arc<Vec<ArkG1Affine>> {
+    static CACHE: OnceLock<AffineBaseCache> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = (g1_bases.as_ptr() as usize, g1_bases.len());
+    {
+        let guard = cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(cached) = guard.get(&key).cloned() {
+            return cached;
+        }
+    }
+
+    let bases = g1_bases
+        .iter()
+        .copied()
+        .map(ark_to_jolt_g1)
+        .collect::<Vec<_>>();
+    let affines = Arc::new(jolt_crypto::ec::bn254::batch_addition::normalize_g1_bases(
+        &bases,
+    ));
+    let mut guard = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _ = guard.insert(key, Arc::clone(&affines));
+    affines
 }
 
 #[derive(Clone)]
@@ -161,42 +209,7 @@ impl CommitmentScheme for DoryScheme {
         hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Self::Proof {
-        let num_vars = point.len();
-        let adapter = DorySourceAdapter::new(poly);
-        let sigma = num_vars.div_ceil(2);
-        let nu = num_vars - sigma;
-
-        let row_commitments = match hint {
-            Some(h) => jolt_g1_vec_to_ark(h.0),
-            None => commit_rows_dense(poly, sigma, &setup.0),
-        };
-
-        let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
-        let mut dory_transcript = JoltToDoryTranscript::new(transcript);
-
-        let (proof, _blind) = match dory::prove::<
-            ArkFr,
-            InnerBN254,
-            JoltG1Routines,
-            JoltG2Routines,
-            _,
-            _,
-            Transparent,
-        >(
-            &adapter,
-            &ark_point,
-            row_commitments,
-            <ArkFr as DoryField>::zero(),
-            nu,
-            sigma,
-            &setup.0,
-            &mut dory_transcript,
-        ) {
-            Ok(proof) => proof,
-            Err(_) => std::process::abort(),
-        };
-
-        DoryProof(proof)
+        Self::open_poly(poly, point, _eval, setup, hint, transcript)
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::verify")]
@@ -252,6 +265,71 @@ impl AdditivelyHomomorphic for DoryScheme {
     }
 
     fn combine_hints(hints: Vec<Self::OpeningHint>, scalars: &[Self::Field]) -> Self::OpeningHint {
+        let hint_refs = hints.iter().collect::<Vec<_>>();
+        Self::combine_hint_refs(&hint_refs, scalars)
+    }
+}
+
+impl DoryScheme {
+    #[tracing::instrument(skip_all, name = "DoryScheme::open_poly")]
+    pub fn open_poly<P>(
+        poly: &P,
+        point: &[Fr],
+        _eval: Fr,
+        setup: &DoryProverSetup,
+        hint: Option<DoryHint>,
+        transcript: &mut impl Transcript<Challenge = Fr>,
+    ) -> DoryProof
+    where
+        P: MultilinearPoly<Fr>,
+    {
+        let num_vars = point.len();
+        let _adapter_span = tracing::info_span!("DoryScheme::open.adapter").entered();
+        let adapter = DorySourceAdapter::new(poly);
+        drop(_adapter_span);
+        let sigma = num_vars.div_ceil(2);
+        let nu = num_vars - sigma;
+
+        let _rows_span = tracing::info_span!("DoryScheme::open.row_commitments").entered();
+        let row_commitments = match hint {
+            Some(h) => jolt_g1_vec_to_ark(h.0),
+            None => commit_rows_dense(poly, sigma, &setup.0),
+        };
+        drop(_rows_span);
+
+        let _point_span = tracing::info_span!("DoryScheme::open.point").entered();
+        let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
+        let mut dory_transcript = JoltToDoryTranscript::new(transcript);
+        drop(_point_span);
+
+        let _prove_span = tracing::info_span!("DoryScheme::open.prove").entered();
+        let (proof, _blind) = match dory::prove::<
+            ArkFr,
+            InnerBN254,
+            JoltG1Routines,
+            JoltG2Routines,
+            _,
+            _,
+            Transparent,
+        >(
+            &adapter,
+            &ark_point,
+            row_commitments,
+            <ArkFr as DoryField>::zero(),
+            nu,
+            sigma,
+            &setup.0,
+            &mut dory_transcript,
+        ) {
+            Ok(proof) => proof,
+            Err(_) => std::process::abort(),
+        };
+        drop(_prove_span);
+
+        DoryProof(proof)
+    }
+
+    pub fn combine_hint_refs(hints: &[&DoryHint], scalars: &[Fr]) -> DoryHint {
         assert_eq!(hints.len(), scalars.len());
         if hints.is_empty() {
             return DoryHint::default();
@@ -260,14 +338,12 @@ impl AdditivelyHomomorphic for DoryScheme {
         let num_rows = hints.iter().map(|hint| hint.0.len()).max().unwrap_or(0);
         let mut combined = vec![Bn254G1::identity(); num_rows];
 
-        for (mut hint, &scalar) in hints.into_iter().zip(scalars.iter()) {
-            hint.0.resize(num_rows, Bn254G1::identity());
-            jolt_crypto::ec::bn254::glv::vector_scalar_mul_add_gamma_g1(
-                &mut hint.0,
+        for (hint, &scalar) in hints.iter().zip(scalars.iter()) {
+            jolt_crypto::ec::bn254::glv::vector_add_scalar_mul_g1(
+                &mut combined[..hint.0.len()],
+                &hint.0,
                 scalar,
-                &combined,
             );
-            combined = hint.0;
         }
 
         DoryHint(combined)
@@ -388,12 +464,34 @@ fn commit_rows_sparse<P: MultilinearPoly<Fr> + ?Sized>(
     let g1_bases = &setup.g1_vec[..num_cols];
     let identity = <InnerBN254 as PairingCurve>::G1::identity();
 
+    let mut row_indices = vec![Vec::<usize>::new(); num_rows];
+    let mut all_one = true;
+    poly.for_each_nonzero(&mut |flat_idx, _val| {
+        let row = flat_idx / num_cols;
+        let col = flat_idx % num_cols;
+        row_indices[row].push(col);
+        all_one &= _val == Fr::from_u64(1);
+    });
+
+    if all_one {
+        return jolt_g1_vec_to_ark(
+            jolt_crypto::ec::bn254::batch_addition::batch_g1_additions_multi_affine(
+                &cached_affine_g1_bases(g1_bases),
+                &row_indices,
+            )
+            .into_iter()
+            .map(|affine| Bn254G1::from(ark_bn254::G1Projective::from(affine)))
+            .collect(),
+        );
+    }
+
     let mut row_commitments = vec![identity; num_rows];
     poly.for_each_nonzero(&mut |flat_idx, _val| {
         let row = flat_idx / num_cols;
         let col = flat_idx % num_cols;
+        let scaled = jolt_fr_to_ark(&_val) * g1_bases[col];
         row_commitments[row] =
-            <InnerBN254 as PairingCurve>::G1::add(&row_commitments[row], &g1_bases[col]);
+            <InnerBN254 as PairingCurve>::G1::add(&row_commitments[row], &scaled);
     });
     row_commitments
 }
@@ -449,9 +547,13 @@ impl<S: MultilinearPoly<Fr>> DoryPolynomial<ArkFr> for DorySourceAdapter<'_, S> 
 
 impl<S: MultilinearPoly<Fr>> MultilinearLagrange<ArkFr> for DorySourceAdapter<'_, S> {
     fn vector_matrix_product(&self, left_vec: &[ArkFr], _nu: usize, sigma: usize) -> Vec<ArkFr> {
-        let native_left: Vec<Fr> = left_vec.iter().map(ark_to_jolt_fr).collect();
-        let result = self.source.fold_rows(&native_left, sigma);
-        result.iter().map(jolt_fr_to_ark).collect()
+        let _span = tracing::info_span!(
+            "DorySourceAdapter::vector_matrix_product",
+            left_len = left_vec.len(),
+            sigma = sigma
+        )
+        .entered();
+        jolt_fr_vec_to_ark(self.source.fold_rows(ark_fr_slice_to_jolt(left_vec), sigma))
     }
 }
 

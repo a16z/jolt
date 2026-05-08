@@ -18,7 +18,7 @@ static PERF_TRACING: Once = Once::new();
 
 pub const CORE_VS_BOLT_PERF_THRESHOLDS: PerfGateThresholds = PerfGateThresholds {
     max_setup_ratio: None,
-    max_prove_ratio: Some(100.0),
+    max_prove_ratio: Some(1.20),
     max_verify_ratio: Some(100.0),
     max_proof_size_ratio: Some(100.0),
     max_peak_rss_ratio: Some(100.0),

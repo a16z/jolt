@@ -163,6 +163,14 @@ use crate::zkvm::r1cs::constraints::{
 #[cfg(feature = "zk")]
 use crate::zkvm::verifier::BlindfoldSetup;
 
+fn trace_core_stage_spans() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var_os("JOLT_CORE_STAGE_TRACE").is_some()
+            || std::env::var_os("JOLT_BOLT_PERF_TRACE").is_some()
+    })
+}
+
 /// Jolt CPU prover for RV64IMAC.
 pub struct JoltCpuProver<
     'a,
@@ -510,9 +518,12 @@ impl<
             self.preprocessing.shared.bytecode.code_size
         );
 
+        let _commit_span =
+            trace_core_stage_spans().then(|| tracing::info_span!("core.commitment").entered());
         let (commitments, mut opening_proof_hints) = self.generate_and_commit_witness_polynomials();
         let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
         self.generate_and_commit_trusted_advice();
+        drop(_commit_span);
 
         // Add advice hints for batched Stage 8 opening
         if let Some(hint) = self.advice.trusted_advice_hint.take() {
@@ -522,21 +533,45 @@ impl<
             opening_proof_hints.insert(CommittedPolynomial::UntrustedAdvice, hint);
         }
 
+        let _stage1_span =
+            trace_core_stage_spans().then(|| tracing::info_span!("core.stage1").entered());
         let (stage1_uni_skip_first_round_proof, stage1_sumcheck_proof, r_stage1) =
             self.prove_stage1();
+        drop(_stage1_span);
+        let _stage2_span =
+            trace_core_stage_spans().then(|| tracing::info_span!("core.stage2").entered());
         let (stage2_uni_skip_first_round_proof, stage2_sumcheck_proof, r_stage2) =
             self.prove_stage2();
+        drop(_stage2_span);
+        let _stage3_span =
+            trace_core_stage_spans().then(|| tracing::info_span!("core.stage3").entered());
         let (stage3_sumcheck_proof, r_stage3) = self.prove_stage3();
+        drop(_stage3_span);
+        let _stage4_span =
+            trace_core_stage_spans().then(|| tracing::info_span!("core.stage4").entered());
         let (stage4_sumcheck_proof, r_stage4) = self.prove_stage4();
+        drop(_stage4_span);
+        let _stage5_span =
+            trace_core_stage_spans().then(|| tracing::info_span!("core.stage5").entered());
         let (stage5_sumcheck_proof, r_stage5) = self.prove_stage5();
+        drop(_stage5_span);
+        let _stage6_span =
+            trace_core_stage_spans().then(|| tracing::info_span!("core.stage6").entered());
         let (stage6_sumcheck_proof, r_stage6) = self.prove_stage6();
+        drop(_stage6_span);
+        let _stage7_span =
+            trace_core_stage_spans().then(|| tracing::info_span!("core.stage7").entered());
         let (stage7_sumcheck_proof, r_stage7) = self.prove_stage7();
+        drop(_stage7_span);
 
         let _sumcheck_challenges = [
             r_stage1, r_stage2, r_stage3, r_stage4, r_stage5, r_stage6, r_stage7,
         ];
 
+        let _stage8_span =
+            trace_core_stage_spans().then(|| tracing::info_span!("core.stage8").entered());
         let joint_opening_proof = self.prove_stage8(opening_proof_hints);
+        drop(_stage8_span);
         #[cfg(feature = "zk")]
         let blindfold_proof = self.prove_blindfold(&joint_opening_proof);
 

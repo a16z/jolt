@@ -2028,29 +2028,50 @@ where
         .map(|(claim, gamma)| claim.value * *gamma)
         .sum();
     drop(_rlc_span);
-    let _materialize_span =
-        tracing::info_span!("bolt.evaluate.materialize_joint_polynomial").entered();
-    let joint_evals = materialize_joint_polynomial(
-        commitment_inputs,
-        &claims,
-        &gamma_powers,
-        log_t,
-        opening_point.len(),
-    )?;
-    drop(_materialize_span);
-    let joint_poly = Polynomial::new(joint_evals);
+    let joint_requests =
+        joint_contribution_requests(&claims, &gamma_powers, log_t, opening_point.len())?;
     let _hint_span = tracing::info_span!("bolt.evaluate.joint_opening_hint").entered();
     let joint_hint = joint_opening_hint(commitments, &claims, &gamma_powers)?;
     drop(_hint_span);
     let _dory_open_span = tracing::info_span!("bolt.evaluate.dory_open").entered();
-    let joint_opening_proof = <jolt_dory::DoryScheme as CommitmentScheme>::open(
-        &joint_poly,
+    let sparse_joint_opening = commitment_inputs.open_joint_polynomial(
+        &joint_requests,
         &opening_point,
         joint_claim,
         prover_setup,
-        Some(joint_hint),
+        joint_hint,
         transcript,
     );
+    let joint_opening_proof = match sparse_joint_opening {{
+        Ok(proof) => {{
+            let _materialize_span =
+                tracing::info_span!("bolt.evaluate.materialize_joint_polynomial").entered();
+            drop(_materialize_span);
+            proof
+        }}
+        Err(joint_hint) => {{
+            let _materialize_span =
+                tracing::info_span!("bolt.evaluate.materialize_joint_polynomial").entered();
+            let joint_evals = materialize_joint_polynomial(
+                commitment_inputs,
+                &joint_requests,
+                &claims,
+                &gamma_powers,
+                log_t,
+                opening_point.len(),
+            )?;
+            drop(_materialize_span);
+            let joint_poly = Polynomial::new(joint_evals);
+            <jolt_dory::DoryScheme as CommitmentScheme>::open(
+                &joint_poly,
+                &opening_point,
+                joint_claim,
+                prover_setup,
+                Some(joint_hint),
+                transcript,
+            )
+        }}
+    }};
     drop(_dory_open_span);
     let _bind_span = tracing::info_span!("bolt.evaluate.bind_opening_inputs").entered();
     <jolt_dory::DoryScheme as CommitmentScheme>::bind_opening_inputs(
@@ -2192,6 +2213,7 @@ where
 
 fn materialize_joint_polynomial<I>(
     commitment_inputs: &mut I,
+    requests: &[commitment_stage::JointContribution],
     claims: &[EvaluationClaim],
     gamma_powers: &[{field_type}],
     log_t: usize,
@@ -2203,7 +2225,11 @@ where
     let trace_len = target_len(log_t)?;
     let main_len = target_len(main_num_vars)?;
     let mut joint = vec![{field_type}::from_u64(0); main_len];
-    for (claim, gamma) in claims.iter().zip(gamma_powers) {{
+    let handled = commitment_inputs.add_scaled_to_joint_batch(requests, &mut joint);
+    for (index, (claim, gamma)) in claims.iter().zip(gamma_powers).enumerate() {{
+        if handled.get(index).copied().unwrap_or(false) {{
+            continue;
+        }}
         if claim.source_stage == "stage6" {{
             add_oracle_scaled(commitment_inputs, &mut joint, claim.oracle, log_t, trace_len, *gamma)?;
         }} else {{
@@ -2218,6 +2244,37 @@ where
         }}
     }}
     Ok(joint)
+}}
+
+fn joint_contribution_requests(
+    claims: &[EvaluationClaim],
+    gamma_powers: &[{field_type}],
+    log_t: usize,
+    main_num_vars: usize,
+) -> Result<Vec<commitment_stage::JointContribution>, JoltEvaluationProveError> {{
+    let trace_len = target_len(log_t)?;
+    let main_len = target_len(main_num_vars)?;
+    Ok(claims
+        .iter()
+        .zip(gamma_powers)
+        .map(|(claim, gamma)| {{
+            if claim.source_stage == "stage6" {{
+                commitment_stage::JointContribution {{
+                    oracle: claim.oracle,
+                    num_vars: log_t,
+                    limit: trace_len,
+                    scalar: *gamma,
+                }}
+            }} else {{
+                commitment_stage::JointContribution {{
+                    oracle: claim.oracle,
+                    num_vars: main_num_vars,
+                    limit: main_len,
+                    scalar: *gamma,
+                }}
+            }}
+        }})
+        .collect())
 }}
 
 fn add_oracle_scaled<I>(
@@ -2295,20 +2352,18 @@ fn joint_opening_hint(
         scalars.push(coefficient);
     }}
 
-    Ok(<DoryScheme as AdditivelyHomomorphic>::combine_hints(
-        hints, &scalars,
-    ))
+    Ok(DoryScheme::combine_hint_refs(&hints, &scalars))
 }}
 
-fn opening_hint_for_oracle(
-    commitments: &commitment_stage::CommitmentArtifacts,
+fn opening_hint_for_oracle<'a>(
+    commitments: &'a commitment_stage::CommitmentArtifacts,
     oracle: &'static str,
-) -> Result<DoryHint, JoltEvaluationProveError> {{
+) -> Result<&'a DoryHint, JoltEvaluationProveError> {{
     commitments
         .hints
         .iter()
         .find(|hint| hint.oracle == oracle)
-        .map(|hint| hint.hint.clone())
+        .map(|hint| &hint.hint)
         .ok_or(JoltEvaluationProveError::MissingOpeningHint {{ oracle }})
 }}
 

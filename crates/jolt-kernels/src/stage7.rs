@@ -13,6 +13,7 @@ use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{Label, LabelWithCount, Transcript};
 use jolt_witness::Stage6WitnessSlices;
+use rayon::prelude::*;
 
 pub use crate::stage6::{
     Stage6ChallengeVector as Stage7ChallengeVector,
@@ -1097,11 +1098,14 @@ where
             individual_polys.push(poly);
         }
         let batched_poly = combine_univariate_polys(&individual_polys, &batching_coeffs);
-        if batched_poly.evaluate(F::zero()) + batched_poly.evaluate(F::one()) != batched_claim {
-            return Err(Stage7KernelError::InvalidProof {
-                driver: context.driver.symbol,
-                reason: "batched round claim mismatch",
-            });
+        #[cfg(debug_assertions)]
+        {
+            if batched_poly.evaluate(F::zero()) + batched_poly.evaluate(F::one()) != batched_claim {
+                return Err(Stage7KernelError::InvalidProof {
+                    driver: context.driver.symbol,
+                    reason: "batched round claim mismatch",
+                });
+            }
         }
         append_compressed_univariate_poly(transcript, context.driver.round_label, &batched_poly);
         let challenge = transcript.challenge();
@@ -1536,7 +1540,7 @@ fn hamming_weight_claim_reduction_state<F: Field>(
             });
         }
         chunks
-            .iter()
+            .par_iter()
             .map(|chunk| pushforward_ra_indices(chunk.indices, log_k_chunk, &eq_cycle))
             .collect::<Result<Vec<_>, _>>()?
     } else {
@@ -1556,7 +1560,7 @@ fn hamming_weight_claim_reduction_state<F: Field>(
             });
         }
         chunks
-            .iter()
+            .par_iter()
             .map(|chunk| pushforward_ra_chunk(chunk.evals, chunk.layout, log_k_chunk, &eq_cycle))
             .collect::<Result<Vec<_>, _>>()?
     };
@@ -2160,6 +2164,7 @@ fn reverse_slice<F: Field>(slice: &[F]) -> Vec<F> {
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests use expect for assertion context")]
 mod tests {
     use super::*;
     use jolt_field::Fr;

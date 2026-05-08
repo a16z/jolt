@@ -23,6 +23,11 @@ use jolt_transcript::{Label, LabelWithCount, Transcript};
 use jolt_witness::{stage4_5_sparse_trace_witness, Stage45SparseTraceWitness};
 use rayon::prelude::*;
 
+fn trace_stage4_inner_spans() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("JOLT_STAGE4_TRACE_INSTANCES").is_some())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage4ExecutionMode {
     Prover,
@@ -915,6 +920,26 @@ fn require_operand_count(
     }
 }
 
+#[inline]
+fn check_round_claim<F: Field>(
+    poly: &UnivariatePoly<F>,
+    previous_claim: F,
+    driver: &'static str,
+    reason: &'static str,
+) -> Result<(), Stage4KernelError> {
+    #[cfg(debug_assertions)]
+    {
+        if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != previous_claim {
+            return Err(Stage4KernelError::InvalidProof { driver, reason });
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (poly, previous_claim, driver, reason);
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Stage4KernelContext<'a> {
     pub mode: Stage4ExecutionMode,
@@ -1376,6 +1401,7 @@ where
     let mut instances = Vec::with_capacity(claims.len());
     for (index, claim) in claims.iter().enumerate() {
         let offset = instance_round_offset(context.program, context.driver.symbol, claim.symbol)?;
+        let relation = claim_relation(context.program, claim)?;
         if offset + claim.num_rounds > max_rounds {
             return Err(Stage4KernelError::InvalidInputLength {
                 input: claim.symbol,
@@ -1384,9 +1410,17 @@ where
             });
         }
         let active_scale = F::one().mul_pow_2(max_rounds - offset - claim.num_rounds);
+        let _span = trace_stage4_inner_spans().then(|| {
+            tracing::info_span!(
+                "Stage4::instance.init",
+                relation = relation.symbol(),
+                claim = claim.symbol
+            )
+            .entered()
+        });
         instances.push(Stage4BatchedInstance {
             claim,
-            relation: claim_relation(context.program, claim)?,
+            relation,
             offset,
             previous_claim: input_claims[index].mul_pow_2(max_rounds - claim.num_rounds),
             state: Stage4ProverInstanceState::new(
@@ -1410,6 +1444,15 @@ where
         let mut individual_polys = Vec::with_capacity(instances.len());
         for instance in &mut instances {
             let poly = if instance.is_active(round) {
+                let _span = trace_stage4_inner_spans().then(|| {
+                    tracing::info_span!(
+                        "Stage4::instance.round_poly",
+                        relation = instance.relation.symbol(),
+                        claim = instance.claim.symbol,
+                        round
+                    )
+                    .entered()
+                });
                 instance
                     .state
                     .round_poly(instance.previous_claim, instance.relation)?
@@ -1444,6 +1487,15 @@ where
         for (instance, poly) in instances.iter_mut().zip(individual_polys) {
             instance.previous_claim = poly.evaluate(challenge);
             if instance.is_active(round) {
+                let _span = trace_stage4_inner_spans().then(|| {
+                    tracing::info_span!(
+                        "Stage4::instance.bind",
+                        relation = instance.relation.symbol(),
+                        claim = instance.claim.symbol,
+                        round
+                    )
+                    .entered()
+                });
                 instance.state.ingest_challenge(challenge);
             }
         }
@@ -1688,12 +1740,12 @@ impl<F: Field> DenseStage4State<F> {
         }
         let poly =
             round_poly_from_dense_terms(&self.factors, &self.terms, self.active_scale, relation)?;
-        if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != previous_claim {
-            return Err(Stage4KernelError::InvalidProof {
-                driver: relation.symbol(),
-                reason: "stage4 relation input claim mismatch",
-            });
-        }
+        check_round_claim(
+            &poly,
+            previous_claim,
+            relation.symbol(),
+            "stage4 relation input claim mismatch",
+        )?;
         Ok(poly)
     }
 
@@ -1851,12 +1903,12 @@ impl<F: Field> SparseRegistersState<F> {
             q_quadratic,
             previous_claim,
         );
-        if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != previous_claim {
-            return Err(Stage4KernelError::InvalidProof {
-                driver: relation.symbol(),
-                reason: "stage4 sparse registers input claim mismatch",
-            });
-        }
+        check_round_claim(
+            &poly,
+            previous_claim,
+            relation.symbol(),
+            "stage4 sparse registers input claim mismatch",
+        )?;
         Ok(poly)
     }
 

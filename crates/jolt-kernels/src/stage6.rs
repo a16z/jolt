@@ -1,20 +1,27 @@
 //! Stage 6 coarse-kernel ABI used by Bolt-generated Jolt prover code.
 
-use std::error::Error;
 use std::fmt::{self, Display, Formatter};
+use std::{borrow::Cow, error::Error};
 
-use crate::dense::{bind_dense_evals_reuse, DENSE_BIND_PAR_THRESHOLD};
-use jolt_field::Field;
+use crate::dense::{
+    bind_dense_evals_reuse, bind_dense_evals_reuse_serial, DENSE_BIND_PAR_THRESHOLD,
+};
+use jolt_field::{Field, FieldAccumulator, FieldScalarAccumulator};
 use jolt_poly::{
     BindingOrder, EqPolynomial, ExpandingTable, GruenSplitEqPolynomial, UnivariatePoly,
 };
 use jolt_transcript::{Label, LabelWithCount, Transcript};
 pub use jolt_witness::Stage6WitnessParams;
 use jolt_witness::{
-    stage6_witness_polynomials, CycleInput, Stage6OpeningInputRef, Stage6WitnessInputs,
-    Stage6WitnessPolynomials, Stage6WitnessSlices,
+    stage6_witness_polynomials, CycleInput, Stage6BooleanityRow, Stage6OpeningInputRef,
+    Stage6WitnessInputs, Stage6WitnessPolynomials, Stage6WitnessSlices,
 };
 use rayon::prelude::*;
+
+fn trace_stage6_inner_spans() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("JOLT_STAGE6_TRACE_INSTANCES").is_some())
+}
 
 pub use crate::stage4::{
     Stage4ChallengeVector as Stage6ChallengeVector,
@@ -360,6 +367,7 @@ impl Error for Stage6KernelError {}
 pub struct Stage6BooleanityWitness<'a, F: Field> {
     pub chunks: &'a [&'a [F]],
     pub index_chunks: Option<&'a [&'a [Option<u8>]]>,
+    pub row_indices: Option<&'a [Stage6BooleanityRow]>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -464,6 +472,7 @@ pub struct Stage6RamRaVirtualWitness<'a, F: Field> {
 #[derive(Clone, Copy)]
 pub struct Stage6InstructionRaVirtualWitness<'a, F: Field> {
     pub instruction_ra_chunks: &'a [&'a [F]],
+    pub instruction_ra_index_chunks: Option<&'a [&'a [Option<u8>]]>,
     pub virtual_count: usize,
 }
 
@@ -580,6 +589,7 @@ impl<'a, F: Field> Stage6ProverInputs<'a, F> {
         .with_booleanity(Stage6BooleanityWitness {
             chunks: &slices.booleanity_chunks,
             index_chunks: Some(&slices.booleanity_index_chunks),
+            row_indices: Some(slices.booleanity_rows),
         })
         .with_hamming_booleanity(Stage6HammingBooleanityWitness {
             hamming_weight: &witness.hamming_weight,
@@ -589,6 +599,7 @@ impl<'a, F: Field> Stage6ProverInputs<'a, F> {
         })
         .with_instruction_ra_virtual(Stage6InstructionRaVirtualWitness {
             instruction_ra_chunks: &slices.instruction_ra_virtual_chunks,
+            instruction_ra_index_chunks: Some(&slices.instruction_ra_index_chunks),
             virtual_count: instruction_ra_virtual_count,
         })
         .with_inc_claim_reduction(Stage6IncClaimReductionWitness {
@@ -1287,9 +1298,9 @@ where
 }
 
 #[tracing::instrument(skip_all, name = "Stage6::prove_batched")]
-fn prove_batched_stage6<F, T>(
+fn prove_batched_stage6<'a, F, T>(
     context: Stage6KernelContext<'_>,
-    inputs: &Stage6ProverInputs<'_, F>,
+    inputs: &'a Stage6ProverInputs<'a, F>,
     mut store: Stage6ValueStore<F>,
     transcript: &mut T,
 ) -> Result<Stage6SumcheckOutput<F>, Stage6KernelError>
@@ -1305,6 +1316,7 @@ where
     let batching_coeffs = transcript.challenge_vector(claims.len());
     let max_rounds = context.driver.num_rounds;
     let timing_enabled = std::env::var_os("JOLT_STAGE6_KERNEL_TIMINGS").is_some();
+    let trace_instances = std::env::var_os("JOLT_STAGE6_TRACE_INSTANCES").is_some();
     let two_inv = F::from_u64(2)
         .inverse()
         .ok_or(Stage6KernelError::InvalidProof {
@@ -1325,8 +1337,17 @@ where
         let relation = claim_relation(context.program, claim)?;
         let active_scale = F::one().mul_pow_2(max_rounds - offset - claim.num_rounds);
         let init_start = timing_enabled.then(std::time::Instant::now);
-        let state =
-            Stage6ProverInstanceState::new(context.program, claim, inputs, &store, active_scale)?;
+        let state = if trace_instances {
+            let _span = tracing::info_span!(
+                "Stage6::instance.init",
+                relation = relation.symbol(),
+                claim = claim.symbol
+            )
+            .entered();
+            Stage6ProverInstanceState::new(context.program, claim, inputs, &store, active_scale)?
+        } else {
+            Stage6ProverInstanceState::new(context.program, claim, inputs, &store, active_scale)?
+        };
         let init_nanos = init_start.map_or(0, |start| start.elapsed().as_nanos());
         instances.push(Stage6BatchedInstance {
             claim,
@@ -1350,9 +1371,22 @@ where
         for (index, instance) in instances.iter_mut().enumerate() {
             let poly = if instance.is_active(round) {
                 let round_start = timing_enabled.then(std::time::Instant::now);
-                let poly = instance
-                    .state
-                    .round_poly(instance.previous_claim, instance.relation)?;
+                let poly = if trace_instances {
+                    let _span = tracing::info_span!(
+                        "Stage6::instance.round_poly",
+                        relation = instance.relation.symbol(),
+                        claim = instance.claim.symbol,
+                        round = round
+                    )
+                    .entered();
+                    instance
+                        .state
+                        .round_poly(instance.previous_claim, instance.relation)?
+                } else {
+                    instance
+                        .state
+                        .round_poly(instance.previous_claim, instance.relation)?
+                };
                 if let Some(start) = round_start {
                     timing_stats[index].2 += start.elapsed().as_nanos();
                 }
@@ -1363,12 +1397,12 @@ where
             individual_polys.push(poly);
         }
         let batched_poly = combine_univariate_polys(&individual_polys, &batching_coeffs);
-        if batched_poly.evaluate(F::zero()) + batched_poly.evaluate(F::one()) != batched_claim {
-            return Err(Stage6KernelError::InvalidProof {
-                driver: context.driver.symbol,
-                reason: "batched round claim mismatch",
-            });
-        }
+        check_round_claim(
+            &batched_poly,
+            batched_claim,
+            context.driver.symbol,
+            "batched round claim mismatch",
+        )?;
         append_compressed_univariate_poly(transcript, context.driver.round_label, &batched_poly);
         let challenge = transcript.challenge();
         point.push(challenge);
@@ -1377,7 +1411,18 @@ where
             instance.previous_claim = poly.evaluate(challenge);
             if instance.is_active(round) {
                 let bind_start = timing_enabled.then(std::time::Instant::now);
-                instance.state.ingest_challenge(challenge);
+                if trace_instances {
+                    let _span = tracing::info_span!(
+                        "Stage6::instance.bind",
+                        relation = instance.relation.symbol(),
+                        claim = instance.claim.symbol,
+                        round = round
+                    )
+                    .entered();
+                    instance.state.ingest_challenge(challenge);
+                } else {
+                    instance.state.ingest_challenge(challenge);
+                }
                 if let Some(start) = bind_start {
                     timing_stats[index].3 += start.elapsed().as_nanos();
                 }
@@ -1793,7 +1838,7 @@ struct Stage6BatchedInstance<'a, F: Field> {
     relation: Stage6Relation,
     offset: usize,
     previous_claim: F,
-    state: Stage6ProverInstanceState<F>,
+    state: Stage6ProverInstanceState<'a, F>,
 }
 
 impl<F: Field> Stage6BatchedInstance<'_, F> {
@@ -1802,18 +1847,22 @@ impl<F: Field> Stage6BatchedInstance<'_, F> {
     }
 }
 
-enum Stage6ProverInstanceState<F: Field> {
+enum Stage6ProverInstanceState<'a, F: Field> {
     Booleanity(BooleanityStage6State<F>),
-    CoreBooleanity(CoreBooleanityStage6State<F>),
-    BytecodeReadRaf(BytecodeReadRafStage6State<F>),
+    CoreBooleanity(Box<CoreBooleanityStage6State<'a, F>>),
+    BytecodeReadRaf(Box<BytecodeReadRafStage6State<F>>),
+    HammingBooleanity(HammingBooleanityStage6State<F>),
+    RamRaVirtual(InstructionRaVirtualStage6State<'a, F>),
+    InstructionRaVirtual(InstructionRaVirtualStage6State<'a, F>),
+    IncClaimReduction(IncClaimReductionStage6State<F>),
     Dense(DenseStage6State<F>),
 }
 
-impl<F: Field> Stage6ProverInstanceState<F> {
+impl<'a, F: Field> Stage6ProverInstanceState<'a, F> {
     fn new(
         program: &'static Stage6CpuProgramPlan,
         claim: &Stage6SumcheckClaimPlan,
-        inputs: &Stage6ProverInputs<'_, F>,
+        inputs: &'a Stage6ProverInputs<'a, F>,
         store: &Stage6ValueStore<F>,
         active_scale: F,
     ) -> Result<Self, Stage6KernelError> {
@@ -1826,18 +1875,19 @@ impl<F: Field> Stage6ProverInstanceState<F> {
             }
             Stage6Relation::HammingBooleanity => {
                 hamming_booleanity_state(program, claim, inputs, store, active_scale)
-                    .map(Self::Dense)
+                    .map(Self::HammingBooleanity)
             }
             Stage6Relation::IncClaimReduction => {
                 inc_claim_reduction_state(program, claim, inputs, store, active_scale)
-                    .map(Self::Dense)
+                    .map(Self::IncClaimReduction)
             }
             Stage6Relation::RamRaVirtual => {
-                ram_ra_virtual_state(program, claim, inputs, store, active_scale).map(Self::Dense)
+                ram_ra_virtual_state(program, claim, inputs, store, active_scale)
+                    .map(Self::RamRaVirtual)
             }
             Stage6Relation::InstructionRaVirtual => {
                 instruction_ra_virtual_state(program, claim, inputs, store, active_scale)
-                    .map(Self::Dense)
+                    .map(Self::InstructionRaVirtual)
             }
             relation @ Stage6Relation::Batched => Err(Stage6KernelError::KernelNotImplemented {
                 abi: relation.symbol(),
@@ -1854,6 +1904,10 @@ impl<F: Field> Stage6ProverInstanceState<F> {
             Self::Booleanity(state) => state.round_poly(previous_claim, relation),
             Self::CoreBooleanity(state) => state.round_poly(previous_claim, relation),
             Self::BytecodeReadRaf(state) => state.round_poly(previous_claim, relation),
+            Self::HammingBooleanity(state) => state.round_poly(previous_claim, relation),
+            Self::RamRaVirtual(state) => state.round_poly(previous_claim, relation),
+            Self::InstructionRaVirtual(state) => state.round_poly(previous_claim, relation),
+            Self::IncClaimReduction(state) => state.round_poly(previous_claim, relation),
             Self::Dense(state) => state.round_poly(previous_claim, relation),
         }
     }
@@ -1863,6 +1917,10 @@ impl<F: Field> Stage6ProverInstanceState<F> {
             Self::Booleanity(state) => state.bind(challenge),
             Self::CoreBooleanity(state) => state.bind(challenge),
             Self::BytecodeReadRaf(state) => state.bind(challenge),
+            Self::HammingBooleanity(state) => state.bind(challenge),
+            Self::RamRaVirtual(state) => state.bind(challenge),
+            Self::InstructionRaVirtual(state) => state.bind(challenge),
+            Self::IncClaimReduction(state) => state.bind(challenge),
             Self::Dense(state) => state.bind(challenge),
         }
     }
@@ -1872,6 +1930,10 @@ impl<F: Field> Stage6ProverInstanceState<F> {
             Self::Booleanity(state) => state.final_relation_eval(relation),
             Self::CoreBooleanity(state) => state.final_relation_eval(relation),
             Self::BytecodeReadRaf(state) => state.final_relation_eval(relation),
+            Self::HammingBooleanity(state) => state.final_relation_eval(relation),
+            Self::RamRaVirtual(state) => state.final_relation_eval(relation),
+            Self::InstructionRaVirtual(state) => state.final_relation_eval(relation),
+            Self::IncClaimReduction(state) => state.final_relation_eval(relation),
             Self::Dense(state) => state.final_relation_eval(relation),
         }
     }
@@ -1884,6 +1946,10 @@ impl<F: Field> Stage6ProverInstanceState<F> {
             Self::Booleanity(state) => state.final_evals(relation),
             Self::CoreBooleanity(state) => state.final_evals(relation),
             Self::BytecodeReadRaf(state) => state.final_evals(relation),
+            Self::HammingBooleanity(state) => state.final_evals(relation),
+            Self::RamRaVirtual(state) => state.final_evals(relation),
+            Self::InstructionRaVirtual(state) => state.final_evals(relation),
+            Self::IncClaimReduction(state) => state.final_evals(relation),
             Self::Dense(state) => state.final_evals(relation),
         }
     }
@@ -1895,6 +1961,288 @@ enum BytecodeReadRafPhase {
     Cycle,
 }
 
+enum BytecodeReadRafCycleFactors<F: Field> {
+    Empty,
+    SparseRound1 {
+        tables: Vec<Vec<F>>,
+        indices: Vec<Vec<Option<u8>>>,
+    },
+    SparseRound2 {
+        tables_0: Vec<Vec<F>>,
+        tables_1: Vec<Vec<F>>,
+        indices: Vec<Vec<Option<u8>>>,
+    },
+    SparseRound3 {
+        tables_00: Vec<Vec<F>>,
+        tables_01: Vec<Vec<F>>,
+        tables_10: Vec<Vec<F>>,
+        tables_11: Vec<Vec<F>>,
+        indices: Vec<Vec<Option<u8>>>,
+    },
+    Bound {
+        chunks: Vec<Vec<F>>,
+        scratch: Vec<Vec<F>>,
+    },
+}
+
+impl<F: Field> BytecodeReadRafCycleFactors<F> {
+    fn empty() -> Self {
+        Self::Empty
+    }
+
+    fn sparse(indices: Vec<Vec<Option<u8>>>, chunk_lens: &[usize], address_point: &[F]) -> Self {
+        let tables = chunk_lens
+            .iter()
+            .scan(0usize, |offset, &chunk_len| {
+                let start = *offset;
+                *offset += chunk_len;
+                Some(EqPolynomial::<F>::evals(
+                    &address_point[start..start + chunk_len],
+                    None,
+                ))
+            })
+            .collect();
+        Self::SparseRound1 { tables, indices }
+    }
+
+    fn dense(chunks: Vec<Vec<F>>) -> Self {
+        let scratch = (0..chunks.len()).map(|_| Vec::new()).collect();
+        Self::Bound { chunks, scratch }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Empty => 0,
+            Self::SparseRound1 { tables, .. }
+            | Self::SparseRound2 {
+                tables_0: tables, ..
+            }
+            | Self::SparseRound3 {
+                tables_00: tables, ..
+            } => tables.len(),
+            Self::Bound { chunks, .. } => chunks.len(),
+        }
+    }
+
+    fn current_len(&self) -> usize {
+        match self {
+            Self::Empty => 0,
+            Self::SparseRound1 { indices, .. } => indices.first().map_or(0, Vec::len),
+            Self::SparseRound2 { indices, .. } => {
+                indices.first().map_or(0, |chunk| chunk.len() / 2)
+            }
+            Self::SparseRound3 { indices, .. } => {
+                indices.first().map_or(0, |chunk| chunk.len() / 4)
+            }
+            Self::Bound { chunks, .. } => chunks.first().map_or(0, Vec::len),
+        }
+    }
+
+    fn factor_eval(&self, chunk: usize) -> Option<F> {
+        (chunk < self.len()).then(|| self.get(chunk, 0))
+    }
+
+    fn get_pair(&self, chunk: usize, row: usize) -> (F, F) {
+        (self.get(chunk, 2 * row), self.get(chunk, 2 * row + 1))
+    }
+
+    fn get(&self, chunk: usize, index: usize) -> F {
+        match self {
+            Self::Empty => F::zero(),
+            Self::SparseRound1 { tables, indices } => {
+                indices[chunk][index].map_or(F::zero(), |value| tables[chunk][usize::from(value)])
+            }
+            Self::SparseRound2 {
+                tables_0,
+                tables_1,
+                indices,
+            } => {
+                let source = 2 * index;
+                let low = indices[chunk][source]
+                    .map_or(F::zero(), |value| tables_0[chunk][usize::from(value)]);
+                let high = indices[chunk][source + 1]
+                    .map_or(F::zero(), |value| tables_1[chunk][usize::from(value)]);
+                low + high
+            }
+            Self::SparseRound3 {
+                tables_00,
+                tables_01,
+                tables_10,
+                tables_11,
+                indices,
+            } => {
+                let source = 4 * index;
+                let h_00 = indices[chunk][source]
+                    .map_or(F::zero(), |value| tables_00[chunk][usize::from(value)]);
+                let h_10 = indices[chunk][source + 1]
+                    .map_or(F::zero(), |value| tables_10[chunk][usize::from(value)]);
+                let h_01 = indices[chunk][source + 2]
+                    .map_or(F::zero(), |value| tables_01[chunk][usize::from(value)]);
+                let h_11 = indices[chunk][source + 3]
+                    .map_or(F::zero(), |value| tables_11[chunk][usize::from(value)]);
+                h_00 + h_10 + h_01 + h_11
+            }
+            Self::Bound { chunks, .. } => chunks[chunk][index],
+        }
+    }
+
+    fn bind(&mut self, challenge: F) {
+        let one_minus = F::one() - challenge;
+        match std::mem::replace(self, Self::Empty) {
+            Self::Empty => *self = Self::Empty,
+            Self::SparseRound1 { tables, indices } => {
+                let (tables_0, tables_1) = rayon::join(
+                    || scale_bytecode_read_raf_tables(&tables, one_minus),
+                    || scale_bytecode_read_raf_tables(&tables, challenge),
+                );
+                *self = Self::SparseRound2 {
+                    tables_0,
+                    tables_1,
+                    indices,
+                };
+            }
+            Self::SparseRound2 {
+                tables_0,
+                tables_1,
+                indices,
+            } => {
+                let (tables_00, tables_01) = rayon::join(
+                    || scale_bytecode_read_raf_tables(&tables_0, one_minus),
+                    || scale_bytecode_read_raf_tables(&tables_0, challenge),
+                );
+                let (tables_10, tables_11) = rayon::join(
+                    || scale_bytecode_read_raf_tables(&tables_1, one_minus),
+                    || scale_bytecode_read_raf_tables(&tables_1, challenge),
+                );
+                *self = Self::SparseRound3 {
+                    tables_00,
+                    tables_01,
+                    tables_10,
+                    tables_11,
+                    indices,
+                };
+            }
+            Self::SparseRound3 {
+                tables_00,
+                tables_01,
+                tables_10,
+                tables_11,
+                indices,
+            } => {
+                let (tables_000, tables_001) = rayon::join(
+                    || scale_bytecode_read_raf_tables(&tables_00, one_minus),
+                    || scale_bytecode_read_raf_tables(&tables_00, challenge),
+                );
+                let (tables_010, tables_011) = rayon::join(
+                    || scale_bytecode_read_raf_tables(&tables_01, one_minus),
+                    || scale_bytecode_read_raf_tables(&tables_01, challenge),
+                );
+                let (tables_100, tables_101) = rayon::join(
+                    || scale_bytecode_read_raf_tables(&tables_10, one_minus),
+                    || scale_bytecode_read_raf_tables(&tables_10, challenge),
+                );
+                let (tables_110, tables_111) = rayon::join(
+                    || scale_bytecode_read_raf_tables(&tables_11, one_minus),
+                    || scale_bytecode_read_raf_tables(&tables_11, challenge),
+                );
+                let table_groups = [
+                    &tables_000,
+                    &tables_100,
+                    &tables_010,
+                    &tables_110,
+                    &tables_001,
+                    &tables_101,
+                    &tables_011,
+                    &tables_111,
+                ];
+                let new_len = indices.first().map_or(0, |chunk| chunk.len() / 8);
+                let materialize_chunk_size = 1 << 16;
+                let chunks = (0..tables_000.len())
+                    .into_par_iter()
+                    .map(|chunk| {
+                        let mut values = vec![F::zero(); new_len];
+                        values
+                            .par_chunks_mut(materialize_chunk_size)
+                            .enumerate()
+                            .for_each(|(chunk_index, values_chunk)| {
+                                let start = chunk_index * materialize_chunk_size;
+                                for (local_index, value) in values_chunk.iter_mut().enumerate() {
+                                    let index = start + local_index;
+                                    let source = 8 * index;
+                                    let h_000 = indices[chunk][source].map_or(F::zero(), |value| {
+                                        table_groups[0][chunk][usize::from(value)]
+                                    });
+                                    let h_100 = indices[chunk][source + 1]
+                                        .map_or(F::zero(), |value| {
+                                            table_groups[1][chunk][usize::from(value)]
+                                        });
+                                    let h_010 = indices[chunk][source + 2]
+                                        .map_or(F::zero(), |value| {
+                                            table_groups[2][chunk][usize::from(value)]
+                                        });
+                                    let h_110 = indices[chunk][source + 3]
+                                        .map_or(F::zero(), |value| {
+                                            table_groups[3][chunk][usize::from(value)]
+                                        });
+                                    let h_001 = indices[chunk][source + 4]
+                                        .map_or(F::zero(), |value| {
+                                            table_groups[4][chunk][usize::from(value)]
+                                        });
+                                    let h_101 = indices[chunk][source + 5]
+                                        .map_or(F::zero(), |value| {
+                                            table_groups[5][chunk][usize::from(value)]
+                                        });
+                                    let h_011 = indices[chunk][source + 6]
+                                        .map_or(F::zero(), |value| {
+                                            table_groups[6][chunk][usize::from(value)]
+                                        });
+                                    let h_111 = indices[chunk][source + 7]
+                                        .map_or(F::zero(), |value| {
+                                            table_groups[7][chunk][usize::from(value)]
+                                        });
+                                    *value = h_000
+                                        + h_010
+                                        + h_100
+                                        + h_110
+                                        + h_001
+                                        + h_011
+                                        + h_101
+                                        + h_111;
+                                }
+                            });
+                        values
+                    })
+                    .collect();
+                *self = Self::dense(chunks);
+            }
+            Self::Bound {
+                mut chunks,
+                mut scratch,
+            } => {
+                if chunks.first().map_or(0, Vec::len) / 2 >= DENSE_BIND_PAR_THRESHOLD {
+                    chunks.par_iter_mut().zip(scratch.par_iter_mut()).for_each(
+                        |(chunk, scratch)| {
+                            bind_dense_evals_reuse_serial(chunk, scratch, challenge);
+                        },
+                    );
+                } else {
+                    for (chunk, scratch) in chunks.iter_mut().zip(&mut scratch) {
+                        bind_dense_evals_reuse(chunk, scratch, challenge);
+                    }
+                }
+                *self = Self::Bound { chunks, scratch };
+            }
+        }
+    }
+}
+
+fn scale_bytecode_read_raf_tables<F: Field>(tables: &[Vec<F>], scalar: F) -> Vec<Vec<F>> {
+    tables
+        .par_iter()
+        .map(|table| table.iter().map(|value| *value * scalar).collect())
+        .collect()
+}
+
 struct BytecodeReadRafStage6State<F: Field> {
     log_k: usize,
     log_t: usize,
@@ -1902,13 +2250,21 @@ struct BytecodeReadRafStage6State<F: Field> {
     bytecode_ra_chunks: Vec<Vec<F>>,
     bytecode_ra_indices: Option<Vec<Vec<Option<u8>>>>,
     stage_factors: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
+    stage_factor_scratch: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
     stage_values: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
+    stage_value_scratch: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
     entry_trace: Vec<F>,
+    entry_trace_scratch: Vec<F>,
     entry_expected: Vec<F>,
+    entry_expected_scratch: Vec<F>,
     address_challenges: Vec<F>,
-    cycle_factors: Vec<Vec<F>>,
+    cycle_factors: BytecodeReadRafCycleFactors<F>,
     cycle_eqs: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
+    cycle_eq_scratch: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
     cycle_entry_eq: Vec<F>,
+    cycle_entry_eq_scratch: Vec<F>,
+    cycle_combined_eq: Vec<F>,
+    cycle_combined_eq_scratch: Vec<F>,
     bound_stage_values: Option<[F; BYTECODE_READ_RAF_STAGE_COUNT]>,
     bound_entry_expected: Option<F>,
     outputs: Vec<FactorOutput>,
@@ -2057,13 +2413,21 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                 .collect(),
             bytecode_ra_indices,
             stage_factors,
+            stage_factor_scratch: std::array::from_fn(|_| Vec::new()),
             stage_values,
+            stage_value_scratch: std::array::from_fn(|_| Vec::new()),
             entry_trace,
+            entry_trace_scratch: Vec::new(),
             entry_expected,
+            entry_expected_scratch: Vec::new(),
             address_challenges: Vec::with_capacity(log_k),
-            cycle_factors: Vec::new(),
+            cycle_factors: BytecodeReadRafCycleFactors::empty(),
             cycle_eqs,
+            cycle_eq_scratch: std::array::from_fn(|_| Vec::new()),
             cycle_entry_eq,
+            cycle_entry_eq_scratch: Vec::new(),
+            cycle_combined_eq: Vec::new(),
+            cycle_combined_eq_scratch: Vec::new(),
             bound_stage_values: None,
             bound_entry_expected: None,
             outputs,
@@ -2080,20 +2444,21 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
         relation: Stage6Relation,
     ) -> Result<UnivariatePoly<F>, Stage6KernelError> {
         let poly = match self.phase {
-            BytecodeReadRafPhase::Address => self.address_round_poly(relation)?,
-            BytecodeReadRafPhase::Cycle => self.cycle_round_poly(relation)?,
+            BytecodeReadRafPhase::Address => self.address_round_poly(previous_claim, relation)?,
+            BytecodeReadRafPhase::Cycle => self.cycle_round_poly(previous_claim, relation)?,
         };
-        if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != previous_claim {
-            return Err(Stage6KernelError::InvalidProof {
-                driver: relation.symbol(),
-                reason: "stage6 relation input claim mismatch",
-            });
-        }
+        check_round_claim(
+            &poly,
+            previous_claim,
+            relation.symbol(),
+            "stage6 relation input claim mismatch",
+        )?;
         Ok(poly)
     }
 
     fn address_round_poly(
         &self,
+        previous_claim: F,
         relation: Stage6Relation,
     ) -> Result<UnivariatePoly<F>, Stage6KernelError> {
         let first_len = self.stage_values[0].len();
@@ -2103,144 +2468,177 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                 reason: "bytecode read RAF address phase has invalid length",
             });
         }
-        let eval_count = self.degree_bound + 1;
-        let mut evals = if first_len / 2 >= DENSE_BIND_PAR_THRESHOLD {
+        let eval_count = 2;
+        let eval_accs = if first_len / 2 >= DENSE_BIND_PAR_THRESHOLD {
             (0..first_len / 2)
                 .into_par_iter()
                 .fold(
-                    || vec![F::zero(); eval_count],
+                    || vec![F::Accumulator::default(); eval_count],
                     |mut row_evals, row| {
                         self.accumulate_address_row(row, &mut row_evals);
                         row_evals
                     },
                 )
                 .reduce(
-                    || vec![F::zero(); eval_count],
+                    || vec![F::Accumulator::default(); eval_count],
                     |mut left, right| {
                         for (left, right) in left.iter_mut().zip(right) {
-                            *left += right;
+                            left.merge(right);
                         }
                         left
                     },
                 )
         } else {
-            let mut evals = vec![F::zero(); eval_count];
+            let mut evals = vec![F::Accumulator::default(); eval_count];
             for row in 0..first_len / 2 {
                 self.accumulate_address_row(row, &mut evals);
             }
             evals
         };
+        let mut evals = eval_accs
+            .into_iter()
+            .map(FieldAccumulator::reduce)
+            .collect::<Vec<_>>();
         for eval in &mut evals {
             *eval *= self.active_scale;
         }
-        Ok(UnivariatePoly::from_evals(&evals))
+        Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals))
     }
 
-    fn accumulate_address_row(&self, row: usize, evals: &mut [F]) {
+    fn accumulate_address_row(&self, row: usize, evals: &mut [F::Accumulator]) {
         for (point_index, eval) in evals.iter_mut().enumerate() {
-            let point = F::from_u64(point_index as u64);
-            let mut value = F::zero();
+            let point = if point_index == 0 {
+                F::zero()
+            } else {
+                F::from_u64((point_index + 1) as u64)
+            };
             for stage in 0..BYTECODE_READ_RAF_STAGE_COUNT {
                 let trace_eval = pair_linear_eval(&self.stage_factors[stage], row, point);
                 let value_eval = pair_linear_eval(&self.stage_values[stage], row, point);
-                value += self.gamma_powers[stage] * trace_eval * value_eval;
+                eval.fmadd(trace_eval, self.gamma_powers[stage] * value_eval);
             }
             let entry_trace = pair_linear_eval(&self.entry_trace, row, point);
             let entry_expected = pair_linear_eval(&self.entry_expected, row, point);
-            value += self.gamma_powers[7] * entry_trace * entry_expected;
-            *eval += value;
+            eval.fmadd(entry_trace, self.gamma_powers[7] * entry_expected);
         }
     }
 
     fn cycle_round_poly(
         &self,
+        previous_claim: F,
         relation: Stage6Relation,
     ) -> Result<UnivariatePoly<F>, Stage6KernelError> {
-        let Some(bound_stage_values) = self.bound_stage_values else {
+        if self.bound_stage_values.is_none() {
             return Err(Stage6KernelError::InvalidProof {
                 driver: relation.symbol(),
                 reason: "bytecode read RAF cycle phase missing bound values",
             });
-        };
-        let Some(bound_entry_expected) = self.bound_entry_expected else {
+        }
+        if self.bound_entry_expected.is_none() {
             return Err(Stage6KernelError::InvalidProof {
                 driver: relation.symbol(),
                 reason: "bytecode read RAF cycle phase missing entry value",
             });
-        };
-        let first_len = self.cycle_factors.first().map_or(0, Vec::len);
+        }
+        let first_len = self.cycle_factors.current_len();
         if first_len == 0 || !first_len.is_power_of_two() {
             return Err(Stage6KernelError::InvalidProof {
                 driver: relation.symbol(),
                 reason: "bytecode read RAF cycle phase has invalid length",
             });
         }
-        let eval_count = self.degree_bound + 1;
-        let mut evals = if first_len / 2 >= DENSE_BIND_PAR_THRESHOLD {
+        let eval_count = self.degree_bound;
+        let eval_accs = if first_len / 2 >= DENSE_BIND_PAR_THRESHOLD {
             (0..first_len / 2)
                 .into_par_iter()
                 .fold(
-                    || vec![F::zero(); eval_count],
+                    || vec![F::Accumulator::default(); eval_count],
                     |mut row_evals, row| {
-                        self.accumulate_cycle_row(
-                            row,
-                            bound_stage_values,
-                            bound_entry_expected,
-                            &mut row_evals,
-                        );
+                        self.accumulate_cycle_row(row, &mut row_evals);
                         row_evals
                     },
                 )
                 .reduce(
-                    || vec![F::zero(); eval_count],
+                    || vec![F::Accumulator::default(); eval_count],
                     |mut left, right| {
                         for (left, right) in left.iter_mut().zip(right) {
-                            *left += right;
+                            left.merge(right);
                         }
                         left
                     },
                 )
         } else {
-            let mut evals = vec![F::zero(); eval_count];
+            let mut evals = vec![F::Accumulator::default(); eval_count];
             for row in 0..first_len / 2 {
-                self.accumulate_cycle_row(
-                    row,
-                    bound_stage_values,
-                    bound_entry_expected,
-                    &mut evals,
-                );
+                self.accumulate_cycle_row(row, &mut evals);
             }
             evals
         };
+        let mut evals = eval_accs
+            .into_iter()
+            .map(FieldAccumulator::reduce)
+            .collect::<Vec<_>>();
         for eval in &mut evals {
             *eval *= self.active_scale;
         }
-        Ok(UnivariatePoly::from_evals(&evals))
+        Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals))
     }
 
-    fn accumulate_cycle_row(
-        &self,
-        row: usize,
-        bound_stage_values: [F; BYTECODE_READ_RAF_STAGE_COUNT],
-        bound_entry_expected: F,
-        evals: &mut [F],
-    ) {
+    fn accumulate_cycle_row(&self, row: usize, evals: &mut [F::Accumulator]) {
+        const MAX_BYTECODE_CYCLE_EVALS: usize = 8;
+        if evals.len() <= MAX_BYTECODE_CYCLE_EVALS {
+            let mut ra_products = [F::one(); MAX_BYTECODE_CYCLE_EVALS];
+            for chunk in 0..self.cycle_factors.len() {
+                let (low, high) = self.cycle_factors.get_pair(chunk, row);
+                let slope = high - low;
+                for (point_index, product) in ra_products.iter_mut().take(evals.len()).enumerate() {
+                    let point = if point_index == 0 {
+                        F::zero()
+                    } else {
+                        F::from_u64((point_index + 1) as u64)
+                    };
+                    *product *= low + slope * point;
+                }
+            }
+
+            let combined_low = self.cycle_combined_eq[2 * row];
+            let combined_high = self.cycle_combined_eq[2 * row + 1];
+            let combined_slope = combined_high - combined_low;
+            let mut weighted_values = [F::zero(); MAX_BYTECODE_CYCLE_EVALS];
+            for (point_index, weighted_value) in
+                weighted_values.iter_mut().take(evals.len()).enumerate()
+            {
+                let point = if point_index == 0 {
+                    F::zero()
+                } else {
+                    F::from_u64((point_index + 1) as u64)
+                };
+                *weighted_value = combined_low + combined_slope * point;
+            }
+
+            for ((eval, &ra_product), &weighted_value) in evals
+                .iter_mut()
+                .zip(ra_products.iter())
+                .zip(weighted_values.iter())
+            {
+                eval.fmadd(ra_product, weighted_value);
+            }
+            return;
+        }
+
         for (point_index, eval) in evals.iter_mut().enumerate() {
-            let point = F::from_u64(point_index as u64);
+            let point = if point_index == 0 {
+                F::zero()
+            } else {
+                F::from_u64((point_index + 1) as u64)
+            };
             let mut ra_product = F::one();
-            for factor in &self.cycle_factors {
-                ra_product *= pair_linear_eval(factor, row, point);
+            for chunk in 0..self.cycle_factors.len() {
+                let (low, high) = self.cycle_factors.get_pair(chunk, row);
+                ra_product *= low + (high - low) * point;
             }
-            let mut weighted_value = F::zero();
-            for (stage, bound_stage_value) in bound_stage_values.iter().enumerate() {
-                weighted_value += self.gamma_powers[stage]
-                    * *bound_stage_value
-                    * pair_linear_eval(&self.cycle_eqs[stage], row, point);
-            }
-            weighted_value += self.gamma_powers[7]
-                * bound_entry_expected
-                * pair_linear_eval(&self.cycle_entry_eq, row, point);
-            *eval += ra_product * weighted_value;
+            let weighted_value = pair_linear_eval(&self.cycle_combined_eq, row, point);
+            eval.fmadd(ra_product, weighted_value);
         }
     }
 
@@ -2252,12 +2650,46 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
     }
 
     fn bind_address(&mut self, challenge: F) {
-        for stage in 0..BYTECODE_READ_RAF_STAGE_COUNT {
-            bind_dense_evals_reuse(&mut self.stage_factors[stage], &mut Vec::new(), challenge);
-            bind_dense_evals_reuse(&mut self.stage_values[stage], &mut Vec::new(), challenge);
-        }
-        bind_dense_evals_reuse(&mut self.entry_trace, &mut Vec::new(), challenge);
-        bind_dense_evals_reuse(&mut self.entry_expected, &mut Vec::new(), challenge);
+        rayon::join(
+            || {
+                rayon::join(
+                    || {
+                        self.stage_factors
+                            .par_iter_mut()
+                            .zip(self.stage_factor_scratch.par_iter_mut())
+                            .for_each(|(factor, scratch)| {
+                                bind_dense_evals_reuse_serial(factor, scratch, challenge);
+                            });
+                    },
+                    || {
+                        self.stage_values
+                            .par_iter_mut()
+                            .zip(self.stage_value_scratch.par_iter_mut())
+                            .for_each(|(value, scratch)| {
+                                bind_dense_evals_reuse_serial(value, scratch, challenge);
+                            });
+                    },
+                );
+            },
+            || {
+                rayon::join(
+                    || {
+                        bind_dense_evals_reuse(
+                            &mut self.entry_trace,
+                            &mut self.entry_trace_scratch,
+                            challenge,
+                        );
+                    },
+                    || {
+                        bind_dense_evals_reuse(
+                            &mut self.entry_expected,
+                            &mut self.entry_expected_scratch,
+                            challenge,
+                        );
+                    },
+                );
+            },
+        );
         self.address_challenges.push(challenge);
         if self.address_challenges.len() == self.log_k {
             self.init_cycle_phase();
@@ -2275,48 +2707,50 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
         let mut address_point = self.address_challenges.clone();
         address_point.reverse();
 
-        self.cycle_factors = if let Some(bytecode_ra_indices) = &self.bytecode_ra_indices {
-            self.sparse_cycle_factors(bytecode_ra_indices, &address_point)
+        self.cycle_factors = if let Some(bytecode_ra_indices) = self.bytecode_ra_indices.take() {
+            BytecodeReadRafCycleFactors::sparse(
+                bytecode_ra_indices,
+                &self.chunk_lens,
+                &address_point,
+            )
         } else {
-            self.dense_cycle_factors(&address_point)
+            BytecodeReadRafCycleFactors::dense(self.dense_cycle_factors(&address_point))
         };
+        let stage_coefficients =
+            std::array::from_fn::<_, BYTECODE_READ_RAF_STAGE_COUNT, _>(|stage| {
+                self.gamma_powers[stage] * bound_stage_values[stage]
+            });
+        let trace_len = 1usize << self.log_t;
+        self.cycle_combined_eq = (0..trace_len)
+            .into_par_iter()
+            .map(|index| {
+                let mut combined = F::zero();
+                for (stage, &coefficient) in stage_coefficients.iter().enumerate() {
+                    combined += coefficient * self.cycle_eqs[stage][index];
+                }
+                combined
+            })
+            .collect();
+        let entry_coefficient = self.gamma_powers[7] * bound_entry_expected;
+        if let Some(combined) = self.cycle_combined_eq.first_mut() {
+            *combined += entry_coefficient;
+        }
 
         self.bound_stage_values = Some(bound_stage_values);
         self.bound_entry_expected = Some(bound_entry_expected);
         self.stage_factors = std::array::from_fn(|_| Vec::new());
+        self.stage_factor_scratch = std::array::from_fn(|_| Vec::new());
         self.stage_values = std::array::from_fn(|_| Vec::new());
+        self.stage_value_scratch = std::array::from_fn(|_| Vec::new());
         self.entry_trace.clear();
+        self.entry_trace_scratch.clear();
         self.entry_expected.clear();
+        self.entry_expected_scratch.clear();
+        self.cycle_eqs = std::array::from_fn(|_| Vec::new());
+        self.cycle_eq_scratch = std::array::from_fn(|_| Vec::new());
+        self.cycle_entry_eq.clear();
+        self.cycle_entry_eq_scratch.clear();
         self.phase = BytecodeReadRafPhase::Cycle;
-    }
-
-    fn sparse_cycle_factors(
-        &self,
-        bytecode_ra_indices: &[Vec<Option<u8>>],
-        address_point: &[F],
-    ) -> Vec<Vec<F>> {
-        let trace_len = 1usize << self.log_t;
-        bytecode_ra_indices
-            .iter()
-            .zip(&self.chunk_lens)
-            .scan(0usize, |offset, (indices, &chunk_len)| {
-                let start = *offset;
-                *offset += chunk_len;
-                Some((indices, start, chunk_len))
-            })
-            .map(|(indices, offset, chunk_len)| {
-                let eq_chunk =
-                    EqPolynomial::<F>::evals(&address_point[offset..offset + chunk_len], None);
-                indices
-                    .iter()
-                    .take(trace_len)
-                    .map(|index| match index {
-                        Some(index) => eq_chunk[usize::from(*index)],
-                        None => F::zero(),
-                    })
-                    .collect()
-            })
-            .collect()
     }
 
     fn dense_cycle_factors(&self, address_point: &[F]) -> Vec<Vec<F>> {
@@ -2346,58 +2780,44 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
     }
 
     fn bind_cycle(&mut self, challenge: F) {
-        for factor in &mut self.cycle_factors {
-            bind_dense_evals_reuse(factor, &mut Vec::new(), challenge);
-        }
-        for eq in &mut self.cycle_eqs {
-            bind_dense_evals_reuse(eq, &mut Vec::new(), challenge);
-        }
-        bind_dense_evals_reuse(&mut self.cycle_entry_eq, &mut Vec::new(), challenge);
+        self.cycle_factors.bind(challenge);
+        bind_dense_evals_reuse(
+            &mut self.cycle_combined_eq,
+            &mut self.cycle_combined_eq_scratch,
+            challenge,
+        );
     }
 
     fn final_relation_eval(&self, relation: Stage6Relation) -> Result<F, Stage6KernelError> {
-        let Some(bound_stage_values) = self.bound_stage_values else {
+        if self.bound_stage_values.is_none() {
             return Err(Stage6KernelError::InvalidProof {
                 driver: relation.symbol(),
                 reason: "bytecode read RAF final eval missing bound values",
             });
-        };
-        let Some(bound_entry_expected) = self.bound_entry_expected else {
+        }
+        if self.bound_entry_expected.is_none() {
             return Err(Stage6KernelError::InvalidProof {
                 driver: relation.symbol(),
                 reason: "bytecode read RAF final eval missing entry value",
             });
-        };
+        }
         let mut ra_product = F::one();
-        for factor in &self.cycle_factors {
-            ra_product *= factor
-                .first()
-                .copied()
-                .ok_or(Stage6KernelError::InvalidProof {
-                    driver: relation.symbol(),
-                    reason: "bytecode read RAF final eval missing RA factor",
-                })?;
-        }
-        let mut weighted_value = F::zero();
-        for (stage, bound_stage_value) in bound_stage_values.iter().enumerate() {
-            weighted_value += self.gamma_powers[stage]
-                * *bound_stage_value
-                * self.cycle_eqs[stage].first().copied().ok_or(
-                    Stage6KernelError::InvalidProof {
+        for chunk in 0..self.cycle_factors.len() {
+            ra_product *=
+                self.cycle_factors
+                    .factor_eval(chunk)
+                    .ok_or(Stage6KernelError::InvalidProof {
                         driver: relation.symbol(),
-                        reason: "bytecode read RAF final eval missing cycle eq",
-                    },
-                )?;
+                        reason: "bytecode read RAF final eval missing RA factor",
+                    })?;
         }
-        weighted_value += self.gamma_powers[7]
-            * bound_entry_expected
-            * self
-                .cycle_entry_eq
+        let weighted_value =
+            self.cycle_combined_eq
                 .first()
                 .copied()
                 .ok_or(Stage6KernelError::InvalidProof {
                     driver: relation.symbol(),
-                    reason: "bytecode read RAF final eval missing entry eq",
+                    reason: "bytecode read RAF final eval missing combined cycle eq",
                 })?;
         Ok(ra_product * weighted_value)
     }
@@ -2417,15 +2837,12 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                             driver: relation.symbol(),
                             reason: "bytecode read RAF output factor underflow",
                         })?;
-                let value = self
-                    .cycle_factors
-                    .get(factor)
-                    .and_then(|values| values.first())
-                    .copied()
-                    .ok_or(Stage6KernelError::InvalidProof {
+                let value = self.cycle_factors.factor_eval(factor).ok_or(
+                    Stage6KernelError::InvalidProof {
                         driver: relation.symbol(),
                         reason: "bytecode read RAF final eval missing output factor",
-                    })?;
+                    },
+                )?;
                 Ok(named_eval(output.name, output.oracle, value))
             })
             .collect()
@@ -2437,6 +2854,25 @@ fn pair_linear_eval<F: Field>(values: &[F], row: usize, point: F) -> F {
     let low = values[row << 1];
     let high = values[(row << 1) + 1];
     low + (high - low) * point
+}
+
+#[inline]
+fn multiply_linear_factor<F: Field>(
+    coefficients: &mut [F; 6],
+    scratch: &mut [F; 6],
+    degree: &mut usize,
+    constant: F,
+    slope: F,
+) {
+    for value in scratch.iter_mut().take(*degree + 2) {
+        *value = F::zero();
+    }
+    for index in 0..=*degree {
+        scratch[index] += coefficients[index] * constant;
+        scratch[index + 1] += coefficients[index] * slope;
+    }
+    *degree += 1;
+    coefficients[..=*degree].copy_from_slice(&scratch[..=*degree]);
 }
 
 struct BooleanityStage6State<F: Field> {
@@ -2497,62 +2933,64 @@ impl<F: Field> BooleanityStage6State<F> {
                 reason: "booleanity factor has invalid length",
             });
         }
-        let mut evals = if self.degree_bound == 3 {
-            self.round_evals_degree3(first_len / 2)
-        } else {
-            self.round_evals_generic(first_len / 2)
-        };
+        if self.degree_bound == 3 {
+            let mut evals = self.round_evals_degree3(first_len / 2);
+            for eval in &mut evals {
+                *eval *= self.active_scale;
+            }
+            let poly = UnivariatePoly::from_evals_and_hint(previous_claim, &evals);
+            check_round_claim(
+                &poly,
+                previous_claim,
+                relation.symbol(),
+                "stage6 relation input claim mismatch",
+            )?;
+            return Ok(poly);
+        }
+
+        let mut evals = self.round_evals_generic(first_len / 2);
         for eval in &mut evals {
             *eval *= self.active_scale;
         }
         let poly = UnivariatePoly::from_evals(&evals);
-        if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != previous_claim {
-            return Err(Stage6KernelError::InvalidProof {
-                driver: relation.symbol(),
-                reason: "stage6 relation input claim mismatch",
-            });
-        }
+        check_round_claim(
+            &poly,
+            previous_claim,
+            relation.symbol(),
+            "stage6 relation input claim mismatch",
+        )?;
         Ok(poly)
     }
 
-    fn round_evals_degree3(&self, half_len: usize) -> Vec<F> {
-        let evals = if half_len >= DENSE_BIND_PAR_THRESHOLD {
+    fn round_evals_degree3(&self, half_len: usize) -> [F; 3] {
+        if half_len >= DENSE_BIND_PAR_THRESHOLD {
             (0..half_len)
                 .into_par_iter()
                 .fold(
-                    || [F::zero(); 4],
+                    || [F::zero(); 3],
                     |mut row_evals, row| {
                         self.accumulate_row_degree3(row, &mut row_evals);
                         row_evals
                     },
                 )
                 .reduce(
-                    || [F::zero(); 4],
-                    |left, right| {
-                        [
-                            left[0] + right[0],
-                            left[1] + right[1],
-                            left[2] + right[2],
-                            left[3] + right[3],
-                        ]
-                    },
+                    || [F::zero(); 3],
+                    |left, right| [left[0] + right[0], left[1] + right[1], left[2] + right[2]],
                 )
         } else {
-            let mut evals = [F::zero(); 4];
+            let mut evals = [F::zero(); 3];
             for row in 0..half_len {
                 self.accumulate_row_degree3(row, &mut evals);
             }
             evals
-        };
-        evals.to_vec()
+        }
     }
 
-    fn accumulate_row_degree3(&self, row: usize, evals: &mut [F; 4]) {
+    fn accumulate_row_degree3(&self, row: usize, evals: &mut [F; 3]) {
         let eq_low = self.eq[row << 1];
         let eq_high = self.eq[(row << 1) + 1];
         let delta_eq = eq_high - eq_low;
         let eq_at_0 = eq_low;
-        let eq_at_1 = eq_high;
         let eq_at_2 = eq_low + delta_eq.mul_u64(2);
         let eq_at_3 = eq_low + delta_eq.mul_u64(3);
         for (chunk_index, chunk) in self.chunks.iter().enumerate() {
@@ -2564,13 +3002,11 @@ impl<F: Field> BooleanityStage6State<F> {
             let delta_ra = ra_high - ra_low;
             let gamma_power = self.gamma_powers[chunk_index];
             let ra_at_0 = ra_low;
-            let ra_at_1 = ra_high;
             let ra_at_2 = ra_low + delta_ra.mul_u64(2);
             let ra_at_3 = ra_low + delta_ra.mul_u64(3);
             evals[0] += gamma_power * eq_at_0 * (ra_at_0.square() - ra_at_0);
-            evals[1] += gamma_power * eq_at_1 * (ra_at_1.square() - ra_at_1);
-            evals[2] += gamma_power * eq_at_2 * (ra_at_2.square() - ra_at_2);
-            evals[3] += gamma_power * eq_at_3 * (ra_at_3.square() - ra_at_3);
+            evals[1] += gamma_power * eq_at_2 * (ra_at_2.square() - ra_at_2);
+            evals[2] += gamma_power * eq_at_3 * (ra_at_3.square() - ra_at_3);
         }
     }
 
@@ -2632,7 +3068,7 @@ impl<F: Field> BooleanityStage6State<F> {
                 .par_iter_mut()
                 .zip(self.chunk_scratch.par_iter_mut())
                 .for_each(|(chunk, scratch)| {
-                    bind_dense_evals_reuse(chunk, scratch, challenge);
+                    bind_dense_evals_reuse_serial(chunk, scratch, challenge);
                 });
         } else {
             for (chunk, scratch) in self.chunks.iter_mut().zip(&mut self.chunk_scratch) {
@@ -2694,17 +3130,18 @@ impl<F: Field> BooleanityStage6State<F> {
     }
 }
 
-struct CoreBooleanityStage6State<F: Field> {
+struct CoreBooleanityStage6State<'a, F: Field> {
     log_k_chunk: usize,
+    num_polys: usize,
     address_round: usize,
     b: GruenSplitEqPolynomial<F>,
     d: GruenSplitEqPolynomial<F>,
     f_table: ExpandingTable<F>,
     eq_r_r: F,
+    eq_r_r_inv: F,
     g: Vec<Vec<F>>,
-    indices: Vec<Vec<Option<u8>>>,
-    h: Option<Vec<Vec<F>>>,
-    h_scratch: Vec<Vec<F>>,
+    indices: Cow<'a, [Stage6BooleanityRow]>,
+    h: Option<CoreBooleanityHState<'a, F>>,
     gamma_powers: Vec<F>,
     gamma_powers_inv: Vec<F>,
     gamma_powers_square: Vec<F>,
@@ -2712,11 +3149,12 @@ struct CoreBooleanityStage6State<F: Field> {
     active_scale: F,
 }
 
-impl<F: Field> CoreBooleanityStage6State<F> {
+impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
     fn new(
         r_address: &[F],
         r_cycle: &[F],
-        indices: Vec<Vec<Option<u8>>>,
+        indices: &[&[Option<u8>]],
+        row_indices: Option<&'a [Stage6BooleanityRow]>,
         gamma: F,
         outputs: Vec<FactorOutput>,
         active_scale: F,
@@ -2731,33 +3169,26 @@ impl<F: Field> CoreBooleanityStage6State<F> {
             });
         }
 
-        let eq_cycle = EqPolynomial::<F>::evals(r_cycle, None);
-        let mut g = (0..indices.len())
-            .map(|_| vec![F::zero(); chunk_domain])
-            .collect::<Vec<_>>();
-        for (chunk_index, chunk) in indices.iter().enumerate() {
-            for (cycle, index) in chunk.iter().enumerate() {
-                let Some(index) = index else {
-                    continue;
-                };
-                let index = usize::from(*index);
-                if index >= chunk_domain {
-                    return Err(Stage6KernelError::InvalidProof {
-                        driver: Stage6Relation::Booleanity.symbol(),
-                        reason: "booleanity index exceeds chunk domain",
-                    });
-                }
-                g[chunk_index][index] += eq_cycle[cycle];
-            }
-        }
+        let num_polys = indices.len();
+        let row_indices = if let Some(rows) = row_indices {
+            require_operand_count("stage6.booleanity.row_indices", trace_len, rows.len())?;
+            Cow::Borrowed(rows)
+        } else {
+            Cow::Owned(core_booleanity_row_indices(
+                indices,
+                trace_len,
+                chunk_domain,
+            )?)
+        };
+        let g = core_booleanity_g_from_rows(r_cycle, &row_indices, num_polys, chunk_domain);
 
-        let mut gamma_powers = Vec::with_capacity(indices.len());
-        let mut gamma_powers_inv = Vec::with_capacity(indices.len());
-        let mut gamma_powers_square = Vec::with_capacity(indices.len());
+        let mut gamma_powers = Vec::with_capacity(num_polys);
+        let mut gamma_powers_inv = Vec::with_capacity(num_polys);
+        let mut gamma_powers_square = Vec::with_capacity(num_polys);
         let mut gamma_power = F::one();
         let gamma_square = gamma.square();
         let mut gamma_square_power = F::one();
-        for _ in 0..indices.len() {
+        for _ in 0..num_polys {
             gamma_powers.push(gamma_power);
             gamma_powers_inv.push(gamma_power.inverse().ok_or(
                 Stage6KernelError::InvalidProof {
@@ -2775,15 +3206,16 @@ impl<F: Field> CoreBooleanityStage6State<F> {
 
         Ok(Self {
             log_k_chunk,
+            num_polys,
             address_round: 0,
             b: GruenSplitEqPolynomial::new(r_address, BindingOrder::LowToHigh),
             d: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
             f_table,
             eq_r_r: F::zero(),
+            eq_r_r_inv: F::zero(),
             g,
-            indices,
+            indices: row_indices,
             h: None,
-            h_scratch: Vec::new(),
             gamma_powers,
             gamma_powers_inv,
             gamma_powers_square,
@@ -2804,36 +3236,40 @@ impl<F: Field> CoreBooleanityStage6State<F> {
             });
         }
         let mut poly = if self.h.is_none() {
+            let _span = trace_stage6_inner_spans()
+                .then(|| tracing::info_span!("Stage6::booleanity.address_round").entered());
             self.address_round_poly(previous_claim)
         } else {
+            let _span = trace_stage6_inner_spans()
+                .then(|| tracing::info_span!("Stage6::booleanity.cycle_round").entered());
             self.cycle_round_poly(previous_claim)?
         };
         if self.active_scale != F::one() {
             poly *= self.active_scale;
         }
-        if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != previous_claim {
-            return Err(Stage6KernelError::InvalidProof {
-                driver: relation.symbol(),
-                reason: "stage6 booleanity input claim mismatch",
-            });
-        }
+        check_round_claim(
+            &poly,
+            previous_claim,
+            relation.symbol(),
+            "stage6 booleanity input claim mismatch",
+        )?;
         Ok(poly)
     }
 
     fn address_round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
         let m = self.address_round + 1;
         let f_values = self.f_table.values();
-        let quadratic_coeffs = self.b.fold_out_in(
-            || [F::zero(); 2],
+
+        let quadratic_accs = self.b.fold_out_in(
+            || [F::Accumulator::default(); 2],
             |inner, k_prime, _x_in, e_in| {
-                let block_start = k_prime << m;
-                let block_end = block_start + (1 << m);
-                for (index, g_i) in self.g.iter().enumerate() {
+                for (g_i, &gamma_square) in self.g.iter().zip(&self.gamma_powers_square) {
                     let mut eval_0 = F::zero();
                     let mut eval_infty = F::zero();
-                    for (local, &g_k) in g_i[block_start..block_end].iter().enumerate() {
-                        let k_m = local >> (m - 1);
-                        let f_k = f_values[local & ((1 << (m - 1)) - 1)];
+                    let block_start = k_prime << m;
+                    for (k, &g_k) in g_i[block_start..block_start + (1 << m)].iter().enumerate() {
+                        let k_m = k >> (m - 1);
+                        let f_k = f_values[k & ((1 << (m - 1)) - 1)];
                         let g_times_f = g_k * f_k;
                         let eval_inf = g_times_f * f_k;
                         if k_m == 0 {
@@ -2841,13 +3277,24 @@ impl<F: Field> CoreBooleanityStage6State<F> {
                         }
                         eval_infty += eval_inf;
                     }
-                    inner[0] += e_in * self.gamma_powers_square[index] * eval_0;
-                    inner[1] += e_in * self.gamma_powers_square[index] * eval_infty;
+                    let weight = e_in * gamma_square;
+                    inner[0].fmadd(weight, eval_0);
+                    inner[1].fmadd(weight, eval_infty);
                 }
             },
-            |_x_out, e_out, inner| [e_out * inner[0], e_out * inner[1]],
-            |left, right| [left[0] + right[0], left[1] + right[1]],
+            |_x_out, e_out, inner| {
+                let mut outer = [F::Accumulator::default(); 2];
+                outer[0].fmadd(e_out, inner[0].reduce());
+                outer[1].fmadd(e_out, inner[1].reduce());
+                outer
+            },
+            |mut left, right| {
+                left[0].merge(right[0]);
+                left[1].merge(right[1]);
+                left
+            },
         );
+        let quadratic_coeffs = [quadratic_accs[0].reduce(), quadratic_accs[1].reduce()];
         self.b
             .gruen_poly_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
     }
@@ -2857,29 +3304,94 @@ impl<F: Field> CoreBooleanityStage6State<F> {
             driver: Stage6Relation::Booleanity.symbol(),
             reason: "booleanity cycle state is missing",
         })?;
-        let quadratic_coeffs = self.d.fold_out_in(
-            || [F::zero(); 2],
-            |inner, j_prime, _x_in, e_in| {
-                for (index, h_i) in h.iter().enumerate() {
-                    let h_0 = h_i[2 * j_prime];
-                    let h_1 = h_i[2 * j_prime + 1];
-                    let delta = h_1 - h_0;
-                    let rho = self.gamma_powers[index];
-                    inner[0] += e_in * h_0 * (h_0 - rho);
-                    inner[1] += e_in * delta.square();
+        if let CoreBooleanityHState::RoundN { h, .. } = h {
+            return self.cycle_round_poly_round_n(previous_claim, h);
+        }
+        let e_out = self.d.e_out_current();
+        let e_in = self.d.e_in_current();
+        let in_bits = e_in.len().trailing_zeros() as usize;
+        let quadratic_accs = (0..e_out.len())
+            .into_par_iter()
+            .map(|x_out| {
+                let mut inner_accs = [F::Accumulator::default(); 2];
+                for (x_in, &e_in) in e_in.iter().enumerate() {
+                    let j_prime = (x_out << in_bits) | x_in;
+                    let mut constant_acc = F::Accumulator::default();
+                    let mut quadratic_acc = F::Accumulator::default();
+                    for index in 0..h.num_polys() {
+                        let (h_0, h_1) = h.get_bound_pair(index, j_prime);
+                        let delta = h_1 - h_0;
+                        let rho = self.gamma_powers[index];
+                        constant_acc.fmadd(h_0, h_0 - rho);
+                        quadratic_acc.fmadd(delta, delta);
+                    }
+                    inner_accs[0].fmadd(e_in, constant_acc.reduce());
+                    inner_accs[1].fmadd(e_in, quadratic_acc.reduce());
                 }
-            },
-            |_x_out, e_out, inner| [e_out * inner[0], e_out * inner[1]],
-            |left, right| [left[0] + right[0], left[1] + right[1]],
-        );
-        let adjusted_claim = previous_claim
-            * self
-                .eq_r_r
-                .inverse()
-                .ok_or(Stage6KernelError::InvalidProof {
-                    driver: Stage6Relation::Booleanity.symbol(),
-                    reason: "booleanity address equality scalar is not invertible",
-                })?;
+                let mut outer_accs = [F::Accumulator::default(); 2];
+                outer_accs[0].fmadd(e_out[x_out], inner_accs[0].reduce());
+                outer_accs[1].fmadd(e_out[x_out], inner_accs[1].reduce());
+                outer_accs
+            })
+            .reduce(
+                || [F::Accumulator::default(); 2],
+                |mut left, right| {
+                    left[0].merge(right[0]);
+                    left[1].merge(right[1]);
+                    left
+                },
+            );
+        let quadratic_coeffs = [quadratic_accs[0].reduce(), quadratic_accs[1].reduce()];
+        let adjusted_claim = previous_claim * self.eq_r_r_inv;
+        Ok(self
+            .d
+            .gruen_poly_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], adjusted_claim)
+            * self.eq_r_r)
+    }
+
+    fn cycle_round_poly_round_n(
+        &self,
+        previous_claim: F,
+        h: &[Vec<F>],
+    ) -> Result<UnivariatePoly<F>, Stage6KernelError> {
+        let e_out = self.d.e_out_current();
+        let e_in = self.d.e_in_current();
+        let in_bits = e_in.len().trailing_zeros() as usize;
+        let quadratic_accs = (0..e_out.len())
+            .into_par_iter()
+            .map(|x_out| {
+                let mut inner_accs = [F::Accumulator::default(); 2];
+                let base = x_out << in_bits;
+                for (x_in, &e_in) in e_in.iter().enumerate() {
+                    let j_prime = base | x_in;
+                    let mut constant_acc = F::Accumulator::default();
+                    let mut quadratic_acc = F::Accumulator::default();
+                    for (index, h_poly) in h.iter().enumerate() {
+                        let rho = self.gamma_powers[index];
+                        let h_0 = h_poly[2 * j_prime];
+                        let h_1 = h_poly[2 * j_prime + 1];
+                        let delta = h_1 - h_0;
+                        constant_acc.fmadd(h_0, h_0 - rho);
+                        quadratic_acc.fmadd(delta, delta);
+                    }
+                    inner_accs[0].fmadd(e_in, constant_acc.reduce());
+                    inner_accs[1].fmadd(e_in, quadratic_acc.reduce());
+                }
+                let mut outer_accs = [F::Accumulator::default(); 2];
+                outer_accs[0].fmadd(e_out[x_out], inner_accs[0].reduce());
+                outer_accs[1].fmadd(e_out[x_out], inner_accs[1].reduce());
+                outer_accs
+            })
+            .reduce(
+                || [F::Accumulator::default(); 2],
+                |mut left, right| {
+                    left[0].merge(right[0]);
+                    left[1].merge(right[1]);
+                    left
+                },
+            );
+        let quadratic_coeffs = [quadratic_accs[0].reduce(), quadratic_accs[1].reduce()];
+        let adjusted_claim = previous_claim * self.eq_r_r_inv;
         Ok(self
             .d
             .gruen_poly_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], adjusted_claim)
@@ -2893,30 +3405,26 @@ impl<F: Field> CoreBooleanityStage6State<F> {
             self.address_round += 1;
             if self.address_round == self.log_k_chunk {
                 self.eq_r_r = self.b.current_scalar();
+                self.eq_r_r_inv = self.eq_r_r.inverse().unwrap_or_else(|| {
+                    // A non-invertible equality scalar would make the verifier's
+                    // phase-2 claim normalization undefined.
+                    std::process::abort();
+                });
                 let base_eq = self.f_table.clone_values();
-                let h = self
-                    .indices
-                    .iter()
-                    .enumerate()
-                    .map(|(chunk_index, chunk)| {
+                let tables = (0..self.num_polys)
+                    .into_par_iter()
+                    .map(|chunk_index| {
                         let rho = self.gamma_powers[chunk_index];
-                        chunk
-                            .iter()
-                            .map(|index| {
-                                index.map_or(F::zero(), |index| rho * base_eq[usize::from(index)])
-                            })
-                            .collect::<Vec<_>>()
+                        base_eq.iter().map(|value| rho * *value).collect::<Vec<_>>()
                     })
                     .collect::<Vec<_>>();
-                self.h_scratch = (0..h.len()).map(|_| Vec::new()).collect();
-                self.h = Some(h);
+                let indices = std::mem::replace(&mut self.indices, Cow::Borrowed(&[]));
+                self.h = Some(CoreBooleanityHState::new(tables, indices));
             }
         } else {
             self.d.bind(challenge);
             if let Some(h) = &mut self.h {
-                for (chunk, scratch) in h.iter_mut().zip(&mut self.h_scratch) {
-                    bind_dense_evals_reuse(chunk, scratch, challenge);
-                }
+                h.bind(challenge);
             }
         }
     }
@@ -2924,9 +3432,7 @@ impl<F: Field> CoreBooleanityStage6State<F> {
     fn factor_eval(&self, index: usize, relation: Stage6Relation) -> Result<F, Stage6KernelError> {
         self.h
             .as_ref()
-            .and_then(|h| h.get(index))
-            .and_then(|values| values.first())
-            .copied()
+            .map(|h| h.final_sumcheck_claim(index))
             .map(|value| value * self.gamma_powers_inv[index])
             .ok_or(Stage6KernelError::InvalidProof {
                 driver: relation.symbol(),
@@ -2947,14 +3453,8 @@ impl<F: Field> CoreBooleanityStage6State<F> {
             reason: "booleanity cycle state is missing",
         })?;
         let mut booleanity = F::zero();
-        for (index, h_i) in h.iter().enumerate() {
-            let scaled = h_i
-                .first()
-                .copied()
-                .ok_or(Stage6KernelError::InvalidProof {
-                    driver: relation.symbol(),
-                    reason: "empty core booleanity factor",
-                })?;
+        for index in 0..h.num_polys() {
+            let scaled = h.final_sumcheck_claim(index);
             booleanity += scaled * (scaled - self.gamma_powers[index]);
         }
         Ok(eq * booleanity)
@@ -2979,6 +3479,748 @@ impl<F: Field> CoreBooleanityStage6State<F> {
                     output.name,
                     output.oracle,
                     self.factor_eval(factor, relation)?,
+                ))
+            })
+            .collect()
+    }
+}
+
+fn core_booleanity_g_from_rows<F: Field>(
+    r_cycle: &[F],
+    row_indices: &[Stage6BooleanityRow],
+    num_polys: usize,
+    chunk_domain: usize,
+) -> Vec<Vec<F>> {
+    let log_t = r_cycle.len();
+    let lo_bits = log_t / 2;
+    let hi_bits = log_t - lo_bits;
+    let (r_hi, r_lo) = r_cycle.split_at(hi_bits);
+    let (e_hi, e_lo) = rayon::join(
+        || EqPolynomial::<F>::evals(r_hi, None),
+        || EqPolynomial::<F>::evals(r_lo, None),
+    );
+
+    let in_len = e_lo.len();
+    let chunk_size = e_hi.len().div_ceil(rayon::current_num_threads()).max(1);
+
+    e_hi.par_chunks(chunk_size)
+        .enumerate()
+        .map(|(chunk_index, e_hi_chunk)| {
+            let mut partial = (0..num_polys)
+                .map(|_| vec![F::zero(); chunk_domain])
+                .collect::<Vec<_>>();
+            let mut local = (0..num_polys)
+                .map(|_| vec![F::ScalarAccumulator::default(); chunk_domain])
+                .collect::<Vec<_>>();
+            let mut touched = (0..num_polys)
+                .map(|_| Vec::<usize>::with_capacity(chunk_domain))
+                .collect::<Vec<_>>();
+            let mut touched_flags = (0..num_polys)
+                .map(|_| vec![false; chunk_domain])
+                .collect::<Vec<_>>();
+
+            let chunk_start = chunk_index * chunk_size;
+            for (local_hi, &hi_weight) in e_hi_chunk.iter().enumerate() {
+                for poly_index in 0..num_polys {
+                    for &index in &touched[poly_index] {
+                        local[poly_index][index] = F::ScalarAccumulator::default();
+                        touched_flags[poly_index][index] = false;
+                    }
+                    touched[poly_index].clear();
+                }
+
+                let cycle_base = (chunk_start + local_hi) * in_len;
+                for (lo_index, &lo_weight) in e_lo.iter().enumerate() {
+                    let cycle = cycle_base + lo_index;
+                    let Some(row) = row_indices.get(cycle) else {
+                        break;
+                    };
+                    for poly_index in 0..num_polys {
+                        if let Some(index) = row.get(poly_index) {
+                            let index = usize::from(index);
+                            if !touched_flags[poly_index][index] {
+                                touched_flags[poly_index][index] = true;
+                                touched[poly_index].push(index);
+                            }
+                            local[poly_index][index].add(lo_weight);
+                        }
+                    }
+                }
+
+                for poly_index in 0..num_polys {
+                    for &index in &touched[poly_index] {
+                        partial[poly_index][index] += hi_weight * local[poly_index][index].reduce();
+                    }
+                }
+            }
+            partial
+        })
+        .reduce(
+            || {
+                (0..num_polys)
+                    .map(|_| vec![F::zero(); chunk_domain])
+                    .collect::<Vec<_>>()
+            },
+            |mut left, right| {
+                for (left_poly, right_poly) in left.iter_mut().zip(right) {
+                    for (left_value, right_value) in left_poly.iter_mut().zip(right_poly) {
+                        *left_value += right_value;
+                    }
+                }
+                left
+            },
+        )
+}
+
+fn core_booleanity_row_indices(
+    chunks: &[&[Option<u8>]],
+    trace_len: usize,
+    chunk_domain: usize,
+) -> Result<Vec<Stage6BooleanityRow>, Stage6KernelError> {
+    if chunks.len() > jolt_witness::STAGE6_BOOLEANITY_MAX_POLYS {
+        return Err(Stage6KernelError::InvalidProof {
+            driver: Stage6Relation::Booleanity.symbol(),
+            reason: "booleanity has too many index chunks for compact row-major state",
+        });
+    }
+
+    let mut rows = vec![Stage6BooleanityRow::empty(); trace_len];
+    for (chunk_index, chunk) in chunks.iter().enumerate() {
+        for (cycle, index) in chunk.iter().enumerate() {
+            let Some(index) = index else {
+                continue;
+            };
+            if usize::from(*index) >= chunk_domain {
+                return Err(Stage6KernelError::InvalidProof {
+                    driver: Stage6Relation::Booleanity.symbol(),
+                    reason: "booleanity index exceeds chunk domain",
+                });
+            }
+            rows[cycle].set(chunk_index, *index);
+        }
+    }
+    Ok(rows)
+}
+
+enum CoreBooleanityHState<'a, F: Field> {
+    Round1 {
+        tables: Vec<Vec<F>>,
+        indices: Cow<'a, [Stage6BooleanityRow]>,
+    },
+    Round2 {
+        tables_0: Vec<Vec<F>>,
+        tables_1: Vec<Vec<F>>,
+        indices: Cow<'a, [Stage6BooleanityRow]>,
+    },
+    Round3 {
+        tables_00: Vec<Vec<F>>,
+        tables_01: Vec<Vec<F>>,
+        tables_10: Vec<Vec<F>>,
+        tables_11: Vec<Vec<F>>,
+        indices: Cow<'a, [Stage6BooleanityRow]>,
+    },
+    RoundN {
+        h: Vec<Vec<F>>,
+        scratch: Vec<Vec<F>>,
+    },
+}
+
+impl<'a, F: Field> CoreBooleanityHState<'a, F> {
+    fn new(tables: Vec<Vec<F>>, indices: Cow<'a, [Stage6BooleanityRow]>) -> Self {
+        Self::Round1 { tables, indices }
+    }
+
+    fn num_polys(&self) -> usize {
+        match self {
+            Self::Round1 { tables, .. } => tables.len(),
+            Self::Round2 { tables_0, .. } => tables_0.len(),
+            Self::Round3 { tables_00, .. } => tables_00.len(),
+            Self::RoundN { h, .. } => h.len(),
+        }
+    }
+
+    fn get_bound_coeff(&self, poly_idx: usize, j: usize) -> F {
+        match self {
+            Self::Round1 { tables, indices } => indices[j]
+                .get(poly_idx)
+                .map_or(F::zero(), |index| tables[poly_idx][usize::from(index)]),
+            Self::Round2 {
+                tables_0,
+                tables_1,
+                indices,
+            } => {
+                let h_0 = indices[2 * j]
+                    .get(poly_idx)
+                    .map_or(F::zero(), |index| tables_0[poly_idx][usize::from(index)]);
+                let h_1 = indices[2 * j + 1]
+                    .get(poly_idx)
+                    .map_or(F::zero(), |index| tables_1[poly_idx][usize::from(index)]);
+                h_0 + h_1
+            }
+            Self::Round3 {
+                tables_00,
+                tables_01,
+                tables_10,
+                tables_11,
+                indices,
+            } => {
+                let h_00 = indices[4 * j]
+                    .get(poly_idx)
+                    .map_or(F::zero(), |index| tables_00[poly_idx][usize::from(index)]);
+                let h_10 = indices[4 * j + 1]
+                    .get(poly_idx)
+                    .map_or(F::zero(), |index| tables_10[poly_idx][usize::from(index)]);
+                let h_01 = indices[4 * j + 2]
+                    .get(poly_idx)
+                    .map_or(F::zero(), |index| tables_01[poly_idx][usize::from(index)]);
+                let h_11 = indices[4 * j + 3]
+                    .get(poly_idx)
+                    .map_or(F::zero(), |index| tables_11[poly_idx][usize::from(index)]);
+                h_00 + h_10 + h_01 + h_11
+            }
+            Self::RoundN { h, .. } => h[poly_idx][j],
+        }
+    }
+
+    fn get_bound_pair(&self, poly_idx: usize, row: usize) -> (F, F) {
+        match self {
+            Self::Round1 { tables, indices } => {
+                let source = 2 * row;
+                (
+                    indices[source]
+                        .get(poly_idx)
+                        .map_or(F::zero(), |index| tables[poly_idx][usize::from(index)]),
+                    indices[source + 1]
+                        .get(poly_idx)
+                        .map_or(F::zero(), |index| tables[poly_idx][usize::from(index)]),
+                )
+            }
+            Self::Round2 {
+                tables_0,
+                tables_1,
+                indices,
+            } => {
+                let source = 4 * row;
+                let low = indices[source]
+                    .get(poly_idx)
+                    .map_or(F::zero(), |index| tables_0[poly_idx][usize::from(index)])
+                    + indices[source + 1]
+                        .get(poly_idx)
+                        .map_or(F::zero(), |index| tables_1[poly_idx][usize::from(index)]);
+                let high = indices[source + 2]
+                    .get(poly_idx)
+                    .map_or(F::zero(), |index| tables_0[poly_idx][usize::from(index)])
+                    + indices[source + 3]
+                        .get(poly_idx)
+                        .map_or(F::zero(), |index| tables_1[poly_idx][usize::from(index)]);
+                (low, high)
+            }
+            Self::Round3 {
+                tables_00,
+                tables_01,
+                tables_10,
+                tables_11,
+                indices,
+            } => {
+                let source = 8 * row;
+                let low = indices[source]
+                    .get(poly_idx)
+                    .map_or(F::zero(), |index| tables_00[poly_idx][usize::from(index)])
+                    + indices[source + 1]
+                        .get(poly_idx)
+                        .map_or(F::zero(), |index| tables_10[poly_idx][usize::from(index)])
+                    + indices[source + 2]
+                        .get(poly_idx)
+                        .map_or(F::zero(), |index| tables_01[poly_idx][usize::from(index)])
+                    + indices[source + 3]
+                        .get(poly_idx)
+                        .map_or(F::zero(), |index| tables_11[poly_idx][usize::from(index)]);
+                let high = indices[source + 4]
+                    .get(poly_idx)
+                    .map_or(F::zero(), |index| tables_00[poly_idx][usize::from(index)])
+                    + indices[source + 5]
+                        .get(poly_idx)
+                        .map_or(F::zero(), |index| tables_10[poly_idx][usize::from(index)])
+                    + indices[source + 6]
+                        .get(poly_idx)
+                        .map_or(F::zero(), |index| tables_01[poly_idx][usize::from(index)])
+                    + indices[source + 7]
+                        .get(poly_idx)
+                        .map_or(F::zero(), |index| tables_11[poly_idx][usize::from(index)]);
+                (low, high)
+            }
+            Self::RoundN { h, .. } => (h[poly_idx][2 * row], h[poly_idx][2 * row + 1]),
+        }
+    }
+
+    fn final_sumcheck_claim(&self, poly_idx: usize) -> F {
+        self.get_bound_coeff(poly_idx, 0)
+    }
+
+    fn bind(&mut self, challenge: F) {
+        match std::mem::replace(
+            self,
+            Self::RoundN {
+                h: Vec::new(),
+                scratch: Vec::new(),
+            },
+        ) {
+            Self::Round1 { tables, indices } => {
+                let one_minus = F::one() - challenge;
+                let (tables_0, tables_1) = rayon::join(
+                    || scale_booleanity_tables(&tables, one_minus),
+                    || scale_booleanity_tables(&tables, challenge),
+                );
+                *self = Self::Round2 {
+                    tables_0,
+                    tables_1,
+                    indices,
+                };
+            }
+            Self::Round2 {
+                tables_0,
+                tables_1,
+                indices,
+            } => {
+                let one_minus = F::one() - challenge;
+                let (tables_00, tables_01) = rayon::join(
+                    || scale_booleanity_tables(&tables_0, one_minus),
+                    || scale_booleanity_tables(&tables_0, challenge),
+                );
+                let (tables_10, tables_11) = rayon::join(
+                    || scale_booleanity_tables(&tables_1, one_minus),
+                    || scale_booleanity_tables(&tables_1, challenge),
+                );
+                *self = Self::Round3 {
+                    tables_00,
+                    tables_01,
+                    tables_10,
+                    tables_11,
+                    indices,
+                };
+            }
+            Self::Round3 {
+                tables_00,
+                tables_01,
+                tables_10,
+                tables_11,
+                indices,
+            } => {
+                let one_minus = F::one() - challenge;
+                let (tables_000, tables_001) = rayon::join(
+                    || scale_booleanity_tables(&tables_00, one_minus),
+                    || scale_booleanity_tables(&tables_00, challenge),
+                );
+                let (tables_010, tables_011) = rayon::join(
+                    || scale_booleanity_tables(&tables_01, one_minus),
+                    || scale_booleanity_tables(&tables_01, challenge),
+                );
+                let (tables_100, tables_101) = rayon::join(
+                    || scale_booleanity_tables(&tables_10, one_minus),
+                    || scale_booleanity_tables(&tables_10, challenge),
+                );
+                let (tables_110, tables_111) = rayon::join(
+                    || scale_booleanity_tables(&tables_11, one_minus),
+                    || scale_booleanity_tables(&tables_11, challenge),
+                );
+                let table_groups = [
+                    &tables_000,
+                    &tables_100,
+                    &tables_010,
+                    &tables_110,
+                    &tables_001,
+                    &tables_101,
+                    &tables_011,
+                    &tables_111,
+                ];
+                let new_len = indices.len() / 8;
+                let num_polys = tables_000.len();
+                let h = (0..num_polys)
+                    .into_par_iter()
+                    .map(|poly_idx| {
+                        (0..new_len)
+                            .into_par_iter()
+                            .map(|j| {
+                                (0..8)
+                                    .map(|offset| {
+                                        indices[8 * j + offset].get(poly_idx).map_or(
+                                            F::zero(),
+                                            |index| {
+                                                table_groups[offset][poly_idx][usize::from(index)]
+                                            },
+                                        )
+                                    })
+                                    .sum()
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                let scratch = (0..h.len()).map(|_| Vec::new()).collect();
+                *self = Self::RoundN { h, scratch };
+            }
+            Self::RoundN { mut h, mut scratch } => {
+                if h.first().map_or(0, Vec::len) / 2 >= DENSE_BIND_PAR_THRESHOLD {
+                    h.par_iter_mut()
+                        .zip(scratch.par_iter_mut())
+                        .for_each(|(chunk, scratch)| {
+                            bind_dense_evals_reuse_serial(chunk, scratch, challenge);
+                        });
+                } else {
+                    for (chunk, scratch) in h.iter_mut().zip(&mut scratch) {
+                        bind_dense_evals_reuse(chunk, scratch, challenge);
+                    }
+                }
+                *self = Self::RoundN { h, scratch };
+            }
+        }
+    }
+}
+
+fn scale_booleanity_tables<F: Field>(tables: &[Vec<F>], scalar: F) -> Vec<Vec<F>> {
+    tables
+        .par_iter()
+        .map(|table| {
+            table
+                .iter()
+                .map(|value| *value * scalar)
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+struct HammingBooleanityStage6State<F: Field> {
+    eq: GruenSplitEqPolynomial<F>,
+    hamming_weight: Vec<F>,
+    hamming_weight_scratch: Vec<F>,
+    output: FactorOutput,
+    active_scale: F,
+}
+
+impl<F: Field> HammingBooleanityStage6State<F> {
+    fn new(
+        point: &[F],
+        hamming_weight: Vec<F>,
+        output: FactorOutput,
+        active_scale: F,
+        degree_bound: usize,
+    ) -> Result<Self, Stage6KernelError> {
+        if degree_bound < 3 {
+            return Err(Stage6KernelError::InvalidProof {
+                driver: Stage6Relation::HammingBooleanity.symbol(),
+                reason: "hamming booleanity degree bound is too small",
+            });
+        }
+        require_operand_count(
+            "stage6.hamming_booleanity.eq",
+            hamming_weight.len(),
+            1usize << point.len(),
+        )?;
+        Ok(Self {
+            eq: GruenSplitEqPolynomial::new(point, BindingOrder::LowToHigh),
+            hamming_weight,
+            hamming_weight_scratch: Vec::new(),
+            output,
+            active_scale,
+        })
+    }
+
+    fn round_poly(
+        &self,
+        previous_claim: F,
+        relation: Stage6Relation,
+    ) -> Result<UnivariatePoly<F>, Stage6KernelError> {
+        if relation != Stage6Relation::HammingBooleanity {
+            return Err(Stage6KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "wrong relation for hamming booleanity state",
+            });
+        }
+        let e_out = self.eq.e_out_current();
+        let e_in = self.eq.e_in_current();
+        let in_bits = e_in.len().trailing_zeros() as usize;
+        let quadratic_accs = (0..e_out.len())
+            .into_par_iter()
+            .map(|x_out| {
+                let mut accs = [F::Accumulator::default(); 2];
+                let base = x_out << in_bits;
+                for (x_in, &e_in) in e_in.iter().enumerate() {
+                    let group = base | x_in;
+                    let h0 = self.hamming_weight[2 * group];
+                    let h1 = self.hamming_weight[2 * group + 1];
+                    let delta = h1 - h0;
+                    let weight = e_out[x_out] * e_in;
+                    accs[0].fmadd(weight, h0.square() - h0);
+                    accs[1].fmadd(weight, delta.square());
+                }
+                accs
+            })
+            .reduce(
+                || [F::Accumulator::default(); 2],
+                |mut left, right| {
+                    left[0].merge(right[0]);
+                    left[1].merge(right[1]);
+                    left
+                },
+            );
+        let mut poly = self.eq.gruen_poly_deg_3(
+            quadratic_accs[0].reduce(),
+            quadratic_accs[1].reduce(),
+            previous_claim,
+        );
+        if self.active_scale != F::one() {
+            poly *= self.active_scale;
+        }
+        check_round_claim(
+            &poly,
+            previous_claim,
+            relation.symbol(),
+            "stage6 relation input claim mismatch",
+        )?;
+        Ok(poly)
+    }
+
+    fn bind(&mut self, challenge: F) {
+        self.eq.bind(challenge);
+        bind_dense_evals_reuse(
+            &mut self.hamming_weight,
+            &mut self.hamming_weight_scratch,
+            challenge,
+        );
+    }
+
+    fn final_relation_eval(&self, relation: Stage6Relation) -> Result<F, Stage6KernelError> {
+        let hamming_weight =
+            self.hamming_weight
+                .first()
+                .copied()
+                .ok_or(Stage6KernelError::InvalidProof {
+                    driver: relation.symbol(),
+                    reason: "empty hamming booleanity factor",
+                })?;
+        Ok(self.eq.current_scalar() * (hamming_weight.square() - hamming_weight))
+    }
+
+    fn final_evals(
+        &self,
+        relation: Stage6Relation,
+    ) -> Result<Vec<Stage6NamedEval<F>>, Stage6KernelError> {
+        Ok(vec![named_eval(
+            self.output.name,
+            self.output.oracle,
+            self.hamming_weight
+                .first()
+                .copied()
+                .ok_or(Stage6KernelError::InvalidProof {
+                    driver: relation.symbol(),
+                    reason: "empty hamming booleanity factor",
+                })?,
+        )])
+    }
+}
+
+struct IncClaimReductionStage6State<F: Field> {
+    eq_ram: Vec<F>,
+    eq_ram_scratch: Vec<F>,
+    ram_inc: Vec<F>,
+    ram_inc_scratch: Vec<F>,
+    eq_rd: Vec<F>,
+    eq_rd_scratch: Vec<F>,
+    rd_inc: Vec<F>,
+    rd_inc_scratch: Vec<F>,
+    gamma2: F,
+    outputs: [FactorOutput; 2],
+    active_scale: F,
+}
+
+impl<F: Field> IncClaimReductionStage6State<F> {
+    fn round_poly(
+        &self,
+        previous_claim: F,
+        relation: Stage6Relation,
+    ) -> Result<UnivariatePoly<F>, Stage6KernelError> {
+        if relation != Stage6Relation::IncClaimReduction {
+            return Err(Stage6KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "wrong relation for increment claim-reduction state",
+            });
+        }
+        let len = self.eq_ram.len();
+        if len == 0 || !len.is_power_of_two() || self.eq_rd.len() != len {
+            return Err(Stage6KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "increment claim-reduction factors have invalid length",
+            });
+        }
+        if self.ram_inc.len() != len || self.rd_inc.len() != len {
+            return Err(Stage6KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "increment claim-reduction factors have inconsistent lengths",
+            });
+        }
+
+        let half = len / 2;
+        let eval_accs = if half >= DENSE_BIND_PAR_THRESHOLD {
+            (0..half)
+                .into_par_iter()
+                .fold(
+                    || [F::Accumulator::default(); 2],
+                    |mut accs, row| {
+                        self.accumulate_row(row, &mut accs);
+                        accs
+                    },
+                )
+                .reduce(
+                    || [F::Accumulator::default(); 2],
+                    |mut left, right| {
+                        left[0].merge(right[0]);
+                        left[1].merge(right[1]);
+                        left
+                    },
+                )
+        } else {
+            let mut accs = [F::Accumulator::default(); 2];
+            for row in 0..half {
+                self.accumulate_row(row, &mut accs);
+            }
+            accs
+        };
+        let mut evals = eval_accs.map(FieldAccumulator::reduce);
+        if self.active_scale != F::one() {
+            evals[0] *= self.active_scale;
+            evals[1] *= self.active_scale;
+        }
+        let poly = UnivariatePoly::from_evals_and_hint(previous_claim, &evals);
+        check_round_claim(
+            &poly,
+            previous_claim,
+            relation.symbol(),
+            "stage6 increment claim-reduction input claim mismatch",
+        )?;
+        Ok(poly)
+    }
+
+    fn accumulate_row(&self, row: usize, evals: &mut [F::Accumulator; 2]) {
+        let ram_eq_0 = self.eq_ram[2 * row];
+        let ram_eq_1 = self.eq_ram[2 * row + 1];
+        let ram_inc_0 = self.ram_inc[2 * row];
+        let ram_inc_1 = self.ram_inc[2 * row + 1];
+        let rd_eq_0 = self.eq_rd[2 * row];
+        let rd_eq_1 = self.eq_rd[2 * row + 1];
+        let rd_inc_0 = self.rd_inc[2 * row];
+        let rd_inc_1 = self.rd_inc[2 * row + 1];
+
+        evals[0].fmadd(ram_eq_0, ram_inc_0);
+        evals[0].fmadd(self.gamma2 * rd_eq_0, rd_inc_0);
+
+        let ram_eq_2 = ram_eq_1 + ram_eq_1 - ram_eq_0;
+        let ram_inc_2 = ram_inc_1 + ram_inc_1 - ram_inc_0;
+        let rd_eq_2 = rd_eq_1 + rd_eq_1 - rd_eq_0;
+        let rd_inc_2 = rd_inc_1 + rd_inc_1 - rd_inc_0;
+        evals[1].fmadd(ram_eq_2, ram_inc_2);
+        evals[1].fmadd(self.gamma2 * rd_eq_2, rd_inc_2);
+    }
+
+    fn bind(&mut self, challenge: F) {
+        if self.eq_ram.len() / 2 >= DENSE_BIND_PAR_THRESHOLD {
+            rayon::join(
+                || {
+                    rayon::join(
+                        || {
+                            bind_dense_evals_reuse_serial(
+                                &mut self.eq_ram,
+                                &mut self.eq_ram_scratch,
+                                challenge,
+                            );
+                        },
+                        || {
+                            bind_dense_evals_reuse_serial(
+                                &mut self.ram_inc,
+                                &mut self.ram_inc_scratch,
+                                challenge,
+                            );
+                        },
+                    );
+                },
+                || {
+                    rayon::join(
+                        || {
+                            bind_dense_evals_reuse_serial(
+                                &mut self.eq_rd,
+                                &mut self.eq_rd_scratch,
+                                challenge,
+                            );
+                        },
+                        || {
+                            bind_dense_evals_reuse_serial(
+                                &mut self.rd_inc,
+                                &mut self.rd_inc_scratch,
+                                challenge,
+                            );
+                        },
+                    );
+                },
+            );
+        } else {
+            bind_dense_evals_reuse(&mut self.eq_ram, &mut self.eq_ram_scratch, challenge);
+            bind_dense_evals_reuse(&mut self.ram_inc, &mut self.ram_inc_scratch, challenge);
+            bind_dense_evals_reuse(&mut self.eq_rd, &mut self.eq_rd_scratch, challenge);
+            bind_dense_evals_reuse(&mut self.rd_inc, &mut self.rd_inc_scratch, challenge);
+        }
+    }
+
+    fn factor_eval(&self, factor: usize, relation: Stage6Relation) -> Result<F, Stage6KernelError> {
+        let values = match factor {
+            1 => &self.ram_inc,
+            3 => &self.rd_inc,
+            _ => {
+                return Err(Stage6KernelError::InvalidProof {
+                    driver: relation.symbol(),
+                    reason: "unsupported increment claim-reduction output factor",
+                });
+            }
+        };
+        values
+            .first()
+            .copied()
+            .ok_or(Stage6KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "empty increment claim-reduction factor",
+            })
+    }
+
+    fn final_relation_eval(&self, relation: Stage6Relation) -> Result<F, Stage6KernelError> {
+        let eq_ram = self
+            .eq_ram
+            .first()
+            .copied()
+            .ok_or(Stage6KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "empty increment claim-reduction eq factor",
+            })?;
+        let ram_inc = self.factor_eval(1, relation)?;
+        let eq_rd = self
+            .eq_rd
+            .first()
+            .copied()
+            .ok_or(Stage6KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "empty increment claim-reduction eq factor",
+            })?;
+        let rd_inc = self.factor_eval(3, relation)?;
+        Ok(eq_ram * ram_inc + self.gamma2 * eq_rd * rd_inc)
+    }
+
+    fn final_evals(
+        &self,
+        relation: Stage6Relation,
+    ) -> Result<Vec<Stage6NamedEval<F>>, Stage6KernelError> {
+        self.outputs
+            .iter()
+            .map(|output| {
+                Ok(named_eval(
+                    output.name,
+                    output.oracle,
+                    self.factor_eval(output.factor, relation)?,
                 ))
             })
             .collect()
@@ -3049,14 +4291,15 @@ impl<F: Field> DenseStage6State<F> {
             &self.terms,
             self.active_scale,
             self.degree_bound,
+            previous_claim,
             relation,
         )?;
-        if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != previous_claim {
-            return Err(Stage6KernelError::InvalidProof {
-                driver: relation.symbol(),
-                reason: "stage6 relation input claim mismatch",
-            });
-        }
+        check_round_claim(
+            &poly,
+            previous_claim,
+            relation.symbol(),
+            "stage6 relation input claim mismatch",
+        )?;
         Ok(poly)
     }
 
@@ -3066,7 +4309,7 @@ impl<F: Field> DenseStage6State<F> {
                 .par_iter_mut()
                 .zip(self.factor_scratch.par_iter_mut())
                 .for_each(|(factor, scratch)| {
-                    bind_dense_evals_reuse(factor, scratch, challenge);
+                    bind_dense_evals_reuse_serial(factor, scratch, challenge);
                 });
         } else {
             for (factor, scratch) in self.factors.iter_mut().zip(&mut self.factor_scratch) {
@@ -3115,13 +4358,1080 @@ impl<F: Field> DenseStage6State<F> {
     }
 }
 
-fn bytecode_read_raf_state<F: Field>(
+enum InstructionRaVirtualDenseChunks<'a, F: Field> {
+    Borrowed(&'a [&'a [F]]),
+    Bound {
+        chunks: Vec<Vec<F>>,
+        scratch: Vec<Vec<F>>,
+    },
+}
+
+impl<'a, F: Field> InstructionRaVirtualDenseChunks<'a, F> {
+    fn borrowed(chunks: &'a [&'a [F]]) -> Self {
+        Self::Borrowed(chunks)
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Borrowed(chunks) => chunks.len(),
+            Self::Bound { chunks, .. } => chunks.len(),
+        }
+    }
+
+    fn current_len(&self) -> usize {
+        match self {
+            Self::Borrowed(chunks) => chunks.first().map_or(0, |chunk| chunk.len()),
+            Self::Bound { chunks, .. } => chunks.first().map_or(0, Vec::len),
+        }
+    }
+
+    fn get(&self, chunk: usize, index: usize) -> F {
+        match self {
+            Self::Borrowed(chunks) => chunks[chunk][index],
+            Self::Bound { chunks, .. } => chunks[chunk][index],
+        }
+    }
+
+    fn get_pair(&self, chunk: usize, row: usize) -> (F, F) {
+        match self {
+            Self::Borrowed(chunks) => (chunks[chunk][2 * row], chunks[chunk][2 * row + 1]),
+            Self::Bound { chunks, .. } => (chunks[chunk][2 * row], chunks[chunk][2 * row + 1]),
+        }
+    }
+
+    fn final_sumcheck_claim(&self, chunk: usize) -> F {
+        self.get(chunk, 0)
+    }
+
+    fn bind(&mut self, challenge: F) {
+        match self {
+            Self::Borrowed(chunks) => {
+                let bound = if chunks.first().map_or(0, |chunk| chunk.len() / 2)
+                    >= DENSE_BIND_PAR_THRESHOLD
+                {
+                    chunks
+                        .par_iter()
+                        .map(|chunk| bind_dense_evals_to_vec(chunk, challenge))
+                        .collect::<Vec<_>>()
+                } else {
+                    chunks
+                        .iter()
+                        .map(|chunk| bind_dense_evals_to_vec(chunk, challenge))
+                        .collect::<Vec<_>>()
+                };
+                let scratch = (0..bound.len()).map(|_| Vec::new()).collect();
+                *self = Self::Bound {
+                    chunks: bound,
+                    scratch,
+                };
+            }
+            Self::Bound { chunks, scratch } => {
+                if chunks.first().map_or(0, Vec::len) / 2 >= DENSE_BIND_PAR_THRESHOLD {
+                    chunks.par_iter_mut().zip(scratch.par_iter_mut()).for_each(
+                        |(chunk, scratch)| {
+                            bind_dense_evals_reuse_serial(chunk, scratch, challenge);
+                        },
+                    );
+                } else {
+                    for (chunk, scratch) in chunks.iter_mut().zip(scratch) {
+                        bind_dense_evals_reuse(chunk, scratch, challenge);
+                    }
+                }
+            }
+        }
+    }
+}
+
+enum InstructionRaVirtualSparseChunks<'a, F: Field> {
+    Round1 {
+        tables: Vec<Vec<F>>,
+        indices: &'a [&'a [Option<u8>]],
+    },
+    Round2 {
+        tables_0: Vec<Vec<F>>,
+        tables_1: Vec<Vec<F>>,
+        indices: &'a [&'a [Option<u8>]],
+    },
+    Round3 {
+        tables_00: Vec<Vec<F>>,
+        tables_01: Vec<Vec<F>>,
+        tables_10: Vec<Vec<F>>,
+        tables_11: Vec<Vec<F>>,
+        indices: &'a [&'a [Option<u8>]],
+    },
+    Bound {
+        chunks: Vec<Vec<F>>,
+        scratch: Vec<Vec<F>>,
+    },
+}
+
+impl<'a, F: Field> InstructionRaVirtualSparseChunks<'a, F> {
+    fn new(tables: Vec<Vec<F>>, indices: &'a [&'a [Option<u8>]]) -> Self {
+        Self::Round1 { tables, indices }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Round1 { tables, .. } => tables.len(),
+            Self::Round2 { tables_0, .. } => tables_0.len(),
+            Self::Round3 { tables_00, .. } => tables_00.len(),
+            Self::Bound { chunks, .. } => chunks.len(),
+        }
+    }
+
+    fn current_len(&self) -> usize {
+        match self {
+            Self::Round1 { indices, .. } => indices.first().map_or(0, |chunk| chunk.len()),
+            Self::Round2 { indices, .. } => indices.first().map_or(0, |chunk| chunk.len() / 2),
+            Self::Round3 { indices, .. } => indices.first().map_or(0, |chunk| chunk.len() / 4),
+            Self::Bound { chunks, .. } => chunks.first().map_or(0, Vec::len),
+        }
+    }
+
+    fn get(&self, chunk: usize, index: usize) -> F {
+        match self {
+            Self::Round1 { tables, indices } => {
+                indices[chunk][index].map_or(F::zero(), |value| tables[chunk][usize::from(value)])
+            }
+            Self::Round2 {
+                tables_0,
+                tables_1,
+                indices,
+            } => {
+                let low = indices[chunk][2 * index]
+                    .map_or(F::zero(), |value| tables_0[chunk][usize::from(value)]);
+                let high = indices[chunk][2 * index + 1]
+                    .map_or(F::zero(), |value| tables_1[chunk][usize::from(value)]);
+                low + high
+            }
+            Self::Round3 {
+                tables_00,
+                tables_01,
+                tables_10,
+                tables_11,
+                indices,
+            } => {
+                let h_00 = indices[chunk][4 * index]
+                    .map_or(F::zero(), |value| tables_00[chunk][usize::from(value)]);
+                let h_10 = indices[chunk][4 * index + 1]
+                    .map_or(F::zero(), |value| tables_10[chunk][usize::from(value)]);
+                let h_01 = indices[chunk][4 * index + 2]
+                    .map_or(F::zero(), |value| tables_01[chunk][usize::from(value)]);
+                let h_11 = indices[chunk][4 * index + 3]
+                    .map_or(F::zero(), |value| tables_11[chunk][usize::from(value)]);
+                h_00 + h_10 + h_01 + h_11
+            }
+            Self::Bound { chunks, .. } => chunks[chunk][index],
+        }
+    }
+
+    fn get_pair(&self, chunk: usize, row: usize) -> (F, F) {
+        match self {
+            Self::Round1 { tables, indices } => {
+                let source = 2 * row;
+                (
+                    indices[chunk][source]
+                        .map_or(F::zero(), |value| tables[chunk][usize::from(value)]),
+                    indices[chunk][source + 1]
+                        .map_or(F::zero(), |value| tables[chunk][usize::from(value)]),
+                )
+            }
+            Self::Round2 {
+                tables_0,
+                tables_1,
+                indices,
+            } => {
+                let source = 4 * row;
+                let low = indices[chunk][source]
+                    .map_or(F::zero(), |value| tables_0[chunk][usize::from(value)])
+                    + indices[chunk][source + 1]
+                        .map_or(F::zero(), |value| tables_1[chunk][usize::from(value)]);
+                let high = indices[chunk][source + 2]
+                    .map_or(F::zero(), |value| tables_0[chunk][usize::from(value)])
+                    + indices[chunk][source + 3]
+                        .map_or(F::zero(), |value| tables_1[chunk][usize::from(value)]);
+                (low, high)
+            }
+            Self::Round3 {
+                tables_00,
+                tables_01,
+                tables_10,
+                tables_11,
+                indices,
+            } => {
+                let source = 8 * row;
+                let low = indices[chunk][source]
+                    .map_or(F::zero(), |value| tables_00[chunk][usize::from(value)])
+                    + indices[chunk][source + 1]
+                        .map_or(F::zero(), |value| tables_10[chunk][usize::from(value)])
+                    + indices[chunk][source + 2]
+                        .map_or(F::zero(), |value| tables_01[chunk][usize::from(value)])
+                    + indices[chunk][source + 3]
+                        .map_or(F::zero(), |value| tables_11[chunk][usize::from(value)]);
+                let high = indices[chunk][source + 4]
+                    .map_or(F::zero(), |value| tables_00[chunk][usize::from(value)])
+                    + indices[chunk][source + 5]
+                        .map_or(F::zero(), |value| tables_10[chunk][usize::from(value)])
+                    + indices[chunk][source + 6]
+                        .map_or(F::zero(), |value| tables_01[chunk][usize::from(value)])
+                    + indices[chunk][source + 7]
+                        .map_or(F::zero(), |value| tables_11[chunk][usize::from(value)]);
+                (low, high)
+            }
+            Self::Bound { chunks, .. } => (chunks[chunk][2 * row], chunks[chunk][2 * row + 1]),
+        }
+    }
+
+    fn final_sumcheck_claim(&self, chunk: usize) -> F {
+        self.get(chunk, 0)
+    }
+
+    fn accumulate_d4_product_terms(
+        &self,
+        row: usize,
+        virtual_count: usize,
+        evals: &mut [F::Accumulator; 4],
+    ) {
+        match self {
+            Self::Round1 { tables, indices } => {
+                let source = 2 * row;
+                for virtual_index in 0..virtual_count {
+                    let base = virtual_index * 4;
+                    let a0 = sparse_round1_pair(tables, indices, base, source);
+                    let a1 = sparse_round1_pair(tables, indices, base + 1, source);
+                    let a2 = sparse_round1_pair(tables, indices, base + 2, source);
+                    let a3 = sparse_round1_pair(tables, indices, base + 3, source);
+                    accumulate_instruction_ra_d4_product_terms(evals, a0, a1, a2, a3);
+                }
+            }
+            Self::Round2 {
+                tables_0,
+                tables_1,
+                indices,
+            } => {
+                let source = 4 * row;
+                for virtual_index in 0..virtual_count {
+                    let base = virtual_index * 4;
+                    let a0 = sparse_round2_pair(tables_0, tables_1, indices, base, source);
+                    let a1 = sparse_round2_pair(tables_0, tables_1, indices, base + 1, source);
+                    let a2 = sparse_round2_pair(tables_0, tables_1, indices, base + 2, source);
+                    let a3 = sparse_round2_pair(tables_0, tables_1, indices, base + 3, source);
+                    accumulate_instruction_ra_d4_product_terms(evals, a0, a1, a2, a3);
+                }
+            }
+            Self::Round3 {
+                tables_00,
+                tables_01,
+                tables_10,
+                tables_11,
+                indices,
+            } => {
+                let source = 8 * row;
+                for virtual_index in 0..virtual_count {
+                    let base = virtual_index * 4;
+                    let a0 = sparse_round3_pair(
+                        tables_00, tables_01, tables_10, tables_11, indices, base, source,
+                    );
+                    let a1 = sparse_round3_pair(
+                        tables_00,
+                        tables_01,
+                        tables_10,
+                        tables_11,
+                        indices,
+                        base + 1,
+                        source,
+                    );
+                    let a2 = sparse_round3_pair(
+                        tables_00,
+                        tables_01,
+                        tables_10,
+                        tables_11,
+                        indices,
+                        base + 2,
+                        source,
+                    );
+                    let a3 = sparse_round3_pair(
+                        tables_00,
+                        tables_01,
+                        tables_10,
+                        tables_11,
+                        indices,
+                        base + 3,
+                        source,
+                    );
+                    accumulate_instruction_ra_d4_product_terms(evals, a0, a1, a2, a3);
+                }
+            }
+            Self::Bound { chunks, .. } => {
+                for virtual_index in 0..virtual_count {
+                    let base = virtual_index * 4;
+                    let a0 = (chunks[base][2 * row], chunks[base][2 * row + 1]);
+                    let a1 = (chunks[base + 1][2 * row], chunks[base + 1][2 * row + 1]);
+                    let a2 = (chunks[base + 2][2 * row], chunks[base + 2][2 * row + 1]);
+                    let a3 = (chunks[base + 3][2 * row], chunks[base + 3][2 * row + 1]);
+                    accumulate_instruction_ra_d4_product_terms(evals, a0, a1, a2, a3);
+                }
+            }
+        }
+    }
+
+    fn bind(&mut self, challenge: F) {
+        let one_minus = F::one() - challenge;
+        match std::mem::replace(
+            self,
+            Self::Bound {
+                chunks: Vec::new(),
+                scratch: Vec::new(),
+            },
+        ) {
+            Self::Round1 { tables, indices } => {
+                let (tables_0, tables_1) = rayon::join(
+                    || scale_instruction_ra_tables(&tables, one_minus),
+                    || scale_instruction_ra_tables(&tables, challenge),
+                );
+                *self = Self::Round2 {
+                    tables_0,
+                    tables_1,
+                    indices,
+                };
+            }
+            Self::Round2 {
+                tables_0,
+                tables_1,
+                indices,
+            } => {
+                let (tables_00, tables_01) = rayon::join(
+                    || scale_instruction_ra_tables(&tables_0, one_minus),
+                    || scale_instruction_ra_tables(&tables_0, challenge),
+                );
+                let (tables_10, tables_11) = rayon::join(
+                    || scale_instruction_ra_tables(&tables_1, one_minus),
+                    || scale_instruction_ra_tables(&tables_1, challenge),
+                );
+                *self = Self::Round3 {
+                    tables_00,
+                    tables_01,
+                    tables_10,
+                    tables_11,
+                    indices,
+                };
+            }
+            Self::Round3 {
+                tables_00,
+                tables_01,
+                tables_10,
+                tables_11,
+                indices,
+            } => {
+                let (tables_000, tables_001) = rayon::join(
+                    || scale_instruction_ra_tables(&tables_00, one_minus),
+                    || scale_instruction_ra_tables(&tables_00, challenge),
+                );
+                let (tables_010, tables_011) = rayon::join(
+                    || scale_instruction_ra_tables(&tables_01, one_minus),
+                    || scale_instruction_ra_tables(&tables_01, challenge),
+                );
+                let (tables_100, tables_101) = rayon::join(
+                    || scale_instruction_ra_tables(&tables_10, one_minus),
+                    || scale_instruction_ra_tables(&tables_10, challenge),
+                );
+                let (tables_110, tables_111) = rayon::join(
+                    || scale_instruction_ra_tables(&tables_11, one_minus),
+                    || scale_instruction_ra_tables(&tables_11, challenge),
+                );
+                let table_groups = [
+                    &tables_000,
+                    &tables_100,
+                    &tables_010,
+                    &tables_110,
+                    &tables_001,
+                    &tables_101,
+                    &tables_011,
+                    &tables_111,
+                ];
+                let new_len = indices.first().map_or(0, |chunk| chunk.len() / 8);
+                let chunks = (0..indices.len())
+                    .into_par_iter()
+                    .map(|chunk| {
+                        (0..new_len)
+                            .map(|index| {
+                                (0..8)
+                                    .map(|offset| {
+                                        indices[chunk][8 * index + offset]
+                                            .map_or(F::zero(), |value| {
+                                                table_groups[offset][chunk][usize::from(value)]
+                                            })
+                                    })
+                                    .sum()
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                let scratch = (0..chunks.len()).map(|_| Vec::new()).collect();
+                *self = Self::Bound { chunks, scratch };
+            }
+            Self::Bound {
+                mut chunks,
+                mut scratch,
+            } => {
+                if chunks.first().map_or(0, Vec::len) / 2 >= DENSE_BIND_PAR_THRESHOLD {
+                    chunks.par_iter_mut().zip(scratch.par_iter_mut()).for_each(
+                        |(chunk, scratch)| {
+                            bind_dense_evals_reuse_serial(chunk, scratch, challenge);
+                        },
+                    );
+                } else {
+                    for (chunk, scratch) in chunks.iter_mut().zip(&mut scratch) {
+                        bind_dense_evals_reuse(chunk, scratch, challenge);
+                    }
+                }
+                *self = Self::Bound { chunks, scratch };
+            }
+        }
+    }
+}
+
+#[inline(always)]
+fn sparse_lookup<F: Field>(table: &[F], index: Option<u8>) -> F {
+    index.map_or(F::zero(), |value| table[usize::from(value)])
+}
+
+#[inline(always)]
+fn sparse_round1_pair<F: Field>(
+    tables: &[Vec<F>],
+    indices: &[&[Option<u8>]],
+    chunk: usize,
+    source: usize,
+) -> (F, F) {
+    (
+        sparse_lookup(&tables[chunk], indices[chunk][source]),
+        sparse_lookup(&tables[chunk], indices[chunk][source + 1]),
+    )
+}
+
+#[inline(always)]
+fn sparse_round2_pair<F: Field>(
+    tables_0: &[Vec<F>],
+    tables_1: &[Vec<F>],
+    indices: &[&[Option<u8>]],
+    chunk: usize,
+    source: usize,
+) -> (F, F) {
+    let low = sparse_lookup(&tables_0[chunk], indices[chunk][source])
+        + sparse_lookup(&tables_1[chunk], indices[chunk][source + 1]);
+    let high = sparse_lookup(&tables_0[chunk], indices[chunk][source + 2])
+        + sparse_lookup(&tables_1[chunk], indices[chunk][source + 3]);
+    (low, high)
+}
+
+#[inline(always)]
+fn sparse_round3_pair<F: Field>(
+    tables_00: &[Vec<F>],
+    tables_01: &[Vec<F>],
+    tables_10: &[Vec<F>],
+    tables_11: &[Vec<F>],
+    indices: &[&[Option<u8>]],
+    chunk: usize,
+    source: usize,
+) -> (F, F) {
+    let low = sparse_lookup(&tables_00[chunk], indices[chunk][source])
+        + sparse_lookup(&tables_10[chunk], indices[chunk][source + 1])
+        + sparse_lookup(&tables_01[chunk], indices[chunk][source + 2])
+        + sparse_lookup(&tables_11[chunk], indices[chunk][source + 3]);
+    let high = sparse_lookup(&tables_00[chunk], indices[chunk][source + 4])
+        + sparse_lookup(&tables_10[chunk], indices[chunk][source + 5])
+        + sparse_lookup(&tables_01[chunk], indices[chunk][source + 6])
+        + sparse_lookup(&tables_11[chunk], indices[chunk][source + 7]);
+    (low, high)
+}
+
+fn scale_instruction_ra_tables<F: Field>(tables: &[Vec<F>], scalar: F) -> Vec<Vec<F>> {
+    tables
+        .par_iter()
+        .map(|table| table.iter().map(|value| *value * scalar).collect())
+        .collect()
+}
+
+fn eval_instruction_ra_product<F: Field>(pairs: &[(F, F)], evals: &mut [F]) {
+    debug_assert_eq!(pairs.len(), evals.len());
+    for (point_index, eval) in evals.iter_mut().enumerate() {
+        if point_index + 1 == pairs.len() {
+            *eval = pairs.iter().map(|(low, high)| *high - *low).product::<F>();
+        } else {
+            let point = F::from_u64((point_index + 1) as u64);
+            *eval = pairs
+                .iter()
+                .map(|(low, high)| *low + (*high - *low) * point)
+                .product::<F>();
+        }
+    }
+}
+
+#[inline(always)]
+fn accumulate_instruction_ra_d4_products<F: Field>(
+    weight: F,
+    evals: &mut [F::Accumulator],
+    a0: (F, F),
+    a1: (F, F),
+    a2: (F, F),
+    a3: (F, F),
+) {
+    let (a1_eval, a2_eval, a_inf) = eval_linear_prod_2_internal_stage6(a0, a1);
+    let a3_eval = extrapolate_quadratic_next(a1_eval, a2_eval, a_inf);
+    let (b1_eval, b2_eval, b_inf) = eval_linear_prod_2_internal_stage6(a2, a3);
+    let b3_eval = extrapolate_quadratic_next(b1_eval, b2_eval, b_inf);
+
+    evals[0].fmadd(weight, a1_eval * b1_eval);
+    evals[1].fmadd(weight, a2_eval * b2_eval);
+    evals[2].fmadd(weight, a3_eval * b3_eval);
+    evals[3].fmadd(weight, a_inf * b_inf);
+}
+
+#[inline(always)]
+fn accumulate_instruction_ra_d4_product_terms<F: Field>(
+    evals: &mut [F::Accumulator; 4],
+    a0: (F, F),
+    a1: (F, F),
+    a2: (F, F),
+    a3: (F, F),
+) {
+    let (a1_eval, a2_eval, a_inf) = eval_linear_prod_2_internal_stage6(a0, a1);
+    let a3_eval = extrapolate_quadratic_next(a1_eval, a2_eval, a_inf);
+    let (b1_eval, b2_eval, b_inf) = eval_linear_prod_2_internal_stage6(a2, a3);
+    let b3_eval = extrapolate_quadratic_next(b1_eval, b2_eval, b_inf);
+
+    evals[0].fmadd(a1_eval, b1_eval);
+    evals[1].fmadd(a2_eval, b2_eval);
+    evals[2].fmadd(a3_eval, b3_eval);
+    evals[3].fmadd(a_inf, b_inf);
+}
+
+#[inline(always)]
+fn eval_linear_prod_2_internal_stage6<F: Field>((p0, p1): (F, F), (q0, q1): (F, F)) -> (F, F, F) {
+    let p_inf = p1 - p0;
+    let p2 = p1 + p_inf;
+    let q_inf = q1 - q0;
+    let q2 = q1 + q_inf;
+    (p1 * q1, p2 * q2, p_inf * q_inf)
+}
+
+#[inline(always)]
+fn extrapolate_quadratic_next<F: Field>(eval_at_1: F, eval_at_2: F, eval_at_inf: F) -> F {
+    let doubled = eval_at_2 + eval_at_inf;
+    doubled + doubled - eval_at_1
+}
+
+enum InstructionRaVirtualChunks<'a, F: Field> {
+    Dense(InstructionRaVirtualDenseChunks<'a, F>),
+    Sparse(InstructionRaVirtualSparseChunks<'a, F>),
+}
+
+impl<F: Field> InstructionRaVirtualChunks<'_, F> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Dense(chunks) => chunks.len(),
+            Self::Sparse(chunks) => chunks.len(),
+        }
+    }
+
+    fn current_len(&self) -> usize {
+        match self {
+            Self::Dense(chunks) => chunks.current_len(),
+            Self::Sparse(chunks) => chunks.current_len(),
+        }
+    }
+
+    fn get(&self, chunk: usize, index: usize) -> F {
+        match self {
+            Self::Dense(chunks) => chunks.get(chunk, index),
+            Self::Sparse(chunks) => chunks.get(chunk, index),
+        }
+    }
+
+    fn get_pair(&self, chunk: usize, row: usize) -> (F, F) {
+        match self {
+            Self::Dense(chunks) => chunks.get_pair(chunk, row),
+            Self::Sparse(chunks) => chunks.get_pair(chunk, row),
+        }
+    }
+
+    fn final_sumcheck_claim(&self, chunk: usize) -> F {
+        match self {
+            Self::Dense(chunks) => chunks.final_sumcheck_claim(chunk),
+            Self::Sparse(chunks) => chunks.final_sumcheck_claim(chunk),
+        }
+    }
+
+    fn bind(&mut self, challenge: F) {
+        match self {
+            Self::Dense(chunks) => chunks.bind(challenge),
+            Self::Sparse(chunks) => chunks.bind(challenge),
+        }
+    }
+}
+
+fn bind_dense_evals_to_vec<F: Field>(values: &[F], challenge: F) -> Vec<F> {
+    values
+        .chunks_exact(2)
+        .map(|pair| pair[0] + (pair[1] - pair[0]) * challenge)
+        .collect()
+}
+
+struct InstructionRaVirtualStage6State<'a, F: Field> {
+    relation: Stage6Relation,
+    eq_cycle: Vec<F>,
+    eq_scratch: Vec<F>,
+    split_eq: Option<GruenSplitEqPolynomial<F>>,
+    chunks: InstructionRaVirtualChunks<'a, F>,
+    chunks_per_virtual: usize,
+    gamma_powers: Vec<F>,
+    gamma_powers_inv: Vec<F>,
+    gamma_absorbed: bool,
+    output_factor_offset: usize,
+    outputs: Vec<FactorOutput>,
+    active_scale: F,
+}
+
+impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
+    #[expect(clippy::too_many_arguments)]
+    fn new(
+        relation: Stage6Relation,
+        eq_cycle: Vec<F>,
+        split_eq: Option<GruenSplitEqPolynomial<F>>,
+        chunks: InstructionRaVirtualChunks<'a, F>,
+        chunks_per_virtual: usize,
+        gamma: F,
+        gamma_absorbed: bool,
+        output_factor_offset: usize,
+        outputs: Vec<FactorOutput>,
+        active_scale: F,
+        degree_bound: usize,
+    ) -> Result<Self, Stage6KernelError> {
+        if chunks.len() == 0
+            || chunks_per_virtual == 0
+            || !chunks.len().is_multiple_of(chunks_per_virtual)
+        {
+            return Err(Stage6KernelError::InvalidInputLength {
+                input: relation.symbol(),
+                expected: chunks_per_virtual,
+                actual: chunks.len(),
+            });
+        }
+        if degree_bound < chunks_per_virtual + 1 {
+            return Err(Stage6KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "RA virtual degree bound is too small",
+            });
+        }
+        if degree_bound > 5 {
+            return Err(Stage6KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "RA virtual degree bound is unsupported",
+            });
+        }
+        if chunks.current_len() != eq_cycle.len() {
+            return Err(Stage6KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "RA virtual chunks have inconsistent lengths",
+            });
+        }
+
+        let virtual_count = chunks.len() / chunks_per_virtual;
+        let mut gamma_powers = Vec::with_capacity(virtual_count);
+        let mut gamma_powers_inv = Vec::with_capacity(virtual_count);
+        let mut gamma_power = F::one();
+        for _ in 0..virtual_count {
+            gamma_powers.push(gamma_power);
+            gamma_powers_inv.push(gamma_power.inverse().ok_or(
+                Stage6KernelError::InvalidProof {
+                    driver: relation.symbol(),
+                    reason: "RA virtual gamma power is not invertible",
+                },
+            )?);
+            gamma_power *= gamma;
+        }
+
+        Ok(Self {
+            relation,
+            eq_cycle,
+            eq_scratch: Vec::new(),
+            split_eq,
+            chunks,
+            chunks_per_virtual,
+            gamma_powers,
+            gamma_powers_inv,
+            gamma_absorbed,
+            output_factor_offset,
+            outputs,
+            active_scale,
+        })
+    }
+
+    fn round_poly(
+        &self,
+        previous_claim: F,
+        relation: Stage6Relation,
+    ) -> Result<UnivariatePoly<F>, Stage6KernelError> {
+        if relation != self.relation {
+            return Err(Stage6KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "wrong relation for RA virtual state",
+            });
+        }
+        if self.chunks.current_len() == 0 || !self.chunks.current_len().is_power_of_two() {
+            return Err(Stage6KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "RA virtual factor has invalid length",
+            });
+        }
+        if let Some(split_eq) = &self.split_eq {
+            let _span = trace_stage6_inner_spans().then(|| {
+                tracing::info_span!(
+                    "Stage6::ra_virtual.round_sparse",
+                    relation = relation.symbol(),
+                    chunks_per_virtual = self.chunks_per_virtual
+                )
+                .entered()
+            });
+            return self.round_poly_sparse(previous_claim, relation, split_eq);
+        }
+        let _span = trace_stage6_inner_spans().then(|| {
+            tracing::info_span!(
+                "Stage6::ra_virtual.round_dense",
+                relation = relation.symbol(),
+                chunks_per_virtual = self.chunks_per_virtual
+            )
+            .entered()
+        });
+        let first_len = self.eq_cycle.len();
+        let coefficient_count = self.chunks_per_virtual + 2;
+        let half = first_len / 2;
+        let coefficient_accs = if half >= DENSE_BIND_PAR_THRESHOLD {
+            (0..half)
+                .into_par_iter()
+                .fold(
+                    || vec![F::Accumulator::default(); coefficient_count],
+                    |mut row_coefficients, row| {
+                        self.accumulate_row_coefficients(row, &mut row_coefficients);
+                        row_coefficients
+                    },
+                )
+                .reduce(
+                    || vec![F::Accumulator::default(); coefficient_count],
+                    |mut left, right| {
+                        for (left, right) in left.iter_mut().zip(right) {
+                            left.merge(right);
+                        }
+                        left
+                    },
+                )
+        } else {
+            let mut coefficients = vec![F::Accumulator::default(); coefficient_count];
+            for row in 0..half {
+                self.accumulate_row_coefficients(row, &mut coefficients);
+            }
+            coefficients
+        };
+        let mut coefficients = coefficient_accs
+            .into_iter()
+            .map(FieldAccumulator::reduce)
+            .collect::<Vec<_>>();
+        for coefficient in &mut coefficients {
+            *coefficient *= self.active_scale;
+        }
+        let poly = UnivariatePoly::new(coefficients);
+        check_round_claim(
+            &poly,
+            previous_claim,
+            relation.symbol(),
+            "stage6 relation input claim mismatch",
+        )?;
+        Ok(poly)
+    }
+
+    fn round_poly_sparse(
+        &self,
+        previous_claim: F,
+        relation: Stage6Relation,
+        split_eq: &GruenSplitEqPolynomial<F>,
+    ) -> Result<UnivariatePoly<F>, Stage6KernelError> {
+        if self.chunks_per_virtual == 4 {
+            return self.round_poly_sparse_d4(previous_claim, relation, split_eq);
+        }
+
+        let evals = split_eq.fold_out_in(
+            || vec![F::Accumulator::default(); self.chunks_per_virtual],
+            |inner, row, _x_in, e_in| {
+                self.accumulate_sparse_row_evals(row, e_in, inner);
+            },
+            |_x_out, e_out, inner| {
+                inner
+                    .into_iter()
+                    .map(|acc| {
+                        let mut outer = F::Accumulator::default();
+                        outer.fmadd(e_out, acc.reduce());
+                        outer
+                    })
+                    .collect::<Vec<_>>()
+            },
+            |mut left, right| {
+                for (left, right) in left.iter_mut().zip(right) {
+                    left.merge(right);
+                }
+                left
+            },
+        );
+        let mut evals = evals
+            .into_iter()
+            .map(FieldAccumulator::reduce)
+            .collect::<Vec<_>>();
+        for eval in &mut evals {
+            *eval *= self.active_scale;
+        }
+        let poly = split_eq.gruen_poly_from_evals(&evals, previous_claim);
+        check_round_claim(
+            &poly,
+            previous_claim,
+            relation.symbol(),
+            "stage6 relation input claim mismatch",
+        )?;
+        Ok(poly)
+    }
+
+    fn round_poly_sparse_d4(
+        &self,
+        previous_claim: F,
+        relation: Stage6Relation,
+        split_eq: &GruenSplitEqPolynomial<F>,
+    ) -> Result<UnivariatePoly<F>, Stage6KernelError> {
+        debug_assert_eq!(self.chunks_per_virtual, 4);
+
+        let e_out = split_eq.e_out_current();
+        let e_in = split_eq.e_in_current();
+        let in_bits = e_in.len().trailing_zeros() as usize;
+        let eval_accs = (0..e_out.len())
+            .into_par_iter()
+            .map(|x_out| {
+                let mut inner = [F::Accumulator::default(); 4];
+                let base = x_out << in_bits;
+                for (x_in, &e_in) in e_in.iter().enumerate() {
+                    self.accumulate_sparse_row_evals_d4(base | x_in, e_in, &mut inner);
+                }
+
+                let mut outer = [F::Accumulator::default(); 4];
+                for (outer, inner) in outer.iter_mut().zip(inner) {
+                    outer.fmadd(e_out[x_out], inner.reduce());
+                }
+                outer
+            })
+            .reduce(
+                || [F::Accumulator::default(); 4],
+                |mut left, right| {
+                    for (left, right) in left.iter_mut().zip(right) {
+                        left.merge(right);
+                    }
+                    left
+                },
+            );
+
+        let mut evals = eval_accs.map(FieldAccumulator::reduce).to_vec();
+        for eval in &mut evals {
+            *eval *= self.active_scale;
+        }
+        let poly = split_eq.gruen_poly_from_evals(&evals, previous_claim);
+        check_round_claim(
+            &poly,
+            previous_claim,
+            relation.symbol(),
+            "stage6 relation input claim mismatch",
+        )?;
+        Ok(poly)
+    }
+
+    fn accumulate_sparse_row_evals(&self, row: usize, e_in: F, evals: &mut [F::Accumulator]) {
+        if self.chunks_per_virtual == 4 {
+            self.accumulate_sparse_row_evals_d4(row, e_in, evals);
+            return;
+        }
+
+        let mut pairs = vec![(F::zero(), F::zero()); self.chunks_per_virtual];
+        let mut product_evals = vec![F::zero(); self.chunks_per_virtual];
+        for virtual_index in 0..self.virtual_count() {
+            for (offset, pair) in pairs.iter_mut().enumerate() {
+                let chunk = virtual_index * self.chunks_per_virtual + offset;
+                *pair = (
+                    self.chunks.get(chunk, 2 * row),
+                    self.chunks.get(chunk, 2 * row + 1),
+                );
+            }
+            eval_instruction_ra_product(&pairs, &mut product_evals);
+            let weight = if self.gamma_absorbed {
+                e_in
+            } else {
+                e_in * self.gamma_powers[virtual_index]
+            };
+            for (eval, product_eval) in evals.iter_mut().zip(&product_evals) {
+                eval.fmadd(weight, *product_eval);
+            }
+        }
+    }
+
+    fn accumulate_sparse_row_evals_d4(&self, row: usize, e_in: F, evals: &mut [F::Accumulator]) {
+        debug_assert_eq!(self.chunks_per_virtual, 4);
+        debug_assert_eq!(evals.len(), 4);
+
+        if self.gamma_absorbed {
+            let mut product_accs = [F::Accumulator::default(); 4];
+            if let InstructionRaVirtualChunks::Sparse(chunks) = &self.chunks {
+                chunks.accumulate_d4_product_terms(row, self.virtual_count(), &mut product_accs);
+            } else {
+                for virtual_index in 0..self.virtual_count() {
+                    let base = virtual_index * 4;
+
+                    let a0 = self.chunks.get_pair(base, row);
+                    let a1 = self.chunks.get_pair(base + 1, row);
+                    let a2 = self.chunks.get_pair(base + 2, row);
+                    let a3 = self.chunks.get_pair(base + 3, row);
+
+                    accumulate_instruction_ra_d4_product_terms(&mut product_accs, a0, a1, a2, a3);
+                }
+            }
+            for (eval, product_acc) in evals.iter_mut().zip(product_accs) {
+                eval.fmadd(e_in, product_acc.reduce());
+            }
+            return;
+        }
+
+        for virtual_index in 0..self.virtual_count() {
+            let base = virtual_index * 4;
+
+            let a0 = self.chunks.get_pair(base, row);
+            let a1 = self.chunks.get_pair(base + 1, row);
+            let a2 = self.chunks.get_pair(base + 2, row);
+            let a3 = self.chunks.get_pair(base + 3, row);
+
+            let weight = if self.gamma_absorbed {
+                e_in
+            } else {
+                e_in * self.gamma_powers[virtual_index]
+            };
+            accumulate_instruction_ra_d4_products(weight, evals, a0, a1, a2, a3);
+        }
+    }
+
+    fn accumulate_row_coefficients(&self, row: usize, coefficients: &mut [F::Accumulator]) {
+        let eq_low = self.eq_cycle[2 * row];
+        let eq_slope = self.eq_cycle[2 * row + 1] - eq_low;
+        for virtual_index in 0..self.virtual_count() {
+            let mut term = [F::zero(); 6];
+            let mut next = [F::zero(); 6];
+            term[0] = self.gamma_powers[virtual_index];
+            let mut degree = 0;
+            for offset in 0..self.chunks_per_virtual {
+                let chunk = virtual_index * self.chunks_per_virtual + offset;
+                let low = self.chunks.get(chunk, 2 * row);
+                let high = self.chunks.get(chunk, 2 * row + 1);
+                let slope = high - low;
+                multiply_linear_factor(&mut term, &mut next, &mut degree, low, slope);
+            }
+            multiply_linear_factor(&mut term, &mut next, &mut degree, eq_low, eq_slope);
+            for (coefficient, term_coefficient) in coefficients.iter_mut().zip(term) {
+                coefficient.acc_add(term_coefficient);
+            }
+        }
+    }
+
+    fn bind(&mut self, challenge: F) {
+        if self.split_eq.is_none() {
+            bind_dense_evals_reuse(&mut self.eq_cycle, &mut self.eq_scratch, challenge);
+        }
+        self.chunks.bind(challenge);
+        if let Some(split_eq) = &mut self.split_eq {
+            split_eq.bind(challenge);
+        }
+    }
+
+    fn final_relation_eval(&self, relation: Stage6Relation) -> Result<F, Stage6KernelError> {
+        if relation != self.relation {
+            return Err(Stage6KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "wrong relation for RA virtual state",
+            });
+        }
+        let eq = if let Some(split_eq) = &self.split_eq {
+            split_eq.current_scalar()
+        } else {
+            self.eq_cycle
+                .first()
+                .copied()
+                .ok_or(Stage6KernelError::InvalidProof {
+                    driver: relation.symbol(),
+                    reason: "empty instruction RA virtual eq factor",
+                })?
+        };
+        let mut virtual_sum = F::zero();
+        for virtual_index in 0..self.virtual_count() {
+            let mut product = if self.gamma_absorbed {
+                F::one()
+            } else {
+                self.gamma_powers[virtual_index]
+            };
+            for offset in 0..self.chunks_per_virtual {
+                let chunk = virtual_index * self.chunks_per_virtual + offset;
+                product *= self.chunks.final_sumcheck_claim(chunk);
+            }
+            virtual_sum += product;
+        }
+        Ok(eq * virtual_sum)
+    }
+
+    fn virtual_count(&self) -> usize {
+        self.chunks.len() / self.chunks_per_virtual
+    }
+
+    fn unscaled_factor_eval(&self, factor: usize) -> F {
+        let mut eval = self.chunks.final_sumcheck_claim(factor);
+        if self.gamma_absorbed && factor.is_multiple_of(self.chunks_per_virtual) {
+            eval *= self.gamma_powers_inv[factor / self.chunks_per_virtual];
+        }
+        eval
+    }
+
+    fn final_evals(
+        &self,
+        relation: Stage6Relation,
+    ) -> Result<Vec<Stage6NamedEval<F>>, Stage6KernelError> {
+        self.outputs
+            .iter()
+            .map(|output| {
+                let factor = output.factor.checked_sub(self.output_factor_offset).ok_or(
+                    Stage6KernelError::InvalidProof {
+                        driver: relation.symbol(),
+                        reason: "RA virtual output factor underflow",
+                    },
+                )?;
+                Ok(named_eval(
+                    output.name,
+                    output.oracle,
+                    (factor < self.chunks.len())
+                        .then(|| self.unscaled_factor_eval(factor))
+                        .ok_or(Stage6KernelError::InvalidProof {
+                            driver: relation.symbol(),
+                            reason: "empty RA virtual factor",
+                        })?,
+                ))
+            })
+            .collect()
+    }
+}
+
+fn bytecode_read_raf_state<'a, F: Field>(
     program: &'static Stage6CpuProgramPlan,
     claim: &Stage6SumcheckClaimPlan,
-    inputs: &Stage6ProverInputs<'_, F>,
+    inputs: &'a Stage6ProverInputs<'a, F>,
     store: &Stage6ValueStore<F>,
     active_scale: F,
-) -> Result<Stage6ProverInstanceState<F>, Stage6KernelError> {
+) -> Result<Stage6ProverInstanceState<'a, F>, Stage6KernelError> {
     let witness = inputs
         .bytecode_read_raf
         .ok_or(Stage6KernelError::MissingKernelInput {
@@ -3234,7 +5544,7 @@ fn bytecode_read_raf_state<F: Field>(
             claim.degree,
             outputs,
         )
-        .map(Stage6ProverInstanceState::BytecodeReadRaf);
+        .map(|state| Stage6ProverInstanceState::BytecodeReadRaf(Box::new(state)));
     }
 
     bytecode_read_raf_dense_state(
@@ -3293,13 +5603,13 @@ fn bytecode_read_raf_dense_state<F: Field>(
     ))
 }
 
-fn booleanity_state<F: Field>(
+fn booleanity_state<'a, F: Field>(
     program: &'static Stage6CpuProgramPlan,
     claim: &Stage6SumcheckClaimPlan,
-    inputs: &Stage6ProverInputs<'_, F>,
+    inputs: &'a Stage6ProverInputs<'a, F>,
     store: &Stage6ValueStore<F>,
     active_scale: F,
-) -> Result<Stage6ProverInstanceState<F>, Stage6KernelError> {
+) -> Result<Stage6ProverInstanceState<'a, F>, Stage6KernelError> {
     let witness = inputs
         .booleanity
         .ok_or(Stage6KernelError::MissingKernelInput {
@@ -3339,12 +5649,13 @@ fn booleanity_state<F: Field>(
         return CoreBooleanityStage6State::new(
             r_address,
             r_cycle,
-            index_chunks.iter().map(|chunk| (*chunk).to_vec()).collect(),
+            index_chunks,
+            witness.row_indices,
             store.scalar("stage6.booleanity.gamma")?,
             booleanity_output_plans(program, index_chunks.len())?,
             active_scale,
         )
-        .map(Stage6ProverInstanceState::CoreBooleanity);
+        .map(|state| Stage6ProverInstanceState::CoreBooleanity(Box::new(state)));
     }
 
     if witness.chunks.is_empty() {
@@ -3445,7 +5756,7 @@ fn hamming_booleanity_state<F: Field>(
     inputs: &Stage6ProverInputs<'_, F>,
     store: &Stage6ValueStore<F>,
     active_scale: F,
-) -> Result<DenseStage6State<F>, Stage6KernelError> {
+) -> Result<HammingBooleanityStage6State<F>, Stage6KernelError> {
     let witness = inputs
         .hamming_booleanity
         .ok_or(Stage6KernelError::MissingKernelInput {
@@ -3467,12 +5778,6 @@ fn hamming_booleanity_state<F: Field>(
         trace_rounds,
         lookup_output_point.len(),
     )?;
-    let eq_lookup_output = EqPolynomial::<F>::evals(&lookup_output_point, None);
-    require_operand_count(
-        "stage6.hamming_booleanity.eq",
-        witness.hamming_weight.len(),
-        eq_lookup_output.len(),
-    )?;
     let output = program
         .evals
         .iter()
@@ -3486,22 +5791,13 @@ fn hamming_booleanity_state<F: Field>(
             symbol: "stage6.hamming_booleanity.eval.HammingWeight",
         })?;
 
-    Ok(DenseStage6State::new(
-        vec![eq_lookup_output, witness.hamming_weight.to_vec()],
-        vec![
-            DenseTerm {
-                coefficient: F::one(),
-                factors: vec![0, 1, 1],
-            },
-            DenseTerm {
-                coefficient: -F::one(),
-                factors: vec![0, 1],
-            },
-        ],
-        vec![output],
+    HammingBooleanityStage6State::new(
+        &lookup_output_point,
+        witness.hamming_weight.to_vec(),
+        output,
         active_scale,
         claim.degree,
-    ))
+    )
 }
 
 fn inc_claim_reduction_state<F: Field>(
@@ -3510,7 +5806,7 @@ fn inc_claim_reduction_state<F: Field>(
     inputs: &Stage6ProverInputs<'_, F>,
     store: &Stage6ValueStore<F>,
     active_scale: F,
-) -> Result<DenseStage6State<F>, Stage6KernelError> {
+) -> Result<IncClaimReductionStage6State<F>, Stage6KernelError> {
     let witness = inputs
         .inc_claim_reduction
         .ok_or(Stage6KernelError::MissingKernelInput {
@@ -3555,10 +5851,30 @@ fn inc_claim_reduction_state<F: Field>(
     let gamma = store.scalar("stage6.inc_claim_reduction.gamma")?;
     let gamma2 = gamma.square();
 
-    let mut eq_ram_combined = EqPolynomial::<F>::evals(ram_inc_stage2, None);
-    let eq_ram_stage4 = EqPolynomial::<F>::evals(ram_inc_stage4, None);
-    let mut eq_rd_combined = EqPolynomial::<F>::evals(rd_inc_stage4, None);
-    let eq_rd_stage5 = EqPolynomial::<F>::evals(rd_inc_stage5, None);
+    let (eq_ram_combined, eq_rd_combined) = rayon::join(
+        || {
+            let (eq_ram_stage2, eq_ram_stage4) = rayon::join(
+                || EqPolynomial::<F>::evals(ram_inc_stage2, None),
+                || EqPolynomial::<F>::evals(ram_inc_stage4, None),
+            );
+            eq_ram_stage2
+                .par_iter()
+                .zip(eq_ram_stage4.par_iter())
+                .map(|(&stage2, &stage4)| stage2 + gamma * stage4)
+                .collect::<Vec<_>>()
+        },
+        || {
+            let (eq_rd_stage4, eq_rd_stage5) = rayon::join(
+                || EqPolynomial::<F>::evals(rd_inc_stage4, None),
+                || EqPolynomial::<F>::evals(rd_inc_stage5, None),
+            );
+            eq_rd_stage4
+                .par_iter()
+                .zip(eq_rd_stage5.par_iter())
+                .map(|(&stage4, &stage5)| stage4 + gamma * stage5)
+                .collect::<Vec<_>>()
+        },
+    );
     require_operand_count(
         "stage6.inc_claim_reduction.eq_ram",
         witness.ram_inc.len(),
@@ -3569,46 +5885,32 @@ fn inc_claim_reduction_state<F: Field>(
         witness.rd_inc.len(),
         eq_rd_combined.len(),
     )?;
-    for (combined, stage4) in eq_ram_combined.iter_mut().zip(eq_ram_stage4) {
-        *combined += gamma * stage4;
-    }
-    for (combined, stage5) in eq_rd_combined.iter_mut().zip(eq_rd_stage5) {
-        *combined += gamma * stage5;
-    }
 
-    Ok(DenseStage6State::new(
-        vec![
-            eq_ram_combined,
-            witness.ram_inc.to_vec(),
-            eq_rd_combined,
-            witness.rd_inc.to_vec(),
-        ],
-        vec![
-            DenseTerm {
-                coefficient: F::one(),
-                factors: vec![0, 1],
-            },
-            DenseTerm {
-                coefficient: gamma2,
-                factors: vec![2, 3],
-            },
-        ],
-        vec![
+    Ok(IncClaimReductionStage6State {
+        eq_ram: eq_ram_combined,
+        eq_ram_scratch: Vec::new(),
+        ram_inc: witness.ram_inc.to_vec(),
+        ram_inc_scratch: Vec::new(),
+        eq_rd: eq_rd_combined,
+        eq_rd_scratch: Vec::new(),
+        rd_inc: witness.rd_inc.to_vec(),
+        rd_inc_scratch: Vec::new(),
+        gamma2,
+        outputs: [
             factor_output_by_name(program, "stage6.inc_claim_reduction.eval.RamInc", 1)?,
             factor_output_by_name(program, "stage6.inc_claim_reduction.eval.RdInc", 3)?,
         ],
         active_scale,
-        claim.degree,
-    ))
+    })
 }
 
-fn ram_ra_virtual_state<F: Field>(
+fn ram_ra_virtual_state<'a, F: Field>(
     program: &'static Stage6CpuProgramPlan,
     claim: &Stage6SumcheckClaimPlan,
-    inputs: &Stage6ProverInputs<'_, F>,
+    inputs: &'a Stage6ProverInputs<'a, F>,
     store: &Stage6ValueStore<F>,
     active_scale: F,
-) -> Result<DenseStage6State<F>, Stage6KernelError> {
+) -> Result<InstructionRaVirtualStage6State<'a, F>, Stage6KernelError> {
     let witness = inputs
         .ram_ra_virtual
         .ok_or(Stage6KernelError::MissingKernelInput {
@@ -3642,31 +5944,35 @@ fn ram_ra_virtual_state<F: Field>(
     let eq_cycle = EqPolynomial::<F>::evals(r_cycle, None);
     require_operand_count("stage6.ram_ra_virtual.eq", trace_len, eq_cycle.len())?;
 
-    let mut factors = Vec::with_capacity(witness.ram_ra_chunks.len() + 1);
-    factors.push(eq_cycle);
-    factors.extend(witness.ram_ra_chunks.iter().map(|chunk| (*chunk).to_vec()));
-    let term_factors = (0..factors.len()).collect::<Vec<_>>();
     let outputs = ram_ra_virtual_output_plans(program, witness.ram_ra_chunks.len())?;
 
-    Ok(DenseStage6State::new(
-        factors,
-        vec![DenseTerm {
-            coefficient: F::one(),
-            factors: term_factors,
-        }],
+    InstructionRaVirtualStage6State::new(
+        Stage6Relation::RamRaVirtual,
+        eq_cycle,
+        Some(GruenSplitEqPolynomial::new(
+            r_cycle,
+            BindingOrder::LowToHigh,
+        )),
+        InstructionRaVirtualChunks::Dense(InstructionRaVirtualDenseChunks::borrowed(
+            witness.ram_ra_chunks,
+        )),
+        witness.ram_ra_chunks.len(),
+        F::one(),
+        false,
+        1,
         outputs,
         active_scale,
         claim.degree,
-    ))
+    )
 }
 
-fn instruction_ra_virtual_state<F: Field>(
+fn instruction_ra_virtual_state<'a, F: Field>(
     program: &'static Stage6CpuProgramPlan,
     claim: &Stage6SumcheckClaimPlan,
-    inputs: &Stage6ProverInputs<'_, F>,
+    inputs: &'a Stage6ProverInputs<'a, F>,
     store: &Stage6ValueStore<F>,
     active_scale: F,
-) -> Result<DenseStage6State<F>, Stage6KernelError> {
+) -> Result<InstructionRaVirtualStage6State<'a, F>, Stage6KernelError> {
     let witness = inputs
         .instruction_ra_virtual
         .ok_or(Stage6KernelError::MissingKernelInput {
@@ -3711,41 +6017,134 @@ fn instruction_ra_virtual_state<F: Field>(
         eq_cycle.len(),
     )?;
 
-    let mut factors = Vec::with_capacity(witness.instruction_ra_chunks.len() + 1);
-    factors.push(eq_cycle);
-    factors.extend(
-        witness
-            .instruction_ra_chunks
-            .iter()
-            .map(|chunk| (*chunk).to_vec()),
-    );
-
     let chunks_per_virtual = witness.instruction_ra_chunks.len() / witness.virtual_count;
     let gamma = store.scalar("stage6.instruction_ra_virtual.gamma")?;
-    let mut gamma_power = F::one();
-    let mut terms = Vec::with_capacity(witness.virtual_count);
-    for virtual_index in 0..witness.virtual_count {
-        let start = 1 + virtual_index * chunks_per_virtual;
-        let end = start + chunks_per_virtual;
-        let mut factors = Vec::with_capacity(chunks_per_virtual + 1);
-        factors.push(0);
-        factors.extend(start..end);
-        terms.push(DenseTerm {
-            coefficient: gamma_power,
-            factors,
-        });
-        gamma_power *= gamma;
-    }
     let outputs =
         instruction_ra_virtual_output_plans(program, witness.instruction_ra_chunks.len())?;
+    let sparse_chunks = match witness.instruction_ra_index_chunks {
+        Some(index_chunks) if index_chunks.len() == witness.instruction_ra_chunks.len() => {
+            Some(instruction_ra_virtual_sparse_chunks(
+                program,
+                store,
+                index_chunks,
+                chunks_per_virtual,
+                gamma,
+                trace_rounds,
+            )?)
+        }
+        _ => None,
+    };
 
-    Ok(DenseStage6State::new(
-        factors,
-        terms,
+    if let Some(sparse_chunks) = sparse_chunks {
+        return InstructionRaVirtualStage6State::new(
+            Stage6Relation::InstructionRaVirtual,
+            eq_cycle,
+            Some(GruenSplitEqPolynomial::new(
+                r_cycle,
+                BindingOrder::LowToHigh,
+            )),
+            InstructionRaVirtualChunks::Sparse(sparse_chunks),
+            chunks_per_virtual,
+            gamma,
+            true,
+            0,
+            outputs,
+            active_scale,
+            claim.degree,
+        );
+    }
+
+    InstructionRaVirtualStage6State::new(
+        Stage6Relation::InstructionRaVirtual,
+        eq_cycle,
+        None,
+        InstructionRaVirtualChunks::Dense(InstructionRaVirtualDenseChunks::borrowed(
+            witness.instruction_ra_chunks,
+        )),
+        chunks_per_virtual,
+        gamma,
+        false,
+        0,
         outputs,
         active_scale,
         claim.degree,
-    ))
+    )
+}
+
+fn instruction_ra_virtual_sparse_chunks<'a, F: Field>(
+    program: &'static Stage6CpuProgramPlan,
+    store: &Stage6ValueStore<F>,
+    index_chunks: &'a [&'a [Option<u8>]],
+    chunks_per_virtual: usize,
+    gamma: F,
+    trace_rounds: usize,
+) -> Result<InstructionRaVirtualSparseChunks<'a, F>, Stage6KernelError> {
+    let log_k_chunk = instruction_ra_virtual_log_k_chunk(program, trace_rounds)?;
+    let virtual_address_len = chunks_per_virtual * log_k_chunk;
+    let mut gamma_powers = Vec::with_capacity(index_chunks.len().div_ceil(chunks_per_virtual));
+    let mut gamma_power = F::one();
+    for _ in 0..gamma_powers.capacity() {
+        gamma_powers.push(gamma_power);
+        gamma_power *= gamma;
+    }
+    let tables = (0..index_chunks.len())
+        .map(|chunk_index| {
+            let virtual_index = chunk_index / chunks_per_virtual;
+            let local_chunk = chunk_index % chunks_per_virtual;
+            let symbol =
+                format!("stage6.input.stage5.instruction_read_raf.InstructionRa_{virtual_index}");
+            let point = store
+                .try_point(&symbol)
+                .ok_or(Stage6KernelError::MissingValue {
+                    symbol: "stage6.input.stage5.instruction_read_raf.InstructionRa_",
+                })?;
+            if point.len() < virtual_address_len {
+                return Err(Stage6KernelError::InvalidInputLength {
+                    input: "stage6.input.stage5.instruction_read_raf.InstructionRa_",
+                    expected: virtual_address_len,
+                    actual: point.len(),
+                });
+            }
+            let start = local_chunk * log_k_chunk;
+            let end = start + log_k_chunk;
+            let scaling_factor = (local_chunk == 0 && gamma_powers[virtual_index] != F::one())
+                .then_some(gamma_powers[virtual_index]);
+            Ok(EqPolynomial::<F>::evals(&point[start..end], scaling_factor))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for (indices, table) in index_chunks.iter().zip(&tables) {
+        require_operand_count(
+            "stage6.instruction_ra_virtual.index_chunk",
+            1usize << trace_rounds,
+            indices.len(),
+        )?;
+        for index in *indices {
+            if usize::from(index.unwrap_or(0)) >= table.len() {
+                return Err(Stage6KernelError::InvalidInputLength {
+                    input: "stage6.instruction_ra_virtual.index_chunk",
+                    expected: table.len(),
+                    actual: usize::from(index.unwrap_or(0)) + 1,
+                });
+            }
+        }
+    }
+
+    Ok(InstructionRaVirtualSparseChunks::new(tables, index_chunks))
+}
+
+fn instruction_ra_virtual_log_k_chunk(
+    program: &'static Stage6CpuProgramPlan,
+    trace_rounds: usize,
+) -> Result<usize, Stage6KernelError> {
+    program
+        .opening_claims
+        .iter()
+        .find(|claim| claim.symbol == "stage6.instruction_ra_virtual.opening.InstructionRa_0")
+        .and_then(|claim| claim.point_arity.checked_sub(trace_rounds))
+        .ok_or(Stage6KernelError::MissingValue {
+            symbol: "stage6.instruction_ra_virtual.opening.InstructionRa_0",
+        })
 }
 
 fn evaluate_stage6_field_expr<F: Field>(
@@ -3821,6 +6220,26 @@ fn require_operand_count(
             actual,
         })
     }
+}
+
+#[inline]
+fn check_round_claim<F: Field>(
+    poly: &UnivariatePoly<F>,
+    previous_claim: F,
+    driver: &'static str,
+    reason: &'static str,
+) -> Result<(), Stage6KernelError> {
+    #[cfg(debug_assertions)]
+    {
+        if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != previous_claim {
+            return Err(Stage6KernelError::InvalidProof { driver, reason });
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (poly, previous_claim, driver, reason);
+    }
+    Ok(())
 }
 
 fn append_opening_claims<F, T>(
@@ -4669,7 +7088,7 @@ fn instruction_ra_virtual_output_plans(
         program,
         "stage6.instruction_ra_virtual.eval.InstructionRa_",
         chunk_count,
-        1,
+        0,
     )
 }
 
@@ -4840,6 +7259,7 @@ fn round_poly_from_dense_terms<F: Field>(
     terms: &[DenseTerm<F>],
     active_scale: F,
     degree_bound: usize,
+    previous_claim: F,
     relation: Stage6Relation,
 ) -> Result<UnivariatePoly<F>, Stage6KernelError> {
     if degree_bound > 5 {
@@ -4864,7 +7284,7 @@ fn round_poly_from_dense_terms<F: Field>(
         }
     }
 
-    let eval_count = degree_bound + 1;
+    let eval_count = degree_bound;
     let mut evals = if half >= DENSE_BIND_PAR_THRESHOLD {
         (0..half)
             .into_par_iter()
@@ -4894,7 +7314,7 @@ fn round_poly_from_dense_terms<F: Field>(
     for eval in &mut evals {
         *eval *= active_scale;
     }
-    Ok(UnivariatePoly::interpolate_over_integers(&evals))
+    Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals))
 }
 
 fn accumulate_dense_row_evaluations<F: Field>(
@@ -4903,8 +7323,12 @@ fn accumulate_dense_row_evaluations<F: Field>(
     row: usize,
     evals: &mut [F],
 ) {
-    for (point, eval) in evals.iter_mut().enumerate() {
-        let point = F::from_u64(point as u64);
+    for (point_index, eval) in evals.iter_mut().enumerate() {
+        let point = if point_index == 0 {
+            F::zero()
+        } else {
+            F::from_u64((point_index + 1) as u64)
+        };
         for term in terms {
             let mut term_eval = term.coefficient;
             for &factor in &term.factors {
@@ -5064,6 +7488,12 @@ fn find_batch(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::manual_is_multiple_of,
+    clippy::unwrap_used,
+    reason = "tests use direct assertions and unwraps for fixture setup"
+)]
 mod tests {
     use super::*;
     use jolt_field::Fr;
@@ -6311,6 +8741,7 @@ mod tests {
             Stage6ProverInputs::new(&opening_inputs).with_booleanity(Stage6BooleanityWitness {
                 chunks: &chunks,
                 index_chunks: None,
+                row_indices: None,
             });
         let mut prover = Stage6ProverKernelExecutor::new(prover_inputs);
         let mut prover_transcript = Blake2bTranscript::<Fr>::new(b"stage6_test");
@@ -6361,6 +8792,7 @@ mod tests {
             Stage6ProverInputs::new(&opening_inputs).with_booleanity(Stage6BooleanityWitness {
                 chunks: &chunks,
                 index_chunks: None,
+                row_indices: None,
             });
         let mut prover = Stage6ProverKernelExecutor::new(prover_inputs);
         let mut prover_transcript = Blake2bTranscript::<Fr>::new(b"stage6_test");
@@ -6876,6 +9308,7 @@ mod tests {
         let prover_inputs = Stage6ProverInputs::new(&opening_inputs).with_instruction_ra_virtual(
             Stage6InstructionRaVirtualWitness {
                 instruction_ra_chunks: &instruction_ra_chunks,
+                instruction_ra_index_chunks: None,
                 virtual_count: 2,
             },
         );
@@ -6956,6 +9389,7 @@ mod tests {
         let prover_inputs = Stage6ProverInputs::new(&opening_inputs).with_instruction_ra_virtual(
             Stage6InstructionRaVirtualWitness {
                 instruction_ra_chunks: &instruction_ra_chunks,
+                instruction_ra_index_chunks: None,
                 virtual_count: 2,
             },
         );

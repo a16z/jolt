@@ -22,12 +22,19 @@ use jolt_lookup_tables::{
     },
     uninterleave_bits, LookupBits, LookupTableKind,
 };
-use jolt_poly::{bind_high_to_low, EqPolynomial, UnivariatePoly};
+use jolt_poly::{
+    bind_high_to_low, BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly,
+};
 use jolt_transcript::{Label, LabelWithCount, Transcript};
 use jolt_witness::Stage45SparseTraceWitness;
 use rayon::prelude::*;
 
 type PrefixPairEvals<F> = ([PrefixEval<F>; NUM_PREFIXES], [PrefixEval<F>; NUM_PREFIXES]);
+
+fn trace_stage5_inner_spans() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("JOLT_STAGE5_TRACE_INSTANCES").is_some())
+}
 
 pub use crate::stage4::{
     Stage4ChallengeVector as Stage5ChallengeVector, Stage4CpuProgramPlan as Stage5CpuProgramPlan,
@@ -1110,6 +1117,8 @@ where
     }
     let batching_coeffs = transcript.challenge_vector(claims.len());
     let max_rounds = context.driver.num_rounds;
+    let timing_enabled = std::env::var_os("JOLT_STAGE5_KERNEL_TIMINGS").is_some();
+    let trace_instances = std::env::var_os("JOLT_STAGE5_TRACE_INSTANCES").is_some();
     let two_inv = F::from_u64(2)
         .inverse()
         .ok_or(Stage5KernelError::InvalidProof {
@@ -1117,6 +1126,7 @@ where
             reason: "field element 2 is not invertible",
         })?;
     let mut instances = Vec::with_capacity(claims.len());
+    let mut timing_stats = Vec::with_capacity(claims.len());
     for (index, claim) in claims.iter().enumerate() {
         let offset = instance_round_offset(context.program, context.driver.symbol, claim.symbol)?;
         if offset + claim.num_rounds > max_rounds {
@@ -1127,19 +1137,28 @@ where
             });
         }
         let active_scale = F::one().mul_pow_2(max_rounds - offset - claim.num_rounds);
+        let relation = claim_relation(context.program, claim)?;
+        let init_start = timing_enabled.then(std::time::Instant::now);
+        let state = if trace_instances {
+            let _span = tracing::info_span!(
+                "Stage5::instance.init",
+                relation = relation.symbol(),
+                claim = claim.symbol
+            )
+            .entered();
+            Stage5ProverInstanceState::new(context.program, claim, inputs, &store, active_scale)?
+        } else {
+            Stage5ProverInstanceState::new(context.program, claim, inputs, &store, active_scale)?
+        };
+        let init_nanos = init_start.map_or(0, |start| start.elapsed().as_nanos());
         instances.push(Stage5BatchedInstance {
             claim,
-            relation: claim_relation(context.program, claim)?,
+            relation,
             offset,
             previous_claim: input_claims[index].mul_pow_2(max_rounds - claim.num_rounds),
-            state: Stage5ProverInstanceState::new(
-                context.program,
-                claim,
-                inputs,
-                &store,
-                active_scale,
-            )?,
+            state,
         });
+        timing_stats.push((relation, init_nanos, 0u128, 0u128));
     }
 
     let mut point = Vec::with_capacity(max_rounds);
@@ -1151,31 +1170,64 @@ where
         .sum::<F>();
     for round in 0..max_rounds {
         let mut individual_polys = Vec::with_capacity(instances.len());
-        for instance in &mut instances {
+        for (index, instance) in instances.iter_mut().enumerate() {
             let poly = if instance.is_active(round) {
-                instance
-                    .state
-                    .round_poly(instance.previous_claim, instance.relation)?
+                let round_start = timing_enabled.then(std::time::Instant::now);
+                let poly = if trace_instances {
+                    let _span = tracing::info_span!(
+                        "Stage5::instance.round_poly",
+                        relation = instance.relation.symbol(),
+                        claim = instance.claim.symbol,
+                        round = round
+                    )
+                    .entered();
+                    instance
+                        .state
+                        .round_poly(instance.previous_claim, instance.relation)?
+                } else {
+                    instance
+                        .state
+                        .round_poly(instance.previous_claim, instance.relation)?
+                };
+                if let Some(start) = round_start {
+                    timing_stats[index].2 += start.elapsed().as_nanos();
+                }
+                poly
             } else {
                 UnivariatePoly::new(vec![instance.previous_claim * two_inv])
             };
             individual_polys.push(poly);
         }
         let batched_poly = combine_univariate_polys(&individual_polys, &batching_coeffs);
-        if batched_poly.evaluate(F::zero()) + batched_poly.evaluate(F::one()) != batched_claim {
-            return Err(Stage5KernelError::InvalidProof {
-                driver: context.driver.symbol,
-                reason: "batched round claim mismatch",
-            });
-        }
+        check_round_claim(
+            &batched_poly,
+            batched_claim,
+            context.driver.symbol,
+            "batched round claim mismatch",
+        )?;
         append_compressed_univariate_poly(transcript, context.driver.round_label, &batched_poly);
         let challenge = transcript.challenge();
         point.push(challenge);
         batched_claim = batched_poly.evaluate(challenge);
-        for (instance, poly) in instances.iter_mut().zip(individual_polys) {
+        for (index, (instance, poly)) in instances.iter_mut().zip(individual_polys).enumerate() {
             instance.previous_claim = poly.evaluate(challenge);
             if instance.is_active(round) {
-                instance.state.ingest_challenge(challenge);
+                let bind_start = timing_enabled.then(std::time::Instant::now);
+                if trace_instances {
+                    let _span = tracing::info_span!(
+                        "Stage5::instance.bind",
+                        relation = instance.relation.symbol(),
+                        claim = instance.claim.symbol,
+                        round = round
+                    )
+                    .entered();
+                    instance.state.ingest_challenge(challenge);
+                } else {
+                    instance.state.ingest_challenge(challenge);
+                }
+                if let Some(start) = bind_start {
+                    timing_stats[index].3 += start.elapsed().as_nanos();
+                }
             }
         }
         round_polynomials.push(batched_poly);
@@ -1195,6 +1247,17 @@ where
     }
     store.observe_sumcheck_values(context.program, context.driver.symbol, &point, &evals)?;
     let opening_claims = append_opening_claims(context.program, &mut store, transcript, &evals)?;
+    if timing_enabled {
+        for (relation, init_nanos, round_nanos, bind_nanos) in timing_stats {
+            tracing::info!(
+                "[stage5 timings] relation={} init_ms={:.3} round_ms={:.3} bind_ms={:.3}",
+                relation.symbol(),
+                init_nanos as f64 / 1_000_000.0,
+                round_nanos as f64 / 1_000_000.0,
+                bind_nanos as f64 / 1_000_000.0,
+            );
+        }
+    }
     Ok(Stage5SumcheckOutput {
         driver: context.driver.symbol,
         point,
@@ -1404,6 +1467,7 @@ struct InstructionReadRafOutputPlan {
 
 struct InstructionReadRafStage5State<F: Field> {
     trace_len: usize,
+    r_reduction: Vec<F>,
     lookup_indices: Vec<u128>,
     lookup_table_indices: Vec<Option<usize>>,
     is_interleaved_operands: Vec<bool>,
@@ -1455,8 +1519,36 @@ struct InstructionReadRafReadTablePhase<F: Field> {
 }
 
 struct InstructionReadRafCycleState<F: Field> {
-    factors: Vec<Vec<F>>,
-    factor_scratch: Vec<Vec<F>>,
+    fixed_factors: Vec<Vec<F>>,
+    fixed_factor_scratch: Vec<Vec<F>>,
+    ra_factors: InstructionReadRafCycleRaFactors<F>,
+    split_eq: GruenSplitEqPolynomial<F>,
+}
+
+enum InstructionReadRafCycleRaFactors<F: Field> {
+    SparseRound1 {
+        tables: Vec<Vec<F>>,
+        lookup_indices: Vec<u128>,
+        chunk_bits: usize,
+    },
+    SparseRound2 {
+        tables_0: Vec<Vec<F>>,
+        tables_1: Vec<Vec<F>>,
+        lookup_indices: Vec<u128>,
+        chunk_bits: usize,
+    },
+    SparseRound3 {
+        tables_00: Vec<Vec<F>>,
+        tables_01: Vec<Vec<F>>,
+        tables_10: Vec<Vec<F>>,
+        tables_11: Vec<Vec<F>>,
+        lookup_indices: Vec<u128>,
+        chunk_bits: usize,
+    },
+    Bound {
+        chunks: Vec<Vec<F>>,
+        scratch: Vec<Vec<F>>,
+    },
 }
 
 impl<F: Field> DenseStage5State<F> {
@@ -1496,12 +1588,12 @@ impl<F: Field> DenseStage5State<F> {
         }
         let poly =
             round_poly_from_dense_terms(&self.factors, &self.terms, self.active_scale, relation)?;
-        if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != previous_claim {
-            return Err(Stage5KernelError::InvalidProof {
-                driver: relation.symbol(),
-                reason: "stage5 relation input claim mismatch",
-            });
-        }
+        check_round_claim(
+            &poly,
+            previous_claim,
+            relation.symbol(),
+            "stage5 relation input claim mismatch",
+        )?;
         Ok(poly)
     }
 
@@ -1563,14 +1655,33 @@ impl<F: Field> InstructionReadRafStage5State<F> {
                 std::process::abort();
             };
             let (read, raf_components) = if address_phase.left_operand_prefix.len() <= 32 {
-                (
-                    address_phase.read_table_round_evals(),
-                    address_phase.raf_round_component_evals(),
-                )
+                let _read_span = trace_stage5_inner_spans().then(|| {
+                    tracing::info_span!("Stage5::instruction_read_raf.address_read").entered()
+                });
+                let read = address_phase.read_table_round_evals();
+                drop(_read_span);
+                let _raf_span = trace_stage5_inner_spans().then(|| {
+                    tracing::info_span!("Stage5::instruction_read_raf.address_raf").entered()
+                });
+                let raf = address_phase.raf_round_component_evals();
+                drop(_raf_span);
+                (read, raf)
             } else {
                 rayon::join(
-                    || address_phase.read_table_round_evals(),
-                    || address_phase.raf_round_component_evals(),
+                    || {
+                        let _span = trace_stage5_inner_spans().then(|| {
+                            tracing::info_span!("Stage5::instruction_read_raf.address_read")
+                                .entered()
+                        });
+                        address_phase.read_table_round_evals()
+                    },
+                    || {
+                        let _span = trace_stage5_inner_spans().then(|| {
+                            tracing::info_span!("Stage5::instruction_read_raf.address_raf")
+                                .entered()
+                        });
+                        address_phase.raf_round_component_evals()
+                    },
                 )
             };
             let eval_at_0 = (read[0]
@@ -1589,11 +1700,16 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         }
 
         if self.cycle_state.is_none() {
+            let _span = trace_stage5_inner_spans().then(|| {
+                tracing::info_span!("Stage5::instruction_read_raf.materialize_cycle").entered()
+            });
             self.cycle_state = Some(self.materialize_cycle_state()?);
         }
         let Some(cycle_state) = self.cycle_state.as_ref() else {
             std::process::abort();
         };
+        let _span = trace_stage5_inner_spans()
+            .then(|| tracing::info_span!("Stage5::instruction_read_raf.cycle_round").entered());
         cycle_state.round_poly(previous_claim, self.active_scale, relation)
     }
 
@@ -1684,6 +1800,9 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         {
             return;
         }
+        let _span = trace_stage5_inner_spans().then(|| {
+            tracing::info_span!("Stage5::instruction_read_raf.build_address_phase").entered()
+        });
         self.address_phase = Some(self.build_address_phase(phase));
     }
 
@@ -1696,22 +1815,27 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         let right_operand_prefix =
             operand_prefix_poly(self.right_operand_checkpoint, chunk_bits, false);
         let identity_prefix = identity_prefix_poly(self.identity_checkpoint, chunk_bits);
-        let read_prefix_polys = ALL_PREFIXES
-            .par_iter()
-            .map(|prefix| {
-                (0..poly_len)
-                    .map(|bits| {
-                        prefix
-                            .evaluate(
-                                &self.read_prefix_checkpoints,
-                                LookupBits::new(bits as u128, chunk_bits),
-                                suffix_len,
-                            )
-                            .into_inner()
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
+        let read_prefix_polys = {
+            let _span = trace_stage5_inner_spans().then(|| {
+                tracing::info_span!("Stage5::instruction_read_raf.build.read_prefix").entered()
+            });
+            ALL_PREFIXES
+                .par_iter()
+                .map(|prefix| {
+                    (0..poly_len)
+                        .map(|bits| {
+                            prefix
+                                .evaluate(
+                                    &self.read_prefix_checkpoints,
+                                    LookupBits::new(bits as u128, chunk_bits),
+                                    suffix_len,
+                                )
+                                .into_inner()
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
 
         let shift_half_value = 1u128 << (suffix_len / 2);
         let shift_full_value = 1u128 << suffix_len;
@@ -1729,56 +1853,80 @@ impl<F: Field> InstructionReadRafStage5State<F> {
             .len()
             .div_ceil(rayon::current_num_threads())
             .max(1);
-        let q_rows = self
-            .lookup_groups
-            .par_chunks(q_chunk_size)
-            .fold(
-                || vec![F::zero(); q_total_len],
-                |mut acc, groups| {
-                    let shift_half_offset = 0;
-                    let left_offset = poly_len;
-                    let right_offset = 2 * poly_len;
-                    let shift_full_offset = 3 * poly_len;
-                    let identity_offset = 4 * poly_len;
+        let q_rows = {
+            let _span = trace_stage5_inner_spans()
+                .then(|| tracing::info_span!("Stage5::instruction_read_raf.build.raf_q").entered());
+            self.lookup_groups
+                .par_chunks(q_chunk_size)
+                .fold(
+                    || vec![F::ScalarAccumulator::default(); q_total_len],
+                    |mut acc, groups| {
+                        let shift_half_offset = 0;
+                        let left_offset = poly_len;
+                        let right_offset = 2 * poly_len;
+                        let shift_full_offset = 3 * poly_len;
+                        let identity_offset = 4 * poly_len;
 
-                    for group in groups {
-                        let index = ((group.lookup_index >> suffix_len) as usize) & (poly_len - 1);
-                        let suffix_bits = group.lookup_index & suffix_mask;
-                        let weight = group.phase_u_eval_sum;
+                        for group in groups {
+                            let index =
+                                ((group.lookup_index >> suffix_len) as usize) & (poly_len - 1);
+                            let suffix_bits = group.lookup_index & suffix_mask;
+                            let weight = group.phase_u_eval_sum;
 
-                        if group.is_interleaved_operands {
-                            acc[shift_half_offset + index] += weight;
-                            let (left_suffix, right_suffix) = uninterleave_bits(suffix_bits);
-                            if left_suffix != 0 {
-                                acc[left_offset + index] += weight.mul_u64(left_suffix);
-                            }
-                            if right_suffix != 0 {
-                                acc[right_offset + index] += weight.mul_u64(right_suffix);
-                            }
-                        } else {
-                            acc[shift_full_offset + index] += weight;
-                            if suffix_bits != 0 {
-                                acc[identity_offset + index] += weight.mul_u128(suffix_bits);
+                            if group.is_interleaved_operands {
+                                acc[shift_half_offset + index].add(weight);
+                                let (left_suffix, right_suffix) = uninterleave_bits(suffix_bits);
+                                if left_suffix != 0 {
+                                    acc[left_offset + index].add_mul_u64(weight, left_suffix);
+                                }
+                                if right_suffix != 0 {
+                                    acc[right_offset + index].add_mul_u64(weight, right_suffix);
+                                }
+                            } else {
+                                acc[shift_full_offset + index].add(weight);
+                                if suffix_bits != 0 {
+                                    acc[identity_offset + index].add_mul_u128(weight, suffix_bits);
+                                }
                             }
                         }
-                    }
-                    acc
-                },
-            )
-            .reduce(
-                || vec![F::zero(); q_total_len],
-                |mut left, right| {
-                    for (left_value, right_value) in left.iter_mut().zip(right) {
-                        *left_value += right_value;
-                    }
-                    left
-                },
-            );
-        let mut raf_shift_half_q = q_rows[..poly_len].to_vec();
-        let raf_left_q = q_rows[poly_len..2 * poly_len].to_vec();
-        let raf_right_q = q_rows[2 * poly_len..3 * poly_len].to_vec();
-        let mut raf_shift_full_q = q_rows[3 * poly_len..4 * poly_len].to_vec();
-        let raf_identity_q = q_rows[4 * poly_len..5 * poly_len].to_vec();
+                        acc
+                    },
+                )
+                .reduce(
+                    || vec![F::ScalarAccumulator::default(); q_total_len],
+                    |mut left, right| {
+                        for (left_value, right_value) in left.iter_mut().zip(right) {
+                            left_value.merge(right_value);
+                        }
+                        left
+                    },
+                )
+        };
+        let mut raf_shift_half_q = q_rows[..poly_len]
+            .par_iter()
+            .copied()
+            .map(FieldScalarAccumulator::reduce)
+            .collect::<Vec<_>>();
+        let raf_left_q = q_rows[poly_len..2 * poly_len]
+            .par_iter()
+            .copied()
+            .map(FieldScalarAccumulator::reduce)
+            .collect::<Vec<_>>();
+        let raf_right_q = q_rows[2 * poly_len..3 * poly_len]
+            .par_iter()
+            .copied()
+            .map(FieldScalarAccumulator::reduce)
+            .collect::<Vec<_>>();
+        let mut raf_shift_full_q = q_rows[3 * poly_len..4 * poly_len]
+            .par_iter()
+            .copied()
+            .map(FieldScalarAccumulator::reduce)
+            .collect::<Vec<_>>();
+        let raf_identity_q = q_rows[4 * poly_len..5 * poly_len]
+            .par_iter()
+            .copied()
+            .map(FieldScalarAccumulator::reduce)
+            .collect::<Vec<_>>();
         if shift_half_value != 1 {
             for value in &mut raf_shift_half_q {
                 *value *= shift_half;
@@ -1791,62 +1939,108 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         }
 
         let tables = LookupTableKind::<64>::all();
-        let read_suffix_polys = tables
-            .par_iter()
-            .enumerate()
-            .filter_map(|(table_index, table)| {
-                if self.lookup_groups_by_table[table_index].is_empty() {
-                    return None;
-                }
-                let suffixes = table.suffixes();
-                let mut accumulators =
-                    vec![vec![F::ScalarAccumulator::default(); poly_len]; suffixes.len()];
-                let mut one_suffix = None;
-                let mut boolean_suffixes = Vec::new();
-                let mut valued_suffixes = Vec::new();
-                for (suffix_index, suffix) in suffixes.iter().enumerate() {
-                    if matches!(suffix, Suffixes::One) {
-                        one_suffix = Some(suffix_index);
-                    } else if suffix.is_01_valued() {
-                        boolean_suffixes.push((suffix_index, suffix));
-                    } else {
-                        valued_suffixes.push((suffix_index, suffix));
+        let read_suffix_polys = {
+            const MAX_SUFFIXES: usize = 4;
+            let _span = trace_stage5_inner_spans().then(|| {
+                tracing::info_span!("Stage5::instruction_read_raf.build.read_suffix").entered()
+            });
+            tables
+                .par_iter()
+                .enumerate()
+                .filter_map(|(table_index, table)| {
+                    if self.lookup_groups_by_table[table_index].is_empty() {
+                        return None;
                     }
-                }
-                for &group_index in &self.lookup_groups_by_table[table_index] {
-                    let group = &self.lookup_groups[group_index];
-                    let index = ((group.lookup_index >> suffix_len) as usize) & (poly_len - 1);
-                    let suffix_bits = LookupBits::new(group.lookup_index & suffix_mask, suffix_len);
-                    let weight = group.phase_u_eval_sum;
-                    if let Some(suffix_index) = one_suffix {
-                        accumulators[suffix_index][index].add(weight);
-                    }
-                    for &(suffix_index, suffix) in &boolean_suffixes {
-                        let suffix_value = suffix.suffix_mle(suffix_bits);
-                        debug_assert!(suffix_value == 0 || suffix_value == 1);
-                        if suffix_value == 1 {
-                            accumulators[suffix_index][index].add(weight);
+                    let suffixes = table.suffixes();
+                    let suffix_count = suffixes.len();
+                    let table_groups = &self.lookup_groups_by_table[table_index];
+                    let chunk_size = table_groups
+                        .len()
+                        .div_ceil(rayon::current_num_threads())
+                        .max(1);
+                    let mut one_suffix = None;
+                    let mut boolean_suffixes = [0usize; MAX_SUFFIXES];
+                    let mut boolean_suffix_count = 0usize;
+                    let mut valued_suffixes = [0usize; MAX_SUFFIXES];
+                    let mut valued_suffix_count = 0usize;
+                    for (suffix_index, suffix) in suffixes.iter().enumerate() {
+                        if matches!(suffix, Suffixes::One) {
+                            one_suffix = Some(suffix_index);
+                        } else if suffix.is_01_valued() {
+                            boolean_suffixes[boolean_suffix_count] = suffix_index;
+                            boolean_suffix_count += 1;
+                        } else {
+                            valued_suffixes[valued_suffix_count] = suffix_index;
+                            valued_suffix_count += 1;
                         }
                     }
-                    for &(suffix_index, suffix) in &valued_suffixes {
-                        let suffix_value = suffix.suffix_mle(suffix_bits);
-                        accumulators[suffix_index][index].add_mul_u64(weight, suffix_value);
-                    }
-                }
-                let polys = accumulators
-                    .into_iter()
-                    .map(|poly| {
-                        poly.into_iter()
-                            .map(FieldScalarAccumulator::reduce)
-                            .collect::<Vec<_>>()
+                    let accumulators = table_groups
+                        .par_chunks(chunk_size)
+                        .fold(
+                            || vec![F::ScalarAccumulator::default(); suffix_count * poly_len],
+                            |mut accumulators, group_indices| {
+                                for &group_index in group_indices {
+                                    let group = &self.lookup_groups[group_index];
+                                    let index = ((group.lookup_index >> suffix_len) as usize)
+                                        & (poly_len - 1);
+                                    let suffix_bits = LookupBits::new(
+                                        group.lookup_index & suffix_mask,
+                                        suffix_len,
+                                    );
+                                    let weight = group.phase_u_eval_sum;
+                                    if let Some(suffix_index) = one_suffix {
+                                        accumulators[suffix_index * poly_len + index].add(weight);
+                                    }
+                                    for &suffix_index in
+                                        boolean_suffixes.iter().take(boolean_suffix_count)
+                                    {
+                                        let suffix_value: u64 =
+                                            suffixes[suffix_index].suffix_mle(suffix_bits);
+                                        debug_assert!(suffix_value == 0 || suffix_value == 1);
+                                        if suffix_value == 1 {
+                                            accumulators[suffix_index * poly_len + index]
+                                                .add(weight);
+                                        }
+                                    }
+                                    for &suffix_index in
+                                        valued_suffixes.iter().take(valued_suffix_count)
+                                    {
+                                        let suffix_value: u64 =
+                                            suffixes[suffix_index].suffix_mle(suffix_bits);
+                                        if suffix_value != 0 {
+                                            accumulators[suffix_index * poly_len + index]
+                                                .add_mul_u64(weight, suffix_value);
+                                        }
+                                    }
+                                }
+                                accumulators
+                            },
+                        )
+                        .reduce(
+                            || vec![F::ScalarAccumulator::default(); suffix_count * poly_len],
+                            |mut left, right| {
+                                for (left_value, right_value) in left.iter_mut().zip(right) {
+                                    left_value.merge(right_value);
+                                }
+                                left
+                            },
+                        );
+                    let polys = accumulators
+                        .par_chunks(poly_len)
+                        .map(|poly| {
+                            poly.par_iter()
+                                .copied()
+                                .map(FieldScalarAccumulator::reduce)
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>();
+                    Some(InstructionReadRafReadTablePhase {
+                        table: *table,
+                        suffix_polys: polys,
                     })
-                    .collect::<Vec<_>>();
-                Some(InstructionReadRafReadTablePhase {
-                    table: *table,
-                    suffix_polys: polys,
                 })
-            })
-            .collect::<Vec<_>>();
+                .collect::<Vec<_>>()
+        };
 
         InstructionReadRafAddressPhase {
             phase,
@@ -1901,8 +2095,8 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         )?;
         let tables = LookupTableKind::<64>::all();
         let ra_chunks = Self::LOG_K / self.ra_virtual_log_k_chunk;
-        let mut factors = Vec::with_capacity(2 + ra_chunks);
-        factors.push(self.u_evals.clone());
+        let mut fixed_factors = Vec::with_capacity(2);
+        fixed_factors.push(self.u_evals.clone());
         let table_values_at_address = tables
             .par_iter()
             .enumerate()
@@ -1917,7 +2111,7 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         let raf_interleaved = self.gamma * operand_polynomial_eval(&self.address_challenges, true)
             + self.gamma2 * operand_polynomial_eval(&self.address_challenges, false);
         let raf_identity = self.gamma2 * identity_polynomial_eval(&self.address_challenges);
-        factors.push(
+        fixed_factors.push(
             (0..self.trace_len)
                 .into_par_iter()
                 .map(|cycle| {
@@ -1934,27 +2128,54 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         );
 
         let chunk_bits = self.ra_virtual_log_k_chunk;
-        let chunk_mask = if chunk_bits == 128 {
-            u128::MAX
+        let ra_factors = if chunk_bits <= 16 {
+            let tables = (0..ra_chunks)
+                .map(|chunk| {
+                    let chunk_point =
+                        &self.address_challenges[chunk * chunk_bits..(chunk + 1) * chunk_bits];
+                    EqPolynomial::<F>::evals(chunk_point, None)
+                })
+                .collect::<Vec<_>>();
+            InstructionReadRafCycleRaFactors::sparse(
+                tables,
+                self.lookup_indices.clone(),
+                chunk_bits,
+            )?
         } else {
-            (1u128 << chunk_bits) - 1
+            let chunk_mask = if chunk_bits == 128 {
+                u128::MAX
+            } else {
+                (1u128 << chunk_bits) - 1
+            };
+            let mut chunks = Vec::with_capacity(ra_chunks);
+            for chunk in 0..ra_chunks {
+                let chunk_point =
+                    &self.address_challenges[chunk * chunk_bits..(chunk + 1) * chunk_bits];
+                let eq_tables = eq_eval_bit_chunk_tables(chunk_point, 8);
+                let shift = Self::LOG_K - (chunk + 1) * chunk_bits;
+                chunks.push(
+                    self.lookup_indices
+                        .par_iter()
+                        .map(|&lookup_index| {
+                            let chunk_value = (lookup_index >> shift) & chunk_mask;
+                            eq_eval_at_bits_from_chunk_tables(
+                                &eq_tables,
+                                chunk_value,
+                                chunk_bits,
+                                8,
+                            )
+                        })
+                        .collect(),
+                );
+            }
+            InstructionReadRafCycleRaFactors::dense(chunks)
         };
-        for chunk in 0..ra_chunks {
-            let chunk_point =
-                &self.address_challenges[chunk * chunk_bits..(chunk + 1) * chunk_bits];
-            let eq_tables = eq_eval_bit_chunk_tables(chunk_point, 8);
-            let shift = Self::LOG_K - (chunk + 1) * chunk_bits;
-            factors.push(
-                self.lookup_indices
-                    .par_iter()
-                    .map(|&lookup_index| {
-                        let chunk_value = (lookup_index >> shift) & chunk_mask;
-                        eq_eval_at_bits_from_chunk_tables(&eq_tables, chunk_value, chunk_bits, 8)
-                    })
-                    .collect(),
-            );
-        }
-        InstructionReadRafCycleState::new(factors, Stage5Relation::InstructionReadRaf)
+        InstructionReadRafCycleState::new(
+            fixed_factors,
+            ra_factors,
+            &self.r_reduction,
+            Stage5Relation::InstructionReadRaf,
+        )
     }
 
     fn instruction_read_raf_output_evals_from_groups(
@@ -2026,7 +2247,7 @@ impl<F: Field> InstructionReadRafStage5State<F> {
                     .factor_eval(2 + chunk)
                     .ok_or(Stage5KernelError::InvalidInputLength {
                         input: "stage5.instruction_read_raf.instruction_ra",
-                        expected: cycle_state.factors.len(),
+                        expected: 2 + cycle_state.ra_factors.len(),
                         actual: 2 + chunk + 1,
                     })
             })
@@ -2260,24 +2481,38 @@ fn identity_prefix_poly<F: Field>(checkpoint: F, chunk_bits: usize) -> Vec<F> {
 }
 
 impl<F: Field> InstructionReadRafCycleState<F> {
-    fn new(factors: Vec<Vec<F>>, relation: Stage5Relation) -> Result<Self, Stage5KernelError> {
-        let first_len = factors.first().map_or(0, Vec::len);
+    fn new(
+        fixed_factors: Vec<Vec<F>>,
+        ra_factors: InstructionReadRafCycleRaFactors<F>,
+        r_reduction: &[F],
+        relation: Stage5Relation,
+    ) -> Result<Self, Stage5KernelError> {
+        let first_len = fixed_factors.first().map_or(0, Vec::len);
         if first_len == 0 || !first_len.is_power_of_two() {
             return Err(Stage5KernelError::InvalidProof {
                 driver: relation.symbol(),
                 reason: "instruction read raf cycle factor has invalid length",
             });
         }
-        if factors.iter().any(|factor| factor.len() != first_len) {
+        if fixed_factors.iter().any(|factor| factor.len() != first_len)
+            || ra_factors.current_len() != first_len
+        {
             return Err(Stage5KernelError::InvalidProof {
                 driver: relation.symbol(),
                 reason: "instruction read raf cycle factors have inconsistent lengths",
             });
         }
-        let factor_scratch = (0..factors.len()).map(|_| Vec::new()).collect();
+        require_operand_count(
+            "stage5.instruction_read_raf.r_reduction",
+            log2_exact(first_len, "stage5.instruction_read_raf.cycle_factor_len")?,
+            r_reduction.len(),
+        )?;
+        let fixed_factor_scratch = (0..fixed_factors.len()).map(|_| Vec::new()).collect();
         Ok(Self {
-            factors,
-            factor_scratch,
+            fixed_factors,
+            fixed_factor_scratch,
+            ra_factors,
+            split_eq: GruenSplitEqPolynomial::new(r_reduction, BindingOrder::LowToHigh),
         })
     }
 
@@ -2287,97 +2522,663 @@ impl<F: Field> InstructionReadRafCycleState<F> {
         active_scale: F,
         relation: Stage5Relation,
     ) -> Result<UnivariatePoly<F>, Stage5KernelError> {
-        let coefficients = self.round_coefficients(active_scale);
-        let poly = UnivariatePoly::new(coefficients);
-        if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != previous_claim {
-            return Err(Stage5KernelError::InvalidProof {
-                driver: relation.symbol(),
-                reason: "instruction read raf cycle input claim mismatch",
-            });
-        }
+        let evals = self.round_quotient_evals(active_scale);
+        let poly = self.split_eq.gruen_poly_from_evals(&evals, previous_claim);
+        check_round_claim(
+            &poly,
+            previous_claim,
+            relation.symbol(),
+            "instruction read raf cycle input claim mismatch",
+        )?;
         Ok(poly)
     }
 
     fn factor_eval(&self, index: usize) -> Option<F> {
-        self.factors
-            .get(index)
-            .and_then(|factor| factor.first())
-            .copied()
+        match index {
+            0 | 1 => self
+                .fixed_factors
+                .get(index)
+                .and_then(|factor| factor.first())
+                .copied(),
+            _ => self.ra_factors.factor_eval(index - 2),
+        }
     }
 
-    fn round_coefficients(&self, active_scale: F) -> Vec<F> {
+    fn round_quotient_evals(&self, active_scale: F) -> Vec<F> {
         const MAX_DEGREE_PLUS_ONE: usize = 16;
-        let degree = self.factors.len();
+        let degree = 1 + self.ra_factors.len();
         debug_assert!(degree < MAX_DEGREE_PLUS_ONE);
-        let half = self.factors[0].len() / 2;
-        let mut sums = if half >= DENSE_BIND_PAR_THRESHOLD {
-            (0..half)
-                .into_par_iter()
-                .fold(
-                    || [F::zero(); MAX_DEGREE_PLUS_ONE],
-                    |mut sums, row| {
-                        accumulate_cycle_row_coefficients(&mut sums, &self.factors, degree, row);
-                        sums
-                    },
-                )
-                .reduce(
-                    || [F::zero(); MAX_DEGREE_PLUS_ONE],
-                    |mut left, right| {
-                        for coefficient_index in 0..=degree {
-                            left[coefficient_index] += right[coefficient_index];
-                        }
-                        left
-                    },
-                )
-        } else {
-            (0..half).fold([F::zero(); MAX_DEGREE_PLUS_ONE], |mut sums, row| {
-                accumulate_cycle_row_coefficients(&mut sums, &self.factors, degree, row);
-                sums
-            })
-        };
-        sums[..=degree]
-            .iter_mut()
-            .map(|coefficient| *coefficient * active_scale)
+        if degree == 9 {
+            return self.round_quotient_evals_degree9(active_scale);
+        }
+        let coefficients = self.split_eq.fold_out_in(
+            || [F::zero(); MAX_DEGREE_PLUS_ONE],
+            |inner, group, _x_in, e_in| {
+                self.accumulate_cycle_row_coefficients_scaled(inner, degree, group, e_in);
+            },
+            |_x_out, e_out, mut inner| {
+                for coefficient in inner.iter_mut().take(degree + 1) {
+                    *coefficient *= e_out;
+                }
+                inner
+            },
+            |mut left, right| {
+                for coefficient_index in 0..=degree {
+                    left[coefficient_index] += right[coefficient_index];
+                }
+                left
+            },
+        );
+
+        let quotient = UnivariatePoly::new(
+            coefficients[..=degree]
+                .iter()
+                .map(|coefficient| *coefficient * active_scale)
+                .collect(),
+        );
+        let mut evals = Vec::with_capacity(degree);
+        for x in 1..degree {
+            evals.push(quotient.evaluate(F::from_u64(x as u64)));
+        }
+        let leading = quotient
+            .coefficients()
+            .get(degree)
+            .copied()
+            .unwrap_or_else(F::zero);
+        evals.push(leading);
+        evals
+    }
+
+    fn round_quotient_evals_degree9(&self, active_scale: F) -> Vec<F> {
+        let eval_accs = self.split_eq.fold_out_in(
+            || [F::Accumulator::default(); 9],
+            |inner, group, _x_in, e_in| {
+                let combined = &self.fixed_factors[1];
+                let mut ra_pairs = [(F::zero(), F::zero()); 8];
+                self.ra_factors.fill_eight_pairs(group, &mut ra_pairs);
+                let pairs: [(F, F); 9] = std::array::from_fn(|index| {
+                    if index == 0 {
+                        (combined[2 * group] * e_in, combined[2 * group + 1] * e_in)
+                    } else {
+                        ra_pairs[index - 1]
+                    }
+                });
+                let evals = eval_product_9(&pairs);
+                for (acc, eval) in inner.iter_mut().zip(evals) {
+                    acc.acc_add(eval);
+                }
+            },
+            |_x_out, e_out, inner| {
+                let mut outer = [F::Accumulator::default(); 9];
+                for (outer, inner) in outer.iter_mut().zip(inner) {
+                    outer.fmadd(e_out, inner.reduce());
+                }
+                outer
+            },
+            |mut left, right| {
+                for (left, right) in left.iter_mut().zip(right) {
+                    left.merge(right);
+                }
+                left
+            },
+        );
+        eval_accs
+            .into_iter()
+            .map(|acc| acc.reduce() * active_scale)
             .collect()
     }
 
     fn bind(&mut self, challenge: F) {
-        if self.factors.first().map_or(0, Vec::len) / 2 >= DENSE_BIND_PAR_THRESHOLD {
-            self.factors
+        self.split_eq.bind(challenge);
+        if self.fixed_factors.get(1).map_or(0, Vec::len) / 2 >= DENSE_BIND_PAR_THRESHOLD {
+            self.fixed_factors[1..]
                 .par_iter_mut()
-                .zip(self.factor_scratch.par_iter_mut())
+                .zip(self.fixed_factor_scratch[1..].par_iter_mut())
                 .for_each(|(factor, scratch)| {
                     bind_dense_evals_reuse(factor, scratch, challenge);
                 });
         } else {
-            for (factor, scratch) in self.factors.iter_mut().zip(&mut self.factor_scratch) {
+            for (factor, scratch) in self.fixed_factors[1..]
+                .iter_mut()
+                .zip(&mut self.fixed_factor_scratch[1..])
+            {
                 bind_dense_evals_reuse(factor, scratch, challenge);
+            }
+        }
+        self.ra_factors.bind(challenge);
+    }
+
+    fn accumulate_cycle_row_coefficients_scaled<const N: usize>(
+        &self,
+        sums: &mut [F; N],
+        degree: usize,
+        row: usize,
+        first_factor_scale: F,
+    ) {
+        let mut coefficients = [F::zero(); N];
+        coefficients[0] = F::one();
+        for current_degree in 0..degree {
+            let (mut low, mut high) = if current_degree == 0 {
+                let factor = &self.fixed_factors[1];
+                (factor[2 * row], factor[2 * row + 1])
+            } else {
+                self.ra_factors.get_pair(current_degree - 1, row)
+            };
+            if current_degree == 0 {
+                low *= first_factor_scale;
+                high *= first_factor_scale;
+            }
+            let diff = high - low;
+            coefficients[current_degree + 1] = F::zero();
+            for coefficient_index in (0..=current_degree).rev() {
+                let coefficient = coefficients[coefficient_index];
+                coefficients[coefficient_index + 1] += coefficient * diff;
+                coefficients[coefficient_index] = coefficient * low;
+            }
+        }
+        for coefficient_index in 0..=degree {
+            sums[coefficient_index] += coefficients[coefficient_index];
+        }
+    }
+}
+
+impl<F: Field> InstructionReadRafCycleRaFactors<F> {
+    fn sparse(
+        tables: Vec<Vec<F>>,
+        lookup_indices: Vec<u128>,
+        chunk_bits: usize,
+    ) -> Result<Self, Stage5KernelError> {
+        if tables.is_empty() {
+            return Err(Stage5KernelError::InvalidInputLength {
+                input: "stage5.instruction_read_raf.instruction_ra_tables",
+                expected: 1,
+                actual: 0,
+            });
+        }
+        Ok(Self::SparseRound1 {
+            tables,
+            lookup_indices,
+            chunk_bits,
+        })
+    }
+
+    fn dense(chunks: Vec<Vec<F>>) -> Self {
+        let scratch = (0..chunks.len()).map(|_| Vec::new()).collect();
+        Self::Bound { chunks, scratch }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::SparseRound1 { tables, .. }
+            | Self::SparseRound2 {
+                tables_0: tables, ..
+            }
+            | Self::SparseRound3 {
+                tables_00: tables, ..
+            } => tables.len(),
+            Self::Bound { chunks, .. } => chunks.len(),
+        }
+    }
+
+    fn current_len(&self) -> usize {
+        match self {
+            Self::SparseRound1 { lookup_indices, .. } => lookup_indices.len(),
+            Self::SparseRound2 { lookup_indices, .. } => lookup_indices.len() / 2,
+            Self::SparseRound3 { lookup_indices, .. } => lookup_indices.len() / 4,
+            Self::Bound { chunks, .. } => chunks.first().map_or(0, Vec::len),
+        }
+    }
+
+    fn factor_eval(&self, chunk: usize) -> Option<F> {
+        (chunk < self.len()).then(|| self.get(chunk, 0))
+    }
+
+    fn fill_eight_pairs(&self, row: usize, pairs: &mut [(F, F); 8]) {
+        match self {
+            Self::SparseRound1 {
+                tables,
+                lookup_indices,
+                chunk_bits,
+            } => {
+                let source = 2 * row;
+                for (chunk, pair) in pairs.iter_mut().enumerate() {
+                    *pair = (
+                        tables[chunk][instruction_read_raf_lookup_chunk(
+                            lookup_indices[source],
+                            chunk,
+                            *chunk_bits,
+                        )],
+                        tables[chunk][instruction_read_raf_lookup_chunk(
+                            lookup_indices[source + 1],
+                            chunk,
+                            *chunk_bits,
+                        )],
+                    );
+                }
+            }
+            Self::SparseRound2 {
+                tables_0,
+                tables_1,
+                lookup_indices,
+                chunk_bits,
+            } => {
+                let source = 4 * row;
+                for (chunk, pair) in pairs.iter_mut().enumerate() {
+                    let low_0 = instruction_read_raf_lookup_chunk(
+                        lookup_indices[source],
+                        chunk,
+                        *chunk_bits,
+                    );
+                    let low_1 = instruction_read_raf_lookup_chunk(
+                        lookup_indices[source + 1],
+                        chunk,
+                        *chunk_bits,
+                    );
+                    let high_0 = instruction_read_raf_lookup_chunk(
+                        lookup_indices[source + 2],
+                        chunk,
+                        *chunk_bits,
+                    );
+                    let high_1 = instruction_read_raf_lookup_chunk(
+                        lookup_indices[source + 3],
+                        chunk,
+                        *chunk_bits,
+                    );
+                    *pair = (
+                        tables_0[chunk][low_0] + tables_1[chunk][low_1],
+                        tables_0[chunk][high_0] + tables_1[chunk][high_1],
+                    );
+                }
+            }
+            Self::SparseRound3 {
+                tables_00,
+                tables_01,
+                tables_10,
+                tables_11,
+                lookup_indices,
+                chunk_bits,
+            } => {
+                let source = 8 * row;
+                for (chunk, pair) in pairs.iter_mut().enumerate() {
+                    let low_00 = instruction_read_raf_lookup_chunk(
+                        lookup_indices[source],
+                        chunk,
+                        *chunk_bits,
+                    );
+                    let low_10 = instruction_read_raf_lookup_chunk(
+                        lookup_indices[source + 1],
+                        chunk,
+                        *chunk_bits,
+                    );
+                    let low_01 = instruction_read_raf_lookup_chunk(
+                        lookup_indices[source + 2],
+                        chunk,
+                        *chunk_bits,
+                    );
+                    let low_11 = instruction_read_raf_lookup_chunk(
+                        lookup_indices[source + 3],
+                        chunk,
+                        *chunk_bits,
+                    );
+                    let high_00 = instruction_read_raf_lookup_chunk(
+                        lookup_indices[source + 4],
+                        chunk,
+                        *chunk_bits,
+                    );
+                    let high_10 = instruction_read_raf_lookup_chunk(
+                        lookup_indices[source + 5],
+                        chunk,
+                        *chunk_bits,
+                    );
+                    let high_01 = instruction_read_raf_lookup_chunk(
+                        lookup_indices[source + 6],
+                        chunk,
+                        *chunk_bits,
+                    );
+                    let high_11 = instruction_read_raf_lookup_chunk(
+                        lookup_indices[source + 7],
+                        chunk,
+                        *chunk_bits,
+                    );
+                    *pair = (
+                        tables_00[chunk][low_00]
+                            + tables_10[chunk][low_10]
+                            + tables_01[chunk][low_01]
+                            + tables_11[chunk][low_11],
+                        tables_00[chunk][high_00]
+                            + tables_10[chunk][high_10]
+                            + tables_01[chunk][high_01]
+                            + tables_11[chunk][high_11],
+                    );
+                }
+            }
+            Self::Bound { chunks, .. } => {
+                for (chunk, pair) in pairs.iter_mut().enumerate() {
+                    *pair = (chunks[chunk][2 * row], chunks[chunk][2 * row + 1]);
+                }
+            }
+        }
+    }
+
+    fn get_pair(&self, chunk: usize, row: usize) -> (F, F) {
+        (self.get(chunk, 2 * row), self.get(chunk, 2 * row + 1))
+    }
+
+    fn get(&self, chunk: usize, index: usize) -> F {
+        match self {
+            Self::SparseRound1 {
+                tables,
+                lookup_indices,
+                chunk_bits,
+            } => {
+                let value =
+                    instruction_read_raf_lookup_chunk(lookup_indices[index], chunk, *chunk_bits);
+                tables[chunk][value]
+            }
+            Self::SparseRound2 {
+                tables_0,
+                tables_1,
+                lookup_indices,
+                chunk_bits,
+            } => {
+                let source = 2 * index;
+                let low =
+                    instruction_read_raf_lookup_chunk(lookup_indices[source], chunk, *chunk_bits);
+                let high = instruction_read_raf_lookup_chunk(
+                    lookup_indices[source + 1],
+                    chunk,
+                    *chunk_bits,
+                );
+                tables_0[chunk][low] + tables_1[chunk][high]
+            }
+            Self::SparseRound3 {
+                tables_00,
+                tables_01,
+                tables_10,
+                tables_11,
+                lookup_indices,
+                chunk_bits,
+            } => {
+                let source = 4 * index;
+                let h_00 =
+                    instruction_read_raf_lookup_chunk(lookup_indices[source], chunk, *chunk_bits);
+                let h_10 = instruction_read_raf_lookup_chunk(
+                    lookup_indices[source + 1],
+                    chunk,
+                    *chunk_bits,
+                );
+                let h_01 = instruction_read_raf_lookup_chunk(
+                    lookup_indices[source + 2],
+                    chunk,
+                    *chunk_bits,
+                );
+                let h_11 = instruction_read_raf_lookup_chunk(
+                    lookup_indices[source + 3],
+                    chunk,
+                    *chunk_bits,
+                );
+                tables_00[chunk][h_00]
+                    + tables_10[chunk][h_10]
+                    + tables_01[chunk][h_01]
+                    + tables_11[chunk][h_11]
+            }
+            Self::Bound { chunks, .. } => chunks[chunk][index],
+        }
+    }
+
+    fn bind(&mut self, challenge: F) {
+        let one_minus = F::one() - challenge;
+        match std::mem::replace(
+            self,
+            Self::Bound {
+                chunks: Vec::new(),
+                scratch: Vec::new(),
+            },
+        ) {
+            Self::SparseRound1 {
+                tables,
+                lookup_indices,
+                chunk_bits,
+            } => {
+                let (tables_0, tables_1) = rayon::join(
+                    || scale_instruction_read_raf_tables(&tables, one_minus),
+                    || scale_instruction_read_raf_tables(&tables, challenge),
+                );
+                *self = Self::SparseRound2 {
+                    tables_0,
+                    tables_1,
+                    lookup_indices,
+                    chunk_bits,
+                };
+            }
+            Self::SparseRound2 {
+                tables_0,
+                tables_1,
+                lookup_indices,
+                chunk_bits,
+            } => {
+                let (tables_00, tables_01) = rayon::join(
+                    || scale_instruction_read_raf_tables(&tables_0, one_minus),
+                    || scale_instruction_read_raf_tables(&tables_0, challenge),
+                );
+                let (tables_10, tables_11) = rayon::join(
+                    || scale_instruction_read_raf_tables(&tables_1, one_minus),
+                    || scale_instruction_read_raf_tables(&tables_1, challenge),
+                );
+                *self = Self::SparseRound3 {
+                    tables_00,
+                    tables_01,
+                    tables_10,
+                    tables_11,
+                    lookup_indices,
+                    chunk_bits,
+                };
+            }
+            Self::SparseRound3 {
+                tables_00,
+                tables_01,
+                tables_10,
+                tables_11,
+                lookup_indices,
+                chunk_bits,
+            } => {
+                let (tables_000, tables_001) = rayon::join(
+                    || scale_instruction_read_raf_tables(&tables_00, one_minus),
+                    || scale_instruction_read_raf_tables(&tables_00, challenge),
+                );
+                let (tables_010, tables_011) = rayon::join(
+                    || scale_instruction_read_raf_tables(&tables_01, one_minus),
+                    || scale_instruction_read_raf_tables(&tables_01, challenge),
+                );
+                let (tables_100, tables_101) = rayon::join(
+                    || scale_instruction_read_raf_tables(&tables_10, one_minus),
+                    || scale_instruction_read_raf_tables(&tables_10, challenge),
+                );
+                let (tables_110, tables_111) = rayon::join(
+                    || scale_instruction_read_raf_tables(&tables_11, one_minus),
+                    || scale_instruction_read_raf_tables(&tables_11, challenge),
+                );
+                let table_groups = [
+                    &tables_000,
+                    &tables_100,
+                    &tables_010,
+                    &tables_110,
+                    &tables_001,
+                    &tables_101,
+                    &tables_011,
+                    &tables_111,
+                ];
+                let chunk_count = tables_000.len();
+                let new_len = lookup_indices.len() / 8;
+                let chunks = (0..chunk_count)
+                    .into_par_iter()
+                    .map(|chunk| {
+                        (0..new_len)
+                            .into_par_iter()
+                            .map(|index| {
+                                (0..8)
+                                    .map(|offset| {
+                                        let value = instruction_read_raf_lookup_chunk(
+                                            lookup_indices[8 * index + offset],
+                                            chunk,
+                                            chunk_bits,
+                                        );
+                                        table_groups[offset][chunk][value]
+                                    })
+                                    .sum()
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                *self = Self::dense(chunks);
+            }
+            Self::Bound {
+                mut chunks,
+                mut scratch,
+            } => {
+                if chunks.first().map_or(0, Vec::len) / 2 >= DENSE_BIND_PAR_THRESHOLD {
+                    chunks.par_iter_mut().zip(scratch.par_iter_mut()).for_each(
+                        |(chunk, scratch)| {
+                            bind_dense_evals_reuse(chunk, scratch, challenge);
+                        },
+                    );
+                } else {
+                    for (chunk, scratch) in chunks.iter_mut().zip(&mut scratch) {
+                        bind_dense_evals_reuse(chunk, scratch, challenge);
+                    }
+                }
+                *self = Self::Bound { chunks, scratch };
             }
         }
     }
 }
 
-fn accumulate_cycle_row_coefficients<F: Field, const N: usize>(
-    sums: &mut [F; N],
-    factors: &[Vec<F>],
-    degree: usize,
-    row: usize,
-) {
-    let mut coefficients = [F::zero(); N];
-    coefficients[0] = F::one();
-    for (current_degree, factor) in factors.iter().enumerate() {
-        let low = factor[2 * row];
-        let diff = factor[2 * row + 1] - low;
-        coefficients[current_degree + 1] = F::zero();
-        for coefficient_index in (0..=current_degree).rev() {
-            let coefficient = coefficients[coefficient_index];
-            coefficients[coefficient_index + 1] += coefficient * diff;
-            coefficients[coefficient_index] = coefficient * low;
-        }
-    }
-    for coefficient_index in 0..=degree {
-        sums[coefficient_index] += coefficients[coefficient_index];
-    }
+fn scale_instruction_read_raf_tables<F: Field>(tables: &[Vec<F>], scalar: F) -> Vec<Vec<F>> {
+    tables
+        .par_iter()
+        .map(|table| table.iter().map(|value| *value * scalar).collect())
+        .collect()
+}
+
+fn instruction_read_raf_lookup_chunk(lookup_index: u128, chunk: usize, chunk_bits: usize) -> usize {
+    const LOG_K: usize = 128;
+    let shift = LOG_K - (chunk + 1) * chunk_bits;
+    ((lookup_index >> shift) & ((1u128 << chunk_bits) - 1)) as usize
+}
+
+#[inline(always)]
+fn eval_product_9<F: Field>(pairs: &[(F, F); 9]) -> [F; 9] {
+    let first = [
+        pairs[0], pairs[1], pairs[2], pairs[3], pairs[4], pairs[5], pairs[6], pairs[7],
+    ];
+    let [a1, a2, a3, a4, a5, a6, a7, a8, a_inf] = eval_product_8_internal(first);
+
+    let (lin0, lin1) = pairs[8];
+    let delta = lin1 - lin0;
+    let l1 = lin1;
+    let l2 = l1 + delta;
+    let l3 = l2 + delta;
+    let l4 = l3 + delta;
+    let l5 = l4 + delta;
+    let l6 = l5 + delta;
+    let l7 = l6 + delta;
+    let l8 = l7 + delta;
+    let l_inf = delta;
+
+    [
+        a1 * l1,
+        a2 * l2,
+        a3 * l3,
+        a4 * l4,
+        a5 * l5,
+        a6 * l6,
+        a7 * l7,
+        a8 * l8,
+        a_inf * l_inf,
+    ]
+}
+
+fn eval_product_8_internal<F: Field>(pairs: [(F, F); 8]) -> [F; 9] {
+    let first = [pairs[0], pairs[1], pairs[2], pairs[3]];
+    let second = [pairs[4], pairs[5], pairs[6], pairs[7]];
+    let (a1, a2, a3, a4, a_inf) = eval_product_4_internal(first);
+    let (a5, a6, a7, a8) = extrapolate_degree4_two_plus_two(a1, a2, a3, a4, a_inf);
+    let (b1, b2, b3, b4, b_inf) = eval_product_4_internal(second);
+    let (b5, b6, b7, b8) = extrapolate_degree4_two_plus_two(b1, b2, b3, b4, b_inf);
+    [
+        a1 * b1,
+        a2 * b2,
+        a3 * b3,
+        a4 * b4,
+        a5 * b5,
+        a6 * b6,
+        a7 * b7,
+        a8 * b8,
+        a_inf * b_inf,
+    ]
+}
+
+#[inline(always)]
+fn eval_product_4_internal<F: Field>(pairs: [(F, F); 4]) -> (F, F, F, F, F) {
+    let (a1, a2, a_inf) = eval_product_2_internal(pairs[0], pairs[1]);
+    let a3 = extrapolate_degree2(a1, a2, a_inf);
+    let a4 = extrapolate_degree2(a2, a3, a_inf);
+    let (b1, b2, b_inf) = eval_product_2_internal(pairs[2], pairs[3]);
+    let b3 = extrapolate_degree2(b1, b2, b_inf);
+    let b4 = extrapolate_degree2(b2, b3, b_inf);
+    (a1 * b1, a2 * b2, a3 * b3, a4 * b4, a_inf * b_inf)
+}
+
+#[inline(always)]
+fn eval_product_2_internal<F: Field>((p0, p1): (F, F), (q0, q1): (F, F)) -> (F, F, F) {
+    let p_inf = p1 - p0;
+    let p2 = p_inf + p1;
+    let q_inf = q1 - q0;
+    let q2 = q_inf + q1;
+    (p1 * q1, p2 * q2, p_inf * q_inf)
+}
+
+#[inline(always)]
+fn extrapolate_degree2<F: Field>(eval_1: F, eval_2: F, eval_inf: F) -> F {
+    let mut value = eval_2 + eval_inf;
+    value += value;
+    value - eval_1
+}
+
+#[inline(always)]
+fn extrapolate_degree4_two_plus_two<F: Field>(
+    eval_1: F,
+    eval_2: F,
+    eval_3: F,
+    eval_4: F,
+    eval_inf: F,
+) -> (F, F, F, F) {
+    let eval_inf_6 = eval_inf.mul_u64(6);
+    let (eval_5, eval_6) =
+        extrapolate_degree4_next_two([eval_1, eval_2, eval_3, eval_4], eval_inf_6);
+    let (eval_7, eval_8) =
+        extrapolate_degree4_next_two([eval_3, eval_4, eval_5, eval_6], eval_inf_6);
+    (eval_5, eval_6, eval_7, eval_8)
+}
+
+#[inline(always)]
+fn extrapolate_degree4_next_two<F: Field>(evals: [F; 4], eval_inf_6: F) -> (F, F) {
+    let eval_4_minus_3 = evals[3] - evals[2];
+    let mut eval_5 = eval_inf_6;
+    eval_5 += eval_4_minus_3;
+    eval_5 += evals[1];
+    eval_5 += eval_5;
+    eval_5 -= evals[2];
+    eval_5 += eval_5;
+    eval_5 -= evals[0];
+
+    let mut eval_6 = eval_5 - eval_4_minus_3 + eval_inf_6;
+    eval_6 += eval_6;
+    eval_6 -= evals[3];
+    eval_6 += eval_6;
+    eval_6 -= evals[1];
+
+    (eval_5, eval_6)
 }
 
 fn instruction_read_raf_state<F: Field>(
@@ -2468,6 +3269,7 @@ fn instruction_read_raf_state<F: Field>(
 
     Ok(InstructionReadRafStage5State {
         trace_len: witness.trace_len,
+        r_reduction: r_reduction.to_vec(),
         lookup_indices: witness.lookup_indices.to_vec(),
         lookup_table_indices: witness.lookup_table_indices.to_vec(),
         is_interleaved_operands: witness.is_interleaved_operands.to_vec(),
@@ -3598,6 +4400,26 @@ fn require_operand_count(
     }
 }
 
+#[inline]
+fn check_round_claim<F: Field>(
+    poly: &UnivariatePoly<F>,
+    previous_claim: F,
+    driver: &'static str,
+    reason: &'static str,
+) -> Result<(), Stage5KernelError> {
+    #[cfg(debug_assertions)]
+    {
+        if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != previous_claim {
+            return Err(Stage5KernelError::InvalidProof { driver, reason });
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (poly, previous_claim, driver, reason);
+    }
+    Ok(())
+}
+
 fn suffix_point<'a, F: Field>(
     point: &'a [F],
     length: usize,
@@ -3882,6 +4704,7 @@ fn find_batch<'a>(
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests use expect for assertion context")]
 mod tests {
     use super::*;
     use jolt_field::{Field, Fr};

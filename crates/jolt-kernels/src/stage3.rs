@@ -16,6 +16,11 @@ use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{Label, LabelWithCount, Transcript};
 use rayon::prelude::*;
 
+fn trace_stage3_inner_spans() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("JOLT_STAGE3_TRACE_INSTANCES").is_some())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage3ExecutionMode {
     Prover,
@@ -1330,9 +1335,18 @@ where
         })?;
     let mut instances = Vec::with_capacity(claims.len());
     for (index, claim) in claims.iter().enumerate() {
+        let relation = claim_relation(context.program, claim)?;
+        let _span = trace_stage3_inner_spans().then(|| {
+            tracing::info_span!(
+                "Stage3::instance.init",
+                relation = relation.symbol(),
+                claim = claim.symbol
+            )
+            .entered()
+        });
         instances.push(Stage3BatchedInstance {
             claim,
-            relation: claim_relation(context.program, claim)?,
+            relation,
             offset: instance_round_offset(context.program, context.driver.symbol, claim.symbol)?,
             previous_claim: input_claims[index].mul_pow_2(max_rounds - claim.num_rounds),
             state: Stage3ProverInstanceState::new(context.program, claim, inputs, &store)?,
@@ -1350,6 +1364,15 @@ where
         let mut individual_polys = Vec::with_capacity(instances.len());
         for instance in &mut instances {
             let poly = if instance.is_active(round) {
+                let _span = trace_stage3_inner_spans().then(|| {
+                    tracing::info_span!(
+                        "Stage3::instance.round_poly",
+                        relation = instance.relation.symbol(),
+                        claim = instance.claim.symbol,
+                        round
+                    )
+                    .entered()
+                });
                 instance
                     .state
                     .round_poly(round - instance.offset, instance.previous_claim)?
@@ -1384,6 +1407,15 @@ where
         for (instance, poly) in instances.iter_mut().zip(individual_polys) {
             instance.previous_claim = poly.evaluate(challenge);
             if instance.is_active(round) {
+                let _span = trace_stage3_inner_spans().then(|| {
+                    tracing::info_span!(
+                        "Stage3::instance.bind",
+                        relation = instance.relation.symbol(),
+                        claim = instance.claim.symbol,
+                        round
+                    )
+                    .entered()
+                });
                 instance.state.ingest_challenge(challenge);
             }
         }

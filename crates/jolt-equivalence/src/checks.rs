@@ -10,14 +10,9 @@ use std::collections::BTreeMap;
 
 use jolt_core::curve::Bn254Curve;
 use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
-use jolt_core::poly::opening_proof::SumcheckId as S;
-use jolt_core::poly::opening_proof::{OpeningId, SumcheckId};
 use jolt_core::subprotocols::univariate_skip::UniSkipFirstRoundProofVariant;
 use jolt_core::transcripts::Blake2bTranscript as CoreBlake2bTranscript;
-use jolt_core::zkvm::instruction::{CircuitFlags, InstructionFlags};
 use jolt_core::zkvm::proof_serialization::JoltProof as CoreJoltProof;
-use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
-use jolt_core::zkvm::witness::{CommittedPolynomial as C, VirtualPolynomial as V};
 use jolt_dory::DoryProof;
 use jolt_field::{Field, Fr};
 use jolt_kernels::{
@@ -30,7 +25,7 @@ use jolt_kernels::{
     stage3::Stage3ExecutionArtifacts,
 };
 use jolt_poly::UnivariatePoly;
-use jolt_verifier::stages::stage6 as generated_stage6;
+use jolt_verifier::stages::{common::OpeningClaimPlan, stage2, stage3, stage6};
 use jolt_verifier::{JoltStageExecutionArtifacts, JoltStageProof, JoltSumcheckOutput};
 
 use crate::adapters::{
@@ -40,6 +35,7 @@ use crate::adapters::{
 };
 use crate::artifacts::{EquivalenceRun, StageArtifacts};
 use crate::core_conversion::to_ark;
+use crate::core_opening_ids::core_opening_id;
 
 pub type CoreProofForChecks =
     CoreJoltProof<ark_bn254::Fr, Bn254Curve, DoryCommitmentScheme, CoreBlake2bTranscript>;
@@ -213,60 +209,37 @@ fn assert_stage1_extended_eval_vecs_match(label: &str, actual: &[Fr], expected: 
     }
 }
 
-type CoreOpeningExpectation = (&'static str, OpeningId);
-
-fn expected_virtual_opening(
-    name: &'static str,
-    polynomial: VirtualPolynomial,
-    sumcheck: SumcheckId,
-) -> CoreOpeningExpectation {
-    (name, OpeningId::virt(polynomial, sumcheck))
-}
-
-fn expected_committed_opening(
-    name: &'static str,
-    polynomial: CommittedPolynomial,
-    sumcheck: SumcheckId,
-) -> CoreOpeningExpectation {
-    (name, OpeningId::committed(polynomial, sumcheck))
-}
-
-macro_rules! expected_opening {
-    (v, $name:literal, $polynomial:expr, $sumcheck:expr) => {
-        expected_virtual_opening($name, $polynomial, $sumcheck)
-    };
-    (c, $name:literal, $polynomial:expr, $sumcheck:expr) => {
-        expected_committed_opening($name, $polynomial, $sumcheck)
-    };
-}
-
-macro_rules! expected_openings {
-    ($($kind:ident $name:literal $polynomial:expr => $sumcheck:expr;)+) => {
-        [$(expected_opening!($kind, $name, $polynomial, $sumcheck)),+]
-    };
-}
-
-fn assert_core_opening_claim_evals_match(
+fn assert_core_opening_claim_plans_match_bolt(
     stage: &str,
     proof: &CoreProofForChecks,
     evals: impl IntoIterator<Item = (&'static str, Fr)>,
-    expected: impl IntoIterator<Item = CoreOpeningExpectation>,
+    opening_claims: &[OpeningClaimPlan],
 ) {
     let evals = evals.into_iter().collect::<BTreeMap<_, _>>();
     let mut matched_claims = 0usize;
 
-    for (name, opening_id) in expected {
+    for claim in opening_claims {
+        let Some(opening_id) = core_opening_id(claim) else {
+            panic!(
+                "{stage} opening claim has no core mapping: {}",
+                claim.symbol
+            );
+        };
         let Some((_, core_claim)) = proof.opening_claims.0.get(&opening_id) else {
             continue;
         };
-        let Some(value) = evals.get(name) else {
-            panic!("{stage} proof missing expected opening eval {name}");
+        let Some(value) = evals.get(claim.eval_source) else {
+            panic!(
+                "{stage} proof missing eval {} for opening claim {}",
+                claim.eval_source, claim.symbol
+            );
         };
         matched_claims += 1;
         assert_eq!(
             *value,
             Fr::from(*core_claim),
-            "{stage} opening claim mismatch for {name}",
+            "{stage} opening claim mismatch for {}",
+            claim.symbol,
         );
     }
     assert!(
@@ -280,35 +253,14 @@ pub(crate) fn assert_core_stage2_opening_claims_match_bolt(
     proof: &CoreProofForChecks,
     artifacts: &Stage2ExecutionArtifacts<Fr>,
 ) {
-    let expected = expected_openings! {
-        v "stage2.product_virtual.uniskip.eval.UnivariateSkip" V::UnivariateSkip => S::SpartanProductVirtualization;
-        v "stage2.ram_read_write.eval.RamVal" V::RamVal => S::RamReadWriteChecking;
-        v "stage2.ram_read_write.eval.RamRa" V::RamRa => S::RamReadWriteChecking;
-        c "stage2.ram_read_write.eval.RamInc" C::RamInc => S::RamReadWriteChecking;
-        v "stage2.product_virtual.remainder.eval.LeftInstructionInput" V::LeftInstructionInput => S::SpartanProductVirtualization;
-        v "stage2.product_virtual.remainder.eval.RightInstructionInput" V::RightInstructionInput => S::SpartanProductVirtualization;
-        v "stage2.product_virtual.remainder.eval.OpFlagJump" V::OpFlags(CircuitFlags::Jump) => S::SpartanProductVirtualization;
-        v "stage2.product_virtual.remainder.eval.OpFlagWriteLookupOutputToRD" V::OpFlags(CircuitFlags::WriteLookupOutputToRD) => S::SpartanProductVirtualization;
-        v "stage2.product_virtual.remainder.eval.LookupOutput" V::LookupOutput => S::SpartanProductVirtualization;
-        v "stage2.product_virtual.remainder.eval.InstructionFlagBranch" V::InstructionFlags(InstructionFlags::Branch) => S::SpartanProductVirtualization;
-        v "stage2.product_virtual.remainder.eval.NextIsNoop" V::NextIsNoop => S::SpartanProductVirtualization;
-        v "stage2.product_virtual.remainder.eval.OpFlagVirtualInstruction" V::OpFlags(CircuitFlags::VirtualInstruction) => S::SpartanProductVirtualization;
-        v "stage2.instruction_lookup.claim_reduction.eval.LookupOutput" V::LookupOutput => S::InstructionClaimReduction;
-        v "stage2.instruction_lookup.claim_reduction.eval.LeftLookupOperand" V::LeftLookupOperand => S::InstructionClaimReduction;
-        v "stage2.instruction_lookup.claim_reduction.eval.RightLookupOperand" V::RightLookupOperand => S::InstructionClaimReduction;
-        v "stage2.instruction_lookup.claim_reduction.eval.LeftInstructionInput" V::LeftInstructionInput => S::InstructionClaimReduction;
-        v "stage2.instruction_lookup.claim_reduction.eval.RightInstructionInput" V::RightInstructionInput => S::InstructionClaimReduction;
-        v "stage2.ram_raf.eval.RamRa" V::RamRa => S::RamRafEvaluation;
-        v "stage2.ram_output.eval.RamValFinal" V::RamValFinal => S::RamOutputCheck;
-    };
-    assert_core_opening_claim_evals_match(
+    assert_core_opening_claim_plans_match_bolt(
         "Stage 2",
         proof,
         artifacts
             .sumchecks
             .iter()
             .flat_map(|output| output.evals.iter().map(|eval| (eval.name, eval.value))),
-        expected,
+        stage2::STAGE2_OPENING_CLAIMS,
     );
 }
 
@@ -317,97 +269,15 @@ pub(crate) fn assert_core_stage3_opening_claims_match_bolt(
     proof: &CoreProofForChecks,
     artifacts: &Stage3ExecutionArtifacts<Fr>,
 ) {
-    let expected = expected_openings! {
-        v "stage3.spartan_shift.eval.UnexpandedPC" V::UnexpandedPC => S::SpartanShift;
-        v "stage3.spartan_shift.eval.PC" V::PC => S::SpartanShift;
-        v "stage3.spartan_shift.eval.OpFlagVirtualInstruction" V::OpFlags(CircuitFlags::VirtualInstruction) => S::SpartanShift;
-        v "stage3.spartan_shift.eval.OpFlagIsFirstInSequence" V::OpFlags(CircuitFlags::IsFirstInSequence) => S::SpartanShift;
-        v "stage3.spartan_shift.eval.InstructionFlagIsNoop" V::InstructionFlags(InstructionFlags::IsNoop) => S::SpartanShift;
-        v "stage3.instruction_input.eval.InstructionFlagLeftOperandIsRs1Value" V::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value) => S::InstructionInputVirtualization;
-        v "stage3.instruction_input.eval.Rs1Value" V::Rs1Value => S::InstructionInputVirtualization;
-        v "stage3.instruction_input.eval.InstructionFlagLeftOperandIsPC" V::InstructionFlags(InstructionFlags::LeftOperandIsPC) => S::InstructionInputVirtualization;
-        v "stage3.instruction_input.eval.UnexpandedPC" V::UnexpandedPC => S::InstructionInputVirtualization;
-        v "stage3.instruction_input.eval.InstructionFlagRightOperandIsRs2Value" V::InstructionFlags(InstructionFlags::RightOperandIsRs2Value) => S::InstructionInputVirtualization;
-        v "stage3.instruction_input.eval.Rs2Value" V::Rs2Value => S::InstructionInputVirtualization;
-        v "stage3.instruction_input.eval.InstructionFlagRightOperandIsImm" V::InstructionFlags(InstructionFlags::RightOperandIsImm) => S::InstructionInputVirtualization;
-        v "stage3.instruction_input.eval.Imm" V::Imm => S::InstructionInputVirtualization;
-        v "stage3.registers_claim_reduction.eval.RdWriteValue" V::RdWriteValue => S::RegistersClaimReduction;
-        v "stage3.registers_claim_reduction.eval.Rs1Value" V::Rs1Value => S::RegistersClaimReduction;
-        v "stage3.registers_claim_reduction.eval.Rs2Value" V::Rs2Value => S::RegistersClaimReduction;
-    };
-    assert_core_opening_claim_evals_match(
+    assert_core_opening_claim_plans_match_bolt(
         "Stage 3",
         proof,
         artifacts
             .sumchecks
             .iter()
             .flat_map(|output| output.evals.iter().map(|eval| (eval.name, eval.value))),
-        expected,
+        stage3::STAGE3_OPENING_CLAIMS,
     );
-}
-
-fn stage6_oracle_index(oracle: &'static str, prefix: &'static str) -> Option<usize> {
-    oracle.strip_prefix(prefix)?.parse().ok()
-}
-
-fn stage6_committed_polynomial(oracle: &'static str) -> Option<CommittedPolynomial> {
-    if let Some(index) = stage6_oracle_index(oracle, "InstructionRa_") {
-        return Some(CommittedPolynomial::InstructionRa(index));
-    }
-    if let Some(index) = stage6_oracle_index(oracle, "BytecodeRa_") {
-        return Some(CommittedPolynomial::BytecodeRa(index));
-    }
-    if let Some(index) = stage6_oracle_index(oracle, "RamRa_") {
-        return Some(CommittedPolynomial::RamRa(index));
-    }
-    match oracle {
-        "RamInc" => Some(CommittedPolynomial::RamInc),
-        "RdInc" => Some(CommittedPolynomial::RdInc),
-        _ => None,
-    }
-}
-
-fn stage6_opening_claim_id(claim: &generated_stage6::Stage6OpeningClaimPlan) -> Option<OpeningId> {
-    if claim
-        .symbol
-        .starts_with("stage6.bytecode_read_raf.opening.")
-    {
-        return stage6_committed_polynomial(claim.oracle)
-            .map(|polynomial| OpeningId::committed(polynomial, SumcheckId::BytecodeReadRaf));
-    }
-    if claim.symbol.starts_with("stage6.booleanity.opening.") {
-        return stage6_committed_polynomial(claim.oracle)
-            .map(|polynomial| OpeningId::committed(polynomial, SumcheckId::Booleanity));
-    }
-    if claim.symbol == "stage6.hamming_booleanity.opening.HammingWeight" {
-        return Some(OpeningId::virt(
-            VirtualPolynomial::RamHammingWeight,
-            SumcheckId::RamHammingBooleanity,
-        ));
-    }
-    if claim.symbol.starts_with("stage6.ram_ra_virtual.opening.") {
-        return stage6_committed_polynomial(claim.oracle)
-            .map(|polynomial| OpeningId::committed(polynomial, SumcheckId::RamRaVirtualization));
-    }
-    if claim
-        .symbol
-        .starts_with("stage6.instruction_ra_virtual.opening.")
-    {
-        return stage6_committed_polynomial(claim.oracle).map(|polynomial| {
-            OpeningId::committed(polynomial, SumcheckId::InstructionRaVirtualization)
-        });
-    }
-    match claim.symbol {
-        "stage6.inc_claim_reduction.opening.RamInc" => Some(OpeningId::committed(
-            CommittedPolynomial::RamInc,
-            SumcheckId::IncClaimReduction,
-        )),
-        "stage6.inc_claim_reduction.opening.RdInc" => Some(OpeningId::committed(
-            CommittedPolynomial::RdInc,
-            SumcheckId::IncClaimReduction,
-        )),
-        _ => None,
-    }
 }
 
 /// Assert Stage 6 opening-claim evals against jolt-core public proof claims.
@@ -415,38 +285,17 @@ pub(crate) fn assert_core_stage6_opening_claims_match_bolt(
     proof: &CoreProofForChecks,
     stage6_proof: &JoltStageProof,
 ) {
-    let evals = stage6_proof
-        .sumchecks
-        .iter()
-        .flat_map(|output| output.evals.iter())
-        .map(|eval| (eval.name, eval.value))
-        .collect::<BTreeMap<_, _>>();
-
-    for claim in generated_stage6::STAGE6_OPENING_CLAIMS {
-        let Some(opening_id) = stage6_opening_claim_id(claim) else {
-            panic!(
-                "Stage 6 opening claim has no core mapping: {}",
-                claim.symbol
-            );
-        };
-        let Some(value) = evals.get(claim.eval_source) else {
-            panic!(
-                "Stage 6 proof missing eval {} for opening claim {}",
-                claim.eval_source, claim.symbol
-            );
-        };
-        let Some((_, core_claim)) = proof.opening_claims.0.get(&opening_id) else {
-            panic!("Stage 6 core opening claim missing for {}", claim.symbol);
-        };
-        assert_eq!(
-            *value,
-            Fr::from(*core_claim),
-            "Stage 6 opening claim mismatch for {}",
-            claim.symbol,
-        );
-    }
+    assert_core_opening_claim_plans_match_bolt(
+        "Stage 6",
+        proof,
+        stage6_proof
+            .sumchecks
+            .iter()
+            .flat_map(|output| output.evals.iter().map(|eval| (eval.name, eval.value))),
+        stage6::STAGE6_OPENING_CLAIMS,
+    );
     assert!(
-        !generated_stage6::STAGE6_OPENING_CLAIMS.is_empty(),
+        !stage6::STAGE6_OPENING_CLAIMS.is_empty(),
         "Stage 6 opening claim check was empty"
     );
 }

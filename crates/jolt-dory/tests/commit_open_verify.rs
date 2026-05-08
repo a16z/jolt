@@ -3,6 +3,8 @@
 //! Public-API-only tests — no `pub(crate)` imports. Exercises commit, open,
 //! verify, streaming, combine, and negative cases across transcript backends.
 
+#![expect(clippy::expect_used, reason = "tests use expect for assertion context")]
+
 use jolt_dory::DoryScheme;
 use jolt_field::{Field, Fr};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment};

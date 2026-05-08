@@ -6,14 +6,19 @@
 use jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme};
 use jolt_field::{Field, Fr};
 use jolt_kernels::{stage1, stage2, stage3, stage4, stage5, stage6, stage7};
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
+use jolt_openings::CommitmentScheme;
 use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
 use jolt_verifier::{JoltEvaluationProof, JoltNamedEval, JoltProof, JoltStage2RamAccess, JoltStage2RamData, JoltStage2RamOutputLayout, JoltStage6BytecodeEntry, JoltStage6BytecodeReadRafData, JoltStage6VerifierData, JoltStageChallengeVector, JoltStageExecutionArtifacts, JoltStageOpeningInputValue, JoltStageProof, JoltSumcheckOutput};
 use jolt_witness::{stage4_ram_val_init_opening, CycleInput, Stage45SparseTraceWitness, Stage6BytecodeEntry as WitnessStage6BytecodeEntry, Stage6WitnessParams, Stage6WitnessPolynomials, Stage6WitnessSlices};
 use rayon::prelude::*;
 
-use crate::stages::{commitment as commitment_stage, stage1_outer as stage1_outer_stage, stage2 as stage2_stage, stage3 as stage3_stage, stage4 as stage4_stage, stage5 as stage5_stage, stage6 as stage6_stage, stage7 as stage7_stage, stage8 as stage8_stage};
+use crate::stages::{
+    commitment as commitment_stage,
+    stage1_outer as stage1_outer_stage, stage2 as stage2_stage, stage3 as stage3_stage,
+    stage4 as stage4_stage, stage5 as stage5_stage, stage6 as stage6_stage,
+    stage7 as stage7_stage, stage8 as stage8_stage,
+};
 
 pub type DefaultJoltTranscript = Blake2bTranscript<Fr>;
 
@@ -300,29 +305,49 @@ where
         .map(|(claim, gamma)| claim.value * *gamma)
         .sum();
     drop(_rlc_span);
-    let _materialize_span =
-        tracing::info_span!("bolt.evaluate.materialize_joint_polynomial").entered();
-    let joint_evals = materialize_joint_polynomial(
-        commitment_inputs,
-        &claims,
-        &gamma_powers,
-        log_t,
-        opening_point.len(),
-    )?;
-    drop(_materialize_span);
-    let joint_poly = Polynomial::new(joint_evals);
+    let joint_requests = joint_contribution_requests(&claims, &gamma_powers, log_t, opening_point.len())?;
     let _hint_span = tracing::info_span!("bolt.evaluate.joint_opening_hint").entered();
     let joint_hint = joint_opening_hint(commitments, &claims, &gamma_powers)?;
     drop(_hint_span);
     let _dory_open_span = tracing::info_span!("bolt.evaluate.dory_open").entered();
-    let joint_opening_proof = <jolt_dory::DoryScheme as CommitmentScheme>::open(
-        &joint_poly,
+    let sparse_joint_opening = commitment_inputs.open_joint_polynomial(
+        &joint_requests,
         &opening_point,
         joint_claim,
         prover_setup,
-        Some(joint_hint),
+        joint_hint,
         transcript,
     );
+    let joint_opening_proof = match sparse_joint_opening {
+        Ok(proof) => {
+            let _materialize_span =
+                tracing::info_span!("bolt.evaluate.materialize_joint_polynomial").entered();
+            drop(_materialize_span);
+            proof
+        }
+        Err(joint_hint) => {
+            let _materialize_span =
+                tracing::info_span!("bolt.evaluate.materialize_joint_polynomial").entered();
+            let joint_evals = materialize_joint_polynomial(
+                commitment_inputs,
+                &joint_requests,
+                &claims,
+                &gamma_powers,
+                log_t,
+                opening_point.len(),
+            )?;
+            drop(_materialize_span);
+            let joint_poly = Polynomial::new(joint_evals);
+            <jolt_dory::DoryScheme as CommitmentScheme>::open(
+                &joint_poly,
+                &opening_point,
+                joint_claim,
+                prover_setup,
+                Some(joint_hint),
+                transcript,
+            )
+        }
+    };
     drop(_dory_open_span);
     let _bind_span = tracing::info_span!("bolt.evaluate.bind_opening_inputs").entered();
     <jolt_dory::DoryScheme as CommitmentScheme>::bind_opening_inputs(
@@ -464,6 +489,7 @@ where
 
 fn materialize_joint_polynomial<I>(
     commitment_inputs: &mut I,
+    requests: &[commitment_stage::JointContribution],
     claims: &[EvaluationClaim],
     gamma_powers: &[Fr],
     log_t: usize,
@@ -475,7 +501,11 @@ where
     let trace_len = target_len(log_t)?;
     let main_len = target_len(main_num_vars)?;
     let mut joint = vec![Fr::from_u64(0); main_len];
-    for (claim, gamma) in claims.iter().zip(gamma_powers) {
+    let handled = commitment_inputs.add_scaled_to_joint_batch(requests, &mut joint);
+    for (index, (claim, gamma)) in claims.iter().zip(gamma_powers).enumerate() {
+        if handled.get(index).copied().unwrap_or(false) {
+            continue;
+        }
         if claim.source_stage == "stage6" {
             add_oracle_scaled(commitment_inputs, &mut joint, claim.oracle, log_t, trace_len, *gamma)?;
         } else {
@@ -490,6 +520,37 @@ where
         }
     }
     Ok(joint)
+}
+
+fn joint_contribution_requests(
+    claims: &[EvaluationClaim],
+    gamma_powers: &[Fr],
+    log_t: usize,
+    main_num_vars: usize,
+) -> Result<Vec<commitment_stage::JointContribution>, JoltEvaluationProveError> {
+    let trace_len = target_len(log_t)?;
+    let main_len = target_len(main_num_vars)?;
+    Ok(claims
+        .iter()
+        .zip(gamma_powers)
+        .map(|(claim, gamma)| {
+            if claim.source_stage == "stage6" {
+                commitment_stage::JointContribution {
+                    oracle: claim.oracle,
+                    num_vars: log_t,
+                    limit: trace_len,
+                    scalar: *gamma,
+                }
+            } else {
+                commitment_stage::JointContribution {
+                    oracle: claim.oracle,
+                    num_vars: main_num_vars,
+                    limit: main_len,
+                    scalar: *gamma,
+                }
+            }
+        })
+        .collect())
 }
 
 fn add_oracle_scaled<I>(
@@ -567,20 +628,18 @@ fn joint_opening_hint(
         scalars.push(coefficient);
     }
 
-    Ok(<DoryScheme as AdditivelyHomomorphic>::combine_hints(
-        hints, &scalars,
-    ))
+    Ok(DoryScheme::combine_hint_refs(&hints, &scalars))
 }
 
-fn opening_hint_for_oracle(
-    commitments: &commitment_stage::CommitmentArtifacts,
+fn opening_hint_for_oracle<'a>(
+    commitments: &'a commitment_stage::CommitmentArtifacts,
     oracle: &'static str,
-) -> Result<DoryHint, JoltEvaluationProveError> {
+) -> Result<&'a DoryHint, JoltEvaluationProveError> {
     commitments
         .hints
         .iter()
         .find(|hint| hint.oracle == oracle)
-        .map(|hint| hint.hint.clone())
+        .map(|hint| &hint.hint)
         .ok_or(JoltEvaluationProveError::MissingOpeningHint { oracle })
 }
 
@@ -2088,4 +2147,3 @@ fn stage7_eval(eval: &stage7::Stage7NamedEval<Fr>) -> JoltNamedEval {
         value: eval.value,
     }
 }
-

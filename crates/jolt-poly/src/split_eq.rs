@@ -298,6 +298,7 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
     ) -> OuterAcc {
         let e_out = self.e_out_current();
         let e_in = self.e_in_current();
+        let in_bits = e_in.len().trailing_zeros() as usize;
 
         #[cfg(feature = "parallel")]
         {
@@ -305,8 +306,9 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
                 .into_par_iter()
                 .map(|x_out| {
                     let mut inner_acc = make_inner();
+                    let base = x_out << in_bits;
                     for (x_in, &e_in) in e_in.iter().enumerate() {
-                        let group = self.group_index(x_out, x_in);
+                        let group = base | x_in;
                         inner_step(&mut inner_acc, group, x_in, e_in);
                     }
                     outer_step(x_out, e_out[x_out], inner_acc)
@@ -324,8 +326,9 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
         {
             let mut iter = (0..e_out.len()).map(|x_out| {
                 let mut inner_acc = make_inner();
+                let base = x_out << in_bits;
                 for (x_in, &e_in) in e_in.iter().enumerate() {
-                    let group = self.group_index(x_out, x_in);
+                    let group = base | x_in;
                     inner_step(&mut inner_acc, group, x_in, e_in);
                 }
                 outer_step(x_out, e_out[x_out], inner_acc)
