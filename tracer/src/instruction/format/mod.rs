@@ -1,4 +1,5 @@
 use crate::emulator::cpu::{Cpu, Xlen};
+pub use jolt_riscv::NormalizedOperands;
 use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::Debug;
 
@@ -16,14 +17,6 @@ pub mod format_s;
 pub mod format_u;
 pub mod format_virtual_right_shift_i;
 pub mod format_virtual_right_shift_r;
-
-#[derive(Default, Debug, Clone, Copy, PartialEq)]
-pub struct NormalizedOperands {
-    pub rs1: Option<u8>,
-    pub rs2: Option<u8>,
-    pub rd: Option<u8>,
-    pub imm: i128,
-}
 
 pub trait InstructionFormat:
     Default + Debug + From<NormalizedOperands> + Into<NormalizedOperands>

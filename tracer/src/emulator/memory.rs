@@ -318,6 +318,24 @@ impl Memory {
         }
     }
 
+    pub fn materialized_nonzero_bytes(&self) -> Vec<(u64, u8)> {
+        let mut bytes = Vec::new();
+        for (&index, &doubleword) in &self.data.memory {
+            if doubleword == 0 {
+                continue;
+            }
+            let base_address = (index as u64) * 8;
+            for byte_offset in 0..8 {
+                let byte = (doubleword >> (byte_offset * 8)) as u8;
+                if byte != 0 {
+                    bytes.push((base_address + byte_offset, byte));
+                }
+            }
+        }
+        bytes.sort_by_key(|(address, _)| *address);
+        bytes
+    }
+
     /// Reads multiple bytes from memory.
     ///
     /// # Arguments

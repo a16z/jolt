@@ -74,6 +74,7 @@ impl MacroBuilder {
         let build_prover_fn = self.make_build_prover_fn();
         let build_verifier_fn = self.make_build_verifier_fn();
         let analyze_fn = self.make_analyze_function();
+        let trace_fn = self.make_trace_func();
         let trace_to_file_fn = self.make_trace_to_file_func();
         let compile_fn = self.make_compile_func();
         let preprocess_shared_fn = self.make_preprocess_shared_func();
@@ -108,6 +109,7 @@ impl MacroBuilder {
             #build_verifier_fn
             #execute_fn
             #analyze_fn
+            #trace_fn
             #trace_to_file_fn
             #compile_fn
             #preprocess_shared_fn
@@ -356,6 +358,78 @@ impl MacroBuilder {
 
                 program.trace_analyze::<jolt::F>(&input_bytes, &untrusted_advice_bytes, &trusted_advice_bytes)
              }
+        }
+    }
+
+    fn make_trace_func(&self) -> TokenStream2 {
+        let imports = self.make_imports();
+        let guest_name = self.get_guest_name();
+        let set_mem_size = self.make_set_linker_parameters();
+        let set_std = self.make_set_std();
+        let set_backtrace = self.make_set_backtrace();
+        let set_profile = self.make_set_profile();
+
+        let fn_name = self.get_func_name();
+        let fn_name_str = fn_name.to_string();
+        let trace_fn_name = Ident::new(&format!("trace_{fn_name}"), fn_name.span());
+        let trace_with_backend_fn_name =
+            Ident::new(&format!("trace_{fn_name}_with_backend"), fn_name.span());
+        let inputs_vec: Vec<_> = self.func.sig.inputs.iter().collect();
+        let inputs = quote! { #(#inputs_vec),* };
+        let ordered_func_args = self.get_all_func_args_in_order();
+        let all_names: Vec<_> = ordered_func_args.iter().map(|(name, _)| name).collect();
+        let set_pub_args = self.pub_func_args.iter().map(|(name, _)| {
+            quote! {
+                input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+            }
+        });
+        let set_untrusted_advice_args = self.untrusted_func_args.iter().map(|(name, _)| {
+            quote! {
+                untrusted_advice_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+            }
+        });
+        let set_trusted_advice_args = self.trusted_func_args.iter().map(|(name, _)| {
+            quote! {
+                trusted_advice_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+            }
+        });
+        quote! {
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            pub fn #trace_fn_name(#inputs) -> Result<jolt::TraceOutput<jolt::OwnedTrace>, jolt::TraceError> {
+                #imports
+
+                let mut backend = jolt::TracerBackend::new();
+                #trace_with_backend_fn_name(&mut backend, #(#all_names),*)
+            }
+
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            pub fn #trace_with_backend_fn_name<B: jolt::ExecutionBackend>(
+                backend: &mut B,
+                #inputs
+            ) -> Result<jolt::TraceOutput<B::Trace>, jolt::TraceError> {
+                #imports
+
+                let mut program = Program::new(#guest_name);
+                program.set_func(#fn_name_str);
+                #set_std
+                #set_profile
+                #set_backtrace
+                #set_mem_size
+
+                let mut input_bytes = vec![];
+                #(#set_pub_args;)*
+                let mut untrusted_advice_bytes = vec![];
+                #(#set_untrusted_advice_args;)*
+                let mut trusted_advice_bytes = vec![];
+                #(#set_trusted_advice_args;)*
+
+                program.trace_with_backend(
+                    backend,
+                    &input_bytes,
+                    &untrusted_advice_bytes,
+                    &trusted_advice_bytes,
+                )
+            }
         }
     }
 

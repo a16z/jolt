@@ -1,7 +1,7 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
-use jolt_trace::instructions::AssertWordAlignment;
-use jolt_trace::{JoltCycle, JoltInstruction};
+use jolt_riscv::instructions::AssertWordAlignment;
+use jolt_riscv::JoltCycle;
 
 impl_lookup_table!(AssertWordAlignment, Some(WordAlignment));
 
@@ -10,7 +10,9 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for AssertWordAlignment<
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
         (
             self.0.rs1_val().unwrap_or(0) & mask,
-            self.0.instruction().imm(),
+            Into::<jolt_riscv::NormalizedInstruction>::into(self.0.instruction())
+                .operands
+                .imm,
         )
     }
 

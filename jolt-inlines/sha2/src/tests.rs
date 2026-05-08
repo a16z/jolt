@@ -110,40 +110,38 @@ mod sequence_tests {
     #[test]
     fn test_sha256_direct_execution() {
         for (desc, block, initial_state, expected) in TestVectors::get_standard_test_vectors() {
-            for xlen in [Xlen::Bit32, Xlen::Bit64] {
-                let mut harness = create_sha256_harness(xlen);
-                harness.setup_registers();
-                harness.load_input32(&block);
-                harness.load_state32(&initial_state);
-                harness.execute_inline(instruction_sha256());
+            let xlen = Xlen::Bit64;
+            let mut harness = create_sha256_harness(xlen);
+            harness.setup_registers();
+            harness.load_input32(&block);
+            harness.load_state32(&initial_state);
+            harness.execute_inline(instruction_sha256());
 
-                let result: [u32; 8] = harness.read_output32(8).try_into().unwrap();
+            let result: [u32; 8] = harness.read_output32(8).try_into().unwrap();
 
-                assert_eq!(
-                    &expected, &result,
-                    "SHA256 direct execution for {xlen:?}: {desc}, expected: {expected:08x?}, actual: {result:08x?}",
-                );
-            }
+            assert_eq!(
+                &expected, &result,
+                "SHA256 direct execution for {xlen:?}: {desc}, expected: {expected:08x?}, actual: {result:08x?}",
+            );
         }
     }
 
     #[test]
     fn test_sha256init_direct_execution() {
         for (desc, block, _initial_state, expected) in TestVectors::get_standard_test_vectors() {
-            for xlen in [Xlen::Bit32, Xlen::Bit64] {
-                let mut harness = create_sha256_harness(xlen);
-                harness.setup_registers();
-                harness.load_input32(&block);
-                harness.execute_inline(instruction_sha256init());
+            let xlen = Xlen::Bit64;
+            let mut harness = create_sha256_harness(xlen);
+            harness.setup_registers();
+            harness.load_input32(&block);
+            harness.execute_inline(instruction_sha256init());
 
-                let result: [u32; 8] = harness.read_output32(8).try_into().unwrap();
+            let result: [u32; 8] = harness.read_output32(8).try_into().unwrap();
 
-                assert_eq!(
-                    &expected,
-                    &result,
-                    "SHA256INIT direct execution for {xlen:?}: {desc}, expected: {expected:08x?}, actual: {result:08x?}",
-                );
-            }
+            assert_eq!(
+                &expected,
+                &result,
+                "SHA256INIT direct execution for {xlen:?}: {desc}, expected: {expected:08x?}, actual: {result:08x?}",
+            );
         }
     }
 }

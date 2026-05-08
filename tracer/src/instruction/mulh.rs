@@ -1,5 +1,3 @@
-use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -7,10 +5,7 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{
-    add::ADD, format::format_r::FormatR, mul::MUL, mulhu::MULHU, virtual_movsign::VirtualMovsign,
-    Cycle, Instruction, RISCVInstruction, RISCVTrace,
-};
+use super::{format::format_r::FormatR, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = MULH,
@@ -40,34 +35,10 @@ impl MULH {
 
 impl RISCVTrace for MULH {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
-    }
-
-    /// MULH computes the high 64 bits of signed multiplication using identity:
-    /// (x × y)_high = (x × y)_high_unsigned + sign(x) × y + sign(y) × x
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
-        let v_sx = allocator.allocate();
-        let v_sy = allocator.allocate();
-        let v_tmp = allocator.allocate();
-
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
-
-        asm.emit_i::<VirtualMovsign>(*v_sx, self.operands.rs1, 0);
-        asm.emit_i::<VirtualMovsign>(*v_sy, self.operands.rs2, 0);
-        asm.emit_r::<MUL>(*v_sx, *v_sx, self.operands.rs2);
-        asm.emit_r::<MUL>(*v_sy, *v_sy, self.operands.rs1);
-        asm.emit_r::<MULHU>(*v_tmp, self.operands.rs1, self.operands.rs2);
-        asm.emit_r::<ADD>(*v_tmp, *v_tmp, *v_sx);
-        asm.emit_r::<ADD>(self.operands.rd, *v_tmp, *v_sy);
-
-        asm.finalize()
     }
 }

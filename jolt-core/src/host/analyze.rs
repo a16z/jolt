@@ -1,17 +1,16 @@
 use std::{collections::HashMap, fs::File, io, path::PathBuf};
 
+use common::jolt_device::JoltDevice;
+use jolt_program::execution::TraceRow;
+use jolt_riscv::NormalizedInstruction;
 use serde::{Deserialize, Serialize};
-use tracer::{
-    instruction::{Cycle, Instruction},
-    JoltDevice,
-};
 
 use crate::field::JoltField;
 
 #[derive(Serialize, Deserialize)]
 pub struct ProgramSummary {
-    pub trace: Vec<Cycle>,
-    pub bytecode: Vec<Instruction>,
+    pub trace: Vec<TraceRow>,
+    pub bytecode: Vec<NormalizedInstruction>,
     pub memory_init: Vec<(u64, u8)>,
     pub io_device: JoltDevice,
 }
@@ -23,8 +22,8 @@ impl ProgramSummary {
 
     pub fn analyze<F: JoltField>(&self) -> Vec<(&'static str, usize)> {
         let mut counts = HashMap::<&'static str, usize>::new();
-        for cycle in self.trace.iter() {
-            let instruction_name: &'static str = cycle.into();
+        for row in self.trace.iter() {
+            let instruction_name = row.instruction.instruction_kind.name();
             if let Some(count) = counts.get(instruction_name) {
                 counts.insert(instruction_name, count + 1);
             } else {

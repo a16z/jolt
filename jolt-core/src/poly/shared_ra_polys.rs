@@ -32,7 +32,7 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::zkvm::bytecode::BytecodePreprocessing;
+use crate::zkvm::bytecode::{get_pc_for_cycle, BytecodePreprocessing};
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::instruction::LookupQuery;
 use crate::zkvm::ram::remap_address;
@@ -150,7 +150,7 @@ impl RaIndices {
         }
 
         // Bytecode indices from PC
-        let pc = bytecode.get_pc(cycle);
+        let pc = get_pc_for_cycle(bytecode, cycle);
         let mut bytecode_arr = [0u8; MAX_BYTECODE_D];
         for i in 0..one_hot_params.bytecode_d {
             bytecode_arr[i] = one_hot_params.bytecode_pc_chunk(pc, i);
