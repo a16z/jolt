@@ -5,21 +5,11 @@ macro_rules! declare_riscv_instr {
       mask    = $mask:expr,
       match   = $match_:expr,
       format  = $format:ty,
-      ram     = $ram:ty,
-      side_effects = true
+      ram     = $ram:ty $(,)?
   ) => {
-        declare_riscv_instr!(@inner $name, $mask, $match_, $format, $ram, true);
+        declare_riscv_instr!(@inner $name, $mask, $match_, $format, $ram);
     };
-    (
-      name    = $name:ident,
-      mask    = $mask:expr,
-      match   = $match_:expr,
-      format  = $format:ty,
-      ram     = $ram:ty
-  ) => {
-        declare_riscv_instr!(@inner $name, $mask, $match_, $format, $ram, false);
-    };
-    (@inner $name:ident, $mask:expr, $match_:expr, $format:ty, $ram:ty, $se:expr) => {
+    (@inner $name:ident, $mask:expr, $match_:expr, $format:ty, $ram:ty) => {
         #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
         pub struct $name {
             pub address: u64,
@@ -80,10 +70,6 @@ macro_rules! declare_riscv_instr {
             fn execute(&self, cpu: &mut $crate::emulator::cpu::Cpu, ram: &mut Self::RAMAccess) {
                 self.exec(cpu, ram)
             }
-
-            fn has_side_effects(&self) -> bool {
-                $se
-            }
         }
 
         impl From<$crate::instruction::NormalizedInstruction> for $name {
@@ -91,16 +77,19 @@ macro_rules! declare_riscv_instr {
                 Self {
                     address: ni.address as u64,
                     operands: ni.operands.into(),
-                    virtual_sequence_remaining: None,
-                    is_first_in_sequence: false,
+                    virtual_sequence_remaining: ni.virtual_sequence_remaining,
+                    is_first_in_sequence: ni.is_first_in_sequence,
                     is_compressed: ni.is_compressed,
                 }
             }
         }
 
+        impl ::jolt_riscv::JoltInstruction for $name {}
+
         impl From<$name> for $crate::instruction::NormalizedInstruction {
             fn from(instr: $name) -> $crate::instruction::NormalizedInstruction {
                 $crate::instruction::NormalizedInstruction {
+                    instruction_kind: ::jolt_riscv::InstructionKind::$name,
                     address: instr.address as usize,
                     operands: instr.operands.into(),
                     is_compressed: instr.is_compressed,

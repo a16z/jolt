@@ -1,8 +1,8 @@
 use crate::tables::virtual_rev8w::rev8w;
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
-use jolt_trace::instructions::VirtualRev8W;
-use jolt_trace::JoltCycle;
+use jolt_riscv::instructions::VirtualRev8W;
+use jolt_riscv::JoltCycle;
 
 impl_lookup_table!(VirtualRev8W, Some(VirtualRev8W));
 

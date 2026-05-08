@@ -2724,6 +2724,8 @@ dependencies = [
  "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-optimizations",
+ "jolt-program",
+ "jolt-riscv",
  "light-poseidon",
  "memory-stats",
  "num",
@@ -2952,7 +2954,7 @@ name = "jolt-lookup-tables"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
- "jolt-trace",
+ "jolt-riscv",
  "rand 0.8.5",
  "serde",
  "strum 0.28.0",
@@ -3035,6 +3037,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-program"
+version = "0.1.0"
+dependencies = [
+ "ark-serialize 0.5.0",
+ "common",
+ "jolt-riscv",
+ "object 0.39.1",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
@@ -3052,9 +3066,10 @@ dependencies = [
 name = "jolt-riscv"
 version = "0.1.0"
 dependencies = [
+ "ark-serialize 0.5.0",
+ "rand 0.8.5",
  "serde",
  "strum 0.28.0",
- "tracer",
 ]
 
 [[package]]
@@ -3066,10 +3081,12 @@ dependencies = [
  "common",
  "jolt-core",
  "jolt-platform",
+ "jolt-program",
  "jolt-sdk-macros",
  "postcard",
  "riscv 0.16.0",
  "serde",
+ "tracer",
  "zeroos",
 ]
 
@@ -3094,19 +3111,6 @@ dependencies = [
  "rand_core 0.6.4",
  "serde",
  "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
-name = "jolt-trace"
-version = "0.1.0"
-dependencies = [
- "bincode 2.0.1",
- "common",
- "jolt-riscv",
- "rand 0.8.5",
- "serde",
- "tracer",
  "tracing",
 ]
 
@@ -5734,6 +5738,8 @@ dependencies = [
  "inventory",
  "itertools 0.14.0",
  "jolt-platform",
+ "jolt-program",
+ "jolt-riscv",
  "object 0.39.1",
  "paste",
  "postcard",

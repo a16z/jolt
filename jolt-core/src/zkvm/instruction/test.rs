@@ -35,11 +35,12 @@ where
 mod flags {
     use std::panic;
 
-    use crate::zkvm::instruction::{Flags, InstructionFlags};
+    use crate::zkvm::instruction::{Flags, InstructionFlags, SupportedInstruction};
 
     use super::CircuitFlags;
+    use jolt_riscv::{InstructionKind, NormalizedInstruction, NormalizedOperands};
     use strum::IntoEnumIterator;
-    use tracer::instruction::Cycle;
+    use tracer::instruction::{Cycle, Instruction};
 
     #[test]
     fn left_operand_exclusive() {
@@ -113,6 +114,75 @@ mod flags {
                     "Load/Store flags not exclusive for {instr:?}",
                 );
             }
+        }
+    }
+
+    #[test]
+    fn normalized_flags_match_concrete_instruction_flags() {
+        for cycle in Cycle::iter() {
+            if let Cycle::INLINE(_) = cycle {
+                continue;
+            }
+            let instr = cycle.instruction();
+            if !instr.is_supported_instruction() {
+                continue;
+            }
+
+            let normalized = instr.normalize();
+            assert_eq!(
+                normalized.circuit_flags(),
+                instr.circuit_flags(),
+                "circuit flags differ for {instr:?}"
+            );
+            assert_eq!(
+                normalized.instruction_flags(),
+                instr.instruction_flags(),
+                "instruction flags differ for {instr:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn concrete_terminal_virtual_flags_match_normalized_flags() {
+        let normalized = NormalizedInstruction {
+            instruction_kind: InstructionKind::ADDI,
+            address: 0x8000_0000,
+            operands: NormalizedOperands {
+                rd: Some(1),
+                rs1: Some(2),
+                rs2: None,
+                imm: 3,
+            },
+            virtual_sequence_remaining: Some(0),
+            is_first_in_sequence: false,
+            is_compressed: false,
+        };
+        let concrete = Instruction::try_from_normalized(normalized)
+            .expect("ADDI should convert from normalized form");
+
+        assert_eq!(normalized.circuit_flags(), concrete.circuit_flags());
+        assert!(concrete.circuit_flags()[CircuitFlags::IsLastInSequence]);
+    }
+
+    #[cfg(feature = "host")]
+    #[test]
+    fn normalized_flags_match_expanded_program_bytecode() {
+        let mut program = crate::host::Program::new("fibonacci-guest");
+        let (bytecode, _, _, _) = program.decode();
+
+        for normalized in bytecode {
+            let concrete = Instruction::try_from_normalized(normalized)
+                .expect("expanded bytecode should convert to a concrete instruction");
+            assert_eq!(
+                normalized.circuit_flags(),
+                concrete.circuit_flags(),
+                "circuit flags differ for {normalized:?}"
+            );
+            assert_eq!(
+                normalized.instruction_flags(),
+                concrete.instruction_flags(),
+                "instruction flags differ for {normalized:?}"
+            );
         }
     }
 

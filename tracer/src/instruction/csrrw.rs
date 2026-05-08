@@ -15,34 +15,17 @@
 //! The full `csrrw rd, csr, rs` swaps rd ← old_CSR, CSR ← rs.
 
 use serde::{Deserialize, Serialize};
-use tracing::warn;
 
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-    utils::inline_helpers::InstrAssembler,
-    utils::virtual_registers::VirtualRegisterAllocator,
-};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
-use super::{
-    addi::ADDI, format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RISCVTrace,
-};
-
-/// CSR addresses for M-mode CSRs
-const CSR_MSTATUS: u16 = 0x300; // Machine Status
-const CSR_MTVEC: u16 = 0x305; // Machine Trap-Vector Base Address
-const CSR_MSCRATCH: u16 = 0x340; // Machine Scratch Register
-const CSR_MEPC: u16 = 0x341; // Machine Exception Program Counter
-const CSR_MCAUSE: u16 = 0x342; // Machine Trap Cause
-const CSR_MTVAL: u16 = 0x343; // Machine Trap Value
+use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = CSRRW,
     mask   = 0x0000707f,  // Match opcode (7 bits) + funct3 (3 bits)
     match  = 0x00001073,  // opcode=1110011, funct3=001
     format = FormatI,
-    ram    = (),
-    side_effects = true
+    ram    = ()
 );
 
 impl CSRRW {
@@ -76,78 +59,12 @@ impl RISCVTrace for CSRRW {
         // Generate and execute inline sequence
         // The inline sequence reads from virtual register and writes to rd,
         // then writes rs1 to virtual register.
-        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
 
         let mut trace = trace;
         for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
-    }
-
-    /// Generate inline sequence for CSRRW.
-    ///
-    /// Reads old CSR value from virtual register and writes new value (rs1) to it.
-    /// Virtual registers are the source of truth for proofs.
-    ///
-    /// For rd = 0 (csrw pseudo-instruction):
-    ///   0: ADDI(vr, rs1, 0) - Write rs1 to virtual register
-    ///
-    /// For rd != 0, rd != rs1 (full csrrw):
-    ///   0: ADDI(rd, vr, 0)  - Read old value from virtual register to rd
-    ///   1: ADDI(vr, rs1, 0) - Write rs1 to virtual register
-    ///
-    /// For rd != 0, rd == rs1 (swap where dest equals source):
-    ///   0: ADDI(temp, rs1, 0) - Preserve rs1 before it gets clobbered
-    ///   1: ADDI(rd, vr, 0)    - Read old value to rd (clobbers rs1!)
-    ///   2: ADDI(vr, temp, 0)  - Write preserved value to virtual register
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
-        let csr_addr = self.csr_address();
-
-        // CSR 0 is never valid - return no-op for default-constructed instructions.
-        // Other unsupported CSRs are rejected at decode time (see Instruction::decode),
-        // so the trace path should never see one.
-        match csr_addr {
-            0 => {
-                warn!("CSRRW with CSR address 0 is invalid, returning NoOp");
-                return vec![Instruction::NoOp];
-            }
-            CSR_MSTATUS | CSR_MTVEC | CSR_MSCRATCH | CSR_MEPC | CSR_MCAUSE | CSR_MTVAL => {}
-            _ => unreachable!("Unsupported CSR 0x{csr_addr:03x}; decode should have rejected it"),
-        };
-
-        // Map CSR address to virtual register
-        let virtual_reg = match csr_addr {
-            CSR_MSTATUS => allocator.mstatus_register(),
-            CSR_MTVEC => allocator.trap_handler_register(),
-            CSR_MSCRATCH => allocator.mscratch_register(),
-            CSR_MEPC => allocator.mepc_register(),
-            CSR_MCAUSE => allocator.mcause_register(),
-            CSR_MTVAL => allocator.mtval_register(),
-            _ => unreachable!(), // Already validated above
-        };
-
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
-
-        if self.operands.rd == 0 {
-            // csrw pseudo-instruction: just write new value
-            asm.emit_i::<ADDI>(virtual_reg, self.operands.rs1, 0);
-        } else if self.operands.rd == self.operands.rs1 {
-            // rd == rs1: need to preserve rs1 before clobbering
-            let temp = allocator.allocate();
-            asm.emit_i::<ADDI>(*temp, self.operands.rs1, 0); // Preserve rs1
-            asm.emit_i::<ADDI>(self.operands.rd, virtual_reg, 0); // Read old to rd (clobbers rs1)
-            asm.emit_i::<ADDI>(virtual_reg, *temp, 0); // Write preserved value to vr
-        } else {
-            // rd != rs1: straightforward read-then-write
-            asm.emit_i::<ADDI>(self.operands.rd, virtual_reg, 0); // Read old to rd
-            asm.emit_i::<ADDI>(virtual_reg, self.operands.rs1, 0); // Write rs1 to vr
-        }
-
-        asm.finalize()
     }
 }
 

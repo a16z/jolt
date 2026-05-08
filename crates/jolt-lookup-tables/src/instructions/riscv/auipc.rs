@@ -1,7 +1,7 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
-use jolt_trace::instructions::Auipc;
-use jolt_trace::{JoltCycle, JoltInstruction};
+use jolt_riscv::instructions::Auipc;
+use jolt_riscv::JoltCycle;
 
 impl_lookup_table!(Auipc, Some(RangeCheck));
 
@@ -18,8 +18,11 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Auipc<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
         (
-            self.0.instruction().address() & mask,
-            self.0.instruction().imm(),
+            Into::<jolt_riscv::NormalizedInstruction>::into(self.0.instruction()).address as u64
+                & mask,
+            Into::<jolt_riscv::NormalizedInstruction>::into(self.0.instruction())
+                .operands
+                .imm,
         )
     }
 

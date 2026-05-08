@@ -1,13 +1,18 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
-use jolt_trace::instructions::VirtualSrli;
-use jolt_trace::{JoltCycle, JoltInstruction};
+use jolt_riscv::instructions::VirtualSrli;
+use jolt_riscv::JoltCycle;
 
 impl_lookup_table!(VirtualSrli, Some(VirtualSRL));
 
 impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualSrli<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        (self.0.rs1_val().unwrap_or(0), self.0.instruction().imm())
+        (
+            self.0.rs1_val().unwrap_or(0),
+            Into::<jolt_riscv::NormalizedInstruction>::into(self.0.instruction())
+                .operands
+                .imm,
+        )
     }
 
     fn to_lookup_output(&self) -> u64 {

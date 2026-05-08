@@ -6,26 +6,17 @@
 //! The `csrs csr, rs` pseudo-instruction is `csrrs x0, csr, rs` (set only, discard old value).
 
 use serde::{Deserialize, Serialize};
-use tracing::warn;
 
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-    utils::inline_helpers::InstrAssembler,
-    utils::virtual_registers::VirtualRegisterAllocator,
-};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
-use super::{
-    addi::ADDI, format::format_i::FormatI, or::OR, Cycle, Instruction, RISCVInstruction, RISCVTrace,
-};
+use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = CSRRS,
     mask   = 0x0000707f,  // Match opcode (7 bits) + funct3 (3 bits)
     match  = 0x00002073,  // opcode=1110011, funct3=010
     format = FormatI,
-    ram    = (),
-    side_effects = true
+    ram    = ()
 );
 
 impl CSRRS {
@@ -56,74 +47,12 @@ impl CSRRS {
 impl RISCVTrace for CSRRS {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         // Don't call self.execute() - the inline sequence handles all register writes.
-        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
 
         let mut trace = trace;
         for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
-    }
-
-    /// Generate inline sequence for CSRRS.
-    ///
-    /// Semantics: `rd = CSR; CSR |= rs1`
-    ///
-    /// For rs1 = 0, rd != 0 (csrr — read only):
-    ///   ADDI(rd, vr, 0)
-    ///
-    /// For rs1 != 0, rd = 0 (csrs — set only):
-    ///   OR(vr, vr, rs1)
-    ///
-    /// For rs1 != 0, rd != 0, rd != rs1 (full read-set):
-    ///   ADDI(rd, vr, 0)     — read old value to rd
-    ///   OR(vr, vr, rs1)     — set bits
-    ///
-    /// For rs1 != 0, rd != 0, rd == rs1 (read-set, dest clobbers source):
-    ///   ADDI(temp, rs1, 0)  — preserve rs1
-    ///   ADDI(rd, vr, 0)     — read old value to rd (clobbers rs1)
-    ///   OR(vr, vr, temp)    — set bits from preserved value
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
-        let csr_addr = self.csr_address();
-
-        // CSR 0 is never valid - return no-op for default-constructed instructions
-        if csr_addr == 0 {
-            warn!("CSRRS with CSR address 0 is invalid, returning NoOp");
-            return vec![Instruction::NoOp];
-        }
-
-        // Other unsupported CSRs are rejected at decode time (see
-        // Instruction::decode), so the trace path should never see one.
-        let virtual_reg = allocator
-            .csr_to_virtual_register(csr_addr)
-            .unwrap_or_else(|| {
-                unreachable!("Unsupported CSR 0x{csr_addr:03x}; decode should have rejected it")
-            });
-
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
-
-        if self.operands.rs1 == 0 {
-            // csrr: read only
-            asm.emit_i::<ADDI>(self.operands.rd, virtual_reg, 0);
-        } else if self.operands.rd == 0 {
-            // csrs: set only
-            asm.emit_r::<OR>(virtual_reg, virtual_reg, self.operands.rs1);
-        } else if self.operands.rd == self.operands.rs1 {
-            // rd == rs1: preserve rs1 before clobbering
-            let temp = allocator.allocate();
-            asm.emit_i::<ADDI>(*temp, self.operands.rs1, 0);
-            asm.emit_i::<ADDI>(self.operands.rd, virtual_reg, 0);
-            asm.emit_r::<OR>(virtual_reg, virtual_reg, *temp);
-        } else {
-            // rd != rs1: read old, then set
-            asm.emit_i::<ADDI>(self.operands.rd, virtual_reg, 0);
-            asm.emit_r::<OR>(virtual_reg, virtual_reg, self.operands.rs1);
-        }
-
-        asm.finalize()
     }
 }
 

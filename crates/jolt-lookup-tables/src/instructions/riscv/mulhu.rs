@@ -1,7 +1,7 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
-use jolt_trace::instructions::MulHU;
-use jolt_trace::JoltCycle;
+use jolt_riscv::instructions::MulHU;
+use jolt_riscv::JoltCycle;
 
 impl_lookup_table!(MulHU, Some(UpperWord));
 

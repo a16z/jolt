@@ -156,12 +156,28 @@ use crate::emulator::cpu::{Cpu, Xlen};
 use crate::utils::virtual_registers::{is_supported_csr, VirtualRegisterAllocator};
 use derive_more::From;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
+use jolt_riscv::InstructionKind;
+pub use jolt_riscv::NormalizedInstruction;
 
 pub mod format;
 
 pub use crate::utils::instruction_macros;
 
-pub(super) mod amo;
+pub(crate) fn fill_virtual_advice(sequence: &mut [Instruction], values: &[u64]) {
+    let mut filled = 0;
+    for instruction in sequence {
+        if let Instruction::VirtualAdvice(advice) = instruction {
+            let Some(value) = values.get(filled) else {
+                panic!("inline sequence did not contain enough virtual advice instructions");
+            };
+            advice.advice = *value;
+            filled += 1;
+        }
+    }
+    if filled != 0 && filled != values.len() {
+        panic!("inline sequence did not contain enough virtual advice instructions");
+    }
+}
 
 pub mod add;
 pub mod addi;
@@ -344,15 +360,6 @@ impl From<()> for RAMAccess {
     }
 }
 
-#[derive(Default)]
-pub struct NormalizedInstruction {
-    pub address: usize,
-    pub operands: NormalizedOperands,
-    pub virtual_sequence_remaining: Option<u16>,
-    pub is_first_in_sequence: bool,
-    pub is_compressed: bool,
-}
-
 pub trait RISCVInstruction:
     std::fmt::Debug
     + Sized
@@ -378,7 +385,8 @@ pub trait RISCVInstruction:
     fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess);
 
     fn has_side_effects(&self) -> bool {
-        false
+        let instruction: NormalizedInstruction = (*self).into();
+        instruction.instruction_kind.has_side_effects()
     }
 }
 
@@ -400,14 +408,6 @@ where
         if let Some(trace_vec) = trace {
             trace_vec.push(cycle.into());
         }
-    }
-    // Default implementation. Instructions with inline sequences will override this.
-    fn inline_sequence(
-        &self,
-        _vr_allocator: &VirtualRegisterAllocator,
-        _xlen: Xlen,
-    ) -> Vec<Instruction> {
-        vec![(*self).into()]
     }
 }
 
@@ -633,26 +633,6 @@ macro_rules! define_rv32im_enums {
                 self.into()
             }
 
-            /// Copy this instruction with rd overwritten.  Uses
-            /// `InstructionFormat::set_rd` so the correct field is updated
-            /// for each format (e.g. FormatInline writes rs3).
-            fn with_rd(&self, new_rd: u8) -> Instruction {
-                match self {
-                    Instruction::NoOp => Instruction::NoOp,
-                    Instruction::UNIMPL => Instruction::UNIMPL,
-                    $(Instruction::$instr(instr) => {
-                        let mut copy = *instr;
-                        copy.operands.set_rd(new_rd);
-                        copy.into()
-                    },)*
-                    Instruction::INLINE(instr) => {
-                        let mut copy = *instr;
-                        copy.operands.set_rd(new_rd);
-                        copy.into()
-                    }
-                }
-            }
-
             pub fn has_side_effects(&self) -> bool {
                 match self {
                     Instruction::NoOp => false,
@@ -665,51 +645,44 @@ macro_rules! define_rv32im_enums {
             }
 
             pub fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
-                let normalized = self.normalize();
-                if normalized.operands.rd == Some(0) {
-                    // Delegate: these handle rd=0 internally
-                    if matches!(
-                        self,
-                        Instruction::ECALL(_)
-                            | Instruction::MRET(_)
-                            | Instruction::EBREAK(_)
-                            | Instruction::CSRRW(_)
-                            | Instruction::CSRRS(_)
-                    ) {
-                        return self.dispatch_inline_sequence(allocator, xlen);
-                    }
-
-                    // Remap rd to a virtual register for instructions with side effects
-                    if self.has_side_effects() {
-                        let vr = allocator.allocate();
-                        return self.with_rd(*vr).inline_sequence(allocator, xlen);
-                    }
-                    // No side effects beyond writing rd: replace with NOP
-                    let addi = ADDI::from(NormalizedInstruction {
-                        address: normalized.address,
-                        operands: NormalizedOperands {
-                            rd: Some(0),
-                            rs1: Some(0),
-                            rs2: None,
-                            imm: 0,
-                        },
-                        virtual_sequence_remaining: None,
-                        is_first_in_sequence: false,
-                        is_compressed: normalized.is_compressed,
-                    });
-                    return vec![addi.into()];
+                if let Instruction::INLINE(inline) = self {
+                    return inline.inline_sequence(allocator, xlen);
                 }
-                self.dispatch_inline_sequence(allocator, xlen)
+                let mut expansion_allocator = jolt_program::expand::ExpansionAllocator::new();
+                jolt_program::expand::expand_instruction(
+                    &self.normalize(),
+                    &mut expansion_allocator,
+                )
+                .expect("jolt-program bytecode expansion failed")
+                .into_iter()
+                .map(|instruction| {
+                    Instruction::try_from_normalized(instruction)
+                        .expect("jolt-program expansion produced an instruction unknown to tracer")
+                })
+                .collect()
             }
 
-            fn dispatch_inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
-                match self {
-                    Instruction::NoOp => vec![],
-                    Instruction::UNIMPL => vec![],
+            pub fn try_from_normalized(instruction: NormalizedInstruction) -> Result<Self, &'static str> {
+                match instruction.instruction_kind {
+                    InstructionKind::NoOp => Ok(Instruction::NoOp),
+                    InstructionKind::Unimpl => Ok(Instruction::UNIMPL),
                     $(
-                        Instruction::$instr(instr) => instr.inline_sequence(allocator, xlen),
+                        InstructionKind::$instr => Ok(<$instr as From<NormalizedInstruction>>::from(instruction).into()),
                     )*
-                    Instruction::INLINE(instr) => instr.inline_sequence(allocator, xlen),
+                    InstructionKind::Inline => {
+                        let metadata = instruction.operands.imm as u32;
+                        let inline = INLINE {
+                            opcode: metadata & 0x7f,
+                            funct3: (metadata >> 7) & 0x7,
+                            funct7: (metadata >> 10) & 0x7f,
+                            address: instruction.address as u64,
+                            operands: instruction.operands.into(),
+                            virtual_sequence_remaining: instruction.virtual_sequence_remaining,
+                            is_first_in_sequence: instruction.is_first_in_sequence,
+                            is_compressed: instruction.is_compressed,
+                        };
+                        Ok(inline.into())
+                    }
                 }
             }
 
@@ -754,6 +727,7 @@ macro_rules! define_rv32im_enums {
                     Instruction::UNIMPL => Default::default(),
                     $(
                         Instruction::$instr(instr) => NormalizedInstruction {
+                            instruction_kind: InstructionKind::$instr,
                             address: instr.address as usize,
                             operands: instr.operands.into(),
                             virtual_sequence_remaining: instr.virtual_sequence_remaining,
@@ -762,8 +736,13 @@ macro_rules! define_rv32im_enums {
                         },
                     )*
                     Instruction::INLINE(instr) => NormalizedInstruction {
+                        instruction_kind: InstructionKind::Inline,
                         address: instr.address as usize,
-                        operands: instr.operands.into(),
+                        operands: {
+                            let mut operands: NormalizedOperands = instr.operands.into();
+                            operands.imm = inline_metadata(instr.opcode, instr.funct3, instr.funct7);
+                            operands
+                        },
                         virtual_sequence_remaining: instr.virtual_sequence_remaining,
                         is_first_in_sequence: instr.is_first_in_sequence,
                         is_compressed: instr.is_compressed,
@@ -774,37 +753,10 @@ macro_rules! define_rv32im_enums {
     };
 }
 
-define_rv32im_enums! {
-    instructions: [
-        ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
-        CSRRS, CSRRW, DIV, DIVU,
-        EBREAK, ECALL, FENCE, JAL, JALR, LB, LBU, LD, LH, LHU, LUI, LW, MRET, MUL, MULH, MULHSU,
-        MULHU, OR, ORI, REM, REMU, SB, SD, SH, SLL, SLLI, SLT, SLTI, SLTIU, SLTU,
-        SRA, SRAI, SRL, SRLI, SUB, SW, XOR, XORI,
-        // RV64I
-        ADDIW, SLLIW, SRLIW, SRAIW, ADDW, SUBW, SLLW, SRLW, SRAW, LWU,
-        // RV64M
-        DIVUW, DIVW, MULW, REMUW, REMW,
-        // RV32A (Atomic Memory Operations)
-        LRW, SCW, AMOSWAPW, AMOADDW, AMOANDW, AMOORW, AMOXORW, AMOMINW, AMOMAXW, AMOMINUW, AMOMAXUW,
-        // RV64A (Atomic Memory Operations)
-        LRD, SCD, AMOSWAPD, AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOMIND, AMOMAXD, AMOMINUD, AMOMAXUD,
-        // Virtual
-        AdviceLB, AdviceLD, AdviceLH, AdviceLW,
-        VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad,
-        VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment, VirtualAssertLTE,
-        VirtualHostIO,
-        VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder, VirtualAssertMulUNoOverflow,
-        VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW,VirtualSW, VirtualZeroExtendWord,
-        VirtualSignExtendWord,VirtualPow2W, VirtualPow2IW,
-        VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualRev8W, VirtualROTRI,
-        VirtualROTRIW,
-        VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
-        VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
-        // XORROT
-        VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
-        VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
-    ]
+jolt_riscv::for_each_instruction_kind!(define_rv32im_enums);
+
+fn inline_metadata(opcode: u32, funct3: u32, funct7: u32) -> i128 {
+    (opcode | (funct3 << 7) | (funct7 << 10)) as i128
 }
 
 impl CanonicalSerialize for Instruction {

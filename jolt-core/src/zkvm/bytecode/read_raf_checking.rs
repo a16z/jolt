@@ -47,9 +47,10 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use common::constants::{REGISTER_COUNT, XLEN};
 use itertools::{zip_eq, Itertools};
+use jolt_riscv::NormalizedInstruction;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
-use tracer::instruction::{Cycle, Instruction};
+use tracer::instruction::Cycle;
 
 /// Number of batched read-checking sumchecks bespokely
 const N_STAGES: usize = 5;
@@ -243,7 +244,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
                             break;
                         }
 
-                        let pc = bytecode_preprocessing.get_pc(&trace[c]);
+                        let pc = super::get_pc_for_cycle(&bytecode_preprocessing, &trace[c]);
 
                         // Track touched PCs (avoid duplicates with a simple check)
                         if inner[0][pc].is_zero() {
@@ -309,7 +310,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
             .each_ref()
             .map(|r_cycle| GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh));
 
-        let pc_0 = bytecode_preprocessing.get_pc(&trace[0]);
+        let pc_0 = super::get_pc_for_cycle(&bytecode_preprocessing, &trace[0]);
         assert!(
             pc_0 < params.K,
             "pc_0 ({pc_0}) out of bounds for K ({})",
@@ -415,7 +416,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
                     .trace
                     .par_iter()
                     .map(|cycle| {
-                        let pc = self.bytecode_preprocessing.get_pc(cycle);
+                        let pc = super::get_pc_for_cycle(&self.bytecode_preprocessing, cycle);
                         Some(self.params.one_hot_params.bytecode_pc_chunk(pc, i))
                     })
                     .collect();
@@ -927,7 +928,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         let (_, raf_shift_claim) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
         let entry_gamma = gamma_powers[7];
-        let entry_bytecode_index = bytecode_preprocessing.entry_bytecode_index();
+        let entry_bytecode_index = super::entry_bytecode_index(bytecode_preprocessing);
         // Both prover and verifier add entry_gamma unconditionally.
         // The security comes from the sumcheck: if ra(entry_index, 0) != 1, the sum
         // won't match input_claim and the sumcheck fails.
@@ -1008,7 +1009,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
     /// and formula for Val(k).
     #[allow(clippy::too_many_arguments)]
     fn compute_val_polys(
-        bytecode: &[Instruction],
+        bytecode: &[NormalizedInstruction],
         eq_r_register_4: &[F],
         eq_r_register_5: &[F],
         stage1_gammas: &[F],
@@ -1032,7 +1033,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             .zip(v3.par_iter_mut())
             .zip(v4.par_iter_mut())
             .for_each(|(((((instruction, o0), o1), o2), o3), o4)| {
-                let instr = instruction.normalize();
+                let instr = *instruction;
                 let circuit_flags = instruction.circuit_flags();
                 let instr_flags = instruction.instruction_flags();
 
@@ -1148,8 +1149,8 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
                     if !circuit_flags.is_interleaved_operands() {
                         lc += stage5_gammas[1];
                     }
-                    if let Some(table) = instruction.lookup_table() {
-                        let table_index = LookupTables::enum_index(&table);
+                    if let Some(table) = InstructionLookup::<XLEN>::lookup_table(instruction) {
+                        let table_index = LookupTables::<XLEN>::enum_index(&table);
                         lc += stage5_gammas[2 + table_index];
                     }
                     *o4 = lc;

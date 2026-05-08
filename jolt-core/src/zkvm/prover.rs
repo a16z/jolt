@@ -3377,14 +3377,15 @@ mod tests {
         );
         let (proof, _) = prover.prove();
 
-        let original_entry_index = shared.bytecode.entry_bytecode_index();
+        let original_entry_index = crate::zkvm::bytecode::entry_bytecode_index(&shared.bytecode);
         // Tamper: give verifier a wrong entry_address so it computes a different
         // entry_bytecode_index and thus a different input_claim expectation.
         let mut tampered_shared = shared.clone();
         let mut tampered_bytecode = (*tampered_shared.bytecode).clone();
         tampered_bytecode.entry_address = e_entry.wrapping_add(4);
         tampered_shared.bytecode = Arc::new(tampered_bytecode);
-        let tampered_entry_index = tampered_shared.bytecode.entry_bytecode_index();
+        let tampered_entry_index =
+            crate::zkvm::bytecode::entry_bytecode_index(&tampered_shared.bytecode);
         assert_ne!(
             original_entry_index, tampered_entry_index,
             "tamper did not change entry_bytecode_index — test scenario is invalid"

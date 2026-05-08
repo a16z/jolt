@@ -1,7 +1,7 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
-use jolt_trace::instructions::AssertValidDiv0;
-use jolt_trace::JoltCycle;
+use jolt_riscv::instructions::AssertValidDiv0;
+use jolt_riscv::JoltCycle;
 
 impl_lookup_table!(AssertValidDiv0, Some(ValidDiv0));
 

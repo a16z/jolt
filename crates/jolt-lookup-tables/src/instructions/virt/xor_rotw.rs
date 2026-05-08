@@ -1,9 +1,9 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
-use jolt_trace::instructions::{
+use jolt_riscv::instructions::{
     VirtualXorRotW12, VirtualXorRotW16, VirtualXorRotW7, VirtualXorRotW8,
 };
-use jolt_trace::JoltCycle;
+use jolt_riscv::JoltCycle;
 
 impl_lookup_table!(VirtualXorRotW16, Some(VirtualXORROTW16));
 impl_lookup_table!(VirtualXorRotW12, Some(VirtualXORROTW12));

@@ -561,7 +561,8 @@ fn test_correctness<I: RISCVInstruction + RISCVTrace>(
     let mut cpu_expected = cpu.clone();
     expected(instr, &mut cpu_expected);
 
-    let seq = instr.inline_sequence(&allocator, xlen);
+    let instruction: Instruction = (*instr).into();
+    let seq = instruction.inline_sequence(&allocator, xlen);
     for instr in seq {
         symbolic_exec(&instr, &mut cpu);
     }
