@@ -3,7 +3,7 @@ use super::*;
 use common::constants::RAM_START_ADDRESS;
 
 fn instruction(
-    instruction_kind: InstructionKind,
+    instruction_kind: JoltInstructionKind,
     rd: Option<u8>,
     is_compressed: bool,
 ) -> NormalizedInstruction {
@@ -26,12 +26,12 @@ fn instruction(
 fn side_effect_free_rd_zero_becomes_noop_addi() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let expanded = expand_instruction(
-        &instruction(InstructionKind::ADD, Some(0), true),
+        &instruction(JoltInstructionKind::ADD, Some(0), true),
         &mut allocator,
     )?;
 
     assert_eq!(expanded.len(), 1);
-    assert_eq!(expanded[0].instruction_kind, InstructionKind::ADDI);
+    assert_eq!(expanded[0].instruction_kind, JoltInstructionKind::ADDI);
     assert_eq!(expanded[0].operands.rd, Some(0));
     assert_eq!(expanded[0].operands.rs1, Some(0));
     assert_eq!(expanded[0].operands.rs2, None);
@@ -44,12 +44,12 @@ fn side_effect_free_rd_zero_becomes_noop_addi() -> Result<(), ExpansionError> {
 fn side_effecting_rd_zero_rewrites_to_temporary_register() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let expanded = expand_instruction(
-        &instruction(InstructionKind::JAL, Some(0), false),
+        &instruction(JoltInstructionKind::JAL, Some(0), false),
         &mut allocator,
     )?;
 
     assert_eq!(expanded.len(), 1);
-    assert_eq!(expanded[0].instruction_kind, InstructionKind::JAL);
+    assert_eq!(expanded[0].instruction_kind, JoltInstructionKind::JAL);
     assert_eq!(expanded[0].operands.rd, Some(40));
     Ok(())
 }
@@ -57,19 +57,19 @@ fn side_effecting_rd_zero_rewrites_to_temporary_register() -> Result<(), Expansi
 #[test]
 fn trap_related_rd_zero_uses_instruction_expansion() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
-    let input = instruction(InstructionKind::ECALL, Some(0), false);
+    let input = instruction(JoltInstructionKind::ECALL, Some(0), false);
     let expanded = expand_instruction(&input, &mut allocator)?;
 
     assert_eq!(expanded.len(), 7);
-    assert_eq!(expanded[0].instruction_kind, InstructionKind::AUIPC);
-    assert_eq!(expanded[6].instruction_kind, InstructionKind::JALR);
+    assert_eq!(expanded[0].instruction_kind, JoltInstructionKind::AUIPC);
+    assert_eq!(expanded[6].instruction_kind, JoltInstructionKind::JALR);
     Ok(())
 }
 
 #[test]
 fn inline_requires_provider() {
     let mut allocator = ExpansionAllocator::new();
-    let input = instruction(InstructionKind::Inline, Some(3), false);
+    let input = instruction(JoltInstructionKind::Inline, Some(3), false);
 
     assert!(matches!(
         expand_instruction(&input, &mut allocator),
@@ -79,7 +79,7 @@ fn inline_requires_provider() {
 
 #[test]
 fn csr_zero_is_rejected() {
-    for instruction_kind in [InstructionKind::CSRRW, InstructionKind::CSRRS] {
+    for instruction_kind in [JoltInstructionKind::CSRRW, JoltInstructionKind::CSRRS] {
         let mut allocator = ExpansionAllocator::new();
         let mut input = instruction(instruction_kind, Some(3), false);
         input.operands.imm = 0;
@@ -94,10 +94,10 @@ fn csr_zero_is_rejected() {
 #[test]
 fn lr_sc_expansions_restrict_address_to_ram() -> Result<(), ExpansionError> {
     for instruction_kind in [
-        InstructionKind::LRW,
-        InstructionKind::LRD,
-        InstructionKind::SCW,
-        InstructionKind::SCD,
+        JoltInstructionKind::LRW,
+        JoltInstructionKind::LRD,
+        JoltInstructionKind::SCW,
+        JoltInstructionKind::SCD,
     ] {
         let mut allocator = ExpansionAllocator::new();
         let expanded = expand_instruction(
@@ -105,12 +105,12 @@ fn lr_sc_expansions_restrict_address_to_ram() -> Result<(), ExpansionError> {
             &mut allocator,
         )?;
 
-        assert_eq!(expanded[0].instruction_kind, InstructionKind::LUI);
+        assert_eq!(expanded[0].instruction_kind, JoltInstructionKind::LUI);
         assert_eq!(expanded[0].operands.rd, Some(40));
         assert_eq!(expanded[0].operands.imm, RAM_START_ADDRESS as i128);
         assert_eq!(
             expanded[1].instruction_kind,
-            InstructionKind::VirtualAssertLTE
+            JoltInstructionKind::VirtualAssertLTE
         );
         assert_eq!(expanded[1].operands.rs1, Some(40));
         assert_eq!(expanded[1].operands.rs2, Some(1));
@@ -120,15 +120,15 @@ fn lr_sc_expansions_restrict_address_to_ram() -> Result<(), ExpansionError> {
 
 #[test]
 fn sc_success_advice_is_not_position_dependent() -> Result<(), ExpansionError> {
-    for instruction_kind in [InstructionKind::SCW, InstructionKind::SCD] {
+    for instruction_kind in [JoltInstructionKind::SCW, JoltInstructionKind::SCD] {
         let mut allocator = ExpansionAllocator::new();
         let expanded = expand_instruction(
             &instruction(instruction_kind, Some(3), false),
             &mut allocator,
         )?;
-        let advice_position = expanded
-            .iter()
-            .position(|instruction| instruction.instruction_kind == InstructionKind::VirtualAdvice);
+        let advice_position = expanded.iter().position(|instruction| {
+            instruction.instruction_kind == JoltInstructionKind::VirtualAdvice
+        });
 
         assert!(
             matches!(advice_position, Some(position) if position > 1),
@@ -157,7 +157,7 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
     }
 
     let input = NormalizedInstruction {
-        instruction_kind: InstructionKind::Inline,
+        instruction_kind: JoltInstructionKind::Inline,
         address: 0x8000_0000,
         operands: NormalizedOperands {
             rd: Some(0),

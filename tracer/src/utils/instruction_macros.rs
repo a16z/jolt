@@ -89,7 +89,7 @@ macro_rules! declare_riscv_instr {
         impl From<$name> for $crate::instruction::NormalizedInstruction {
             fn from(instr: $name) -> $crate::instruction::NormalizedInstruction {
                 $crate::instruction::NormalizedInstruction {
-                    instruction_kind: ::jolt_riscv::InstructionKind::$name,
+                    instruction_kind: ::jolt_riscv::JoltInstructionKind::$name,
                     address: instr.address as usize,
                     operands: instr.operands.into(),
                     is_compressed: instr.is_compressed,

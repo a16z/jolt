@@ -1527,7 +1527,7 @@ impl RiscvInstructionKind {
 }
 
 impl JoltInstructionKind {
-    pub const fn lookup_kind(self) -> Option<LookupInstructionKind>;
+    pub fn lookup_kind(self) -> Option<LookupInstructionKind>;
 }
 ```
 
@@ -1543,6 +1543,13 @@ overlapping unclear meanings. Either `JoltInstructions<T>` becomes a typed view
 over the chosen Jolt bytecode kind, or it is renamed/narrowed so it no longer
 sounds like "all instructions provable by Jolt" when it actually contains a
 mixed subset.
+
+Implementation direction for this PR: use the first option. The flat serialized
+row discriminant is `JoltInstructionKind`; RV64 decode tables produce
+`RiscvInstructionKind` and lower that into normalized `JoltInstructionKind`
+rows; the typed metadata view formerly called `JoltInstructions` is now
+`LookupInstruction`, with `LookupInstructionKind` available through
+`JoltInstructionKind::lookup_kind()`.
 
 Phase 2 should include these tests and checks:
 
@@ -1850,13 +1857,13 @@ Do not leave both expanders in production. A temporary test-only reference path 
       and the remaining tracer image/load boundary.
 - [ ] RV32-only tests and stale docs/comments are removed or rewritten, while
       RV64 word-op and RV64 compressed-instruction coverage remains.
-- [ ] Source-level instruction identity, expanded Jolt bytecode row identity,
+- [x] Source-level instruction identity, expanded Jolt bytecode row identity,
       and lookup-backed instruction identity have distinct names/types or
       explicit conversion APIs.
-- [ ] The `InstructionKind` / `JoltInstructions<T>` relationship is resolved so
+- [x] The `InstructionKind` / `JoltInstructions<T>` relationship is resolved so
       the code no longer has two overlapping concepts with unclear phase
       ownership.
-- [ ] Lookup-table routing uses `LookupInstructionKind` or an equivalent
+- [x] Lookup-table routing uses `LookupInstructionKind` or an equivalent
       explicit subset API such as `JoltInstructionKind::lookup_kind()`.
 - [ ] `jolt-program::expand` no longer has a production `InstrAssembler<'a>` that stores a borrowed allocator.
 - [ ] Expansion recipes are represented as syntactic lowering data or shallow operations; the grammar does not model instruction execution semantics.

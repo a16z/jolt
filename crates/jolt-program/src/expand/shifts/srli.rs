@@ -9,7 +9,7 @@ pub(in crate::expand) fn expand_srli(
     let mut asm =
         assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
     asm.emit_i(
-        InstructionKind::VirtualSRLI,
+        JoltInstructionKind::VirtualSRLI,
         rd(instruction)?,
         rs1(instruction)?,
         bitmask as i128,

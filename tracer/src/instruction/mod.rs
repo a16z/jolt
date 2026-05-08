@@ -156,7 +156,7 @@ use crate::emulator::cpu::{Cpu, Xlen};
 use crate::utils::virtual_registers::{is_supported_csr, VirtualRegisterAllocator};
 use derive_more::From;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
-use jolt_riscv::InstructionKind;
+use jolt_riscv::JoltInstructionKind;
 pub use jolt_riscv::NormalizedInstruction;
 
 pub mod format;
@@ -664,12 +664,12 @@ macro_rules! define_rv64imac_enums {
 
             pub fn try_from_normalized(instruction: NormalizedInstruction) -> Result<Self, &'static str> {
                 match instruction.instruction_kind {
-                    InstructionKind::NoOp => Ok(Instruction::NoOp),
-                    InstructionKind::Unimpl => Ok(Instruction::UNIMPL),
+                    JoltInstructionKind::NoOp => Ok(Instruction::NoOp),
+                    JoltInstructionKind::Unimpl => Ok(Instruction::UNIMPL),
                     $(
-                        InstructionKind::$instr => Ok(<$instr as From<NormalizedInstruction>>::from(instruction).into()),
+                        JoltInstructionKind::$instr => Ok(<$instr as From<NormalizedInstruction>>::from(instruction).into()),
                     )*
-                    InstructionKind::Inline => {
+                    JoltInstructionKind::Inline => {
                         let metadata = instruction.operands.imm as u32;
                         let inline = INLINE {
                             opcode: metadata & 0x7f,
@@ -727,7 +727,7 @@ macro_rules! define_rv64imac_enums {
                     Instruction::UNIMPL => Default::default(),
                     $(
                         Instruction::$instr(instr) => NormalizedInstruction {
-                            instruction_kind: InstructionKind::$instr,
+                            instruction_kind: JoltInstructionKind::$instr,
                             address: instr.address as usize,
                             operands: instr.operands.into(),
                             virtual_sequence_remaining: instr.virtual_sequence_remaining,
@@ -736,7 +736,7 @@ macro_rules! define_rv64imac_enums {
                         },
                     )*
                     Instruction::INLINE(instr) => NormalizedInstruction {
-                        instruction_kind: InstructionKind::Inline,
+                        instruction_kind: JoltInstructionKind::Inline,
                         address: instr.address as usize,
                         operands: {
                             let mut operands: NormalizedOperands = instr.operands.into();

@@ -20,7 +20,7 @@ macro_rules! define_instruction_kind {
             Deserialize,
         )]
         #[repr(u16)]
-        pub enum InstructionKind {
+        pub enum RiscvInstructionKind {
             #[default]
             NoOp,
             Unimpl,
@@ -30,7 +30,59 @@ macro_rules! define_instruction_kind {
             Inline,
         }
 
-        impl CanonicalSerialize for InstructionKind {
+        #[derive(
+            Default,
+            Debug,
+            Clone,
+            Copy,
+            PartialEq,
+            Eq,
+            Hash,
+            Serialize,
+            Deserialize,
+        )]
+        #[repr(u16)]
+        pub enum JoltInstructionKind {
+            #[default]
+            NoOp,
+            Unimpl,
+            $(
+                $instr,
+            )*
+            Inline,
+        }
+
+
+
+        impl RiscvInstructionKind {
+            pub const fn name(self) -> &'static str {
+                match self {
+                    Self::NoOp => "NoOp",
+                    Self::Unimpl => "Unimpl",
+                    $(
+                        Self::$instr => stringify!($instr),
+                    )*
+                    Self::Inline => "Inline",
+                }
+            }
+
+            pub const fn jolt_kind(self) -> JoltInstructionKind {
+                match self {
+                    Self::NoOp => JoltInstructionKind::NoOp,
+                    Self::Unimpl => JoltInstructionKind::Unimpl,
+                    $(
+                        Self::$instr => JoltInstructionKind::$instr,
+                    )*
+                    Self::Inline => JoltInstructionKind::Inline,
+                }
+            }
+
+            pub const fn expands_to_jolt(self) -> bool {
+                !matches!(self, Self::NoOp | Self::Unimpl)
+            }
+        }
+
+        impl CanonicalSerialize for JoltInstructionKind {
             fn serialize_with_mode<W: Write>(
                 &self,
                 writer: W,
@@ -44,7 +96,7 @@ macro_rules! define_instruction_kind {
             }
         }
 
-        impl CanonicalDeserialize for InstructionKind {
+        impl CanonicalDeserialize for JoltInstructionKind {
             fn deserialize_with_mode<R: Read>(
                 reader: R,
                 compress: Compress,
@@ -63,13 +115,13 @@ macro_rules! define_instruction_kind {
             }
         }
 
-        impl Valid for InstructionKind {
+        impl Valid for JoltInstructionKind {
             fn check(&self) -> Result<(), SerializationError> {
                 Ok(())
             }
         }
 
-        impl InstructionKind {
+        impl JoltInstructionKind {
             pub const fn name(self) -> &'static str {
                 match self {
                     Self::NoOp => "NoOp",
@@ -79,6 +131,16 @@ macro_rules! define_instruction_kind {
                     )*
                     Self::Inline => "Inline",
                 }
+            }
+
+            pub fn lookup_kind(self) -> Option<crate::LookupInstructionKind> {
+                let row = crate::NormalizedInstruction {
+                    instruction_kind: self,
+                    ..Default::default()
+                };
+                crate::LookupInstruction::try_from(row)
+                    .ok()
+                    .map(|instruction| instruction.kind())
             }
 
             pub const fn has_side_effects(self) -> bool {

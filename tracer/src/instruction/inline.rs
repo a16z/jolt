@@ -257,7 +257,7 @@ impl From<INLINE> for NormalizedInstruction {
         let mut operands: NormalizedOperands = instr.operands.into();
         operands.imm = (instr.opcode | (instr.funct3 << 7) | (instr.funct7 << 10)) as i128;
         NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Inline,
+            instruction_kind: jolt_riscv::JoltInstructionKind::Inline,
             address: instr.address as usize,
             operands,
             virtual_sequence_remaining: instr.virtual_sequence_remaining,

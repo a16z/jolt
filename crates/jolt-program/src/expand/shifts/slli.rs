@@ -8,7 +8,7 @@ pub(in crate::expand) fn expand_slli(
     let mut asm =
         assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
     asm.emit_i(
-        InstructionKind::VirtualMULI,
+        JoltInstructionKind::VirtualMULI,
         rd(instruction)?,
         rs1(instruction)?,
         1i128 << shift,

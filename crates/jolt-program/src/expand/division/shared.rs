@@ -27,20 +27,20 @@ pub(in crate::expand) fn expand_signed_div_rem(
     let mut asm =
         assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
 
-    asm.emit_j(InstructionKind::VirtualAdvice, a2, 0)?;
-    asm.emit_j(InstructionKind::VirtualAdvice, a3, 0)?;
+    asm.emit_j(JoltInstructionKind::VirtualAdvice, a2, 0)?;
+    asm.emit_j(JoltInstructionKind::VirtualAdvice, a3, 0)?;
 
     if word {
-        asm.emit_i(InstructionKind::VirtualSignExtendWord, dividend, a0, 0)?;
-        asm.emit_i(InstructionKind::VirtualSignExtendWord, divisor, a1, 0)?;
+        asm.emit_i(JoltInstructionKind::VirtualSignExtendWord, dividend, a0, 0)?;
+        asm.emit_i(JoltInstructionKind::VirtualSignExtendWord, divisor, a1, 0)?;
     }
 
-    asm.emit_b(InstructionKind::VirtualAssertValidDiv0, divisor, a2, 0)?;
+    asm.emit_b(JoltInstructionKind::VirtualAssertValidDiv0, divisor, a2, 0)?;
     asm.emit_r(
         if word {
-            InstructionKind::VirtualChangeDivisorW
+            JoltInstructionKind::VirtualChangeDivisorW
         } else {
-            InstructionKind::VirtualChangeDivisor
+            JoltInstructionKind::VirtualChangeDivisor
         },
         t0,
         dividend,
@@ -48,64 +48,64 @@ pub(in crate::expand) fn expand_signed_div_rem(
     )?;
 
     if word {
-        asm.emit_i(InstructionKind::VirtualSignExtendWord, t1, a2, 0)?;
-        asm.emit_b(InstructionKind::VirtualAssertEQ, t1, a2, 0)?;
-        asm.emit_i(InstructionKind::SRAI, t2, a3, 32)?;
-        asm.emit_b(InstructionKind::VirtualAssertEQ, t2, 0, 0)?;
+        asm.emit_i(JoltInstructionKind::VirtualSignExtendWord, t1, a2, 0)?;
+        asm.emit_b(JoltInstructionKind::VirtualAssertEQ, t1, a2, 0)?;
+        asm.emit_i(JoltInstructionKind::SRAI, t2, a3, 32)?;
+        asm.emit_b(JoltInstructionKind::VirtualAssertEQ, t2, 0, 0)?;
     } else {
-        asm.emit_r(InstructionKind::MULH, t1, a2, t0)?;
+        asm.emit_r(JoltInstructionKind::MULH, t1, a2, t0)?;
         t2 = asm.allocator().allocate()?;
         t3 = asm.allocator().allocate()?;
-        asm.emit_r(InstructionKind::MUL, t2, a2, t0)?;
-        asm.emit_i(InstructionKind::SRAI, t3, t2, shmat)?;
-        asm.emit_b(InstructionKind::VirtualAssertEQ, t1, t3, 0)?;
+        asm.emit_r(JoltInstructionKind::MUL, t2, a2, t0)?;
+        asm.emit_i(JoltInstructionKind::SRAI, t3, t2, shmat)?;
+        asm.emit_b(JoltInstructionKind::VirtualAssertEQ, t1, t3, 0)?;
     }
 
     if word {
-        asm.emit_i(InstructionKind::SRAI, t2, dividend, shmat)?;
-        asm.emit_r(InstructionKind::XOR, t3, a3, t2)?;
-        asm.emit_r(InstructionKind::SUB, t3, t3, t2)?;
-        asm.emit_r(InstructionKind::MUL, t1, a2, t0)?;
-        asm.emit_r(InstructionKind::ADD, t1, t1, t3)?;
-        asm.emit_b(InstructionKind::VirtualAssertEQ, t1, dividend, 0)?;
-        asm.emit_i(InstructionKind::SRAI, t2, t0, 31)?;
-        asm.emit_r(InstructionKind::XOR, t1, t0, t2)?;
-        asm.emit_r(InstructionKind::SUB, t1, t1, t2)?;
+        asm.emit_i(JoltInstructionKind::SRAI, t2, dividend, shmat)?;
+        asm.emit_r(JoltInstructionKind::XOR, t3, a3, t2)?;
+        asm.emit_r(JoltInstructionKind::SUB, t3, t3, t2)?;
+        asm.emit_r(JoltInstructionKind::MUL, t1, a2, t0)?;
+        asm.emit_r(JoltInstructionKind::ADD, t1, t1, t3)?;
+        asm.emit_b(JoltInstructionKind::VirtualAssertEQ, t1, dividend, 0)?;
+        asm.emit_i(JoltInstructionKind::SRAI, t2, t0, 31)?;
+        asm.emit_r(JoltInstructionKind::XOR, t1, t0, t2)?;
+        asm.emit_r(JoltInstructionKind::SUB, t1, t1, t2)?;
         asm.emit_b(
-            InstructionKind::VirtualAssertValidUnsignedRemainder,
+            JoltInstructionKind::VirtualAssertValidUnsignedRemainder,
             a3,
             t1,
             0,
         )?;
         asm.emit_i(
-            InstructionKind::VirtualSignExtendWord,
+            JoltInstructionKind::VirtualSignExtendWord,
             rd(instruction)?,
             if remainder_output { t3 } else { a2 },
             0,
         )?;
     } else {
-        asm.emit_i(InstructionKind::SRAI, t1, dividend, shmat)?;
-        asm.emit_r(InstructionKind::XOR, t3, a3, t1)?;
-        asm.emit_r(InstructionKind::SUB, t3, t3, t1)?;
-        asm.emit_r(InstructionKind::ADD, t2, t2, t3)?;
-        asm.emit_b(InstructionKind::VirtualAssertEQ, t2, a0, 0)?;
-        asm.emit_i(InstructionKind::SRAI, t1, t0, shmat)?;
+        asm.emit_i(JoltInstructionKind::SRAI, t1, dividend, shmat)?;
+        asm.emit_r(JoltInstructionKind::XOR, t3, a3, t1)?;
+        asm.emit_r(JoltInstructionKind::SUB, t3, t3, t1)?;
+        asm.emit_r(JoltInstructionKind::ADD, t2, t2, t3)?;
+        asm.emit_b(JoltInstructionKind::VirtualAssertEQ, t2, a0, 0)?;
+        asm.emit_i(JoltInstructionKind::SRAI, t1, t0, shmat)?;
         asm.emit_r(
-            InstructionKind::XOR,
+            JoltInstructionKind::XOR,
             if remainder_output { t2 } else { t3 },
             t0,
             t1,
         )?;
         let abs_divisor = if remainder_output { t2 } else { t3 };
-        asm.emit_r(InstructionKind::SUB, abs_divisor, abs_divisor, t1)?;
+        asm.emit_r(JoltInstructionKind::SUB, abs_divisor, abs_divisor, t1)?;
         asm.emit_b(
-            InstructionKind::VirtualAssertValidUnsignedRemainder,
+            JoltInstructionKind::VirtualAssertValidUnsignedRemainder,
             a3,
             abs_divisor,
             0,
         )?;
         asm.emit_i(
-            InstructionKind::ADDI,
+            JoltInstructionKind::ADDI,
             rd(instruction)?,
             if remainder_output { t3 } else { a2 },
             0,
@@ -141,49 +141,49 @@ pub(in crate::expand) fn expand_unsigned_word_div_rem(
     let mut asm =
         assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
     asm.emit_i(
-        InstructionKind::VirtualZeroExtendWord,
+        JoltInstructionKind::VirtualZeroExtendWord,
         rs1_extended,
         rs1(instruction)?,
         0,
     )?;
     asm.emit_i(
-        InstructionKind::VirtualZeroExtendWord,
+        JoltInstructionKind::VirtualZeroExtendWord,
         rs2_extended,
         rs2(instruction)?,
         0,
     )?;
-    asm.emit_j(InstructionKind::VirtualAdvice, quotient, 0)?;
+    asm.emit_j(JoltInstructionKind::VirtualAdvice, quotient, 0)?;
     asm.emit_b(
-        InstructionKind::VirtualAssertMulUNoOverflow,
+        JoltInstructionKind::VirtualAssertMulUNoOverflow,
         quotient,
         rs2_extended,
         0,
     )?;
-    asm.emit_r(InstructionKind::MUL, tmp, quotient, rs2_extended)?;
-    asm.emit_b(InstructionKind::VirtualAssertLTE, tmp, rs1_extended, 0)?;
-    asm.emit_r(InstructionKind::SUB, tmp, rs1_extended, tmp)?;
+    asm.emit_r(JoltInstructionKind::MUL, tmp, quotient, rs2_extended)?;
+    asm.emit_b(JoltInstructionKind::VirtualAssertLTE, tmp, rs1_extended, 0)?;
+    asm.emit_r(JoltInstructionKind::SUB, tmp, rs1_extended, tmp)?;
     asm.emit_b(
-        InstructionKind::VirtualAssertValidUnsignedRemainder,
+        JoltInstructionKind::VirtualAssertValidUnsignedRemainder,
         tmp,
         rs2_extended,
         0,
     )?;
     if remainder_output {
         asm.emit_i(
-            InstructionKind::VirtualSignExtendWord,
+            JoltInstructionKind::VirtualSignExtendWord,
             rd(instruction)?,
             tmp,
             0,
         )?;
     } else {
-        asm.emit_i(InstructionKind::VirtualSignExtendWord, tmp, quotient, 0)?;
+        asm.emit_i(JoltInstructionKind::VirtualSignExtendWord, tmp, quotient, 0)?;
         asm.emit_b(
-            InstructionKind::VirtualAssertValidDiv0,
+            JoltInstructionKind::VirtualAssertValidDiv0,
             rs2_extended,
             tmp,
             0,
         )?;
-        asm.emit_i(InstructionKind::ADDI, rd(instruction)?, tmp, 0)?;
+        asm.emit_i(JoltInstructionKind::ADDI, rd(instruction)?, tmp, 0)?;
     }
     let sequence = asm.finalize()?;
     allocator.release(rs1_extended)?;

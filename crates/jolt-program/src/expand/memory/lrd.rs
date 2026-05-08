@@ -9,8 +9,23 @@ pub(in crate::expand) fn expand_lrd(
     let mut asm =
         assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
     super::shared::emit_ram_region_assertion(&mut asm, rs1(instruction)?)?;
-    asm.emit_i(InstructionKind::ADDI, v_reservation_d, rs1(instruction)?, 0)?;
-    asm.emit_i(InstructionKind::ADDI, v_reservation_w, rs1(instruction)?, 0)?;
-    asm.emit_i(InstructionKind::LD, rd(instruction)?, rs1(instruction)?, 0)?;
+    asm.emit_i(
+        JoltInstructionKind::ADDI,
+        v_reservation_d,
+        rs1(instruction)?,
+        0,
+    )?;
+    asm.emit_i(
+        JoltInstructionKind::ADDI,
+        v_reservation_w,
+        rs1(instruction)?,
+        0,
+    )?;
+    asm.emit_i(
+        JoltInstructionKind::LD,
+        rd(instruction)?,
+        rs1(instruction)?,
+        0,
+    )?;
     asm.finalize()
 }

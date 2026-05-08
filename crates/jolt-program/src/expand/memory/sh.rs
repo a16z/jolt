@@ -8,6 +8,6 @@ pub(in crate::expand) fn expand_sh(
         instruction,
         allocator,
         0xffff,
-        Some(InstructionKind::VirtualAssertHalfwordAlignment),
+        Some(JoltInstructionKind::VirtualAssertHalfwordAlignment),
     )
 }

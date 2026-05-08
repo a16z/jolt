@@ -7,13 +7,13 @@ pub(in crate::expand) fn expand_addiw(
     let mut asm =
         assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
     asm.emit_i(
-        InstructionKind::ADDI,
+        JoltInstructionKind::ADDI,
         rd(instruction)?,
         rs1(instruction)?,
         instruction.operands.imm,
     )?;
     asm.emit_i(
-        InstructionKind::VirtualSignExtendWord,
+        JoltInstructionKind::VirtualSignExtendWord,
         rd(instruction)?,
         rd(instruction)?,
         0,

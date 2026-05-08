@@ -1,6 +1,6 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
-use jolt_riscv::{InstructionKind, NormalizedInstruction};
+use jolt_riscv::{JoltInstructionKind, NormalizedInstruction};
 
 use crate::preprocess::PreprocessingError;
 
@@ -47,7 +47,7 @@ impl BytecodePreprocessing {
     }
 
     pub fn get_pc(&self, instruction: &NormalizedInstruction) -> Option<usize> {
-        if instruction.instruction_kind == InstructionKind::NoOp {
+        if instruction.instruction_kind == JoltInstructionKind::NoOp {
             return Some(0);
         }
         self.pc_map.get_pc(
@@ -164,7 +164,7 @@ impl BytecodePCMapper {
 
 const fn noop_instruction() -> NormalizedInstruction {
     NormalizedInstruction {
-        instruction_kind: InstructionKind::NoOp,
+        instruction_kind: JoltInstructionKind::NoOp,
         address: 0,
         operands: jolt_riscv::NormalizedOperands {
             rs1: None,
@@ -181,7 +181,7 @@ const fn noop_instruction() -> NormalizedInstruction {
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
-    use jolt_riscv::{InstructionKind, NormalizedInstruction, NormalizedOperands};
+    use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
 
     use super::{BytecodePCMapper, BytecodePreprocessing, PreprocessingError};
 
@@ -194,7 +194,7 @@ mod tests {
         assert_eq!(preprocessing.code_size, 2);
         assert_eq!(
             preprocessing.bytecode[0].instruction_kind,
-            InstructionKind::NoOp
+            JoltInstructionKind::NoOp
         );
         assert_eq!(preprocessing.entry_bytecode_index(), Some(1));
     }
@@ -269,7 +269,7 @@ mod tests {
         virtual_sequence_remaining: Option<u16>,
     ) -> NormalizedInstruction {
         NormalizedInstruction {
-            instruction_kind: InstructionKind::ADDI,
+            instruction_kind: JoltInstructionKind::ADDI,
             address,
             operands: NormalizedOperands {
                 rd: Some(1),

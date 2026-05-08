@@ -8,13 +8,13 @@ pub(in crate::expand) fn expand_slliw(
     let mut asm =
         assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
     asm.emit_i(
-        InstructionKind::VirtualMULI,
+        JoltInstructionKind::VirtualMULI,
         rd(instruction)?,
         rs1(instruction)?,
         1i128 << shift,
     )?;
     asm.emit_i(
-        InstructionKind::VirtualSignExtendWord,
+        JoltInstructionKind::VirtualSignExtendWord,
         rd(instruction)?,
         rd(instruction)?,
         0,

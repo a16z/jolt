@@ -10,19 +10,19 @@ pub(in crate::expand) fn expand_srliw(
     let mut asm =
         assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
     asm.emit_i(
-        InstructionKind::VirtualMULI,
+        JoltInstructionKind::VirtualMULI,
         v_rs1,
         rs1(instruction)?,
         1i128 << 32,
     )?;
     asm.emit_i(
-        InstructionKind::VirtualSRLI,
+        JoltInstructionKind::VirtualSRLI,
         rd(instruction)?,
         v_rs1,
         bitmask as i128,
     )?;
     asm.emit_i(
-        InstructionKind::VirtualSignExtendWord,
+        JoltInstructionKind::VirtualSignExtendWord,
         rd(instruction)?,
         rd(instruction)?,
         0,

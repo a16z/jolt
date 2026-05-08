@@ -38,7 +38,7 @@ mod flags {
     use crate::zkvm::instruction::{Flags, InstructionFlags, SupportedInstruction};
 
     use super::CircuitFlags;
-    use jolt_riscv::{InstructionKind, NormalizedInstruction, NormalizedOperands};
+    use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
     use strum::IntoEnumIterator;
     use tracer::instruction::{Cycle, Instruction};
 
@@ -145,7 +145,7 @@ mod flags {
     #[test]
     fn concrete_terminal_virtual_flags_match_normalized_flags() {
         let normalized = NormalizedInstruction {
-            instruction_kind: InstructionKind::ADDI,
+            instruction_kind: JoltInstructionKind::ADDI,
             address: 0x8000_0000,
             operands: NormalizedOperands {
                 rd: Some(1),

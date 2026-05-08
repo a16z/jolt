@@ -1,5 +1,5 @@
 use common::constants::{RISCV_REGISTER_COUNT, VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT};
-use jolt_riscv::{InstructionKind, NormalizedInstruction, NormalizedOperands};
+use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
 
 use crate::expand::{allocator::ExpansionAllocator, expand_instruction, ExpansionError};
 
@@ -49,7 +49,7 @@ impl<'a> InstrAssembler<'a> {
 
     pub fn emit(
         &mut self,
-        instruction_kind: InstructionKind,
+        instruction_kind: JoltInstructionKind,
         operands: NormalizedOperands,
     ) -> Result<(), ExpansionError> {
         if self.has_inline_instr_format {
@@ -70,7 +70,7 @@ impl<'a> InstrAssembler<'a> {
 
     pub fn emit_r(
         &mut self,
-        instruction_kind: InstructionKind,
+        instruction_kind: JoltInstructionKind,
         rd: u8,
         rs1: u8,
         rs2: u8,
@@ -88,7 +88,7 @@ impl<'a> InstrAssembler<'a> {
 
     pub fn emit_i(
         &mut self,
-        instruction_kind: InstructionKind,
+        instruction_kind: JoltInstructionKind,
         rd: u8,
         rs1: u8,
         imm: i128,
@@ -106,7 +106,7 @@ impl<'a> InstrAssembler<'a> {
 
     pub fn emit_s(
         &mut self,
-        instruction_kind: InstructionKind,
+        instruction_kind: JoltInstructionKind,
         rs1: u8,
         rs2: u8,
         imm: i128,
@@ -124,7 +124,7 @@ impl<'a> InstrAssembler<'a> {
 
     pub fn emit_b(
         &mut self,
-        instruction_kind: InstructionKind,
+        instruction_kind: JoltInstructionKind,
         rs1: u8,
         rs2: u8,
         imm: i128,
@@ -142,7 +142,7 @@ impl<'a> InstrAssembler<'a> {
 
     pub fn emit_j(
         &mut self,
-        instruction_kind: InstructionKind,
+        instruction_kind: JoltInstructionKind,
         rd: u8,
         imm: i128,
     ) -> Result<(), ExpansionError> {
@@ -159,7 +159,7 @@ impl<'a> InstrAssembler<'a> {
 
     pub fn emit_u(
         &mut self,
-        instruction_kind: InstructionKind,
+        instruction_kind: JoltInstructionKind,
         rd: u8,
         imm: i128,
     ) -> Result<(), ExpansionError> {
@@ -176,7 +176,7 @@ impl<'a> InstrAssembler<'a> {
 
     pub fn emit_align(
         &mut self,
-        instruction_kind: InstructionKind,
+        instruction_kind: JoltInstructionKind,
         rs1: u8,
         imm: i128,
     ) -> Result<(), ExpansionError> {
@@ -198,7 +198,7 @@ impl<'a> InstrAssembler<'a> {
 
     pub fn finalize_inline(mut self) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
         for register in self.allocator.take_registers_for_reset()? {
-            self.emit_i(InstructionKind::ADDI, register, 0, 0)?;
+            self.emit_i(JoltInstructionKind::ADDI, register, 0, 0)?;
         }
         self.finalize()
     }
@@ -253,8 +253,8 @@ mod tests {
     fn finalizes_sequence_metadata() -> Result<(), ExpansionError> {
         let mut allocator = ExpansionAllocator::new();
         let mut assembler = InstrAssembler::new(0x8000_0000, true, &mut allocator);
-        assembler.emit_i(InstructionKind::ADDI, 1, 2, 3)?;
-        assembler.emit_r(InstructionKind::ADD, 4, 5, 6)?;
+        assembler.emit_i(JoltInstructionKind::ADDI, 1, 2, 3)?;
+        assembler.emit_r(JoltInstructionKind::ADD, 4, 5, 6)?;
 
         let sequence = assembler.finalize()?;
         assert_eq!(sequence[0].virtual_sequence_remaining, Some(1));
@@ -272,7 +272,7 @@ mod tests {
         let mut assembler = InstrAssembler::new_inline(0x8000_0000, false, &mut allocator);
 
         assert!(matches!(
-            assembler.emit_i(InstructionKind::ADDI, 1, 0, 0),
+            assembler.emit_i(JoltInstructionKind::ADDI, 1, 0, 0),
             Err(ExpansionError::InvalidInlineWriteTarget {
                 register: 1,
                 minimum_register: 40
@@ -287,13 +287,13 @@ mod tests {
         allocator.release(register)?;
 
         let mut assembler = InstrAssembler::new_inline(0x8000_0000, false, &mut allocator);
-        assembler.emit_i(InstructionKind::ADDI, register, 0, 7)?;
+        assembler.emit_i(JoltInstructionKind::ADDI, register, 0, 7)?;
         let sequence = assembler.finalize_inline()?;
 
         assert_eq!(sequence.len(), 2);
         assert_eq!(sequence[0].operands.rd, Some(register));
         assert_eq!(sequence[0].operands.imm, 7);
-        assert_eq!(sequence[1].instruction_kind, InstructionKind::ADDI);
+        assert_eq!(sequence[1].instruction_kind, JoltInstructionKind::ADDI);
         assert_eq!(sequence[1].operands.rd, Some(register));
         assert_eq!(sequence[1].operands.imm, 0);
         Ok(())

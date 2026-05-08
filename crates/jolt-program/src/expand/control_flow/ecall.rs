@@ -15,20 +15,25 @@ pub(in crate::expand) fn expand_ecall(
         assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
 
     let ecall_addr = asm.allocator().allocate()?;
-    asm.emit_u(InstructionKind::AUIPC, ecall_addr, 0)?;
-    asm.emit_i(InstructionKind::ADDI, vr_mepc, ecall_addr, 0)?;
+    asm.emit_u(JoltInstructionKind::AUIPC, ecall_addr, 0)?;
+    asm.emit_i(JoltInstructionKind::ADDI, vr_mepc, ecall_addr, 0)?;
     asm.allocator().release(ecall_addr)?;
 
-    asm.emit_i(InstructionKind::ADDI, vr_mcause, 0, MCAUSE_ECALL_FROM_MMODE)?;
-    asm.emit_i(InstructionKind::ADDI, vr_mtval, 0, 0)?;
+    asm.emit_i(
+        JoltInstructionKind::ADDI,
+        vr_mcause,
+        0,
+        MCAUSE_ECALL_FROM_MMODE,
+    )?;
+    asm.emit_i(JoltInstructionKind::ADDI, vr_mtval, 0, 0)?;
 
     let three = asm.allocator().allocate()?;
-    asm.emit_i(InstructionKind::ADDI, three, 0, 3)?;
-    asm.emit_i(InstructionKind::SLLI, vr_mstatus, three, 11)?;
+    asm.emit_i(JoltInstructionKind::ADDI, three, 0, 3)?;
+    asm.emit_i(JoltInstructionKind::SLLI, vr_mstatus, three, 11)?;
     asm.allocator().release(three)?;
 
     let jalr_rd = asm.allocator().allocate()?;
-    asm.emit_i(InstructionKind::JALR, jalr_rd, v_trap_handler_reg, 0)?;
+    asm.emit_i(JoltInstructionKind::JALR, jalr_rd, v_trap_handler_reg, 0)?;
     asm.allocator().release(jalr_rd)?;
 
     asm.finalize()

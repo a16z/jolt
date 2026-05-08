@@ -9,26 +9,31 @@ pub(in crate::expand) fn expand_sraw(
     let mut asm =
         assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
     asm.emit_i(
-        InstructionKind::VirtualSignExtendWord,
+        JoltInstructionKind::VirtualSignExtendWord,
         v_rs1,
         rs1(instruction)?,
         0,
     )?;
-    asm.emit_i(InstructionKind::ANDI, v_bitmask, rs2(instruction)?, 0x1f)?;
     asm.emit_i(
-        InstructionKind::VirtualShiftRightBitmask,
+        JoltInstructionKind::ANDI,
+        v_bitmask,
+        rs2(instruction)?,
+        0x1f,
+    )?;
+    asm.emit_i(
+        JoltInstructionKind::VirtualShiftRightBitmask,
         v_bitmask,
         v_bitmask,
         0,
     )?;
     asm.emit_r(
-        InstructionKind::VirtualSRA,
+        JoltInstructionKind::VirtualSRA,
         rd(instruction)?,
         v_rs1,
         v_bitmask,
     )?;
     asm.emit_i(
-        InstructionKind::VirtualSignExtendWord,
+        JoltInstructionKind::VirtualSignExtendWord,
         rd(instruction)?,
         rd(instruction)?,
         0,

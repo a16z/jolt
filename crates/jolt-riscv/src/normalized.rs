@@ -1,7 +1,7 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
-use crate::InstructionKind;
+use crate::JoltInstructionKind;
 
 #[derive(
     Default,
@@ -35,7 +35,7 @@ pub struct NormalizedOperands {
     Deserialize,
 )]
 pub struct NormalizedInstruction {
-    pub instruction_kind: InstructionKind,
+    pub instruction_kind: JoltInstructionKind,
     pub address: usize,
     pub operands: NormalizedOperands,
     pub virtual_sequence_remaining: Option<u16>,

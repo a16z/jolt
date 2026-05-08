@@ -53,9 +53,9 @@ pub use flags::{
     CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags,
     InterleavedBitsMarker, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
-pub use instructions::JoltInstructions;
+pub use instructions::{LookupInstruction, LookupInstructionKind};
 pub use jolt_instruction::JoltInstruction;
-pub use kind::InstructionKind;
+pub use kind::{JoltInstructionKind, RiscvInstructionKind};
 pub use normalized::{NormalizedInstruction, NormalizedOperands};
 pub use trace::JoltCycle;
 pub use uncompress::uncompress_rv64_instruction;

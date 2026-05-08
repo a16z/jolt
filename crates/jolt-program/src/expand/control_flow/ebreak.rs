@@ -7,7 +7,7 @@ pub(in crate::expand) fn expand_ebreak(
     let mut asm =
         assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
     let discard = asm.allocator().allocate()?;
-    asm.emit_j(InstructionKind::JAL, discard, 0)?;
+    asm.emit_j(JoltInstructionKind::JAL, discard, 0)?;
     asm.allocator().release(discard)?;
     asm.finalize()
 }
