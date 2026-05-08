@@ -8,11 +8,17 @@ pub(in crate::expand) fn expand_amoswapw(
     let v_dword = allocator.allocate()?;
     let v_shift = allocator.allocate()?;
     let v_rd = allocator.allocate()?;
-    let mut asm =
-        assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
-    super::shared::amo_pre64(&mut asm, rs1(instruction)?, v_rd, v_dword, v_shift)?;
+    let mut sequence = core::ExpansionSequence::new(instruction);
+    super::shared::amo_pre64(
+        &mut sequence,
+        rs1(instruction)?,
+        v_rd,
+        v_dword,
+        v_shift,
+        allocator,
+    )?;
     super::shared::amo_post64(
-        &mut asm,
+        &mut sequence,
         rs1(instruction)?,
         rs2(instruction)?,
         v_dword,
@@ -20,11 +26,7 @@ pub(in crate::expand) fn expand_amoswapw(
         v_mask,
         rd(instruction)?,
         v_rd,
+        allocator,
     )?;
-    let sequence = asm.finalize()?;
-    allocator.release(v_mask)?;
-    allocator.release(v_dword)?;
-    allocator.release(v_shift)?;
-    allocator.release(v_rd)?;
-    Ok(sequence)
+    sequence.finish_releasing(allocator, [v_mask, v_dword, v_shift, v_rd])
 }
