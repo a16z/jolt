@@ -78,25 +78,11 @@ impl ExpansionSequence {
         });
     }
 
-    pub(super) fn emit_op(&mut self, op: ExpansionOp) {
-        match op {
-            ExpansionOp::Row(row) => self.emit(row.instruction_kind, row.operands),
-            ExpansionOp::Expand(row) => self.emit(row.instruction_kind, row.operands),
-            ExpansionOp::Release(_) => {}
-        }
-    }
-
     pub(super) fn extend(
         &mut self,
         rows: impl IntoIterator<Item = NormalizedInstruction>,
     ) -> Result<(), ExpansionError> {
         self.rows.extend(rows)
-    }
-
-    pub(super) fn emit_ops(&mut self, ops: impl IntoIterator<Item = ExpansionOp>) {
-        for op in ops {
-            self.emit_op(op);
-        }
     }
 
     pub(super) fn emit_expanded(
