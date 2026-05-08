@@ -1,6 +1,6 @@
 use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
 
-use crate::expand::ExpansionError;
+use crate::expand::{allocator::ExpansionAllocator, ExpansionError};
 
 pub(super) struct ExpansionSequence {
     address: usize,
@@ -82,5 +82,17 @@ impl ExpansionSequence {
             last.is_compressed = self.is_compressed;
         }
         Ok(self.rows)
+    }
+
+    pub(super) fn finish_releasing(
+        self,
+        allocator: &mut ExpansionAllocator,
+        registers: impl IntoIterator<Item = u8>,
+    ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+        let rows = self.finish()?;
+        for register in registers {
+            allocator.release(register)?;
+        }
+        Ok(rows)
     }
 }

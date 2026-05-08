@@ -5,21 +5,18 @@ pub(in crate::expand) fn expand_srl(
     allocator: &mut ExpansionAllocator,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     let v_bitmask = allocator.allocate()?;
-    let mut asm =
-        assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
-    asm.emit_i(
+    let mut sequence = core::ExpansionSequence::new(instruction);
+    sequence.emit_i(
         JoltInstructionKind::VirtualShiftRightBitmask,
         v_bitmask,
         rs2(instruction)?,
         0,
-    )?;
-    asm.emit_r(
+    );
+    sequence.emit_r(
         JoltInstructionKind::VirtualSRL,
         rd(instruction)?,
         rs1(instruction)?,
         v_bitmask,
-    )?;
-    let sequence = asm.finalize()?;
-    allocator.release(v_bitmask)?;
-    Ok(sequence)
+    );
+    sequence.finish_releasing(allocator, [v_bitmask])
 }
