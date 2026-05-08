@@ -1,0 +1,25 @@
+[package]
+name = "jolt-kernels"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Jolt Contributors"]
+repository = "https://github.com/a16z/jolt"
+description = "Coarse CPU kernels targeted by the Bolt-shaped Jolt compiler"
+keywords = ["SNARK", "compiler", "sumcheck", "zkvm"]
+categories = ["cryptography"]
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-field = { path = "../jolt-field" }
+jolt-lookup-tables = { path = "../jolt-lookup-tables" }
+jolt-poly = { path = "../jolt-poly" }
+jolt-r1cs = { path = "../jolt-r1cs" }
+jolt-sumcheck = { path = "../jolt-sumcheck" }
+jolt-transcript = { path = "../jolt-transcript" }
+jolt-trace = { path = "../jolt-trace" }
+jolt-witness = { path = "../jolt-witness" }
+rayon = { workspace = true }
+tracing = { workspace = true }

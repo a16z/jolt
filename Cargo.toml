@@ -37,6 +37,9 @@ members = [
   "crates/jolt-transcript",
   "crates/jolt-witness",
   "crates/bolt",
+  "crates/jolt-kernels",
+  "crates/jolt-prover",
+  "crates/jolt-verifier",
   "crates/jolt-profiling",
   "crates/jolt-field",
   "jolt-core",
@@ -379,6 +382,8 @@ common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
 jolt-core = { path = "./jolt-core", default-features = false }
 jolt-crypto = { path = "./crates/jolt-crypto" }
+jolt-dory = { path = "./crates/jolt-dory" }
+jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
 jolt-field = { path = "./crates/jolt-field" }
 jolt-openings = { path = "./crates/jolt-openings" }
 jolt-poly = { path = "./crates/jolt-poly" }
@@ -387,6 +392,9 @@ jolt-sumcheck = { path = "./crates/jolt-sumcheck" }
 jolt-r1cs = { path = "./crates/jolt-r1cs" }
 jolt-witness = { path = "./crates/jolt-witness" }
 bolt = { path = "./crates/bolt" }
+jolt-kernels = { path = "./crates/jolt-kernels" }
+jolt-prover = { path = "./crates/jolt-prover" }
+jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-riscv = { path = "./crates/jolt-riscv" }
 jolt-trace = { path = "./crates/jolt-trace" }
 jolt-lookup-tables = { path = "./crates/jolt-lookup-tables" }
