@@ -12,6 +12,8 @@ pub enum ExpansionError {
     InvalidInlineWriteTarget { register: u8, minimum_register: u8 },
     #[error("expansion produced an empty instruction sequence")]
     EmptySequence,
+    #[error("expansion produced {actual} rows, exceeding the per-source capacity {capacity}")]
+    CapacityExceeded { actual: usize, capacity: usize },
     #[error("malformed normalized instruction: {0}")]
     MalformedInstruction(&'static str),
     #[error("unsupported CSR 0x{0:03x}")]

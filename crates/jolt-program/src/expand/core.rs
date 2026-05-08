@@ -2,6 +2,8 @@ use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands}
 
 use crate::expand::{allocator::ExpansionAllocator, expand_instruction, ExpansionError};
 
+const MAX_FINAL_ROWS_PER_SOURCE: usize = 64;
+
 pub(super) struct ExpansionSequence {
     address: usize,
     is_compressed: bool,
@@ -106,8 +108,17 @@ impl ExpansionSequence {
             is_first_in_sequence: false,
             is_compressed: false,
         };
-        self.rows
-            .extend(expand_instruction(&instruction, allocator)?);
+        self.extend_rows(expand_instruction(&instruction, allocator)?)
+    }
+
+    fn extend_rows(
+        &mut self,
+        rows: impl IntoIterator<Item = NormalizedInstruction>,
+    ) -> Result<(), ExpansionError> {
+        for row in rows {
+            self.rows.push(row);
+            self.check_capacity()?;
+        }
         Ok(())
     }
 
@@ -253,6 +264,7 @@ impl ExpansionSequence {
             return Err(ExpansionError::EmptySequence);
         }
 
+        self.check_capacity()?;
         let len = self.rows.len();
         for (index, row) in self.rows.iter_mut().enumerate() {
             row.is_first_in_sequence = index == 0;
@@ -274,5 +286,15 @@ impl ExpansionSequence {
             allocator.release(register)?;
         }
         Ok(rows)
+    }
+
+    fn check_capacity(&self) -> Result<(), ExpansionError> {
+        if self.rows.len() > MAX_FINAL_ROWS_PER_SOURCE {
+            return Err(ExpansionError::CapacityExceeded {
+                actual: self.rows.len(),
+                capacity: MAX_FINAL_ROWS_PER_SOURCE,
+            });
+        }
+        Ok(())
     }
 }

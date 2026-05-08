@@ -1842,20 +1842,22 @@ resource materialization machinery as provider-free expansion.
     provider-free path.
 11. Replace allocator boolean arrays and heap-backed inline reset tracking with
     bitsets while preserving first-fit register allocation order.
-12. Port arithmetic, shifts, memory, division, and control-flow families.
-13. Replace `InstrAssembler<'a>` in production expansion code.
-14. Preserve tracer inline adapter support as finalized rows outside
+12. Add the measured final-row capacity guard to provider-free sequence
+    materialization.
+13. Port arithmetic, shifts, memory, division, and control-flow families.
+14. Replace `InstrAssembler<'a>` in production expansion code.
+15. Preserve tracer inline adapter support as finalized rows outside
     provider-free core.
-15. Delete the old recursive assembler once all parity tests pass.
-16. Run Hax/Aeneas again on:
+16. Delete the old recursive assembler once all parity tests pass.
+17. Run Hax/Aeneas again on:
    - metadata stamping,
    - allocator transitions,
    - ADDIW shallow lowering,
    - provider-free `expand_one_core`.
-17. Record the separate semantics follow-up: a hand-modeled Lean transition
+18. Record the separate semantics follow-up: a hand-modeled Lean transition
     relation for a small provider-free slice, plus an expansion-correctness
     statement comparing source-row execution with target-sequence execution.
-18. Run formatting, clippy, host tests, ZK tests, and dependency checks.
+19. Run formatting, clippy, host tests, ZK tests, and dependency checks.
 
 Do not leave both expanders in production. A temporary test-only reference path is acceptable during the rewrite, but the final branch should have one canonical production expander.
 
