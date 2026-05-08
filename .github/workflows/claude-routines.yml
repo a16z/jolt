@@ -14,7 +14,7 @@ jobs:
     if: github.event.label.name == 'claude-review-request'
     uses: ./.github/workflows/_fire-claude-routine.yml
     with:
-      routine_id: trig_0184QxNSKDj7Y9akvnEmo3s2
+      routine_id: trig_01KoydrLGJM8r8kj9LFZr5Ln
       session_kind: code review
     secrets:
       routine_token: ${{ secrets.ANTHROPIC_REVIEW_AUTHORIZATION }}
@@ -24,17 +24,7 @@ jobs:
     if: github.event.label.name == 'claude-spec-review-request'
     uses: ./.github/workflows/_fire-claude-routine.yml
     with:
-      routine_id: trig_01JBnYKwfoAgiruS15s3CcP7
+      routine_id: trig_01WNzoD27n9CQvy7o9bKobxa
       session_kind: spec review
     secrets:
       routine_token: ${{ secrets.ANTHROPIC_SPEC_REVIEW_AUTHORIZATION }}
-
-  implement:
-    name: Claude implement spec
-    if: github.event.label.name == 'claude-implement-spec'
-    uses: ./.github/workflows/_fire-claude-routine.yml
-    with:
-      routine_id: trig_01CzBwCbrD2q5m8QHCWU16r5
-      session_kind: implement-spec
-    secrets:
-      routine_token: ${{ secrets.ANTHROPIC_IMPLEMENT_AUTHORIZATION }}
