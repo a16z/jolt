@@ -2,21 +2,20 @@ use super::*;
 
 pub(in crate::expand) fn expand_addiw(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
+    _allocator: &mut ExpansionAllocator,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let mut asm =
-        assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
-    asm.emit_i(
+    let mut sequence = core::ExpansionSequence::new(instruction);
+    sequence.emit_i(
         JoltInstructionKind::ADDI,
         rd(instruction)?,
         rs1(instruction)?,
         instruction.operands.imm,
-    )?;
-    asm.emit_i(
+    );
+    sequence.emit_i(
         JoltInstructionKind::VirtualSignExtendWord,
         rd(instruction)?,
         rd(instruction)?,
         0,
-    )?;
-    asm.finalize()
+    );
+    sequence.finish()
 }

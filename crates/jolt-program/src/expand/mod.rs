@@ -8,6 +8,7 @@ pub mod allocator;
 mod arithmetic;
 pub mod assembler;
 mod control_flow;
+mod core;
 mod division;
 pub mod error;
 mod memory;
