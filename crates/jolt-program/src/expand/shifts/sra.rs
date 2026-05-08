@@ -5,18 +5,22 @@ pub(in crate::expand) fn expand_sra(
     allocator: &mut ExpansionAllocator,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     let v_bitmask = allocator.allocate()?;
-    let mut sequence = core::ExpansionSequence::new(instruction);
-    sequence.emit_i(
-        JoltInstructionKind::VirtualShiftRightBitmask,
-        v_bitmask,
-        rs2(instruction)?,
-        0,
-    );
-    sequence.emit_r(
-        JoltInstructionKind::VirtualSRA,
-        rd(instruction)?,
-        rs1(instruction)?,
-        v_bitmask,
-    );
-    sequence.finish_releasing(allocator, [v_bitmask])
+    core::ExpansionState::new(allocator).materialize_ops(
+        instruction,
+        [
+            grammar::ExpansionOp::Row(grammar::RowTemplate::i(
+                JoltInstructionKind::VirtualShiftRightBitmask,
+                v_bitmask,
+                rs2(instruction)?,
+                0,
+            )),
+            grammar::ExpansionOp::Row(grammar::RowTemplate::r(
+                JoltInstructionKind::VirtualSRA,
+                rd(instruction)?,
+                rs1(instruction)?,
+                v_bitmask,
+            )),
+            grammar::ExpansionOp::Release(v_bitmask),
+        ],
+    )
 }
