@@ -6,6 +6,7 @@
 
 pub mod allocator;
 mod arithmetic;
+mod buffer;
 mod control_flow;
 mod core;
 mod division;

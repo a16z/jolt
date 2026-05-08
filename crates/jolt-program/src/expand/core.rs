@@ -1,15 +1,14 @@
 use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
 
 use crate::expand::{
-    allocator::ExpansionAllocator, expand_instruction, metadata::stamp_sequence, ExpansionError,
+    allocator::ExpansionAllocator, buffer::ExpansionBuffer, expand_instruction,
+    metadata::stamp_sequence, ExpansionError,
 };
-
-const MAX_FINAL_ROWS_PER_SOURCE: usize = 64;
 
 pub(super) struct ExpansionSequence {
     address: usize,
     is_compressed: bool,
-    rows: Vec<NormalizedInstruction>,
+    rows: ExpansionBuffer,
 }
 
 impl ExpansionSequence {
@@ -17,7 +16,7 @@ impl ExpansionSequence {
         Self {
             address: source.address,
             is_compressed: source.is_compressed,
-            rows: Vec::new(),
+            rows: ExpansionBuffer::new(),
         }
     }
 
@@ -110,18 +109,8 @@ impl ExpansionSequence {
             is_first_in_sequence: false,
             is_compressed: false,
         };
-        self.extend_rows(expand_instruction(&instruction, allocator)?)
-    }
-
-    fn extend_rows(
-        &mut self,
-        rows: impl IntoIterator<Item = NormalizedInstruction>,
-    ) -> Result<(), ExpansionError> {
-        for row in rows {
-            self.rows.push(row);
-            self.check_capacity()?;
-        }
-        Ok(())
+        self.rows
+            .extend(expand_instruction(&instruction, allocator)?)
     }
 
     pub(super) fn emit_r_expanded(
@@ -262,8 +251,8 @@ impl ExpansionSequence {
     }
 
     pub(super) fn finish(self) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-        self.check_capacity()?;
-        stamp_sequence(self.rows, self.is_compressed)
+        self.rows.check_capacity()?;
+        stamp_sequence(self.rows.into_vec(), self.is_compressed)
     }
 
     pub(super) fn finish_releasing(
@@ -276,15 +265,5 @@ impl ExpansionSequence {
             allocator.release(register)?;
         }
         Ok(rows)
-    }
-
-    fn check_capacity(&self) -> Result<(), ExpansionError> {
-        if self.rows.len() > MAX_FINAL_ROWS_PER_SOURCE {
-            return Err(ExpansionError::CapacityExceeded {
-                actual: self.rows.len(),
-                capacity: MAX_FINAL_ROWS_PER_SOURCE,
-            });
-        }
-        Ok(())
     }
 }
