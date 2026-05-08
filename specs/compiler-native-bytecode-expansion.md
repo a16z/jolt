@@ -1914,32 +1914,32 @@ Do not leave both expanders in production. A temporary test-only reference path 
       ownership.
 - [x] Lookup-table routing uses `LookupInstructionKind` or an equivalent
       explicit subset API such as `JoltInstructionKind::lookup_kind()`.
-- [ ] `jolt-program::expand` no longer has a production `InstrAssembler<'a>` that stores a borrowed allocator.
-- [ ] Expansion recipes are represented as syntactic lowering data or shallow operations; the grammar does not model instruction execution semantics.
-- [ ] The spec keeps execution semantics on a separate track, starting with a hand-modeled Lean abstract machine slice and expansion-correctness theorem rather than extraction from `tracer` or MLIR-as-semantics.
-- [ ] The spec names source, intermediate, and target phases with MLIR-ready legality predicates, even while Rust remains the implementation substrate.
-- [ ] `NormalizedInstruction` remains the core row type, with only minimal stage/result wrappers for source, expanded, stamped, pass-through, and literal policies.
-- [ ] Recipe temps have explicit lifetimes and are materialized into concrete virtual registers by a deterministic allocation/resource-materialization step.
-- [ ] Recipe checks reject invalid operand shapes, unchecked literal rows, bounded-capacity overflow, and temp-lifetime mistakes where temp scopes are represented as data.
-- [ ] Family lowerers are shallow and do not call `expand_instruction`.
-- [ ] Recursive expansion happens in one central depth-first driver.
-- [ ] Temporary-register release and inline reset are explicit expansion operations.
-- [ ] Allocator state is represented by bitsets, not a heap-backed reset list.
-- [ ] Per-source expansion uses bounded buffers, with explicit overflow errors.
-- [ ] Synthetic sequence metadata is stamped during final row construction, not by mutating already-built rows.
-- [ ] Source pass-through rows and deliberate literal rows preserve the current metadata policy exactly, with tests for the weird cases.
-- [ ] Provider-free core expansion has a concrete, non-generic entry point over `NormalizedInstruction` and `ExpansionState`.
-- [ ] Inline provider support is an adapter outside the provider-free core.
-- [ ] Provider-free expansion preserves advice-load lowering exactly:
+- [x] `jolt-program::expand` no longer has a production `InstrAssembler<'a>` that stores a borrowed allocator.
+- [x] Expansion recipes are represented as syntactic lowering data or shallow operations; the grammar does not model instruction execution semantics.
+- [x] The spec keeps execution semantics on a separate track, starting with a hand-modeled Lean abstract machine slice and expansion-correctness theorem rather than extraction from `tracer` or MLIR-as-semantics.
+- [x] The spec names source, intermediate, and target phases with MLIR-ready legality predicates, even while Rust remains the implementation substrate.
+- [x] `NormalizedInstruction` remains the core row type, with only minimal stage/result wrappers for source, expanded, stamped, pass-through, and literal policies.
+- [x] Recipe temps have explicit lifetimes and are materialized into concrete virtual registers by a deterministic allocation/resource-materialization step.
+- [x] Recipe checks reject invalid operand shapes, unchecked literal rows, bounded-capacity overflow, and temp-lifetime mistakes where temp scopes are represented as data.
+- [x] Family lowerers are shallow and do not call `expand_instruction`.
+- [x] Recursive expansion happens in one central depth-first driver.
+- [x] Temporary-register release and inline reset are explicit expansion operations.
+- [x] Allocator state is represented by bitsets, not a heap-backed reset list.
+- [x] Per-source expansion uses bounded buffers, with explicit overflow errors.
+- [x] Synthetic sequence metadata is stamped during final row construction, not by mutating already-built rows.
+- [x] Source pass-through rows and deliberate literal rows preserve the current metadata policy exactly, with tests for the weird cases.
+- [x] Provider-free core expansion has a concrete, non-generic entry point over `NormalizedInstruction` and `ExpansionState`.
+- [x] Inline provider support is an adapter outside the provider-free core.
+- [x] Provider-free expansion preserves advice-load lowering exactly:
       `AdviceLB/LH/LW/LD` emit `VirtualAdviceLoad` plus sign extension where
       needed.
-- [ ] `VirtualAdvice` payload assignment remains outside provider-free
+- [x] `VirtualAdvice` payload assignment remains outside provider-free
       expansion; `NormalizedInstruction` does not grow an advice payload field.
-- [ ] Trusted/untrusted advice memory and polynomial commitments remain
+- [x] Trusted/untrusted advice memory and polynomial commitments remain
       preprocessing/proof responsibilities, not expansion responsibilities.
-- [ ] Expansion output matches PR #1490 baseline fixtures exactly.
+- [x] Expansion output matches PR #1490 baseline fixtures exactly.
 - [ ] Hax and Aeneas can extract metadata stamping and at least one shallow family lowerer without pulling in execution/preprocess/serialization modules.
-- [ ] Dependency checks still show no `tracer` dependency from `jolt-program` or `jolt-riscv`.
+- [x] Dependency checks still show no `tracer` dependency from `jolt-program` or `jolt-riscv`.
 
 ## Resolved And Sharpened Questions
 
