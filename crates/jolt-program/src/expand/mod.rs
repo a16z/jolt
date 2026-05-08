@@ -11,6 +11,7 @@ mod core;
 mod division;
 pub mod error;
 mod memory;
+mod metadata;
 mod operands;
 mod shifts;
 #[cfg(test)]

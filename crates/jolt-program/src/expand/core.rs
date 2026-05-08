@@ -1,6 +1,8 @@
 use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
 
-use crate::expand::{allocator::ExpansionAllocator, expand_instruction, ExpansionError};
+use crate::expand::{
+    allocator::ExpansionAllocator, expand_instruction, metadata::stamp_sequence, ExpansionError,
+};
 
 const MAX_FINAL_ROWS_PER_SOURCE: usize = 64;
 
@@ -259,21 +261,9 @@ impl ExpansionSequence {
         )
     }
 
-    pub(super) fn finish(mut self) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-        if self.rows.is_empty() {
-            return Err(ExpansionError::EmptySequence);
-        }
-
+    pub(super) fn finish(self) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
         self.check_capacity()?;
-        let len = self.rows.len();
-        for (index, row) in self.rows.iter_mut().enumerate() {
-            row.is_first_in_sequence = index == 0;
-            row.virtual_sequence_remaining = Some((len - index - 1) as u16);
-        }
-        if let Some(last) = self.rows.last_mut() {
-            last.is_compressed = self.is_compressed;
-        }
-        Ok(self.rows)
+        stamp_sequence(self.rows, self.is_compressed)
     }
 
     pub(super) fn finish_releasing(
