@@ -11,7 +11,6 @@ pub mod instructions;
 mod jolt_instruction;
 mod kind;
 mod normalized;
-mod operands;
 pub mod trace;
 mod uncompress;
 
@@ -57,8 +56,7 @@ pub use flags::{
 pub use instructions::JoltInstructions;
 pub use jolt_instruction::JoltInstruction;
 pub use kind::InstructionKind;
-pub use normalized::NormalizedInstruction;
-pub use operands::NormalizedOperands;
+pub use normalized::{NormalizedInstruction, NormalizedOperands};
 pub use trace::JoltCycle;
 pub use uncompress::uncompress_rv64_instruction;
 

@@ -126,11 +126,21 @@ impl BytecodePCMapper {
             let [(previous_sequence, _), (new_sequence, _)] = window else {
                 unreachable!("windows(2) always yields two entries");
             };
-            if previous_sequence <= new_sequence {
-                return Err(PreprocessingError::NonDecreasingInlineSequence {
+            let Some(expected_sequence) = previous_sequence.checked_sub(1) else {
+                return Err(PreprocessingError::InvalidInlineSequence {
                     bytecode_index,
                     address: Self::address_for_index(bytecode_index),
-                    previous_max_sequence: *previous_sequence,
+                    previous_sequence: *previous_sequence,
+                    expected_sequence: 0,
+                    new_sequence: *new_sequence,
+                });
+            };
+            if *new_sequence != expected_sequence {
+                return Err(PreprocessingError::InvalidInlineSequence {
+                    bytecode_index,
+                    address: Self::address_for_index(bytecode_index),
+                    previous_sequence: *previous_sequence,
+                    expected_sequence,
                     new_sequence: *new_sequence,
                 });
             }
@@ -215,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_decreasing_inline_sequences() {
+    fn rejects_invalid_inline_sequences() {
         let bytecode = vec![
             instruction(0x8000_0004, Some(1)),
             instruction(0x8000_0004, Some(1)),
@@ -224,11 +234,32 @@ mod tests {
         let err = BytecodePCMapper::try_new(&bytecode).unwrap_err();
         assert_eq!(
             err,
-            PreprocessingError::NonDecreasingInlineSequence {
+            PreprocessingError::InvalidInlineSequence {
                 bytecode_index: BytecodePCMapper::get_index(0x8000_0004),
                 address: 0x8000_0004,
-                previous_max_sequence: 1,
+                previous_sequence: 1,
+                expected_sequence: 0,
                 new_sequence: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_non_consecutive_inline_sequences() {
+        let bytecode = vec![
+            instruction(0x8000_0004, Some(2)),
+            instruction(0x8000_0004, Some(0)),
+        ];
+
+        let err = BytecodePCMapper::try_new(&bytecode).unwrap_err();
+        assert_eq!(
+            err,
+            PreprocessingError::InvalidInlineSequence {
+                bytecode_index: BytecodePCMapper::get_index(0x8000_0004),
+                address: 0x8000_0004,
+                previous_sequence: 2,
+                expected_sequence: 1,
+                new_sequence: 0,
             }
         );
     }

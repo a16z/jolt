@@ -1,12 +1,13 @@
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PreprocessingError {
     #[error(
-        "bytecode has non-decreasing inline sequences at index {bytecode_index} (address {address:#x}): previous max sequence {previous_max_sequence}, new sequence {new_sequence}"
+        "bytecode has invalid inline sequence at index {bytecode_index} (address {address:#x}): previous sequence {previous_sequence}, expected next sequence {expected_sequence}, new sequence {new_sequence}"
     )]
-    NonDecreasingInlineSequence {
+    InvalidInlineSequence {
         bytecode_index: usize,
         address: usize,
-        previous_max_sequence: u16,
+        previous_sequence: u16,
+        expected_sequence: u16,
         new_sequence: u16,
     },
 }
