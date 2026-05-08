@@ -14,7 +14,7 @@ use dory::primitives::arithmetic::{
 };
 use dory::primitives::poly::{MultilinearLagrange, Polynomial as DoryPolynomial};
 use jolt_crypto::{Bn254G1, Bn254GT, Commitment, DeriveSetup, JoltGroup, PedersenSetup};
-use jolt_field::Fr;
+use jolt_field::{Field, Fr};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
@@ -63,6 +63,12 @@ pub(crate) fn jolt_g1_vec_to_ark(v: Vec<Bn254G1>) -> Vec<ArkG1> {
     // SAFETY: Bn254G1 and ArkG1 have identical size/align (repr(transparent)
     // over G1Projective), so Vec layout is identical.
     unsafe { std::mem::transmute(v) }
+}
+
+#[inline]
+pub(crate) fn jolt_g1_to_ark(jolt: Bn254G1) -> ArkG1 {
+    // SAFETY: same layout as jolt_g1_vec_to_ark.
+    unsafe { std::mem::transmute_copy(&jolt) }
 }
 
 #[inline]
@@ -141,8 +147,8 @@ impl CommitmentScheme for DoryScheme {
         let num_cols = 1usize << sigma;
         let num_rows = 1usize << (num_vars - sigma);
 
-        let row_commitments = if poly.is_one_hot() {
-            commit_rows_one_hot(poly, num_rows, num_cols, &setup.0)
+        let row_commitments = if poly.is_sparse() {
+            commit_rows_sparse(poly, num_rows, num_cols, &setup.0)
         } else {
             commit_rows_dense(poly, sigma, &setup.0)
         };
@@ -174,7 +180,7 @@ impl CommitmentScheme for DoryScheme {
 
         let row_commitments = match hint {
             Some(h) => jolt_g1_vec_to_ark(h.0),
-            None if poly.is_one_hot() => commit_rows_one_hot(poly, num_rows, num_cols, &setup.0),
+            None if poly.is_sparse() => commit_rows_sparse(poly, num_rows, num_cols, &setup.0),
             None => commit_rows_dense(poly, sigma, &setup.0),
         };
 
@@ -298,7 +304,7 @@ impl ZkOpeningScheme for DoryScheme {
 
         let row_commitments = match hint {
             Some(h) => jolt_g1_vec_to_ark(h.0),
-            None if poly.is_one_hot() => commit_rows_one_hot(poly, num_rows, num_cols, &setup.0),
+            None if poly.is_sparse() => commit_rows_sparse(poly, num_rows, num_cols, &setup.0),
             None => commit_rows_dense(poly, sigma, &setup.0),
         };
 
@@ -371,8 +377,9 @@ fn commit_rows_dense<P: MultilinearPoly<Fr> + ?Sized>(
         .collect()
 }
 
-/// One-hot commit: O(T) group additions for unit-valued one-hot polynomials.
-fn commit_rows_one_hot<P: MultilinearPoly<Fr> + ?Sized>(
+/// Sparse commit: O(nnz) group operations, with the one-hot case kept as pure
+/// group addition.
+fn commit_rows_sparse<P: MultilinearPoly<Fr> + ?Sized>(
     poly: &P,
     num_rows: usize,
     num_cols: usize,
@@ -380,24 +387,32 @@ fn commit_rows_one_hot<P: MultilinearPoly<Fr> + ?Sized>(
 ) -> Vec<ArkG1> {
     let g1_bases = &setup.g1_vec[..num_cols];
 
-    let mut cols_per_row: Vec<Vec<usize>> = vec![Vec::new(); num_rows];
-    poly.for_each_one(&mut |flat_idx| {
+    let mut entries_per_row: Vec<Vec<(usize, Fr)>> = vec![Vec::new(); num_rows];
+    poly.for_each_nonzero(&mut |flat_idx, value| {
         let row = flat_idx / num_cols;
         let col = flat_idx % num_cols;
         debug_assert!(
             row < num_rows && col < num_cols,
-            "for_each_one out-of-bounds flat_idx: row={row} num_rows={num_rows} col={col} num_cols={num_cols}",
+            "for_each_nonzero out-of-bounds flat_idx: row={row} num_rows={num_rows} col={col} num_cols={num_cols}",
         );
-        cols_per_row[row].push(col);
+        entries_per_row[row].push((col, value));
     });
 
-    cols_per_row
+    entries_per_row
         .par_iter()
-        .map(|cols| {
-            cols.iter()
-                .fold(<InnerBN254 as PairingCurve>::G1::identity(), |acc, &col| {
-                    <InnerBN254 as PairingCurve>::G1::add(&acc, &g1_bases[col])
-                })
+        .map(|entries| {
+            entries.iter().fold(
+                <InnerBN254 as PairingCurve>::G1::identity(),
+                |acc, &(col, value)| {
+                    let term = if value == Fr::from_u64(1) {
+                        g1_bases[col]
+                    } else {
+                        let base = ark_to_jolt_g1(g1_bases[col]);
+                        jolt_g1_to_ark(base.scalar_mul(&value))
+                    };
+                    <InnerBN254 as PairingCurve>::G1::add(&acc, &term)
+                },
+            )
         })
         .collect()
 }
@@ -455,7 +470,7 @@ impl<S: MultilinearPoly<Fr>> MultilinearLagrange<ArkFr> for DorySourceAdapter<'_
 mod tests {
     use super::*;
     use jolt_crypto::{Pedersen, VectorCommitment};
-    use jolt_field::{FromPrimitiveInt, RandomSampling};
+    use jolt_field::Field;
     use jolt_poly::Polynomial;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
@@ -469,9 +484,7 @@ mod tests {
         let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
-            .collect();
+        let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
         let eval = poly.evaluate(&point);
 
         let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
@@ -519,13 +532,8 @@ mod tests {
             .collect();
         let (commit_sum_direct, _) = DoryScheme::commit(&sum_evals, &prover_setup);
 
-        let combined = DoryScheme::combine(
-            &[commit_a, commit_b],
-            &[
-                <Fr as FromPrimitiveInt>::from_u64(1),
-                <Fr as FromPrimitiveInt>::from_u64(1),
-            ],
-        );
+        let combined =
+            DoryScheme::combine(&[commit_a, commit_b], &[Fr::from_u64(1), Fr::from_u64(1)]);
 
         assert_eq!(
             commit_sum_direct, combined,
@@ -542,9 +550,7 @@ mod tests {
         let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
-            .collect();
+        let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
         let eval = poly.evaluate(&point);
 
         let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
@@ -583,12 +589,8 @@ mod tests {
             capacity,
         );
 
-        let values = vec![
-            <Fr as FromPrimitiveInt>::from_u64(1),
-            <Fr as FromPrimitiveInt>::from_u64(2),
-            <Fr as FromPrimitiveInt>::from_u64(3),
-        ];
-        let blinding = <Fr as FromPrimitiveInt>::from_u64(42);
+        let values = vec![Fr::from_u64(1), Fr::from_u64(2), Fr::from_u64(3)];
+        let blinding = Fr::from_u64(42);
         let commitment =
             <Pedersen<Bn254G1> as VectorCommitment>::commit(&vc_setup, &values, &blinding);
         assert!(<Pedersen<Bn254G1> as VectorCommitment>::verify(

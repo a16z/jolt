@@ -31,14 +31,18 @@ pub struct MockProof<F: Field> {
 
 impl<F: Field> AppendToTranscript for MockCommitment<F> {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        let mut buf = Vec::with_capacity(self.evaluations.len() * F::NUM_BYTES);
+        let mut buf = Vec::with_capacity(self.evaluations.len() * 32);
         for e in &self.evaluations {
-            let start = buf.len();
-            buf.resize(start + F::NUM_BYTES, 0);
-            e.to_bytes_le(&mut buf[start..]);
+            buf.extend_from_slice(&e.to_bytes());
         }
         buf.reverse();
         transcript.append_bytes(&buf);
+    }
+
+    fn serialized_len(&self) -> u64 {
+        u64::try_from(self.evaluations.len())
+            .unwrap_or(u64::MAX / 32)
+            .saturating_mul(32)
     }
 }
 
@@ -160,6 +164,10 @@ impl<F: Field> AppendToTranscript for MockHidingCommitment<F> {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         self.eval.append_to_transcript(transcript);
     }
+
+    fn serialized_len(&self) -> u64 {
+        self.eval.serialized_len()
+    }
 }
 
 impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
@@ -194,6 +202,7 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
                 actual: format!("len={}", proof.evaluations.len()),
             });
         }
+
         Ok(())
     }
 }
@@ -203,7 +212,8 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
 mod tests {
     use super::*;
     use crate::{reduce_prover, reduce_verifier, ProverClaim, VerifierClaim};
-    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+    use jolt_field::Field;
+    use jolt_field::Fr;
     use jolt_poly::Polynomial;
     use jolt_transcript::Blake2bTranscript;
     use rand_chacha::rand_core::SeedableRng;

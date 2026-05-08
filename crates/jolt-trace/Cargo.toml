@@ -17,7 +17,10 @@ test-utils = []
 [dependencies]
 bincode.workspace = true
 common = { workspace = true }
+jolt-field = { workspace = true }
+jolt-r1cs = { workspace = true }
 jolt-riscv = { workspace = true }
+jolt-witness = { workspace = true }
 rand = { workspace = true }
 serde.workspace = true
 tracer = { workspace = true, features = ["std", "test-utils"] }

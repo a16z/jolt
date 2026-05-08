@@ -1,5 +1,5 @@
 #![no_main]
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling, ReducingBytes};
+use jolt_field::{Field, Fr};
 use jolt_openings::{rlc_combine, rlc_combine_scalars};
 use libfuzzer_sys::fuzz_target;
 
@@ -9,7 +9,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
-    let rho = <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[..32]);
+    let rho = <Fr as Field>::from_bytes(&data[..32]);
     let remaining = &data[32..];
 
     // Build 1-4 polynomials of length 1-8 from remaining bytes
@@ -25,7 +25,7 @@ fuzz_target!(|data: &[u8]| {
             if end - start < 32 {
                 Fr::from_u64(remaining[start] as u64)
             } else {
-                <Fr as ReducingBytes>::from_le_bytes_mod_order(&remaining[start..end])
+                <Fr as Field>::from_bytes(&remaining[start..end])
             }
         })
         .collect();

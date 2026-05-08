@@ -4,7 +4,9 @@ use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use jolt_field::Fr;
-use jolt_transcript::{Blake2bTranscript, KeccakTranscript, PoseidonTranscript, Transcript};
+#[cfg(feature = "poseidon")]
+use jolt_transcript::PoseidonTranscript;
+use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 
 fn bench_append_bytes(c: &mut Criterion) {
     let mut group = c.benchmark_group("append_bytes");
@@ -32,6 +34,7 @@ fn bench_append_bytes(c: &mut Criterion) {
                 criterion::BatchSize::SmallInput,
             );
         });
+        #[cfg(feature = "poseidon")]
         group.bench_with_input(BenchmarkId::new("Poseidon", label), data, |bench, data| {
             bench.iter_batched(
                 || PoseidonTranscript::<Fr>::new(b"bench"),
@@ -73,6 +76,7 @@ fn bench_challenge(c: &mut Criterion) {
         );
     });
 
+    #[cfg(feature = "poseidon")]
     group.bench_function("Poseidon", |bench| {
         bench.iter_batched(
             || {

@@ -38,6 +38,10 @@ impl AppendToTranscript for DoryCommitment {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         self.0.append_to_transcript(transcript);
     }
+
+    fn serialized_len(&self) -> u64 {
+        self.0.serialized_len()
+    }
 }
 
 impl<F: jolt_field::Field> HomomorphicCommitment<F> for DoryCommitment {
@@ -135,7 +139,7 @@ fn validate_proof_round_count(buf: &[u8]) -> Result<(), String> {
 #[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 mod tests {
     use super::*;
-    use jolt_field::RandomSampling;
+    use jolt_field::Field;
     use jolt_openings::CommitmentScheme;
     use jolt_poly::Polynomial;
     use jolt_transcript::Transcript;
@@ -173,9 +177,7 @@ mod tests {
         let prover_setup = crate::DoryScheme::setup_prover(num_vars);
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
-            .collect();
+        let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
         let eval = poly.evaluate(&point);
         let (commitment, hint) = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
 
@@ -212,9 +214,7 @@ mod tests {
         let prover_setup = crate::DoryScheme::setup_prover(num_vars);
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
-            .collect();
+        let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
         let eval = poly.evaluate(&point);
 
         let mut transcript = jolt_transcript::Blake2bTranscript::new(b"serde-bp");
@@ -247,9 +247,7 @@ mod tests {
 
         let prover_setup = crate::DoryScheme::setup_prover(num_vars);
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
-            .collect();
+        let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
         let eval = poly.evaluate(&point);
 
         let mut transcript = jolt_transcript::Blake2bTranscript::new(b"serde-oversized");

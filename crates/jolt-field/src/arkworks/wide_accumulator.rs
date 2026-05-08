@@ -9,7 +9,7 @@
 //! elements is 8 limbs (512 bits). A 9-limb accumulator (576 bits) can
 //! hold up to 2^64 such products without overflow.
 
-use crate::accumulator::{AdditiveAccumulator, RingAccumulator};
+use crate::accumulator::FieldAccumulator;
 use crate::arkworks::bn254::Fr;
 use crate::Limbs;
 
@@ -19,7 +19,7 @@ use super::bn254_ops;
 ///
 /// Stores the running sum of Montgomery-form products as a 576-bit integer.
 /// Converting to a field element requires a single Montgomery reduction
-/// via [`AdditiveAccumulator::reduce`].
+/// via [`reduce`](FieldAccumulator::reduce).
 #[derive(Clone, Copy)]
 pub struct WideAccumulator {
     /// 9 limbs = 2×4 (product width) + 1 (addition headroom).
@@ -35,12 +35,12 @@ impl Default for WideAccumulator {
     }
 }
 
-impl AdditiveAccumulator for WideAccumulator {
-    type Element = Fr;
+impl FieldAccumulator for WideAccumulator {
+    type Field = Fr;
 
     #[inline(always)]
-    fn add(&mut self, value: Fr) {
-        self.fmadd(value, <Fr as num_traits::One>::one());
+    fn fmadd(&mut self, a: Fr, b: Fr) {
+        self.limbs.fmadd::<4, 4>(&a.inner_limbs(), &b.inner_limbs());
     }
 
     #[inline(always)]
@@ -49,25 +49,18 @@ impl AdditiveAccumulator for WideAccumulator {
     }
 
     fn reduce(self) -> Fr {
-        // The accumulator holds Montgomery-form products and/or elements.
-        // Montgomery reduction divides product terms by R; raw element additions
-        // are already in Montgomery form and live in the low limbs.
+        // The accumulator holds sum_i (a_i_mont × b_i_mont).
+        // Montgomery reduction divides by R, yielding the Montgomery form
+        // of sum_i (a_i × b_i).
         let bigint = self.limbs.into();
         Fr::from_inner(bn254_ops::from_montgomery_reduce(bigint))
-    }
-}
-
-impl RingAccumulator for WideAccumulator {
-    #[inline(always)]
-    fn fmadd(&mut self, a: Fr, b: Fr) {
-        self.limbs.fmadd::<4, 4>(&a.inner_limbs(), &b.inner_limbs());
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AdditiveAccumulator, FromPrimitiveInt};
+    use crate::Field;
 
     #[test]
     fn single_fmadd() {

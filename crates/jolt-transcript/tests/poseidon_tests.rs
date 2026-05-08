@@ -1,4 +1,5 @@
 //! Tests for PoseidonTranscript implementation.
+
 #![cfg(feature = "poseidon")]
 
 mod common;

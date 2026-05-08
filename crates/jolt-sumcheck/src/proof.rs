@@ -1,5 +1,6 @@
 //! Proof structures for single and batched sumcheck protocols.
 
+use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// $(r_1, \ldots, r_n)$.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct SumcheckProof<F: jolt_field::Field> {
+pub struct SumcheckProof<F: Field> {
     /// Round polynomials $s_1, \ldots, s_n$ in the order they were generated.
     pub round_polynomials: Vec<UnivariatePoly<F>>,
 }

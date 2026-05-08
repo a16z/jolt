@@ -18,8 +18,11 @@ struct TestState {
 /// Fiat-Shamir transcript backed by a 256-bit digest.
 ///
 /// Generic over the hash function `D` and field type `F`. Challenges are
-/// produced as field elements through `F::from_challenge_bytes`.
-pub struct DigestTranscript<D: Digest<OutputSize = U32> + 'static, F> {
+/// produced as full-width field elements via `F::from_bytes()`.
+pub struct DigestTranscript<
+    D: Digest<OutputSize = U32> + 'static,
+    F: jolt_field::Field = jolt_field::Fr,
+> {
     state: [u8; 32],
     n_rounds: u32,
     #[cfg(test)]
@@ -27,11 +30,7 @@ pub struct DigestTranscript<D: Digest<OutputSize = U32> + 'static, F> {
     _marker: std::marker::PhantomData<(fn() -> D, F)>,
 }
 
-impl<D, F> Clone for DigestTranscript<D, F>
-where
-    D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
-{
+impl<D: Digest<OutputSize = U32>, F: jolt_field::Field> Clone for DigestTranscript<D, F> {
     fn clone(&self) -> Self {
         Self {
             state: self.state,
@@ -43,21 +42,13 @@ where
     }
 }
 
-impl<D, F> Default for DigestTranscript<D, F>
-where
-    D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
-{
+impl<D: Digest<OutputSize = U32>, F: jolt_field::Field> Default for DigestTranscript<D, F> {
     fn default() -> Self {
         Self::new(b"")
     }
 }
 
-impl<D, F> std::fmt::Debug for DigestTranscript<D, F>
-where
-    D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
-{
+impl<D: Digest<OutputSize = U32>, F: jolt_field::Field> std::fmt::Debug for DigestTranscript<D, F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DigestTranscript")
             .field("state", &format_args!("{:02x?}", self.state))
@@ -66,11 +57,7 @@ where
     }
 }
 
-impl<D, F> DigestTranscript<D, F>
-where
-    D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
-{
+impl<D: Digest<OutputSize = U32>, F: jolt_field::Field> DigestTranscript<D, F> {
     #[inline]
     fn hasher(&self) -> D {
         let mut round_bytes = [0u8; 32];
@@ -97,11 +84,7 @@ where
 
     #[inline]
     fn challenge_bytes32(&mut self, out: &mut [u8; 32]) {
-        let hash: [u8; 32] = self
-            .hasher()
-            .chain_update([0x01]) // squeeze domain tag
-            .finalize()
-            .into();
+        let hash: [u8; 32] = self.hasher().finalize().into();
         out.copy_from_slice(&hash);
         self.update_state(hash);
     }
@@ -124,11 +107,7 @@ where
     }
 }
 
-impl<D, F> Transcript for DigestTranscript<D, F>
-where
-    D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
-{
+impl<D: Digest<OutputSize = U32>, F: jolt_field::Field> Transcript for DigestTranscript<D, F> {
     type Challenge = F;
 
     fn new(label: &'static [u8]) -> Self {
@@ -155,19 +134,14 @@ where
     }
 
     fn append_bytes(&mut self, bytes: &[u8]) {
-        let hash: [u8; 32] = self
-            .hasher()
-            .chain_update([0x00]) // absorb domain tag
-            .chain_update(bytes)
-            .finalize()
-            .into();
+        let hash: [u8; 32] = self.hasher().chain_update(bytes).finalize().into();
         self.update_state(hash);
     }
 
     fn challenge(&mut self) -> F {
-        let mut buf = [0u8; 16];
+        let mut buf = vec![0u8; F::NUM_BYTES];
         self.challenge_bytes(&mut buf);
-        F::from_challenge_bytes(&buf)
+        F::from_bytes(&buf)
     }
 
     #[inline]

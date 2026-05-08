@@ -385,6 +385,19 @@ fn from_unchecked_nplus2(element: BigInt<6>) -> Fr {
     Fp::new_unchecked(r2)
 }
 
+/// Barrett-reduce an arbitrary little-endian limb integer into a field element.
+#[inline(always)]
+pub(crate) fn from_barrett_reduce<const L: usize>(element: BigInt<L>) -> Fr {
+    let mut acc = BigInt::<N>([0u64; N]);
+    let mut i = L;
+    while i > 0 {
+        i -= 1;
+        let chunk = nplus1_from_low_and_high(element.0[i], acc.0);
+        acc = barrett_reduce_5_to_4(chunk);
+    }
+    Fp::new_unchecked(acc)
+}
+
 /// Multiply a field element by u64.
 #[inline(always)]
 pub(crate) fn mul_u64(a: Fr, b: u64) -> Fr {

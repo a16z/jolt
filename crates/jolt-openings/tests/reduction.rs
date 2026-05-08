@@ -13,7 +13,7 @@
     reason = "tests may panic on assertion failures"
 )]
 
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling, ReducingBytes};
+use jolt_field::{Field, Fr};
 use jolt_openings::mock::MockCommitmentScheme;
 use jolt_openings::{reduce_prover, reduce_verifier, CommitmentScheme, ProverClaim, VerifierClaim};
 use jolt_poly::Polynomial;

@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use jolt_crypto::Bn254;
-use jolt_field::{Fr, RandomSampling};
+use jolt_field::{Field, Fr};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
 use jolt_poly::Polynomial;

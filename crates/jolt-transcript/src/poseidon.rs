@@ -1,5 +1,4 @@
 //! Poseidon-based Fiat-Shamir transcript for SNARK-friendly verification.
-#![cfg(feature = "poseidon")]
 //!
 //! Uses 3-input Poseidon (width-4 permutation: 3 inputs + 1 capacity element)
 //! over BN254 Fr with circom-compatible parameters via [`light_poseidon`].
@@ -43,8 +42,8 @@ const BYTES_PER_CHUNK: usize = 32;
 
 /// Fiat-Shamir transcript using Poseidon hash over BN254.
 ///
-/// Generic over the field type `F`. Challenges are produced as field
-/// elements directly via `TranscriptChallenge`.
+/// Generic over the field type `F`. Challenges are produced as full-width
+/// field elements directly via `F::from_bytes()`.
 pub struct PoseidonTranscript<F: jolt_field::Field = jolt_field::Fr> {
     /// 256-bit running state (canonical LE serialization of Fr).
     state: [u8; 32],
@@ -233,9 +232,9 @@ impl<F: jolt_field::Field> Transcript for PoseidonTranscript<F> {
     }
 
     fn challenge(&mut self) -> F {
-        let mut buf = [0u8; 16];
+        let mut buf = vec![0u8; F::NUM_BYTES];
         self.challenge_bytes(&mut buf);
-        <F as jolt_field::TranscriptChallenge>::from_challenge_bytes(&buf)
+        F::from_bytes(&buf)
     }
 
     #[inline]

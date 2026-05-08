@@ -69,6 +69,8 @@ pub trait MultilinearBinding<F: Field>: Send + Sync {
 /// - [`fold_rows`](Self::fold_rows): matrix-vector product $v \cdot M$ (opening protocols)
 /// - [`is_one_hot`](Self::is_one_hot) / [`for_each_one`](Self::for_each_one): unit-entry
 ///   one-hot hints for PCS commit optimization (e.g., batch addition instead of MSM)
+/// - [`is_sparse`](Self::is_sparse) / [`for_each_nonzero`](Self::for_each_nonzero):
+///   weighted sparse-entry hints for PCS commit optimization
 pub trait MultilinearPoly<F: Field>: Send + Sync {
     /// Number of variables $n$. The polynomial has $2^n$ evaluations.
     fn num_vars(&self) -> usize;
@@ -130,6 +132,25 @@ pub trait MultilinearPoly<F: Field>: Send + Sync {
     /// should override this method. The default is a no-op for non-one-hot
     /// polynomials.
     fn for_each_one(&self, _f: &mut dyn FnMut(usize)) {}
+
+    /// Whether this polynomial exposes sparse nonzero entries.
+    ///
+    /// This is a more general contract than [`is_one_hot`](Self::is_one_hot):
+    /// entries may carry arbitrary field weights. One-hot implementors get a
+    /// default sparse view through [`for_each_one`](Self::for_each_one).
+    fn is_sparse(&self) -> bool {
+        self.is_one_hot()
+    }
+
+    /// Iterates over `(position, value)` pairs for nonzero entries.
+    ///
+    /// Implementations that return true from [`is_sparse`](Self::is_sparse)
+    /// should override this when entries are not unit-valued.
+    fn for_each_nonzero(&self, f: &mut dyn FnMut(usize, F)) {
+        if self.is_one_hot() {
+            self.for_each_one(&mut |idx| f(idx, F::one()));
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -355,7 +376,7 @@ impl<F: Field, S: MultilinearPoly<F>> MultilinearPoly<F> for RlcSource<F, S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, RandomSampling};
+    use jolt_field::Fr;
     use num_traits::Zero;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;

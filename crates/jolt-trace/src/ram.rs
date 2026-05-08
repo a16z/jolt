@@ -5,7 +5,7 @@
 //! - `Memory`: final tracer memory state
 //! - `JoltDevice`: I/O data (inputs, outputs, advice, panic/termination)
 //!
-//! Mirrors jolt-core's `gen_ram_memory_states` but uses jolt-host types.
+//! Mirrors jolt-core's `gen_ram_memory_states` but uses jolt-trace types.
 
 use common::constants::RAM_START_ADDRESS;
 use common::jolt_device::JoltDevice;

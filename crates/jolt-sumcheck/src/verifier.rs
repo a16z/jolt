@@ -1,11 +1,11 @@
 //! Sumcheck verifier: checks round polynomials against the claimed sum.
 
+use jolt_field::Field;
 use jolt_transcript::Transcript;
 
 use crate::claim::{EvaluationClaim, SumcheckClaim};
 use crate::error::SumcheckError;
 use crate::round_proof::RoundProof;
-use crate::scalar::SumcheckScalar;
 
 /// Stateless sumcheck verifier engine.
 ///
@@ -50,7 +50,7 @@ impl SumcheckVerifier {
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        F: SumcheckScalar,
+        F: Field,
         T: Transcript<Challenge = F>,
         P: RoundProof<F>,
     {

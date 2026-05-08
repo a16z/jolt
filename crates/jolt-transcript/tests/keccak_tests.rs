@@ -1,5 +1,4 @@
 //! Tests for KeccakTranscript implementation.
-#![cfg(feature = "poseidon")]
 
 mod common;
 

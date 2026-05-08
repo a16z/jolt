@@ -7,7 +7,7 @@
 
 use dory::backends::arkworks::ArkG1;
 use jolt_dory::DoryScheme;
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+use jolt_field::{Field, Fr};
 use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme,
 };
@@ -21,9 +21,7 @@ fn round_trip<T: Transcript<Challenge = Fr>>(num_vars: usize, seed: u64, label: 
     let prover_setup = DoryScheme::setup_prover(num_vars);
     let verifier_setup = DoryScheme::setup_verifier(num_vars);
     let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-    let point: Vec<Fr> = (0..num_vars)
-        .map(|_| <Fr as RandomSampling>::random(&mut rng))
-        .collect();
+    let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
     let eval = poly.evaluate(&point);
     let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
@@ -123,9 +121,7 @@ fn wrong_eval_rejected() {
     let prover_setup = DoryScheme::setup_prover(num_vars);
     let verifier_setup = DoryScheme::setup_verifier(num_vars);
     let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-    let point: Vec<Fr> = (0..num_vars)
-        .map(|_| <Fr as RandomSampling>::random(&mut rng))
-        .collect();
+    let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
     let eval = poly.evaluate(&point);
     let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
@@ -153,9 +149,7 @@ fn wrong_point_rejected() {
     let prover_setup = DoryScheme::setup_prover(num_vars);
     let verifier_setup = DoryScheme::setup_verifier(num_vars);
     let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-    let point: Vec<Fr> = (0..num_vars)
-        .map(|_| <Fr as RandomSampling>::random(&mut rng))
-        .collect();
+    let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
     let eval = poly.evaluate(&point);
     let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
@@ -189,8 +183,8 @@ fn combine_linear_combination() {
     let (commit_a, _) = DoryScheme::commit(poly_a.evaluations(), &prover_setup);
     let (commit_b, _) = DoryScheme::commit(poly_b.evaluations(), &prover_setup);
 
-    let c1 = <Fr as RandomSampling>::random(&mut rng);
-    let c2 = <Fr as RandomSampling>::random(&mut rng);
+    let c1 = Fr::random(&mut rng);
+    let c2 = Fr::random(&mut rng);
 
     let combined = DoryScheme::combine(&[commit_a, commit_b], &[c1, c2]);
 
@@ -231,9 +225,7 @@ fn wrong_commitment_rejected() {
     let verifier_setup = DoryScheme::setup_verifier(num_vars);
 
     let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-    let point: Vec<Fr> = (0..num_vars)
-        .map(|_| <Fr as RandomSampling>::random(&mut rng))
-        .collect();
+    let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
     let eval = poly.evaluate(&point);
     let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
@@ -265,9 +257,7 @@ fn wrong_transcript_domain_rejected() {
     let prover_setup = DoryScheme::setup_prover(num_vars);
     let verifier_setup = DoryScheme::setup_verifier(num_vars);
     let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-    let point: Vec<Fr> = (0..num_vars)
-        .map(|_| <Fr as RandomSampling>::random(&mut rng))
-        .collect();
+    let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
     let eval = poly.evaluate(&point);
     let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
@@ -292,9 +282,7 @@ fn zk_round_trip<T: Transcript<Challenge = Fr>>(num_vars: usize, seed: u64, labe
     let prover_setup = DoryScheme::setup_prover(num_vars);
     let verifier_setup = DoryScheme::setup_verifier(num_vars);
     let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-    let point: Vec<Fr> = (0..num_vars)
-        .map(|_| <Fr as RandomSampling>::random(&mut rng))
-        .collect();
+    let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
     let eval = poly.evaluate(&point);
     let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
@@ -330,9 +318,7 @@ fn zk_wrong_commitment_rejected() {
     let verifier_setup = DoryScheme::setup_verifier(num_vars);
 
     let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-    let point: Vec<Fr> = (0..num_vars)
-        .map(|_| <Fr as RandomSampling>::random(&mut rng))
-        .collect();
+    let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
     let eval = poly.evaluate(&point);
     let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
@@ -357,9 +343,7 @@ fn wrong_eval_commitment_rejected_zk() {
     let prover_setup = DoryScheme::setup_prover(num_vars);
     let verifier_setup = DoryScheme::setup_verifier(num_vars);
     let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-    let point: Vec<Fr> = (0..num_vars)
-        .map(|_| <Fr as RandomSampling>::random(&mut rng))
-        .collect();
+    let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
     let eval = poly.evaluate(&point);
     let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
@@ -385,9 +369,7 @@ fn zk_wrong_transcript_domain_rejected() {
     let prover_setup = DoryScheme::setup_prover(num_vars);
     let verifier_setup = DoryScheme::setup_verifier(num_vars);
     let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-    let point: Vec<Fr> = (0..num_vars)
-        .map(|_| <Fr as RandomSampling>::random(&mut rng))
-        .collect();
+    let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
     let eval = poly.evaluate(&point);
     let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 

@@ -149,7 +149,7 @@ fn dot<F: Field>(row: &[(usize, F)], witness: &[F]) -> F {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::Fr;
 
     #[test]
     fn satisfied_constraint() {

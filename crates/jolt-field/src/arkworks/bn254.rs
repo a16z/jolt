@@ -2,11 +2,7 @@
 //!
 //! [`Fr`] is `#[repr(transparent)]` over the inner arkworks scalar field element,
 //! so it has identical layout and can be transmuted where needed.
-use crate::{
-    AdditiveGroup, CanonicalBitLength, CanonicalBytes, CanonicalU64, Field, FieldCore,
-    FixedByteSize, FixedBytes, FromPrimitiveInt, Invertible, Limbs, MulPrimitiveInt,
-    RandomSampling, ReducingBytes, RingCore, TranscriptChallenge, WithAccumulator,
-};
+use crate::{Field, Limbs};
 use ark_ff::{prelude::*, PrimeField, UniformRand};
 use rand_core::RngCore;
 
@@ -38,56 +34,56 @@ impl From<Fr> for ark_bn254::Fr {
 impl From<bool> for Fr {
     #[inline(always)]
     fn from(v: bool) -> Self {
-        <Self as FromPrimitiveInt>::from_bool(v)
+        <Self as Field>::from_bool(v)
     }
 }
 
 impl From<u8> for Fr {
     #[inline(always)]
     fn from(v: u8) -> Self {
-        <Self as FromPrimitiveInt>::from_u64(v as u64)
+        <Self as Field>::from_u64(v as u64)
     }
 }
 
 impl From<u16> for Fr {
     #[inline(always)]
     fn from(v: u16) -> Self {
-        <Self as FromPrimitiveInt>::from_u64(v as u64)
+        <Self as Field>::from_u64(v as u64)
     }
 }
 
 impl From<u32> for Fr {
     #[inline(always)]
     fn from(v: u32) -> Self {
-        <Self as FromPrimitiveInt>::from_u64(v as u64)
+        <Self as Field>::from_u64(v as u64)
     }
 }
 
 impl From<u64> for Fr {
     #[inline(always)]
     fn from(v: u64) -> Self {
-        <Self as FromPrimitiveInt>::from_u64(v)
+        <Self as Field>::from_u64(v)
     }
 }
 
 impl From<i64> for Fr {
     #[inline(always)]
     fn from(v: i64) -> Self {
-        <Self as FromPrimitiveInt>::from_i64(v)
+        <Self as Field>::from_i64(v)
     }
 }
 
 impl From<i128> for Fr {
     #[inline(always)]
     fn from(v: i128) -> Self {
-        <Self as FromPrimitiveInt>::from_i128(v)
+        <Self as Field>::from_i128(v)
     }
 }
 
 impl From<u128> for Fr {
     #[inline(always)]
     fn from(v: u128) -> Self {
-        <Self as FromPrimitiveInt>::from_u128(v)
+        <Self as Field>::from_u128(v)
     }
 }
 
@@ -298,6 +294,12 @@ impl Fr {
         Fr(bn254_ops::from_bigint_unchecked(limbs.into()))
     }
 
+    /// Barrett-reduces an unreduced internal-representation integer.
+    #[inline(always)]
+    pub fn from_barrett_reduced_limbs<const L: usize>(limbs: Limbs<L>) -> Self {
+        Fr(bn254_ops::from_barrett_reduce(limbs.into()))
+    }
+
     /// Access the internal Montgomery-form limbs.
     ///
     /// Used by [`WideAccumulator`](super::wide_accumulator::WideAccumulator)
@@ -314,86 +316,54 @@ impl Fr {
     }
 }
 
-impl AdditiveGroup for Fr {}
+impl Field for Fr {
+    type Accumulator = super::wide_accumulator::WideAccumulator;
+    type ScalarAccumulator = super::scalar_accumulator::ScalarAccumulator;
 
-impl RingCore for Fr {
-    #[inline]
-    fn square(&self) -> Self {
-        Fr(<InnerFr as ark_ff::Field>::square(&self.0))
-    }
-}
-
-impl Invertible for Fr {
-    #[inline]
-    fn inverse(&self) -> Option<Self> {
-        <InnerFr as ark_ff::Field>::inverse(&self.0).map(Fr)
-    }
-}
-
-impl FieldCore for Fr {}
-
-impl FixedByteSize for Fr {
     const NUM_BYTES: usize = 32;
-}
 
-impl CanonicalBytes for Fr {
     #[expect(clippy::expect_used)]
-    #[inline]
-    fn to_bytes_le(&self, out: &mut [u8]) {
-        assert_eq!(out.len(), <Self as FixedByteSize>::NUM_BYTES);
+    fn to_bytes(&self) -> [u8; 32] {
         use ark_serialize::CanonicalSerialize;
+        let mut buf = [0u8; 32];
         self.0
-            .serialize_compressed(out)
+            .serialize_compressed(&mut buf[..])
             .expect("BN254 Fr always serializes to 32 bytes");
+        buf
     }
-}
 
-impl ReducingBytes for Fr {
-    #[inline]
-    fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
+    fn random<R: RngCore>(rng: &mut R) -> Self {
+        Fr(<InnerFr as UniformRand>::rand(rng))
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Self {
         Fr::from_le_bytes_mod_order(bytes)
     }
-}
 
-impl TranscriptChallenge for Fr {
-    #[inline]
-    fn from_challenge_bytes(bytes: &[u8]) -> Self {
-        Fr::from_le_bytes_mod_order(bytes)
-    }
-}
-
-impl FixedBytes<32> for Fr {}
-
-impl CanonicalU64 for Fr {
-    #[inline]
-    fn to_canonical_u64_checked(&self) -> Option<u64> {
+    fn to_u64(&self) -> Option<u64> {
         let bigint = <InnerFr as PrimeField>::into_bigint(self.0);
         let limbs: &[u64] = bigint.as_ref();
         let result = limbs[0];
 
-        if <Self as FromPrimitiveInt>::from_u64(result) != *self {
+        if <Self as Field>::from_u64(result) != *self {
             None
         } else {
             Some(result)
         }
     }
-}
 
-impl CanonicalBitLength for Fr {
-    #[inline]
     fn num_bits(&self) -> u32 {
         <InnerFr as PrimeField>::into_bigint(self.0).num_bits()
     }
-}
 
-impl RandomSampling for Fr {
-    #[inline]
-    fn random<R: RngCore>(rng: &mut R) -> Self {
-        Fr(<InnerFr as UniformRand>::rand(rng))
+    fn square(&self) -> Self {
+        Fr(<InnerFr as ark_ff::Field>::square(&self.0))
     }
-}
 
-impl FromPrimitiveInt for Fr {
+    fn inverse(&self) -> Option<Self> {
+        <InnerFr as ark_ff::Field>::inverse(&self.0).map(Fr)
+    }
+
     #[inline]
     fn from_u64(n: u64) -> Self {
         Fr(bn254_ops::from_u64(n))
@@ -421,15 +391,7 @@ impl FromPrimitiveInt for Fr {
     fn from_u128(val: u128) -> Self {
         Fr(bn254_ops::from_u128(val))
     }
-}
 
-impl WithAccumulator for Fr {
-    type Accumulator = super::wide_accumulator::WideAccumulator;
-}
-
-impl crate::MulPow2 for Fr {}
-
-impl MulPrimitiveInt for Fr {
     #[inline]
     fn mul_u64(&self, n: u64) -> Self {
         Fr(bn254_ops::mul_u64(self.0, n))
@@ -451,13 +413,11 @@ impl MulPrimitiveInt for Fr {
     }
 }
 
-impl Field for Fr {}
-
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::{CanonicalU64, FixedBytes};
+    use crate::Field;
 
     #[test]
     fn field_arithmetic_basic() {
@@ -482,8 +442,8 @@ mod tests {
     #[test]
     fn serialization_roundtrip() {
         let val = Fr::from_u64(123_456_789);
-        let bytes = val.to_bytes_array();
-        let recovered = Fr::from_bytes_array(&bytes);
+        let bytes = val.to_bytes();
+        let recovered = Fr::from_bytes(&bytes);
         assert_eq!(val, recovered);
     }
 
@@ -499,10 +459,10 @@ mod tests {
 
     #[test]
     fn to_u64_roundtrip() {
-        assert_eq!(Fr::from_u64(999).to_canonical_u64_checked(), Some(999));
+        assert_eq!(Fr::from_u64(999).to_u64(), Some(999));
         // Large field element should not fit in u64
         let big = Fr::from_u128(u128::MAX / 2);
-        assert_eq!(big.to_canonical_u64_checked(), None);
+        assert_eq!(big.to_u64(), None);
     }
 
     #[test]

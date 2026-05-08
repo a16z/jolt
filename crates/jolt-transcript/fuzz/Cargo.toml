@@ -21,7 +21,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-jolt-transcript = { path = ".." }
+jolt-transcript = { path = "..", features = ["poseidon"] }
 
 [[bin]]
 name = "transcript_no_panic"

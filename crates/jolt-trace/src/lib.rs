@@ -6,11 +6,17 @@
 
 mod analyze;
 pub mod bytecode;
+mod cycle_row;
+mod extract;
 mod jolt_cycle;
 mod program;
+pub mod r1cs_witness;
 pub mod ram;
+mod tracer_cycle;
 
 pub use bytecode::BytecodePreprocessing;
+pub use cycle_row::CycleRow;
+pub use extract::{extract_trace, InstructionFlagData};
 pub use jolt_cycle::JoltCycle;
 pub use jolt_riscv::instructions;
 pub use jolt_riscv::{
@@ -18,6 +24,8 @@ pub use jolt_riscv::{
     InterleavedBitsMarker, JoltInstruction, JoltInstructions, NUM_CIRCUIT_FLAGS,
     NUM_INSTRUCTION_FLAGS,
 };
+pub use r1cs_witness::{build_r1cs_witness, r1cs_cycle_witness};
+pub use tracer_cycle::{instruction_circuit_flags, instruction_instruction_flags};
 
 use std::path::{Path, PathBuf};
 

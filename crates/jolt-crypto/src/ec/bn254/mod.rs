@@ -139,6 +139,11 @@ macro_rules! impl_jolt_group_wrapper {
                 buf.reverse();
                 transcript.append_bytes(&buf);
             }
+
+            fn serialized_len(&self) -> u64 {
+                use ::ark_serialize::CanonicalSerialize;
+                self.0.uncompressed_size() as u64
+            }
         }
 
         impl $crate::JoltGroup for $wrapper {
@@ -259,8 +264,7 @@ impl PairingGroup for Bn254 {
 /// catches silent modular reduction when `F` has a larger modulus than BN254 Fr.
 #[inline]
 pub(crate) fn field_to_fr<F: Field>(f: &F) -> ark_bn254::Fr {
-    let mut bytes = vec![0u8; F::NUM_BYTES];
-    f.to_bytes_le(&mut bytes);
+    let bytes = f.to_bytes();
     #[cfg(debug_assertions)]
     {
         use ark_ff::{BigInteger, PrimeField as _};

@@ -1,7 +1,6 @@
 //! Sumcheck claim: the public statement that the protocol proves.
 
-use jolt_field::FieldCore;
-
+use jolt_field::Field;
 /// A sumcheck claim asserting that
 /// $\sum_{x \in \{0,1\}^n} g(x) = C$
 /// where $g$ is a polynomial of individual degree at most `degree` in each variable.
@@ -13,7 +12,7 @@ use jolt_field::FieldCore;
 ///   For a product of $k$ multilinear polynomials, `degree = k`.
 /// * `claimed_sum` -- the value $C$ that the prover claims the sum equals.
 #[derive(Clone, Debug)]
-pub struct SumcheckClaim<F: FieldCore> {
+pub struct SumcheckClaim<F: Field> {
     /// Number of Boolean variables in the summation.
     pub num_vars: usize,
     /// Maximum degree of each round polynomial.
@@ -22,7 +21,7 @@ pub struct SumcheckClaim<F: FieldCore> {
     pub claimed_sum: F,
 }
 
-impl<F: FieldCore> SumcheckClaim<F> {
+impl<F: Field> SumcheckClaim<F> {
     /// Construct a sumcheck claim.
     ///
     /// # Panics
@@ -50,7 +49,7 @@ impl<F: FieldCore> SumcheckClaim<F> {
 /// BlindFold, etc.) to retain soundness — sumcheck alone does not
 /// verify `v` against any commitment.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EvaluationClaim<F: FieldCore> {
+pub struct EvaluationClaim<F: Field> {
     /// Challenge point `r = (r_1, ..., r_n)`.
     pub point: Vec<F>,
     /// Claimed evaluation `g(r) = v`.

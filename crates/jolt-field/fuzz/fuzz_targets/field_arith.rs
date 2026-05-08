@@ -1,5 +1,5 @@
 #![no_main]
-use jolt_field::{Fr, FromPrimitiveInt, Invertible, ReducingBytes};
+use jolt_field::{Field, Fr};
 use libfuzzer_sys::fuzz_target;
 use num_traits::Zero;
 
@@ -7,8 +7,8 @@ fuzz_target!(|data: &[u8]| {
     if data.len() < 64 {
         return;
     }
-    let a = <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[..32]);
-    let b = <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[32..64]);
+    let a = <Fr as Field>::from_bytes(&data[..32]);
+    let b = <Fr as Field>::from_bytes(&data[32..64]);
 
     // Arithmetic operations must not panic
     let sum = a + b;

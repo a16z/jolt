@@ -31,6 +31,10 @@ impl AppendToTranscript for Label {
         padded[..self.0.len()].copy_from_slice(self.0);
         transcript.append_bytes(&padded);
     }
+
+    fn serialized_len(&self) -> u64 {
+        32
+    }
 }
 
 /// Packed label (24 bytes) + count (8 bytes BE) in one 32-byte word.
@@ -56,6 +60,10 @@ impl AppendToTranscript for LabelWithCount {
         packed[24..32].copy_from_slice(&self.1.to_be_bytes());
         transcript.append_bytes(&packed);
     }
+
+    fn serialized_len(&self) -> u64 {
+        32
+    }
 }
 
 /// EVM-compatible left-padded u64: 24 zero bytes + 8-byte BE value.
@@ -68,6 +76,10 @@ impl AppendToTranscript for U64Word {
         let mut packed = [0u8; 32];
         packed[24..].copy_from_slice(&self.0.to_be_bytes());
         transcript.append_bytes(&packed);
+    }
+
+    fn serialized_len(&self) -> u64 {
+        32
     }
 }
 

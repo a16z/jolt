@@ -1,9 +1,8 @@
 //! Tests for Blake2bTranscript implementation.
-#![cfg(feature = "poseidon")]
 
 mod common;
 
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::Fr;
 use jolt_transcript::Blake2bTranscript;
 use num_traits::Zero;
 
@@ -61,6 +60,7 @@ fn test_field_zero_one_distinct_states() {
 
 #[test]
 fn test_field_element_ordering_sensitivity() {
+    use jolt_field::{Field, Fr};
     use jolt_transcript::{AppendToTranscript, Transcript};
 
     let a = Fr::from_u64(42);

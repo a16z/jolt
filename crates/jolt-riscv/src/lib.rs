@@ -51,13 +51,12 @@ macro_rules! jolt_instruction {
             fn circuit_flags(&self) -> $crate::CircuitFlagSet {
                 let mut flags = $crate::CircuitFlagSet::default()
                     $(.set($crate::CircuitFlags::$circuit))*;
-                if let Some(virtual_sequence_remaining) = self.0.virtual_sequence_remaining() {
+                let virtual_sequence_remaining = self.0.virtual_sequence_remaining();
+                if virtual_sequence_remaining.is_some() {
                     flags = flags.set($crate::CircuitFlags::VirtualInstruction);
-                    if virtual_sequence_remaining == 0 {
-                        flags = flags.set($crate::CircuitFlags::IsLastInSequence);
-                    }
+                    $crate::jolt_instruction!(@set_is_last_in_sequence flags, $name, virtual_sequence_remaining);
                 }
-                if self.0.virtual_sequence_remaining().unwrap_or(0) != 0 {
+                if virtual_sequence_remaining.unwrap_or(0) != 0 {
                     flags = flags.set($crate::CircuitFlags::DoNotUpdateUnexpandedPC);
                 }
                 if self.0.is_compressed() {
@@ -89,13 +88,12 @@ macro_rules! jolt_instruction {
             #[inline]
             fn circuit_flags(&self) -> $crate::CircuitFlagSet {
                 let mut flags = $crate::CircuitFlagSet::default();
-                if let Some(virtual_sequence_remaining) = self.0.virtual_sequence_remaining() {
+                let virtual_sequence_remaining = self.0.virtual_sequence_remaining();
+                if virtual_sequence_remaining.is_some() {
                     flags = flags.set($crate::CircuitFlags::VirtualInstruction);
-                    if virtual_sequence_remaining == 0 {
-                        flags = flags.set($crate::CircuitFlags::IsLastInSequence);
-                    }
+                    $crate::jolt_instruction!(@set_is_last_in_sequence flags, $name, virtual_sequence_remaining);
                 }
-                if self.0.virtual_sequence_remaining().unwrap_or(0) != 0 {
+                if virtual_sequence_remaining.unwrap_or(0) != 0 {
                     flags = flags.set($crate::CircuitFlags::DoNotUpdateUnexpandedPC);
                 }
                 if self.0.is_compressed() {
@@ -132,6 +130,14 @@ macro_rules! jolt_instruction {
         )]
         pub struct $name<T = ()>(pub T);
     };
+
+    (@set_is_last_in_sequence $flags:ident, Jalr, $virtual_sequence_remaining:expr) => {
+        if $virtual_sequence_remaining == Some(0) {
+            $flags = $flags.set($crate::CircuitFlags::IsLastInSequence);
+        }
+    };
+
+    (@set_is_last_in_sequence $flags:ident, $name:ident, $virtual_sequence_remaining:expr) => {};
 
     // Internal: emit `JoltInstruction` for `$name<T>` whenever `T` is itself a
     // `RISCVInstruction`. Lets call sites treat the wrapper newtype as a Jolt

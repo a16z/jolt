@@ -78,4 +78,8 @@ pub const MAX_LABEL_LEN: usize = 32;
 pub trait AppendToTranscript {
     /// Absorbs this value into the transcript.
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T);
+
+    /// Number of raw bytes that [`append_to_transcript`](Self::append_to_transcript)
+    /// feeds to [`Transcript::append_bytes`].
+    fn serialized_len(&self) -> u64;
 }

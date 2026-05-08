@@ -3,7 +3,7 @@ use crate::traits::LookupQuery;
 use jolt_trace::instructions::MovSign;
 use jolt_trace::{JoltCycle, JoltInstruction};
 
-impl_lookup_table!(MovSign, Some(SignMask));
+impl_lookup_table!(MovSign, Some(Movsign));
 
 impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for MovSign<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {

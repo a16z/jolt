@@ -6,7 +6,7 @@
 
 #![expect(clippy::unwrap_used, reason = "tests may panic on assertion failures")]
 
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Field, Fr};
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
 use jolt_sumcheck::error::SumcheckError;

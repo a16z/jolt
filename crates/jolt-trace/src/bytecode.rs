@@ -8,7 +8,7 @@
 //! - [`BytecodePCMapper::get_pc`] — resolves `(address, virtual_sequence_remaining)`
 //!   to a dense bytecode table index, accounting for virtual instruction expansion.
 
-use crate::JoltInstruction;
+use crate::{CycleRow, JoltInstruction};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
 use serde::{Deserialize, Serialize};
 use tracer::instruction::Instruction;
@@ -61,6 +61,16 @@ impl BytecodePreprocessing {
         }
         self.pc_map.get_pc(
             cycle.address() as usize,
+            cycle.virtual_sequence_remaining().unwrap_or(0),
+        )
+    }
+
+    pub fn get_cycle_pc(&self, cycle: &impl CycleRow) -> usize {
+        if cycle.is_noop() {
+            return 0;
+        }
+        self.pc_map.get_pc(
+            cycle.unexpanded_pc() as usize,
             cycle.virtual_sequence_remaining().unwrap_or(0),
         )
     }
