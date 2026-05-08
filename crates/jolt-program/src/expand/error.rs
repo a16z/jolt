@@ -18,6 +18,8 @@ pub enum ExpansionError {
     RecursionDepthExceeded { max_depth: usize },
     #[error("malformed normalized instruction: {0}")]
     MalformedInstruction(&'static str),
+    #[error("instruction {0:?} is not legal in finalized provider-free bytecode")]
+    IllegalTargetInstruction(jolt_riscv::JoltInstructionKind),
     #[error("unsupported CSR 0x{0:03x}")]
     UnsupportedCsr(u16),
     #[error("unsupported instruction expansion")]

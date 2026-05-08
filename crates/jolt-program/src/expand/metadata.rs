@@ -1,6 +1,6 @@
 use jolt_riscv::NormalizedInstruction;
 
-use crate::expand::ExpansionError;
+use crate::expand::{grammar::is_target_legal, ExpansionError};
 
 pub(super) fn stamp_sequence(
     rows: Vec<NormalizedInstruction>,
@@ -8,6 +8,13 @@ pub(super) fn stamp_sequence(
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     if rows.is_empty() {
         return Err(ExpansionError::EmptySequence);
+    }
+    for row in &rows {
+        if !is_target_legal(row.instruction_kind) {
+            return Err(ExpansionError::IllegalTargetInstruction(
+                row.instruction_kind,
+            ));
+        }
     }
 
     let len = rows.len();
