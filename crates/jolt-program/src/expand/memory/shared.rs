@@ -117,30 +117,28 @@ pub(in crate::expand) fn expand_advice_load(
     sign_extension_shift: Option<i128>,
     allocator: &mut ExpansionAllocator,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let mut sequence = core::ExpansionSequence::new(instruction);
-    sequence.emit_j_expanded(
+    let mut ops = vec![grammar::ExpansionOp::Expand(grammar::RowTemplate::j(
         JoltInstructionKind::VirtualAdviceLoad,
         rd(instruction)?,
         byte_len,
-        allocator,
-    )?;
+    ))];
     if let Some(shift) = sign_extension_shift {
-        sequence.emit_i_expanded(
-            JoltInstructionKind::SLLI,
-            rd(instruction)?,
-            rd(instruction)?,
-            shift,
-            allocator,
-        )?;
-        sequence.emit_i_expanded(
-            JoltInstructionKind::SRAI,
-            rd(instruction)?,
-            rd(instruction)?,
-            shift,
-            allocator,
-        )?;
+        ops.extend([
+            grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+                JoltInstructionKind::SLLI,
+                rd(instruction)?,
+                rd(instruction)?,
+                shift,
+            )),
+            grammar::ExpansionOp::Expand(grammar::RowTemplate::i(
+                JoltInstructionKind::SRAI,
+                rd(instruction)?,
+                rd(instruction)?,
+                shift,
+            )),
+        ]);
     }
-    sequence.finish()
+    core::ExpansionState::new(allocator).materialize_ops(instruction, ops)
 }
 
 pub(in crate::expand) fn expand_amo_d(
