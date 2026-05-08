@@ -8,30 +8,68 @@ pub(in crate::expand) fn expand_csrrs(
     let virtual_reg = allocator
         .csr_to_virtual_register(csr)
         .ok_or(ExpansionError::UnsupportedCsr(csr))?;
-    let mut sequence = core::ExpansionSequence::new(instruction);
     if rs1(instruction)? == 0 {
-        sequence.emit_i(JoltInstructionKind::ADDI, rd(instruction)?, virtual_reg, 0);
+        return core::ExpansionState::new(allocator).materialize_ops(
+            instruction,
+            [grammar::ExpansionOp::Row(grammar::RowTemplate::i(
+                JoltInstructionKind::ADDI,
+                rd(instruction)?,
+                virtual_reg,
+                0,
+            ))],
+        );
     } else if rd(instruction)? == 0 {
-        sequence.emit_r(
-            JoltInstructionKind::OR,
-            virtual_reg,
-            virtual_reg,
-            rs1(instruction)?,
+        return core::ExpansionState::new(allocator).materialize_ops(
+            instruction,
+            [grammar::ExpansionOp::Row(grammar::RowTemplate::r(
+                JoltInstructionKind::OR,
+                virtual_reg,
+                virtual_reg,
+                rs1(instruction)?,
+            ))],
         );
     } else if rd(instruction)? == rs1(instruction)? {
         let temp = allocator.allocate()?;
-        sequence.emit_i(JoltInstructionKind::ADDI, temp, rs1(instruction)?, 0);
-        sequence.emit_i(JoltInstructionKind::ADDI, rd(instruction)?, virtual_reg, 0);
-        sequence.emit_r(JoltInstructionKind::OR, virtual_reg, virtual_reg, temp);
-        return sequence.finish_releasing(allocator, [temp]);
-    } else {
-        sequence.emit_i(JoltInstructionKind::ADDI, rd(instruction)?, virtual_reg, 0);
-        sequence.emit_r(
-            JoltInstructionKind::OR,
-            virtual_reg,
-            virtual_reg,
-            rs1(instruction)?,
+        return core::ExpansionState::new(allocator).materialize_ops(
+            instruction,
+            [
+                grammar::ExpansionOp::Row(grammar::RowTemplate::i(
+                    JoltInstructionKind::ADDI,
+                    temp,
+                    rs1(instruction)?,
+                    0,
+                )),
+                grammar::ExpansionOp::Row(grammar::RowTemplate::i(
+                    JoltInstructionKind::ADDI,
+                    rd(instruction)?,
+                    virtual_reg,
+                    0,
+                )),
+                grammar::ExpansionOp::Row(grammar::RowTemplate::r(
+                    JoltInstructionKind::OR,
+                    virtual_reg,
+                    virtual_reg,
+                    temp,
+                )),
+                grammar::ExpansionOp::Release(temp),
+            ],
         );
     }
-    sequence.finish()
+    core::ExpansionState::new(allocator).materialize_ops(
+        instruction,
+        [
+            grammar::ExpansionOp::Row(grammar::RowTemplate::i(
+                JoltInstructionKind::ADDI,
+                rd(instruction)?,
+                virtual_reg,
+                0,
+            )),
+            grammar::ExpansionOp::Row(grammar::RowTemplate::r(
+                JoltInstructionKind::OR,
+                virtual_reg,
+                virtual_reg,
+                rs1(instruction)?,
+            )),
+        ],
+    )
 }

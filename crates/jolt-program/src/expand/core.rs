@@ -99,42 +99,6 @@ impl ExpansionSequence {
         }
     }
 
-    pub(super) fn emit_r(
-        &mut self,
-        instruction_kind: JoltInstructionKind,
-        rd: u8,
-        rs1: u8,
-        rs2: u8,
-    ) {
-        self.emit(
-            instruction_kind,
-            NormalizedOperands {
-                rd: Some(rd),
-                rs1: Some(rs1),
-                rs2: Some(rs2),
-                imm: 0,
-            },
-        );
-    }
-
-    pub(super) fn emit_i(
-        &mut self,
-        instruction_kind: JoltInstructionKind,
-        rd: u8,
-        rs1: u8,
-        imm: i128,
-    ) {
-        self.emit(
-            instruction_kind,
-            NormalizedOperands {
-                rd: Some(rd),
-                rs1: Some(rs1),
-                rs2: None,
-                imm,
-            },
-        );
-    }
-
     pub(super) fn emit_expanded(
         &mut self,
         instruction_kind: JoltInstructionKind,
