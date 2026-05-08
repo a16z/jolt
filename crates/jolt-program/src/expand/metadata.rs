@@ -29,3 +29,34 @@ pub(super) fn stamp_sequence(
         })
         .collect())
 }
+
+#[cfg(test)]
+mod tests {
+    use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
+
+    use super::*;
+
+    #[test]
+    fn rejects_source_only_rows_before_stamping() {
+        let rows = vec![NormalizedInstruction {
+            instruction_kind: JoltInstructionKind::ADDIW,
+            address: 0x8000_0000,
+            operands: NormalizedOperands {
+                rd: Some(1),
+                rs1: Some(2),
+                rs2: None,
+                imm: 3,
+            },
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: false,
+        }];
+
+        assert!(matches!(
+            stamp_sequence(rows, false),
+            Err(ExpansionError::IllegalTargetInstruction(
+                JoltInstructionKind::ADDIW
+            ))
+        ));
+    }
+}
