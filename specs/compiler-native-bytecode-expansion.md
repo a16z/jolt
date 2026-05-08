@@ -1860,20 +1860,21 @@ resource materialization machinery as provider-free expansion.
 20. Add central `ExpansionOp` materialization for row, helper expansion, and
     release operations; port one temp-using shift lowering through it.
 21. Widen ordered release-op materialization across temp-using shift lowerings.
-22. Port arithmetic, shifts, memory, division, and control-flow families.
-23. Replace `InstrAssembler<'a>` in production expansion code.
-24. Preserve tracer inline adapter support as finalized rows outside
+22. Move remaining arithmetic temp lowerers onto ordered expansion ops.
+23. Port arithmetic, shifts, memory, division, and control-flow families.
+24. Replace `InstrAssembler<'a>` in production expansion code.
+25. Preserve tracer inline adapter support as finalized rows outside
     provider-free core.
-25. Delete the old recursive assembler once all parity tests pass.
-26. Run Hax/Aeneas again on:
+26. Delete the old recursive assembler once all parity tests pass.
+27. Run Hax/Aeneas again on:
    - metadata stamping,
    - allocator transitions,
    - ADDIW shallow lowering,
    - provider-free `expand_one_core`.
-27. Record the separate semantics follow-up: a hand-modeled Lean transition
+28. Record the separate semantics follow-up: a hand-modeled Lean transition
     relation for a small provider-free slice, plus an expansion-correctness
     statement comparing source-row execution with target-sequence execution.
-28. Run formatting, clippy, host tests, ZK tests, and dependency checks.
+29. Run formatting, clippy, host tests, ZK tests, and dependency checks.
 
 Do not leave both expanders in production. A temporary test-only reference path is acceptable during the rewrite, but the final branch should have one canonical production expander.
 
