@@ -5,7 +5,7 @@
 | Author(s)   | Quang Dao                                                            |
 | Created     | 2026-05-05                                                           |
 | Status      | draft                                                                 |
-| Related PR  | [#1490](https://github.com/a16z/jolt/pull/1490)                      |
+| Related PR  | [#1490](https://github.com/a16z/jolt/pull/1490), [#1518](https://github.com/a16z/jolt/pull/1518) |
 | Baseline    | `main` after [#1490](https://github.com/a16z/jolt/pull/1490), merge commit `51d81a36e` |
 | Depends on  | `specs/bytecode-expansion-crate.md`                                   |
 
@@ -1448,6 +1448,7 @@ ordered scope is:
 1. **Phase 1: fully remove historical RV32 support from `tracer`.**
    `jolt-program` already rejects ELF32/RV32. Finish the cutover by deleting
    live `tracer` RV32 execution/decode/uncompression paths and stale docs.
+   Implemented in [#1518](https://github.com/a16z/jolt/pull/1518).
 2. **Phase 2: introduce phase-specific instruction identities.** Keep a flat
    committed row identity where proof code needs it, but stop asking one name to
    mean source RISC-V op, expanded Jolt bytecode row, and lookup-backed row.
