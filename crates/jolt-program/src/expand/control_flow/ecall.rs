@@ -2,17 +2,16 @@ use super::*;
 
 pub(in crate::expand) fn expand_ecall(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
     const MCAUSE_ECALL_FROM_MMODE: i128 = 11;
 
-    let v_trap_handler_reg = allocator.trap_handler_register();
-    let vr_mepc = allocator.mepc_register();
-    let vr_mcause = allocator.mcause_register();
-    let vr_mtval = allocator.mtval_register();
-    let vr_mstatus = allocator.mstatus_register();
+    let v_trap_handler_reg = trap_handler_register();
+    let vr_mepc = mepc_register();
+    let vr_mcause = mcause_register();
+    let vr_mtval = mtval_register();
+    let vr_mstatus = mstatus_register();
 
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
+    let mut asm = ExpansionBuilder::new(*instruction);
 
     let ecall_addr = asm.allocate()?;
     asm.emit_u(JoltInstructionKind::AUIPC, ecall_addr, 0);

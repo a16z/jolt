@@ -2,12 +2,11 @@ use super::*;
 
 pub(in crate::expand) fn expand_mulh(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v_sx = allocator.allocate()?;
-    let v_sy = allocator.allocate()?;
-    let v_tmp = allocator.allocate()?;
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let v_sx = asm.allocate()?;
+    let v_sy = asm.allocate()?;
+    let v_tmp = asm.allocate()?;
 
     asm.emit_i(
         JoltInstructionKind::VirtualMovsign,

@@ -2,13 +2,10 @@ use super::*;
 
 pub(in crate::expand) fn expand_csrrw(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let csr = csr_address(instruction);
-    let virtual_reg = allocator
-        .csr_to_virtual_register(csr)
-        .ok_or(ExpansionError::UnsupportedCsr(csr))?;
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
+    let virtual_reg = csr_to_virtual_register(csr).ok_or(ExpansionError::UnsupportedCsr(csr))?;
+    let mut asm = ExpansionBuilder::new(*instruction);
 
     if rd(instruction)? == 0 {
         asm.emit_i(JoltInstructionKind::ADDI, virtual_reg, rs1(instruction)?, 0);

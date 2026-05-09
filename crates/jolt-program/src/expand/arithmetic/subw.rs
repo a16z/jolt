@@ -2,9 +2,8 @@ use super::*;
 
 pub(in crate::expand) fn expand_subw(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
 
     asm.emit_r(
         JoltInstructionKind::SUB,

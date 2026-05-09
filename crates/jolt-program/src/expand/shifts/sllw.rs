@@ -2,10 +2,9 @@ use super::*;
 
 pub(in crate::expand) fn expand_sllw(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v_pow2 = allocator.allocate()?;
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let v_pow2 = asm.allocate()?;
 
     asm.emit_i(
         JoltInstructionKind::VirtualPow2W,

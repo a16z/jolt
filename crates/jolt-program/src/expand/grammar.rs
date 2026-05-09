@@ -1,10 +1,9 @@
 use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
 
-use crate::expand::{
-    allocator::ExpansionAllocator,
-    core::{ExpansionSequence, ExpansionState},
-    ExpansionError,
-};
+use crate::expand::ExpansionError;
+
+const TEMP_REGISTER_BASE: u8 = 200;
+const MAX_TEMP_REGISTERS_PER_SOURCE: usize = 48;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct RowTemplate {
@@ -114,6 +113,27 @@ impl RowTemplate {
         }
     }
 
+    pub(super) fn temporary(index: usize) -> Result<u8, ExpansionError> {
+        if index >= MAX_TEMP_REGISTERS_PER_SOURCE {
+            return Err(ExpansionError::CapacityExceeded {
+                actual: index + 1,
+                capacity: MAX_TEMP_REGISTERS_PER_SOURCE,
+            });
+        }
+        Ok(TEMP_REGISTER_BASE + index as u8)
+    }
+
+    pub(super) const fn is_temporary_register(register: u8) -> bool {
+        register >= TEMP_REGISTER_BASE
+    }
+
+    pub(super) fn temporary_index(register: u8) -> Result<usize, ExpansionError> {
+        if !Self::is_temporary_register(register) {
+            return Err(ExpansionError::InvalidVirtualRegister { register });
+        }
+        Ok((register - TEMP_REGISTER_BASE) as usize)
+    }
+
     pub(super) fn instruction_at(self, address: usize) -> NormalizedInstruction {
         NormalizedInstruction {
             instruction_kind: self.instruction_kind,
@@ -126,26 +146,38 @@ impl RowTemplate {
     }
 }
 
-pub(super) struct ExpansionBuilder<'a, 'b> {
-    source: &'b NormalizedInstruction,
-    state: ExpansionState<'a>,
-    sequence: ExpansionSequence,
+pub(super) enum ExpansionOp {
+    Emit(RowTemplate),
+    Expand(RowTemplate),
+    Allocate(u8),
+    Release(u8),
 }
 
-impl<'a, 'b> ExpansionBuilder<'a, 'b> {
-    pub(super) fn new(
-        source: &'b NormalizedInstruction,
-        allocator: &'a mut ExpansionAllocator,
-    ) -> Self {
+pub(super) struct ExpandedInstructionSequence {
+    pub(super) source: NormalizedInstruction,
+    pub(super) ops: Vec<ExpansionOp>,
+}
+
+pub(super) struct ExpansionBuilder {
+    source: NormalizedInstruction,
+    ops: Vec<ExpansionOp>,
+    next_temp: usize,
+}
+
+impl ExpansionBuilder {
+    pub(super) fn new(source: NormalizedInstruction) -> Self {
         Self {
             source,
-            state: ExpansionState::new(allocator),
-            sequence: ExpansionSequence::new(source),
+            ops: Vec::new(),
+            next_temp: 0,
         }
     }
 
     pub(super) fn allocate(&mut self) -> Result<u8, ExpansionError> {
-        self.state.allocator().allocate()
+        let register = RowTemplate::temporary(self.next_temp)?;
+        self.next_temp += 1;
+        self.ops.push(ExpansionOp::Allocate(register));
+        Ok(register)
     }
 
     /// Append an already target-legal row to this source row's output sequence.
@@ -181,8 +213,8 @@ impl<'a, 'b> ExpansionBuilder<'a, 'b> {
         self.emit(RowTemplate::u(instruction_kind, rd, imm));
     }
 
-    /// Route a source-only helper row through provider-free expansion, then
-    /// append the resulting finalized rows to this source row's output sequence.
+    /// Record a source-only helper row that the provider-free materializer must
+    /// expand before appending its finalized rows to this source-row sequence.
     ///
     /// Recursive helper expansion always goes through `ExpansionState`, so
     /// rd=x0 handling, recursion depth, allocator state, and metadata stamping
@@ -255,7 +287,8 @@ impl<'a, 'b> ExpansionBuilder<'a, 'b> {
     }
 
     pub(super) fn release(&mut self, register: u8) -> Result<(), ExpansionError> {
-        self.state.allocator().release(register)
+        self.ops.push(ExpansionOp::Release(register));
+        Ok(())
     }
 
     pub(super) fn release_many(
@@ -268,18 +301,20 @@ impl<'a, 'b> ExpansionBuilder<'a, 'b> {
         Ok(())
     }
 
-    pub(super) fn finalize(self) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-        self.sequence.finish()
+    pub(super) fn finalize(self) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        Ok(ExpandedInstructionSequence {
+            source: self.source,
+            ops: self.ops,
+        })
     }
 
     fn emit(&mut self, row: RowTemplate) {
-        self.sequence.emit(row.instruction_kind, row.operands);
+        self.ops.push(ExpansionOp::Emit(row));
     }
 
     fn expand(&mut self, row: RowTemplate) -> Result<(), ExpansionError> {
-        let instruction = row.instruction_at(self.source.address);
-        self.sequence
-            .extend(self.state.expand_one_core(&instruction)?)
+        self.ops.push(ExpansionOp::Expand(row));
+        Ok(())
     }
 }
 

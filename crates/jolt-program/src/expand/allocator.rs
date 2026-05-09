@@ -24,6 +24,50 @@ pub const CSR_MEPC: u16 = 0x341;
 pub const CSR_MCAUSE: u16 = 0x342;
 pub const CSR_MTVAL: u16 = 0x343;
 
+pub(super) const fn reservation_w_register() -> u8 {
+    RESERVATION_W_REGISTER
+}
+
+pub(super) const fn reservation_d_register() -> u8 {
+    RESERVATION_D_REGISTER
+}
+
+pub(super) const fn trap_handler_register() -> u8 {
+    TRAP_HANDLER_REGISTER
+}
+
+pub(super) const fn mepc_register() -> u8 {
+    MEPC_REGISTER
+}
+
+pub(super) const fn mcause_register() -> u8 {
+    MCAUSE_REGISTER
+}
+
+pub(super) const fn mtval_register() -> u8 {
+    MTVAL_REGISTER
+}
+
+pub(super) const fn mstatus_register() -> u8 {
+    MSTATUS_REGISTER
+}
+
+pub(super) fn csr_to_virtual_register(csr_addr: u16) -> Option<u8> {
+    match csr_addr {
+        CSR_MSTATUS => Some(mstatus_register()),
+        CSR_MTVEC => Some(trap_handler_register()),
+        CSR_MSCRATCH => Some(mscratch_register()),
+        CSR_MEPC => Some(mepc_register()),
+        CSR_MCAUSE => Some(mcause_register()),
+        CSR_MTVAL => Some(mtval_register()),
+        _ => None,
+    }
+}
+
+pub(super) const fn mscratch_register() -> u8 {
+    MSCRATCH_REGISTER
+}
+
 #[derive(Debug, Clone)]
 pub struct ExpansionAllocator {
     allocated: u128,
@@ -73,15 +117,7 @@ impl ExpansionAllocator {
     }
 
     pub fn csr_to_virtual_register(&self, csr_addr: u16) -> Option<u8> {
-        match csr_addr {
-            CSR_MSTATUS => Some(self.mstatus_register()),
-            CSR_MTVEC => Some(self.trap_handler_register()),
-            CSR_MSCRATCH => Some(self.mscratch_register()),
-            CSR_MEPC => Some(self.mepc_register()),
-            CSR_MCAUSE => Some(self.mcause_register()),
-            CSR_MTVAL => Some(self.mtval_register()),
-            _ => None,
-        }
+        csr_to_virtual_register(csr_addr)
     }
 
     pub fn allocate(&mut self) -> Result<u8, ExpansionError> {

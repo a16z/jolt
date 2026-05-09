@@ -2,10 +2,9 @@ use super::*;
 
 pub(in crate::expand) fn expand_slliw(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let shift = instruction.operands.imm & 0x1f;
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
+    let mut asm = ExpansionBuilder::new(*instruction);
 
     asm.emit_i(
         JoltInstructionKind::VirtualMULI,

@@ -2,13 +2,12 @@ use super::*;
 
 pub(in crate::expand) fn expand_mulhsu(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v0 = allocator.allocate()?;
-    let v1 = allocator.allocate()?;
-    let v2 = allocator.allocate()?;
-    let v3 = allocator.allocate()?;
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let v0 = asm.allocate()?;
+    let v1 = asm.allocate()?;
+    let v2 = asm.allocate()?;
+    let v3 = asm.allocate()?;
 
     asm.emit_i(
         JoltInstructionKind::VirtualMovsign,

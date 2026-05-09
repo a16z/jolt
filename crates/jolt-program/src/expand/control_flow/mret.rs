@@ -2,11 +2,10 @@ use super::*;
 
 pub(in crate::expand) fn expand_mret(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let mepc_vr = allocator.mepc_register();
-    let jalr_rd = allocator.allocate()?;
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mepc_vr = mepc_register();
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let jalr_rd = asm.allocate()?;
 
     asm.emit_i(JoltInstructionKind::JALR, jalr_rd, mepc_vr, 0);
     asm.release(jalr_rd)?;

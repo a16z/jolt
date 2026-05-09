@@ -2,29 +2,24 @@ use super::*;
 
 pub(in crate::expand) fn expand_signed_div_rem(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
     word: bool,
     remainder_output: bool,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
     let a0 = rs1(instruction)?;
     let a1 = rs2(instruction)?;
-    let a2 = allocator.allocate()?;
-    let a3 = allocator.allocate()?;
-    let t0 = allocator.allocate()?;
-    let t1 = allocator.allocate()?;
+    let a2 = asm.allocate()?;
+    let a3 = asm.allocate()?;
+    let t0 = asm.allocate()?;
+    let t1 = asm.allocate()?;
     let (mut t2, mut t3, t4) = if word {
-        (
-            allocator.allocate()?,
-            allocator.allocate()?,
-            Some(allocator.allocate()?),
-        )
+        (asm.allocate()?, asm.allocate()?, Some(asm.allocate()?))
     } else {
         (0, 0, None)
     };
     let dividend = t4.unwrap_or(a0);
     let divisor = if word { t3 } else { a1 };
     let shmat = if word { 31 } else { 63 };
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
 
     asm.expand_j(JoltInstructionKind::VirtualAdvice, a2, 0)?;
     asm.expand_j(JoltInstructionKind::VirtualAdvice, a3, 0)?;
@@ -115,19 +110,17 @@ pub(in crate::expand) fn expand_signed_div_rem(
 
 pub(in crate::expand) fn expand_unsigned_word_div_rem(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
     remainder_output: bool,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let rs1_extended = allocator.allocate()?;
-    let rs2_extended = allocator.allocate()?;
-    let quotient = allocator.allocate()?;
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let rs1_extended = asm.allocate()?;
+    let rs2_extended = asm.allocate()?;
+    let quotient = asm.allocate()?;
     let tmp = if remainder_output {
         quotient
     } else {
-        allocator.allocate()?
+        asm.allocate()?
     };
-
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
 
     asm.expand_i(
         JoltInstructionKind::VirtualZeroExtendWord,

@@ -2,11 +2,10 @@ use super::*;
 
 pub(in crate::expand) fn expand_scw(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v_reservation = allocator.reservation_w_register();
-    let v_reservation_d = allocator.reservation_d_register();
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let v_reservation = reservation_w_register();
+    let v_reservation_d = reservation_d_register();
+    let mut asm = ExpansionBuilder::new(*instruction);
 
     let ram_start = asm.allocate()?;
     super::shared::expand_ram_region_assertion(&mut asm, rs1(instruction)?, ram_start)?;

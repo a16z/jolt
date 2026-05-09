@@ -3,7 +3,7 @@ use common::constants::RAM_START_ADDRESS;
 use super::*;
 
 pub(in crate::expand) fn expand_ram_region_assertion(
-    asm: &mut ExpansionBuilder<'_, '_>,
+    asm: &mut ExpansionBuilder,
     address_register: u8,
     ram_start: u8,
 ) -> Result<(), ExpansionError> {
@@ -23,12 +23,11 @@ pub(in crate::expand) fn expand_ram_region_assertion(
 
 pub(in crate::expand) fn expand_byte_load(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
     signed: bool,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v0 = allocator.allocate()?;
-    let v1 = allocator.allocate()?;
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let v0 = asm.allocate()?;
+    let v1 = asm.allocate()?;
 
     asm.expand_i(
         JoltInstructionKind::ADDI,
@@ -58,12 +57,11 @@ pub(in crate::expand) fn expand_byte_load(
 
 pub(in crate::expand) fn expand_halfword_load(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
     signed: bool,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v0 = allocator.allocate()?;
-    let v1 = allocator.allocate()?;
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let v0 = asm.allocate()?;
+    let v1 = asm.allocate()?;
 
     asm.expand_address(
         JoltInstructionKind::VirtualAssertHalfwordAlignment,
@@ -100,9 +98,8 @@ pub(in crate::expand) fn expand_advice_load(
     instruction: &NormalizedInstruction,
     byte_len: i128,
     sign_extension_shift: Option<i128>,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
 
     asm.expand_j(
         JoltInstructionKind::VirtualAdviceLoad,
@@ -130,11 +127,10 @@ pub(in crate::expand) fn expand_advice_load(
 pub(in crate::expand) fn expand_amo_d(
     instruction: &NormalizedInstruction,
     op: JoltInstructionKind,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v_rs2 = allocator.allocate()?;
-    let v_rd = allocator.allocate()?;
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let v_rs2 = asm.allocate()?;
+    let v_rd = asm.allocate()?;
 
     asm.expand_i(JoltInstructionKind::LD, v_rd, rs1(instruction)?, 0)?;
     asm.expand_r(op, v_rs2, v_rd, rs2(instruction)?)?;
@@ -149,17 +145,16 @@ pub(in crate::expand) fn expand_amo_minmax_d(
     instruction: &NormalizedInstruction,
     compare_op: JoltInstructionKind,
     min: bool,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v0 = allocator.allocate()?;
-    let v1 = allocator.allocate()?;
-    let v2 = allocator.allocate()?;
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let v0 = asm.allocate()?;
+    let v1 = asm.allocate()?;
+    let v2 = asm.allocate()?;
     let (cmp_rs1, cmp_rs2) = if min {
         (rs2(instruction)?, v0)
     } else {
         (v0, rs2(instruction)?)
     };
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
 
     asm.expand_i(JoltInstructionKind::LD, v0, rs1(instruction)?, 0)?;
     asm.expand_r(compare_op, v1, cmp_rs1, cmp_rs2)?;
@@ -176,14 +171,13 @@ pub(in crate::expand) fn expand_amo_minmax_d(
 pub(in crate::expand) fn expand_amo_w(
     instruction: &NormalizedInstruction,
     op: JoltInstructionKind,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v_rd = allocator.allocate()?;
-    let v_rs2 = allocator.allocate()?;
-    let v_mask = allocator.allocate()?;
-    let v_dword = allocator.allocate()?;
-    let v_shift = allocator.allocate()?;
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let v_rd = asm.allocate()?;
+    let v_rs2 = asm.allocate()?;
+    let v_mask = asm.allocate()?;
+    let v_dword = asm.allocate()?;
+    let v_shift = asm.allocate()?;
 
     expand_amo_pre64(&mut asm, rs1(instruction)?, v_rd, v_dword, v_shift)?;
     asm.expand_r(op, v_rs2, v_rd, rs2(instruction)?)?;
@@ -209,12 +203,11 @@ pub(in crate::expand) fn expand_amo_minmax_w(
     compare_op: JoltInstructionKind,
     min: bool,
     signed: bool,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v_rd = allocator.allocate()?;
-    let v_dword = allocator.allocate()?;
-    let v_shift = allocator.allocate()?;
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let v_rd = asm.allocate()?;
+    let v_dword = asm.allocate()?;
+    let v_shift = asm.allocate()?;
 
     expand_amo_pre64(&mut asm, rs1(instruction)?, v_rd, v_dword, v_shift)?;
 
@@ -250,7 +243,7 @@ pub(in crate::expand) fn expand_amo_minmax_w(
 }
 
 pub(in crate::expand) fn expand_amo_pre64(
-    asm: &mut ExpansionBuilder<'_, '_>,
+    asm: &mut ExpansionBuilder,
     rs1: u8,
     v_rd: u8,
     v_dword: u8,
@@ -274,7 +267,7 @@ pub(in crate::expand) struct AmoPost64 {
 }
 
 pub(in crate::expand) fn expand_amo_post64(
-    asm: &mut ExpansionBuilder<'_, '_>,
+    asm: &mut ExpansionBuilder,
     registers: AmoPost64,
 ) -> Result<(), ExpansionError> {
     let AmoPost64 {
@@ -301,15 +294,14 @@ pub(in crate::expand) fn expand_amo_post64(
 
 pub(in crate::expand) fn expand_narrow_store(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
     mask: i128,
     alignment: Option<JoltInstructionKind>,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v0 = allocator.allocate()?;
-    let v1 = allocator.allocate()?;
-    let v2 = allocator.allocate()?;
-    let v3 = allocator.allocate()?;
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let v0 = asm.allocate()?;
+    let v1 = asm.allocate()?;
+    let v2 = asm.allocate()?;
+    let v3 = asm.allocate()?;
 
     if let Some(alignment) = alignment {
         asm.expand_address(alignment, rs1(instruction)?, instruction.operands.imm)?;

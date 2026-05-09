@@ -2,13 +2,12 @@ use super::*;
 
 pub(in crate::expand) fn expand_amoswapw(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v_mask = allocator.allocate()?;
-    let v_dword = allocator.allocate()?;
-    let v_shift = allocator.allocate()?;
-    let v_rd = allocator.allocate()?;
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let v_mask = asm.allocate()?;
+    let v_dword = asm.allocate()?;
+    let v_shift = asm.allocate()?;
+    let v_rd = asm.allocate()?;
 
     super::shared::expand_amo_pre64(&mut asm, rs1(instruction)?, v_rd, v_dword, v_shift)?;
     super::shared::expand_amo_post64(

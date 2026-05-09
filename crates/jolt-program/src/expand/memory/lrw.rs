@@ -4,12 +4,11 @@ use super::*;
 
 pub(in crate::expand) fn expand_lrw(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v_reservation_w = allocator.reservation_w_register();
-    let v_reservation_d = allocator.reservation_d_register();
-    let ram_start = allocator.allocate()?;
-    let mut asm = ExpansionBuilder::new(instruction, allocator);
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let v_reservation_w = reservation_w_register();
+    let v_reservation_d = reservation_d_register();
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let ram_start = asm.allocate()?;
 
     asm.expand_u(
         JoltInstructionKind::LUI,
