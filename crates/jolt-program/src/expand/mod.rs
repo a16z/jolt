@@ -33,6 +33,12 @@ use operands::*;
 use shifts::*;
 
 pub trait InlineExpansionProvider {
+    /// Expands a registered inline row into finalized normalized rows.
+    ///
+    /// Provider output intentionally stays outside the provider-free builder
+    /// core. The top-level entry point remaps `rd = x0` before calling this
+    /// hook, and providers are responsible for returning rows with the metadata
+    /// policy they need.
     fn expand_inline(
         &mut self,
         instruction: &NormalizedInstruction,
@@ -106,72 +112,149 @@ fn expand_instruction_core(
 
     match instruction.instruction_kind {
         JoltInstructionKind::Inline => Err(ExpansionError::InlineProviderRequired),
-        JoltInstructionKind::ADDIW => expand_addiw(instruction, state.allocator()),
-        JoltInstructionKind::ADDW => expand_addw(instruction, state.allocator()),
-        JoltInstructionKind::SUBW => expand_subw(instruction, state.allocator()),
-        JoltInstructionKind::MULH => expand_mulh(instruction, state.allocator()),
-        JoltInstructionKind::MULHSU => expand_mulhsu(instruction, state.allocator()),
-        JoltInstructionKind::MULW => expand_mulw(instruction, state.allocator()),
-        JoltInstructionKind::LB => expand_lb(instruction, state.allocator()),
-        JoltInstructionKind::LBU => expand_lbu(instruction, state.allocator()),
-        JoltInstructionKind::LH => expand_lh(instruction, state.allocator()),
-        JoltInstructionKind::LHU => expand_lhu(instruction, state.allocator()),
-        JoltInstructionKind::LW => expand_lw(instruction, state.allocator()),
-        JoltInstructionKind::LWU => expand_lwu(instruction, state.allocator()),
-        JoltInstructionKind::AdviceLB => expand_advice_lb(instruction, state.allocator()),
-        JoltInstructionKind::AdviceLH => expand_advice_lh(instruction, state.allocator()),
-        JoltInstructionKind::AdviceLW => expand_advice_lw(instruction, state.allocator()),
-        JoltInstructionKind::AdviceLD => expand_advice_ld(instruction, state.allocator()),
-        JoltInstructionKind::AMOADDD => expand_amoaddd(instruction, state.allocator()),
-        JoltInstructionKind::AMOANDD => expand_amoandd(instruction, state.allocator()),
-        JoltInstructionKind::AMOORD => expand_amoord(instruction, state.allocator()),
-        JoltInstructionKind::AMOXORD => expand_amoxord(instruction, state.allocator()),
-        JoltInstructionKind::AMOSWAPD => expand_amoswapd(instruction, state.allocator()),
-        JoltInstructionKind::AMOMAXD => expand_amomaxd(instruction, state.allocator()),
-        JoltInstructionKind::AMOMAXUD => expand_amomaxud(instruction, state.allocator()),
-        JoltInstructionKind::AMOMIND => expand_amomind(instruction, state.allocator()),
-        JoltInstructionKind::AMOMINUD => expand_amominud(instruction, state.allocator()),
-        JoltInstructionKind::AMOADDW => expand_amoaddw(instruction, state.allocator()),
-        JoltInstructionKind::AMOANDW => expand_amoandw(instruction, state.allocator()),
-        JoltInstructionKind::AMOORW => expand_amoorw(instruction, state.allocator()),
-        JoltInstructionKind::AMOXORW => expand_amoxorw(instruction, state.allocator()),
-        JoltInstructionKind::AMOSWAPW => expand_amoswapw(instruction, state.allocator()),
-        JoltInstructionKind::AMOMAXW => expand_amomaxw(instruction, state.allocator()),
-        JoltInstructionKind::AMOMAXUW => expand_amomaxuw(instruction, state.allocator()),
-        JoltInstructionKind::AMOMINW => expand_amominw(instruction, state.allocator()),
-        JoltInstructionKind::AMOMINUW => expand_amominuw(instruction, state.allocator()),
-        JoltInstructionKind::LRD => expand_lrd(instruction, state.allocator()),
-        JoltInstructionKind::LRW => expand_lrw(instruction, state.allocator()),
-        JoltInstructionKind::DIV => expand_div(instruction, state.allocator()),
-        JoltInstructionKind::DIVU => expand_divu(instruction, state.allocator()),
-        JoltInstructionKind::DIVW => expand_divw(instruction, state.allocator()),
-        JoltInstructionKind::DIVUW => expand_divuw(instruction, state.allocator()),
-        JoltInstructionKind::REM => expand_rem(instruction, state.allocator()),
-        JoltInstructionKind::REMU => expand_remu(instruction, state.allocator()),
-        JoltInstructionKind::REMW => expand_remw(instruction, state.allocator()),
-        JoltInstructionKind::REMUW => expand_remuw(instruction, state.allocator()),
-        JoltInstructionKind::SB => expand_sb(instruction, state.allocator()),
-        JoltInstructionKind::SCD => expand_scd(instruction, state.allocator()),
-        JoltInstructionKind::SCW => expand_scw(instruction, state.allocator()),
-        JoltInstructionKind::SH => expand_sh(instruction, state.allocator()),
-        JoltInstructionKind::SW => expand_sw(instruction, state.allocator()),
-        JoltInstructionKind::CSRRW => expand_csrrw(instruction, state.allocator()),
-        JoltInstructionKind::CSRRS => expand_csrrs(instruction, state.allocator()),
-        JoltInstructionKind::EBREAK => expand_ebreak(instruction, state.allocator()),
-        JoltInstructionKind::ECALL => expand_ecall(instruction, state.allocator()),
-        JoltInstructionKind::MRET => expand_mret(instruction, state.allocator()),
-        JoltInstructionKind::SLL => expand_sll(instruction, state.allocator()),
-        JoltInstructionKind::SLLI => expand_slli(instruction, state.allocator()),
-        JoltInstructionKind::SLLW => expand_sllw(instruction, state.allocator()),
-        JoltInstructionKind::SLLIW => expand_slliw(instruction, state.allocator()),
-        JoltInstructionKind::SRL => expand_srl(instruction, state.allocator()),
-        JoltInstructionKind::SRLI => expand_srli(instruction, state.allocator()),
-        JoltInstructionKind::SRA => expand_sra(instruction, state.allocator()),
-        JoltInstructionKind::SRAI => expand_srai(instruction, state.allocator()),
-        JoltInstructionKind::SRLIW => expand_srliw(instruction, state.allocator()),
-        JoltInstructionKind::SRAIW => expand_sraiw(instruction, state.allocator()),
-        JoltInstructionKind::SRLW => expand_srlw(instruction, state.allocator()),
-        JoltInstructionKind::SRAW => expand_sraw(instruction, state.allocator()),
+        JoltInstructionKind::ADDIW
+        | JoltInstructionKind::ADDW
+        | JoltInstructionKind::SUBW
+        | JoltInstructionKind::MULH
+        | JoltInstructionKind::MULHSU
+        | JoltInstructionKind::MULW
+        | JoltInstructionKind::LB
+        | JoltInstructionKind::LBU
+        | JoltInstructionKind::LH
+        | JoltInstructionKind::LHU
+        | JoltInstructionKind::LW
+        | JoltInstructionKind::LWU
+        | JoltInstructionKind::AdviceLB
+        | JoltInstructionKind::AdviceLH
+        | JoltInstructionKind::AdviceLW
+        | JoltInstructionKind::AdviceLD
+        | JoltInstructionKind::AMOADDD
+        | JoltInstructionKind::AMOANDD
+        | JoltInstructionKind::AMOORD
+        | JoltInstructionKind::AMOXORD
+        | JoltInstructionKind::AMOSWAPD
+        | JoltInstructionKind::AMOMAXD
+        | JoltInstructionKind::AMOMAXUD
+        | JoltInstructionKind::AMOMIND
+        | JoltInstructionKind::AMOMINUD
+        | JoltInstructionKind::AMOADDW
+        | JoltInstructionKind::AMOANDW
+        | JoltInstructionKind::AMOORW
+        | JoltInstructionKind::AMOXORW
+        | JoltInstructionKind::AMOSWAPW
+        | JoltInstructionKind::AMOMAXW
+        | JoltInstructionKind::AMOMAXUW
+        | JoltInstructionKind::AMOMINW
+        | JoltInstructionKind::AMOMINUW
+        | JoltInstructionKind::LRD
+        | JoltInstructionKind::LRW
+        | JoltInstructionKind::DIV
+        | JoltInstructionKind::DIVU
+        | JoltInstructionKind::DIVW
+        | JoltInstructionKind::DIVUW
+        | JoltInstructionKind::REM
+        | JoltInstructionKind::REMU
+        | JoltInstructionKind::REMW
+        | JoltInstructionKind::REMUW
+        | JoltInstructionKind::SB
+        | JoltInstructionKind::SCD
+        | JoltInstructionKind::SCW
+        | JoltInstructionKind::SH
+        | JoltInstructionKind::SW
+        | JoltInstructionKind::CSRRW
+        | JoltInstructionKind::CSRRS
+        | JoltInstructionKind::EBREAK
+        | JoltInstructionKind::ECALL
+        | JoltInstructionKind::MRET
+        | JoltInstructionKind::SLL
+        | JoltInstructionKind::SLLI
+        | JoltInstructionKind::SLLW
+        | JoltInstructionKind::SLLIW
+        | JoltInstructionKind::SRL
+        | JoltInstructionKind::SRLI
+        | JoltInstructionKind::SRA
+        | JoltInstructionKind::SRAI
+        | JoltInstructionKind::SRLIW
+        | JoltInstructionKind::SRAIW
+        | JoltInstructionKind::SRLW
+        | JoltInstructionKind::SRAW => {
+            expand_source_only_instruction(instruction, state.allocator())
+        }
+        _ => Ok(vec![*instruction]),
+    }
+}
+
+fn expand_source_only_instruction(
+    instruction: &NormalizedInstruction,
+    allocator: &mut ExpansionAllocator,
+) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+    match instruction.instruction_kind {
+        JoltInstructionKind::ADDIW => expand_addiw(instruction, allocator),
+        JoltInstructionKind::ADDW => expand_addw(instruction, allocator),
+        JoltInstructionKind::SUBW => expand_subw(instruction, allocator),
+        JoltInstructionKind::MULH => expand_mulh(instruction, allocator),
+        JoltInstructionKind::MULHSU => expand_mulhsu(instruction, allocator),
+        JoltInstructionKind::MULW => expand_mulw(instruction, allocator),
+        JoltInstructionKind::LB => expand_lb(instruction, allocator),
+        JoltInstructionKind::LBU => expand_lbu(instruction, allocator),
+        JoltInstructionKind::LH => expand_lh(instruction, allocator),
+        JoltInstructionKind::LHU => expand_lhu(instruction, allocator),
+        JoltInstructionKind::LW => expand_lw(instruction, allocator),
+        JoltInstructionKind::LWU => expand_lwu(instruction, allocator),
+        JoltInstructionKind::AdviceLB => expand_advice_lb(instruction, allocator),
+        JoltInstructionKind::AdviceLH => expand_advice_lh(instruction, allocator),
+        JoltInstructionKind::AdviceLW => expand_advice_lw(instruction, allocator),
+        JoltInstructionKind::AdviceLD => expand_advice_ld(instruction, allocator),
+        JoltInstructionKind::AMOADDD => expand_amoaddd(instruction, allocator),
+        JoltInstructionKind::AMOANDD => expand_amoandd(instruction, allocator),
+        JoltInstructionKind::AMOORD => expand_amoord(instruction, allocator),
+        JoltInstructionKind::AMOXORD => expand_amoxord(instruction, allocator),
+        JoltInstructionKind::AMOSWAPD => expand_amoswapd(instruction, allocator),
+        JoltInstructionKind::AMOMAXD => expand_amomaxd(instruction, allocator),
+        JoltInstructionKind::AMOMAXUD => expand_amomaxud(instruction, allocator),
+        JoltInstructionKind::AMOMIND => expand_amomind(instruction, allocator),
+        JoltInstructionKind::AMOMINUD => expand_amominud(instruction, allocator),
+        JoltInstructionKind::AMOADDW => expand_amoaddw(instruction, allocator),
+        JoltInstructionKind::AMOANDW => expand_amoandw(instruction, allocator),
+        JoltInstructionKind::AMOORW => expand_amoorw(instruction, allocator),
+        JoltInstructionKind::AMOXORW => expand_amoxorw(instruction, allocator),
+        JoltInstructionKind::AMOSWAPW => expand_amoswapw(instruction, allocator),
+        JoltInstructionKind::AMOMAXW => expand_amomaxw(instruction, allocator),
+        JoltInstructionKind::AMOMAXUW => expand_amomaxuw(instruction, allocator),
+        JoltInstructionKind::AMOMINW => expand_amominw(instruction, allocator),
+        JoltInstructionKind::AMOMINUW => expand_amominuw(instruction, allocator),
+        JoltInstructionKind::LRD => expand_lrd(instruction, allocator),
+        JoltInstructionKind::LRW => expand_lrw(instruction, allocator),
+        JoltInstructionKind::DIV => expand_div(instruction, allocator),
+        JoltInstructionKind::DIVU => expand_divu(instruction, allocator),
+        JoltInstructionKind::DIVW => expand_divw(instruction, allocator),
+        JoltInstructionKind::DIVUW => expand_divuw(instruction, allocator),
+        JoltInstructionKind::REM => expand_rem(instruction, allocator),
+        JoltInstructionKind::REMU => expand_remu(instruction, allocator),
+        JoltInstructionKind::REMW => expand_remw(instruction, allocator),
+        JoltInstructionKind::REMUW => expand_remuw(instruction, allocator),
+        JoltInstructionKind::SB => expand_sb(instruction, allocator),
+        JoltInstructionKind::SCD => expand_scd(instruction, allocator),
+        JoltInstructionKind::SCW => expand_scw(instruction, allocator),
+        JoltInstructionKind::SH => expand_sh(instruction, allocator),
+        JoltInstructionKind::SW => expand_sw(instruction, allocator),
+        JoltInstructionKind::CSRRW => expand_csrrw(instruction, allocator),
+        JoltInstructionKind::CSRRS => expand_csrrs(instruction, allocator),
+        JoltInstructionKind::EBREAK => expand_ebreak(instruction, allocator),
+        JoltInstructionKind::ECALL => expand_ecall(instruction, allocator),
+        JoltInstructionKind::MRET => expand_mret(instruction, allocator),
+        JoltInstructionKind::SLL => expand_sll(instruction, allocator),
+        JoltInstructionKind::SLLI => expand_slli(instruction, allocator),
+        JoltInstructionKind::SLLW => expand_sllw(instruction, allocator),
+        JoltInstructionKind::SLLIW => expand_slliw(instruction, allocator),
+        JoltInstructionKind::SRL => expand_srl(instruction, allocator),
+        JoltInstructionKind::SRLI => expand_srli(instruction, allocator),
+        JoltInstructionKind::SRA => expand_sra(instruction, allocator),
+        JoltInstructionKind::SRAI => expand_srai(instruction, allocator),
+        JoltInstructionKind::SRLIW => expand_srliw(instruction, allocator),
+        JoltInstructionKind::SRAIW => expand_sraiw(instruction, allocator),
+        JoltInstructionKind::SRLW => expand_srlw(instruction, allocator),
+        JoltInstructionKind::SRAW => expand_sraw(instruction, allocator),
         _ => Ok(vec![*instruction]),
     }
 }

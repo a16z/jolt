@@ -2,7 +2,7 @@ use common::constants::RAM_START_ADDRESS;
 
 use super::*;
 
-pub(in crate::expand) fn emit_ram_region_assertion(
+pub(in crate::expand) fn expand_ram_region_assertion(
     asm: &mut ExpansionBuilder<'_, '_>,
     address_register: u8,
     ram_start: u8,
@@ -51,8 +51,7 @@ pub(in crate::expand) fn expand_byte_load(
         v1,
         56,
     )?;
-    asm.release(v0)?;
-    asm.release(v1)?;
+    asm.release_many([v0, v1])?;
 
     asm.finalize()
 }
@@ -92,8 +91,7 @@ pub(in crate::expand) fn expand_halfword_load(
         v1,
         48,
     )?;
-    asm.release(v0)?;
-    asm.release(v1)?;
+    asm.release_many([v0, v1])?;
 
     asm.finalize()
 }
@@ -142,8 +140,7 @@ pub(in crate::expand) fn expand_amo_d(
     asm.expand_r(op, v_rs2, v_rd, rs2(instruction)?)?;
     asm.expand_s(JoltInstructionKind::SD, rs1(instruction)?, v_rs2, 0)?;
     asm.expand_i(JoltInstructionKind::ADDI, rd(instruction)?, v_rd, 0)?;
-    asm.release(v_rs2)?;
-    asm.release(v_rd)?;
+    asm.release_many([v_rs2, v_rd])?;
 
     asm.finalize()
 }
@@ -171,9 +168,7 @@ pub(in crate::expand) fn expand_amo_minmax_d(
     asm.expand_r(JoltInstructionKind::ADD, v1, v0, v2)?;
     asm.expand_s(JoltInstructionKind::SD, rs1(instruction)?, v1, 0)?;
     asm.expand_i(JoltInstructionKind::ADDI, rd(instruction)?, v0, 0)?;
-    asm.release(v0)?;
-    asm.release(v1)?;
-    asm.release(v2)?;
+    asm.release_many([v0, v1, v2])?;
 
     asm.finalize()
 }
@@ -190,9 +185,9 @@ pub(in crate::expand) fn expand_amo_w(
     let v_shift = allocator.allocate()?;
     let mut asm = ExpansionBuilder::new(instruction, allocator);
 
-    emit_amo_pre64(&mut asm, rs1(instruction)?, v_rd, v_dword, v_shift)?;
+    expand_amo_pre64(&mut asm, rs1(instruction)?, v_rd, v_dword, v_shift)?;
     asm.expand_r(op, v_rs2, v_rd, rs2(instruction)?)?;
-    emit_amo_post64(
+    expand_amo_post64(
         &mut asm,
         AmoPost64 {
             rs1: rs1(instruction)?,
@@ -204,11 +199,7 @@ pub(in crate::expand) fn expand_amo_w(
             v_rd,
         },
     )?;
-    asm.release(v_rd)?;
-    asm.release(v_rs2)?;
-    asm.release(v_mask)?;
-    asm.release(v_dword)?;
-    asm.release(v_shift)?;
+    asm.release_many([v_rd, v_rs2, v_mask, v_dword, v_shift])?;
 
     asm.finalize()
 }
@@ -225,7 +216,7 @@ pub(in crate::expand) fn expand_amo_minmax_w(
     let v_shift = allocator.allocate()?;
     let mut asm = ExpansionBuilder::new(instruction, allocator);
 
-    emit_amo_pre64(&mut asm, rs1(instruction)?, v_rd, v_dword, v_shift)?;
+    expand_amo_pre64(&mut asm, rs1(instruction)?, v_rd, v_dword, v_shift)?;
 
     let v_rs2 = asm.allocate()?;
     let v0 = asm.allocate()?;
@@ -241,7 +232,7 @@ pub(in crate::expand) fn expand_amo_minmax_w(
     asm.expand_r(JoltInstructionKind::SUB, v_rs2, rs2(instruction)?, v_rd)?;
     asm.expand_r(JoltInstructionKind::MUL, v_rs2, v_rs2, v0)?;
     asm.expand_r(JoltInstructionKind::ADD, v_rs2, v_rs2, v_rd)?;
-    emit_amo_post64(
+    expand_amo_post64(
         &mut asm,
         AmoPost64 {
             rs1: rs1(instruction)?,
@@ -253,16 +244,12 @@ pub(in crate::expand) fn expand_amo_minmax_w(
             v_rd,
         },
     )?;
-    asm.release(v_rd)?;
-    asm.release(v_dword)?;
-    asm.release(v_shift)?;
-    asm.release(v_rs2)?;
-    asm.release(v0)?;
+    asm.release_many([v_rd, v_dword, v_shift, v_rs2, v0])?;
 
     asm.finalize()
 }
 
-pub(in crate::expand) fn emit_amo_pre64(
+pub(in crate::expand) fn expand_amo_pre64(
     asm: &mut ExpansionBuilder<'_, '_>,
     rs1: u8,
     v_rd: u8,
@@ -286,7 +273,7 @@ pub(in crate::expand) struct AmoPost64 {
     pub(in crate::expand) v_rd: u8,
 }
 
-pub(in crate::expand) fn emit_amo_post64(
+pub(in crate::expand) fn expand_amo_post64(
     asm: &mut ExpansionBuilder<'_, '_>,
     registers: AmoPost64,
 ) -> Result<(), ExpansionError> {
@@ -343,10 +330,7 @@ pub(in crate::expand) fn expand_narrow_store(
     asm.expand_r(JoltInstructionKind::AND, v3, v3, v0)?;
     asm.expand_r(JoltInstructionKind::XOR, v2, v2, v3)?;
     asm.expand_s(JoltInstructionKind::SD, v1, v2, 0)?;
-    asm.release(v0)?;
-    asm.release(v1)?;
-    asm.release(v2)?;
-    asm.release(v3)?;
+    asm.release_many([v0, v1, v2, v3])?;
 
     asm.finalize()
 }

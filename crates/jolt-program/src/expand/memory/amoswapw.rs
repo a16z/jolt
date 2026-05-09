@@ -10,8 +10,8 @@ pub(in crate::expand) fn expand_amoswapw(
     let v_rd = allocator.allocate()?;
     let mut asm = ExpansionBuilder::new(instruction, allocator);
 
-    super::shared::emit_amo_pre64(&mut asm, rs1(instruction)?, v_rd, v_dword, v_shift)?;
-    super::shared::emit_amo_post64(
+    super::shared::expand_amo_pre64(&mut asm, rs1(instruction)?, v_rd, v_dword, v_shift)?;
+    super::shared::expand_amo_post64(
         &mut asm,
         super::shared::AmoPost64 {
             rs1: rs1(instruction)?,
@@ -23,10 +23,7 @@ pub(in crate::expand) fn expand_amoswapw(
             v_rd,
         },
     )?;
-    asm.release(v_mask)?;
-    asm.release(v_dword)?;
-    asm.release(v_shift)?;
-    asm.release(v_rd)?;
+    asm.release_many([v_mask, v_dword, v_shift, v_rd])?;
 
     asm.finalize()
 }

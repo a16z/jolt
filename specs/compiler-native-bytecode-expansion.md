@@ -4,12 +4,59 @@
 |-------------|-----------------------------------------------------------------------|
 | Author(s)   | Quang Dao                                                            |
 | Created     | 2026-05-05                                                           |
-| Status      | draft                                                                 |
+| Status      | final PR record                                                       |
 | Related PR  | [#1490](https://github.com/a16z/jolt/pull/1490), [#1518](https://github.com/a16z/jolt/pull/1518) |
 | Baseline    | `main` after [#1490](https://github.com/a16z/jolt/pull/1490), merge commit `51d81a36e` |
 | Depends on  | `specs/bytecode-expansion-crate.md`                                   |
 
 ## Summary
+
+### Final PR State
+
+This PR landed the RV64-only cleanup, instruction-kind phase split, and a
+production `jolt-program::expand` refactor that removes the old
+borrowed-allocator `InstrAssembler<'a>` from provider-free expansion. The final
+expander is intentionally shaped as a human-readable `ExpansionBuilder` API:
+family lowerers now read as ordered `asm.emit_*`, `asm.expand_*`,
+`asm.allocate`, and `asm.release` calls rather than raw grammar-node
+construction.
+
+The branch does **not** land the more ambitious explicit `ExpansionOp` work
+stack / fully declarative recipe interpreter sketched earlier in this document.
+Recursive helper lowering still uses Rust calls through
+`ExpansionState::expand_one_core`, with a recursion-depth guard and a bounded
+per-source output buffer. That is the deliberate final shape for this PR after
+reviewing readability: the lowerings are substantially easier for humans to
+audit and extend, while preserving the centralized rd=x0 handling, allocator
+state, recursive helper expansion path, and final metadata stamping.
+
+The checked-in parity oracle is the compact hash fixture
+`crates/jolt-program/src/expand/fixtures/main_expand_parity_hashes.json`. It is
+the canonical baseline artifact for this PR, generated from `main` merge commit
+`51d81a36e` after #1490. The fixture stores each provider-free input and the
+SHA-256 of `serde_json::to_vec(&expanded_rows)` rather than full expanded row
+JSON. That keeps the fixture small enough to review while still catching exact
+row order, metadata, and virtual-register allocation drift.
+
+When the fixture must change:
+
+- Treat a hash update as a semantic review event, not an automatic snapshot
+  refresh.
+- Name the baseline commit or intentional semantic change in the commit or PR
+  description.
+- Regenerate hashes using the exact serialized bytes
+  `serde_json::to_vec(&Vec<NormalizedInstruction>)`.
+- Run
+  `cargo nextest run -p jolt-program expansion_matches_main_golden_fixture --cargo-quiet`.
+- For affected instruction families, inspect at least one expanded-row diff
+  before accepting the new hash.
+
+Useful follow-ups are:
+
+- add a checked-in regeneration helper instead of relying on ad hoc scripts;
+- promote the source-only legality list into a single generated metadata table;
+- revisit a fully declarative recipe/work-stack interpreter only if extraction
+  results still justify the readability cost.
 
 PR #1490 moves bytecode expansion out of `tracer` and into
 `jolt-program::expand`. That crate boundary is the right direction for formal
@@ -24,7 +71,7 @@ issues ahead of the compiler-native rewrite:
    lookup-backed kinds explicitly before baking the ambiguity into the
    extraction-oriented expander.
 
-This spec therefore prioritizes the next PR sequence as:
+This spec originally prioritized the #1518 work sequence as:
 
 ```text
 Phase 1: remove historical RV32 support from tracer and stale docs
@@ -32,15 +79,9 @@ Phase 2: split instruction phase identities
 Phase 3: rewrite provider-free jolt-program::expand as a compiler-native core
 ```
 
-Phase 1 should come first because it deletes width-dependent branches from the
-emulator, decoder, virtual helpers, and expansion call sites before Phase 2
-names the RV64 source/target row universe. Phase 2 should come before the
-compiler-native rewrite because legality predicates and recipe boundaries are
-clearer once source rows, expanded bytecode rows, and lookup-backed rows have
-separate names.
-
-After those two setup phases, the current `jolt-program::expand` implementation
-still uses an idiomatic recursive Rust assembler shape that is hard for Hax and
+The branch follows that ordering: RV32 cleanup and instruction-kind naming land
+before the provider-free expansion rewrite. Before #1518, `jolt-program::expand`
+used an idiomatic recursive Rust assembler shape that was hard for Hax and
 Aeneas to extract:
 
 - family expanders build `Vec<NormalizedInstruction>` values;
@@ -50,12 +91,12 @@ Aeneas to extract:
 - metadata is stamped by mutating a finished slice;
 - inline expansion is a trait callback inside the core dispatch path.
 
-The compiler-native phase proposes a rewrite of `jolt-program::expand` into an
-extraction-friendly production implementation. The goal is not to add a
-proof-only model next to production code. The production expander itself should
-become a first-order lowering pipeline over explicit data transitions, while
-preserving byte-for-byte output and keeping runtime performance the same or
-better.
+The compiler-native phase rewrites `jolt-program::expand` in production rather
+than adding a proof-only model next to production code. The landed version is
+not a fully first-order declarative interpreter, but it does preserve byte-for-
+byte output and moves the provider-free expander onto a clearer builder,
+bounded sequence buffer, centralized recursive helper path, and explicit
+source/target legality checks.
 
 This rewrite should also align with the MLIR-shaped Jolt work in the
 `refactor/crates` branch, which currently treats Bolt as a compiler pipeline
@@ -65,7 +106,8 @@ but it has the same compiler shape: a source IR, a target IR, legality
 constraints, lowering rules, resource materialization, validation, and
 emission into production Rust data structures.
 
-The target design:
+Earlier extraction target design, retained as a follow-up design note rather
+than the final #1518 implementation:
 
 ```text
 Decoded NormalizedInstruction
@@ -875,12 +917,13 @@ data. The Lean path should consume the same syntactic expansion definitions.
 Hax/Aeneas then become one extraction path for the driver and core state
 machine, not the only way to recover expansion behavior from arbitrary Rust.
 
-## Core Data Model
+## Follow-Up Core Data Model Sketch
 
-Keep the runtime data model smaller than the first draft. `NormalizedInstruction`
-is already the canonical row type, and most proposed types were wrappers around
-it. The core should distinguish row stages and metadata policy without creating
-a parallel instruction representation.
+Keep the runtime data model smaller than the first draft if the project later
+returns to a fully declarative interpreter. `NormalizedInstruction` is already
+the canonical row type, and most proposed types were wrappers around it. A
+future core could distinguish row stages and metadata policy without creating a
+parallel instruction representation.
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -921,7 +964,8 @@ pub(crate) enum InitialExpansion {
 }
 ```
 
-Family lowerers produce operations, not recursively finalized `Vec`s:
+In that follow-up design, family lowerers would produce operations rather than
+recursively finalized `Vec`s:
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -938,7 +982,7 @@ bytecode and the metadata policy has been applied. Historical CSR-zero
 default-row behavior is excluded from the stage model because the PR now rejects
 that row before materialization.
 
-The driver owns all mutable state:
+A fully declarative driver would own all mutable state:
 
 ```rust
 pub(crate) struct ExpansionState {
@@ -949,11 +993,17 @@ pub(crate) struct ExpansionState {
 }
 ```
 
-No production expansion struct should contain a borrowed allocator or a lifetime parameter.
+The #1518 implementation resolves the borrowed-allocator issue by replacing
+`InstrAssembler<'a>` with `ExpansionBuilder`, whose borrowed allocator is
+hidden behind short-lived builder use in each lowerer rather than stored in the
+public production assembler API. A later declarative interpreter can remove
+that internal lifetime as well if extraction requires it.
 
-## Driver Design
+## Follow-Up Driver Design Sketch
 
-The driver is the only recursive component. It should be implemented as an iterative depth-first work stack:
+If the project chooses the fully declarative route later, the driver should be
+the only recursive component and can be implemented as an iterative depth-first
+work stack:
 
 ```rust
 pub(crate) fn expand_one_core(
@@ -1830,7 +1880,7 @@ resource materialization machinery as provider-free expansion.
    `jolt-program::expand`.
 9. Represent temp lifetimes explicitly and materialize them through the
    allocator at `WithTemp` or equivalent boundaries.
-10. Port one small family, such as ADDIW/ADDW/SUBW, to recipe-backed shallow
+10. Port one small family, such as ADDIW/ADDW/SUBW, to builder-backed shallow
     lowering and prove parity against the current output.
     Started in this PR by introducing an owned `ExpansionSequence` and moving
     ADDIW/ADDW/SUBW, MULW/MULH/MULHSU, shift-family lowerings, and simple
@@ -1851,37 +1901,36 @@ resource materialization machinery as provider-free expansion.
     through the core entry point while keeping inline provider handling outside
     that core.
 16. Add an explicit recursion-depth/fuel guard to provider-free expansion.
-17. Add the initial `expand::grammar` operation layer and route the simplest
-    arithmetic word lowerings through row templates.
-18. Extend row-template lowering to additional shallow arithmetic and shift
+17. Add the initial `expand::grammar` builder layer and route the simplest
+    arithmetic word lowerings through row templates hidden behind the builder.
+18. Extend builder-backed lowering to additional shallow arithmetic and shift
     families.
 19. Add source-only and target-legal instruction predicates, and validate
     provider-free synthetic sequences before metadata stamping.
-20. Add central `ExpansionOp` materialization for row, helper expansion, and
-    release operations; port one temp-using shift lowering through it.
-21. Widen ordered release-op materialization across temp-using shift lowerings.
-22. Move remaining arithmetic temp lowerers onto ordered expansion ops.
-23. Move simple control-flow/trap lowerings onto ordered expansion ops.
-24. Move CSR lowerings onto ordered expansion ops.
-25. Move unsigned division/remainder lowerings onto ordered expansion ops.
-26. Move unsigned word division/remainder lowerings onto ordered expansion ops.
-27. Move simple doubleword atomic swap lowering onto ordered expansion ops.
-28. Move load-reserved lowerings onto ordered expansion ops.
-29. Move advice-load lowerings onto ordered expansion ops.
-30. Move simple doubleword AMO lowerings onto ordered expansion ops.
-31. Move doubleword min/max AMO lowerings onto ordered expansion ops.
-32. Move byte-load lowerings onto ordered expansion ops.
-33. Move halfword-load lowerings onto ordered expansion ops.
-34. Move word-load lowerings onto ordered expansion ops.
-35. Move word-store lowering onto ordered expansion ops.
-36. Move remaining shallow arithmetic and shift lowerings onto ordered
-    expansion ops.
-37. Move word AMO lowerings onto ordered expansion ops.
-38. Move narrow-store lowerings onto ordered expansion ops.
-39. Add a main-generated golden expansion fixture and fix release-order
+20. Add centralized builder methods for direct target-row emission, recursive
+    helper expansion, allocation, ordered release, and final metadata stamping.
+21. Widen ordered release materialization across temp-using shift lowerings.
+22. Move remaining arithmetic temp lowerers onto the readable builder API.
+23. Move simple control-flow/trap lowerings onto the builder API.
+24. Move CSR lowerings onto the builder API.
+25. Move unsigned division/remainder lowerings onto the builder API.
+26. Move unsigned word division/remainder lowerings onto the builder API.
+27. Move simple doubleword atomic swap lowering onto the builder API.
+28. Move load-reserved lowerings onto the builder API.
+29. Move advice-load lowerings onto the builder API.
+30. Move simple doubleword AMO lowerings onto the builder API.
+31. Move doubleword min/max AMO lowerings onto the builder API.
+32. Move byte-load lowerings onto the builder API.
+33. Move halfword-load lowerings onto the builder API.
+34. Move word-load lowerings onto the builder API.
+35. Move word-store lowering onto the builder API.
+36. Move remaining shallow arithmetic and shift lowerings onto the builder API.
+37. Move word AMO lowerings onto the builder API.
+38. Move narrow-store lowerings onto the builder API.
+39. Add a main-generated compact hash fixture and fix release-order
     regressions it exposed in word AMO min/max and `ECALL`.
-40. Move store-conditional lowerings onto ordered expansion ops.
-41. Move signed division/remainder lowerings onto ordered expansion ops.
+40. Move store-conditional lowerings onto the builder API.
+41. Move signed division/remainder lowerings onto the builder API.
 42. Replace `InstrAssembler<'a>` in production expansion code.
 43. Preserve tracer inline adapter support as finalized rows outside
     provider-free core.
@@ -1915,15 +1964,15 @@ Do not leave both expanders in production. A temporary test-only reference path 
 - [x] Lookup-table routing uses `LookupInstructionKind` or an equivalent
       explicit subset API such as `JoltInstructionKind::lookup_kind()`.
 - [x] `jolt-program::expand` no longer has a production `InstrAssembler<'a>` that stores a borrowed allocator.
-- [x] Expansion recipes are represented as syntactic lowering data or shallow operations; the grammar does not model instruction execution semantics.
+- [x] Provider-free expansion lowerings are shallow builder programs; the grammar does not model instruction execution semantics.
 - [x] The spec keeps execution semantics on a separate track, starting with a hand-modeled Lean abstract machine slice and expansion-correctness theorem rather than extraction from `tracer` or MLIR-as-semantics.
 - [x] The spec names source, intermediate, and target phases with MLIR-ready legality predicates, even while Rust remains the implementation substrate.
 - [x] `NormalizedInstruction` remains the core row type, with only minimal stage/result wrappers for source, expanded, stamped, pass-through, and literal policies.
-- [x] Recipe temps have explicit lifetimes and are materialized into concrete virtual registers by a deterministic allocation/resource-materialization step.
-- [x] Recipe checks reject invalid operand shapes, unchecked literal rows, bounded-capacity overflow, and temp-lifetime mistakes where temp scopes are represented as data.
-- [x] Family lowerers are shallow and do not call `expand_instruction`.
-- [x] Recursive expansion happens in one central depth-first driver.
-- [x] Temporary-register release and inline reset are explicit expansion operations.
+- [x] Temporary registers have explicit ordered `allocate`/`release` calls and deterministic allocation/reuse behavior.
+- [x] Checks reject invalid operand shapes, unchecked source-only target rows, bounded-capacity overflow, and invalid temp release.
+- [x] Family lowerers are shallow and do not call public `expand_instruction`.
+- [x] Recursive helper expansion goes through `ExpansionState::expand_one_core`; a fully explicit iterative work stack remains a follow-up.
+- [x] Temporary-register release is explicit in builder code; data-level `ExpansionOp::Release` remains a follow-up if the project wants a declarative interpreter.
 - [x] Allocator state is represented by bitsets, not a heap-backed reset list.
 - [x] Per-source expansion uses bounded buffers, with explicit overflow errors.
 - [x] Synthetic sequence metadata is stamped during final row construction, not by mutating already-built rows.
@@ -1937,8 +1986,8 @@ Do not leave both expanders in production. A temporary test-only reference path 
       expansion; `NormalizedInstruction` does not grow an advice payload field.
 - [x] Trusted/untrusted advice memory and polynomial commitments remain
       preprocessing/proof responsibilities, not expansion responsibilities.
-- [x] Expansion output matches PR #1490 baseline fixtures exactly.
-- [ ] Hax and Aeneas can extract metadata stamping and at least one shallow family lowerer without pulling in execution/preprocess/serialization modules.
+- [x] Expansion output matches the PR #1490 baseline hash fixture exactly.
+- [ ] Hax and Aeneas can extract metadata stamping and at least one shallow family lowerer without pulling in execution/preprocess/serialization modules. Hax JSON export for `jolt-program` succeeded locally; Aeneas/Charon were not available in this environment for a final rerun.
 - [x] Dependency checks still show no `tracer` dependency from `jolt-program` or `jolt-riscv`.
 
 ## Resolved And Sharpened Questions
@@ -1969,14 +2018,16 @@ Inline expansion should not use these provider-free constants until inline recip
 
 ### Grammar Surface
 
-Decision: start with ordinary Rust data or shallow lowerers plus a small
-`RecipeBuilder` only where it pays for itself; do not start with a proc macro.
+Decision after the #1518 implementation: start with readable Rust lowerers and
+a small `ExpansionBuilder`; do not start with a proc macro.
 
-Plain data is the extraction-friendly source of truth, but the first
-implementation should not overbuild the grammar. A builder is acceptable only
-if `finish()` returns inspectable syntactic expansion data or bounded
-`ExpansionOp` buffers. The builder must not be a new imperative assembler whose
-methods hide arbitrary recursive emission logic.
+Plain data remains the extraction-friendly long-term source of truth, but the
+first implementation should not overbuild the grammar. The landed builder keeps
+the human-readable old assembler style while making the important distinction
+explicit: `emit_*` appends target-legal final rows, while `expand_*` routes
+source-only helper rows back through the centralized expander. This was chosen
+over raw `ExpansionOp` construction because reviewers and future opcode authors
+need to understand and edit lowerings directly.
 
 Start with the smallest surface that covers the ported families. `Seq`,
 `Emit`, `If`, `WithTemp`/explicit lifetime markers, `Fragment`, `Release`,

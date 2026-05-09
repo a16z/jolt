@@ -192,6 +192,60 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
 }
 
 #[test]
+fn source_only_expanders_are_not_target_legal() {
+    macro_rules! assert_source_only {
+        ($($kind:ident),* $(,)?) => {
+            $(
+                assert!(
+                    !grammar::is_target_legal(JoltInstructionKind::$kind),
+                    concat!(stringify!($kind), " has an expander but is target-legal")
+                );
+            )*
+        };
+    }
+
+    assert_source_only! {
+        ADDIW, ADDW, SUBW, MULH, MULHSU, MULW,
+        LB, LBU, LH, LHU, LW, LWU,
+        AdviceLB, AdviceLH, AdviceLW, AdviceLD,
+        AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOSWAPD,
+        AMOMAXD, AMOMAXUD, AMOMIND, AMOMINUD,
+        AMOADDW, AMOANDW, AMOORW, AMOXORW, AMOSWAPW,
+        AMOMAXW, AMOMAXUW, AMOMINW, AMOMINUW,
+        LRD, LRW,
+        DIV, DIVU, DIVW, DIVUW, REM, REMU, REMW, REMUW,
+        SB, SCD, SCW, SH, SW,
+        CSRRW, CSRRS, EBREAK, ECALL, MRET,
+        SLL, SLLI, SLLW, SLLIW, SRL, SRLI, SRA, SRAI,
+        SRLIW, SRAIW, SRLW, SRAW,
+    }
+    assert!(!grammar::is_target_legal(JoltInstructionKind::Inline));
+}
+
+#[test]
+fn recursive_helper_expansion_is_stamped_as_one_sequence() -> Result<(), ExpansionError> {
+    let mut allocator = ExpansionAllocator::new();
+    let input = instruction(JoltInstructionKind::SLL, Some(3), true);
+    let expanded = expand_instruction(&input, &mut allocator)?;
+
+    assert!(expanded.len() > 1);
+    for (i, row) in expanded.iter().enumerate() {
+        assert_eq!(row.address, input.address);
+        assert_eq!(
+            row.virtual_sequence_remaining,
+            Some((expanded.len() - i - 1) as u16)
+        );
+        assert_eq!(row.is_first_in_sequence, i == 0);
+        assert_eq!(row.is_compressed, i + 1 == expanded.len());
+    }
+    assert!(expanded
+        .iter()
+        .all(|row| grammar::is_target_legal(row.instruction_kind)));
+
+    Ok(())
+}
+
+#[test]
 fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Error>> {
     // Expected hashes generated from baseline main commit 51d81a36e. This catches
     // recursive expansion order and virtual-register reuse regressions without

@@ -36,8 +36,7 @@ pub(in crate::expand) fn expand_divu(
         0,
     )?;
     asm.expand_i(JoltInstructionKind::ADDI, rd(instruction)?, v0, 0)?;
-    asm.release(v0)?;
-    asm.release(v1)?;
+    asm.release_many([v0, v1])?;
 
     asm.finalize()
 }

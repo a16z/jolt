@@ -31,9 +31,7 @@ pub(in crate::expand) fn expand_mulh(
     );
     asm.emit_r(JoltInstructionKind::ADD, v_tmp, v_tmp, v_sx);
     asm.emit_r(JoltInstructionKind::ADD, rd(instruction)?, v_tmp, v_sy);
-    asm.release(v_sx)?;
-    asm.release(v_sy)?;
-    asm.release(v_tmp)?;
+    asm.release_many([v_sx, v_sy, v_tmp])?;
 
     asm.finalize()
 }

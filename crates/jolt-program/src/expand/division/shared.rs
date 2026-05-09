@@ -108,9 +108,7 @@ pub(in crate::expand) fn expand_signed_div_rem(
     if let Some(t4) = t4 {
         released.push(t4);
     }
-    for register in released {
-        asm.release(register)?;
-    }
+    asm.release_many(released)?;
 
     asm.finalize()
 }
@@ -178,9 +176,7 @@ pub(in crate::expand) fn expand_unsigned_word_div_rem(
         asm.expand_i(JoltInstructionKind::ADDI, rd(instruction)?, tmp, 0)?;
     }
 
-    asm.release(rs1_extended)?;
-    asm.release(rs2_extended)?;
-    asm.release(quotient)?;
+    asm.release_many([rs1_extended, rs2_extended, quotient])?;
     if !remainder_output {
         asm.release(tmp)?;
     }

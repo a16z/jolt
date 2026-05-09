@@ -9,7 +9,7 @@ pub(in crate::expand) fn expand_scd(
     let mut asm = ExpansionBuilder::new(instruction, allocator);
 
     let ram_start = asm.allocate()?;
-    super::shared::emit_ram_region_assertion(&mut asm, rs1(instruction)?, ram_start)?;
+    super::shared::expand_ram_region_assertion(&mut asm, rs1(instruction)?, ram_start)?;
 
     let v_success = asm.allocate()?;
     asm.expand_j(JoltInstructionKind::VirtualAdvice, v_success, 0)?;

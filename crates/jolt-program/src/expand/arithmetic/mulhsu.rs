@@ -26,10 +26,7 @@ pub(in crate::expand) fn expand_mulhsu(
     asm.emit_r(JoltInstructionKind::ADD, v0, v2, v1);
     asm.emit_r(JoltInstructionKind::SLTU, v0, v0, v2);
     asm.emit_r(JoltInstructionKind::ADD, rd(instruction)?, v3, v0);
-    asm.release(v0)?;
-    asm.release(v1)?;
-    asm.release(v2)?;
-    asm.release(v3)?;
+    asm.release_many([v0, v1, v2, v3])?;
 
     asm.finalize()
 }

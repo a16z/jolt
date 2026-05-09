@@ -100,6 +100,8 @@ impl RowTemplate {
         }
     }
 
+    /// Pseudo-I format for address/alignment assertions that read `rs1` and an
+    /// immediate offset but do not write `rd`.
     pub(super) const fn address(instruction_kind: JoltInstructionKind, rs1: u8, imm: i128) -> Self {
         Self {
             instruction_kind,
@@ -146,6 +148,11 @@ impl<'a, 'b> ExpansionBuilder<'a, 'b> {
         self.state.allocator().allocate()
     }
 
+    /// Append an already target-legal row to this source row's output sequence.
+    ///
+    /// Use `emit_*` when the row should appear exactly as written in finalized
+    /// bytecode. Use `expand_*` instead when the row is a source-only helper
+    /// that must be routed through the central expander first.
     pub(super) fn emit_r(
         &mut self,
         instruction_kind: JoltInstructionKind,
@@ -174,6 +181,12 @@ impl<'a, 'b> ExpansionBuilder<'a, 'b> {
         self.emit(RowTemplate::u(instruction_kind, rd, imm));
     }
 
+    /// Route a source-only helper row through provider-free expansion, then
+    /// append the resulting finalized rows to this source row's output sequence.
+    ///
+    /// Recursive helper expansion always goes through `ExpansionState`, so
+    /// rd=x0 handling, recursion depth, allocator state, and metadata stamping
+    /// stay centralized.
     pub(super) fn expand_r(
         &mut self,
         instruction_kind: JoltInstructionKind,
@@ -243,6 +256,16 @@ impl<'a, 'b> ExpansionBuilder<'a, 'b> {
 
     pub(super) fn release(&mut self, register: u8) -> Result<(), ExpansionError> {
         self.state.allocator().release(register)
+    }
+
+    pub(super) fn release_many(
+        &mut self,
+        registers: impl IntoIterator<Item = u8>,
+    ) -> Result<(), ExpansionError> {
+        for register in registers {
+            self.release(register)?;
+        }
+        Ok(())
     }
 
     pub(super) fn finalize(self) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
