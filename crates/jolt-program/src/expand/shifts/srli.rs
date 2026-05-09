@@ -9,8 +9,8 @@ pub(in crate::expand) fn expand_srli(
 
     asm.emit_i(
         JoltInstructionKind::VirtualSRLI,
-        rd(instruction)?,
-        rs1(instruction)?,
+        reg(rd(instruction)?),
+        reg(rs1(instruction)?),
         bitmask as i128,
     );
 

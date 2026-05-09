@@ -7,14 +7,14 @@ pub(in crate::expand) fn expand_addiw(
 
     asm.emit_i(
         JoltInstructionKind::ADDI,
-        rd(instruction)?,
-        rs1(instruction)?,
+        reg(rd(instruction)?),
+        reg(rs1(instruction)?),
         instruction.operands.imm,
     );
     asm.emit_i(
         JoltInstructionKind::VirtualSignExtendWord,
-        rd(instruction)?,
-        rd(instruction)?,
+        reg(rd(instruction)?),
+        reg(rd(instruction)?),
         0,
     );
 

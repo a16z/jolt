@@ -6,7 +6,7 @@ pub(in crate::expand) fn expand_ebreak(
     let mut asm = ExpansionBuilder::new(*instruction);
     let discard = asm.allocate()?;
 
-    asm.emit_j(JoltInstructionKind::JAL, discard, 0);
+    asm.emit_j(JoltInstructionKind::JAL, discard.operand(), 0);
     asm.release(discard)?;
 
     asm.finalize()

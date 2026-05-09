@@ -8,8 +8,8 @@ pub(in crate::expand) fn expand_slli(
 
     asm.emit_i(
         JoltInstructionKind::VirtualMULI,
-        rd(instruction)?,
-        rs1(instruction)?,
+        reg(rd(instruction)?),
+        reg(rs1(instruction)?),
         1i128 << shift,
     );
 

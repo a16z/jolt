@@ -28,18 +28,18 @@ They should look like ordered assembly snippets:
 ```rust
 let mut asm = ExpansionBuilder::new(*instruction);
 
-asm.emit_r(
-    JoltInstructionKind::SUB,
-    rd(instruction)?,
-    rs1(instruction)?,
-    rs2(instruction)?,
-);
-asm.emit_i(
-    JoltInstructionKind::VirtualSignExtendWord,
-    rd(instruction)?,
-    rd(instruction)?,
-    0,
-);
+    asm.emit_r(
+        JoltInstructionKind::SUB,
+        reg(rd(instruction)?),
+        reg(rs1(instruction)?),
+        reg(rs2(instruction)?),
+    );
+    asm.emit_i(
+        JoltInstructionKind::VirtualSignExtendWord,
+        reg(rd(instruction)?),
+        reg(rd(instruction)?),
+        0,
+    );
 
 asm.finalize()
 ```
@@ -107,6 +107,9 @@ builder-based expander:
   `asm.allocate`, and `asm.release` calls.
 - `emit_*` means "append a target-legal row"; `expand_*` means "route a helper
   row through provider-free expansion".
+- builder/template APIs now take explicit `RegisterOperand` values instead of
+  generic `impl Into<RegisterOperand>` parameters; architectural registers are
+  written as `reg(x)` and symbolic temps as `temp.operand()`.
 - bounded row buffers, sequence metadata helpers, recursion-depth checks,
   target-legality checks, and explicit release calls were added.
 - a compact hash fixture
@@ -254,12 +257,29 @@ The names can change, but the responsibilities should not:
 
 ### Row Templates And Symbolic Temps
 
-Recipes can mention architectural registers and symbolic temps. Symbolic temps
-are encoded as reserved placeholder register values inside `RowTemplate`, so the
+Recipes can mention architectural registers and symbolic temps. They are both
+represented explicitly as `RegisterOperand` values inside `RowTemplate`, so the
 current lowerer code can stay close to the old assembly-like style while still
 deferring concrete virtual-register allocation to materialization.
 
 ```rust
+pub(super) struct TempId(u8);
+
+pub(super) enum RegisterOperand {
+    Register(u8),
+    Temp(TempId),
+}
+
+pub(super) const fn reg(register: u8) -> RegisterOperand {
+    RegisterOperand::Register(register)
+}
+
+impl TempId {
+    pub(super) const fn operand(self) -> RegisterOperand {
+        RegisterOperand::Temp(self)
+    }
+}
+
 pub(super) struct RowTemplate {
     instruction_kind: JoltInstructionKind,
     operands: TemplateOperands,
@@ -268,6 +288,12 @@ pub(super) struct RowTemplate {
 
 Materialization resolves `TempId` values to concrete virtual registers through
 the owned `ExpansionAllocator`.
+
+The builder and row-template APIs intentionally do not accept
+`impl Into<RegisterOperand>`. Making the operand phase explicit has two
+benefits: readers can see whether a row consumes an architectural register or a
+symbolic temporary, and extraction tools do not need to model generic
+conversion/typeclass plumbing on the core grammar surface.
 
 ## Target Control Flow
 
@@ -420,18 +446,18 @@ pub(in crate::expand) fn expand_subw(
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
 
-    asm.emit_r(
-        JoltInstructionKind::SUB,
-        rd(instruction)?,
-        rs1(instruction)?,
-        rs2(instruction)?,
-    );
-    asm.emit_i(
-        JoltInstructionKind::VirtualSignExtendWord,
-        rd(instruction)?,
-        rd(instruction)?,
-        0,
-    );
+asm.emit_r(
+    JoltInstructionKind::SUB,
+    reg(rd(instruction)?),
+    reg(rs1(instruction)?),
+    reg(rs2(instruction)?),
+);
+asm.emit_i(
+    JoltInstructionKind::VirtualSignExtendWord,
+    reg(rd(instruction)?),
+    reg(rd(instruction)?),
+    0,
+);
 
     asm.finalize()
 }
@@ -444,32 +470,32 @@ pub(in crate::expand) fn expand_lw(
     instruction: &NormalizedInstruction,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
-    let v0 = asm.allocate();
-    let v1 = asm.allocate();
+    let v0 = asm.allocate()?;
+    let v1 = asm.allocate()?;
 
     asm.expand_address(
         JoltInstructionKind::VirtualAssertWordAlignment,
-        rs1(instruction)?,
+        reg(rs1(instruction)?),
         instruction.operands.imm,
-    );
+    )?;
     asm.expand_i(
         JoltInstructionKind::ADDI,
-        v0,
-        rs1(instruction)?,
+        v0.operand(),
+        reg(rs1(instruction)?),
         instruction.operands.imm,
-    );
-    asm.expand_i(JoltInstructionKind::ANDI, v1, v0, format_i_imm(-8));
-    asm.expand_i(JoltInstructionKind::LD, v1, v1, 0);
-    asm.expand_i(JoltInstructionKind::SLLI, v0, v0, 3);
-    asm.expand_r(JoltInstructionKind::SRL, v1, v1, v0);
+    )?;
+    asm.expand_i(JoltInstructionKind::ANDI, v1.operand(), v0.operand(), format_i_imm(-8))?;
+    asm.expand_i(JoltInstructionKind::LD, v1.operand(), v1.operand(), 0)?;
+    asm.expand_i(JoltInstructionKind::SLLI, v0.operand(), v0.operand(), 3)?;
+    asm.expand_r(JoltInstructionKind::SRL, v1.operand(), v1.operand(), v0.operand())?;
     asm.expand_i(
         JoltInstructionKind::VirtualSignExtendWord,
-        rd(instruction)?,
-        v1,
+        reg(rd(instruction)?),
+        v1.operand(),
         0,
-    );
+    )?;
 
-    asm.release_many([v0, v1]);
+    asm.release_many([v0, v1])?;
     asm.finalize()
 }
 ```
@@ -546,8 +572,29 @@ but production code should first remove avoidable obstacles:
 - no public trait callback in the provider-free core;
 - no `impl IntoIterator` in extraction-critical signatures when a concrete slice
   or vector is enough;
+- no generic `impl Into<RegisterOperand>` builder/template signatures in the
+  extraction-critical grammar; use explicit `reg(x)` and `temp.operand()` calls
+  instead;
 - minimal serialization/preprocess/prover dependencies in the extracted call
   graph.
+
+The explicit-operand cutover is not only for extraction. It also makes the
+grammar boundary less ambiguous: a `u8` is no longer silently accepted as either
+an architectural register or some unrelated byte-sized value, and symbolic temps
+must be visibly marked at every emitted/expanded row. The tradeoff is a little
+more syntax in simple lowerers.
+
+Latest extraction check after this cutover:
+
+- Hax still emits Lean for `jolt_program::expand`; the old
+  `impl_Into_RegisterOperand` helper noise is gone, but total output size is
+  slightly higher because explicit `reg(...)` / `operand()` calls are now
+  represented directly.
+- Charon still emits LLBC with the same two `Box` initialization warnings.
+- Aeneas no longer hits the previous "Arrow types are not supported yet" crash
+  from the generic operand API. It still fails on older blockers: conditional
+  join failures in memory load lowering, allocator loop typing/region issues,
+  metadata loop fixed-point handling, and shallow `Box` initialization.
 
 ## Acceptance Criteria
 
@@ -580,6 +627,8 @@ Already satisfied by the current branch:
       rows recursively.
 - [x] Temp lifetimes are represented explicitly in recipe data and materialized
       centrally.
+- [x] Builder and row-template methods use explicit `RegisterOperand` operands,
+      not generic `impl Into<RegisterOperand>` conversion parameters.
 
 Satisfied by the owned recipe/materializer rewrite:
 

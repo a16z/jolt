@@ -31,7 +31,7 @@ use control_flow::*;
 use core::ExpansionState;
 use division::*;
 use grammar::{
-    is_source_only, ExpandedInstructionSequence, ExpansionBuilder, RegisterOperand, TempId,
+    is_source_only, reg, ExpandedInstructionSequence, ExpansionBuilder, RegisterOperand, TempId,
 };
 use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
 use memory::*;

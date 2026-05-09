@@ -8,14 +8,14 @@ pub(in crate::expand) fn expand_slliw(
 
     asm.emit_i(
         JoltInstructionKind::VirtualMULI,
-        rd(instruction)?,
-        rs1(instruction)?,
+        reg(rd(instruction)?),
+        reg(rs1(instruction)?),
         1i128 << shift,
     );
     asm.emit_i(
         JoltInstructionKind::VirtualSignExtendWord,
-        rd(instruction)?,
-        rd(instruction)?,
+        reg(rd(instruction)?),
+        reg(rd(instruction)?),
         0,
     );
 

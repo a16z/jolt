@@ -12,32 +12,32 @@ pub(in crate::expand) fn expand_lrd(
 
     asm.expand_u(
         JoltInstructionKind::LUI,
-        ram_start,
+        ram_start.operand(),
         RAM_START_ADDRESS as i128,
     )?;
     asm.expand_b(
         JoltInstructionKind::VirtualAssertLTE,
-        ram_start,
-        rs1(instruction)?,
+        ram_start.operand(),
+        reg(rs1(instruction)?),
         0,
     )?;
     asm.release(ram_start)?;
     asm.expand_i(
         JoltInstructionKind::ADDI,
-        v_reservation_d,
-        rs1(instruction)?,
+        reg(v_reservation_d),
+        reg(rs1(instruction)?),
         0,
     )?;
     asm.expand_i(
         JoltInstructionKind::ADDI,
-        v_reservation_w,
-        rs1(instruction)?,
+        reg(v_reservation_w),
+        reg(rs1(instruction)?),
         0,
     )?;
     asm.expand_i(
         JoltInstructionKind::LD,
-        rd(instruction)?,
-        rs1(instruction)?,
+        reg(rd(instruction)?),
+        reg(rs1(instruction)?),
         0,
     )?;
 

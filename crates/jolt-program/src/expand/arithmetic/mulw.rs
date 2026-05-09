@@ -7,14 +7,14 @@ pub(in crate::expand) fn expand_mulw(
 
     asm.emit_r(
         JoltInstructionKind::MUL,
-        rd(instruction)?,
-        rs1(instruction)?,
-        rs2(instruction)?,
+        reg(rd(instruction)?),
+        reg(rs1(instruction)?),
+        reg(rs2(instruction)?),
     );
     asm.emit_i(
         JoltInstructionKind::VirtualSignExtendWord,
-        rd(instruction)?,
-        rd(instruction)?,
+        reg(rd(instruction)?),
+        reg(rd(instruction)?),
         0,
     );
 

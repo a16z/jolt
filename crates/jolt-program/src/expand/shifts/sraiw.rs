@@ -10,20 +10,20 @@ pub(in crate::expand) fn expand_sraiw(
 
     asm.emit_i(
         JoltInstructionKind::VirtualSignExtendWord,
-        v_rs1,
-        rs1(instruction)?,
+        v_rs1.operand(),
+        reg(rs1(instruction)?),
         0,
     );
     asm.emit_i(
         JoltInstructionKind::VirtualSRAI,
-        rd(instruction)?,
-        v_rs1,
+        reg(rd(instruction)?),
+        v_rs1.operand(),
         bitmask as i128,
     );
     asm.emit_i(
         JoltInstructionKind::VirtualSignExtendWord,
-        rd(instruction)?,
-        rd(instruction)?,
+        reg(rd(instruction)?),
+        reg(rd(instruction)?),
         0,
     );
     asm.release(v_rs1)?;

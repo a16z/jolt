@@ -195,6 +195,8 @@ impl SequenceMaterializer {
 mod tests {
     use jolt_riscv::{JoltInstructionKind, NormalizedOperands};
 
+    use crate::expand::grammar::reg;
+
     use super::*;
 
     fn source() -> NormalizedInstruction {
@@ -236,8 +238,8 @@ mod tests {
             source: source(),
             ops: vec![ExpansionOp::Emit(RowTemplate::i(
                 JoltInstructionKind::ADDI,
-                temp,
-                1,
+                temp.operand(),
+                reg(1),
                 0,
             ))],
         };

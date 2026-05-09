@@ -8,15 +8,15 @@ pub(in crate::expand) fn expand_sra(
 
     asm.emit_i(
         JoltInstructionKind::VirtualShiftRightBitmask,
-        v_bitmask,
-        rs2(instruction)?,
+        v_bitmask.operand(),
+        reg(rs2(instruction)?),
         0,
     );
     asm.emit_r(
         JoltInstructionKind::VirtualSRA,
-        rd(instruction)?,
-        rs1(instruction)?,
-        v_bitmask,
+        reg(rd(instruction)?),
+        reg(rs1(instruction)?),
+        v_bitmask.operand(),
     );
     asm.release(v_bitmask)?;
 

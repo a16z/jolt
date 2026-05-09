@@ -4,17 +4,17 @@ use super::*;
 
 pub(in crate::expand) fn expand_ram_region_assertion(
     asm: &mut ExpansionBuilder,
-    address_register: u8,
+    address_register: RegisterOperand,
     ram_start: TempId,
 ) -> Result<(), ExpansionError> {
     asm.expand_u(
         JoltInstructionKind::LUI,
-        ram_start,
+        ram_start.operand(),
         RAM_START_ADDRESS as i128,
     )?;
     asm.expand_b(
         JoltInstructionKind::VirtualAssertLTE,
-        ram_start,
+        ram_start.operand(),
         address_register,
         0,
     )?;
@@ -31,23 +31,33 @@ pub(in crate::expand) fn expand_byte_load(
 
     asm.expand_i(
         JoltInstructionKind::ADDI,
-        v0,
-        rs1(instruction)?,
+        v0.operand(),
+        reg(rs1(instruction)?),
         format_i_imm(instruction.operands.imm),
     )?;
-    asm.expand_i(JoltInstructionKind::ANDI, v1, v0, format_i_imm(-8))?;
-    asm.expand_i(JoltInstructionKind::LD, v1, v1, 0)?;
-    asm.expand_i(JoltInstructionKind::XORI, v0, v0, 7)?;
-    asm.expand_i(JoltInstructionKind::SLLI, v0, v0, 3)?;
-    asm.expand_r(JoltInstructionKind::SLL, v1, v1, v0)?;
+    asm.expand_i(
+        JoltInstructionKind::ANDI,
+        v1.operand(),
+        v0.operand(),
+        format_i_imm(-8),
+    )?;
+    asm.expand_i(JoltInstructionKind::LD, v1.operand(), v1.operand(), 0)?;
+    asm.expand_i(JoltInstructionKind::XORI, v0.operand(), v0.operand(), 7)?;
+    asm.expand_i(JoltInstructionKind::SLLI, v0.operand(), v0.operand(), 3)?;
+    asm.expand_r(
+        JoltInstructionKind::SLL,
+        v1.operand(),
+        v1.operand(),
+        v0.operand(),
+    )?;
     asm.expand_i(
         if signed {
             JoltInstructionKind::SRAI
         } else {
             JoltInstructionKind::SRLI
         },
-        rd(instruction)?,
-        v1,
+        reg(rd(instruction)?),
+        v1.operand(),
         56,
     )?;
     asm.release_many([v0, v1])?;
@@ -65,28 +75,38 @@ pub(in crate::expand) fn expand_halfword_load(
 
     asm.expand_address(
         JoltInstructionKind::VirtualAssertHalfwordAlignment,
-        rs1(instruction)?,
+        reg(rs1(instruction)?),
         instruction.operands.imm,
     )?;
     asm.expand_i(
         JoltInstructionKind::ADDI,
-        v0,
-        rs1(instruction)?,
+        v0.operand(),
+        reg(rs1(instruction)?),
         format_i_imm(instruction.operands.imm),
     )?;
-    asm.expand_i(JoltInstructionKind::ANDI, v1, v0, format_i_imm(-8))?;
-    asm.expand_i(JoltInstructionKind::LD, v1, v1, 0)?;
-    asm.expand_i(JoltInstructionKind::XORI, v0, v0, 6)?;
-    asm.expand_i(JoltInstructionKind::SLLI, v0, v0, 3)?;
-    asm.expand_r(JoltInstructionKind::SLL, v1, v1, v0)?;
+    asm.expand_i(
+        JoltInstructionKind::ANDI,
+        v1.operand(),
+        v0.operand(),
+        format_i_imm(-8),
+    )?;
+    asm.expand_i(JoltInstructionKind::LD, v1.operand(), v1.operand(), 0)?;
+    asm.expand_i(JoltInstructionKind::XORI, v0.operand(), v0.operand(), 6)?;
+    asm.expand_i(JoltInstructionKind::SLLI, v0.operand(), v0.operand(), 3)?;
+    asm.expand_r(
+        JoltInstructionKind::SLL,
+        v1.operand(),
+        v1.operand(),
+        v0.operand(),
+    )?;
     asm.expand_i(
         if signed {
             JoltInstructionKind::SRAI
         } else {
             JoltInstructionKind::SRLI
         },
-        rd(instruction)?,
-        v1,
+        reg(rd(instruction)?),
+        v1.operand(),
         48,
     )?;
     asm.release_many([v0, v1])?;
@@ -103,20 +123,20 @@ pub(in crate::expand) fn expand_advice_load(
 
     asm.expand_j(
         JoltInstructionKind::VirtualAdviceLoad,
-        rd(instruction)?,
+        reg(rd(instruction)?),
         byte_len,
     )?;
     if let Some(shift) = sign_extension_shift {
         asm.expand_i(
             JoltInstructionKind::SLLI,
-            rd(instruction)?,
-            rd(instruction)?,
+            reg(rd(instruction)?),
+            reg(rd(instruction)?),
             shift,
         )?;
         asm.expand_i(
             JoltInstructionKind::SRAI,
-            rd(instruction)?,
-            rd(instruction)?,
+            reg(rd(instruction)?),
+            reg(rd(instruction)?),
             shift,
         )?;
     }
@@ -132,10 +152,25 @@ pub(in crate::expand) fn expand_amo_d(
     let v_rs2 = asm.allocate()?;
     let v_rd = asm.allocate()?;
 
-    asm.expand_i(JoltInstructionKind::LD, v_rd, rs1(instruction)?, 0)?;
-    asm.expand_r(op, v_rs2, v_rd, rs2(instruction)?)?;
-    asm.expand_s(JoltInstructionKind::SD, rs1(instruction)?, v_rs2, 0)?;
-    asm.expand_i(JoltInstructionKind::ADDI, rd(instruction)?, v_rd, 0)?;
+    asm.expand_i(
+        JoltInstructionKind::LD,
+        v_rd.operand(),
+        reg(rs1(instruction)?),
+        0,
+    )?;
+    asm.expand_r(op, v_rs2.operand(), v_rd.operand(), reg(rs2(instruction)?))?;
+    asm.expand_s(
+        JoltInstructionKind::SD,
+        reg(rs1(instruction)?),
+        v_rs2.operand(),
+        0,
+    )?;
+    asm.expand_i(
+        JoltInstructionKind::ADDI,
+        reg(rd(instruction)?),
+        v_rd.operand(),
+        0,
+    )?;
     asm.release_many([v_rs2, v_rd])?;
 
     asm.finalize()
@@ -151,18 +186,48 @@ pub(in crate::expand) fn expand_amo_minmax_d(
     let v1 = asm.allocate()?;
     let v2 = asm.allocate()?;
     let (cmp_rs1, cmp_rs2): (RegisterOperand, RegisterOperand) = if min {
-        (rs2(instruction)?.into(), v0.into())
+        (reg(rs2(instruction)?), v0.operand())
     } else {
-        (v0.into(), rs2(instruction)?.into())
+        (v0.operand(), reg(rs2(instruction)?))
     };
 
-    asm.expand_i(JoltInstructionKind::LD, v0, rs1(instruction)?, 0)?;
-    asm.expand_r(compare_op, v1, cmp_rs1, cmp_rs2)?;
-    asm.expand_r(JoltInstructionKind::SUB, v2, rs2(instruction)?, v0)?;
-    asm.expand_r(JoltInstructionKind::MUL, v2, v2, v1)?;
-    asm.expand_r(JoltInstructionKind::ADD, v1, v0, v2)?;
-    asm.expand_s(JoltInstructionKind::SD, rs1(instruction)?, v1, 0)?;
-    asm.expand_i(JoltInstructionKind::ADDI, rd(instruction)?, v0, 0)?;
+    asm.expand_i(
+        JoltInstructionKind::LD,
+        v0.operand(),
+        reg(rs1(instruction)?),
+        0,
+    )?;
+    asm.expand_r(compare_op, v1.operand(), cmp_rs1, cmp_rs2)?;
+    asm.expand_r(
+        JoltInstructionKind::SUB,
+        v2.operand(),
+        reg(rs2(instruction)?),
+        v0.operand(),
+    )?;
+    asm.expand_r(
+        JoltInstructionKind::MUL,
+        v2.operand(),
+        v2.operand(),
+        v1.operand(),
+    )?;
+    asm.expand_r(
+        JoltInstructionKind::ADD,
+        v1.operand(),
+        v0.operand(),
+        v2.operand(),
+    )?;
+    asm.expand_s(
+        JoltInstructionKind::SD,
+        reg(rs1(instruction)?),
+        v1.operand(),
+        0,
+    )?;
+    asm.expand_i(
+        JoltInstructionKind::ADDI,
+        reg(rd(instruction)?),
+        v0.operand(),
+        0,
+    )?;
     asm.release_many([v0, v1, v2])?;
 
     asm.finalize()
@@ -179,18 +244,24 @@ pub(in crate::expand) fn expand_amo_w(
     let v_dword = asm.allocate()?;
     let v_shift = asm.allocate()?;
 
-    expand_amo_pre64(&mut asm, rs1(instruction)?, v_rd, v_dword, v_shift)?;
-    asm.expand_r(op, v_rs2, v_rd, rs2(instruction)?)?;
+    expand_amo_pre64(
+        &mut asm,
+        reg(rs1(instruction)?),
+        v_rd.operand(),
+        v_dword.operand(),
+        v_shift.operand(),
+    )?;
+    asm.expand_r(op, v_rs2.operand(), v_rd.operand(), reg(rs2(instruction)?))?;
     expand_amo_post64(
         &mut asm,
         AmoPost64 {
-            rs1: rs1(instruction)?,
-            v_rs2: v_rs2.into(),
-            v_dword: v_dword.into(),
-            v_shift: v_shift.into(),
-            v_mask: v_mask.into(),
-            rd: rd(instruction)?,
-            v_rd: v_rd.into(),
+            rs1: reg(rs1(instruction)?),
+            v_rs2: v_rs2.operand(),
+            v_dword: v_dword.operand(),
+            v_shift: v_shift.operand(),
+            v_mask: v_mask.operand(),
+            rd: reg(rd(instruction)?),
+            v_rd: v_rd.operand(),
         },
     )?;
     asm.release_many([v_rd, v_rs2, v_mask, v_dword, v_shift])?;
@@ -209,7 +280,13 @@ pub(in crate::expand) fn expand_amo_minmax_w(
     let v_dword = asm.allocate()?;
     let v_shift = asm.allocate()?;
 
-    expand_amo_pre64(&mut asm, rs1(instruction)?, v_rd, v_dword, v_shift)?;
+    expand_amo_pre64(
+        &mut asm,
+        reg(rs1(instruction)?),
+        v_rd.operand(),
+        v_dword.operand(),
+        v_shift.operand(),
+    )?;
 
     let v_rs2 = asm.allocate()?;
     let v0 = asm.allocate()?;
@@ -218,23 +295,42 @@ pub(in crate::expand) fn expand_amo_minmax_w(
     } else {
         JoltInstructionKind::VirtualZeroExtendWord
     };
-    asm.expand_i(extend_op, v_rs2, rs2(instruction)?, 0)?;
-    asm.expand_i(extend_op, v0, v_rd, 0)?;
-    let (cmp_rs1, cmp_rs2) = if min { (v_rs2, v0) } else { (v0, v_rs2) };
-    asm.expand_r(compare_op, v0, cmp_rs1, cmp_rs2)?;
-    asm.expand_r(JoltInstructionKind::SUB, v_rs2, rs2(instruction)?, v_rd)?;
-    asm.expand_r(JoltInstructionKind::MUL, v_rs2, v_rs2, v0)?;
-    asm.expand_r(JoltInstructionKind::ADD, v_rs2, v_rs2, v_rd)?;
+    asm.expand_i(extend_op, v_rs2.operand(), reg(rs2(instruction)?), 0)?;
+    asm.expand_i(extend_op, v0.operand(), v_rd.operand(), 0)?;
+    let (cmp_rs1, cmp_rs2) = if min {
+        (v_rs2.operand(), v0.operand())
+    } else {
+        (v0.operand(), v_rs2.operand())
+    };
+    asm.expand_r(compare_op, v0.operand(), cmp_rs1, cmp_rs2)?;
+    asm.expand_r(
+        JoltInstructionKind::SUB,
+        v_rs2.operand(),
+        reg(rs2(instruction)?),
+        v_rd.operand(),
+    )?;
+    asm.expand_r(
+        JoltInstructionKind::MUL,
+        v_rs2.operand(),
+        v_rs2.operand(),
+        v0.operand(),
+    )?;
+    asm.expand_r(
+        JoltInstructionKind::ADD,
+        v_rs2.operand(),
+        v_rs2.operand(),
+        v_rd.operand(),
+    )?;
     expand_amo_post64(
         &mut asm,
         AmoPost64 {
-            rs1: rs1(instruction)?,
-            v_rs2: v_rs2.into(),
-            v_dword: v_dword.into(),
-            v_shift: v_shift.into(),
-            v_mask: v0.into(),
-            rd: rd(instruction)?,
-            v_rd: v_rd.into(),
+            rs1: reg(rs1(instruction)?),
+            v_rs2: v_rs2.operand(),
+            v_dword: v_dword.operand(),
+            v_shift: v_shift.operand(),
+            v_mask: v0.operand(),
+            rd: reg(rd(instruction)?),
+            v_rd: v_rd.operand(),
         },
     )?;
     asm.release_many([v_rd, v_dword, v_shift, v_rs2, v0])?;
@@ -244,10 +340,10 @@ pub(in crate::expand) fn expand_amo_minmax_w(
 
 pub(in crate::expand) fn expand_amo_pre64(
     asm: &mut ExpansionBuilder,
-    rs1: u8,
-    v_rd: impl Into<RegisterOperand> + Copy,
-    v_dword: impl Into<RegisterOperand> + Copy,
-    v_shift: impl Into<RegisterOperand> + Copy,
+    rs1: RegisterOperand,
+    v_rd: RegisterOperand,
+    v_dword: RegisterOperand,
+    v_shift: RegisterOperand,
 ) -> Result<(), ExpansionError> {
     asm.expand_address(JoltInstructionKind::VirtualAssertWordAlignment, rs1, 0)?;
     asm.expand_i(JoltInstructionKind::ANDI, v_shift, rs1, format_i_imm(-8))?;
@@ -257,12 +353,12 @@ pub(in crate::expand) fn expand_amo_pre64(
 }
 
 pub(in crate::expand) struct AmoPost64 {
-    pub(in crate::expand) rs1: u8,
+    pub(in crate::expand) rs1: RegisterOperand,
     pub(in crate::expand) v_rs2: RegisterOperand,
     pub(in crate::expand) v_dword: RegisterOperand,
     pub(in crate::expand) v_shift: RegisterOperand,
     pub(in crate::expand) v_mask: RegisterOperand,
-    pub(in crate::expand) rd: u8,
+    pub(in crate::expand) rd: RegisterOperand,
     pub(in crate::expand) v_rd: RegisterOperand,
 }
 
@@ -280,7 +376,7 @@ pub(in crate::expand) fn expand_amo_post64(
         v_rd,
     } = registers;
 
-    asm.expand_i(JoltInstructionKind::ORI, v_mask, 0, format_i_imm(-1))?;
+    asm.expand_i(JoltInstructionKind::ORI, v_mask, reg(0), format_i_imm(-1))?;
     asm.expand_i(JoltInstructionKind::SRLI, v_mask, v_mask, 32)?;
     asm.expand_r(JoltInstructionKind::SLL, v_mask, v_mask, v_shift)?;
     asm.expand_r(JoltInstructionKind::SLL, v_shift, v_rs2, v_shift)?;
@@ -304,24 +400,54 @@ pub(in crate::expand) fn expand_narrow_store(
     let v3 = asm.allocate()?;
 
     if let Some(alignment) = alignment {
-        asm.expand_address(alignment, rs1(instruction)?, instruction.operands.imm)?;
+        asm.expand_address(alignment, reg(rs1(instruction)?), instruction.operands.imm)?;
     }
     asm.expand_i(
         JoltInstructionKind::ADDI,
-        v0,
-        rs1(instruction)?,
+        v0.operand(),
+        reg(rs1(instruction)?),
         format_i_imm(instruction.operands.imm),
     )?;
-    asm.expand_i(JoltInstructionKind::ANDI, v1, v0, format_i_imm(-8))?;
-    asm.expand_i(JoltInstructionKind::LD, v2, v1, 0)?;
-    asm.expand_i(JoltInstructionKind::SLLI, v3, v0, 3)?;
-    asm.expand_u(JoltInstructionKind::LUI, v0, mask)?;
-    asm.expand_r(JoltInstructionKind::SLL, v0, v0, v3)?;
-    asm.expand_r(JoltInstructionKind::SLL, v3, rs2(instruction)?, v3)?;
-    asm.expand_r(JoltInstructionKind::XOR, v3, v2, v3)?;
-    asm.expand_r(JoltInstructionKind::AND, v3, v3, v0)?;
-    asm.expand_r(JoltInstructionKind::XOR, v2, v2, v3)?;
-    asm.expand_s(JoltInstructionKind::SD, v1, v2, 0)?;
+    asm.expand_i(
+        JoltInstructionKind::ANDI,
+        v1.operand(),
+        v0.operand(),
+        format_i_imm(-8),
+    )?;
+    asm.expand_i(JoltInstructionKind::LD, v2.operand(), v1.operand(), 0)?;
+    asm.expand_i(JoltInstructionKind::SLLI, v3.operand(), v0.operand(), 3)?;
+    asm.expand_u(JoltInstructionKind::LUI, v0.operand(), mask)?;
+    asm.expand_r(
+        JoltInstructionKind::SLL,
+        v0.operand(),
+        v0.operand(),
+        v3.operand(),
+    )?;
+    asm.expand_r(
+        JoltInstructionKind::SLL,
+        v3.operand(),
+        reg(rs2(instruction)?),
+        v3.operand(),
+    )?;
+    asm.expand_r(
+        JoltInstructionKind::XOR,
+        v3.operand(),
+        v2.operand(),
+        v3.operand(),
+    )?;
+    asm.expand_r(
+        JoltInstructionKind::AND,
+        v3.operand(),
+        v3.operand(),
+        v0.operand(),
+    )?;
+    asm.expand_r(
+        JoltInstructionKind::XOR,
+        v2.operand(),
+        v2.operand(),
+        v3.operand(),
+    )?;
+    asm.expand_s(JoltInstructionKind::SD, v1.operand(), v2.operand(), 0)?;
     asm.release_many([v0, v1, v2, v3])?;
 
     asm.finalize()

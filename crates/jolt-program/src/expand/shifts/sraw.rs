@@ -9,32 +9,32 @@ pub(in crate::expand) fn expand_sraw(
 
     asm.emit_i(
         JoltInstructionKind::VirtualSignExtendWord,
-        v_rs1,
-        rs1(instruction)?,
+        v_rs1.operand(),
+        reg(rs1(instruction)?),
         0,
     );
     asm.emit_i(
         JoltInstructionKind::ANDI,
-        v_bitmask,
-        rs2(instruction)?,
+        v_bitmask.operand(),
+        reg(rs2(instruction)?),
         0x1f,
     );
     asm.emit_i(
         JoltInstructionKind::VirtualShiftRightBitmask,
-        v_bitmask,
-        v_bitmask,
+        v_bitmask.operand(),
+        v_bitmask.operand(),
         0,
     );
     asm.emit_r(
         JoltInstructionKind::VirtualSRA,
-        rd(instruction)?,
-        v_rs1,
-        v_bitmask,
+        reg(rd(instruction)?),
+        v_rs1.operand(),
+        v_bitmask.operand(),
     );
     asm.emit_i(
         JoltInstructionKind::VirtualSignExtendWord,
-        rd(instruction)?,
-        rd(instruction)?,
+        reg(rd(instruction)?),
+        reg(rd(instruction)?),
         0,
     );
     asm.release(v_rs1)?;

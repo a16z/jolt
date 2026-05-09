@@ -8,20 +8,20 @@ pub(in crate::expand) fn expand_sllw(
 
     asm.emit_i(
         JoltInstructionKind::VirtualPow2W,
-        v_pow2,
-        rs2(instruction)?,
+        v_pow2.operand(),
+        reg(rs2(instruction)?),
         0,
     );
     asm.emit_r(
         JoltInstructionKind::MUL,
-        rd(instruction)?,
-        rs1(instruction)?,
-        v_pow2,
+        reg(rd(instruction)?),
+        reg(rs1(instruction)?),
+        v_pow2.operand(),
     );
     asm.emit_i(
         JoltInstructionKind::VirtualSignExtendWord,
-        rd(instruction)?,
-        rd(instruction)?,
+        reg(rd(instruction)?),
+        reg(rd(instruction)?),
         0,
     );
     asm.release(v_pow2)?;

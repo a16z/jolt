@@ -10,26 +10,46 @@ pub(in crate::expand) fn expand_mulh(
 
     asm.emit_i(
         JoltInstructionKind::VirtualMovsign,
-        v_sx,
-        rs1(instruction)?,
+        v_sx.operand(),
+        reg(rs1(instruction)?),
         0,
     );
     asm.emit_i(
         JoltInstructionKind::VirtualMovsign,
-        v_sy,
-        rs2(instruction)?,
+        v_sy.operand(),
+        reg(rs2(instruction)?),
         0,
     );
-    asm.emit_r(JoltInstructionKind::MUL, v_sx, v_sx, rs2(instruction)?);
-    asm.emit_r(JoltInstructionKind::MUL, v_sy, v_sy, rs1(instruction)?);
+    asm.emit_r(
+        JoltInstructionKind::MUL,
+        v_sx.operand(),
+        v_sx.operand(),
+        reg(rs2(instruction)?),
+    );
+    asm.emit_r(
+        JoltInstructionKind::MUL,
+        v_sy.operand(),
+        v_sy.operand(),
+        reg(rs1(instruction)?),
+    );
     asm.emit_r(
         JoltInstructionKind::MULHU,
-        v_tmp,
-        rs1(instruction)?,
-        rs2(instruction)?,
+        v_tmp.operand(),
+        reg(rs1(instruction)?),
+        reg(rs2(instruction)?),
     );
-    asm.emit_r(JoltInstructionKind::ADD, v_tmp, v_tmp, v_sx);
-    asm.emit_r(JoltInstructionKind::ADD, rd(instruction)?, v_tmp, v_sy);
+    asm.emit_r(
+        JoltInstructionKind::ADD,
+        v_tmp.operand(),
+        v_tmp.operand(),
+        v_sx.operand(),
+    );
+    asm.emit_r(
+        JoltInstructionKind::ADD,
+        reg(rd(instruction)?),
+        v_tmp.operand(),
+        v_sy.operand(),
+    );
     asm.release_many([v_sx, v_sy, v_tmp])?;
 
     asm.finalize()

@@ -7,7 +7,12 @@ pub(in crate::expand) fn expand_mret(
     let mut asm = ExpansionBuilder::new(*instruction);
     let jalr_rd = asm.allocate()?;
 
-    asm.emit_i(JoltInstructionKind::JALR, jalr_rd, mepc_vr, 0);
+    asm.emit_i(
+        JoltInstructionKind::JALR,
+        jalr_rd.operand(),
+        reg(mepc_vr),
+        0,
+    );
     asm.release(jalr_rd)?;
 
     asm.finalize()
