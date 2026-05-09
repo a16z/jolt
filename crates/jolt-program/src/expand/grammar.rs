@@ -151,6 +151,7 @@ impl RowTemplate {
     }
 }
 
+#[derive(Clone, Copy)]
 pub(super) enum ExpansionOp {
     Emit(RowTemplate),
     Expand(RowTemplate),
@@ -179,11 +180,12 @@ impl ExpansionBuilder {
     }
 
     pub(super) fn allocate(&mut self) -> Result<TempId, ExpansionError> {
-        let temp = u8::try_from(self.next_temp).map(TempId).map_err(|_| {
-            ExpansionError::TooManyTemporaryRegisters {
+        if self.next_temp >= 256 {
+            return Err(ExpansionError::TooManyTemporaryRegisters {
                 actual: self.next_temp + 1,
-            }
-        })?;
+            });
+        }
+        let temp = TempId(self.next_temp as u8);
         self.next_temp += 1;
         self.ops.push(ExpansionOp::Allocate(temp));
         Ok(temp)
@@ -314,8 +316,10 @@ impl ExpansionBuilder {
         &mut self,
         registers: [TempId; N],
     ) -> Result<(), ExpansionError> {
-        for register in registers {
-            self.release(register)?;
+        let mut index = 0;
+        while index < N {
+            self.release(registers[index])?;
+            index += 1;
         }
         Ok(())
     }

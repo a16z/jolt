@@ -23,8 +23,8 @@ pub use allocator::ExpansionAllocator;
 pub use error::ExpansionError;
 
 use allocator::{
-    csr_to_virtual_register, mcause_register, mepc_register, mstatus_register, mtval_register,
-    reservation_d_register, reservation_w_register, trap_handler_register,
+    mcause_register, mepc_register, mstatus_register, mtval_register, reservation_d_register,
+    reservation_w_register, trap_handler_register, virtual_register_for_csr,
 };
 use arithmetic::*;
 use control_flow::*;
@@ -77,20 +77,36 @@ pub fn expand_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
     allocator: &mut ExpansionAllocator,
     inline_provider: &mut P,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    if instruction.operands.rd == Some(0)
+    let mut rewritten;
+    let mut allocated_rd_zero_register = None;
+    let instruction = if instruction.operands.rd == Some(0)
         && !handles_rd_zero_internally(instruction.instruction_kind)
     {
         if instruction.instruction_kind.has_side_effects() {
             let virtual_register = allocator.allocate()?;
-            let mut rewritten = *instruction;
+            allocated_rd_zero_register = Some(virtual_register);
+            rewritten = *instruction;
             rewritten.operands.rd = Some(virtual_register);
-            let expanded = expand_instruction_with_provider(&rewritten, allocator, inline_provider);
-            allocator.release(virtual_register)?;
-            return expanded;
+            &rewritten
+        } else {
+            return Ok(single_row(noop_for(*instruction)));
         }
-        return Ok(vec![noop_for(*instruction)]);
-    }
+    } else {
+        instruction
+    };
 
+    let result = expand_instruction_with_provider_inner(instruction, allocator, inline_provider);
+    if let Some(register) = allocated_rd_zero_register {
+        allocator.release(register)?;
+    }
+    result
+}
+
+fn expand_instruction_with_provider_inner<P: InlineExpansionProvider + ?Sized>(
+    instruction: &NormalizedInstruction,
+    allocator: &mut ExpansionAllocator,
+    inline_provider: &mut P,
+) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     if instruction.instruction_kind == JoltInstructionKind::Inline {
         let rows = inline_provider.expand_inline(instruction, allocator)?;
         return finalize_inline_provider_rows(*instruction, allocator, rows);
@@ -108,7 +124,10 @@ fn finalize_inline_provider_rows(
     allocator: &mut ExpansionAllocator,
     mut rows: Vec<NormalizedInstruction>,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    for register in allocator.take_registers_for_reset()? {
+    let registers = allocator.take_registers_for_reset()?;
+    let mut index = 0;
+    while index < registers.len() {
+        let register = registers[index];
         rows.push(NormalizedInstruction {
             instruction_kind: JoltInstructionKind::ADDI,
             address: source.address,
@@ -122,11 +141,12 @@ fn finalize_inline_provider_rows(
             is_first_in_sequence: false,
             is_compressed: false,
         });
+        index += 1;
     }
     stamp_sequence(rows, source.is_compressed)
 }
 
-fn expand_instruction_core(
+fn expand_instruction_body(
     instruction: &NormalizedInstruction,
     state: &mut ExpansionState,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
@@ -141,17 +161,27 @@ fn expand_instruction_core(
             state.release_register(virtual_register)?;
             return expanded;
         }
-        return Ok(vec![noop_for(*instruction)]);
+        return Ok(single_row(noop_for(*instruction)));
     }
 
     if instruction.instruction_kind == JoltInstructionKind::Inline {
         return Err(ExpansionError::InlineProviderRequired);
     }
     if !is_source_only(instruction.instruction_kind) {
-        return Ok(vec![*instruction]);
+        return Ok(single_row(*instruction));
     }
     let sequence = expand_source_only_instruction(instruction)?;
     state.materialize(sequence)
+}
+
+#[expect(
+    clippy::vec_init_then_push,
+    reason = "Hax extracts explicit Vec construction more reliably than vec! for singleton rows"
+)]
+fn single_row(row: NormalizedInstruction) -> Vec<NormalizedInstruction> {
+    let mut rows = Vec::with_capacity(1);
+    rows.push(row);
+    rows
 }
 
 fn expand_source_only_instruction(
@@ -240,12 +270,22 @@ pub fn expand_program_with_provider<P: InlineExpansionProvider + ?Sized>(
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let mut expanded = Vec::new();
-    for instruction in instructions {
-        expanded.extend(expand_instruction_with_provider(
-            instruction,
-            &mut allocator,
-            inline_provider,
-        )?);
+    let mut index = 0;
+    while index < instructions.len() {
+        let instruction = &instructions[index];
+        append_rows(
+            &mut expanded,
+            expand_instruction_with_provider(instruction, &mut allocator, inline_provider)?,
+        );
+        index += 1;
     }
     Ok(expanded)
+}
+
+fn append_rows(target: &mut Vec<NormalizedInstruction>, rows: Vec<NormalizedInstruction>) {
+    let mut index = 0;
+    while index < rows.len() {
+        target.push(rows[index]);
+        index += 1;
+    }
 }

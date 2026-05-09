@@ -1,7 +1,9 @@
+#[cfg(feature = "serialization")]
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, Read, SerializationError, Valid, Validate,
     Write,
 };
+#[cfg(feature = "serialization")]
 use serde::{Deserialize, Serialize};
 
 macro_rules! define_instruction_kind {
@@ -16,9 +18,8 @@ macro_rules! define_instruction_kind {
             PartialEq,
             Eq,
             Hash,
-            Serialize,
-            Deserialize,
         )]
+        #[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
         #[repr(u16)]
         pub enum RiscvInstructionKind {
             #[default]
@@ -38,9 +39,8 @@ macro_rules! define_instruction_kind {
             PartialEq,
             Eq,
             Hash,
-            Serialize,
-            Deserialize,
         )]
+        #[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
         #[repr(u16)]
         pub enum JoltInstructionKind {
             #[default]
@@ -82,6 +82,7 @@ macro_rules! define_instruction_kind {
             }
         }
 
+        #[cfg(feature = "serialization")]
         impl CanonicalSerialize for JoltInstructionKind {
             fn serialize_with_mode<W: Write>(
                 &self,
@@ -96,6 +97,7 @@ macro_rules! define_instruction_kind {
             }
         }
 
+        #[cfg(feature = "serialization")]
         impl CanonicalDeserialize for JoltInstructionKind {
             fn deserialize_with_mode<R: Read>(
                 reader: R,
@@ -115,6 +117,7 @@ macro_rules! define_instruction_kind {
             }
         }
 
+        #[cfg(feature = "serialization")]
         impl Valid for JoltInstructionKind {
             fn check(&self) -> Result<(), SerializationError> {
                 Ok(())

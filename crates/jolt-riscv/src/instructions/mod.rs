@@ -10,6 +10,7 @@
 //! witness-generation flags. The `InstructionLookupTable` impls (in
 //! `jolt-lookup-tables`) map instructions to lookup tables.
 
+#[cfg(feature = "serialization")]
 use serde::{Deserialize, Serialize};
 
 pub mod a;
@@ -172,7 +173,8 @@ pub use virt::VirtualSw;
 /// `VirtualSw`. These are intentionally absent from `LookupInstruction` and
 /// from the flag-exclusivity tests below.
 /// Subset identity for expanded rows that have static lookup/circuit metadata.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, strum::EnumIter)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum::EnumIter)]
+#[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
 pub enum LookupInstructionKind {
     Noop,
     Add,
@@ -281,7 +283,8 @@ pub enum LookupInstructionKind {
     VirtualHostIO,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, strum::EnumIter)]
+#[derive(Clone, Copy, Debug, PartialEq, strum::EnumIter)]
+#[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
 pub enum LookupInstruction {
     Noop,
     Add(Add<NormalizedInstruction>),

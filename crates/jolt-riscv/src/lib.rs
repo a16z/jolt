@@ -172,8 +172,10 @@ macro_rules! jolt_instruction {
             PartialEq,
             Eq,
             Hash,
-            ::serde::Serialize,
-            ::serde::Deserialize,
+        )]
+        #[cfg_attr(
+            feature = "serialization",
+            derive(::serde::Serialize, ::serde::Deserialize)
         )]
         pub struct $name<T = ()>(pub T);
     };

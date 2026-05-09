@@ -5,14 +5,14 @@
 | Author(s)  | Quang Dao |
 | Created    | 2026-05-05 |
 | Revised    | 2026-05-09 |
-| Status     | target design |
+| Status     | implemented design |
 | Related PR | [#1490](https://github.com/a16z/jolt/pull/1490), [#1518](https://github.com/a16z/jolt/pull/1518) |
 
 ## Summary
 
-`jolt-program::expand` should be a small compiler pass over explicit instruction
+`jolt-program::expand` is a small compiler pass over explicit instruction
 phases, not a recursive Rust assembler that happens to produce the right rows.
-The long-term target is:
+The pipeline is:
 
 ```text
 decoded RV64 source row
@@ -22,8 +22,8 @@ decoded RV64 source row
   -> final stamped Jolt bytecode rows
 ```
 
-Concrete instruction lowerings should stay easy for humans to read and edit.
-They should look like ordered assembly snippets:
+Concrete instruction lowerings stay easy for humans to read and edit. They look
+like ordered assembly snippets:
 
 ```rust
 let mut asm = ExpansionBuilder::new(*instruction);
@@ -44,21 +44,17 @@ let mut asm = ExpansionBuilder::new(*instruction);
 asm.finalize()
 ```
 
-But the builder must be declarative: it records expansion operations. It must
-not own or borrow allocator-backed expansion state, and it must not recursively
-call the public expander while a concrete instruction lowering is running.
+The builder is declarative: it records expansion operations. It does not own or
+borrow allocator-backed expansion state, and it does not recursively call the
+public expander while a concrete instruction lowering is running.
 
-The branch first improved naming, removed old RV32-facing paths, and replaced
-the old `InstrAssembler<'a>` surface. The final target goes further: no
-provider-free lowerer should own or borrow allocator-backed expansion state.
-This spec replaces that interim builder shape with owned state, explicit
-recipes, and a central materializer.
+The branch improves naming, removes old RV32-facing paths, and replaces the old
+`InstrAssembler<'a>` surface with owned state, explicit recipes, and a central
+materializer.
 
 ## Branch Changes So Far
 
-The branch already contains three substantial changes relative to `main`. The
-remaining owned-state recipe rewrite should build on these changes rather than
-re-describe them as future work.
+The branch contains four substantial changes relative to `main`.
 
 ### RV64-Only Cleanup
 
@@ -90,14 +86,12 @@ The branch has already split the old ambiguous instruction naming:
   SHA2 inline sequence builder, and the Z3 virtual-sequence verifier were moved
   onto the new phase names.
 
-The remaining work is not to invent these names from scratch. It is to audit and
-finish the split while implementing the recipe expander, so source-only
-legality, lookup-backed legality, and side-effect classification sit on the
-right phase APIs.
+The split lets source-only legality, lookup-backed legality, and side-effect
+classification sit on the right phase APIs.
 
-### Interim Expansion Refactor
+### Compiler-Native Expansion Refactor
 
-The branch replaced the old production `assembler.rs` path with a more readable
+The branch replaces the old production `assembler.rs` path with a readable
 builder-based expander:
 
 - `assembler.rs` was deleted.
@@ -110,16 +104,23 @@ builder-based expander:
 - builder/template APIs now take explicit `RegisterOperand` values instead of
   generic `impl Into<RegisterOperand>` parameters; architectural registers are
   written as `reg(x)` and symbolic temps as `temp.operand()`.
+- `ExpansionBuilder` records pure `ExpansionOp` recipes; it does not borrow the
+  allocator or materialize concrete virtual registers.
+- `ExpansionState` owns allocator state while materializing recipes, recursive
+  helper expansion, and sequence metadata.
+- temporary-register bindings are represented by a fixed table keyed by `u8`
+  `TempId`, matching the real symbolic-temp address space.
 - bounded row buffers, sequence metadata helpers, recursion-depth checks,
   target-legality checks, and explicit release calls were added.
+- serialization derives in `jolt-riscv` and `jolt-program` are behind a default
+  `serialization` feature, keeping the extraction core independent of serde and
+  ark serialization.
 - a compact hash fixture
   `crates/jolt-program/src/expand/fixtures/main_expand_parity_hashes.json`
   checks provider-free expansion parity without committing huge row JSON.
 
-The final compiler-native cutover preserves that readable lowerer surface but
-changes what it means: `ExpansionBuilder` records pure `ExpansionOp` recipes,
-and owned `ExpansionState` materializes temps, helper expansion, and sequence
-metadata centrally.
+The compiler-native cutover preserves the readable lowerer surface while making
+the lowering/materialization split explicit.
 
 ## Goals
 
@@ -157,7 +158,9 @@ metadata centrally.
 - Do not make Hax/Aeneas extraction a CI requirement unless maintainers ask for
   it.
 
-## Current Problem
+## Design Decisions
+
+### Owned State Boundary
 
 The old #1490 shape used `InstrAssembler<'a>`:
 
@@ -168,31 +171,41 @@ pub struct InstrAssembler<'a> {
 }
 ```
 
-The interim builder refactor removed that type from production expansion, but it
-recreated the same fundamental borrow shape:
+The compiler-native expander avoids that borrow shape. Concrete lowerers build
+recipes; `ExpansionState` owns mutable expansion state while interpreting those
+recipes.
 
-```rust
-pub(super) struct ExpansionState<'a> {
-    allocator: &'a mut ExpansionAllocator,
-}
+This keeps mutable allocator state out of individual lowerers and gives Hax and
+Aeneas a production extraction target that is closer to a conventional compiler
+pass:
 
-pub(super) struct ExpansionBuilder<'a, 'b> {
-    source: &'b NormalizedInstruction,
-    state: ExpansionState<'a>,
-    sequence: ExpansionSequence,
-}
+- lowerers produce data;
+- the driver owns mutable state;
+- recursive helper expansion is interpreted by the driver;
+- sequence metadata is stamped centrally.
+
+### Extraction-Friendly Core
+
+The production core intentionally favors explicit control flow in the
+materialization path. This is not a separate formal model: it is the same code
+used by normal expansion. The design avoids long-lived mutable borrows, generic
+operand conversion shims, iterator-heavy state-machine code, and serialization
+dependencies in the no-default extraction configuration.
+
+The current Hax extraction command is:
+
+```bash
+cargo hax -C -p jolt-program --no-default-features \; into \
+  --output-dir /tmp/jolt-program-hax-lean-refactor \
+  -i '-** +jolt_program::expand::**' \
+  lean
 ```
 
-That shape was nicer to read, but it was not the compiler-native design.
-Extraction tools still saw a long-lived mutable borrow stored inside the
-expansion engine, and recursive helper expansion was still encoded by Rust calls
-from builder methods.
-
-The correct boundary is:
-
-- concrete lowerers produce data;
-- the driver owns mutable state;
-- the driver is the only component that interprets recursive expansion work.
+This now emits Lean without serde/ark instruction serialization, without the
+old CSR helper name collision, and without the old dynamic Vec-backed temp table.
+Remaining Lean build work is concentrated in Hax/Lean support for generated
+`while_loop_return` forms and very large nested expansion functions, rather than
+in production expansion borrowing or serialization boundaries.
 
 ## Target Data Model
 
@@ -305,7 +318,7 @@ conversion/typeclass plumbing on the core grammar surface.
 pub(super) struct ExpansionBuilder {
     source: NormalizedInstruction,
     ops: Vec<ExpansionOp>,
-    next_temp: u8,
+    next_temp: usize,
 }
 ```
 
@@ -316,7 +329,7 @@ It must not contain:
 - any lifetime parameter needed for allocator ownership;
 - calls to `expand_instruction` or `expand_one_core`.
 
-It should expose ergonomic methods:
+It exposes ergonomic methods:
 
 ```rust
 impl ExpansionBuilder {
@@ -346,7 +359,7 @@ impl ExpansionBuilder {
 }
 ```
 
-`emit_*` methods should be infallible when they only record a syntactically valid
+`emit_*` methods are infallible when they only record a syntactically valid
 template. Operand validation that depends on source row shape can still return
 `ExpansionError` at the lowerer boundary.
 
@@ -357,21 +370,19 @@ template. Operand validation that depends on source row shape can still return
 ```rust
 pub(super) struct ExpansionState {
     allocator: ExpansionAllocator,
-    work: Vec<ExpansionOp>,
-    fuel: u32,
 }
 ```
 
-It should provide the provider-free entry point:
+It provides the provider-free recursive entry point:
 
 ```rust
 pub(super) fn expand_one_core(
-    source: NormalizedInstruction,
-    state: &mut ExpansionState,
+    &mut self,
+    instruction: &NormalizedInstruction,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError>;
 ```
 
-The public API may preserve the existing call shape as an adapter:
+The public API preserves the existing call shape as an adapter:
 
 ```rust
 pub fn expand_instruction(
@@ -380,9 +391,9 @@ pub fn expand_instruction(
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError>;
 ```
 
-but the adapter must move allocator state into `ExpansionState`, run the owned
-driver, then move allocator state back out. Borrowed allocator state must not be
-stored in production core structures.
+The adapter moves allocator state into `ExpansionState`, runs the owned driver,
+then moves allocator state back out. Borrowed allocator state is not stored in
+production core structures.
 
 ### Central Driver
 
@@ -394,32 +405,34 @@ The central driver handles:
 - recursive helper expansion;
 - temp allocation and release;
 - output capacity checks;
-- recursion/fuel limits;
+- recursion-depth limits;
 - sequence metadata stamping;
 - provider-free `Inline` rejection.
 
 In pseudocode:
 
 ```rust
-fn expand_one_core(
-    source: NormalizedInstruction,
-    state: &mut ExpansionState,
+fn materialize(
+    &mut self,
+    sequence: ExpandedInstructionSequence,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    state.reset_for_source(source)?;
-    let recipe = lower_source_row(source)?;
-    state.push_recipe(recipe)?;
-
-    while let Some(op) = state.pop_work()? {
-        state.consume_fuel()?;
+    let mut materializer = SequenceMaterializer::new(sequence.source);
+    let mut index = 0;
+    while index < sequence.ops.len() {
+        let op = sequence.ops[index];
         match op {
             ExpansionOp::Emit(row) => materializer.emit(row)?,
-            ExpansionOp::Expand(row) => materializer.extend(state.expand_helper(row)?)?,
-            ExpansionOp::Allocate(temp) => materializer.bind_temp(temp, state.allocate()?)?,
-            ExpansionOp::Release(temp) => state.release(materializer.resolve_release(temp)?)?,
+            ExpansionOp::Expand(row) => {
+                let instruction = materializer.instruction(row)?;
+                materializer.extend(self.expand_one_core(&instruction)?)?;
+            }
+            ExpansionOp::Allocate(temp) => materializer.bind_temp(temp, self.allocate()?)?,
+            ExpansionOp::Release(temp) => self.release(materializer.resolve_release(temp)?)?,
         }
+        index += 1;
     }
 
-    state.finish_source_sequence()
+    materializer.finish()
 }
 ```
 
@@ -428,7 +441,7 @@ not a builder action.
 
 ## Concrete Lowerer Shape
 
-Concrete lowerers should no longer accept `&mut ExpansionAllocator`.
+Concrete lowerers no longer accept `&mut ExpansionAllocator`.
 
 Target signature:
 
@@ -586,15 +599,21 @@ more syntax in simple lowerers.
 
 Latest extraction check after this cutover:
 
-- Hax still emits Lean for `jolt_program::expand`; the old
-  `impl_Into_RegisterOperand` helper noise is gone, but total output size is
-  slightly higher because explicit `reg(...)` / `operand()` calls are now
-  represented directly.
-- Charon still emits LLBC with the same two `Box` initialization warnings.
-- Aeneas no longer hits the previous "Arrow types are not supported yet" crash
-  from the generic operand API. It still fails on older blockers: conditional
-  join failures in memory load lowering, allocator loop typing/region issues,
-  metadata loop fixed-point handling, and shallow `Box` initialization.
+- Hax emits Lean for `jolt_program::expand` with:
+  `cargo hax -C -p jolt-program --no-default-features \; into ...`.
+- serde and ark serialization are no longer in the extracted core.
+- the old `impl_Into_RegisterOperand` helper noise is gone.
+- the CSR helper/method name collision is gone.
+- symbolic temp bindings are fixed-array updates instead of dynamic Vec
+  resize/slice updates.
+- materialization uses explicit recipe indexing rather than a reversed work
+  stack.
+
+The generated Lean still does not compile end-to-end. The remaining blockers are
+now concentrated in Hax/Lean support for generated `while_loop_return` forms,
+large nested expansion functions, and helper definitions that fail to enter the
+environment after earlier Lean errors. Those are extractor/prelude issues, not a
+reason to add a separate hand-written expansion model.
 
 ## Acceptance Criteria
 
@@ -661,9 +680,11 @@ Remaining outside this PR:
 
 - [ ] Prove or hand-port the emitted Hax/Aeneas Lean into a maintained Lean
       project once the extractor prelude/library-model blockers are resolved.
-- [ ] Decide whether to further simplify concrete lowerers specifically for
-      Aeneas by avoiding conditional expressions inside row operands and by
-      replacing iterator-heavy metadata helpers with loop-shaped code.
+- [ ] Add or upstream Lean support for the generated `while_loop_return`
+      combinator and the remaining standard-library models needed by Hax.
+- [ ] Decide whether very large lowerers such as division and AMO helpers should
+      be split further for readability and Lean elaboration, independent of
+      extraction.
 
 ## Implemented Work Items
 
@@ -710,7 +731,8 @@ implemented unless explicitly listed above as outside this PR.
 ### 5. Make ExpansionState Owned
 
 - Change `ExpansionState` to own `ExpansionAllocator`.
-- Add work-stack, output-buffer, and fuel/depth state.
+- Materialize recipe operations directly from `ExpandedInstructionSequence`.
+- Keep recursion-depth state in `ExpansionAllocator`.
 - Add owned-state entry points and adapter functions for the existing public API.
 - Avoid `impl IntoIterator` in extraction-critical APIs where concrete types are
   straightforward.

@@ -12,12 +12,14 @@ categories = ["cryptography"]
 workspace = true
 
 [features]
+default = ["serialization"]
+serialization = ["dep:ark-serialize", "dep:serde"]
 test-utils = ["dep:rand"]
 
 [dependencies]
-ark-serialize.workspace = true
+ark-serialize = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
-serde.workspace = true
+serde = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]

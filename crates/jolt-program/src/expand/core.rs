@@ -3,7 +3,7 @@ use jolt_riscv::{NormalizedInstruction, NormalizedOperands};
 use crate::expand::{
     allocator::ExpansionAllocator,
     buffer::ExpansionBuffer,
-    expand_instruction_core,
+    expand_instruction_body,
     grammar::{
         ExpandedInstructionSequence, ExpansionOp, RegisterOperand, RowTemplate, TempId,
         TemplateOperands,
@@ -14,15 +14,11 @@ use crate::expand::{
 
 pub(super) struct ExpansionState {
     allocator: ExpansionAllocator,
-    work: Vec<ExpansionOp>,
 }
 
 impl ExpansionState {
     pub(super) fn new(allocator: ExpansionAllocator) -> Self {
-        Self {
-            allocator,
-            work: Vec::new(),
-        }
+        Self { allocator }
     }
 
     pub(super) fn into_allocator(self) -> ExpansionAllocator {
@@ -34,7 +30,7 @@ impl ExpansionState {
         instruction: &NormalizedInstruction,
     ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
         self.allocator.enter_expansion()?;
-        let result = expand_instruction_core(instruction, self);
+        let result = expand_instruction_body(instruction, self);
         self.allocator.exit_expansion();
         result
     }
@@ -51,22 +47,10 @@ impl ExpansionState {
         &mut self,
         sequence: ExpandedInstructionSequence,
     ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-        let saved_work = std::mem::replace(
-            &mut self.work,
-            sequence.ops.into_iter().rev().collect::<Vec<_>>(),
-        );
-        let result = self.materialize_current_work(sequence.source);
-        self.work = saved_work;
-        result
-    }
-
-    fn materialize_current_work(
-        &mut self,
-        source: NormalizedInstruction,
-    ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-        let mut materializer = SequenceMaterializer::new(source);
-        while let Some(op) = self.work.pop() {
-            match op {
+        let mut materializer = SequenceMaterializer::new(sequence.source);
+        let mut index = 0;
+        while index < sequence.ops.len() {
+            match sequence.ops[index] {
                 ExpansionOp::Emit(row) => materializer.emit(row)?,
                 ExpansionOp::Expand(row) => {
                     let instruction = materializer.instruction(row)?;
@@ -81,8 +65,56 @@ impl ExpansionState {
                     self.allocator.release(register)?;
                 }
             }
+            index += 1;
         }
         materializer.finish()
+    }
+}
+
+const MAX_TEMP_BINDINGS: usize = 256;
+
+struct TempBindings {
+    slots: [Option<u8>; MAX_TEMP_BINDINGS],
+}
+
+impl TempBindings {
+    fn new() -> Self {
+        Self {
+            slots: [None; MAX_TEMP_BINDINGS],
+        }
+    }
+
+    fn bind(&mut self, temp: TempId, allocated: u8) -> Result<(), ExpansionError> {
+        let index = temp.index();
+        if self.slots[index].is_some() {
+            return Err(ExpansionError::DuplicateTemporaryRegister { index });
+        }
+        self.slots[index] = Some(allocated);
+        Ok(())
+    }
+
+    fn get(&self, temp: TempId) -> Result<u8, ExpansionError> {
+        let index = temp.index();
+        self.slots[index].ok_or(ExpansionError::UnallocatedTemporaryRegister { index })
+    }
+
+    fn take(&mut self, temp: TempId) -> Result<u8, ExpansionError> {
+        let index = temp.index();
+        match self.slots[index].take() {
+            Some(register) => Ok(register),
+            None => Err(ExpansionError::UnallocatedTemporaryRegister { index }),
+        }
+    }
+
+    fn first_leaked(&self) -> Option<usize> {
+        let mut index = 0;
+        while index < self.slots.len() {
+            if self.slots[index].is_some() {
+                return Some(index);
+            }
+            index += 1;
+        }
+        None
     }
 }
 
@@ -90,7 +122,7 @@ struct SequenceMaterializer {
     address: usize,
     is_compressed: bool,
     rows: ExpansionBuffer,
-    temps: Vec<Option<u8>>,
+    temps: TempBindings,
 }
 
 impl SequenceMaterializer {
@@ -99,7 +131,7 @@ impl SequenceMaterializer {
             address: source.address,
             is_compressed: source.is_compressed,
             rows: ExpansionBuffer::new(),
-            temps: Vec::new(),
+            temps: TempBindings::new(),
         }
     }
 
@@ -124,25 +156,11 @@ impl SequenceMaterializer {
     }
 
     fn bind_temp(&mut self, temp: TempId, allocated: u8) -> Result<(), ExpansionError> {
-        let index = temp.index();
-        if self.temps.len() <= index {
-            self.temps.resize(index + 1, None);
-        }
-        if self.temps[index].is_some() {
-            return Err(ExpansionError::DuplicateTemporaryRegister { index });
-        }
-        self.temps[index] = Some(allocated);
-        Ok(())
+        self.temps.bind(temp, allocated)
     }
 
     fn resolve_register_for_release(&mut self, temp: TempId) -> Result<u8, ExpansionError> {
-        let index = temp.index();
-        let resolved = self
-            .temps
-            .get_mut(index)
-            .and_then(Option::take)
-            .ok_or(ExpansionError::UnallocatedTemporaryRegister { index })?;
-        Ok(resolved)
+        self.temps.take(temp)
     }
 
     fn resolve_operands(
@@ -161,29 +179,21 @@ impl SequenceMaterializer {
         &self,
         register: Option<RegisterOperand>,
     ) -> Result<Option<u8>, ExpansionError> {
-        register
-            .map(|register| self.resolve_register(register))
-            .transpose()
+        match register {
+            Some(register) => Ok(Some(self.resolve_register(register)?)),
+            None => Ok(None),
+        }
     }
 
     fn resolve_register(&self, register: RegisterOperand) -> Result<u8, ExpansionError> {
         match register {
             RegisterOperand::Register(register) => Ok(register),
-            RegisterOperand::Temp(temp) => self.temps.get(temp.index()).copied().flatten().ok_or(
-                ExpansionError::UnallocatedTemporaryRegister {
-                    index: temp.index(),
-                },
-            ),
+            RegisterOperand::Temp(temp) => self.temps.get(temp),
         }
     }
 
     fn finish(self) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-        if let Some((index, _)) = self
-            .temps
-            .iter()
-            .enumerate()
-            .find(|(_, register)| register.is_some())
-        {
+        if let Some(index) = self.temps.first_leaked() {
             return Err(ExpansionError::LeakedTemporaryRegister { index });
         }
         self.rows.check_capacity()?;

@@ -1,19 +1,14 @@
+#[cfg(feature = "serialization")]
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+#[cfg(feature = "serialization")]
 use serde::{Deserialize, Serialize};
 
 use crate::JoltInstructionKind;
 
-#[derive(
-    Default,
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    CanonicalSerialize,
-    CanonicalDeserialize,
-    Serialize,
-    Deserialize,
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(CanonicalSerialize, CanonicalDeserialize, Serialize, Deserialize)
 )]
 pub struct NormalizedOperands {
     pub rs1: Option<u8>,
@@ -22,17 +17,10 @@ pub struct NormalizedOperands {
     pub imm: i128,
 }
 
-#[derive(
-    Default,
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    CanonicalSerialize,
-    CanonicalDeserialize,
-    Serialize,
-    Deserialize,
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(CanonicalSerialize, CanonicalDeserialize, Serialize, Deserialize)
 )]
 pub struct NormalizedInstruction {
     pub instruction_kind: JoltInstructionKind,

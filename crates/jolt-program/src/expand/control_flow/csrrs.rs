@@ -4,7 +4,7 @@ pub(in crate::expand) fn expand_csrrs(
     instruction: &NormalizedInstruction,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let csr = csr_address(instruction);
-    let virtual_reg = csr_to_virtual_register(csr).ok_or(ExpansionError::UnsupportedCsr(csr))?;
+    let virtual_reg = virtual_register_for_csr(csr).ok_or(ExpansionError::UnsupportedCsr(csr))?;
     let mut asm = ExpansionBuilder::new(*instruction);
 
     if rs1(instruction)? == 0 {

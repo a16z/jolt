@@ -52,7 +52,7 @@ pub(super) const fn mstatus_register() -> u8 {
     MSTATUS_REGISTER
 }
 
-pub(super) fn csr_to_virtual_register(csr_addr: u16) -> Option<u8> {
+pub(super) fn virtual_register_for_csr(csr_addr: u16) -> Option<u8> {
     match csr_addr {
         CSR_MSTATUS => Some(mstatus_register()),
         CSR_MTVEC => Some(trap_handler_register()),
@@ -116,10 +116,6 @@ impl ExpansionAllocator {
         MSTATUS_REGISTER
     }
 
-    pub fn csr_to_virtual_register(&self, csr_addr: u16) -> Option<u8> {
-        csr_to_virtual_register(csr_addr)
-    }
-
     pub fn allocate(&mut self) -> Result<u8, ExpansionError> {
         self.allocate_in_range(
             NUM_RESERVED_VIRTUAL_REGISTERS,
@@ -181,12 +177,14 @@ impl ExpansionAllocator {
         pool: &'static str,
     ) -> Result<u8, ExpansionError> {
         let allocated = self.allocated;
-        for index in start..end {
+        let mut index = start;
+        while index < end {
             let bit = 1u128 << index;
             if allocated & bit == 0 {
                 self.allocated |= bit;
                 return Ok(RISCV_REGISTER_BASE + index as u8);
             }
+            index += 1;
         }
         Err(ExpansionError::VirtualRegisterExhausted { pool })
     }
@@ -212,15 +210,15 @@ impl ExpansionAllocator {
     }
 
     fn registers_in_mask(mask: u128) -> Vec<u8> {
-        (0..NUM_VIRTUAL_REGISTERS)
-            .filter_map(|index| {
-                if mask & (1u128 << index) == 0 {
-                    None
-                } else {
-                    Some(RISCV_REGISTER_BASE + index as u8)
-                }
-            })
-            .collect()
+        let mut registers = Vec::new();
+        let mut index = 0;
+        while index < NUM_VIRTUAL_REGISTERS {
+            if mask & (1u128 << index) != 0 {
+                registers.push(RISCV_REGISTER_BASE + index as u8);
+            }
+            index += 1;
+        }
+        registers
     }
 }
 
@@ -298,31 +296,21 @@ mod tests {
 
     #[test]
     fn maps_supported_csrs_to_reserved_registers() {
-        let allocator = ExpansionAllocator::new();
         assert_eq!(
-            allocator.csr_to_virtual_register(CSR_MSTATUS),
+            virtual_register_for_csr(CSR_MSTATUS),
             Some(MSTATUS_REGISTER)
         );
         assert_eq!(
-            allocator.csr_to_virtual_register(CSR_MTVEC),
+            virtual_register_for_csr(CSR_MTVEC),
             Some(TRAP_HANDLER_REGISTER)
         );
         assert_eq!(
-            allocator.csr_to_virtual_register(CSR_MSCRATCH),
+            virtual_register_for_csr(CSR_MSCRATCH),
             Some(MSCRATCH_REGISTER)
         );
-        assert_eq!(
-            allocator.csr_to_virtual_register(CSR_MEPC),
-            Some(MEPC_REGISTER)
-        );
-        assert_eq!(
-            allocator.csr_to_virtual_register(CSR_MCAUSE),
-            Some(MCAUSE_REGISTER)
-        );
-        assert_eq!(
-            allocator.csr_to_virtual_register(CSR_MTVAL),
-            Some(MTVAL_REGISTER)
-        );
-        assert_eq!(allocator.csr_to_virtual_register(0x999), None);
+        assert_eq!(virtual_register_for_csr(CSR_MEPC), Some(MEPC_REGISTER));
+        assert_eq!(virtual_register_for_csr(CSR_MCAUSE), Some(MCAUSE_REGISTER));
+        assert_eq!(virtual_register_for_csr(CSR_MTVAL), Some(MTVAL_REGISTER));
+        assert_eq!(virtual_register_for_csr(0x999), None);
     }
 }

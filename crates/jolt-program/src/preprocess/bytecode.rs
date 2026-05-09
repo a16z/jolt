@@ -1,19 +1,19 @@
+#[cfg(feature = "serialization")]
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
 use jolt_riscv::{JoltInstructionKind, NormalizedInstruction};
 
 use crate::preprocess::PreprocessingError;
 
-#[derive(
-    Default,
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    CanonicalSerialize,
-    CanonicalDeserialize,
-    serde::Serialize,
-    serde::Deserialize,
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(
+        CanonicalSerialize,
+        CanonicalDeserialize,
+        serde::Serialize,
+        serde::Deserialize
+    )
 )]
 pub struct BytecodePreprocessing {
     pub code_size: usize,
@@ -57,16 +57,15 @@ impl BytecodePreprocessing {
     }
 }
 
-#[derive(
-    Default,
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    CanonicalSerialize,
-    CanonicalDeserialize,
-    serde::Serialize,
-    serde::Deserialize,
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(
+        CanonicalSerialize,
+        CanonicalDeserialize,
+        serde::Serialize,
+        serde::Deserialize
+    )
 )]
 pub struct BytecodePCMapper {
     indices: Vec<Vec<(u16, usize)>>,

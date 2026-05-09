@@ -1,9 +1,12 @@
 use super::*;
 
 use common::constants::RAM_START_ADDRESS;
+#[cfg(feature = "serialization")]
 use serde::Deserialize;
+#[cfg(feature = "serialization")]
 use sha2::{Digest, Sha256};
 
+#[cfg(feature = "serialization")]
 #[derive(Debug, Deserialize)]
 struct ExpansionParityCase {
     name: String,
@@ -332,6 +335,7 @@ fn recursive_helper_expansion_is_stamped_as_one_sequence() -> Result<(), Expansi
 }
 
 #[test]
+#[cfg(feature = "serialization")]
 fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Error>> {
     // Expected hashes generated from baseline main commit 51d81a36e. This catches
     // recursive expansion order and virtual-register reuse regressions without
