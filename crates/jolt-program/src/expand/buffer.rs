@@ -16,22 +16,23 @@ impl ExpansionBuffer {
         }
     }
 
-    pub(super) fn push(&mut self, row: NormalizedInstruction) {
+    pub(super) fn push(&mut self, row: NormalizedInstruction) -> Result<(), ExpansionError> {
+        if self.rows.len() == MAX_FINAL_ROWS_PER_SOURCE {
+            return Err(ExpansionError::CapacityExceeded {
+                actual: self.rows.len() + 1,
+                capacity: MAX_FINAL_ROWS_PER_SOURCE,
+            });
+        }
         self.rows.push(row);
+        Ok(())
     }
 
-    pub(super) fn extend(
+    pub(super) fn extend_vec(
         &mut self,
-        rows: impl IntoIterator<Item = NormalizedInstruction>,
+        rows: Vec<NormalizedInstruction>,
     ) -> Result<(), ExpansionError> {
         for row in rows {
-            if self.rows.len() == MAX_FINAL_ROWS_PER_SOURCE {
-                return Err(ExpansionError::CapacityExceeded {
-                    actual: self.rows.len() + 1,
-                    capacity: MAX_FINAL_ROWS_PER_SOURCE,
-                });
-            }
-            self.push(row);
+            self.push(row)?;
         }
         Ok(())
     }

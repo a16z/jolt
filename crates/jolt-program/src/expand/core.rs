@@ -28,10 +28,6 @@ impl ExpansionState {
         self.allocator
     }
 
-    pub(super) fn allocator(&mut self) -> &mut ExpansionAllocator {
-        &mut self.allocator
-    }
-
     pub(super) fn expand_one_core(
         &mut self,
         instruction: &NormalizedInstruction,
@@ -40,6 +36,14 @@ impl ExpansionState {
         let result = expand_instruction_core(instruction, self);
         self.allocator.exit_expansion();
         result
+    }
+
+    pub(super) fn allocate_register(&mut self) -> Result<u8, ExpansionError> {
+        self.allocator.allocate()
+    }
+
+    pub(super) fn release_register(&mut self, register: u8) -> Result<(), ExpansionError> {
+        self.allocator.release(register)
     }
 
     pub(super) fn materialize(
@@ -112,11 +116,11 @@ impl SequenceMaterializer {
 
     fn emit(&mut self, row: RowTemplate) -> Result<(), ExpansionError> {
         let row = self.instruction(row)?;
-        self.rows.extend([row])
+        self.rows.push(row)
     }
 
     fn extend(&mut self, rows: Vec<NormalizedInstruction>) -> Result<(), ExpansionError> {
-        self.rows.extend(rows)
+        self.rows.extend_vec(rows)
     }
 
     fn instruction(&self, row: RowTemplate) -> Result<NormalizedInstruction, ExpansionError> {

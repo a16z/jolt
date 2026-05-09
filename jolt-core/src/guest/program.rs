@@ -106,7 +106,7 @@ pub fn decode(elf: &[u8]) -> (Vec<NormalizedInstruction>, Vec<(u64, u8)>, u64, u
     let program_size = image.program_end - RAM_START_ADDRESS;
     let mut inline_provider = tracer::TracerInlineExpansionProvider::new();
     let instructions = jolt_program::expand::expand_program_with_provider(
-        image.instructions,
+        &image.instructions,
         &mut inline_provider,
     )
     .expect("program bytecode expansion failed");

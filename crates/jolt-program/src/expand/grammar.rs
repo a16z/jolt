@@ -291,9 +291,9 @@ impl ExpansionBuilder {
         Ok(())
     }
 
-    pub(super) fn release_many(
+    pub(super) fn release_many<const N: usize>(
         &mut self,
-        registers: impl IntoIterator<Item = u8>,
+        registers: [u8; N],
     ) -> Result<(), ExpansionError> {
         for register in registers {
             self.release(register)?;

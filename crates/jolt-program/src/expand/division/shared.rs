@@ -99,11 +99,10 @@ pub(in crate::expand) fn expand_signed_div_rem(
         )?;
     }
 
-    let mut released = vec![a2, a3, t0, t1, t2, t3];
+    asm.release_many([a2, a3, t0, t1, t2, t3])?;
     if let Some(t4) = t4 {
-        released.push(t4);
+        asm.release(t4)?;
     }
-    asm.release_many(released)?;
 
     asm.finalize()
 }

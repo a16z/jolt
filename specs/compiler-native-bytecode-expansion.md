@@ -233,15 +233,14 @@ Concrete lowerers return a recipe:
 ```rust
 pub(super) struct ExpandedInstructionSequence {
     source: NormalizedInstruction,
-    ops: ExpansionBuffer<ExpansionOp>,
+    ops: Vec<ExpansionOp>,
 }
 
 pub(super) enum ExpansionOp {
     Emit(RowTemplate),
     Expand(RowTemplate),
-    AllocateTemp(TempId),
-    ReleaseTemp(TempId),
-    ResetInlineRegisters,
+    Allocate(u8),
+    Release(u8),
 }
 ```
 
@@ -249,22 +248,18 @@ The names can change, but the responsibilities should not:
 
 - `Emit` appends a row that is already final Jolt bytecode.
 - `Expand` appends a source/helper row that must go through the central expander.
-- `AllocateTemp` and `ReleaseTemp` describe temp lifetimes in the recipe.
-- `ResetInlineRegisters` preserves inline reset behavior outside provider-free
-  semantics.
+- `Allocate` and `Release` describe symbolic temp lifetimes in the recipe.
+  The recorded `u8` values are temporary placeholders, not concrete virtual
+  registers.
 
 ### Row Templates And Symbolic Temps
 
-Recipes should be able to mention architectural registers and symbolic temps.
-This avoids allocating concrete virtual registers while a lowerer is merely
-describing work.
+Recipes can mention architectural registers and symbolic temps. Symbolic temps
+are encoded as reserved placeholder register values inside `RowTemplate`, so the
+current lowerer code can stay close to the old assembly-like style while still
+deferring concrete virtual-register allocation to materialization.
 
 ```rust
-pub(super) enum RegOperand {
-    Arch(u8),
-    Temp(TempId),
-}
-
 pub(super) struct RowTemplate {
     instruction_kind: JoltInstructionKind,
     operands: TemplateOperands,
@@ -283,7 +278,8 @@ the owned `ExpansionAllocator`.
 ```rust
 pub(super) struct ExpansionBuilder {
     source: NormalizedInstruction,
-    sequence: ExpandedInstructionSequence,
+    ops: Vec<ExpansionOp>,
+    next_temp: u8,
 }
 ```
 
@@ -300,9 +296,10 @@ It should expose ergonomic methods:
 impl ExpansionBuilder {
     pub fn new(source: NormalizedInstruction) -> Self;
 
-    pub fn allocate(&mut self) -> TempId;
-    pub fn release(&mut self, temp: TempId);
-    pub fn release_many<const N: usize>(&mut self, temps: [TempId; N]);
+    pub fn allocate(&mut self) -> Result<u8, ExpansionError>;
+    pub fn release(&mut self, temp: u8) -> Result<(), ExpansionError>;
+    pub fn release_many<const N: usize>(&mut self, temps: [u8; N])
+        -> Result<(), ExpansionError>;
 
     pub fn emit_r(...);
     pub fn emit_i(...);
@@ -334,8 +331,7 @@ template. Operand validation that depends on source row shape can still return
 ```rust
 pub(super) struct ExpansionState {
     allocator: ExpansionAllocator,
-    work: WorkStack<ExpansionOp>,
-    output: ExpansionBuffer<NormalizedInstruction>,
+    work: Vec<ExpansionOp>,
     fuel: u32,
 }
 ```
@@ -390,11 +386,10 @@ fn expand_one_core(
     while let Some(op) = state.pop_work()? {
         state.consume_fuel()?;
         match op {
-            ExpansionOp::Emit(row) => state.emit_final(row)?,
-            ExpansionOp::Expand(row) => state.expand_helper(row)?,
-            ExpansionOp::AllocateTemp(temp) => state.allocate_temp(temp)?,
-            ExpansionOp::ReleaseTemp(temp) => state.release_temp(temp)?,
-            ExpansionOp::ResetInlineRegisters => state.reset_inline_registers()?,
+            ExpansionOp::Emit(row) => materializer.emit(row)?,
+            ExpansionOp::Expand(row) => materializer.extend(state.expand_helper(row)?)?,
+            ExpansionOp::Allocate(temp) => materializer.bind_temp(temp, state.allocate()?)?,
+            ExpansionOp::Release(temp) => state.release(materializer.resolve_release(temp)?)?,
         }
     }
 
@@ -586,34 +581,45 @@ Already satisfied by the current branch:
 - [x] Temp lifetimes are represented explicitly in recipe data and materialized
       centrally.
 
-Still required for the long-term compiler-native target:
+Satisfied by the owned recipe/materializer rewrite:
 
-- [ ] Materialization preserves current virtual-register allocation and reuse.
-- [ ] `rd = x0` handling is centralized and covered by tests for side-effecting
+- [x] Materialization preserves current virtual-register allocation and reuse.
+- [x] `rd = x0` handling is centralized and covered by tests for side-effecting
       and non-side-effecting rows.
-- [ ] Synthetic sequence metadata is stamped centrally and matches the baseline.
-- [ ] Pass-through rows preserve the current metadata policy.
-- [ ] Provider-free expansion rejects `Inline`; inline provider support remains
+- [x] Synthetic sequence metadata is stamped centrally and matches the baseline.
+- [x] Pass-through rows preserve the current metadata policy.
+- [x] Provider-free expansion rejects `Inline`; inline provider support remains
       an adapter outside the owned core.
-- [ ] The existing instruction phase split is audited after the recipe rewrite,
+- [x] The existing instruction phase split is audited after the recipe rewrite,
       with no stale `InstructionKind` ambiguity or misplaced legality predicate.
-- [ ] `jolt-program::expand` remains independent of tracer, CPU execution,
+- [x] `jolt-program::expand` remains independent of tracer, CPU execution,
       prover, transcript, PCS, and ELF parser dependencies.
-- [ ] Existing provider-free parity tests pass.
-- [ ] `cargo fmt -q` passes.
-- [ ] `cargo clippy --all --features host -q --all-targets -- -D warnings`
+- [x] Existing provider-free parity tests pass.
+- [x] `cargo fmt -q` passes.
+- [x] `cargo clippy --all --features host -q --all-targets -- -D warnings`
       passes.
-- [ ] `cargo clippy --all --features host,zk -q --all-targets -- -D warnings`
+- [x] `cargo clippy --all --features host,zk -q --all-targets -- -D warnings`
       passes.
-- [ ] `cargo nextest run -p jolt-program --cargo-quiet` passes.
-- [ ] `cargo nextest run -p jolt-core muldiv --cargo-quiet --features host`
+- [x] `cargo nextest run -p jolt-program --cargo-quiet` passes.
+- [x] `cargo nextest run -p jolt-core muldiv --cargo-quiet --features host`
       passes.
-- [ ] `cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk`
+- [x] `cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk`
       passes.
-- [ ] Hax/Aeneas extraction is rerun on the provider-free core and the remaining
+- [x] Hax/Aeneas extraction is rerun on the provider-free core and the remaining
       blockers are documented.
 
-## Work Items
+Remaining outside this PR:
+
+- [ ] Prove or hand-port the emitted Hax/Aeneas Lean into a maintained Lean
+      project once the extractor prelude/library-model blockers are resolved.
+- [ ] Decide whether to further simplify concrete lowerers specifically for
+      Aeneas by avoiding conditional expressions inside row operands and by
+      replacing iterator-heavy metadata helpers with loop-shaped code.
+
+## Implemented Work Items
+
+These are retained as an implementation checklist for the PR history. They are
+implemented unless explicitly listed above as outside this PR.
 
 ### 1. Preserve And Verify Already-Landed Scope
 

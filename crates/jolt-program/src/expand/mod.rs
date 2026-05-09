@@ -108,11 +108,11 @@ fn expand_instruction_core(
         && !handles_rd_zero_internally(instruction.instruction_kind)
     {
         if instruction.instruction_kind.has_side_effects() {
-            let virtual_register = state.allocator().allocate()?;
+            let virtual_register = state.allocate_register()?;
             let mut rewritten = *instruction;
             rewritten.operands.rd = Some(virtual_register);
             let expanded = state.expand_one_core(&rewritten);
-            state.allocator().release(virtual_register)?;
+            state.release_register(virtual_register)?;
             return expanded;
         }
         return Ok(vec![noop_for(*instruction)]);
@@ -268,20 +268,20 @@ fn expand_source_only_instruction(
 }
 
 pub fn expand_program(
-    instructions: impl IntoIterator<Item = NormalizedInstruction>,
+    instructions: &[NormalizedInstruction],
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     expand_program_with_provider(instructions, &mut NoInlineExpansionProvider)
 }
 
 pub fn expand_program_with_provider<P: InlineExpansionProvider + ?Sized>(
-    instructions: impl IntoIterator<Item = NormalizedInstruction>,
+    instructions: &[NormalizedInstruction],
     inline_provider: &mut P,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let mut expanded = Vec::new();
     for instruction in instructions {
         expanded.extend(expand_instruction_with_provider(
-            &instruction,
+            instruction,
             &mut allocator,
             inline_provider,
         )?);
