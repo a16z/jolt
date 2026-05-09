@@ -4,7 +4,10 @@ use crate::expand::{
     allocator::ExpansionAllocator,
     buffer::ExpansionBuffer,
     expand_instruction_core,
-    grammar::{ExpandedInstructionSequence, ExpansionOp, RowTemplate},
+    grammar::{
+        ExpandedInstructionSequence, ExpansionOp, RegisterOperand, RowTemplate, TempId,
+        TemplateOperands,
+    },
     metadata::stamp_sequence,
     ExpansionError,
 };
@@ -12,7 +15,6 @@ use crate::expand::{
 pub(super) struct ExpansionState {
     allocator: ExpansionAllocator,
     work: Vec<ExpansionOp>,
-    fuel: u32,
 }
 
 impl ExpansionState {
@@ -20,7 +22,6 @@ impl ExpansionState {
         Self {
             allocator,
             work: Vec::new(),
-            fuel: 0,
         }
     }
 
@@ -54,11 +55,8 @@ impl ExpansionState {
             &mut self.work,
             sequence.ops.into_iter().rev().collect::<Vec<_>>(),
         );
-        let saved_fuel = self.fuel;
-        self.fuel = self.work.len() as u32;
         let result = self.materialize_current_work(sequence.source);
         self.work = saved_work;
-        self.fuel = saved_fuel;
         result
     }
 
@@ -68,7 +66,6 @@ impl ExpansionState {
     ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
         let mut materializer = SequenceMaterializer::new(source);
         while let Some(op) = self.work.pop() {
-            self.consume_fuel()?;
             match op {
                 ExpansionOp::Emit(row) => materializer.emit(row)?,
                 ExpansionOp::Expand(row) => {
@@ -86,14 +83,6 @@ impl ExpansionState {
             }
         }
         materializer.finish()
-    }
-
-    fn consume_fuel(&mut self) -> Result<(), ExpansionError> {
-        self.fuel = self
-            .fuel
-            .checked_sub(1)
-            .ok_or(ExpansionError::RecursionDepthExceeded { max_depth: 0 })?;
-        Ok(())
     }
 }
 
@@ -124,39 +113,41 @@ impl SequenceMaterializer {
     }
 
     fn instruction(&self, row: RowTemplate) -> Result<NormalizedInstruction, ExpansionError> {
-        let mut instruction = row.instruction_at(self.address);
-        instruction.operands = self.resolve_operands(instruction.operands)?;
-        Ok(instruction)
+        Ok(NormalizedInstruction {
+            instruction_kind: row.instruction_kind,
+            address: self.address,
+            operands: self.resolve_operands(row.operands)?,
+            virtual_sequence_remaining: Some(0),
+            is_first_in_sequence: false,
+            is_compressed: false,
+        })
     }
 
-    fn bind_temp(&mut self, register: u8, allocated: u8) -> Result<(), ExpansionError> {
-        let index = RowTemplate::temporary_index(register)?;
+    fn bind_temp(&mut self, temp: TempId, allocated: u8) -> Result<(), ExpansionError> {
+        let index = temp.index();
         if self.temps.len() <= index {
             self.temps.resize(index + 1, None);
         }
         if self.temps[index].is_some() {
-            return Err(ExpansionError::DuplicateTemporaryRegister { register });
+            return Err(ExpansionError::DuplicateTemporaryRegister { index });
         }
         self.temps[index] = Some(allocated);
         Ok(())
     }
 
-    fn resolve_register_for_release(&mut self, register: u8) -> Result<u8, ExpansionError> {
-        if !RowTemplate::is_temporary_register(register) {
-            return Ok(register);
-        }
-        let index = RowTemplate::temporary_index(register)?;
+    fn resolve_register_for_release(&mut self, temp: TempId) -> Result<u8, ExpansionError> {
+        let index = temp.index();
         let resolved = self
             .temps
             .get_mut(index)
             .and_then(Option::take)
-            .ok_or(ExpansionError::UnallocatedTemporaryRegister { register })?;
+            .ok_or(ExpansionError::UnallocatedTemporaryRegister { index })?;
         Ok(resolved)
     }
 
     fn resolve_operands(
         &self,
-        operands: NormalizedOperands,
+        operands: TemplateOperands,
     ) -> Result<NormalizedOperands, ExpansionError> {
         Ok(NormalizedOperands {
             rd: self.resolve_optional_register(operands.rd)?,
@@ -168,26 +159,33 @@ impl SequenceMaterializer {
 
     fn resolve_optional_register(
         &self,
-        register: Option<u8>,
+        register: Option<RegisterOperand>,
     ) -> Result<Option<u8>, ExpansionError> {
         register
             .map(|register| self.resolve_register(register))
             .transpose()
     }
 
-    fn resolve_register(&self, register: u8) -> Result<u8, ExpansionError> {
-        if !RowTemplate::is_temporary_register(register) {
-            return Ok(register);
+    fn resolve_register(&self, register: RegisterOperand) -> Result<u8, ExpansionError> {
+        match register {
+            RegisterOperand::Register(register) => Ok(register),
+            RegisterOperand::Temp(temp) => self.temps.get(temp.index()).copied().flatten().ok_or(
+                ExpansionError::UnallocatedTemporaryRegister {
+                    index: temp.index(),
+                },
+            ),
         }
-        let index = RowTemplate::temporary_index(register)?;
-        self.temps
-            .get(index)
-            .copied()
-            .flatten()
-            .ok_or(ExpansionError::UnallocatedTemporaryRegister { register })
     }
 
     fn finish(self) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+        if let Some((index, _)) = self
+            .temps
+            .iter()
+            .enumerate()
+            .find(|(_, register)| register.is_some())
+        {
+            return Err(ExpansionError::LeakedTemporaryRegister { index });
+        }
         self.rows.check_capacity()?;
         stamp_sequence(self.rows.into_vec(), self.is_compressed)
     }
@@ -217,7 +215,7 @@ mod tests {
 
     #[test]
     fn materializer_rejects_duplicate_temp_allocation() -> Result<(), ExpansionError> {
-        let temp = RowTemplate::temporary(0)?;
+        let temp = TempId(0);
         let sequence = ExpandedInstructionSequence {
             source: source(),
             ops: vec![ExpansionOp::Allocate(temp), ExpansionOp::Allocate(temp)],
@@ -226,14 +224,14 @@ mod tests {
 
         assert!(matches!(
             state.materialize(sequence),
-            Err(ExpansionError::DuplicateTemporaryRegister { register }) if register == temp
+            Err(ExpansionError::DuplicateTemporaryRegister { index }) if index == temp.index()
         ));
         Ok(())
     }
 
     #[test]
     fn materializer_rejects_unallocated_temp_use() -> Result<(), ExpansionError> {
-        let temp = RowTemplate::temporary(0)?;
+        let temp = TempId(0);
         let sequence = ExpandedInstructionSequence {
             source: source(),
             ops: vec![ExpansionOp::Emit(RowTemplate::i(
@@ -247,14 +245,14 @@ mod tests {
 
         assert!(matches!(
             state.materialize(sequence),
-            Err(ExpansionError::UnallocatedTemporaryRegister { register }) if register == temp
+            Err(ExpansionError::UnallocatedTemporaryRegister { index }) if index == temp.index()
         ));
         Ok(())
     }
 
     #[test]
     fn materializer_rejects_unallocated_temp_release() -> Result<(), ExpansionError> {
-        let temp = RowTemplate::temporary(0)?;
+        let temp = TempId(0);
         let sequence = ExpandedInstructionSequence {
             source: source(),
             ops: vec![ExpansionOp::Release(temp)],
@@ -263,7 +261,23 @@ mod tests {
 
         assert!(matches!(
             state.materialize(sequence),
-            Err(ExpansionError::UnallocatedTemporaryRegister { register }) if register == temp
+            Err(ExpansionError::UnallocatedTemporaryRegister { index }) if index == temp.index()
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn materializer_rejects_leaked_temp() -> Result<(), ExpansionError> {
+        let temp = TempId(0);
+        let sequence = ExpandedInstructionSequence {
+            source: source(),
+            ops: vec![ExpansionOp::Allocate(temp)],
+        };
+        let mut state = ExpansionState::new(ExpansionAllocator::new());
+
+        assert!(matches!(
+            state.materialize(sequence),
+            Err(ExpansionError::LeakedTemporaryRegister { index }) if index == temp.index()
         ));
         Ok(())
     }

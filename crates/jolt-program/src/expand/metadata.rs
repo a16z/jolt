@@ -1,6 +1,6 @@
 use jolt_riscv::NormalizedInstruction;
 
-use crate::expand::{grammar::is_target_legal, ExpansionError};
+use crate::expand::{buffer::MAX_FINAL_ROWS_PER_SOURCE, grammar::is_target_legal, ExpansionError};
 
 pub(super) fn stamp_sequence(
     rows: Vec<NormalizedInstruction>,
@@ -8,6 +8,12 @@ pub(super) fn stamp_sequence(
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     if rows.is_empty() {
         return Err(ExpansionError::EmptySequence);
+    }
+    if rows.len() > MAX_FINAL_ROWS_PER_SOURCE {
+        return Err(ExpansionError::CapacityExceeded {
+            actual: rows.len(),
+            capacity: MAX_FINAL_ROWS_PER_SOURCE,
+        });
     }
     for row in &rows {
         if !is_target_legal(row.instruction_kind) {

@@ -1,51 +1,92 @@
-use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
+use jolt_riscv::{JoltInstructionKind, NormalizedInstruction};
 
 use crate::expand::ExpansionError;
 
-const TEMP_REGISTER_BASE: u8 = 200;
-const MAX_TEMP_REGISTERS_PER_SOURCE: usize = 48;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct TempId(pub(super) u8);
+
+impl TempId {
+    pub(super) const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RegisterOperand {
+    Register(u8),
+    Temp(TempId),
+}
+
+impl From<u8> for RegisterOperand {
+    fn from(register: u8) -> Self {
+        Self::Register(register)
+    }
+}
+
+impl From<TempId> for RegisterOperand {
+    fn from(temp: TempId) -> Self {
+        Self::Temp(temp)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct TemplateOperands {
+    pub(super) rd: Option<RegisterOperand>,
+    pub(super) rs1: Option<RegisterOperand>,
+    pub(super) rs2: Option<RegisterOperand>,
+    pub(super) imm: i128,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct RowTemplate {
     pub(super) instruction_kind: JoltInstructionKind,
-    pub(super) operands: NormalizedOperands,
+    pub(super) operands: TemplateOperands,
 }
 
 impl RowTemplate {
-    pub(super) const fn r(instruction_kind: JoltInstructionKind, rd: u8, rs1: u8, rs2: u8) -> Self {
+    pub(super) fn r(
+        instruction_kind: JoltInstructionKind,
+        rd: impl Into<RegisterOperand>,
+        rs1: impl Into<RegisterOperand>,
+        rs2: impl Into<RegisterOperand>,
+    ) -> Self {
         Self {
             instruction_kind,
-            operands: NormalizedOperands {
-                rd: Some(rd),
-                rs1: Some(rs1),
-                rs2: Some(rs2),
+            operands: TemplateOperands {
+                rd: Some(rd.into()),
+                rs1: Some(rs1.into()),
+                rs2: Some(rs2.into()),
                 imm: 0,
             },
         }
     }
 
-    pub(super) const fn i(
+    pub(super) fn i(
         instruction_kind: JoltInstructionKind,
-        rd: u8,
-        rs1: u8,
+        rd: impl Into<RegisterOperand>,
+        rs1: impl Into<RegisterOperand>,
         imm: i128,
     ) -> Self {
         Self {
             instruction_kind,
-            operands: NormalizedOperands {
-                rd: Some(rd),
-                rs1: Some(rs1),
+            operands: TemplateOperands {
+                rd: Some(rd.into()),
+                rs1: Some(rs1.into()),
                 rs2: None,
                 imm,
             },
         }
     }
 
-    pub(super) const fn j(instruction_kind: JoltInstructionKind, rd: u8, imm: i128) -> Self {
+    pub(super) fn j(
+        instruction_kind: JoltInstructionKind,
+        rd: impl Into<RegisterOperand>,
+        imm: i128,
+    ) -> Self {
         Self {
             instruction_kind,
-            operands: NormalizedOperands {
-                rd: Some(rd),
+            operands: TemplateOperands {
+                rd: Some(rd.into()),
                 rs1: None,
                 rs2: None,
                 imm,
@@ -53,11 +94,15 @@ impl RowTemplate {
         }
     }
 
-    pub(super) const fn u(instruction_kind: JoltInstructionKind, rd: u8, imm: i128) -> Self {
+    pub(super) fn u(
+        instruction_kind: JoltInstructionKind,
+        rd: impl Into<RegisterOperand>,
+        imm: i128,
+    ) -> Self {
         Self {
             instruction_kind,
-            operands: NormalizedOperands {
-                rd: Some(rd),
+            operands: TemplateOperands {
+                rd: Some(rd.into()),
                 rs1: None,
                 rs2: None,
                 imm,
@@ -65,35 +110,35 @@ impl RowTemplate {
         }
     }
 
-    pub(super) const fn b(
+    pub(super) fn b(
         instruction_kind: JoltInstructionKind,
-        rs1: u8,
-        rs2: u8,
+        rs1: impl Into<RegisterOperand>,
+        rs2: impl Into<RegisterOperand>,
         imm: i128,
     ) -> Self {
         Self {
             instruction_kind,
-            operands: NormalizedOperands {
+            operands: TemplateOperands {
                 rd: None,
-                rs1: Some(rs1),
-                rs2: Some(rs2),
+                rs1: Some(rs1.into()),
+                rs2: Some(rs2.into()),
                 imm,
             },
         }
     }
 
-    pub(super) const fn s(
+    pub(super) fn s(
         instruction_kind: JoltInstructionKind,
-        rs1: u8,
-        rs2: u8,
+        rs1: impl Into<RegisterOperand>,
+        rs2: impl Into<RegisterOperand>,
         imm: i128,
     ) -> Self {
         Self {
             instruction_kind,
-            operands: NormalizedOperands {
+            operands: TemplateOperands {
                 rd: None,
-                rs1: Some(rs1),
-                rs2: Some(rs2),
+                rs1: Some(rs1.into()),
+                rs2: Some(rs2.into()),
                 imm,
             },
         }
@@ -101,47 +146,19 @@ impl RowTemplate {
 
     /// Pseudo-I format for address/alignment assertions that read `rs1` and an
     /// immediate offset but do not write `rd`.
-    pub(super) const fn address(instruction_kind: JoltInstructionKind, rs1: u8, imm: i128) -> Self {
+    pub(super) fn address(
+        instruction_kind: JoltInstructionKind,
+        rs1: impl Into<RegisterOperand>,
+        imm: i128,
+    ) -> Self {
         Self {
             instruction_kind,
-            operands: NormalizedOperands {
+            operands: TemplateOperands {
                 rd: None,
-                rs1: Some(rs1),
+                rs1: Some(rs1.into()),
                 rs2: None,
                 imm,
             },
-        }
-    }
-
-    pub(super) fn temporary(index: usize) -> Result<u8, ExpansionError> {
-        if index >= MAX_TEMP_REGISTERS_PER_SOURCE {
-            return Err(ExpansionError::CapacityExceeded {
-                actual: index + 1,
-                capacity: MAX_TEMP_REGISTERS_PER_SOURCE,
-            });
-        }
-        Ok(TEMP_REGISTER_BASE + index as u8)
-    }
-
-    pub(super) const fn is_temporary_register(register: u8) -> bool {
-        register >= TEMP_REGISTER_BASE
-    }
-
-    pub(super) fn temporary_index(register: u8) -> Result<usize, ExpansionError> {
-        if !Self::is_temporary_register(register) {
-            return Err(ExpansionError::InvalidVirtualRegister { register });
-        }
-        Ok((register - TEMP_REGISTER_BASE) as usize)
-    }
-
-    pub(super) fn instruction_at(self, address: usize) -> NormalizedInstruction {
-        NormalizedInstruction {
-            instruction_kind: self.instruction_kind,
-            address,
-            operands: self.operands,
-            virtual_sequence_remaining: Some(0),
-            is_first_in_sequence: false,
-            is_compressed: false,
         }
     }
 }
@@ -149,8 +166,8 @@ impl RowTemplate {
 pub(super) enum ExpansionOp {
     Emit(RowTemplate),
     Expand(RowTemplate),
-    Allocate(u8),
-    Release(u8),
+    Allocate(TempId),
+    Release(TempId),
 }
 
 pub(super) struct ExpandedInstructionSequence {
@@ -173,11 +190,15 @@ impl ExpansionBuilder {
         }
     }
 
-    pub(super) fn allocate(&mut self) -> Result<u8, ExpansionError> {
-        let register = RowTemplate::temporary(self.next_temp)?;
+    pub(super) fn allocate(&mut self) -> Result<TempId, ExpansionError> {
+        let temp = u8::try_from(self.next_temp).map(TempId).map_err(|_| {
+            ExpansionError::TooManyTemporaryRegisters {
+                actual: self.next_temp + 1,
+            }
+        })?;
         self.next_temp += 1;
-        self.ops.push(ExpansionOp::Allocate(register));
-        Ok(register)
+        self.ops.push(ExpansionOp::Allocate(temp));
+        Ok(temp)
     }
 
     /// Append an already target-legal row to this source row's output sequence.
@@ -188,9 +209,9 @@ impl ExpansionBuilder {
     pub(super) fn emit_r(
         &mut self,
         instruction_kind: JoltInstructionKind,
-        rd: u8,
-        rs1: u8,
-        rs2: u8,
+        rd: impl Into<RegisterOperand>,
+        rs1: impl Into<RegisterOperand>,
+        rs2: impl Into<RegisterOperand>,
     ) {
         self.emit(RowTemplate::r(instruction_kind, rd, rs1, rs2));
     }
@@ -198,18 +219,28 @@ impl ExpansionBuilder {
     pub(super) fn emit_i(
         &mut self,
         instruction_kind: JoltInstructionKind,
-        rd: u8,
-        rs1: u8,
+        rd: impl Into<RegisterOperand>,
+        rs1: impl Into<RegisterOperand>,
         imm: i128,
     ) {
         self.emit(RowTemplate::i(instruction_kind, rd, rs1, imm));
     }
 
-    pub(super) fn emit_j(&mut self, instruction_kind: JoltInstructionKind, rd: u8, imm: i128) {
+    pub(super) fn emit_j(
+        &mut self,
+        instruction_kind: JoltInstructionKind,
+        rd: impl Into<RegisterOperand>,
+        imm: i128,
+    ) {
         self.emit(RowTemplate::j(instruction_kind, rd, imm));
     }
 
-    pub(super) fn emit_u(&mut self, instruction_kind: JoltInstructionKind, rd: u8, imm: i128) {
+    pub(super) fn emit_u(
+        &mut self,
+        instruction_kind: JoltInstructionKind,
+        rd: impl Into<RegisterOperand>,
+        imm: i128,
+    ) {
         self.emit(RowTemplate::u(instruction_kind, rd, imm));
     }
 
@@ -222,9 +253,9 @@ impl ExpansionBuilder {
     pub(super) fn expand_r(
         &mut self,
         instruction_kind: JoltInstructionKind,
-        rd: u8,
-        rs1: u8,
-        rs2: u8,
+        rd: impl Into<RegisterOperand>,
+        rs1: impl Into<RegisterOperand>,
+        rs2: impl Into<RegisterOperand>,
     ) -> Result<(), ExpansionError> {
         self.expand(RowTemplate::r(instruction_kind, rd, rs1, rs2))
     }
@@ -232,8 +263,8 @@ impl ExpansionBuilder {
     pub(super) fn expand_i(
         &mut self,
         instruction_kind: JoltInstructionKind,
-        rd: u8,
-        rs1: u8,
+        rd: impl Into<RegisterOperand>,
+        rs1: impl Into<RegisterOperand>,
         imm: i128,
     ) -> Result<(), ExpansionError> {
         self.expand(RowTemplate::i(instruction_kind, rd, rs1, imm))
@@ -242,7 +273,7 @@ impl ExpansionBuilder {
     pub(super) fn expand_j(
         &mut self,
         instruction_kind: JoltInstructionKind,
-        rd: u8,
+        rd: impl Into<RegisterOperand>,
         imm: i128,
     ) -> Result<(), ExpansionError> {
         self.expand(RowTemplate::j(instruction_kind, rd, imm))
@@ -251,7 +282,7 @@ impl ExpansionBuilder {
     pub(super) fn expand_u(
         &mut self,
         instruction_kind: JoltInstructionKind,
-        rd: u8,
+        rd: impl Into<RegisterOperand>,
         imm: i128,
     ) -> Result<(), ExpansionError> {
         self.expand(RowTemplate::u(instruction_kind, rd, imm))
@@ -260,8 +291,8 @@ impl ExpansionBuilder {
     pub(super) fn expand_b(
         &mut self,
         instruction_kind: JoltInstructionKind,
-        rs1: u8,
-        rs2: u8,
+        rs1: impl Into<RegisterOperand>,
+        rs2: impl Into<RegisterOperand>,
         imm: i128,
     ) -> Result<(), ExpansionError> {
         self.expand(RowTemplate::b(instruction_kind, rs1, rs2, imm))
@@ -270,8 +301,8 @@ impl ExpansionBuilder {
     pub(super) fn expand_s(
         &mut self,
         instruction_kind: JoltInstructionKind,
-        rs1: u8,
-        rs2: u8,
+        rs1: impl Into<RegisterOperand>,
+        rs2: impl Into<RegisterOperand>,
         imm: i128,
     ) -> Result<(), ExpansionError> {
         self.expand(RowTemplate::s(instruction_kind, rs1, rs2, imm))
@@ -280,20 +311,20 @@ impl ExpansionBuilder {
     pub(super) fn expand_address(
         &mut self,
         instruction_kind: JoltInstructionKind,
-        rs1: u8,
+        rs1: impl Into<RegisterOperand>,
         imm: i128,
     ) -> Result<(), ExpansionError> {
         self.expand(RowTemplate::address(instruction_kind, rs1, imm))
     }
 
-    pub(super) fn release(&mut self, register: u8) -> Result<(), ExpansionError> {
-        self.ops.push(ExpansionOp::Release(register));
+    pub(super) fn release(&mut self, temp: TempId) -> Result<(), ExpansionError> {
+        self.ops.push(ExpansionOp::Release(temp));
         Ok(())
     }
 
     pub(super) fn release_many<const N: usize>(
         &mut self,
-        registers: [u8; N],
+        registers: [TempId; N],
     ) -> Result<(), ExpansionError> {
         for register in registers {
             self.release(register)?;

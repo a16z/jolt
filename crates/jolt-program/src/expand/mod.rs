@@ -30,19 +30,21 @@ use arithmetic::*;
 use control_flow::*;
 use core::ExpansionState;
 use division::*;
-use grammar::{ExpandedInstructionSequence, ExpansionBuilder};
+use grammar::{
+    is_source_only, ExpandedInstructionSequence, ExpansionBuilder, RegisterOperand, TempId,
+};
 use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
 use memory::*;
+use metadata::stamp_sequence;
 use operands::*;
 use shifts::*;
 
 pub trait InlineExpansionProvider {
-    /// Expands a registered inline row into finalized normalized rows.
+    /// Expands a registered inline row into normalized rows.
     ///
     /// Provider output intentionally stays outside the provider-free builder
     /// core. The top-level entry point remaps `rd = x0` before calling this
-    /// hook, and providers are responsible for returning rows with the metadata
-    /// policy they need.
+    /// hook, then validates target legality and stamps sequence metadata.
     fn expand_inline(
         &mut self,
         instruction: &NormalizedInstruction,
@@ -90,7 +92,8 @@ pub fn expand_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
     }
 
     if instruction.instruction_kind == JoltInstructionKind::Inline {
-        return inline_provider.expand_inline(instruction, allocator);
+        let rows = inline_provider.expand_inline(instruction, allocator)?;
+        return finalize_inline_provider_rows(*instruction, allocator, rows);
     }
 
     let owned_allocator = std::mem::take(allocator);
@@ -98,6 +101,29 @@ pub fn expand_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
     let result = state.expand_one_core(instruction);
     *allocator = state.into_allocator();
     result
+}
+
+fn finalize_inline_provider_rows(
+    source: NormalizedInstruction,
+    allocator: &mut ExpansionAllocator,
+    mut rows: Vec<NormalizedInstruction>,
+) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+    for register in allocator.take_registers_for_reset()? {
+        rows.push(NormalizedInstruction {
+            instruction_kind: JoltInstructionKind::ADDI,
+            address: source.address,
+            operands: NormalizedOperands {
+                rd: Some(register),
+                rs1: Some(0),
+                rs2: None,
+                imm: 0,
+            },
+            virtual_sequence_remaining: Some(0),
+            is_first_in_sequence: false,
+            is_compressed: false,
+        });
+    }
+    stamp_sequence(rows, source.is_compressed)
 }
 
 fn expand_instruction_core(
@@ -118,79 +144,14 @@ fn expand_instruction_core(
         return Ok(vec![noop_for(*instruction)]);
     }
 
-    match instruction.instruction_kind {
-        JoltInstructionKind::Inline => Err(ExpansionError::InlineProviderRequired),
-        JoltInstructionKind::ADDIW
-        | JoltInstructionKind::ADDW
-        | JoltInstructionKind::SUBW
-        | JoltInstructionKind::MULH
-        | JoltInstructionKind::MULHSU
-        | JoltInstructionKind::MULW
-        | JoltInstructionKind::LB
-        | JoltInstructionKind::LBU
-        | JoltInstructionKind::LH
-        | JoltInstructionKind::LHU
-        | JoltInstructionKind::LW
-        | JoltInstructionKind::LWU
-        | JoltInstructionKind::AdviceLB
-        | JoltInstructionKind::AdviceLH
-        | JoltInstructionKind::AdviceLW
-        | JoltInstructionKind::AdviceLD
-        | JoltInstructionKind::AMOADDD
-        | JoltInstructionKind::AMOANDD
-        | JoltInstructionKind::AMOORD
-        | JoltInstructionKind::AMOXORD
-        | JoltInstructionKind::AMOSWAPD
-        | JoltInstructionKind::AMOMAXD
-        | JoltInstructionKind::AMOMAXUD
-        | JoltInstructionKind::AMOMIND
-        | JoltInstructionKind::AMOMINUD
-        | JoltInstructionKind::AMOADDW
-        | JoltInstructionKind::AMOANDW
-        | JoltInstructionKind::AMOORW
-        | JoltInstructionKind::AMOXORW
-        | JoltInstructionKind::AMOSWAPW
-        | JoltInstructionKind::AMOMAXW
-        | JoltInstructionKind::AMOMAXUW
-        | JoltInstructionKind::AMOMINW
-        | JoltInstructionKind::AMOMINUW
-        | JoltInstructionKind::LRD
-        | JoltInstructionKind::LRW
-        | JoltInstructionKind::DIV
-        | JoltInstructionKind::DIVU
-        | JoltInstructionKind::DIVW
-        | JoltInstructionKind::DIVUW
-        | JoltInstructionKind::REM
-        | JoltInstructionKind::REMU
-        | JoltInstructionKind::REMW
-        | JoltInstructionKind::REMUW
-        | JoltInstructionKind::SB
-        | JoltInstructionKind::SCD
-        | JoltInstructionKind::SCW
-        | JoltInstructionKind::SH
-        | JoltInstructionKind::SW
-        | JoltInstructionKind::CSRRW
-        | JoltInstructionKind::CSRRS
-        | JoltInstructionKind::EBREAK
-        | JoltInstructionKind::ECALL
-        | JoltInstructionKind::MRET
-        | JoltInstructionKind::SLL
-        | JoltInstructionKind::SLLI
-        | JoltInstructionKind::SLLW
-        | JoltInstructionKind::SLLIW
-        | JoltInstructionKind::SRL
-        | JoltInstructionKind::SRLI
-        | JoltInstructionKind::SRA
-        | JoltInstructionKind::SRAI
-        | JoltInstructionKind::SRLIW
-        | JoltInstructionKind::SRAIW
-        | JoltInstructionKind::SRLW
-        | JoltInstructionKind::SRAW => {
-            let sequence = expand_source_only_instruction(instruction)?;
-            state.materialize(sequence)
-        }
-        _ => Ok(vec![*instruction]),
+    if instruction.instruction_kind == JoltInstructionKind::Inline {
+        return Err(ExpansionError::InlineProviderRequired);
     }
+    if !is_source_only(instruction.instruction_kind) {
+        return Ok(vec![*instruction]);
+    }
+    let sequence = expand_source_only_instruction(instruction)?;
+    state.materialize(sequence)
 }
 
 fn expand_source_only_instruction(

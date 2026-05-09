@@ -161,7 +161,19 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
             _allocator: &mut ExpansionAllocator,
         ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
             self.captured = Some(*instruction);
-            Ok(vec![*instruction])
+            Ok(vec![NormalizedInstruction {
+                instruction_kind: JoltInstructionKind::ADDI,
+                address: instruction.address,
+                operands: NormalizedOperands {
+                    rd: instruction.operands.rd,
+                    rs1: Some(0),
+                    rs2: None,
+                    imm: 0,
+                },
+                virtual_sequence_remaining: None,
+                is_first_in_sequence: false,
+                is_compressed: false,
+            }])
         }
     }
 
@@ -187,7 +199,81 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
     expected.operands.rd = Some(40);
 
     assert_eq!(provider.captured, Some(expected));
-    assert_eq!(expanded, vec![expected]);
+    assert_eq!(expanded.len(), 1);
+    assert_eq!(expanded[0].instruction_kind, JoltInstructionKind::ADDI);
+    assert_eq!(expanded[0].operands.rd, Some(40));
+    assert_eq!(expanded[0].virtual_sequence_remaining, Some(0));
+    assert!(expanded[0].is_first_in_sequence);
+    Ok(())
+}
+
+#[test]
+fn inline_provider_output_is_validated_and_stamped() {
+    struct BadProvider;
+
+    impl InlineExpansionProvider for BadProvider {
+        fn expand_inline(
+            &mut self,
+            instruction: &NormalizedInstruction,
+            _allocator: &mut ExpansionAllocator,
+        ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+            Ok(vec![*instruction])
+        }
+    }
+
+    let input = instruction(JoltInstructionKind::Inline, Some(3), true);
+    let mut allocator = ExpansionAllocator::new();
+
+    assert!(matches!(
+        expand_instruction_with_provider(&input, &mut allocator, &mut BadProvider),
+        Err(ExpansionError::IllegalTargetInstruction(
+            JoltInstructionKind::Inline
+        ))
+    ));
+}
+
+#[test]
+fn inline_provider_allocator_resets_are_appended() -> Result<(), ExpansionError> {
+    struct AllocatingProvider;
+
+    impl InlineExpansionProvider for AllocatingProvider {
+        fn expand_inline(
+            &mut self,
+            instruction: &NormalizedInstruction,
+            allocator: &mut ExpansionAllocator,
+        ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+            let register = allocator.allocate_for_inline()?;
+            allocator.release(register)?;
+            Ok(vec![NormalizedInstruction {
+                instruction_kind: JoltInstructionKind::ADDI,
+                address: instruction.address,
+                operands: NormalizedOperands {
+                    rd: Some(register),
+                    rs1: Some(0),
+                    rs2: None,
+                    imm: 1,
+                },
+                virtual_sequence_remaining: None,
+                is_first_in_sequence: false,
+                is_compressed: false,
+            }])
+        }
+    }
+
+    let input = instruction(JoltInstructionKind::Inline, Some(3), true);
+    let mut allocator = ExpansionAllocator::new();
+    let expanded =
+        expand_instruction_with_provider(&input, &mut allocator, &mut AllocatingProvider)?;
+
+    assert_eq!(expanded.len(), 2);
+    assert_eq!(expanded[0].virtual_sequence_remaining, Some(1));
+    assert!(expanded[0].is_first_in_sequence);
+    assert!(!expanded[0].is_compressed);
+    assert_eq!(expanded[1].instruction_kind, JoltInstructionKind::ADDI);
+    assert_eq!(expanded[1].operands.rs1, Some(0));
+    assert_eq!(expanded[1].operands.imm, 0);
+    assert_eq!(expanded[1].virtual_sequence_remaining, Some(0));
+    assert!(expanded[1].is_compressed);
     Ok(())
 }
 

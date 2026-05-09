@@ -5,7 +5,7 @@ use super::*;
 pub(in crate::expand) fn expand_ram_region_assertion(
     asm: &mut ExpansionBuilder,
     address_register: u8,
-    ram_start: u8,
+    ram_start: TempId,
 ) -> Result<(), ExpansionError> {
     asm.expand_u(
         JoltInstructionKind::LUI,
@@ -150,10 +150,10 @@ pub(in crate::expand) fn expand_amo_minmax_d(
     let v0 = asm.allocate()?;
     let v1 = asm.allocate()?;
     let v2 = asm.allocate()?;
-    let (cmp_rs1, cmp_rs2) = if min {
-        (rs2(instruction)?, v0)
+    let (cmp_rs1, cmp_rs2): (RegisterOperand, RegisterOperand) = if min {
+        (rs2(instruction)?.into(), v0.into())
     } else {
-        (v0, rs2(instruction)?)
+        (v0.into(), rs2(instruction)?.into())
     };
 
     asm.expand_i(JoltInstructionKind::LD, v0, rs1(instruction)?, 0)?;
@@ -185,12 +185,12 @@ pub(in crate::expand) fn expand_amo_w(
         &mut asm,
         AmoPost64 {
             rs1: rs1(instruction)?,
-            v_rs2,
-            v_dword,
-            v_shift,
-            v_mask,
+            v_rs2: v_rs2.into(),
+            v_dword: v_dword.into(),
+            v_shift: v_shift.into(),
+            v_mask: v_mask.into(),
             rd: rd(instruction)?,
-            v_rd,
+            v_rd: v_rd.into(),
         },
     )?;
     asm.release_many([v_rd, v_rs2, v_mask, v_dword, v_shift])?;
@@ -229,12 +229,12 @@ pub(in crate::expand) fn expand_amo_minmax_w(
         &mut asm,
         AmoPost64 {
             rs1: rs1(instruction)?,
-            v_rs2,
-            v_dword,
-            v_shift,
-            v_mask: v0,
+            v_rs2: v_rs2.into(),
+            v_dword: v_dword.into(),
+            v_shift: v_shift.into(),
+            v_mask: v0.into(),
             rd: rd(instruction)?,
-            v_rd,
+            v_rd: v_rd.into(),
         },
     )?;
     asm.release_many([v_rd, v_dword, v_shift, v_rs2, v0])?;
@@ -245,9 +245,9 @@ pub(in crate::expand) fn expand_amo_minmax_w(
 pub(in crate::expand) fn expand_amo_pre64(
     asm: &mut ExpansionBuilder,
     rs1: u8,
-    v_rd: u8,
-    v_dword: u8,
-    v_shift: u8,
+    v_rd: impl Into<RegisterOperand> + Copy,
+    v_dword: impl Into<RegisterOperand> + Copy,
+    v_shift: impl Into<RegisterOperand> + Copy,
 ) -> Result<(), ExpansionError> {
     asm.expand_address(JoltInstructionKind::VirtualAssertWordAlignment, rs1, 0)?;
     asm.expand_i(JoltInstructionKind::ANDI, v_shift, rs1, format_i_imm(-8))?;
@@ -258,12 +258,12 @@ pub(in crate::expand) fn expand_amo_pre64(
 
 pub(in crate::expand) struct AmoPost64 {
     pub(in crate::expand) rs1: u8,
-    pub(in crate::expand) v_rs2: u8,
-    pub(in crate::expand) v_dword: u8,
-    pub(in crate::expand) v_shift: u8,
-    pub(in crate::expand) v_mask: u8,
+    pub(in crate::expand) v_rs2: RegisterOperand,
+    pub(in crate::expand) v_dword: RegisterOperand,
+    pub(in crate::expand) v_shift: RegisterOperand,
+    pub(in crate::expand) v_mask: RegisterOperand,
     pub(in crate::expand) rd: u8,
-    pub(in crate::expand) v_rd: u8,
+    pub(in crate::expand) v_rd: RegisterOperand,
 }
 
 pub(in crate::expand) fn expand_amo_post64(

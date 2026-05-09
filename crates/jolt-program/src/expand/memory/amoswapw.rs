@@ -14,12 +14,12 @@ pub(in crate::expand) fn expand_amoswapw(
         &mut asm,
         super::shared::AmoPost64 {
             rs1: rs1(instruction)?,
-            v_rs2: rs2(instruction)?,
-            v_dword,
-            v_shift,
-            v_mask,
+            v_rs2: rs2(instruction)?.into(),
+            v_dword: v_dword.into(),
+            v_shift: v_shift.into(),
+            v_mask: v_mask.into(),
             rd: rd(instruction)?,
-            v_rd,
+            v_rd: v_rd.into(),
         },
     )?;
     asm.release_many([v_mask, v_dword, v_shift, v_rd])?;

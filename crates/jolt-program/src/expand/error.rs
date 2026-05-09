@@ -16,10 +16,14 @@ pub enum ExpansionError {
     CapacityExceeded { actual: usize, capacity: usize },
     #[error("expansion recursion depth exceeded {max_depth}")]
     RecursionDepthExceeded { max_depth: usize },
-    #[error("temporary expansion register {register} was used before allocation")]
-    UnallocatedTemporaryRegister { register: u8 },
-    #[error("temporary expansion register {register} was allocated more than once")]
-    DuplicateTemporaryRegister { register: u8 },
+    #[error("temporary expansion register {index} was used before allocation")]
+    UnallocatedTemporaryRegister { index: usize },
+    #[error("temporary expansion register {index} was allocated more than once")]
+    DuplicateTemporaryRegister { index: usize },
+    #[error("temporary expansion register {index} was allocated but not released")]
+    LeakedTemporaryRegister { index: usize },
+    #[error("expansion allocated too many temporary registers: {actual}")]
+    TooManyTemporaryRegisters { actual: usize },
     #[error("malformed normalized instruction: {0}")]
     MalformedInstruction(&'static str),
     #[error("instruction {0:?} is not legal in finalized provider-free bytecode")]
