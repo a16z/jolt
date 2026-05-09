@@ -1,6 +1,6 @@
 use jolt_riscv::{JoltInstructionKind, NormalizedInstruction};
 
-use crate::expand::ExpansionError;
+use crate::expand::{allocator::NUM_VIRTUAL_INSTRUCTION_REGISTERS, ExpansionError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct TempId(pub(super) u8);
@@ -180,7 +180,7 @@ impl ExpansionBuilder {
     }
 
     pub(super) fn allocate(&mut self) -> Result<TempId, ExpansionError> {
-        if self.next_temp >= 256 {
+        if self.next_temp >= NUM_VIRTUAL_INSTRUCTION_REGISTERS {
             return Err(ExpansionError::TooManyTemporaryRegisters {
                 actual: self.next_temp + 1,
             });
@@ -246,8 +246,8 @@ impl ExpansionBuilder {
         rd: RegisterOperand,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
-    ) -> Result<(), ExpansionError> {
-        self.expand(RowTemplate::r(instruction_kind, rd, rs1, rs2))
+    ) {
+        self.expand(RowTemplate::r(instruction_kind, rd, rs1, rs2));
     }
 
     pub(super) fn expand_i(
@@ -256,8 +256,8 @@ impl ExpansionBuilder {
         rd: RegisterOperand,
         rs1: RegisterOperand,
         imm: i128,
-    ) -> Result<(), ExpansionError> {
-        self.expand(RowTemplate::i(instruction_kind, rd, rs1, imm))
+    ) {
+        self.expand(RowTemplate::i(instruction_kind, rd, rs1, imm));
     }
 
     pub(super) fn expand_j(
@@ -265,8 +265,8 @@ impl ExpansionBuilder {
         instruction_kind: JoltInstructionKind,
         rd: RegisterOperand,
         imm: i128,
-    ) -> Result<(), ExpansionError> {
-        self.expand(RowTemplate::j(instruction_kind, rd, imm))
+    ) {
+        self.expand(RowTemplate::j(instruction_kind, rd, imm));
     }
 
     pub(super) fn expand_u(
@@ -274,8 +274,8 @@ impl ExpansionBuilder {
         instruction_kind: JoltInstructionKind,
         rd: RegisterOperand,
         imm: i128,
-    ) -> Result<(), ExpansionError> {
-        self.expand(RowTemplate::u(instruction_kind, rd, imm))
+    ) {
+        self.expand(RowTemplate::u(instruction_kind, rd, imm));
     }
 
     pub(super) fn expand_b(
@@ -284,8 +284,8 @@ impl ExpansionBuilder {
         rs1: RegisterOperand,
         rs2: RegisterOperand,
         imm: i128,
-    ) -> Result<(), ExpansionError> {
-        self.expand(RowTemplate::b(instruction_kind, rs1, rs2, imm))
+    ) {
+        self.expand(RowTemplate::b(instruction_kind, rs1, rs2, imm));
     }
 
     pub(super) fn expand_s(
@@ -294,8 +294,8 @@ impl ExpansionBuilder {
         rs1: RegisterOperand,
         rs2: RegisterOperand,
         imm: i128,
-    ) -> Result<(), ExpansionError> {
-        self.expand(RowTemplate::s(instruction_kind, rs1, rs2, imm))
+    ) {
+        self.expand(RowTemplate::s(instruction_kind, rs1, rs2, imm));
     }
 
     pub(super) fn expand_address(
@@ -303,25 +303,18 @@ impl ExpansionBuilder {
         instruction_kind: JoltInstructionKind,
         rs1: RegisterOperand,
         imm: i128,
-    ) -> Result<(), ExpansionError> {
-        self.expand(RowTemplate::address(instruction_kind, rs1, imm))
+    ) {
+        self.expand(RowTemplate::address(instruction_kind, rs1, imm));
     }
 
-    pub(super) fn release(&mut self, temp: TempId) -> Result<(), ExpansionError> {
+    pub(super) fn release(&mut self, temp: TempId) {
         self.ops.push(ExpansionOp::Release(temp));
-        Ok(())
     }
 
-    pub(super) fn release_many<const N: usize>(
-        &mut self,
-        registers: [TempId; N],
-    ) -> Result<(), ExpansionError> {
-        let mut index = 0;
-        while index < N {
-            self.release(registers[index])?;
-            index += 1;
+    pub(super) fn release_many<const N: usize>(&mut self, registers: [TempId; N]) {
+        for register in registers {
+            self.release(register);
         }
-        Ok(())
     }
 
     pub(super) fn finalize(self) -> Result<ExpandedInstructionSequence, ExpansionError> {
@@ -335,9 +328,8 @@ impl ExpansionBuilder {
         self.ops.push(ExpansionOp::Emit(row));
     }
 
-    fn expand(&mut self, row: RowTemplate) -> Result<(), ExpansionError> {
+    fn expand(&mut self, row: RowTemplate) {
         self.ops.push(ExpansionOp::Expand(row));
-        Ok(())
     }
 }
 
@@ -416,4 +408,37 @@ pub(super) fn is_source_only(instruction_kind: JoltInstructionKind) -> bool {
 
 pub(super) fn is_target_legal(instruction_kind: JoltInstructionKind) -> bool {
     !is_source_only(instruction_kind)
+}
+
+#[cfg(test)]
+mod tests {
+    use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
+
+    use super::*;
+
+    fn source() -> NormalizedInstruction {
+        NormalizedInstruction {
+            instruction_kind: JoltInstructionKind::ADDIW,
+            address: 0x8000_0000,
+            operands: NormalizedOperands::default(),
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: false,
+        }
+    }
+
+    #[test]
+    fn symbolic_temps_are_limited_to_instruction_register_pool() -> Result<(), ExpansionError> {
+        let mut builder = ExpansionBuilder::new(source());
+        for _ in 0..NUM_VIRTUAL_INSTRUCTION_REGISTERS {
+            let _ = builder.allocate()?;
+        }
+
+        assert!(matches!(
+            builder.allocate(),
+            Err(ExpansionError::TooManyTemporaryRegisters { actual })
+                if actual == NUM_VIRTUAL_INSTRUCTION_REGISTERS + 1
+        ));
+        Ok(())
+    }
 }

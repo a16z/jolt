@@ -31,10 +31,8 @@ impl ExpansionBuffer {
         &mut self,
         rows: Vec<NormalizedInstruction>,
     ) -> Result<(), ExpansionError> {
-        let mut index = 0;
-        while index < rows.len() {
-            self.push(rows[index])?;
-            index += 1;
+        for row in rows {
+            self.push(row)?;
         }
         Ok(())
     }

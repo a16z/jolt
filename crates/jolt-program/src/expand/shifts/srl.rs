@@ -18,7 +18,7 @@ pub(in crate::expand) fn expand_srl(
         reg(rs1(instruction)?),
         v_bitmask.operand(),
     );
-    asm.release(v_bitmask)?;
+    asm.release(v_bitmask);
 
     asm.finalize()
 }

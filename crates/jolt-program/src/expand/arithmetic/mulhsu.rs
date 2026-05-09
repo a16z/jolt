@@ -70,7 +70,7 @@ pub(in crate::expand) fn expand_mulhsu(
         v3.operand(),
         v0.operand(),
     );
-    asm.release_many([v0, v1, v2, v3])?;
+    asm.release_many([v0, v1, v2, v3]);
 
     asm.finalize()
 }

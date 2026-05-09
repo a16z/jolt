@@ -21,7 +21,7 @@ pub(in crate::expand) fn expand_ecall(
         ecall_addr.operand(),
         0,
     );
-    asm.release(ecall_addr)?;
+    asm.release(ecall_addr);
     asm.emit_i(
         JoltInstructionKind::ADDI,
         reg(vr_mcause),
@@ -37,8 +37,8 @@ pub(in crate::expand) fn expand_ecall(
         reg(vr_mstatus),
         three.operand(),
         11,
-    )?;
-    asm.release(three)?;
+    );
+    asm.release(three);
 
     let jalr_rd = asm.allocate()?;
     asm.emit_i(
@@ -47,7 +47,7 @@ pub(in crate::expand) fn expand_ecall(
         reg(v_trap_handler_reg),
         0,
     );
-    asm.release(jalr_rd)?;
+    asm.release(jalr_rd);
 
     asm.finalize()
 }

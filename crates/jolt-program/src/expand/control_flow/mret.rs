@@ -13,7 +13,7 @@ pub(in crate::expand) fn expand_mret(
         reg(mepc_vr),
         0,
     );
-    asm.release(jalr_rd)?;
+    asm.release(jalr_rd);
 
     asm.finalize()
 }

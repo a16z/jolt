@@ -7,7 +7,7 @@ pub(in crate::expand) fn expand_ebreak(
     let discard = asm.allocate()?;
 
     asm.emit_j(JoltInstructionKind::JAL, discard.operand(), 0);
-    asm.release(discard)?;
+    asm.release(discard);
 
     asm.finalize()
 }

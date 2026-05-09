@@ -10,241 +10,147 @@
 
 ## Summary
 
-`jolt-program::expand` is a small compiler pass over explicit instruction
-phases, not a recursive Rust assembler that happens to produce the right rows.
-The pipeline is:
+`jolt-program::expand` lowers decoded RV64 source rows into final Jolt bytecode
+rows through a compiler-style pipeline:
 
 ```text
 decoded RV64 source row
-  -> human-readable per-instruction lowering
-  -> ExpandedInstructionSequence / ExpansionOp recipe
-  -> owned ExpansionState materializer
-  -> final stamped Jolt bytecode rows
+  -> readable per-instruction lowering
+  -> ExpandedInstructionSequence recipe
+  -> ExpansionState materializer
+  -> stamped Jolt bytecode rows
 ```
 
-Concrete instruction lowerings stay easy for humans to read and edit. They look
-like ordered assembly snippets:
+Concrete lowerers are written as assembly-like recipes using
+`ExpansionBuilder`. The builder records what should be emitted, expanded,
+allocated, and released. It does not own allocator state and does not recursively
+call the public expander. One central materializer interprets the recipe,
+resolves symbolic temps to real virtual registers, recursively expands helper
+rows, validates target legality, and stamps sequence metadata.
 
-```rust
-let mut asm = ExpansionBuilder::new(*instruction);
+The design favors production Rust readability and exact register-budget
+invariants. Hax/Aeneas extraction is useful as an audit path, but current
+extractor limitations do not dictate Rust style.
 
-    asm.emit_r(
-        JoltInstructionKind::SUB,
-        reg(rd(instruction)?),
-        reg(rs1(instruction)?),
-        reg(rs2(instruction)?),
-    );
-    asm.emit_i(
-        JoltInstructionKind::VirtualSignExtendWord,
-        reg(rd(instruction)?),
-        reg(rd(instruction)?),
-        0,
-    );
+## Scope
 
-asm.finalize()
-```
+This PR combines four related cleanups that reinforce the same boundary:
 
-The builder is declarative: it records expansion operations. It does not own or
-borrow allocator-backed expansion state, and it does not recursively call the
-public expander while a concrete instruction lowering is running.
+- RV64-only program construction and tracing. Historical RV32/SV32 execution
+  paths are removed from tracer code, and ELF32/RV32 inputs are rejected at the
+  `jolt-program::image` boundary.
+- instruction identity is split by phase, so decoded RISC-V instructions,
+  expanded Jolt bytecode rows, and lookup-backed instructions are named
+  separately.
+- provider-free expansion is moved from a recursive assembler with borrowed
+  allocator state to a recipe/materializer pass.
+- serialization derives in `jolt-riscv` and `jolt-program` are feature-gated so
+  the no-default expansion surface does not pull serde or ark serialization into
+  extraction experiments.
 
-The branch improves naming, removes old RV32-facing paths, and replaces the old
-`InstrAssembler<'a>` surface with owned state, explicit recipes, and a central
-materializer.
-
-## Branch Changes So Far
-
-The branch contains four substantial changes relative to `main`.
-
-### RV64-Only Cleanup
-
-The tracer/emulator path has been narrowed to RV64:
-
-- `Xlen::Bit32` and SV32 handling were removed from `tracer`.
-- MMU tracing now uses 8-byte RV64 words consistently.
-- RV32-specific arithmetic/sign-extension branches were removed from instruction
-  implementations and virtual helpers.
-- stale RV32-facing tests, comments, and helper assumptions were removed or
-  rewritten.
-- `jolt-program::image` continues to reject ELF32/RV32 inputs at the image
-  boundary.
-
-This means the new expander does not need an `Xlen` parameter or RV32 fallback
-paths. Word instructions such as `ADDW`, `LW`, and `AMO*W` remain RV64 word
-operations, not evidence that RV32 execution is still supported.
-
-### Instruction Phase Naming
-
-The branch has already split the old ambiguous instruction naming:
-
-- decoded source rows use `RiscvInstructionKind`;
-- expanded Jolt bytecode/helper rows use `JoltInstructionKind`;
-- lookup-backed/provable rows use `LookupInstructionKind`;
-- the old typed `JoltInstructions` view has been renamed to
-  `LookupInstruction`;
-- lookup routing in `jolt-core`, instruction metadata in `jolt-riscv`, the
-  SHA2 inline sequence builder, and the Z3 virtual-sequence verifier were moved
-  onto the new phase names.
-
-The split lets source-only legality, lookup-backed legality, and side-effect
-classification sit on the right phase APIs.
-
-### Compiler-Native Expansion Refactor
-
-The branch replaces the old production `assembler.rs` path with a readable
-builder-based expander:
-
-- `assembler.rs` was deleted.
-- `buffer.rs`, `core.rs`, `grammar.rs`, and `metadata.rs` were added under
-  `crates/jolt-program/src/expand`.
-- concrete expansion files now read as `asm.emit_*`, `asm.expand_*`,
-  `asm.allocate`, and `asm.release` calls.
-- `emit_*` means "append a target-legal row"; `expand_*` means "route a helper
-  row through provider-free expansion".
-- builder/template APIs now take explicit `RegisterOperand` values instead of
-  generic `impl Into<RegisterOperand>` parameters; architectural registers are
-  written as `reg(x)` and symbolic temps as `temp.operand()`.
-- `ExpansionBuilder` records pure `ExpansionOp` recipes; it does not borrow the
-  allocator or materialize concrete virtual registers.
-- `ExpansionState` owns allocator state while materializing recipes, recursive
-  helper expansion, and sequence metadata.
-- temporary-register bindings are represented by a fixed table keyed by `u8`
-  `TempId`, matching the real symbolic-temp address space.
-- bounded row buffers, sequence metadata helpers, recursion-depth checks,
-  target-legality checks, and explicit release calls were added.
-- serialization derives in `jolt-riscv` and `jolt-program` are behind a default
-  `serialization` feature, keeping the extraction core independent of serde and
-  ark serialization.
-- a compact hash fixture
-  `crates/jolt-program/src/expand/fixtures/main_expand_parity_hashes.json`
-  checks provider-free expansion parity without committing huge row JSON.
-
-The compiler-native cutover preserves the readable lowerer surface while making
-the lowering/materialization split explicit.
+Word instructions such as `ADDW`, `LW`, and `AMO*W` remain RV64 word
+operations. They are not RV32 execution support.
 
 ## Goals
 
-- Keep Jolt program expansion RV64-only.
-- Preserve expansion behavior relative to the post-#1490 baseline unless a
-  change is explicitly called out.
-- Keep concrete instruction expansions readable and close to the old hand-written
-  assembly style.
-- Make expansion lowering declarative: lowerers produce recipes; one central
-  driver materializes recipes.
-- Eliminate lifetime-bearing expansion state from provider-free expansion.
-- Make temporary-register allocation, release, reuse, recursion, metadata
-  stamping, and `rd = x0` rewriting explicit and centrally validated.
-- Split instruction identity by phase:
-  - `RiscvInstructionKind`: decoded source ISA identity;
-  - `JoltInstructionKind`: Jolt bytecode/helper row identity used during
-    expansion;
+- Keep program construction and bytecode expansion RV64-only.
+- Preserve expansion behavior relative to the post-#1490 baseline.
+- Make instruction phase boundaries explicit:
+  - `RiscvInstructionKind`: decoded source ISA identity.
+  - `JoltInstructionKind`: expanded bytecode/helper row identity.
   - `LookupInstructionKind`: lookup-backed/provable row identity.
-- Keep provider-free expansion isolated from tracer, CPU, memory-device,
-  advice-tape, prover, transcript, ELF parser, and PCS dependencies.
-- Make Hax/Aeneas extraction target production expansion code, not a hand-written
-  model that can drift from production.
+- Keep concrete lowerers readable enough for humans to add or revise opcodes.
+- Centralize allocator ownership, recursive helper expansion, target-legality
+  validation, metadata stamping, recursion-depth checks, and `rd = x0` rewriting.
+- Keep registered inline expansion behind an explicit provider boundary.
+- Keep provider-free expansion independent of tracer CPU state, advice tapes,
+  prover internals, transcript code, PCS code, and ELF parsing.
+- Keep serialization dependencies out of the no-default extraction surface.
 
 ## Non-Goals
 
 - Do not change RISC-V or Jolt instruction semantics.
-- Do not reintroduce RV32 compatibility shims.
-- Do not add deprecated aliases or migration layers for renamed instruction
-  kinds.
-- Do not model full execution semantics in this expansion pass. Expansion says
-  how source rows lower into bytecode rows; it does not define the operational
-  meaning of those rows.
-- Do not port registered `jolt-inlines` recipes or advice producers into the
-  provider-free grammar in this pass.
-- Do not make Hax/Aeneas extraction a CI requirement unless maintainers ask for
-  it.
+- Do not reintroduce RV32 or ELF32 support.
+- Do not add compatibility aliases for renamed instruction kinds.
+- Do not model execution semantics in the expander. Expansion defines bytecode
+  lowering, not operational execution.
+- Do not move registered `jolt-inlines` implementations into the provider-free
+  grammar.
+- Do not require Hax/Aeneas extraction in CI.
 
-## Design Decisions
+## Instruction Phases
 
-### Owned State Boundary
+Instruction identity is split by phase:
 
-The old #1490 shape used `InstrAssembler<'a>`:
+- `RiscvInstructionKind` names decoded source instructions.
+- `JoltInstructionKind` names rows that can appear during expansion and in final
+  Jolt bytecode.
+- `LookupInstructionKind` names instructions with corresponding lookup-table
+  proof semantics.
 
-```rust
-pub struct InstrAssembler<'a> {
-    sequence: Vec<NormalizedInstruction>,
-    allocator: &'a mut ExpansionAllocator,
-}
-```
+This keeps source-only legality, expanded-bytecode legality, lookup routing, and
+side-effect classification attached to the phase where each question belongs.
 
-The compiler-native expander avoids that borrow shape. Concrete lowerers build
-recipes; `ExpansionState` owns mutable expansion state while interpreting those
-recipes.
+`NormalizedInstruction` remains the production row type for decoded and expanded
+rows. It carries row identity, operands, address, sequence metadata, and
+compressed-tail metadata. It does not carry execution state, advice payloads, or
+proof-system fields.
 
-This keeps mutable allocator state out of individual lowerers and gives Hax and
-Aeneas a production extraction target that is closer to a conventional compiler
-pass:
-
-- lowerers produce data;
-- the driver owns mutable state;
-- recursive helper expansion is interpreted by the driver;
-- sequence metadata is stamped centrally.
-
-### Extraction-Friendly Core
-
-The production core intentionally favors explicit control flow in the
-materialization path. This is not a separate formal model: it is the same code
-used by normal expansion. The design avoids long-lived mutable borrows, generic
-operand conversion shims, iterator-heavy state-machine code, and serialization
-dependencies in the no-default extraction configuration.
-
-The current Hax extraction command is:
-
-```bash
-cargo hax -C -p jolt-program --no-default-features \; into \
-  --output-dir /tmp/jolt-program-hax-lean-refactor \
-  -i '-** +jolt_program::expand::**' \
-  lean
-```
-
-This now emits Lean without serde/ark instruction serialization, without the
-old CSR helper name collision, and without the old dynamic Vec-backed temp table.
-Remaining Lean build work is concentrated in Hax/Lean support for generated
-`while_loop_return` forms and very large nested expansion functions, rather than
-in production expansion borrowing or serialization boundaries.
-
-## Target Data Model
-
-### Row Type
-
-`NormalizedInstruction` remains the production row type. It should not grow
-execution semantics, advice payloads, or proof-system fields.
-
-### Instruction Phase Types
-
-Use explicit phase names:
-
-```rust
-pub enum RiscvInstructionKind { ... }
-pub enum JoltInstructionKind { ... }
-pub enum LookupInstructionKind { ... }
-```
-
-Expected ownership:
-
-- `RiscvInstructionKind` belongs to decode and source-program representation.
-- `JoltInstructionKind` belongs to expanded Jolt bytecode and virtual/helper
-  rows.
-- `LookupInstructionKind` belongs to lookup-table routing and proving.
-
-The exact enum layout can be flat or nested, but conversions must be explicit.
-For example:
+Conversions between phases are explicit. For example, lookup routing should go
+through an API shaped like:
 
 ```rust
 impl JoltInstructionKind {
     pub fn lookup_kind(self) -> Option<LookupInstructionKind> { ... }
-    pub fn is_source_only(self) -> bool { ... }
-    pub fn has_side_effects(self) -> bool { ... }
 }
 ```
 
-### Expansion Recipes
+Source-only legality, target-bytecode legality, side-effect classification, and
+lookup-backed classification should not be inferred from a shared ambiguous enum
+name.
 
-Concrete lowerers return a recipe:
+## Expansion Pipeline
+
+Each source-only lowerer returns an `ExpandedInstructionSequence`:
+
+```rust
+let mut asm = ExpansionBuilder::new(*instruction);
+
+let tmp = asm.allocate()?;
+asm.expand_i(
+    JoltInstructionKind::VirtualPow2,
+    tmp.operand(),
+    reg(rs2(instruction)?),
+    0,
+);
+asm.emit_r(
+    JoltInstructionKind::MUL,
+    reg(rd(instruction)?),
+    reg(rs1(instruction)?),
+    tmp.operand(),
+);
+asm.release(tmp);
+
+asm.finalize()
+```
+
+Builder methods have precise meaning:
+
+- `emit_*` records a row that is already target-legal.
+- `expand_*` records a helper row that must pass through provider-free
+  expansion before it is appended to the source row's final bytecode sequence.
+- `allocate()` creates a symbolic `TempId`.
+- `release(temp)` records the end of a symbolic temp lifetime.
+- `finalize()` returns the recipe for materialization.
+
+Pure recording operations are infallible. Fallible operations are limited to
+places where failure can actually occur: operand decoding, symbolic temp
+allocation, recursive materialization, target validation, capacity checks, and
+real virtual-register allocation/release.
+
+### Recipe Data Model
+
+`ExpandedInstructionSequence` is a recipe, not finalized bytecode:
 
 ```rust
 pub(super) struct ExpandedInstructionSequence {
@@ -255,25 +161,20 @@ pub(super) struct ExpandedInstructionSequence {
 pub(super) enum ExpansionOp {
     Emit(RowTemplate),
     Expand(RowTemplate),
-    Allocate(u8),
-    Release(u8),
+    Allocate(TempId),
+    Release(TempId),
 }
 ```
 
-The names can change, but the responsibilities should not:
+The operation meanings are fixed:
 
-- `Emit` appends a row that is already final Jolt bytecode.
-- `Expand` appends a source/helper row that must go through the central expander.
-- `Allocate` and `Release` describe symbolic temp lifetimes in the recipe.
-  The recorded `u8` values are temporary placeholders, not concrete virtual
-  registers.
+- `Emit` appends a row that is already legal final Jolt bytecode.
+- `Expand` records a helper row that must be recursively lowered by the central
+  provider-free driver.
+- `Allocate` creates a symbolic temp lifetime.
+- `Release` ends a symbolic temp lifetime.
 
-### Row Templates And Symbolic Temps
-
-Recipes can mention architectural registers and symbolic temps. They are both
-represented explicitly as `RegisterOperand` values inside `RowTemplate`, so the
-current lowerer code can stay close to the old assembly-like style while still
-deferring concrete virtual-register allocation to materialization.
+Rows inside recipes use explicit operand provenance:
 
 ```rust
 pub(super) struct TempId(u8);
@@ -292,511 +193,246 @@ impl TempId {
         RegisterOperand::Temp(self)
     }
 }
-
-pub(super) struct RowTemplate {
-    instruction_kind: JoltInstructionKind,
-    operands: TemplateOperands,
-}
 ```
 
-Materialization resolves `TempId` values to concrete virtual registers through
-the owned `ExpansionAllocator`.
+This keeps lowerers close to assembly while still making the register phase
+visible at every row.
 
-The builder and row-template APIs intentionally do not accept
-`impl Into<RegisterOperand>`. Making the operand phase explicit has two
-benefits: readers can see whether a row consumes an architectural register or a
-symbolic temporary, and extraction tools do not need to model generic
-conversion/typeclass plumbing on the core grammar surface.
+## Register Budget
 
-## Target Control Flow
+Jolt has 32 architectural RISC-V registers and 96 virtual registers:
 
-### ExpansionBuilder
-
-`ExpansionBuilder` is a pure lowering builder:
-
-```rust
-pub(super) struct ExpansionBuilder {
-    source: NormalizedInstruction,
-    ops: Vec<ExpansionOp>,
-    next_temp: usize,
-}
+```text
+x0..x31      architectural RISC-V registers
+vr32..vr39   reserved persistent virtual registers
+vr40..vr47   instruction expansion temps
+vr48..vr127  registered-inline temps
 ```
 
-It must not contain:
+The expander enforces this split exactly:
 
-- `&mut ExpansionAllocator`;
-- `ExpansionState<'_>`;
-- any lifetime parameter needed for allocator ownership;
-- calls to `expand_instruction` or `expand_one_core`.
+- `NUM_RESERVED_VIRTUAL_REGISTERS = 8`
+- `NUM_VIRTUAL_INSTRUCTION_REGISTERS = 8`
+- `ExpansionAllocator::allocate()` uses only `vr40..vr47`.
+- `ExpansionAllocator::allocate_for_inline()` uses only `vr48..vr127`.
 
-It exposes ergonomic methods:
+`TempId` is symbolic recipe syntax, but each live temp is materialized through
+`ExpansionAllocator::allocate()`. The symbolic temp namespace is therefore
+bounded by `NUM_VIRTUAL_INSTRUCTION_REGISTERS`, not by the full `u8` range. A
+ninth symbolic temp is rejected while building the recipe.
 
-```rust
-impl ExpansionBuilder {
-    pub fn new(source: NormalizedInstruction) -> Self;
+The explicit `reg(x)` and `temp.operand()` spelling is intentional. It makes
+operand provenance visible in lowerers: decoded architectural registers and
+symbolic allocator temps have different lifetimes and different side-effect
+implications.
 
-    pub fn allocate(&mut self) -> Result<u8, ExpansionError>;
-    pub fn release(&mut self, temp: u8) -> Result<(), ExpansionError>;
-    pub fn release_many<const N: usize>(&mut self, temps: [u8; N])
-        -> Result<(), ExpansionError>;
+## Materialization
 
-    pub fn emit_r(...);
-    pub fn emit_i(...);
-    pub fn emit_s(...);
-    pub fn emit_b(...);
-    pub fn emit_u(...);
-    pub fn emit_j(...);
+`ExpansionState` owns the real `ExpansionAllocator` while interpreting
+`ExpansionOp` recipes. It is responsible for:
 
-    pub fn expand_r(...);
-    pub fn expand_i(...);
-    pub fn expand_s(...);
-    pub fn expand_b(...);
-    pub fn expand_u(...);
-    pub fn expand_j(...);
-    pub fn expand_address(...);
+- allocating real virtual registers for symbolic temps;
+- rejecting duplicate, unallocated, and leaked symbolic temps;
+- recursively expanding helper rows recorded with `expand_*`;
+- enforcing recursion depth;
+- preserving inline-provider isolation;
+- stamping `is_first_in_sequence`, `virtual_sequence_remaining`, and
+  compressed-tail metadata;
+- rejecting source-only rows in final bytecode;
+- enforcing final sequence capacity.
 
-    pub fn finalize(self) -> Result<ExpandedInstructionSequence, ExpansionError>;
-}
-```
+The lowerers stay declarative. The materializer owns stateful behavior.
 
-`emit_*` methods are infallible when they only record a syntactically valid
-template. Operand validation that depends on source row shape can still return
-`ExpansionError` at the lowerer boundary.
+### Metadata Policy
 
-### ExpansionState
-
-`ExpansionState` owns all mutable materialization state:
-
-```rust
-pub(super) struct ExpansionState {
-    allocator: ExpansionAllocator,
-}
-```
-
-It provides the provider-free recursive entry point:
-
-```rust
-pub(super) fn expand_one_core(
-    &mut self,
-    instruction: &NormalizedInstruction,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError>;
-```
-
-The public API preserves the existing call shape as an adapter:
-
-```rust
-pub fn expand_instruction(
-    instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError>;
-```
-
-The adapter moves allocator state into `ExpansionState`, runs the owned driver,
-then moves allocator state back out. Borrowed allocator state is not stored in
-production core structures.
-
-### Central Driver
-
-The central driver handles:
-
-- `rd = x0` canonicalization;
-- side-effect-preserving `rd = x0` rewrites;
-- source-only legality checks;
-- recursive helper expansion;
-- temp allocation and release;
-- output capacity checks;
-- recursion-depth limits;
-- sequence metadata stamping;
-- provider-free `Inline` rejection.
-
-In pseudocode:
-
-```rust
-fn materialize(
-    &mut self,
-    sequence: ExpandedInstructionSequence,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let mut materializer = SequenceMaterializer::new(sequence.source);
-    let mut index = 0;
-    while index < sequence.ops.len() {
-        let op = sequence.ops[index];
-        match op {
-            ExpansionOp::Emit(row) => materializer.emit(row)?,
-            ExpansionOp::Expand(row) => {
-                let instruction = materializer.instruction(row)?;
-                materializer.extend(self.expand_one_core(&instruction)?)?;
-            }
-            ExpansionOp::Allocate(temp) => materializer.bind_temp(temp, self.allocate()?)?,
-            ExpansionOp::Release(temp) => self.release(materializer.resolve_release(temp)?)?,
-        }
-        index += 1;
-    }
-
-    materializer.finish()
-}
-```
-
-The important invariant is that recursive helper expansion is a driver action,
-not a builder action.
-
-## Concrete Lowerer Shape
-
-Concrete lowerers no longer accept `&mut ExpansionAllocator`.
-
-Target signature:
-
-```rust
-pub(in crate::expand) fn expand_addiw(
-    instruction: &NormalizedInstruction,
-) -> Result<ExpandedInstructionSequence, ExpansionError>;
-```
-
-Simple example:
-
-```rust
-pub(in crate::expand) fn expand_subw(
-    instruction: &NormalizedInstruction,
-) -> Result<ExpandedInstructionSequence, ExpansionError> {
-    let mut asm = ExpansionBuilder::new(*instruction);
-
-asm.emit_r(
-    JoltInstructionKind::SUB,
-    reg(rd(instruction)?),
-    reg(rs1(instruction)?),
-    reg(rs2(instruction)?),
-);
-asm.emit_i(
-    JoltInstructionKind::VirtualSignExtendWord,
-    reg(rd(instruction)?),
-    reg(rd(instruction)?),
-    0,
-);
-
-    asm.finalize()
-}
-```
-
-Temp-heavy example:
-
-```rust
-pub(in crate::expand) fn expand_lw(
-    instruction: &NormalizedInstruction,
-) -> Result<ExpandedInstructionSequence, ExpansionError> {
-    let mut asm = ExpansionBuilder::new(*instruction);
-    let v0 = asm.allocate()?;
-    let v1 = asm.allocate()?;
-
-    asm.expand_address(
-        JoltInstructionKind::VirtualAssertWordAlignment,
-        reg(rs1(instruction)?),
-        instruction.operands.imm,
-    )?;
-    asm.expand_i(
-        JoltInstructionKind::ADDI,
-        v0.operand(),
-        reg(rs1(instruction)?),
-        instruction.operands.imm,
-    )?;
-    asm.expand_i(JoltInstructionKind::ANDI, v1.operand(), v0.operand(), format_i_imm(-8))?;
-    asm.expand_i(JoltInstructionKind::LD, v1.operand(), v1.operand(), 0)?;
-    asm.expand_i(JoltInstructionKind::SLLI, v0.operand(), v0.operand(), 3)?;
-    asm.expand_r(JoltInstructionKind::SRL, v1.operand(), v1.operand(), v0.operand())?;
-    asm.expand_i(
-        JoltInstructionKind::VirtualSignExtendWord,
-        reg(rd(instruction)?),
-        v1.operand(),
-        0,
-    )?;
-
-    asm.release_many([v0, v1])?;
-    asm.finalize()
-}
-```
-
-This shape is intentionally close to the current readable builder code. The
-difference is that the builder records a recipe; it does not materialize rows or
-recurse.
-
-## Inline And Advice Boundary
-
-Provider-free expansion rejects `JoltInstructionKind::Inline`.
-
-Registered inline expansion remains an adapter outside the provider-free core:
-
-- the provider may return finalized `NormalizedInstruction` rows;
-- provider output is not modeled as provider-free `ExpansionOp` values in this
-  pass;
-- advice payload assignment remains outside `NormalizedInstruction`;
-- trusted/untrusted advice memory and polynomial commitments remain
-  preprocessing/proof responsibilities.
-
-Advice-load source rows such as `AdviceLB`, `AdviceLH`, `AdviceLW`, and
-`AdviceLD` are provider-free lowerings because they lower to ordinary bytecode
-and virtual advice-load rows. Registered inlines that synthesize advice remain
-outside this grammar.
-
-## Metadata Policy
-
-Preserve the current metadata policy:
+Sequence metadata is owned by the materializer:
 
 - pass-through rows remain unchanged;
 - synthetic sequences are stamped as one source-row expansion;
-- `is_compressed` is attached according to the current final-row policy;
-- `virtual_sequence_remaining` and `is_first_in_sequence` are derived centrally;
-- helper rows expanded recursively participate in the outer source sequence.
+- recursive helper expansions participate in the outer source sequence;
+- `is_first_in_sequence` and `virtual_sequence_remaining` are derived centrally;
+- `is_compressed` is attached to the final row of the expanded sequence according
+  to the existing compressed-tail policy.
 
-No concrete lowerer should mutate sequence metadata directly.
+Concrete lowerers should not mutate sequence metadata directly.
 
-## Validation Strategy
+## Inline Provider Boundary
 
-Behavioral parity should be tested at three levels:
+Registered inlines are expanded through `InlineExpansionProvider`.
 
-1. Targeted unit tests for allocator transitions, temp release ordering, invalid
-   releases, buffer overflow, and metadata stamping.
-2. Instruction-family tests for representative shallow, recursive, temp-heavy,
-   memory, AMO, CSR/control-flow, division/remainder, and advice-load lowerings.
-3. A compact baseline parity fixture that hashes serialized expanded rows for
-   provider-free inputs.
+Provider output is intentionally outside the provider-free grammar because
+registered inlines may need tracer-side registration, advice generation, and
+large inline-specific virtual-register use. The public expansion entry point
+still validates provider rows, appends reset rows for inline registers that must
+be cleared, and stamps the resulting sequence.
 
-The fixture should remain compact. Avoid checking in giant expanded-row JSON.
-When fixture hashes change, treat it as a semantic review event:
+Inline register clearing uses the same allocator partition as tracer:
+instruction expansion temps do not borrow from the inline register pool, and
+inline registers do not consume `vr40..vr47`.
 
-- state the baseline commit or intended semantic change;
-- inspect at least one expanded-row diff for each affected family;
-- regenerate with exact serialized bytes of `Vec<NormalizedInstruction>`;
-- run the dedicated parity test.
+### Follow-Up: Systematic Inline Expansion
 
-## Extraction Strategy
+Registered inlines are still the least systematic part of the expansion stack.
+Today they are built through tracer-side `InstrAssembler` and `InlineOp`
+registrations:
 
-The extraction start set should be provider-free expansion internals:
+- inline metadata is registered by `(opcode, funct3, funct7)`;
+- sequence builders emit tracer `Instruction` values through generic
+  `emit_r::<Op>`, `emit_i::<Op>`, `emit_s::<Op>`, and similar helpers;
+- inline builders allocate from `allocate_for_inline()`, not from the eight
+  instruction-temp registers used by provider-free source-row expansion;
+- `finalize_inline()` appends zeroing rows for the inline virtual registers that
+  were allocated;
+- advice-producing inlines separately provide advice values during tracing.
 
-- allocator transitions;
-- row template and recipe construction;
-- metadata stamping;
-- one shallow lowerer such as `ADDIW` or `SUBW`;
-- one recursive/temp-heavy lowerer such as `LW`;
-- the owned `ExpansionState` driver.
+The current PR should keep that provider boundary. A follow-up PR can make
+inlines systematic without mixing them into provider-free expansion all at once.
+The clean direction is:
 
-Hax/Aeneas issues caused by missing standard-library models are useful to record,
-but production code should first remove avoidable obstacles:
+1. Define an inline recipe layer parallel to `ExpandedInstructionSequence`.
+   It should use explicit inline virtual-register operands and inline-local
+   allocation, but keep the larger `vr48..vr127` register pool.
+2. Split inline declarations into metadata, bytecode recipe construction, and
+   advice production. Metadata should remain registration-friendly; bytecode
+   construction should be testable without a live CPU; advice production can
+   keep the CPU/MMU dependency.
+3. Reuse the same final-row validation and metadata stamping policy as
+   provider-free expansion. Inline recipes should not hand-stamp sequence fields.
+4. Preserve `finalize_inline()` semantics: every inline register allocated from
+   the inline pool must be zeroed exactly once at the end of the inline sequence.
+5. Add parity fixtures per inline family using compact hashes, not huge expanded
+   row JSON.
+6. Move one small inline first, preferably an advice-store style inline or a
+   compact cryptographic helper, before attempting SHA2, Keccak, Blake, or field
+   arithmetic inlines.
 
-- no lifetime-bearing expansion state;
-- no long-lived mutable borrow stored in the builder;
-- no public trait callback in the provider-free core;
-- no `impl IntoIterator` in extraction-critical signatures when a concrete slice
-  or vector is enough;
-- no generic `impl Into<RegisterOperand>` builder/template signatures in the
-  extraction-critical grammar; use explicit `reg(x)` and `temp.operand()` calls
-  instead;
-- minimal serialization/preprocess/prover dependencies in the extracted call
-  graph.
+This would give inlines the same compiler-style shape as provider-free
+expansion while preserving the important distinction between source-row
+expansion temps and large inline working sets.
 
-The explicit-operand cutover is not only for extraction. It also makes the
-grammar boundary less ambiguous: a `u8` is no longer silently accepted as either
-an architectural register or some unrelated byte-sized value, and symbolic temps
-must be visibly marked at every emitted/expanded row. The tradeoff is a little
-more syntax in simple lowerers.
+## Serialization Boundary
 
-Latest extraction check after this cutover:
+`jolt-riscv` and `jolt-program` expose a default `serialization` feature for
+normal workspace builds. `serde` and `ark-serialize` derives are gated behind
+that feature.
 
-- Hax emits Lean for `jolt_program::expand` with:
-  `cargo hax -C -p jolt-program --no-default-features \; into ...`.
-- serde and ark serialization are no longer in the extracted core.
-- the old `impl_Into_RegisterOperand` helper noise is gone.
-- the CSR helper/method name collision is gone.
-- symbolic temp bindings are fixed-array updates instead of dynamic Vec
-  resize/slice updates.
-- materialization uses explicit recipe indexing rather than a reversed work
-  stack.
+No-default builds keep the provider-free expansion core independent of
+serialization crates:
 
-The generated Lean still does not compile end-to-end. The remaining blockers are
-now concentrated in Hax/Lean support for generated `while_loop_return` forms,
-large nested expansion functions, and helper definitions that fail to enter the
-environment after earlier Lean errors. Those are extractor/prelude issues, not a
-reason to add a separate hand-written expansion model.
+```bash
+cargo clippy -p jolt-program --no-default-features -q --all-targets -- -D warnings
+```
+
+Workspace crates that need serialized preprocessing, tracing, or proving data
+opt back into the feature explicitly.
+
+## Validation
+
+The expander is validated by focused unit tests and by compact parity checks:
+
+- allocator partition tests for instruction temps and inline temps;
+- symbolic temp tests for duplicate allocation, unallocated use, unallocated
+  release, leak detection, and the exact eight-temp recipe bound;
+- metadata stamping and source-only target-legality tests;
+- `rd = x0` behavior for side-effecting and side-effect-free instructions;
+- inline-provider validation and reset-row tests;
+- LR/SC RAM-range and CSR-zero rejection tests;
+- a compact hash fixture covering provider-free expansion parity.
+
+When the compact parity fixture changes, treat it as a semantic review event:
+
+- record the baseline commit or intended semantic change;
+- inspect row-level diffs for each affected instruction family;
+- regenerate from deterministic serialized `Vec<NormalizedInstruction>` bytes;
+- rerun the dedicated parity test and the `muldiv` e2e checks.
+
+The primary e2e correctness checks remain:
+
+```bash
+cargo nextest run -p jolt-core muldiv --cargo-quiet --features host
+cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk
+```
+
+## Extraction Status
+
+Extraction is informational. It is useful for finding hidden coupling and
+dependency creep, but production Rust should remain idiomatic.
+
+Current Hax command:
+
+```bash
+cargo hax -C -p jolt-program --no-default-features \; into \
+  --output-dir /tmp/jolt-program-hax-lean-ergonomic \
+  -i '-** +jolt_program::expand::**' \
+  lean
+```
+
+The command emits Lean for the selected expansion namespace. The generated file
+is currently about 14k lines. It no longer includes serde or ark-serialization
+dependencies in the no-default configuration, and it reflects the exact
+instruction-temp register bound.
+
+The emitted Lean does not typecheck end-to-end in a scratch Lake project. The
+current blockers are in extraction packaging and prelude coverage:
+
+- missing or stubbed cross-crate models for `common` and `jolt-riscv`;
+- missing Hax Lean models for some `Vec` operations;
+- missing iterator/fold helpers such as `Iterator.position` and `fold_return`;
+- Lean typeclass/universe synthesis failures around generated derive support;
+- downstream unknown identifiers after earlier environment failures.
+
+These blockers are not production Rust requirements. The next extraction work
+should improve the Lean environment or upstream Hax/Aeneas models rather than
+rewriting clear Rust into extractor-specific control flow.
+
+## Remaining Work Outside This PR
+
+- Make registered inlines systematic using the inline recipe plan above.
+- Decide whether very large lowerers such as division and AMO helpers should be
+  split further for human readability. This should be motivated by code quality,
+  not by extractor output size alone.
+- Continue improving Hax/Aeneas support in a maintained Lean environment:
+  multi-crate models for `common` and `jolt-riscv`, standard-library models for
+  `Vec`/iterator/fold helpers, and generated derive/typeclass support.
+- Add row-diff tooling around the compact parity fixture so fixture updates are
+  easier to review.
+
+## Implementation Checklist
+
+- [x] RV64-only program expansion boundary.
+- [x] Instruction phase names split across source, expanded, and lookup-backed
+      identities.
+- [x] `ExpansionBuilder` recipe API.
+- [x] `ExpansionState` materializer with owned allocator state.
+- [x] Exact virtual-register partition for reserved, instruction-temp, and
+      inline-temp registers.
+- [x] Explicit symbolic temp lifetime validation.
+- [x] Infallible pure recipe-recording methods.
+- [x] Central target legality and metadata stamping.
+- [x] Inline-provider validation and reset-row handling.
+- [x] Serialization feature boundary.
+- [x] Compact provider-free expansion parity fixture.
+- [x] Informational Hax extraction pass.
 
 ## Acceptance Criteria
 
-Already satisfied by the current branch:
-
-- [x] Historical RV32 tracer execution support is removed; no live `Xlen::Bit32`
-      or SV32 path remains.
-- [x] ELF32/RV32 inputs are rejected at the `jolt-program::image` boundary.
+- [x] No live RV32/SV32 tracer execution path remains.
+- [x] ELF32/RV32 inputs are rejected before expansion.
 - [x] Decoded-source, expanded-bytecode, and lookup-backed instruction
-      identities are named separately as `RiscvInstructionKind`,
-      `JoltInstructionKind`, and `LookupInstructionKind`.
-- [x] The old typed `JoltInstructions` view has been renamed to
-      `LookupInstruction`.
-- [x] Lookup-table routing uses `LookupInstructionKind` or equivalent explicit
-      lookup-subset conversion APIs.
-- [x] The old production `InstrAssembler<'a>` file/path is removed.
-- [x] The current concrete lowerers use readable builder calls rather than raw
-      grammar-node construction.
-- [x] A compact provider-free expansion parity fixture exists.
-- [x] `ExpansionState` owns `ExpansionAllocator`; no production
-      `ExpansionState<'a>` remains.
-- [x] `ExpansionBuilder` has no lifetime parameters and stores no
-      `ExpansionState`.
-- [x] Concrete lowerers return `ExpandedInstructionSequence` recipes, not
-      finalized `Vec<NormalizedInstruction>` values.
-- [x] Concrete provider-free lowerers do not accept `&mut ExpansionAllocator`.
-- [x] Builder `expand_*` methods record recursive-helper work; they do not call
-      `expand_instruction`, `expand_one_core`, or any central driver function.
-- [x] The central driver is the only provider-free component that expands helper
-      rows recursively.
-- [x] Temp lifetimes are represented explicitly in recipe data and materialized
+      identities use explicit phase names.
+- [x] The old production `InstrAssembler<'a>` expansion path is removed from
+      `jolt-program::expand`.
+- [x] Concrete provider-free lowerers return `ExpandedInstructionSequence`
+      recipes and do not accept `&mut ExpansionAllocator`.
+- [x] The central driver is the only provider-free component that recursively
+      expands helper rows.
+- [x] Symbolic temp lifetimes are represented in recipe data and materialized
       centrally.
-- [x] Builder and row-template methods use explicit `RegisterOperand` operands,
-      not generic `impl Into<RegisterOperand>` conversion parameters.
-
-Satisfied by the owned recipe/materializer rewrite:
-
-- [x] Materialization preserves current virtual-register allocation and reuse.
-- [x] `rd = x0` handling is centralized and covered by tests for side-effecting
-      and non-side-effecting rows.
-- [x] Synthetic sequence metadata is stamped centrally and matches the baseline.
-- [x] Pass-through rows preserve the current metadata policy.
-- [x] Provider-free expansion rejects `Inline`; inline provider support remains
-      an adapter outside the owned core.
-- [x] The existing instruction phase split is audited after the recipe rewrite,
-      with no stale `InstructionKind` ambiguity or misplaced legality predicate.
-- [x] `jolt-program::expand` remains independent of tracer, CPU execution,
+- [x] The exact eight-register instruction-temp pool is enforced before
+      materialization.
+- [x] Provider-free expansion rejects `Inline`; registered inline support stays
+      behind `InlineExpansionProvider`.
+- [x] `jolt-program::expand` remains independent of tracer CPU execution,
       prover, transcript, PCS, and ELF parser dependencies.
-- [x] Existing provider-free parity tests pass.
-- [x] `cargo fmt -q` passes.
-- [x] `cargo clippy --all --features host -q --all-targets -- -D warnings`
-      passes.
-- [x] `cargo clippy --all --features host,zk -q --all-targets -- -D warnings`
-      passes.
-- [x] `cargo nextest run -p jolt-program --cargo-quiet` passes.
-- [x] `cargo nextest run -p jolt-core muldiv --cargo-quiet --features host`
-      passes.
-- [x] `cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk`
-      passes.
-- [x] Hax/Aeneas extraction is rerun on the provider-free core and the remaining
-      blockers are documented.
-
-Remaining outside this PR:
-
-- [ ] Prove or hand-port the emitted Hax/Aeneas Lean into a maintained Lean
-      project once the extractor prelude/library-model blockers are resolved.
-- [ ] Add or upstream Lean support for the generated `while_loop_return`
-      combinator and the remaining standard-library models needed by Hax.
-- [ ] Decide whether very large lowerers such as division and AMO helpers should
-      be split further for readability and Lean elaboration, independent of
-      extraction.
-
-## Implemented Work Items
-
-These are retained as an implementation checklist for the PR history. They are
-implemented unless explicitly listed above as outside this PR.
-
-### 1. Preserve And Verify Already-Landed Scope
-
-- Treat RV64-only tracer cleanup as already landed; avoid reintroducing `Xlen`
-  branches or RV32 compatibility shims while rewriting expansion.
-- Treat `RiscvInstructionKind` / `JoltInstructionKind` /
-  `LookupInstructionKind` as the current branch direction; audit and finish it
-  rather than reverting to `InstructionKind`.
-- Treat the current readable builder surface as the ergonomic baseline for
-  concrete lowerers.
-- Keep the compact hash fixture strategy; do not replace it with giant JSON.
-
-### 2. Clean Up The Current Interim State
-
-- Remove any remaining production references to `ExpansionState<'a>` and
-  `ExpansionBuilder<'a, 'b>`.
-- Remove stale spec/test language that treats the borrowed-builder shape as the
-  final design.
-- Keep `EXTRACTION-AUDIT-NEVER-COMMIT.md` local and untracked.
-
-### 3. Introduce Recipe Types
-
-- Add `ExpandedInstructionSequence`.
-- Add `ExpansionOp`.
-- Add `RowTemplate` / `TemplateOperands` capable of carrying architectural
-  registers and symbolic temps.
-- Add `TempId` or equivalent symbolic temp identifiers.
-- Add tests for recipe construction and invalid temp lifetime patterns.
-
-### 4. Make ExpansionBuilder Pure
-
-- Change `ExpansionBuilder::new` to accept the source row by value.
-- Remove allocator/state fields from `ExpansionBuilder`.
-- Make `emit_*` append `ExpansionOp::Emit`.
-- Make `expand_*` append `ExpansionOp::Expand`.
-- Make `allocate` / `release` record temp lifetime operations.
-- Keep lowerer code visually close to the current readable builder style.
-
-### 5. Make ExpansionState Owned
-
-- Change `ExpansionState` to own `ExpansionAllocator`.
-- Materialize recipe operations directly from `ExpandedInstructionSequence`.
-- Keep recursion-depth state in `ExpansionAllocator`.
-- Add owned-state entry points and adapter functions for the existing public API.
-- Avoid `impl IntoIterator` in extraction-critical APIs where concrete types are
-  straightforward.
-
-### 6. Implement The Central Materializer
-
-- Interpret `ExpansionOp` values.
-- Resolve symbolic temps to concrete virtual registers.
-- Centralize `rd = x0` rewriting.
-- Centralize source-only legality checks.
-- Centralize helper expansion.
-- Centralize metadata stamping.
-- Preserve pass-through behavior.
-- Preserve inline reset behavior at the adapter boundary.
-
-### 7. Convert Concrete Lowerers
-
-- Update every lowerer signature to remove `&mut ExpansionAllocator`.
-- Convert arithmetic and word-op lowerers.
-- Convert shift lowerers.
-- Convert load/store lowerers.
-- Convert AMO lowerers.
-- Convert LR/SC lowerers.
-- Convert division/remainder lowerers.
-- Convert CSR/control-flow lowerers.
-- Convert advice-load lowerers.
-- Remove old finalized-row helper paths once all call sites are converted.
-
-### 8. Finish Instruction Phase Split
-
-- Audit uses of `InstructionKind`, `JoltInstructionKind`, and
-  `LookupInstructionKind`.
-- Ensure decoded-source, expanded-bytecode, and lookup-backed concepts have
-  explicit names and conversions.
-- Ensure source-only and lookup-backed legality predicates live on the right
-  phase type.
-- Remove stale aliases or compatibility names.
-
-### 9. Strengthen Parity And Regression Tests
-
-- Keep compact hash fixture rather than giant JSON.
-- Add row-diff tooling or test helper for affected fixture changes.
-- Add targeted tests for:
-  - recursive helper expansion order;
-  - temp allocation/release order;
-  - metadata stamping;
-  - side-effecting `rd = x0`;
-  - non-side-effecting `rd = x0`;
-  - provider-free `Inline` rejection;
-  - advice-load lowering.
-
-### 10. Rerun Extraction Experiments
-
-- Rerun Hax on allocator, metadata, one shallow lowerer, one temp-heavy lowerer,
-  and the owned driver.
-- Rerun Aeneas/Charon on the same slices.
-- Record remaining blockers in local never-commit notes.
-- Separate genuine design blockers from tool/prelude/library-model blockers.
-
-### 11. Final Verification
-
-- Run formatting.
-- Run clippy in host and host+zk modes.
-- Run `jolt-program` nextest.
-- Run `jolt-core` `muldiv` in host and host+zk modes.
-- Check dependency boundaries.
-- Update the PR description with the final architecture and verification.
+- [x] Formatting, clippy in host and host+zk modes, focused expansion tests, and
+      `muldiv` e2e tests pass.

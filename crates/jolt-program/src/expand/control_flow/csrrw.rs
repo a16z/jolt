@@ -35,7 +35,7 @@ pub(in crate::expand) fn expand_csrrw(
             temp.operand(),
             0,
         );
-        asm.release(temp)?;
+        asm.release(temp);
         return asm.finalize();
     }
 

@@ -50,7 +50,7 @@ pub(in crate::expand) fn expand_mulh(
         v_tmp.operand(),
         v_sy.operand(),
     );
-    asm.release_many([v_sx, v_sy, v_tmp])?;
+    asm.release_many([v_sx, v_sy, v_tmp]);
 
     asm.finalize()
 }

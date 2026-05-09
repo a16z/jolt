@@ -37,8 +37,8 @@ pub(in crate::expand) fn expand_srlw(
         reg(rd(instruction)?),
         0,
     );
-    asm.release(v_bitmask)?;
-    asm.release(v_rs1)?;
+    asm.release(v_bitmask);
+    asm.release(v_rs1);
 
     asm.finalize()
 }

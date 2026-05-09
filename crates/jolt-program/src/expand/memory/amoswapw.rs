@@ -28,7 +28,7 @@ pub(in crate::expand) fn expand_amoswapw(
             v_rd: v_rd.operand(),
         },
     )?;
-    asm.release_many([v_mask, v_dword, v_shift, v_rd])?;
+    asm.release_many([v_mask, v_dword, v_shift, v_rd]);
 
     asm.finalize()
 }

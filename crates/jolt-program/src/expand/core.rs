@@ -1,14 +1,14 @@
 use jolt_riscv::{NormalizedInstruction, NormalizedOperands};
 
 use crate::expand::{
-    allocator::ExpansionAllocator,
+    allocator::{ExpansionAllocator, NUM_VIRTUAL_INSTRUCTION_REGISTERS},
     buffer::ExpansionBuffer,
     expand_instruction_body,
     grammar::{
         ExpandedInstructionSequence, ExpansionOp, RegisterOperand, RowTemplate, TempId,
         TemplateOperands,
     },
-    metadata::stamp_sequence,
+    metadata::stamp_instruction_sequence,
     ExpansionError,
 };
 
@@ -48,9 +48,8 @@ impl ExpansionState {
         sequence: ExpandedInstructionSequence,
     ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
         let mut materializer = SequenceMaterializer::new(sequence.source);
-        let mut index = 0;
-        while index < sequence.ops.len() {
-            match sequence.ops[index] {
+        for op in sequence.ops {
+            match op {
                 ExpansionOp::Emit(row) => materializer.emit(row)?,
                 ExpansionOp::Expand(row) => {
                     let instruction = materializer.instruction(row)?;
@@ -65,22 +64,19 @@ impl ExpansionState {
                     self.allocator.release(register)?;
                 }
             }
-            index += 1;
         }
         materializer.finish()
     }
 }
 
-const MAX_TEMP_BINDINGS: usize = 256;
-
 struct TempBindings {
-    slots: [Option<u8>; MAX_TEMP_BINDINGS],
+    slots: [Option<u8>; NUM_VIRTUAL_INSTRUCTION_REGISTERS],
 }
 
 impl TempBindings {
     fn new() -> Self {
         Self {
-            slots: [None; MAX_TEMP_BINDINGS],
+            slots: [None; NUM_VIRTUAL_INSTRUCTION_REGISTERS],
         }
     }
 
@@ -107,14 +103,7 @@ impl TempBindings {
     }
 
     fn first_leaked(&self) -> Option<usize> {
-        let mut index = 0;
-        while index < self.slots.len() {
-            if self.slots[index].is_some() {
-                return Some(index);
-            }
-            index += 1;
-        }
-        None
+        self.slots.iter().position(Option::is_some)
     }
 }
 
@@ -197,7 +186,7 @@ impl SequenceMaterializer {
             return Err(ExpansionError::LeakedTemporaryRegister { index });
         }
         self.rows.check_capacity()?;
-        stamp_sequence(self.rows.into_vec(), self.is_compressed)
+        stamp_instruction_sequence(self.rows.into_vec(), self.is_compressed)
     }
 }
 

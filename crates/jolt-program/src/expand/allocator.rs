@@ -3,7 +3,7 @@ use common::constants::{RISCV_REGISTER_COUNT, VIRTUAL_REGISTER_COUNT};
 use crate::expand::ExpansionError;
 
 const NUM_VIRTUAL_REGISTERS: usize = VIRTUAL_REGISTER_COUNT as usize;
-const NUM_VIRTUAL_INSTRUCTION_REGISTERS: usize = 8;
+pub(super) const NUM_VIRTUAL_INSTRUCTION_REGISTERS: usize = 8;
 const RISCV_REGISTER_BASE: u8 = RISCV_REGISTER_COUNT;
 const NUM_RESERVED_VIRTUAL_REGISTERS: usize = 8;
 const MAX_RECURSION_DEPTH: usize = 128;
@@ -176,15 +176,12 @@ impl ExpansionAllocator {
         end: usize,
         pool: &'static str,
     ) -> Result<u8, ExpansionError> {
-        let allocated = self.allocated;
-        let mut index = start;
-        while index < end {
+        for index in start..end {
             let bit = 1u128 << index;
-            if allocated & bit == 0 {
+            if self.allocated & bit == 0 {
                 self.allocated |= bit;
                 return Ok(RISCV_REGISTER_BASE + index as u8);
             }
-            index += 1;
         }
         Err(ExpansionError::VirtualRegisterExhausted { pool })
     }
@@ -211,12 +208,10 @@ impl ExpansionAllocator {
 
     fn registers_in_mask(mask: u128) -> Vec<u8> {
         let mut registers = Vec::new();
-        let mut index = 0;
-        while index < NUM_VIRTUAL_REGISTERS {
+        for index in 0..NUM_VIRTUAL_REGISTERS {
             if mask & (1u128 << index) != 0 {
                 registers.push(RISCV_REGISTER_BASE + index as u8);
             }
-            index += 1;
         }
         registers
     }

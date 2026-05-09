@@ -7,50 +7,50 @@ pub(in crate::expand) fn expand_divu(
     let v0 = asm.allocate()?;
     let v1 = asm.allocate()?;
 
-    asm.expand_j(JoltInstructionKind::VirtualAdvice, v0.operand(), 0)?;
+    asm.expand_j(JoltInstructionKind::VirtualAdvice, v0.operand(), 0);
     asm.expand_b(
         JoltInstructionKind::VirtualAssertValidDiv0,
         reg(rs2(instruction)?),
         v0.operand(),
         0,
-    )?;
+    );
     asm.expand_b(
         JoltInstructionKind::VirtualAssertMulUNoOverflow,
         v0.operand(),
         reg(rs2(instruction)?),
         0,
-    )?;
+    );
     asm.expand_r(
         JoltInstructionKind::MUL,
         v1.operand(),
         v0.operand(),
         reg(rs2(instruction)?),
-    )?;
+    );
     asm.expand_b(
         JoltInstructionKind::VirtualAssertLTE,
         v1.operand(),
         reg(rs1(instruction)?),
         0,
-    )?;
+    );
     asm.expand_r(
         JoltInstructionKind::SUB,
         v1.operand(),
         reg(rs1(instruction)?),
         v1.operand(),
-    )?;
+    );
     asm.expand_b(
         JoltInstructionKind::VirtualAssertValidUnsignedRemainder,
         v1.operand(),
         reg(rs2(instruction)?),
         0,
-    )?;
+    );
     asm.expand_i(
         JoltInstructionKind::ADDI,
         reg(rd(instruction)?),
         v0.operand(),
         0,
-    )?;
-    asm.release_many([v0, v1])?;
+    );
+    asm.release_many([v0, v1]);
 
     asm.finalize()
 }

@@ -43,7 +43,7 @@ pub(in crate::expand) fn expand_csrrs(
             reg(virtual_reg),
             temp.operand(),
         );
-        asm.release(temp)?;
+        asm.release(temp);
         return asm.finalize();
     }
 

@@ -24,7 +24,7 @@ pub(in crate::expand) fn expand_sllw(
         reg(rd(instruction)?),
         0,
     );
-    asm.release(v_pow2)?;
+    asm.release(v_pow2);
 
     asm.finalize()
 }

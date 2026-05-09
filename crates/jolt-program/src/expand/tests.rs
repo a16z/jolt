@@ -281,6 +281,49 @@ fn inline_provider_allocator_resets_are_appended() -> Result<(), ExpansionError>
 }
 
 #[test]
+fn inline_provider_allows_sequences_larger_than_instruction_recipes() -> Result<(), ExpansionError>
+{
+    struct LargeProvider;
+
+    impl InlineExpansionProvider for LargeProvider {
+        fn expand_inline(
+            &mut self,
+            instruction: &NormalizedInstruction,
+            _allocator: &mut ExpansionAllocator,
+        ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+            Ok((0..=buffer::MAX_FINAL_ROWS_PER_SOURCE)
+                .map(|_| NormalizedInstruction {
+                    instruction_kind: JoltInstructionKind::ADDI,
+                    address: instruction.address,
+                    operands: NormalizedOperands {
+                        rd: Some(0),
+                        rs1: Some(0),
+                        rs2: None,
+                        imm: 0,
+                    },
+                    virtual_sequence_remaining: None,
+                    is_first_in_sequence: false,
+                    is_compressed: false,
+                })
+                .collect())
+        }
+    }
+
+    let input = instruction(JoltInstructionKind::Inline, Some(3), true);
+    let mut allocator = ExpansionAllocator::new();
+    let expanded = expand_instruction_with_provider(&input, &mut allocator, &mut LargeProvider)?;
+
+    assert_eq!(expanded.len(), buffer::MAX_FINAL_ROWS_PER_SOURCE + 1);
+    assert_eq!(
+        expanded[0].virtual_sequence_remaining,
+        Some(buffer::MAX_FINAL_ROWS_PER_SOURCE as u16)
+    );
+    assert!(expanded[0].is_first_in_sequence);
+    assert!(expanded[buffer::MAX_FINAL_ROWS_PER_SOURCE].is_compressed);
+    Ok(())
+}
+
+#[test]
 fn source_only_expanders_are_not_target_legal() {
     macro_rules! assert_source_only {
         ($($kind:ident),* $(,)?) => {
