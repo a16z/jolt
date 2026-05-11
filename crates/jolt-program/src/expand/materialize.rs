@@ -4,8 +4,8 @@ use crate::expand::{
     allocator::{ExpansionAllocator, NUM_VIRTUAL_INSTRUCTION_REGISTERS},
     expand_source_only_instruction,
     grammar::{
-        is_source_only, ExpandedInstructionSequence, ExpansionOp, RegisterOperand, RowTemplate,
-        TempId, TemplateOperands,
+        is_source_only, DispatchRowTemplate, ExpandedInstructionSequence, ExpansionOp,
+        RegisterOperand, RowTemplate, TempId, TemplateOperands,
     },
     metadata::stamp_instruction_sequence,
     operands::{handles_rd_zero_internally, noop_for},
@@ -84,7 +84,7 @@ impl ExpansionState {
             match op {
                 ExpansionOp::Emit(row) => materializer.emit(row)?,
                 ExpansionOp::Dispatch(row) => {
-                    let instruction = materializer.instruction(row)?;
+                    let instruction = materializer.dispatch_instruction(row)?;
                     materializer.extend(self.expand_recursive(&instruction)?)?;
                 }
                 ExpansionOp::Allocate(register) => {
@@ -216,6 +216,20 @@ impl SequenceMaterializer {
     fn instruction(&self, row: RowTemplate) -> Result<NormalizedInstruction, ExpansionError> {
         Ok(NormalizedInstruction {
             instruction_kind: row.instruction_kind,
+            address: self.address,
+            operands: self.resolve_operands(row.operands)?,
+            virtual_sequence_remaining: Some(0),
+            is_first_in_sequence: false,
+            is_compressed: false,
+        })
+    }
+
+    fn dispatch_instruction(
+        &self,
+        row: DispatchRowTemplate,
+    ) -> Result<NormalizedInstruction, ExpansionError> {
+        Ok(NormalizedInstruction {
+            instruction_kind: row.instruction_kind.jolt_kind(),
             address: self.address,
             operands: self.resolve_operands(row.operands)?,
             virtual_sequence_remaining: Some(0),

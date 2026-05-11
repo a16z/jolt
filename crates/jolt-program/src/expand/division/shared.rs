@@ -59,7 +59,7 @@ pub(in crate::expand) fn expand_signed_div_rem(
             a2.operand(),
             0,
         );
-        asm.dispatch_i(JoltInstructionKind::SRAI, t2.operand(), a3.operand(), 32);
+        asm.dispatch_i(SourceInstructionKind::SRAI, t2.operand(), a3.operand(), 32);
         asm.dispatch_b(
             JoltInstructionKind::VirtualAssertEQ,
             t2.operand(),
@@ -68,7 +68,7 @@ pub(in crate::expand) fn expand_signed_div_rem(
         );
     } else {
         asm.dispatch_r(
-            JoltInstructionKind::MULH,
+            SourceInstructionKind::MULH,
             t1.operand(),
             a2.operand(),
             t0.operand(),
@@ -81,7 +81,12 @@ pub(in crate::expand) fn expand_signed_div_rem(
             a2.operand(),
             t0.operand(),
         );
-        asm.dispatch_i(JoltInstructionKind::SRAI, t3.operand(), t2.operand(), shmat);
+        asm.dispatch_i(
+            SourceInstructionKind::SRAI,
+            t3.operand(),
+            t2.operand(),
+            shmat,
+        );
         asm.dispatch_b(
             JoltInstructionKind::VirtualAssertEQ,
             t1.operand(),
@@ -94,7 +99,7 @@ pub(in crate::expand) fn expand_signed_div_rem(
     if word {
         let t2 = word_t2.ok_or(ExpansionError::MalformedInstruction("missing word temp"))?;
         let t3 = word_t3.ok_or(ExpansionError::MalformedInstruction("missing word temp"))?;
-        asm.dispatch_i(JoltInstructionKind::SRAI, t2.operand(), dividend, shmat);
+        asm.dispatch_i(SourceInstructionKind::SRAI, t2.operand(), dividend, shmat);
         asm.dispatch_r(
             JoltInstructionKind::XOR,
             t3.operand(),
@@ -125,7 +130,7 @@ pub(in crate::expand) fn expand_signed_div_rem(
             dividend,
             0,
         );
-        asm.dispatch_i(JoltInstructionKind::SRAI, t2.operand(), t0.operand(), 31);
+        asm.dispatch_i(SourceInstructionKind::SRAI, t2.operand(), t0.operand(), 31);
         asm.dispatch_r(
             JoltInstructionKind::XOR,
             t1.operand(),
@@ -160,7 +165,7 @@ pub(in crate::expand) fn expand_signed_div_rem(
         let t2 = asm.allocate()?;
         let t3 = asm.allocate()?;
         let abs_divisor = if remainder_output { t2 } else { t3 };
-        asm.dispatch_i(JoltInstructionKind::SRAI, t1.operand(), dividend, shmat);
+        asm.dispatch_i(SourceInstructionKind::SRAI, t1.operand(), dividend, shmat);
         asm.dispatch_r(
             JoltInstructionKind::XOR,
             t3.operand(),
@@ -180,7 +185,12 @@ pub(in crate::expand) fn expand_signed_div_rem(
             t3.operand(),
         );
         asm.dispatch_b(JoltInstructionKind::VirtualAssertEQ, t2.operand(), a0, 0);
-        asm.dispatch_i(JoltInstructionKind::SRAI, t1.operand(), t0.operand(), shmat);
+        asm.dispatch_i(
+            SourceInstructionKind::SRAI,
+            t1.operand(),
+            t0.operand(),
+            shmat,
+        );
         asm.dispatch_r(
             JoltInstructionKind::XOR,
             abs_divisor.operand(),

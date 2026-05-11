@@ -38,6 +38,7 @@ use division::*;
 use grammar::{reg, ExpandedInstructionSequence, ExpansionBuilder, RegisterOperand, TempId};
 use jolt_riscv::{
     JoltInstructionKind, NormalizedInstruction, NormalizedOperands, SourceInstruction,
+    SourceInstructionKind,
 };
 use materialize::ExpansionState;
 use memory::*;

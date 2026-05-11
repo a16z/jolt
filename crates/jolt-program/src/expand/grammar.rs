@@ -1,4 +1,4 @@
-use jolt_riscv::{JoltInstructionKind, NormalizedInstruction};
+use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, SourceInstructionKind};
 
 use crate::expand::{allocator::NUM_VIRTUAL_INSTRUCTION_REGISTERS, ExpansionError};
 
@@ -35,20 +35,20 @@ pub(super) struct TemplateOperands {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct RowTemplate {
-    pub(super) instruction_kind: JoltInstructionKind,
+pub(super) struct RowTemplate<K = JoltInstructionKind> {
+    pub(super) instruction_kind: K,
     pub(super) operands: TemplateOperands,
 }
 
-impl RowTemplate {
+impl<K> RowTemplate<K> {
     pub(super) fn r(
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: impl Into<K>,
         rd: RegisterOperand,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
     ) -> Self {
         Self {
-            instruction_kind,
+            instruction_kind: instruction_kind.into(),
             operands: TemplateOperands {
                 rd: Some(rd),
                 rs1: Some(rs1),
@@ -59,13 +59,13 @@ impl RowTemplate {
     }
 
     pub(super) fn i(
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: impl Into<K>,
         rd: RegisterOperand,
         rs1: RegisterOperand,
         imm: i128,
     ) -> Self {
         Self {
-            instruction_kind,
+            instruction_kind: instruction_kind.into(),
             operands: TemplateOperands {
                 rd: Some(rd),
                 rs1: Some(rs1),
@@ -75,9 +75,9 @@ impl RowTemplate {
         }
     }
 
-    pub(super) fn j(instruction_kind: JoltInstructionKind, rd: RegisterOperand, imm: i128) -> Self {
+    pub(super) fn j(instruction_kind: impl Into<K>, rd: RegisterOperand, imm: i128) -> Self {
         Self {
-            instruction_kind,
+            instruction_kind: instruction_kind.into(),
             operands: TemplateOperands {
                 rd: Some(rd),
                 rs1: None,
@@ -87,9 +87,9 @@ impl RowTemplate {
         }
     }
 
-    pub(super) fn u(instruction_kind: JoltInstructionKind, rd: RegisterOperand, imm: i128) -> Self {
+    pub(super) fn u(instruction_kind: impl Into<K>, rd: RegisterOperand, imm: i128) -> Self {
         Self {
-            instruction_kind,
+            instruction_kind: instruction_kind.into(),
             operands: TemplateOperands {
                 rd: Some(rd),
                 rs1: None,
@@ -98,15 +98,14 @@ impl RowTemplate {
             },
         }
     }
-
     pub(super) fn b(
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: impl Into<K>,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
         imm: i128,
     ) -> Self {
         Self {
-            instruction_kind,
+            instruction_kind: instruction_kind.into(),
             operands: TemplateOperands {
                 rd: None,
                 rs1: Some(rs1),
@@ -117,13 +116,13 @@ impl RowTemplate {
     }
 
     pub(super) fn s(
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: impl Into<K>,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
         imm: i128,
     ) -> Self {
         Self {
-            instruction_kind,
+            instruction_kind: instruction_kind.into(),
             operands: TemplateOperands {
                 rd: None,
                 rs1: Some(rs1),
@@ -133,15 +132,9 @@ impl RowTemplate {
         }
     }
 
-    /// Pseudo-I format for address/alignment assertions that read `rs1` and an
-    /// immediate offset but do not write `rd`.
-    pub(super) fn address(
-        instruction_kind: JoltInstructionKind,
-        rs1: RegisterOperand,
-        imm: i128,
-    ) -> Self {
+    pub(super) fn address(instruction_kind: impl Into<K>, rs1: RegisterOperand, imm: i128) -> Self {
         Self {
-            instruction_kind,
+            instruction_kind: instruction_kind.into(),
             operands: TemplateOperands {
                 rd: None,
                 rs1: Some(rs1),
@@ -152,13 +145,48 @@ impl RowTemplate {
     }
 }
 
+/// Kind carried by a recursive dispatch recipe step.
+///
+/// `Final` rows are already expressed in final Jolt bytecode vocabulary.
+/// `Source` rows intentionally request another source/helper lowering pass.
+/// The enum stays private to expansion so the public API remains the simpler
+/// `SourceInstruction -> Vec<NormalizedInstruction>` boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DispatchInstructionKind {
+    Source(SourceInstructionKind),
+    Final(JoltInstructionKind),
+}
+
+impl DispatchInstructionKind {
+    pub(super) const fn jolt_kind(self) -> JoltInstructionKind {
+        match self {
+            Self::Source(kind) => kind.jolt_kind(),
+            Self::Final(kind) => kind,
+        }
+    }
+}
+
+impl From<SourceInstructionKind> for DispatchInstructionKind {
+    fn from(value: SourceInstructionKind) -> Self {
+        Self::Source(value)
+    }
+}
+
+impl From<JoltInstructionKind> for DispatchInstructionKind {
+    fn from(value: JoltInstructionKind) -> Self {
+        Self::Final(value)
+    }
+}
+
+pub(super) type DispatchRowTemplate = RowTemplate<DispatchInstructionKind>;
+
 /// A single step in a symbolic expansion recipe.
 #[derive(Clone, Copy)]
 pub(super) enum ExpansionOp {
     /// Append this row directly to the output.
     Emit(RowTemplate),
     /// Recursively expand this row through the full pipeline before appending.
-    Dispatch(RowTemplate),
+    Dispatch(DispatchRowTemplate),
     Allocate(TempId),
     Release(TempId),
 }
@@ -248,69 +276,69 @@ impl ExpansionBuilder {
     /// and metadata stamping stay centralized.
     pub(super) fn dispatch_r(
         &mut self,
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: impl Into<DispatchInstructionKind>,
         rd: RegisterOperand,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
     ) {
-        self.dispatch(RowTemplate::r(instruction_kind, rd, rs1, rs2));
+        self.dispatch(DispatchRowTemplate::r(instruction_kind, rd, rs1, rs2));
     }
 
     pub(super) fn dispatch_i(
         &mut self,
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: impl Into<DispatchInstructionKind>,
         rd: RegisterOperand,
         rs1: RegisterOperand,
         imm: i128,
     ) {
-        self.dispatch(RowTemplate::i(instruction_kind, rd, rs1, imm));
+        self.dispatch(DispatchRowTemplate::i(instruction_kind, rd, rs1, imm));
     }
 
     pub(super) fn dispatch_j(
         &mut self,
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: impl Into<DispatchInstructionKind>,
         rd: RegisterOperand,
         imm: i128,
     ) {
-        self.dispatch(RowTemplate::j(instruction_kind, rd, imm));
+        self.dispatch(DispatchRowTemplate::j(instruction_kind, rd, imm));
     }
 
     pub(super) fn dispatch_u(
         &mut self,
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: impl Into<DispatchInstructionKind>,
         rd: RegisterOperand,
         imm: i128,
     ) {
-        self.dispatch(RowTemplate::u(instruction_kind, rd, imm));
+        self.dispatch(DispatchRowTemplate::u(instruction_kind, rd, imm));
     }
 
     pub(super) fn dispatch_b(
         &mut self,
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: impl Into<DispatchInstructionKind>,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
         imm: i128,
     ) {
-        self.dispatch(RowTemplate::b(instruction_kind, rs1, rs2, imm));
+        self.dispatch(DispatchRowTemplate::b(instruction_kind, rs1, rs2, imm));
     }
 
     pub(super) fn dispatch_s(
         &mut self,
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: impl Into<DispatchInstructionKind>,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
         imm: i128,
     ) {
-        self.dispatch(RowTemplate::s(instruction_kind, rs1, rs2, imm));
+        self.dispatch(DispatchRowTemplate::s(instruction_kind, rs1, rs2, imm));
     }
 
     pub(super) fn dispatch_address(
         &mut self,
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: impl Into<DispatchInstructionKind>,
         rs1: RegisterOperand,
         imm: i128,
     ) {
-        self.dispatch(RowTemplate::address(instruction_kind, rs1, imm));
+        self.dispatch(DispatchRowTemplate::address(instruction_kind, rs1, imm));
     }
 
     pub(super) fn release(&mut self, temp: TempId) {
@@ -334,7 +362,7 @@ impl ExpansionBuilder {
         self.ops.push(ExpansionOp::Emit(row));
     }
 
-    fn dispatch(&mut self, row: RowTemplate) {
+    fn dispatch(&mut self, row: DispatchRowTemplate) {
         self.ops.push(ExpansionOp::Dispatch(row));
     }
 }

@@ -26,15 +26,15 @@ pub(in crate::expand) fn expand_lwu(
     );
     asm.dispatch_i(JoltInstructionKind::LD, v1.operand(), v1.operand(), 0);
     asm.dispatch_i(JoltInstructionKind::XORI, v0.operand(), v0.operand(), 4);
-    asm.dispatch_i(JoltInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
+    asm.dispatch_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
     asm.dispatch_r(
-        JoltInstructionKind::SLL,
+        SourceInstructionKind::SLL,
         v1.operand(),
         v1.operand(),
         v0.operand(),
     );
     asm.dispatch_i(
-        JoltInstructionKind::SRLI,
+        SourceInstructionKind::SRLI,
         reg(rd(instruction)?),
         v1.operand(),
         32,

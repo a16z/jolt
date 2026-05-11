@@ -65,7 +65,7 @@ Keep the implementation PR's new checks focused on targeted `jolt-program`, `tra
 - This spec does not require supporting RV32 in `jolt-program`; RV32/ELF32 should be rejected by the new program pipeline.
 - This spec does not require deleting historical RV32 branches from `tracer`; that cleanup can happen separately.
 - TODO(tracer RV32 cleanup): when RV32 support is fully removed from `tracer`, update stale comments and docs that still describe `Xlen`, RV32, ELF32, or dual-width expansion behavior as live supported paths.
-- TODO(final row split): `SourceInstruction` is now distinct from `NormalizedInstruction` at the decode/expand API boundary. The remaining internal cleanup is to make recursive dispatch rows explicit enough that source-only helper rows no longer need to masquerade as final bytecode rows while they are being lowered.
+- TODO(final row split): `SourceInstruction` is now distinct from `NormalizedInstruction` at the decode/expand API boundary, and recipe dispatch can carry private source/helper row kinds. The remaining internal cleanup is to make the lowering matcher consume those source/helper kinds directly instead of converting them through `JoltInstructionKind` first.
 - TODO(instruction kind names): `SourceInstructionKind` is the decoded guest-program kind. It includes RV64 ISA opcodes plus Jolt custom source opcodes such as registered inlines, advice loads, `VirtualHostIO`, and `VirtualAdviceLen`.
 - TODO(final bytecode kind): keep `JoltInstructionKind` as the final expanded bytecode-row identity. It should eventually stop containing source-only rows such as AMOs, source loads/stores that are always lowered, source DIV/REM helpers, CSR/trap source rows if they always lower, and `Inline`. Do this only after recursive dispatch has a typed place to carry source-only helper rows.
 - TODO(expansion operation names): `ExpansionOp::Dispatch` and `ExpansionBuilder::dispatch_*` mean "dispatch this row through recursive canonicalization/lowering", not "expand a source RISC-V instruction". Keep this naming and do not reintroduce `expand_*` for recursive row routing.
@@ -100,8 +100,8 @@ Keep the implementation PR's new checks focused on targeted `jolt-program`, `tra
 - [x] Rename the recursive expansion operation from `Expand`/`expand_*` to `Dispatch`/`dispatch_*`, because this operation routes a row through rd=x0 canonicalization, source-only lowering, and target-row pass-through. It is not synonymous with "expand a decoded RISC-V source instruction".
 - [x] Introduce a decoded/source row type distinct from the final bytecode row type. `SourceInstruction` is the source-program row, and public expansion APIs accept source rows rather than final bytecode rows.
 - [x] Rename the decoded/source kind enum to `SourceInstructionKind` and document that it includes RV64 ISA opcodes plus Jolt custom source opcodes.
-- [ ] Shrink `JoltInstructionKind` to final expanded bytecode rows only after recursive dispatch semantics are represented explicitly. Do not remove source-only variants before the expansion language has a typed place to put helper rows that intentionally require another lowering pass.
-- [ ] Keep any `DispatchKind`/source-vs-final helper enum private to `jolt-program::expand` unless a public API need emerges. The design goal is fewer concepts at public boundaries, not a larger instruction-kind lattice.
+- [ ] Shrink `JoltInstructionKind` to final expanded bytecode rows only after recursive dispatch has fully stopped lowering source-only helpers through `NormalizedInstruction`. Do not remove source-only variants before the lowering matcher itself accepts the source/helper kind.
+- [x] Keep any `DispatchKind`/source-vs-final helper enum private to `jolt-program::expand` unless a public API need emerges. The design goal is fewer concepts at public boundaries, not a larger instruction-kind lattice.
 - [x] `jolt-program` does not depend on PCS implementations, Dory setup, commitment derivation, bytecode/program-image opening hints, BlindFold setup, or prover-only witness generation.
 - [x] The expansion-critical `jolt-program::expand` module does not depend on CPU execution, lazy tracing, memory-device emulation, advice I/O, prover-only witness generation, transcripts, or ELF/object parsing.
 - [x] Any ELF/object parsing dependency is feature-gated and isolated to `jolt-program::image` so `jolt-program::expand` and `jolt-program::preprocess` remain usable without an object-file parser dependency.
@@ -195,8 +195,8 @@ Therefore the first simplification should be behavioral and mechanical:
 
 ```rust
 enum ExpansionOp {
-    Emit(RowTemplate),      // append this final row exactly
-    Dispatch(RowTemplate),  // route through recursive canonicalization/lowering
+    Emit(RowTemplate),              // append this final row exactly
+    Dispatch(DispatchRowTemplate),  // route through recursive canonicalization/lowering
     Allocate(TempId),
     Release(TempId),
 }
@@ -209,7 +209,7 @@ asm.emit_i(...);      // exact final row
 asm.dispatch_i(...);  // recursive dispatch/canonicalization
 ```
 
-This preserves current behavior while making it auditable. It also avoids adding a public `DispatchInstructionKind` abstraction before the source/final row split proves it needs one.
+This preserves current behavior while making it auditable. The implementation may use a private `DispatchInstructionKind`/`DispatchRowTemplate` inside `jolt-program::expand` so recursive helper rows can say whether they are source/helper rows or final rows. That helper must remain private unless a public API need emerges.
 
 #### Source Rows Versus Final Jolt Rows
 

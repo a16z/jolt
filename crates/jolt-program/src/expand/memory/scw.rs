@@ -54,7 +54,7 @@ pub(in crate::expand) fn expand_scw(
 
     let v_mem = asm.allocate()?;
     asm.dispatch_i(
-        JoltInstructionKind::LW,
+        SourceInstructionKind::LW,
         v_mem.operand(),
         reg(rs1(instruction)?),
         0,
@@ -89,7 +89,7 @@ pub(in crate::expand) fn expand_scw(
     );
     asm.release(v_diff);
     asm.dispatch_s(
-        JoltInstructionKind::SW,
+        SourceInstructionKind::SW,
         reg(rs1(instruction)?),
         reg(v_reservation_d),
         0,

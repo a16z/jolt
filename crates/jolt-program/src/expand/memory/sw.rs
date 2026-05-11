@@ -27,22 +27,22 @@ pub(in crate::expand) fn expand_sw(
         format_i_imm(-8),
     );
     asm.dispatch_i(JoltInstructionKind::LD, v2.operand(), v1.operand(), 0);
-    asm.dispatch_i(JoltInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
+    asm.dispatch_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
     asm.dispatch_i(
         JoltInstructionKind::ORI,
         v3.operand(),
         reg(0),
         format_i_imm(-1),
     );
-    asm.dispatch_i(JoltInstructionKind::SRLI, v3.operand(), v3.operand(), 32);
+    asm.dispatch_i(SourceInstructionKind::SRLI, v3.operand(), v3.operand(), 32);
     asm.dispatch_r(
-        JoltInstructionKind::SLL,
+        SourceInstructionKind::SLL,
         v3.operand(),
         v3.operand(),
         v0.operand(),
     );
     asm.dispatch_r(
-        JoltInstructionKind::SLL,
+        SourceInstructionKind::SLL,
         v0.operand(),
         reg(rs2(instruction)?),
         v0.operand(),

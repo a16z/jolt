@@ -30,7 +30,7 @@ pub(in crate::expand) fn expand_lrw(
     );
     asm.dispatch_i(JoltInstructionKind::ADDI, reg(v_reservation_d), reg(0), 0);
     asm.dispatch_i(
-        JoltInstructionKind::LW,
+        SourceInstructionKind::LW,
         reg(rd(instruction)?),
         reg(rs1(instruction)?),
         0,

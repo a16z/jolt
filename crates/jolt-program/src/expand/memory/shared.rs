@@ -44,18 +44,18 @@ pub(in crate::expand) fn expand_byte_load(
     );
     asm.dispatch_i(JoltInstructionKind::LD, v1.operand(), v1.operand(), 0);
     asm.dispatch_i(JoltInstructionKind::XORI, v0.operand(), v0.operand(), 7);
-    asm.dispatch_i(JoltInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
+    asm.dispatch_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
     asm.dispatch_r(
-        JoltInstructionKind::SLL,
+        SourceInstructionKind::SLL,
         v1.operand(),
         v1.operand(),
         v0.operand(),
     );
     asm.dispatch_i(
         if signed {
-            JoltInstructionKind::SRAI
+            SourceInstructionKind::SRAI
         } else {
-            JoltInstructionKind::SRLI
+            SourceInstructionKind::SRLI
         },
         reg(rd(instruction)?),
         v1.operand(),
@@ -93,18 +93,18 @@ pub(in crate::expand) fn expand_halfword_load(
     );
     asm.dispatch_i(JoltInstructionKind::LD, v1.operand(), v1.operand(), 0);
     asm.dispatch_i(JoltInstructionKind::XORI, v0.operand(), v0.operand(), 6);
-    asm.dispatch_i(JoltInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
+    asm.dispatch_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
     asm.dispatch_r(
-        JoltInstructionKind::SLL,
+        SourceInstructionKind::SLL,
         v1.operand(),
         v1.operand(),
         v0.operand(),
     );
     asm.dispatch_i(
         if signed {
-            JoltInstructionKind::SRAI
+            SourceInstructionKind::SRAI
         } else {
-            JoltInstructionKind::SRLI
+            SourceInstructionKind::SRLI
         },
         reg(rd(instruction)?),
         v1.operand(),
@@ -129,13 +129,13 @@ pub(in crate::expand) fn expand_advice_load(
     if byte_len < 8 {
         let shift = 64 - byte_len * 8;
         asm.dispatch_i(
-            JoltInstructionKind::SLLI,
+            SourceInstructionKind::SLLI,
             reg(rd(instruction)?),
             reg(rd(instruction)?),
             shift,
         );
         asm.dispatch_i(
-            JoltInstructionKind::SRAI,
+            SourceInstructionKind::SRAI,
             reg(rd(instruction)?),
             reg(rd(instruction)?),
             shift,
@@ -349,8 +349,8 @@ pub(in crate::expand) fn expand_amo_pre64(
     asm.dispatch_address(JoltInstructionKind::VirtualAssertWordAlignment, rs1, 0);
     asm.dispatch_i(JoltInstructionKind::ANDI, v_shift, rs1, format_i_imm(-8));
     asm.dispatch_i(JoltInstructionKind::LD, v_dword, v_shift, 0);
-    asm.dispatch_i(JoltInstructionKind::SLLI, v_shift, rs1, 3);
-    asm.dispatch_r(JoltInstructionKind::SRL, v_rd, v_dword, v_shift);
+    asm.dispatch_i(SourceInstructionKind::SLLI, v_shift, rs1, 3);
+    asm.dispatch_r(SourceInstructionKind::SRL, v_rd, v_dword, v_shift);
     Ok(())
 }
 
@@ -379,9 +379,9 @@ pub(in crate::expand) fn expand_amo_post64(
     } = registers;
 
     asm.dispatch_i(JoltInstructionKind::ORI, v_mask, reg(0), format_i_imm(-1));
-    asm.dispatch_i(JoltInstructionKind::SRLI, v_mask, v_mask, 32);
-    asm.dispatch_r(JoltInstructionKind::SLL, v_mask, v_mask, v_shift);
-    asm.dispatch_r(JoltInstructionKind::SLL, v_shift, v_rs2, v_shift);
+    asm.dispatch_i(SourceInstructionKind::SRLI, v_mask, v_mask, 32);
+    asm.dispatch_r(SourceInstructionKind::SLL, v_mask, v_mask, v_shift);
+    asm.dispatch_r(SourceInstructionKind::SLL, v_shift, v_rs2, v_shift);
     asm.dispatch_r(JoltInstructionKind::XOR, v_shift, v_dword, v_shift);
     asm.dispatch_r(JoltInstructionKind::AND, v_shift, v_shift, v_mask);
     asm.dispatch_r(JoltInstructionKind::XOR, v_dword, v_dword, v_shift);
@@ -418,16 +418,16 @@ pub(in crate::expand) fn expand_narrow_store(
         format_i_imm(-8),
     );
     asm.dispatch_i(JoltInstructionKind::LD, v2.operand(), v1.operand(), 0);
-    asm.dispatch_i(JoltInstructionKind::SLLI, v3.operand(), v0.operand(), 3);
+    asm.dispatch_i(SourceInstructionKind::SLLI, v3.operand(), v0.operand(), 3);
     asm.dispatch_u(JoltInstructionKind::LUI, v0.operand(), mask);
     asm.dispatch_r(
-        JoltInstructionKind::SLL,
+        SourceInstructionKind::SLL,
         v0.operand(),
         v0.operand(),
         v3.operand(),
     );
     asm.dispatch_r(
-        JoltInstructionKind::SLL,
+        SourceInstructionKind::SLL,
         v3.operand(),
         reg(rs2(instruction)?),
         v3.operand(),
