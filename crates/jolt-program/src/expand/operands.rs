@@ -1,21 +1,5 @@
 use super::*;
 
-pub(super) fn noop_for_source(instruction: SourceInstruction) -> NormalizedInstruction {
-    NormalizedInstruction {
-        instruction_kind: JoltInstructionKind::ADDI,
-        address: instruction.address,
-        operands: NormalizedOperands {
-            rd: Some(0),
-            rs1: Some(0),
-            rs2: None,
-            imm: 0,
-        },
-        virtual_sequence_remaining: None,
-        is_first_in_sequence: false,
-        is_compressed: instruction.is_compressed,
-    }
-}
-
 /// Replaces a side-effect-free rd=x0 instruction with `ADDI x0, x0, 0`.
 pub(super) fn noop_for(instruction: NormalizedInstruction) -> NormalizedInstruction {
     debug_assert_eq!(instruction.operands.rd, Some(0));
@@ -63,10 +47,8 @@ pub(super) fn csr_address(instruction: &NormalizedInstruction) -> u16 {
     (instruction.operands.imm & 0xfff) as u16
 }
 
-/// Final rows whose expansion dispatch handles rd=x0 itself.
-pub(super) const fn handles_final_rd_zero_internally(
-    instruction_kind: JoltInstructionKind,
-) -> bool {
+/// Instructions whose expansion recipes handle rd=x0 themselves (trap, CSR).
+pub(super) const fn handles_rd_zero_internally(instruction_kind: JoltInstructionKind) -> bool {
     matches!(
         instruction_kind,
         JoltInstructionKind::ECALL

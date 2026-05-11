@@ -1,4 +1,4 @@
-use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, SourceInstructionKind};
+use jolt_riscv::{JoltInstructionKind, NormalizedInstruction};
 
 use crate::expand::{allocator::NUM_VIRTUAL_INSTRUCTION_REGISTERS, ExpansionError};
 
@@ -35,20 +35,20 @@ pub(super) struct TemplateOperands {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct RowTemplate<K = JoltInstructionKind> {
-    pub(super) instruction_kind: K,
+pub(super) struct RowTemplate {
+    pub(super) instruction_kind: JoltInstructionKind,
     pub(super) operands: TemplateOperands,
 }
 
-impl<K> RowTemplate<K> {
+impl RowTemplate {
     pub(super) fn r(
-        instruction_kind: impl Into<K>,
+        instruction_kind: JoltInstructionKind,
         rd: RegisterOperand,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
     ) -> Self {
         Self {
-            instruction_kind: instruction_kind.into(),
+            instruction_kind,
             operands: TemplateOperands {
                 rd: Some(rd),
                 rs1: Some(rs1),
@@ -59,13 +59,13 @@ impl<K> RowTemplate<K> {
     }
 
     pub(super) fn i(
-        instruction_kind: impl Into<K>,
+        instruction_kind: JoltInstructionKind,
         rd: RegisterOperand,
         rs1: RegisterOperand,
         imm: i128,
     ) -> Self {
         Self {
-            instruction_kind: instruction_kind.into(),
+            instruction_kind,
             operands: TemplateOperands {
                 rd: Some(rd),
                 rs1: Some(rs1),
@@ -75,9 +75,9 @@ impl<K> RowTemplate<K> {
         }
     }
 
-    pub(super) fn j(instruction_kind: impl Into<K>, rd: RegisterOperand, imm: i128) -> Self {
+    pub(super) fn j(instruction_kind: JoltInstructionKind, rd: RegisterOperand, imm: i128) -> Self {
         Self {
-            instruction_kind: instruction_kind.into(),
+            instruction_kind,
             operands: TemplateOperands {
                 rd: Some(rd),
                 rs1: None,
@@ -87,9 +87,9 @@ impl<K> RowTemplate<K> {
         }
     }
 
-    pub(super) fn u(instruction_kind: impl Into<K>, rd: RegisterOperand, imm: i128) -> Self {
+    pub(super) fn u(instruction_kind: JoltInstructionKind, rd: RegisterOperand, imm: i128) -> Self {
         Self {
-            instruction_kind: instruction_kind.into(),
+            instruction_kind,
             operands: TemplateOperands {
                 rd: Some(rd),
                 rs1: None,
@@ -98,14 +98,15 @@ impl<K> RowTemplate<K> {
             },
         }
     }
+
     pub(super) fn b(
-        instruction_kind: impl Into<K>,
+        instruction_kind: JoltInstructionKind,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
         imm: i128,
     ) -> Self {
         Self {
-            instruction_kind: instruction_kind.into(),
+            instruction_kind,
             operands: TemplateOperands {
                 rd: None,
                 rs1: Some(rs1),
@@ -116,13 +117,13 @@ impl<K> RowTemplate<K> {
     }
 
     pub(super) fn s(
-        instruction_kind: impl Into<K>,
+        instruction_kind: JoltInstructionKind,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
         imm: i128,
     ) -> Self {
         Self {
-            instruction_kind: instruction_kind.into(),
+            instruction_kind,
             operands: TemplateOperands {
                 rd: None,
                 rs1: Some(rs1),
@@ -132,9 +133,15 @@ impl<K> RowTemplate<K> {
         }
     }
 
-    pub(super) fn address(instruction_kind: impl Into<K>, rs1: RegisterOperand, imm: i128) -> Self {
+    /// Pseudo-I format for address/alignment assertions that read `rs1` and an
+    /// immediate offset but do not write `rd`.
+    pub(super) fn address(
+        instruction_kind: JoltInstructionKind,
+        rs1: RegisterOperand,
+        imm: i128,
+    ) -> Self {
         Self {
-            instruction_kind: instruction_kind.into(),
+            instruction_kind,
             operands: TemplateOperands {
                 rd: None,
                 rs1: Some(rs1),
@@ -145,39 +152,13 @@ impl<K> RowTemplate<K> {
     }
 }
 
-/// Kind carried by a recursive dispatch recipe step.
-///
-/// `Final` rows are already expressed in final Jolt bytecode vocabulary.
-/// `Source` rows intentionally request another source/helper lowering pass.
-/// The enum stays private to expansion so the public API remains the simpler
-/// `SourceInstruction -> Vec<NormalizedInstruction>` boundary.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum DispatchInstructionKind {
-    Source(SourceInstructionKind),
-    Final(JoltInstructionKind),
-}
-
-impl From<SourceInstructionKind> for DispatchInstructionKind {
-    fn from(value: SourceInstructionKind) -> Self {
-        Self::Source(value)
-    }
-}
-
-impl From<JoltInstructionKind> for DispatchInstructionKind {
-    fn from(value: JoltInstructionKind) -> Self {
-        Self::Final(value)
-    }
-}
-
-pub(super) type DispatchRowTemplate = RowTemplate<DispatchInstructionKind>;
-
 /// A single step in a symbolic expansion recipe.
 #[derive(Clone, Copy)]
 pub(super) enum ExpansionOp {
     /// Append this row directly to the output.
     Emit(RowTemplate),
     /// Recursively expand this row through the full pipeline before appending.
-    Dispatch(DispatchRowTemplate),
+    Expand(RowTemplate),
     Allocate(TempId),
     Release(TempId),
 }
@@ -188,7 +169,7 @@ pub(super) struct ExpandedInstructionSequence {
     pub(super) ops: Vec<ExpansionOp>,
 }
 
-/// Builds a symbolic expansion recipe from emit/dispatch/allocate/release calls.
+/// Builds a symbolic expansion recipe from emit/expand/allocate/release calls.
 pub(super) struct ExpansionBuilder {
     source: NormalizedInstruction,
     ops: Vec<ExpansionOp>,
@@ -219,8 +200,8 @@ impl ExpansionBuilder {
     /// Append an already target-legal row to this source row's output sequence.
     ///
     /// Use `emit_*` when the row should appear exactly as written in finalized
-    /// bytecode. Use `dispatch_*` when the row must first go through recursive
-    /// canonicalization, including rd=x0 handling and source-only lowering.
+    /// bytecode. Use `expand_*` instead when the row is a source-only helper
+    /// that must be routed through the central expander first.
     pub(super) fn emit_r(
         &mut self,
         instruction_kind: JoltInstructionKind,
@@ -259,77 +240,77 @@ impl ExpansionBuilder {
         self.emit(RowTemplate::u(instruction_kind, rd, imm));
     }
 
-    /// Record a row that the provider-free materializer must dispatch before
-    /// appending its finalized rows to this source-row sequence.
+    /// Record a source-only helper row that the provider-free materializer must
+    /// expand before appending its finalized rows to this source-row sequence.
     ///
-    /// Recursive helper dispatch always goes through `ExpansionState`, so
-    /// rd=x0 handling, source-only lowering, recursion depth, allocator state,
-    /// and metadata stamping stay centralized.
-    pub(super) fn dispatch_r(
+    /// Recursive helper expansion always goes through `ExpansionState`, so
+    /// rd=x0 handling, recursion depth, allocator state, and metadata stamping
+    /// stay centralized.
+    pub(super) fn expand_r(
         &mut self,
-        instruction_kind: impl Into<DispatchInstructionKind>,
+        instruction_kind: JoltInstructionKind,
         rd: RegisterOperand,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
     ) {
-        self.dispatch(DispatchRowTemplate::r(instruction_kind, rd, rs1, rs2));
+        self.expand(RowTemplate::r(instruction_kind, rd, rs1, rs2));
     }
 
-    pub(super) fn dispatch_i(
+    pub(super) fn expand_i(
         &mut self,
-        instruction_kind: impl Into<DispatchInstructionKind>,
+        instruction_kind: JoltInstructionKind,
         rd: RegisterOperand,
         rs1: RegisterOperand,
         imm: i128,
     ) {
-        self.dispatch(DispatchRowTemplate::i(instruction_kind, rd, rs1, imm));
+        self.expand(RowTemplate::i(instruction_kind, rd, rs1, imm));
     }
 
-    pub(super) fn dispatch_j(
+    pub(super) fn expand_j(
         &mut self,
-        instruction_kind: impl Into<DispatchInstructionKind>,
+        instruction_kind: JoltInstructionKind,
         rd: RegisterOperand,
         imm: i128,
     ) {
-        self.dispatch(DispatchRowTemplate::j(instruction_kind, rd, imm));
+        self.expand(RowTemplate::j(instruction_kind, rd, imm));
     }
 
-    pub(super) fn dispatch_u(
+    pub(super) fn expand_u(
         &mut self,
-        instruction_kind: impl Into<DispatchInstructionKind>,
+        instruction_kind: JoltInstructionKind,
         rd: RegisterOperand,
         imm: i128,
     ) {
-        self.dispatch(DispatchRowTemplate::u(instruction_kind, rd, imm));
+        self.expand(RowTemplate::u(instruction_kind, rd, imm));
     }
 
-    pub(super) fn dispatch_b(
+    pub(super) fn expand_b(
         &mut self,
-        instruction_kind: impl Into<DispatchInstructionKind>,
+        instruction_kind: JoltInstructionKind,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
         imm: i128,
     ) {
-        self.dispatch(DispatchRowTemplate::b(instruction_kind, rs1, rs2, imm));
+        self.expand(RowTemplate::b(instruction_kind, rs1, rs2, imm));
     }
 
-    pub(super) fn dispatch_s(
+    pub(super) fn expand_s(
         &mut self,
-        instruction_kind: impl Into<DispatchInstructionKind>,
+        instruction_kind: JoltInstructionKind,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
         imm: i128,
     ) {
-        self.dispatch(DispatchRowTemplate::s(instruction_kind, rs1, rs2, imm));
+        self.expand(RowTemplate::s(instruction_kind, rs1, rs2, imm));
     }
 
-    pub(super) fn dispatch_address(
+    pub(super) fn expand_address(
         &mut self,
-        instruction_kind: impl Into<DispatchInstructionKind>,
+        instruction_kind: JoltInstructionKind,
         rs1: RegisterOperand,
         imm: i128,
     ) {
-        self.dispatch(DispatchRowTemplate::address(instruction_kind, rs1, imm));
+        self.expand(RowTemplate::address(instruction_kind, rs1, imm));
     }
 
     pub(super) fn release(&mut self, temp: TempId) {
@@ -353,13 +334,87 @@ impl ExpansionBuilder {
         self.ops.push(ExpansionOp::Emit(row));
     }
 
-    fn dispatch(&mut self, row: DispatchRowTemplate) {
-        self.ops.push(ExpansionOp::Dispatch(row));
+    fn expand(&mut self, row: RowTemplate) {
+        self.ops.push(ExpansionOp::Expand(row));
     }
 }
 
+/// Instructions that exist only in decoded source and must be expanded into target-legal sequences.
+pub(super) fn is_source_only(instruction_kind: JoltInstructionKind) -> bool {
+    matches!(
+        instruction_kind,
+        JoltInstructionKind::Inline
+            | JoltInstructionKind::ADDIW
+            | JoltInstructionKind::ADDW
+            | JoltInstructionKind::SUBW
+            | JoltInstructionKind::MULH
+            | JoltInstructionKind::MULHSU
+            | JoltInstructionKind::MULW
+            | JoltInstructionKind::LB
+            | JoltInstructionKind::LBU
+            | JoltInstructionKind::LH
+            | JoltInstructionKind::LHU
+            | JoltInstructionKind::LW
+            | JoltInstructionKind::LWU
+            | JoltInstructionKind::AdviceLB
+            | JoltInstructionKind::AdviceLH
+            | JoltInstructionKind::AdviceLW
+            | JoltInstructionKind::AdviceLD
+            | JoltInstructionKind::AMOADDD
+            | JoltInstructionKind::AMOANDD
+            | JoltInstructionKind::AMOORD
+            | JoltInstructionKind::AMOXORD
+            | JoltInstructionKind::AMOSWAPD
+            | JoltInstructionKind::AMOMAXD
+            | JoltInstructionKind::AMOMAXUD
+            | JoltInstructionKind::AMOMIND
+            | JoltInstructionKind::AMOMINUD
+            | JoltInstructionKind::AMOADDW
+            | JoltInstructionKind::AMOANDW
+            | JoltInstructionKind::AMOORW
+            | JoltInstructionKind::AMOXORW
+            | JoltInstructionKind::AMOSWAPW
+            | JoltInstructionKind::AMOMAXW
+            | JoltInstructionKind::AMOMAXUW
+            | JoltInstructionKind::AMOMINW
+            | JoltInstructionKind::AMOMINUW
+            | JoltInstructionKind::LRD
+            | JoltInstructionKind::LRW
+            | JoltInstructionKind::DIV
+            | JoltInstructionKind::DIVU
+            | JoltInstructionKind::DIVW
+            | JoltInstructionKind::DIVUW
+            | JoltInstructionKind::REM
+            | JoltInstructionKind::REMU
+            | JoltInstructionKind::REMW
+            | JoltInstructionKind::REMUW
+            | JoltInstructionKind::SB
+            | JoltInstructionKind::SCD
+            | JoltInstructionKind::SCW
+            | JoltInstructionKind::SH
+            | JoltInstructionKind::SW
+            | JoltInstructionKind::CSRRW
+            | JoltInstructionKind::CSRRS
+            | JoltInstructionKind::EBREAK
+            | JoltInstructionKind::ECALL
+            | JoltInstructionKind::MRET
+            | JoltInstructionKind::SLL
+            | JoltInstructionKind::SLLI
+            | JoltInstructionKind::SLLW
+            | JoltInstructionKind::SLLIW
+            | JoltInstructionKind::SRL
+            | JoltInstructionKind::SRLI
+            | JoltInstructionKind::SRA
+            | JoltInstructionKind::SRAI
+            | JoltInstructionKind::SRLIW
+            | JoltInstructionKind::SRAIW
+            | JoltInstructionKind::SRLW
+            | JoltInstructionKind::SRAW
+    )
+}
+
 pub(super) fn is_target_legal(instruction_kind: JoltInstructionKind) -> bool {
-    !SourceInstructionKind::from(instruction_kind).is_source_only()
+    !is_source_only(instruction_kind)
 }
 
 #[cfg(test)]

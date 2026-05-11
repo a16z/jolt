@@ -57,7 +57,7 @@ fn test_rng() -> StdRng {
 }
 
 #[test]
-fn jolt_program_rv64_decode_matches_tracer_source_instruction() {
+fn jolt_program_rv64_decode_matches_tracer_normalization() {
     use crate::instruction::{uncompress_instruction, Instruction};
 
     let address = DRAM_BASE;
@@ -87,7 +87,7 @@ fn jolt_program_rv64_decode_matches_tracer_source_instruction() {
     for (word, compressed) in cases {
         let expected = Instruction::decode(word, address, compressed)
             .unwrap()
-            .source_instruction();
+            .normalize();
         let actual =
             jolt_program::image::decode::decode_instruction(word, address, compressed).unwrap();
         assert_eq!(actual, expected, "word={word:08x} compressed={compressed}");

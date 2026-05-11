@@ -22,10 +22,10 @@ decoded RV64 source row
 ```
 
 Concrete lowerers are written as assembly-like recipes using
-`ExpansionBuilder`. The builder records what should be emitted, dispatched,
+`ExpansionBuilder`. The builder records what should be emitted, expanded,
 allocated, and released. It does not own allocator state and does not recursively
 call the public expander. One central materializer interprets the recipe,
-resolves symbolic temps to real virtual registers, recursively dispatches helper
+resolves symbolic temps to real virtual registers, recursively expands helper
 rows, validates target legality, and stamps sequence metadata.
 
 The design favors production Rust readability and exact register-budget
@@ -39,9 +39,10 @@ This PR combines four related cleanups that reinforce the same boundary:
 - RV64-only program construction and tracing. Historical RV32/SV32 execution
   paths are removed from tracer code, and ELF32/RV32 inputs are rejected at the
   `jolt-program::image` boundary.
-- instruction identity is split by phase, so decoded RISC-V instructions,
-  expanded Jolt bytecode rows, and lookup-backed instructions are named
-  separately.
+- lookup-backed instruction identity is split out of the flat instruction enum.
+  The deeper decoded-source versus expanded-Jolt split is intentionally left as
+  follow-up work because it requires tracer's concrete `Instruction` and
+  `Cycle` model to become phase-aware.
 - provider-free expansion is moved from a recursive assembler with borrowed
   allocator state to a recipe/materializer pass.
 - serialization derives in `jolt-riscv` and `jolt-program` are feature-gated so
@@ -55,10 +56,10 @@ operations. They are not RV32 execution support.
 
 - Keep program construction and bytecode expansion RV64-only.
 - Preserve expansion behavior relative to the post-#1490 baseline.
-- Make instruction phase boundaries explicit:
-  - `SourceInstructionKind`: decoded source-program identity.
-  - `JoltInstructionKind`: expanded bytecode row identity.
-  - `LookupInstruction`: typed view of lookup-backed/provable rows.
+- Keep `JoltInstructionKind`/`NormalizedInstruction` as the existing flat row
+  identity for this PR while removing the separate lookup-kind enum.
+- Preserve a decoder-facing `SourceInstructionKind` only as a preparatory mirror
+  of the current flat enum, not as a completed source/final split.
 - Keep concrete lowerers readable enough for humans to add or revise opcodes.
 - Centralize allocator ownership, recursive helper expansion, target-legality
   validation, metadata stamping, recursion-depth checks, and `rd = x0` rewriting.
@@ -77,42 +78,41 @@ operations. They are not RV32 execution support.
 - Do not move registered `jolt-inlines` implementations into the provider-free
   grammar.
 - Do not require Hax/Aeneas extraction in CI.
+- Do not complete the source-program versus final-Jolt instruction-kind split
+  in this PR. That requires tracer-side API changes so decoded guest
+  instructions and expanded trace/proof rows no longer share the same concrete
+  conversion path.
 
 ## Instruction Phases
 
-Instruction identity is split by phase:
+Instruction identity is only partially separated in this PR:
 
-- `SourceInstructionKind` names decoded source rows. It includes standard RV64
-  ISA opcodes and Jolt custom source opcodes such as registered inlines, advice
-  loads, `VirtualHostIO`, and `VirtualAdviceLen`.
-- `JoltInstructionKind` names normalized Jolt bytecode rows. The current code
-  still carries some legacy source-only variants while tracer conversion traits
-  are being cut over, but the intended final shape is final-bytecode-only.
-- `LookupInstruction` is the typed view for final rows that have lookup-table
-  proof semantics. There is no separate `LookupInstructionKind` enum.
+- `JoltInstructionKind` remains the canonical flat row identity used by
+  `NormalizedInstruction`, bytecode preprocessing, tracer conversion traits, and
+  proof code. It still contains both final bytecode rows and source-only rows
+  that are expansion inputs.
+- `SourceInstructionKind` is a decoder-facing mirror of the same current
+  instruction set. It names the decode result, but it does not yet enforce a
+  smaller source/final type boundary.
+- `LookupInstructionKind` has been removed. `LookupInstruction` remains as the
+  typed view of rows with lookup/circuit metadata.
 
-This keeps source-only legality, expanded-bytecode legality, lookup routing, and
-side-effect classification attached to the phase where each question belongs.
+This deliberately does **not** address the deeper reviewer concern that source
+and Jolt/target instruction kinds are still effectively the same broad set. A
+follow-up PR should split tracer's phase model first: decoded guest instructions
+should convert through a source row, while expanded trace/proof rows should
+convert through a final Jolt row. Only after that should `JoltInstructionKind`
+shrink to final bytecode rows.
 
-`SourceInstruction` is the decoded source-program row type. It carries source
-kind, operands, address, and compressed-source metadata, but no virtual-sequence
-metadata. `NormalizedInstruction` is the expanded bytecode row type consumed by
-preprocessing, tracing, and proof code. It carries final row identity, operands,
-address, virtual-sequence metadata, and compressed-tail metadata. Neither row
-type carries CPU execution state, advice payloads, or proof-system fields.
+`NormalizedInstruction` remains the production row type for decoded and expanded
+rows. It carries row identity, operands, address, sequence metadata, and
+compressed-tail metadata. It does not carry execution state, advice payloads, or
+proof-system fields.
 
-Conversions between phases are explicit. For example, source rows that are
-already final-bytecode-shaped use:
-
-```rust
-SourceInstruction::into_final_instruction() -> Option<NormalizedInstruction>
-```
-
-Source-only legality, target-bytecode legality, side-effect classification, and
-lookup-backed classification should not be inferred from a shared ambiguous enum
-name. Source-only legality and source-side side effects live on
-`SourceInstructionKind`; lookup-backed classification lives on
-`LookupInstruction::try_from(row)`.
+Lookup-backed classification is explicit through `LookupInstruction::try_from`.
+Source-only legality and target-bytecode legality are still derived from the
+combined `JoltInstructionKind` set in this PR and should be moved to true
+source/final types in the tracer-aware follow-up.
 
 ## Expansion Pipeline
 
@@ -122,7 +122,7 @@ Each source-only lowerer returns an `ExpandedInstructionSequence`:
 let mut asm = ExpansionBuilder::new(*instruction);
 
 let tmp = asm.allocate()?;
-asm.dispatch_i(
+asm.expand_i(
     JoltInstructionKind::VirtualPow2,
     tmp.operand(),
     reg(rs2(instruction)?),
@@ -142,9 +142,8 @@ asm.finalize()
 Builder methods have precise meaning:
 
 - `emit_*` records a row that is already target-legal.
-- `dispatch_*` records a helper row that must pass through recursive
-  canonicalization/lowering before it is appended to the source row's final
-  bytecode sequence.
+- `expand_*` records a helper row that must pass through provider-free
+  expansion before it is appended to the source row's final bytecode sequence.
 - `allocate()` creates a symbolic `TempId`.
 - `release(temp)` records the end of a symbolic temp lifetime.
 - `finalize()` returns the recipe for materialization.
@@ -166,7 +165,7 @@ pub(super) struct ExpandedInstructionSequence {
 
 pub(super) enum ExpansionOp {
     Emit(RowTemplate),
-    Dispatch(DispatchRowTemplate),
+    Expand(RowTemplate),
     Allocate(TempId),
     Release(TempId),
 }
@@ -175,9 +174,8 @@ pub(super) enum ExpansionOp {
 The operation meanings are fixed:
 
 - `Emit` appends a row that is already legal final Jolt bytecode.
-- `Dispatch` records a helper row that must be routed through the central
-  provider-free driver. The private dispatch row kind distinguishes source
-  helper rows from final rows, while keeping the public API small.
+- `Expand` records a helper row that must be recursively lowered by the central
+  provider-free driver.
 - `Allocate` creates a symbolic temp lifetime.
 - `Release` ends a symbolic temp lifetime.
 
@@ -240,7 +238,7 @@ implications.
 
 - allocating real virtual registers for symbolic temps;
 - rejecting duplicate, unallocated, and leaked symbolic temps;
-- recursively dispatching helper rows recorded with `dispatch_*`;
+- recursively expanding helper rows recorded with `expand_*`;
 - enforcing recursion depth;
 - preserving inline-provider isolation;
 - stamping `is_first_in_sequence`, `virtual_sequence_remaining`, and
@@ -403,16 +401,18 @@ rewriting clear Rust into extractor-specific control flow.
   `Vec`/iterator/fold helpers, and generated derive/typeclass support.
 - Add row-diff tooling around the compact parity fixture so fixture updates are
   easier to review.
-- Shrink `JoltInstructionKind` to final bytecode rows after the remaining
-  tracer conversion traits and test-only normalized source-row entry points no
-  longer require source-only variants in `NormalizedInstruction`.
+- Split decoded source instructions from final Jolt bytecode rows across
+  `jolt-riscv`, `jolt-program`, and `tracer`. This follow-up should change
+  tracer's conversion traits and concrete instruction APIs before shrinking
+  `JoltInstructionKind`.
 
 ## Implementation Checklist
 
 - [x] RV64-only program expansion boundary.
-- [x] Instruction phase names split across source, expanded, and lookup-backed
-      identities, with `SourceInstructionKind`, `JoltInstructionKind`, and
-      `LookupInstruction`.
+- [x] `LookupInstructionKind` removed; `LookupInstruction` remains as the typed
+      lookup-backed view.
+- [ ] True source-vs-final instruction split. Deferred to a tracer-aware
+      follow-up PR.
 - [x] `ExpansionBuilder` recipe API.
 - [x] `ExpansionState` materializer with owned allocator state.
 - [x] Exact virtual-register partition for reserved, instruction-temp, and
@@ -424,15 +424,17 @@ rewriting clear Rust into extractor-specific control flow.
 - [x] Serialization feature boundary.
 - [x] Compact provider-free expansion parity fixture.
 - [x] Informational Hax extraction pass.
-- [ ] Final `JoltInstructionKind` shrink once legacy normalized source-row
-      bridges are removed.
 
 ## Acceptance Criteria
 
 - [x] No live RV32/SV32 tracer execution path remains.
 - [x] ELF32/RV32 inputs are rejected before expansion.
-- [x] Decoded-source, expanded-bytecode, and lookup-backed instruction
-      identities use explicit phase names.
+- [x] Lookup-backed instruction identity uses `LookupInstruction` rather than a
+      separate kind enum.
+- [ ] Decoded-source and expanded-bytecode instruction identities are fully
+      separated. Deferred because tracer still uses `NormalizedInstruction` and
+      the concrete `Instruction` enum for both decoded source instructions and
+      expanded Jolt rows.
 - [x] The old production `InstrAssembler<'a>` expansion path is removed from
       `jolt-program::expand`.
 - [x] Concrete provider-free lowerers return `ExpandedInstructionSequence`

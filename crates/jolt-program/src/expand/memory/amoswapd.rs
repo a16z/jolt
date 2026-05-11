@@ -6,19 +6,19 @@ pub(in crate::expand) fn expand_amoswapd(
     let mut asm = ExpansionBuilder::new(*instruction);
     let v_rd = asm.allocate()?;
 
-    asm.dispatch_i(
+    asm.expand_i(
         JoltInstructionKind::LD,
         v_rd.operand(),
         reg(rs1(instruction)?),
         0,
     );
-    asm.dispatch_s(
+    asm.expand_s(
         JoltInstructionKind::SD,
         reg(rs1(instruction)?),
         reg(rs2(instruction)?),
         0,
     );
-    asm.dispatch_i(
+    asm.expand_i(
         JoltInstructionKind::ADDI,
         reg(rd(instruction)?),
         v_rd.operand(),

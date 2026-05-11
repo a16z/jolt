@@ -555,7 +555,7 @@ mod tests {
     }
 
     #[test]
-    fn source_kind_bridges_to_current_final_kind() {
+    fn phase_specific_instruction_kinds_are_distinct() {
         let source_kind = crate::SourceInstructionKind::AMOADDW;
         let jolt_kind = source_kind.jolt_kind();
 

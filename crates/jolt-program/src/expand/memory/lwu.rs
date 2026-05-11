@@ -7,34 +7,34 @@ pub(in crate::expand) fn expand_lwu(
     let v0 = asm.allocate()?;
     let v1 = asm.allocate()?;
 
-    asm.dispatch_address(
+    asm.expand_address(
         JoltInstructionKind::VirtualAssertWordAlignment,
         reg(rs1(instruction)?),
         instruction.operands.imm,
     );
-    asm.dispatch_i(
+    asm.expand_i(
         JoltInstructionKind::ADDI,
         v0.operand(),
         reg(rs1(instruction)?),
         format_i_imm(instruction.operands.imm),
     );
-    asm.dispatch_i(
+    asm.expand_i(
         JoltInstructionKind::ANDI,
         v1.operand(),
         v0.operand(),
         format_i_imm(-8),
     );
-    asm.dispatch_i(JoltInstructionKind::LD, v1.operand(), v1.operand(), 0);
-    asm.dispatch_i(JoltInstructionKind::XORI, v0.operand(), v0.operand(), 4);
-    asm.dispatch_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
-    asm.dispatch_r(
-        SourceInstructionKind::SLL,
+    asm.expand_i(JoltInstructionKind::LD, v1.operand(), v1.operand(), 0);
+    asm.expand_i(JoltInstructionKind::XORI, v0.operand(), v0.operand(), 4);
+    asm.expand_i(JoltInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
+    asm.expand_r(
+        JoltInstructionKind::SLL,
         v1.operand(),
         v1.operand(),
         v0.operand(),
     );
-    asm.dispatch_i(
-        SourceInstructionKind::SRLI,
+    asm.expand_i(
+        JoltInstructionKind::SRLI,
         reg(rd(instruction)?),
         v1.operand(),
         32,
