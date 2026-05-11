@@ -22,7 +22,7 @@
 //!             CommitmentScheme            (+ Field, Proof, commit/open/verify)
 //!                ╱        ╲
 //! AdditivelyHomomorphic   ZkOpeningScheme
-//!       (+ combine)        (+ open_zk/verify_zk)
+//!       (+ combine)        (+ commit_zk/open_zk/verify_zk)
 //!             │
 //!   StreamingCommitment
 //!     (+ begin/feed/finish)

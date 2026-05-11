@@ -32,3 +32,9 @@ Zicntr-csrrc-00
 Zicntr-csrrs-00
 Zihpm-csrrc-00
 
+# ---------------------------------------------------------------------------
+# Jolt does not support the Zihpm extension (hardware performance counters
+# hpmcounter3-31). Reads of these CSRs are rejected at decode time.
+# ---------------------------------------------------------------------------
+Zihpm-csrrs-00
+

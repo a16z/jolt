@@ -8,13 +8,16 @@ use common::constants::{
     RAM_START_ADDRESS,
 };
 use common::jolt_device::{JoltDevice, MemoryConfig};
+use jolt_program::execution::{ExecutionBackend, TraceError, TraceInputs, TraceOutput};
+use jolt_program::{JoltProgram, ProgramError};
+use jolt_riscv::NormalizedInstruction;
 use std::fs::File;
 use std::io;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::Command;
 use tracer::emulator::memory::Memory;
-use tracer::instruction::{Cycle, Instruction};
+use tracer::instruction::Cycle;
 use tracer::LazyTraceIterator;
 use tracing::info;
 
@@ -260,14 +263,44 @@ impl Program {
         }
     }
 
-    pub fn decode(&mut self) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
+    pub fn jolt_program(&mut self) -> Result<JoltProgram, ProgramError> {
         self.build(DEFAULT_TARGET_DIR);
-        let elf = self.elf.as_ref().unwrap();
-        let mut elf_file =
-            File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
-        let mut elf_contents = Vec::new();
-        elf_file.read_to_end(&mut elf_contents).unwrap();
-        guest::program::decode(&elf_contents)
+        let elf_contents = self
+            .get_elf_contents()
+            .expect("ELF contents should be available after building the guest");
+        let mut inline_provider = tracer::TracerInlineExpansionProvider::new();
+        jolt_program::build_jolt_program_with_inline_provider(&elf_contents, &mut inline_provider)
+    }
+
+    pub fn decode(&mut self) -> (Vec<NormalizedInstruction>, Vec<(u64, u8)>, u64, u64) {
+        let program = self.jolt_program().expect("failed to build Jolt program");
+        (
+            program.expanded_bytecode,
+            program.memory_init,
+            program.program_end - RAM_START_ADDRESS,
+            program.entry_address,
+        )
+    }
+
+    pub fn trace_with_backend<B: ExecutionBackend>(
+        &mut self,
+        backend: &mut B,
+        inputs: &[u8],
+        untrusted_advice: &[u8],
+        trusted_advice: &[u8],
+    ) -> Result<TraceOutput<B::Trace>, TraceError> {
+        let program = self.jolt_program()?;
+        let memory_config =
+            self.memory_config_with_program_size(program.program_end - RAM_START_ADDRESS);
+        program.trace_with(
+            backend,
+            TraceInputs::new(
+                inputs.to_vec(),
+                untrusted_advice.to_vec(),
+                trusted_advice.to_vec(),
+                memory_config,
+            ),
+        )
     }
 
     // TODO(moodlezoup): Make this generic over InstructionSet
@@ -284,18 +317,10 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let (_, _, program_end, _, _) = tracer::decode(&elf_contents);
-        let program_size = program_end - RAM_START_ADDRESS;
-
-        let memory_config = MemoryConfig {
-            heap_size: self.heap_size,
-            stack_size: self.stack_size,
-            max_input_size: self.max_input_size,
-            max_untrusted_advice_size: self.max_untrusted_advice_size,
-            max_trusted_advice_size: self.max_trusted_advice_size,
-            max_output_size: self.max_output_size,
-            program_size: Some(program_size),
-        };
+        let image =
+            jolt_program::image::decode_elf(&elf_contents).expect("program ELF decoding failed");
+        let memory_config =
+            self.memory_config_with_program_size(image.program_end - RAM_START_ADDRESS);
 
         let (lazy_trace, trace, memory, jolt_device, _advice_tape) = guest::program::trace(
             &elf_contents,
@@ -323,17 +348,10 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let (_, _, program_end, _, _) = tracer::decode(&elf_contents);
-        let program_size = program_end - RAM_START_ADDRESS;
-        let memory_config = MemoryConfig {
-            heap_size: self.heap_size,
-            stack_size: self.stack_size,
-            max_input_size: self.max_input_size,
-            max_untrusted_advice_size: self.max_untrusted_advice_size,
-            max_trusted_advice_size: self.max_trusted_advice_size,
-            max_output_size: self.max_output_size,
-            program_size: Some(program_size),
-        };
+        let image =
+            jolt_program::image::decode_elf(&elf_contents).expect("program ELF decoding failed");
+        let memory_config =
+            self.memory_config_with_program_size(image.program_end - RAM_START_ADDRESS);
 
         tracer::trace_to_file(
             &elf_contents,
@@ -353,13 +371,28 @@ impl Program {
         trusted_advice: &[u8],
     ) -> ProgramSummary {
         let (bytecode, init_memory_state, _, _) = self.decode();
-        let (_, trace, _, io_device) = self.trace(inputs, untrusted_advice, trusted_advice);
+        let mut backend = tracer::TracerBackend::new();
+        let trace_output = self
+            .trace_with_backend(&mut backend, inputs, untrusted_advice, trusted_advice)
+            .expect("failed to trace program with default tracer backend");
 
         ProgramSummary {
-            trace,
+            trace: trace_output.trace.into_rows(),
             bytecode,
             memory_init: init_memory_state,
-            io_device,
+            io_device: trace_output.device,
+        }
+    }
+
+    fn memory_config_with_program_size(&self, program_size: u64) -> MemoryConfig {
+        MemoryConfig {
+            heap_size: self.heap_size,
+            stack_size: self.stack_size,
+            max_input_size: self.max_input_size,
+            max_untrusted_advice_size: self.max_untrusted_advice_size,
+            max_trusted_advice_size: self.max_trusted_advice_size,
+            max_output_size: self.max_output_size,
+            program_size: Some(program_size),
         }
     }
 }

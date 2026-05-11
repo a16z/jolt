@@ -7,7 +7,7 @@ use crate::zkvm::instruction::{
 };
 use crate::zkvm::lookup_table::LookupTables;
 use common::constants::{REGISTER_COUNT, XLEN};
-use tracer::instruction::Instruction;
+use jolt_riscv::NormalizedInstruction;
 
 /// Total number of lanes encoded by committed-bytecode rows.
 pub const fn total_lanes() -> usize {
@@ -102,33 +102,32 @@ pub enum ActiveLaneValue<F: JoltField> {
 
 #[inline(always)]
 pub fn for_each_active_lane_value<F: JoltField>(
-    instr: &Instruction,
+    instruction: &NormalizedInstruction,
     mut visit: impl FnMut(usize, ActiveLaneValue<F>),
 ) {
     let l = BYTECODE_LANE_LAYOUT;
 
-    let normalized = instr.normalize();
-    let circuit_flags = <Instruction as Flags>::circuit_flags(instr);
-    let instr_flags = <Instruction as Flags>::instruction_flags(instr);
-    let lookup_idx = <Instruction as InstructionLookup<XLEN>>::lookup_table(instr)
+    let circuit_flags = instruction.circuit_flags();
+    let instr_flags = instruction.instruction_flags();
+    let lookup_idx = InstructionLookup::<XLEN>::lookup_table(instruction)
         .map(|t| LookupTables::<XLEN>::enum_index(&t));
     let raf_flag = !InterleavedBitsMarker::is_interleaved_operands(&circuit_flags);
 
-    if let Some(r) = normalized.operands.rs1 {
+    if let Some(r) = instruction.operands.rs1 {
         visit(l.rs1_start + (r as usize), ActiveLaneValue::One);
     }
-    if let Some(r) = normalized.operands.rs2 {
+    if let Some(r) = instruction.operands.rs2 {
         visit(l.rs2_start + (r as usize), ActiveLaneValue::One);
     }
-    if let Some(r) = normalized.operands.rd {
+    if let Some(r) = instruction.operands.rd {
         visit(l.rd_start + (r as usize), ActiveLaneValue::One);
     }
 
-    let unexpanded_pc = F::from_u64(normalized.address as u64);
+    let unexpanded_pc = F::from_u64(instruction.address as u64);
     if !unexpanded_pc.is_zero() {
         visit(l.unexp_pc_idx, ActiveLaneValue::Scalar(unexpanded_pc));
     }
-    let imm = F::from_i128(normalized.operands.imm);
+    let imm = F::from_i128(instruction.operands.imm);
     if !imm.is_zero() {
         visit(l.imm_idx, ActiveLaneValue::Scalar(imm));
     }
@@ -153,7 +152,7 @@ pub fn for_each_active_lane_value<F: JoltField>(
 
 #[tracing::instrument(skip_all, name = "bytecode::build_committed_bytecode_chunk_coeffs")]
 pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
-    instructions: &[Instruction],
+    instructions: &[NormalizedInstruction],
     chunk_count: usize,
 ) -> Vec<Vec<F>> {
     let bytecode_len = instructions.len();
@@ -193,7 +192,7 @@ pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
     name = "bytecode::build_committed_bytecode_chunk_polynomials"
 )]
 pub fn build_committed_bytecode_chunk_polynomials<F: JoltField>(
-    instructions: &[Instruction],
+    instructions: &[NormalizedInstruction],
     chunk_count: usize,
 ) -> Vec<MultilinearPolynomial<F>> {
     build_committed_bytecode_chunk_coeffs::<F>(instructions, chunk_count)

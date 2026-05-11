@@ -8,7 +8,7 @@
 //! The INLINE instruction iterates these registrations to find the matching builder.
 
 use super::{
-    format::{format_inline::FormatInline, InstructionFormat},
+    format::{format_inline::FormatInline, InstructionFormat, NormalizedOperands},
     Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 use crate::{
@@ -16,7 +16,11 @@ use crate::{
     instruction::NormalizedInstruction,
     utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
+use jolt_program::expand::{ExpansionAllocator, ExpansionError, InlineExpansionProvider};
 use serde::{Deserialize, Serialize};
+
+const FIRST_INSTRUCTION_TEMP_REGISTER: u8 = common::constants::RISCV_REGISTER_COUNT + 8;
+const LAST_INSTRUCTION_TEMP_REGISTER: u8 = FIRST_INSTRUCTION_TEMP_REGISTER + 8;
 use std::collections::VecDeque;
 
 pub type InlineSequenceFn = fn(InstrAssembler, FormatInline) -> Vec<Instruction>;
@@ -57,6 +61,49 @@ pub fn is_inline_registered(opcode: u32, funct3: u32, funct7: u32) -> bool {
     inventory::iter::<InlineRegistration>
         .into_iter()
         .any(|r| r.opcode == opcode && r.funct3 == funct3 && r.funct7 == funct7)
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TracerInlineExpansionProvider {
+    allocator: VirtualRegisterAllocator,
+}
+
+impl TracerInlineExpansionProvider {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InlineExpansionProvider for TracerInlineExpansionProvider {
+    fn expand_inline(
+        &mut self,
+        instruction: &NormalizedInstruction,
+        _allocator: &mut ExpansionAllocator,
+    ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+        let Instruction::INLINE(inline) = Instruction::try_from_normalized(*instruction)
+            .map_err(|_| ExpansionError::MalformedInstruction("malformed inline instruction"))?
+        else {
+            return Err(ExpansionError::MalformedInstruction(
+                "expected inline instruction",
+            ));
+        };
+
+        if !is_inline_registered(inline.opcode, inline.funct3, inline.funct7) {
+            return Err(ExpansionError::UnsupportedInstruction);
+        }
+
+        let _remapped_rd_guard = instruction.operands.rd.and_then(|rd| {
+            (FIRST_INSTRUCTION_TEMP_REGISTER..LAST_INSTRUCTION_TEMP_REGISTER)
+                .contains(&rd)
+                .then(|| self.allocator.allocate())
+        });
+
+        Ok(inline
+            .inline_sequence(&self.allocator, Xlen::Bit64)
+            .into_iter()
+            .map(|instruction| instruction.normalize())
+            .collect())
+    }
 }
 
 /// RISC-V inline instruction.
@@ -125,15 +172,21 @@ impl RISCVInstruction for INLINE {
     fn execute(&self, cpu: &mut Cpu, ram: &mut Self::RAMAccess) {
         self.exec(cpu, ram)
     }
-
-    fn has_side_effects(&self) -> bool {
-        true
-    }
 }
 
 impl INLINE {
     pub fn exec(&self, _cpu: &mut Cpu, _: &mut <INLINE as RISCVInstruction>::RAMAccess) {
         panic!("Inline instructions must use trace(), not exec()");
+    }
+
+    pub fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let reg = find_inline(self.opcode, self.funct3, self.funct7);
+        let asm = InstrAssembler::new_inline(self.address, self.is_compressed, xlen, allocator);
+        (reg.build_sequence)(asm, self.operands)
     }
 }
 
@@ -150,11 +203,12 @@ impl RISCVTrace for INLINE {
         }
 
         let reg = find_inline(self.opcode, self.funct3, self.funct7);
+        let advice_allocator = VirtualRegisterAllocator::new();
         let asm = InstrAssembler::new_inline(
             self.address,
             self.is_compressed,
             cpu.xlen,
-            &cpu.vr_allocator,
+            &advice_allocator,
         );
         if let Some(mut advice) = (reg.build_advice)(asm, self.operands, cpu) {
             let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
@@ -170,7 +224,7 @@ impl RISCVTrace for INLINE {
                         ),
                     };
                 }
-                instr.trace(cpu, trace.as_deref_mut());
+                instr.trace_raw(cpu, trace.as_deref_mut());
             }
             assert!(
                 advice.is_empty(),
@@ -184,19 +238,9 @@ impl RISCVTrace for INLINE {
             let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
             let mut trace = trace;
             for instr in inline_sequence {
-                instr.trace(cpu, trace.as_deref_mut());
+                instr.trace_raw(cpu, trace.as_deref_mut());
             }
         }
-    }
-
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
-        let reg = find_inline(self.opcode, self.funct3, self.funct7);
-        let asm = InstrAssembler::new_inline(self.address, self.is_compressed, xlen, allocator);
-        (reg.build_sequence)(asm, self.operands)
     }
 }
 
@@ -206,11 +250,16 @@ impl From<NormalizedInstruction> for INLINE {
     }
 }
 
+impl jolt_riscv::JoltInstruction for INLINE {}
+
 impl From<INLINE> for NormalizedInstruction {
     fn from(instr: INLINE) -> Self {
+        let mut operands: NormalizedOperands = instr.operands.into();
+        operands.imm = (instr.opcode | (instr.funct3 << 7) | (instr.funct7 << 10)) as i128;
         NormalizedInstruction {
+            instruction_kind: jolt_riscv::InstructionKind::Inline,
             address: instr.address as usize,
-            operands: instr.operands.into(),
+            operands,
             virtual_sequence_remaining: instr.virtual_sequence_remaining,
             is_first_in_sequence: instr.is_first_in_sequence,
             is_compressed: instr.is_compressed,
@@ -250,5 +299,18 @@ mod tests {
         for ((opcode, funct3, funct7), _name) in &inlines {
             assert!(is_inline_registered(*opcode, *funct3, *funct7));
         }
+    }
+
+    #[test]
+    fn provider_rejects_unregistered_inline() {
+        let mut provider = TracerInlineExpansionProvider::new();
+        let mut allocator = ExpansionAllocator::new();
+        let instruction: NormalizedInstruction =
+            INLINE::new(0xfe00_7fab, 0x8000_0000, false, false).into();
+
+        assert!(matches!(
+            provider.expand_inline(&instruction, &mut allocator),
+            Err(ExpansionError::UnsupportedInstruction)
+        ));
     }
 }

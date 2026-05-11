@@ -116,6 +116,46 @@ fn one_hot_commitment_matches_dense() {
 }
 
 #[test]
+fn streaming_zk_commitment_is_blinded_and_verifies() {
+    let num_vars = 4usize;
+    let sigma = num_vars.div_ceil(2);
+    let num_cols = 1usize << sigma;
+    let mut rng = ChaCha20Rng::seed_from_u64(350);
+
+    let prover_setup = DoryScheme::setup_prover(num_vars);
+    let verifier_setup = DoryScheme::setup_verifier(num_vars);
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let point: Vec<Fr> = (0..num_vars)
+        .map(|_| <Fr as RandomSampling>::random(&mut rng))
+        .collect();
+    let eval = poly.evaluate(&point);
+
+    let mut partial = DoryScheme::begin(&prover_setup);
+    for row in poly.evaluations().chunks(num_cols) {
+        DoryScheme::feed(&mut partial, row, &prover_setup);
+    }
+    let (commitment, hint) = DoryScheme::finish_zk(partial, &prover_setup);
+
+    let mut partial_again = DoryScheme::begin(&prover_setup);
+    for row in poly.evaluations().chunks(num_cols) {
+        DoryScheme::feed(&mut partial_again, row, &prover_setup);
+    }
+    let (commitment_again, _) = DoryScheme::finish_zk(partial_again, &prover_setup);
+    assert_ne!(
+        commitment, commitment_again,
+        "streaming ZK commitments must use fresh blinding"
+    );
+
+    let mut pt = Blake2bTranscript::new(b"stream-zk");
+    let (proof, _eval_com, _blind) =
+        DoryScheme::open_zk(&poly, &point, eval, &prover_setup, hint, &mut pt);
+
+    let mut vt = Blake2bTranscript::new(b"stream-zk");
+    DoryScheme::verify_zk(&commitment, &point, &proof, &verifier_setup, &mut vt)
+        .expect("streaming ZK commitment must verify");
+}
+
+#[test]
 fn wrong_eval_rejected() {
     let num_vars = 3;
     let mut rng = ChaCha20Rng::seed_from_u64(400);
@@ -223,6 +263,20 @@ fn deterministic_commitment() {
 }
 
 #[test]
+fn zk_commitment_is_blinded() {
+    let num_vars = 4;
+    let prover_setup = DoryScheme::setup_prover(num_vars);
+
+    let mut rng = ChaCha20Rng::seed_from_u64(750);
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+
+    let (c1, _) = <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup);
+    let (c2, _) = <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup);
+
+    assert_ne!(c1, c2, "ZK Dory commitments must use fresh blinding");
+}
+
+#[test]
 fn wrong_commitment_rejected() {
     let num_vars = 3;
     let mut rng = ChaCha20Rng::seed_from_u64(900);
@@ -296,11 +350,12 @@ fn zk_round_trip<T: Transcript<Challenge = Fr>>(num_vars: usize, seed: u64, labe
         .map(|_| <Fr as RandomSampling>::random(&mut rng))
         .collect();
     let eval = poly.evaluate(&point);
-    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+    let (commitment, hint) =
+        <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup);
 
     let mut pt = T::new(label);
     let (proof, _eval_com, _blind) =
-        DoryScheme::open_zk(&poly, &point, eval, &prover_setup, Some(hint), &mut pt);
+        DoryScheme::open_zk(&poly, &point, eval, &prover_setup, hint, &mut pt);
 
     let mut vt = T::new(label);
     DoryScheme::verify_zk(&commitment, &point, &proof, &verifier_setup, &mut vt)
@@ -334,19 +389,109 @@ fn zk_wrong_commitment_rejected() {
         .map(|_| <Fr as RandomSampling>::random(&mut rng))
         .collect();
     let eval = poly.evaluate(&point);
-    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+    let (commitment, hint) =
+        <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup);
 
     let mut pt = Blake2bTranscript::new(b"zk-wrong-commit");
     let (proof, _eval_com, _blind) =
-        DoryScheme::open_zk(&poly, &point, eval, &prover_setup, Some(hint), &mut pt);
+        DoryScheme::open_zk(&poly, &point, eval, &prover_setup, hint, &mut pt);
 
     let wrong_poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-    let (wrong_commitment, _) = DoryScheme::commit(wrong_poly.evaluations(), &prover_setup);
+    let (wrong_commitment, _) =
+        <DoryScheme as ZkOpeningScheme>::commit_zk(wrong_poly.evaluations(), &prover_setup);
     assert_ne!(commitment, wrong_commitment);
 
     let mut vt = Blake2bTranscript::new(b"zk-wrong-commit");
     let result = DoryScheme::verify_zk(&wrong_commitment, &point, &proof, &verifier_setup, &mut vt);
     assert!(result.is_err(), "ZK: wrong commitment must be rejected");
+}
+
+#[test]
+fn transparent_commitment_rejected_for_zk_blinded_proof() {
+    let num_vars = 3;
+    let mut rng = ChaCha20Rng::seed_from_u64(1450);
+
+    let prover_setup = DoryScheme::setup_prover(num_vars);
+    let verifier_setup = DoryScheme::setup_verifier(num_vars);
+
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let point: Vec<Fr> = (0..num_vars)
+        .map(|_| <Fr as RandomSampling>::random(&mut rng))
+        .collect();
+    let eval = poly.evaluate(&point);
+    let (transparent_commitment, _) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+    let (_zk_commitment, hint) =
+        <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup);
+
+    let mut pt = Blake2bTranscript::new(b"zk-transparent-reject");
+    let (proof, _eval_com, _blind) =
+        DoryScheme::open_zk(&poly, &point, eval, &prover_setup, hint, &mut pt);
+
+    let mut vt = Blake2bTranscript::new(b"zk-transparent-reject");
+    let result = DoryScheme::verify_zk(
+        &transparent_commitment,
+        &point,
+        &proof,
+        &verifier_setup,
+        &mut vt,
+    );
+    assert!(
+        result.is_err(),
+        "transparent commitment must not verify against a proof using a ZK commit blind"
+    );
+}
+
+#[test]
+fn zk_combined_commitment_and_hint_verify() {
+    let num_vars = 3;
+    let mut rng = ChaCha20Rng::seed_from_u64(1475);
+
+    let prover_setup = DoryScheme::setup_prover(num_vars);
+    let verifier_setup = DoryScheme::setup_verifier(num_vars);
+
+    let poly_a = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let poly_b = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let (commit_a, hint_a) =
+        <DoryScheme as ZkOpeningScheme>::commit_zk(poly_a.evaluations(), &prover_setup);
+    let (commit_b, hint_b) =
+        <DoryScheme as ZkOpeningScheme>::commit_zk(poly_b.evaluations(), &prover_setup);
+
+    let c1 = <Fr as RandomSampling>::random(&mut rng);
+    let c2 = <Fr as RandomSampling>::random(&mut rng);
+    let combined_commitment = DoryScheme::combine(&[commit_a, commit_b], &[c1, c2]);
+    let combined_hint = DoryScheme::combine_hints(vec![hint_a, hint_b], &[c1, c2]);
+
+    let weighted_evals: Vec<Fr> = poly_a
+        .evaluations()
+        .iter()
+        .zip(poly_b.evaluations().iter())
+        .map(|(a, b)| c1 * *a + c2 * *b)
+        .collect();
+    let weighted_poly = Polynomial::new(weighted_evals);
+    let point: Vec<Fr> = (0..num_vars)
+        .map(|_| <Fr as RandomSampling>::random(&mut rng))
+        .collect();
+    let eval = weighted_poly.evaluate(&point);
+
+    let mut pt = Blake2bTranscript::new(b"zk-combined");
+    let (proof, _eval_com, _blind) = DoryScheme::open_zk(
+        &weighted_poly,
+        &point,
+        eval,
+        &prover_setup,
+        combined_hint,
+        &mut pt,
+    );
+
+    let mut vt = Blake2bTranscript::new(b"zk-combined");
+    DoryScheme::verify_zk(
+        &combined_commitment,
+        &point,
+        &proof,
+        &verifier_setup,
+        &mut vt,
+    )
+    .expect("combined ZK commitment and hint must verify");
 }
 
 #[test]
@@ -361,11 +506,12 @@ fn wrong_eval_commitment_rejected_zk() {
         .map(|_| <Fr as RandomSampling>::random(&mut rng))
         .collect();
     let eval = poly.evaluate(&point);
-    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+    let (commitment, hint) =
+        <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup);
 
     let mut pt = Blake2bTranscript::new(b"zk-tampered-y-com");
     let (mut proof, _eval_com, _blind) =
-        DoryScheme::open_zk(&poly, &point, eval, &prover_setup, Some(hint), &mut pt);
+        DoryScheme::open_zk(&poly, &point, eval, &prover_setup, hint, &mut pt);
 
     // Replace proof.y_com (the hiding commitment to the evaluation) with a
     // different valid G1. dory::verify must reject because the Σ₁/Σ₂ sub-proofs
@@ -389,11 +535,12 @@ fn zk_wrong_transcript_domain_rejected() {
         .map(|_| <Fr as RandomSampling>::random(&mut rng))
         .collect();
     let eval = poly.evaluate(&point);
-    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+    let (commitment, hint) =
+        <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup);
 
     let mut pt = Blake2bTranscript::new(b"zk-correct-domain");
     let (proof, _eval_com, _blind) =
-        DoryScheme::open_zk(&poly, &point, eval, &prover_setup, Some(hint), &mut pt);
+        DoryScheme::open_zk(&poly, &point, eval, &prover_setup, hint, &mut pt);
 
     let mut vt = Blake2bTranscript::new(b"zk-wrong-domain");
     let result = DoryScheme::verify_zk(&commitment, &point, &proof, &verifier_setup, &mut vt);

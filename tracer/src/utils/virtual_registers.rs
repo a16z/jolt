@@ -226,6 +226,17 @@ impl Default for VirtualRegisterAllocator {
     }
 }
 
+/// Returns whether `csr_addr` maps to a CSR that Jolt models in its proof
+/// system. Used by `Instruction::decode` to reject unsupported CSR
+/// instructions before they reach the tracer's inline-sequence path, which
+/// would otherwise panic on unsupported CSRs.
+pub fn is_supported_csr(csr_addr: u16) -> bool {
+    matches!(
+        csr_addr,
+        CSR_MSTATUS | CSR_MTVEC | CSR_MSCRATCH | CSR_MEPC | CSR_MCAUSE | CSR_MTVAL
+    )
+}
+
 pub struct VirtualRegisterGuard {
     index: u8,
     allocator: VirtualRegisterAllocator,

@@ -65,11 +65,8 @@ use crate::{
 };
 use std::vec;
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::{
-    constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS},
-    jolt_device::MemoryLayout,
-};
+use common::{constants::RAM_START_ADDRESS, jolt_device::MemoryLayout};
+pub use jolt_program::preprocess::RAMPreprocessing;
 use rayon::prelude::*;
 use std::any::Any;
 use std::cell::RefCell;
@@ -129,49 +126,6 @@ pub mod raf_evaluation;
 pub mod read_write_checking;
 pub mod val_check;
 
-#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct RAMPreprocessing {
-    pub min_bytecode_address: u64,
-    pub bytecode_words: Vec<u64>,
-}
-
-impl RAMPreprocessing {
-    pub fn preprocess(memory_init: Vec<(u64, u8)>) -> Self {
-        let min_bytecode_address = memory_init
-            .iter()
-            .map(|(address, _)| *address)
-            .min()
-            .unwrap_or(0);
-
-        let max_bytecode_address = memory_init
-            .iter()
-            .map(|(address, _)| *address)
-            .max()
-            .unwrap_or(0)
-            + (BYTES_PER_INSTRUCTION as u64 - 1);
-
-        let num_words = max_bytecode_address.div_ceil(8) - min_bytecode_address / 8 + 1;
-        let mut bytecode_words = vec![0u64; num_words as usize];
-        // Convert bytes into words and populate `bytecode_words`
-        for chunk in
-            memory_init.chunk_by(|(address_a, _), (address_b, _)| address_a / 8 == address_b / 8)
-        {
-            let mut word = [0u8; 8];
-            for (address, byte) in chunk {
-                word[(address % 8) as usize] = *byte;
-            }
-            let word = u64::from_le_bytes(word);
-            let remapped_index = (chunk[0].0 / 8 - min_bytecode_address / 8) as usize;
-            bytecode_words[remapped_index] = word;
-        }
-
-        Self {
-            min_bytecode_address,
-            bytecode_words,
-        }
-    }
-}
-
 /// Computes the minimum valid `ram_K` from preprocessing and memory layout.
 ///
 /// `ram_K` must be at least large enough to index all statically-known memory
@@ -188,6 +142,24 @@ pub fn compute_min_ram_K(
     let io_end = remap_address(RAM_START_ADDRESS, memory_layout).unwrap_or(0) as usize;
 
     bytecode_end.max(io_end).next_power_of_two()
+}
+
+/// Computes the maximum valid `ram_K` from the memory layout.
+///
+/// The emulator confines all RAM accesses (advice, I/O, bytecode, stack, heap)
+/// to the byte range `[memory_layout.get_lowest_address(), memory_layout.heap_end)`.
+/// `remap_address` divides by 8, so the count of addressable words is
+/// `(heap_end - lowest_address) / 8`. Any honest `ram_K` is the smallest power
+/// of two that fits this count.
+///
+/// Verifiers MUST reject proof-supplied `ram_K` values exceeding this bound:
+/// `gen_ram_initial_memory_state` allocates a dense `Vec<u64>` of length
+/// `ram_K`, so an unbounded `ram_K` would let an untrusted proof force
+/// arbitrarily large allocations on the verifier. All inputs come from the
+/// trusted `MemoryLayout` carried in preprocessing, never the proof.
+pub fn compute_max_ram_K(memory_layout: &MemoryLayout) -> usize {
+    let total_words = (memory_layout.heap_end - memory_layout.get_lowest_address()) / 8;
+    (total_words as usize).next_power_of_two()
 }
 
 /// Returns Some(address) if there was read/write
@@ -1057,5 +1029,51 @@ mod tests {
         let fast_eval = eval_initial_ram_mle::<F>(&ram_pp, &program_io, &r);
 
         assert_eq!(dense_eval, fast_eval);
+    }
+
+    /// `compute_max_ram_K` must bound the honest `ram_K` derivable from the
+    /// memory layout while rejecting much larger values that would drive
+    /// `gen_ram_initial_memory_state` to allocate gigabytes of zeroed memory.
+    #[test]
+    fn compute_max_ram_K_bounds_honest_layout() {
+        let memory_config = MemoryConfig {
+            program_size: Some(4096),
+            ..Default::default()
+        };
+        let layout = common::jolt_device::MemoryLayout::new(&memory_config);
+
+        let max_ram_K = compute_max_ram_K(&layout);
+
+        // The bound is a power of two (required by ram_K invariants).
+        assert!(
+            max_ram_K.is_power_of_two(),
+            "max_ram_K must be a power of two"
+        );
+
+        // Every reachable byte (advice + I/O + bytecode + stack + heap) fits
+        // in the bound when divided into 8-byte words.
+        let reachable_words = (layout.heap_end - layout.get_lowest_address()) as usize / 8;
+        assert!(
+            max_ram_K >= reachable_words,
+            "max_ram_K = {max_ram_K} fails to cover reachable_words = {reachable_words}"
+        );
+
+        // The bound is tight: halving it would no longer cover every reachable
+        // word — i.e., the verifier doesn't grant gratuitous slack.
+        if max_ram_K > 1 {
+            assert!(
+                max_ram_K / 2 < reachable_words,
+                "max_ram_K = {max_ram_K} grants more slack than necessary; \
+                 reachable_words = {reachable_words}"
+            );
+        }
+
+        // A pathologically large `ram_K` (2^40 -> ~8 TiB of u64s) is rejected
+        // by the same predicate the verifier uses.
+        let oversized_ram_K = 1usize << 40;
+        assert!(
+            oversized_ram_K > max_ram_K,
+            "oversized ram_K = 2^40 must exceed the layout-derived max"
+        );
     }
 }

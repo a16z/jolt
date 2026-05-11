@@ -56,6 +56,47 @@ fn test_rng() -> StdRng {
     StdRng::from_seed(seed)
 }
 
+#[test]
+fn jolt_program_rv64_decode_matches_tracer_normalization() {
+    use crate::{
+        emulator::cpu::Xlen,
+        instruction::{uncompress_instruction, Instruction},
+    };
+
+    let address = DRAM_BASE;
+    let cases = [
+        (0x1234_50b7, false),
+        (0x1234_5097, false),
+        (0x0080_00ef, false),
+        (0x0000_80e7, false),
+        (0x0020_8063, false),
+        (0x0000_b183, false),
+        (0x0030_b023, false),
+        (0xfff1_0093, false),
+        (0x0010_809b, false),
+        (0x0020_81b3, false),
+        (0x0220_81b3, false),
+        (0x0020_81bb, false),
+        (0x0000_000f, false),
+        (0x0000_0073, false),
+        (0x0010_0073, false),
+        (0x3020_0073, false),
+        (0x3001_10f3, false),
+        (0x0000_50db, false),
+        (0x0020_802b, false),
+        (uncompress_instruction(0x107a, Xlen::Bit64), true),
+    ];
+
+    for (word, compressed) in cases {
+        let expected = Instruction::decode(word, address, compressed)
+            .unwrap()
+            .normalize();
+        let actual =
+            jolt_program::image::decode::decode_instruction(word, address, compressed).unwrap();
+        assert_eq!(actual, expected, "word={word:08x} compressed={compressed}");
+    }
+}
+
 pub fn inline_sequence_trace_test<I: RISCVInstruction + RISCVTrace + Copy>()
 where
     Cycle: From<RISCVCycle<I>>,

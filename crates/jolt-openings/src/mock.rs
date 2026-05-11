@@ -166,12 +166,19 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
     type HidingCommitment = MockHidingCommitment<F>;
     type Blind = ();
 
+    fn commit_zk<P: jolt_poly::MultilinearPoly<Self::Field> + ?Sized>(
+        poly: &P,
+        setup: &Self::ProverSetup,
+    ) -> (Self::Output, Self::OpeningHint) {
+        Self::commit(poly, setup)
+    }
+
     fn open_zk(
         poly: &Self::Polynomial,
         _point: &[Self::Field],
         eval: Self::Field,
         _setup: &Self::ProverSetup,
-        _hint: Option<Self::OpeningHint>,
+        _hint: Self::OpeningHint,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
         let proof = MockProof {
@@ -463,7 +470,7 @@ mod tests {
 
         let mut transcript_p = Blake2bTranscript::new(b"zk-test");
         let (proof, eval_com, _blinding) =
-            MockPCS::open_zk(&poly, &point, eval, &(), None, &mut transcript_p);
+            MockPCS::open_zk(&poly, &point, eval, &(), (), &mut transcript_p);
 
         let _ = eval_com;
         let mut transcript_v = Blake2bTranscript::new(b"zk-test");

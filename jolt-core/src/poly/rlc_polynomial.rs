@@ -11,7 +11,7 @@ use crate::zkvm::ram::remap_address;
 use crate::zkvm::{
     bytecode::{
         chunks::{committed_lanes, for_each_active_lane_value, ActiveLaneValue},
-        BytecodePreprocessing,
+        get_pc_for_cycle, BytecodePreprocessing,
     },
     witness::CommittedPolynomial,
 };
@@ -935,7 +935,7 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
         onehot_accs: &mut [F::UnreducedProductAccum],
     ) {
         let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-        let pc = self.bytecode.get_pc(cycle);
+        let pc = get_pc_for_cycle(self.bytecode, cycle);
         let remapped_address =
             remap_address(cycle.ram_access().address() as u64, self.memory_layout);
 
@@ -1047,7 +1047,7 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
         }
 
         // Bytecode RA chunks
-        let pc = self.bytecode.get_pc(cycle);
+        let pc = crate::zkvm::bytecode::get_pc_for_cycle(self.bytecode, cycle);
         for (i, table) in self.folded_tables.bytecode.iter().enumerate() {
             let k = self.one_hot_params.bytecode_pc_chunk(pc, i) as usize;
             inner_sum += table[k].to_unreduced();

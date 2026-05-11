@@ -14,7 +14,8 @@ use crate::zkvm::bytecode::{
 };
 use crate::zkvm::ram::RAMPreprocessing;
 use common::jolt_device::MemoryLayout;
-use tracer::instruction::{Cycle, Instruction};
+use jolt_riscv::NormalizedInstruction;
+use tracer::instruction::Cycle;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct FullProgramPreprocessing {
@@ -37,12 +38,12 @@ impl Default for FullProgramPreprocessing {
 impl FullProgramPreprocessing {
     #[tracing::instrument(skip_all, name = "ProgramPreprocessing::preprocess")]
     pub fn preprocess(
-        instructions: Vec<Instruction>,
+        instructions: Vec<NormalizedInstruction>,
         memory_init: Vec<(u64, u8)>,
     ) -> Result<Self, PreprocessingError> {
         let entry_address = instructions
             .first()
-            .map(|instr| instr.normalize().address as u64)
+            .map(|instr| instr.address as u64)
             .unwrap_or(0);
         Ok(Self {
             bytecode: BytecodePreprocessing::preprocess(instructions, entry_address)?,
@@ -77,12 +78,12 @@ impl FullProgramPreprocessing {
 
     #[inline(always)]
     pub fn get_pc(&self, cycle: &Cycle) -> usize {
-        self.bytecode.get_pc(cycle)
+        crate::zkvm::bytecode::get_pc_for_cycle(&self.bytecode, cycle)
     }
 
     #[inline(always)]
     pub fn entry_bytecode_index(&self) -> usize {
-        self.bytecode.entry_bytecode_index()
+        crate::zkvm::bytecode::entry_bytecode_index(&self.bytecode)
     }
 }
 
@@ -213,7 +214,7 @@ impl<PCS: CommitmentScheme> Default for ProgramPreprocessing<PCS> {
 impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     #[tracing::instrument(skip_all, name = "ProgramPreprocessing::preprocess")]
     pub fn preprocess(
-        instructions: Vec<Instruction>,
+        instructions: Vec<NormalizedInstruction>,
         memory_init: Vec<(u64, u8)>,
     ) -> Result<Self, PreprocessingError> {
         Ok(Self::Full(FullProgramPreprocessing::preprocess(

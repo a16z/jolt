@@ -30,8 +30,8 @@ pub enum ProofVerifyError {
     InvalidOneHotConfig(String),
     #[error("Invalid bytecode commitment configuration: {0}")]
     InvalidBytecodeConfig(String),
-    #[error("Invalid ram_K: got {0}, minimum required {1}")]
-    InvalidRamK(usize, usize),
+    #[error("Invalid ram_K: got {got}, expected power of two in [{min}, {max}]")]
+    InvalidRamK { got: usize, min: usize, max: usize },
     #[error("Invalid trace_length: got {0}, max allowed {1}")]
     InvalidTraceLength(usize, usize),
     #[error("Dory proof verification failed: {0}")]

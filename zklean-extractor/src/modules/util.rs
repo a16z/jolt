@@ -1,5 +1,6 @@
 use build_fs_tree::{file, serde_yaml, BuildError, FileSystemTree};
 use std::{
+    collections::BTreeMap,
     ffi::OsString,
     fs::{read_dir, File},
     io::Read,
@@ -75,6 +76,8 @@ impl std::fmt::Display for FSError {
 
 pub type FSResult<T> = Result<T, FSError>;
 
+const IGNORED_TEMPLATE_ENTRIES: &[&str] = &[".lake"];
+
 pub fn read_fs_tree_recursively(root: &PathBuf) -> FSResult<FSTree> {
     if !root.is_dir() {
         Err(FSError::TemplateError(
@@ -82,30 +85,32 @@ pub fn read_fs_tree_recursively(root: &PathBuf) -> FSResult<FSTree> {
         ))?;
     }
 
-    Ok(FileSystemTree::Directory(
-        read_dir(root)?
-            .map(|ent| {
-                let ent = ent?;
-                let ftype = ent.file_type()?;
-                let fname = ent.file_name().into_string()?;
+    let mut entries = BTreeMap::new();
+    for ent in read_dir(root)? {
+        let ent = ent?;
+        let ftype = ent.file_type()?;
+        let fname = ent.file_name().into_string()?;
 
-                if ftype.is_file() {
-                    let fcontents = {
-                        let mut buf: Vec<u8> = vec![];
-                        let mut f = File::open(ent.path())?;
-                        f.read_to_end(&mut buf)?;
-                        buf
-                    };
+        if IGNORED_TEMPLATE_ENTRIES.contains(&fname.as_str()) {
+            continue;
+        }
 
-                    Ok((fname, file!(fcontents)))
-                } else if ftype.is_dir() {
-                    Ok((fname, read_fs_tree_recursively(&ent.path())?))
-                } else {
-                    Err(FSError::TemplateError(
-                        "unsupported file type (e.g., symlink)".to_string(),
-                    ))
-                }
-            })
-            .collect::<FSResult<_>>()?,
-    ))
+        if ftype.is_file() {
+            let fcontents = {
+                let mut buf: Vec<u8> = vec![];
+                let mut f = File::open(ent.path())?;
+                f.read_to_end(&mut buf)?;
+                buf
+            };
+            entries.insert(fname, file!(fcontents));
+        } else if ftype.is_dir() {
+            entries.insert(fname, read_fs_tree_recursively(&ent.path())?);
+        } else {
+            Err(FSError::TemplateError(
+                "unsupported file type (e.g., symlink)".to_string(),
+            ))?;
+        }
+    }
+
+    Ok(FileSystemTree::Directory(entries))
 }

@@ -2631,6 +2631,7 @@ mod tests {
     };
     #[cfg(feature = "zk")]
     use crate::{curve::JoltCurve, field::JoltField};
+    use jolt_riscv::NormalizedInstruction;
 
     #[cfg(feature = "zk")]
     fn round_commitment_data<F: JoltField, C: JoltCurve<F = F>, R: rand_core::RngCore>(
@@ -2682,7 +2683,7 @@ mod tests {
     }
 
     fn test_shared_preprocessing(
-        bytecode: Vec<tracer::instruction::Instruction>,
+        bytecode: Vec<NormalizedInstruction>,
         init_memory_state: Vec<(u64, u8)>,
         memory_layout: common::jolt_device::MemoryLayout,
         max_trace_len: usize,
@@ -2694,7 +2695,7 @@ mod tests {
     }
 
     fn test_shared_preprocessing_committed(
-        bytecode: Vec<tracer::instruction::Instruction>,
+        bytecode: Vec<NormalizedInstruction>,
         init_memory_state: Vec<(u64, u8)>,
         memory_layout: common::jolt_device::MemoryLayout,
         max_trace_len: usize,
@@ -3775,9 +3776,16 @@ mod tests {
         // Tamper: give verifier a wrong entry_address so it computes a different
         // entry_bytecode_index and thus a different input_claim expectation.
         let mut tampered_shared = shared.clone();
-        tampered_shared.program_meta.entry_address = e_entry.wrapping_add(4);
-        let tampered_entry_index = tampered_shared.program_meta.entry_address as usize
-            / common::constants::BYTES_PER_INSTRUCTION;
+        match &mut tampered_shared.program {
+            ProgramPreprocessing::Full(full) => {
+                full.bytecode.entry_address = e_entry.wrapping_add(4);
+            }
+            ProgramPreprocessing::Committed(_) => {
+                panic!("test uses full program preprocessing");
+            }
+        }
+        tampered_shared.program_meta = tampered_shared.program.meta();
+        let tampered_entry_index = tampered_shared.program.entry_bytecode_index();
         assert_ne!(
             original_entry_index, tampered_entry_index,
             "tamper did not change entry_bytecode_index — test scenario is invalid"

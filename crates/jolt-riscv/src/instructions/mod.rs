@@ -18,6 +18,7 @@ pub mod i;
 pub mod m;
 pub mod virt;
 
+use crate::{InstructionKind, NormalizedInstruction};
 pub use assert::AssertEq;
 pub use assert::AssertHalfwordAlignment;
 pub use assert::AssertLte;
@@ -92,106 +93,6 @@ pub use m::Rem;
 pub use m::RemU;
 pub use m::RemUW;
 pub use m::RemW;
-use tracer::instruction::{
-    add::ADD,
-    addi::ADDI,
-    addiw::ADDIW,
-    addw::ADDW,
-    and::AND,
-    andi::ANDI,
-    andn::ANDN,
-    auipc::AUIPC,
-    beq::BEQ,
-    bge::BGE,
-    bgeu::BGEU,
-    blt::BLT,
-    bltu::BLTU,
-    bne::BNE,
-    div::DIV,
-    divu::DIVU,
-    divuw::DIVUW,
-    divw::DIVW,
-    ebreak::EBREAK,
-    ecall::ECALL,
-    fence::FENCE,
-    jal::JAL,
-    jalr::JALR,
-    lb::LB,
-    lbu::LBU,
-    ld::LD,
-    lh::LH,
-    lhu::LHU,
-    lui::LUI,
-    lw::LW,
-    lwu::LWU,
-    mul::MUL,
-    mulh::MULH,
-    mulhsu::MULHSU,
-    mulhu::MULHU,
-    mulw::MULW,
-    or::OR,
-    ori::ORI,
-    rem::REM,
-    remu::REMU,
-    remuw::REMUW,
-    remw::REMW,
-    sb::SB,
-    sd::SD,
-    sh::SH,
-    sll::SLL,
-    slli::SLLI,
-    slliw::SLLIW,
-    sllw::SLLW,
-    slt::SLT,
-    slti::SLTI,
-    sltiu::SLTIU,
-    sltu::SLTU,
-    sra::SRA,
-    srai::SRAI,
-    sraiw::SRAIW,
-    sraw::SRAW,
-    srl::SRL,
-    srli::SRLI,
-    srliw::SRLIW,
-    srlw::SRLW,
-    sub::SUB,
-    subw::SUBW,
-    sw::SW,
-    virtual_advice::VirtualAdvice as TracerVirtualAdvice,
-    virtual_advice_len::VirtualAdviceLen as TracerVirtualAdviceLen,
-    virtual_advice_load::VirtualAdviceLoad as TracerVirtualAdviceLoad,
-    virtual_assert_eq::VirtualAssertEQ,
-    virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment,
-    virtual_assert_lte::VirtualAssertLTE,
-    virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow,
-    virtual_assert_valid_div0::VirtualAssertValidDiv0,
-    virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
-    virtual_assert_word_alignment::VirtualAssertWordAlignment,
-    virtual_change_divisor::VirtualChangeDivisor as TracerVirtualChangeDivisor,
-    virtual_change_divisor_w::VirtualChangeDivisorW as TracerVirtualChangeDivisorW,
-    virtual_host_io::VirtualHostIO as TracerVirtualHostIO,
-    virtual_movsign::VirtualMovsign,
-    virtual_muli::VirtualMULI,
-    virtual_pow2::VirtualPow2 as TracerVirtualPow2,
-    virtual_pow2_w::VirtualPow2W as TracerVirtualPow2W,
-    virtual_pow2i::VirtualPow2I as TracerVirtualPow2I,
-    virtual_pow2i_w::VirtualPow2IW as TracerVirtualPow2IW,
-    virtual_rev8w::VirtualRev8W as TracerVirtualRev8W,
-    virtual_rotri::VirtualROTRI,
-    virtual_rotriw::VirtualROTRIW,
-    virtual_shift_right_bitmask::VirtualShiftRightBitmask as TracerVirtualShiftRightBitmask,
-    virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI,
-    virtual_sign_extend_word::VirtualSignExtendWord as TracerVirtualSignExtendWord,
-    virtual_sra::VirtualSRA,
-    virtual_srai::VirtualSRAI,
-    virtual_srl::VirtualSRL,
-    virtual_srli::VirtualSRLI,
-    virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63},
-    virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8},
-    virtual_zero_extend_word::VirtualZeroExtendWord as TracerVirtualZeroExtendWord,
-    xor::XOR,
-    xori::XORI,
-};
 pub use virt::MovSign;
 pub use virt::MulI;
 pub use virt::Pow2;
@@ -259,11 +160,10 @@ pub use virt::VirtualSw;
 
 /// Enum with one variant per Jolt instruction.
 ///
-/// Each variant wraps a Jolt newtype parameterized by the corresponding tracer
-/// instruction struct, so a `JoltInstructions` value carries a populated
-/// instruction (not just a marker). Static-flag dispatch and the
-/// flag-exclusivity tests rely on this concretization to satisfy
-/// `T: JoltInstruction` on the `Flags` impls.
+/// Each variant wraps a Jolt newtype parameterized by the canonical
+/// [`NormalizedInstruction`](crate::NormalizedInstruction) row. Static-flag
+/// dispatch and the flag-exclusivity tests rely on this concretization to
+/// satisfy `T: JoltInstruction` on the `Flags` impls.
 ///
 /// Deliberately omitted instruction kinds (declared and re-exported above
 /// but not proven by Jolt): the Zicsr ops (`Csrrs`, `Csrrw`), `Mret`,
@@ -274,110 +174,255 @@ pub use virt::VirtualSw;
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, strum::EnumIter)]
 pub enum JoltInstructions {
     Noop,
-    Add(Add<ADD>),
-    Addi(Addi<ADDI>),
-    Sub(Sub<SUB>),
-    Lui(Lui<LUI>),
-    Auipc(Auipc<AUIPC>),
-    Mul(Mul<MUL>),
-    MulH(MulH<MULH>),
-    MulHSU(MulHSU<MULHSU>),
-    MulHU(MulHU<MULHU>),
-    Div(Div<DIV>),
-    DivU(DivU<DIVU>),
-    Rem(Rem<REM>),
-    RemU(RemU<REMU>),
-    AddW(AddW<ADDW>),
-    AddiW(AddiW<ADDIW>),
-    SubW(SubW<SUBW>),
-    MulW(MulW<MULW>),
-    DivW(DivW<DIVW>),
-    DivUW(DivUW<DIVUW>),
-    RemW(RemW<REMW>),
-    RemUW(RemUW<REMUW>),
-    And(And<AND>),
-    AndI(AndI<ANDI>),
-    Or(Or<OR>),
-    OrI(OrI<ORI>),
-    Xor(Xor<XOR>),
-    XorI(XorI<XORI>),
-    Andn(Andn<ANDN>),
-    Sll(Sll<SLL>),
-    SllI(SllI<SLLI>),
-    Srl(Srl<SRL>),
-    SrlI(SrlI<SRLI>),
-    Sra(Sra<SRA>),
-    SraI(SraI<SRAI>),
-    SllW(SllW<SLLW>),
-    SllIW(SllIW<SLLIW>),
-    SrlW(SrlW<SRLW>),
-    SrlIW(SrlIW<SRLIW>),
-    SraW(SraW<SRAW>),
-    SraIW(SraIW<SRAIW>),
-    Slt(Slt<SLT>),
-    SltI(SltI<SLTI>),
-    SltU(SltU<SLTU>),
-    SltIU(SltIU<SLTIU>),
-    Beq(Beq<BEQ>),
-    Bne(Bne<BNE>),
-    Blt(Blt<BLT>),
-    Bge(Bge<BGE>),
-    BltU(BltU<BLTU>),
-    BgeU(BgeU<BGEU>),
-    Lb(Lb<LB>),
-    Lbu(Lbu<LBU>),
-    Lh(Lh<LH>),
-    Lhu(Lhu<LHU>),
-    Lw(Lw<LW>),
-    Lwu(Lwu<LWU>),
-    Ld(Ld<LD>),
-    Sb(Sb<SB>),
-    Sh(Sh<SH>),
-    Sw(Sw<SW>),
-    Sd(Sd<SD>),
-    Ecall(Ecall<ECALL>),
-    Ebreak(Ebreak<EBREAK>),
-    Fence(Fence<FENCE>),
-    Jal(Jal<JAL>),
-    Jalr(Jalr<JALR>),
-    AssertEq(AssertEq<VirtualAssertEQ>),
-    AssertLte(AssertLte<VirtualAssertLTE>),
-    AssertValidDiv0(AssertValidDiv0<VirtualAssertValidDiv0>),
-    AssertValidUnsignedRemainder(AssertValidUnsignedRemainder<VirtualAssertValidUnsignedRemainder>),
-    AssertMulUNoOverflow(AssertMulUNoOverflow<VirtualAssertMulUNoOverflow>),
-    AssertWordAlignment(AssertWordAlignment<VirtualAssertWordAlignment>),
-    AssertHalfwordAlignment(AssertHalfwordAlignment<VirtualAssertHalfwordAlignment>),
-    Pow2(Pow2<TracerVirtualPow2>),
-    Pow2I(Pow2I<TracerVirtualPow2I>),
-    Pow2W(Pow2W<TracerVirtualPow2W>),
-    Pow2IW(Pow2IW<TracerVirtualPow2IW>),
-    MulI(MulI<VirtualMULI>),
-    MovSign(MovSign<VirtualMovsign>),
-    VirtualRev8W(VirtualRev8W<TracerVirtualRev8W>),
-    VirtualChangeDivisor(VirtualChangeDivisor<TracerVirtualChangeDivisor>),
-    VirtualChangeDivisorW(VirtualChangeDivisorW<TracerVirtualChangeDivisorW>),
-    VirtualSignExtendWord(VirtualSignExtendWord<TracerVirtualSignExtendWord>),
-    VirtualZeroExtendWord(VirtualZeroExtendWord<TracerVirtualZeroExtendWord>),
-    VirtualSrl(VirtualSrl<VirtualSRL>),
-    VirtualSrli(VirtualSrli<VirtualSRLI>),
-    VirtualSra(VirtualSra<VirtualSRA>),
-    VirtualSrai(VirtualSrai<VirtualSRAI>),
-    VirtualShiftRightBitmask(VirtualShiftRightBitmask<TracerVirtualShiftRightBitmask>),
-    VirtualShiftRightBitmaski(VirtualShiftRightBitmaski<VirtualShiftRightBitmaskI>),
-    VirtualRotri(VirtualRotri<VirtualROTRI>),
-    VirtualRotriw(VirtualRotriw<VirtualROTRIW>),
-    VirtualXorRot32(VirtualXorRot32<VirtualXORROT32>),
-    VirtualXorRot24(VirtualXorRot24<VirtualXORROT24>),
-    VirtualXorRot16(VirtualXorRot16<VirtualXORROT16>),
-    VirtualXorRot63(VirtualXorRot63<VirtualXORROT63>),
-    VirtualXorRotW16(VirtualXorRotW16<VirtualXORROTW16>),
-    VirtualXorRotW12(VirtualXorRotW12<VirtualXORROTW12>),
-    VirtualXorRotW8(VirtualXorRotW8<VirtualXORROTW8>),
-    VirtualXorRotW7(VirtualXorRotW7<VirtualXORROTW7>),
-    VirtualAdvice(VirtualAdvice<TracerVirtualAdvice>),
-    VirtualAdviceLen(VirtualAdviceLen<TracerVirtualAdviceLen>),
-    VirtualAdviceLoad(VirtualAdviceLoad<TracerVirtualAdviceLoad>),
-    VirtualHostIO(VirtualHostIO<TracerVirtualHostIO>),
+    Add(Add<NormalizedInstruction>),
+    Addi(Addi<NormalizedInstruction>),
+    Sub(Sub<NormalizedInstruction>),
+    Lui(Lui<NormalizedInstruction>),
+    Auipc(Auipc<NormalizedInstruction>),
+    Mul(Mul<NormalizedInstruction>),
+    MulH(MulH<NormalizedInstruction>),
+    MulHSU(MulHSU<NormalizedInstruction>),
+    MulHU(MulHU<NormalizedInstruction>),
+    Div(Div<NormalizedInstruction>),
+    DivU(DivU<NormalizedInstruction>),
+    Rem(Rem<NormalizedInstruction>),
+    RemU(RemU<NormalizedInstruction>),
+    AddW(AddW<NormalizedInstruction>),
+    AddiW(AddiW<NormalizedInstruction>),
+    SubW(SubW<NormalizedInstruction>),
+    MulW(MulW<NormalizedInstruction>),
+    DivW(DivW<NormalizedInstruction>),
+    DivUW(DivUW<NormalizedInstruction>),
+    RemW(RemW<NormalizedInstruction>),
+    RemUW(RemUW<NormalizedInstruction>),
+    And(And<NormalizedInstruction>),
+    AndI(AndI<NormalizedInstruction>),
+    Or(Or<NormalizedInstruction>),
+    OrI(OrI<NormalizedInstruction>),
+    Xor(Xor<NormalizedInstruction>),
+    XorI(XorI<NormalizedInstruction>),
+    Andn(Andn<NormalizedInstruction>),
+    Sll(Sll<NormalizedInstruction>),
+    SllI(SllI<NormalizedInstruction>),
+    Srl(Srl<NormalizedInstruction>),
+    SrlI(SrlI<NormalizedInstruction>),
+    Sra(Sra<NormalizedInstruction>),
+    SraI(SraI<NormalizedInstruction>),
+    SllW(SllW<NormalizedInstruction>),
+    SllIW(SllIW<NormalizedInstruction>),
+    SrlW(SrlW<NormalizedInstruction>),
+    SrlIW(SrlIW<NormalizedInstruction>),
+    SraW(SraW<NormalizedInstruction>),
+    SraIW(SraIW<NormalizedInstruction>),
+    Slt(Slt<NormalizedInstruction>),
+    SltI(SltI<NormalizedInstruction>),
+    SltU(SltU<NormalizedInstruction>),
+    SltIU(SltIU<NormalizedInstruction>),
+    Beq(Beq<NormalizedInstruction>),
+    Bne(Bne<NormalizedInstruction>),
+    Blt(Blt<NormalizedInstruction>),
+    Bge(Bge<NormalizedInstruction>),
+    BltU(BltU<NormalizedInstruction>),
+    BgeU(BgeU<NormalizedInstruction>),
+    Lb(Lb<NormalizedInstruction>),
+    Lbu(Lbu<NormalizedInstruction>),
+    Lh(Lh<NormalizedInstruction>),
+    Lhu(Lhu<NormalizedInstruction>),
+    Lw(Lw<NormalizedInstruction>),
+    Lwu(Lwu<NormalizedInstruction>),
+    Ld(Ld<NormalizedInstruction>),
+    Sb(Sb<NormalizedInstruction>),
+    Sh(Sh<NormalizedInstruction>),
+    Sw(Sw<NormalizedInstruction>),
+    Sd(Sd<NormalizedInstruction>),
+    Ecall(Ecall<NormalizedInstruction>),
+    Ebreak(Ebreak<NormalizedInstruction>),
+    Fence(Fence<NormalizedInstruction>),
+    Jal(Jal<NormalizedInstruction>),
+    Jalr(Jalr<NormalizedInstruction>),
+    AssertEq(AssertEq<NormalizedInstruction>),
+    AssertLte(AssertLte<NormalizedInstruction>),
+    AssertValidDiv0(AssertValidDiv0<NormalizedInstruction>),
+    AssertValidUnsignedRemainder(AssertValidUnsignedRemainder<NormalizedInstruction>),
+    AssertMulUNoOverflow(AssertMulUNoOverflow<NormalizedInstruction>),
+    AssertWordAlignment(AssertWordAlignment<NormalizedInstruction>),
+    AssertHalfwordAlignment(AssertHalfwordAlignment<NormalizedInstruction>),
+    Pow2(Pow2<NormalizedInstruction>),
+    Pow2I(Pow2I<NormalizedInstruction>),
+    Pow2W(Pow2W<NormalizedInstruction>),
+    Pow2IW(Pow2IW<NormalizedInstruction>),
+    MulI(MulI<NormalizedInstruction>),
+    MovSign(MovSign<NormalizedInstruction>),
+    VirtualRev8W(VirtualRev8W<NormalizedInstruction>),
+    VirtualChangeDivisor(VirtualChangeDivisor<NormalizedInstruction>),
+    VirtualChangeDivisorW(VirtualChangeDivisorW<NormalizedInstruction>),
+    VirtualSignExtendWord(VirtualSignExtendWord<NormalizedInstruction>),
+    VirtualZeroExtendWord(VirtualZeroExtendWord<NormalizedInstruction>),
+    VirtualSrl(VirtualSrl<NormalizedInstruction>),
+    VirtualSrli(VirtualSrli<NormalizedInstruction>),
+    VirtualSra(VirtualSra<NormalizedInstruction>),
+    VirtualSrai(VirtualSrai<NormalizedInstruction>),
+    VirtualShiftRightBitmask(VirtualShiftRightBitmask<NormalizedInstruction>),
+    VirtualShiftRightBitmaski(VirtualShiftRightBitmaski<NormalizedInstruction>),
+    VirtualRotri(VirtualRotri<NormalizedInstruction>),
+    VirtualRotriw(VirtualRotriw<NormalizedInstruction>),
+    VirtualXorRot32(VirtualXorRot32<NormalizedInstruction>),
+    VirtualXorRot24(VirtualXorRot24<NormalizedInstruction>),
+    VirtualXorRot16(VirtualXorRot16<NormalizedInstruction>),
+    VirtualXorRot63(VirtualXorRot63<NormalizedInstruction>),
+    VirtualXorRotW16(VirtualXorRotW16<NormalizedInstruction>),
+    VirtualXorRotW12(VirtualXorRotW12<NormalizedInstruction>),
+    VirtualXorRotW8(VirtualXorRotW8<NormalizedInstruction>),
+    VirtualXorRotW7(VirtualXorRotW7<NormalizedInstruction>),
+    VirtualAdvice(VirtualAdvice<NormalizedInstruction>),
+    VirtualAdviceLen(VirtualAdviceLen<NormalizedInstruction>),
+    VirtualAdviceLoad(VirtualAdviceLoad<NormalizedInstruction>),
+    VirtualHostIO(VirtualHostIO<NormalizedInstruction>),
+}
+
+impl TryFrom<NormalizedInstruction> for JoltInstructions {
+    type Error = InstructionKind;
+
+    fn try_from(instruction: NormalizedInstruction) -> Result<Self, Self::Error> {
+        Ok(match instruction.instruction_kind {
+            InstructionKind::NoOp => Self::Noop,
+            InstructionKind::ADD => Self::Add(Add(instruction)),
+            InstructionKind::ADDI => Self::Addi(Addi(instruction)),
+            InstructionKind::SUB => Self::Sub(Sub(instruction)),
+            InstructionKind::LUI => Self::Lui(Lui(instruction)),
+            InstructionKind::AUIPC => Self::Auipc(Auipc(instruction)),
+            InstructionKind::MUL => Self::Mul(Mul(instruction)),
+            InstructionKind::MULH => Self::MulH(MulH(instruction)),
+            InstructionKind::MULHSU => Self::MulHSU(MulHSU(instruction)),
+            InstructionKind::MULHU => Self::MulHU(MulHU(instruction)),
+            InstructionKind::DIV => Self::Div(Div(instruction)),
+            InstructionKind::DIVU => Self::DivU(DivU(instruction)),
+            InstructionKind::REM => Self::Rem(Rem(instruction)),
+            InstructionKind::REMU => Self::RemU(RemU(instruction)),
+            InstructionKind::ADDW => Self::AddW(AddW(instruction)),
+            InstructionKind::ADDIW => Self::AddiW(AddiW(instruction)),
+            InstructionKind::SUBW => Self::SubW(SubW(instruction)),
+            InstructionKind::MULW => Self::MulW(MulW(instruction)),
+            InstructionKind::DIVW => Self::DivW(DivW(instruction)),
+            InstructionKind::DIVUW => Self::DivUW(DivUW(instruction)),
+            InstructionKind::REMW => Self::RemW(RemW(instruction)),
+            InstructionKind::REMUW => Self::RemUW(RemUW(instruction)),
+            InstructionKind::AND => Self::And(And(instruction)),
+            InstructionKind::ANDI => Self::AndI(AndI(instruction)),
+            InstructionKind::OR => Self::Or(Or(instruction)),
+            InstructionKind::ORI => Self::OrI(OrI(instruction)),
+            InstructionKind::XOR => Self::Xor(Xor(instruction)),
+            InstructionKind::XORI => Self::XorI(XorI(instruction)),
+            InstructionKind::ANDN => Self::Andn(Andn(instruction)),
+            InstructionKind::SLL => Self::Sll(Sll(instruction)),
+            InstructionKind::SLLI => Self::SllI(SllI(instruction)),
+            InstructionKind::SRL => Self::Srl(Srl(instruction)),
+            InstructionKind::SRLI => Self::SrlI(SrlI(instruction)),
+            InstructionKind::SRA => Self::Sra(Sra(instruction)),
+            InstructionKind::SRAI => Self::SraI(SraI(instruction)),
+            InstructionKind::SLLW => Self::SllW(SllW(instruction)),
+            InstructionKind::SLLIW => Self::SllIW(SllIW(instruction)),
+            InstructionKind::SRLW => Self::SrlW(SrlW(instruction)),
+            InstructionKind::SRLIW => Self::SrlIW(SrlIW(instruction)),
+            InstructionKind::SRAW => Self::SraW(SraW(instruction)),
+            InstructionKind::SRAIW => Self::SraIW(SraIW(instruction)),
+            InstructionKind::SLT => Self::Slt(Slt(instruction)),
+            InstructionKind::SLTI => Self::SltI(SltI(instruction)),
+            InstructionKind::SLTU => Self::SltU(SltU(instruction)),
+            InstructionKind::SLTIU => Self::SltIU(SltIU(instruction)),
+            InstructionKind::BEQ => Self::Beq(Beq(instruction)),
+            InstructionKind::BNE => Self::Bne(Bne(instruction)),
+            InstructionKind::BLT => Self::Blt(Blt(instruction)),
+            InstructionKind::BGE => Self::Bge(Bge(instruction)),
+            InstructionKind::BLTU => Self::BltU(BltU(instruction)),
+            InstructionKind::BGEU => Self::BgeU(BgeU(instruction)),
+            InstructionKind::LB => Self::Lb(Lb(instruction)),
+            InstructionKind::LBU => Self::Lbu(Lbu(instruction)),
+            InstructionKind::LH => Self::Lh(Lh(instruction)),
+            InstructionKind::LHU => Self::Lhu(Lhu(instruction)),
+            InstructionKind::LW => Self::Lw(Lw(instruction)),
+            InstructionKind::LWU => Self::Lwu(Lwu(instruction)),
+            InstructionKind::LD => Self::Ld(Ld(instruction)),
+            InstructionKind::SB => Self::Sb(Sb(instruction)),
+            InstructionKind::SH => Self::Sh(Sh(instruction)),
+            InstructionKind::SW => Self::Sw(Sw(instruction)),
+            InstructionKind::SD => Self::Sd(Sd(instruction)),
+            InstructionKind::ECALL => Self::Ecall(Ecall(instruction)),
+            InstructionKind::EBREAK => Self::Ebreak(Ebreak(instruction)),
+            InstructionKind::FENCE => Self::Fence(Fence(instruction)),
+            InstructionKind::JAL => Self::Jal(Jal(instruction)),
+            InstructionKind::JALR => Self::Jalr(Jalr(instruction)),
+            InstructionKind::VirtualAssertEQ => Self::AssertEq(AssertEq(instruction)),
+            InstructionKind::VirtualAssertLTE => Self::AssertLte(AssertLte(instruction)),
+            InstructionKind::VirtualAssertValidDiv0 => {
+                Self::AssertValidDiv0(AssertValidDiv0(instruction))
+            }
+            InstructionKind::VirtualAssertValidUnsignedRemainder => {
+                Self::AssertValidUnsignedRemainder(AssertValidUnsignedRemainder(instruction))
+            }
+            InstructionKind::VirtualAssertMulUNoOverflow => {
+                Self::AssertMulUNoOverflow(AssertMulUNoOverflow(instruction))
+            }
+            InstructionKind::VirtualAssertWordAlignment => {
+                Self::AssertWordAlignment(AssertWordAlignment(instruction))
+            }
+            InstructionKind::VirtualAssertHalfwordAlignment => {
+                Self::AssertHalfwordAlignment(AssertHalfwordAlignment(instruction))
+            }
+            InstructionKind::VirtualPow2 => Self::Pow2(Pow2(instruction)),
+            InstructionKind::VirtualPow2I => Self::Pow2I(Pow2I(instruction)),
+            InstructionKind::VirtualPow2W => Self::Pow2W(Pow2W(instruction)),
+            InstructionKind::VirtualPow2IW => Self::Pow2IW(Pow2IW(instruction)),
+            InstructionKind::VirtualMULI => Self::MulI(MulI(instruction)),
+            InstructionKind::VirtualMovsign => Self::MovSign(MovSign(instruction)),
+            InstructionKind::VirtualRev8W => Self::VirtualRev8W(VirtualRev8W(instruction)),
+            InstructionKind::VirtualChangeDivisor => {
+                Self::VirtualChangeDivisor(VirtualChangeDivisor(instruction))
+            }
+            InstructionKind::VirtualChangeDivisorW => {
+                Self::VirtualChangeDivisorW(VirtualChangeDivisorW(instruction))
+            }
+            InstructionKind::VirtualSignExtendWord => {
+                Self::VirtualSignExtendWord(VirtualSignExtendWord(instruction))
+            }
+            InstructionKind::VirtualZeroExtendWord => {
+                Self::VirtualZeroExtendWord(VirtualZeroExtendWord(instruction))
+            }
+            InstructionKind::VirtualSRL => Self::VirtualSrl(VirtualSrl(instruction)),
+            InstructionKind::VirtualSRLI => Self::VirtualSrli(VirtualSrli(instruction)),
+            InstructionKind::VirtualSRA => Self::VirtualSra(VirtualSra(instruction)),
+            InstructionKind::VirtualSRAI => Self::VirtualSrai(VirtualSrai(instruction)),
+            InstructionKind::VirtualShiftRightBitmask => {
+                Self::VirtualShiftRightBitmask(VirtualShiftRightBitmask(instruction))
+            }
+            InstructionKind::VirtualShiftRightBitmaskI => {
+                Self::VirtualShiftRightBitmaski(VirtualShiftRightBitmaski(instruction))
+            }
+            InstructionKind::VirtualROTRI => Self::VirtualRotri(VirtualRotri(instruction)),
+            InstructionKind::VirtualROTRIW => Self::VirtualRotriw(VirtualRotriw(instruction)),
+            InstructionKind::VirtualXORROT32 => Self::VirtualXorRot32(VirtualXorRot32(instruction)),
+            InstructionKind::VirtualXORROT24 => Self::VirtualXorRot24(VirtualXorRot24(instruction)),
+            InstructionKind::VirtualXORROT16 => Self::VirtualXorRot16(VirtualXorRot16(instruction)),
+            InstructionKind::VirtualXORROT63 => Self::VirtualXorRot63(VirtualXorRot63(instruction)),
+            InstructionKind::VirtualXORROTW16 => {
+                Self::VirtualXorRotW16(VirtualXorRotW16(instruction))
+            }
+            InstructionKind::VirtualXORROTW12 => {
+                Self::VirtualXorRotW12(VirtualXorRotW12(instruction))
+            }
+            InstructionKind::VirtualXORROTW8 => Self::VirtualXorRotW8(VirtualXorRotW8(instruction)),
+            InstructionKind::VirtualXORROTW7 => Self::VirtualXorRotW7(VirtualXorRotW7(instruction)),
+            InstructionKind::VirtualAdvice => Self::VirtualAdvice(VirtualAdvice(instruction)),
+            InstructionKind::VirtualAdviceLen => {
+                Self::VirtualAdviceLen(VirtualAdviceLen(instruction))
+            }
+            InstructionKind::VirtualAdviceLoad => {
+                Self::VirtualAdviceLoad(VirtualAdviceLoad(instruction))
+            }
+            InstructionKind::VirtualHostIO => Self::VirtualHostIO(VirtualHostIO(instruction)),
+            unsupported => return Err(unsupported),
+        })
+    }
 }
 
 macro_rules! impl_jolt_instructions_flags {
@@ -492,5 +537,33 @@ mod tests {
                 "Load/Store flags not exclusive for {instr:?}",
             );
         }
+    }
+
+    #[test]
+    fn terminal_virtual_instruction_marks_last_in_sequence() -> Result<(), InstructionKind> {
+        fn flags_for(row: NormalizedInstruction) -> Result<crate::CircuitFlagSet, InstructionKind> {
+            JoltInstructions::try_from(row).map(|instruction| instruction.circuit_flags())
+        }
+
+        let mut row = NormalizedInstruction {
+            virtual_sequence_remaining: Some(0),
+            ..Default::default()
+        };
+
+        row.instruction_kind = InstructionKind::ADDI;
+        let addi_flags = flags_for(row)?;
+        assert!(addi_flags[CircuitFlags::VirtualInstruction]);
+        assert!(addi_flags[CircuitFlags::IsLastInSequence]);
+
+        row.instruction_kind = InstructionKind::JALR;
+        let jalr_flags = flags_for(row)?;
+        assert!(jalr_flags[CircuitFlags::VirtualInstruction]);
+        assert!(jalr_flags[CircuitFlags::IsLastInSequence]);
+
+        row.virtual_sequence_remaining = Some(1);
+        let nonterminal_flags = flags_for(row)?;
+        assert!(nonterminal_flags[CircuitFlags::VirtualInstruction]);
+        assert!(!nonterminal_flags[CircuitFlags::IsLastInSequence]);
+        Ok(())
     }
 }

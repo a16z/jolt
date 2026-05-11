@@ -28,6 +28,7 @@ jobs:
           - jolt-crypto
           - jolt-field
           - jolt-poly
+          - jolt-sumcheck
           - jolt-transcript
     name: Fuzz ${{ matrix.crate }}
     concurrency:
