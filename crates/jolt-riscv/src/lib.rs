@@ -53,7 +53,7 @@ pub use flags::{
     CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags,
     InterleavedBitsMarker, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
-pub use instructions::{LookupInstruction, LookupInstructionKind};
+pub use instructions::LookupInstruction;
 pub use jolt_instruction::JoltInstruction;
 pub use kind::{JoltInstructionKind, RiscvInstructionKind};
 pub use normalized::{NormalizedInstruction, NormalizedOperands};

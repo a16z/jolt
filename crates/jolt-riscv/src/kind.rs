@@ -136,16 +136,6 @@ macro_rules! define_instruction_kind {
                 }
             }
 
-            pub fn lookup_kind(self) -> Option<crate::LookupInstructionKind> {
-                let row = crate::NormalizedInstruction {
-                    instruction_kind: self,
-                    ..Default::default()
-                };
-                crate::LookupInstruction::try_from(row)
-                    .ok()
-                    .map(|instruction| instruction.kind())
-            }
-
             pub const fn has_side_effects(self) -> bool {
                 matches!(
                     self,

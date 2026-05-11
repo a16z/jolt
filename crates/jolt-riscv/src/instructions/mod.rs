@@ -172,116 +172,6 @@ pub use virt::VirtualSw;
 /// the advice-load helpers (`AdviceLb`/`Ld`/`Lh`/`Lw`), and `VirtualLw` /
 /// `VirtualSw`. These are intentionally absent from `LookupInstruction` and
 /// from the flag-exclusivity tests below.
-/// Subset identity for expanded rows that have static lookup/circuit metadata.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum::EnumIter)]
-#[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
-pub enum LookupInstructionKind {
-    Noop,
-    Add,
-    Addi,
-    Sub,
-    Lui,
-    Auipc,
-    Mul,
-    MulH,
-    MulHSU,
-    MulHU,
-    Div,
-    DivU,
-    Rem,
-    RemU,
-    AddW,
-    AddiW,
-    SubW,
-    MulW,
-    DivW,
-    DivUW,
-    RemW,
-    RemUW,
-    And,
-    AndI,
-    Or,
-    OrI,
-    Xor,
-    XorI,
-    Andn,
-    Sll,
-    SllI,
-    Srl,
-    SrlI,
-    Sra,
-    SraI,
-    SllW,
-    SllIW,
-    SrlW,
-    SrlIW,
-    SraW,
-    SraIW,
-    Slt,
-    SltI,
-    SltU,
-    SltIU,
-    Beq,
-    Bne,
-    Blt,
-    Bge,
-    BltU,
-    BgeU,
-    Lb,
-    Lbu,
-    Lh,
-    Lhu,
-    Lw,
-    Lwu,
-    Ld,
-    Sb,
-    Sh,
-    Sw,
-    Sd,
-    Ecall,
-    Ebreak,
-    Fence,
-    Jal,
-    Jalr,
-    AssertEq,
-    AssertLte,
-    AssertValidDiv0,
-    AssertValidUnsignedRemainder,
-    AssertMulUNoOverflow,
-    AssertWordAlignment,
-    AssertHalfwordAlignment,
-    Pow2,
-    Pow2I,
-    Pow2W,
-    Pow2IW,
-    MulI,
-    MovSign,
-    VirtualRev8W,
-    VirtualChangeDivisor,
-    VirtualChangeDivisorW,
-    VirtualSignExtendWord,
-    VirtualZeroExtendWord,
-    VirtualSrl,
-    VirtualSrli,
-    VirtualSra,
-    VirtualSrai,
-    VirtualShiftRightBitmask,
-    VirtualShiftRightBitmaski,
-    VirtualRotri,
-    VirtualRotriw,
-    VirtualXorRot32,
-    VirtualXorRot24,
-    VirtualXorRot16,
-    VirtualXorRot63,
-    VirtualXorRotW16,
-    VirtualXorRotW12,
-    VirtualXorRotW8,
-    VirtualXorRotW7,
-    VirtualAdvice,
-    VirtualAdviceLen,
-    VirtualAdviceLoad,
-    VirtualHostIO,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, strum::EnumIter)]
 #[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
@@ -391,120 +281,6 @@ pub enum LookupInstruction {
     VirtualAdviceLen(VirtualAdviceLen<NormalizedInstruction>),
     VirtualAdviceLoad(VirtualAdviceLoad<NormalizedInstruction>),
     VirtualHostIO(VirtualHostIO<NormalizedInstruction>),
-}
-
-impl LookupInstruction {
-    pub const fn kind(&self) -> LookupInstructionKind {
-        match self {
-            Self::Noop => LookupInstructionKind::Noop,
-            Self::Add(..) => LookupInstructionKind::Add,
-            Self::Addi(..) => LookupInstructionKind::Addi,
-            Self::Sub(..) => LookupInstructionKind::Sub,
-            Self::Lui(..) => LookupInstructionKind::Lui,
-            Self::Auipc(..) => LookupInstructionKind::Auipc,
-            Self::Mul(..) => LookupInstructionKind::Mul,
-            Self::MulH(..) => LookupInstructionKind::MulH,
-            Self::MulHSU(..) => LookupInstructionKind::MulHSU,
-            Self::MulHU(..) => LookupInstructionKind::MulHU,
-            Self::Div(..) => LookupInstructionKind::Div,
-            Self::DivU(..) => LookupInstructionKind::DivU,
-            Self::Rem(..) => LookupInstructionKind::Rem,
-            Self::RemU(..) => LookupInstructionKind::RemU,
-            Self::AddW(..) => LookupInstructionKind::AddW,
-            Self::AddiW(..) => LookupInstructionKind::AddiW,
-            Self::SubW(..) => LookupInstructionKind::SubW,
-            Self::MulW(..) => LookupInstructionKind::MulW,
-            Self::DivW(..) => LookupInstructionKind::DivW,
-            Self::DivUW(..) => LookupInstructionKind::DivUW,
-            Self::RemW(..) => LookupInstructionKind::RemW,
-            Self::RemUW(..) => LookupInstructionKind::RemUW,
-            Self::And(..) => LookupInstructionKind::And,
-            Self::AndI(..) => LookupInstructionKind::AndI,
-            Self::Or(..) => LookupInstructionKind::Or,
-            Self::OrI(..) => LookupInstructionKind::OrI,
-            Self::Xor(..) => LookupInstructionKind::Xor,
-            Self::XorI(..) => LookupInstructionKind::XorI,
-            Self::Andn(..) => LookupInstructionKind::Andn,
-            Self::Sll(..) => LookupInstructionKind::Sll,
-            Self::SllI(..) => LookupInstructionKind::SllI,
-            Self::Srl(..) => LookupInstructionKind::Srl,
-            Self::SrlI(..) => LookupInstructionKind::SrlI,
-            Self::Sra(..) => LookupInstructionKind::Sra,
-            Self::SraI(..) => LookupInstructionKind::SraI,
-            Self::SllW(..) => LookupInstructionKind::SllW,
-            Self::SllIW(..) => LookupInstructionKind::SllIW,
-            Self::SrlW(..) => LookupInstructionKind::SrlW,
-            Self::SrlIW(..) => LookupInstructionKind::SrlIW,
-            Self::SraW(..) => LookupInstructionKind::SraW,
-            Self::SraIW(..) => LookupInstructionKind::SraIW,
-            Self::Slt(..) => LookupInstructionKind::Slt,
-            Self::SltI(..) => LookupInstructionKind::SltI,
-            Self::SltU(..) => LookupInstructionKind::SltU,
-            Self::SltIU(..) => LookupInstructionKind::SltIU,
-            Self::Beq(..) => LookupInstructionKind::Beq,
-            Self::Bne(..) => LookupInstructionKind::Bne,
-            Self::Blt(..) => LookupInstructionKind::Blt,
-            Self::Bge(..) => LookupInstructionKind::Bge,
-            Self::BltU(..) => LookupInstructionKind::BltU,
-            Self::BgeU(..) => LookupInstructionKind::BgeU,
-            Self::Lb(..) => LookupInstructionKind::Lb,
-            Self::Lbu(..) => LookupInstructionKind::Lbu,
-            Self::Lh(..) => LookupInstructionKind::Lh,
-            Self::Lhu(..) => LookupInstructionKind::Lhu,
-            Self::Lw(..) => LookupInstructionKind::Lw,
-            Self::Lwu(..) => LookupInstructionKind::Lwu,
-            Self::Ld(..) => LookupInstructionKind::Ld,
-            Self::Sb(..) => LookupInstructionKind::Sb,
-            Self::Sh(..) => LookupInstructionKind::Sh,
-            Self::Sw(..) => LookupInstructionKind::Sw,
-            Self::Sd(..) => LookupInstructionKind::Sd,
-            Self::Ecall(..) => LookupInstructionKind::Ecall,
-            Self::Ebreak(..) => LookupInstructionKind::Ebreak,
-            Self::Fence(..) => LookupInstructionKind::Fence,
-            Self::Jal(..) => LookupInstructionKind::Jal,
-            Self::Jalr(..) => LookupInstructionKind::Jalr,
-            Self::AssertEq(..) => LookupInstructionKind::AssertEq,
-            Self::AssertLte(..) => LookupInstructionKind::AssertLte,
-            Self::AssertValidDiv0(..) => LookupInstructionKind::AssertValidDiv0,
-            Self::AssertValidUnsignedRemainder(..) => {
-                LookupInstructionKind::AssertValidUnsignedRemainder
-            }
-            Self::AssertMulUNoOverflow(..) => LookupInstructionKind::AssertMulUNoOverflow,
-            Self::AssertWordAlignment(..) => LookupInstructionKind::AssertWordAlignment,
-            Self::AssertHalfwordAlignment(..) => LookupInstructionKind::AssertHalfwordAlignment,
-            Self::Pow2(..) => LookupInstructionKind::Pow2,
-            Self::Pow2I(..) => LookupInstructionKind::Pow2I,
-            Self::Pow2W(..) => LookupInstructionKind::Pow2W,
-            Self::Pow2IW(..) => LookupInstructionKind::Pow2IW,
-            Self::MulI(..) => LookupInstructionKind::MulI,
-            Self::MovSign(..) => LookupInstructionKind::MovSign,
-            Self::VirtualRev8W(..) => LookupInstructionKind::VirtualRev8W,
-            Self::VirtualChangeDivisor(..) => LookupInstructionKind::VirtualChangeDivisor,
-            Self::VirtualChangeDivisorW(..) => LookupInstructionKind::VirtualChangeDivisorW,
-            Self::VirtualSignExtendWord(..) => LookupInstructionKind::VirtualSignExtendWord,
-            Self::VirtualZeroExtendWord(..) => LookupInstructionKind::VirtualZeroExtendWord,
-            Self::VirtualSrl(..) => LookupInstructionKind::VirtualSrl,
-            Self::VirtualSrli(..) => LookupInstructionKind::VirtualSrli,
-            Self::VirtualSra(..) => LookupInstructionKind::VirtualSra,
-            Self::VirtualSrai(..) => LookupInstructionKind::VirtualSrai,
-            Self::VirtualShiftRightBitmask(..) => LookupInstructionKind::VirtualShiftRightBitmask,
-            Self::VirtualShiftRightBitmaski(..) => LookupInstructionKind::VirtualShiftRightBitmaski,
-            Self::VirtualRotri(..) => LookupInstructionKind::VirtualRotri,
-            Self::VirtualRotriw(..) => LookupInstructionKind::VirtualRotriw,
-            Self::VirtualXorRot32(..) => LookupInstructionKind::VirtualXorRot32,
-            Self::VirtualXorRot24(..) => LookupInstructionKind::VirtualXorRot24,
-            Self::VirtualXorRot16(..) => LookupInstructionKind::VirtualXorRot16,
-            Self::VirtualXorRot63(..) => LookupInstructionKind::VirtualXorRot63,
-            Self::VirtualXorRotW16(..) => LookupInstructionKind::VirtualXorRotW16,
-            Self::VirtualXorRotW12(..) => LookupInstructionKind::VirtualXorRotW12,
-            Self::VirtualXorRotW8(..) => LookupInstructionKind::VirtualXorRotW8,
-            Self::VirtualXorRotW7(..) => LookupInstructionKind::VirtualXorRotW7,
-            Self::VirtualAdvice(..) => LookupInstructionKind::VirtualAdvice,
-            Self::VirtualAdviceLen(..) => LookupInstructionKind::VirtualAdviceLen,
-            Self::VirtualAdviceLoad(..) => LookupInstructionKind::VirtualAdviceLoad,
-            Self::VirtualHostIO(..) => LookupInstructionKind::VirtualHostIO,
-        }
-    }
 }
 
 impl TryFrom<NormalizedInstruction> for LookupInstruction {
@@ -785,18 +561,37 @@ mod tests {
 
         assert_eq!(jolt_kind, JoltInstructionKind::AMOADDW);
         assert!(source_kind.expands_to_jolt());
-        assert_eq!(jolt_kind.lookup_kind(), None);
+        assert_eq!(
+            LookupInstruction::try_from(NormalizedInstruction {
+                instruction_kind: jolt_kind,
+                ..Default::default()
+            }),
+            Err(jolt_kind)
+        );
     }
 
     #[test]
-    fn lookup_kind_identifies_explicit_subset() {
-        assert_eq!(
-            JoltInstructionKind::ADD.lookup_kind(),
-            Some(LookupInstructionKind::Add)
-        );
-        assert_eq!(JoltInstructionKind::AMOADDW.lookup_kind(), None);
-        assert_eq!(JoltInstructionKind::CSRRS.lookup_kind(), None);
-        assert_eq!(JoltInstructionKind::VirtualSW.lookup_kind(), None);
+    fn lookup_instruction_identifies_explicit_subset() {
+        assert!(matches!(
+            LookupInstruction::try_from(NormalizedInstruction {
+                instruction_kind: JoltInstructionKind::ADD,
+                ..Default::default()
+            }),
+            Ok(LookupInstruction::Add(..))
+        ));
+        for kind in [
+            JoltInstructionKind::AMOADDW,
+            JoltInstructionKind::CSRRS,
+            JoltInstructionKind::VirtualSW,
+        ] {
+            assert_eq!(
+                LookupInstruction::try_from(NormalizedInstruction {
+                    instruction_kind: kind,
+                    ..Default::default()
+                }),
+                Err(kind)
+            );
+        }
     }
 
     #[test]
