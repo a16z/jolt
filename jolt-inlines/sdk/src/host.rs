@@ -4,7 +4,7 @@ pub use num_bigint::BigUint as NBigUint;
 use tracer::utils::inline_sequence_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
 
 pub use inventory;
-pub use tracer::emulator::cpu::{Cpu, Xlen};
+pub use tracer::emulator::cpu::Cpu;
 pub use tracer::instruction;
 pub use tracer::instruction::format::format_inline::FormatInline;
 pub use tracer::instruction::inline::InlineRegistration;

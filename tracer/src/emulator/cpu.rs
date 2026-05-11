@@ -160,7 +160,7 @@ struct ActiveMarker {
 #[derive(Clone, Debug)]
 pub struct Cpu {
     clock: u64,
-    pub(crate) xlen: Xlen,
+
     pub(crate) privilege_mode: PrivilegeMode,
     wfi: bool,
     pub x: [i64; REGISTER_COUNT as usize],
@@ -183,11 +183,6 @@ pub struct Cpu {
     call_stack: VecDeque<CallFrame>,
     /// Advice tape for runtime advice system
     pub advice_tape: AdviceTape,
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum Xlen {
-    Bit64,
 }
 
 /// Width of an LR/SC reservation set. Ordered `Word < Doubleword` so
@@ -297,10 +292,8 @@ fn _get_trap_type_name(trap_type: &TrapType) -> &'static str {
     }
 }
 
-fn get_trap_cause(trap: &Trap, xlen: &Xlen) -> u64 {
-    let interrupt_bit = match xlen {
-        Xlen::Bit64 => 0x8000000000000000_u64,
-    };
+fn get_trap_cause(trap: &Trap) -> u64 {
+    let interrupt_bit = 0x8000000000000000_u64;
     match trap.trap_type {
         TrapType::InstructionAddressMisaligned => 0,
         TrapType::InstructionAccessFault => 1,
@@ -336,14 +329,13 @@ impl Cpu {
     pub fn new(terminal: Box<dyn Terminal>) -> Self {
         let mut cpu = Self {
             clock: 0,
-            xlen: Xlen::Bit64,
             privilege_mode: PrivilegeMode::Machine,
             wfi: false,
             x: [0; REGISTER_COUNT as usize],
             f: [0.0; 32],
             pc: 0,
             csr: [0; CSR_CAPACITY],
-            mmu: Mmu::new(Xlen::Bit64, terminal),
+            mmu: Mmu::new(terminal),
             reservation: 0,
             is_reservation_set: false,
             reservation_width: ReservationWidth::Word,
@@ -374,18 +366,6 @@ impl Cpu {
     /// * `value`
     pub fn update_pc(&mut self, value: u64) {
         self.pc = value;
-    }
-
-    /// Updates XLEN.
-    ///
-    /// # Arguments
-    /// * `xlen`
-    pub fn update_xlen(&mut self, xlen: Xlen) {
-        self.xlen = xlen;
-        self.unsigned_data_mask = match xlen {
-            Xlen::Bit64 => 0xffffffffffffffff,
-        };
-        self.mmu.update_xlen(xlen);
     }
 
     /// Reads integer register content
@@ -477,7 +457,7 @@ impl Cpu {
         }
 
         let original_word = self.fetch()?;
-        let instruction_address = normalize_u64(self.pc, &self.xlen);
+        let instruction_address = normalize_u64(self.pc);
         let is_compressed = (original_word & 0x3) != 0x3;
         let word = match is_compressed {
             false => {
@@ -486,7 +466,7 @@ impl Cpu {
             }
             true => {
                 self.pc = self.pc.wrapping_add(2); // 16-bit length compressed instruction
-                uncompress_instruction(original_word & 0xffff, self.xlen)
+                uncompress_instruction(original_word & 0xffff)
             }
         };
 
@@ -502,7 +482,7 @@ impl Cpu {
             self.trace_len += 1;
         } else {
             instr.trace(self, trace);
-            self.trace_len += instr.inline_sequence(&self.vr_allocator, self.xlen).len();
+            self.trace_len += instr.inline_sequence(&self.vr_allocator).len();
         }
 
         // check if current instruction is real or not for cycle profiling
@@ -628,7 +608,7 @@ impl Cpu {
 
     fn handle_trap(&mut self, trap: Trap, instruction_address: u64, is_interrupt: bool) -> bool {
         let current_privilege_encoding = get_privilege_encoding(&self.privilege_mode) as u64;
-        let cause = get_trap_cause(&trap, &self.xlen);
+        let cause = get_trap_cause(&trap);
 
         // First, determine which privilege mode should handle the trap.
         // @TODO: Check if this logic is correct
@@ -961,30 +941,24 @@ impl Cpu {
 
     #[allow(dead_code)]
     fn update_addressing_mode(&mut self, value: u64) {
-        let addressing_mode = match self.xlen {
-            Xlen::Bit64 => match value >> 60 {
-                0 => AddressingMode::None,
-                8 => AddressingMode::SV39,
-                9 => AddressingMode::SV48,
-                _ => {
-                    #[cfg(feature = "std")]
-                    tracing::error!("Unknown addressing_mode {:x}", value >> 60);
-                    panic!();
-                }
-            },
+        let addressing_mode = match value >> 60 {
+            0 => AddressingMode::None,
+            8 => AddressingMode::SV39,
+            9 => AddressingMode::SV48,
+            _ => {
+                #[cfg(feature = "std")]
+                tracing::error!("Unknown addressing_mode {:x}", value >> 60);
+                panic!();
+            }
         };
-        let ppn = match self.xlen {
-            Xlen::Bit64 => value & 0xfffffffffff,
-        };
+        let ppn = value & 0xfffffffffff;
         self.mmu.update_addressing_mode(addressing_mode);
         self.mmu.update_ppn(ppn);
     }
 
     // @TODO: Rename to better name?
     pub(crate) fn sign_extend(&self, value: i64) -> i64 {
-        match self.xlen {
-            Xlen::Bit64 => value,
-        }
+        value
     }
 
     // @TODO: Rename to better name?
@@ -994,9 +968,7 @@ impl Cpu {
 
     // @TODO: Rename to better name?
     pub(crate) fn most_negative(&self) -> i64 {
-        match self.xlen {
-            Xlen::Bit64 => i64::MIN,
-        }
+        i64::MIN
     }
 
     /// Disassembles an instruction pointed by Program Counter.
@@ -1017,7 +989,7 @@ impl Cpu {
             false => original_word,
             true => {
                 original_word &= 0xffff;
-                uncompress_instruction(original_word, self.xlen)
+                uncompress_instruction(original_word)
             }
         };
 
@@ -1149,7 +1121,6 @@ impl Cpu {
     pub fn save_state_with_empty_memory(&self) -> Cpu {
         Cpu {
             clock: self.clock,
-            xlen: self.xlen,
             privilege_mode: self.privilege_mode,
             wfi: self.wfi,
             x: self.x,
@@ -1228,10 +1199,8 @@ pub fn get_register_name(num: usize) -> &'static str {
     }
 }
 
-fn normalize_u64(value: u64, width: &Xlen) -> u64 {
-    match width {
-        Xlen::Bit64 => value,
-    }
+fn normalize_u64(value: u64) -> u64 {
+    value
 }
 
 #[cfg(test)]

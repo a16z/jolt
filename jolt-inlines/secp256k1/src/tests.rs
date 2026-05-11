@@ -7,7 +7,6 @@ mod sequence_tests {
     };
     use ark_ff::{BigInt, Field, PrimeField};
     use ark_secp256k1::{Fq, Fr};
-    use tracer::emulator::cpu::Xlen;
     use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
     fn assert_divq_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
@@ -22,7 +21,7 @@ mod sequence_tests {
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
 
-        let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
+        let mut harness = InlineTestHarness::new(layout);
         harness.setup_registers();
         harness.load_input64(a);
         harness.load_input2_64(b);
@@ -68,7 +67,7 @@ mod sequence_tests {
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
 
-        let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
+        let mut harness = InlineTestHarness::new(layout);
         harness.setup_registers();
         harness.load_input64(a);
         harness.load_input2_64(b);
@@ -117,7 +116,7 @@ mod sequence_tests {
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
 
-        let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
+        let mut harness = InlineTestHarness::new(layout);
         harness.setup_registers();
         harness.load_input64(a);
         harness.execute_inline(InlineTestHarness::create_default_instruction(
@@ -161,7 +160,7 @@ mod sequence_tests {
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
 
-        let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
+        let mut harness = InlineTestHarness::new(layout);
         harness.setup_registers();
         harness.load_input64(a);
         harness.load_input2_64(b);
@@ -207,7 +206,7 @@ mod sequence_tests {
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
 
-        let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
+        let mut harness = InlineTestHarness::new(layout);
         harness.setup_registers();
         harness.load_input64(a);
         harness.load_input2_64(b);
@@ -256,7 +255,7 @@ mod sequence_tests {
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
 
-        let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
+        let mut harness = InlineTestHarness::new(layout);
         harness.setup_registers();
         harness.load_input64(a);
         harness.execute_inline(InlineTestHarness::create_default_instruction(

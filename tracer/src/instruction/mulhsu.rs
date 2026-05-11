@@ -35,7 +35,7 @@ impl MULHSU {
 
 impl RISCVTrace for MULHSU {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
         let mut trace = trace;
         for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
@@ -46,10 +46,7 @@ impl RISCVTrace for MULHSU {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emulator::{
-        cpu::{Cpu, Xlen},
-        default_terminal::DefaultTerminal,
-    };
+    use crate::emulator::{cpu::Cpu, default_terminal::DefaultTerminal};
 
     /// Regression test: MULHSU with negative rs1.
     ///
@@ -60,7 +57,6 @@ mod tests {
     #[test]
     fn test_mulhsu_negative_rs1() {
         let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
-        cpu.update_xlen(Xlen::Bit64);
 
         // MULHSU rd=x1, rs1=x2, rs2=x3
         let instr = MULHSU::with_regs(1, 2, 3);

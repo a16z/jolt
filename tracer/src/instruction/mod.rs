@@ -152,7 +152,7 @@ use virtual_zero_extend_word::VirtualZeroExtendWord;
 
 use self::inline::INLINE;
 
-use crate::emulator::cpu::{Cpu, Xlen};
+use crate::emulator::cpu::Cpu;
 use crate::utils::virtual_registers::{is_supported_csr, VirtualRegisterAllocator};
 use derive_more::From;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
@@ -576,7 +576,7 @@ macro_rules! define_rv64imac_enums {
                             | Instruction::INLINE(_)
                     )
                 {
-                    let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+                    let inline_sequence = self.inline_sequence(&cpu.vr_allocator);
                     let mut trace = trace;
                     for instr in inline_sequence {
                         instr.trace_raw(cpu, trace.as_deref_mut());
@@ -644,9 +644,9 @@ macro_rules! define_rv64imac_enums {
                 }
             }
 
-            pub fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
+            pub fn inline_sequence(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
                 if let Instruction::INLINE(inline) = self {
-                    return inline.inline_sequence(allocator, xlen);
+                    return inline.inline_sequence(allocator);
                 }
                 let mut expansion_allocator = jolt_program::expand::ExpansionAllocator::new();
                 jolt_program::expand::expand_instruction(
@@ -1107,7 +1107,7 @@ impl Instruction {
 }
 
 // @TODO: Optimize
-pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
+pub fn uncompress_instruction(halfword: u32) -> u32 {
     let op = halfword & 0x3; // [1:0]
     let funct3 = (halfword >> 13) & 0x7; // [15:13]
 
@@ -1240,8 +1240,7 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                     }
                 }
                 1 => {
-                    let _ = xlen;
-                    // C.ADDIW (RV64C only)
+                    // C.ADDIW
                     let r = (halfword >> 7) & 0x1f;
                     let imm = match halfword & 0x1000 {
                             0x1000 => 0xffffffc0,

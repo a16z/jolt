@@ -45,8 +45,7 @@ impl RISCVTrace for DIVUW {
             (x / y) as u64
         };
 
-        let mut inline_sequence =
-            Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let mut inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
         fill_virtual_advice(&mut inline_sequence, &[quotient]);
 
         let mut trace = trace;

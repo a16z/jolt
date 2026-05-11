@@ -58,10 +58,7 @@ fn test_rng() -> StdRng {
 
 #[test]
 fn jolt_program_rv64_decode_matches_tracer_normalization() {
-    use crate::{
-        emulator::cpu::Xlen,
-        instruction::{uncompress_instruction, Instruction},
-    };
+    use crate::instruction::{uncompress_instruction, Instruction};
 
     let address = DRAM_BASE;
     let cases = [
@@ -84,7 +81,7 @@ fn jolt_program_rv64_decode_matches_tracer_normalization() {
         (0x3001_10f3, false),
         (0x0000_50db, false),
         (0x0020_802b, false),
-        (uncompress_instruction(0x107a, Xlen::Bit64), true),
+        (uncompress_instruction(0x107a), true),
     ];
 
     for (word, compressed) in cases {

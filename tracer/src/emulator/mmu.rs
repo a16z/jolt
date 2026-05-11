@@ -7,7 +7,7 @@ use crate::instruction::{RAMRead, RAMWrite};
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 use common::jolt_device::JoltDevice;
 
-use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType, Xlen};
+use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType};
 use super::terminal::Terminal;
 
 /// Emulates Memory Management Unit. It holds the Main memory and peripheral
@@ -18,7 +18,6 @@ use super::terminal::Terminal;
 #[derive(Clone, Debug)]
 pub struct Mmu {
     clock: u64,
-    xlen: Xlen,
     ppn: u64,
     addressing_mode: AddressingMode,
     privilege_mode: PrivilegeMode,
@@ -59,10 +58,9 @@ impl Mmu {
     /// * `xlen`
     /// * `terminal`
     /// * `tracer`
-    pub fn new(xlen: Xlen, _terminal: Box<dyn Terminal>) -> Self {
+    pub fn new(_terminal: Box<dyn Terminal>) -> Self {
         Mmu {
             clock: 0,
-            xlen,
             ppn: 0,
             addressing_mode: AddressingMode::None,
             privilege_mode: PrivilegeMode::Machine,
@@ -70,14 +68,6 @@ impl Mmu {
             jolt_device: None,
             mstatus: 0,
         }
-    }
-
-    /// Updates XLEN.
-    ///
-    /// # Arguments
-    /// * `xlen`
-    pub fn update_xlen(&mut self, xlen: Xlen) {
-        self.xlen = xlen;
     }
 
     /// Initializes Main memory. This method is expected to be called only once.
@@ -127,7 +117,6 @@ impl Mmu {
     }
 
     fn get_effective_address(&self, address: u64) -> u64 {
-        let _ = self.xlen;
         address
     }
 
@@ -1032,7 +1021,6 @@ impl Mmu {
     pub fn save_state_with_empty_memory(&self) -> Mmu {
         Mmu {
             clock: self.clock,
-            xlen: self.xlen,
             ppn: self.ppn,
             addressing_mode: self.addressing_mode,
             privilege_mode: self.privilege_mode,
@@ -1148,7 +1136,7 @@ mod test_mmu {
 
     fn setup_mmu() -> Mmu {
         let terminal = Box::new(DummyTerminal::default());
-        let mut mmu = Mmu::new(Xlen::Bit64, terminal);
+        let mut mmu = Mmu::new(terminal);
         let memory_config = MemoryConfig {
             program_size: Some(1024),
             ..Default::default()

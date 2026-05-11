@@ -26,7 +26,7 @@ impl SLLI {
 
 impl RISCVTrace for SLLI {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
         let mut trace = trace;
         for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
@@ -37,14 +37,12 @@ impl RISCVTrace for SLLI {
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
-    use crate::emulator::cpu::{Cpu, Xlen};
+    use crate::emulator::cpu::Cpu;
     use crate::emulator::default_terminal::DefaultTerminal;
     use crate::instruction::{uncompress_instruction, Instruction};
 
     fn setup_rv64_cpu() -> Cpu {
-        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
-        cpu.update_xlen(Xlen::Bit64);
-        cpu
+        Cpu::new(Box::new(DefaultTerminal::default()))
     }
 
     /// c.slli RV64 encoding roundtrip: assembles the compressed halfword, runs it
@@ -59,7 +57,7 @@ mod tests {
         // bits [11:7] = rd, bits [6:2] = imm[4:0], op = 0b10 at bits [1:0].
         let halfword: u32 =
             ((shamt_hi as u32) << 12) | ((rd as u32) << 7) | ((shamt5 as u32) << 2) | 0b10;
-        let word = uncompress_instruction(halfword, Xlen::Bit64);
+        let word = uncompress_instruction(halfword);
         let decoded = Instruction::decode(word, 0x80000000, true).unwrap();
         let Instruction::SLLI(ref slli) = decoded else {
             panic!("expected SLLI after uncompress; got {decoded:?}");
@@ -111,7 +109,7 @@ mod tests {
         // c.slli x0, 52: funct3=000 (implicit 0), bit12=shamt[5]=1,
         // rd=x0 (bits[11:7]=0), shamt[4:0]=20 at bits[6:2], op=10.
         let halfword: u32 = (1u32 << 12) | ((52u32 & 0x1f) << 2) | 0b10;
-        let word = uncompress_instruction(halfword, Xlen::Bit64);
+        let word = uncompress_instruction(halfword);
         assert_ne!(
             word, 0xffffffff,
             "c.slli x0, 52 should decode (HINT), not return the sentinel"

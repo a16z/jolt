@@ -1,10 +1,9 @@
 use crate::{INLINE_OPCODE, SHA256_FUNCT3, SHA256_FUNCT7, SHA256_INIT_FUNCT3, SHA256_INIT_FUNCT7};
-use tracer::emulator::cpu::Xlen;
 use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
-pub fn create_sha256_harness(xlen: Xlen) -> InlineTestHarness {
+pub fn create_sha256_harness() -> InlineTestHarness {
     let layout = InlineMemoryLayout::single_input(64, 32);
-    InlineTestHarness::new(layout, xlen)
+    InlineTestHarness::new(layout)
 }
 
 pub fn instruction_sha256() -> tracer::instruction::inline::INLINE {
@@ -105,13 +104,11 @@ mod exec_functions {
 mod sequence_tests {
     use super::*;
     use crate::test_constants::TestVectors;
-    use tracer::emulator::cpu::Xlen;
 
     #[test]
     fn test_sha256_direct_execution() {
         for (desc, block, initial_state, expected) in TestVectors::get_standard_test_vectors() {
-            let xlen = Xlen::Bit64;
-            let mut harness = create_sha256_harness(xlen);
+            let mut harness = create_sha256_harness();
             harness.setup_registers();
             harness.load_input32(&block);
             harness.load_state32(&initial_state);
@@ -121,7 +118,7 @@ mod sequence_tests {
 
             assert_eq!(
                 &expected, &result,
-                "SHA256 direct execution for {xlen:?}: {desc}, expected: {expected:08x?}, actual: {result:08x?}",
+                "SHA256 direct execution: {desc}, expected: {expected:08x?}, actual: {result:08x?}",
             );
         }
     }
@@ -129,8 +126,7 @@ mod sequence_tests {
     #[test]
     fn test_sha256init_direct_execution() {
         for (desc, block, _initial_state, expected) in TestVectors::get_standard_test_vectors() {
-            let xlen = Xlen::Bit64;
-            let mut harness = create_sha256_harness(xlen);
+            let mut harness = create_sha256_harness();
             harness.setup_registers();
             harness.load_input32(&block);
             harness.execute_inline(instruction_sha256init());
@@ -140,7 +136,7 @@ mod sequence_tests {
             assert_eq!(
                 &expected,
                 &result,
-                "SHA256INIT direct execution for {xlen:?}: {desc}, expected: {expected:08x?}, actual: {result:08x?}",
+                "SHA256INIT direct execution: {desc}, expected: {expected:08x?}, actual: {result:08x?}",
             );
         }
     }

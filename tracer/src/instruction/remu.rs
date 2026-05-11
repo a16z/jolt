@@ -31,8 +31,7 @@ impl REMU {
 
 impl RISCVTrace for REMU {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let mut inline_sequence =
-            Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let mut inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
         let quotient = if cpu.unsigned_data(cpu.x[self.operands.rs2 as usize]) == 0 {
             u64::MAX
         } else {

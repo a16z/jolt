@@ -1,4 +1,4 @@
-use crate::emulator::cpu::{Cpu, Xlen};
+use crate::emulator::cpu::Cpu;
 pub use jolt_riscv::NormalizedOperands;
 use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::Debug;
@@ -58,10 +58,9 @@ pub fn normalize_register_value(cpu: &Cpu, reg: usize) -> u64 {
         }
         _ => cpu.x[reg],
     };
-    let _ = cpu.xlen;
     value as u64
 }
 
-pub fn normalize_imm(imm: u64, _xlen: &Xlen) -> i64 {
+pub fn normalize_imm(imm: u64) -> i64 {
     imm as i64
 }

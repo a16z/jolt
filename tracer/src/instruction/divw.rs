@@ -51,8 +51,7 @@ impl RISCVTrace for DIVW {
             (quotient, remainder.unsigned_abs())
         };
 
-        let mut inline_sequence =
-            Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let mut inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
         fill_virtual_advice(&mut inline_sequence, &[quotient as u64, remainder as u64]);
 
         let mut trace = trace;

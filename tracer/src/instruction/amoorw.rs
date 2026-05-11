@@ -38,7 +38,7 @@ impl AMOORW {
 
 impl RISCVTrace for AMOORW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
         let mut trace = trace;
         for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());

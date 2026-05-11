@@ -12,10 +12,7 @@ use tracing::{error, info};
 use alloc::{boxed::Box, vec::Vec};
 
 use common::{self, jolt_device::MemoryConfig};
-use emulator::{
-    cpu::{self, Xlen},
-    default_terminal::DefaultTerminal,
-};
+use emulator::{cpu, default_terminal::DefaultTerminal};
 use instruction::{Cycle, Instruction};
 
 pub mod emulator;
@@ -256,8 +253,6 @@ fn setup_emulator_with_backtraces(
 ) -> Emulator {
     let term = DefaultTerminal::default();
     let mut emulator = Emulator::new(Box::new(term));
-    emulator.update_xlen(get_xlen());
-
     // Set the advice tape if provided
     if let Some(tape) = advice_tape {
         emulator.set_advice_tape(tape);
@@ -652,7 +647,7 @@ impl LazyTracer for CheckpointingTracer {
 }
 
 #[tracing::instrument(skip_all)]
-pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64, Xlen) {
+pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
     let obj = object::File::parse(elf).unwrap();
     if matches!(&obj, object::File::Elf32(_)) {
         panic!("tracer only supports RV64 ELF inputs");
@@ -672,15 +667,7 @@ pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64, Xlen) 
         image.memory_init,
         image.program_end,
         image.entry_address,
-        Xlen::Bit64,
     )
-}
-
-fn get_xlen() -> Xlen {
-    match common::constants::XLEN {
-        64 => cpu::Xlen::Bit64,
-        _ => panic!("Emulator only supports 64-bit registers."),
-    }
 }
 
 pub struct IterChunks<I: Iterator> {

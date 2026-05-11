@@ -5,7 +5,6 @@
 //! During actual runtime execution, these values will vary according to the specific bytecode being executed
 //! and should be replaced with actual runtime values.
 
-use crate::emulator::cpu::Xlen;
 use crate::instruction::format::format_inline::FormatInline;
 use crate::instruction::Instruction;
 use crate::utils::inline_helpers::InstrAssembler;
@@ -15,7 +14,6 @@ use std::io::{self, Write};
 use std::path::Path;
 
 pub const DEFAULT_RAM_START_ADDRESS: u64 = 0x80000000;
-pub const DEFAULT_XLEN: Xlen = Xlen::Bit64;
 pub const DEFAULT_RS1: u8 = 10;
 pub const DEFAULT_RS2: u8 = 11;
 pub const DEFAULT_RS3: u8 = 12;
@@ -49,8 +47,6 @@ pub struct SequenceInputs {
     pub address: u64,
     /// Whether the instruction is compressed
     pub is_compressed: bool,
-    /// CPU architecture width (32 or 64)
-    pub xlen: Xlen,
     pub rs1: u8,
     pub rs2: u8,
     pub rs3: u8,
@@ -71,18 +67,16 @@ impl From<&SequenceInputs> for InstrAssembler {
         InstrAssembler::new_inline(
             input.address,
             input.is_compressed,
-            input.xlen,
             &VirtualRegisterAllocator::default(),
         )
     }
 }
 
 impl SequenceInputs {
-    pub fn new(address: u64, is_compressed: bool, xlen: Xlen, rs1: u8, rs2: u8, rs3: u8) -> Self {
+    pub fn new(address: u64, is_compressed: bool, rs1: u8, rs2: u8, rs3: u8) -> Self {
         Self {
             address,
             is_compressed,
-            xlen,
             rs1,
             rs2,
             rs3,
@@ -95,7 +89,6 @@ impl Default for SequenceInputs {
         Self {
             address: DEFAULT_RAM_START_ADDRESS,
             is_compressed: DEFAULT_IS_COMPRESSED,
-            xlen: DEFAULT_XLEN,
             rs1: DEFAULT_RS1,
             rs2: DEFAULT_RS2,
             rs3: DEFAULT_RS3,
@@ -150,7 +143,6 @@ pub fn write_inline_trace(
         inline_info.name, inline_info.opcode, inline_info.funct3, inline_info.funct7
     )?;
 
-    let _ = sequence_inputs.xlen;
     let xlen = "64";
 
     writeln!(

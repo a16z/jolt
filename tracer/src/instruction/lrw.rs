@@ -44,7 +44,7 @@ impl RISCVTrace for LRW {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         cpu.set_reservation(address, ReservationWidth::Word);
 
-        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
 
         let mut trace = trace;
         for instr in inline_sequence {

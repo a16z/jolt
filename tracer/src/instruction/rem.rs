@@ -52,8 +52,7 @@ impl RISCVTrace for REM {
             (quotient as u64, remainder.unsigned_abs())
         };
 
-        let mut inline_sequence =
-            Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let mut inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
         fill_virtual_advice(&mut inline_sequence, &[quotient, remainder]);
 
         let mut trace = trace;

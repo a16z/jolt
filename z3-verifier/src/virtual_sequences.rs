@@ -4,7 +4,6 @@ use common::constants::{REGISTER_COUNT, RISCV_REGISTER_COUNT};
 use std::env;
 use std::fmt::Write;
 use tracer::{
-    emulator::cpu::Xlen,
     instruction::{
         add::ADD,
         addi::ADDI,
@@ -127,13 +126,12 @@ struct SymbolicCpu {
     x: [BV; REGISTER_COUNT as usize],
     advice_vars: Vec<BV>,
     asserts: Vec<Bool>,
-    xlen: Xlen,
     bv_bits: u32,
     word_bits: u32,
 }
 
 impl SymbolicCpu {
-    fn new(var_prefix: &str, xlen: Xlen, bv_bits: u32) -> Self {
+    fn new(var_prefix: &str, bv_bits: u32) -> Self {
         assert!(bv_bits.is_power_of_two() && (8..=64).contains(&bv_bits));
         assert!(bv_bits.is_multiple_of(2));
         let word_bits = bv_bits / 2;
@@ -148,7 +146,6 @@ impl SymbolicCpu {
             x: regs,
             advice_vars: Vec::new(),
             asserts, // x0 is always 0
-            xlen,
             bv_bits,
             word_bits,
         }
@@ -223,7 +220,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
         }
         Instruction::ADDI(ADDI { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
-            let imm = normalize_imm(operands.imm, &cpu.xlen);
+            let imm = normalize_imm(operands.imm);
             cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 + imm));
         }
         Instruction::AND(AND { operands, .. }) => {
@@ -233,7 +230,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
         }
         Instruction::ANDI(ANDI { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
-            let imm = normalize_imm(scale_imm_u64(operands.imm, cpu), &cpu.xlen);
+            let imm = normalize_imm(scale_imm_u64(operands.imm, cpu));
             cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 & imm));
         }
         Instruction::ANDN(ANDN { operands, .. }) => {
@@ -242,7 +239,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 & rs2.bvnot()));
         }
         Instruction::LUI(LUI { operands, .. }) => {
-            let imm = normalize_imm(operands.imm, &cpu.xlen);
+            let imm = normalize_imm(operands.imm);
             cpu.x[operands.rd as usize] = BV::from_i64(imm, cpu.bv_bits);
         }
         Instruction::MUL(MUL { operands, .. }) => {
@@ -258,7 +255,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
         }
         Instruction::ORI(ORI { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
-            let imm = normalize_imm(scale_imm_u64(operands.imm, cpu), &cpu.xlen);
+            let imm = normalize_imm(scale_imm_u64(operands.imm, cpu));
             cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 | imm));
         }
         Instruction::SUB(SUB { operands, .. }) => {
@@ -463,16 +460,15 @@ fn test_correctness<I: RISCVInstruction + RISCVTrace>(
     let mut solver = Solver::new();
     solver.set_params(&solver_params);
     let allocator = VirtualRegisterAllocator::default();
-    let xlen = Xlen::Bit64;
     let bv_bits = verifier_bv_bits();
-    let mut cpu = SymbolicCpu::new("cpu1", xlen, bv_bits);
+    let mut cpu = SymbolicCpu::new("cpu1", bv_bits);
 
     let cpu_initial = cpu.clone();
     let mut cpu_expected = cpu.clone();
     expected(instr, &mut cpu_expected);
 
     let instruction: Instruction = (*instr).into();
-    let seq = instruction.inline_sequence(&allocator, xlen);
+    let seq = instruction.inline_sequence(&allocator);
     for instr in seq {
         symbolic_exec(&instr, &mut cpu);
     }
@@ -529,11 +525,10 @@ fn test_consistency(instr: &Instruction) {
     let mut solver = Solver::new();
     solver.set_params(&solver_params);
     let allocator = VirtualRegisterAllocator::default();
-    let xlen = Xlen::Bit64;
     let bv_bits = verifier_bv_bits();
     let (mut cpu1, mut cpu2) = (
-        SymbolicCpu::new("cpu1", xlen, bv_bits),
-        SymbolicCpu::new("cpu2", xlen, bv_bits),
+        SymbolicCpu::new("cpu1", bv_bits),
+        SymbolicCpu::new("cpu2", bv_bits),
     );
     let cpu1_initial = cpu1.clone();
 
@@ -541,7 +536,7 @@ fn test_consistency(instr: &Instruction) {
         solver += &x1.eq(x2);
     }
 
-    let seq = instr.inline_sequence(&allocator, xlen);
+    let seq = instr.inline_sequence(&allocator);
     for instr in &seq {
         symbolic_exec(instr, &mut cpu1);
         symbolic_exec(instr, &mut cpu2);
@@ -655,7 +650,7 @@ macro_rules! test_sequence {
 
 test_sequence!(ADDIW, FormatI, |instr: &ADDIW, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let imm = normalize_imm(instr.operands.imm, &cpu.xlen);
+    let imm = normalize_imm(instr.operands.imm);
     cpu.x[instr.operands.rd as usize] =
         cpu.sign_ext_word(&(rs1 + imm).extract(cpu.word_bits - 1, 0));
 });
