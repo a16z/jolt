@@ -3,7 +3,7 @@
 //! The pipeline has two phases:
 //! 1. **Recipe building** (`grammar.rs`): each source-only instruction maps to a
 //!    symbolic recipe — a sequence of `ExpansionOp`s referencing `TempId` placeholders.
-//! 2. **Materialization** (`core.rs`): recipes are executed by binding temps to
+//! 2. **Materialization** (`materialize.rs`): recipes are executed by binding temps to
 //!    physical virtual registers, emitting concrete rows, and recursing for nested
 //!    expansions.
 //!
