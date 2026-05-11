@@ -93,27 +93,19 @@ pub fn expand_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
         instruction
     };
 
-    let result = expand_instruction_with_provider_inner(instruction, allocator, inline_provider);
+    let result = if instruction.instruction_kind == JoltInstructionKind::Inline {
+        let rows = inline_provider.expand_inline(instruction, allocator)?;
+        finalize_inline_provider_rows(*instruction, allocator, rows)
+    } else {
+        let owned_allocator = std::mem::take(allocator);
+        let mut state = ExpansionState::new(owned_allocator);
+        let result = state.expand_recursive(instruction);
+        *allocator = state.into_allocator();
+        result
+    };
     if let Some(register) = allocated_rd_zero_register {
         allocator.release(register)?;
     }
-    result
-}
-
-fn expand_instruction_with_provider_inner<P: InlineExpansionProvider + ?Sized>(
-    instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-    inline_provider: &mut P,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    if instruction.instruction_kind == JoltInstructionKind::Inline {
-        let rows = inline_provider.expand_inline(instruction, allocator)?;
-        return finalize_inline_provider_rows(*instruction, allocator, rows);
-    }
-
-    let owned_allocator = std::mem::take(allocator);
-    let mut state = ExpansionState::new(owned_allocator);
-    let result = state.expand_recursive(instruction);
-    *allocator = state.into_allocator();
     result
 }
 
