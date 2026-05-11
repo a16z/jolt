@@ -34,10 +34,10 @@ use allocator::{
 };
 use arithmetic::*;
 use control_flow::*;
-use materialize::ExpansionState;
 use division::*;
 use grammar::{reg, ExpandedInstructionSequence, ExpansionBuilder, RegisterOperand, TempId};
 use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
+use materialize::ExpansionState;
 use memory::*;
 use metadata::stamp_inline_sequence;
 use operands::*;

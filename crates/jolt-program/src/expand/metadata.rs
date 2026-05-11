@@ -1,6 +1,8 @@
 use jolt_riscv::NormalizedInstruction;
 
-use crate::expand::{grammar::is_target_legal, materialize::MAX_FINAL_ROWS_PER_SOURCE, ExpansionError};
+use crate::expand::{
+    grammar::is_target_legal, materialize::MAX_FINAL_ROWS_PER_SOURCE, ExpansionError,
+};
 
 const MAX_METADATA_SEQUENCE_ROWS: usize = u16::MAX as usize + 1;
 
