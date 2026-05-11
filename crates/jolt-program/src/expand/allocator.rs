@@ -68,6 +68,8 @@ pub(super) const fn mscratch_register() -> u8 {
     MSCRATCH_REGISTER
 }
 
+/// Virtual register pool partitioned into reserved (CSRs), instruction (per-expansion temps),
+/// and inline (provider-allocated) ranges. Also tracks recursion depth.
 #[derive(Debug, Clone)]
 pub struct ExpansionAllocator {
     allocated: u128,

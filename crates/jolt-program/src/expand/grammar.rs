@@ -2,6 +2,7 @@ use jolt_riscv::{JoltInstructionKind, NormalizedInstruction};
 
 use crate::expand::{allocator::NUM_VIRTUAL_INSTRUCTION_REGISTERS, ExpansionError};
 
+/// Symbolic register placeholder, resolved to a physical virtual register during materialization.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct TempId(pub(super) u8);
 
@@ -151,19 +152,24 @@ impl RowTemplate {
     }
 }
 
+/// A single step in a symbolic expansion recipe.
 #[derive(Clone, Copy)]
 pub(super) enum ExpansionOp {
+    /// Append this row directly to the output.
     Emit(RowTemplate),
+    /// Recursively expand this row through the full pipeline before appending.
     Expand(RowTemplate),
     Allocate(TempId),
     Release(TempId),
 }
 
+/// A complete symbolic recipe: source instruction paired with the ops to materialize it.
 pub(super) struct ExpandedInstructionSequence {
     pub(super) source: NormalizedInstruction,
     pub(super) ops: Vec<ExpansionOp>,
 }
 
+/// Builds a symbolic expansion recipe from emit/expand/allocate/release calls.
 pub(super) struct ExpansionBuilder {
     source: NormalizedInstruction,
     ops: Vec<ExpansionOp>,
@@ -333,6 +339,7 @@ impl ExpansionBuilder {
     }
 }
 
+/// Instructions that exist only in decoded source and must be expanded into target-legal sequences.
 pub(super) fn is_source_only(instruction_kind: JoltInstructionKind) -> bool {
     matches!(
         instruction_kind,

@@ -1,5 +1,6 @@
 use super::*;
 
+/// Replaces a side-effect-free rd=x0 instruction with `ADDI x0, x0, 0`.
 pub(super) fn noop_for(instruction: NormalizedInstruction) -> NormalizedInstruction {
     debug_assert_eq!(instruction.operands.rd, Some(0));
     NormalizedInstruction {
@@ -46,6 +47,7 @@ pub(super) fn csr_address(instruction: &NormalizedInstruction) -> u16 {
     (instruction.operands.imm & 0xfff) as u16
 }
 
+/// Instructions whose expansion recipes handle rd=x0 themselves (trap, CSR).
 pub(super) const fn handles_rd_zero_internally(instruction_kind: JoltInstructionKind) -> bool {
     matches!(
         instruction_kind,

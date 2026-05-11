@@ -1,9 +1,10 @@
 use jolt_riscv::NormalizedInstruction;
 
-use crate::expand::{buffer::MAX_FINAL_ROWS_PER_SOURCE, grammar::is_target_legal, ExpansionError};
+use crate::expand::{grammar::is_target_legal, materialize::MAX_FINAL_ROWS_PER_SOURCE, ExpansionError};
 
 const MAX_METADATA_SEQUENCE_ROWS: usize = u16::MAX as usize + 1;
 
+/// Stamps position metadata (`is_first_in_sequence`, `virtual_sequence_remaining`) on recipe output.
 pub(super) fn stamp_instruction_sequence(
     rows: Vec<NormalizedInstruction>,
     is_compressed: bool,
@@ -11,6 +12,7 @@ pub(super) fn stamp_instruction_sequence(
     stamp_sequence_metadata(rows, is_compressed, MAX_FINAL_ROWS_PER_SOURCE)
 }
 
+/// Same as `stamp_instruction_sequence` but for inline provider output (higher capacity limit).
 pub(super) fn stamp_inline_sequence(
     rows: Vec<NormalizedInstruction>,
     is_compressed: bool,

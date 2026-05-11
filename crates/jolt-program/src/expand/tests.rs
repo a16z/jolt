@@ -291,7 +291,7 @@ fn inline_provider_allows_sequences_larger_than_instruction_recipes() -> Result<
             instruction: &NormalizedInstruction,
             _allocator: &mut ExpansionAllocator,
         ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-            Ok((0..=buffer::MAX_FINAL_ROWS_PER_SOURCE)
+            Ok((0..=materialize::MAX_FINAL_ROWS_PER_SOURCE)
                 .map(|_| NormalizedInstruction {
                     instruction_kind: JoltInstructionKind::ADDI,
                     address: instruction.address,
@@ -313,13 +313,13 @@ fn inline_provider_allows_sequences_larger_than_instruction_recipes() -> Result<
     let mut allocator = ExpansionAllocator::new();
     let expanded = expand_instruction_with_provider(&input, &mut allocator, &mut LargeProvider)?;
 
-    assert_eq!(expanded.len(), buffer::MAX_FINAL_ROWS_PER_SOURCE + 1);
+    assert_eq!(expanded.len(), materialize::MAX_FINAL_ROWS_PER_SOURCE + 1);
     assert_eq!(
         expanded[0].virtual_sequence_remaining,
-        Some(buffer::MAX_FINAL_ROWS_PER_SOURCE as u16)
+        Some(materialize::MAX_FINAL_ROWS_PER_SOURCE as u16)
     );
     assert!(expanded[0].is_first_in_sequence);
-    assert!(expanded[buffer::MAX_FINAL_ROWS_PER_SOURCE].is_compressed);
+    assert!(expanded[materialize::MAX_FINAL_ROWS_PER_SOURCE].is_compressed);
     Ok(())
 }
 

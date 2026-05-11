@@ -2,7 +2,6 @@ use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands}
 
 use crate::expand::{
     allocator::{ExpansionAllocator, NUM_VIRTUAL_INSTRUCTION_REGISTERS},
-    buffer::ExpansionBuffer,
     expand_source_only_instruction,
     grammar::{
         is_source_only, ExpandedInstructionSequence, ExpansionOp, RegisterOperand, RowTemplate,
@@ -13,6 +12,9 @@ use crate::expand::{
     ExpansionError,
 };
 
+pub(super) const MAX_FINAL_ROWS_PER_SOURCE: usize = 64;
+
+/// Materializes symbolic recipes into concrete instructions (phase 2).
 pub(super) struct ExpansionState {
     allocator: ExpansionAllocator,
 }
@@ -36,6 +38,7 @@ impl ExpansionState {
         result
     }
 
+    /// Routes: rd=x0 rewrite → recurse, native → pass-through, source-only → build recipe + materialize.
     fn dispatch(
         &mut self,
         instruction: &NormalizedInstruction,
@@ -98,6 +101,53 @@ impl ExpansionState {
     }
 }
 
+/// Bounded output collector — rejects sequences exceeding `MAX_FINAL_ROWS_PER_SOURCE`.
+#[derive(Debug)]
+struct ExpansionBuffer {
+    rows: Vec<NormalizedInstruction>,
+}
+
+impl ExpansionBuffer {
+    fn new() -> Self {
+        Self {
+            rows: Vec::with_capacity(MAX_FINAL_ROWS_PER_SOURCE),
+        }
+    }
+
+    fn push(&mut self, row: NormalizedInstruction) -> Result<(), ExpansionError> {
+        if self.rows.len() == MAX_FINAL_ROWS_PER_SOURCE {
+            return Err(ExpansionError::CapacityExceeded {
+                actual: self.rows.len() + 1,
+                capacity: MAX_FINAL_ROWS_PER_SOURCE,
+            });
+        }
+        self.rows.push(row);
+        Ok(())
+    }
+
+    fn extend_vec(&mut self, rows: Vec<NormalizedInstruction>) -> Result<(), ExpansionError> {
+        for row in rows {
+            self.push(row)?;
+        }
+        Ok(())
+    }
+
+    fn check_capacity(&self) -> Result<(), ExpansionError> {
+        if self.rows.len() > MAX_FINAL_ROWS_PER_SOURCE {
+            return Err(ExpansionError::CapacityExceeded {
+                actual: self.rows.len(),
+                capacity: MAX_FINAL_ROWS_PER_SOURCE,
+            });
+        }
+        Ok(())
+    }
+
+    fn into_vec(self) -> Vec<NormalizedInstruction> {
+        self.rows
+    }
+}
+
+/// Maps symbolic `TempId`s to physical virtual registers for one recipe materialization.
 struct TempBindings {
     slots: [Option<u8>; NUM_VIRTUAL_INSTRUCTION_REGISTERS],
 }
@@ -136,6 +186,7 @@ impl TempBindings {
     }
 }
 
+/// Executes a single recipe: resolves temps, collects output rows, checks capacity.
 struct SequenceMaterializer {
     address: usize,
     is_compressed: bool,

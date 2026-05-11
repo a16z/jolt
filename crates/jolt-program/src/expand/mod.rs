@@ -1,17 +1,23 @@
 //! RV64 bytecode expansion from decoded source rows into final Jolt bytecode.
 //!
+//! The pipeline has two phases:
+//! 1. **Recipe building** (`grammar.rs`): each source-only instruction maps to a
+//!    symbolic recipe — a sequence of `ExpansionOp`s referencing `TempId` placeholders.
+//! 2. **Materialization** (`core.rs`): recipes are executed by binding temps to
+//!    physical virtual registers, emitting concrete rows, and recursing for nested
+//!    expansions.
+//!
 //! Expansion intentionally has no `Xlen` parameter: the `jolt-program` pipeline
 //! only supports RV64. RV32/ELF32 inputs are rejected before this module is
 //! called.
 
 pub mod allocator;
 mod arithmetic;
-mod buffer;
 mod control_flow;
-mod core;
 mod division;
 pub mod error;
 mod grammar;
+mod materialize;
 mod memory;
 mod metadata;
 mod operands;
@@ -28,7 +34,7 @@ use allocator::{
 };
 use arithmetic::*;
 use control_flow::*;
-use core::ExpansionState;
+use materialize::ExpansionState;
 use division::*;
 use grammar::{reg, ExpandedInstructionSequence, ExpansionBuilder, RegisterOperand, TempId};
 use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
@@ -132,6 +138,7 @@ fn finalize_inline_provider_rows(
     stamp_inline_sequence(rows, source.is_compressed)
 }
 
+/// Dispatches a source-only instruction to its recipe builder (phase 1).
 fn expand_source_only_instruction(
     instruction: &NormalizedInstruction,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
