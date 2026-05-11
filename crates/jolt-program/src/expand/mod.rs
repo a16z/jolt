@@ -87,16 +87,16 @@ pub fn expand_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
     let mut rewritten;
     let mut allocated_rd_zero_register = None;
     let instruction = if instruction.operands.rd == Some(0)
-        && !handles_rd_zero_internally(instruction.instruction_kind.jolt_kind())
+        && !instruction.instruction_kind.handles_rd_zero_internally()
     {
-        if instruction.instruction_kind.jolt_kind().has_side_effects() {
+        if instruction.instruction_kind.has_side_effects() {
             let virtual_register = allocator.allocate()?;
             allocated_rd_zero_register = Some(virtual_register);
             rewritten = *instruction;
             rewritten.operands.rd = Some(virtual_register);
             &rewritten
         } else {
-            return Ok(vec![noop_for(instruction.into_normalized_instruction())]);
+            return Ok(vec![noop_for_source(*instruction)]);
         }
     } else {
         instruction
@@ -128,7 +128,7 @@ fn expand_normalized_instruction_with_provider<P: InlineExpansionProvider + ?Siz
     let mut rewritten;
     let mut allocated_rd_zero_register = None;
     let instruction = if instruction.operands.rd == Some(0)
-        && !handles_rd_zero_internally(instruction.instruction_kind)
+        && !handles_final_rd_zero_internally(instruction.instruction_kind)
     {
         if instruction.instruction_kind.has_side_effects() {
             let virtual_register = allocator.allocate()?;

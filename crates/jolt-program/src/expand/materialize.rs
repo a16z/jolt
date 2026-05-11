@@ -7,11 +7,11 @@ use crate::expand::{
     allocator::{ExpansionAllocator, NUM_VIRTUAL_INSTRUCTION_REGISTERS},
     expand_source_only_instruction,
     grammar::{
-        is_source_only, DispatchRowTemplate, ExpandedInstructionSequence, ExpansionOp,
+        is_target_legal, DispatchRowTemplate, ExpandedInstructionSequence, ExpansionOp,
         RegisterOperand, RowTemplate, TempId, TemplateOperands,
     },
     metadata::stamp_instruction_sequence,
-    operands::{handles_rd_zero_internally, noop_for},
+    operands::{handles_final_rd_zero_internally, noop_for, noop_for_source},
     ExpansionError,
 };
 
@@ -57,7 +57,7 @@ impl ExpansionState {
         instruction: NormalizedInstruction,
     ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
         if instruction.operands.rd == Some(0)
-            && !handles_rd_zero_internally(instruction.instruction_kind)
+            && !handles_final_rd_zero_internally(instruction.instruction_kind)
         {
             if instruction.instruction_kind.has_side_effects() {
                 let virtual_register = self.allocate_register()?;
@@ -73,7 +73,7 @@ impl ExpansionState {
         if instruction.instruction_kind == JoltInstructionKind::Inline {
             return Err(ExpansionError::InlineProviderRequired);
         }
-        if !is_source_only(instruction.instruction_kind) {
+        if is_target_legal(instruction.instruction_kind) {
             return Ok(vec![instruction]);
         }
         let source = SourceInstruction {
@@ -90,9 +90,10 @@ impl ExpansionState {
         &mut self,
         instruction: SourceInstruction,
     ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-        let jolt_kind = instruction.instruction_kind.jolt_kind();
-        if instruction.operands.rd == Some(0) && !handles_rd_zero_internally(jolt_kind) {
-            if jolt_kind.has_side_effects() {
+        if instruction.operands.rd == Some(0)
+            && !instruction.instruction_kind.handles_rd_zero_internally()
+        {
+            if instruction.instruction_kind.has_side_effects() {
                 let virtual_register = self.allocate_register()?;
                 let mut rewritten = instruction;
                 rewritten.operands.rd = Some(virtual_register);
@@ -100,14 +101,17 @@ impl ExpansionState {
                 self.release_register(virtual_register)?;
                 return expanded;
             }
-            return Ok(vec![noop_for(instruction.into_normalized_instruction())]);
+            return Ok(vec![noop_for_source(instruction)]);
         }
 
         if instruction.instruction_kind == SourceInstructionKind::Inline {
             return Err(ExpansionError::InlineProviderRequired);
         }
-        if !is_source_only(jolt_kind) {
-            return Ok(vec![instruction.into_normalized_instruction()]);
+        if !instruction.instruction_kind.is_source_only() {
+            return instruction
+                .into_final_instruction()
+                .map(|instruction| vec![instruction])
+                .ok_or(ExpansionError::UnsupportedInstruction);
         }
         let sequence = expand_source_only_instruction(&instruction)?;
         self.materialize(sequence)

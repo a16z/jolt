@@ -33,6 +33,23 @@ pub struct SourceInstruction {
 }
 
 impl SourceInstruction {
+    /// Converts a source row that is already final-bytecode-shaped into a
+    /// normalized Jolt bytecode row.
+    ///
+    /// Source-only rows such as registered inlines, AMOs, narrow loads/stores,
+    /// CSR/trap rows, division helpers, and word/shift helpers must go through
+    /// bytecode expansion instead of using this conversion.
+    pub fn into_final_instruction(self) -> Option<NormalizedInstruction> {
+        Some(NormalizedInstruction {
+            instruction_kind: self.instruction_kind.final_kind()?,
+            address: self.address,
+            operands: self.operands,
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: self.is_compressed,
+        })
+    }
+
     /// Converts this decoded source row into the current normalized row shape.
     ///
     /// This is the explicit bridge used while `NormalizedInstruction` remains
