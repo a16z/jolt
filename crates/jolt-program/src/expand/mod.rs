@@ -36,7 +36,9 @@ use arithmetic::*;
 use control_flow::*;
 use division::*;
 use grammar::{reg, ExpandedInstructionSequence, ExpansionBuilder, RegisterOperand, TempId};
-use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
+use jolt_riscv::{
+    JoltInstructionKind, NormalizedInstruction, NormalizedOperands, SourceInstruction,
+};
 use materialize::ExpansionState;
 use memory::*;
 use metadata::stamp_inline_sequence;
@@ -70,13 +72,22 @@ impl InlineExpansionProvider for NoInlineExpansionProvider {
 }
 
 pub fn expand_instruction(
-    instruction: &NormalizedInstruction,
+    instruction: &SourceInstruction,
     allocator: &mut ExpansionAllocator,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     expand_instruction_with_provider(instruction, allocator, &mut NoInlineExpansionProvider)
 }
 
 pub fn expand_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
+    instruction: &SourceInstruction,
+    allocator: &mut ExpansionAllocator,
+    inline_provider: &mut P,
+) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+    let instruction = instruction.into_normalized_instruction();
+    expand_normalized_instruction_with_provider(&instruction, allocator, inline_provider)
+}
+
+fn expand_normalized_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
     instruction: &NormalizedInstruction,
     allocator: &mut ExpansionAllocator,
     inline_provider: &mut P,
@@ -214,13 +225,13 @@ fn expand_source_only_instruction(
 }
 
 pub fn expand_program(
-    instructions: &[NormalizedInstruction],
+    instructions: &[SourceInstruction],
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     expand_program_with_provider(instructions, &mut NoInlineExpansionProvider)
 }
 
 pub fn expand_program_with_provider<P: InlineExpansionProvider + ?Sized>(
-    instructions: &[NormalizedInstruction],
+    instructions: &[SourceInstruction],
     inline_provider: &mut P,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     let mut allocator = ExpansionAllocator::new();

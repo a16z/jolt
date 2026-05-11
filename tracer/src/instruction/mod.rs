@@ -156,8 +156,8 @@ use crate::emulator::cpu::Cpu;
 use crate::utils::virtual_registers::{is_supported_csr, VirtualRegisterAllocator};
 use derive_more::From;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
-use jolt_riscv::JoltInstructionKind;
 pub use jolt_riscv::NormalizedInstruction;
+use jolt_riscv::{JoltInstructionKind, SourceInstruction, SourceInstructionKind};
 
 pub mod format;
 
@@ -633,6 +633,10 @@ macro_rules! define_rv64imac_enums {
                 self.into()
             }
 
+            pub fn source_instruction(&self) -> SourceInstruction {
+                self.into()
+            }
+
             pub fn has_side_effects(&self) -> bool {
                 match self {
                     Instruction::NoOp => false,
@@ -650,7 +654,7 @@ macro_rules! define_rv64imac_enums {
                 }
                 let mut expansion_allocator = jolt_program::expand::ExpansionAllocator::new();
                 jolt_program::expand::expand_instruction(
-                    &self.normalize(),
+                    &self.source_instruction(),
                     &mut expansion_allocator,
                 )
                 .expect("jolt-program bytecode expansion failed")
@@ -745,6 +749,36 @@ macro_rules! define_rv64imac_enums {
                         },
                         virtual_sequence_remaining: instr.virtual_sequence_remaining,
                         is_first_in_sequence: instr.is_first_in_sequence,
+                        is_compressed: instr.is_compressed,
+                    },
+                }
+            }
+        }
+
+        impl From<&Instruction> for SourceInstruction {
+            fn from(instr: &Instruction) -> Self {
+                match instr {
+                    Instruction::NoOp => Default::default(),
+                    Instruction::UNIMPL => SourceInstruction {
+                        instruction_kind: SourceInstructionKind::Unimpl,
+                        ..Default::default()
+                    },
+                    $(
+                        Instruction::$instr(instr) => SourceInstruction {
+                            instruction_kind: SourceInstructionKind::$instr,
+                            address: instr.address as usize,
+                            operands: instr.operands.into(),
+                            is_compressed: instr.is_compressed,
+                        },
+                    )*
+                    Instruction::INLINE(instr) => SourceInstruction {
+                        instruction_kind: SourceInstructionKind::Inline,
+                        address: instr.address as usize,
+                        operands: {
+                            let mut operands: NormalizedOperands = instr.operands.into();
+                            operands.imm = inline_metadata(instr.opcode, instr.funct3, instr.funct7);
+                            operands
+                        },
                         is_compressed: instr.is_compressed,
                     },
                 }

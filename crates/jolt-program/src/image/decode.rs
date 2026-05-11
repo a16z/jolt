@@ -3,9 +3,7 @@
     reason = "RISC-V decode tables are easiest to audit in ISA bit-field widths"
 )]
 
-use jolt_riscv::{
-    JoltInstructionKind, NormalizedInstruction, NormalizedOperands, RiscvInstructionKind,
-};
+use jolt_riscv::{NormalizedOperands, SourceInstruction, SourceInstructionKind};
 
 use crate::ProgramError;
 
@@ -13,50 +11,50 @@ pub fn decode_instruction(
     word: u32,
     address: u64,
     is_compressed: bool,
-) -> Result<NormalizedInstruction, ProgramError> {
+) -> Result<SourceInstruction, ProgramError> {
     let opcode = word & 0x7f;
     let kind = match opcode {
-        0b0110111 => RiscvInstructionKind::LUI,
-        0b0010111 => RiscvInstructionKind::AUIPC,
-        0b1101111 => RiscvInstructionKind::JAL,
+        0b0110111 => SourceInstructionKind::LUI,
+        0b0010111 => SourceInstructionKind::AUIPC,
+        0b1101111 => SourceInstructionKind::JAL,
         0b1100111 => match funct3(word) {
-            0b000 => RiscvInstructionKind::JALR,
+            0b000 => SourceInstructionKind::JALR,
             _ => return invalid("invalid JALR funct3"),
         },
         0b1100011 => match funct3(word) {
-            0b000 => RiscvInstructionKind::BEQ,
-            0b001 => RiscvInstructionKind::BNE,
-            0b100 => RiscvInstructionKind::BLT,
-            0b101 => RiscvInstructionKind::BGE,
-            0b110 => RiscvInstructionKind::BLTU,
-            0b111 => RiscvInstructionKind::BGEU,
+            0b000 => SourceInstructionKind::BEQ,
+            0b001 => SourceInstructionKind::BNE,
+            0b100 => SourceInstructionKind::BLT,
+            0b101 => SourceInstructionKind::BGE,
+            0b110 => SourceInstructionKind::BLTU,
+            0b111 => SourceInstructionKind::BGEU,
             _ => return invalid("invalid branch funct3"),
         },
         0b0000011 => match funct3(word) {
-            0b000 => RiscvInstructionKind::LB,
-            0b001 => RiscvInstructionKind::LH,
-            0b010 => RiscvInstructionKind::LW,
-            0b011 => RiscvInstructionKind::LD,
-            0b100 => RiscvInstructionKind::LBU,
-            0b101 => RiscvInstructionKind::LHU,
-            0b110 => RiscvInstructionKind::LWU,
+            0b000 => SourceInstructionKind::LB,
+            0b001 => SourceInstructionKind::LH,
+            0b010 => SourceInstructionKind::LW,
+            0b011 => SourceInstructionKind::LD,
+            0b100 => SourceInstructionKind::LBU,
+            0b101 => SourceInstructionKind::LHU,
+            0b110 => SourceInstructionKind::LWU,
             _ => return invalid("invalid load funct3"),
         },
         0b0100011 => match funct3(word) {
-            0b000 => RiscvInstructionKind::SB,
-            0b001 => RiscvInstructionKind::SH,
-            0b010 => RiscvInstructionKind::SW,
-            0b011 => RiscvInstructionKind::SD,
+            0b000 => SourceInstructionKind::SB,
+            0b001 => SourceInstructionKind::SH,
+            0b010 => SourceInstructionKind::SW,
+            0b011 => SourceInstructionKind::SD,
             _ => return invalid("invalid store funct3"),
         },
         0b0010011 => decode_op_imm(word)?,
         0b0011011 => decode_op_imm_32(word)?,
         0b0110011 => decode_op(word)?,
         0b0111011 => decode_op_32(word)?,
-        0b0001111 => RiscvInstructionKind::FENCE,
+        0b0001111 => SourceInstructionKind::FENCE,
         0b0101111 => decode_amo(word)?,
         0b1110011 => decode_system(word)?,
-        0b0001011 | 0b0101011 => RiscvInstructionKind::Inline,
+        0b0001011 | 0b0101011 => SourceInstructionKind::Inline,
         0b1011011 => decode_custom(word)?,
         _ => return invalid("unknown RV64 opcode"),
     };
@@ -64,203 +62,203 @@ pub fn decode_instruction(
     Ok(normalized(kind, word, address, is_compressed))
 }
 
-fn decode_op_imm(word: u32) -> Result<RiscvInstructionKind, ProgramError> {
+fn decode_op_imm(word: u32) -> Result<SourceInstructionKind, ProgramError> {
     match funct3(word) {
-        0b001 if funct6(word) == 0 => Ok(RiscvInstructionKind::SLLI),
+        0b001 if funct6(word) == 0 => Ok(SourceInstructionKind::SLLI),
         0b001 => invalid("invalid SLLI funct6"),
-        0b101 if funct6(word) == 0b000000 => Ok(RiscvInstructionKind::SRLI),
-        0b101 if funct6(word) == 0b010000 => Ok(RiscvInstructionKind::SRAI),
+        0b101 if funct6(word) == 0b000000 => Ok(SourceInstructionKind::SRLI),
+        0b101 if funct6(word) == 0b010000 => Ok(SourceInstructionKind::SRAI),
         0b101 => invalid("invalid shift-immediate funct6"),
-        0b000 => Ok(RiscvInstructionKind::ADDI),
-        0b010 => Ok(RiscvInstructionKind::SLTI),
-        0b011 => Ok(RiscvInstructionKind::SLTIU),
-        0b100 => Ok(RiscvInstructionKind::XORI),
-        0b110 => Ok(RiscvInstructionKind::ORI),
-        0b111 => Ok(RiscvInstructionKind::ANDI),
+        0b000 => Ok(SourceInstructionKind::ADDI),
+        0b010 => Ok(SourceInstructionKind::SLTI),
+        0b011 => Ok(SourceInstructionKind::SLTIU),
+        0b100 => Ok(SourceInstructionKind::XORI),
+        0b110 => Ok(SourceInstructionKind::ORI),
+        0b111 => Ok(SourceInstructionKind::ANDI),
         _ => invalid("invalid op-imm funct3"),
     }
 }
 
-fn decode_op_imm_32(word: u32) -> Result<RiscvInstructionKind, ProgramError> {
+fn decode_op_imm_32(word: u32) -> Result<SourceInstructionKind, ProgramError> {
     match (funct3(word), funct7(word)) {
-        (0b000, _) => Ok(RiscvInstructionKind::ADDIW),
-        (0b001, 0b0000000) => Ok(RiscvInstructionKind::SLLIW),
-        (0b101, 0b0000000) => Ok(RiscvInstructionKind::SRLIW),
-        (0b101, 0b0100000) => Ok(RiscvInstructionKind::SRAIW),
+        (0b000, _) => Ok(SourceInstructionKind::ADDIW),
+        (0b001, 0b0000000) => Ok(SourceInstructionKind::SLLIW),
+        (0b101, 0b0000000) => Ok(SourceInstructionKind::SRLIW),
+        (0b101, 0b0100000) => Ok(SourceInstructionKind::SRAIW),
         _ => invalid("invalid RV64 op-imm-32 instruction"),
     }
 }
 
-fn decode_op(word: u32) -> Result<RiscvInstructionKind, ProgramError> {
+fn decode_op(word: u32) -> Result<SourceInstructionKind, ProgramError> {
     match (funct3(word), funct7(word)) {
-        (0b000, 0b0000000) => Ok(RiscvInstructionKind::ADD),
-        (0b000, 0b0100000) => Ok(RiscvInstructionKind::SUB),
-        (0b001, 0b0000000) => Ok(RiscvInstructionKind::SLL),
-        (0b010, 0b0000000) => Ok(RiscvInstructionKind::SLT),
-        (0b011, 0b0000000) => Ok(RiscvInstructionKind::SLTU),
-        (0b100, 0b0000000) => Ok(RiscvInstructionKind::XOR),
-        (0b101, 0b0000000) => Ok(RiscvInstructionKind::SRL),
-        (0b101, 0b0100000) => Ok(RiscvInstructionKind::SRA),
-        (0b110, 0b0000000) => Ok(RiscvInstructionKind::OR),
-        (0b111, 0b0000000) => Ok(RiscvInstructionKind::AND),
-        (0b000, 0b0000001) => Ok(RiscvInstructionKind::MUL),
-        (0b001, 0b0000001) => Ok(RiscvInstructionKind::MULH),
-        (0b010, 0b0000001) => Ok(RiscvInstructionKind::MULHSU),
-        (0b011, 0b0000001) => Ok(RiscvInstructionKind::MULHU),
-        (0b100, 0b0000001) => Ok(RiscvInstructionKind::DIV),
-        (0b101, 0b0000001) => Ok(RiscvInstructionKind::DIVU),
-        (0b110, 0b0000001) => Ok(RiscvInstructionKind::REM),
-        (0b111, 0b0000001) => Ok(RiscvInstructionKind::REMU),
+        (0b000, 0b0000000) => Ok(SourceInstructionKind::ADD),
+        (0b000, 0b0100000) => Ok(SourceInstructionKind::SUB),
+        (0b001, 0b0000000) => Ok(SourceInstructionKind::SLL),
+        (0b010, 0b0000000) => Ok(SourceInstructionKind::SLT),
+        (0b011, 0b0000000) => Ok(SourceInstructionKind::SLTU),
+        (0b100, 0b0000000) => Ok(SourceInstructionKind::XOR),
+        (0b101, 0b0000000) => Ok(SourceInstructionKind::SRL),
+        (0b101, 0b0100000) => Ok(SourceInstructionKind::SRA),
+        (0b110, 0b0000000) => Ok(SourceInstructionKind::OR),
+        (0b111, 0b0000000) => Ok(SourceInstructionKind::AND),
+        (0b000, 0b0000001) => Ok(SourceInstructionKind::MUL),
+        (0b001, 0b0000001) => Ok(SourceInstructionKind::MULH),
+        (0b010, 0b0000001) => Ok(SourceInstructionKind::MULHSU),
+        (0b011, 0b0000001) => Ok(SourceInstructionKind::MULHU),
+        (0b100, 0b0000001) => Ok(SourceInstructionKind::DIV),
+        (0b101, 0b0000001) => Ok(SourceInstructionKind::DIVU),
+        (0b110, 0b0000001) => Ok(SourceInstructionKind::REM),
+        (0b111, 0b0000001) => Ok(SourceInstructionKind::REMU),
         _ => invalid("invalid op instruction"),
     }
 }
 
-fn decode_op_32(word: u32) -> Result<RiscvInstructionKind, ProgramError> {
+fn decode_op_32(word: u32) -> Result<SourceInstructionKind, ProgramError> {
     match (funct3(word), funct7(word)) {
-        (0b000, 0b0000000) => Ok(RiscvInstructionKind::ADDW),
-        (0b000, 0b0100000) => Ok(RiscvInstructionKind::SUBW),
-        (0b001, 0b0000000) => Ok(RiscvInstructionKind::SLLW),
-        (0b100, 0b0000001) => Ok(RiscvInstructionKind::DIVW),
-        (0b101, 0b0000000) => Ok(RiscvInstructionKind::SRLW),
-        (0b101, 0b0100000) => Ok(RiscvInstructionKind::SRAW),
-        (0b000, 0b0000001) => Ok(RiscvInstructionKind::MULW),
-        (0b101, 0b0000001) => Ok(RiscvInstructionKind::DIVUW),
-        (0b110, 0b0000001) => Ok(RiscvInstructionKind::REMW),
-        (0b111, 0b0000001) => Ok(RiscvInstructionKind::REMUW),
+        (0b000, 0b0000000) => Ok(SourceInstructionKind::ADDW),
+        (0b000, 0b0100000) => Ok(SourceInstructionKind::SUBW),
+        (0b001, 0b0000000) => Ok(SourceInstructionKind::SLLW),
+        (0b100, 0b0000001) => Ok(SourceInstructionKind::DIVW),
+        (0b101, 0b0000000) => Ok(SourceInstructionKind::SRLW),
+        (0b101, 0b0100000) => Ok(SourceInstructionKind::SRAW),
+        (0b000, 0b0000001) => Ok(SourceInstructionKind::MULW),
+        (0b101, 0b0000001) => Ok(SourceInstructionKind::DIVUW),
+        (0b110, 0b0000001) => Ok(SourceInstructionKind::REMW),
+        (0b111, 0b0000001) => Ok(SourceInstructionKind::REMUW),
         _ => invalid("invalid RV64 op-32 instruction"),
     }
 }
 
-fn decode_amo(word: u32) -> Result<RiscvInstructionKind, ProgramError> {
+fn decode_amo(word: u32) -> Result<SourceInstructionKind, ProgramError> {
     match (funct3(word), (word >> 27) & 0x1f) {
-        (0b010, 0b00010) => Ok(RiscvInstructionKind::LRW),
-        (0b011, 0b00010) => Ok(RiscvInstructionKind::LRD),
-        (0b010, 0b00011) => Ok(RiscvInstructionKind::SCW),
-        (0b011, 0b00011) => Ok(RiscvInstructionKind::SCD),
-        (0b010, 0b00001) => Ok(RiscvInstructionKind::AMOSWAPW),
-        (0b011, 0b00001) => Ok(RiscvInstructionKind::AMOSWAPD),
-        (0b010, 0b00000) => Ok(RiscvInstructionKind::AMOADDW),
-        (0b011, 0b00000) => Ok(RiscvInstructionKind::AMOADDD),
-        (0b010, 0b01100) => Ok(RiscvInstructionKind::AMOANDW),
-        (0b011, 0b01100) => Ok(RiscvInstructionKind::AMOANDD),
-        (0b010, 0b01000) => Ok(RiscvInstructionKind::AMOORW),
-        (0b011, 0b01000) => Ok(RiscvInstructionKind::AMOORD),
-        (0b010, 0b00100) => Ok(RiscvInstructionKind::AMOXORW),
-        (0b011, 0b00100) => Ok(RiscvInstructionKind::AMOXORD),
-        (0b010, 0b10000) => Ok(RiscvInstructionKind::AMOMINW),
-        (0b011, 0b10000) => Ok(RiscvInstructionKind::AMOMIND),
-        (0b010, 0b10100) => Ok(RiscvInstructionKind::AMOMAXW),
-        (0b011, 0b10100) => Ok(RiscvInstructionKind::AMOMAXD),
-        (0b010, 0b11000) => Ok(RiscvInstructionKind::AMOMINUW),
-        (0b011, 0b11000) => Ok(RiscvInstructionKind::AMOMINUD),
-        (0b010, 0b11100) => Ok(RiscvInstructionKind::AMOMAXUW),
-        (0b011, 0b11100) => Ok(RiscvInstructionKind::AMOMAXUD),
+        (0b010, 0b00010) => Ok(SourceInstructionKind::LRW),
+        (0b011, 0b00010) => Ok(SourceInstructionKind::LRD),
+        (0b010, 0b00011) => Ok(SourceInstructionKind::SCW),
+        (0b011, 0b00011) => Ok(SourceInstructionKind::SCD),
+        (0b010, 0b00001) => Ok(SourceInstructionKind::AMOSWAPW),
+        (0b011, 0b00001) => Ok(SourceInstructionKind::AMOSWAPD),
+        (0b010, 0b00000) => Ok(SourceInstructionKind::AMOADDW),
+        (0b011, 0b00000) => Ok(SourceInstructionKind::AMOADDD),
+        (0b010, 0b01100) => Ok(SourceInstructionKind::AMOANDW),
+        (0b011, 0b01100) => Ok(SourceInstructionKind::AMOANDD),
+        (0b010, 0b01000) => Ok(SourceInstructionKind::AMOORW),
+        (0b011, 0b01000) => Ok(SourceInstructionKind::AMOORD),
+        (0b010, 0b00100) => Ok(SourceInstructionKind::AMOXORW),
+        (0b011, 0b00100) => Ok(SourceInstructionKind::AMOXORD),
+        (0b010, 0b10000) => Ok(SourceInstructionKind::AMOMINW),
+        (0b011, 0b10000) => Ok(SourceInstructionKind::AMOMIND),
+        (0b010, 0b10100) => Ok(SourceInstructionKind::AMOMAXW),
+        (0b011, 0b10100) => Ok(SourceInstructionKind::AMOMAXD),
+        (0b010, 0b11000) => Ok(SourceInstructionKind::AMOMINUW),
+        (0b011, 0b11000) => Ok(SourceInstructionKind::AMOMINUD),
+        (0b010, 0b11100) => Ok(SourceInstructionKind::AMOMAXUW),
+        (0b011, 0b11100) => Ok(SourceInstructionKind::AMOMAXUD),
         _ => invalid("invalid atomic memory operation"),
     }
 }
 
-fn decode_system(word: u32) -> Result<RiscvInstructionKind, ProgramError> {
+fn decode_system(word: u32) -> Result<SourceInstructionKind, ProgramError> {
     match (funct3(word), funct7(word), (word >> 20) & 0x1f) {
-        (0, 0, 0) if word == 0x00000073 => Ok(RiscvInstructionKind::ECALL),
-        (0, 0, 1) if word == 0x00100073 => Ok(RiscvInstructionKind::EBREAK),
-        (0, 0x18, 2) if word == 0x30200073 => Ok(RiscvInstructionKind::MRET),
-        (1, _, _) => Ok(RiscvInstructionKind::CSRRW),
-        (2, _, _) => Ok(RiscvInstructionKind::CSRRS),
+        (0, 0, 0) if word == 0x00000073 => Ok(SourceInstructionKind::ECALL),
+        (0, 0, 1) if word == 0x00100073 => Ok(SourceInstructionKind::EBREAK),
+        (0, 0x18, 2) if word == 0x30200073 => Ok(SourceInstructionKind::MRET),
+        (1, _, _) => Ok(SourceInstructionKind::CSRRW),
+        (2, _, _) => Ok(SourceInstructionKind::CSRRS),
         _ => invalid("unsupported system instruction"),
     }
 }
 
-fn decode_custom(word: u32) -> Result<RiscvInstructionKind, ProgramError> {
+fn decode_custom(word: u32) -> Result<SourceInstructionKind, ProgramError> {
     match funct3(word) {
-        0b000 => Ok(RiscvInstructionKind::VirtualRev8W),
-        0b001 => Ok(RiscvInstructionKind::VirtualAssertEQ),
-        0b010 => Ok(RiscvInstructionKind::VirtualHostIO),
-        0b011 => Ok(RiscvInstructionKind::AdviceLB),
-        0b100 => Ok(RiscvInstructionKind::AdviceLH),
-        0b101 => Ok(RiscvInstructionKind::AdviceLW),
-        0b110 => Ok(RiscvInstructionKind::AdviceLD),
-        0b111 => Ok(RiscvInstructionKind::VirtualAdviceLen),
+        0b000 => Ok(SourceInstructionKind::VirtualRev8W),
+        0b001 => Ok(SourceInstructionKind::VirtualAssertEQ),
+        0b010 => Ok(SourceInstructionKind::VirtualHostIO),
+        0b011 => Ok(SourceInstructionKind::AdviceLB),
+        0b100 => Ok(SourceInstructionKind::AdviceLH),
+        0b101 => Ok(SourceInstructionKind::AdviceLW),
+        0b110 => Ok(SourceInstructionKind::AdviceLD),
+        0b111 => Ok(SourceInstructionKind::VirtualAdviceLen),
         _ => invalid("invalid custom instruction"),
     }
 }
 
 fn normalized(
-    instruction_kind: RiscvInstructionKind,
+    instruction_kind: SourceInstructionKind,
     word: u32,
     address: u64,
     is_compressed: bool,
-) -> NormalizedInstruction {
-    let jolt_kind = instruction_kind.jolt_kind();
-    NormalizedInstruction {
-        instruction_kind: jolt_kind,
+) -> SourceInstruction {
+    SourceInstruction {
+        instruction_kind,
         address: address as usize,
-        operands: operands(jolt_kind, word),
-        virtual_sequence_remaining: None,
-        is_first_in_sequence: false,
+        operands: operands(instruction_kind, word),
         is_compressed,
     }
 }
 
-fn operands(instruction_kind: JoltInstructionKind, word: u32) -> NormalizedOperands {
+fn operands(instruction_kind: SourceInstructionKind, word: u32) -> NormalizedOperands {
     match instruction_kind {
-        JoltInstructionKind::LUI | JoltInstructionKind::AUIPC => format_u_operands(word),
-        JoltInstructionKind::JAL => format_j_operands(word),
-        JoltInstructionKind::BEQ
-        | JoltInstructionKind::BNE
-        | JoltInstructionKind::BLT
-        | JoltInstructionKind::BGE
-        | JoltInstructionKind::BLTU
-        | JoltInstructionKind::BGEU
-        | JoltInstructionKind::VirtualAssertEQ => format_b_operands(word),
-        JoltInstructionKind::SB
-        | JoltInstructionKind::SH
-        | JoltInstructionKind::SW
-        | JoltInstructionKind::SD => format_s_operands(word),
-        JoltInstructionKind::LB
-        | JoltInstructionKind::LH
-        | JoltInstructionKind::LW
-        | JoltInstructionKind::LD
-        | JoltInstructionKind::LBU
-        | JoltInstructionKind::LHU
-        | JoltInstructionKind::LWU => format_load_operands(word),
-        JoltInstructionKind::LRW
-        | JoltInstructionKind::LRD
-        | JoltInstructionKind::SCW
-        | JoltInstructionKind::SCD
-        | JoltInstructionKind::AMOSWAPW
-        | JoltInstructionKind::AMOSWAPD
-        | JoltInstructionKind::AMOADDW
-        | JoltInstructionKind::AMOADDD
-        | JoltInstructionKind::AMOANDW
-        | JoltInstructionKind::AMOANDD
-        | JoltInstructionKind::AMOORW
-        | JoltInstructionKind::AMOORD
-        | JoltInstructionKind::AMOXORW
-        | JoltInstructionKind::AMOXORD
-        | JoltInstructionKind::AMOMINW
-        | JoltInstructionKind::AMOMIND
-        | JoltInstructionKind::AMOMAXW
-        | JoltInstructionKind::AMOMAXD
-        | JoltInstructionKind::AMOMINUW
-        | JoltInstructionKind::AMOMINUD
-        | JoltInstructionKind::AMOMAXUW
-        | JoltInstructionKind::AMOMAXUD => format_r_operands(word),
-        JoltInstructionKind::AdviceLB
-        | JoltInstructionKind::AdviceLH
-        | JoltInstructionKind::AdviceLW
-        | JoltInstructionKind::AdviceLD => format_advice_load_operands(word),
-        JoltInstructionKind::Inline => format_inline_operands(word),
-        JoltInstructionKind::ECALL | JoltInstructionKind::EBREAK | JoltInstructionKind::MRET => {
-            format_i_operands(word)
-        }
-        JoltInstructionKind::FENCE | JoltInstructionKind::NoOp | JoltInstructionKind::Unimpl => {
-            NormalizedOperands::default()
-        }
+        SourceInstructionKind::LUI | SourceInstructionKind::AUIPC => format_u_operands(word),
+        SourceInstructionKind::JAL => format_j_operands(word),
+        SourceInstructionKind::BEQ
+        | SourceInstructionKind::BNE
+        | SourceInstructionKind::BLT
+        | SourceInstructionKind::BGE
+        | SourceInstructionKind::BLTU
+        | SourceInstructionKind::BGEU
+        | SourceInstructionKind::VirtualAssertEQ => format_b_operands(word),
+        SourceInstructionKind::SB
+        | SourceInstructionKind::SH
+        | SourceInstructionKind::SW
+        | SourceInstructionKind::SD => format_s_operands(word),
+        SourceInstructionKind::LB
+        | SourceInstructionKind::LH
+        | SourceInstructionKind::LW
+        | SourceInstructionKind::LD
+        | SourceInstructionKind::LBU
+        | SourceInstructionKind::LHU
+        | SourceInstructionKind::LWU => format_load_operands(word),
+        SourceInstructionKind::LRW
+        | SourceInstructionKind::LRD
+        | SourceInstructionKind::SCW
+        | SourceInstructionKind::SCD
+        | SourceInstructionKind::AMOSWAPW
+        | SourceInstructionKind::AMOSWAPD
+        | SourceInstructionKind::AMOADDW
+        | SourceInstructionKind::AMOADDD
+        | SourceInstructionKind::AMOANDW
+        | SourceInstructionKind::AMOANDD
+        | SourceInstructionKind::AMOORW
+        | SourceInstructionKind::AMOORD
+        | SourceInstructionKind::AMOXORW
+        | SourceInstructionKind::AMOXORD
+        | SourceInstructionKind::AMOMINW
+        | SourceInstructionKind::AMOMIND
+        | SourceInstructionKind::AMOMAXW
+        | SourceInstructionKind::AMOMAXD
+        | SourceInstructionKind::AMOMINUW
+        | SourceInstructionKind::AMOMINUD
+        | SourceInstructionKind::AMOMAXUW
+        | SourceInstructionKind::AMOMAXUD => format_r_operands(word),
+        SourceInstructionKind::AdviceLB
+        | SourceInstructionKind::AdviceLH
+        | SourceInstructionKind::AdviceLW
+        | SourceInstructionKind::AdviceLD => format_advice_load_operands(word),
+        SourceInstructionKind::Inline => format_inline_operands(word),
+        SourceInstructionKind::ECALL
+        | SourceInstructionKind::EBREAK
+        | SourceInstructionKind::MRET => format_i_operands(word),
+        SourceInstructionKind::FENCE
+        | SourceInstructionKind::NoOp
+        | SourceInstructionKind::Unimpl => NormalizedOperands::default(),
         _ => format_i_or_r_operands(instruction_kind, word),
     }
 }
 
-fn format_i_or_r_operands(instruction_kind: JoltInstructionKind, word: u32) -> NormalizedOperands {
+fn format_i_or_r_operands(
+    instruction_kind: SourceInstructionKind,
+    word: u32,
+) -> NormalizedOperands {
     if uses_r_format(instruction_kind) {
         format_r_operands(word)
     } else {
@@ -268,37 +266,37 @@ fn format_i_or_r_operands(instruction_kind: JoltInstructionKind, word: u32) -> N
     }
 }
 
-fn uses_r_format(instruction_kind: JoltInstructionKind) -> bool {
+fn uses_r_format(instruction_kind: SourceInstructionKind) -> bool {
     matches!(
         instruction_kind,
-        JoltInstructionKind::ADD
-            | JoltInstructionKind::SUB
-            | JoltInstructionKind::SLL
-            | JoltInstructionKind::SLT
-            | JoltInstructionKind::SLTU
-            | JoltInstructionKind::XOR
-            | JoltInstructionKind::SRL
-            | JoltInstructionKind::SRA
-            | JoltInstructionKind::OR
-            | JoltInstructionKind::AND
-            | JoltInstructionKind::MUL
-            | JoltInstructionKind::MULH
-            | JoltInstructionKind::MULHSU
-            | JoltInstructionKind::MULHU
-            | JoltInstructionKind::DIV
-            | JoltInstructionKind::DIVU
-            | JoltInstructionKind::REM
-            | JoltInstructionKind::REMU
-            | JoltInstructionKind::ADDW
-            | JoltInstructionKind::SUBW
-            | JoltInstructionKind::SLLW
-            | JoltInstructionKind::DIVW
-            | JoltInstructionKind::SRLW
-            | JoltInstructionKind::SRAW
-            | JoltInstructionKind::MULW
-            | JoltInstructionKind::DIVUW
-            | JoltInstructionKind::REMW
-            | JoltInstructionKind::REMUW
+        SourceInstructionKind::ADD
+            | SourceInstructionKind::SUB
+            | SourceInstructionKind::SLL
+            | SourceInstructionKind::SLT
+            | SourceInstructionKind::SLTU
+            | SourceInstructionKind::XOR
+            | SourceInstructionKind::SRL
+            | SourceInstructionKind::SRA
+            | SourceInstructionKind::OR
+            | SourceInstructionKind::AND
+            | SourceInstructionKind::MUL
+            | SourceInstructionKind::MULH
+            | SourceInstructionKind::MULHSU
+            | SourceInstructionKind::MULHU
+            | SourceInstructionKind::DIV
+            | SourceInstructionKind::DIVU
+            | SourceInstructionKind::REM
+            | SourceInstructionKind::REMU
+            | SourceInstructionKind::ADDW
+            | SourceInstructionKind::SUBW
+            | SourceInstructionKind::SLLW
+            | SourceInstructionKind::DIVW
+            | SourceInstructionKind::SRLW
+            | SourceInstructionKind::SRAW
+            | SourceInstructionKind::MULW
+            | SourceInstructionKind::DIVUW
+            | SourceInstructionKind::REMW
+            | SourceInstructionKind::REMUW
     )
 }
 

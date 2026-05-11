@@ -55,8 +55,8 @@ pub use flags::{
 };
 pub use instructions::LookupInstruction;
 pub use jolt_instruction::JoltInstruction;
-pub use kind::{JoltInstructionKind, RiscvInstructionKind};
-pub use normalized::{NormalizedInstruction, NormalizedOperands};
+pub use kind::{JoltInstructionKind, SourceInstructionKind};
+pub use normalized::{NormalizedInstruction, NormalizedOperands, SourceInstruction};
 pub use trace::JoltCycle;
 pub use uncompress::uncompress_rv64_instruction;
 

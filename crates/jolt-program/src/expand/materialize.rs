@@ -83,7 +83,7 @@ impl ExpansionState {
         for op in sequence.ops {
             match op {
                 ExpansionOp::Emit(row) => materializer.emit(row)?,
-                ExpansionOp::Expand(row) => {
+                ExpansionOp::Dispatch(row) => {
                     let instruction = materializer.instruction(row)?;
                     materializer.extend(self.expand_recursive(&instruction)?)?;
                 }

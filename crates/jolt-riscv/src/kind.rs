@@ -10,6 +10,13 @@ macro_rules! define_instruction_kind {
     (
         instructions: [$($instr:ident),* $(,)?]
     ) => {
+        /// Decoded guest-program instruction kind before bytecode expansion.
+        ///
+        /// This is the source side of the program pipeline. It includes RV64
+        /// ISA opcodes decoded from ELF text and Jolt custom source opcodes
+        /// such as registered inlines, advice loads, and host I/O markers.
+        /// Expansion maps these source kinds into final [`JoltInstructionKind`]
+        /// rows consumed by bytecode preprocessing, tracing, and proof code.
         #[derive(
             Default,
             Debug,
@@ -21,7 +28,7 @@ macro_rules! define_instruction_kind {
         )]
         #[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
         #[repr(u16)]
-        pub enum RiscvInstructionKind {
+        pub enum SourceInstructionKind {
             #[default]
             NoOp,
             Unimpl,
@@ -52,9 +59,7 @@ macro_rules! define_instruction_kind {
             Inline,
         }
 
-
-
-        impl RiscvInstructionKind {
+        impl SourceInstructionKind {
             pub const fn name(self) -> &'static str {
                 match self {
                     Self::NoOp => "NoOp",

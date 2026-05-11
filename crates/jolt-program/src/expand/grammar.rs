@@ -158,7 +158,7 @@ pub(super) enum ExpansionOp {
     /// Append this row directly to the output.
     Emit(RowTemplate),
     /// Recursively expand this row through the full pipeline before appending.
-    Expand(RowTemplate),
+    Dispatch(RowTemplate),
     Allocate(TempId),
     Release(TempId),
 }
@@ -169,7 +169,7 @@ pub(super) struct ExpandedInstructionSequence {
     pub(super) ops: Vec<ExpansionOp>,
 }
 
-/// Builds a symbolic expansion recipe from emit/expand/allocate/release calls.
+/// Builds a symbolic expansion recipe from emit/dispatch/allocate/release calls.
 pub(super) struct ExpansionBuilder {
     source: NormalizedInstruction,
     ops: Vec<ExpansionOp>,
@@ -200,8 +200,8 @@ impl ExpansionBuilder {
     /// Append an already target-legal row to this source row's output sequence.
     ///
     /// Use `emit_*` when the row should appear exactly as written in finalized
-    /// bytecode. Use `expand_*` instead when the row is a source-only helper
-    /// that must be routed through the central expander first.
+    /// bytecode. Use `dispatch_*` when the row must first go through recursive
+    /// canonicalization, including rd=x0 handling and source-only lowering.
     pub(super) fn emit_r(
         &mut self,
         instruction_kind: JoltInstructionKind,
@@ -240,77 +240,77 @@ impl ExpansionBuilder {
         self.emit(RowTemplate::u(instruction_kind, rd, imm));
     }
 
-    /// Record a source-only helper row that the provider-free materializer must
-    /// expand before appending its finalized rows to this source-row sequence.
+    /// Record a row that the provider-free materializer must dispatch before
+    /// appending its finalized rows to this source-row sequence.
     ///
-    /// Recursive helper expansion always goes through `ExpansionState`, so
-    /// rd=x0 handling, recursion depth, allocator state, and metadata stamping
-    /// stay centralized.
-    pub(super) fn expand_r(
+    /// Recursive helper dispatch always goes through `ExpansionState`, so
+    /// rd=x0 handling, source-only lowering, recursion depth, allocator state,
+    /// and metadata stamping stay centralized.
+    pub(super) fn dispatch_r(
         &mut self,
         instruction_kind: JoltInstructionKind,
         rd: RegisterOperand,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
     ) {
-        self.expand(RowTemplate::r(instruction_kind, rd, rs1, rs2));
+        self.dispatch(RowTemplate::r(instruction_kind, rd, rs1, rs2));
     }
 
-    pub(super) fn expand_i(
+    pub(super) fn dispatch_i(
         &mut self,
         instruction_kind: JoltInstructionKind,
         rd: RegisterOperand,
         rs1: RegisterOperand,
         imm: i128,
     ) {
-        self.expand(RowTemplate::i(instruction_kind, rd, rs1, imm));
+        self.dispatch(RowTemplate::i(instruction_kind, rd, rs1, imm));
     }
 
-    pub(super) fn expand_j(
+    pub(super) fn dispatch_j(
         &mut self,
         instruction_kind: JoltInstructionKind,
         rd: RegisterOperand,
         imm: i128,
     ) {
-        self.expand(RowTemplate::j(instruction_kind, rd, imm));
+        self.dispatch(RowTemplate::j(instruction_kind, rd, imm));
     }
 
-    pub(super) fn expand_u(
+    pub(super) fn dispatch_u(
         &mut self,
         instruction_kind: JoltInstructionKind,
         rd: RegisterOperand,
         imm: i128,
     ) {
-        self.expand(RowTemplate::u(instruction_kind, rd, imm));
+        self.dispatch(RowTemplate::u(instruction_kind, rd, imm));
     }
 
-    pub(super) fn expand_b(
+    pub(super) fn dispatch_b(
         &mut self,
         instruction_kind: JoltInstructionKind,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
         imm: i128,
     ) {
-        self.expand(RowTemplate::b(instruction_kind, rs1, rs2, imm));
+        self.dispatch(RowTemplate::b(instruction_kind, rs1, rs2, imm));
     }
 
-    pub(super) fn expand_s(
+    pub(super) fn dispatch_s(
         &mut self,
         instruction_kind: JoltInstructionKind,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
         imm: i128,
     ) {
-        self.expand(RowTemplate::s(instruction_kind, rs1, rs2, imm));
+        self.dispatch(RowTemplate::s(instruction_kind, rs1, rs2, imm));
     }
 
-    pub(super) fn expand_address(
+    pub(super) fn dispatch_address(
         &mut self,
         instruction_kind: JoltInstructionKind,
         rs1: RegisterOperand,
         imm: i128,
     ) {
-        self.expand(RowTemplate::address(instruction_kind, rs1, imm));
+        self.dispatch(RowTemplate::address(instruction_kind, rs1, imm));
     }
 
     pub(super) fn release(&mut self, temp: TempId) {
@@ -334,8 +334,8 @@ impl ExpansionBuilder {
         self.ops.push(ExpansionOp::Emit(row));
     }
 
-    fn expand(&mut self, row: RowTemplate) {
-        self.ops.push(ExpansionOp::Expand(row));
+    fn dispatch(&mut self, row: RowTemplate) {
+        self.ops.push(ExpansionOp::Dispatch(row));
     }
 }
 

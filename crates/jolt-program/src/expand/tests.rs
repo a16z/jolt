@@ -34,10 +34,21 @@ fn instruction(
     }
 }
 
+fn expand_normalized_instruction(
+    instruction: &NormalizedInstruction,
+    allocator: &mut ExpansionAllocator,
+) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+    expand_normalized_instruction_with_provider(
+        instruction,
+        allocator,
+        &mut NoInlineExpansionProvider,
+    )
+}
+
 #[test]
 fn side_effect_free_rd_zero_becomes_noop_addi() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
-    let expanded = expand_instruction(
+    let expanded = expand_normalized_instruction(
         &instruction(JoltInstructionKind::ADD, Some(0), true),
         &mut allocator,
     )?;
@@ -55,7 +66,7 @@ fn side_effect_free_rd_zero_becomes_noop_addi() -> Result<(), ExpansionError> {
 #[test]
 fn side_effecting_rd_zero_rewrites_to_temporary_register() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
-    let expanded = expand_instruction(
+    let expanded = expand_normalized_instruction(
         &instruction(JoltInstructionKind::JAL, Some(0), false),
         &mut allocator,
     )?;
@@ -70,7 +81,7 @@ fn side_effecting_rd_zero_rewrites_to_temporary_register() -> Result<(), Expansi
 fn trap_related_rd_zero_uses_instruction_expansion() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let input = instruction(JoltInstructionKind::ECALL, Some(0), false);
-    let expanded = expand_instruction(&input, &mut allocator)?;
+    let expanded = expand_normalized_instruction(&input, &mut allocator)?;
 
     assert_eq!(expanded.len(), 7);
     assert_eq!(expanded[0].instruction_kind, JoltInstructionKind::AUIPC);
@@ -84,7 +95,7 @@ fn inline_requires_provider() {
     let input = instruction(JoltInstructionKind::Inline, Some(3), false);
 
     assert!(matches!(
-        expand_instruction(&input, &mut allocator),
+        expand_normalized_instruction(&input, &mut allocator),
         Err(ExpansionError::InlineProviderRequired)
     ));
 }
@@ -97,7 +108,7 @@ fn csr_zero_is_rejected() {
         input.operands.imm = 0;
 
         assert!(matches!(
-            expand_instruction(&input, &mut allocator),
+            expand_normalized_instruction(&input, &mut allocator),
             Err(ExpansionError::UnsupportedCsr(0))
         ));
     }
@@ -112,7 +123,7 @@ fn lr_sc_expansions_restrict_address_to_ram() -> Result<(), ExpansionError> {
         JoltInstructionKind::SCD,
     ] {
         let mut allocator = ExpansionAllocator::new();
-        let expanded = expand_instruction(
+        let expanded = expand_normalized_instruction(
             &instruction(instruction_kind, Some(3), false),
             &mut allocator,
         )?;
@@ -134,7 +145,7 @@ fn lr_sc_expansions_restrict_address_to_ram() -> Result<(), ExpansionError> {
 fn sc_success_advice_is_not_position_dependent() -> Result<(), ExpansionError> {
     for instruction_kind in [JoltInstructionKind::SCW, JoltInstructionKind::SCD] {
         let mut allocator = ExpansionAllocator::new();
-        let expanded = expand_instruction(
+        let expanded = expand_normalized_instruction(
             &instruction(instruction_kind, Some(3), false),
             &mut allocator,
         )?;
@@ -196,7 +207,8 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let mut provider = CapturingProvider::default();
 
-    let expanded = expand_instruction_with_provider(&input, &mut allocator, &mut provider)?;
+    let expanded =
+        expand_normalized_instruction_with_provider(&input, &mut allocator, &mut provider)?;
 
     let mut expected = input;
     expected.operands.rd = Some(40);
@@ -228,7 +240,7 @@ fn inline_provider_output_is_validated_and_stamped() {
     let mut allocator = ExpansionAllocator::new();
 
     assert!(matches!(
-        expand_instruction_with_provider(&input, &mut allocator, &mut BadProvider),
+        expand_normalized_instruction_with_provider(&input, &mut allocator, &mut BadProvider),
         Err(ExpansionError::IllegalTargetInstruction(
             JoltInstructionKind::Inline
         ))
@@ -265,8 +277,11 @@ fn inline_provider_allocator_resets_are_appended() -> Result<(), ExpansionError>
 
     let input = instruction(JoltInstructionKind::Inline, Some(3), true);
     let mut allocator = ExpansionAllocator::new();
-    let expanded =
-        expand_instruction_with_provider(&input, &mut allocator, &mut AllocatingProvider)?;
+    let expanded = expand_normalized_instruction_with_provider(
+        &input,
+        &mut allocator,
+        &mut AllocatingProvider,
+    )?;
 
     assert_eq!(expanded.len(), 2);
     assert_eq!(expanded[0].virtual_sequence_remaining, Some(1));
@@ -311,7 +326,8 @@ fn inline_provider_allows_sequences_larger_than_instruction_recipes() -> Result<
 
     let input = instruction(JoltInstructionKind::Inline, Some(3), true);
     let mut allocator = ExpansionAllocator::new();
-    let expanded = expand_instruction_with_provider(&input, &mut allocator, &mut LargeProvider)?;
+    let expanded =
+        expand_normalized_instruction_with_provider(&input, &mut allocator, &mut LargeProvider)?;
 
     assert_eq!(expanded.len(), materialize::MAX_FINAL_ROWS_PER_SOURCE + 1);
     assert_eq!(
@@ -358,7 +374,7 @@ fn source_only_expanders_are_not_target_legal() {
 fn recursive_helper_expansion_is_stamped_as_one_sequence() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let input = instruction(JoltInstructionKind::SLL, Some(3), true);
-    let expanded = expand_instruction(&input, &mut allocator)?;
+    let expanded = expand_normalized_instruction(&input, &mut allocator)?;
 
     assert!(expanded.len() > 1);
     for (i, row) in expanded.iter().enumerate() {
@@ -388,7 +404,7 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
 
     for case in cases {
         let mut allocator = ExpansionAllocator::new();
-        let expanded = expand_instruction(&case.input, &mut allocator)?;
+        let expanded = expand_normalized_instruction(&case.input, &mut allocator)?;
         let encoded = serde_json::to_vec(&expanded)?;
         let output_sha256 = hex::encode(Sha256::digest(encoded));
 

@@ -1,5 +1,5 @@
 use common::constants::RAM_START_ADDRESS;
-use jolt_riscv::{uncompress_rv64_instruction, NormalizedInstruction};
+use jolt_riscv::{uncompress_rv64_instruction, SourceInstruction};
 use object::{Object, ObjectSection, SectionKind};
 use std::collections::BTreeMap;
 
@@ -17,7 +17,7 @@ use crate::ProgramError;
 )]
 pub struct Rv64ProgramImage {
     /// Source instruction rows decoded from executable text sections.
-    pub instructions: Vec<NormalizedInstruction>,
+    pub instructions: Vec<SourceInstruction>,
     /// Initial byte values for memory-backed ELF sections.
     pub memory_init: Vec<(u64, u8)>,
     /// End address of the loaded program image.
@@ -104,7 +104,7 @@ fn merge_ranges(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
 fn decode_text_section(
     section_address: u64,
     raw_data: &[u8],
-    instructions: &mut Vec<NormalizedInstruction>,
+    instructions: &mut Vec<SourceInstruction>,
 ) -> Result<(), ProgramError> {
     let mut offset = 0;
     while offset < raw_data.len() {

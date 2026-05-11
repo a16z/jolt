@@ -32,7 +32,7 @@ pub(in crate::expand) fn expand_ecall(
 
     let three = asm.allocate()?;
     asm.emit_i(JoltInstructionKind::ADDI, three.operand(), reg(0), 3);
-    asm.expand_i(
+    asm.dispatch_i(
         JoltInstructionKind::SLLI,
         reg(vr_mstatus),
         three.operand(),

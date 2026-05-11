@@ -658,7 +658,7 @@ pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
         .instructions
         .into_iter()
         .map(|instruction| {
-            Instruction::try_from_normalized(instruction)
+            Instruction::try_from_normalized(instruction.into_normalized_instruction())
                 .expect("jolt-program image decoder produced an unknown tracer row")
         })
         .collect();

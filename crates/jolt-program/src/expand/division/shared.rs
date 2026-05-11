@@ -22,19 +22,19 @@ pub(in crate::expand) fn expand_signed_div_rem(
     let divisor: RegisterOperand = word_t3.map_or(a1, TempId::operand);
     let shmat = if word { 31 } else { 63 };
 
-    asm.expand_j(JoltInstructionKind::VirtualAdvice, a2.operand(), 0);
-    asm.expand_j(JoltInstructionKind::VirtualAdvice, a3.operand(), 0);
+    asm.dispatch_j(JoltInstructionKind::VirtualAdvice, a2.operand(), 0);
+    asm.dispatch_j(JoltInstructionKind::VirtualAdvice, a3.operand(), 0);
     if word {
-        asm.expand_i(JoltInstructionKind::VirtualSignExtendWord, dividend, a0, 0);
-        asm.expand_i(JoltInstructionKind::VirtualSignExtendWord, divisor, a1, 0);
+        asm.dispatch_i(JoltInstructionKind::VirtualSignExtendWord, dividend, a0, 0);
+        asm.dispatch_i(JoltInstructionKind::VirtualSignExtendWord, divisor, a1, 0);
     }
-    asm.expand_b(
+    asm.dispatch_b(
         JoltInstructionKind::VirtualAssertValidDiv0,
         divisor,
         a2.operand(),
         0,
     );
-    asm.expand_r(
+    asm.dispatch_r(
         if word {
             JoltInstructionKind::VirtualChangeDivisorW
         } else {
@@ -47,27 +47,27 @@ pub(in crate::expand) fn expand_signed_div_rem(
 
     if word {
         let t2 = word_t2.ok_or(ExpansionError::MalformedInstruction("missing word temp"))?;
-        asm.expand_i(
+        asm.dispatch_i(
             JoltInstructionKind::VirtualSignExtendWord,
             t1.operand(),
             a2.operand(),
             0,
         );
-        asm.expand_b(
+        asm.dispatch_b(
             JoltInstructionKind::VirtualAssertEQ,
             t1.operand(),
             a2.operand(),
             0,
         );
-        asm.expand_i(JoltInstructionKind::SRAI, t2.operand(), a3.operand(), 32);
-        asm.expand_b(
+        asm.dispatch_i(JoltInstructionKind::SRAI, t2.operand(), a3.operand(), 32);
+        asm.dispatch_b(
             JoltInstructionKind::VirtualAssertEQ,
             t2.operand(),
             reg(0),
             0,
         );
     } else {
-        asm.expand_r(
+        asm.dispatch_r(
             JoltInstructionKind::MULH,
             t1.operand(),
             a2.operand(),
@@ -75,14 +75,14 @@ pub(in crate::expand) fn expand_signed_div_rem(
         );
         let t2 = asm.allocate()?;
         let t3 = asm.allocate()?;
-        asm.expand_r(
+        asm.dispatch_r(
             JoltInstructionKind::MUL,
             t2.operand(),
             a2.operand(),
             t0.operand(),
         );
-        asm.expand_i(JoltInstructionKind::SRAI, t3.operand(), t2.operand(), shmat);
-        asm.expand_b(
+        asm.dispatch_i(JoltInstructionKind::SRAI, t3.operand(), t2.operand(), shmat);
+        asm.dispatch_b(
             JoltInstructionKind::VirtualAssertEQ,
             t1.operand(),
             t3.operand(),
@@ -94,51 +94,51 @@ pub(in crate::expand) fn expand_signed_div_rem(
     if word {
         let t2 = word_t2.ok_or(ExpansionError::MalformedInstruction("missing word temp"))?;
         let t3 = word_t3.ok_or(ExpansionError::MalformedInstruction("missing word temp"))?;
-        asm.expand_i(JoltInstructionKind::SRAI, t2.operand(), dividend, shmat);
-        asm.expand_r(
+        asm.dispatch_i(JoltInstructionKind::SRAI, t2.operand(), dividend, shmat);
+        asm.dispatch_r(
             JoltInstructionKind::XOR,
             t3.operand(),
             a3.operand(),
             t2.operand(),
         );
-        asm.expand_r(
+        asm.dispatch_r(
             JoltInstructionKind::SUB,
             t3.operand(),
             t3.operand(),
             t2.operand(),
         );
-        asm.expand_r(
+        asm.dispatch_r(
             JoltInstructionKind::MUL,
             t1.operand(),
             a2.operand(),
             t0.operand(),
         );
-        asm.expand_r(
+        asm.dispatch_r(
             JoltInstructionKind::ADD,
             t1.operand(),
             t1.operand(),
             t3.operand(),
         );
-        asm.expand_b(
+        asm.dispatch_b(
             JoltInstructionKind::VirtualAssertEQ,
             t1.operand(),
             dividend,
             0,
         );
-        asm.expand_i(JoltInstructionKind::SRAI, t2.operand(), t0.operand(), 31);
-        asm.expand_r(
+        asm.dispatch_i(JoltInstructionKind::SRAI, t2.operand(), t0.operand(), 31);
+        asm.dispatch_r(
             JoltInstructionKind::XOR,
             t1.operand(),
             t0.operand(),
             t2.operand(),
         );
-        asm.expand_r(
+        asm.dispatch_r(
             JoltInstructionKind::SUB,
             t1.operand(),
             t1.operand(),
             t2.operand(),
         );
-        asm.expand_b(
+        asm.dispatch_b(
             JoltInstructionKind::VirtualAssertValidUnsignedRemainder,
             a3.operand(),
             t1.operand(),
@@ -149,7 +149,7 @@ pub(in crate::expand) fn expand_signed_div_rem(
         } else {
             a2.operand()
         };
-        asm.expand_i(
+        asm.dispatch_i(
             JoltInstructionKind::VirtualSignExtendWord,
             reg(rd(instruction)?),
             output,
@@ -160,40 +160,40 @@ pub(in crate::expand) fn expand_signed_div_rem(
         let t2 = asm.allocate()?;
         let t3 = asm.allocate()?;
         let abs_divisor = if remainder_output { t2 } else { t3 };
-        asm.expand_i(JoltInstructionKind::SRAI, t1.operand(), dividend, shmat);
-        asm.expand_r(
+        asm.dispatch_i(JoltInstructionKind::SRAI, t1.operand(), dividend, shmat);
+        asm.dispatch_r(
             JoltInstructionKind::XOR,
             t3.operand(),
             a3.operand(),
             t1.operand(),
         );
-        asm.expand_r(
+        asm.dispatch_r(
             JoltInstructionKind::SUB,
             t3.operand(),
             t3.operand(),
             t1.operand(),
         );
-        asm.expand_r(
+        asm.dispatch_r(
             JoltInstructionKind::ADD,
             t2.operand(),
             t2.operand(),
             t3.operand(),
         );
-        asm.expand_b(JoltInstructionKind::VirtualAssertEQ, t2.operand(), a0, 0);
-        asm.expand_i(JoltInstructionKind::SRAI, t1.operand(), t0.operand(), shmat);
-        asm.expand_r(
+        asm.dispatch_b(JoltInstructionKind::VirtualAssertEQ, t2.operand(), a0, 0);
+        asm.dispatch_i(JoltInstructionKind::SRAI, t1.operand(), t0.operand(), shmat);
+        asm.dispatch_r(
             JoltInstructionKind::XOR,
             abs_divisor.operand(),
             t0.operand(),
             t1.operand(),
         );
-        asm.expand_r(
+        asm.dispatch_r(
             JoltInstructionKind::SUB,
             abs_divisor.operand(),
             abs_divisor.operand(),
             t1.operand(),
         );
-        asm.expand_b(
+        asm.dispatch_b(
             JoltInstructionKind::VirtualAssertValidUnsignedRemainder,
             a3.operand(),
             abs_divisor.operand(),
@@ -204,7 +204,7 @@ pub(in crate::expand) fn expand_signed_div_rem(
         } else {
             a2.operand()
         };
-        asm.expand_i(JoltInstructionKind::ADDI, reg(rd(instruction)?), output, 0);
+        asm.dispatch_i(JoltInstructionKind::ADDI, reg(rd(instruction)?), output, 0);
         asm.release_many([t2, t3]);
     }
 
@@ -230,44 +230,44 @@ pub(in crate::expand) fn expand_unsigned_word_div_rem(
         asm.allocate()?
     };
 
-    asm.expand_i(
+    asm.dispatch_i(
         JoltInstructionKind::VirtualZeroExtendWord,
         rs1_extended.operand(),
         reg(rs1(instruction)?),
         0,
     );
-    asm.expand_i(
+    asm.dispatch_i(
         JoltInstructionKind::VirtualZeroExtendWord,
         rs2_extended.operand(),
         reg(rs2(instruction)?),
         0,
     );
-    asm.expand_j(JoltInstructionKind::VirtualAdvice, quotient.operand(), 0);
-    asm.expand_b(
+    asm.dispatch_j(JoltInstructionKind::VirtualAdvice, quotient.operand(), 0);
+    asm.dispatch_b(
         JoltInstructionKind::VirtualAssertMulUNoOverflow,
         quotient.operand(),
         rs2_extended.operand(),
         0,
     );
-    asm.expand_r(
+    asm.dispatch_r(
         JoltInstructionKind::MUL,
         tmp.operand(),
         quotient.operand(),
         rs2_extended.operand(),
     );
-    asm.expand_b(
+    asm.dispatch_b(
         JoltInstructionKind::VirtualAssertLTE,
         tmp.operand(),
         rs1_extended.operand(),
         0,
     );
-    asm.expand_r(
+    asm.dispatch_r(
         JoltInstructionKind::SUB,
         tmp.operand(),
         rs1_extended.operand(),
         tmp.operand(),
     );
-    asm.expand_b(
+    asm.dispatch_b(
         JoltInstructionKind::VirtualAssertValidUnsignedRemainder,
         tmp.operand(),
         rs2_extended.operand(),
@@ -275,26 +275,26 @@ pub(in crate::expand) fn expand_unsigned_word_div_rem(
     );
 
     if remainder_output {
-        asm.expand_i(
+        asm.dispatch_i(
             JoltInstructionKind::VirtualSignExtendWord,
             reg(rd(instruction)?),
             tmp.operand(),
             0,
         );
     } else {
-        asm.expand_i(
+        asm.dispatch_i(
             JoltInstructionKind::VirtualSignExtendWord,
             tmp.operand(),
             quotient.operand(),
             0,
         );
-        asm.expand_b(
+        asm.dispatch_b(
             JoltInstructionKind::VirtualAssertValidDiv0,
             rs2_extended.operand(),
             tmp.operand(),
             0,
         );
-        asm.expand_i(
+        asm.dispatch_i(
             JoltInstructionKind::ADDI,
             reg(rd(instruction)?),
             tmp.operand(),

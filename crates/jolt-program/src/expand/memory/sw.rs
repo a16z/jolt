@@ -9,63 +9,63 @@ pub(in crate::expand) fn expand_sw(
     let v2 = asm.allocate()?;
     let v3 = asm.allocate()?;
 
-    asm.expand_address(
+    asm.dispatch_address(
         JoltInstructionKind::VirtualAssertWordAlignment,
         reg(rs1(instruction)?),
         instruction.operands.imm,
     );
-    asm.expand_i(
+    asm.dispatch_i(
         JoltInstructionKind::ADDI,
         v0.operand(),
         reg(rs1(instruction)?),
         format_i_imm(instruction.operands.imm),
     );
-    asm.expand_i(
+    asm.dispatch_i(
         JoltInstructionKind::ANDI,
         v1.operand(),
         v0.operand(),
         format_i_imm(-8),
     );
-    asm.expand_i(JoltInstructionKind::LD, v2.operand(), v1.operand(), 0);
-    asm.expand_i(JoltInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
-    asm.expand_i(
+    asm.dispatch_i(JoltInstructionKind::LD, v2.operand(), v1.operand(), 0);
+    asm.dispatch_i(JoltInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
+    asm.dispatch_i(
         JoltInstructionKind::ORI,
         v3.operand(),
         reg(0),
         format_i_imm(-1),
     );
-    asm.expand_i(JoltInstructionKind::SRLI, v3.operand(), v3.operand(), 32);
-    asm.expand_r(
+    asm.dispatch_i(JoltInstructionKind::SRLI, v3.operand(), v3.operand(), 32);
+    asm.dispatch_r(
         JoltInstructionKind::SLL,
         v3.operand(),
         v3.operand(),
         v0.operand(),
     );
-    asm.expand_r(
+    asm.dispatch_r(
         JoltInstructionKind::SLL,
         v0.operand(),
         reg(rs2(instruction)?),
         v0.operand(),
     );
-    asm.expand_r(
+    asm.dispatch_r(
         JoltInstructionKind::XOR,
         v0.operand(),
         v2.operand(),
         v0.operand(),
     );
-    asm.expand_r(
+    asm.dispatch_r(
         JoltInstructionKind::AND,
         v0.operand(),
         v0.operand(),
         v3.operand(),
     );
-    asm.expand_r(
+    asm.dispatch_r(
         JoltInstructionKind::XOR,
         v2.operand(),
         v2.operand(),
         v0.operand(),
     );
-    asm.expand_s(JoltInstructionKind::SD, v1.operand(), v2.operand(), 0);
+    asm.dispatch_s(JoltInstructionKind::SD, v1.operand(), v2.operand(), 0);
     asm.release_many([v0, v1, v2, v3]);
 
     asm.finalize()

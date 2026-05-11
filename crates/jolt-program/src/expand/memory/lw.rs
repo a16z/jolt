@@ -7,32 +7,32 @@ pub(in crate::expand) fn expand_lw(
     let v0 = asm.allocate()?;
     let v1 = asm.allocate()?;
 
-    asm.expand_address(
+    asm.dispatch_address(
         JoltInstructionKind::VirtualAssertWordAlignment,
         reg(rs1(instruction)?),
         instruction.operands.imm,
     );
-    asm.expand_i(
+    asm.dispatch_i(
         JoltInstructionKind::ADDI,
         v0.operand(),
         reg(rs1(instruction)?),
         format_i_imm(instruction.operands.imm),
     );
-    asm.expand_i(
+    asm.dispatch_i(
         JoltInstructionKind::ANDI,
         v1.operand(),
         v0.operand(),
         format_i_imm(-8),
     );
-    asm.expand_i(JoltInstructionKind::LD, v1.operand(), v1.operand(), 0);
-    asm.expand_i(JoltInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
-    asm.expand_r(
+    asm.dispatch_i(JoltInstructionKind::LD, v1.operand(), v1.operand(), 0);
+    asm.dispatch_i(JoltInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
+    asm.dispatch_r(
         JoltInstructionKind::SRL,
         v1.operand(),
         v1.operand(),
         v0.operand(),
     );
-    asm.expand_i(
+    asm.dispatch_i(
         JoltInstructionKind::VirtualSignExtendWord,
         reg(rd(instruction)?),
         v1.operand(),
