@@ -118,7 +118,6 @@ pub(in crate::expand) fn expand_halfword_load(
 pub(in crate::expand) fn expand_advice_load(
     instruction: &NormalizedInstruction,
     byte_len: i128,
-    sign_extension_shift: Option<i128>,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
 
@@ -127,7 +126,8 @@ pub(in crate::expand) fn expand_advice_load(
         reg(rd(instruction)?),
         byte_len,
     );
-    if let Some(shift) = sign_extension_shift {
+    if byte_len < 8 {
+        let shift = 64 - byte_len * 8;
         asm.expand_i(
             JoltInstructionKind::SLLI,
             reg(rd(instruction)?),
