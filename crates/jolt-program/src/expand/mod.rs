@@ -30,9 +30,7 @@ use arithmetic::*;
 use control_flow::*;
 use core::ExpansionState;
 use division::*;
-use grammar::{
-    is_source_only, reg, ExpandedInstructionSequence, ExpansionBuilder, RegisterOperand, TempId,
-};
+use grammar::{reg, ExpandedInstructionSequence, ExpansionBuilder, RegisterOperand, TempId};
 use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
 use memory::*;
 use metadata::stamp_inline_sequence;
@@ -114,7 +112,7 @@ fn expand_instruction_with_provider_inner<P: InlineExpansionProvider + ?Sized>(
 
     let owned_allocator = std::mem::take(allocator);
     let mut state = ExpansionState::new(owned_allocator);
-    let result = state.expand_one_core(instruction);
+    let result = state.expand_recursive(instruction);
     *allocator = state.into_allocator();
     result
 }
@@ -140,34 +138,6 @@ fn finalize_inline_provider_rows(
         });
     }
     stamp_inline_sequence(rows, source.is_compressed)
-}
-
-fn expand_instruction_body(
-    instruction: &NormalizedInstruction,
-    state: &mut ExpansionState,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    if instruction.operands.rd == Some(0)
-        && !handles_rd_zero_internally(instruction.instruction_kind)
-    {
-        if instruction.instruction_kind.has_side_effects() {
-            let virtual_register = state.allocate_register()?;
-            let mut rewritten = *instruction;
-            rewritten.operands.rd = Some(virtual_register);
-            let expanded = state.expand_one_core(&rewritten);
-            state.release_register(virtual_register)?;
-            return expanded;
-        }
-        return Ok(vec![noop_for(*instruction)]);
-    }
-
-    if instruction.instruction_kind == JoltInstructionKind::Inline {
-        return Err(ExpansionError::InlineProviderRequired);
-    }
-    if !is_source_only(instruction.instruction_kind) {
-        return Ok(vec![*instruction]);
-    }
-    let sequence = expand_source_only_instruction(instruction)?;
-    state.materialize(sequence)
 }
 
 fn expand_source_only_instruction(

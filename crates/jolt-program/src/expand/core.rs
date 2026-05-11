@@ -1,14 +1,15 @@
-use jolt_riscv::{NormalizedInstruction, NormalizedOperands};
+use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
 
 use crate::expand::{
     allocator::{ExpansionAllocator, NUM_VIRTUAL_INSTRUCTION_REGISTERS},
     buffer::ExpansionBuffer,
-    expand_instruction_body,
+    expand_source_only_instruction,
     grammar::{
-        ExpandedInstructionSequence, ExpansionOp, RegisterOperand, RowTemplate, TempId,
-        TemplateOperands,
+        is_source_only, ExpandedInstructionSequence, ExpansionOp, RegisterOperand, RowTemplate,
+        TempId, TemplateOperands,
     },
     metadata::stamp_instruction_sequence,
+    operands::{handles_rd_zero_internally, noop_for},
     ExpansionError,
 };
 
@@ -25,14 +26,42 @@ impl ExpansionState {
         self.allocator
     }
 
-    pub(super) fn expand_one_core(
+    pub(super) fn expand_recursive(
         &mut self,
         instruction: &NormalizedInstruction,
     ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
         self.allocator.enter_expansion()?;
-        let result = expand_instruction_body(instruction, self);
+        let result = self.dispatch(instruction);
         self.allocator.exit_expansion();
         result
+    }
+
+    fn dispatch(
+        &mut self,
+        instruction: &NormalizedInstruction,
+    ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+        if instruction.operands.rd == Some(0)
+            && !handles_rd_zero_internally(instruction.instruction_kind)
+        {
+            if instruction.instruction_kind.has_side_effects() {
+                let virtual_register = self.allocate_register()?;
+                let mut rewritten = *instruction;
+                rewritten.operands.rd = Some(virtual_register);
+                let expanded = self.expand_recursive(&rewritten);
+                self.release_register(virtual_register)?;
+                return expanded;
+            }
+            return Ok(vec![noop_for(*instruction)]);
+        }
+
+        if instruction.instruction_kind == JoltInstructionKind::Inline {
+            return Err(ExpansionError::InlineProviderRequired);
+        }
+        if !is_source_only(instruction.instruction_kind) {
+            return Ok(vec![*instruction]);
+        }
+        let sequence = expand_source_only_instruction(instruction)?;
+        self.materialize(sequence)
     }
 
     pub(super) fn allocate_register(&mut self) -> Result<u8, ExpansionError> {
@@ -53,7 +82,7 @@ impl ExpansionState {
                 ExpansionOp::Emit(row) => materializer.emit(row)?,
                 ExpansionOp::Expand(row) => {
                     let instruction = materializer.instruction(row)?;
-                    materializer.extend(self.expand_one_core(&instruction)?)?;
+                    materializer.extend(self.expand_recursive(&instruction)?)?;
                 }
                 ExpansionOp::Allocate(register) => {
                     let allocated = self.allocator.allocate()?;
