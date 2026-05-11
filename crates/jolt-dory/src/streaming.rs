@@ -1,14 +1,34 @@
 //! Streaming (chunked) commitment for the Dory scheme.
 
 use dory::backends::arkworks::G1Routines;
-use dory::primitives::arithmetic::{DoryRoutines, PairingCurve};
+use dory::primitives::arithmetic::DoryRoutines;
 use jolt_field::Fr;
 use jolt_openings::StreamingCommitment;
 
-use crate::scheme::{ark_to_jolt_g1, ark_to_jolt_gt, jolt_fr_to_ark, jolt_g1_vec_to_ark, ArkFr};
-use crate::types::{DoryCommitment, DoryPartialCommitment};
+use crate::scheme::{
+    ark_to_jolt_fr, ark_to_jolt_g1, ark_to_jolt_g1_vec, ark_to_jolt_gt, commit_rows_tier_2,
+    jolt_fr_to_ark, jolt_g1_vec_to_ark, ArkFr,
+};
+use crate::types::{DoryCommitment, DoryHint, DoryPartialCommitment, DoryProverSetup};
 
-type InnerBN254 = dory::backends::arkworks::BN254;
+impl crate::DoryScheme {
+    #[tracing::instrument(skip_all, name = "DoryScheme::stream_finish_zk")]
+    pub fn finish_zk(
+        partial: DoryPartialCommitment,
+        setup: &DoryProverSetup,
+    ) -> (DoryCommitment, DoryHint) {
+        validate_row_count(partial.row_commitments.len(), setup);
+        let row_commitments = jolt_g1_vec_to_ark(partial.row_commitments);
+        let (tier_2, commit_blind) = commit_rows_tier_2::<dory::ZK>(&row_commitments, setup);
+        (
+            DoryCommitment(ark_to_jolt_gt(&tier_2)),
+            DoryHint::new(
+                ark_to_jolt_g1_vec(row_commitments),
+                ark_to_jolt_fr(&commit_blind),
+            ),
+        )
+    }
+}
 
 impl StreamingCommitment for crate::DoryScheme {
     type PartialCommitment = DoryPartialCommitment;
@@ -49,22 +69,25 @@ impl StreamingCommitment for crate::DoryScheme {
     #[tracing::instrument(skip_all, name = "DoryScheme::stream_finish")]
     fn finish(partial: Self::PartialCommitment, setup: &Self::ProverSetup) -> Self::Output {
         let num_rows = partial.row_commitments.len();
-        assert!(
-            num_rows.is_power_of_two(),
-            "streaming: row count ({num_rows}) must be a power of two",
-        );
-        assert!(
-            num_rows <= setup.0.g2_vec.len(),
-            "streaming: row count ({}) exceeds Dory SRS size ({})",
-            num_rows,
-            setup.0.g2_vec.len(),
-        );
+        validate_row_count(num_rows, setup);
 
         let ark_rows = jolt_g1_vec_to_ark(partial.row_commitments);
-        let g2_bases = &setup.0.g2_vec[..num_rows];
-        let tier_2 = <InnerBN254 as PairingCurve>::multi_pair_g2_setup(&ark_rows, g2_bases);
+        let (tier_2, _) = commit_rows_tier_2::<dory::Transparent>(&ark_rows, setup);
         DoryCommitment(ark_to_jolt_gt(&tier_2))
     }
+}
+
+fn validate_row_count(num_rows: usize, setup: &DoryProverSetup) {
+    assert!(
+        num_rows.is_power_of_two(),
+        "streaming: row count ({num_rows}) must be a power of two",
+    );
+    assert!(
+        num_rows <= setup.0.g2_vec.len(),
+        "streaming: row count ({}) exceeds Dory SRS size ({})",
+        num_rows,
+        setup.0.g2_vec.len(),
+    );
 }
 
 #[cfg(test)]

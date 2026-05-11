@@ -3,7 +3,7 @@
 //! - [`CommitmentScheme`] — commit, open, verify for multilinear polynomials.
 //! - [`AdditivelyHomomorphic`] — linear combination of commitments.
 //! - [`StreamingCommitment`] — chunked commitment without full materialization.
-//! - [`ZkOpeningScheme`] — zero-knowledge opening proofs with hiding commitments.
+//! - [`ZkOpeningScheme`] — zero-knowledge commitments and opening proofs.
 
 use std::fmt::Debug;
 
@@ -107,12 +107,20 @@ pub trait ZkOpeningScheme: CommitmentScheme {
 
     type Blind: Clone + Send + Sync;
 
+    /// Commit in the scheme's ZK/hiding mode.
+    fn commit_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
+        poly: &P,
+        setup: &Self::ProverSetup,
+    ) -> (Self::Output, Self::OpeningHint);
+
+    /// Open a ZK/hiding commitment using the opening hint returned by
+    /// [`commit_zk`](Self::commit_zk).
     fn open_zk(
         poly: &Self::Polynomial,
         point: &[Self::Field],
         eval: Self::Field,
         setup: &Self::ProverSetup,
-        hint: Option<Self::OpeningHint>,
+        hint: Self::OpeningHint,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> (Self::Proof, Self::HidingCommitment, Self::Blind);
 

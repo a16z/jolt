@@ -13,7 +13,9 @@
 //! # Public API
 //!
 //! - [`DoryScheme`] — implements the four PCS traits. Static methods:
-//!   `setup_prover`, `setup_verifier`. Also implements
+//!   `setup_prover` and `setup_verifier`. Use
+//!   [`ZkOpeningScheme::commit_zk`](jolt_openings::ZkOpeningScheme::commit_zk)
+//!   for hiding commitments. Also implements
 //!   [`DeriveSetup<DoryProverSetup>`](jolt_crypto::DeriveSetup) for
 //!   [`PedersenSetup<Bn254G1>`](jolt_crypto::PedersenSetup) (use
 //!   `PedersenSetup::derive(&prover_setup, capacity)`).
@@ -21,7 +23,7 @@
 //! - [`DoryProof`] — single opening proof.
 //! - [`DoryProverSetup`] / [`DoryVerifierSetup`] — prover and verifier SRS.
 //! - [`DoryPartialCommitment`] — intermediate state for streaming commitment.
-//! - [`DoryHint`] — row commitments reusable as opening proof hint.
+//! - [`DoryHint`] — row commitments and commitment blind reusable as opening proof hint.
 
 mod scheme;
 mod streaming;
