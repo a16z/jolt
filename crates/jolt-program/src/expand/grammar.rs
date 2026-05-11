@@ -157,15 +157,6 @@ pub(super) enum DispatchInstructionKind {
     Final(JoltInstructionKind),
 }
 
-impl DispatchInstructionKind {
-    pub(super) const fn jolt_kind(self) -> JoltInstructionKind {
-        match self {
-            Self::Source(kind) => kind.jolt_kind(),
-            Self::Final(kind) => kind,
-        }
-    }
-}
-
 impl From<SourceInstructionKind> for DispatchInstructionKind {
     fn from(value: SourceInstructionKind) -> Self {
         Self::Source(value)

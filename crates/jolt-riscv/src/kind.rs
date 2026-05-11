@@ -87,6 +87,19 @@ macro_rules! define_instruction_kind {
             }
         }
 
+        impl From<JoltInstructionKind> for SourceInstructionKind {
+            fn from(value: JoltInstructionKind) -> Self {
+                match value {
+                    JoltInstructionKind::NoOp => Self::NoOp,
+                    JoltInstructionKind::Unimpl => Self::Unimpl,
+                    $(
+                        JoltInstructionKind::$instr => Self::$instr,
+                    )*
+                    JoltInstructionKind::Inline => Self::Inline,
+                }
+            }
+        }
+
         #[cfg(feature = "serialization")]
         impl CanonicalSerialize for JoltInstructionKind {
             fn serialize_with_mode<W: Write>(

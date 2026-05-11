@@ -1,4 +1,7 @@
-use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
+use jolt_riscv::{
+    JoltInstructionKind, NormalizedInstruction, NormalizedOperands, SourceInstruction,
+    SourceInstructionKind,
+};
 
 use crate::expand::{
     allocator::{ExpansionAllocator, NUM_VIRTUAL_INSTRUCTION_REGISTERS},
@@ -33,37 +36,80 @@ impl ExpansionState {
         instruction: &NormalizedInstruction,
     ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
         self.allocator.enter_expansion()?;
-        let result = self.dispatch(instruction);
+        let result = self.dispatch_final(*instruction);
+        self.allocator.exit_expansion();
+        result
+    }
+
+    pub(super) fn expand_source_recursive(
+        &mut self,
+        instruction: &SourceInstruction,
+    ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+        self.allocator.enter_expansion()?;
+        let result = self.dispatch_source(*instruction);
         self.allocator.exit_expansion();
         result
     }
 
     /// Routes: rd=x0 rewrite → recurse, native → pass-through, source-only → build recipe + materialize.
-    fn dispatch(
+    fn dispatch_final(
         &mut self,
-        instruction: &NormalizedInstruction,
+        instruction: NormalizedInstruction,
     ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
         if instruction.operands.rd == Some(0)
             && !handles_rd_zero_internally(instruction.instruction_kind)
         {
             if instruction.instruction_kind.has_side_effects() {
                 let virtual_register = self.allocate_register()?;
-                let mut rewritten = *instruction;
+                let mut rewritten = instruction;
                 rewritten.operands.rd = Some(virtual_register);
                 let expanded = self.expand_recursive(&rewritten);
                 self.release_register(virtual_register)?;
                 return expanded;
             }
-            return Ok(vec![noop_for(*instruction)]);
+            return Ok(vec![noop_for(instruction)]);
         }
 
         if instruction.instruction_kind == JoltInstructionKind::Inline {
             return Err(ExpansionError::InlineProviderRequired);
         }
         if !is_source_only(instruction.instruction_kind) {
-            return Ok(vec![*instruction]);
+            return Ok(vec![instruction]);
         }
-        let sequence = expand_source_only_instruction(instruction)?;
+        let source = SourceInstruction {
+            instruction_kind: instruction.instruction_kind.into(),
+            address: instruction.address,
+            operands: instruction.operands,
+            is_compressed: instruction.is_compressed,
+        };
+        let sequence = expand_source_only_instruction(&source)?;
+        self.materialize(sequence)
+    }
+
+    fn dispatch_source(
+        &mut self,
+        instruction: SourceInstruction,
+    ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+        let jolt_kind = instruction.instruction_kind.jolt_kind();
+        if instruction.operands.rd == Some(0) && !handles_rd_zero_internally(jolt_kind) {
+            if jolt_kind.has_side_effects() {
+                let virtual_register = self.allocate_register()?;
+                let mut rewritten = instruction;
+                rewritten.operands.rd = Some(virtual_register);
+                let expanded = self.expand_source_recursive(&rewritten);
+                self.release_register(virtual_register)?;
+                return expanded;
+            }
+            return Ok(vec![noop_for(instruction.into_normalized_instruction())]);
+        }
+
+        if instruction.instruction_kind == SourceInstructionKind::Inline {
+            return Err(ExpansionError::InlineProviderRequired);
+        }
+        if !is_source_only(jolt_kind) {
+            return Ok(vec![instruction.into_normalized_instruction()]);
+        }
+        let sequence = expand_source_only_instruction(&instruction)?;
         self.materialize(sequence)
     }
 
@@ -84,8 +130,15 @@ impl ExpansionState {
             match op {
                 ExpansionOp::Emit(row) => materializer.emit(row)?,
                 ExpansionOp::Dispatch(row) => {
-                    let instruction = materializer.dispatch_instruction(row)?;
-                    materializer.extend(self.expand_recursive(&instruction)?)?;
+                    let expanded = match materializer.dispatch_instruction(row)? {
+                        DispatchInstruction::Source(instruction) => {
+                            self.expand_source_recursive(&instruction)?
+                        }
+                        DispatchInstruction::Final(instruction) => {
+                            self.expand_recursive(&instruction)?
+                        }
+                    };
+                    materializer.extend(expanded)?;
                 }
                 ExpansionOp::Allocate(register) => {
                     let allocated = self.allocator.allocate()?;
@@ -99,6 +152,11 @@ impl ExpansionState {
         }
         materializer.finish()
     }
+}
+
+enum DispatchInstruction {
+    Source(SourceInstruction),
+    Final(NormalizedInstruction),
 }
 
 /// Bounded output collector — rejects sequences exceeding `MAX_FINAL_ROWS_PER_SOURCE`.
@@ -227,14 +285,27 @@ impl SequenceMaterializer {
     fn dispatch_instruction(
         &self,
         row: DispatchRowTemplate,
-    ) -> Result<NormalizedInstruction, ExpansionError> {
-        Ok(NormalizedInstruction {
-            instruction_kind: row.instruction_kind.jolt_kind(),
-            address: self.address,
-            operands: self.resolve_operands(row.operands)?,
-            virtual_sequence_remaining: Some(0),
-            is_first_in_sequence: false,
-            is_compressed: false,
+    ) -> Result<DispatchInstruction, ExpansionError> {
+        let operands = self.resolve_operands(row.operands)?;
+        Ok(match row.instruction_kind {
+            crate::expand::grammar::DispatchInstructionKind::Source(instruction_kind) => {
+                DispatchInstruction::Source(SourceInstruction {
+                    instruction_kind,
+                    address: self.address,
+                    operands,
+                    is_compressed: false,
+                })
+            }
+            crate::expand::grammar::DispatchInstructionKind::Final(instruction_kind) => {
+                DispatchInstruction::Final(NormalizedInstruction {
+                    instruction_kind,
+                    address: self.address,
+                    operands,
+                    virtual_sequence_remaining: Some(0),
+                    is_first_in_sequence: false,
+                    is_compressed: false,
+                })
+            }
         })
     }
 
