@@ -6,8 +6,8 @@ use jolt_field::Fr;
 use jolt_openings::StreamingCommitment;
 
 use crate::scheme::{
-    ark_to_jolt_fr, ark_to_jolt_g1, ark_to_jolt_gt, commit_rows_tier_2, jolt_fr_to_ark,
-    jolt_g1_vec_to_ark, ArkFr,
+    ark_to_jolt_fr, ark_to_jolt_g1, ark_to_jolt_g1_vec, ark_to_jolt_gt, commit_rows_tier_2,
+    jolt_fr_to_ark, jolt_g1_vec_to_ark, ArkFr,
 };
 use crate::types::{DoryCommitment, DoryHint, DoryPartialCommitment, DoryProverSetup};
 
@@ -18,12 +18,14 @@ impl crate::DoryScheme {
         setup: &DoryProverSetup,
     ) -> (DoryCommitment, DoryHint) {
         validate_row_count(partial.row_commitments.len(), setup);
-        let row_commitments = partial.row_commitments;
-        let ark_rows = jolt_g1_vec_to_ark(row_commitments.clone());
-        let (tier_2, commit_blind) = commit_rows_tier_2::<dory::ZK>(&ark_rows, setup);
+        let row_commitments = jolt_g1_vec_to_ark(partial.row_commitments);
+        let (tier_2, commit_blind) = commit_rows_tier_2::<dory::ZK>(&row_commitments, setup);
         (
             DoryCommitment(ark_to_jolt_gt(&tier_2)),
-            DoryHint::new(row_commitments, ark_to_jolt_fr(&commit_blind)),
+            DoryHint::new(
+                ark_to_jolt_g1_vec(row_commitments),
+                ark_to_jolt_fr(&commit_blind),
+            ),
         )
     }
 }

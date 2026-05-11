@@ -178,6 +178,10 @@ impl CommitmentScheme for DoryScheme {
                 <ArkFr as DoryField>::zero(),
             ),
         };
+        debug_assert!(
+            commit_blind.is_zero(),
+            "commit_blind should be 0 for transparent mode"
+        );
 
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);

@@ -166,6 +166,13 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
     type HidingCommitment = MockHidingCommitment<F>;
     type Blind = ();
 
+    fn commit_zk<P: jolt_poly::MultilinearPoly<Self::Field> + ?Sized>(
+        poly: &P,
+        setup: &Self::ProverSetup,
+    ) -> (Self::Output, Self::OpeningHint) {
+        Self::commit(poly, setup)
+    }
+
     fn open_zk(
         poly: &Self::Polynomial,
         _point: &[Self::Field],

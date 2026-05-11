@@ -107,14 +107,11 @@ pub trait ZkOpeningScheme: CommitmentScheme {
 
     type Blind: Clone + Send + Sync;
 
-    /// Commit in the scheme's ZK/hiding mode. Implementations that do not
-    /// distinguish commitment modes may use the default transparent commit.
+    /// Commit in the scheme's ZK/hiding mode.
     fn commit_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
         setup: &Self::ProverSetup,
-    ) -> (Self::Output, Self::OpeningHint) {
-        Self::commit(poly, setup)
-    }
+    ) -> (Self::Output, Self::OpeningHint);
 
     /// Open a ZK/hiding commitment using the opening hint returned by
     /// [`commit_zk`](Self::commit_zk).
