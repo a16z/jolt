@@ -381,7 +381,7 @@ jolt-openings = { path = "./crates/jolt-openings" }
 jolt-poly = { path = "./crates/jolt-poly" }
 jolt-transcript = { path = "./crates/jolt-transcript" }
 jolt-sumcheck = { path = "./crates/jolt-sumcheck" }
-jolt-riscv = { path = "./crates/jolt-riscv" }
+jolt-riscv = { path = "./crates/jolt-riscv", default-features = false }
 jolt-program = { path = "./crates/jolt-program", default-features = false }
 jolt-lookup-tables = { path = "./crates/jolt-lookup-tables" }
 jolt-platform = { path = "./jolt-platform", default-features = false }

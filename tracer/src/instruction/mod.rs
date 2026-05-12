@@ -152,11 +152,11 @@ use virtual_zero_extend_word::VirtualZeroExtendWord;
 
 use self::inline::INLINE;
 
-use crate::emulator::cpu::{Cpu, Xlen};
+use crate::emulator::cpu::Cpu;
 use crate::utils::virtual_registers::{is_supported_csr, VirtualRegisterAllocator};
 use derive_more::From;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
-use jolt_riscv::InstructionKind;
+use jolt_riscv::JoltInstructionKind;
 pub use jolt_riscv::NormalizedInstruction;
 
 pub mod format;
@@ -411,7 +411,7 @@ where
     }
 }
 
-macro_rules! define_rv32im_enums {
+macro_rules! define_rv64imac_enums {
     (
         instructions: [$($instr:ident),* $(,)?]
     ) => {
@@ -576,7 +576,7 @@ macro_rules! define_rv32im_enums {
                             | Instruction::INLINE(_)
                     )
                 {
-                    let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+                    let inline_sequence = self.inline_sequence(&cpu.vr_allocator);
                     let mut trace = trace;
                     for instr in inline_sequence {
                         instr.trace_raw(cpu, trace.as_deref_mut());
@@ -644,9 +644,9 @@ macro_rules! define_rv32im_enums {
                 }
             }
 
-            pub fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
+            pub fn inline_sequence(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
                 if let Instruction::INLINE(inline) = self {
-                    return inline.inline_sequence(allocator, xlen);
+                    return inline.inline_sequence(allocator);
                 }
                 let mut expansion_allocator = jolt_program::expand::ExpansionAllocator::new();
                 jolt_program::expand::expand_instruction(
@@ -664,12 +664,12 @@ macro_rules! define_rv32im_enums {
 
             pub fn try_from_normalized(instruction: NormalizedInstruction) -> Result<Self, &'static str> {
                 match instruction.instruction_kind {
-                    InstructionKind::NoOp => Ok(Instruction::NoOp),
-                    InstructionKind::Unimpl => Ok(Instruction::UNIMPL),
+                    JoltInstructionKind::NoOp => Ok(Instruction::NoOp),
+                    JoltInstructionKind::Unimpl => Ok(Instruction::UNIMPL),
                     $(
-                        InstructionKind::$instr => Ok(<$instr as From<NormalizedInstruction>>::from(instruction).into()),
+                        JoltInstructionKind::$instr => Ok(<$instr as From<NormalizedInstruction>>::from(instruction).into()),
                     )*
-                    InstructionKind::Inline => {
+                    JoltInstructionKind::Inline => {
                         let metadata = instruction.operands.imm as u32;
                         let inline = INLINE {
                             opcode: metadata & 0x7f,
@@ -727,7 +727,7 @@ macro_rules! define_rv32im_enums {
                     Instruction::UNIMPL => Default::default(),
                     $(
                         Instruction::$instr(instr) => NormalizedInstruction {
-                            instruction_kind: InstructionKind::$instr,
+                            instruction_kind: JoltInstructionKind::$instr,
                             address: instr.address as usize,
                             operands: instr.operands.into(),
                             virtual_sequence_remaining: instr.virtual_sequence_remaining,
@@ -736,7 +736,7 @@ macro_rules! define_rv32im_enums {
                         },
                     )*
                     Instruction::INLINE(instr) => NormalizedInstruction {
-                        instruction_kind: InstructionKind::Inline,
+                        instruction_kind: JoltInstructionKind::Inline,
                         address: instr.address as usize,
                         operands: {
                             let mut operands: NormalizedOperands = instr.operands.into();
@@ -753,7 +753,7 @@ macro_rules! define_rv32im_enums {
     };
 }
 
-jolt_riscv::for_each_instruction_kind!(define_rv32im_enums);
+jolt_riscv::for_each_instruction_kind!(define_rv64imac_enums);
 
 fn inline_metadata(opcode: u32, funct3: u32, funct7: u32) -> i128 {
     (opcode | (funct3 << 7) | (funct7 << 10)) as i128
@@ -936,7 +936,7 @@ impl Instruction {
                     (0b110, 0b0000000) => Ok(OR::new(instr, address, true, compressed).into()),
                     (0b111, 0b0000000) => Ok(AND::new(instr, address, true, compressed).into()),
 
-                    // RV32M extension
+                    // M extension
                     (0b000, 0b0000001) => Ok(MUL::new(instr, address, true, compressed).into()),
                     (0b001, 0b0000001) => Ok(MULH::new(instr, address, true, compressed).into()),
                     (0b010, 0b0000001) => Ok(MULHSU::new(instr, address, true, compressed).into()),
@@ -1107,7 +1107,7 @@ impl Instruction {
 }
 
 // @TODO: Optimize
-pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
+pub fn uncompress_instruction(halfword: u32) -> u32 {
     let op = halfword & 0x3; // [1:0]
     let funct3 = (halfword >> 13) & 0x7; // [15:13]
 
@@ -1147,8 +1147,7 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                 return (offset << 20) | ((rs1 + 8) << 15) | (2 << 12) | ((rd + 8) << 7) | 0x3;
             }
             3 => {
-                // @TODO: Support C.FLW in 32-bit mode
-                // C.LD in 64-bit mode
+                // C.LD
                 // ld rd+8, offset(rs1+8)
                 let rs1 = (halfword >> 7) & 0x7; // [9:7]
                 let rd = (halfword >> 2) & 0x7; // [4:2]
@@ -1193,7 +1192,6 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                     | 0x23;
             }
             7 => {
-                // @TODO: Support C.FSW in 32-bit mode
                 // C.SD
                 // sd rs2+8, offset(rs1+8)
                 let rs1 = (halfword >> 7) & 0x7; // [9:7]
@@ -1242,47 +1240,22 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                     }
                 }
                 1 => {
-                    match xlen {
-                        Xlen::Bit32 => {
-                            // C.JAL (RV32C only)
-                            // jal x1, offset
-                            let offset = match halfword & 0x1000 {
-                                    0x1000 => 0xfffff000,
-                                    _ => 0
-                                } | // offset[31:12] <= [12]
-                                ((halfword >> 1) & 0x800) | // offset[11] <= [12]
-                                ((halfword >> 7) & 0x10) | // offset[4] <= [11]
-                                ((halfword >> 1) & 0x300) | // offset[9:8] <= [10:9]
-                                ((halfword << 2) & 0x400) | // offset[10] <= [8]
-                                ((halfword >> 1) & 0x40) | // offset[6] <= [7]
-                                ((halfword << 1) & 0x80) | // offset[7] <= [6]
-                                ((halfword >> 2) & 0xe) | // offset[3:1] <= [5:3]
-                                ((halfword << 3) & 0x20); // offset[5] <= [2]
-                            let imm = ((offset >> 1) & 0x80000) | // imm[19] <= offset[20]
-                                    ((offset << 8) & 0x7fe00) | // imm[18:9] <= offset[10:1]
-                                    ((offset >> 3) & 0x100) | // imm[8] <= offset[11]
-                                    ((offset >> 12) & 0xff); // imm[7:0] <= offset[19:12]
-                            return (imm << 12) | (1 << 7) | 0x6f;
-                        }
-                        Xlen::Bit64 => {
-                            // C.ADDIW (RV64C only)
-                            let r = (halfword >> 7) & 0x1f;
-                            let imm = match halfword & 0x1000 {
+                    // C.ADDIW
+                    let r = (halfword >> 7) & 0x1f;
+                    let imm = match halfword & 0x1000 {
                             0x1000 => 0xffffffc0,
                             _ => 0
                         } | // imm[31:6] <= [12]
                         ((halfword >> 7) & 0x20) | // imm[5] <= [12]
                         ((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
-                            if r == 0 {
-                                // Reserved
-                            } else if imm == 0 {
-                                // sext.w rd
-                                return (r << 15) | (r << 7) | 0x1b;
-                            } else {
-                                // addiw r, r, imm
-                                return (imm << 20) | (r << 15) | (r << 7) | 0x1b;
-                            }
-                        }
+                    if r == 0 {
+                        // Reserved
+                    } else if imm == 0 {
+                        // sext.w rd
+                        return (r << 15) | (r << 7) | 0x1b;
+                    } else {
+                        // addiw r, r, imm
+                        return (imm << 20) | (r << 15) | (r << 7) | 0x1b;
                     }
                 }
                 2 => {
@@ -1558,7 +1531,6 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                     // r == 0 is reserved instruction
                 }
                 3 => {
-                    // @TODO: Support C.FLWSP in 32-bit mode
                     // C.LDSP
                     // ld rd, offset(x2)
                     let rd = (halfword >> 7) & 0x1f;
@@ -1654,7 +1626,6 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                         | 0x23;
                 }
                 7 => {
-                    // @TODO: Support C.FSWSP in 32-bit mode
                     // C.SDSP
                     // sd rs, offset(x2)
                     let rs2 = (halfword >> 2) & 0x1f; // [6:2]
@@ -1707,7 +1678,7 @@ mod tests {
 
     #[test]
     // Check that the size of Cycle is as expected.
-    fn rv32im_cycle_size() {
+    fn rv64imac_cycle_size() {
         let size = size_of::<Cycle>();
         let expected = 96;
         assert_eq!(

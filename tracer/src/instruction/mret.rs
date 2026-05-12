@@ -52,7 +52,7 @@ impl RISCVTrace for MRET {
 
         // Generate and execute inline sequence
         // The inline sequence reads mepc from virtual register (source of truth for proofs)
-        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
 
         let mut trace = trace;
         for instr in inline_sequence {

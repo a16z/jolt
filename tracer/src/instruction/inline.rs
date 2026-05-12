@@ -12,7 +12,7 @@ use super::{
     Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 use crate::{
-    emulator::cpu::{Cpu, Xlen},
+    emulator::cpu::Cpu,
     instruction::NormalizedInstruction,
     utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
@@ -99,7 +99,7 @@ impl InlineExpansionProvider for TracerInlineExpansionProvider {
         });
 
         Ok(inline
-            .inline_sequence(&self.allocator, Xlen::Bit64)
+            .inline_sequence(&self.allocator)
             .into_iter()
             .map(|instruction| instruction.normalize())
             .collect())
@@ -179,13 +179,9 @@ impl INLINE {
         panic!("Inline instructions must use trace(), not exec()");
     }
 
-    pub fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    pub fn inline_sequence(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
         let reg = find_inline(self.opcode, self.funct3, self.funct7);
-        let asm = InstrAssembler::new_inline(self.address, self.is_compressed, xlen, allocator);
+        let asm = InstrAssembler::new_inline(self.address, self.is_compressed, allocator);
         (reg.build_sequence)(asm, self.operands)
     }
 }
@@ -204,14 +200,9 @@ impl RISCVTrace for INLINE {
 
         let reg = find_inline(self.opcode, self.funct3, self.funct7);
         let advice_allocator = VirtualRegisterAllocator::new();
-        let asm = InstrAssembler::new_inline(
-            self.address,
-            self.is_compressed,
-            cpu.xlen,
-            &advice_allocator,
-        );
+        let asm = InstrAssembler::new_inline(self.address, self.is_compressed, &advice_allocator);
         if let Some(mut advice) = (reg.build_advice)(asm, self.operands, cpu) {
-            let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+            let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator);
             let mut trace = trace;
             for instr in inline_sequence.iter_mut() {
                 if let Instruction::VirtualAdvice(va) = instr {
@@ -235,7 +226,7 @@ impl RISCVTrace for INLINE {
                 self.funct7
             );
         } else {
-            let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+            let inline_sequence = self.inline_sequence(&cpu.vr_allocator);
             let mut trace = trace;
             for instr in inline_sequence {
                 instr.trace_raw(cpu, trace.as_deref_mut());
@@ -257,7 +248,7 @@ impl From<INLINE> for NormalizedInstruction {
         let mut operands: NormalizedOperands = instr.operands.into();
         operands.imm = (instr.opcode | (instr.funct3 << 7) | (instr.funct7 << 10)) as i128;
         NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Inline,
+            instruction_kind: jolt_riscv::JoltInstructionKind::Inline,
             address: instr.address as usize,
             operands,
             virtual_sequence_remaining: instr.virtual_sequence_remaining,

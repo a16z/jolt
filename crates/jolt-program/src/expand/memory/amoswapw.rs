@@ -2,29 +2,33 @@ use super::*;
 
 pub(in crate::expand) fn expand_amoswapw(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v_mask = allocator.allocate()?;
-    let v_dword = allocator.allocate()?;
-    let v_shift = allocator.allocate()?;
-    let v_rd = allocator.allocate()?;
-    let mut asm =
-        assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
-    super::shared::amo_pre64(&mut asm, rs1(instruction)?, v_rd, v_dword, v_shift)?;
-    super::shared::amo_post64(
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let v_mask = asm.allocate()?;
+    let v_dword = asm.allocate()?;
+    let v_shift = asm.allocate()?;
+    let v_rd = asm.allocate()?;
+
+    super::shared::expand_amo_pre64(
         &mut asm,
-        rs1(instruction)?,
-        rs2(instruction)?,
-        v_dword,
-        v_shift,
-        v_mask,
-        rd(instruction)?,
-        v_rd,
+        reg(rs1(instruction)?),
+        v_rd.operand(),
+        v_dword.operand(),
+        v_shift.operand(),
     )?;
-    let sequence = asm.finalize()?;
-    allocator.release(v_mask)?;
-    allocator.release(v_dword)?;
-    allocator.release(v_shift)?;
-    allocator.release(v_rd)?;
-    Ok(sequence)
+    super::shared::expand_amo_post64(
+        &mut asm,
+        super::shared::AmoPost64 {
+            rs1: reg(rs1(instruction)?),
+            v_rs2: reg(rs2(instruction)?),
+            v_dword: v_dword.operand(),
+            v_shift: v_shift.operand(),
+            v_mask: v_mask.operand(),
+            rd: reg(rd(instruction)?),
+            v_rd: v_rd.operand(),
+        },
+    )?;
+    asm.release_many([v_mask, v_dword, v_shift, v_rd]);
+
+    asm.finalize()
 }

@@ -29,7 +29,6 @@ use crate::instruction::add::ADD;
 use crate::instruction::addi::ADDI;
 use crate::instruction::and::AND;
 use crate::instruction::andi::ANDI;
-use crate::instruction::srli::SRLI;
 use crate::instruction::srliw::SRLIW;
 
 use crate::instruction::format::format_assert_align::FormatAssert;
@@ -44,7 +43,6 @@ use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRight
 use crate::instruction::format::format_virtual_right_shift_r::FormatVirtualRightShiftR;
 use crate::instruction::format::NormalizedOperands;
 
-use crate::emulator::cpu::Xlen;
 use crate::instruction::virtual_rotri::VirtualROTRI;
 use crate::instruction::virtual_rotriw::VirtualROTRIW;
 use crate::instruction::xor::XOR;
@@ -79,8 +77,6 @@ pub struct InstrAssembler {
     pub address: u64,
     /// Whether to use RVC encodings.
     pub is_compressed: bool,
-    /// Xlen of the CPU.
-    pub xlen: Xlen,
     /// Accumulated instruction buffer.
     sequence: Vec<Instruction>,
     /// Whether the instruction uses the the FormatInline instruction format.
@@ -94,13 +90,11 @@ impl InstrAssembler {
     pub fn new_inline(
         address: u64,
         is_compressed: bool,
-        xlen: Xlen,
         allocator: &VirtualRegisterAllocator,
     ) -> Self {
         Self {
             address,
             is_compressed,
-            xlen,
             sequence: Vec::new(),
             has_inline_instr_format: true,
             allocator: allocator.clone(),
@@ -160,7 +154,7 @@ impl InstrAssembler {
         }
         let instruction: Instruction = inst.into();
         self.sequence
-            .extend(instruction.inline_sequence(&self.allocator, self.xlen));
+            .extend(instruction.inline_sequence(&self.allocator));
     }
 
     /// Emit any R-type instruction (rd, rs1, rs2).
@@ -175,7 +169,7 @@ impl InstrAssembler {
         RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
+            instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {
                 rd: Some(rd),
@@ -201,7 +195,7 @@ impl InstrAssembler {
         RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
+            instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {
                 rd: Some(rd),
@@ -227,7 +221,7 @@ impl InstrAssembler {
         RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
+            instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {
                 rd: None,
@@ -253,7 +247,7 @@ impl InstrAssembler {
         RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
+            instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {
                 rd: Some(rd),
@@ -279,7 +273,7 @@ impl InstrAssembler {
         RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
+            instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {
                 rd: None,
@@ -301,7 +295,7 @@ impl InstrAssembler {
         RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
+            instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {
                 rd: Some(rd),
@@ -323,7 +317,7 @@ impl InstrAssembler {
         RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
+            instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {
                 rd: Some(rd),
@@ -349,7 +343,7 @@ impl InstrAssembler {
         RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
+            instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {
                 rd: Some(rd),
@@ -375,7 +369,7 @@ impl InstrAssembler {
         RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
+            instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {
                 rd: Some(rd),
@@ -400,7 +394,7 @@ impl InstrAssembler {
         RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
+            instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {
                 rd: None,
@@ -455,10 +449,7 @@ impl InstrAssembler {
         }
         match rs1 {
             Reg(rs1) => {
-                match self.xlen {
-                    Xlen::Bit32 => self.emit_i::<SRLI>(rd, rs1, shamt as u64),
-                    Xlen::Bit64 => self.emit_i::<SRLIW>(rd, rs1, (shamt & 0x1f) as u64),
-                }
+                self.emit_i::<SRLIW>(rd, rs1, (shamt & 0x1f) as u64);
                 Reg(rd)
             }
             Imm(val) => Imm(((val as u32) >> shamt) as u64),
@@ -475,10 +466,7 @@ impl InstrAssembler {
         let mask = ones << shamt;
         match rs1 {
             Reg(rs1_reg) => {
-                match self.xlen {
-                    Xlen::Bit32 => self.emit_vshift_i::<VirtualROTRI>(rd, rs1_reg, mask),
-                    Xlen::Bit64 => self.emit_vshift_i::<VirtualROTRIW>(rd, rs1_reg, mask),
-                }
+                self.emit_vshift_i::<VirtualROTRIW>(rd, rs1_reg, mask);
                 Reg(rd)
             }
             Imm(val) => Imm(((val as u32).rotate_right(shamt)) as u64),
@@ -560,7 +548,7 @@ mod tests {
     #[test]
     fn test_rotl64_immediate_paths() {
         let allocator = VirtualRegisterAllocator::new();
-        let mut asm = InstrAssembler::new_inline(0, false, Xlen::Bit64, &allocator);
+        let mut asm = InstrAssembler::new_inline(0, false, &allocator);
         let dest = 0;
         let vectors: &[(u64, u32, u64)] = &[
             (0x0000000000000001, 1, 0x0000000000000002),

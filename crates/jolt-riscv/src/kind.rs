@@ -1,7 +1,9 @@
+#[cfg(feature = "serialization")]
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, Read, SerializationError, Valid, Validate,
     Write,
 };
+#[cfg(feature = "serialization")]
 use serde::{Deserialize, Serialize};
 
 macro_rules! define_instruction_kind {
@@ -16,11 +18,14 @@ macro_rules! define_instruction_kind {
             PartialEq,
             Eq,
             Hash,
-            Serialize,
-            Deserialize,
         )]
+        #[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
         #[repr(u16)]
-        pub enum InstructionKind {
+        /// Instruction kind decoded from program bytes before Jolt bytecode expansion.
+        ///
+        /// This includes ordinary RV64 instructions plus Jolt custom source
+        /// opcodes, so it is intentionally named "source" rather than "RISC-V".
+        pub enum SourceInstructionKind {
             #[default]
             NoOp,
             Unimpl,
@@ -30,7 +35,59 @@ macro_rules! define_instruction_kind {
             Inline,
         }
 
-        impl CanonicalSerialize for InstructionKind {
+        #[derive(
+            Default,
+            Debug,
+            Clone,
+            Copy,
+            PartialEq,
+            Eq,
+            Hash,
+        )]
+        #[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
+        #[repr(u16)]
+        pub enum JoltInstructionKind {
+            #[default]
+            NoOp,
+            Unimpl,
+            $(
+                $instr,
+            )*
+            Inline,
+        }
+
+
+
+        impl SourceInstructionKind {
+            pub const fn name(self) -> &'static str {
+                match self {
+                    Self::NoOp => "NoOp",
+                    Self::Unimpl => "Unimpl",
+                    $(
+                        Self::$instr => stringify!($instr),
+                    )*
+                    Self::Inline => "Inline",
+                }
+            }
+
+            pub const fn jolt_kind(self) -> JoltInstructionKind {
+                match self {
+                    Self::NoOp => JoltInstructionKind::NoOp,
+                    Self::Unimpl => JoltInstructionKind::Unimpl,
+                    $(
+                        Self::$instr => JoltInstructionKind::$instr,
+                    )*
+                    Self::Inline => JoltInstructionKind::Inline,
+                }
+            }
+
+            pub const fn expands_to_jolt(self) -> bool {
+                !matches!(self, Self::NoOp | Self::Unimpl)
+            }
+        }
+
+        #[cfg(feature = "serialization")]
+        impl CanonicalSerialize for JoltInstructionKind {
             fn serialize_with_mode<W: Write>(
                 &self,
                 writer: W,
@@ -44,7 +101,8 @@ macro_rules! define_instruction_kind {
             }
         }
 
-        impl CanonicalDeserialize for InstructionKind {
+        #[cfg(feature = "serialization")]
+        impl CanonicalDeserialize for JoltInstructionKind {
             fn deserialize_with_mode<R: Read>(
                 reader: R,
                 compress: Compress,
@@ -63,13 +121,14 @@ macro_rules! define_instruction_kind {
             }
         }
 
-        impl Valid for InstructionKind {
+        #[cfg(feature = "serialization")]
+        impl Valid for JoltInstructionKind {
             fn check(&self) -> Result<(), SerializationError> {
                 Ok(())
             }
         }
 
-        impl InstructionKind {
+        impl JoltInstructionKind {
             pub const fn name(self) -> &'static str {
                 match self {
                     Self::NoOp => "NoOp",

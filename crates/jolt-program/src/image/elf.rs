@@ -10,7 +10,11 @@ use crate::ProgramError;
 /// The instruction rows here match the executable text after RV64 decoding and
 /// compressed-instruction normalization. They have not been expanded into Jolt
 /// bytecode yet.
-#[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Debug, Clone)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct Rv64ProgramImage {
     /// Source instruction rows decoded from executable text sections.
     pub instructions: Vec<NormalizedInstruction>,

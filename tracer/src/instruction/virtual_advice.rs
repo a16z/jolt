@@ -72,7 +72,7 @@ impl jolt_riscv::JoltInstruction for VirtualAdvice {}
 impl From<VirtualAdvice> for NormalizedInstruction {
     fn from(val: VirtualAdvice) -> Self {
         NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::VirtualAdvice,
+            instruction_kind: jolt_riscv::JoltInstructionKind::VirtualAdvice,
             address: val.address as usize,
             operands: val.operands.into(),
             is_compressed: val.is_compressed,

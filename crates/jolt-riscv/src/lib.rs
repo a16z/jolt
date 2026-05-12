@@ -53,9 +53,9 @@ pub use flags::{
     CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags,
     InterleavedBitsMarker, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
-pub use instructions::JoltInstructions;
+pub use instructions::LookupInstruction;
 pub use jolt_instruction::JoltInstruction;
-pub use kind::InstructionKind;
+pub use kind::{JoltInstructionKind, SourceInstructionKind};
 pub use normalized::{NormalizedInstruction, NormalizedOperands};
 pub use trace::JoltCycle;
 pub use uncompress::uncompress_rv64_instruction;
@@ -75,7 +75,7 @@ pub use uncompress::uncompress_rv64_instruction;
 ///
 /// // No flag config — struct only, no `Flags` impl:
 /// jolt_instruction!(
-///     /// RV32I (Zicsr) CSRRS: atomic CSR read+set bits.
+///     /// Zicsr CSRRS: atomic CSR read+set bits.
 ///     Csrrs
 /// );
 /// ```
@@ -172,8 +172,10 @@ macro_rules! jolt_instruction {
             PartialEq,
             Eq,
             Hash,
-            ::serde::Serialize,
-            ::serde::Deserialize,
+        )]
+        #[cfg_attr(
+            feature = "serialization",
+            derive(::serde::Serialize, ::serde::Deserialize)
         )]
         pub struct $name<T = ()>(pub T);
     };

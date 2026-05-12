@@ -1,16 +1,25 @@
 //! RV64 bytecode expansion from decoded source rows into final Jolt bytecode.
 //!
+//! The pipeline has two phases:
+//! 1. **Recipe building** (`grammar.rs`): each source-only instruction maps to a
+//!    symbolic recipe — a sequence of `ExpansionOp`s referencing `TempId` placeholders.
+//! 2. **Materialization** (`materialize.rs`): recipes are executed by binding temps to
+//!    physical virtual registers, emitting concrete rows, and recursing for nested
+//!    expansions.
+//!
 //! Expansion intentionally has no `Xlen` parameter: the `jolt-program` pipeline
-//! only supports RV64. RV32/ELF32 inputs should be rejected before this module is
+//! only supports RV64. RV32/ELF32 inputs are rejected before this module is
 //! called.
 
 pub mod allocator;
 mod arithmetic;
-pub mod assembler;
 mod control_flow;
 mod division;
 pub mod error;
+mod grammar;
+mod materialize;
 mod memory;
+mod metadata;
 mod operands;
 mod shifts;
 #[cfg(test)]
@@ -19,15 +28,27 @@ mod tests;
 pub use allocator::ExpansionAllocator;
 pub use error::ExpansionError;
 
+use allocator::{
+    mcause_register, mepc_register, mstatus_register, mtval_register, reservation_d_register,
+    reservation_w_register, trap_handler_register, virtual_register_for_csr,
+};
 use arithmetic::*;
 use control_flow::*;
 use division::*;
-use jolt_riscv::{InstructionKind, NormalizedInstruction, NormalizedOperands};
+use grammar::{reg, ExpandedInstructionSequence, ExpansionBuilder, RegisterOperand, TempId};
+use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
+use materialize::ExpansionState;
 use memory::*;
+use metadata::stamp_inline_sequence;
 use operands::*;
 use shifts::*;
 
 pub trait InlineExpansionProvider {
+    /// Expands a registered inline row into normalized rows.
+    ///
+    /// Provider output intentionally stays outside the provider-free builder
+    /// core. The top-level entry point remaps `rd = x0` before calling this
+    /// hook, then validates target legality and stamps sequence metadata.
     fn expand_inline(
         &mut self,
         instruction: &NormalizedInstruction,
@@ -60,107 +81,153 @@ pub fn expand_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
     allocator: &mut ExpansionAllocator,
     inline_provider: &mut P,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    if instruction.operands.rd == Some(0)
+    let mut rewritten;
+    let mut allocated_rd_zero_register = None;
+    let instruction = if instruction.operands.rd == Some(0)
         && !handles_rd_zero_internally(instruction.instruction_kind)
     {
         if instruction.instruction_kind.has_side_effects() {
             let virtual_register = allocator.allocate()?;
-            let mut rewritten = *instruction;
+            allocated_rd_zero_register = Some(virtual_register);
+            rewritten = *instruction;
             rewritten.operands.rd = Some(virtual_register);
-            let expanded = expand_instruction_with_provider(&rewritten, allocator, inline_provider);
-            allocator.release(virtual_register)?;
-            return expanded;
+            &rewritten
+        } else {
+            return Ok(vec![noop_for(*instruction)]);
         }
-        return Ok(vec![noop_for(*instruction)]);
-    }
+    } else {
+        instruction
+    };
 
+    let result = if instruction.instruction_kind == JoltInstructionKind::Inline {
+        let rows = inline_provider.expand_inline(instruction, allocator)?;
+        finalize_inline_provider_rows(*instruction, allocator, rows)
+    } else {
+        let owned_allocator = std::mem::take(allocator);
+        let mut state = ExpansionState::new(owned_allocator);
+        let result = state.expand_recursive(instruction);
+        *allocator = state.into_allocator();
+        result
+    };
+    if let Some(register) = allocated_rd_zero_register {
+        allocator.release(register)?;
+    }
+    result
+}
+
+fn finalize_inline_provider_rows(
+    source: NormalizedInstruction,
+    allocator: &mut ExpansionAllocator,
+    mut rows: Vec<NormalizedInstruction>,
+) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+    for register in allocator.take_registers_for_reset()? {
+        rows.push(NormalizedInstruction {
+            instruction_kind: JoltInstructionKind::ADDI,
+            address: source.address,
+            operands: NormalizedOperands {
+                rd: Some(register),
+                rs1: Some(0),
+                rs2: None,
+                imm: 0,
+            },
+            virtual_sequence_remaining: Some(0),
+            is_first_in_sequence: false,
+            is_compressed: false,
+        });
+    }
+    stamp_inline_sequence(rows, source.is_compressed)
+}
+
+/// Dispatches a source-only instruction to its recipe builder (phase 1).
+fn expand_source_only_instruction(
+    instruction: &NormalizedInstruction,
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
     match instruction.instruction_kind {
-        InstructionKind::Inline => inline_provider.expand_inline(instruction, allocator),
-        InstructionKind::ADDIW => expand_addiw(instruction, allocator),
-        InstructionKind::ADDW => expand_addw(instruction, allocator),
-        InstructionKind::SUBW => expand_subw(instruction, allocator),
-        InstructionKind::MULH => expand_mulh(instruction, allocator),
-        InstructionKind::MULHSU => expand_mulhsu(instruction, allocator),
-        InstructionKind::MULW => expand_mulw(instruction, allocator),
-        InstructionKind::LB => expand_lb(instruction, allocator),
-        InstructionKind::LBU => expand_lbu(instruction, allocator),
-        InstructionKind::LH => expand_lh(instruction, allocator),
-        InstructionKind::LHU => expand_lhu(instruction, allocator),
-        InstructionKind::LW => expand_lw(instruction, allocator),
-        InstructionKind::LWU => expand_lwu(instruction, allocator),
-        InstructionKind::AdviceLB => expand_advice_lb(instruction, allocator),
-        InstructionKind::AdviceLH => expand_advice_lh(instruction, allocator),
-        InstructionKind::AdviceLW => expand_advice_lw(instruction, allocator),
-        InstructionKind::AdviceLD => expand_advice_ld(instruction, allocator),
-        InstructionKind::AMOADDD => expand_amoaddd(instruction, allocator),
-        InstructionKind::AMOANDD => expand_amoandd(instruction, allocator),
-        InstructionKind::AMOORD => expand_amoord(instruction, allocator),
-        InstructionKind::AMOXORD => expand_amoxord(instruction, allocator),
-        InstructionKind::AMOSWAPD => expand_amoswapd(instruction, allocator),
-        InstructionKind::AMOMAXD => expand_amomaxd(instruction, allocator),
-        InstructionKind::AMOMAXUD => expand_amomaxud(instruction, allocator),
-        InstructionKind::AMOMIND => expand_amomind(instruction, allocator),
-        InstructionKind::AMOMINUD => expand_amominud(instruction, allocator),
-        InstructionKind::AMOADDW => expand_amoaddw(instruction, allocator),
-        InstructionKind::AMOANDW => expand_amoandw(instruction, allocator),
-        InstructionKind::AMOORW => expand_amoorw(instruction, allocator),
-        InstructionKind::AMOXORW => expand_amoxorw(instruction, allocator),
-        InstructionKind::AMOSWAPW => expand_amoswapw(instruction, allocator),
-        InstructionKind::AMOMAXW => expand_amomaxw(instruction, allocator),
-        InstructionKind::AMOMAXUW => expand_amomaxuw(instruction, allocator),
-        InstructionKind::AMOMINW => expand_amominw(instruction, allocator),
-        InstructionKind::AMOMINUW => expand_amominuw(instruction, allocator),
-        InstructionKind::LRD => expand_lrd(instruction, allocator),
-        InstructionKind::LRW => expand_lrw(instruction, allocator),
-        InstructionKind::DIV => expand_div(instruction, allocator),
-        InstructionKind::DIVU => expand_divu(instruction, allocator),
-        InstructionKind::DIVW => expand_divw(instruction, allocator),
-        InstructionKind::DIVUW => expand_divuw(instruction, allocator),
-        InstructionKind::REM => expand_rem(instruction, allocator),
-        InstructionKind::REMU => expand_remu(instruction, allocator),
-        InstructionKind::REMW => expand_remw(instruction, allocator),
-        InstructionKind::REMUW => expand_remuw(instruction, allocator),
-        InstructionKind::SB => expand_sb(instruction, allocator),
-        InstructionKind::SCD => expand_scd(instruction, allocator),
-        InstructionKind::SCW => expand_scw(instruction, allocator),
-        InstructionKind::SH => expand_sh(instruction, allocator),
-        InstructionKind::SW => expand_sw(instruction, allocator),
-        InstructionKind::CSRRW => expand_csrrw(instruction, allocator),
-        InstructionKind::CSRRS => expand_csrrs(instruction, allocator),
-        InstructionKind::EBREAK => expand_ebreak(instruction, allocator),
-        InstructionKind::ECALL => expand_ecall(instruction, allocator),
-        InstructionKind::MRET => expand_mret(instruction, allocator),
-        InstructionKind::SLL => expand_sll(instruction, allocator),
-        InstructionKind::SLLI => expand_slli(instruction, allocator),
-        InstructionKind::SLLW => expand_sllw(instruction, allocator),
-        InstructionKind::SLLIW => expand_slliw(instruction, allocator),
-        InstructionKind::SRL => expand_srl(instruction, allocator),
-        InstructionKind::SRLI => expand_srli(instruction, allocator),
-        InstructionKind::SRA => expand_sra(instruction, allocator),
-        InstructionKind::SRAI => expand_srai(instruction, allocator),
-        InstructionKind::SRLIW => expand_srliw(instruction, allocator),
-        InstructionKind::SRAIW => expand_sraiw(instruction, allocator),
-        InstructionKind::SRLW => expand_srlw(instruction, allocator),
-        InstructionKind::SRAW => expand_sraw(instruction, allocator),
-        _ => Ok(vec![*instruction]),
+        JoltInstructionKind::ADDIW => expand_addiw(instruction),
+        JoltInstructionKind::ADDW => expand_addw(instruction),
+        JoltInstructionKind::SUBW => expand_subw(instruction),
+        JoltInstructionKind::MULH => expand_mulh(instruction),
+        JoltInstructionKind::MULHSU => expand_mulhsu(instruction),
+        JoltInstructionKind::MULW => expand_mulw(instruction),
+        JoltInstructionKind::LB => expand_lb(instruction),
+        JoltInstructionKind::LBU => expand_lbu(instruction),
+        JoltInstructionKind::LH => expand_lh(instruction),
+        JoltInstructionKind::LHU => expand_lhu(instruction),
+        JoltInstructionKind::LW => expand_lw(instruction),
+        JoltInstructionKind::LWU => expand_lwu(instruction),
+        JoltInstructionKind::AdviceLB => expand_advice_lb(instruction),
+        JoltInstructionKind::AdviceLH => expand_advice_lh(instruction),
+        JoltInstructionKind::AdviceLW => expand_advice_lw(instruction),
+        JoltInstructionKind::AdviceLD => expand_advice_ld(instruction),
+        JoltInstructionKind::AMOADDD => expand_amoaddd(instruction),
+        JoltInstructionKind::AMOANDD => expand_amoandd(instruction),
+        JoltInstructionKind::AMOORD => expand_amoord(instruction),
+        JoltInstructionKind::AMOXORD => expand_amoxord(instruction),
+        JoltInstructionKind::AMOSWAPD => expand_amoswapd(instruction),
+        JoltInstructionKind::AMOMAXD => expand_amomaxd(instruction),
+        JoltInstructionKind::AMOMAXUD => expand_amomaxud(instruction),
+        JoltInstructionKind::AMOMIND => expand_amomind(instruction),
+        JoltInstructionKind::AMOMINUD => expand_amominud(instruction),
+        JoltInstructionKind::AMOADDW => expand_amoaddw(instruction),
+        JoltInstructionKind::AMOANDW => expand_amoandw(instruction),
+        JoltInstructionKind::AMOORW => expand_amoorw(instruction),
+        JoltInstructionKind::AMOXORW => expand_amoxorw(instruction),
+        JoltInstructionKind::AMOSWAPW => expand_amoswapw(instruction),
+        JoltInstructionKind::AMOMAXW => expand_amomaxw(instruction),
+        JoltInstructionKind::AMOMAXUW => expand_amomaxuw(instruction),
+        JoltInstructionKind::AMOMINW => expand_amominw(instruction),
+        JoltInstructionKind::AMOMINUW => expand_amominuw(instruction),
+        JoltInstructionKind::LRD => expand_lrd(instruction),
+        JoltInstructionKind::LRW => expand_lrw(instruction),
+        JoltInstructionKind::DIV => expand_div(instruction),
+        JoltInstructionKind::DIVU => expand_divu(instruction),
+        JoltInstructionKind::DIVW => expand_divw(instruction),
+        JoltInstructionKind::DIVUW => expand_divuw(instruction),
+        JoltInstructionKind::REM => expand_rem(instruction),
+        JoltInstructionKind::REMU => expand_remu(instruction),
+        JoltInstructionKind::REMW => expand_remw(instruction),
+        JoltInstructionKind::REMUW => expand_remuw(instruction),
+        JoltInstructionKind::SB => expand_sb(instruction),
+        JoltInstructionKind::SCD => expand_scd(instruction),
+        JoltInstructionKind::SCW => expand_scw(instruction),
+        JoltInstructionKind::SH => expand_sh(instruction),
+        JoltInstructionKind::SW => expand_sw(instruction),
+        JoltInstructionKind::CSRRW => expand_csrrw(instruction),
+        JoltInstructionKind::CSRRS => expand_csrrs(instruction),
+        JoltInstructionKind::EBREAK => expand_ebreak(instruction),
+        JoltInstructionKind::ECALL => expand_ecall(instruction),
+        JoltInstructionKind::MRET => expand_mret(instruction),
+        JoltInstructionKind::SLL => expand_sll(instruction),
+        JoltInstructionKind::SLLI => expand_slli(instruction),
+        JoltInstructionKind::SLLW => expand_sllw(instruction),
+        JoltInstructionKind::SLLIW => expand_slliw(instruction),
+        JoltInstructionKind::SRL => expand_srl(instruction),
+        JoltInstructionKind::SRLI => expand_srli(instruction),
+        JoltInstructionKind::SRA => expand_sra(instruction),
+        JoltInstructionKind::SRAI => expand_srai(instruction),
+        JoltInstructionKind::SRLIW => expand_srliw(instruction),
+        JoltInstructionKind::SRAIW => expand_sraiw(instruction),
+        JoltInstructionKind::SRLW => expand_srlw(instruction),
+        JoltInstructionKind::SRAW => expand_sraw(instruction),
+        _ => Err(ExpansionError::UnsupportedInstruction),
     }
 }
 
 pub fn expand_program(
-    instructions: impl IntoIterator<Item = NormalizedInstruction>,
+    instructions: &[NormalizedInstruction],
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     expand_program_with_provider(instructions, &mut NoInlineExpansionProvider)
 }
 
 pub fn expand_program_with_provider<P: InlineExpansionProvider + ?Sized>(
-    instructions: impl IntoIterator<Item = NormalizedInstruction>,
+    instructions: &[NormalizedInstruction],
     inline_provider: &mut P,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let mut expanded = Vec::new();
     for instruction in instructions {
         expanded.extend(expand_instruction_with_provider(
-            &instruction,
+            instruction,
             &mut allocator,
             inline_provider,
         )?);

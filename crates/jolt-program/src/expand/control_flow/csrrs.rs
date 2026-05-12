@@ -2,37 +2,63 @@ use super::*;
 
 pub(in crate::expand) fn expand_csrrs(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let csr = csr_address(instruction);
-    let virtual_reg = allocator
-        .csr_to_virtual_register(csr)
-        .ok_or(ExpansionError::UnsupportedCsr(csr))?;
-    let mut asm =
-        assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
+    let virtual_reg = virtual_register_for_csr(csr).ok_or(ExpansionError::UnsupportedCsr(csr))?;
+    let mut asm = ExpansionBuilder::new(*instruction);
+
     if rs1(instruction)? == 0 {
-        asm.emit_i(InstructionKind::ADDI, rd(instruction)?, virtual_reg, 0)?;
+        asm.emit_i(
+            JoltInstructionKind::ADDI,
+            reg(rd(instruction)?),
+            reg(virtual_reg),
+            0,
+        );
+        return asm.finalize();
     } else if rd(instruction)? == 0 {
         asm.emit_r(
-            InstructionKind::OR,
-            virtual_reg,
-            virtual_reg,
-            rs1(instruction)?,
-        )?;
+            JoltInstructionKind::OR,
+            reg(virtual_reg),
+            reg(virtual_reg),
+            reg(rs1(instruction)?),
+        );
+        return asm.finalize();
     } else if rd(instruction)? == rs1(instruction)? {
-        let temp = asm.allocator().allocate()?;
-        asm.emit_i(InstructionKind::ADDI, temp, rs1(instruction)?, 0)?;
-        asm.emit_i(InstructionKind::ADDI, rd(instruction)?, virtual_reg, 0)?;
-        asm.emit_r(InstructionKind::OR, virtual_reg, virtual_reg, temp)?;
-        asm.allocator().release(temp)?;
-    } else {
-        asm.emit_i(InstructionKind::ADDI, rd(instruction)?, virtual_reg, 0)?;
+        let temp = asm.allocate()?;
+        asm.emit_i(
+            JoltInstructionKind::ADDI,
+            temp.operand(),
+            reg(rs1(instruction)?),
+            0,
+        );
+        asm.emit_i(
+            JoltInstructionKind::ADDI,
+            reg(rd(instruction)?),
+            reg(virtual_reg),
+            0,
+        );
         asm.emit_r(
-            InstructionKind::OR,
-            virtual_reg,
-            virtual_reg,
-            rs1(instruction)?,
-        )?;
+            JoltInstructionKind::OR,
+            reg(virtual_reg),
+            reg(virtual_reg),
+            temp.operand(),
+        );
+        asm.release(temp);
+        return asm.finalize();
     }
+
+    asm.emit_i(
+        JoltInstructionKind::ADDI,
+        reg(rd(instruction)?),
+        reg(virtual_reg),
+        0,
+    );
+    asm.emit_r(
+        JoltInstructionKind::OR,
+        reg(virtual_reg),
+        reg(virtual_reg),
+        reg(rs1(instruction)?),
+    );
+
     asm.finalize()
 }

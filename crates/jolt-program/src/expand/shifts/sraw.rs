@@ -2,39 +2,43 @@ use super::*;
 
 pub(in crate::expand) fn expand_sraw(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v_rs1 = allocator.allocate()?;
-    let v_bitmask = allocator.allocate()?;
-    let mut asm =
-        assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let v_rs1 = asm.allocate()?;
+    let v_bitmask = asm.allocate()?;
+
     asm.emit_i(
-        InstructionKind::VirtualSignExtendWord,
-        v_rs1,
-        rs1(instruction)?,
+        JoltInstructionKind::VirtualSignExtendWord,
+        v_rs1.operand(),
+        reg(rs1(instruction)?),
         0,
-    )?;
-    asm.emit_i(InstructionKind::ANDI, v_bitmask, rs2(instruction)?, 0x1f)?;
+    );
     asm.emit_i(
-        InstructionKind::VirtualShiftRightBitmask,
-        v_bitmask,
-        v_bitmask,
+        JoltInstructionKind::ANDI,
+        v_bitmask.operand(),
+        reg(rs2(instruction)?),
+        0x1f,
+    );
+    asm.emit_i(
+        JoltInstructionKind::VirtualShiftRightBitmask,
+        v_bitmask.operand(),
+        v_bitmask.operand(),
         0,
-    )?;
+    );
     asm.emit_r(
-        InstructionKind::VirtualSRA,
-        rd(instruction)?,
-        v_rs1,
-        v_bitmask,
-    )?;
+        JoltInstructionKind::VirtualSRA,
+        reg(rd(instruction)?),
+        v_rs1.operand(),
+        v_bitmask.operand(),
+    );
     asm.emit_i(
-        InstructionKind::VirtualSignExtendWord,
-        rd(instruction)?,
-        rd(instruction)?,
+        JoltInstructionKind::VirtualSignExtendWord,
+        reg(rd(instruction)?),
+        reg(rd(instruction)?),
         0,
-    )?;
-    let sequence = asm.finalize()?;
-    allocator.release(v_rs1)?;
-    allocator.release(v_bitmask)?;
-    Ok(sequence)
+    );
+    asm.release(v_rs1);
+    asm.release(v_bitmask);
+
+    asm.finalize()
 }

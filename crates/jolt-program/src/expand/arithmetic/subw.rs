@@ -2,21 +2,21 @@ use super::*;
 
 pub(in crate::expand) fn expand_subw(
     instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let mut asm =
-        assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+
     asm.emit_r(
-        InstructionKind::SUB,
-        rd(instruction)?,
-        rs1(instruction)?,
-        rs2(instruction)?,
-    )?;
+        JoltInstructionKind::SUB,
+        reg(rd(instruction)?),
+        reg(rs1(instruction)?),
+        reg(rs2(instruction)?),
+    );
     asm.emit_i(
-        InstructionKind::VirtualSignExtendWord,
-        rd(instruction)?,
-        rd(instruction)?,
+        JoltInstructionKind::VirtualSignExtendWord,
+        reg(rd(instruction)?),
+        reg(rd(instruction)?),
         0,
-    )?;
+    );
+
     asm.finalize()
 }

@@ -4,7 +4,7 @@ use allocative::Allocative;
 use common::constants::XLEN;
 use jolt_riscv::{
     CircuitFlagSet as RiscvCircuitFlagSet, Flags as RiscvFlags,
-    InstructionFlagSet as RiscvInstructionFlagSet, InstructionKind, JoltInstructions,
+    InstructionFlagSet as RiscvInstructionFlagSet, JoltInstructionKind, LookupInstruction,
     NormalizedInstruction,
 };
 use strum::EnumCount;
@@ -177,13 +177,13 @@ pub trait Flags {
 
 impl Flags for NormalizedInstruction {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
-        JoltInstructions::try_from(*self)
+        LookupInstruction::try_from(*self)
             .map(|instruction| circuit_flags_from_riscv(instruction.circuit_flags()))
             .unwrap_or([false; NUM_CIRCUIT_FLAGS])
     }
 
     fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
-        JoltInstructions::try_from(*self)
+        LookupInstruction::try_from(*self)
             .map(|instruction| instruction_flags_from_riscv(instruction.instruction_flags()))
             .unwrap_or([false; NUM_INSTRUCTION_FLAGS])
     }
@@ -192,95 +192,121 @@ impl Flags for NormalizedInstruction {
 impl<const XLEN: usize> InstructionLookup<XLEN> for NormalizedInstruction {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
         Some(match self.instruction_kind {
-            InstructionKind::ADD
-            | InstructionKind::ADDI
-            | InstructionKind::AUIPC
-            | InstructionKind::JAL
-            | InstructionKind::LUI
-            | InstructionKind::MUL
-            | InstructionKind::SUB
-            | InstructionKind::VirtualAdvice
-            | InstructionKind::VirtualAdviceLen
-            | InstructionKind::VirtualAdviceLoad
-            | InstructionKind::VirtualMULI => LookupTables::RangeCheck(Default::default()),
-            InstructionKind::JALR => LookupTables::RangeCheckAligned(Default::default()),
-            InstructionKind::AND | InstructionKind::ANDI => LookupTables::And(Default::default()),
-            InstructionKind::ANDN => LookupTables::Andn(Default::default()),
-            InstructionKind::OR | InstructionKind::ORI => LookupTables::Or(Default::default()),
-            InstructionKind::XOR | InstructionKind::XORI => LookupTables::Xor(Default::default()),
-            InstructionKind::BEQ | InstructionKind::VirtualAssertEQ => {
+            JoltInstructionKind::ADD
+            | JoltInstructionKind::ADDI
+            | JoltInstructionKind::AUIPC
+            | JoltInstructionKind::JAL
+            | JoltInstructionKind::LUI
+            | JoltInstructionKind::MUL
+            | JoltInstructionKind::SUB
+            | JoltInstructionKind::VirtualAdvice
+            | JoltInstructionKind::VirtualAdviceLen
+            | JoltInstructionKind::VirtualAdviceLoad
+            | JoltInstructionKind::VirtualMULI => LookupTables::RangeCheck(Default::default()),
+            JoltInstructionKind::JALR => LookupTables::RangeCheckAligned(Default::default()),
+            JoltInstructionKind::AND | JoltInstructionKind::ANDI => {
+                LookupTables::And(Default::default())
+            }
+            JoltInstructionKind::ANDN => LookupTables::Andn(Default::default()),
+            JoltInstructionKind::OR | JoltInstructionKind::ORI => {
+                LookupTables::Or(Default::default())
+            }
+            JoltInstructionKind::XOR | JoltInstructionKind::XORI => {
+                LookupTables::Xor(Default::default())
+            }
+            JoltInstructionKind::BEQ | JoltInstructionKind::VirtualAssertEQ => {
                 LookupTables::Equal(Default::default())
             }
-            InstructionKind::BGE => LookupTables::SignedGreaterThanEqual(Default::default()),
-            InstructionKind::BGEU => LookupTables::UnsignedGreaterThanEqual(Default::default()),
-            InstructionKind::BNE => LookupTables::NotEqual(Default::default()),
-            InstructionKind::BLT | InstructionKind::SLT | InstructionKind::SLTI => {
+            JoltInstructionKind::BGE => LookupTables::SignedGreaterThanEqual(Default::default()),
+            JoltInstructionKind::BGEU => LookupTables::UnsignedGreaterThanEqual(Default::default()),
+            JoltInstructionKind::BNE => LookupTables::NotEqual(Default::default()),
+            JoltInstructionKind::BLT | JoltInstructionKind::SLT | JoltInstructionKind::SLTI => {
                 LookupTables::SignedLessThan(Default::default())
             }
-            InstructionKind::BLTU | InstructionKind::SLTU | InstructionKind::SLTIU => {
+            JoltInstructionKind::BLTU | JoltInstructionKind::SLTU | JoltInstructionKind::SLTIU => {
                 LookupTables::UnsignedLessThan(Default::default())
             }
-            InstructionKind::VirtualMovsign => LookupTables::Movsign(Default::default()),
-            InstructionKind::MULHU => LookupTables::UpperWord(Default::default()),
-            InstructionKind::VirtualAssertLTE => LookupTables::LessThanEqual(Default::default()),
-            InstructionKind::VirtualAssertValidUnsignedRemainder => {
+            JoltInstructionKind::VirtualMovsign => LookupTables::Movsign(Default::default()),
+            JoltInstructionKind::MULHU => LookupTables::UpperWord(Default::default()),
+            JoltInstructionKind::VirtualAssertLTE => {
+                LookupTables::LessThanEqual(Default::default())
+            }
+            JoltInstructionKind::VirtualAssertValidUnsignedRemainder => {
                 LookupTables::ValidUnsignedRemainder(Default::default())
             }
-            InstructionKind::VirtualAssertValidDiv0 => LookupTables::ValidDiv0(Default::default()),
-            InstructionKind::VirtualAssertHalfwordAlignment => {
+            JoltInstructionKind::VirtualAssertValidDiv0 => {
+                LookupTables::ValidDiv0(Default::default())
+            }
+            JoltInstructionKind::VirtualAssertHalfwordAlignment => {
                 LookupTables::HalfwordAlignment(Default::default())
             }
-            InstructionKind::VirtualAssertWordAlignment => {
+            JoltInstructionKind::VirtualAssertWordAlignment => {
                 LookupTables::WordAlignment(Default::default())
             }
-            InstructionKind::VirtualZeroExtendWord => {
+            JoltInstructionKind::VirtualZeroExtendWord => {
                 LookupTables::LowerHalfWord(Default::default())
             }
-            InstructionKind::VirtualSignExtendWord => {
+            JoltInstructionKind::VirtualSignExtendWord => {
                 LookupTables::SignExtendHalfWord(Default::default())
             }
-            InstructionKind::VirtualPow2 | InstructionKind::VirtualPow2I => {
+            JoltInstructionKind::VirtualPow2 | JoltInstructionKind::VirtualPow2I => {
                 LookupTables::Pow2(Default::default())
             }
-            InstructionKind::VirtualPow2W | InstructionKind::VirtualPow2IW => {
+            JoltInstructionKind::VirtualPow2W | JoltInstructionKind::VirtualPow2IW => {
                 LookupTables::Pow2W(Default::default())
             }
-            InstructionKind::VirtualShiftRightBitmask
-            | InstructionKind::VirtualShiftRightBitmaskI => {
+            JoltInstructionKind::VirtualShiftRightBitmask
+            | JoltInstructionKind::VirtualShiftRightBitmaskI => {
                 LookupTables::ShiftRightBitmask(Default::default())
             }
-            InstructionKind::VirtualRev8W => LookupTables::VirtualRev8W(Default::default()),
-            InstructionKind::VirtualSRL | InstructionKind::VirtualSRLI => {
+            JoltInstructionKind::VirtualRev8W => LookupTables::VirtualRev8W(Default::default()),
+            JoltInstructionKind::VirtualSRL | JoltInstructionKind::VirtualSRLI => {
                 LookupTables::VirtualSRL(Default::default())
             }
-            InstructionKind::VirtualSRA | InstructionKind::VirtualSRAI => {
+            JoltInstructionKind::VirtualSRA | JoltInstructionKind::VirtualSRAI => {
                 LookupTables::VirtualSRA(Default::default())
             }
-            InstructionKind::VirtualROTRI => LookupTables::VirtualROTR(Default::default()),
-            InstructionKind::VirtualROTRIW => LookupTables::VirtualROTRW(Default::default()),
-            InstructionKind::VirtualChangeDivisor => {
+            JoltInstructionKind::VirtualROTRI => LookupTables::VirtualROTR(Default::default()),
+            JoltInstructionKind::VirtualROTRIW => LookupTables::VirtualROTRW(Default::default()),
+            JoltInstructionKind::VirtualChangeDivisor => {
                 LookupTables::VirtualChangeDivisor(Default::default())
             }
-            InstructionKind::VirtualChangeDivisorW => {
+            JoltInstructionKind::VirtualChangeDivisorW => {
                 LookupTables::VirtualChangeDivisorW(Default::default())
             }
-            InstructionKind::VirtualAssertMulUNoOverflow => {
+            JoltInstructionKind::VirtualAssertMulUNoOverflow => {
                 LookupTables::MulUNoOverflow(Default::default())
             }
-            InstructionKind::VirtualXORROT32 => LookupTables::VirtualXORROT32(Default::default()),
-            InstructionKind::VirtualXORROT24 => LookupTables::VirtualXORROT24(Default::default()),
-            InstructionKind::VirtualXORROT16 => LookupTables::VirtualXORROT16(Default::default()),
-            InstructionKind::VirtualXORROT63 => LookupTables::VirtualXORROT63(Default::default()),
-            InstructionKind::VirtualXORROTW16 => LookupTables::VirtualXORROTW16(Default::default()),
-            InstructionKind::VirtualXORROTW12 => LookupTables::VirtualXORROTW12(Default::default()),
-            InstructionKind::VirtualXORROTW8 => LookupTables::VirtualXORROTW8(Default::default()),
-            InstructionKind::VirtualXORROTW7 => LookupTables::VirtualXORROTW7(Default::default()),
-            InstructionKind::LD
-            | InstructionKind::SD
-            | InstructionKind::EBREAK
-            | InstructionKind::ECALL
-            | InstructionKind::FENCE
-            | InstructionKind::VirtualHostIO => return None,
+            JoltInstructionKind::VirtualXORROT32 => {
+                LookupTables::VirtualXORROT32(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT24 => {
+                LookupTables::VirtualXORROT24(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT16 => {
+                LookupTables::VirtualXORROT16(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT63 => {
+                LookupTables::VirtualXORROT63(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROTW16 => {
+                LookupTables::VirtualXORROTW16(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROTW12 => {
+                LookupTables::VirtualXORROTW12(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROTW8 => {
+                LookupTables::VirtualXORROTW8(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROTW7 => {
+                LookupTables::VirtualXORROTW7(Default::default())
+            }
+            JoltInstructionKind::LD
+            | JoltInstructionKind::SD
+            | JoltInstructionKind::EBREAK
+            | JoltInstructionKind::ECALL
+            | JoltInstructionKind::FENCE
+            | JoltInstructionKind::VirtualHostIO => return None,
             _ => return None,
         })
     }
@@ -302,7 +328,7 @@ fn instruction_flags_from_riscv(flags: RiscvInstructionFlagSet) -> [bool; NUM_IN
     converted
 }
 
-macro_rules! define_rv32im_trait_impls {
+macro_rules! define_rv64imac_trait_impls {
     (
         instructions: [$($instr:ident),* $(,)?]
     ) => {
@@ -422,7 +448,7 @@ macro_rules! define_rv32im_trait_impls {
     };
 }
 
-define_rv32im_trait_impls! {
+define_rv64imac_trait_impls! {
     instructions: [
         ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
         EBREAK, ECALL, FENCE, JAL, JALR, LUI, LD, MUL, MULHU, OR, ORI,

@@ -2,12 +2,11 @@
 
 mod exec {
     use crate::test_utils::*;
-    use tracer::emulator::cpu::Xlen;
 
     #[test]
     fn test_keccak256_direct_execution() {
         for (i, test_case) in keccak_test_vectors().iter().enumerate() {
-            let mut harness = create_keccak_harness(Xlen::Bit64);
+            let mut harness = create_keccak_harness();
             harness.setup_registers();
             harness.load_state64(&test_case.input);
             let instruction = instruction();
@@ -50,13 +49,12 @@ mod exec {
 mod exec_trace_equivalence {
     use crate::test_constants::*;
     use crate::test_utils::*;
-    use tracer::emulator::cpu::Xlen;
 
     #[test]
     fn test_keccak_against_reference() {
         let initial_state = [0u64; 25];
         let expected_final_state = xkcp_vectors::AFTER_ONE_PERMUTATION;
-        let mut harness = create_keccak_harness(Xlen::Bit64);
+        let mut harness = create_keccak_harness();
         harness.setup_registers();
         harness.load_state64(&initial_state);
         let instruction = instruction();

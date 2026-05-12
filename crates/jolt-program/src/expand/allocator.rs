@@ -3,9 +3,10 @@ use common::constants::{RISCV_REGISTER_COUNT, VIRTUAL_REGISTER_COUNT};
 use crate::expand::ExpansionError;
 
 const NUM_VIRTUAL_REGISTERS: usize = VIRTUAL_REGISTER_COUNT as usize;
-const NUM_VIRTUAL_INSTRUCTION_REGISTERS: usize = 8;
+pub(super) const NUM_VIRTUAL_INSTRUCTION_REGISTERS: usize = 8;
 const RISCV_REGISTER_BASE: u8 = RISCV_REGISTER_COUNT;
 const NUM_RESERVED_VIRTUAL_REGISTERS: usize = 8;
+const MAX_RECURSION_DEPTH: usize = 128;
 
 const RESERVATION_W_REGISTER: u8 = RISCV_REGISTER_BASE;
 const RESERVATION_D_REGISTER: u8 = RISCV_REGISTER_BASE + 1;
@@ -23,18 +24,65 @@ pub const CSR_MEPC: u16 = 0x341;
 pub const CSR_MCAUSE: u16 = 0x342;
 pub const CSR_MTVAL: u16 = 0x343;
 
+pub(super) const fn reservation_w_register() -> u8 {
+    RESERVATION_W_REGISTER
+}
+
+pub(super) const fn reservation_d_register() -> u8 {
+    RESERVATION_D_REGISTER
+}
+
+pub(super) const fn trap_handler_register() -> u8 {
+    TRAP_HANDLER_REGISTER
+}
+
+pub(super) const fn mepc_register() -> u8 {
+    MEPC_REGISTER
+}
+
+pub(super) const fn mcause_register() -> u8 {
+    MCAUSE_REGISTER
+}
+
+pub(super) const fn mtval_register() -> u8 {
+    MTVAL_REGISTER
+}
+
+pub(super) const fn mstatus_register() -> u8 {
+    MSTATUS_REGISTER
+}
+
+pub(super) fn virtual_register_for_csr(csr_addr: u16) -> Option<u8> {
+    match csr_addr {
+        CSR_MSTATUS => Some(mstatus_register()),
+        CSR_MTVEC => Some(trap_handler_register()),
+        CSR_MSCRATCH => Some(mscratch_register()),
+        CSR_MEPC => Some(mepc_register()),
+        CSR_MCAUSE => Some(mcause_register()),
+        CSR_MTVAL => Some(mtval_register()),
+        _ => None,
+    }
+}
+
+pub(super) const fn mscratch_register() -> u8 {
+    MSCRATCH_REGISTER
+}
+
+/// Virtual register pool partitioned into reserved (CSRs), instruction (per-expansion temps),
+/// and inline (provider-allocated) ranges. Also tracks recursion depth.
 #[derive(Debug, Clone)]
 pub struct ExpansionAllocator {
-    allocated: [bool; NUM_VIRTUAL_REGISTERS],
-    /// Inline-only virtual registers that must be reset before finalizing an inline sequence.
-    pending_clearing_inline: Vec<u8>,
+    allocated: u128,
+    pending_clearing_inline: u128,
+    recursion_depth: usize,
 }
 
 impl ExpansionAllocator {
     pub const fn new() -> Self {
         Self {
-            allocated: [false; NUM_VIRTUAL_REGISTERS],
-            pending_clearing_inline: Vec::new(),
+            allocated: 0,
+            pending_clearing_inline: 0,
+            recursion_depth: 0,
         }
     }
 
@@ -70,18 +118,6 @@ impl ExpansionAllocator {
         MSTATUS_REGISTER
     }
 
-    pub fn csr_to_virtual_register(&self, csr_addr: u16) -> Option<u8> {
-        match csr_addr {
-            CSR_MSTATUS => Some(self.mstatus_register()),
-            CSR_MTVEC => Some(self.trap_handler_register()),
-            CSR_MSCRATCH => Some(self.mscratch_register()),
-            CSR_MEPC => Some(self.mepc_register()),
-            CSR_MCAUSE => Some(self.mcause_register()),
-            CSR_MTVAL => Some(self.mtval_register()),
-            _ => None,
-        }
-    }
-
     pub fn allocate(&mut self) -> Result<u8, ExpansionError> {
         self.allocate_in_range(
             NUM_RESERVED_VIRTUAL_REGISTERS,
@@ -96,31 +132,44 @@ impl ExpansionAllocator {
             NUM_VIRTUAL_REGISTERS,
             "inline",
         )?;
-        if !self.pending_clearing_inline.contains(&register) {
-            self.pending_clearing_inline.push(register);
-        }
+        self.pending_clearing_inline |= Self::register_bit(register)?;
         Ok(register)
     }
 
     pub fn release(&mut self, register: u8) -> Result<(), ExpansionError> {
-        let index = Self::virtual_index(register)?;
-        if !self.allocated[index] {
+        let bit = Self::register_bit(register)?;
+        if self.allocated & bit == 0 {
             return Err(ExpansionError::UnallocatedVirtualRegister { register });
         }
-        self.allocated[index] = false;
+        self.allocated &= !bit;
         Ok(())
     }
 
     pub fn take_registers_for_reset(&mut self) -> Result<Vec<u8>, ExpansionError> {
-        if self
-            .allocated
-            .iter()
-            .skip(NUM_RESERVED_VIRTUAL_REGISTERS + NUM_VIRTUAL_INSTRUCTION_REGISTERS)
-            .any(|allocated| *allocated)
-        {
+        let inline_mask = Self::range_mask(
+            NUM_RESERVED_VIRTUAL_REGISTERS + NUM_VIRTUAL_INSTRUCTION_REGISTERS,
+            NUM_VIRTUAL_REGISTERS,
+        );
+        if self.allocated & inline_mask != 0 {
             return Err(ExpansionError::InlineRegistersStillAllocated);
         }
-        Ok(std::mem::take(&mut self.pending_clearing_inline))
+        let pending = self.pending_clearing_inline;
+        self.pending_clearing_inline = 0;
+        Ok(Self::registers_in_mask(pending))
+    }
+
+    pub(super) fn enter_expansion(&mut self) -> Result<(), ExpansionError> {
+        if self.recursion_depth == MAX_RECURSION_DEPTH {
+            return Err(ExpansionError::RecursionDepthExceeded {
+                max_depth: MAX_RECURSION_DEPTH,
+            });
+        }
+        self.recursion_depth += 1;
+        Ok(())
+    }
+
+    pub(super) fn exit_expansion(&mut self) {
+        self.recursion_depth -= 1;
     }
 
     fn allocate_in_range(
@@ -130,8 +179,9 @@ impl ExpansionAllocator {
         pool: &'static str,
     ) -> Result<u8, ExpansionError> {
         for index in start..end {
-            if !self.allocated[index] {
-                self.allocated[index] = true;
+            let bit = 1u128 << index;
+            if self.allocated & bit == 0 {
+                self.allocated |= bit;
                 return Ok(RISCV_REGISTER_BASE + index as u8);
             }
         }
@@ -147,6 +197,25 @@ impl ExpansionAllocator {
             return Err(ExpansionError::InvalidVirtualRegister { register });
         }
         Ok(index)
+    }
+
+    fn register_bit(register: u8) -> Result<u128, ExpansionError> {
+        Ok(1u128 << Self::virtual_index(register)?)
+    }
+
+    fn range_mask(start: usize, end: usize) -> u128 {
+        let len = end - start;
+        ((1u128 << len) - 1) << start
+    }
+
+    fn registers_in_mask(mask: u128) -> Vec<u8> {
+        let mut registers = Vec::new();
+        for index in 0..NUM_VIRTUAL_REGISTERS {
+            if mask & (1u128 << index) != 0 {
+                registers.push(RISCV_REGISTER_BASE + index as u8);
+            }
+        }
+        registers
     }
 }
 
@@ -224,31 +293,21 @@ mod tests {
 
     #[test]
     fn maps_supported_csrs_to_reserved_registers() {
-        let allocator = ExpansionAllocator::new();
         assert_eq!(
-            allocator.csr_to_virtual_register(CSR_MSTATUS),
+            virtual_register_for_csr(CSR_MSTATUS),
             Some(MSTATUS_REGISTER)
         );
         assert_eq!(
-            allocator.csr_to_virtual_register(CSR_MTVEC),
+            virtual_register_for_csr(CSR_MTVEC),
             Some(TRAP_HANDLER_REGISTER)
         );
         assert_eq!(
-            allocator.csr_to_virtual_register(CSR_MSCRATCH),
+            virtual_register_for_csr(CSR_MSCRATCH),
             Some(MSCRATCH_REGISTER)
         );
-        assert_eq!(
-            allocator.csr_to_virtual_register(CSR_MEPC),
-            Some(MEPC_REGISTER)
-        );
-        assert_eq!(
-            allocator.csr_to_virtual_register(CSR_MCAUSE),
-            Some(MCAUSE_REGISTER)
-        );
-        assert_eq!(
-            allocator.csr_to_virtual_register(CSR_MTVAL),
-            Some(MTVAL_REGISTER)
-        );
-        assert_eq!(allocator.csr_to_virtual_register(0x999), None);
+        assert_eq!(virtual_register_for_csr(CSR_MEPC), Some(MEPC_REGISTER));
+        assert_eq!(virtual_register_for_csr(CSR_MCAUSE), Some(MCAUSE_REGISTER));
+        assert_eq!(virtual_register_for_csr(CSR_MTVAL), Some(MTVAL_REGISTER));
+        assert_eq!(virtual_register_for_csr(0x999), None);
     }
 }
