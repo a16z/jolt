@@ -64,4 +64,3 @@ path = "fuzz_targets/transcript_consistency_poseidon.rs"
 test = false
 doc = false
 bench = false
-

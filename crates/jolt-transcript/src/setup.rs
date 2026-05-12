@@ -50,11 +50,7 @@ where
 
 /// Builds a fresh `VerifierState` over `sponge` for the given session bytes
 /// and NARG.
-pub fn to_verifier<'a, H>(
-    sponge: H,
-    session: &[u8],
-    narg: &'a [u8],
-) -> VerifierState<'a, H>
+pub fn to_verifier<'a, H>(sponge: H, session: &[u8], narg: &'a [u8]) -> VerifierState<'a, H>
 where
     H: DuplexSpongeInterface<U = u8>,
 {

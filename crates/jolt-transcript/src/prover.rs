@@ -6,9 +6,7 @@
 
 use ark_bn254::Fr;
 use rand::{CryptoRng, RngCore};
-use spongefish::{
-    Decoding, DuplexSpongeInterface, Encoding, NargSerialize, ProverState,
-};
+use spongefish::{Decoding, DuplexSpongeInterface, Encoding, NargSerialize, ProverState};
 
 use crate::codec::FieldElOptimized;
 

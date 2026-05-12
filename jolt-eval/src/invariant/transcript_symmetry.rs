@@ -128,11 +128,7 @@ where
     Ok(())
 }
 
-fn violation(
-    what: &str,
-    op_idx: usize,
-    err: spongefish::VerificationError,
-) -> CheckError {
+fn violation(what: &str, op_idx: usize, err: spongefish::VerificationError) -> CheckError {
     CheckError::Violation(InvariantViolation::with_details(
         format!("{what} failed on verifier"),
         format!("op_idx={op_idx}, err={err:?}"),
@@ -194,67 +190,94 @@ fn seed_corpus_shared() -> Vec<Input> {
     ]
 }
 
-macro_rules! transcript_invariant {
-    ($struct:ident, $sponge:ty, $build:expr, $name:literal, $sponge_label:literal) => {
-        #[doc = concat!(
-            "Spongefish symmetry invariant for the ",
-            $sponge_label,
-            " sponge."
-        )]
-        #[jolt_eval_macros::invariant(Test, Fuzz, RedTeam)]
-        #[derive(Default)]
-        pub struct $struct;
-
-        impl Invariant for $struct {
-            type Setup = ();
-            type Input = Input;
-
-            fn name(&self) -> &str {
-                $name
-            }
-
-            fn description(&self) -> String {
-                format!(
-                    "spongefish ProverState/VerifierState pair ({} sponge) replaying \
-                     the same operation sequence must round-trip every prover message \
-                     and agree on every challenge.",
-                    $sponge_label
-                )
-            }
-
-            fn setup(&self) {}
-
-            fn check(&self, _setup: &(), input: Input) -> Result<(), CheckError> {
-                run_check::<$sponge>(&input, $build)
-            }
-
-            fn seed_corpus(&self) -> Vec<Input> {
-                seed_corpus_shared()
-            }
-        }
-    };
+fn description_for(label: &str) -> String {
+    format!(
+        "spongefish ProverState/VerifierState pair ({label} sponge) replaying \
+         the same operation sequence must round-trip every prover message \
+         and agree on every challenge."
+    )
 }
 
-transcript_invariant!(
-    TranscriptConsistencyBlake2bInvariant,
-    Blake2b512,
-    Blake2b512::default,
-    "transcript_prover_verifier_consistency_blake2b",
-    "Blake2b512"
-);
+/// Spongefish symmetry invariant for the Blake2b512 sponge.
+#[jolt_eval_macros::invariant(Test, Fuzz, RedTeam)]
+#[derive(Default)]
+pub struct TranscriptConsistencyBlake2bInvariant;
 
-transcript_invariant!(
-    TranscriptConsistencyKeccakInvariant,
-    Keccak,
-    Keccak::default,
-    "transcript_prover_verifier_consistency_keccak",
-    "Keccak"
-);
+impl Invariant for TranscriptConsistencyBlake2bInvariant {
+    type Setup = ();
+    type Input = Input;
 
-transcript_invariant!(
-    TranscriptConsistencyPoseidonInvariant,
-    PoseidonSponge,
-    PoseidonSponge::new,
-    "transcript_prover_verifier_consistency_poseidon",
-    "Poseidon"
-);
+    fn name(&self) -> &str {
+        "transcript_prover_verifier_consistency_blake2b"
+    }
+
+    fn description(&self) -> String {
+        description_for("Blake2b512")
+    }
+
+    fn setup(&self) {}
+
+    fn check(&self, _setup: &(), input: Input) -> Result<(), CheckError> {
+        run_check::<Blake2b512>(&input, Blake2b512::default)
+    }
+
+    fn seed_corpus(&self) -> Vec<Input> {
+        seed_corpus_shared()
+    }
+}
+
+/// Spongefish symmetry invariant for the Keccak sponge.
+#[jolt_eval_macros::invariant(Test, Fuzz, RedTeam)]
+#[derive(Default)]
+pub struct TranscriptConsistencyKeccakInvariant;
+
+impl Invariant for TranscriptConsistencyKeccakInvariant {
+    type Setup = ();
+    type Input = Input;
+
+    fn name(&self) -> &str {
+        "transcript_prover_verifier_consistency_keccak"
+    }
+
+    fn description(&self) -> String {
+        description_for("Keccak")
+    }
+
+    fn setup(&self) {}
+
+    fn check(&self, _setup: &(), input: Input) -> Result<(), CheckError> {
+        run_check::<Keccak>(&input, Keccak::default)
+    }
+
+    fn seed_corpus(&self) -> Vec<Input> {
+        seed_corpus_shared()
+    }
+}
+
+/// Spongefish symmetry invariant for the Poseidon sponge.
+#[jolt_eval_macros::invariant(Test, Fuzz, RedTeam)]
+#[derive(Default)]
+pub struct TranscriptConsistencyPoseidonInvariant;
+
+impl Invariant for TranscriptConsistencyPoseidonInvariant {
+    type Setup = ();
+    type Input = Input;
+
+    fn name(&self) -> &str {
+        "transcript_prover_verifier_consistency_poseidon"
+    }
+
+    fn description(&self) -> String {
+        description_for("Poseidon")
+    }
+
+    fn setup(&self) {}
+
+    fn check(&self, _setup: &(), input: Input) -> Result<(), CheckError> {
+        run_check::<PoseidonSponge>(&input, PoseidonSponge::new)
+    }
+
+    fn seed_corpus(&self) -> Vec<Input> {
+        seed_corpus_shared()
+    }
+}

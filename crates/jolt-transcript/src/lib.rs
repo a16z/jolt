@@ -27,8 +27,7 @@ mod verifier;
 
 pub use codec::{BytesMsg, FieldEl, FieldElOptimized};
 pub use compat::{
-    AppendToTranscript, Label, LabelWithCount, SpongeTranscript, Transcript, U64Word,
-    MAX_LABEL_LEN,
+    AppendToTranscript, Label, LabelWithCount, SpongeTranscript, Transcript, U64Word, MAX_LABEL_LEN,
 };
 pub use setup::{to_prover, to_verifier, EmptyInstance, PROTOCOL_ID};
 
