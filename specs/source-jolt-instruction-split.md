@@ -81,6 +81,10 @@ phase shares.
 - Registered inline expansion remains behind a provider boundary. The provider
   may live in `tracer`, but its input must be a source inline row and its output
   must be validated `JoltInstruction` rows.
+- Expansion definitions should stay readable for humans authoring and reviewing
+  instruction lowerings. The refactor may change the underlying recipe and row
+  types, but the call-site syntax for ordinary expansions should remain at
+  least as easy to parse as the current builder style.
 - `jolt-program::expand` remains independent of tracer CPU state, advice tapes,
   concrete tracer cycles, PCS/prover code, and ELF parsing.
 - Prover/verifier behavior is unchanged. Bytecode preprocessing, PC mapping,
@@ -128,6 +132,9 @@ phase shares.
       `NormalizedOperands::imm`.
 - [ ] `InlineExpansionProvider` accepts source inline data and returns final
       `JoltInstruction` rows.
+- [ ] Concrete expansion files remain ergonomic for human authors: common
+      lowering code should read like a small instruction sequence, not like
+      serialized grammar data or generated tables.
 - [ ] Tracer concrete `Instruction`/`Cycle` APIs execute final Jolt rows, while
       decoded source instructions convert through the expansion path before
       trace execution.
@@ -170,6 +177,53 @@ once into final rows, and final rows should be reused by preprocessing/tracing
 where the current code already does so. If the implementation introduces a
 conversion allocation around tracer execution, remove it or document why it is
 outside hot loops before review.
+
+### Readability
+
+The implementation should preserve the readability win from PR #1518: changing
+the symbolic expansion plumbing must not make ordinary expansion files harder
+to read. It is acceptable to rename types and builder methods when that makes
+the source/final boundary clearer, but adding a new opcode or auditing an
+existing lowering should still look like writing a short instruction sequence.
+
+Prefer code shaped like this:
+
+```rust
+let mut asm = ExpansionBuilder::new(instruction);
+
+asm.emit_r(
+    JoltInstructionKind::SUB,
+    rd(instruction)?,
+    rs1(instruction)?,
+    rs2(instruction)?,
+);
+asm.emit_i(
+    JoltInstructionKind::VirtualSignExtendWord,
+    rd(instruction)?,
+    rd(instruction)?,
+    0,
+);
+
+asm.finalize()
+```
+
+Avoid exposing representation-oriented recipe construction at ordinary call
+sites unless it is genuinely clearer for that instruction:
+
+```rust
+ExpandedInstructionSequence::new(
+    instruction,
+    [
+        ExpansionOp::Emit(RowTemplate::r(...)),
+        ExpansionOp::Emit(RowTemplate::i(...)),
+    ],
+)
+```
+
+The catalog/profile work has the same constraint. Metadata can become more
+structured, but instruction authors should not need to mentally execute macro
+grammar to understand whether an opcode is source-only, target-only,
+lookup-backed, side-effecting, or part of a default profile.
 
 ## Design
 
