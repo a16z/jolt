@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778530822425,
+  "lastUpdate": 1778599165126,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -98410,6 +98410,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 866064,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "quang.dao@layerzerolabs.org",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dce63bdaceab89567ac577a4bdf8b27d19da6565",
+          "message": "Refactor RV64 bytecode expansion pipeline (#1518)\n\n* refactor(rv32): remove legacy execution paths\n\nRemove the remaining RV32 mode from tracer, inline builders, and z3 virtual-sequence checks. ELF32 inputs now fail at the tracer decode/setup boundary, and the spec/docs are updated for the RV64-only baseline.\n\n* docs(spec): record RV32 removal PR\n\nReference PR #1518 as the implementation of the first RV32-removal phase before continuing with the instruction identity split.\n\n* refactor(instructions): split phase kind names\n\nRename the flat normalized row discriminant to JoltInstructionKind, add RiscvInstructionKind for decode/source identity, and rename the typed metadata view to LookupInstruction with an explicit LookupInstructionKind subset API.\n\n* refactor(expand): add owned sequence builder\n\nIntroduce an owned ExpansionSequence path and port the ADDIW/ADDW/SUBW lowering family off the borrowed InstrAssembler surface as the first compiler-native expansion slice.\n\n* refactor(expand): port arithmetic shifts to sequence builder\n\n* refactor(expand): port control flow to sequence builder\n\n* refactor(expand): port memory to sequence builder\n\n* refactor(expand): port division to sequence builder\n\n* refactor(expand): remove borrowed assembler\n\n* refactor(expand): use bitsets for allocator state\n\n* refactor(expand): guard sequence row capacity\n\n* refactor(expand): split metadata stamping\n\n* refactor(expand): add bounded row buffer\n\n* refactor(expand): add expansion state entry\n\n* refactor(expand): add recursion depth guard\n\n* refactor(expand): add initial grammar ops\n\n* refactor(expand): lower shallow shifts with grammar ops\n\n* refactor(expand): validate target row legality\n\n* test(expand): cover target legality check\n\n* refactor(expand): materialize expansion ops\n\n* refactor(expand): use release ops in shift lowerings\n\n* refactor(expand): use release ops in arithmetic lowerings\n\n* refactor(expand): use ops for trap lowerings\n\n* refactor(expand): use ops for csr lowerings\n\n* refactor(expand): use ops for unsigned division\n\n* refactor(expand): use ops for unsigned word division\n\n* refactor(expand): use ops for amoswapd\n\n* refactor(expand): use ops for load reserved\n\n* refactor(expand): use ops for advice loads\n\n* refactor(expand): use ops for doubleword amos\n\n* refactor(expand): use ops for doubleword minmax amos\n\n* refactor(expand): use ops for byte loads\n\n* refactor(expand): use ops for halfword loads\n\n* refactor(expand): use ops for word loads\n\n* refactor(expand): use ops for word stores\n\n* refactor(expand): use ops for shallow lowerings\n\n* refactor(expand): use ops for word amos\n\n* refactor(expand): use ops for narrow stores\n\n* test(expand): validate parity against main\n\n* refactor(expand): use ops for store conditional\n\n* refactor(expand): use ops for signed division\n\n* docs(spec): mark expansion cutover complete\n\n* test(expand): compact parity fixture\n\n* refactor(expand): add readable expansion builder\n\n* refactor(expand): tighten builder ergonomics\n\n* refactor(expand): materialize recipe lowerings\n\nMove provider-free expansion onto lifetime-free recipe lowerings backed by owned ExpansionState materialization. Concrete lowerers now return ExpandedInstructionSequence recipes with symbolic temps, while the central materializer resolves allocation, release, helper expansion, and sequence stamping.\n\n* refactor(expand): clean extraction-facing APIs\n\n* fix(expand): harden recipe materialization\n\n* refactor(expand): make recipe operands explicit\n\n* refactor(expand): harden extraction core\n\n* refactor(expand): restore ergonomic recipes\n\nKeep concrete expansion lowerers idiomatic while preserving the owned recipe/materializer split. Use the exact virtual instruction register pool for symbolic temps, split sequence stamping bounds for instruction recipes versus inline provider output, and refresh the spec around the final design.\n\n* refactor(expand): remove Xlen enum\n\n* refactor(expand): derive sign_extension_shift from byte_len in expand_advice_load\n\nThe shift is always `64 - byte_len * 8` when byte_len < 8, making the\nseparate parameter redundant.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* refactor(expand): move dispatch logic onto ExpansionState to surface recursion\n\nThe free function `expand_instruction_body` obscured the mutual recursion\nbetween `expand_one_core` and `materialize` by sitting between them as an\nunrelated free function. Moving it onto `ExpansionState` as `dispatch` makes\nall recursive calls visible as `self.method()` on a single type. Renamed\n`expand_one_core` → `expand_recursive` to further clarify intent.\n\nCo-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>\n\n* refactor(expand): inline expand_instruction_with_provider_inner\n\nSingle-use helper added no clarity — inline it as an if/else on Inline\nvs normal dispatch directly in expand_instruction_with_provider.\n\nCo-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>\n\n* refactor(expand): rename core→materialize, fold buffer in, add doc comments\n\nRename core.rs → materialize.rs and absorb buffer.rs into it, making\nExpansionBuffer module-private. The file names now reflect the two-phase\npipeline: grammar.rs (recipe building) and materialize.rs (execution).\n\nAdd concise doc comments across all expand/ files to document the\npipeline phases, key types, and non-obvious behavior.\n\nCo-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>\n\n* fix(expand): update module doc to reference materialize.rs\n\nCo-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>\n\n* fmt\n\n* refactor(riscv): remove lookup kind enum\n\n* refactor(expand): clarify source dispatch boundary\n\nRename decoded instruction kinds to SourceInstructionKind and add an explicit SourceInstruction row at the decode/expand API boundary.\n\nRename recursive expansion recipe operations from expand to dispatch to describe the existing canonicalization path more accurately, and update the spec to mark the remaining internal final-kind shrink as follow-up work once recursive dispatch has a typed source-row carrier.\n\n* refactor(expand): type recursive dispatch rows\n\nAdd a private dispatch row kind so expansion recipes can distinguish source/helper rows from final bytecode rows while keeping the public expansion API simple.\n\nUpdate recursive helper dispatch sites that intentionally require another lowering pass to use SourceInstructionKind. This prepares the lowering matcher for a later JoltInstructionKind shrink without exposing a public kind lattice.\n\n* refactor(expand): lower source dispatch directly\n\nRoute source dispatch rows through SourceInstruction until the lowering matcher, while preserving a test-only normalized bridge for legacy fixtures.\n\nThis removes the recursive helper dependency on source-only JoltInstructionKind rows and narrows the remaining enum-shrink blocker to legacy normalized inputs and lookup/static-metadata coverage.\n\n* refactor(expand): move source row metadata to source kind\n\n* refactor(expand): defer source kind split\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Opus 4.6 <noreply@anthropic.com>",
+          "timestamp": "2026-05-12T10:17:42-04:00",
+          "tree_id": "9dead010d6c686af1d12ec52affc0fd718b9ac0b",
+          "url": "https://github.com/a16z/jolt/commit/dce63bdaceab89567ac577a4bdf8b27d19da6565"
+        },
+        "date": 1778599162732,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.0163,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 862084,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3016,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 500448,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 500272,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 500724,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.72,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498372,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5858,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 498628,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.971,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 498268,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.6212,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 180708,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4105,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 864492,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5685,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500880,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4615,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 498680,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.2347,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 498612,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.5046,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 500096,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.5021,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1046520,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.2739,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 650640,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 95.5277,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2130648,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.478,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 498332,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5197,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 500512,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.5184,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 864016,
             "unit": "KB",
             "extra": ""
           }
