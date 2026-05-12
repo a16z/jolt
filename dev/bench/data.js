@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778599165126,
+  "lastUpdate": 1778613974610,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -98662,6 +98662,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 864016,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3c3b5e4b1dc9f43256449b0534cc625f101c83a2",
+          "message": "feat(jolt-hyperkzg): add HyperKZG multilinear commitment scheme (#1488)\n\n* feat(jolt-hyperkzg): add HyperKZG multilinear commitment scheme\n\nIntroduces jolt-hyperkzg, a pairing-based multilinear polynomial\ncommitment scheme implementing the jolt-openings trait surface.\nGeneric over `P: PairingGroup`; BN254 is the production instantiation.\n\nContents:\n- scheme.rs: HyperKZGScheme implementing CommitmentScheme and\n  AdditivelyHomomorphic; prove/verify built on KZG univariate openings\n- kzg.rs: univariate KZG primitives (commit, evaluate, witness\n  polynomial division) used internally by the multilinear protocol\n- types.rs: HyperKZGCommitment, HyperKZGProof, HyperKZGProverSetup,\n  HyperKZGVerifierSetup\n- error.rs: HyperKzgError enum\n\n* fix(hyperkzg): harden verifier proof validation\n\n* fix(hyperkzg): address PR review feedback\n\n- Return d-1 elements from compute_witness_polynomial to avoid wasted\n  zero-coefficient MSM work in the hot path\n- Use MSM in AdditivelyHomomorphic::combine instead of naive scalar_mul+fold\n- Guard against ell==0 underflow in HyperKZGScheme::open\n- Split HyperKZGError into typed variants (FoldingConsistencyFailed,\n  PairingCheckFailed, DegenerateChallenge, dimension-specific errors)\n  for better debuggability\n- Rename prover transcript challenge to _d_0 to clarify it mirrors the\n  verifier's d_0\n- Document shared KZG/Pedersen trapdoor in DeriveSetup impl\n- Expand fuzz target to tamper proof.com and proof.w fields, exercising\n  the pairing-check side of the verifier\n\nCo-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>\n\n* refactor(hyperkzg): use length-3 arrays for witness/evaluation proof fields\n\nReplace Vec with [T; 3] for the three evaluation points {r, -r, r²}\nthroughout the HyperKZG crate. The proof struct now uses [P::G1; 3]\nfor witness commitments and [Vec<P::ScalarField>; 3] for evaluation\nrows, enforcing the length invariant at the type level.\n\n- Serde rejects wrong-length proofs at deserialization\n- Removed WrongEvaluationRowCount and WrongWitnessCount error variants\n- Removed malformed_witness_commitments test (type system enforces it)\n- Switched kzg_open_batch from par_iter to [T;3]::map (3 elements)\n\nCo-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: markosg04 <mgeorghiades@a16z.com>\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Opus 4.6 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-05-12T14:16:41-04:00",
+          "tree_id": "dc5508c5398495c6961700a23289704962a17d78",
+          "url": "https://github.com/a16z/jolt/commit/3c3b5e4b1dc9f43256449b0534cc625f101c83a2"
+        },
+        "date": 1778613972057,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.3609,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 862376,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.314,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 498812,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498288,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 502816,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7139,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 502164,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5813,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 500680,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.4126,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 502580,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.8709,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 187884,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4193,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 863992,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5665,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 502760,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4568,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 502956,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.2754,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 502508,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7612,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 498672,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.3182,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1053920,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.266,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 662632,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 95.7214,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2117716,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4811,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 500324,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5384,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 496196,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.5469,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 863668,
             "unit": "KB",
             "extra": ""
           }
