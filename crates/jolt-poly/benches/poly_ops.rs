@@ -1,7 +1,7 @@
 #![expect(unused_results)]
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, RandomSampling};
 use jolt_poly::{EqPolynomial, Polynomial};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -60,5 +60,30 @@ fn bench_evaluate(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_bind, bench_eq_evaluations, bench_evaluate);
+fn bench_eq_evals(c: &mut Criterion) {
+    let mut group = c.benchmark_group("EqPolynomial::evals");
+    for num_vars in [17, 19, 20, 22] {
+        let mut rng = ChaCha20Rng::seed_from_u64(300 + num_vars as u64);
+        let r: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
+
+        group.bench_with_input(
+            BenchmarkId::from_parameter(num_vars),
+            &num_vars,
+            |bench, _| {
+                bench.iter(|| {
+                    EqPolynomial::<Fr>::evals(std::hint::black_box(&r), std::hint::black_box(None))
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_bind,
+    bench_eq_evaluations,
+    bench_evaluate,
+    bench_eq_evals,
+);
 criterion_main!(benches);

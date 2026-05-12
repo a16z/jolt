@@ -7,20 +7,22 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
-use crate::XLEN;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct VirtualChangeDivisorTable;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct VirtualChangeDivisorTable<const XLEN: usize>;
 
-impl LookupTable for VirtualChangeDivisorTable {
+impl<const XLEN: usize> LookupTable for VirtualChangeDivisorTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (dividend, divisor) = uninterleave_bits(index);
-        let dividend = dividend as i64;
-        let divisor = divisor as i64;
-        if dividend == i64::MIN && divisor == -1 {
+        let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
+        let dividend = dividend & mask;
+        let divisor = divisor & mask;
+        let signed_min = 1u64 << (XLEN - 1);
+        let neg_one = mask;
+        if dividend == signed_min && divisor == neg_one {
             1
         } else {
-            divisor as u64
+            divisor
         }
     }
 
@@ -54,7 +56,7 @@ impl LookupTable for VirtualChangeDivisorTable {
     }
 }
 
-impl PrefixSuffixDecomposition for VirtualChangeDivisorTable {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualChangeDivisorTable<XLEN> {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[
             Suffixes::One,
@@ -77,16 +79,22 @@ impl PrefixSuffixDecomposition for VirtualChangeDivisorTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
+    fn mle_full_hypercube() {
+        mle_full_hypercube_test::<8, Fr, VirtualChangeDivisorTable<8>>();
+    }
+
+    #[test]
     fn mle_random() {
-        mle_random_test::<Fr, VirtualChangeDivisorTable>();
+        mle_random_test::<XLEN, Fr, VirtualChangeDivisorTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, VirtualChangeDivisorTable>();
+        prefix_suffix_test::<XLEN, Fr, VirtualChangeDivisorTable<XLEN>>();
     }
 }

@@ -1,0 +1,147 @@
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Compress, Read, SerializationError, Valid, Validate,
+    Write,
+};
+use serde::{Deserialize, Serialize};
+
+macro_rules! define_instruction_kind {
+    (
+        instructions: [$($instr:ident),* $(,)?]
+    ) => {
+        #[derive(
+            Default,
+            Debug,
+            Clone,
+            Copy,
+            PartialEq,
+            Eq,
+            Hash,
+            Serialize,
+            Deserialize,
+        )]
+        #[repr(u16)]
+        pub enum InstructionKind {
+            #[default]
+            NoOp,
+            Unimpl,
+            $(
+                $instr,
+            )*
+            Inline,
+        }
+
+        impl CanonicalSerialize for InstructionKind {
+            fn serialize_with_mode<W: Write>(
+                &self,
+                writer: W,
+                compress: Compress,
+            ) -> Result<(), SerializationError> {
+                (*self as u16).serialize_with_mode(writer, compress)
+            }
+
+            fn serialized_size(&self, compress: Compress) -> usize {
+                (*self as u16).serialized_size(compress)
+            }
+        }
+
+        impl CanonicalDeserialize for InstructionKind {
+            fn deserialize_with_mode<R: Read>(
+                reader: R,
+                compress: Compress,
+                validate: Validate,
+            ) -> Result<Self, SerializationError> {
+                let value = u16::deserialize_with_mode(reader, compress, validate)?;
+                match value {
+                    x if x == Self::NoOp as u16 => Ok(Self::NoOp),
+                    x if x == Self::Unimpl as u16 => Ok(Self::Unimpl),
+                    $(
+                        x if x == Self::$instr as u16 => Ok(Self::$instr),
+                    )*
+                    x if x == Self::Inline as u16 => Ok(Self::Inline),
+                    _ => Err(SerializationError::InvalidData),
+                }
+            }
+        }
+
+        impl Valid for InstructionKind {
+            fn check(&self) -> Result<(), SerializationError> {
+                Ok(())
+            }
+        }
+
+        impl InstructionKind {
+            pub const fn name(self) -> &'static str {
+                match self {
+                    Self::NoOp => "NoOp",
+                    Self::Unimpl => "Unimpl",
+                    $(
+                        Self::$instr => stringify!($instr),
+                    )*
+                    Self::Inline => "Inline",
+                }
+            }
+
+            pub const fn has_side_effects(self) -> bool {
+                matches!(
+                    self,
+                    Self::AdviceLB
+                        | Self::AdviceLD
+                        | Self::AdviceLH
+                        | Self::AdviceLW
+                        | Self::AMOADDD
+                        | Self::AMOADDW
+                        | Self::AMOANDD
+                        | Self::AMOANDW
+                        | Self::AMOMAXD
+                        | Self::AMOMAXUD
+                        | Self::AMOMAXUW
+                        | Self::AMOMAXW
+                        | Self::AMOMIND
+                        | Self::AMOMINUD
+                        | Self::AMOMINUW
+                        | Self::AMOMINW
+                        | Self::AMOORD
+                        | Self::AMOORW
+                        | Self::AMOSWAPD
+                        | Self::AMOSWAPW
+                        | Self::AMOXORD
+                        | Self::AMOXORW
+                        | Self::BEQ
+                        | Self::BGE
+                        | Self::BGEU
+                        | Self::BLT
+                        | Self::BLTU
+                        | Self::BNE
+                        | Self::CSRRS
+                        | Self::CSRRW
+                        | Self::EBREAK
+                        | Self::ECALL
+                        | Self::Inline
+                        | Self::JAL
+                        | Self::JALR
+                        | Self::LB
+                        | Self::LBU
+                        | Self::LD
+                        | Self::LH
+                        | Self::LHU
+                        | Self::LRD
+                        | Self::LRW
+                        | Self::LW
+                        | Self::LWU
+                        | Self::MRET
+                        | Self::SB
+                        | Self::SCD
+                        | Self::SCW
+                        | Self::SD
+                        | Self::SH
+                        | Self::SW
+                        | Self::VirtualAdviceLoad
+                        | Self::VirtualHostIO
+                        | Self::VirtualSW
+                )
+            }
+        }
+    };
+}
+
+crate::for_each_instruction_kind!(define_instruction_kind);

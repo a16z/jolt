@@ -9,8 +9,7 @@ declare_riscv_instr!(
     mask   = 0x0000707f,
     match  = 0x00007063,
     format = FormatB,
-    ram    = (),
-    side_effects = true
+    ram    = ()
 );
 
 impl BGEU {

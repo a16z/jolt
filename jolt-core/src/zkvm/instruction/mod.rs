@@ -2,6 +2,11 @@ use std::ops::{Index, IndexMut};
 
 use allocative::Allocative;
 use common::constants::XLEN;
+use jolt_riscv::{
+    CircuitFlagSet as RiscvCircuitFlagSet, Flags as RiscvFlags,
+    InstructionFlagSet as RiscvInstructionFlagSet, InstructionKind, JoltInstructions,
+    NormalizedInstruction,
+};
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter, FromRepr};
 use tracer::instruction::{Cycle, Instruction};
@@ -170,6 +175,133 @@ pub trait Flags {
     fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS];
 }
 
+impl Flags for NormalizedInstruction {
+    fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
+        JoltInstructions::try_from(*self)
+            .map(|instruction| circuit_flags_from_riscv(instruction.circuit_flags()))
+            .unwrap_or([false; NUM_CIRCUIT_FLAGS])
+    }
+
+    fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
+        JoltInstructions::try_from(*self)
+            .map(|instruction| instruction_flags_from_riscv(instruction.instruction_flags()))
+            .unwrap_or([false; NUM_INSTRUCTION_FLAGS])
+    }
+}
+
+impl<const XLEN: usize> InstructionLookup<XLEN> for NormalizedInstruction {
+    fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
+        Some(match self.instruction_kind {
+            InstructionKind::ADD
+            | InstructionKind::ADDI
+            | InstructionKind::AUIPC
+            | InstructionKind::JAL
+            | InstructionKind::LUI
+            | InstructionKind::MUL
+            | InstructionKind::SUB
+            | InstructionKind::VirtualAdvice
+            | InstructionKind::VirtualAdviceLen
+            | InstructionKind::VirtualAdviceLoad
+            | InstructionKind::VirtualMULI => LookupTables::RangeCheck(Default::default()),
+            InstructionKind::JALR => LookupTables::RangeCheckAligned(Default::default()),
+            InstructionKind::AND | InstructionKind::ANDI => LookupTables::And(Default::default()),
+            InstructionKind::ANDN => LookupTables::Andn(Default::default()),
+            InstructionKind::OR | InstructionKind::ORI => LookupTables::Or(Default::default()),
+            InstructionKind::XOR | InstructionKind::XORI => LookupTables::Xor(Default::default()),
+            InstructionKind::BEQ | InstructionKind::VirtualAssertEQ => {
+                LookupTables::Equal(Default::default())
+            }
+            InstructionKind::BGE => LookupTables::SignedGreaterThanEqual(Default::default()),
+            InstructionKind::BGEU => LookupTables::UnsignedGreaterThanEqual(Default::default()),
+            InstructionKind::BNE => LookupTables::NotEqual(Default::default()),
+            InstructionKind::BLT | InstructionKind::SLT | InstructionKind::SLTI => {
+                LookupTables::SignedLessThan(Default::default())
+            }
+            InstructionKind::BLTU | InstructionKind::SLTU | InstructionKind::SLTIU => {
+                LookupTables::UnsignedLessThan(Default::default())
+            }
+            InstructionKind::VirtualMovsign => LookupTables::Movsign(Default::default()),
+            InstructionKind::MULHU => LookupTables::UpperWord(Default::default()),
+            InstructionKind::VirtualAssertLTE => LookupTables::LessThanEqual(Default::default()),
+            InstructionKind::VirtualAssertValidUnsignedRemainder => {
+                LookupTables::ValidUnsignedRemainder(Default::default())
+            }
+            InstructionKind::VirtualAssertValidDiv0 => LookupTables::ValidDiv0(Default::default()),
+            InstructionKind::VirtualAssertHalfwordAlignment => {
+                LookupTables::HalfwordAlignment(Default::default())
+            }
+            InstructionKind::VirtualAssertWordAlignment => {
+                LookupTables::WordAlignment(Default::default())
+            }
+            InstructionKind::VirtualZeroExtendWord => {
+                LookupTables::LowerHalfWord(Default::default())
+            }
+            InstructionKind::VirtualSignExtendWord => {
+                LookupTables::SignExtendHalfWord(Default::default())
+            }
+            InstructionKind::VirtualPow2 | InstructionKind::VirtualPow2I => {
+                LookupTables::Pow2(Default::default())
+            }
+            InstructionKind::VirtualPow2W | InstructionKind::VirtualPow2IW => {
+                LookupTables::Pow2W(Default::default())
+            }
+            InstructionKind::VirtualShiftRightBitmask
+            | InstructionKind::VirtualShiftRightBitmaskI => {
+                LookupTables::ShiftRightBitmask(Default::default())
+            }
+            InstructionKind::VirtualRev8W => LookupTables::VirtualRev8W(Default::default()),
+            InstructionKind::VirtualSRL | InstructionKind::VirtualSRLI => {
+                LookupTables::VirtualSRL(Default::default())
+            }
+            InstructionKind::VirtualSRA | InstructionKind::VirtualSRAI => {
+                LookupTables::VirtualSRA(Default::default())
+            }
+            InstructionKind::VirtualROTRI => LookupTables::VirtualROTR(Default::default()),
+            InstructionKind::VirtualROTRIW => LookupTables::VirtualROTRW(Default::default()),
+            InstructionKind::VirtualChangeDivisor => {
+                LookupTables::VirtualChangeDivisor(Default::default())
+            }
+            InstructionKind::VirtualChangeDivisorW => {
+                LookupTables::VirtualChangeDivisorW(Default::default())
+            }
+            InstructionKind::VirtualAssertMulUNoOverflow => {
+                LookupTables::MulUNoOverflow(Default::default())
+            }
+            InstructionKind::VirtualXORROT32 => LookupTables::VirtualXORROT32(Default::default()),
+            InstructionKind::VirtualXORROT24 => LookupTables::VirtualXORROT24(Default::default()),
+            InstructionKind::VirtualXORROT16 => LookupTables::VirtualXORROT16(Default::default()),
+            InstructionKind::VirtualXORROT63 => LookupTables::VirtualXORROT63(Default::default()),
+            InstructionKind::VirtualXORROTW16 => LookupTables::VirtualXORROTW16(Default::default()),
+            InstructionKind::VirtualXORROTW12 => LookupTables::VirtualXORROTW12(Default::default()),
+            InstructionKind::VirtualXORROTW8 => LookupTables::VirtualXORROTW8(Default::default()),
+            InstructionKind::VirtualXORROTW7 => LookupTables::VirtualXORROTW7(Default::default()),
+            InstructionKind::LD
+            | InstructionKind::SD
+            | InstructionKind::EBREAK
+            | InstructionKind::ECALL
+            | InstructionKind::FENCE
+            | InstructionKind::VirtualHostIO => return None,
+            _ => return None,
+        })
+    }
+}
+
+fn circuit_flags_from_riscv(flags: RiscvCircuitFlagSet) -> [bool; NUM_CIRCUIT_FLAGS] {
+    let mut converted = [false; NUM_CIRCUIT_FLAGS];
+    for (index, value) in converted.iter_mut().enumerate() {
+        *value = flags.bits() & (1 << index) != 0;
+    }
+    converted
+}
+
+fn instruction_flags_from_riscv(flags: RiscvInstructionFlagSet) -> [bool; NUM_INSTRUCTION_FLAGS] {
+    let mut converted = [false; NUM_INSTRUCTION_FLAGS];
+    for (index, value) in converted.iter_mut().enumerate() {
+        *value = flags.bits() & (1 << index) != 0;
+    }
+    converted
+}
+
 macro_rules! define_rv32im_trait_impls {
     (
         instructions: [$($instr:ident),* $(,)?]
@@ -189,7 +321,7 @@ macro_rules! define_rv32im_trait_impls {
 
         impl Flags for Instruction {
             fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
-                match self {
+                let mut flags = match self {
                     Instruction::NoOp => {
                         let mut flags = [false; NUM_CIRCUIT_FLAGS];
                         flags[CircuitFlags::DoNotUpdateUnexpandedPC] = true;
@@ -200,7 +332,11 @@ macro_rules! define_rv32im_trait_impls {
                     )*
                     Instruction::UNIMPL => [false; NUM_CIRCUIT_FLAGS],
                     _ => panic!("Unexpected instruction: {:?}", self),
+                };
+                if self.normalize().virtual_sequence_remaining == Some(0) {
+                    flags[CircuitFlags::IsLastInSequence] = true;
                 }
+                flags
             }
 
             fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {

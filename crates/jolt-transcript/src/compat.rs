@@ -1,17 +1,17 @@
 //! Source-compatible facade for `jolt-sumcheck`, `jolt-openings`, and
 //! `jolt-crypto`.
 //!
-//! Wraps a spongefish `ProverState` over each of the three sponges and
-//! re-exposes the legacy `Transcript` / `AppendToTranscript` API. Removed
-//! once jolt-core migrates to the split-trait surface.
+//! Wraps a duplex sponge over each of the three backends and re-exposes
+//! the legacy `Transcript` / `AppendToTranscript` API. Removed once
+//! jolt-core migrates to the split-trait surface.
 
 use std::marker::PhantomData;
 
-use jolt_field::Field;
+use jolt_field::{CanonicalBytes, TranscriptChallenge};
 use spongefish::{DuplexSpongeInterface, Encoding};
 
 use crate::codec::BytesMsg;
-use crate::domain::{EmptyInstance, PROTOCOL_ID};
+use crate::setup::{EmptyInstance, PROTOCOL_ID};
 
 /// Maximum label length in bytes accepted by [`Transcript::new`] and the
 /// label helpers below.
@@ -30,7 +30,7 @@ pub const MAX_LABEL_LEN: usize = 32;
 /// barriers.
 pub trait Transcript: Default + Clone + Sync + Send + 'static {
     /// The challenge type produced by this transcript.
-    type Challenge: Copy + Default + PartialEq + Eq + std::fmt::Debug + std::hash::Hash;
+    type Challenge: TranscriptChallenge;
 
     /// Creates a new transcript with the given domain separation label.
     ///
@@ -56,6 +56,20 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
     fn challenge_vector(&mut self, len: usize) -> Vec<Self::Challenge> {
         (0..len).map(|_| self.challenge()).collect()
     }
+
+    /// Current 256-bit transcript state. Peeked non-destructively by
+    /// squeezing 32 bytes from a sponge clone, so callers can read it
+    /// without advancing the real state. Useful for debug-only
+    /// cross-verifier comparison.
+    #[must_use]
+    fn state(&self) -> &[u8; 32];
+
+    /// Enables transcript comparison for tests; mirrors upstream's signature.
+    /// Spongefish sponges have no replayable state history, so this is a
+    /// no-op on the compat facade — call sites already only use it under
+    /// `#[cfg(test)]` for debugging digest-based transcripts.
+    #[cfg(test)]
+    fn compare_to(&mut self, _other: &Self) {}
 }
 
 /// Implement on types that absorb themselves into a [`Transcript`].
@@ -66,9 +80,10 @@ pub trait AppendToTranscript {
 
 /// Big-endian field element absorption (matches jolt-core's EVM-compatible
 /// byte order).
-impl<F: Field> AppendToTranscript for F {
+impl<F: CanonicalBytes> AppendToTranscript for F {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        let mut buf = self.to_bytes();
+        let mut buf = vec![0u8; F::NUM_BYTES];
+        self.to_bytes_le(&mut buf);
         buf.reverse();
         transcript.append_bytes(&buf);
     }
@@ -123,25 +138,28 @@ impl AppendToTranscript for U64Word {
 /// Sponge-backed transcript driving a duplex sponge directly.
 ///
 /// The compat facade does not produce or consume a NARG byte string —
-/// existing modular consumers (jolt-sumcheck, jolt-openings, jolt-crypto)
-/// only call `append_bytes` / `challenge`. New code should use
-/// [`crate::ProverTranscript`] / [`crate::VerifierTranscript`] instead.
+/// existing modular consumers only call `append_bytes` / `challenge` /
+/// `state`. New code should use [`crate::ProverTranscript`] /
+/// [`crate::VerifierTranscript`] instead.
 ///
 /// Construction mirrors spongefish's `DomainSeparator` builder:
 /// `protocol_id || session(label) || instance(())` are absorbed in order.
 pub struct SpongeTranscript<H, F = jolt_field::Fr>
 where
     H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,
-    F: Field,
+    F: TranscriptChallenge,
 {
     sponge: H,
+    /// 32-byte non-destructive peek of the sponge state, refreshed after
+    /// every absorb / squeeze so `state()` can return a reference cheaply.
+    state: [u8; 32],
     _field: PhantomData<F>,
 }
 
 impl<H, F> Default for SpongeTranscript<H, F>
 where
     H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,
-    F: Field,
+    F: TranscriptChallenge,
 {
     fn default() -> Self {
         Self::new(b"")
@@ -151,11 +169,12 @@ where
 impl<H, F> Clone for SpongeTranscript<H, F>
 where
     H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,
-    F: Field,
+    F: TranscriptChallenge,
 {
     fn clone(&self) -> Self {
         Self {
             sponge: self.sponge.clone(),
+            state: self.state,
             _field: PhantomData,
         }
     }
@@ -169,10 +188,18 @@ where
     let _ = sponge.absorb(value.encode().as_ref());
 }
 
+/// Peeks 32 bytes from a clone of the sponge so the real state stays put.
+fn peek_state<H: DuplexSpongeInterface<U = u8> + Clone>(sponge: &H) -> [u8; 32] {
+    let mut clone = sponge.clone();
+    let mut buf = [0u8; 32];
+    let _ = clone.squeeze(&mut buf);
+    buf
+}
+
 impl<H, F> Transcript for SpongeTranscript<H, F>
 where
     H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,
-    F: Field,
+    F: TranscriptChallenge,
 {
     type Challenge = F;
 
@@ -185,8 +212,10 @@ where
         absorb_encoded(&mut sponge, &PROTOCOL_ID);
         absorb_encoded(&mut sponge, &BytesMsg(label.to_vec()));
         absorb_encoded(&mut sponge, &EmptyInstance);
+        let state = peek_state(&sponge);
         Self {
             sponge,
+            state,
             _field: PhantomData,
         }
     }
@@ -207,11 +236,17 @@ where
         buf.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
         buf.extend_from_slice(bytes);
         let _ = self.sponge.absorb(&buf);
+        self.state = peek_state(&self.sponge);
     }
 
     fn challenge(&mut self) -> F {
         let mut buf = [0u8; 16];
         let _ = self.sponge.squeeze(&mut buf);
-        F::from_u128(u128::from_le_bytes(buf))
+        self.state = peek_state(&self.sponge);
+        F::from_challenge_bytes(&buf)
+    }
+
+    fn state(&self) -> &[u8; 32] {
+        &self.state
     }
 }

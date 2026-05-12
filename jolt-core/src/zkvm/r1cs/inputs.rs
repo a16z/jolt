@@ -307,9 +307,9 @@ impl R1CSCycleInputs {
         };
 
         // PCs
-        let pc = bytecode_preprocessing.get_pc(cycle) as u64;
+        let pc = crate::zkvm::bytecode::get_pc_for_cycle(bytecode_preprocessing, cycle) as u64;
         let next_pc = if let Some(nc) = next_cycle {
-            bytecode_preprocessing.get_pc(nc) as u64
+            crate::zkvm::bytecode::get_pc_for_cycle(bytecode_preprocessing, nc) as u64
         } else {
             0u64
         };
@@ -524,7 +524,7 @@ impl ShiftSumcheckCycleState {
         let circuit_flags = instruction.circuit_flags();
         Self {
             unexpanded_pc: instruction.normalize().address as u64,
-            pc: bytecode_preprocessing.get_pc(cycle) as u64,
+            pc: crate::zkvm::bytecode::get_pc_for_cycle(bytecode_preprocessing, cycle) as u64,
             is_virtual: circuit_flags[CircuitFlags::VirtualInstruction],
             is_first_in_sequence: circuit_flags[CircuitFlags::IsFirstInSequence],
             is_noop: instruction.instruction_flags()[InstructionFlags::IsNoop],

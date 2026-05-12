@@ -331,10 +331,14 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
 
     fn expected_output_claim(
         &self,
-        _accumulator: &A,
+        accumulator: &A,
         _sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) -> F {
-        unimplemented!("Unused for univariate skip")
+        let (_, claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::UnivariateSkip,
+            SumcheckId::SpartanOuter,
+        );
+        claim
     }
 
     fn cache_openings(

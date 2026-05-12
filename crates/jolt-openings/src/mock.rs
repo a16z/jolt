@@ -31,9 +31,11 @@ pub struct MockProof<F: Field> {
 
 impl<F: Field> AppendToTranscript for MockCommitment<F> {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        let mut buf = Vec::with_capacity(self.evaluations.len() * 32);
+        let mut buf = Vec::with_capacity(self.evaluations.len() * F::NUM_BYTES);
         for e in &self.evaluations {
-            buf.extend_from_slice(&e.to_bytes());
+            let start = buf.len();
+            buf.resize(start + F::NUM_BYTES, 0);
+            e.to_bytes_le(&mut buf[start..]);
         }
         buf.reverse();
         transcript.append_bytes(&buf);
@@ -164,12 +166,19 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
     type HidingCommitment = MockHidingCommitment<F>;
     type Blind = ();
 
+    fn commit_zk<P: jolt_poly::MultilinearPoly<Self::Field> + ?Sized>(
+        poly: &P,
+        setup: &Self::ProverSetup,
+    ) -> (Self::Output, Self::OpeningHint) {
+        Self::commit(poly, setup)
+    }
+
     fn open_zk(
         poly: &Self::Polynomial,
         _point: &[Self::Field],
         eval: Self::Field,
         _setup: &Self::ProverSetup,
-        _hint: Option<Self::OpeningHint>,
+        _hint: Self::OpeningHint,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
         let proof = MockProof {
@@ -181,8 +190,7 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
 
     fn verify_zk(
         commitment: &Self::Output,
-        point: &[Self::Field],
-        eval_commitment: &Self::HidingCommitment,
+        _point: &[Self::Field],
         proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
@@ -193,13 +201,6 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
                 actual: format!("len={}", proof.evaluations.len()),
             });
         }
-
-        let poly = Polynomial::new(proof.evaluations.clone());
-        let actual_eval = poly.evaluate(point);
-        if actual_eval != eval_commitment.eval {
-            return Err(OpeningsError::VerificationFailed);
-        }
-
         Ok(())
     }
 }
@@ -209,8 +210,7 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
 mod tests {
     use super::*;
     use crate::{reduce_prover, reduce_verifier, ProverClaim, VerifierClaim};
-    use jolt_field::Field;
-    use jolt_field::Fr;
+    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
     use jolt_poly::Polynomial;
     use jolt_transcript::Blake2bTranscript;
     use rand_chacha::rand_core::SeedableRng;
@@ -470,46 +470,11 @@ mod tests {
 
         let mut transcript_p = Blake2bTranscript::new(b"zk-test");
         let (proof, eval_com, _blinding) =
-            MockPCS::open_zk(&poly, &point, eval, &(), None, &mut transcript_p);
+            MockPCS::open_zk(&poly, &point, eval, &(), (), &mut transcript_p);
 
+        let _ = eval_com;
         let mut transcript_v = Blake2bTranscript::new(b"zk-test");
-        MockPCS::verify_zk(
-            &commitment,
-            &point,
-            &eval_com,
-            &proof,
-            &(),
-            &mut transcript_v,
-        )
-        .expect("valid ZK proof should verify");
-    }
-
-    #[test]
-    fn zk_verify_rejects_wrong_eval_commitment() {
-        let mut rng = ChaCha20Rng::seed_from_u64(501);
-        let poly = Polynomial::<Fr>::random(3, &mut rng);
-        let point: Vec<Fr> = (0..3).map(|_| Fr::random(&mut rng)).collect();
-        let eval = poly.evaluate(&point);
-
-        let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
-
-        let mut transcript_p = Blake2bTranscript::new(b"zk-test");
-        let (proof, _eval_com, _blinding) =
-            MockPCS::open_zk(&poly, &point, eval, &(), None, &mut transcript_p);
-
-        let wrong_eval_com = MockHidingCommitment {
-            eval: eval + Fr::from_u64(1),
-        };
-
-        let mut transcript_v = Blake2bTranscript::new(b"zk-test");
-        let result = MockPCS::verify_zk(
-            &commitment,
-            &point,
-            &wrong_eval_com,
-            &proof,
-            &(),
-            &mut transcript_v,
-        );
-        assert!(result.is_err(), "wrong eval commitment should be rejected");
+        MockPCS::verify_zk(&commitment, &point, &proof, &(), &mut transcript_v)
+            .expect("valid ZK proof should verify");
     }
 }

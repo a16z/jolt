@@ -6,11 +6,13 @@ on:
     paths:
       - "crates/*/fuzz/**"
       - "crates/*/src/**"
+      - ".github/workflows/fuzz-crates.yml"
   pull_request:
     branches: [main]
     paths:
       - "crates/*/fuzz/**"
       - "crates/*/src/**"
+      - ".github/workflows/fuzz-crates.yml"
 
 env:
   CARGO_TERM_COLOR: always
@@ -26,6 +28,7 @@ jobs:
           - jolt-crypto
           - jolt-field
           - jolt-poly
+          - jolt-sumcheck
           - jolt-transcript
     name: Fuzz ${{ matrix.crate }}
     concurrency:
@@ -37,7 +40,9 @@ jobs:
         with:
           toolchain: nightly
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
       - name: Fuzz all targets
         working-directory: crates/${{ matrix.crate }}
         run: |
@@ -49,5 +54,5 @@ jobs:
           fi
           for target in $targets; do
             echo "--- Fuzzing $target for ${FUZZ_DURATION}s ---"
-            cargo +nightly fuzz run "$target" -- -max_total_time=$FUZZ_DURATION
+            cargo +nightly fuzz run --target x86_64-unknown-linux-gnu "$target" -- -max_total_time=$FUZZ_DURATION
           done

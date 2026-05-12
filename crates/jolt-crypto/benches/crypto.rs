@@ -5,7 +5,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use jolt_crypto::{
     Bn254, Bn254G1, Bn254G2, JoltGroup, PairingGroup, Pedersen, PedersenSetup, VectorCommitment,
 };
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 

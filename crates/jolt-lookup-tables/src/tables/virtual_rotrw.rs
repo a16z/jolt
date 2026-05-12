@@ -7,12 +7,11 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
-use crate::XLEN;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct VirtualROTRWTable;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct VirtualROTRWTable<const XLEN: usize>;
 
-impl LookupTable for VirtualROTRWTable {
+impl<const XLEN: usize> LookupTable for VirtualROTRWTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x_bits, y_bits) = uninterleave_bits(index);
 
@@ -61,7 +60,7 @@ impl LookupTable for VirtualROTRWTable {
     }
 }
 
-impl PrefixSuffixDecomposition for VirtualROTRWTable {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualROTRWTable<XLEN> {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[
             Suffixes::RightShiftWHelper,
@@ -83,23 +82,29 @@ impl PrefixSuffixDecomposition for VirtualROTRWTable {
 
     #[cfg(test)]
     fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
-        crate::tables::test_utils::gen_bitmask_lookup_index(rng)
+        crate::tables::test_utils::gen_bitmask_lookup_index::<XLEN>(rng)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
     fn mle_random() {
-        mle_random_test::<Fr, VirtualROTRWTable>();
+        mle_random_test::<XLEN, Fr, VirtualROTRWTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, VirtualROTRWTable>();
+        prefix_suffix_test::<XLEN, Fr, VirtualROTRWTable<XLEN>>();
+    }
+
+    #[test]
+    fn mle_full_hypercube() {
+        mle_full_hypercube_test::<8, Fr, VirtualROTRWTable<8>>();
     }
 }

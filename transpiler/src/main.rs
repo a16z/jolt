@@ -98,6 +98,10 @@ struct Args {
     /// Output directory (defaults to target-specific directory, e.g., "go" for gnark)
     #[arg(long, short = 'o')]
     output_dir: Option<PathBuf>,
+
+    /// Also generate cross-validation circuit with api.Println hooks (crossval/circuit.go)
+    #[arg(long)]
+    crossval: bool,
 }
 
 fn main() {
@@ -331,12 +335,21 @@ fn main() {
     }
     println!("  Constraints: {}", bundle.constraints.len());
 
-    // Run CSE (Common Subexpression Elimination) at the AST level.
+    // Run global CSE: identify nodes shared across multiple constraints
+    // (primarily TranscriptHash chains) and hoist them to a single computation block.
+    bundle.run_global_cse();
+    println!(
+        "  Global CSE: {} nodes hoisted across constraints",
+        bundle.global_cse.bindings.len()
+    );
+
+    // Run per-constraint CSE (Common Subexpression Elimination) at the AST level.
     // This pre-computes which nodes should be hoisted to named variables,
     // making codegen simpler (just reads pre-computed decisions).
+    // Nodes already in global CSE are excluded.
     bundle.run_cse();
     println!(
-        "  CSE bindings: {} total across {} constraints",
+        "  Per-constraint CSE bindings: {} total across {} constraints",
         bundle
             .constraint_cse
             .iter()
@@ -381,6 +394,24 @@ fn main() {
                 .unwrap_or_else(|e| panic!("Failed to write circuit file {circuit_path:?}: {e}"));
             println!("  Circuit written to: {circuit_path:?}");
             println!("  Circuit size: {} bytes", circuit_code.len());
+
+            if args.crossval {
+                println!("\n=== Generating Crossval Circuit ===");
+                let (crossval_code, _) = gnark_codegen::generate_circuit_from_bundle_with_stats(
+                    &bundle,
+                    "JoltStagesCircuit",
+                    true,
+                );
+                let crossval_dir = output_dir.join("crossval");
+                std::fs::create_dir_all(&crossval_dir).unwrap_or_else(|e| {
+                    panic!("Failed to create crossval dir {crossval_dir:?}: {e}")
+                });
+                let crossval_path = crossval_dir.join("circuit.go");
+                std::fs::write(&crossval_path, &crossval_code).unwrap_or_else(|e| {
+                    panic!("Failed to write crossval circuit {crossval_path:?}: {e}")
+                });
+                println!("  Crossval circuit written to: {crossval_path:?}");
+            }
 
             // Get witness values captured during symbolization.
             // VarAllocator records both symbolic variables AND concrete values in a single pass,

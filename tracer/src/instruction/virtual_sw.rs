@@ -9,8 +9,7 @@ declare_riscv_instr!(
     mask = 0,
     match = 0,
     format = FormatS,
-    ram    = super::RAMWrite,
-    side_effects = true
+    ram    = super::RAMWrite
 );
 
 impl VirtualSW {

@@ -1,5 +1,3 @@
-use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -8,12 +6,7 @@ use crate::{
 };
 
 use super::{
-    format::format_r::FormatR, mul::MUL, sub::SUB, virtual_advice::VirtualAdvice,
-    virtual_assert_lte::VirtualAssertLTE,
-    virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow,
-    virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
-    virtual_sign_extend_word::VirtualSignExtendWord,
-    virtual_zero_extend_word::VirtualZeroExtendWord, Cycle, Instruction, RISCVInstruction,
+    fill_virtual_advice, format::format_r::FormatR, Cycle, Instruction, RISCVInstruction,
     RISCVTrace,
 };
 
@@ -62,57 +55,13 @@ impl RISCVTrace for REMUW {
             }
         };
 
-        let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
-        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[2] {
-            instr.advice = quotient;
-        } else {
-            panic!("Expected Advice instruction");
-        }
+        let mut inline_sequence =
+            Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        fill_virtual_advice(&mut inline_sequence, &[quotient]);
 
         let mut trace = trace;
         for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
-    }
-
-    /// REMUW computes unsigned 32-bit remainder on RV64, sign-extending the result to 64 bits.
-    ///
-    /// This RV64 instruction computes the remainder of dividing the lower 32 bits of rs1
-    /// by the lower 32 bits of rs2, treating them as unsigned integers. The result is
-    /// sign-extended to 64 bits despite being unsigned remainder (per RISC-V spec).
-    ///
-    /// The verification strategy is identical to that of REMU
-    /// The only difference is that the inputs need to be zero-extended and the output needs to be sign-extended
-    ///
-    /// Special case: Division by zero returns dividend (handled by VirtualAssertValidUnsignedRemainder)
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
-        // registers for zero-extended inputs
-        let rs1 = allocator.allocate();
-        let rs2 = allocator.allocate();
-        let v_tmp = allocator.allocate();
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
-        // Zero-extend inputs to proper 32-bit unsigned values
-        asm.emit_i::<VirtualZeroExtendWord>(*rs1, self.operands.rs1, 0);
-        asm.emit_i::<VirtualZeroExtendWord>(*rs2, self.operands.rs2, 0);
-        // Get quotient as untrusted advice from oracle
-        asm.emit_j::<VirtualAdvice>(*v_tmp, 0);
-        // Verify no overflow: quotient × divisor must not overflow
-        asm.emit_b::<VirtualAssertMulUNoOverflow>(*v_tmp, *rs2, 0);
-        // Compute quotient × divisor
-        asm.emit_r::<MUL>(*v_tmp, *v_tmp, *rs2);
-        // Verify: quotient × divisor <= dividend
-        asm.emit_b::<VirtualAssertLTE>(*v_tmp, *rs1, 0);
-        // Compute remainder = dividend - quotient × divisor
-        // Note: if divisor == 0, then remainder will equal dividend, which satisfies the spec
-        asm.emit_r::<SUB>(*v_tmp, *rs1, *v_tmp);
-        // Verify: divisor == 0 || remainder < divisor (unsigned)
-        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*v_tmp, *rs2, 0);
-        // Sign-extend 32-bit remainder to 64 bits
-        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, *v_tmp, 0);
-        asm.finalize()
     }
 }

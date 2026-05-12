@@ -261,13 +261,18 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {
 
         // Check symmetric-domain sum equals zero (initial claim), and compute next claim s1(r0)
         let input_claim = sumcheck_instance.input_claim(opening_accumulator);
-        let ok = proof
+        let input_claim_ok = proof
             .uni_poly
             .check_sum_evals::<N, FIRST_ROUND_POLY_NUM_COEFFS>(input_claim);
+
         sumcheck_instance.cache_openings(opening_accumulator, &[r0]);
+        let expected_output = proof.uni_poly.evaluate(&r0);
+        let claimed_output = sumcheck_instance.expected_output_claim(opening_accumulator, &[r0]);
+        let output_claim_ok = claimed_output == expected_output;
+
         opening_accumulator.flush_to_transcript(transcript);
 
-        if !ok {
+        if !input_claim_ok || !output_claim_ok {
             Err(ProofVerifyError::UniSkipVerificationError)
         } else {
             Ok(r0)

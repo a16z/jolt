@@ -147,7 +147,7 @@ impl<'a, F: Field> R1csSource<'a, F> {
 mod tests {
     use super::*;
     use crate::constraint::ConstraintMatrices;
-    use jolt_field::{Field, Fr};
+    use jolt_field::{Fr, FromPrimitiveInt};
     use num_traits::{One, Zero};
 
     #[test]

@@ -1,5 +1,3 @@
-use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -7,10 +5,7 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{
-    add::ADD, andi::ANDI, format::format_r::FormatR, mul::MUL, mulhu::MULHU, sltu::SLTU,
-    virtual_movsign::VirtualMovsign, xor::XOR, Cycle, Instruction, RISCVInstruction, RISCVTrace,
-};
+use super::{format::format_r::FormatR, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = MULHSU,
@@ -52,38 +47,11 @@ impl MULHSU {
 
 impl RISCVTrace for MULHSU {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
-    }
-
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
-        let v0 = allocator.allocate();
-        let v1 = allocator.allocate();
-        let v2 = allocator.allocate();
-        let v3 = allocator.allocate();
-
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
-
-        asm.emit_i::<VirtualMovsign>(*v0, self.operands.rs1, 0);
-        asm.emit_i::<ANDI>(*v1, *v0, 1);
-        asm.emit_r::<XOR>(*v2, self.operands.rs1, *v0);
-        asm.emit_r::<ADD>(*v2, *v2, *v1);
-        asm.emit_r::<MULHU>(*v3, *v2, self.operands.rs2);
-        asm.emit_r::<MUL>(*v2, *v2, self.operands.rs2);
-        asm.emit_r::<XOR>(*v3, *v3, *v0);
-        asm.emit_r::<XOR>(*v2, *v2, *v0);
-        asm.emit_r::<ADD>(*v0, *v2, *v1);
-        asm.emit_r::<SLTU>(*v0, *v0, *v2);
-        asm.emit_r::<ADD>(self.operands.rd, *v3, *v0);
-
-        asm.finalize()
     }
 }
 

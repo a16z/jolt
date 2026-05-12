@@ -84,6 +84,8 @@ derive_more.workspace = true
 dory.workspace = true
 allocative.workspace = true
 inferno = { workspace = true, optional = true }
+jolt-program = { workspace = true, features = ["image"] }
+jolt-riscv.workspace = true
 jolt-inlines-sha2 = { workspace = true, features = ["host"], optional = true }
 jolt-inlines-keccak256 = { workspace = true, features = [
   "host",

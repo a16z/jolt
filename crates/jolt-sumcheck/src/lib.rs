@@ -65,6 +65,7 @@ pub mod claim;
 pub mod error;
 pub mod proof;
 pub mod round_proof;
+pub mod scalar;
 pub mod verifier;
 
 #[cfg(test)]
@@ -75,4 +76,5 @@ pub use claim::{EvaluationClaim, SumcheckClaim};
 pub use error::SumcheckError;
 pub use proof::SumcheckProof;
 pub use round_proof::{CompressedLabeledRoundPoly, LabeledRoundPoly, RoundProof};
+pub use scalar::SumcheckScalar;
 pub use verifier::SumcheckVerifier;

@@ -108,7 +108,8 @@ impl CommittedPolynomial {
                 let row: Vec<Option<usize>> = row_cycles
                     .iter()
                     .map(|cycle| {
-                        let pc = preprocessing.bytecode.get_pc(cycle);
+                        let pc =
+                            crate::zkvm::bytecode::get_pc_for_cycle(&preprocessing.bytecode, cycle);
                         Some(one_hot_params.bytecode_pc_chunk(pc, *idx) as usize)
                     })
                     .collect();
@@ -150,7 +151,8 @@ impl CommittedPolynomial {
                 let addresses: Vec<_> = trace
                     .par_iter()
                     .map(|cycle| {
-                        let pc = bytecode_preprocessing.get_pc(cycle);
+                        let pc =
+                            crate::zkvm::bytecode::get_pc_for_cycle(bytecode_preprocessing, cycle);
                         Some(one_hot_params.bytecode_pc_chunk(pc, *i))
                     })
                     .collect();

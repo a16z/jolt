@@ -25,14 +25,14 @@ keywords = ["SNARK", "cryptography", "proofs"]
 [workspace]
 members = [
   "crates/jolt-crypto",
-  "crates/jolt-trace",
+  "crates/jolt-program",
   "crates/jolt-poly",
   "crates/jolt-lookup-tables",
   "crates/jolt-r1cs",
   "crates/jolt-sumcheck",
   "crates/jolt-openings",
+  "crates/jolt-dory",
   "crates/jolt-riscv",
-  "crates/jolt-riscv-derive",
   "crates/jolt-transcript",
   "crates/jolt-profiling",
   "crates/jolt-field",
@@ -259,6 +259,7 @@ dory = { package = "dory-pcs", version = "0.3.0", features = [
   "backends",
   "cache",
   "disk-persistence",
+  "zk",
 ] }
 
 # Core Utilities
@@ -313,7 +314,7 @@ tracing = { version = "0.1.37", default-features = false, features = [
   "attributes",
 ] }
 tracing-chrome = "0.7.1"
-tracing-subscriber = { version = "0.3.20", features = ["fmt", "env-filter"] }
+tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }
 inferno = { version = "0.12.3" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 pprof = { version = "0.15", features = [
@@ -330,11 +331,11 @@ proc-macro2 = "1.0.79"
 
 # Platform-specific
 fnv = { version = "1.0.7", default-features = false }
-object = { version = "0.39.0", features = [
+object = { version = "0.39.1", features = [
   "build_core",
   "elf",
 ], default-features = false }
-addr2line = "0.26.0"
+addr2line = "0.26.1"
 getrandom = { version = "0.2.16", default-features = false }
 getrandom_v02 = { version = "0.2.16", package = "getrandom", default-features = false }
 getrandom_v03 = { version = "0.3.3", package = "getrandom", default-features = false }
@@ -377,11 +378,12 @@ tracer = { path = "./tracer", default-features = false }
 jolt-core = { path = "./jolt-core", default-features = false }
 jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-field = { path = "./crates/jolt-field" }
+jolt-openings = { path = "./crates/jolt-openings" }
 jolt-poly = { path = "./crates/jolt-poly" }
 jolt-transcript = { path = "./crates/jolt-transcript" }
 jolt-sumcheck = { path = "./crates/jolt-sumcheck" }
 jolt-riscv = { path = "./crates/jolt-riscv" }
-jolt-riscv-derive = { path = "./crates/jolt-riscv-derive" }
+jolt-program = { path = "./crates/jolt-program", default-features = false }
 jolt-lookup-tables = { path = "./crates/jolt-lookup-tables" }
 jolt-platform = { path = "./jolt-platform", default-features = false }
 jolt-sdk = { path = "./jolt-sdk", default-features = false }

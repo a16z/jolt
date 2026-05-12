@@ -1,15 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{
     declare_riscv_instr,
-    emulator::cpu::{Cpu, ReservationWidth, Xlen},
+    emulator::cpu::{Cpu, ReservationWidth},
 };
 
-use super::addi::ADDI;
 use super::format::format_r::FormatR;
-use super::ld::LD;
 use super::{Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
@@ -17,8 +13,7 @@ declare_riscv_instr!(
     mask   = 0xf9f0707f,
     match  = 0x1000302f,
     format = FormatR,
-    ram    = (),
-    side_effects = true
+    ram    = ()
 );
 
 impl LRD {
@@ -49,39 +44,59 @@ impl RISCVTrace for LRD {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         cpu.set_reservation(address, ReservationWidth::Doubleword);
 
-        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
+}
 
-    /// LR.D: Load Reserved Doubleword
-    /// Loads a 64-bit doubleword from memory at address rs1, stores it in rd,
-    /// and sets a reservation on the address.
-    ///
-    /// The 8-byte reservation covers both the 4-byte and 8-byte reservation
-    /// sets used by subsequent SC.W and SC.D respectively — per the RISC-V A
-    /// spec, SC succeeds if the reservation set contains the bytes being
-    /// written, so SC.W after LR.D should succeed. We record the address in
-    /// both `v_reservation_w` and `v_reservation_d` so the SC.W-after-LR.D
-    /// constraint check (reservation == rs1) passes.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
-        // LR.D is only available in RV64A, so we only implement the 64-bit path
-        assert_eq!(xlen, Xlen::Bit64, "LR.D is only available in RV64");
+#[cfg(test)]
+mod tests {
+    use crate::emulator::{cpu::Cpu, default_terminal::DefaultTerminal};
+    use crate::instruction::{Instruction, RISCVTrace};
 
-        let v_reservation_d = allocator.reservation_d_register();
-        let v_reservation_w = allocator.reservation_w_register();
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
+    const TEST_MEM_SIZE: u64 = 1024 * 1024;
 
-        asm.emit_i::<ADDI>(v_reservation_d, self.operands.rs1, 0);
-        asm.emit_i::<ADDI>(v_reservation_w, self.operands.rs1, 0);
-        asm.emit_ld::<LD>(self.operands.rd, self.operands.rs1, 0);
+    fn setup_cpu() -> Cpu {
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+        let memory_config = common::jolt_device::MemoryConfig {
+            heap_size: TEST_MEM_SIZE,
+            program_size: Some(1024),
+            ..Default::default()
+        };
+        cpu.get_mut_mmu().jolt_device = Some(common::jolt_device::JoltDevice::new(&memory_config));
+        cpu.get_mut_mmu().init_memory(TEST_MEM_SIZE);
+        cpu
+    }
 
-        asm.finalize()
+    fn encode_lrd(rd: u8, rs1: u8) -> u32 {
+        (0b00010 << 27) | ((rs1 as u32) << 15) | (0b011 << 12) | ((rd as u32) << 7) | 0x2F
+    }
+
+    /// LR.D to a non-RAM (I/O) address is rejected by the RAM-range
+    /// constraint. Mirrors SC.D coverage.
+    #[test]
+    #[should_panic(expected = "assertion failed")]
+    fn test_lrd_to_io_rejected() {
+        let mut cpu = setup_cpu();
+        let panic_addr = cpu
+            .get_mut_mmu()
+            .jolt_device
+            .as_ref()
+            .unwrap()
+            .memory_layout
+            .panic;
+
+        cpu.x[11] = panic_addr as i64;
+
+        let decoded = Instruction::decode(encode_lrd(10, 11), 0x1000, false).unwrap();
+        let Instruction::LRD(lrd) = decoded else {
+            panic!("Expected LRD");
+        };
+
+        let mut trace = Vec::new();
+        lrd.trace(&mut cpu, Some(&mut trace));
     }
 }

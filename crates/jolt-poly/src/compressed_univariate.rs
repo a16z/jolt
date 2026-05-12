@@ -95,7 +95,7 @@ impl<F: Field> CompressedPoly<F> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use jolt_field::Fr;
+    use jolt_field::{Fr, FromPrimitiveInt};
     use num_traits::{One, Zero};
 
     /// Helper: build a standard polynomial p(x) = c0 + c1*x + c2*x^2 + ...

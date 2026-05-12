@@ -19,10 +19,10 @@
 
 mod codec;
 mod compat;
-mod domain;
 #[cfg(feature = "transcript-poseidon")]
 mod poseidon;
 mod prover;
+mod setup;
 mod verifier;
 
 pub use codec::{BytesMsg, FieldEl, FieldElOptimized};
@@ -30,7 +30,15 @@ pub use compat::{
     AppendToTranscript, Label, LabelWithCount, SpongeTranscript, Transcript, U64Word,
     MAX_LABEL_LEN,
 };
-pub use domain::{to_prover, to_verifier, EmptyInstance, PROTOCOL_ID};
+pub use setup::{to_prover, to_verifier, EmptyInstance, PROTOCOL_ID};
+
+/// Source-compatible re-exports of legacy label / count / word helpers
+/// under their `jolt_transcript::domain::*` path (matches the path used
+/// by jolt-dory and earlier modular consumers).
+pub mod domain {
+    pub use crate::compat::{Label, LabelWithCount, U64Word};
+}
+
 #[cfg(feature = "transcript-poseidon")]
 pub use poseidon::PoseidonSponge;
 pub use prover::{OptimizedChallenge, ProverTranscript};

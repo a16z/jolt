@@ -6,14 +6,13 @@ use crate::tables::prefixes::{PrefixEval, Prefixes};
 use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
-use crate::XLEN;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct Pow2WTable;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct Pow2WTable<const XLEN: usize>;
 
-impl LookupTable for Pow2WTable {
+impl<const XLEN: usize> LookupTable for Pow2WTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
-        1 << (index % 32) as u64
+        1 << (index % (XLEN / 2) as u128) as u64
     }
 
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
@@ -22,15 +21,16 @@ impl LookupTable for Pow2WTable {
         F: Field + FieldOps<C>,
     {
         debug_assert_eq!(r.len(), 2 * XLEN);
+        let log_half = (XLEN / 2).trailing_zeros() as usize;
         let mut result = F::one();
-        for i in 0..5 {
+        for i in 0..log_half {
             result *= F::one() + (F::from_u64((1 << (1 << i)) - 1)) * r[r.len() - i - 1];
         }
         result
     }
 }
 
-impl PrefixSuffixDecomposition for Pow2WTable {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for Pow2WTable<XLEN> {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::Pow2W]
     }
@@ -46,16 +46,22 @@ impl PrefixSuffixDecomposition for Pow2WTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
+    fn mle_full_hypercube() {
+        mle_full_hypercube_test::<8, Fr, Pow2WTable<8>>();
+    }
+
+    #[test]
     fn mle_random() {
-        mle_random_test::<Fr, Pow2WTable>();
+        mle_random_test::<XLEN, Fr, Pow2WTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, Pow2WTable>();
+        prefix_suffix_test::<XLEN, Fr, Pow2WTable<XLEN>>();
     }
 }

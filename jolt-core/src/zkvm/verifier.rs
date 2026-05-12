@@ -56,7 +56,8 @@ use crate::zkvm::{
     proof_serialization::JoltProof,
     r1cs::key::UniformSpartanKey,
     ram::{
-        compute_min_ram_K, hamming_booleanity::HammingBooleanitySumcheckVerifier,
+        compute_max_ram_K, compute_min_ram_K,
+        hamming_booleanity::HammingBooleanitySumcheckVerifier,
         output_check::OutputSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
         read_write_checking::RamReadWriteCheckingVerifier, val_check::RamValCheckSumcheckVerifier,
@@ -215,7 +216,7 @@ fn scale_batching_coefficients<
 }
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
-use tracer::instruction::Instruction;
+use jolt_riscv::NormalizedInstruction;
 use tracer::JoltDevice;
 
 pub struct JoltVerifier<
@@ -343,8 +344,13 @@ impl<
             &preprocessing.shared.ram,
             &preprocessing.shared.memory_layout,
         );
-        if !proof.ram_K.is_power_of_two() || proof.ram_K < min_ram_K {
-            return Err(ProofVerifyError::InvalidRamK(proof.ram_K, min_ram_K));
+        let max_ram_K = compute_max_ram_K(&preprocessing.shared.memory_layout);
+        if !proof.ram_K.is_power_of_two() || proof.ram_K < min_ram_K || proof.ram_K > max_ram_K {
+            return Err(ProofVerifyError::InvalidRamK {
+                got: proof.ram_K,
+                min: min_ram_K,
+                max: max_ram_K,
+            });
         }
 
         proof
@@ -1806,7 +1812,7 @@ impl ark_serialize::Valid for JoltSharedPreprocessing {
 impl JoltSharedPreprocessing {
     #[tracing::instrument(skip_all, name = "JoltSharedPreprocessing::new")]
     pub fn new(
-        bytecode: Vec<Instruction>,
+        bytecode: Vec<NormalizedInstruction>,
         memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
         max_padded_trace_length: usize,

@@ -6,14 +6,13 @@ use crate::tables::prefixes::{PrefixEval, Prefixes};
 use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
-use crate::XLEN;
 
 /// Sign-extends the lower half of a word to the full word width.
 /// For XLEN=64, sign-extends a 32-bit value to 64 bits.
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct SignExtendHalfWordTable;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct SignExtendHalfWordTable<const XLEN: usize>;
 
-impl LookupTable for SignExtendHalfWordTable {
+impl<const XLEN: usize> LookupTable for SignExtendHalfWordTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let half_word_size = XLEN / 2;
         let lower_half = (index % (1u128 << half_word_size)) as u64;
@@ -50,7 +49,7 @@ impl LookupTable for SignExtendHalfWordTable {
     }
 }
 
-impl PrefixSuffixDecomposition for SignExtendHalfWordTable {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SignExtendHalfWordTable<XLEN> {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[
             Suffixes::One,
@@ -71,16 +70,22 @@ impl PrefixSuffixDecomposition for SignExtendHalfWordTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
+    fn mle_full_hypercube() {
+        mle_full_hypercube_test::<8, Fr, SignExtendHalfWordTable<8>>();
+    }
+
+    #[test]
     fn mle_random() {
-        mle_random_test::<Fr, SignExtendHalfWordTable>();
+        mle_random_test::<XLEN, Fr, SignExtendHalfWordTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, SignExtendHalfWordTable>();
+        prefix_suffix_test::<XLEN, Fr, SignExtendHalfWordTable<XLEN>>();
     }
 }
