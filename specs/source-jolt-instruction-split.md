@@ -401,7 +401,7 @@ pub enum JoltTargetExtension {
     /// Advice-producing and advice-consuming virtual operations.
     Advice,
     /// Host I/O virtual operations.
-    HostIo,
+    HostIO,
     /// Virtual assertions used by expansion and inlines.
     VirtualAssertions,
     /// Virtual arithmetic helpers used by division, word ops, and carries.
@@ -460,7 +460,7 @@ The current default target profile should include:
 - `JoltTargetExtension::LoadStore64`: final `LD` and `SD` instructions;
 - `JoltTargetExtension::Advice`: `VirtualAdvice`, `VirtualAdviceLen`, and
   `VirtualAdviceLoad`;
-- `JoltTargetExtension::HostIo`: `VirtualHostIO`;
+- `JoltTargetExtension::HostIO`: `VirtualHostIO`;
 - `JoltTargetExtension::VirtualAssertions`: `VirtualAssertEQ`,
   `VirtualAssertLTE`, `VirtualAssertValidDiv0`,
   `VirtualAssertValidUnsignedRemainder`, `VirtualAssertMulUNoOverflow`,
@@ -521,7 +521,7 @@ pub const RV64IMAC_JOLT: JoltInstructionProfile = JoltInstructionProfile {
         JoltTargetExtension::ControlFlow,
         JoltTargetExtension::LoadStore64,
         JoltTargetExtension::Advice,
-        JoltTargetExtension::HostIo,
+        JoltTargetExtension::HostIO,
         JoltTargetExtension::VirtualAssertions,
         JoltTargetExtension::VirtualArithmetic,
         JoltTargetExtension::VirtualShifts,
