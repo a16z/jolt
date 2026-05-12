@@ -85,6 +85,10 @@ phase shares.
   instruction lowerings. The refactor may change the underlying recipe and row
   types, but the call-site syntax for ordinary expansions should remain at
   least as easy to parse as the current builder style.
+- The resulting instruction and expansion code should remain extraction
+  friendly. The PR does not need to make Hax or Aeneas fully compile the
+  extracted output today, but it should avoid Rust patterns that are inherently
+  difficult to translate into proof-oriented languages.
 - `jolt-program::expand` remains independent of tracer CPU state, advice tapes,
   concrete tracer cycles, PCS/prover code, and ELF parsing.
 - Prover/verifier behavior is unchanged. Bytecode preprocessing, PC mapping,
@@ -98,7 +102,9 @@ phase shares.
   `JoltInstruction` rows.
 - Do not change RISC-V or Jolt instruction semantics.
 - Do not change the registered inline algorithms themselves.
-- Do not require Hax/Aeneas extraction to compile in this PR.
+- Do not require Hax/Aeneas extraction to compile in this PR. Current extraction
+  tools have temporary limitations, and this PR should not contort otherwise
+  good Rust APIs around those limitations.
 - Do not introduce deprecated aliases, conversion shims, or dual public APIs.
   This is a full cutover.
 - Do not make `jolt-program` depend on `tracer`.
@@ -135,6 +141,8 @@ phase shares.
 - [ ] Concrete expansion files remain ergonomic for human authors: common
       lowering code should read like a small instruction sequence, not like
       serialized grammar data or generated tables.
+- [ ] The refactor does not introduce extraction-hostile Rust patterns in the
+      instruction catalog, row types, or expansion pipeline.
 - [ ] Tracer concrete `Instruction`/`Cycle` APIs execute final Jolt rows, while
       decoded source instructions convert through the expansion path before
       trace execution.
@@ -224,6 +232,38 @@ The catalog/profile work has the same constraint. Metadata can become more
 structured, but instruction authors should not need to mentally execute macro
 grammar to understand whether an opcode is source-only, target-only,
 lookup-backed, side-effecting, or part of a default profile.
+
+### Extraction Friendliness
+
+This PR should keep the code on a path toward clean extraction into theorem
+prover targets such as Lean. That does not mean optimizing the Rust code around
+today's Hax/Aeneas limitations, especially when those limitations are likely to
+move. It does mean avoiding choices that are structurally unfriendly to
+extraction.
+
+Prefer:
+
+- plain data types with explicit fields over packed, phase-dependent encodings;
+- small enums and structs with local invariants over trait-object or callback
+  heavy control flow;
+- total conversion functions that return typed errors over implicit panics;
+- simple iterator/loop structure where it keeps the code just as readable;
+- catalog metadata that can be inspected as data, not only through macro
+  expansion side effects.
+
+Avoid introducing:
+
+- `dyn` dispatch or closure-heavy APIs in the core instruction/expansion path;
+- hidden global state for catalog/profile decisions;
+- unsafe code in catalog, decode, or expansion plumbing;
+- encodings where a field has unrelated meanings depending on an instruction
+  phase;
+- procedural macro magic that makes the generated instruction set difficult to
+  audit or mirror in extracted code.
+
+Extraction-friendliness is subordinate to correctness, performance, and idiomatic
+Rust, but it should influence tie-breakers when two designs are otherwise
+comparable.
 
 ## Design
 
