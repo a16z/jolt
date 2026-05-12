@@ -5,7 +5,7 @@
 | Author(s)   | Quang Dao |
 | Created     | 2026-05-12 |
 | Status      | proposed |
-| PR          | TBD |
+| PR          | [#1522](https://github.com/a16z/jolt/pull/1522) |
 
 ## Summary
 
