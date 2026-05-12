@@ -45,9 +45,12 @@ layer across decode, expansion, tracer conversion, bytecode preprocessing, and
 inline expansion:
 
 - universal instruction enums: the source of truth for shipped source/final row
-  identities, stable discriminants, and enum-to-marker-struct dispatch.
+  identities, canonical operation names, compact binary tags, and
+  enum-to-marker-struct dispatch.
 - profile legality: the source of truth for which source instructions decode
   under a selected profile and which final rows are legal after expansion.
+- profile-local dense indexes: generated indexes used by profile-specific
+  tables only, never the persistent identity of an instruction.
 - crate-local decorations: the source of truth for crate-specific behavior and
   metadata such as decode encodings, expansion dispatch, tracer execution,
   lookup-table routing, circuit flags, and instruction flags.
@@ -85,6 +88,13 @@ profile legality deciding what is accepted for a given compiled configuration.
   source opcode should not automatically add a final Jolt bytecode row, and
   adding a target-only virtual row should not automatically make it decodable
   from guest program bytes.
+- Instruction identity is not Rust declaration order. Each source/final row
+  identity has a canonical operation name such as `riscv.rv64i.add` or
+  `jolt.virtual.sign_extend_word`. Compact numeric tags are a binary encoding
+  of those names for serialization, fixtures, and other persistent cross-crate
+  references. Profile-local dense indexes may be regenerated for selected
+  legality sets, but they must be derived from canonical names/tags and tied to
+  the selected profile/catalog fingerprint.
 - Source/final enum variants carry the marker structs directly, e.g.
   `SourceInstruction::ADD(Add<SourceRow>)` and
   `JoltInstruction::VirtualSignExtendWord(VirtualSignExtendWord<JoltRow>)`.
@@ -136,6 +146,11 @@ profile legality deciding what is accepted for a given compiled configuration.
 - Prover/verifier behavior is unchanged. Bytecode preprocessing, PC mapping,
   instruction flags, lookup-table routing, and trace witness generation must
   see the same final Jolt rows as before.
+- Adding a future instruction must not renumber existing serialized source or
+  final row identities. If a new row changes a profile-local dense index used by
+  preprocessing or proving tables, the corresponding profile/catalog
+  fingerprint must change so stale artifacts are rejected rather than silently
+  reused.
 
 ### Non-Goals
 
@@ -179,8 +194,13 @@ profile legality deciding what is accepted for a given compiled configuration.
 - [ ] Source and final row universes are separate closed enums whose variants
       carry marker structs, e.g. `ADD(Add<T>)`. They are not mirrored bare tag
       enums and are not generated differently for each profile.
-- [ ] Stable discriminants/serialization are explicit for the universal
-      source/final enums and do not depend on which profile is selected.
+- [ ] Canonical operation names and stable `u16` Jolt tags are explicit for the
+      universal source/final enums supported by this catalog. Serialization does
+      not depend on Rust enum declaration order, generated display order, or
+      which profile is selected.
+- [ ] Any dense instruction indexes used by profile-specific preprocessing,
+      lookup, or proving tables are generated from compact tags for that
+      selected profile and are not used as persistent instruction identity.
 - [ ] Decode metadata and operand parsing are declared in `jolt-program`, keyed
       by instruction marker structs or `SourceInstruction<T>`
       variants, not duplicated as an unrelated handwritten opcode list.
@@ -246,11 +266,17 @@ Add or update tests for:
 - registered inline provider returning only target-legal `JoltInstruction`
   rows;
 - final bytecode rejecting every source-only kind at preprocessing;
+- canonical-name and compact-tag tests proving existing identities do not change
+  when generated enum order changes or new instructions are appended;
+- profile dense-index tests proving unsupported rows have no index and supported
+  rows map to a contiguous profile-local range;
+- profile/catalog fingerprint tests proving a changed legal row set changes the
+  artifact identity used by preprocessing/proving;
 - tracer execution of expanded rows after the source/final cutover;
 - fixture parity for the existing representative source corpus;
 - a `jolt-eval` invariant named `source_to_jolt_expansion_equivalence` that
   compares the new source-to-final expansion stream against the pre-refactor
-  normalized expansion semantics modulo intentional row type and discriminant
+  normalized expansion semantics modulo intentional row type and compact-tag
   renames.
 
 ### Performance
@@ -316,7 +342,7 @@ by phase-specific row types, even if the emitted program is semantically
 unchanged. Regenerating that fixture is therefore not itself sufficient evidence.
 Before updating hashes, add a structural equivalence check that compares the new
 `SourceInstruction<SourceRow> -> Vec<JoltInstruction<JoltRow>>` stream with the
-post-#1518 `main` semantics modulo intentional type/discriminant renames and the
+post-#1518 `main` semantics modulo intentional type/compact-tag renames and the
 removal of the old `JoltInstructionKind::Inline` tag from final rows.
 
 The durable invariant should live in `jolt-eval` as
@@ -380,7 +406,8 @@ metadata. That ownership should stay deliberately small. It should provide:
   `VirtualSignExtendWord<T>`;
 - the universal source/final row enums whose variants carry those marker
   structs;
-- stable enum variant names and serialization discriminants;
+- stable enum variant names, canonical operation names, and compact binary tags
+  used for serialization;
 - row structs and profile-independent row-shape types shared across crates.
 
 It should not provide a mega declaration that also names decode opcodes,
@@ -447,6 +474,118 @@ selected source profile defines which source rows decode, and the target closure
 defines which final rows may be emitted by this profile. Source operands may
 continue to use normalized register fields for ordinary rows; inline dispatch
 metadata should not be stored in an immediate field.
+
+### Canonical Names, Tags, And Profile Indexes
+
+Do not use Rust enum declaration order as instruction identity. Source and
+final row enums should have canonical operation names that are explicit,
+reviewed, and namespace-qualified. This follows the MLIR model: the durable
+semantic identity is a dialect-like namespace plus an operation mnemonic, while
+compact encodings are an implementation detail.
+
+Examples:
+
+```text
+riscv.rv64i.add
+riscv.rv64m.mul
+riscv.rv64f.fadd_s
+jolt.virtual.sign_extend_word
+jolt.field.bn254.mul
+jolt.inline.sha2.compress
+wasm.i32.add
+```
+
+RISC-V instruction encodings are useful decode metadata, not sufficient Jolt
+row identities. A RISC-V instruction is usually identified by an encoding
+pattern such as `(opcode, funct3, funct7)` or by compressed-instruction fields,
+not by the 7-bit opcode alone. Several instructions share the same opcode,
+compressed rows live in a different encoding space, and Jolt virtual/final-only
+rows have no source-program RISC-V encoding at all. Therefore `jolt-program`
+should own RISC-V encoding facts for decode, while `jolt-riscv` owns canonical
+operation names for source/final row identity.
+
+For Jolt's binary artifacts, every operation supported by the shipped Jolt
+catalog has a compact stable tag. The name is the reviewable semantic identity;
+the tag is the compact serialization of that identity for bytecode rows,
+fixtures, preprocessing keys, and proof-adjacent tables. This tag only needs to
+cover operations Jolt actually supports in the current catalog, not every
+operation in every possible future source ISA. A stable `u16` tag is therefore
+the preferred starting point: it keeps bytecode row serialization as compact as
+today while decoupling identity from Rust enum declaration order.
+
+Use metadata like this in the generated catalog data:
+
+```rust
+pub trait SourceOp {
+    const CANONICAL_NAME: &'static str;
+    const JOLT_TAG: JoltOpTag;
+}
+
+pub trait JoltOp {
+    const CANONICAL_NAME: &'static str;
+    const JOLT_TAG: JoltOpTag;
+}
+
+impl<T> SourceOp for Add<T> {
+    const CANONICAL_NAME: &'static str = "riscv.rv64i.add";
+    const JOLT_TAG: JoltOpTag = JoltOpTag(0x0101);
+}
+
+impl<T> JoltOp for Add<T> {
+    const CANONICAL_NAME: &'static str = "riscv.rv64i.add";
+    const JOLT_TAG: JoltOpTag = JoltOpTag(0x0101);
+}
+
+impl<T> SourceOp for AddW<T> {
+    const CANONICAL_NAME: &'static str = "riscv.rv64i.addw";
+    const JOLT_TAG: JoltOpTag = JoltOpTag(0x0102);
+}
+
+impl<T> JoltOp for VirtualSignExtendWord<T> {
+    const CANONICAL_NAME: &'static str = "jolt.virtual.sign_extend_word";
+    const JOLT_TAG: JoltOpTag = JoltOpTag(0x8001);
+}
+```
+
+The tag is allocated only for supported Jolt source/final rows. Future source
+ISA operations may be known by canonical name without receiving a Jolt tag until
+the selected Jolt catalog actually supports them. Numeric tag ranges may be used
+as a readability aid, but they must not be the source of architectural meaning.
+The robust partition is the canonical name namespace: `riscv.*`,
+`jolt.virtual.*`, `jolt.field.*`, `jolt.inline.*`, `wasm.*`, and future
+namespaces. If a row moves from source-only to final-only, or from an inline
+helper to a first-class operation, its name and tag should change only if its
+semantic identity changes.
+
+Profile-local dense indexes are a separate concept. They may be compact and may
+change when a profile's legal final-row set changes:
+
+```rust
+pub struct ProfileInstructionIndex(u16);
+
+impl Rv64imacJolt {
+    pub const fn jolt_dense_index(tag: JoltOpTag) -> Option<ProfileInstructionIndex> {
+        match tag {
+            tag!("riscv.rv64i.add") => Some(ProfileInstructionIndex(0)),
+            tag!("riscv.rv64i.addi") => Some(ProfileInstructionIndex(1)),
+            tag!("riscv.rv64m.mul") => Some(ProfileInstructionIndex(2)),
+            tag!("riscv.rv64i.ld") => Some(ProfileInstructionIndex(3)),
+            tag!("jolt.virtual.sign_extend_word") => Some(ProfileInstructionIndex(4)),
+            _ => None,
+        }
+    }
+}
+```
+
+Dense indexes are appropriate for profile-specific preprocessing, lookup, or
+proving tables. Concrete examples include arrays of per-profile final-row
+metadata, profile-specific legality bitsets, lookup-routing tables keyed by the
+selected final-row set, and any proving key/preprocessing structure that wants a
+contiguous `[0, profile_instruction_count)` coordinate. Dense indexes are not
+appropriate for canonical identity, serialization source of truth, fixture
+identity, or cross-profile references. Any artifact that relies on dense
+indexes must be keyed by the selected profile/catalog fingerprint so that stale
+tables cannot be reused after adding or removing legal rows.
 
 Profiles should not change the Rust enum shape. This is intentionally closer to
 MLIR than to profile-specific generated Rust APIs: operations exist in the
@@ -767,7 +906,8 @@ requiring callers to maintain a parallel target list. The Rust enum remains the
 same universal shipped final-row enum; the selected profile changes which rows
 decode and which final rows pass preprocessing legality. Cross-profile proof
 artifact compatibility is not a goal of this PR: circuit/preprocessing keys are
-tied to the selected compile-time profile and its legality sets.
+tied to the selected compile-time profile, compact tags, dense-index maps, and
+legality sets.
 
 Reserve these shipped preset names:
 
@@ -956,44 +1096,57 @@ book update is required unless public SDK APIs expose the new names directly.
 2. Add universal `SourceInstruction<T = SourceRow>` and
    `JoltInstruction<T = JoltRow>` enums whose variants carry marker structs,
    following the existing `LookupInstruction` pattern.
-3. Add explicit stable serialization/discriminants for those universal row
-   enums. Discriminants must not depend on the selected profile.
+3. Add explicit canonical operation names, stable `u16` Jolt tags, and
+   serialization for those universal row enums. Tags must encode canonical names
+   for rows supported by this catalog and must not depend on Rust enum
+   declaration order or the selected profile.
 4. Add the shipped `JoltInstructionProfile` presets and positive source/target
    legality APIs. Profiles select legal rows; they do not change enum shape.
-5. Add `jolt-program`-owned decode metadata keyed by marker structs or source
+5. Add generated profile-local dense-index maps where preprocessing/proving
+   needs compact indexes. Dense indexes must be derived from compact tags and
+   included in the selected profile/catalog artifact fingerprint.
+6. Add `jolt-program`-owned decode metadata keyed by marker structs or source
    enum variants, then change ELF/word decode to return
    `SourceInstruction<SourceRow>` after profile legality validation.
-6. Add `jolt-program`-owned source expansion metadata/dispatch keyed by marker
+7. Add `jolt-program`-owned source expansion metadata/dispatch keyed by marker
    structs or source enum variants.
-7. Change `jolt-program::expand` public APIs and internal recipes to consume
+8. Change `jolt-program::expand` public APIs and internal recipes to consume
    source rows and emit target rows.
-8. Remove `Inline` from the final `JoltInstruction<T>` universe and move inline
+9. Remove `Inline` from the final `JoltInstruction<T>` universe and move inline
    metadata to source-only types.
-9. Cut bytecode preprocessing, `JoltProgram`, execution rows, and proof imports
+10. Cut bytecode preprocessing, `JoltProgram`, execution rows, and proof imports
    over to `JoltInstruction`.
-10. Update tracer conversions so decode/source paths and expanded execution paths
+11. Update tracer conversions so decode/source paths and expanded execution paths
    are separate while preserving tracer ownership of concrete execution
    semantics.
-11. Update `TracerInlineExpansionProvider` and `jolt-inlines-sdk` boundaries so
+12. Update `TracerInlineExpansionProvider` and `jolt-inlines-sdk` boundaries so
    registered inline expansion accepts source inline rows and returns validated
    final rows.
-12. Move or preserve lookup/proving metadata in the lookup/proving owner, keyed
+13. Move or preserve lookup/proving metadata in the lookup/proving owner, keyed
     by final instruction identities; do not add lookup-table flags, circuit
     flags, or instruction flags to the `jolt-riscv` row enum definitions.
-13. Delete obsolete normalized-row aliases, stale legality helpers, and any
+14. Delete obsolete normalized-row aliases, stale legality helpers, and any
     source-only variants left in `JoltInstruction<T>`.
-14. Add small default-profile legality tests that check current supported source
+15. Add small default-profile legality tests that check current supported source
     extensions, inline extensions, and computed target legality closure
     accept/reject the expected source/final rows.
-15. Add the `jolt-eval` `source_to_jolt_expansion_equivalence` invariant and use
+16. Add canonical-name, compact-tag, and dense-index tests that prove adding a
+    row does not rename existing operations or renumber existing serialized
+    tags, unsupported rows have no profile-local dense index, and
+    profile/catalog fingerprinting changes when dense maps or legality sets
+    change.
+17. Add the `jolt-eval` `source_to_jolt_expansion_equivalence` invariant and use
     it to gate any expansion fixture/hash regeneration.
-16. Run the full validation stack and update the expansion fixture/hash only if
+18. Run the full validation stack and update the expansion fixture/hash only if
     row type serialization changes while structural expansion output remains
     unchanged.
 
 ## References
 
 - [PR #1518](https://github.com/a16z/jolt/pull/1518)
+- [MLIR Language Reference](https://mlir.llvm.org/docs/LangRef/)
+- [MLIR Operation Definition Specification](https://mlir.llvm.org/docs/DefiningDialects/Operations/)
+- [MLIR Bytecode Format](https://mlir.llvm.org/docs/BytecodeFormat/)
 - [`specs/compiler-native-bytecode-expansion.md`](compiler-native-bytecode-expansion.md)
 - [`specs/bytecode-expansion-crate.md`](bytecode-expansion-crate.md)
 - Archived extraction audit:
