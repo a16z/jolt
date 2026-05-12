@@ -37,13 +37,17 @@ be broad mirrored `SourceInstructionKind` / `JoltInstructionKind` enums.
 
 ### Goal
 
-Introduce phase-specific instruction data types and use them across decode,
-expansion, tracer conversion, bytecode preprocessing, and inline expansion:
+Introduce an explicit instruction catalog/profile layer, then use the selected
+profile to generate phase-specific instruction identifiers and row types across
+decode, expansion, tracer conversion, bytecode preprocessing, and inline
+expansion:
 
-- `SourceInstructionKind`: decoded source-program opcode identity.
+- catalog entries: the source of truth for instruction membership, phase,
+  extension/profile membership, side effects, and lookup/proof support.
+- `SourceInstructionKind`: generated decoded source-program opcode identity.
 - `SourceInstruction`: decoded source row, including address, operands,
   compression metadata, and inline dispatch metadata when applicable.
-- `JoltInstructionKind`: final expanded bytecode row identity.
+- `JoltInstructionKind`: generated final expanded bytecode row identity.
 - `JoltInstruction`: final bytecode/proof/tracer row, including operands,
   address, virtual-sequence metadata, and compression-tail metadata.
 
@@ -51,11 +55,10 @@ The old `NormalizedInstruction` row should not remain as a compatibility shim.
 If a temporary name is needed while editing, it must be removed before the PR is
 ready for review.
 
-The concrete enums may remain closed Rust enums for now. That is useful for
-serialization, match exhaustiveness, static dispatch, and proof performance.
-The important architectural change is that they should be treated as generated
-views over catalog metadata, not as one hand-maintained global list that every
-phase shares.
+The concrete `*InstructionKind` types may remain closed Rust enums. That is
+useful for serialization, match exhaustiveness, static dispatch, and proof
+performance. They must be generated views over catalog/profile metadata, not
+one hand-maintained global list that every phase shares.
 
 Catalog/profile support is part of the main goal, not a stretch goal. The PR
 should leave `SourceInstructionKind` and `JoltInstructionKind` as phase-specific
@@ -80,9 +83,9 @@ of instruction-set truth.
   `Inline`, `ADDW`, `LW`, `SW`, AMOs, traps, CSR rows, shifts, DIV/REM, advice
   source loads, and other source-only expansion inputs must be rejected before
   preprocessing.
-- `JoltInstructionKind` contains only target-legal rows consumed by bytecode
-  preprocessing, tracer execution, and proof lookup metadata. In particular, it
-  must not contain `Inline`.
+- Generated `JoltInstructionKind` contains only target-legal rows consumed by
+  bytecode preprocessing, tracer execution, and proof lookup metadata. In
+  particular, it must not contain `Inline`.
 - Source and final rows carry different semantic metadata:
   source rows know decode/inline identity; final rows know virtual-sequence
   position.
@@ -133,10 +136,11 @@ of instruction-set truth.
       and returns `Vec<JoltInstruction>`.
 - [ ] Recursive expansion internally distinguishes source helper dispatch from
       direct target-row emission without relying on a broad shared enum.
-- [ ] `JoltInstructionKind` no longer has `Inline` and no longer contains rows
-      rejected by final-bytecode legality.
-- [ ] `SourceInstructionKind` remains broad enough to describe decoded RV64,
-      Jolt custom source opcodes, and registered inline opcodes.
+- [ ] Generated `JoltInstructionKind` no longer has `Inline` and no longer
+      contains rows rejected by final-bytecode legality.
+- [ ] Generated `SourceInstructionKind` contains decoded RV64, Jolt custom
+      source opcodes, and registered inline opcodes selected by the source
+      catalog/profile.
 - [ ] The instruction catalog records source membership and target membership
       separately. `SourceInstructionKind` and `JoltInstructionKind` are generated
       from those memberships rather than from one shared variant list.
@@ -296,22 +300,25 @@ ELF / decoded word
   -> bytecode preprocessing / tracer execution / proof lookup metadata
 ```
 
-`jolt-riscv` owns both row families:
+`jolt-riscv` owns the catalog and the generated source/final row identifiers
+because it is the lowest common crate shared by decode, expansion, tracer,
+bytecode preprocessing, and lookup metadata. It should not own tracer execution
+state or lookup table implementations. In this PR, `jolt-riscv` should define
+catalog data first, then derive the source and target instruction-kind views
+from that data.
 
 ```rust
-pub enum SourceInstructionKind {
-    ADD,
-    ADDIW,
-    LW,
-    SW,
-    CSRRW,
-    Inline,
-    VirtualRev8W,
-    AdviceLD,
-    // decoded source-program opcode identities
+pub struct InstructionCatalogEntry {
+    pub name: InstructionName,
+    pub phase: InstructionPhase,
+    pub source: Option<SourceInstructionSpec>,
+    pub target: Option<JoltInstructionSpec>,
+    pub side_effects: bool,
+    pub lookup: LookupSupport,
 }
 
 pub struct SourceInstruction {
+    // Generated from catalog entries whose `source` field is present.
     pub kind: SourceInstructionKind,
     pub address: usize,
     pub operands: SourceOperands,
@@ -325,20 +332,8 @@ pub struct SourceInline {
     pub funct7: u32,
 }
 
-pub enum JoltInstructionKind {
-    ADD,
-    ADDI,
-    LD,
-    SD,
-    MUL,
-    MULHU,
-    VirtualAdvice,
-    VirtualAssertEQ,
-    VirtualSignExtendWord,
-    // only rows legal after expansion
-}
-
 pub struct JoltInstruction {
+    // Generated from catalog entries whose `target` field is present.
     pub kind: JoltInstructionKind,
     pub address: usize,
     pub operands: JoltOperands,
@@ -348,10 +343,12 @@ pub struct JoltInstruction {
 }
 ```
 
-The exact operand type names can change, but the phase split should be visible
-at the type level. Source operands may continue to use normalized register
-fields for ordinary rows; inline dispatch metadata should not be stored in an
-immediate field.
+The exact operand/spec type names can change, but the ownership relationship
+should not: catalog entries define what exists, selected profiles define what is
+enabled, and `SourceInstructionKind` / `JoltInstructionKind` are generated
+identifiers over those selected catalog entries. Source operands may continue to
+use normalized register fields for ordinary rows; inline dispatch metadata
+should not be stored in an immediate field.
 
 ### Catalog And Profiles
 
