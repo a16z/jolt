@@ -11,15 +11,19 @@ categories = ["cryptography", "no-std"]
 [lints]
 workspace = true
 
+[features]
+default = ["transcript-blake2b", "transcript-keccak", "transcript-poseidon"]
+transcript-blake2b = ["spongefish/blake2"]
+transcript-keccak = ["spongefish/keccak"]
+transcript-poseidon = ["dep:light-poseidon"]
+
 [dependencies]
 ark-bn254.workspace = true
 ark-ff.workspace = true
-ark-serialize.workspace = true
-blake2.workspace = true
-digest.workspace = true
-light-poseidon.workspace = true
-sha3.workspace = true
+light-poseidon = { workspace = true, optional = true }
+spongefish = { workspace = true }
 jolt-field.workspace = true
+rand.workspace = true
 
 [dev-dependencies]
 num-traits = { workspace = true }

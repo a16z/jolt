@@ -4,7 +4,6 @@ mod common;
 
 use jolt_field::Fr;
 use jolt_transcript::KeccakTranscript;
-use num_traits::Zero;
 
 type Kec = KeccakTranscript<Fr>;
 
@@ -12,28 +11,19 @@ transcript_tests!(Kec);
 
 #[test]
 fn test_keccak_known_vector() {
+    use ark_ff::PrimeField;
     use jolt_transcript::Transcript;
 
     let mut transcript = KeccakTranscript::<Fr>::new(b"Jolt");
     transcript.append_bytes(&12345u64.to_be_bytes());
-
     let challenge: Fr = transcript.challenge();
 
-    assert!(!challenge.is_zero());
-
-    let mut transcript2 = KeccakTranscript::<Fr>::new(b"Jolt");
-    transcript2.append_bytes(&12345u64.to_be_bytes());
-    assert_eq!(challenge, transcript2.challenge());
-}
-
-#[test]
-fn test_keccak_state_accessor() {
-    use jolt_transcript::Transcript;
-
-    let transcript = KeccakTranscript::<Fr>::new(b"test");
-    let state = transcript.state();
-
-    assert_eq!(state.len(), 32);
-
-    assert!(!state.iter().all(|&b| b == 0));
+    // Pinned wire-format check; see Blake2b counterpart for rationale.
+    let expected: ark_bn254::Fr = ark_bn254::Fr::from_le_bytes_mod_order(&[
+        0x1E, 0x1D, 0x14, 0x83, 0xB5, 0x56, 0xB0, 0x9C, 0x1C, 0xEC, 0x84, 0x40, 0x02, 0x78, 0x38,
+        0x5F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00,
+    ]);
+    let got: ark_bn254::Fr = challenge.into();
+    assert_eq!(got, expected, "Keccak known-vector regression");
 }
