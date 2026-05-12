@@ -198,6 +198,72 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionParams<F> {
     }
 }
 
+impl<F: JoltField> AdviceClaimReductionParams<F> {
+    #[cfg(feature = "zk")]
+    fn final_advice_output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let advice_opening = match self.kind {
+            AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReduction),
+            AdviceKind::Untrusted => OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReduction),
+        };
+        Some(OutputClaimConstraint::linear(vec![(
+            ValueSource::Challenge(0),
+            ValueSource::Opening(advice_opening),
+        )]))
+    }
+
+    fn final_advice_output_scale(&self, sumcheck_challenges: &[F::Challenge]) -> F {
+        let eq_eval = self.final_advice_eq_eval(sumcheck_challenges);
+        let scale = match self.phase {
+            PrecommittedPhase::CycleVariables => self.precommitted.cycle_phase_skip_scale(),
+            PrecommittedPhase::AddressVariables => {
+                precommitted_skip_round_scale(&self.precommitted)
+            }
+        };
+        eq_eval * scale
+    }
+
+    fn final_advice_eq_eval(&self, sumcheck_challenges: &[F::Challenge]) -> F {
+        let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(
+            self.precommitted
+                .poly_opening_round_permutation_be()
+                .iter()
+                .map(|&global_round| {
+                    self.challenge_for_global_round(global_round, sumcheck_challenges)
+                })
+                .collect(),
+        );
+        EqPolynomial::mle(&opening_point.r, &self.r_val.r)
+    }
+
+    fn challenge_for_global_round(
+        &self,
+        global_round: usize,
+        sumcheck_challenges: &[F::Challenge],
+    ) -> F::Challenge {
+        let cycle_rounds = self.precommitted.cycle_alignment_rounds();
+        if global_round < cycle_rounds {
+            return match self.phase {
+                PrecommittedPhase::CycleVariables => sumcheck_challenges[global_round],
+                PrecommittedPhase::AddressVariables => {
+                    let idx = self
+                        .precommitted
+                        .cycle_phase_rounds()
+                        .binary_search(&global_round)
+                        .expect("cycle round should be active for advice polynomial");
+                    self.precommitted.cycle_var_challenges[idx]
+                }
+            };
+        }
+
+        assert_eq!(
+            self.phase,
+            PrecommittedPhase::AddressVariables,
+            "cycle-phase final advice scale should not contain address rounds"
+        );
+        sumcheck_challenges[global_round - cycle_rounds]
+    }
+}
+
 impl<F: JoltField> PrecomittedParams<F> for AdviceClaimReductionParams<F> {
     fn is_cycle_phase(&self) -> bool {
         self.phase == PrecommittedPhase::CycleVariables
@@ -450,5 +516,75 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn round_offset(&self, max_num_rounds: usize) -> usize {
         let params = self.params.borrow();
         params.round_offset(max_num_rounds)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_bn254::Fr;
+
+    type Challenge = <Fr as JoltField>::Challenge;
+
+    #[test]
+    fn final_advice_output_scale_counts_leading_dummy_rounds_when_col_range_is_empty() {
+        let challenges = [0, 12, 13]
+            .map(|value| Challenge::from(value as u128))
+            .to_vec();
+        let active_opening_point =
+            OpeningPoint::<LITTLE_ENDIAN, Fr>::new(challenges[0..1].to_vec()).match_endianness();
+        let scheduling_reference = PrecommittedSchedulingReference {
+            main_total_vars: 3,
+            reference_total_vars: 3,
+            cycle_alignment_rounds: 3,
+            address_rounds: 0,
+            joint_col_vars: 0,
+        };
+        let params = AdviceClaimReductionParams {
+            kind: AdviceKind::Trusted,
+            phase: PrecommittedPhase::CycleVariables,
+            precommitted: PrecommittedClaimReduction::new(1, 0, scheduling_reference),
+            advice_col_vars: 0,
+            advice_row_vars: 1,
+            r_val: active_opening_point,
+        };
+
+        let two_inv = Fr::from_u64(2).inverse().unwrap();
+
+        assert_eq!(
+            params.final_advice_output_scale(&challenges),
+            two_inv * two_inv
+        );
+    }
+
+    #[test]
+    fn final_advice_output_scale_ignores_unrun_address_dummy_rounds() {
+        let challenges = [11, 12]
+            .map(|value| Challenge::from(value as u128))
+            .to_vec();
+        let r_val = OpeningPoint::<BIG_ENDIAN, Fr>::new(vec![Challenge::from(7)]);
+        let scheduling_reference = PrecommittedSchedulingReference {
+            main_total_vars: 4,
+            reference_total_vars: 4,
+            cycle_alignment_rounds: 2,
+            address_rounds: 2,
+            joint_col_vars: 0,
+        };
+        let params = AdviceClaimReductionParams {
+            kind: AdviceKind::Trusted,
+            phase: PrecommittedPhase::CycleVariables,
+            precommitted: PrecommittedClaimReduction::new(1, 0, scheduling_reference),
+            advice_col_vars: 0,
+            advice_row_vars: 1,
+            r_val,
+        };
+
+        let two_inv = Fr::from_u64(2).inverse().unwrap();
+        let expected_eq = EqPolynomial::mle(&[challenges[0]], &params.r_val.r);
+
+        assert_eq!(
+            params.final_advice_output_scale(&challenges),
+            expected_eq * two_inv
+        );
     }
 }

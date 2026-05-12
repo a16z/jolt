@@ -80,10 +80,15 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
         let has_precommitted_dominance =
             scheduling_reference.reference_total_vars > scheduling_reference.main_total_vars;
         let embedding_mode = Self::embedding_mode_for_poly(poly_total_vars, &scheduling_reference);
+        let dense_cycle_prefix_rounds = if has_precommitted_dominance {
+            DoryGlobals::main_t().log_2()
+        } else {
+            0
+        };
         let dory_opening_round_permutation_be = Self::reference_dory_opening_round_permutation_be(
             &scheduling_reference,
             has_precommitted_dominance,
-            DoryGlobals::main_t().log_2(),
+            dense_cycle_prefix_rounds,
         );
         let poly_opening_round_permutation_be = Self::project_dory_round_permutation_for_poly(
             &dory_opening_round_permutation_be,
