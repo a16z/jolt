@@ -138,7 +138,7 @@ where
             transcript.append(c);
         }
         let r: P::ScalarField = transcript.challenge();
-        let u = vec![r, -r, r * r];
+        let u = [r, -r, r * r];
 
         // Phase 3: batch open all polynomials at the three points
         let (w, v) = kzg_open_batch::<P, T>(&polys, &u, setup, transcript);
@@ -168,16 +168,10 @@ where
             });
         }
 
-        // Validate proof dimensions before mutating the transcript.
+        // Validate inner evaluation widths before mutating the transcript.
         let v = &proof.v;
-        if v.len() != 3 {
-            return Err(HyperKZGError::WrongEvaluationRowCount { got: v.len() });
-        }
         if v[0].len() != ell || v[1].len() != ell || v[2].len() != ell {
             return Err(HyperKZGError::WrongEvaluationWidth { expected: ell });
-        }
-        if proof.w.len() != 3 {
-            return Err(HyperKZGError::WrongWitnessCount { got: proof.w.len() });
         }
 
         // Absorb intermediate commitments
@@ -195,7 +189,7 @@ where
         com.push(commitment.point);
         com.extend_from_slice(&proof.com);
 
-        let u = vec![r, -r, r * r];
+        let u = [r, -r, r * r];
 
         let ypos = &v[0]; // evaluations at r
         let yneg = &v[1]; // evaluations at -r
@@ -477,45 +471,6 @@ mod tests {
         assert!(matches!(
             result,
             Err(HyperKZGError::WrongCommitmentCount { .. })
-        ));
-    }
-
-    #[test]
-    fn malformed_witness_commitments_reject_without_panic() {
-        let ell = 4;
-        let n = 1 << ell;
-        let mut rng = ChaCha20Rng::seed_from_u64(44);
-        let (pk, vk) = test_setup(n);
-
-        let poly = Polynomial::<Fr>::random(ell, &mut rng);
-        let point: Vec<Fr> = (0..ell).map(|_| Fr::random(&mut rng)).collect();
-        let eval = poly.evaluate(&point);
-
-        let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
-
-        let mut prover_transcript = Blake2bTranscript::new(b"test-short-w");
-        let mut proof = <TestScheme as CommitmentScheme>::open(
-            &poly,
-            &point,
-            eval,
-            &pk,
-            None,
-            &mut prover_transcript,
-        );
-        let _ = proof.w.pop();
-
-        let mut verifier_transcript = Blake2bTranscript::new(b"test-short-w");
-        let result = TestScheme::verify(
-            &vk,
-            &commitment,
-            &point,
-            &eval,
-            &proof,
-            &mut verifier_transcript,
-        );
-        assert!(matches!(
-            result,
-            Err(HyperKZGError::WrongWitnessCount { .. })
         ));
     }
 

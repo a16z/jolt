@@ -9,14 +9,8 @@ pub enum HyperKZGError {
     #[error("expected {expected} intermediate commitments, got {got}")]
     WrongCommitmentCount { expected: usize, got: usize },
 
-    #[error("expected 3 evaluation rows, got {got}")]
-    WrongEvaluationRowCount { got: usize },
-
     #[error("each evaluation row must have {expected} entries")]
     WrongEvaluationWidth { expected: usize },
-
-    #[error("expected 3 witness commitments, got {got}")]
-    WrongWitnessCount { got: usize },
 
     #[error("polynomial must have at least 1 variable")]
     EmptyPoint,

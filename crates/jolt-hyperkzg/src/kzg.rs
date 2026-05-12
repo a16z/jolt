@@ -7,7 +7,6 @@ use jolt_crypto::{JoltGroup, PairingGroup};
 use jolt_field::Field;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::{One, Zero};
-use rayon::prelude::*;
 
 use crate::error::HyperKZGError;
 use crate::types::{HyperKZGProverSetup, HyperKZGVerifierSetup};
@@ -67,10 +66,10 @@ pub(crate) fn eval_univariate<F: Field>(coeffs: &[F], u: F) -> F {
 /// Returns `(w, v)`.
 pub(crate) fn kzg_open_batch<P, T>(
     f: &[Vec<P::ScalarField>],
-    u: &[P::ScalarField],
+    u: &[P::ScalarField; 3],
     setup: &HyperKZGProverSetup<P>,
     transcript: &mut T,
-) -> (Vec<P::G1>, Vec<Vec<P::ScalarField>>)
+) -> ([P::G1; 3], [Vec<P::ScalarField>; 3])
 where
     P: PairingGroup,
     T: Transcript<Challenge = P::ScalarField>,
@@ -79,11 +78,9 @@ where
 {
     let k = f.len();
 
-    // Compute evaluations v[i][j] = f_j(u_i)
-    let v: Vec<Vec<P::ScalarField>> = u
-        .par_iter()
-        .map(|ui| f.iter().map(|fj| eval_univariate(fj, *ui)).collect())
-        .collect();
+    // Compute evaluations v[t][j] = f_j(u_t)
+    let v: [Vec<P::ScalarField>; 3] =
+        (*u).map(|ui| f.iter().map(|fj| eval_univariate(fj, ui)).collect());
 
     // Absorb all evaluations into transcript
     for row in &v {
@@ -106,13 +103,10 @@ where
     }
 
     // Compute witness polynomials and commit
-    let w: Vec<P::G1> = u
-        .par_iter()
-        .map(|ui| {
-            let h = compute_witness_polynomial::<P::ScalarField>(&b_poly, *ui);
-            P::G1::msm(&setup.g1_powers[..h.len()], &h)
-        })
-        .collect();
+    let w: [P::G1; 3] = (*u).map(|ui| {
+        let h = compute_witness_polynomial::<P::ScalarField>(&b_poly, ui);
+        P::G1::msm(&setup.g1_powers[..h.len()], &h)
+    });
 
     // Absorb witness commitments and mirror the verifier's `d_0` challenge
     // to keep prover/verifier transcripts in sync.
@@ -131,9 +125,9 @@ where
 pub(crate) fn kzg_verify_batch<P, T>(
     vk: &HyperKZGVerifierSetup<P>,
     com: &[P::G1],
-    wit: &[P::G1],
-    u: &[P::ScalarField],
-    v: &[Vec<P::ScalarField>],
+    wit: &[P::G1; 3],
+    u: &[P::ScalarField; 3],
+    v: &[Vec<P::ScalarField>; 3],
     transcript: &mut T,
 ) -> bool
 where
@@ -144,7 +138,7 @@ where
 {
     let k = com.len();
 
-    if wit.len() != 3 || u.len() != 3 || v.len() != 3 || v.iter().any(|row| row.len() != k) {
+    if v.iter().any(|row| row.len() != k) {
         return false;
     }
 

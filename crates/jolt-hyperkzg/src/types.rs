@@ -73,8 +73,8 @@ impl<P: PairingGroup> Default for HyperKZGCommitment<P> {
 ))]
 pub struct HyperKZGProof<P: PairingGroup> {
     pub com: Vec<P::G1>,
-    pub w: Vec<P::G1>,
-    pub v: Vec<Vec<P::ScalarField>>,
+    pub w: [P::G1; 3],
+    pub v: [Vec<P::ScalarField>; 3],
 }
 
 /// Prover setup: SRS G1 and G2 powers.
