@@ -20,83 +20,94 @@ bytecode/preprocessing/tracing/proof rows are Jolt instructions.
 The same cutover should clean up registered inlines. Inline opcodes are source
 program opcodes identified by `(opcode, funct3, funct7)`; they are not final
 Jolt bytecode rows. The inline provider contract should therefore accept source
-inline rows and return final Jolt rows, without routing through a fake
-`JoltInstructionKind::Inline` row.
+inline rows and return final Jolt rows, without routing through the old fake
+final `JoltInstructionKind::Inline` tag.
 
 This split should also prepare Jolt for a more modular instruction world without
 turning this PR into a general profile system or a single all-knowing instruction
-macro. The near-term requirement is to create one shared instruction identity
-registry, then let each crate decorate those identities with the facts it owns.
-`jolt-riscv` should know stable marker names, enum variants, discriminants, row
-shape, and source/final membership. `jolt-program` should own decode and
-expansion facts. `tracer` should own execution semantics. Lookup/proving crates
-should own lookup-table and circuit metadata. The final form of this PR should
-not be broad mirrored `SourceInstructionKind` / `JoltInstructionKind` enums, and
-it should not move downstream proving-system details into `jolt-riscv`.
+macro. The near-term requirement is to create universal source/final instruction
+enums whose variants carry the existing marker structs, then let each crate
+decorate those marker structs with the facts it owns. Profiles should work like
+an MLIR conversion target: the operation universe is stable, while each selected
+profile defines which source rows are accepted and which final rows are legal
+after expansion. `jolt-program` should own decode and expansion facts. `tracer`
+should own execution semantics. Lookup/proving crates should own lookup-table
+and circuit metadata. The final form of this PR should not be broad mirrored
+bare `SourceInstructionKind` / `JoltInstructionKind` tag enums, and it should not
+move downstream proving-system details into `jolt-riscv`.
 
 ## Intent
 
 ### Goal
 
-Introduce an explicit instruction registry/profile layer, then use the selected
-source profile and computed target closure to generate phase-specific
-instruction identifiers and row types across decode, expansion, tracer
-conversion, bytecode preprocessing, and inline expansion:
+Introduce explicit source/final instruction row enums plus a profile legality
+layer across decode, expansion, tracer conversion, bytecode preprocessing, and
+inline expansion:
 
-- shared registry entries: the source of truth for stable instruction identity,
-  marker struct names, enum variant names, discriminants, and source/final
-  membership.
+- universal instruction enums: the source of truth for shipped source/final row
+  identities, stable discriminants, and enum-to-marker-struct dispatch.
+- profile legality: the source of truth for which source instructions decode
+  under a selected profile and which final rows are legal after expansion.
 - crate-local decorations: the source of truth for crate-specific behavior and
   metadata such as decode encodings, expansion dispatch, tracer execution,
   lookup-table routing, circuit flags, and instruction flags.
-- `SourceInstructionKind`: generated decoded source-program opcode identity.
-- `SourceInstruction`: decoded source row, including address, operands,
+- `SourceInstruction<T = SourceRow>`: decoded source-program instruction enum,
+  with variants such as `ADD(Add<T>)`, `ADDW(AddW<T>)`, and
+  `Inline(Inline<T>)`.
+- `SourceRow`: decoded source row payload, including address, operands,
   compression metadata, and inline dispatch metadata when applicable.
-- `JoltInstructionKind`: generated final expanded bytecode row identity.
-- `JoltInstruction`: final bytecode/proof/tracer row, including operands,
-  address, virtual-sequence metadata, and compression-tail metadata.
+- `JoltInstruction<T = JoltRow>`: final expanded bytecode/proof/tracer
+  instruction enum, with variants such as `ADD(Add<T>)`, `LD(Ld<T>)`, and
+  `VirtualSignExtendWord(VirtualSignExtendWord<T>)`.
+- `JoltRow`: final row payload, including operands, address,
+  virtual-sequence metadata, and compression-tail metadata.
 
 The old `NormalizedInstruction` row should not remain as a compatibility shim.
 If a temporary name is needed while editing, it must be removed before the PR is
 ready for review.
 
-The concrete `*InstructionKind` types may remain closed Rust enums. That is
-useful for serialization, match exhaustiveness, static dispatch, and proof
-performance. They must be generated views over shared registry facts and the
-selected source profile, not one hand-maintained global list that every phase
-shares.
+The concrete `SourceInstruction<T>` and `JoltInstruction<T>` types should remain
+closed Rust enums. That is useful for serialization, match exhaustiveness, static
+dispatch, and proof performance. Unlike profile-specific generated enums, these
+enums should represent Jolt's shipped operation universe. Profiles then provide
+explicit positive legality checks, in the same spirit as MLIR's separation
+between operation definitions and conversion-target legality.
 
-Registry/profile support is part of the main goal, not a stretch goal. The PR
-should leave `SourceInstructionKind` and `JoltInstructionKind` as phase-specific
-generated artifacts of registry/profile facts, not as the primary source of
-instruction-set truth.
+Profile support is part of the main goal, not a stretch goal. The PR should
+leave source/final row types as phase-specific universal operation enums, with
+profile legality deciding what is accepted for a given compiled configuration.
 
 ### Invariants
 
 - Decoding preserves all currently supported RV64 and Jolt custom source
   opcodes, including registered inline dispatch metadata.
-- Source and target instruction membership is explicit in the registry. Adding a
+- Source and final instruction universes are explicit and separate. Adding a
   source opcode should not automatically add a final Jolt bytecode row, and
   adding a target-only virtual row should not automatically make it decodable
   from guest program bytes.
-- Shared instruction identity facts are centralized once, close to the
-  instruction marker structs. Crate-specific facts are not centralized there:
-  they are declared by the crate that owns the behavior and are keyed by the same
-  marker structs or generated enum variants.
-- The current Jolt source profile is explicit in code. The target instruction
-  set is computed from the selected source extensions plus selected inline
-  extensions: it is the set of final rows that can be emitted by those
+- Source/final enum variants carry the marker structs directly, e.g.
+  `SourceInstruction::ADD(Add<SourceRow>)` and
+  `JoltInstruction::VirtualSignExtendWord(VirtualSignExtendWord<JoltRow>)`.
+  This makes enum dispatch delegate naturally to marker-struct impls without a
+  separate variant-to-struct lookup table.
+- Crate-specific facts are not centralized in `jolt-riscv`: they are declared
+  by the crate that owns the behavior and are keyed by the same marker structs
+  or source/final row enum variants.
+- The current Jolt source profile is explicit in code. The target legality set
+  is computed from the selected source extensions plus selected inline
+  extensions: it is the positive set of final rows that can be emitted by those
   expansions.
 - Expansion behavior is unchanged relative to `main` after PR #1518:
-  `SourceInstruction -> Vec<JoltInstruction>` must match the existing expanded
-  bytecode for the checked fixture corpus, modulo intentional type names.
+  `SourceInstruction<SourceRow> -> Vec<JoltInstruction<JoltRow>>` must match the
+  existing expanded bytecode for the checked fixture corpus, modulo intentional
+  type names.
 - Final Jolt bytecode cannot contain source-only opcodes:
   `Inline`, `ADDW`, `LW`, `SW`, AMOs, traps, CSR rows, shifts, DIV/REM, advice
   source loads, and other source-only expansion inputs must be rejected before
   preprocessing.
-- Generated `JoltInstructionKind` contains only final rows in the computed target
-  closure consumed by bytecode preprocessing, tracer execution, and proof lookup
-  metadata. In particular, it must not contain `Inline`.
+- `JoltInstruction<T>` contains only final-row variants, so it must not contain
+  `Inline`, `ADDW`, `LW`, `SW`, or other source-only expansion inputs. Profile
+  target legality is a separate positive check over those final variants.
 - Source and final rows carry different semantic metadata:
   source rows know decode/inline identity; final rows know virtual-sequence
   position.
@@ -105,11 +116,11 @@ instruction-set truth.
 - Registered inline expansion remains behind a provider boundary. The provider
   may live in `tracer`, but its input must be a source inline row and its output
   must be validated `JoltInstruction` rows.
-- Concrete execution semantics remain tracer-owned. The shared registry must not
-  own CPU state mutation, RAM/advice side effects, concrete cycle construction,
-  or inline advice generation.
+- Concrete execution semantics remain tracer-owned. The source/final enums must
+  not own CPU state mutation, RAM/advice side effects, concrete cycle
+  construction, or inline advice generation.
 - Lookup/proving metadata remains owned by the lookup/proving side of the codebase.
-  The shared registry may provide stable final-row identities, but it must not
+  `JoltInstruction<T>` may provide stable final-row identities, but it must not
   encode lookup-table flags, circuit flags, instruction flags, or proof-system
   routing policy.
 - Expansion definitions should stay readable for humans authoring and reviewing
@@ -151,48 +162,47 @@ instruction-set truth.
 
 - [ ] `NormalizedInstruction` is removed or fully renamed into one of the two
       phase-specific types, with no compatibility alias.
-- [ ] `jolt-program::image::decode_instruction` returns `SourceInstruction`.
+- [ ] `jolt-program::image::decode_instruction` returns
+      `SourceInstruction<SourceRow>`.
 - [ ] `jolt-program::expand` accepts `SourceInstruction` at public boundaries
-      and returns `Vec<JoltInstruction>`.
+      and returns `Vec<JoltInstruction<JoltRow>>`.
 - [ ] Recursive expansion internally distinguishes source helper dispatch from
-      direct target-row emission without relying on a broad shared enum.
-- [ ] Generated `JoltInstructionKind` no longer has `Inline` and contains only
-      final rows reachable from the selected source extensions and enabled
-      inline extensions.
-- [ ] Generated `SourceInstructionKind` contains decoded RV64 source opcodes,
-      Jolt custom source opcodes, and one source-only `Inline` kind when the
-      source profile enables inline decoding. Individual registered inline
-      opcodes are represented by `SourceInline`, not by one enum variant per
-      inline package entry.
-- [ ] The shared instruction registry records source membership and final-row
-      membership separately. `SourceInstructionKind` and `JoltInstructionKind`
-      are generated from those facts rather than from one shared variant list.
-- [ ] Shared registry metadata is limited to cross-crate identity and row-shape
-      facts: marker struct name, enum variant name, stable discriminant,
-      source/final membership, and profile-independent row classification.
+      direct target-row emission without relying on one broad shared enum.
+- [ ] `JoltInstruction<T>` no longer has `Inline` and contains only universal
+      shipped final-row variants. Profile-specific target legality is checked by
+      a positive computed target legality closure rather than by changing the
+      enum shape.
+- [ ] `SourceInstruction<T>` contains decoded RV64 source opcodes, Jolt custom
+      source opcodes, and one source-only `Inline(Inline<T>)` variant.
+      Individual registered inline opcodes are represented by `SourceInline`,
+      not by one enum variant per inline package entry.
+- [ ] Source and final row universes are separate closed enums whose variants
+      carry marker structs, e.g. `ADD(Add<T>)`. They are not mirrored bare tag
+      enums and are not generated differently for each profile.
+- [ ] Stable discriminants/serialization are explicit for the universal
+      source/final enums and do not depend on which profile is selected.
 - [ ] Decode metadata and operand parsing are declared in `jolt-program`, keyed
-      by instruction marker structs or generated `SourceInstructionKind`
+      by instruction marker structs or `SourceInstruction<T>`
       variants, not duplicated as an unrelated handwritten opcode list.
 - [ ] Source-only expansion dispatch is declared/generated in `jolt-program`,
-      keyed by instruction marker structs or generated `SourceInstructionKind`
+      keyed by instruction marker structs or `SourceInstruction<T>`
       variants, and does not live in `jolt-riscv`.
 - [ ] Lookup-table routing, circuit flags, and instruction flags remain owned by
-      the lookup/proving crates. They are not fields in the shared `jolt-riscv`
-      registry or in a mega `jolt_instruction!` declaration.
-- [ ] Tracer still owns concrete execution semantics. No registry macro in
+      the lookup/proving crates. They are not fields in the `jolt-riscv`
+      row enum definitions or in a mega `jolt_instruction!` declaration.
+- [ ] Tracer still owns concrete execution semantics. No row enum macro in
       `jolt-riscv` mutates CPU/RAM/advice state or constructs concrete tracer
       cycles.
-- [ ] Broad mirrored source/target enums are not the final implementation
-      shape. If closed enums remain, they are generated from registry/profile
-      facts and do not themselves define instruction-set membership.
+- [ ] Broad mirrored source/target tag enums are not the final implementation
+      shape. Closed enums remain, but they are phase-specific universal row
+      enums with marker-struct payloads and profile legality layered on top.
 - [ ] The profile/extension layer uses the concrete names `SourceExtension`,
       `JoltTargetExtension`, `InlineExtension`, and `JoltInstructionProfile`.
-- [ ] The default registry/profile corresponds to the current supported
+- [ ] The default profile corresponds to the current supported
       RV64IMAC Jolt behavior, with room for shipped source presets such as
       `RV64IM_JOLT`, `RV64IMAC_JOLT`, and `RV64IMAC_JOLT_ALL_INLINES`.
       Future profiles can be added by selecting source/inline extensions and
-      recomputing the target closure without changing the row types' phase
-      semantics.
+      recomputing positive legality sets without changing the row enum shapes.
 - [ ] Inline dispatch metadata is represented directly on `SourceInstruction`
       or a `SourceInlineInstruction` payload, not packed into
       `NormalizedOperands::imm`.
@@ -202,7 +212,7 @@ instruction-set truth.
       lowering code should read like a small instruction sequence, not like
       serialized grammar data or generated tables.
 - [ ] The refactor does not introduce extraction-hostile Rust patterns in the
-      instruction registry, row types, or expansion pipeline.
+      instruction row enums, row types, or expansion pipeline.
 - [ ] Tracer concrete `Instruction`/`Cycle` APIs execute final Jolt rows, while
       decoded source instructions convert through the expansion path before
       trace execution.
@@ -266,13 +276,13 @@ Prefer code shaped like this:
 let mut asm = ExpansionBuilder::new(instruction);
 
 asm.emit_r(
-    JoltInstructionKind::SUB,
+    Sub,
     rd(instruction)?,
     rs1(instruction)?,
     rs2(instruction)?,
 );
 asm.emit_i(
-    JoltInstructionKind::VirtualSignExtendWord,
+    VirtualSignExtendWord,
     rd(instruction)?,
     rd(instruction)?,
     0,
@@ -294,7 +304,7 @@ ExpandedInstructionSequence::new(
 )
 ```
 
-The registry/profile work has the same constraint. Metadata can become more
+The row-enum/profile work has the same constraint. Metadata can become more
 structured, but instruction authors should not need to mentally execute macro
 grammar to understand whether an opcode is source-only, target-only,
 lookup-backed, side-effecting, or part of a default profile.
@@ -305,9 +315,9 @@ The expansion fixture hash may change when `NormalizedInstruction` is replaced
 by phase-specific row types, even if the emitted program is semantically
 unchanged. Regenerating that fixture is therefore not itself sufficient evidence.
 Before updating hashes, add a structural equivalence check that compares the new
-`SourceInstruction -> Vec<JoltInstruction>` stream with the post-#1518 `main`
-semantics modulo intentional type/discriminant renames and the removal of
-`JoltInstructionKind::Inline` from final rows.
+`SourceInstruction<SourceRow> -> Vec<JoltInstruction<JoltRow>>` stream with the
+post-#1518 `main` semantics modulo intentional type/discriminant renames and the
+removal of the old `JoltInstructionKind::Inline` tag from final rows.
 
 The durable invariant should live in `jolt-eval` as
 `source_to_jolt_expansion_equivalence`. It should run over the representative
@@ -331,14 +341,14 @@ Prefer:
   heavy control flow;
 - total conversion functions that return typed errors over implicit panics;
 - simple iterator/loop structure where it keeps the code just as readable;
-- registry/profile metadata that can be inspected as data, not only through macro
+- profile/legalization metadata that can be inspected as data, not only through macro
   expansion side effects.
 
 Avoid introducing:
 
 - `dyn` dispatch or closure-heavy APIs in the core instruction/expansion path;
-- hidden global state for registry/profile decisions;
-- unsafe code in registry, decode, or expansion plumbing;
+- hidden global state for profile/legalization decisions;
+- unsafe code in row enum, decode, or expansion plumbing;
 - encodings where a field has unrelated meanings depending on an instruction
   phase;
 - procedural macro magic that makes the generated instruction set difficult to
@@ -362,15 +372,15 @@ ELF / decoded word
   -> bytecode preprocessing / tracer execution / proof lookup metadata
 ```
 
-`jolt-riscv` owns shared instruction identity because it is the lowest common
+`jolt-riscv` owns shared instruction row identity because it is the lowest common
 crate shared by decode, expansion, tracer, bytecode preprocessing, and lookup
 metadata. That ownership should stay deliberately small. It should provide:
 
 - the marker structs such as `Add<T>`, `AddW<T>`, and
   `VirtualSignExtendWord<T>`;
-- the stable enum variant names and serialization discriminants;
-- whether an identity can appear as a decoded source row, a final Jolt row, or
-  both;
+- the universal source/final row enums whose variants carry those marker
+  structs;
+- stable enum variant names and serialization discriminants;
 - row structs and profile-independent row-shape types shared across crates.
 
 It should not provide a mega declaration that also names decode opcodes,
@@ -378,46 +388,37 @@ expansion bodies, side-effect policy, tracer execution, lookup-table routing,
 circuit flags, or instruction flags. Those are real facts, but they belong to
 the crates that use and test them.
 
-Because Rust macros cannot discover scattered declarations across files, the
-closed enums still need one explicit registry boundary. That registry can live
-near the existing marker definitions and should be intentionally boring:
+The row enums should use the same pattern as today's `LookupInstruction`: each
+variant wraps the associated marker struct instantiated with a row payload. That
+means the enum itself owns the variant-to-struct relationship; there is no
+separate mapping table to keep in sync.
 
 ```rust
-instruction_registry! {
-    ADD => Add,
-        discriminant = 0x0001,
-        source = true,
-        target = true;
+pub enum SourceInstruction<T = SourceRow> {
+    NoOp,
+    Unimpl,
+    ADD(Add<T>),
+    ADDW(AddW<T>),
+    LW(Lw<T>),
+    SW(Sw<T>),
+    Inline(Inline<T>),
+    // ...all shipped source-program rows...
+}
 
-    ADDW => AddW,
-        discriminant = 0x0002,
-        source = true,
-        target = false;
-
-    VirtualSignExtendWord => VirtualSignExtendWord,
-        discriminant = 0x1001,
-        source = false,
-        target = true;
-
-    Inline => Inline,
-        discriminant = 0x7fff,
-        source = true,
-        target = false;
+pub enum JoltInstruction<T = JoltRow> {
+    NoOp,
+    Unimpl,
+    ADD(Add<T>),
+    LD(Ld<T>),
+    SD(Sd<T>),
+    VirtualSignExtendWord(VirtualSignExtendWord<T>),
+    VirtualHostIO(VirtualHostIO<T>),
+    // ...all shipped final Jolt rows...
 }
 ```
 
-The exact syntax can change. The durable shape is that the registry is a small
-identity table, not a universal semantics table. It should be enough to generate
-`SourceInstructionKind`, `JoltInstructionKind`, stable serialization, and simple
-membership predicates. It should not answer questions like "which lookup table
-does this row use?" or "which tracer method mutates memory for this row?"
-
-Generated row types should then be ordinary data:
-
 ```rust
-pub struct SourceInstruction {
-    // Generated from registry entries whose `source` field is present.
-    pub kind: SourceInstructionKind,
+pub struct SourceRow {
     pub address: usize,
     pub operands: SourceOperands,
     pub inline: Option<SourceInline>,
@@ -431,9 +432,7 @@ pub struct SourceInline {
     pub extension: InlineExtension,
 }
 
-pub struct JoltInstruction {
-    // Generated from reachable registry entries whose `target` field is present.
-    pub kind: JoltInstructionKind,
+pub struct JoltRow {
     pub address: usize,
     pub operands: JoltOperands,
     pub virtual_sequence_remaining: Option<u16>,
@@ -443,19 +442,26 @@ pub struct JoltInstruction {
 ```
 
 The exact operand/spec type names can change, but the ownership relationship
-should not: the shared registry defines what identities exist, the selected
-source profile defines what decodes, and the target closure defines which final
-rows may be emitted. `SourceInstructionKind` / `JoltInstructionKind` are
-generated identifiers over those registry/profile facts. Source operands may
+should not: the universal enums define what shipped row identities exist, the
+selected source profile defines which source rows decode, and the target closure
+defines which final rows may be emitted by this profile. Source operands may
 continue to use normalized register fields for ordinary rows; inline dispatch
 metadata should not be stored in an immediate field.
 
+Profiles should not change the Rust enum shape. This is intentionally closer to
+MLIR than to profile-specific generated Rust APIs: operations exist in the
+universe, and a conversion target/profile declares which operations are legal at
+a given point in the pipeline. Selecting `RV64IM_JOLT` should therefore reject
+atomic source rows during decode and exclude atomic-produced final rows from the
+computed target legality set, but it should not generate a different
+`SourceInstruction<T>` type from `RV64IMAC_JOLT`.
+
 ### Ownership Boundaries
 
-The shared registry owns only cross-crate identity. Crate-local decorations own
-the behavior-specific facts, using the same marker structs as join keys.
+The universal row enums own only cross-crate identity. Crate-local decorations
+own the behavior-specific facts, using the same marker structs as join keys.
 
-`jolt-program` owns source decoding, operand parsing, positive final-bytecode
+`jolt-program` owns source decoding, operand parsing, positive source/target
 legality, and source-to-final expansion dispatch. Its local metadata can be a
 trait, free-function table, or macro that expands to ordinary matches:
 
@@ -492,17 +498,17 @@ Expansion dispatch should be local to `jolt-program` as well:
 ```rust
 trait SourceExpansion {
     fn expand_source(
-        instruction: &SourceInstruction,
+        &self,
         allocator: &mut ExpansionAllocator,
-    ) -> Result<Vec<JoltInstruction>, ExpansionError>;
+    ) -> Result<Vec<JoltInstruction<JoltRow>>, ExpansionError>;
 }
 
-impl SourceExpansion for AddW<()> {
+impl SourceExpansion for AddW<SourceRow> {
     fn expand_source(
-        instruction: &SourceInstruction,
+        &self,
         allocator: &mut ExpansionAllocator,
-    ) -> Result<Vec<JoltInstruction>, ExpansionError> {
-        expand_addw(instruction, allocator)
+    ) -> Result<Vec<JoltInstruction<JoltRow>>, ExpansionError> {
+        expand_addw(self, allocator)
     }
 }
 ```
@@ -517,7 +523,7 @@ impl SourceExpansion for AddW<()> {
   execution instructions.
 
 That can be expressed with tracer-local implementations keyed by the shared
-marker structs or by the generated final enum. For example:
+marker structs or by the final row enum. For example:
 
 ```rust
 trait Execute {
@@ -533,7 +539,8 @@ impl Execute for Add<()> {
 
 Lookup/proving code owns lookup metadata, lookup-table routing, circuit flags,
 and instruction flags. Those facts may also be generated from a local macro, but
-the macro should live with the lookup/proving owner, not in `jolt-riscv`:
+the macro should live with the lookup/proving owner, not in the universal row
+enum definition:
 
 ```rust
 trait LookupMetadata {
@@ -552,17 +559,18 @@ impl LookupMetadata for Add<()> {
 ```
 
 Expansion bodies are also not moved into `jolt-riscv`, because `jolt-riscv`
-must remain below `jolt-program` in the dependency graph. `jolt-riscv` can say
-that `AddW` is source-only. `jolt-program` says how `AddW` lowers and can
-generate the dispatcher that routes `SourceInstructionKind::ADDW` through the
-`AddW` marker to the human-written `expand_addw` body.
+must remain below `jolt-program` in the dependency graph. `jolt-riscv` can expose
+`SourceInstruction::ADDW(AddW<SourceRow>)`. `jolt-program` says whether `ADDW`
+is legal in the active profile, how it lowers, and can generate the dispatcher
+that routes the `ADDW` variant through the `AddW` marker to the human-written
+`expand_addw` body.
 
-### Registry And Profiles
+### Rows And Profiles
 
 The current code generates both instruction-kind enums from one broad macro
 list. That makes the type split mostly nominal: every source opcode also exists
 as a final Jolt opcode unless a later legality check rejects it. This PR should
-replace that with a small identity registry plus crate-local metadata whose
+replace that with two universal row enums plus crate-local metadata whose
 first-order facts are named deliberately and consistently.
 
 Use these names unless implementation uncovers a concrete conflict:
@@ -622,14 +630,15 @@ pub enum InlineExtension {
 }
 ```
 
-The durable requirement is that source decode support, target bytecode support,
+The durable requirement is that source decode support, target bytecode legality,
 inline registration support, lookup-table support, side-effect metadata, circuit
 flags, and instruction flags are separate compile-time facts with separate
 owners. The PR should not add a separate `InstructionPhase` enum unless the
-implementation needs it internally; phase is already determined by whether a
-registry entry has `source`, `target`, or both. Closed enums are acceptable as
-generated compile-time artifacts, but the source of truth must be the
-registry/profile plus crate-local decorations, not a monolithic enum.
+implementation needs it internally; phase is already determined by whether a row
+identity appears in `SourceInstruction<T>`, `JoltInstruction<T>`, or both.
+Closed universal enums are acceptable and desired, but the source of truth for
+profile legality must be explicit profile metadata plus crate-local decorations,
+not a monolithic enum and not `!is_source_only`.
 
 The current default source profile should include:
 
@@ -648,8 +657,8 @@ The current default source profile should include:
 - `SourceExtension::JoltInline`: source rows whose dispatch payload is keyed by
   `(opcode, funct3, funct7)`.
 
-The computed target closure for the current default profile should include these
-`JoltTargetExtension` families:
+The computed target legality closure for the current default profile should
+include these `JoltTargetExtension` families:
 
 - `JoltTargetExtension::IntegerCore`: final instructions such as `ADD`, `ADDI`,
   `SUB`, `LUI`, `AUIPC`, `AND`, `ANDI`, `OR`, `ORI`, `XOR`, `XORI`, `SLT`,
@@ -680,12 +689,13 @@ The computed target closure for the current default profile should include these
 Sentinel rows `NoOp` and `Unimpl` are always available and should not be modeled
 as extension-gated capabilities.
 
-The inline registry should use the registered inline package names as first-class
-entries, not treat every inline as one anonymous extension. This does not mean
-`SourceInstructionKind` gets one variant per inline operation. Source decoding
-uses one `SourceInstructionKind::Inline` row plus a `SourceInline` payload; the
-`InlineExtension` profile gates which registered `(opcode, funct3, funct7)` keys
-are accepted and which provider is allowed to expand them. Current entries are:
+The inline profile metadata should use the registered inline package names as
+first-class entries, not treat every inline as one anonymous extension. This
+does not mean `SourceInstruction<T>` gets one variant per inline operation.
+Source decoding uses one `SourceInstruction::Inline(Inline<SourceRow>)` row plus
+a `SourceInline` payload; the `InlineExtension` profile gates which registered
+`(opcode, funct3, funct7)` keys are accepted and which provider is allowed to
+expand them. Current entries are:
 
 - `InlineExtension::Sha2`: `SHA256_INLINE`, `SHA256_INIT_INLINE`;
 - `InlineExtension::Keccak256`: `KECCAK256_INLINE`;
@@ -698,8 +708,8 @@ are accepted and which provider is allowed to expand them. Current entries are:
 
 `Inline` itself is source-only and must remain illegal in finalized bytecode.
 Registered inline providers may emit ordinary target rows plus virtual helper
-rows, but provider output must be validated against the computed target closure
-before preprocessing.
+rows, but provider output must be validated against the computed target legality
+closure before preprocessing.
 
 The near-term profile shape is source-driven:
 
@@ -742,7 +752,8 @@ pub const RV64IMAC_JOLT_ALL_INLINES: JoltInstructionProfile = JoltInstructionPro
 semantic families such as integer core, host I/O, virtual arithmetic, and crypto
 helper rows. It should not be a second hand-selected profile axis in this PR,
 and it should not encode lookup-table or proving-system policy. Given a selected
-`JoltInstructionProfile`, the build derives the final target set from:
+`JoltInstructionProfile`, `jolt-program` derives the final target legality set
+from:
 
 - direct final rows emitted by source instructions enabled by
   `source_extensions`;
@@ -750,11 +761,13 @@ and it should not encode lookup-table or proving-system policy. Given a selected
 - final rows emitted by enabled `inline_extensions`;
 - sentinel rows such as `NoOp` and `Unimpl`.
 
-This makes `RV64IM_JOLT` naturally produce a smaller final closure than
+This makes `RV64IM_JOLT` naturally produce a smaller legal final closure than
 `RV64IMAC_JOLT` when atomics/compressed-only source paths are disabled, without
-requiring callers to maintain a parallel target list. Cross-profile proof
+requiring callers to maintain a parallel target list. The Rust enum remains the
+same universal shipped final-row enum; the selected profile changes which rows
+decode and which final rows pass preprocessing legality. Cross-profile proof
 artifact compatibility is not a goal of this PR: circuit/preprocessing keys are
-tied to the selected compile-time profile.
+tied to the selected compile-time profile and its legality sets.
 
 Reserve these shipped preset names:
 
@@ -770,7 +783,8 @@ compiled crate graph; do not thread an arbitrary runtime
 `&'static JoltInstructionProfile` through `JoltProgram::new`. If marker types
 are more ergonomic than value-level profiles, use the same names as type names,
 for example `profile::Rv64imacJolt`. Exported presets should still use the
-constant names above.
+constant names above. The selected profile affects legality tables and closure
+checks, not the Rust enum shape.
 
 Inline inventory registration remains link-time, but availability is
 profile-checked. If a workspace links `jolt-inlines-sha2` while the selected
@@ -778,16 +792,16 @@ profile does not include `InlineExtension::Sha2`, decode/expansion must reject
 the registered key before it can enter finalized bytecode. The PR does not need
 to make such a crate fail to compile.
 
-For this PR, the implementation must include the explicit shared registry,
-crate-local metadata, and shipped current source profiles above. It does not
-need arbitrary third-party profile composition, but source/target enum
-generation, decode legality, final-bytecode legality, and inline availability
-should all flow from registry/profile facts and crate-owned decorations rather
-than from a broad shared instruction-kind list.
+For this PR, the implementation must include the universal source/final row
+enums, crate-local metadata, and shipped current source profiles above. It does
+not need arbitrary third-party profile composition, but decode legality,
+final-bytecode legality, and inline availability should all flow from
+profile/legalization facts and crate-owned decorations rather than from a broad
+shared instruction-kind list.
 
 Lookup support should not introduce `LookupInstructionKind`. Keep the existing
-boundary: `JoltInstructionKind` identifies final rows, `LookupInstruction` is
-the typed lookup/proof-facing view of supported final rows, and
+boundary in spirit: `JoltInstruction<T>` identifies final rows,
+`LookupInstruction` is the typed lookup/proof-facing view of supported final rows, and
 `LookupTableKind` identifies concrete lookup tables in `jolt-lookup-tables`.
 A future `LookupTableProfile` may name the compile-time table set for a
 selected proof profile, but it should be table-oriented, not another
@@ -797,38 +811,38 @@ Expansion should expose:
 
 ```rust
 pub fn expand_instruction(
-    instruction: &SourceInstruction,
+    instruction: &SourceInstruction<SourceRow>,
     allocator: &mut ExpansionAllocator,
-) -> Result<Vec<JoltInstruction>, ExpansionError>;
+) -> Result<Vec<JoltInstruction<JoltRow>>, ExpansionError>;
 
 pub trait InlineExpansionProvider {
     fn expand_inline(
         &mut self,
-        instruction: &SourceInstruction,
+        instruction: &Inline<SourceRow>,
         allocator: &mut ExpansionAllocator,
-    ) -> Result<Vec<JoltInstruction>, ExpansionError>;
+    ) -> Result<Vec<JoltInstruction<JoltRow>>, ExpansionError>;
 }
 ```
 
 Inside `jolt-program::expand`, the builder should keep two operations:
 
-- `emit_*`: append target-legal `JoltInstructionKind` rows directly.
-- `expand_*`: recursively lower helper `SourceInstructionKind` rows.
+- `emit_*`: append target-legal `JoltInstruction<JoltRow>` rows directly.
+- `expand_*`: recursively lower helper `SourceInstruction<SourceRow>` rows.
 
 This models the current semantics more accurately than pretending every
 recursive helper is pure RISC-V or every emitted row is already final.
 
 The source-only expansion dispatcher should be generated from `jolt-program`
 metadata or from a small `jolt-program` macro keyed by the instruction marker
-structs, not maintained as an unrelated `match JoltInstructionKind` list. The
+structs, not maintained as an unrelated final-kind match list. The
 generated shape should read conceptually like:
 
 ```rust
-match instruction.kind {
-    SourceInstructionKind::ADDW => AddW::expand_source(instruction, allocator),
-    SourceInstructionKind::LW => Lw::expand_source(instruction, allocator),
-    SourceInstructionKind::Inline => inline_provider.expand_inline(instruction, allocator),
-    _ if instruction.kind.is_direct_target() => emit_direct(instruction),
+match instruction {
+    SourceInstruction::ADD(add) => emit_direct(add),
+    SourceInstruction::ADDW(addw) => addw.expand_source(allocator),
+    SourceInstruction::LW(lw) => lw.expand_source(allocator),
+    SourceInstruction::Inline(inline) => inline_provider.expand_inline(inline, allocator),
     _ => Err(ExpansionError::UnsupportedInstruction),
 }
 ```
@@ -836,7 +850,7 @@ match instruction.kind {
 That does not require moving `expand_addw` into `jolt-riscv`; it requires the
 dispatch edge to be generated from `jolt-program`'s local `AddW` expansion
 metadata instead of copied into a separate list that can drift from the source
-kind registry.
+row enum.
 
 Tracer should become phase-aware:
 
@@ -844,7 +858,7 @@ Tracer should become phase-aware:
 - expanded trace execution consumes `JoltInstruction` or concrete tracer
   `Instruction` built from `JoltInstruction`;
 - execution semantics remain implemented on tracer concrete instruction types,
-  not in `jolt-riscv` registry macros;
+  not in `jolt-riscv` row enum macros;
 - `RISCVInstruction` conversions should not require
   `From<SourceInstruction> + Into<SourceInstruction> + From<JoltInstruction> +
   Into<JoltInstruction>` on the same trait;
@@ -853,41 +867,55 @@ Tracer should become phase-aware:
 Registered inlines can still be implemented in `tracer` for this PR, because
 they need inventory registration and advice-generation hooks. The important
 cleanup is the boundary: `TracerInlineExpansionProvider` should no longer parse
-a fake final `JoltInstructionKind::Inline` row, and `jolt-inlines-sdk::InlineOp`
-should either return final `JoltInstruction` rows directly or use an assembler
-whose output is final `JoltInstruction` rows. If moving every inline builder off
-tracer's `Instruction` enum proves too large, keep that as an internal tracer
-adapter only and ensure the public provider contract is already final-row typed.
+a fake final `Inline` row, and `jolt-inlines-sdk::InlineOp` should either return
+final `JoltInstruction` rows directly or use an assembler whose output is final
+`JoltInstruction` rows. If moving every inline builder off tracer's
+`Instruction` enum proves too large, keep that as an internal tracer adapter
+only and ensure the public provider contract is already final-row typed.
 
 ### Alternatives Considered
 
-Keeping `SourceInstructionKind` and `JoltInstructionKind` as mirror enums is
-the smallest change, but it keeps the reviewer concern intact: names improve,
-but the compiler cannot enforce phase boundaries.
+Keeping `SourceInstructionKind` and `JoltInstructionKind` as mirror bare tag
+enums is the smallest change, but it keeps the reviewer concern intact: names
+improve, but the compiler cannot enforce phase boundaries and enum dispatch
+still needs a separate mapping back to marker structs.
+
+Generating profile-specific source/final enum shapes would maximize type-level
+profile safety: if `RV64IM_JOLT` excludes atomics, the atomic variants could
+literally be absent. That is not the preferred shape for this PR. It makes
+downstream exhaustive matches profile-dependent and is less aligned with MLIR,
+where operations exist in a stable universe and a conversion target decides
+which operations are legal at a particular stage. Jolt should instead keep
+stable universal shipped source/final enums and make profile legality explicit.
 
 Putting every fact into an expanded `jolt_instruction!` declaration would remove
 some match duplication, but it would also make `jolt-riscv` aware of details it
 should not own: decode quirks, expansion bodies, tracer state mutation,
 lookup-table routing, circuit flags, and instruction flags. That is the wrong
-dependency direction. This PR should instead use a minimal shared registry plus
-crate-local decorations.
+dependency direction. This PR should instead use universal marker-carrying
+source/final row enums plus crate-local decorations.
 
 Adding a separate `InstructionCatalogEntry` table beside the existing marker
 structs and then filling it with every fact has the same problem in a different
-shape. A separate table is acceptable only if it stays limited to shared identity
-facts needed to generate the closed enums and stable discriminants.
+shape. A separate table is not needed for the enum variant -> marker struct
+mapping if the variants carry marker structs directly. A small macro/list may
+still be used to avoid hand-writing both enums and stable serialization matches,
+but it should generate `ADD(Add<T>)`-style variants rather than a separate
+bare-kind enum plus a parallel mapping table.
 
 Making the enums fully dynamic, MLIR-style operation IDs would maximize
 extensibility but is the wrong first move for Jolt. Instruction identity feeds
 serialization, bytecode preprocessing, static flag dispatch, lookup routing,
-and proof circuits. Closed generated enums are a better fit: the registry can be
-modular while the compiled prover remains specialized.
+and proof circuits. Closed universal enums are a better fit: the operation
+universe can be MLIR-like and stable while the compiled prover remains
+specialized by explicit profile legality sets.
 
-Using Cargo features alone as the registry would also be too coarse. Features
-can select profiles or extension groups, but they should not be the only place
-where instruction identity lives. Decode membership, target legality, lookup
-table routing, side effects, and lowering behavior should be queryable through
-their owning crates, keyed by shared instruction identities.
+Using Cargo features alone as the profile system would also be too coarse.
+Features can select profiles or extension groups, but they should not be the
+only place where instruction identity or legality lives. Decode membership,
+target legality, lookup table routing, side effects, and lowering behavior
+should be queryable through their owning crates, keyed by shared instruction
+identities.
 
 Making only `jolt-program` phase-aware is also insufficient. Tracer currently
 converts concrete `Instruction` through the same normalized row and also handles
@@ -907,7 +935,8 @@ RAM/device state, generate advice, or build concrete tracer cycles.
 Moving lookup/proving metadata into `jolt-riscv` has the same ownership smell.
 `jolt-riscv` should be blissfully unaware of the proving system's lookup-table
 flags, circuit flags, and instruction flags. Those facts should be declared in
-the lookup/proving owner and keyed by `JoltInstructionKind` or marker structs.
+the lookup/proving owner and keyed by `JoltInstruction<T>` variants or marker
+structs.
 
 Moving all registered inline implementations into `jolt-program` would make the
 provider-free crate depend on inventory/advice/tracer concerns. That reverses
@@ -922,42 +951,43 @@ book update is required unless public SDK APIs expose the new names directly.
 
 ## Execution
 
-1. Add `SourceInstruction`, `SourceInline`, `JoltInstruction`, and operand
-   aliases/types in `jolt-riscv`.
-2. Add a minimal shared instruction registry in `jolt-riscv` that records marker
-   struct names, enum variant names, stable discriminants, and source/final
-   membership.
-3. Generate `SourceInstructionKind`, `JoltInstructionKind`, stable
-   serialization, and simple membership predicates from that registry rather
-   than from one broad shared list.
-4. Add `jolt-program`-owned decode metadata keyed by marker structs or generated
-   source enum variants, then change ELF/word decode to return
-   `SourceInstruction`.
-5. Add `jolt-program`-owned source expansion metadata/dispatch keyed by marker
-   structs or generated source enum variants.
-6. Change `jolt-program::expand` public APIs and internal recipes to consume
+1. Add `SourceRow`, `SourceInline`, `JoltRow`, and operand aliases/types in
+   `jolt-riscv`.
+2. Add universal `SourceInstruction<T = SourceRow>` and
+   `JoltInstruction<T = JoltRow>` enums whose variants carry marker structs,
+   following the existing `LookupInstruction` pattern.
+3. Add explicit stable serialization/discriminants for those universal row
+   enums. Discriminants must not depend on the selected profile.
+4. Add the shipped `JoltInstructionProfile` presets and positive source/target
+   legality APIs. Profiles select legal rows; they do not change enum shape.
+5. Add `jolt-program`-owned decode metadata keyed by marker structs or source
+   enum variants, then change ELF/word decode to return
+   `SourceInstruction<SourceRow>` after profile legality validation.
+6. Add `jolt-program`-owned source expansion metadata/dispatch keyed by marker
+   structs or source enum variants.
+7. Change `jolt-program::expand` public APIs and internal recipes to consume
    source rows and emit target rows.
-7. Remove `JoltInstructionKind::Inline` and move inline metadata to
-   source-only types.
-8. Cut bytecode preprocessing, `JoltProgram`, execution rows, and proof imports
+8. Remove `Inline` from the final `JoltInstruction<T>` universe and move inline
+   metadata to source-only types.
+9. Cut bytecode preprocessing, `JoltProgram`, execution rows, and proof imports
    over to `JoltInstruction`.
-9. Update tracer conversions so decode/source paths and expanded execution paths
+10. Update tracer conversions so decode/source paths and expanded execution paths
    are separate while preserving tracer ownership of concrete execution
    semantics.
-10. Update `TracerInlineExpansionProvider` and `jolt-inlines-sdk` boundaries so
+11. Update `TracerInlineExpansionProvider` and `jolt-inlines-sdk` boundaries so
    registered inline expansion accepts source inline rows and returns validated
    final rows.
-11. Move or preserve lookup/proving metadata in the lookup/proving owner, keyed
+12. Move or preserve lookup/proving metadata in the lookup/proving owner, keyed
     by final instruction identities; do not add lookup-table flags, circuit
-    flags, or instruction flags to the `jolt-riscv` registry.
-12. Delete obsolete normalized-row aliases, stale legality helpers, and any
-    source-only variants left in `JoltInstructionKind`.
-13. Add a small default-profile/registry test that checks current supported
-    source extensions, inline extensions, and computed target closure generate
-    the expected phase-specific kinds.
-14. Add the `jolt-eval` `source_to_jolt_expansion_equivalence` invariant and use
+    flags, or instruction flags to the `jolt-riscv` row enum definitions.
+13. Delete obsolete normalized-row aliases, stale legality helpers, and any
+    source-only variants left in `JoltInstruction<T>`.
+14. Add small default-profile legality tests that check current supported source
+    extensions, inline extensions, and computed target legality closure
+    accept/reject the expected source/final rows.
+15. Add the `jolt-eval` `source_to_jolt_expansion_equivalence` invariant and use
     it to gate any expansion fixture/hash regeneration.
-15. Run the full validation stack and update the expansion fixture/hash only if
+16. Run the full validation stack and update the expansion fixture/hash only if
     row type serialization changes while structural expansion output remains
     unchanged.
 
