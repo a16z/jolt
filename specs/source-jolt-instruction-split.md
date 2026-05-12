@@ -130,9 +130,13 @@ phase shares.
 - [ ] The instruction catalog records source membership and target membership
       separately. `SourceInstructionKind` and `JoltInstructionKind` are generated
       from those memberships rather than from one shared variant list.
-- [ ] The default catalog/profile corresponds to the current supported Jolt
-      behavior. Future profiles can be added by selecting subsets/extensions of
-      the catalog, without changing the row types' phase semantics.
+- [ ] The catalog uses the concrete names `SourceExtension`,
+      `JoltTargetExtension`, `InlineExtension`, and `JoltInstructionProfile`.
+- [ ] The default catalog/profile corresponds to the current supported
+      RV64IMAC Jolt behavior, with room for shipped presets such as
+      `RV64IM_JOLT`, `RV64IMAC_JOLT`, and `RV64IMAC_JOLT_ALL_INLINES`.
+      Future profiles can be added by selecting subsets/extensions of the
+      catalog without changing the row types' phase semantics.
 - [ ] Inline dispatch metadata is represented directly on `SourceInstruction`
       or a `SourceInlineInstruction` payload, not packed into
       `NormalizedOperands::imm`.
@@ -341,7 +345,10 @@ immediate field.
 The current code generates both instruction-kind enums from one broad macro
 list. That makes the type split mostly nominal: every source opcode also exists
 as a final Jolt opcode unless a later legality check rejects it. This PR should
-replace that with catalog metadata whose first-order facts are:
+replace that with catalog metadata whose first-order facts are named
+deliberately and consistently.
+
+Use these names unless implementation uncovers a concrete conflict:
 
 ```rust
 pub enum InstructionPhase {
@@ -351,38 +358,136 @@ pub enum InstructionPhase {
 }
 
 pub enum SourceExtension {
+    /// RV64I instruction semantics and 64-bit base encodings.
     Rv64I,
+    /// RV64M multiply/divide source instructions.
     Rv64M,
+    /// RV64A atomic source instructions.
     Rv64A,
+    /// RVC compressed encodings. These decode into ordinary source rows.
     Rv64C,
+    /// CSR source instructions currently accepted by decode.
+    Zicsr,
+    /// Privileged source instructions currently accepted by decode, such as MRET.
+    RvPrivileged,
+    /// Jolt custom guest opcodes decoded from the custom instruction space.
     JoltCustom,
+    /// Registered inline source opcodes keyed by opcode/funct3/funct7.
     JoltInline,
 }
 
-pub enum TargetExtension {
-    JoltCore,
-    JoltMemory,
-    JoltBranch,
-    JoltVirtualArithmetic,
-    JoltVirtualMemory,
-    JoltVirtualAssert,
-    JoltAdvice,
-    JoltInlineSupport,
+pub enum JoltTargetExtension {
+    /// Base arithmetic, comparison, and immediate rows that may appear after expansion.
+    BaseIntegerRows,
+    /// Multiplication rows retained as final Jolt bytecode rows.
+    MultiplyRows,
+    /// Branch, jump, and other control-flow rows legal in final bytecode.
+    ControlFlowRows,
+    /// Final 64-bit memory rows. Narrow loads/stores and atomics lower into these.
+    Memory64Rows,
+    /// Advice-producing and advice-consuming virtual rows.
+    AdviceRows,
+    /// Host I/O virtual rows.
+    HostIoRows,
+    /// Virtual assertion rows used by expansion and inlines.
+    VirtualAssertRows,
+    /// Virtual arithmetic/helper rows used by division, word ops, and carries.
+    VirtualArithmeticRows,
+    /// Virtual shift and rotate rows used by source lowering.
+    VirtualShiftRows,
+    /// Bit-manipulation rows used mainly by custom ops and crypto inlines.
+    BitmanipRows,
+}
+
+pub enum InlineExtension {
+    Sha2,
+    Keccak256,
+    Blake2,
+    Blake3,
+    BigInt256,
+    Secp256k1,
+    Grumpkin,
+    P256,
 }
 ```
 
-The exact type names are not important. The durable requirement is that source
-decode support, target bytecode support, lookup-table support, and side-effect
-metadata are separate catalog facts. Closed enums are acceptable as generated
-compile-time artifacts, but the source of truth should be the catalog entries,
-not a monolithic enum.
+The durable requirement is that source decode support, target bytecode support,
+inline registration support, lookup-table support, and side-effect metadata are
+separate catalog facts. Closed enums are acceptable as generated compile-time
+artifacts, but the source of truth should be the catalog entries, not a
+monolithic enum.
+
+The current default source profile should include:
+
+- `SourceExtension::Rv64I`: base integer, 64-bit loads/stores, branches, jumps,
+  `FENCE`, `ECALL`, and `EBREAK`;
+- `SourceExtension::Rv64M`: multiply/divide/remainder source opcodes,
+  including W-suffix forms;
+- `SourceExtension::Rv64A`: LR/SC and AMO source opcodes;
+- `SourceExtension::Rv64C`: compressed encodings, which uncompress into
+  ordinary source instructions rather than adding separate source kinds;
+- `SourceExtension::Zicsr`: `CSRRW` and `CSRRS`;
+- `SourceExtension::RvPrivileged`: `MRET`;
+- `SourceExtension::JoltCustom`: custom decoded source rows such as
+  `VirtualRev8W`, `VirtualAssertEQ`, `VirtualHostIO`, `AdviceLB/LH/LW/LD`, and
+  `VirtualAdviceLen`;
+- `SourceExtension::JoltInline`: registered inline source rows keyed by
+  `(opcode, funct3, funct7)`.
+
+The current default target profile should include:
+
+- `JoltTargetExtension::BaseIntegerRows`: final rows such as `ADD`, `ADDI`,
+  `SUB`, `LUI`, `AUIPC`, `AND`, `ANDI`, `OR`, `ORI`, `XOR`, `XORI`, `SLT`,
+  `SLTI`, `SLTU`, and `SLTIU`;
+- `JoltTargetExtension::MultiplyRows`: final multiply rows such as `MUL` and
+  `MULHU`; source-only multiply/divide rows lower before final bytecode;
+- `JoltTargetExtension::ControlFlowRows`: final branch/jump rows such as `BEQ`,
+  `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`, `JAL`, `JALR`, and `FENCE`;
+- `JoltTargetExtension::Memory64Rows`: final `LD` and `SD` rows;
+- `JoltTargetExtension::AdviceRows`: `VirtualAdvice`, `VirtualAdviceLen`, and
+  `VirtualAdviceLoad`;
+- `JoltTargetExtension::HostIoRows`: `VirtualHostIO`;
+- `JoltTargetExtension::VirtualAssertRows`: `VirtualAssertEQ`,
+  `VirtualAssertLTE`, `VirtualAssertValidDiv0`,
+  `VirtualAssertValidUnsignedRemainder`, `VirtualAssertMulUNoOverflow`,
+  `VirtualAssertWordAlignment`, and `VirtualAssertHalfwordAlignment`;
+- `JoltTargetExtension::VirtualArithmeticRows`: `VirtualMULI`,
+  `VirtualMovsign`, `VirtualPow2`, `VirtualPow2I`, `VirtualPow2W`,
+  `VirtualPow2IW`, `VirtualChangeDivisor`, `VirtualChangeDivisorW`,
+  `VirtualSignExtendWord`, and `VirtualZeroExtendWord`;
+- `JoltTargetExtension::VirtualShiftRows`: `VirtualSRL`, `VirtualSRLI`,
+  `VirtualSRA`, `VirtualSRAI`, `VirtualShiftRightBitmask`,
+  `VirtualShiftRightBitmaskI`, `VirtualROTRI`, and `VirtualROTRIW`;
+- `JoltTargetExtension::BitmanipRows`: `ANDN`, `VirtualRev8W`, and the
+  `VirtualXORROT*` / `VirtualXORROTW*` rows used by crypto inlines.
+
+Sentinel rows `NoOp` and `Unimpl` are always available and should not be modeled
+as extension-gated capabilities.
+
+The inline catalog should use the registered inline package names as first-class
+entries, not treat every inline as one anonymous extension. Current entries are:
+
+- `InlineExtension::Sha2`: `SHA256_INLINE`, `SHA256_INIT_INLINE`;
+- `InlineExtension::Keccak256`: `KECCAK256_INLINE`;
+- `InlineExtension::Blake2`: `BLAKE2_INLINE`;
+- `InlineExtension::Blake3`: `BLAKE3_INLINE`, `BLAKE3_KEYED64_INLINE`;
+- `InlineExtension::BigInt256`: `BIGINT256_MUL_INLINE`;
+- `InlineExtension::Secp256k1`: the `SECP256K1_*` inline family;
+- `InlineExtension::Grumpkin`: `GRUMPKIN_DIVQ_ADV`, `GRUMPKIN_DIVR_ADV`;
+- `InlineExtension::P256`: the `P256_*` inline family.
+
+`Inline` itself is source-only and must remain illegal in finalized bytecode.
+Registered inline providers may emit ordinary target rows plus virtual helper
+rows, but provider output must be validated against the selected
+`JoltTargetExtension` set before preprocessing.
 
 The long-term shape is profile-driven:
 
 ```rust
 pub struct JoltInstructionProfile {
     pub source_extensions: &'static [SourceExtension],
-    pub target_extensions: &'static [TargetExtension],
+    pub target_extensions: &'static [JoltTargetExtension],
+    pub inline_extensions: &'static [InlineExtension],
 }
 
 pub const RV64IMAC_JOLT: JoltInstructionProfile = JoltInstructionProfile {
@@ -391,21 +496,53 @@ pub const RV64IMAC_JOLT: JoltInstructionProfile = JoltInstructionProfile {
         SourceExtension::Rv64M,
         SourceExtension::Rv64A,
         SourceExtension::Rv64C,
+        SourceExtension::Zicsr,
+        SourceExtension::RvPrivileged,
         SourceExtension::JoltCustom,
         SourceExtension::JoltInline,
     ],
     target_extensions: &[
-        TargetExtension::JoltCore,
-        TargetExtension::JoltMemory,
-        TargetExtension::JoltBranch,
-        TargetExtension::JoltVirtualArithmetic,
-        TargetExtension::JoltVirtualMemory,
-        TargetExtension::JoltVirtualAssert,
-        TargetExtension::JoltAdvice,
-        TargetExtension::JoltInlineSupport,
+        JoltTargetExtension::BaseIntegerRows,
+        JoltTargetExtension::MultiplyRows,
+        JoltTargetExtension::ControlFlowRows,
+        JoltTargetExtension::Memory64Rows,
+        JoltTargetExtension::AdviceRows,
+        JoltTargetExtension::HostIoRows,
+        JoltTargetExtension::VirtualAssertRows,
+        JoltTargetExtension::VirtualArithmeticRows,
+        JoltTargetExtension::VirtualShiftRows,
+        JoltTargetExtension::BitmanipRows,
+    ],
+    inline_extensions: &[],
+};
+
+pub const RV64IMAC_JOLT_ALL_INLINES: JoltInstructionProfile = JoltInstructionProfile {
+    source_extensions: RV64IMAC_JOLT.source_extensions,
+    target_extensions: RV64IMAC_JOLT.target_extensions,
+    inline_extensions: &[
+        InlineExtension::Sha2,
+        InlineExtension::Keccak256,
+        InlineExtension::Blake2,
+        InlineExtension::Blake3,
+        InlineExtension::BigInt256,
+        InlineExtension::Secp256k1,
+        InlineExtension::Grumpkin,
+        InlineExtension::P256,
     ],
 };
 ```
+
+Reserve these shipped preset names:
+
+- `RV64IM_JOLT`: base RV64I+M profile without atomics or compressed encodings;
+- `RV64IMAC_JOLT`: current base RV64IMAC source/target profile with the inline
+  source mechanism available;
+- `RV64IMAC_JOLT_ALL_INLINES`: current workspace-wide profile with all listed
+  `InlineExtension` packages enabled.
+
+If marker types are more ergonomic than value-level profiles, use the same names
+as type names, for example `profile::Rv64imacJolt`. Exported presets should
+still use the constant names above.
 
 Profiles should be compile-time selections, not runtime plugin loading. The
 selected profile affects decoding, expansion, bytecode preprocessing, lookup
@@ -418,6 +555,14 @@ For this PR, the implementation only needs the current default profile. The
 catalog should nevertheless make extension membership explicit enough that a
 future PR can generate smaller source/target enums or tables from selected
 extensions without re-separating the phase model.
+
+Lookup support should not introduce `LookupInstructionKind`. Keep the existing
+boundary: `JoltInstructionKind` identifies final rows, `LookupInstruction` is
+the typed lookup/proof-facing view of supported final rows, and
+`LookupTableKind` identifies concrete lookup tables in `jolt-lookup-tables`.
+A future `LookupTableProfile` may name the compile-time table set for a
+selected proof profile, but it should be table-oriented, not another
+instruction-kind enum.
 
 Expansion should expose:
 
