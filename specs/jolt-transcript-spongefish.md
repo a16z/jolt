@@ -4,7 +4,7 @@
 | --------- | --------------- |
 | Author(s) | @shreyas-londhe |
 | Created   | 2026-04-17      |
-| Status    | proposed        |
+| Status    | implemented     |
 | PR        | 1455            |
 
 ## Summary
