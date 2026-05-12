@@ -1,10 +1,11 @@
 #![no_main]
 
-//! Fuzz: tamper with proof evaluation bytes and verify that verification rejects.
+//! Fuzz: tamper with proof fields and verify that verification rejects.
 //!
-//! We generate a valid proof, then corrupt an evaluation entry using fuzzer-chosen bytes.
+//! We generate a valid proof, then corrupt either an evaluation entry,
+//! an intermediate commitment, or a witness commitment using fuzzer-chosen bytes.
 
-use jolt_crypto::Bn254;
+use jolt_crypto::{Bn254, JoltGroup};
 use jolt_field::{Field, Fr};
 use jolt_hyperkzg::HyperKZGScheme;
 use jolt_openings::CommitmentScheme;
@@ -40,17 +41,41 @@ fuzz_target!(|data: &[u8]| {
     let proof =
         <TestScheme as CommitmentScheme>::open(&poly, &point, eval, &pk, None, &mut pt);
 
-    let tamper_row = (data[0] as usize) % proof.v.len();
-    let tamper_col = (data[1] as usize) % proof.v[tamper_row].len();
-    let tamper_val = Fr::from_bytes(&data[2..]);
-
-    // Skip if the corruption is a no-op
-    if tamper_val == proof.v[tamper_row][tamper_col] {
-        return;
-    }
-
     let mut tampered = proof.clone();
-    tampered.v[tamper_row][tamper_col] = tamper_val;
+
+    match data[0] % 3 {
+        0 => {
+            // Tamper evaluation entries (exercises folding consistency checks)
+            let tamper_row = (data[1] as usize) % tampered.v.len();
+            let tamper_col = (data[2] as usize) % tampered.v[tamper_row].len();
+            let tamper_val = Fr::from_bytes(&data[3..]);
+            if tamper_val == proof.v[tamper_row][tamper_col] {
+                return;
+            }
+            tampered.v[tamper_row][tamper_col] = tamper_val;
+        }
+        1 => {
+            // Tamper intermediate commitments (exercises pairing check)
+            if tampered.com.is_empty() {
+                return;
+            }
+            let idx = (data[1] as usize) % tampered.com.len();
+            let scalar = Fr::from_bytes(&data[2..]);
+            tampered.com[idx] = tampered.com[idx].scalar_mul(&scalar);
+            if tampered.com[idx] == proof.com[idx] {
+                return;
+            }
+        }
+        _ => {
+            // Tamper witness commitments (exercises pairing check)
+            let idx = (data[1] as usize) % tampered.w.len();
+            let scalar = Fr::from_bytes(&data[2..]);
+            tampered.w[idx] = tampered.w[idx].scalar_mul(&scalar);
+            if tampered.w[idx] == proof.w[idx] {
+                return;
+            }
+        }
+    }
 
     let mut vt = Blake2bTranscript::new(b"fuzz-tamper");
     let result = <TestScheme as CommitmentScheme>::verify(

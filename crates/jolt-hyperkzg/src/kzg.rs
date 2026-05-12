@@ -33,8 +33,12 @@ pub(crate) fn kzg_commit<P: PairingGroup>(
 /// can derive it from the evaluation vectors.
 pub(crate) fn compute_witness_polynomial<F: Field>(f: &[F], u: F) -> Vec<F> {
     let d = f.len();
-    let mut h = vec![F::zero(); d];
-    for i in (1..d).rev() {
+    if d <= 1 {
+        return vec![];
+    }
+    let mut h = vec![F::zero(); d - 1];
+    h[d - 2] = f[d - 1];
+    for i in (1..d - 1).rev() {
         h[i - 1] = f[i] + h[i] * u;
     }
     h
@@ -110,12 +114,12 @@ where
         })
         .collect();
 
-    // Absorb witness commitments and derive one more challenge to keep
-    // prover/verifier transcripts in sync
+    // Absorb witness commitments and mirror the verifier's `d_0` challenge
+    // to keep prover/verifier transcripts in sync.
     for wi in &w {
         transcript.append(wi);
     }
-    let _: P::ScalarField = transcript.challenge();
+    let _d_0: P::ScalarField = transcript.challenge();
 
     (w, v)
 }

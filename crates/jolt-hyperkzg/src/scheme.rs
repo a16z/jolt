@@ -116,6 +116,9 @@ where
         transcript: &mut T,
     ) -> Result<HyperKZGProof<P>, HyperKZGError> {
         let ell = point.len();
+        if ell == 0 {
+            return Err(HyperKZGError::EmptyPoint);
+        }
         let n = evals.len();
         assert_eq!(n, 1 << ell, "evaluation count must be 2^ell");
 
@@ -154,27 +157,27 @@ where
         transcript: &mut T,
     ) -> Result<(), HyperKZGError> {
         let ell = point.len();
+        if ell == 0 {
+            return Err(HyperKZGError::EmptyPoint);
+        }
 
         if proof.com.len() + 1 != ell {
-            return Err(HyperKZGError::InvalidProof(
-                "com must contain ell - 1 intermediate commitments",
-            ));
+            return Err(HyperKZGError::WrongCommitmentCount {
+                expected: ell - 1,
+                got: proof.com.len(),
+            });
         }
 
         // Validate proof dimensions before mutating the transcript.
         let v = &proof.v;
         if v.len() != 3 {
-            return Err(HyperKZGError::InvalidProof("v must have 3 evaluation rows"));
+            return Err(HyperKZGError::WrongEvaluationRowCount { got: v.len() });
         }
         if v[0].len() != ell || v[1].len() != ell || v[2].len() != ell {
-            return Err(HyperKZGError::InvalidProof(
-                "each v row must have ell entries",
-            ));
+            return Err(HyperKZGError::WrongEvaluationWidth { expected: ell });
         }
         if proof.w.len() != 3 {
-            return Err(HyperKZGError::InvalidProof(
-                "w must have 3 witness commitments",
-            ));
+            return Err(HyperKZGError::WrongWitnessCount { got: proof.w.len() });
         }
 
         // Absorb intermediate commitments
@@ -184,7 +187,7 @@ where
         let r: P::ScalarField = transcript.challenge();
 
         if r.is_zero() {
-            return Err(HyperKZGError::VerificationFailed);
+            return Err(HyperKZGError::DegenerateChallenge);
         }
 
         // Prepend the original commitment as C_0
@@ -213,19 +216,24 @@ where
             let rhs = r * (P::ScalarField::one() - point[ell - i - 1]) * (ypos[i] + yneg[i])
                 + point[ell - i - 1] * (ypos[i] - yneg[i]);
             if lhs != rhs {
-                return Err(HyperKZGError::VerificationFailed);
+                return Err(HyperKZGError::FoldingConsistencyFailed { level: i });
             }
         }
 
         // Batch KZG pairing check
         if !kzg_verify_batch::<P, T>(vk, &com, &proof.w, &u, &proof.v, transcript) {
-            return Err(HyperKZGError::VerificationFailed);
+            return Err(HyperKZGError::PairingCheckFailed);
         }
 
         Ok(())
     }
 }
 
+/// # Security note
+///
+/// Uses KZG SRS powers as Pedersen generators — Pedersen binding shares the
+/// KZG trapdoor `beta`. Both are sound once `beta` is destroyed, but the two
+/// schemes do not have independent security assumptions.
 impl<P: PairingGroup> DeriveSetup<HyperKZGProverSetup<P>> for PedersenSetup<P::G1> {
     fn derive(source: &HyperKZGProverSetup<P>, capacity: usize) -> Self {
         assert!(
@@ -333,12 +341,10 @@ where
 {
     fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output {
         assert_eq!(commitments.len(), scalars.len());
-        let combined = commitments
-            .iter()
-            .zip(scalars.iter())
-            .map(|(c, s)| c.point.scalar_mul(s))
-            .fold(P::G1::identity(), |acc, x| acc + x);
-        HyperKZGCommitment { point: combined }
+        let bases: Vec<P::G1> = commitments.iter().map(|c| c.point).collect();
+        HyperKZGCommitment {
+            point: P::G1::msm(&bases, scalars),
+        }
     }
 }
 
@@ -468,7 +474,10 @@ mod tests {
             &proof,
             &mut verifier_transcript,
         );
-        assert!(matches!(result, Err(HyperKZGError::InvalidProof(_))));
+        assert!(matches!(
+            result,
+            Err(HyperKZGError::WrongCommitmentCount { .. })
+        ));
     }
 
     #[test]
@@ -504,7 +513,10 @@ mod tests {
             &proof,
             &mut verifier_transcript,
         );
-        assert!(matches!(result, Err(HyperKZGError::InvalidProof(_))));
+        assert!(matches!(
+            result,
+            Err(HyperKZGError::WrongWitnessCount { .. })
+        ));
     }
 
     #[test]
