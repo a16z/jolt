@@ -6,6 +6,12 @@ edition = "2021"
 [dependencies]
 jolt-core = { workspace = true, features = ["host"] }
 jolt-field = { workspace = true }
+jolt-transcript = { workspace = true, features = [
+    "transcript-blake2b",
+    "transcript-keccak",
+    "transcript-poseidon",
+] }
+spongefish = { workspace = true }
 common = { workspace = true, features = ["std"] }
 tracer = { workspace = true }
 

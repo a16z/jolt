@@ -1,0 +1,260 @@
+//! `transcript_prover_verifier_consistency` — for each spongefish sponge,
+//! a `ProverState` / `VerifierState` pair driven by the same operation
+//! sequence must round-trip every prover message and produce the same
+//! verifier challenges.
+
+use arbitrary::{Arbitrary, Unstructured};
+use ark_bn254::Fr;
+use jolt_field::Fr as JFr;
+use spongefish::instantiations::{Blake2b512, Keccak};
+
+use jolt_transcript::{to_prover, to_verifier, BytesMsg, FieldEl, PoseidonSponge};
+
+use crate::invariant::{CheckError, Invariant, InvariantViolation};
+
+const SESSION: &[u8] = b"jolt-eval/transcript-symmetry/v1";
+
+/// One operation in the prover/verifier sequence.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub enum Op {
+    /// Both sides absorb the same public bytes.
+    PublicBytes(Vec<u8>),
+    /// Both sides absorb the same public BN254 `Fr` scalar.
+    PublicScalar(#[schemars(with = "[u8; 32]")] JFr),
+    /// Prover absorbs + emits bytes; verifier reads them back from the NARG.
+    ProverBytes(Vec<u8>),
+    /// Prover absorbs + emits a BN254 `Fr` scalar; verifier reads it back.
+    ProverScalar(#[schemars(with = "[u8; 32]")] JFr),
+    /// Both sides squeeze a verifier challenge.
+    Challenge,
+}
+
+/// Sequence of operations replayed in lockstep by both sides.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct Input {
+    /// Operations to apply in order.
+    pub ops: Vec<Op>,
+}
+
+impl<'a> Arbitrary<'a> for Input {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        let n = u.int_in_range(0u8..=20)? as usize;
+        let mut ops = Vec::with_capacity(n);
+        for _ in 0..n {
+            let tag = u.int_in_range(0u8..=4)?;
+            ops.push(match tag {
+                0 => Op::PublicBytes(arb_bytes(u)?),
+                1 => Op::PublicScalar(arb_scalar(u)?),
+                2 => Op::ProverBytes(arb_bytes(u)?),
+                3 => Op::ProverScalar(arb_scalar(u)?),
+                _ => Op::Challenge,
+            });
+        }
+        Ok(Self { ops })
+    }
+}
+
+fn arb_bytes(u: &mut Unstructured<'_>) -> arbitrary::Result<Vec<u8>> {
+    let len = u.int_in_range(0u8..=64)? as usize;
+    (0..len).map(|_| u.arbitrary()).collect()
+}
+
+fn arb_scalar(u: &mut Unstructured<'_>) -> arbitrary::Result<JFr> {
+    let bytes: [u8; 32] = u.arbitrary()?;
+    Ok(JFr::from_le_bytes_mod_order(&bytes))
+}
+
+fn ark(f: JFr) -> Fr {
+    f.into()
+}
+
+fn run_check<H>(input: &Input, build_sponge: impl Fn() -> H) -> Result<(), CheckError>
+where
+    H: spongefish::DuplexSpongeInterface<U = u8>,
+{
+    let mut prover = to_prover(build_sponge(), SESSION);
+    let mut prover_challenges: Vec<Fr> = Vec::new();
+
+    for op in &input.ops {
+        match op {
+            Op::PublicBytes(b) => prover.public_message(&BytesMsg(b.clone())),
+            Op::PublicScalar(f) => prover.public_message(&FieldEl(ark(*f))),
+            Op::ProverBytes(b) => prover.prover_message(&BytesMsg(b.clone())),
+            Op::ProverScalar(f) => prover.prover_message(&FieldEl(ark(*f))),
+            Op::Challenge => {
+                let FieldEl(c) = prover.verifier_message::<FieldEl>();
+                prover_challenges.push(c);
+            }
+        }
+    }
+
+    let narg: Vec<u8> = prover.narg_string().to_vec();
+    let mut verifier = to_verifier(build_sponge(), SESSION, &narg);
+    let mut challenge_idx = 0usize;
+
+    for (op_idx, op) in input.ops.iter().enumerate() {
+        match op {
+            Op::PublicBytes(b) => verifier.public_message(&BytesMsg(b.clone())),
+            Op::PublicScalar(f) => verifier.public_message(&FieldEl(ark(*f))),
+            Op::ProverBytes(expected) => {
+                let got: BytesMsg = verifier
+                    .prover_message()
+                    .map_err(|e| violation("prover_message<BytesMsg>", op_idx, e))?;
+                if got.as_slice() != expected.as_slice() {
+                    return Err(mismatch("ProverBytes round-trip", op_idx));
+                }
+            }
+            Op::ProverScalar(expected) => {
+                let got: FieldEl = verifier
+                    .prover_message()
+                    .map_err(|e| violation("prover_message<FieldEl>", op_idx, e))?;
+                if got.0 != ark(*expected) {
+                    return Err(mismatch("ProverScalar round-trip", op_idx));
+                }
+            }
+            Op::Challenge => {
+                let FieldEl(verifier_c) = verifier.verifier_message::<FieldEl>();
+                if verifier_c != prover_challenges[challenge_idx] {
+                    return Err(mismatch("Challenge", op_idx));
+                }
+                challenge_idx += 1;
+            }
+        }
+    }
+
+    verifier
+        .check_eof()
+        .map_err(|e| violation("check_eof", input.ops.len(), e))?;
+    Ok(())
+}
+
+fn violation(
+    what: &str,
+    op_idx: usize,
+    err: spongefish::VerificationError,
+) -> CheckError {
+    CheckError::Violation(InvariantViolation::with_details(
+        format!("{what} failed on verifier"),
+        format!("op_idx={op_idx}, err={err:?}"),
+    ))
+}
+
+fn mismatch(what: &str, op_idx: usize) -> CheckError {
+    CheckError::Violation(InvariantViolation::with_details(
+        format!("{what} mismatch between prover and verifier"),
+        format!("op_idx={op_idx}"),
+    ))
+}
+
+fn seed_corpus_shared() -> Vec<Input> {
+    let scalar = JFr::from_le_bytes_mod_order(&[0xABu8; 32]);
+    let mut mixed_1k = Vec::with_capacity(1000);
+    for i in 0..1000u64 {
+        mixed_1k.push(match i % 5 {
+            0 => Op::PublicBytes(vec![i as u8; (i % 13) as usize]),
+            1 => Op::PublicScalar(JFr::from(i)),
+            2 => Op::ProverBytes(vec![(i ^ 0x5A) as u8; (i % 11) as usize]),
+            3 => Op::ProverScalar(JFr::from(i.wrapping_mul(2_654_435_761))),
+            _ => Op::Challenge,
+        });
+    }
+
+    vec![
+        Input { ops: vec![] },
+        Input {
+            ops: vec![Op::Challenge],
+        },
+        Input {
+            ops: vec![Op::PublicBytes(b"hello".to_vec())],
+        },
+        Input {
+            ops: vec![Op::PublicScalar(scalar)],
+        },
+        Input {
+            ops: vec![Op::ProverBytes(b"prover-data".to_vec())],
+        },
+        Input {
+            ops: vec![Op::ProverScalar(scalar)],
+        },
+        Input {
+            ops: vec![
+                Op::PublicBytes(b"setup".to_vec()),
+                Op::ProverScalar(scalar),
+                Op::Challenge,
+                Op::ProverBytes(vec![1, 2, 3, 4, 5]),
+                Op::Challenge,
+                Op::PublicScalar(scalar),
+                Op::Challenge,
+                Op::ProverScalar(JFr::from(42u64)),
+                Op::Challenge,
+                Op::PublicBytes(vec![]),
+            ],
+        },
+        Input { ops: mixed_1k },
+    ]
+}
+
+macro_rules! transcript_invariant {
+    ($struct:ident, $sponge:ty, $build:expr, $name:literal, $sponge_label:literal) => {
+        #[doc = concat!(
+            "Spongefish symmetry invariant for the ",
+            $sponge_label,
+            " sponge."
+        )]
+        #[jolt_eval_macros::invariant(Test, Fuzz, RedTeam)]
+        #[derive(Default)]
+        pub struct $struct;
+
+        impl Invariant for $struct {
+            type Setup = ();
+            type Input = Input;
+
+            fn name(&self) -> &str {
+                $name
+            }
+
+            fn description(&self) -> String {
+                format!(
+                    "spongefish ProverState/VerifierState pair ({} sponge) replaying \
+                     the same operation sequence must round-trip every prover message \
+                     and agree on every challenge.",
+                    $sponge_label
+                )
+            }
+
+            fn setup(&self) {}
+
+            fn check(&self, _setup: &(), input: Input) -> Result<(), CheckError> {
+                run_check::<$sponge>(&input, $build)
+            }
+
+            fn seed_corpus(&self) -> Vec<Input> {
+                seed_corpus_shared()
+            }
+        }
+    };
+}
+
+transcript_invariant!(
+    TranscriptConsistencyBlake2bInvariant,
+    Blake2b512,
+    Blake2b512::default,
+    "transcript_prover_verifier_consistency_blake2b",
+    "Blake2b512"
+);
+
+transcript_invariant!(
+    TranscriptConsistencyKeccakInvariant,
+    Keccak,
+    Keccak::default,
+    "transcript_prover_verifier_consistency_keccak",
+    "Keccak"
+);
+
+transcript_invariant!(
+    TranscriptConsistencyPoseidonInvariant,
+    PoseidonSponge,
+    PoseidonSponge::new,
+    "transcript_prover_verifier_consistency_poseidon",
+    "Poseidon"
+);
