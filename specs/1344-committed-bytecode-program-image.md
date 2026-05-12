@@ -27,7 +27,7 @@ The new proving-system surface is:
 - `ProgramMode::{Full, Committed}` in `jolt-core/src/zkvm/config.rs`.
 - `ProgramPreprocessing::{Full, Committed}` in `jolt-core/src/zkvm/program.rs`.
 - `CommittedPolynomial::BytecodeChunk(i)` and `CommittedPolynomial::ProgramImageInit` in `jolt-core/src/zkvm/witness.rs`.
-- `VirtualPolynomial::BytecodeValStage(i)`, `VirtualPolynomial::BytecodeClaimReductionIntermediate`, `VirtualPolynomial::ProgramImageInitContributionRw`, and `VirtualPolynomial::ProgramImageInitContributionRaf`.
+- `VirtualPolynomial::BytecodeValStage(i)`, `VirtualPolynomial::BytecodeClaimReductionIntermediate`, and `VirtualPolynomial::ProgramImageInitContributionRw`.
 - `SumcheckId::{BytecodeReadRafAddressPhase, BooleanityAddressPhase, BytecodeClaimReductionCyclePhase, BytecodeClaimReduction, ProgramImageClaimReductionCyclePhase, ProgramImageClaimReduction}`.
 - Shared precommitted scheduling through `PrecommittedClaimReduction` in `jolt-core/src/zkvm/claim_reductions/precommitted.rs`.
 
@@ -36,7 +36,7 @@ The new proving-system surface is:
 - Full and committed program modes must prove the same guest execution relation.
 - Committed mode must not let the verifier accept a proof for bytecode or program-image data that differs from the committed preprocessing.
 - Prover and verifier must derive the same `ProgramMetadata`, bytecode chunk count, bytecode chunk geometry, program-image geometry, Dory layout, and precommitted scheduling reference.
-- `bytecode_chunk_count` must be nonzero, a power of two, and must divide `bytecode_len`.
+- `bytecode_chunk_count` must be nonzero, at most `256`, a power of two, and must divide `bytecode_len`.
 - The committed bytecode lane layout must encode the same values read by bytecode read-RAF: `rs1`, `rs2`, `rd`, unexpanded PC, immediate, circuit flags, instruction flags, lookup-table selector, and RAF flag.
 - Every committed bytecode chunk polynomial must have length `committed_lanes() * (bytecode_len / bytecode_chunk_count)`.
 - The program-image polynomial must be the RAM preprocessing bytecode-word slice padded to a power of two, with no semantic rewriting.
@@ -81,7 +81,7 @@ New `jolt-eval` invariants for committed-program equivalence and Stage 8 opening
 - [x] Stage 8 includes bytecode chunks and program image in the random linear combination exactly when `ProgramMode::Committed` is used.
 - [x] ZK mode BlindFold constraints include bytecode and program-image opening IDs with coefficients matching Stage 8 RLC coefficients.
 - [x] Proof serialization includes `stage6a_sumcheck_proof`, `stage6b_sumcheck_proof`, and the new committed/virtual polynomial tags.
-- [x] SDK macro output includes committed preprocessing helpers that accept `bytecode_chunk_count`.
+- [x] SDK macro output includes committed prover/shared preprocessing helpers that accept `bytecode_chunk_count`.
 - [x] At least one end-to-end Dory test proves and verifies in committed program mode.
 
 ### Testing Strategy
@@ -204,6 +204,7 @@ The lane layout is:
 - RAF flag.
 
 For a bytecode table of length `T_bc` split into `C` chunks, each chunk has cycle length `T_bc / C`.
+The implementation caps `C` at `256`, matching the `u8` serialization used for `BytecodeChunk(i)`.
 The chunk polynomial has dimensions `committed_lanes() * (T_bc / C)`.
 The coefficient index is derived through the active Dory layout so that commitment-time layout and opening-time layout agree.
 
@@ -259,6 +260,9 @@ Committed preprocessing starts from the same full preprocessing, then:
 2. derives a Dory commitment for the program image,
 3. stores metadata and commitments for verifier preprocessing,
 4. stores full preprocessing and Dory opening hints only for prover preprocessing.
+
+Bytecode chunk commitments are derived sequentially under one Dory context because Dory context selection is process-global.
+The default chunk count is `1`, so this does not remove parallelism from the default committed path.
 
 The shared preprocessing digest binds the serialized committed preprocessing to the Fiat-Shamir transcript.
 
@@ -394,7 +398,7 @@ Implementation is organized as:
 7. Add `ProgramImageClaimReduction` over staged program-image RAM contribution and committed program-image opening.
 8. Wire committed-mode reductions into Stage 6b and Stage 7.
 9. Wire committed-mode openings into Stage 8 RLC and BlindFold opening-proof constraints.
-10. Add SDK committed preprocessing helpers and example CLI paths.
+10. Add SDK committed preprocessing helpers and canonical `fibonacci` / `muldiv` example CLI paths.
 11. Add committed-mode e2e tests and precommitted scheduling regression tests.
 
 ## References

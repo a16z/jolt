@@ -25,13 +25,14 @@ use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckIns
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::claim_reductions::{
-    permute_precommitted_polys, precommitted_skip_round_scale, PrecomittedParams,
-    PrecomittedProver, PrecommittedClaimReduction, PrecommittedPhase,
-    PrecommittedSchedulingReference, TWO_PHASE_DEGREE_BOUND,
+    permute_precommitted_polys, precommitted_skip_round_scale, PrecommittedClaimReduction,
+    PrecommittedPhase, PrecommittedSchedulingReference, TWO_PHASE_DEGREE_BOUND,
 };
 use crate::zkvm::ram::remap_address;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use tracer::JoltDevice;
+
+use super::precommitted::{PrecommittedParams, PrecommittedProver};
 
 #[derive(Clone, Allocative)]
 pub struct ProgramImageClaimReductionParams<F: JoltField> {
@@ -210,7 +211,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProgramImageClaimReductionParam
     }
 }
 
-impl<F: JoltField> PrecomittedParams<F> for ProgramImageClaimReductionParams<F> {
+impl<F: JoltField> PrecommittedParams<F> for ProgramImageClaimReductionParams<F> {
     fn is_cycle_phase(&self) -> bool {
         self.phase == PrecommittedPhase::CycleVariables
     }
@@ -238,7 +239,7 @@ impl<F: JoltField> PrecomittedParams<F> for ProgramImageClaimReductionParams<F> 
 
 #[derive(Allocative)]
 pub struct ProgramImageClaimReductionProver<F: JoltField> {
-    core: PrecomittedProver<F, ProgramImageClaimReductionParams<F>>,
+    core: PrecommittedProver<F, ProgramImageClaimReductionParams<F>>,
 }
 
 fn shifted_program_image_eq_slice<F>(
@@ -309,7 +310,7 @@ impl<F: JoltField> ProgramImageClaimReductionProver<F> {
         };
 
         Self {
-            core: PrecomittedProver::new(params, program_word, eq_slice),
+            core: PrecommittedProver::new(params, program_word, eq_slice),
         }
     }
 
@@ -328,7 +329,7 @@ impl<F: JoltField> ProgramImageClaimReductionProver<F> {
         scale: F,
     ) -> Self {
         let mut prover = Self {
-            core: PrecomittedProver::new(
+            core: PrecommittedProver::new(
                 params,
                 MultilinearPolynomial::from(program_word_coeffs),
                 MultilinearPolynomial::from(eq_slice_coeffs),

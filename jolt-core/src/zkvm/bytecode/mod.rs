@@ -1,5 +1,4 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -56,12 +55,10 @@ impl<PCS: CommitmentScheme> TrustedBytecodeCommitments<PCS> {
             DoryContext::UntrustedAdvice,
             None,
         );
+        let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
         let (commitments, hints): (Vec<_>, Vec<_>) = bytecode_chunk_polys
-            .par_iter()
-            .map(|poly| {
-                let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
-                PCS::commit(poly, generators)
-            })
+            .iter()
+            .map(|poly| PCS::commit(poly, generators))
             .unzip();
 
         (

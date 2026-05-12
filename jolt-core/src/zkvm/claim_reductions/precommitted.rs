@@ -526,7 +526,7 @@ pub fn precommitted_sumcheck_inverse_index_permutation(
 
 pub const TWO_PHASE_DEGREE_BOUND: usize = 2;
 
-pub trait PrecomittedParams<F: JoltField>: SumcheckInstanceParams<F> {
+pub trait PrecommittedParams<F: JoltField>: SumcheckInstanceParams<F> {
     fn is_cycle_phase(&self) -> bool;
     fn is_cycle_phase_round(&self, round: usize) -> bool;
     fn is_address_phase_round(&self, round: usize) -> bool;
@@ -536,14 +536,14 @@ pub trait PrecomittedParams<F: JoltField>: SumcheckInstanceParams<F> {
 }
 
 #[derive(Allocative)]
-pub struct PrecomittedProver<F: JoltField, P: PrecomittedParams<F>> {
+pub struct PrecommittedProver<F: JoltField, P: PrecommittedParams<F>> {
     params: P,
     value_poly: MultilinearPolynomial<F>,
     eq_poly: MultilinearPolynomial<F>,
     scale: F,
 }
 
-impl<F: JoltField, P: PrecomittedParams<F>> PrecomittedProver<F, P> {
+impl<F: JoltField, P: PrecommittedParams<F>> PrecommittedProver<F, P> {
     pub fn new(
         params: P,
         value_poly: MultilinearPolynomial<F>,
@@ -567,10 +567,6 @@ impl<F: JoltField, P: PrecomittedParams<F>> PrecomittedProver<F, P> {
 
     pub fn set_scale(&mut self, scale: F) {
         self.scale = scale;
-    }
-
-    pub fn scale(&self) -> F {
-        self.scale
     }
 
     fn compute_message_unscaled(&self, previous_claim_unscaled: F) -> UniPoly<F> {

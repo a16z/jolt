@@ -22,15 +22,13 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
-use crate::zkvm::bytecode::chunks::committed_lanes;
+use crate::zkvm::bytecode::chunks::{committed_lanes, total_lanes, BYTECODE_LANE_LAYOUT};
 use crate::zkvm::bytecode::read_raf_checking::BytecodeReadRafSumcheckParams;
 use crate::zkvm::claim_reductions::{
     permute_precommitted_polys, precommitted_skip_round_scale, PrecommittedClaimReduction,
     PrecommittedPhase, PrecommittedSchedulingReference, TWO_PHASE_DEGREE_BOUND,
 };
-use crate::zkvm::instruction::{
-    CircuitFlags, InstructionFlags, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
-};
+use crate::zkvm::instruction::{CircuitFlags, InstructionFlags, NUM_CIRCUIT_FLAGS};
 use crate::zkvm::lookup_table::LookupTables;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use common::constants::{REGISTER_COUNT, XLEN};
@@ -619,18 +617,8 @@ fn compute_lane_weights<F: JoltField>(
     eta_powers: &[F; NUM_VAL_STAGES],
 ) -> Vec<F> {
     let reg_count = REGISTER_COUNT as usize;
-    let total = crate::zkvm::bytecode::chunks::total_lanes();
-
-    let rs1_start = 0usize;
-    let rs2_start = rs1_start + reg_count;
-    let rd_start = rs2_start + reg_count;
-    let unexp_pc_idx = rd_start + reg_count;
-    let imm_idx = unexp_pc_idx + 1;
-    let circuit_start = imm_idx + 1;
-    let instr_start = circuit_start + NUM_CIRCUIT_FLAGS;
-    let lookup_start = instr_start + NUM_INSTRUCTION_FLAGS;
-    let raf_flag_idx = lookup_start + LookupTables::<XLEN>::COUNT;
-    debug_assert_eq!(raf_flag_idx + 1, total);
+    let layout = BYTECODE_LANE_LAYOUT;
+    debug_assert_eq!(layout.raf_flag_idx + 1, total_lanes());
 
     let log_reg = reg_count.log_2();
     let r_register_4 = accumulator
@@ -653,51 +641,55 @@ fn compute_lane_weights<F: JoltField>(
     {
         let coeff = eta_powers[0];
         let g = &bytecode_read_raf_params.stage1_gammas;
-        weights[unexp_pc_idx] += coeff * g[0];
-        weights[imm_idx] += coeff * g[1];
+        weights[layout.unexp_pc_idx] += coeff * g[0];
+        weights[layout.imm_idx] += coeff * g[1];
         for i in 0..NUM_CIRCUIT_FLAGS {
-            weights[circuit_start + i] += coeff * g[2 + i];
+            weights[layout.circuit_start + i] += coeff * g[2 + i];
         }
     }
     {
         let coeff = eta_powers[1];
         let g = &bytecode_read_raf_params.stage2_gammas;
-        weights[circuit_start + (CircuitFlags::Jump as usize)] += coeff * g[0];
-        weights[instr_start + (InstructionFlags::Branch as usize)] += coeff * g[1];
-        weights[circuit_start + (CircuitFlags::WriteLookupOutputToRD as usize)] += coeff * g[2];
-        weights[circuit_start + (CircuitFlags::VirtualInstruction as usize)] += coeff * g[3];
+        weights[layout.circuit_start + (CircuitFlags::Jump as usize)] += coeff * g[0];
+        weights[layout.instr_start + (InstructionFlags::Branch as usize)] += coeff * g[1];
+        weights[layout.circuit_start + (CircuitFlags::WriteLookupOutputToRD as usize)] +=
+            coeff * g[2];
+        weights[layout.circuit_start + (CircuitFlags::VirtualInstruction as usize)] += coeff * g[3];
     }
     {
         let coeff = eta_powers[2];
         let g = &bytecode_read_raf_params.stage3_gammas;
-        weights[imm_idx] += coeff * g[0];
-        weights[unexp_pc_idx] += coeff * g[1];
-        weights[instr_start + (InstructionFlags::LeftOperandIsRs1Value as usize)] += coeff * g[2];
-        weights[instr_start + (InstructionFlags::LeftOperandIsPC as usize)] += coeff * g[3];
-        weights[instr_start + (InstructionFlags::RightOperandIsRs2Value as usize)] += coeff * g[4];
-        weights[instr_start + (InstructionFlags::RightOperandIsImm as usize)] += coeff * g[5];
-        weights[instr_start + (InstructionFlags::IsNoop as usize)] += coeff * g[6];
-        weights[circuit_start + (CircuitFlags::VirtualInstruction as usize)] += coeff * g[7];
-        weights[circuit_start + (CircuitFlags::IsFirstInSequence as usize)] += coeff * g[8];
+        weights[layout.imm_idx] += coeff * g[0];
+        weights[layout.unexp_pc_idx] += coeff * g[1];
+        weights[layout.instr_start + (InstructionFlags::LeftOperandIsRs1Value as usize)] +=
+            coeff * g[2];
+        weights[layout.instr_start + (InstructionFlags::LeftOperandIsPC as usize)] += coeff * g[3];
+        weights[layout.instr_start + (InstructionFlags::RightOperandIsRs2Value as usize)] +=
+            coeff * g[4];
+        weights[layout.instr_start + (InstructionFlags::RightOperandIsImm as usize)] +=
+            coeff * g[5];
+        weights[layout.instr_start + (InstructionFlags::IsNoop as usize)] += coeff * g[6];
+        weights[layout.circuit_start + (CircuitFlags::VirtualInstruction as usize)] += coeff * g[7];
+        weights[layout.circuit_start + (CircuitFlags::IsFirstInSequence as usize)] += coeff * g[8];
     }
     {
         let coeff = eta_powers[3];
         let g = &bytecode_read_raf_params.stage4_gammas;
         for r in 0..reg_count {
-            weights[rd_start + r] += coeff * g[0] * eq_r_register_4[r];
-            weights[rs1_start + r] += coeff * g[1] * eq_r_register_4[r];
-            weights[rs2_start + r] += coeff * g[2] * eq_r_register_4[r];
+            weights[layout.rd_start + r] += coeff * g[0] * eq_r_register_4[r];
+            weights[layout.rs1_start + r] += coeff * g[1] * eq_r_register_4[r];
+            weights[layout.rs2_start + r] += coeff * g[2] * eq_r_register_4[r];
         }
     }
     {
         let coeff = eta_powers[4];
         let g = &bytecode_read_raf_params.stage5_gammas;
         for r in 0..reg_count {
-            weights[rd_start + r] += coeff * g[0] * eq_r_register_5[r];
+            weights[layout.rd_start + r] += coeff * g[0] * eq_r_register_5[r];
         }
-        weights[raf_flag_idx] += coeff * g[1];
+        weights[layout.raf_flag_idx] += coeff * g[1];
         for i in 0..LookupTables::<XLEN>::COUNT {
-            weights[lookup_start + i] += coeff * g[2 + i];
+            weights[layout.lookup_start + i] += coeff * g[2 + i];
         }
     }
 

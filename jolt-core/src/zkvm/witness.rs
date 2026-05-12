@@ -8,7 +8,7 @@ use tracer::instruction::Cycle;
 
 use crate::curve::JoltCurve;
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
-use crate::zkvm::config::{OneHotParams, ProgramMode};
+use crate::zkvm::config::OneHotParams;
 use crate::zkvm::instruction::InstructionFlags;
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::{
@@ -58,22 +58,6 @@ pub fn all_committed_polynomials(one_hot_params: &OneHotParams) -> Vec<Committed
     }
     for i in 0..one_hot_params.bytecode_d {
         polynomials.push(CommittedPolynomial::BytecodeRa(i));
-    }
-    polynomials
-}
-
-/// Returns all committed polynomials expected in the proof commitments vector.
-pub fn all_proof_commitment_polynomials(
-    one_hot_params: &OneHotParams,
-    program_mode: ProgramMode,
-    bytecode_chunk_count: usize,
-) -> Vec<CommittedPolynomial> {
-    let mut polynomials = all_committed_polynomials(one_hot_params);
-    if program_mode == ProgramMode::Committed {
-        for i in 0..bytecode_chunk_count {
-            polynomials.push(CommittedPolynomial::BytecodeChunk(i));
-        }
-        polynomials.push(CommittedPolynomial::ProgramImageInit);
     }
     polynomials
 }
@@ -301,5 +285,4 @@ pub enum VirtualPolynomial {
     BooleanityAddrClaim,
     BytecodeClaimReductionIntermediate,
     ProgramImageInitContributionRw,
-    ProgramImageInitContributionRaf,
 }

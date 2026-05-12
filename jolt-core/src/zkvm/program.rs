@@ -230,21 +230,8 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
         bytecode_chunk_count: usize,
         max_log_k_chunk: usize,
     ) -> Self {
-        let full = match self {
-            Self::Full(full) => full,
-            Self::Committed(_committed) => {
-                #[cfg(feature = "prover")]
-                {
-                    _committed
-                        .prover_data
-                        .expect("committed prover data missing during recommit")
-                        .full
-                }
-                #[cfg(not(feature = "prover"))]
-                {
-                    panic!("cannot commit already-committed verifier preprocessing")
-                }
-            }
+        let Self::Full(full) = self else {
+            panic!("cannot commit already-committed program preprocessing");
         };
         let meta = full.meta();
         #[cfg(feature = "prover")]

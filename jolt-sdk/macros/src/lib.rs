@@ -82,7 +82,6 @@ impl MacroBuilder {
         let preprocess_prover_fn = self.make_preprocess_prover_func();
         let preprocess_committed_prover_fn = self.make_preprocess_committed_prover_func();
         let preprocess_verifier_fn = self.make_preprocess_verifier_func();
-        let preprocess_committed_verifier_fn = self.make_preprocess_committed_verifier_func();
         let verifier_preprocess_from_prover_fn = self.make_preprocess_from_prover_func();
         let commit_trusted_advice_fn = self.make_commit_trusted_advice_func();
         let prove_fn = self.make_prove_func();
@@ -120,7 +119,6 @@ impl MacroBuilder {
             #preprocess_prover_fn
             #preprocess_committed_prover_fn
             #preprocess_verifier_fn
-            #preprocess_committed_verifier_fn
             #verifier_preprocess_from_prover_fn
             #commit_trusted_advice_fn
             #prove_fn
@@ -592,7 +590,7 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_shared_committed_fn_name(
-                program: &mut jolt::host::Program,
+                program: &mut dyn jolt::host::JoltProgramSource,
                 bytecode_chunk_count: usize,
             ) -> Result<jolt::JoltSharedPreprocessing, jolt::PreprocessingError>
             {
@@ -691,26 +689,6 @@ impl MacroBuilder {
                     generators,
                     blindfold_setup,
                 )
-            }
-        }
-    }
-
-    fn make_preprocess_committed_verifier_func(&self) -> TokenStream2 {
-        let fn_name = self.get_func_name();
-        let preprocess_committed_verifier_fn_name = Ident::new(
-            &format!("preprocess_committed_verifier_{fn_name}"),
-            fn_name.span(),
-        );
-
-        quote! {
-            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #preprocess_committed_verifier_fn_name(
-                shared_preprocess: jolt::JoltSharedPreprocessing,
-                generators: <jolt::PCS as jolt::CommitmentScheme>::VerifierSetup,
-                blindfold_setup: Option<jolt::BlindfoldSetup<jolt::Curve>>,
-            ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Curve, jolt::PCS>
-            {
-                jolt::JoltVerifierPreprocessing::new(shared_preprocess, generators, blindfold_setup)
             }
         }
     }

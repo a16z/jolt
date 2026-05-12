@@ -28,10 +28,15 @@ pub const fn committed_lanes() -> usize {
 }
 
 pub const DEFAULT_COMMITTED_BYTECODE_CHUNK_COUNT: usize = 1;
+pub const MAX_COMMITTED_BYTECODE_CHUNK_COUNT: usize = 256;
 
 #[inline]
 pub fn validate_committed_bytecode_chunk_count(chunk_count: usize) {
     assert!(chunk_count > 0, "bytecode chunk count must be non-zero");
+    assert!(
+        chunk_count <= MAX_COMMITTED_BYTECODE_CHUNK_COUNT,
+        "bytecode chunk count must be at most {MAX_COMMITTED_BYTECODE_CHUNK_COUNT}"
+    );
     assert!(
         chunk_count.is_power_of_two(),
         "bytecode chunk count must be a power of two"

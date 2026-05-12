@@ -20,10 +20,12 @@ use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckIns
 use crate::transcripts::Transcript;
 use crate::zkvm::claim_reductions::{
     permute_precommitted_polys, precommitted_eq_evals_with_scaling, precommitted_skip_round_scale,
-    PrecomittedParams, PrecomittedProver, PrecommittedClaimReduction, PrecommittedPhase,
-    PrecommittedSchedulingReference, TWO_PHASE_DEGREE_BOUND,
+    PrecommittedClaimReduction, PrecommittedPhase, PrecommittedSchedulingReference,
+    TWO_PHASE_DEGREE_BOUND,
 };
 use allocative::Allocative;
+
+use super::precommitted::{PrecommittedParams, PrecommittedProver};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Allocative)]
 pub enum AdviceKind {
@@ -238,7 +240,7 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
     }
 }
 
-impl<F: JoltField> PrecomittedParams<F> for AdviceClaimReductionParams<F> {
+impl<F: JoltField> PrecommittedParams<F> for AdviceClaimReductionParams<F> {
     fn is_cycle_phase(&self) -> bool {
         self.phase == PrecommittedPhase::CycleVariables
     }
@@ -266,7 +268,7 @@ impl<F: JoltField> PrecomittedParams<F> for AdviceClaimReductionParams<F> {
 
 #[derive(Allocative)]
 pub struct AdviceClaimReductionProver<F: JoltField> {
-    core: PrecomittedProver<F, AdviceClaimReductionParams<F>>,
+    core: PrecommittedProver<F, AdviceClaimReductionParams<F>>,
 }
 
 impl<F: JoltField> AdviceClaimReductionProver<F> {
@@ -298,7 +300,7 @@ impl<F: JoltField> AdviceClaimReductionProver<F> {
         };
 
         Self {
-            core: PrecomittedProver::new(params, advice_poly, eq_poly),
+            core: PrecommittedProver::new(params, advice_poly, eq_poly),
         }
     }
 
@@ -317,7 +319,7 @@ impl<F: JoltField> AdviceClaimReductionProver<F> {
         scale: F,
     ) -> Self {
         let mut prover = Self {
-            core: PrecomittedProver::new(
+            core: PrecommittedProver::new(
                 params,
                 MultilinearPolynomial::from(advice_coeffs),
                 MultilinearPolynomial::from(eq_coeffs),
