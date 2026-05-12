@@ -28,8 +28,10 @@ will likely need compile-time profiles for different source ISA combinations
 and different target bytecode/lookup-table sets: for example RV64I+M without C,
 the current RV64IMAC profile, future floating-point support, or inline-specific
 virtual rows that are only enabled when a cryptographic inline package is
-compiled in. This PR should not build that full profile system, but it should
-avoid baking in the current monolithic "everything exists everywhere" shape.
+compiled in. This PR should therefore make the instruction catalog and the
+current compile-time profile explicit. The implementation does not need
+downstream user-authored profiles yet, but the final form of this PR should not
+be broad mirrored `SourceInstructionKind` / `JoltInstructionKind` enums.
 
 ## Intent
 
@@ -55,6 +57,11 @@ The important architectural change is that they should be treated as generated
 views over catalog metadata, not as one hand-maintained global list that every
 phase shares.
 
+Catalog/profile support is part of the main goal, not a stretch goal. The PR
+should leave `SourceInstructionKind` and `JoltInstructionKind` as phase-specific
+generated artifacts of the selected profile/catalog, not as the primary source
+of instruction-set truth.
+
 ### Invariants
 
 - Decoding preserves all currently supported RV64 and Jolt custom source
@@ -63,6 +70,9 @@ phase shares.
   source opcode should not automatically add a final Jolt bytecode row, and
   adding a target-only virtual row should not automatically make it decodable
   from guest program bytes.
+- The current Jolt source/target profile is explicit in code. Profile metadata
+  determines which source extensions decode, which target instruction families
+  may appear after expansion, and which inline packages are available.
 - Expansion behavior is unchanged relative to `main` after PR #1518:
   `SourceInstruction -> Vec<JoltInstruction>` must match the existing expanded
   bytecode for the checked fixture corpus, modulo intentional type names.
@@ -108,9 +118,9 @@ phase shares.
 - Do not introduce deprecated aliases, conversion shims, or dual public APIs.
   This is a full cutover.
 - Do not make `jolt-program` depend on `tracer`.
-- Do not implement user-defined extension profiles in this PR. The catalog
-  should be shaped so profiles can be generated later, but the only required
-  profile here is the current supported Jolt profile.
+- Do not implement downstream user-authored extension profiles in this PR. The
+  current shipped profiles must be explicit and compile-time selected, but
+  third-party profile composition can remain follow-up work.
 
 ## Evaluation
 
@@ -130,6 +140,9 @@ phase shares.
 - [ ] The instruction catalog records source membership and target membership
       separately. `SourceInstructionKind` and `JoltInstructionKind` are generated
       from those memberships rather than from one shared variant list.
+- [ ] Broad mirrored source/target enums are not the final implementation
+      shape. If closed enums remain, they are generated from catalog/profile
+      facts and do not themselves define instruction-set membership.
 - [ ] The catalog uses the concrete names `SourceExtension`,
       `JoltTargetExtension`, `InlineExtension`, and `JoltInstructionProfile`.
 - [ ] The default catalog/profile corresponds to the current supported
@@ -377,26 +390,26 @@ pub enum SourceExtension {
 }
 
 pub enum JoltTargetExtension {
-    /// Base arithmetic, comparison, and immediate rows that may appear after expansion.
-    BaseIntegerRows,
-    /// Multiplication rows retained as final Jolt bytecode rows.
-    MultiplyRows,
-    /// Branch, jump, and other control-flow rows legal in final bytecode.
-    ControlFlowRows,
-    /// Final 64-bit memory rows. Narrow loads/stores and atomics lower into these.
-    Memory64Rows,
-    /// Advice-producing and advice-consuming virtual rows.
-    AdviceRows,
-    /// Host I/O virtual rows.
-    HostIoRows,
-    /// Virtual assertion rows used by expansion and inlines.
-    VirtualAssertRows,
-    /// Virtual arithmetic/helper rows used by division, word ops, and carries.
-    VirtualArithmeticRows,
-    /// Virtual shift and rotate rows used by source lowering.
-    VirtualShiftRows,
-    /// Bit-manipulation rows used mainly by custom ops and crypto inlines.
-    BitmanipRows,
+    /// Base integer arithmetic, comparisons, and immediate operations.
+    IntegerCore,
+    /// Integer multiplication operations retained as final Jolt instructions.
+    IntegerMultiply,
+    /// Branches, jumps, and other control-flow operations.
+    ControlFlow,
+    /// 64-bit load/store operations. Narrow memory operations lower into these.
+    LoadStore64,
+    /// Advice-producing and advice-consuming virtual operations.
+    Advice,
+    /// Host I/O virtual operations.
+    HostIo,
+    /// Virtual assertions used by expansion and inlines.
+    VirtualAssertions,
+    /// Virtual arithmetic helpers used by division, word ops, and carries.
+    VirtualArithmetic,
+    /// Virtual shift and rotate helpers used by source lowering.
+    VirtualShifts,
+    /// Bit-manipulation helpers used mainly by custom ops and crypto inlines.
+    BitManipulation,
 }
 
 pub enum InlineExtension {
@@ -414,8 +427,8 @@ pub enum InlineExtension {
 The durable requirement is that source decode support, target bytecode support,
 inline registration support, lookup-table support, and side-effect metadata are
 separate catalog facts. Closed enums are acceptable as generated compile-time
-artifacts, but the source of truth should be the catalog entries, not a
-monolithic enum.
+artifacts, but the source of truth must be the catalog entries and selected
+profile, not a monolithic enum.
 
 The current default source profile should include:
 
@@ -436,29 +449,30 @@ The current default source profile should include:
 
 The current default target profile should include:
 
-- `JoltTargetExtension::BaseIntegerRows`: final rows such as `ADD`, `ADDI`,
+- `JoltTargetExtension::IntegerCore`: final instructions such as `ADD`, `ADDI`,
   `SUB`, `LUI`, `AUIPC`, `AND`, `ANDI`, `OR`, `ORI`, `XOR`, `XORI`, `SLT`,
   `SLTI`, `SLTU`, and `SLTIU`;
-- `JoltTargetExtension::MultiplyRows`: final multiply rows such as `MUL` and
-  `MULHU`; source-only multiply/divide rows lower before final bytecode;
-- `JoltTargetExtension::ControlFlowRows`: final branch/jump rows such as `BEQ`,
-  `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`, `JAL`, `JALR`, and `FENCE`;
-- `JoltTargetExtension::Memory64Rows`: final `LD` and `SD` rows;
-- `JoltTargetExtension::AdviceRows`: `VirtualAdvice`, `VirtualAdviceLen`, and
+- `JoltTargetExtension::IntegerMultiply`: final multiply instructions such as
+  `MUL` and `MULHU`; source-only multiply/divide rows lower before final
+  bytecode;
+- `JoltTargetExtension::ControlFlow`: final branch/jump instructions such as
+  `BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`, `JAL`, `JALR`, and `FENCE`;
+- `JoltTargetExtension::LoadStore64`: final `LD` and `SD` instructions;
+- `JoltTargetExtension::Advice`: `VirtualAdvice`, `VirtualAdviceLen`, and
   `VirtualAdviceLoad`;
-- `JoltTargetExtension::HostIoRows`: `VirtualHostIO`;
-- `JoltTargetExtension::VirtualAssertRows`: `VirtualAssertEQ`,
+- `JoltTargetExtension::HostIo`: `VirtualHostIO`;
+- `JoltTargetExtension::VirtualAssertions`: `VirtualAssertEQ`,
   `VirtualAssertLTE`, `VirtualAssertValidDiv0`,
   `VirtualAssertValidUnsignedRemainder`, `VirtualAssertMulUNoOverflow`,
   `VirtualAssertWordAlignment`, and `VirtualAssertHalfwordAlignment`;
-- `JoltTargetExtension::VirtualArithmeticRows`: `VirtualMULI`,
+- `JoltTargetExtension::VirtualArithmetic`: `VirtualMULI`,
   `VirtualMovsign`, `VirtualPow2`, `VirtualPow2I`, `VirtualPow2W`,
   `VirtualPow2IW`, `VirtualChangeDivisor`, `VirtualChangeDivisorW`,
   `VirtualSignExtendWord`, and `VirtualZeroExtendWord`;
-- `JoltTargetExtension::VirtualShiftRows`: `VirtualSRL`, `VirtualSRLI`,
+- `JoltTargetExtension::VirtualShifts`: `VirtualSRL`, `VirtualSRLI`,
   `VirtualSRA`, `VirtualSRAI`, `VirtualShiftRightBitmask`,
   `VirtualShiftRightBitmaskI`, `VirtualROTRI`, and `VirtualROTRIW`;
-- `JoltTargetExtension::BitmanipRows`: `ANDN`, `VirtualRev8W`, and the
+- `JoltTargetExtension::BitManipulation`: `ANDN`, `VirtualRev8W`, and the
   `VirtualXORROT*` / `VirtualXORROTW*` rows used by crypto inlines.
 
 Sentinel rows `NoOp` and `Unimpl` are always available and should not be modeled
@@ -502,16 +516,16 @@ pub const RV64IMAC_JOLT: JoltInstructionProfile = JoltInstructionProfile {
         SourceExtension::JoltInline,
     ],
     target_extensions: &[
-        JoltTargetExtension::BaseIntegerRows,
-        JoltTargetExtension::MultiplyRows,
-        JoltTargetExtension::ControlFlowRows,
-        JoltTargetExtension::Memory64Rows,
-        JoltTargetExtension::AdviceRows,
-        JoltTargetExtension::HostIoRows,
-        JoltTargetExtension::VirtualAssertRows,
-        JoltTargetExtension::VirtualArithmeticRows,
-        JoltTargetExtension::VirtualShiftRows,
-        JoltTargetExtension::BitmanipRows,
+        JoltTargetExtension::IntegerCore,
+        JoltTargetExtension::IntegerMultiply,
+        JoltTargetExtension::ControlFlow,
+        JoltTargetExtension::LoadStore64,
+        JoltTargetExtension::Advice,
+        JoltTargetExtension::HostIo,
+        JoltTargetExtension::VirtualAssertions,
+        JoltTargetExtension::VirtualArithmetic,
+        JoltTargetExtension::VirtualShifts,
+        JoltTargetExtension::BitManipulation,
     ],
     inline_extensions: &[],
 };
@@ -551,10 +565,11 @@ Rust type system and Cargo feature/build configuration. Jolt should ship common
 presets, and downstream users should eventually be able to define their own
 profile by composing supported catalog extensions.
 
-For this PR, the implementation only needs the current default profile. The
-catalog should nevertheless make extension membership explicit enough that a
-future PR can generate smaller source/target enums or tables from selected
-extensions without re-separating the phase model.
+For this PR, the implementation must include the explicit catalog and shipped
+current profiles above. It does not need arbitrary third-party profile
+composition, but source/target enum generation, decode legality, final-bytecode
+legality, and inline availability should all flow from catalog/profile facts
+rather than from a broad shared instruction-kind list.
 
 Lookup support should not introduce `LookupInstructionKind`. Keep the existing
 boundary: `JoltInstructionKind` identifies final rows, `LookupInstruction` is
