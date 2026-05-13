@@ -7,7 +7,13 @@
 //!
 //! Requires the `jolt` CLI to be installed (`cargo install --path .`).
 
-use jolt_host::{prove_program, ProveProgramError};
+#![expect(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stderr
+)]
+
+use jolt_host::{prove_program, verify_proof, ProveProgramError};
 use jolt_trace::Program;
 
 #[test]
@@ -19,35 +25,23 @@ fn muldiv_modular_prove_smoke() {
     let result = prove_program(&mut program, &inputs, &[], &[]);
 
     match result {
-        Ok((proof, io_device, _artifacts)) => {
+        Ok(output) => {
             eprintln!(
                 "[prove_program_smoke] proof generated, io output bytes = {}, \
                  evaluation present = {}",
-                io_device.outputs.len(),
-                proof.evaluation.is_some()
+                output.io_device.outputs.len(),
+                output.proof.evaluation.is_some()
             );
-            assert!(
-                proof.evaluation.is_some(),
-                "modular prover should produce an evaluation proof"
-            );
+            verify_proof(&output, &mut program).expect("modular verifier accepts muldiv proof");
         }
         Err(ProveProgramError::UnsupportedShape {
             log_t,
             log_k_bytecode,
             log_k_ram,
         }) => {
-            // Expected today: the goldens-baked fixture is at (16, 10, 16)
-            // but muldiv-guest's compiled ELF + memory layout produces a
-            // different shape. The trace/class-A pipeline still ran — the
-            // gate caught the mismatch cleanly. To run a full proof, the
-            // goldens need regeneration via `JOLT_UPDATE_GOLDENS=1
-            // cargo nextest run -p bolt ...` at this shape.
-            eprintln!(
-                "[prove_program_smoke] trace + class-A pipeline OK; \
-                 shape gate caught fixture mismatch. \
-                 Actual: (log_t={log_t}, log_k_bytecode={log_k_bytecode}, log_k_ram={log_k_ram}). \
-                 Goldens baked at: (16, 10, 16). \
-                 To run full proof: regenerate goldens at the actual shape."
+            panic!(
+                "muldiv shape mismatch: actual=({log_t}, {log_k_bytecode}, {log_k_ram}), \
+                 fixture=(18, 14, 14). Goldens need regen at the new shape."
             );
         }
         Err(other) => {
@@ -90,18 +84,16 @@ fn fr_poseidon2_modular_prove_smoke() {
     let elapsed = start.elapsed();
 
     match result {
-        Ok((proof, io_device, _artifacts)) => {
+        Ok(output) => {
             eprintln!(
                 "[fr_poseidon2_modular_prove_smoke] prove time = {:.2}s, \
                  io output bytes = {}, evaluation present = {}",
                 elapsed.as_secs_f64(),
-                io_device.outputs.len(),
-                proof.evaluation.is_some()
+                output.io_device.outputs.len(),
+                output.proof.evaluation.is_some()
             );
-            assert!(
-                proof.evaluation.is_some(),
-                "modular prover should produce an evaluation proof for FR Poseidon2"
-            );
+            verify_proof(&output, &mut program)
+                .expect("modular verifier accepts FR Poseidon2 proof");
         }
         Err(ProveProgramError::UnsupportedShape {
             log_t,
@@ -110,7 +102,7 @@ fn fr_poseidon2_modular_prove_smoke() {
         }) => {
             panic!(
                 "FR Poseidon2 shape mismatch: actual=({log_t}, {log_k_bytecode}, {log_k_ram}), \
-                 fixture=(16, 13, 14). Goldens need regen at the new shape."
+                 fixture=(18, 14, 14). Goldens need regen at the new shape."
             );
         }
         Err(other) => {

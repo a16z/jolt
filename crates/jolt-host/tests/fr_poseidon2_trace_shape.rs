@@ -4,6 +4,11 @@
 //! `jolt_host::prove_program` (without running any proof) so we can plan a
 //! goldens regen at the natural shape this guest produces.
 
+#![expect(
+    clippy::expect_used,
+    clippy::print_stderr
+)]
+
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use common::jolt_device::MemoryLayout;
 use jolt_trace::{BytecodePreprocessing, CycleRow, Program};

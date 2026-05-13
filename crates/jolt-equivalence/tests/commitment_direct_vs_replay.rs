@@ -425,8 +425,8 @@ fn commitment_direct_vs_replay_stage_chain_parity_at_log_t_9() {
              This is THE bug behind `jolt_host::prove_program`. Switching \
              `prove_program` to record-then-replay (matching bolt_oracle) fixes it."
         ),
-        (Err(ae), Err(be)) => panic!(
-            "Stage 6: BOTH variants failed.\n  replay: {ae:?}\n  direct: {be:?}"
-        ),
+        (Err(ae), Err(be)) => {
+            panic!("Stage 6: BOTH variants failed.\n  replay: {ae:?}\n  direct: {be:?}")
+        }
     }
 }

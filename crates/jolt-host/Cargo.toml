@@ -19,6 +19,7 @@ jolt-dory.workspace = true
 jolt-field.workspace = true
 jolt-kernels.workspace = true
 jolt-lookup-tables.workspace = true
+jolt-openings.workspace = true
 jolt-prover.workspace = true
 jolt-r1cs.workspace = true
 jolt-riscv.workspace = true

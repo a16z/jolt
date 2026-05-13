@@ -23,7 +23,7 @@
 
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use common::jolt_device::{JoltDevice, MemoryLayout};
-use jolt_dory::DoryScheme;
+use jolt_dory::{DoryProverSetup, DoryScheme};
 use jolt_field::Fr;
 use jolt_kernels::stage1::{Stage1OuterRv64Data, Stage1Rv64Cycle};
 use jolt_kernels::stage2::{Stage2RamAccess, Stage2RamData, Stage2RamOutputLayout};
@@ -36,11 +36,15 @@ use jolt_kernels::trace::{
 };
 use jolt_lookup_tables::traits::InstructionLookupTable;
 use jolt_lookup_tables::XLEN;
+use jolt_openings::CommitmentScheme as _;
 use jolt_r1cs::{constraints::rv64, R1csKey};
 use jolt_trace::ram::build_ram_states;
 use jolt_trace::{extract_trace, with_isa_struct, BytecodePreprocessing, CycleRow, Program};
 use jolt_transcript::{Blake2bTranscript, Label, LabelWithCount, Transcript, U64Word};
-use jolt_verifier::JoltProof;
+use jolt_verifier::{
+    default_verifier_programs, verify_jolt_with_programs, JoltProof, JoltVerifierInputs,
+    JoltVerifyError,
+};
 use jolt_witness::{
     FieldRegEvent, Stage6BytecodeEntry as WitnessStage6BytecodeEntry, Stage6WitnessParams,
 };
@@ -113,6 +117,56 @@ impl From<jolt_prover::prover::JoltOpeningInputError> for ProveProgramError {
     }
 }
 
+/// Errors produced by `verify_proof`.
+#[derive(Debug)]
+pub enum VerifyProgramError {
+    /// Inner verifier failure (commitment / Stage 1-7 / evaluation).
+    Verify(JoltVerifyError),
+    /// Opening-input re-derivation failed when reconstructing verifier inputs.
+    Openings(jolt_prover::prover::JoltOpeningInputError),
+    /// `prove_program` did not produce an evaluation proof, so the verifier
+    /// cannot complete the round-trip.
+    MissingEvaluation,
+    /// Re-decoded bytecode shape doesn't match the proven program's shape
+    /// (would indicate a stale `ProveOutput` paired with a mutated `Program`).
+    UnsupportedShape {
+        log_t: usize,
+        log_k_bytecode: usize,
+        log_k_ram: usize,
+    },
+}
+
+impl From<JoltVerifyError> for VerifyProgramError {
+    fn from(value: JoltVerifyError) -> Self {
+        Self::Verify(value)
+    }
+}
+
+impl From<jolt_prover::prover::JoltOpeningInputError> for VerifyProgramError {
+    fn from(value: jolt_prover::prover::JoltOpeningInputError) -> Self {
+        Self::Openings(value)
+    }
+}
+
+/// Bundle returned by `prove_program` carrying everything needed to verify
+/// the proof end-to-end via `verify_proof`. Owning the auxiliary state
+/// (bytecode entries, RAM bufs, PCS setup, etc.) lets `verify_proof` rebuild
+/// verifier inputs without re-tracing the guest.
+pub struct ProveOutput {
+    pub proof: JoltProof,
+    pub io_device: JoltDevice,
+    pub artifacts: JoltProverArtifacts,
+    pub bytecode_entries: Vec<WitnessStage6BytecodeEntry<Fr>>,
+    pub entry_bytecode_index: usize,
+    pub lookup_table_count: usize,
+    pub initial_ram_state: Vec<u64>,
+    pub final_ram_state: Vec<u64>,
+    pub lowest_addr: u64,
+    pub entry_address: u64,
+    params: ModularJoltParams,
+    pcs_setup: DoryProverSetup,
+}
+
 /// JoltProtocolParams equivalent without the MLIR/LLVM dependency.
 ///
 /// Hand-port of `JoltProtocolParams::new` from `crates/bolt/src/protocols/
@@ -124,6 +178,7 @@ struct ModularJoltParams {
     log_t: usize,
     trace_length: usize,
     log_k_bytecode: usize,
+    #[expect(dead_code, reason = "kept for symmetry with JoltProtocolParams::new")]
     bytecode_k: usize,
     log_k_ram: usize,
     ram_k: usize,
@@ -194,14 +249,15 @@ impl ModularJoltParams {
 ///   untrusted advice only.
 ///
 /// # Returns
-/// `(JoltProof, JoltDevice, JoltProverArtifacts)`. The `JoltProof` is
-/// verifiable by `jolt_verifier::verify_jolt_with_programs`.
+/// A [`ProveOutput`] bundle containing the proof and everything
+/// [`verify_proof`] needs to run the modular verifier round-trip without
+/// re-tracing the guest.
 pub fn prove_program(
     program: &mut Program,
     inputs: &[u8],
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
-) -> Result<(JoltProof, JoltDevice, JoltProverArtifacts), ProveProgramError> {
+) -> Result<ProveOutput, ProveProgramError> {
     // ----- Phase 1: trace -----
     // Two-pass advice: pass 1 runs the `compute_advice`-feature ELF (if
     // present, e.g. for BN254 Fr coprocessor guests using
@@ -225,7 +281,11 @@ pub fn prove_program(
     const FIXTURE_LOG_K_RAM: usize = 14;
     let natural_trace_length = trace.len().next_power_of_two().max(256);
     let trace_length = natural_trace_length.max(1usize << FIXTURE_LOG_T);
-    let bytecode = BytecodePreprocessing::preprocess(bytecode_raw, entry_address);
+    let bytecode = BytecodePreprocessing::preprocess_padded(
+        bytecode_raw,
+        entry_address,
+        1usize << FIXTURE_LOG_K_BYTECODE,
+    );
     let bytecode_k = bytecode.code_size;
     let log_t = trace_length.trailing_zeros() as usize;
     let log_k_bytecode = bytecode_k.trailing_zeros() as usize;
@@ -277,8 +337,7 @@ pub fn prove_program(
             Some(((addr - lowest_addr) / 8) as usize)
         }
     };
-    let ram_accesses: Vec<Stage2RamAccess> =
-        stage2_ram_accesses(&trace, trace_length, |addr| remap_addr(addr));
+    let ram_accesses: Vec<Stage2RamAccess> = stage2_ram_accesses(&trace, trace_length, remap_addr);
     let stage3_cycles: Vec<Stage3Cycle> = stage3_cycles(&trace, trace_length, &bytecode);
     let stage4_register_accesses: Vec<Stage4RegisterAccess> =
         stage4_register_accesses(&trace, trace_length);
@@ -510,7 +569,140 @@ pub fn prove_program(
         stage7: stage7_artifacts,
     };
 
-    Ok((proof, io_device, artifacts))
+    Ok(ProveOutput {
+        proof,
+        io_device,
+        artifacts,
+        bytecode_entries: stage6_bytecode_entries_vec,
+        entry_bytecode_index,
+        lookup_table_count,
+        initial_ram_state,
+        final_ram_state,
+        lowest_addr,
+        entry_address,
+        params,
+        pcs_setup,
+    })
+}
+
+/// Round-trip verify a proof produced by [`prove_program`] using the same
+/// modular verifier stack the prover used. Rebuilds verifier inputs from
+/// `ProveOutput`'s captured state plus a re-decoding of `program`'s
+/// bytecode — does NOT re-trace the guest.
+///
+/// Mirrors the canonical verify pattern at
+/// `crates/jolt-equivalence/src/bolt_oracle.rs::assert_bolt_full_real_trace_self_parity`
+/// (lines 519-547 build inputs, 728-743 call verify).
+pub fn verify_proof(output: &ProveOutput, program: &mut Program) -> Result<(), VerifyProgramError> {
+    if output.proof.evaluation.is_none() {
+        return Err(VerifyProgramError::MissingEvaluation);
+    }
+
+    let (bytecode_raw, _init_mem, _program_size, decoded_entry_address) = program.decode();
+    let bytecode = BytecodePreprocessing::preprocess_padded(
+        bytecode_raw,
+        decoded_entry_address,
+        1usize << output.params.log_k_bytecode,
+    );
+    let log_k_bytecode = bytecode.code_size.trailing_zeros() as usize;
+    if log_k_bytecode != output.params.log_k_bytecode
+        || decoded_entry_address != output.entry_address
+    {
+        return Err(VerifyProgramError::UnsupportedShape {
+            log_t: output.params.log_t,
+            log_k_bytecode,
+            log_k_ram: output.params.log_k_ram,
+        });
+    }
+
+    let programs = default_verifier_programs();
+    let prover_programs = default_prover_programs();
+
+    let stage2_kernel_openings = jolt_prover::stage2_opening_inputs_from_artifacts(
+        prover_programs.stage2,
+        &output.artifacts.stage1_outer,
+    )?;
+    let stage3_kernel_openings = jolt_prover::stage3_opening_inputs_from_artifacts(
+        prover_programs.stage3,
+        &output.artifacts.stage1_outer,
+        &output.artifacts.stage2,
+    )?;
+    let stage4_kernel_openings = jolt_prover::stage4_opening_inputs_from_artifacts(
+        prover_programs.stage4,
+        &output.initial_ram_state,
+        &output.artifacts.stage2,
+        &output.artifacts.stage3,
+    )?;
+    let stage5_kernel_openings = jolt_prover::stage5_opening_inputs_from_artifacts(
+        prover_programs.stage5,
+        &output.artifacts.stage2,
+        &output.artifacts.stage4,
+    )?;
+    let stage6_kernel_openings = jolt_prover::stage6_opening_inputs_from_artifacts(
+        prover_programs.stage6,
+        &output.artifacts.stage1_outer,
+        &output.artifacts.stage2,
+        &output.artifacts.stage3,
+        &output.artifacts.stage4,
+        &output.artifacts.stage5,
+    )?;
+    let stage7_kernel_openings =
+        jolt_prover::stage7_opening_inputs_from_stage6_artifacts_with_program(
+            prover_programs.stage7,
+            &output.artifacts.stage6,
+        )?;
+
+    let stage2_openings = jolt_prover::verifier_opening_inputs_from_kernel(&stage2_kernel_openings);
+    let stage3_openings = jolt_prover::verifier_opening_inputs_from_kernel(&stage3_kernel_openings);
+    let stage4_openings = jolt_prover::verifier_opening_inputs_from_kernel(&stage4_kernel_openings);
+    let stage5_openings = jolt_prover::verifier_opening_inputs_from_kernel(&stage5_kernel_openings);
+    let stage6_openings = jolt_prover::verifier_opening_inputs_from_kernel(&stage6_kernel_openings);
+    let stage7_openings = jolt_prover::verifier_opening_inputs_from_kernel(&stage7_kernel_openings);
+
+    let memory_layout = output.io_device.memory_layout.clone();
+    let ram_output_layout = Stage2RamOutputLayout {
+        io_start: ((memory_layout.input_start - output.lowest_addr) / 8) as usize,
+        io_end: ((RAM_START_ADDRESS - output.lowest_addr) / 8) as usize,
+    };
+    let kernel_ram_data = Stage2RamData {
+        log_k: output.params.log_k_ram,
+        start_address: output.lowest_addr,
+        initial_ram: &output.initial_ram_state,
+        final_ram: &output.final_ram_state,
+        accesses: &[],
+        output_layout: Some(ram_output_layout),
+    };
+    let verifier_ram_storage = jolt_prover::stage2_verifier_ram_data(&kernel_ram_data);
+    let verifier_ram = verifier_ram_storage.as_input();
+
+    let stage6_data = jolt_prover::stage6_verifier_data_from_witness_entries(
+        &output.bytecode_entries,
+        output.entry_bytecode_index,
+        output.lookup_table_count,
+    );
+
+    let evaluation_setup = DoryScheme::verifier_setup(&output.pcs_setup);
+
+    let inputs = JoltVerifierInputs {
+        stage2_openings: &stage2_openings,
+        stage2_ram: Some(&verifier_ram),
+        stage3_openings: &stage3_openings,
+        stage4_openings: &stage4_openings,
+        stage5_openings: &stage5_openings,
+        stage6_openings: &stage6_openings,
+        stage6_data: Some(&stage6_data),
+        stage7_openings: &stage7_openings,
+        evaluation_setup: Some(&evaluation_setup),
+    };
+
+    let mut transcript = Blake2bTranscript::<Fr>::new(TRANSCRIPT_LABEL);
+    append_bolt_preamble(
+        &mut transcript,
+        &io_event_data_for_preamble(&output.io_device, &output.params, output.entry_address),
+    );
+
+    let _ = verify_jolt_with_programs(&output.proof, inputs, programs, &mut transcript)?;
+    Ok(())
 }
 
 /// Compact view of (program_io, params, entry_address) for transcript

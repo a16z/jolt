@@ -101,12 +101,18 @@ concrete regression and is enforced by tests or measurement.
 
 - [x] **muldiv smoke through modular path produces a verified proof.**
   `cargo nextest run -p jolt-host muldiv_modular_prove_smoke --release
-  --run-ignored only --cargo-quiet --no-capture` succeeds and the returned
-  `JoltProof` has `evaluation.is_some()`.
+  --run-ignored only --cargo-quiet --no-capture` succeeds. The test calls
+  `jolt_host::prove_program` followed by `jolt_host::verify_proof` and
+  asserts the verifier accepts (round-trip soundness gate).
 - [x] **bn254-fr-poseidon2-sdk smoke through modular path produces a verified
   proof.** `cargo nextest run -p jolt-host fr_poseidon2_modular_prove_smoke
-  --release --run-ignored only ...` succeeds. The FR coprocessor is exercised
+  --release --run-ignored only ...` succeeds end-to-end through
+  `prove_program` → `verify_proof`. The FR coprocessor is exercised
   (~16k `FieldRegEvent`s out of ~36k cycles).
+- [x] **Poseidon2 SDK example exercises prove + verify round-trip.**
+  `cargo run --release -p bn254-fr-poseidon2-sdk` mirrors the muldiv example's
+  flow: `prove_program` → `verify_proof` → `valid: true`, reporting prove time,
+  verify time, and peak RSS.
 - [x] **Modular bolt prove on sha2-chain log_t=16 matches upstream.**
   `cargo nextest run -p jolt-equivalence
   bolt_sha2_chain_2_16_core_vs_bolt_perf_oracle --release --run-ignored only ...`

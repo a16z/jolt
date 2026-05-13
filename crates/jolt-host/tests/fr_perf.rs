@@ -19,6 +19,13 @@
 //!   --cargo-quiet --no-capture --test fr_perf
 //! ```
 
+#![expect(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::single_match_else
+)]
+
 use std::time::Instant;
 
 use jolt_host::prove_program;
@@ -73,25 +80,19 @@ fn run_modular(
     let peak_rss_mb = rss.finish();
 
     match result {
-        Ok((proof, _io_device, artifacts)) => {
-            let raw_cycles = artifacts.commitment.records.len(); // placeholder; real raw count below
-            // The real "raw cycles" comes from the prover's trace before
-            // padding — we can derive it from stage4_register_accesses count
-            // which is keyed by padded length, so instead read it back from
-            // re-tracing... too expensive. Use padded length and document.
+        Ok(output) => {
+            let raw_cycles = output.artifacts.commitment.records.len();
             let _ = raw_cycles;
 
-            // Padded cycles = 2^log_t. Pull from artifacts if exposed, else
-            // pin to the current fixture (log_t=18 after the arkworks regen).
             let padded_cycles = 1usize << 18;
 
             PerfReport {
                 label,
-                raw_cycles: 0, // filled by caller via re-trace if needed
+                raw_cycles: 0,
                 padded_cycles,
                 prove_ms,
                 peak_rss_mb,
-                proof_has_evaluation: proof.evaluation.is_some(),
+                proof_has_evaluation: output.proof.evaluation.is_some(),
             }
         }
         Err(e) => panic!("[{label}] prove_program failed: {e:?}"),
@@ -102,8 +103,7 @@ fn run_modular(
 fn measure_raw_cycles(configure: impl FnOnce(&mut Program), inputs: &[u8]) -> usize {
     let mut program = Program::new("placeholder");
     configure(&mut program);
-    let (_lazy, trace, _final, _io, _events) =
-        program.trace_two_pass_advice(inputs, &[], &[]);
+    let (_lazy, trace, _final, _io, _events) = program.trace_two_pass_advice(inputs, &[], &[]);
     trace.len()
 }
 
@@ -140,7 +140,8 @@ fn perf_fr_poseidon2_sdk_modular() {
     let raw = measure_raw_cycles(
         |p| {
             let mut pp = Program::new("bn254-fr-poseidon2-sdk-guest");
-            let _ = pp.set_func("fr_poseidon2_sdk")
+            let _ = pp
+                .set_func("fr_poseidon2_sdk")
                 .set_stack_size(65_536)
                 .set_heap_size(131_072)
                 .set_max_input_size(8_192);
@@ -152,7 +153,8 @@ fn perf_fr_poseidon2_sdk_modular() {
         "fr_poseidon2_sdk (modular + FR coprocessor inline)",
         |p| {
             let mut pp = Program::new("bn254-fr-poseidon2-sdk-guest");
-            let _ = pp.set_func("fr_poseidon2_sdk")
+            let _ = pp
+                .set_func("fr_poseidon2_sdk")
                 .set_stack_size(65_536)
                 .set_heap_size(131_072)
                 .set_max_input_size(8_192);
@@ -176,7 +178,8 @@ fn perf_fr_poseidon2_arkworks_modular() {
     let raw = measure_raw_cycles(
         |p| {
             let mut pp = Program::new("bn254-fr-poseidon2-arkworks-guest");
-            let _ = pp.set_func("fr_poseidon2_arkworks")
+            let _ = pp
+                .set_func("fr_poseidon2_arkworks")
                 .set_stack_size(65_536)
                 .set_heap_size(1_048_576)
                 .set_max_input_size(8_192);
@@ -189,7 +192,8 @@ fn perf_fr_poseidon2_arkworks_modular() {
             "fr_poseidon2_arkworks (modular, software ark-bn254 Fr)",
             |p| {
                 let mut pp = Program::new("bn254-fr-poseidon2-arkworks-guest");
-                let _ = pp.set_func("fr_poseidon2_arkworks")
+                let _ = pp
+                    .set_func("fr_poseidon2_arkworks")
                     .set_stack_size(65_536)
                     .set_heap_size(1_048_576)
                     .set_max_input_size(8_192);

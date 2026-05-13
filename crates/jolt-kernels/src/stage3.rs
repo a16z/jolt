@@ -2259,14 +2259,13 @@ fn field_registers_state<F: Field>(
             kernel: "jolt_stage3_field_registers_claim_reduction",
             input: "field_registers",
         })?;
-    let expected =
-        1usize
-            .checked_shl(claim.num_rounds as u32)
-            .ok_or(Stage3KernelError::InvalidInputLength {
-                input: "stage3.field_registers.num_rounds",
-                expected: usize::BITS as usize,
-                actual: claim.num_rounds,
-            })?;
+    let expected = 1usize.checked_shl(claim.num_rounds as u32).ok_or(
+        Stage3KernelError::InvalidInputLength {
+            input: "stage3.field_registers.num_rounds",
+            expected: usize::BITS as usize,
+            actual: claim.num_rounds,
+        },
+    )?;
     let eq_point = store.point("stage3.input.stage1.FieldRdValue")?;
     let gamma = store.scalar("stage3.field_registers.gamma")?;
     let gamma2 = store.scalar("stage3.field_registers.gamma2")?;
@@ -2433,8 +2432,7 @@ impl<F: Field> SparseFieldRegistersState<F> {
             });
         }
         let q_constant = self.split_round_constant();
-        let poly =
-            gruen_quadratic_poly(self.eq_cycle.current_target(), q_constant, previous_claim);
+        let poly = gruen_quadratic_poly(self.eq_cycle.current_target(), q_constant, previous_claim);
         #[cfg(debug_assertions)]
         {
             if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != previous_claim {

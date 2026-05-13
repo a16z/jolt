@@ -199,12 +199,9 @@ fn prove_program_vs_bolt_oracle_artifact_divergence_at_log_t_9() {
     )
     .expect("Path A Stage 2");
 
-    let a_stage3_openings = jolt_prover::stage3_opening_inputs_from_artifacts(
-        a_stage3_plan,
-        &a_stage1,
-        &a_stage2,
-    )
-    .expect("Path A Stage 3 openings");
+    let a_stage3_openings =
+        jolt_prover::stage3_opening_inputs_from_artifacts(a_stage3_plan, &a_stage1, &a_stage2)
+            .expect("Path A Stage 3 openings");
     let a_stage3 = jolt_prover::prove_stage3_with_witness_inputs(
         a_stage3_plan,
         &a_stage3_openings,
@@ -232,12 +229,9 @@ fn prove_program_vs_bolt_oracle_artifact_divergence_at_log_t_9() {
     )
     .expect("Path A Stage 4");
 
-    let a_stage5_openings = jolt_prover::stage5_opening_inputs_from_artifacts(
-        a_stage5_plan,
-        &a_stage2,
-        &a_stage4,
-    )
-    .expect("Path A Stage 5 openings");
+    let a_stage5_openings =
+        jolt_prover::stage5_opening_inputs_from_artifacts(a_stage5_plan, &a_stage2, &a_stage4)
+            .expect("Path A Stage 5 openings");
     let a_stage5 = jolt_prover::prove_stage5_with_trace_witness_inputs(
         a_stage5_plan,
         &a_stage5_openings,
@@ -303,12 +297,9 @@ fn prove_program_vs_bolt_oracle_artifact_divergence_at_log_t_9() {
     )
     .expect("Path B Stage 2");
 
-    let b_stage3_openings = jolt_prover::stage3_opening_inputs_from_artifacts(
-        b_programs.stage3,
-        &b_stage1,
-        &b_stage2,
-    )
-    .expect("Path B Stage 3 openings");
+    let b_stage3_openings =
+        jolt_prover::stage3_opening_inputs_from_artifacts(b_programs.stage3, &b_stage1, &b_stage2)
+            .expect("Path B Stage 3 openings");
     let b_stage3 = jolt_prover::prove_stage3_with_witness_inputs(
         b_programs.stage3,
         &b_stage3_openings,
@@ -336,12 +327,9 @@ fn prove_program_vs_bolt_oracle_artifact_divergence_at_log_t_9() {
     )
     .expect("Path B Stage 4");
 
-    let b_stage5_openings = jolt_prover::stage5_opening_inputs_from_artifacts(
-        b_programs.stage5,
-        &b_stage2,
-        &b_stage4,
-    )
-    .expect("Path B Stage 5 openings");
+    let b_stage5_openings =
+        jolt_prover::stage5_opening_inputs_from_artifacts(b_programs.stage5, &b_stage2, &b_stage4)
+            .expect("Path B Stage 5 openings");
     let b_stage5 = jolt_prover::prove_stage5_with_trace_witness_inputs(
         b_programs.stage5,
         &b_stage5_openings,
@@ -499,8 +487,8 @@ fn prove_program_vs_bolt_oracle_artifact_divergence_at_log_t_9() {
              early transcript challenges. If A==B through Stage 5 sumchecks but Stage 6 \
              diverges, the goldens stage6 plan itself is the culprit."
         ),
-        (Err(ae), Err(be)) => panic!(
-            "Stage 6: BOTH paths failed.\n  Path A: {ae:?}\n  Path B: {be:?}"
-        ),
+        (Err(ae), Err(be)) => {
+            panic!("Stage 6: BOTH paths failed.\n  Path A: {ae:?}\n  Path B: {be:?}")
+        }
     }
 }

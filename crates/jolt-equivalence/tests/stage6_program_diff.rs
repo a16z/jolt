@@ -156,8 +156,7 @@ fn diff_programs(fresh: &Stage6CpuProgramPlan, golden: &Stage6CpuProgramPlan) ->
 #[test]
 fn stage6_golden_matches_fresh_bolt_emission_at_fixture() {
     let params = JoltProtocolParams::fixture();
-    let (fresh_prover_program, _fresh_verifier_program) =
-        bolt_stage6_programs_with_params(&params);
+    let (fresh_prover_program, _fresh_verifier_program) = bolt_stage6_programs_with_params(&params);
     let fresh: &'static Stage6CpuProgramPlan = leak_stage6_program(&fresh_prover_program);
     let golden: &'static Stage6CpuProgramPlan = &STAGE6_PROGRAM;
 

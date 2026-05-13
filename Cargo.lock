@@ -1117,9 +1117,12 @@ name = "bn254-fr-poseidon2-sdk"
 version = "0.1.0"
 dependencies = [
  "bn254-fr-poseidon2-sdk-guest",
+ "jolt-host",
  "jolt-inlines-bn254-fr",
  "jolt-profiling",
  "jolt-sdk",
+ "jolt-trace",
+ "postcard",
  "tracing",
  "tracing-subscriber",
 ]
@@ -3070,6 +3073,7 @@ dependencies = [
  "jolt-field",
  "jolt-kernels",
  "jolt-lookup-tables",
+ "jolt-openings",
  "jolt-profiling",
  "jolt-prover",
  "jolt-r1cs",

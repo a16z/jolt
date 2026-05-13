@@ -177,10 +177,7 @@ fn prove_program_live_vs_fixture_data() {
         ram_k, fixture.proof.ram_K
     );
     if ram_k != fixture.proof.ram_K as usize {
-        panic!(
-            "ram_k: live={}, fixture={}",
-            ram_k, fixture.proof.ram_K
-        );
+        panic!("ram_k: live={}, fixture={}", ram_k, fixture.proof.ram_K);
     }
 
     let r1cs_key = R1csKey::new(rv64::rv64_constraints::<Fr>(), trace_length);

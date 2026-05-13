@@ -19,8 +19,8 @@ pub use verifier::{
     verify_jolt_through_stage6_with_programs, verify_jolt_through_stage7,
     verify_jolt_through_stage7_with_programs, verify_jolt_with_programs, JoltEvaluationProof,
     JoltEvaluationProofError, JoltNamedEval, JoltProof, JoltStage2RamAccess, JoltStage2RamData,
-    JoltStage2RamOutputLayout, JoltStageChallengeVector, JoltStageExecutionArtifacts,
-    JoltStage6BytecodeEntry, JoltStage6BytecodeReadRafData, JoltStage6VerifierData,
+    JoltStage2RamOutputLayout, JoltStage6BytecodeEntry, JoltStage6BytecodeReadRafData,
+    JoltStage6VerifierData, JoltStageChallengeVector, JoltStageExecutionArtifacts,
     JoltStageOpeningInputValue, JoltStageProof, JoltSumcheckOutput, JoltVerificationArtifacts,
     JoltVerifierInputs, JoltVerifierPrograms, JoltVerifierTarget, JoltVerifyError,
 };

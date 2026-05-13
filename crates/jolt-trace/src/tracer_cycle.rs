@@ -321,10 +321,7 @@ macro_rules! with_isa_struct {
                         let $i = FieldInv(*value);
                         $body
                     }
-                    _ => panic!(
-                        "unsupported FieldOp funct3 = 0x{:02x}",
-                        value.funct3
-                    ),
+                    _ => panic!("unsupported FieldOp funct3 = 0x{:02x}", value.funct3),
                 }
             }
             Instruction::FieldAssertEq(value) => {
