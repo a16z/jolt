@@ -31,6 +31,10 @@ impl RISCVInstruction for VirtualAdvice {
         &self.operands
     }
 
+    fn source_kind(&self) -> jolt_riscv::SourceInstructionKind {
+        jolt_riscv::SourceInstructionKind::VirtualAdvice
+    }
+
     fn new(_: u32, _: u64, _: bool, _: bool) -> Self {
         panic!("virtual instruction `VirtualAdvice` cannot be built from a machine word");
     }

@@ -31,6 +31,10 @@ macro_rules! declare_riscv_instr {
                 &self.operands
             }
 
+            fn source_kind(&self) -> ::jolt_riscv::SourceInstructionKind {
+                ::jolt_riscv::SourceInstructionKind::$name
+            }
+
             fn new(word: u32, address: u64, validate: bool, compressed: bool) -> Self {
                 if validate {
                     debug_assert_eq!(
@@ -88,8 +92,16 @@ macro_rules! declare_riscv_instr {
 
         impl From<$name> for $crate::instruction::JoltInstructionRow {
             fn from(instr: $name) -> $crate::instruction::JoltInstructionRow {
+                let instruction_kind =
+                    match ::jolt_riscv::SourceInstructionKind::$name.jolt_kind() {
+                        Some(kind) => kind,
+                        None => panic!(
+                            "{} is a source-only instruction and has no direct final Jolt row",
+                            stringify!($name)
+                        ),
+                    };
                 $crate::instruction::JoltInstructionRow {
-                    instruction_kind: ::jolt_riscv::JoltInstructionKind::$name,
+                    instruction_kind,
                     address: instr.address as usize,
                     operands: instr.operands.into(),
                     is_compressed: instr.is_compressed,

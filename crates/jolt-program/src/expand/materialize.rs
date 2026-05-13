@@ -49,7 +49,7 @@ impl ExpansionState {
     ) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
         let kind = instruction.kind();
         if instruction.row().operands.rd == Some(0) && !handles_rd_zero_internally(kind) {
-            if kind.jolt_kind().has_side_effects() {
+            if kind.has_side_effects() {
                 let virtual_register = self.allocate_register()?;
                 let rewritten = (*instruction).map_row(|mut row| {
                     row.operands.rd = Some(virtual_register);
@@ -68,7 +68,7 @@ impl ExpansionState {
         if !is_source_only(kind) {
             return JoltInstructionRow::try_from(instruction)
                 .map(|row| vec![row])
-                .map_err(ExpansionError::IllegalTargetInstruction);
+                .map_err(ExpansionError::IllegalSourceInstruction);
         }
         let sequence = expand_source_only_instruction(instruction)?;
         self.materialize(sequence)

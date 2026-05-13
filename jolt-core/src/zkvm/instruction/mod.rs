@@ -303,8 +303,6 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             }
             JoltInstructionKind::LD
             | JoltInstructionKind::SD
-            | JoltInstructionKind::EBREAK
-            | JoltInstructionKind::ECALL
             | JoltInstructionKind::FENCE
             | JoltInstructionKind::VirtualHostIO => return None,
             _ => return None,

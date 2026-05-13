@@ -208,7 +208,10 @@ const fn noop_instruction() -> JoltInstructionRow {
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
-    use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
+    use jolt_riscv::{
+        JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, NormalizedOperands,
+        SourceExtension, RV64IMAC_JOLT,
+    };
 
     use super::{BytecodePCMapper, BytecodePreprocessing, PreprocessingError};
 
@@ -323,27 +326,19 @@ mod tests {
 
     #[test]
     fn rejects_profile_illegal_target_rows() {
+        const RV64I_ONLY: JoltInstructionProfile = JoltInstructionProfile {
+            source_extensions: &[SourceExtension::Rv64I],
+            inline_extensions: &[],
+        };
+
         let mut row = instruction(0x8000_0000, None);
-        row.instruction_kind = JoltInstructionKind::Inline;
+        row.instruction_kind = JoltInstructionKind::MUL;
 
         let err =
-            BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64IMAC_JOLT).unwrap_err();
+            BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64I_ONLY).unwrap_err();
         assert_eq!(
             err,
-            PreprocessingError::IllegalTargetInstruction(JoltInstructionKind::Inline)
-        );
-    }
-
-    #[test]
-    fn rejects_unimpl_target_rows() {
-        let mut row = instruction(0x8000_0000, None);
-        row.instruction_kind = JoltInstructionKind::Unimpl;
-
-        let err =
-            BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64IMAC_JOLT).unwrap_err();
-        assert_eq!(
-            err,
-            PreprocessingError::IllegalTargetInstruction(JoltInstructionKind::Unimpl)
+            PreprocessingError::IllegalTargetInstruction(JoltInstructionKind::MUL)
         );
     }
 }

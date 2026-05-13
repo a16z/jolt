@@ -174,7 +174,7 @@ pub struct Inline<T = ()>(pub T);
 
 macro_rules! define_source_instruction {
     (
-        instructions: [$($instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+        instructions: [$($instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
     ) => {
         /// Typed view over decoded source rows.
         ///
@@ -245,11 +245,17 @@ macro_rules! define_source_instruction {
         }
 
         impl TryFrom<&SourceInstruction<SourceInstructionRow>> for JoltInstructionRow {
-            type Error = JoltInstructionKind;
+            type Error = SourceInstructionKind;
 
             fn try_from(instruction: &SourceInstruction<SourceInstructionRow>) -> Result<Self, Self::Error> {
-                let row = instruction.row().jolt_instruction_row(instruction.kind().jolt_kind());
-                JoltInstruction::try_from(row).map(|_| row)
+                let source_kind = instruction.kind();
+                let Some(jolt_kind) = source_kind.jolt_kind() else {
+                    return Err(source_kind);
+                };
+                let row = instruction.row().jolt_instruction_row(jolt_kind);
+                JoltInstruction::try_from(row)
+                    .map(|_| row)
+                    .map_err(|_| source_kind)
             }
         }
 
@@ -505,7 +511,6 @@ impl TryFrom<JoltInstructionRow> for JoltInstruction {
                 Self::VirtualAdviceLoad(VirtualAdviceLoad(instruction))
             }
             JoltInstructionKind::VirtualHostIO => Self::VirtualHostIO(VirtualHostIO(instruction)),
-            unsupported => return Err(unsupported),
         })
     }
 }
@@ -726,17 +731,9 @@ mod tests {
     #[test]
     fn phase_specific_instruction_kinds_are_distinct() {
         let source_kind = crate::SourceInstructionKind::AMOADDW;
-        let jolt_kind = source_kind.jolt_kind();
 
-        assert_eq!(jolt_kind, JoltInstructionKind::AMOADDW);
+        assert_eq!(source_kind.jolt_kind(), None);
         assert!(source_kind.expands_to_jolt());
-        assert_eq!(
-            JoltInstruction::try_from(JoltInstructionRow {
-                instruction_kind: jolt_kind,
-                ..Default::default()
-            }),
-            Err(jolt_kind)
-        );
     }
 
     #[test]
@@ -810,19 +807,19 @@ mod tests {
             Ok(JoltInstruction::Add(..))
         ));
         for kind in [
-            JoltInstructionKind::ADDW,
-            JoltInstructionKind::DIV,
-            JoltInstructionKind::LW,
-            JoltInstructionKind::SW,
-            JoltInstructionKind::AMOADDW,
-            JoltInstructionKind::CSRRS,
-            JoltInstructionKind::VirtualSW,
+            SourceInstructionKind::ADDW,
+            SourceInstructionKind::DIV,
+            SourceInstructionKind::LW,
+            SourceInstructionKind::SW,
+            SourceInstructionKind::AMOADDW,
+            SourceInstructionKind::CSRRS,
+            SourceInstructionKind::VirtualSW,
         ] {
             assert_eq!(
-                JoltInstruction::try_from(JoltInstructionRow {
-                    instruction_kind: kind,
-                    ..Default::default()
-                }),
+                JoltInstructionRow::try_from(&SourceInstruction::new(
+                    kind,
+                    SourceInstructionRow::default()
+                )),
                 Err(kind)
             );
         }

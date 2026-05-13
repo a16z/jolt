@@ -113,7 +113,7 @@ impl JoltInstructionProfile {
         dense_index(
             SourceInstructionKind::ALL.iter().copied(),
             |candidate| self.supports_source(candidate),
-            kind.tag(),
+            kind,
         )
     }
 
@@ -121,7 +121,7 @@ impl JoltInstructionProfile {
         dense_index(
             JoltInstructionKind::ALL.iter().copied(),
             |candidate| self.supports_jolt(candidate),
-            kind.tag(),
+            kind,
         )
     }
 
@@ -137,7 +137,7 @@ impl JoltInstructionProfile {
         }
         for kind in SourceInstructionKind::ALL {
             if self.supports_source(*kind) {
-                hash = hash_tag(hash_byte(hash, 0x03), kind.tag());
+                hash = hash_str(hash_byte(hash, 0x03), kind.canonical_name());
             }
         }
         for kind in JoltInstructionKind::ALL {
@@ -323,7 +323,7 @@ pub const fn source_extension(kind: SourceInstructionKind) -> Option<SourceExten
 
 pub const fn jolt_target_extension(kind: JoltInstructionKind) -> Option<JoltTargetExtension> {
     match kind {
-        JoltInstructionKind::NoOp | JoltInstructionKind::Unimpl => None,
+        JoltInstructionKind::NoOp => None,
         JoltInstructionKind::ADD
         | JoltInstructionKind::ADDI
         | JoltInstructionKind::AND
@@ -393,48 +393,29 @@ pub const fn jolt_target_extension(kind: JoltInstructionKind) -> Option<JoltTarg
         | JoltInstructionKind::VirtualXORROTW12
         | JoltInstructionKind::VirtualXORROTW8
         | JoltInstructionKind::VirtualXORROTW7 => Some(JoltTargetExtension::BitManipulation),
-        _ => None,
     }
 }
 
 fn dense_index<I, K>(
     kinds: I,
     mut is_supported: impl FnMut(K) -> bool,
-    tag: JoltInstructionTag,
+    needle: K,
 ) -> Option<ProfileInstructionIndex>
 where
     I: IntoIterator<Item = K>,
-    K: Copy,
-    JoltInstructionTag: PartialEq,
-    K: TaggedInstructionKind,
+    K: Copy + Eq,
 {
     let mut index = 0u16;
     for candidate in kinds {
         if !is_supported(candidate) {
             continue;
         }
-        if candidate.tag() == tag {
+        if candidate == needle {
             return Some(ProfileInstructionIndex(index));
         }
         index = index.checked_add(1)?;
     }
     None
-}
-
-trait TaggedInstructionKind {
-    fn tag(self) -> JoltInstructionTag;
-}
-
-impl TaggedInstructionKind for SourceInstructionKind {
-    fn tag(self) -> JoltInstructionTag {
-        self.tag()
-    }
-}
-
-impl TaggedInstructionKind for JoltInstructionKind {
-    fn tag(self) -> JoltInstructionTag {
-        self.tag()
-    }
 }
 
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
@@ -447,6 +428,13 @@ const fn hash_byte(hash: u64, byte: u8) -> u64 {
 const fn hash_tag(hash: u64, tag: JoltInstructionTag) -> u64 {
     let bytes = tag.0.to_le_bytes();
     hash_byte(hash_byte(hash, bytes[0]), bytes[1])
+}
+
+fn hash_str(mut hash: u64, value: &str) -> u64 {
+    for byte in value.as_bytes() {
+        hash = hash_byte(hash, *byte);
+    }
+    hash
 }
 
 const fn source_extension_code(extension: SourceExtension) -> u8 {
@@ -494,11 +482,11 @@ mod tests {
         assert!(RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::LD));
         assert!(RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::VirtualAssertEQ));
 
-        assert!(!RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::Unimpl));
-        assert!(!RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::ADDW));
-        assert!(!RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::LW));
-        assert!(!RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::SW));
-        assert!(!RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::Inline));
+        assert_eq!(SourceInstructionKind::Unimpl.jolt_kind(), None);
+        assert_eq!(SourceInstructionKind::ADDW.jolt_kind(), None);
+        assert_eq!(SourceInstructionKind::LW.jolt_kind(), None);
+        assert_eq!(SourceInstructionKind::SW.jolt_kind(), None);
+        assert_eq!(SourceInstructionKind::Inline.jolt_kind(), None);
     }
 
     #[test]
@@ -515,10 +503,7 @@ mod tests {
             RV64IM_JOLT.source_dense_index(SourceInstructionKind::AMOADDW),
             None
         );
-        assert_eq!(
-            RV64IMAC_JOLT.jolt_dense_index(JoltInstructionKind::ADDW),
-            None
-        );
+        assert_eq!(SourceInstructionKind::ADDW.jolt_kind(), None);
 
         let supported = JoltInstructionKind::ALL
             .iter()

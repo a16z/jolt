@@ -1,7 +1,10 @@
 use super::*;
 
 use common::constants::RAM_START_ADDRESS;
-use jolt_riscv::{JoltInstruction, SourceInlineKey, SourceInstructionRow, RV64IMAC_JOLT};
+use jolt_riscv::{
+    JoltInstruction, JoltInstructionProfile, SourceExtension, SourceInlineKey,
+    SourceInstructionRow, RV64IMAC_JOLT,
+};
 #[cfg(feature = "serialization")]
 use serde::Deserialize;
 #[cfg(feature = "serialization")]
@@ -255,6 +258,11 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
 
 #[test]
 fn inline_provider_output_is_validated_and_stamped() {
+    const RV64I_ONLY: JoltInstructionProfile = JoltInstructionProfile {
+        source_extensions: &[SourceExtension::Rv64I],
+        inline_extensions: &[],
+    };
+
     struct BadProvider;
 
     impl InlineExpansionProvider for BadProvider {
@@ -265,7 +273,7 @@ fn inline_provider_output_is_validated_and_stamped() {
             _profile: jolt_riscv::JoltInstructionProfile,
         ) -> Result<Vec<JoltInstruction>, ExpansionError> {
             final_instruction(JoltInstructionRow {
-                instruction_kind: JoltInstructionKind::Inline,
+                instruction_kind: JoltInstructionKind::MUL,
                 address: 0x8000_0000,
                 operands: Default::default(),
                 virtual_sequence_remaining: None,
@@ -280,9 +288,9 @@ fn inline_provider_output_is_validated_and_stamped() {
     let mut allocator = ExpansionAllocator::new();
 
     assert!(matches!(
-        expand_instruction_with_provider(&input, &mut allocator, &mut BadProvider, RV64IMAC_JOLT),
+        expand_instruction_with_provider(&input, &mut allocator, &mut BadProvider, RV64I_ONLY),
         Err(ExpansionError::IllegalTargetInstruction(
-            JoltInstructionKind::Inline
+            JoltInstructionKind::MUL
         ))
     ));
 }
@@ -396,8 +404,8 @@ fn source_only_expanders_are_not_target_legal() {
         ($($kind:ident),* $(,)?) => {
             $(
                 assert!(
-                    !RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::$kind),
-                    concat!(stringify!($kind), " has an expander but is target-legal")
+                    SourceInstructionKind::$kind.jolt_kind().is_none(),
+                    concat!(stringify!($kind), " has an expander but maps directly to a final row")
                 );
             )*
         };
@@ -418,7 +426,7 @@ fn source_only_expanders_are_not_target_legal() {
         SLL, SLLI, SLLW, SLLIW, SRL, SRLI, SRA, SRAI,
         SRLIW, SRAIW, SRLW, SRAW,
     }
-    assert!(!RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::Inline));
+    assert_eq!(SourceInstructionKind::Inline.jolt_kind(), None);
 }
 
 #[test]

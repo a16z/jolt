@@ -376,6 +376,7 @@ pub trait RISCVInstruction:
     type RAMAccess: Default + Into<RAMAccess> + Copy + std::fmt::Debug;
 
     fn operands(&self) -> &Self::Format;
+    fn source_kind(&self) -> SourceInstructionKind;
     fn new(word: u32, address: u64, validate: bool, compressed: bool) -> Self;
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
@@ -386,8 +387,7 @@ pub trait RISCVInstruction:
     fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess);
 
     fn has_side_effects(&self) -> bool {
-        let instruction: JoltInstructionRow = (*self).into();
-        instruction.instruction_kind.has_side_effects()
+        self.source_kind().has_side_effects()
     }
 }
 
@@ -414,7 +414,7 @@ where
 
 macro_rules! define_rv64imac_enums {
     (
-        instructions: [$($instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+        instructions: [$($instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
     ) => {
         #[derive(Debug, IntoStaticStr, From, Clone, Serialize, Deserialize, EnumIter)]
         pub enum Instruction {
@@ -564,10 +564,10 @@ macro_rules! define_rv64imac_enums {
 
         impl Instruction {
             pub fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-                let normalized = self.jolt_instruction_row();
+                let source = self.source_instruction();
                 // Rewrite instructions with rd=x0 via inline_sequence so the
                 // constraint system never sees rd=x0.
-                if normalized.operands.rd == Some(0)
+                if source.row().operands.rd == Some(0)
                     && !matches!(
                         self,
                         Instruction::SCW(_)
@@ -708,11 +708,12 @@ macro_rules! define_rv64imac_enums {
             pub fn try_from_jolt_instruction_row(instruction: JoltInstructionRow) -> Result<Self, &'static str> {
                 match instruction.instruction_kind {
                     JoltInstructionKind::NoOp => Ok(Instruction::NoOp),
-                    JoltInstructionKind::Unimpl => Ok(Instruction::UNIMPL),
                     $(
-                        JoltInstructionKind::$instr => Ok(<$instr as From<JoltInstructionRow>>::from(instruction).into()),
+                        jolt_kind if SourceInstructionKind::$instr.jolt_kind() == Some(jolt_kind) => {
+                            Ok(<$instr as From<JoltInstructionRow>>::from(instruction).into())
+                        }
                     )*
-                    JoltInstructionKind::Inline => Err("inline rows are source-only"),
+                    _ => Err("Jolt row is not known to tracer"),
                 }
             }
 
@@ -735,7 +736,20 @@ macro_rules! define_rv64imac_enums {
                     }
                     .into());
                 }
-                Self::try_from_jolt_instruction_row(row.jolt_instruction_row(kind.jolt_kind()))
+                match kind {
+                    SourceInstructionKind::NoOp => Ok(Instruction::NoOp),
+                    SourceInstructionKind::Unimpl => Ok(Instruction::UNIMPL),
+                    $(
+                        SourceInstructionKind::$instr => {
+                            let instruction_kind = kind.jolt_kind().unwrap_or(JoltInstructionKind::NoOp);
+                            Ok(<$instr as From<JoltInstructionRow>>::from(
+                                row.jolt_instruction_row(instruction_kind),
+                            )
+                            .into())
+                        }
+                    )*
+                    SourceInstructionKind::Inline => unreachable!("inline source returned above"),
+                }
             }
 
             pub fn set_virtual_sequence_remaining(&mut self, remaining: Option<u16>) {
@@ -770,6 +784,16 @@ macro_rules! define_rv64imac_enums {
                     Instruction::INLINE(instr) => {instr.is_compressed = is_compressed;}
                 }
             }
+
+            pub fn virtual_sequence_remaining(&self) -> Option<u16> {
+                match self {
+                    Instruction::NoOp | Instruction::UNIMPL => None,
+                    $(
+                        Instruction::$instr(instr) => instr.virtual_sequence_remaining,
+                    )*
+                    Instruction::INLINE(instr) => instr.virtual_sequence_remaining,
+                }
+            }
         }
 
         impl From<&Instruction> for JoltInstructionRow {
@@ -778,26 +802,27 @@ macro_rules! define_rv64imac_enums {
                     Instruction::NoOp => Default::default(),
                     Instruction::UNIMPL => Default::default(),
                     $(
-                        Instruction::$instr(instr) => JoltInstructionRow {
-                            instruction_kind: JoltInstructionKind::$instr,
-                            address: instr.address as usize,
-                            operands: instr.operands.into(),
-                            virtual_sequence_remaining: instr.virtual_sequence_remaining,
-                            is_first_in_sequence: instr.is_first_in_sequence,
-                            is_compressed: instr.is_compressed,
+                        Instruction::$instr(instr) => {
+                            let instruction_kind =
+                                match SourceInstructionKind::$instr.jolt_kind() {
+                                    Some(kind) => kind,
+                                    None => panic!(
+                                        "{} is a source-only instruction and has no direct final Jolt row",
+                                        stringify!($instr)
+                                    ),
+                                };
+                            JoltInstructionRow {
+                                instruction_kind,
+                                address: instr.address as usize,
+                                operands: instr.operands.into(),
+                                virtual_sequence_remaining: instr.virtual_sequence_remaining,
+                                is_first_in_sequence: instr.is_first_in_sequence,
+                                is_compressed: instr.is_compressed,
+                            }
                         },
                     )*
-                    Instruction::INLINE(instr) => JoltInstructionRow {
-                        instruction_kind: JoltInstructionKind::Inline,
-                        address: instr.address as usize,
-                        operands: {
-                            let mut operands: NormalizedOperands = instr.operands.into();
-                            operands.imm = inline_metadata(instr.opcode, instr.funct3, instr.funct7);
-                            operands
-                        },
-                        virtual_sequence_remaining: instr.virtual_sequence_remaining,
-                        is_first_in_sequence: instr.is_first_in_sequence,
-                        is_compressed: instr.is_compressed,
+                    Instruction::INLINE(_) => {
+                        panic!("inline source instructions have no direct final Jolt row")
                     },
                 }
             }
@@ -806,10 +831,6 @@ macro_rules! define_rv64imac_enums {
 }
 
 jolt_riscv::for_each_instruction_kind!(define_rv64imac_enums);
-
-fn inline_metadata(opcode: u32, funct3: u32, funct7: u32) -> i128 {
-    (opcode | (funct3 << 7) | (funct7 << 10)) as i128
-}
 
 impl CanonicalSerialize for Instruction {
     fn serialize_with_mode<W: ark_serialize::Write>(
@@ -863,7 +884,7 @@ impl Instruction {
             return false;
         }
 
-        match self.jolt_instruction_row().virtual_sequence_remaining {
+        match self.virtual_sequence_remaining() {
             None => true,     // ordinary instruction
             Some(0) => true,  // "anchor" of a inline sequence
             Some(_) => false, // helper within the sequence

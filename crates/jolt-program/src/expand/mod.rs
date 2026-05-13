@@ -107,7 +107,7 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
     let instruction = if instruction.row().operands.rd == Some(0)
         && !handles_rd_zero_internally(instruction.kind())
     {
-        if instruction.kind().jolt_kind().has_side_effects() {
+        if instruction.kind().has_side_effects() {
             let virtual_register = allocator.allocate()?;
             allocated_rd_zero_register = Some(virtual_register);
             rewritten_source = (*instruction).map_row(|mut row| {

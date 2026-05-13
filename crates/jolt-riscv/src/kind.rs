@@ -9,25 +9,17 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct JoltInstructionTag(pub u16);
 
-macro_rules! define_instruction_kind {
+macro_rules! define_source_instruction_kind {
     (
-        instructions: [$($instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+        instructions: [$($instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
     ) => {
-        #[derive(
-            Default,
-            Debug,
-            Clone,
-            Copy,
-            PartialEq,
-            Eq,
-            Hash,
-        )]
+        #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
         #[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
-        #[repr(u16)]
         /// Instruction kind decoded from program bytes before Jolt bytecode expansion.
         ///
         /// This includes ordinary RV64 instructions plus Jolt custom source
-        /// opcodes, so it is intentionally named "source" rather than "RISC-V".
+        /// opcodes, so source identity is the canonical namespaced string, not
+        /// the compact final-bytecode tag.
         pub enum SourceInstructionKind {
             #[default]
             NoOp,
@@ -37,29 +29,6 @@ macro_rules! define_instruction_kind {
             )*
             Inline,
         }
-
-        #[derive(
-            Default,
-            Debug,
-            Clone,
-            Copy,
-            PartialEq,
-            Eq,
-            Hash,
-        )]
-        #[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
-        #[repr(u16)]
-        pub enum JoltInstructionKind {
-            #[default]
-            NoOp,
-            Unimpl,
-            $(
-                $instr,
-            )*
-            Inline,
-        }
-
-
 
         impl SourceInstructionKind {
             pub const ALL: &'static [Self] = &[
@@ -93,177 +62,20 @@ macro_rules! define_instruction_kind {
                 }
             }
 
-            pub const fn tag(self) -> JoltInstructionTag {
-                match self {
-                    Self::NoOp => JoltInstructionTag(0x0000),
-                    Self::Unimpl => JoltInstructionTag(0x0001),
+            pub fn from_canonical_name(name: &str) -> Option<Self> {
+                match name {
+                    "jolt.pseudo.noop" => Some(Self::NoOp),
+                    "jolt.pseudo.unimpl" => Some(Self::Unimpl),
                     $(
-                        Self::$instr => JoltInstructionTag($tag),
+                        $canonical_name => Some(Self::$instr),
                     )*
-                    Self::Inline => JoltInstructionTag(0x0089),
-                }
-            }
-
-            pub const fn from_tag(tag: JoltInstructionTag) -> Option<Self> {
-                match tag.0 {
-                    0x0000 => Some(Self::NoOp),
-                    0x0001 => Some(Self::Unimpl),
-                    $(
-                        $tag => Some(Self::$instr),
-                    )*
-                    0x0089 => Some(Self::Inline),
+                    "jolt.inline.dispatch" => Some(Self::Inline),
                     _ => None,
-                }
-            }
-
-            pub const fn from_jolt_kind(kind: JoltInstructionKind) -> Option<Self> {
-                match kind {
-                    JoltInstructionKind::NoOp => Some(Self::NoOp),
-                    JoltInstructionKind::Unimpl => Some(Self::Unimpl),
-                    $(
-                        JoltInstructionKind::$instr => Some(Self::$instr),
-                    )*
-                    JoltInstructionKind::Inline => Some(Self::Inline),
-                }
-            }
-
-            pub const fn jolt_kind(self) -> JoltInstructionKind {
-                match self {
-                    Self::NoOp => JoltInstructionKind::NoOp,
-                    Self::Unimpl => JoltInstructionKind::Unimpl,
-                    $(
-                        Self::$instr => JoltInstructionKind::$instr,
-                    )*
-                    Self::Inline => JoltInstructionKind::Inline,
                 }
             }
 
             pub const fn expands_to_jolt(self) -> bool {
                 !matches!(self, Self::NoOp | Self::Unimpl)
-            }
-        }
-
-        #[cfg(feature = "serialization")]
-        impl CanonicalSerialize for SourceInstructionKind {
-            fn serialize_with_mode<W: Write>(
-                &self,
-                writer: W,
-                compress: Compress,
-            ) -> Result<(), SerializationError> {
-                self.tag().0.serialize_with_mode(writer, compress)
-            }
-
-            fn serialized_size(&self, compress: Compress) -> usize {
-                self.tag().0.serialized_size(compress)
-            }
-        }
-
-        #[cfg(feature = "serialization")]
-        impl CanonicalDeserialize for SourceInstructionKind {
-            fn deserialize_with_mode<R: Read>(
-                reader: R,
-                compress: Compress,
-                validate: Validate,
-            ) -> Result<Self, SerializationError> {
-                let value = u16::deserialize_with_mode(reader, compress, validate)?;
-                Self::from_tag(JoltInstructionTag(value)).ok_or(SerializationError::InvalidData)
-            }
-        }
-
-        #[cfg(feature = "serialization")]
-        impl Valid for SourceInstructionKind {
-            fn check(&self) -> Result<(), SerializationError> {
-                Ok(())
-            }
-        }
-
-        #[cfg(feature = "serialization")]
-        impl CanonicalSerialize for JoltInstructionKind {
-            fn serialize_with_mode<W: Write>(
-                &self,
-                writer: W,
-                compress: Compress,
-            ) -> Result<(), SerializationError> {
-                self.tag().0.serialize_with_mode(writer, compress)
-            }
-
-            fn serialized_size(&self, compress: Compress) -> usize {
-                self.tag().0.serialized_size(compress)
-            }
-        }
-
-        #[cfg(feature = "serialization")]
-        impl CanonicalDeserialize for JoltInstructionKind {
-            fn deserialize_with_mode<R: Read>(
-                reader: R,
-                compress: Compress,
-                validate: Validate,
-            ) -> Result<Self, SerializationError> {
-                let value = u16::deserialize_with_mode(reader, compress, validate)?;
-                Self::from_tag(JoltInstructionTag(value)).ok_or(SerializationError::InvalidData)
-            }
-        }
-
-        #[cfg(feature = "serialization")]
-        impl Valid for JoltInstructionKind {
-            fn check(&self) -> Result<(), SerializationError> {
-                Ok(())
-            }
-        }
-
-        impl JoltInstructionKind {
-            pub const ALL: &'static [Self] = &[
-                Self::NoOp,
-                Self::Unimpl,
-                $(
-                    Self::$instr,
-                )*
-                Self::Inline,
-            ];
-
-            pub const fn name(self) -> &'static str {
-                match self {
-                    Self::NoOp => "NoOp",
-                    Self::Unimpl => "Unimpl",
-                    $(
-                        Self::$instr => stringify!($instr),
-                    )*
-                    Self::Inline => "Inline",
-                }
-            }
-
-            pub const fn canonical_name(self) -> &'static str {
-                match self {
-                    Self::NoOp => "jolt.pseudo.noop",
-                    Self::Unimpl => "jolt.pseudo.unimpl",
-                    $(
-                        Self::$instr => $canonical_name,
-                    )*
-                    Self::Inline => "jolt.inline.dispatch",
-                }
-            }
-
-            pub const fn tag(self) -> JoltInstructionTag {
-                match self {
-                    Self::NoOp => JoltInstructionTag(0x0000),
-                    Self::Unimpl => JoltInstructionTag(0x0001),
-                    $(
-                        Self::$instr => JoltInstructionTag($tag),
-                    )*
-                    Self::Inline => JoltInstructionTag(0x0089),
-                }
-            }
-
-            pub const fn from_tag(tag: JoltInstructionTag) -> Option<Self> {
-                match tag.0 {
-                    0x0000 => Some(Self::NoOp),
-                    0x0001 => Some(Self::Unimpl),
-                    $(
-                        $tag => Some(Self::$instr),
-                    )*
-                    0x0089 => Some(Self::Inline),
-                    _ => None,
-                }
             }
 
             pub const fn has_side_effects(self) -> bool {
@@ -329,7 +141,191 @@ macro_rules! define_instruction_kind {
     };
 }
 
-crate::for_each_instruction_kind!(define_instruction_kind);
+macro_rules! define_jolt_instruction_kind {
+    (
+        instructions: [$($instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+    ) => {
+        #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
+        #[repr(u16)]
+        /// Final instruction kind admitted into Jolt bytecode and proving tables.
+        ///
+        /// This enum is intentionally smaller than [`SourceInstructionKind`].
+        /// Its compact tag is a final-bytecode serialization/indexing identity,
+        /// not a source ISA identity.
+        pub enum JoltInstructionKind {
+            #[default]
+            NoOp,
+            $(
+                $instr,
+            )*
+        }
+
+        impl SourceInstructionKind {
+            pub const fn from_jolt_kind(kind: JoltInstructionKind) -> Option<Self> {
+                match kind {
+                    JoltInstructionKind::NoOp => Some(Self::NoOp),
+                    $(
+                        JoltInstructionKind::$instr => Some(Self::$instr),
+                    )*
+                }
+            }
+
+            pub const fn jolt_kind(self) -> Option<JoltInstructionKind> {
+                match self {
+                    Self::NoOp => Some(JoltInstructionKind::NoOp),
+                    $(
+                        Self::$instr => Some(JoltInstructionKind::$instr),
+                    )*
+                    _ => None,
+                }
+            }
+        }
+
+        impl JoltInstructionKind {
+            pub const ALL: &'static [Self] = &[
+                Self::NoOp,
+                $(
+                    Self::$instr,
+                )*
+            ];
+
+            pub const fn name(self) -> &'static str {
+                match self {
+                    Self::NoOp => "NoOp",
+                    $(
+                        Self::$instr => stringify!($instr),
+                    )*
+                }
+            }
+
+            pub const fn canonical_name(self) -> &'static str {
+                match self {
+                    Self::NoOp => "jolt.pseudo.noop",
+                    $(
+                        Self::$instr => $canonical_name,
+                    )*
+                }
+            }
+
+            pub const fn tag(self) -> JoltInstructionTag {
+                match self {
+                    Self::NoOp => JoltInstructionTag(0x0000),
+                    $(
+                        Self::$instr => JoltInstructionTag($tag),
+                    )*
+                }
+            }
+
+            pub const fn from_tag(tag: JoltInstructionTag) -> Option<Self> {
+                match tag.0 {
+                    0x0000 => Some(Self::NoOp),
+                    $(
+                        $tag => Some(Self::$instr),
+                    )*
+                    _ => None,
+                }
+            }
+
+            pub const fn has_side_effects(self) -> bool {
+                matches!(
+                    self,
+                    Self::BEQ
+                        | Self::BGE
+                        | Self::BGEU
+                        | Self::BLT
+                        | Self::BLTU
+                        | Self::BNE
+                        | Self::FENCE
+                        | Self::JAL
+                        | Self::JALR
+                        | Self::LD
+                        | Self::SD
+                        | Self::VirtualAdviceLoad
+                        | Self::VirtualHostIO
+                )
+            }
+        }
+    };
+}
+
+crate::for_each_instruction_kind!(define_source_instruction_kind);
+crate::for_each_jolt_instruction_kind!(define_jolt_instruction_kind);
+
+#[cfg(feature = "serialization")]
+impl CanonicalSerialize for SourceInstructionKind {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.canonical_name()
+            .as_bytes()
+            .to_vec()
+            .serialize_with_mode(writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.canonical_name()
+            .as_bytes()
+            .to_vec()
+            .serialized_size(compress)
+    }
+}
+
+#[cfg(feature = "serialization")]
+impl CanonicalDeserialize for SourceInstructionKind {
+    fn deserialize_with_mode<R: Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let bytes = Vec::<u8>::deserialize_with_mode(reader, compress, validate)?;
+        let name = std::str::from_utf8(&bytes).map_err(|_| SerializationError::InvalidData)?;
+        Self::from_canonical_name(name).ok_or(SerializationError::InvalidData)
+    }
+}
+
+#[cfg(feature = "serialization")]
+impl Valid for SourceInstructionKind {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "serialization")]
+impl CanonicalSerialize for JoltInstructionKind {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.tag().0.serialize_with_mode(writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.tag().0.serialized_size(compress)
+    }
+}
+
+#[cfg(feature = "serialization")]
+impl CanonicalDeserialize for JoltInstructionKind {
+    fn deserialize_with_mode<R: Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let value = u16::deserialize_with_mode(reader, compress, validate)?;
+        Self::from_tag(JoltInstructionTag(value)).ok_or(SerializationError::InvalidData)
+    }
+}
+
+#[cfg(feature = "serialization")]
+impl Valid for JoltInstructionKind {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -337,12 +333,8 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn tags_are_stable_for_representative_rows() {
+    fn tags_are_stable_for_representative_final_rows() {
         assert_eq!(JoltInstructionKind::NoOp.tag(), JoltInstructionTag(0x0000));
-        assert_eq!(
-            JoltInstructionKind::Unimpl.tag(),
-            JoltInstructionTag(0x0001)
-        );
         assert_eq!(JoltInstructionKind::ADD.tag(), JoltInstructionTag(0x0002));
         assert_eq!(
             JoltInstructionKind::VirtualHostIO.tag(),
@@ -352,14 +344,10 @@ mod tests {
             JoltInstructionKind::VirtualXORROTW7.tag(),
             JoltInstructionTag(0x0088)
         );
-        assert_eq!(
-            JoltInstructionKind::Inline.tag(),
-            JoltInstructionTag(0x0089)
-        );
     }
 
     #[test]
-    fn tags_round_trip_and_are_unique() {
+    fn final_tags_round_trip_and_are_unique() {
         let mut seen = HashSet::new();
         for kind in JoltInstructionKind::ALL {
             let tag = kind.tag();
@@ -369,22 +357,22 @@ mod tests {
     }
 
     #[test]
-    fn canonical_names_are_stable_for_representative_rows() {
-        assert_eq!(JoltInstructionKind::ADD.canonical_name(), "rv64.add");
+    fn source_kinds_use_canonical_names_instead_of_tags() {
+        assert_eq!(SourceInstructionKind::ADD.canonical_name(), "rv64.add");
         assert_eq!(
-            JoltInstructionKind::VirtualHostIO.canonical_name(),
-            "jolt.virtual.host_io"
+            SourceInstructionKind::Inline.canonical_name(),
+            "jolt.inline.dispatch"
         );
         assert_eq!(
-            JoltInstructionKind::Inline.canonical_name(),
-            "jolt.inline.dispatch"
+            SourceInstructionKind::from_canonical_name("rv64.addw"),
+            Some(SourceInstructionKind::ADDW)
         );
     }
 
     #[test]
-    fn canonical_names_are_unique_and_non_empty() {
+    fn source_canonical_names_are_unique_and_non_empty() {
         let mut seen = HashSet::new();
-        for kind in JoltInstructionKind::ALL {
+        for kind in SourceInstructionKind::ALL {
             let name = kind.canonical_name();
             assert!(!name.is_empty(), "empty canonical name for {kind:?}");
             assert!(seen.insert(name), "duplicate canonical name {name:?}");
@@ -392,48 +380,27 @@ mod tests {
     }
 
     #[test]
-    fn source_tags_are_stable_for_representative_rows() {
+    fn source_to_final_mapping_is_partial() {
         assert_eq!(
-            SourceInstructionKind::NoOp.tag(),
-            JoltInstructionTag(0x0000)
+            SourceInstructionKind::ADD.jolt_kind(),
+            Some(JoltInstructionKind::ADD)
         );
         assert_eq!(
-            SourceInstructionKind::Unimpl.tag(),
-            JoltInstructionTag(0x0001)
+            SourceInstructionKind::VirtualHostIO.jolt_kind(),
+            Some(JoltInstructionKind::VirtualHostIO)
         );
-        assert_eq!(SourceInstructionKind::ADD.tag(), JoltInstructionTag(0x0002));
-        assert_eq!(
-            SourceInstructionKind::VirtualHostIO.tag(),
-            JoltInstructionTag(0x0068)
-        );
-        assert_eq!(
-            SourceInstructionKind::Inline.tag(),
-            JoltInstructionTag(0x0089)
-        );
+        assert_eq!(SourceInstructionKind::ADDW.jolt_kind(), None);
+        assert_eq!(SourceInstructionKind::Inline.jolt_kind(), None);
+        assert_eq!(SourceInstructionKind::Unimpl.jolt_kind(), None);
     }
 
     #[test]
-    fn source_tags_round_trip_and_are_unique() {
+    fn final_canonical_names_are_unique_and_non_empty() {
         let mut seen = HashSet::new();
-        for kind in SourceInstructionKind::ALL {
-            let tag = kind.tag();
-            assert!(
-                seen.insert(tag),
-                "duplicate source tag {tag:?} for {kind:?}"
-            );
-            assert_eq!(SourceInstructionKind::from_tag(tag), Some(*kind));
+        for kind in JoltInstructionKind::ALL {
+            let name = kind.canonical_name();
+            assert!(!name.is_empty(), "empty canonical name for {kind:?}");
+            assert!(seen.insert(name), "duplicate canonical name {name:?}");
         }
-    }
-
-    #[test]
-    fn source_and_final_tags_currently_share_values_for_mapped_rows() {
-        assert_eq!(
-            SourceInstructionKind::ADD.tag(),
-            JoltInstructionKind::ADD.tag()
-        );
-        assert_eq!(
-            SourceInstructionKind::Inline.tag(),
-            JoltInstructionKind::Inline.tag()
-        );
     }
 }

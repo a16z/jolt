@@ -8,7 +8,7 @@
 //! The INLINE instruction iterates these registrations to find the matching builder.
 
 use super::{
-    format::{format_inline::FormatInline, InstructionFormat, NormalizedOperands},
+    format::{format_inline::FormatInline, InstructionFormat},
     Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 use crate::{
@@ -152,6 +152,10 @@ impl RISCVInstruction for INLINE {
         &self.operands
     }
 
+    fn source_kind(&self) -> jolt_riscv::SourceInstructionKind {
+        jolt_riscv::SourceInstructionKind::Inline
+    }
+
     fn new(word: u32, address: u64, _validate: bool, is_compressed: bool) -> Self {
         Self {
             opcode: word & 0x7f,
@@ -256,17 +260,8 @@ impl From<JoltInstructionRow> for INLINE {
 impl jolt_riscv::JoltInstructionRowData for INLINE {}
 
 impl From<INLINE> for JoltInstructionRow {
-    fn from(instr: INLINE) -> Self {
-        let mut operands: NormalizedOperands = instr.operands.into();
-        operands.imm = (instr.opcode | (instr.funct3 << 7) | (instr.funct7 << 10)) as i128;
-        JoltInstructionRow {
-            instruction_kind: jolt_riscv::JoltInstructionKind::Inline,
-            address: instr.address as usize,
-            operands,
-            virtual_sequence_remaining: instr.virtual_sequence_remaining,
-            is_first_in_sequence: instr.is_first_in_sequence,
-            is_compressed: instr.is_compressed,
-        }
+    fn from(_: INLINE) -> Self {
+        panic!("inline source instructions have no direct final Jolt row")
     }
 }
 
