@@ -62,19 +62,23 @@ pub struct JoltTraceCycle<'a> {
 }
 
 impl<'a> JoltTraceCycle<'a> {
+    #[inline(always)]
     pub fn try_new(cycle: &'a Cycle) -> Result<Self, SourceInstructionKind> {
         let instruction = cycle.instruction().try_jolt_instruction_row()?;
         Ok(Self { cycle, instruction })
     }
 
+    #[inline(always)]
     pub fn cycle(&self) -> &'a Cycle {
         self.cycle
     }
 
+    #[inline(always)]
     pub fn instruction(&self) -> &JoltInstructionRow {
         &self.instruction
     }
 
+    #[inline(always)]
     pub fn into_instruction(self) -> JoltInstructionRow {
         self.instruction
     }
@@ -209,12 +213,14 @@ pub trait Flags {
 }
 
 impl Flags for JoltInstructionRow {
+    #[inline(always)]
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         JoltInstruction::try_from(*self)
             .map(|instruction| circuit_flags_from_riscv(instruction.circuit_flags()))
             .unwrap_or([false; NUM_CIRCUIT_FLAGS])
     }
 
+    #[inline(always)]
     fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
         JoltInstruction::try_from(*self)
             .map(|instruction| instruction_flags_from_riscv(instruction.instruction_flags()))
@@ -223,6 +229,7 @@ impl Flags for JoltInstructionRow {
 }
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
+    #[inline(always)]
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
         Some(match self.instruction_kind {
             JoltInstructionKind::ADD
@@ -344,34 +351,41 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
 }
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for JoltTraceCycle<'_> {
+    #[inline(always)]
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
         self.instruction.lookup_table()
     }
 }
 
 impl Flags for JoltTraceCycle<'_> {
+    #[inline(always)]
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         self.instruction.circuit_flags()
     }
 
+    #[inline(always)]
     fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
         self.instruction.instruction_flags()
     }
 }
 
 impl<const XLEN: usize> LookupQuery<XLEN> for JoltTraceCycle<'_> {
+    #[inline(always)]
     fn to_instruction_inputs(&self) -> (u64, i128) {
         LookupQuery::<XLEN>::to_instruction_inputs(self.cycle)
     }
 
+    #[inline(always)]
     fn to_lookup_index(&self) -> u128 {
         LookupQuery::<XLEN>::to_lookup_index(self.cycle)
     }
 
+    #[inline(always)]
     fn to_lookup_operands(&self) -> (u64, u128) {
         LookupQuery::<XLEN>::to_lookup_operands(self.cycle)
     }
 
+    #[inline(always)]
     fn to_lookup_output(&self) -> u64 {
         LookupQuery::<XLEN>::to_lookup_output(self.cycle)
     }

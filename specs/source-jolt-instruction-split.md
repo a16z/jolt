@@ -19,9 +19,9 @@ bytecode/preprocessing/tracing/proof rows are Jolt instructions. The initial
 implementation slices rename the final row payload to `JoltInstructionRow`, rename the
 typed final-row view to `JoltInstruction`, add a decoded `SourceInstructionRow` payload,
 and cut the decode/expand boundary over so source rows flow in and final rows
-flow out. The remaining cutover should replace the broad mirrored kind tags
-with typed source/final row enums and remove source-only rows from the final
-universe.
+flow out. The later slices split the source/final kind universes, remove
+source-only rows from the final enum, and require proof metadata queries to
+start from a final `JoltInstructionRow`.
 
 The same cutover should clean up registered inlines. Inline opcodes are source
 program opcodes identified by `(opcode, funct3, funct7)`; they are not final
@@ -800,10 +800,13 @@ pub struct JoltTraceCycle<'a> {
 }
 
 impl<'a> JoltTraceCycle<'a> {
+    #[inline(always)]
     pub fn try_new(cycle: &'a Cycle) -> Result<Self, SourceInstructionKind>;
 
+    #[inline(always)]
     pub fn cycle(&self) -> &'a Cycle;
 
+    #[inline(always)]
     pub fn instruction(&self) -> &JoltInstructionRow;
 }
 ```
@@ -823,6 +826,29 @@ let lookup_index = jolt_cycle.to_lookup_index();
 let lookup_output = jolt_cycle.to_lookup_output();
 let ram_access = jolt_cycle.cycle().ram_access();
 ```
+
+`JoltTraceCycle` is an interim boundary, not the ideal permanent trace shape.
+It is constructed on demand in prover/witness hot paths that still receive raw
+tracer `Cycle` values. The wrapper methods and forwarding trait impls should be
+`#[inline(always)]`, because the type is intended to make the phase boundary
+visible at compile time without adding per-cycle abstraction overhead.
+
+The cleaner endpoint is a single normalization pass immediately after tracing:
+
+```rust
+pub struct ProofTraceRow {
+    pub instruction: JoltInstructionRow,
+    pub registers: RegisterState,
+    pub ram_access: RamAccess,
+}
+```
+
+`crates/jolt-program` already has the equivalent `TraceRow` / `OwnedTrace`
+shape. A future cleanup should make `jolt-core` prover inputs consume that
+normalized proof trace instead of `Arc<Vec<Cycle>>`. In that end state, tracer
+execution still owns concrete `Cycle` construction and CPU/RAM side effects,
+but proving code never sees source-only cycle variants and no longer needs to
+adapt each cycle repeatedly with `JoltTraceCycle::try_new`.
 
 Expansion bodies are also not moved into `jolt-riscv`, because `jolt-riscv`
 must remain below `jolt-program` in the dependency graph. `jolt-riscv` can expose
@@ -1284,6 +1310,10 @@ Current implementation status:
   dynamic `Cycle` witness data with a final `JoltInstructionRow`. R1CS and
   instruction-lookup code should use this adapter whenever they need both
   runtime cycle values and static proof metadata.
+- `JoltTraceCycle` constructor/accessor methods and the tiny final-row
+  forwarding impls are marked `#[inline(always)]` so this interim boundary is
+  explicit in the type system without adding avoidable per-cycle overhead in
+  witness-generation hot paths.
 - `jolt-core` R1CS, Spartan instruction-input, and instruction-lookup paths now
   query flags and lookup-table routing through `JoltTraceCycle` or
   `JoltInstructionRow`, not through decoded tracer `Instruction` values. The
@@ -1293,13 +1323,14 @@ Current implementation status:
   row payloads (`T: JoltInstructionRowData`), and source-only trap markers no
   longer have lookup-table impls.
 - Current gap: `jolt-riscv` still owns `Flags` bitfield types and generated
-  `Flags` impls, `jolt-core` still exposes legacy `Flags` and
-  `InstructionLookup` implementations on tracer `Instruction` / `Cycle`, and
-  `jolt-lookup-tables` currently gives marker-level lookup-table impls for any
-  payload type. These compile today for source-shaped marker payloads and should
-  be cut over so lookup/flag queries require a final `JoltInstructionRow` view
-  and proof metadata is owned by proving/lookup crates rather than the RV64
-  catalog crate.
+  final-row `Flags` impls. Lookup/flag queries are now final-row-only, but the
+  long-term ownership question remains: ideally the RV64 catalog crate should
+  not need to know Jolt R1CS circuit flags or witness-routing instruction flags.
+- Current gap: `jolt-core` prover internals still pass `Arc<Vec<Cycle>>` through
+  many witness-generation and sumcheck paths. `JoltTraceCycle` makes final-row
+  proof metadata explicit at each use site, but a cleaner follow-up is to
+  normalize once from tracer `Cycle` into `TraceRow` / `ProofTraceRow` and make
+  prover APIs consume that proof trace directly.
 
 1. [x] Add `SourceInstructionRow`, `SourceInlineKey`, `JoltInstructionRow`, and operand aliases/types in
    `jolt-riscv`.
@@ -1378,6 +1409,11 @@ Current implementation status:
 24. [x] Run the full validation stack and update the expansion fixture/hash only if
     row type serialization changes while structural expansion output remains
     unchanged.
+25. [ ] Replace raw `Arc<Vec<Cycle>>` prover inputs with a normalized proof trace
+    row shape equivalent to `jolt_program::execution::TraceRow`, after checking
+    all witness-generation paths that still need tracer-specific data. This
+    should subsume most `JoltTraceCycle::try_new` call sites and make
+    source-only cycles unrepresentable in prover internals.
 
 ## References
 
