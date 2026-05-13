@@ -164,9 +164,17 @@ pub use virt::AdviceLw;
 pub use virt::VirtualLw;
 pub use virt::VirtualSw;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
+pub struct Unimpl<T = ()>(pub T);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
+pub struct Inline<T = ()>(pub T);
+
 macro_rules! define_source_instruction {
     (
-        instructions: [$($instr:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+        instructions: [$($instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
     ) => {
         /// Typed view over decoded source rows.
         ///
@@ -177,12 +185,12 @@ macro_rules! define_source_instruction {
         /// two cannot silently disagree.
         #[derive(Clone, Copy, Debug, PartialEq)]
         pub enum SourceInstruction<T = SourceRow> {
-            NoOp(T),
-            Unimpl(T),
+            NoOp(Noop<T>),
+            Unimpl(Unimpl<T>),
             $(
-                $instr(T),
+                $instr($marker<T>),
             )*
-            Inline(T),
+            Inline(Inline<T>),
         }
 
         impl SourceInstruction<SourceRow> {
@@ -199,22 +207,23 @@ macro_rules! define_source_instruction {
 
             pub fn new(kind: SourceInstructionKind, row: SourceRow) -> Self {
                 match kind {
-                    SourceInstructionKind::NoOp => Self::NoOp(row),
-                    SourceInstructionKind::Unimpl => Self::Unimpl(row),
+                    SourceInstructionKind::NoOp => Self::NoOp(Noop(row)),
+                    SourceInstructionKind::Unimpl => Self::Unimpl(Unimpl(row)),
                     $(
-                        SourceInstructionKind::$instr => Self::$instr(row),
+                        SourceInstructionKind::$instr => Self::$instr($marker(row)),
                     )*
-                    SourceInstructionKind::Inline => Self::Inline(row),
+                    SourceInstructionKind::Inline => Self::Inline(Inline(row)),
                 }
             }
 
             pub const fn row(&self) -> &SourceRow {
                 match self {
-                    Self::NoOp(row) | Self::Unimpl(row) => row,
+                    Self::NoOp(instruction) => &instruction.0,
+                    Self::Unimpl(instruction) => &instruction.0,
                     $(
-                        Self::$instr(row) => row,
+                        Self::$instr(instruction) => &instruction.0,
                     )*
-                    Self::Inline(row) => row,
+                    Self::Inline(instruction) => &instruction.0,
                 }
             }
 
@@ -224,11 +233,12 @@ macro_rules! define_source_instruction {
 
             pub fn into_row(self) -> SourceRow {
                 match self {
-                    Self::NoOp(row) | Self::Unimpl(row) => row,
+                    Self::NoOp(instruction) => instruction.0,
+                    Self::Unimpl(instruction) => instruction.0,
                     $(
-                        Self::$instr(row) => row,
+                        Self::$instr(instruction) => instruction.0,
                     )*
-                    Self::Inline(row) => row,
+                    Self::Inline(instruction) => instruction.0,
                 }
             }
 
@@ -732,6 +742,38 @@ mod tests {
             JoltRow::from(beq).instruction_kind,
             JoltInstructionKind::BEQ
         );
+        assert!(matches!(add, SourceInstruction::ADD(Add(..))));
+        assert!(matches!(beq, SourceInstruction::BEQ(Beq(..))));
+    }
+
+    #[test]
+    fn source_instruction_uses_catalog_marker_types() {
+        let row = SourceRow::default();
+
+        assert!(matches!(
+            SourceInstruction::new(SourceInstructionKind::VirtualAssertEQ, row),
+            SourceInstruction::VirtualAssertEQ(AssertEq(..))
+        ));
+        assert!(matches!(
+            SourceInstruction::new(SourceInstructionKind::VirtualMULI, row),
+            SourceInstruction::VirtualMULI(MulI(..))
+        ));
+        assert!(matches!(
+            SourceInstruction::new(SourceInstructionKind::VirtualROTRI, row),
+            SourceInstruction::VirtualROTRI(VirtualRotri(..))
+        ));
+        assert!(matches!(
+            SourceInstruction::new(SourceInstructionKind::AMOMAXUD, row),
+            SourceInstruction::AMOMAXUD(AmoMaxUD(..))
+        ));
+        assert!(matches!(
+            SourceInstruction::new(SourceInstructionKind::Inline, row),
+            SourceInstruction::Inline(Inline(..))
+        ));
+        assert!(matches!(
+            SourceInstruction::new(SourceInstructionKind::Unimpl, row),
+            SourceInstruction::Unimpl(Unimpl(..))
+        ));
     }
 
     #[test]

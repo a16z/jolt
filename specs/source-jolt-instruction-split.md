@@ -194,7 +194,7 @@ profile legality deciding what is accepted for a given compiled configuration.
       shipped final-row variants. Profile-specific target legality is checked by
       a positive computed target legality closure rather than by changing the
       enum shape.
-- [ ] `SourceInstruction<T>` contains decoded RV64 source opcodes, Jolt custom
+- [x] `SourceInstruction<T>` contains decoded RV64 source opcodes, Jolt custom
       source opcodes, and one source-only `Inline(Inline<T>)` variant.
       Individual registered inline opcodes are represented by `SourceInline`,
       not by one enum variant per inline package entry.
@@ -1119,10 +1119,11 @@ Current implementation status:
 - `SourceInstructionKind` tag serialization is now direct rather than routed
   through `SourceInstructionKind::jolt_kind()`, so future source-only identities
   do not need a final-row identity just to serialize.
-- The current `SourceInstruction<T>` variants carry `T` directly. The
-  marker-struct payload cutover, profile legality layer, `InlineExtension`
-  classification, final `JoltInstruction<JoltRow>` return type, and removal of
-  source-only variants from the final row universe are still pending.
+- `SourceInstruction<T>` variants now carry marker structs such as
+  `ADD(Add<T>)` and `Inline(Inline<T>)` rather than raw `T` payloads.
+- The profile legality layer, `InlineExtension` classification, final
+  `JoltInstruction<JoltRow>` return type, and removal of source-only variants
+  from the final row universe are still pending.
 
 1. Add `SourceRow`, `SourceInline`, `JoltRow`, and operand aliases/types in
    `jolt-riscv`.

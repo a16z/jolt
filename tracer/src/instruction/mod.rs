@@ -409,7 +409,7 @@ where
 
 macro_rules! define_rv64imac_enums {
     (
-        instructions: [$($instr:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+        instructions: [$($instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
     ) => {
         #[derive(Debug, IntoStaticStr, From, Clone, Serialize, Deserialize, EnumIter)]
         pub enum Instruction {

@@ -11,7 +11,7 @@ pub struct JoltInstructionTag(pub u16);
 
 macro_rules! define_instruction_kind {
     (
-        instructions: [$($instr:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+        instructions: [$($instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
     ) => {
         #[derive(
             Default,
