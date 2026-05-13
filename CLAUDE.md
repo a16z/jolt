@@ -8,6 +8,13 @@ Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V (RV64IMAC) that effic
 
 ## Essential Commands
 
+### Environment Setup
+
+```bash
+# CRITICAL: Source this before workspace/Bolt cargo checks so MLIR/LLVM paths are set.
+source .bolt-dev-env
+```
+
 ### Linting and Formatting
 
 ```bash
