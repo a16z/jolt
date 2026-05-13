@@ -1308,7 +1308,7 @@ fn stage4_rust_targets_extract_and_compile() {
         .contains("Stage4TranscriptAbsorbBytesPlan"));
     assert!(verifier_source
         .source
-        .contains("relation: Some(\"jolt.stage4.batched\")"));
+        .contains("relation: Some(Stage4RelationKind::Stage4Batched)"));
     assert!(verifier_source.source.contains("Stage4VerifierProgramPlan"));
     assert!(verifier_source.source.contains("pub fn verify_stage4"));
     assert!(verifier_source.source.contains("LabelWithCount"));
@@ -1394,13 +1394,13 @@ fn stage5_rust_targets_extract_and_compile() {
     assert!(verifier_source.source.contains("pub fn verify_stage5"));
     assert!(verifier_source
         .source
-        .contains("relation: Some(\"jolt.stage5.batched\")"));
+        .contains("relation: Some(Stage5RelationKind::Stage5Batched)"));
     assert!(verifier_source
         .source
         .contains("expected_instruction_read_raf"));
     assert!(verifier_source
         .source
-        .contains("jolt.stage5.instruction_read_raf"));
+        .contains("Stage5RelationKind::Stage5InstructionReadRaf"));
     assert!(verifier_source
         .source
         .contains("LookupTableKind::<XLEN>::all"));
@@ -1415,10 +1415,10 @@ fn stage5_rust_targets_extract_and_compile() {
         .contains("expected_registers_val_evaluation"));
     assert!(verifier_source
         .source
-        .contains("jolt.stage5.ram_ra_claim_reduction"));
+        .contains("Stage5RelationKind::Stage5RamRaClaimReduction"));
     assert!(verifier_source
         .source
-        .contains("jolt.stage5.registers_val_evaluation"));
+        .contains("Stage5RelationKind::Stage5RegistersValEvaluation"));
     assert!(verifier_source.source.contains("LookupTableFlag_40"));
     assert!(!verifier_source.source.contains("LookupTableFlag_41"));
     assert!(verifier_source
@@ -1537,10 +1537,10 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(verifier_source.source.contains("pub fn verify_stage6"));
     assert!(verifier_source
         .source
-        .contains("relation: Some(\"jolt.stage6.batched\")"));
+        .contains("relation: Some(Stage6RelationKind::Stage6Batched)"));
     assert!(verifier_source
         .source
-        .contains("jolt.stage6.bytecode_read_raf"));
+        .contains("Stage6RelationKind::Stage6BytecodeReadRaf"));
     assert!(verifier_source.source.contains("Stage6VerifierData"));
     assert!(verifier_source.source.contains("Stage6BytecodeReadRafData"));
     assert!(verifier_source.source.contains("Stage6BytecodeEntry"));
@@ -1556,7 +1556,7 @@ fn stage6_rust_targets_extract_and_compile() {
         .contains("expected_hamming_booleanity"));
     assert!(verifier_source
         .source
-        .contains("jolt.stage6.inc_claim_reduction"));
+        .contains("Stage6RelationKind::Stage6IncClaimReduction"));
     assert!(verifier_source
         .source
         .contains("stage6.input.stage1.LookupOutput"));
@@ -1650,10 +1650,10 @@ fn stage7_rust_targets_extract_and_compile() {
     assert!(verifier_source.source.contains("pub fn verify_stage7"));
     assert!(verifier_source
         .source
-        .contains("relation: Some(\"jolt.stage7.batched\")"));
+        .contains("relation: Some(Stage7RelationKind::Stage7Batched)"));
     assert!(verifier_source
         .source
-        .contains("jolt.stage7.hamming_weight_claim_reduction"));
+        .contains("Stage7RelationKind::Stage7HammingWeightClaimReduction"));
     assert!(verifier_source
         .source
         .contains("expected_hamming_weight_claim_reduction"));
@@ -1717,7 +1717,9 @@ fn stage8_rust_targets_extract_and_compile() {
     assert!(prover_source
         .source
         .contains("stage7.hamming_weight_claim_reduction.eval.InstructionRa_0"));
-    assert!(verifier_source.source.contains("mode: \"verify\""));
+    assert!(verifier_source
+        .source
+        .contains("mode: Stage8PcsProofMode::Verify"));
     assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
     assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
 }

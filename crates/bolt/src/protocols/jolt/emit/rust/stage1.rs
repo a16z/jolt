@@ -709,25 +709,21 @@ impl Stage1CpuProgram {
         push_format(
             &mut source,
             format_args!(
-                "pub const STAGE1_PARAMS: Stage1Params = Stage1Params {{\n\
-             \x20   field: {},\n\
-             \x20   pcs: {},\n\
-             \x20   transcript: {},\n\
-             }};\n",
+                "pub const STAGE1_PARAMS: Stage1Params = Stage1Params {{ field: {}, pcs: {}, transcript: {} }};\n",
                 rust_str(&self.params.field),
                 rust_str(&self.params.pcs),
                 rust_str(&self.params.transcript)
             ),
         );
 
-        source.push_str(&self.emit_transcript_squeeze_constants());
+        source.push_str(&self.emit_transcript_squeeze_constants()?);
         source.push_str(&self.emit_kernel_constants());
         source.push_str(&self.emit_sumcheck_claim_constants()?);
         source.push_str(&self.emit_sumcheck_batch_constants());
         source.push_str(&self.emit_sumcheck_driver_constants()?);
-        source.push_str(&self.emit_sumcheck_instance_result_constants());
+        source.push_str(&self.emit_sumcheck_instance_result_constants()?);
         source.push_str(&self.emit_sumcheck_eval_constants());
-        source.push_str(&self.emit_opening_claim_constants());
+        source.push_str(&self.emit_opening_claim_constants()?);
         source.push_str(&self.emit_opening_batch_constants());
         source.push_str(
             "pub const STAGE1_PROGRAM: Stage1CpuProgramPlan = Stage1CpuProgramPlan {\n\
@@ -746,50 +742,58 @@ impl Stage1CpuProgram {
         Ok(source)
     }
 
-    fn emit_sumcheck_instance_result_constants(&self) -> String {
+    fn emit_sumcheck_instance_result_constants(&self) -> Result<String, EmitError> {
         let instances = self
             .instance_results
             .iter()
             .map(|instance| {
-                format!(
+                Ok(format!(
                     "    Stage1SumcheckInstanceResultPlan {{ symbol: {}, source: {}, claim: {}, relation: {}, index: {}, point_arity: {}, num_rounds: {}, round_offset: {}, point_order: {}, degree: {} }},",
                     rust_str(&instance.symbol),
                     rust_str(&instance.source),
                     rust_str(&instance.claim),
-                    rust_str(&instance.relation),
+                    super::plan_tokens::role_relation_kind_expr(
+                        "Stage1",
+                        &self.role,
+                        &instance.relation
+                    )?,
                     instance.index,
                     instance.point_arity,
                     instance.num_rounds,
                     instance.round_offset,
                     rust_str(&instance.point_order),
                     instance.degree
-                )
+                ))
             })
-            .collect::<Vec<_>>()
+            .collect::<Result<Vec<_>, EmitError>>()?
             .join("\n");
-        format!(
+        Ok(format!(
             "pub const STAGE1_SUMCHECK_INSTANCE_RESULTS: &[Stage1SumcheckInstanceResultPlan] = &[\n{instances}\n];\n\n"
-        )
+        ))
     }
 
-    fn emit_transcript_squeeze_constants(&self) -> String {
+    fn emit_transcript_squeeze_constants(&self) -> Result<String, EmitError> {
         let squeezes = self
             .transcript_squeezes
             .iter()
             .map(|squeeze| {
-                format!(
+                Ok(format!(
                     "    Stage1TranscriptSqueezePlan {{ symbol: {}, label: {}, kind: {}, count: {} }},",
                     rust_str(&squeeze.symbol),
                     rust_str(&squeeze.label),
-                    rust_str(&squeeze.kind),
+                    super::plan_tokens::role_transcript_squeeze_kind_expr(
+                        "Stage1",
+                        &self.role,
+                        &squeeze.kind
+                    )?,
                     squeeze.count,
-                )
+                ))
             })
-            .collect::<Vec<_>>()
+            .collect::<Result<Vec<_>, EmitError>>()?
             .join("\n");
-        format!(
+        Ok(format!(
             "pub const STAGE1_TRANSCRIPT_SQUEEZES: &[Stage1TranscriptSqueezePlan] = &[\n{squeezes}\n];\n\n"
-        )
+        ))
     }
 
     fn emit_kernel_constants(&self) -> String {
@@ -984,25 +988,27 @@ impl Stage1CpuProgram {
         format!("pub const STAGE1_SUMCHECK_EVALS: &[Stage1SumcheckEvalPlan] = &[\n{evals}\n];\n\n")
     }
 
-    fn emit_opening_claim_constants(&self) -> String {
+    fn emit_opening_claim_constants(&self) -> Result<String, EmitError> {
         let claims = self
             .opening_claims
             .iter()
             .map(|claim| {
-                format!(
+                Ok(format!(
                     "    Stage1OpeningClaimPlan {{ symbol: {}, oracle: {}, domain: {}, point_arity: {}, claim_kind: {}, point_source: {}, eval_source: {} }},",
                     rust_str(&claim.symbol),
                     rust_str(&claim.oracle),
                     rust_str(&claim.domain),
                     claim.point_arity,
-                    rust_str(&claim.claim_kind),
+                    super::plan_tokens::role_claim_kind_expr("Stage1", &self.role, &claim.claim_kind)?,
                     rust_str(&claim.point_source),
                     rust_str(&claim.eval_source)
-                )
+                ))
             })
-            .collect::<Vec<_>>()
+            .collect::<Result<Vec<_>, EmitError>>()?
             .join("\n");
-        format!("pub const STAGE1_OPENING_CLAIMS: &[Stage1OpeningClaimPlan] = &[\n{claims}\n];\n\n")
+        Ok(format!(
+            "pub const STAGE1_OPENING_CLAIMS: &[Stage1OpeningClaimPlan] = &[\n{claims}\n];\n\n"
+        ))
     }
 
     fn emit_opening_batch_constants(&self) -> String {
@@ -1084,9 +1090,11 @@ pub type Stage1Proof<F> = super::common::StageProof<F>;
 pub type Stage1VerifierProgramPlan = super::common::VerifierProgramPlanMinimal;
 
 pub use super::common::{
-    OpeningBatchPlan as Stage1OpeningBatchPlan, OpeningClaimPlan as Stage1OpeningClaimPlan,
+    ClaimKind as Stage1ClaimKind, RelationKind as Stage1RelationKind, OpeningBatchPlan as Stage1OpeningBatchPlan,
+    OpeningClaimPlan as Stage1OpeningClaimPlan,
     SumcheckBatchPlan as Stage1SumcheckBatchPlan, SumcheckEvalPlan as Stage1SumcheckEvalPlan,
     SumcheckInstanceResultPlan as Stage1SumcheckInstanceResultPlan,
+    TranscriptSqueezeKind as Stage1TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage1TranscriptSqueezePlan,
     SumcheckClaimPlan as Stage1SumcheckClaimPlan,
     SumcheckDriverPlan as Stage1SumcheckDriverPlan,
@@ -1100,7 +1108,7 @@ pub enum VerifyStage1Error {
     MissingClaim { driver: &'static str, claim: &'static str },
     MissingDependency { driver: &'static str, dependency: &'static str },
     InvalidProof { driver: &'static str, reason: &'static str },
-    UnsupportedRelation { relation: &'static str },
+    UnsupportedRelation { relation: Stage1RelationKind },
     Sumcheck { driver: &'static str, error: SumcheckError<Fr> },
 }
 "
@@ -1111,24 +1119,20 @@ pub enum VerifyStage1Error {
         push_format(
             &mut source,
             format_args!(
-                "pub const STAGE1_PARAMS: Stage1Params = Stage1Params {{\n\
-             \x20   field: {},\n\
-             \x20   pcs: {},\n\
-             \x20   transcript: {},\n\
-             }};\n",
+                "pub const STAGE1_PARAMS: Stage1Params = Stage1Params {{ field: {}, pcs: {}, transcript: {} }};\n",
                 rust_str(&self.params.field),
                 rust_str(&self.params.pcs),
                 rust_str(&self.params.transcript)
             ),
         );
 
-        source.push_str(&self.emit_transcript_squeeze_constants());
+        source.push_str(&self.emit_transcript_squeeze_constants()?);
         source.push_str(&self.emit_verifier_sumcheck_claim_constants()?);
         source.push_str(&self.emit_sumcheck_batch_constants());
         source.push_str(&self.emit_verifier_sumcheck_driver_constants()?);
-        source.push_str(&self.emit_sumcheck_instance_result_constants());
+        source.push_str(&self.emit_sumcheck_instance_result_constants()?);
         source.push_str(&self.emit_sumcheck_eval_constants());
-        source.push_str(&self.emit_opening_claim_constants());
+        source.push_str(&self.emit_opening_claim_constants()?);
         source.push_str(&self.emit_opening_batch_constants());
         source.push_str(
             "pub const STAGE1_PROGRAM: Stage1VerifierProgramPlan = Stage1VerifierProgramPlan {\n\
@@ -1161,7 +1165,11 @@ pub enum VerifyStage1Error {
                     claim.num_rounds,
                     claim.degree,
                     rust_str(&claim.claim),
-                    rust_str(relation),
+                    super::plan_tokens::role_relation_kind_expr(
+                        "Stage1",
+                        &self.role,
+                        relation
+                    )?,
                     rust_str(&claim.claim_value),
                     rust_str(&claim.input_openings.join("|"))
                 ));
@@ -1191,7 +1199,11 @@ pub enum VerifyStage1Error {
                     rust_str(&driver.symbol),
                     rust_str(&driver.stage),
                     rust_str(&driver.proof_slot),
-                    rust_str(relation),
+                    super::plan_tokens::role_relation_kind_expr(
+                        "Stage1",
+                        &self.role,
+                        relation
+                    )?,
                     rust_str(&driver.batch),
                     rust_str(&driver.policy),
                     rust_str(&driver.claim_label),
@@ -1307,10 +1319,17 @@ where
             reason: "driver symbol mismatch",
         });
     }
-    let relation = driver.relation.unwrap_or("<missing>");
+    let Some(relation) = driver.relation else {
+        return Err(VerifyStage1Error::InvalidProof {
+            driver: driver.symbol,
+            reason: "missing driver relation",
+        });
+    };
     match relation {
-        "jolt.stage1.outer.uniskip" => verify_outer_uniskip(program, driver, proof, transcript),
-        "jolt.stage1.outer.remaining" => {
+        Stage1RelationKind::Stage1OuterUniskip => {
+            verify_outer_uniskip(program, driver, proof, transcript)
+        }
+        Stage1RelationKind::Stage1OuterRemaining => {
             verify_outer_remaining(program, driver, proof, completed, transcript)
         }
         relation => Err(VerifyStage1Error::UnsupportedRelation { relation }),
@@ -1497,10 +1516,10 @@ fn emit_str_array(name: &str, values: &[String]) -> String {
 fn emit_usize_array(name: &str, values: &[usize]) -> String {
     let entries = values
         .iter()
-        .map(|value| format!("    {value},"))
+        .map(usize::to_string)
         .collect::<Vec<_>>()
-        .join("\n");
-    format!("pub const {name}: &[usize] = &[\n{entries}\n];\n\n")
+        .join(", ");
+    format!("pub const {name}: &[usize] = &[{entries}];\n\n")
 }
 
 fn rust_str(value: &str) -> String {

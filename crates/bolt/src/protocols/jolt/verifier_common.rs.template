@@ -3,8 +3,12 @@
     reason = "generated verifier helpers mirror staged protocol ABIs"
 )]
 
+use std::cmp::Ordering;
+use std::fmt;
+use std::marker::PhantomData;
+
 use jolt_field::{Field, Fr, MulPow2, RingCore};
-use jolt_poly::EqPolynomial;
+use jolt_poly::{lagrange::lagrange_evals, EqPolynomial};
 use jolt_sumcheck::{
     CompressedLabeledRoundPoly, SumcheckClaim, SumcheckError, SumcheckProof, SumcheckVerifier,
 };
@@ -18,6 +22,61 @@ pub struct StageParams {
     pub transcript: &'static str,
 }
 
+pub struct TypedPlanSymbol<Tag> {
+    symbol: &'static str,
+    _tag: PhantomData<fn() -> Tag>,
+}
+
+impl<Tag> TypedPlanSymbol<Tag> {
+    pub(crate) const fn new(symbol: &'static str) -> Self {
+        Self {
+            symbol,
+            _tag: PhantomData,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        self.symbol
+    }
+}
+
+impl<Tag> Clone for TypedPlanSymbol<Tag> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<Tag> Copy for TypedPlanSymbol<Tag> {}
+
+impl<Tag> fmt::Debug for TypedPlanSymbol<Tag> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("TypedPlanSymbol")
+            .field(&self.symbol)
+            .finish()
+    }
+}
+
+impl<Tag> PartialEq for TypedPlanSymbol<Tag> {
+    fn eq(&self, other: &Self) -> bool {
+        self.symbol == other.symbol
+    }
+}
+
+impl<Tag> Eq for TypedPlanSymbol<Tag> {}
+
+impl<Tag> PartialOrd for TypedPlanSymbol<Tag> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<Tag> Ord for TypedPlanSymbol<Tag> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.symbol.cmp(other.symbol)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KernelPlan {
     pub symbol: &'static str,
@@ -28,10 +87,27 @@ pub struct KernelPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[rustfmt::skip]
+pub enum RelationKind { Stage1OuterUniskip, Stage1OuterRemaining, Stage2ProductVirtualUniskip, Stage2RamReadWrite, Stage2ProductVirtualRemainder, Stage2InstructionLookupClaimReduction, Stage2RamRafEvaluation, Stage2RamOutputCheck, Stage2Batched, Stage3SpartanShift, Stage3InstructionInput, Stage3RegistersClaimReduction, Stage3Batched, Stage4RegistersReadWrite, Stage4RamValCheck, Stage4Batched, Stage5InstructionReadRaf, Stage5RamRaClaimReduction, Stage5RegistersValEvaluation, Stage5Batched, Stage6BytecodeReadRaf, Stage6Booleanity, Stage6HammingBooleanity, Stage6RamRaVirtual, Stage6InstructionRaVirtual, Stage6IncClaimReduction, Stage6Batched, Stage7HammingWeightClaimReduction, Stage7Batched }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TranscriptSqueezeKind {
+    ChallengeScalar,
+    ChallengeVector,
+    Scalar,
+}
+
+impl TranscriptSqueezeKind {
+    pub fn is_scalar(self) -> bool {
+        matches!(self, Self::ChallengeScalar | Self::Scalar)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TranscriptSqueezePlan {
     pub symbol: &'static str,
     pub label: &'static str,
-    pub kind: &'static str,
+    pub kind: TranscriptSqueezeKind,
     pub count: usize,
 }
 
@@ -43,9 +119,43 @@ pub struct TranscriptAbsorbBytesPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProgramStepKind {
+    TranscriptSqueeze,
+    TranscriptAbsorbBytes,
+    SumcheckDriver,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProgramStepPlan {
-    pub kind: &'static str,
+    pub kind: ProgramStepKind,
     pub symbol: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClaimKind {
+    Committed,
+    Virtual,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceStage {
+    Stage6,
+    Stage7,
+}
+
+impl SourceStage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Stage6 => "stage6",
+            Self::Stage7 => "stage7",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PcsProofMode {
+    Open,
+    Verify,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,7 +166,7 @@ pub struct OpeningInputPlan {
     pub oracle: &'static str,
     pub domain: &'static str,
     pub point_arity: usize,
-    pub claim_kind: &'static str,
+    pub claim_kind: ClaimKind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,10 +177,20 @@ pub struct FieldConstantPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldExprKind {
+    OpeningEval,
+    Add,
+    Sub,
+    Mul,
+    Neg,
+    Pow(usize),
+    LagrangeBasisEval(i64, usize, usize),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FieldExprPlan {
     pub symbol: &'static str,
-    pub kind: &'static str,
-    pub formula: &'static str,
+    pub kind: FieldExprKind,
     pub operands: &'static str,
 }
 
@@ -83,7 +203,7 @@ pub struct SumcheckClaimPlan {
     pub degree: usize,
     pub claim: &'static str,
     pub kernel: Option<&'static str>,
-    pub relation: Option<&'static str>,
+    pub relation: Option<RelationKind>,
     pub claim_value: &'static str,
     pub input_openings: &'static str,
 }
@@ -108,7 +228,7 @@ pub struct SumcheckDriverPlan {
     pub stage: &'static str,
     pub proof_slot: &'static str,
     pub kernel: Option<&'static str>,
-    pub relation: Option<&'static str>,
+    pub relation: Option<RelationKind>,
     pub batch: &'static str,
     pub policy: &'static str,
     pub round_schedule: &'static [usize],
@@ -123,7 +243,7 @@ pub struct SumcheckInstanceResultPlan {
     pub symbol: &'static str,
     pub source: &'static str,
     pub claim: &'static str,
-    pub relation: &'static str,
+    pub relation: RelationKind,
     pub index: usize,
     pub point_arity: usize,
     pub num_rounds: usize,
@@ -171,15 +291,20 @@ pub struct OpeningClaimPlan {
     pub oracle: &'static str,
     pub domain: &'static str,
     pub point_arity: usize,
-    pub claim_kind: &'static str,
+    pub claim_kind: ClaimKind,
     pub point_source: &'static str,
     pub eval_source: &'static str,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpeningEqualityMode {
+    PointAndEval,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OpeningClaimEqualityPlan {
     pub symbol: &'static str,
-    pub mode: &'static str,
+    pub mode: OpeningEqualityMode,
     pub lhs: &'static str,
     pub rhs: &'static str,
 }
@@ -366,10 +491,6 @@ pub enum RuntimePlanError {
         driver: &'static str,
         reason: &'static str,
     },
-    UnsupportedFieldExpr {
-        symbol: &'static str,
-        formula: &'static str,
-    },
 }
 
 macro_rules! impl_runtime_plan_error_conversion {
@@ -397,9 +518,6 @@ macro_rules! impl_runtime_plan_error_conversion {
                     },
                     super::common::RuntimePlanError::InvalidProof { driver, reason } => {
                         Self::InvalidProof { driver, reason }
-                    }
-                    super::common::RuntimePlanError::UnsupportedFieldExpr { symbol, formula } => {
-                        Self::UnsupportedFieldExpr { symbol, formula }
                     }
                 }
             }
@@ -556,7 +674,7 @@ impl<F: Field> ValueStore<F> {
         invalid_input_length: impl Fn(&'static str, usize, usize) -> E,
     ) -> Result<(), E> {
         self.insert_point(plan.symbol, values.to_vec());
-        if matches!(plan.kind, "challenge_scalar" | "scalar") {
+        if plan.kind.is_scalar() {
             if values.len() != 1 {
                 return Err(invalid_input_length(plan.symbol, 1, values.len()));
             }
@@ -678,7 +796,7 @@ impl<F: Field> ValueStore<F> {
     ) -> Result<(), E> {
         for equality in opening_equalities {
             match equality.mode {
-                "point_and_eval" => {
+                OpeningEqualityMode::PointAndEval => {
                     if self.point_or(equality.lhs, &missing_value)?
                         != self.point_or(equality.rhs, &missing_value)?
                         || self.scalar_or(equality.lhs, &missing_value)?
@@ -689,12 +807,6 @@ impl<F: Field> ValueStore<F> {
                             "opening claim equality failed",
                         ));
                     }
-                }
-                _ => {
-                    return Err(invalid_proof(
-                        equality.symbol,
-                        "unsupported opening equality mode",
-                    ));
                 }
             }
         }
@@ -1012,39 +1124,39 @@ pub fn evaluate_field_expr<F: Field>(
     expr: &FieldExprPlan,
     operands: &[F],
 ) -> Result<F, RuntimePlanError> {
-    match expr.formula {
-        "opening_eval" => Ok(single_operand(expr.symbol, operands)?),
-        "field.add" => {
+    match expr.kind {
+        FieldExprKind::OpeningEval => Ok(single_operand(expr.symbol, operands)?),
+        FieldExprKind::Add => {
             require_operand_count(expr.symbol, 2, operands.len())?;
             Ok(operands[0] + operands[1])
         }
-        "field.sub" => {
+        FieldExprKind::Sub => {
             require_operand_count(expr.symbol, 2, operands.len())?;
             Ok(operands[0] - operands[1])
         }
-        "field.mul" => {
+        FieldExprKind::Mul => {
             require_operand_count(expr.symbol, 2, operands.len())?;
             Ok(operands[0] * operands[1])
         }
-        "field.neg" => {
+        FieldExprKind::Neg => {
             require_operand_count(expr.symbol, 1, operands.len())?;
             Ok(-operands[0])
         }
-        formula => {
-            if let Some(exponent) = formula.strip_prefix("field.pow:") {
-                require_operand_count(expr.symbol, 1, operands.len())?;
-                let exponent = exponent.parse::<usize>().map_err(|_| {
-                    RuntimePlanError::UnsupportedFieldExpr {
-                        symbol: expr.symbol,
-                        formula,
-                    }
-                })?;
-                return Ok(pow_field(operands[0], exponent));
-            }
-            Err(RuntimePlanError::UnsupportedFieldExpr {
-                symbol: expr.symbol,
-                formula,
-            })
+        FieldExprKind::Pow(exponent) => {
+            require_operand_count(expr.symbol, 1, operands.len())?;
+            Ok(pow_field(operands[0], exponent))
+        }
+        FieldExprKind::LagrangeBasisEval(domain_start, domain_size, index) => {
+            require_operand_count(expr.symbol, 1, operands.len())?;
+            let weights = lagrange_evals(domain_start, domain_size, operands[0]);
+            weights
+                .get(index)
+                .copied()
+                .ok_or(RuntimePlanError::InvalidInputLength {
+                    input: expr.symbol,
+                    expected: index + 1,
+                    actual: weights.len(),
+                })
         }
     }
 }
@@ -1149,7 +1261,6 @@ pub fn normalize_instruction_read_raf_point<F: Field>(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stage67RelationSymbols {
-    pub hamming_booleanity_relation: &'static str,
     pub hamming_booleanity_instance: &'static str,
     pub booleanity_point: &'static str,
     pub stage5_instruction_ra0: &'static str,
@@ -1226,7 +1337,7 @@ pub fn stage67_trace_rounds(
 ) -> Result<usize, RuntimePlanError> {
     instance_results
         .iter()
-        .find(|instance| instance.relation == symbols.hamming_booleanity_relation)
+        .find(|instance| instance.relation == RelationKind::Stage6HammingBooleanity)
         .map(|instance| instance.num_rounds)
         .ok_or(RuntimePlanError::MissingValue {
             symbol: symbols.hamming_booleanity_instance,

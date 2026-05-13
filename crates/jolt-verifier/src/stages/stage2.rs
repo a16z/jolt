@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use super::common::{append_labeled_scalar, batch_claims, eval_by_name, find_batch, find_plan, pow_field, require_operand_count, reverse_slice, single_operand};
+use super::common::{append_labeled_scalar, batch_claims, eval_by_name, find_batch, find_plan, reverse_slice};
 use jolt_field::{Field, Fr, MulPow2, MulPrimitiveInt, RingCore};
 use jolt_poly::lagrange::{lagrange_evals, lagrange_kernel_eval};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
@@ -18,13 +18,17 @@ pub type Stage2OpeningInputValue<F> = super::common::StageOpeningInputValue<F>;
 pub type Stage2VerifierProgramPlan = super::common::StageVerifierProgramPlanNoEqualities;
 
 pub use super::common::{
-    FieldConstantPlan as Stage2FieldConstantPlan, FieldExprPlan as Stage2FieldExprPlan,
+    ClaimKind as Stage2ClaimKind, RelationKind as Stage2RelationKind, FieldConstantPlan as Stage2FieldConstantPlan,
+    FieldExprKind as Stage2FieldExprKind,
+    FieldExprPlan as Stage2FieldExprPlan,
     OpeningBatchPlan as Stage2OpeningBatchPlan, OpeningClaimPlan as Stage2OpeningClaimPlan,
     OpeningInputPlan as Stage2OpeningInputPlan, PointConcatPlan as Stage2PointConcatPlan,
-    PointSlicePlan as Stage2PointSlicePlan, ProgramStepPlan as Stage2ProgramStepPlan,
-    StageParams as Stage2Params, SumcheckBatchPlan as Stage2SumcheckBatchPlan,
+    PointSlicePlan as Stage2PointSlicePlan, ProgramStepKind as Stage2ProgramStepKind,
+    ProgramStepPlan as Stage2ProgramStepPlan, StageParams as Stage2Params,
+    SumcheckBatchPlan as Stage2SumcheckBatchPlan,
     SumcheckEvalPlan as Stage2SumcheckEvalPlan,
     SumcheckInstanceResultPlan as Stage2SumcheckInstanceResultPlan,
+    TranscriptSqueezeKind as Stage2TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage2TranscriptSqueezePlan,
     SumcheckClaimPlan as Stage2SumcheckClaimPlan,
     SumcheckDriverPlan as Stage2SumcheckDriverPlan,
@@ -65,47 +69,42 @@ pub enum VerifyStage2Error {
     MissingValue { symbol: &'static str },
     InvalidInputLength { input: &'static str, expected: usize, actual: usize },
     InvalidProof { driver: &'static str, reason: &'static str },
-    UnsupportedFieldExpr { symbol: &'static str, formula: &'static str },
-    UnsupportedRelation { relation: &'static str },
+    UnsupportedRelation { relation: Stage2RelationKind },
     MissingRam { relation: &'static str },
     Sumcheck { driver: &'static str, error: SumcheckError<Fr> },
 }
 
 super::common::impl_runtime_plan_error_conversion!(VerifyStage2Error);
 
-pub const STAGE2_PARAMS: Stage2Params = Stage2Params {
-    field: "bn254_fr",
-    pcs: "dory",
-    transcript: "blake2b_transcript",
-};
+pub const STAGE2_PARAMS: Stage2Params = Stage2Params { field: "bn254_fr", pcs: "dory", transcript: "blake2b_transcript" };
 pub const STAGE2_PROGRAM_STEPS: &[Stage2ProgramStepPlan] = &[
-    Stage2ProgramStepPlan { kind: "transcript_squeeze", symbol: "stage2.product_virtual.tau_high" },
-    Stage2ProgramStepPlan { kind: "sumcheck_driver", symbol: "stage2.product_virtual.uniskip.sumcheck" },
-    Stage2ProgramStepPlan { kind: "transcript_squeeze", symbol: "stage2.ram_read_write.gamma" },
-    Stage2ProgramStepPlan { kind: "transcript_squeeze", symbol: "stage2.instruction_lookup.gamma" },
-    Stage2ProgramStepPlan { kind: "transcript_squeeze", symbol: "stage2.ram_output.r_address" },
-    Stage2ProgramStepPlan { kind: "sumcheck_driver", symbol: "stage2.sumcheck" },
+    Stage2ProgramStepPlan { kind: Stage2ProgramStepKind::TranscriptSqueeze, symbol: "stage2.product_virtual.tau_high" },
+    Stage2ProgramStepPlan { kind: Stage2ProgramStepKind::SumcheckDriver, symbol: "stage2.product_virtual.uniskip.sumcheck" },
+    Stage2ProgramStepPlan { kind: Stage2ProgramStepKind::TranscriptSqueeze, symbol: "stage2.ram_read_write.gamma" },
+    Stage2ProgramStepPlan { kind: Stage2ProgramStepKind::TranscriptSqueeze, symbol: "stage2.instruction_lookup.gamma" },
+    Stage2ProgramStepPlan { kind: Stage2ProgramStepKind::TranscriptSqueeze, symbol: "stage2.ram_output.r_address" },
+    Stage2ProgramStepPlan { kind: Stage2ProgramStepKind::SumcheckDriver, symbol: "stage2.sumcheck" },
 ];
 
 pub const STAGE2_TRANSCRIPT_SQUEEZES: &[Stage2TranscriptSqueezePlan] = &[
-    Stage2TranscriptSqueezePlan { symbol: "stage2.product_virtual.tau_high", label: "product_virtual_tau_high", kind: "challenge_scalar", count: 1 },
-    Stage2TranscriptSqueezePlan { symbol: "stage2.ram_read_write.gamma", label: "ram_read_write_gamma", kind: "challenge_scalar", count: 1 },
-    Stage2TranscriptSqueezePlan { symbol: "stage2.instruction_lookup.gamma", label: "instruction_lookup_gamma", kind: "challenge_scalar", count: 1 },
-    Stage2TranscriptSqueezePlan { symbol: "stage2.ram_output.r_address", label: "ram_output_r_address", kind: "challenge_vector", count: 16 },
+    Stage2TranscriptSqueezePlan { symbol: "stage2.product_virtual.tau_high", label: "product_virtual_tau_high", kind: Stage2TranscriptSqueezeKind::ChallengeScalar, count: 1 },
+    Stage2TranscriptSqueezePlan { symbol: "stage2.ram_read_write.gamma", label: "ram_read_write_gamma", kind: Stage2TranscriptSqueezeKind::ChallengeScalar, count: 1 },
+    Stage2TranscriptSqueezePlan { symbol: "stage2.instruction_lookup.gamma", label: "instruction_lookup_gamma", kind: Stage2TranscriptSqueezeKind::ChallengeScalar, count: 1 },
+    Stage2TranscriptSqueezePlan { symbol: "stage2.ram_output.r_address", label: "ram_output_r_address", kind: Stage2TranscriptSqueezeKind::ChallengeVector, count: 16 },
 ];
 
 pub const STAGE2_OPENING_INPUTS: &[Stage2OpeningInputPlan] = &[
-    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.Product", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.Product", oracle: "Product", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.ShouldBranch", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.ShouldBranch", oracle: "ShouldBranch", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.ShouldJump", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.ShouldJump", oracle: "ShouldJump", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.RamReadValue", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.RamReadValue", oracle: "RamReadValue", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.RamWriteValue", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.RamWriteValue", oracle: "RamWriteValue", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.LookupOutput", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.LookupOutput", oracle: "LookupOutput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.LeftLookupOperand", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.LeftLookupOperand", oracle: "LeftLookupOperand", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.RightLookupOperand", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.RightLookupOperand", oracle: "RightLookupOperand", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.LeftInstructionInput", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.LeftInstructionInput", oracle: "LeftInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.RightInstructionInput", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.RightInstructionInput", oracle: "RightInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.RamAddress", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.RamAddress", oracle: "RamAddress", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
+    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.Product", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.Product", oracle: "Product", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual },
+    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.ShouldBranch", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.ShouldBranch", oracle: "ShouldBranch", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual },
+    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.ShouldJump", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.ShouldJump", oracle: "ShouldJump", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual },
+    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.RamReadValue", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.RamReadValue", oracle: "RamReadValue", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual },
+    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.RamWriteValue", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.RamWriteValue", oracle: "RamWriteValue", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual },
+    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.LookupOutput", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.LookupOutput", oracle: "LookupOutput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual },
+    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.LeftLookupOperand", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.LeftLookupOperand", oracle: "LeftLookupOperand", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual },
+    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.RightLookupOperand", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.RightLookupOperand", oracle: "RightLookupOperand", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual },
+    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.LeftInstructionInput", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.LeftInstructionInput", oracle: "LeftInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual },
+    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.RightInstructionInput", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.RightInstructionInput", oracle: "RightInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual },
+    Stage2OpeningInputPlan { symbol: "stage2.input.stage1.RamAddress", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.RamAddress", oracle: "RamAddress", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual },
 ];
 
 pub const STAGE2_FIELD_CONSTANTS: &[Stage2FieldConstantPlan] = &[
@@ -113,69 +112,59 @@ pub const STAGE2_FIELD_CONSTANTS: &[Stage2FieldConstantPlan] = &[
 ];
 
 pub const STAGE2_FIELD_EXPRS: &[Stage2FieldExprPlan] = &[
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.weight.Product", kind: "op", formula: "poly.lagrange_basis_eval:-1:3:0", operands: "stage2.product_virtual.tau_high" },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.weight.ShouldBranch", kind: "op", formula: "poly.lagrange_basis_eval:-1:3:1", operands: "stage2.product_virtual.tau_high" },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.weight.ShouldJump", kind: "op", formula: "poly.lagrange_basis_eval:-1:3:2", operands: "stage2.product_virtual.tau_high" },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.term.Product", kind: "op", formula: "field.mul", operands: "stage2.product_virtual.uniskip.weight.Product|stage2.input.stage1.Product" },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.term.ShouldBranch", kind: "op", formula: "field.mul", operands: "stage2.product_virtual.uniskip.weight.ShouldBranch|stage2.input.stage1.ShouldBranch" },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.term.ShouldJump", kind: "op", formula: "field.mul", operands: "stage2.product_virtual.uniskip.weight.ShouldJump|stage2.input.stage1.ShouldJump" },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.partial.ProductShouldBranch", kind: "op", formula: "field.add", operands: "stage2.product_virtual.uniskip.term.Product|stage2.product_virtual.uniskip.term.ShouldBranch" },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.claim_expr", kind: "op", formula: "field.add", operands: "stage2.product_virtual.uniskip.partial.ProductShouldBranch|stage2.product_virtual.uniskip.term.ShouldJump" },
-    Stage2FieldExprPlan { symbol: "stage2.ram_read_write.term.RamWriteValue", kind: "op", formula: "field.mul", operands: "stage2.ram_read_write.gamma|stage2.input.stage1.RamWriteValue" },
-    Stage2FieldExprPlan { symbol: "stage2.ram_read_write.claim_expr", kind: "op", formula: "field.add", operands: "stage2.input.stage1.RamReadValue|stage2.ram_read_write.term.RamWriteValue" },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.gamma2", kind: "op", formula: "field.mul", operands: "stage2.instruction_lookup.gamma|stage2.instruction_lookup.gamma" },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.gamma3", kind: "op", formula: "field.mul", operands: "stage2.instruction_lookup.gamma2|stage2.instruction_lookup.gamma" },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.gamma4", kind: "op", formula: "field.mul", operands: "stage2.instruction_lookup.gamma2|stage2.instruction_lookup.gamma2" },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.LeftLookupOperand", kind: "op", formula: "field.mul", operands: "stage2.instruction_lookup.gamma|stage2.input.stage1.LeftLookupOperand" },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.RightLookupOperand", kind: "op", formula: "field.mul", operands: "stage2.instruction_lookup.gamma2|stage2.input.stage1.RightLookupOperand" },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.LeftInstructionInput", kind: "op", formula: "field.mul", operands: "stage2.instruction_lookup.gamma3|stage2.input.stage1.LeftInstructionInput" },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.RightInstructionInput", kind: "op", formula: "field.mul", operands: "stage2.instruction_lookup.gamma4|stage2.input.stage1.RightInstructionInput" },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.LookupOutputLeftOperand", kind: "op", formula: "field.add", operands: "stage2.input.stage1.LookupOutput|stage2.instruction_lookup.term.LeftLookupOperand" },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.RightOperand", kind: "op", formula: "field.add", operands: "stage2.instruction_lookup.partial.LookupOutputLeftOperand|stage2.instruction_lookup.term.RightLookupOperand" },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.LeftInstructionInput", kind: "op", formula: "field.add", operands: "stage2.instruction_lookup.partial.RightOperand|stage2.instruction_lookup.term.LeftInstructionInput" },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.claim_reduction.claim_expr", kind: "op", formula: "field.add", operands: "stage2.instruction_lookup.partial.LeftInstructionInput|stage2.instruction_lookup.term.RightInstructionInput" },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.weight.Product", kind: Stage2FieldExprKind::LagrangeBasisEval(-1, 3, 0), operands: "stage2.product_virtual.tau_high" },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.weight.ShouldBranch", kind: Stage2FieldExprKind::LagrangeBasisEval(-1, 3, 1), operands: "stage2.product_virtual.tau_high" },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.weight.ShouldJump", kind: Stage2FieldExprKind::LagrangeBasisEval(-1, 3, 2), operands: "stage2.product_virtual.tau_high" },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.term.Product", kind: Stage2FieldExprKind::Mul, operands: "stage2.product_virtual.uniskip.weight.Product|stage2.input.stage1.Product" },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.term.ShouldBranch", kind: Stage2FieldExprKind::Mul, operands: "stage2.product_virtual.uniskip.weight.ShouldBranch|stage2.input.stage1.ShouldBranch" },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.term.ShouldJump", kind: Stage2FieldExprKind::Mul, operands: "stage2.product_virtual.uniskip.weight.ShouldJump|stage2.input.stage1.ShouldJump" },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.partial.ProductShouldBranch", kind: Stage2FieldExprKind::Add, operands: "stage2.product_virtual.uniskip.term.Product|stage2.product_virtual.uniskip.term.ShouldBranch" },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.claim_expr", kind: Stage2FieldExprKind::Add, operands: "stage2.product_virtual.uniskip.partial.ProductShouldBranch|stage2.product_virtual.uniskip.term.ShouldJump" },
+    Stage2FieldExprPlan { symbol: "stage2.ram_read_write.term.RamWriteValue", kind: Stage2FieldExprKind::Mul, operands: "stage2.ram_read_write.gamma|stage2.input.stage1.RamWriteValue" },
+    Stage2FieldExprPlan { symbol: "stage2.ram_read_write.claim_expr", kind: Stage2FieldExprKind::Add, operands: "stage2.input.stage1.RamReadValue|stage2.ram_read_write.term.RamWriteValue" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.gamma2", kind: Stage2FieldExprKind::Mul, operands: "stage2.instruction_lookup.gamma|stage2.instruction_lookup.gamma" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.gamma3", kind: Stage2FieldExprKind::Mul, operands: "stage2.instruction_lookup.gamma2|stage2.instruction_lookup.gamma" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.gamma4", kind: Stage2FieldExprKind::Mul, operands: "stage2.instruction_lookup.gamma2|stage2.instruction_lookup.gamma2" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.LeftLookupOperand", kind: Stage2FieldExprKind::Mul, operands: "stage2.instruction_lookup.gamma|stage2.input.stage1.LeftLookupOperand" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.RightLookupOperand", kind: Stage2FieldExprKind::Mul, operands: "stage2.instruction_lookup.gamma2|stage2.input.stage1.RightLookupOperand" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.LeftInstructionInput", kind: Stage2FieldExprKind::Mul, operands: "stage2.instruction_lookup.gamma3|stage2.input.stage1.LeftInstructionInput" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.RightInstructionInput", kind: Stage2FieldExprKind::Mul, operands: "stage2.instruction_lookup.gamma4|stage2.input.stage1.RightInstructionInput" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.LookupOutputLeftOperand", kind: Stage2FieldExprKind::Add, operands: "stage2.input.stage1.LookupOutput|stage2.instruction_lookup.term.LeftLookupOperand" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.RightOperand", kind: Stage2FieldExprKind::Add, operands: "stage2.instruction_lookup.partial.LookupOutputLeftOperand|stage2.instruction_lookup.term.RightLookupOperand" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.LeftInstructionInput", kind: Stage2FieldExprKind::Add, operands: "stage2.instruction_lookup.partial.RightOperand|stage2.instruction_lookup.term.LeftInstructionInput" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.claim_reduction.claim_expr", kind: Stage2FieldExprKind::Add, operands: "stage2.instruction_lookup.partial.LeftInstructionInput|stage2.instruction_lookup.term.RightInstructionInput" },
 ];
 pub const STAGE2_SUMCHECK_CLAIMS: &[Stage2SumcheckClaimPlan] = &[
-    Stage2SumcheckClaimPlan { symbol: "stage2.product_virtual.uniskip.input", stage: "stage2", domain: "jolt.stage2_uniskip_domain", num_rounds: 1, degree: 6, claim: "stage2.product_virtual.weighted_stage1_outputs", kernel: None, relation: Some("jolt.stage2.product_virtual.uniskip"), claim_value: "stage2.product_virtual.uniskip.claim_expr", input_openings: "stage2.input.stage1.Product|stage2.input.stage1.ShouldBranch|stage2.input.stage1.ShouldJump" },
-    Stage2SumcheckClaimPlan { symbol: "stage2.ram_read_write.input", stage: "stage2", domain: "jolt.stage2_ram_rw_domain", num_rounds: 32, degree: 3, claim: "stage2.ram_read_write.weighted_values", kernel: None, relation: Some("jolt.stage2.ram.read_write"), claim_value: "stage2.ram_read_write.claim_expr", input_openings: "stage2.input.stage1.RamReadValue|stage2.input.stage1.RamWriteValue" },
-    Stage2SumcheckClaimPlan { symbol: "stage2.product_virtual.remainder.input", stage: "stage2", domain: "jolt.trace_domain", num_rounds: 16, degree: 3, claim: "stage2.product_virtual.uniskip.opening", kernel: None, relation: Some("jolt.stage2.product_virtual.remainder"), claim_value: "stage2.product_virtual.uniskip.eval.UnivariateSkip", input_openings: "stage2.product_virtual.uniskip.opening.UnivariateSkip" },
-    Stage2SumcheckClaimPlan { symbol: "stage2.instruction_lookup.claim_reduction.input", stage: "stage2", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage2.instruction_lookup.weighted_operands", kernel: None, relation: Some("jolt.stage2.instruction_lookup.claim_reduction"), claim_value: "stage2.instruction_lookup.claim_reduction.claim_expr", input_openings: "stage2.input.stage1.LookupOutput|stage2.input.stage1.LeftLookupOperand|stage2.input.stage1.RightLookupOperand|stage2.input.stage1.LeftInstructionInput|stage2.input.stage1.RightInstructionInput" },
-    Stage2SumcheckClaimPlan { symbol: "stage2.ram_raf.input", stage: "stage2", domain: "jolt.ram_address_domain", num_rounds: 16, degree: 2, claim: "stage2.ram_raf.ram_address", kernel: None, relation: Some("jolt.stage2.ram.raf_evaluation"), claim_value: "stage2.input.stage1.RamAddress", input_openings: "stage2.input.stage1.RamAddress" },
-    Stage2SumcheckClaimPlan { symbol: "stage2.ram_output.input", stage: "stage2", domain: "jolt.ram_address_domain", num_rounds: 16, degree: 3, claim: "zero", kernel: None, relation: Some("jolt.stage2.ram.output_check"), claim_value: "stage2.ram_output.zero", input_openings: "" },
+    Stage2SumcheckClaimPlan { symbol: "stage2.product_virtual.uniskip.input", stage: "stage2", domain: "jolt.stage2_uniskip_domain", num_rounds: 1, degree: 6, claim: "stage2.product_virtual.weighted_stage1_outputs", kernel: None, relation: Some(Stage2RelationKind::Stage2ProductVirtualUniskip), claim_value: "stage2.product_virtual.uniskip.claim_expr", input_openings: "stage2.input.stage1.Product|stage2.input.stage1.ShouldBranch|stage2.input.stage1.ShouldJump" },
+    Stage2SumcheckClaimPlan { symbol: "stage2.ram_read_write.input", stage: "stage2", domain: "jolt.stage2_ram_rw_domain", num_rounds: 32, degree: 3, claim: "stage2.ram_read_write.weighted_values", kernel: None, relation: Some(Stage2RelationKind::Stage2RamReadWrite), claim_value: "stage2.ram_read_write.claim_expr", input_openings: "stage2.input.stage1.RamReadValue|stage2.input.stage1.RamWriteValue" },
+    Stage2SumcheckClaimPlan { symbol: "stage2.product_virtual.remainder.input", stage: "stage2", domain: "jolt.trace_domain", num_rounds: 16, degree: 3, claim: "stage2.product_virtual.uniskip.opening", kernel: None, relation: Some(Stage2RelationKind::Stage2ProductVirtualRemainder), claim_value: "stage2.product_virtual.uniskip.eval.UnivariateSkip", input_openings: "stage2.product_virtual.uniskip.opening.UnivariateSkip" },
+    Stage2SumcheckClaimPlan { symbol: "stage2.instruction_lookup.claim_reduction.input", stage: "stage2", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage2.instruction_lookup.weighted_operands", kernel: None, relation: Some(Stage2RelationKind::Stage2InstructionLookupClaimReduction), claim_value: "stage2.instruction_lookup.claim_reduction.claim_expr", input_openings: "stage2.input.stage1.LookupOutput|stage2.input.stage1.LeftLookupOperand|stage2.input.stage1.RightLookupOperand|stage2.input.stage1.LeftInstructionInput|stage2.input.stage1.RightInstructionInput" },
+    Stage2SumcheckClaimPlan { symbol: "stage2.ram_raf.input", stage: "stage2", domain: "jolt.ram_address_domain", num_rounds: 16, degree: 2, claim: "stage2.ram_raf.ram_address", kernel: None, relation: Some(Stage2RelationKind::Stage2RamRafEvaluation), claim_value: "stage2.input.stage1.RamAddress", input_openings: "stage2.input.stage1.RamAddress" },
+    Stage2SumcheckClaimPlan { symbol: "stage2.ram_output.input", stage: "stage2", domain: "jolt.ram_address_domain", num_rounds: 16, degree: 3, claim: "zero", kernel: None, relation: Some(Stage2RelationKind::Stage2RamOutputCheck), claim_value: "stage2.ram_output.zero", input_openings: "" },
 ];
-pub const STAGE2_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[
-    1,
-];
+pub const STAGE2_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[1];
 
-pub const STAGE2_SUMCHECK_BATCH_1_ROUND_SCHEDULE: &[usize] = &[
-    16,
-    16,
-];
+pub const STAGE2_SUMCHECK_BATCH_1_ROUND_SCHEDULE: &[usize] = &[16, 16];
 
 pub const STAGE2_SUMCHECK_BATCHES: &[Stage2SumcheckBatchPlan] = &[
     Stage2SumcheckBatchPlan { symbol: "stage2.product_virtual.uniskip.batch", stage: "stage2", proof_slot: "stage2.product_virtual.uni_skip_first_round", policy: "single_instance", count: 1, ordered_claims: "stage2.product_virtual.uniskip.input", claim_operands: "stage2.product_virtual.uniskip.input", claim_label: "uniskip_claim", round_label: "uniskip_poly", round_schedule: STAGE2_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
     Stage2SumcheckBatchPlan { symbol: "stage2.batch", stage: "stage2", proof_slot: "stage2.sumcheck", policy: "jolt_core_stage2_aligned", count: 5, ordered_claims: "stage2.ram_read_write.input|stage2.product_virtual.remainder.input|stage2.instruction_lookup.claim_reduction.input|stage2.ram_raf.input|stage2.ram_output.input", claim_operands: "stage2.ram_read_write.input|stage2.product_virtual.remainder.input|stage2.instruction_lookup.claim_reduction.input|stage2.ram_raf.input|stage2.ram_output.input", claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE2_SUMCHECK_BATCH_1_ROUND_SCHEDULE },
 ];
-pub const STAGE2_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[
-    1,
-];
+pub const STAGE2_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[1];
 
-pub const STAGE2_SUMCHECK_DRIVER_1_ROUND_SCHEDULE: &[usize] = &[
-    16,
-    16,
-];
+pub const STAGE2_SUMCHECK_DRIVER_1_ROUND_SCHEDULE: &[usize] = &[16, 16];
 
 pub const STAGE2_SUMCHECK_DRIVERS: &[Stage2SumcheckDriverPlan] = &[
-    Stage2SumcheckDriverPlan { symbol: "stage2.product_virtual.uniskip.sumcheck", stage: "stage2", proof_slot: "stage2.product_virtual.uni_skip_first_round", kernel: None, relation: Some("jolt.stage2.product_virtual.uniskip"), batch: "stage2.product_virtual.uniskip.batch", policy: "univariate_skip", round_schedule: STAGE2_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "uniskip_claim", round_label: "uniskip_poly", num_rounds: 1, degree: 6 },
-    Stage2SumcheckDriverPlan { symbol: "stage2.sumcheck", stage: "stage2", proof_slot: "stage2.sumcheck", kernel: None, relation: Some("jolt.stage2.batched"), batch: "stage2.batch", policy: "jolt_core_stage2_aligned", round_schedule: STAGE2_SUMCHECK_DRIVER_1_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 32, degree: 3 },
+    Stage2SumcheckDriverPlan { symbol: "stage2.product_virtual.uniskip.sumcheck", stage: "stage2", proof_slot: "stage2.product_virtual.uni_skip_first_round", kernel: None, relation: Some(Stage2RelationKind::Stage2ProductVirtualUniskip), batch: "stage2.product_virtual.uniskip.batch", policy: "univariate_skip", round_schedule: STAGE2_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "uniskip_claim", round_label: "uniskip_poly", num_rounds: 1, degree: 6 },
+    Stage2SumcheckDriverPlan { symbol: "stage2.sumcheck", stage: "stage2", proof_slot: "stage2.sumcheck", kernel: None, relation: Some(Stage2RelationKind::Stage2Batched), batch: "stage2.batch", policy: "jolt_core_stage2_aligned", round_schedule: STAGE2_SUMCHECK_DRIVER_1_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 32, degree: 3 },
 ];
 pub const STAGE2_SUMCHECK_INSTANCE_RESULTS: &[Stage2SumcheckInstanceResultPlan] = &[
-    Stage2SumcheckInstanceResultPlan { symbol: "stage2.product_virtual.uniskip.instance", source: "stage2.product_virtual.uniskip.sumcheck", claim: "stage2.product_virtual.uniskip.input", relation: "jolt.stage2.product_virtual.uniskip", index: 0, point_arity: 1, num_rounds: 1, round_offset: 0, point_order: "as_is", degree: 6 },
-    Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_read_write.instance", source: "stage2.sumcheck", claim: "stage2.ram_read_write.input", relation: "jolt.stage2.ram.read_write", index: 0, point_arity: 32, num_rounds: 32, round_offset: 0, point_order: "reverse", degree: 3 },
-    Stage2SumcheckInstanceResultPlan { symbol: "stage2.product_virtual.remainder.instance", source: "stage2.sumcheck", claim: "stage2.product_virtual.remainder.input", relation: "jolt.stage2.product_virtual.remainder", index: 1, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "reverse", degree: 3 },
-    Stage2SumcheckInstanceResultPlan { symbol: "stage2.instruction_lookup.claim_reduction.instance", source: "stage2.sumcheck", claim: "stage2.instruction_lookup.claim_reduction.input", relation: "jolt.stage2.instruction_lookup.claim_reduction", index: 2, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "reverse", degree: 2 },
-    Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_raf.instance", source: "stage2.sumcheck", claim: "stage2.ram_raf.input", relation: "jolt.stage2.ram.raf_evaluation", index: 3, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "reverse", degree: 2 },
-    Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_output.instance", source: "stage2.sumcheck", claim: "stage2.ram_output.input", relation: "jolt.stage2.ram.output_check", index: 4, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "reverse", degree: 3 },
+    Stage2SumcheckInstanceResultPlan { symbol: "stage2.product_virtual.uniskip.instance", source: "stage2.product_virtual.uniskip.sumcheck", claim: "stage2.product_virtual.uniskip.input", relation: Stage2RelationKind::Stage2ProductVirtualUniskip, index: 0, point_arity: 1, num_rounds: 1, round_offset: 0, point_order: "as_is", degree: 6 },
+    Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_read_write.instance", source: "stage2.sumcheck", claim: "stage2.ram_read_write.input", relation: Stage2RelationKind::Stage2RamReadWrite, index: 0, point_arity: 32, num_rounds: 32, round_offset: 0, point_order: "reverse", degree: 3 },
+    Stage2SumcheckInstanceResultPlan { symbol: "stage2.product_virtual.remainder.instance", source: "stage2.sumcheck", claim: "stage2.product_virtual.remainder.input", relation: Stage2RelationKind::Stage2ProductVirtualRemainder, index: 1, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "reverse", degree: 3 },
+    Stage2SumcheckInstanceResultPlan { symbol: "stage2.instruction_lookup.claim_reduction.instance", source: "stage2.sumcheck", claim: "stage2.instruction_lookup.claim_reduction.input", relation: Stage2RelationKind::Stage2InstructionLookupClaimReduction, index: 2, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "reverse", degree: 2 },
+    Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_raf.instance", source: "stage2.sumcheck", claim: "stage2.ram_raf.input", relation: Stage2RelationKind::Stage2RamRafEvaluation, index: 3, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "reverse", degree: 2 },
+    Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_output.instance", source: "stage2.sumcheck", claim: "stage2.ram_output.input", relation: Stage2RelationKind::Stage2RamOutputCheck, index: 4, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "reverse", degree: 3 },
 ];
 
 pub const STAGE2_SUMCHECK_EVALS: &[Stage2SumcheckEvalPlan] = &[
@@ -208,25 +197,25 @@ pub const STAGE2_POINT_CONCATS: &[Stage2PointConcatPlan] = &[
     Stage2PointConcatPlan { symbol: "stage2.ram_raf.point.RamRa", layout: "address_then_cycle", arity: 32, inputs: "stage2.ram_raf.instance|stage2.input.stage1.RamAddress" },
 ];
 pub const STAGE2_OPENING_CLAIMS: &[Stage2OpeningClaimPlan] = &[
-    Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.uniskip.opening.UnivariateSkip", oracle: "UnivariateSkip", domain: "jolt.stage2_uniskip_domain", point_arity: 1, claim_kind: "virtual", point_source: "stage2.product_virtual.uniskip.instance", eval_source: "stage2.product_virtual.uniskip.eval.UnivariateSkip" },
-    Stage2OpeningClaimPlan { symbol: "stage2.ram_read_write.opening.RamVal", oracle: "RamVal", domain: "jolt.stage2_ram_rw_domain", point_arity: 32, claim_kind: "virtual", point_source: "stage2.ram_read_write.instance", eval_source: "stage2.ram_read_write.eval.RamVal" },
-    Stage2OpeningClaimPlan { symbol: "stage2.ram_read_write.opening.RamRa", oracle: "RamRa", domain: "jolt.stage2_ram_rw_domain", point_arity: 32, claim_kind: "virtual", point_source: "stage2.ram_read_write.instance", eval_source: "stage2.ram_read_write.eval.RamRa" },
-    Stage2OpeningClaimPlan { symbol: "stage2.ram_read_write.opening.RamInc", oracle: "RamInc", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "committed", point_source: "stage2.ram_read_write.point.RamInc", eval_source: "stage2.ram_read_write.eval.RamInc" },
-    Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.remainder.opening.LeftInstructionInput", oracle: "LeftInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage2.product_virtual.remainder.instance", eval_source: "stage2.product_virtual.remainder.eval.LeftInstructionInput" },
-    Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.remainder.opening.RightInstructionInput", oracle: "RightInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage2.product_virtual.remainder.instance", eval_source: "stage2.product_virtual.remainder.eval.RightInstructionInput" },
-    Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.remainder.opening.OpFlagJump", oracle: "OpFlagJump", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage2.product_virtual.remainder.instance", eval_source: "stage2.product_virtual.remainder.eval.OpFlagJump" },
-    Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.remainder.opening.OpFlagWriteLookupOutputToRD", oracle: "OpFlagWriteLookupOutputToRD", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage2.product_virtual.remainder.instance", eval_source: "stage2.product_virtual.remainder.eval.OpFlagWriteLookupOutputToRD" },
-    Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.remainder.opening.LookupOutput", oracle: "LookupOutput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage2.product_virtual.remainder.instance", eval_source: "stage2.product_virtual.remainder.eval.LookupOutput" },
-    Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.remainder.opening.InstructionFlagBranch", oracle: "InstructionFlagBranch", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage2.product_virtual.remainder.instance", eval_source: "stage2.product_virtual.remainder.eval.InstructionFlagBranch" },
-    Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.remainder.opening.NextIsNoop", oracle: "NextIsNoop", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage2.product_virtual.remainder.instance", eval_source: "stage2.product_virtual.remainder.eval.NextIsNoop" },
-    Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.remainder.opening.OpFlagVirtualInstruction", oracle: "OpFlagVirtualInstruction", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage2.product_virtual.remainder.instance", eval_source: "stage2.product_virtual.remainder.eval.OpFlagVirtualInstruction" },
-    Stage2OpeningClaimPlan { symbol: "stage2.instruction_lookup.claim_reduction.opening.LookupOutput", oracle: "LookupOutput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage2.instruction_lookup.claim_reduction.instance", eval_source: "stage2.instruction_lookup.claim_reduction.eval.LookupOutput" },
-    Stage2OpeningClaimPlan { symbol: "stage2.instruction_lookup.claim_reduction.opening.LeftLookupOperand", oracle: "LeftLookupOperand", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage2.instruction_lookup.claim_reduction.instance", eval_source: "stage2.instruction_lookup.claim_reduction.eval.LeftLookupOperand" },
-    Stage2OpeningClaimPlan { symbol: "stage2.instruction_lookup.claim_reduction.opening.RightLookupOperand", oracle: "RightLookupOperand", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage2.instruction_lookup.claim_reduction.instance", eval_source: "stage2.instruction_lookup.claim_reduction.eval.RightLookupOperand" },
-    Stage2OpeningClaimPlan { symbol: "stage2.instruction_lookup.claim_reduction.opening.LeftInstructionInput", oracle: "LeftInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage2.instruction_lookup.claim_reduction.instance", eval_source: "stage2.instruction_lookup.claim_reduction.eval.LeftInstructionInput" },
-    Stage2OpeningClaimPlan { symbol: "stage2.instruction_lookup.claim_reduction.opening.RightInstructionInput", oracle: "RightInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage2.instruction_lookup.claim_reduction.instance", eval_source: "stage2.instruction_lookup.claim_reduction.eval.RightInstructionInput" },
-    Stage2OpeningClaimPlan { symbol: "stage2.ram_raf.opening.RamRa", oracle: "RamRa", domain: "jolt.stage2_ram_rw_domain", point_arity: 32, claim_kind: "virtual", point_source: "stage2.ram_raf.point.RamRa", eval_source: "stage2.ram_raf.eval.RamRa" },
-    Stage2OpeningClaimPlan { symbol: "stage2.ram_output.opening.RamValFinal", oracle: "RamValFinal", domain: "jolt.ram_address_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage2.ram_output.instance", eval_source: "stage2.ram_output.eval.RamValFinal" },
+    Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.uniskip.opening.UnivariateSkip", oracle: "UnivariateSkip", domain: "jolt.stage2_uniskip_domain", point_arity: 1, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.product_virtual.uniskip.instance", eval_source: "stage2.product_virtual.uniskip.eval.UnivariateSkip" },
+    Stage2OpeningClaimPlan { symbol: "stage2.ram_read_write.opening.RamVal", oracle: "RamVal", domain: "jolt.stage2_ram_rw_domain", point_arity: 32, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.ram_read_write.instance", eval_source: "stage2.ram_read_write.eval.RamVal" },
+    Stage2OpeningClaimPlan { symbol: "stage2.ram_read_write.opening.RamRa", oracle: "RamRa", domain: "jolt.stage2_ram_rw_domain", point_arity: 32, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.ram_read_write.instance", eval_source: "stage2.ram_read_write.eval.RamRa" },
+    Stage2OpeningClaimPlan { symbol: "stage2.ram_read_write.opening.RamInc", oracle: "RamInc", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Committed, point_source: "stage2.ram_read_write.point.RamInc", eval_source: "stage2.ram_read_write.eval.RamInc" },
+    Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.remainder.opening.LeftInstructionInput", oracle: "LeftInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.product_virtual.remainder.instance", eval_source: "stage2.product_virtual.remainder.eval.LeftInstructionInput" },
+    Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.remainder.opening.RightInstructionInput", oracle: "RightInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.product_virtual.remainder.instance", eval_source: "stage2.product_virtual.remainder.eval.RightInstructionInput" },
+    Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.remainder.opening.OpFlagJump", oracle: "OpFlagJump", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.product_virtual.remainder.instance", eval_source: "stage2.product_virtual.remainder.eval.OpFlagJump" },
+    Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.remainder.opening.OpFlagWriteLookupOutputToRD", oracle: "OpFlagWriteLookupOutputToRD", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.product_virtual.remainder.instance", eval_source: "stage2.product_virtual.remainder.eval.OpFlagWriteLookupOutputToRD" },
+    Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.remainder.opening.LookupOutput", oracle: "LookupOutput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.product_virtual.remainder.instance", eval_source: "stage2.product_virtual.remainder.eval.LookupOutput" },
+    Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.remainder.opening.InstructionFlagBranch", oracle: "InstructionFlagBranch", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.product_virtual.remainder.instance", eval_source: "stage2.product_virtual.remainder.eval.InstructionFlagBranch" },
+    Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.remainder.opening.NextIsNoop", oracle: "NextIsNoop", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.product_virtual.remainder.instance", eval_source: "stage2.product_virtual.remainder.eval.NextIsNoop" },
+    Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.remainder.opening.OpFlagVirtualInstruction", oracle: "OpFlagVirtualInstruction", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.product_virtual.remainder.instance", eval_source: "stage2.product_virtual.remainder.eval.OpFlagVirtualInstruction" },
+    Stage2OpeningClaimPlan { symbol: "stage2.instruction_lookup.claim_reduction.opening.LookupOutput", oracle: "LookupOutput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.instruction_lookup.claim_reduction.instance", eval_source: "stage2.instruction_lookup.claim_reduction.eval.LookupOutput" },
+    Stage2OpeningClaimPlan { symbol: "stage2.instruction_lookup.claim_reduction.opening.LeftLookupOperand", oracle: "LeftLookupOperand", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.instruction_lookup.claim_reduction.instance", eval_source: "stage2.instruction_lookup.claim_reduction.eval.LeftLookupOperand" },
+    Stage2OpeningClaimPlan { symbol: "stage2.instruction_lookup.claim_reduction.opening.RightLookupOperand", oracle: "RightLookupOperand", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.instruction_lookup.claim_reduction.instance", eval_source: "stage2.instruction_lookup.claim_reduction.eval.RightLookupOperand" },
+    Stage2OpeningClaimPlan { symbol: "stage2.instruction_lookup.claim_reduction.opening.LeftInstructionInput", oracle: "LeftInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.instruction_lookup.claim_reduction.instance", eval_source: "stage2.instruction_lookup.claim_reduction.eval.LeftInstructionInput" },
+    Stage2OpeningClaimPlan { symbol: "stage2.instruction_lookup.claim_reduction.opening.RightInstructionInput", oracle: "RightInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.instruction_lookup.claim_reduction.instance", eval_source: "stage2.instruction_lookup.claim_reduction.eval.RightInstructionInput" },
+    Stage2OpeningClaimPlan { symbol: "stage2.ram_raf.opening.RamRa", oracle: "RamRa", domain: "jolt.stage2_ram_rw_domain", point_arity: 32, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.ram_raf.point.RamRa", eval_source: "stage2.ram_raf.eval.RamRa" },
+    Stage2OpeningClaimPlan { symbol: "stage2.ram_output.opening.RamValFinal", oracle: "RamValFinal", domain: "jolt.ram_address_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.ram_output.instance", eval_source: "stage2.ram_output.eval.RamValFinal" },
 ];
 
 pub const STAGE2_OPENING_BATCHES: &[Stage2OpeningBatchPlan] = &[
@@ -294,19 +283,19 @@ where
     } else {
         for step in program.steps {
             match step.kind {
-                "transcript_squeeze" => {
+                Stage2ProgramStepKind::TranscriptSqueeze => {
                     let squeeze = find_plan(program.transcript_squeezes, step.symbol).ok_or(VerifyStage2Error::MissingValue {
                         symbol: step.symbol,
                     })?;
                     verify_stage2_squeeze(program, squeeze, &mut store, transcript, &mut artifacts)?;
                 }
-                "sumcheck_driver" => {
+                Stage2ProgramStepKind::SumcheckDriver => {
                     let driver = find_plan(program.drivers, step.symbol).ok_or(VerifyStage2Error::MissingProof {
                         driver: step.symbol,
                     })?;
                     verify_stage2_driver(program, driver, proof, ram, &mut store, transcript, &mut artifacts)?;
                 }
-                _ => {
+                Stage2ProgramStepKind::TranscriptAbsorbBytes => {
                     return Err(VerifyStage2Error::InvalidProof {
                         driver: step.symbol,
                         reason: "unsupported stage2 program step",
@@ -369,12 +358,19 @@ where
         .ok_or(VerifyStage2Error::MissingProof {
             driver: driver.symbol,
         })?;
-    let relation = driver.relation.unwrap_or("<missing>");
+    let Some(relation) = driver.relation else {
+        return Err(VerifyStage2Error::InvalidProof {
+            driver: driver.symbol,
+            reason: "missing driver relation",
+        });
+    };
     let output = match relation {
-        "jolt.stage2.product_virtual.uniskip" => {
+        Stage2RelationKind::Stage2ProductVirtualUniskip => {
             verify_product_virtual_uniskip(program, driver, proof, store, transcript)?
         }
-        "jolt.stage2.batched" => verify_batched_stage2(program, driver, proof, ram, store, transcript)?,
+        Stage2RelationKind::Stage2Batched => {
+            verify_batched_stage2(program, driver, proof, ram, store, transcript)?
+        }
         relation => return Err(VerifyStage2Error::UnsupportedRelation { relation }),
     };
     artifacts.sumchecks.push(output);
@@ -553,15 +549,15 @@ impl<F: Field> Stage2ValueStore<F> {
             output,
             |instance, mut point| {
                 match instance.point_order {
-                    "as_is" => {}
-                    "reverse" => point.reverse(),
-                    _ => {
-                        return Err(VerifyStage2Error::InvalidProof {
-                            driver: output.driver,
-                            reason: "unsupported point order",
-                        });
-                    }
+                "as_is" => {}
+                "reverse" => point.reverse(),
+                _ => {
+                    return Err(VerifyStage2Error::InvalidProof {
+                        driver: output.driver,
+                        reason: "unsupported point order",
+                    });
                 }
+            }
                 Ok(point)
             },
             |input, expected, actual| VerifyStage2Error::InvalidInputLength {
@@ -621,7 +617,8 @@ impl<F: Field> Stage2ValueStore<F> {
         program: &'static Stage2VerifierProgramPlan,
     ) -> Result<(), VerifyStage2Error> {
         self.0
-            .evaluate_available_field_exprs(program.field_exprs, evaluate_stage2_field_expr)
+            .evaluate_available_field_exprs(program.field_exprs, super::common::evaluate_field_expr)
+            .map_err(VerifyStage2Error::from)
     }
 
     fn scalar(&self, symbol: &'static str) -> Result<F, VerifyStage2Error> {
@@ -636,109 +633,6 @@ impl<F: Field> Stage2ValueStore<F> {
 
     fn try_point(&self, symbol: &str) -> Option<&[F]> {
         self.0.try_point(symbol)
-    }
-}
-
-fn evaluate_stage2_field_expr<F: Field>(
-    expr: &Stage2FieldExprPlan,
-    operands: &[F],
-) -> Result<F, VerifyStage2Error> {
-    match expr.formula {
-        "opening_eval" => Ok(single_operand(expr.symbol, operands)?),
-        "jolt_stage2_product_virtual_uniskip_input" => {
-            require_operand_count(expr.symbol, 4, operands.len())?;
-            let weights = lagrange_evals(
-                PRODUCT_VIRTUAL_UNISKIP_DOMAIN_START,
-                PRODUCT_VIRTUAL_UNISKIP_DOMAIN_SIZE,
-                operands[0],
-            );
-            Ok(weights[0] * operands[1] + weights[1] * operands[2] + weights[2] * operands[3])
-        }
-        "jolt_stage2_ram_read_write_input" => {
-            require_operand_count(expr.symbol, 3, operands.len())?;
-            Ok(operands[1] + operands[0] * operands[2])
-        }
-        "jolt_stage2_instruction_lookup_input" => {
-            require_operand_count(expr.symbol, 6, operands.len())?;
-            let gamma = operands[0];
-            let gamma2 = gamma.square();
-            let gamma3 = gamma2 * gamma;
-            let gamma4 = gamma2.square();
-            Ok(operands[1]
-                + gamma * operands[2]
-                + gamma2 * operands[3]
-                + gamma3 * operands[4]
-                + gamma4 * operands[5])
-        }
-        "field.add" => {
-            require_operand_count(expr.symbol, 2, operands.len())?;
-            Ok(operands[0] + operands[1])
-        }
-        "field.sub" => {
-            require_operand_count(expr.symbol, 2, operands.len())?;
-            Ok(operands[0] - operands[1])
-        }
-        "field.mul" => {
-            require_operand_count(expr.symbol, 2, operands.len())?;
-            Ok(operands[0] * operands[1])
-        }
-        "field.neg" => {
-            require_operand_count(expr.symbol, 1, operands.len())?;
-            Ok(-operands[0])
-        }
-        formula => {
-            if let Some(exponent) = formula.strip_prefix("field.pow:") {
-                require_operand_count(expr.symbol, 1, operands.len())?;
-                let exponent = exponent.parse::<usize>().map_err(|_| {
-                    VerifyStage2Error::UnsupportedFieldExpr {
-                        symbol: expr.symbol,
-                        formula,
-                    }
-                })?;
-                return Ok(pow_field(operands[0], exponent));
-            }
-            if let Some(spec) = formula.strip_prefix("poly.lagrange_basis_eval:") {
-                require_operand_count(expr.symbol, 1, operands.len())?;
-                let parts = spec.split(':').collect::<Vec<_>>();
-                if parts.len() != 3 {
-                    return Err(VerifyStage2Error::UnsupportedFieldExpr {
-                        symbol: expr.symbol,
-                        formula,
-                    });
-                }
-                let domain_start = parts[0].parse::<i64>().map_err(|_| {
-                    VerifyStage2Error::UnsupportedFieldExpr {
-                        symbol: expr.symbol,
-                        formula,
-                    }
-                })?;
-                let domain_size = parts[1].parse::<usize>().map_err(|_| {
-                    VerifyStage2Error::UnsupportedFieldExpr {
-                        symbol: expr.symbol,
-                        formula,
-                    }
-                })?;
-                let index = parts[2].parse::<usize>().map_err(|_| {
-                    VerifyStage2Error::UnsupportedFieldExpr {
-                        symbol: expr.symbol,
-                        formula,
-                    }
-                })?;
-                let weights = lagrange_evals(domain_start, domain_size, operands[0]);
-                return weights
-                    .get(index)
-                    .copied()
-                    .ok_or(VerifyStage2Error::InvalidInputLength {
-                        input: expr.symbol,
-                        expected: index + 1,
-                        actual: weights.len(),
-                    });
-            }
-            Err(VerifyStage2Error::UnsupportedFieldExpr {
-                symbol: expr.symbol,
-                formula,
-            })
-        }
     }
 }
 
@@ -771,15 +665,19 @@ fn expected_batched_output_claim(
                 actual: point.len(),
             })?;
         let value = match instance.relation {
-            "jolt.stage2.ram.read_write" => expected_ram_read_write(store, evals, local_point)?,
-            "jolt.stage2.product_virtual.remainder" => {
+            Stage2RelationKind::Stage2RamReadWrite => {
+                expected_ram_read_write(store, evals, local_point)?
+            }
+            Stage2RelationKind::Stage2ProductVirtualRemainder => {
                 expected_product_remainder(store, evals, local_point)?
             }
-            "jolt.stage2.instruction_lookup.claim_reduction" => {
+            Stage2RelationKind::Stage2InstructionLookupClaimReduction => {
                 expected_instruction_lookup(store, evals, local_point)?
             }
-            "jolt.stage2.ram.raf_evaluation" => expected_ram_raf(evals, local_point, ram)?,
-            "jolt.stage2.ram.output_check" => expected_ram_output(store, evals, local_point, ram)?,
+            Stage2RelationKind::Stage2RamRafEvaluation => expected_ram_raf(evals, local_point, ram)?,
+            Stage2RelationKind::Stage2RamOutputCheck => {
+                expected_ram_output(store, evals, local_point, ram)?
+            }
             relation => return Err(VerifyStage2Error::UnsupportedRelation { relation }),
         };
         expected += *coefficient * value;

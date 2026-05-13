@@ -6,11 +6,7 @@ use jolt_transcript::{Blake2bTranscript, Transcript};
 
 pub type DefaultStage2Transcript = Blake2bTranscript<Fr>;
 
-pub const STAGE2_PARAMS: Stage2Params = Stage2Params {
-    field: "bn254_fr",
-    pcs: "dory",
-    transcript: "blake2b_transcript",
-};
+pub const STAGE2_PARAMS: Stage2Params = Stage2Params { field: "bn254_fr", pcs: "dory", transcript: "blake2b_transcript" };
 pub const STAGE2_PROGRAM_STEPS: &[Stage2ProgramStepPlan] = &[
     Stage2ProgramStepPlan { kind: "transcript_squeeze", symbol: "stage2.product_virtual.tau_high" },
     Stage2ProgramStepPlan { kind: "sumcheck_driver", symbol: "stage2.product_virtual.uniskip.sumcheck" },
@@ -207,9 +203,7 @@ pub const STAGE2_SUMCHECK_BATCH_0_ORDERED_CLAIMS: &[&str] = &["stage2.product_vi
 
 pub const STAGE2_SUMCHECK_BATCH_0_CLAIM_OPERANDS: &[&str] = &["stage2.product_virtual.uniskip.input"];
 
-pub const STAGE2_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[
-    1,
-];
+pub const STAGE2_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[1];
 
 pub const STAGE2_SUMCHECK_BATCH_1_ORDERED_CLAIMS: &[&str] = &[
     "stage2.ram_read_write.input",
@@ -227,23 +221,15 @@ pub const STAGE2_SUMCHECK_BATCH_1_CLAIM_OPERANDS: &[&str] = &[
     "stage2.ram_output.input",
 ];
 
-pub const STAGE2_SUMCHECK_BATCH_1_ROUND_SCHEDULE: &[usize] = &[
-    16,
-    16,
-];
+pub const STAGE2_SUMCHECK_BATCH_1_ROUND_SCHEDULE: &[usize] = &[16, 16];
 
 pub const STAGE2_SUMCHECK_BATCHES: &[Stage2SumcheckBatchPlan] = &[
     Stage2SumcheckBatchPlan { symbol: "stage2.product_virtual.uniskip.batch", stage: "stage2", proof_slot: "stage2.product_virtual.uni_skip_first_round", policy: "single_instance", count: 1, ordered_claims: STAGE2_SUMCHECK_BATCH_0_ORDERED_CLAIMS, claim_operands: STAGE2_SUMCHECK_BATCH_0_CLAIM_OPERANDS, claim_label: "uniskip_claim", round_label: "uniskip_poly", round_schedule: STAGE2_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
     Stage2SumcheckBatchPlan { symbol: "stage2.batch", stage: "stage2", proof_slot: "stage2.sumcheck", policy: "jolt_core_stage2_aligned", count: 5, ordered_claims: STAGE2_SUMCHECK_BATCH_1_ORDERED_CLAIMS, claim_operands: STAGE2_SUMCHECK_BATCH_1_CLAIM_OPERANDS, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE2_SUMCHECK_BATCH_1_ROUND_SCHEDULE },
 ];
-pub const STAGE2_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[
-    1,
-];
+pub const STAGE2_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[1];
 
-pub const STAGE2_SUMCHECK_DRIVER_1_ROUND_SCHEDULE: &[usize] = &[
-    16,
-    16,
-];
+pub const STAGE2_SUMCHECK_DRIVER_1_ROUND_SCHEDULE: &[usize] = &[16, 16];
 
 pub const STAGE2_SUMCHECK_DRIVERS: &[Stage2SumcheckDriverPlan] = &[
     Stage2SumcheckDriverPlan { symbol: "stage2.product_virtual.uniskip.sumcheck", stage: "stage2", proof_slot: "stage2.product_virtual.uni_skip_first_round", kernel: Some("jolt.cpu.stage2.product_virtual.uniskip"), relation: None, batch: "stage2.product_virtual.uniskip.batch", policy: "univariate_skip", round_schedule: STAGE2_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "uniskip_claim", round_label: "uniskip_poly", num_rounds: 1, degree: 6 },

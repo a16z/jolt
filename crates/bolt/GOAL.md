@@ -75,45 +75,159 @@ generic Bolt compiler infrastructure:
   still genuinely protocol-specific and which are ready to lift into generic
   typed-plan emission.
 
-## Immediate Goal-Mode Slice
+## Current State
 
-First objective for another agent:
-
-```text
-Quarantine Jolt-specific artifact APIs out of generic Rust artifact assembly
-while preserving generated output and all current gates.
-```
-
-Required steps:
-
-1. Move `JoltProtocolStage`, `jolt_artifact_config`, `jolt_rust_artifact`,
-   `assemble_jolt_*`, `write_jolt_generated_crates`, and
-   `validate_jolt_rust_artifact_imports` out of generic
-   `crates/bolt/src/emit/rust/artifacts.rs` into a Jolt-owned module such as
-   `crates/bolt/src/protocols/jolt/artifacts.rs`.
-2. Keep `ProtocolArtifactConfig`, `ProtocolStage`, `ProtocolRustArtifact`,
-   `GeneratedCrate`, `assemble_generated_crates`, `write_generated_crates`, and
-   `validate_rust_artifact_imports` in the generic artifact layer.
-3. Stop re-exporting Jolt APIs from `crates/bolt/src/lib.rs`; update callers in
-   Bolt tests, `jolt-equivalence`, and perf harnesses to import from
-   `bolt::protocols::jolt`.
-4. Add the first genericity hygiene test that rejects new Jolt protocol strings
-   in generic compiler modules, using a small documented allowlist only for
-   migration leftovers.
-5. Run focused generation/import gates and confirm checked-in generated role
-   crates are unchanged unless an intentional artifact-structure change is
-   documented.
-
-Acceptance criteria:
+The initial quarantine slice is complete:
 
 ```text
-generic artifact assembly has no Jolt stage enum or Jolt artifact config
-root bolt exports are generic-only
-Jolt artifact helpers are namespaced under protocols::jolt
-generated jolt-prover/jolt-verifier are byte-for-byte unchanged, or changes are intentional
-genericity hygiene gate exists
-existing generated-artifact and verifier-boundary gates pass
+generic artifact assembly no longer owns Jolt artifact APIs
+root bolt exports keep Jolt helpers under bolt::protocols::jolt
+generic compiler source is guarded against accidental Jolt protocol strings
+checked-in generated verifier is under the current LOC target
+shared verifier plan/runtime scaffolding exists in stages/common.rs
 ```
+
+The remaining work is no longer a stage bring-up task or a pure LOC cleanup.
+This goal is now owned as a verifier-quality cutover: make the generated
+verifier a Rust artifact that a reviewer can audit directly, without needing to
+understand Bolt lowering internals.
+
+## Completion Plan
+
+Work proceeds in reviewable slices. Each slice must reduce a concrete readability
+or soundness risk, regenerate checked-in artifacts, and preserve the semantic
+oracles.
+
+1. **Typed plan vocabulary**
+
+   Replace execution-relevant strings with typed Rust plan data:
+
+   ```text
+   StageId
+   ProofSlot
+   ProgramStepKind
+   TranscriptEventKind
+   RelationKind
+   FieldExprKind
+   OracleId
+   DomainId
+   ClaimKind
+   PointSource
+   EvalSource
+   OpeningEqualityMode
+   ```
+
+   Diagnostic names may remain as `symbol` fields, but verifier execution must
+   not branch on loose strings when a closed enum or structured ID can express
+   the same fact.
+
+2. **Generic stage runtime**
+
+   Collapse stage-local verifier loops into one reviewed runtime path:
+
+   ```text
+   verify transcript events
+   evaluate field expression plans
+   verify sumcheck drivers
+   collect named evals and output claims
+   construct opening claims
+   check opening equalities
+   convert proof records into runtime inputs
+   ```
+
+   Stage files should keep only stage-specific plan constants, typed relation
+   adapters when truly required, and thin `verify_stageN` wrappers.
+
+3. **Readable generated plan layout**
+
+   Reformat emitted Rust so a human can scan it by protocol concept:
+
+   ```text
+   params
+   transcript events
+   opening inputs
+   field expressions
+   sumcheck drivers
+   evals
+   opening claims
+   opening batches
+   stage program
+   ```
+
+   Avoid generated one-line functions, `#[rustfmt::skip]` blocks for ordinary
+   data, pipe-delimited operand strings, and stage-local macro tricks unless
+   they make the artifact materially easier to read.
+
+4. **Compact expression encoding**
+
+   Replace verbose string formulas and operand encodings with typed compact
+   expression rows:
+
+   ```text
+   FieldExprKind::Add { lhs, rhs }
+   FieldExprKind::Mul { lhs, rhs }
+   FieldExprKind::Pow { base, exponent }
+   FieldExprKind::LagrangeBasisEval { domain, index, point }
+   ```
+
+   Repeated operands and symbols should be pooled or indexed when doing so makes
+   the generated Rust clearer, not merely shorter.
+
+5. **Typed relation dispatch**
+
+   Replace relation-name matching with typed `RelationKind` dispatch and
+   relation-specific plan payloads. Any remaining string dispatch must be
+   explicitly allowlisted, documented as temporary, and protected by tests that
+   fail when the allowlist grows.
+
+6. **Stage 8 boundary cleanup**
+
+   Keep Dory/evaluation verification reviewed and explicit, but give Stage 8 a
+   typed input contract from earlier stages:
+
+   ```text
+   committed opening IDs
+   virtual opening IDs
+   ordered opening batches
+   evaluation point sources
+   PCS proof slots
+   transcript labels
+   ```
+
+   Stage 8 does not have to become fully generic before this goal completes, but
+   it must not rely on name-then-position fallback or hidden generated ordering.
+
+7. **Hardening suite**
+
+   Add or preserve negative oracles while the Rust shape changes. The generated
+   verifier must reject malformed plans/proofs with typed errors, not panic or
+   silently default missing values.
+
+8. **Independent readability review**
+
+   Treat readability as a first-class gate. Before declaring this goal complete,
+   run a blind review where reviewers see only:
+
+   ```text
+   current handwritten/verifier-style Rust surface
+   generated jolt-verifier Rust surface
+   brief protocol-stage context
+   no Bolt lowering or emitter implementation details
+   ```
+
+   A small council of reviewers, human or model, should be able to answer:
+
+   ```text
+   What does each stage verify?
+   Where are transcript challenges absorbed or squeezed?
+   Which openings are checked, and at what points?
+   Where does sumcheck verification happen?
+   What code is trusted runtime logic versus declarative generated data?
+   How would a malformed proof be rejected?
+   ```
+
+   The generated verifier passes this gate only if the answers are findable from
+   the emitted Rust with minimal compiler context.
 
 ## Non-Negotiables
 
@@ -304,7 +418,15 @@ no duplicate stage-local field-expression interpreter
 no duplicate stage-local opening equality interpreter
 no giant per-expression operand constants after compaction
 stage files are mostly declarative plan data
+generated functions are rustfmt-formatted and scan-friendly
+execution-relevant plan fields are typed unless explicitly allowlisted
+relation dispatch string sites trend to zero
+field-expression formula strings trend to zero
 ```
+
+LOC gates are guardrails, not the quality definition. A shorter verifier that
+hides semantics in opaque runtime code or compiler-only conventions fails this
+goal.
 
 Security and boundary gates:
 
@@ -318,6 +440,9 @@ no kernel attrs in verifier CPU IR
 all transcript-producing ops thread transcript state
 all opening batches preserve explicit ordered claims
 all relation dispatch is typed or allowlisted
+missing proof data returns typed verifier errors
+duplicate or inconsistent opening claims reject explicitly
+name-then-position eval fallback is absent from verifier execution
 ```
 
 Semantic gates:
@@ -340,6 +465,18 @@ core and Bolt transcript state histories match
 core and Bolt observable proof artifacts match
 core and Bolt reject equivalent tampered proofs
 generated prover/verifier crates stay in sync with artifact rail
+```
+
+Subjective readability gate:
+
+```text
+blind reviewers can identify stage claims, transcript events, openings,
+sumcheck drivers, relation checks, and error paths from emitted Rust alone
+reviewers do not need to inspect Bolt lowering or emitter code to understand
+the generated verifier's security boundary
+reviewers prefer the new generated verifier shape over the current generated
+shape for auditability, or remaining objections are converted into tracked
+cleanup items
 ```
 
 Perf remains a regression guard, not the center of this task. The existing
@@ -371,7 +508,10 @@ score =
 + fewer generated helper bodies
 + stronger negative oracles
 + clearer verifier.rs
++ clearer stage files under blind review
++ more verifier facts represented as typed plans
 - semantic opacity introduced into runtime
+- compiler-context required to audit emitted Rust
 ```
 
 ## Definition Of Done
@@ -384,10 +524,13 @@ verifier.rs is <= 500 LOC
 stage files are mostly declarative plans
 generic verifier mechanics live once
 Jolt relation semantics are typed and auditable
+field expressions and program steps use typed plan data
+remaining string symbols are diagnostic or explicitly allowlisted
 MLIR verifier pathway has malformed-input rejection tests
 tamper suite covers commitments, transcript, stages, openings, evals, and PCS proof
 core/Bolt accept/reject equivalence is preserved
 generated verifier import boundaries are enforced
+independent blind readability review passes
 ```
 
 The desired end state is not merely fewer lines. The verifier should be easy to

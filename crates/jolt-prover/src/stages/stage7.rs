@@ -6,11 +6,7 @@ use jolt_transcript::{Blake2bTranscript, Transcript};
 
 pub type DefaultStage7Transcript = Blake2bTranscript<Fr>;
 
-pub const STAGE7_PARAMS: Stage7Params = Stage7Params {
-    field: "bn254_fr",
-    pcs: "dory",
-    transcript: "blake2b_transcript",
-};
+pub const STAGE7_PARAMS: Stage7Params = Stage7Params { field: "bn254_fr", pcs: "dory", transcript: "blake2b_transcript" };
 pub const STAGE7_PROGRAM_STEPS: &[Stage7ProgramStepPlan] = &[
     Stage7ProgramStepPlan { kind: "transcript_squeeze", symbol: "stage7.hamming_weight_claim_reduction.gamma" },
     Stage7ProgramStepPlan { kind: "sumcheck_driver", symbol: "stage7.sumcheck" },
@@ -1716,16 +1712,12 @@ pub const STAGE7_SUMCHECK_BATCH_0_ORDERED_CLAIMS: &[&str] = &["stage7.hamming_we
 
 pub const STAGE7_SUMCHECK_BATCH_0_CLAIM_OPERANDS: &[&str] = &["stage7.hamming_weight_claim_reduction.input"];
 
-pub const STAGE7_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[
-    4,
-];
+pub const STAGE7_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[4];
 
 pub const STAGE7_SUMCHECK_BATCHES: &[Stage7SumcheckBatchPlan] = &[
     Stage7SumcheckBatchPlan { symbol: "stage7.batch", stage: "stage7", proof_slot: "stage7.sumcheck", policy: "jolt_core_stage7_aligned", count: 1, ordered_claims: STAGE7_SUMCHECK_BATCH_0_ORDERED_CLAIMS, claim_operands: STAGE7_SUMCHECK_BATCH_0_CLAIM_OPERANDS, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE7_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
 ];
-pub const STAGE7_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[
-    4,
-];
+pub const STAGE7_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[4];
 
 pub const STAGE7_SUMCHECK_DRIVERS: &[Stage7SumcheckDriverPlan] = &[
     Stage7SumcheckDriverPlan { symbol: "stage7.sumcheck", stage: "stage7", proof_slot: "stage7.sumcheck", kernel: Some("jolt.cpu.stage7.batched"), relation: None, batch: "stage7.batch", policy: "jolt_core_stage7_aligned", round_schedule: STAGE7_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 4, degree: 2 },

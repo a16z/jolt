@@ -14,11 +14,15 @@ pub type Stage4Proof<F> = super::common::StageProof<F>;
 pub type Stage4OpeningInputValue<F> = super::common::StageOpeningInputValue<F>;
 
 pub use super::common::{
-    FieldConstantPlan as Stage4FieldConstantPlan, FieldExprPlan as Stage4FieldExprPlan,
+    ClaimKind as Stage4ClaimKind, RelationKind as Stage4RelationKind, FieldConstantPlan as Stage4FieldConstantPlan,
+    FieldExprKind as Stage4FieldExprKind,
+    FieldExprPlan as Stage4FieldExprPlan,
     KernelPlan as Stage4KernelPlan, OpeningBatchPlan as Stage4OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage4OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage4OpeningClaimPlan, OpeningInputPlan as Stage4OpeningInputPlan,
+    OpeningEqualityMode as Stage4OpeningEqualityMode,
     PointConcatPlan as Stage4PointConcatPlan, PointSlicePlan as Stage4PointSlicePlan,
+    ProgramStepKind as Stage4ProgramStepKind,
     ProgramStepPlan as Stage4ProgramStepPlan, StageParams as Stage4Params,
     StageProgramPlanNoPointZeros as Stage4CpuProgramPlan,
     SumcheckBatchPlan as Stage4SumcheckBatchPlan,
@@ -26,6 +30,7 @@ pub use super::common::{
     SumcheckEvalPlan as Stage4SumcheckEvalPlan,
     SumcheckInstanceResultPlan as Stage4SumcheckInstanceResultPlan,
     TranscriptAbsorbBytesPlan as Stage4TranscriptAbsorbBytesPlan,
+    TranscriptSqueezeKind as Stage4TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage4TranscriptSqueezePlan,
 };
 
@@ -41,28 +46,23 @@ pub enum VerifyStage4Error {
     MissingValue { symbol: &'static str },
     InvalidInputLength { input: &'static str, expected: usize, actual: usize },
     InvalidProof { driver: &'static str, reason: &'static str },
-    UnsupportedFieldExpr { symbol: &'static str, formula: &'static str },
-    UnsupportedRelation { relation: &'static str },
+    UnsupportedRelation { relation: Stage4RelationKind },
     Sumcheck { driver: &'static str, error: SumcheckError<Fr> },
 }
 
 super::common::impl_runtime_plan_error_conversion!(VerifyStage4Error);
 
-pub const STAGE4_PARAMS: Stage4Params = Stage4Params {
-    field: "bn254_fr",
-    pcs: "dory",
-    transcript: "blake2b_transcript",
-};
+pub const STAGE4_PARAMS: Stage4Params = Stage4Params { field: "bn254_fr", pcs: "dory", transcript: "blake2b_transcript" };
 pub const STAGE4_PROGRAM_STEPS: &[Stage4ProgramStepPlan] = &[
-    Stage4ProgramStepPlan { kind: "transcript_squeeze", symbol: "stage4.registers_read_write.gamma" },
-    Stage4ProgramStepPlan { kind: "transcript_absorb_bytes", symbol: "stage4.ram_val_check.domain_separator" },
-    Stage4ProgramStepPlan { kind: "transcript_squeeze", symbol: "stage4.ram_val_check.gamma" },
-    Stage4ProgramStepPlan { kind: "sumcheck_driver", symbol: "stage4.sumcheck" },
+    Stage4ProgramStepPlan { kind: Stage4ProgramStepKind::TranscriptSqueeze, symbol: "stage4.registers_read_write.gamma" },
+    Stage4ProgramStepPlan { kind: Stage4ProgramStepKind::TranscriptAbsorbBytes, symbol: "stage4.ram_val_check.domain_separator" },
+    Stage4ProgramStepPlan { kind: Stage4ProgramStepKind::TranscriptSqueeze, symbol: "stage4.ram_val_check.gamma" },
+    Stage4ProgramStepPlan { kind: Stage4ProgramStepKind::SumcheckDriver, symbol: "stage4.sumcheck" },
 ];
 
 pub const STAGE4_TRANSCRIPT_SQUEEZES: &[Stage4TranscriptSqueezePlan] = &[
-    Stage4TranscriptSqueezePlan { symbol: "stage4.registers_read_write.gamma", label: "registers_read_write_gamma", kind: "challenge_scalar", count: 1 },
-    Stage4TranscriptSqueezePlan { symbol: "stage4.ram_val_check.gamma", label: "ram_val_check_gamma", kind: "challenge_scalar", count: 1 },
+    Stage4TranscriptSqueezePlan { symbol: "stage4.registers_read_write.gamma", label: "registers_read_write_gamma", kind: Stage4TranscriptSqueezeKind::ChallengeScalar, count: 1 },
+    Stage4TranscriptSqueezePlan { symbol: "stage4.ram_val_check.gamma", label: "ram_val_check_gamma", kind: Stage4TranscriptSqueezeKind::ChallengeScalar, count: 1 },
 ];
 
 pub const STAGE4_TRANSCRIPT_ABSORB_BYTES: &[Stage4TranscriptAbsorbBytesPlan] = &[
@@ -70,14 +70,14 @@ pub const STAGE4_TRANSCRIPT_ABSORB_BYTES: &[Stage4TranscriptAbsorbBytesPlan] = &
 ];
 
 pub const STAGE4_OPENING_INPUTS: &[Stage4OpeningInputPlan] = &[
-    Stage4OpeningInputPlan { symbol: "stage4.input.stage3.registers.RdWriteValue", source_stage: "stage3", source_claim: "stage3.registers_claim_reduction.opening.RdWriteValue", oracle: "RdWriteValue", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage4OpeningInputPlan { symbol: "stage4.input.stage3.registers.Rs1Value", source_stage: "stage3", source_claim: "stage3.registers_claim_reduction.opening.Rs1Value", oracle: "Rs1Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage4OpeningInputPlan { symbol: "stage4.input.stage3.registers.Rs2Value", source_stage: "stage3", source_claim: "stage3.registers_claim_reduction.opening.Rs2Value", oracle: "Rs2Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage4OpeningInputPlan { symbol: "stage4.input.stage3.instruction.Rs1Value", source_stage: "stage3", source_claim: "stage3.instruction_input.opening.Rs1Value", oracle: "Rs1Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage4OpeningInputPlan { symbol: "stage4.input.stage3.instruction.Rs2Value", source_stage: "stage3", source_claim: "stage3.instruction_input.opening.Rs2Value", oracle: "Rs2Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage4OpeningInputPlan { symbol: "stage4.input.stage2.RamVal", source_stage: "stage2", source_claim: "stage2.ram_read_write.opening.RamVal", oracle: "RamVal", domain: "jolt.stage2_ram_rw_domain", point_arity: 32, claim_kind: "virtual" },
-    Stage4OpeningInputPlan { symbol: "stage4.input.stage2.RamValFinal", source_stage: "stage2", source_claim: "stage2.ram_output.opening.RamValFinal", oracle: "RamValFinal", domain: "jolt.ram_address_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage4OpeningInputPlan { symbol: "stage4.input.initial_ram.RamValInit", source_stage: "stage4_precomputed", source_claim: "stage4.ram_val_check.initial_ram_eval", oracle: "RamValInit", domain: "jolt.ram_address_domain", point_arity: 16, claim_kind: "virtual" },
+    Stage4OpeningInputPlan { symbol: "stage4.input.stage3.registers.RdWriteValue", source_stage: "stage3", source_claim: "stage3.registers_claim_reduction.opening.RdWriteValue", oracle: "RdWriteValue", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage4ClaimKind::Virtual },
+    Stage4OpeningInputPlan { symbol: "stage4.input.stage3.registers.Rs1Value", source_stage: "stage3", source_claim: "stage3.registers_claim_reduction.opening.Rs1Value", oracle: "Rs1Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage4ClaimKind::Virtual },
+    Stage4OpeningInputPlan { symbol: "stage4.input.stage3.registers.Rs2Value", source_stage: "stage3", source_claim: "stage3.registers_claim_reduction.opening.Rs2Value", oracle: "Rs2Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage4ClaimKind::Virtual },
+    Stage4OpeningInputPlan { symbol: "stage4.input.stage3.instruction.Rs1Value", source_stage: "stage3", source_claim: "stage3.instruction_input.opening.Rs1Value", oracle: "Rs1Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage4ClaimKind::Virtual },
+    Stage4OpeningInputPlan { symbol: "stage4.input.stage3.instruction.Rs2Value", source_stage: "stage3", source_claim: "stage3.instruction_input.opening.Rs2Value", oracle: "Rs2Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage4ClaimKind::Virtual },
+    Stage4OpeningInputPlan { symbol: "stage4.input.stage2.RamVal", source_stage: "stage2", source_claim: "stage2.ram_read_write.opening.RamVal", oracle: "RamVal", domain: "jolt.stage2_ram_rw_domain", point_arity: 32, claim_kind: Stage4ClaimKind::Virtual },
+    Stage4OpeningInputPlan { symbol: "stage4.input.stage2.RamValFinal", source_stage: "stage2", source_claim: "stage2.ram_output.opening.RamValFinal", oracle: "RamValFinal", domain: "jolt.ram_address_domain", point_arity: 16, claim_kind: Stage4ClaimKind::Virtual },
+    Stage4OpeningInputPlan { symbol: "stage4.input.initial_ram.RamValInit", source_stage: "stage4_precomputed", source_claim: "stage4.ram_val_check.initial_ram_eval", oracle: "RamValInit", domain: "jolt.ram_address_domain", point_arity: 16, claim_kind: Stage4ClaimKind::Virtual },
 ];
 
 pub const STAGE4_FIELD_CONSTANTS: &[Stage4FieldConstantPlan] = &[
@@ -85,43 +85,37 @@ pub const STAGE4_FIELD_CONSTANTS: &[Stage4FieldConstantPlan] = &[
 ];
 
 pub const STAGE4_FIELD_EXPRS: &[Stage4FieldExprPlan] = &[
-    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.gamma2", kind: "op", formula: "field.pow:2", operands: "stage4.registers_read_write.gamma" },
-    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.term.Rs1Value", kind: "op", formula: "field.mul", operands: "stage4.registers_read_write.gamma|stage4.input.stage3.registers.Rs1Value" },
-    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.term.Rs2Value", kind: "op", formula: "field.mul", operands: "stage4.registers_read_write.gamma2|stage4.input.stage3.registers.Rs2Value" },
-    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.partial.RdWriteValueRs1Value", kind: "op", formula: "field.add", operands: "stage4.input.stage3.registers.RdWriteValue|stage4.registers_read_write.term.Rs1Value" },
-    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.claim_expr", kind: "op", formula: "field.add", operands: "stage4.registers_read_write.partial.RdWriteValueRs1Value|stage4.registers_read_write.term.Rs2Value" },
-    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.delta.RamVal", kind: "op", formula: "field.sub", operands: "stage4.input.stage2.RamVal|stage4.input.initial_ram.RamValInit" },
-    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.delta.RamValFinal", kind: "op", formula: "field.sub", operands: "stage4.input.stage2.RamValFinal|stage4.input.initial_ram.RamValInit" },
-    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.term.RamValFinal", kind: "op", formula: "field.mul", operands: "stage4.ram_val_check.gamma|stage4.ram_val_check.delta.RamValFinal" },
-    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.claim_expr", kind: "op", formula: "field.add", operands: "stage4.ram_val_check.delta.RamVal|stage4.ram_val_check.term.RamValFinal" },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.gamma2", kind: Stage4FieldExprKind::Pow(2), operands: "stage4.registers_read_write.gamma" },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.term.Rs1Value", kind: Stage4FieldExprKind::Mul, operands: "stage4.registers_read_write.gamma|stage4.input.stage3.registers.Rs1Value" },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.term.Rs2Value", kind: Stage4FieldExprKind::Mul, operands: "stage4.registers_read_write.gamma2|stage4.input.stage3.registers.Rs2Value" },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.partial.RdWriteValueRs1Value", kind: Stage4FieldExprKind::Add, operands: "stage4.input.stage3.registers.RdWriteValue|stage4.registers_read_write.term.Rs1Value" },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.claim_expr", kind: Stage4FieldExprKind::Add, operands: "stage4.registers_read_write.partial.RdWriteValueRs1Value|stage4.registers_read_write.term.Rs2Value" },
+    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.delta.RamVal", kind: Stage4FieldExprKind::Sub, operands: "stage4.input.stage2.RamVal|stage4.input.initial_ram.RamValInit" },
+    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.delta.RamValFinal", kind: Stage4FieldExprKind::Sub, operands: "stage4.input.stage2.RamValFinal|stage4.input.initial_ram.RamValInit" },
+    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.term.RamValFinal", kind: Stage4FieldExprKind::Mul, operands: "stage4.ram_val_check.gamma|stage4.ram_val_check.delta.RamValFinal" },
+    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.claim_expr", kind: Stage4FieldExprKind::Add, operands: "stage4.ram_val_check.delta.RamVal|stage4.ram_val_check.term.RamValFinal" },
 ];
 pub const STAGE4_KERNELS: &[Stage4KernelPlan] = &[
 
 ];
 
 pub const STAGE4_SUMCHECK_CLAIMS: &[Stage4SumcheckClaimPlan] = &[
-    Stage4SumcheckClaimPlan { symbol: "stage4.registers_read_write.input", stage: "stage4", domain: "jolt.stage4_registers_rw_domain", num_rounds: 23, degree: 3, claim: "stage4.registers_read_write.weighted_values", kernel: None, relation: Some("jolt.stage4.registers_read_write"), claim_value: "stage4.registers_read_write.claim_expr", input_openings: "stage4.input.stage3.registers.RdWriteValue|stage4.input.stage3.registers.Rs1Value|stage4.input.stage3.registers.Rs2Value" },
-    Stage4SumcheckClaimPlan { symbol: "stage4.ram_val_check.input", stage: "stage4", domain: "jolt.trace_domain", num_rounds: 16, degree: 3, claim: "stage4.ram_val_check.weighted_values", kernel: None, relation: Some("jolt.stage4.ram_val_check"), claim_value: "stage4.ram_val_check.claim_expr", input_openings: "stage4.input.stage2.RamVal|stage4.input.stage2.RamValFinal|stage4.input.initial_ram.RamValInit" },
+    Stage4SumcheckClaimPlan { symbol: "stage4.registers_read_write.input", stage: "stage4", domain: "jolt.stage4_registers_rw_domain", num_rounds: 23, degree: 3, claim: "stage4.registers_read_write.weighted_values", kernel: None, relation: Some(Stage4RelationKind::Stage4RegistersReadWrite), claim_value: "stage4.registers_read_write.claim_expr", input_openings: "stage4.input.stage3.registers.RdWriteValue|stage4.input.stage3.registers.Rs1Value|stage4.input.stage3.registers.Rs2Value" },
+    Stage4SumcheckClaimPlan { symbol: "stage4.ram_val_check.input", stage: "stage4", domain: "jolt.trace_domain", num_rounds: 16, degree: 3, claim: "stage4.ram_val_check.weighted_values", kernel: None, relation: Some(Stage4RelationKind::Stage4RamValCheck), claim_value: "stage4.ram_val_check.claim_expr", input_openings: "stage4.input.stage2.RamVal|stage4.input.stage2.RamValFinal|stage4.input.initial_ram.RamValInit" },
 ];
-pub const STAGE4_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[
-    16,
-    7,
-];
+pub const STAGE4_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[16, 7];
 
 pub const STAGE4_SUMCHECK_BATCHES: &[Stage4SumcheckBatchPlan] = &[
     Stage4SumcheckBatchPlan { symbol: "stage4.batch", stage: "stage4", proof_slot: "stage4.sumcheck", policy: "jolt_core_stage4_aligned", count: 2, ordered_claims: "stage4.registers_read_write.input|stage4.ram_val_check.input", claim_operands: "stage4.registers_read_write.input|stage4.ram_val_check.input", claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE4_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
 ];
-pub const STAGE4_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[
-    16,
-    7,
-];
+pub const STAGE4_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[16, 7];
 
 pub const STAGE4_SUMCHECK_DRIVERS: &[Stage4SumcheckDriverPlan] = &[
-    Stage4SumcheckDriverPlan { symbol: "stage4.sumcheck", stage: "stage4", proof_slot: "stage4.sumcheck", kernel: None, relation: Some("jolt.stage4.batched"), batch: "stage4.batch", policy: "jolt_core_stage4_aligned", round_schedule: STAGE4_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 23, degree: 3 },
+    Stage4SumcheckDriverPlan { symbol: "stage4.sumcheck", stage: "stage4", proof_slot: "stage4.sumcheck", kernel: None, relation: Some(Stage4RelationKind::Stage4Batched), batch: "stage4.batch", policy: "jolt_core_stage4_aligned", round_schedule: STAGE4_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 23, degree: 3 },
 ];
 pub const STAGE4_SUMCHECK_INSTANCE_RESULTS: &[Stage4SumcheckInstanceResultPlan] = &[
-    Stage4SumcheckInstanceResultPlan { symbol: "stage4.registers_read_write.instance", source: "stage4.sumcheck", claim: "stage4.registers_read_write.input", relation: "jolt.stage4.registers_read_write", index: 0, point_arity: 23, num_rounds: 23, round_offset: 0, point_order: "stage4_registers_rw", degree: 3 },
-    Stage4SumcheckInstanceResultPlan { symbol: "stage4.ram_val_check.instance", source: "stage4.sumcheck", claim: "stage4.ram_val_check.input", relation: "jolt.stage4.ram_val_check", index: 1, point_arity: 16, num_rounds: 16, round_offset: 7, point_order: "reverse", degree: 3 },
+    Stage4SumcheckInstanceResultPlan { symbol: "stage4.registers_read_write.instance", source: "stage4.sumcheck", claim: "stage4.registers_read_write.input", relation: Stage4RelationKind::Stage4RegistersReadWrite, index: 0, point_arity: 23, num_rounds: 23, round_offset: 0, point_order: "stage4_registers_rw", degree: 3 },
+    Stage4SumcheckInstanceResultPlan { symbol: "stage4.ram_val_check.instance", source: "stage4.sumcheck", claim: "stage4.ram_val_check.input", relation: Stage4RelationKind::Stage4RamValCheck, index: 1, point_arity: 16, num_rounds: 16, round_offset: 7, point_order: "reverse", degree: 3 },
 ];
 
 pub const STAGE4_SUMCHECK_EVALS: &[Stage4SumcheckEvalPlan] = &[
@@ -143,18 +137,18 @@ pub const STAGE4_POINT_CONCATS: &[Stage4PointConcatPlan] = &[
     Stage4PointConcatPlan { symbol: "stage4.ram_val_check.point.RamRa", layout: "address_then_cycle", arity: 32, inputs: "stage4.ram_val_check.point.RamAddress|stage4.ram_val_check.instance" },
 ];
 pub const STAGE4_OPENING_CLAIMS: &[Stage4OpeningClaimPlan] = &[
-    Stage4OpeningClaimPlan { symbol: "stage4.registers_read_write.opening.RegistersVal", oracle: "RegistersVal", domain: "jolt.stage4_registers_rw_domain", point_arity: 23, claim_kind: "virtual", point_source: "stage4.registers_read_write.instance", eval_source: "stage4.registers_read_write.eval.RegistersVal" },
-    Stage4OpeningClaimPlan { symbol: "stage4.registers_read_write.opening.Rs1Ra", oracle: "Rs1Ra", domain: "jolt.stage4_registers_rw_domain", point_arity: 23, claim_kind: "virtual", point_source: "stage4.registers_read_write.instance", eval_source: "stage4.registers_read_write.eval.Rs1Ra" },
-    Stage4OpeningClaimPlan { symbol: "stage4.registers_read_write.opening.Rs2Ra", oracle: "Rs2Ra", domain: "jolt.stage4_registers_rw_domain", point_arity: 23, claim_kind: "virtual", point_source: "stage4.registers_read_write.instance", eval_source: "stage4.registers_read_write.eval.Rs2Ra" },
-    Stage4OpeningClaimPlan { symbol: "stage4.registers_read_write.opening.RdWa", oracle: "RdWa", domain: "jolt.stage4_registers_rw_domain", point_arity: 23, claim_kind: "virtual", point_source: "stage4.registers_read_write.instance", eval_source: "stage4.registers_read_write.eval.RdWa" },
-    Stage4OpeningClaimPlan { symbol: "stage4.registers_read_write.opening.RdInc", oracle: "RdInc", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "committed", point_source: "stage4.registers_read_write.point.RdInc", eval_source: "stage4.registers_read_write.eval.RdInc" },
-    Stage4OpeningClaimPlan { symbol: "stage4.ram_val_check.opening.RamRa", oracle: "RamRa", domain: "jolt.stage2_ram_rw_domain", point_arity: 32, claim_kind: "virtual", point_source: "stage4.ram_val_check.point.RamRa", eval_source: "stage4.ram_val_check.eval.RamRa" },
-    Stage4OpeningClaimPlan { symbol: "stage4.ram_val_check.opening.RamInc", oracle: "RamInc", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "committed", point_source: "stage4.ram_val_check.instance", eval_source: "stage4.ram_val_check.eval.RamInc" },
+    Stage4OpeningClaimPlan { symbol: "stage4.registers_read_write.opening.RegistersVal", oracle: "RegistersVal", domain: "jolt.stage4_registers_rw_domain", point_arity: 23, claim_kind: Stage4ClaimKind::Virtual, point_source: "stage4.registers_read_write.instance", eval_source: "stage4.registers_read_write.eval.RegistersVal" },
+    Stage4OpeningClaimPlan { symbol: "stage4.registers_read_write.opening.Rs1Ra", oracle: "Rs1Ra", domain: "jolt.stage4_registers_rw_domain", point_arity: 23, claim_kind: Stage4ClaimKind::Virtual, point_source: "stage4.registers_read_write.instance", eval_source: "stage4.registers_read_write.eval.Rs1Ra" },
+    Stage4OpeningClaimPlan { symbol: "stage4.registers_read_write.opening.Rs2Ra", oracle: "Rs2Ra", domain: "jolt.stage4_registers_rw_domain", point_arity: 23, claim_kind: Stage4ClaimKind::Virtual, point_source: "stage4.registers_read_write.instance", eval_source: "stage4.registers_read_write.eval.Rs2Ra" },
+    Stage4OpeningClaimPlan { symbol: "stage4.registers_read_write.opening.RdWa", oracle: "RdWa", domain: "jolt.stage4_registers_rw_domain", point_arity: 23, claim_kind: Stage4ClaimKind::Virtual, point_source: "stage4.registers_read_write.instance", eval_source: "stage4.registers_read_write.eval.RdWa" },
+    Stage4OpeningClaimPlan { symbol: "stage4.registers_read_write.opening.RdInc", oracle: "RdInc", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage4ClaimKind::Committed, point_source: "stage4.registers_read_write.point.RdInc", eval_source: "stage4.registers_read_write.eval.RdInc" },
+    Stage4OpeningClaimPlan { symbol: "stage4.ram_val_check.opening.RamRa", oracle: "RamRa", domain: "jolt.stage2_ram_rw_domain", point_arity: 32, claim_kind: Stage4ClaimKind::Virtual, point_source: "stage4.ram_val_check.point.RamRa", eval_source: "stage4.ram_val_check.eval.RamRa" },
+    Stage4OpeningClaimPlan { symbol: "stage4.ram_val_check.opening.RamInc", oracle: "RamInc", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage4ClaimKind::Committed, point_source: "stage4.ram_val_check.instance", eval_source: "stage4.ram_val_check.eval.RamInc" },
 ];
 
 pub const STAGE4_OPENING_EQUALITIES: &[Stage4OpeningClaimEqualityPlan] = &[
-    Stage4OpeningClaimEqualityPlan { symbol: "stage4.registers.rs1_claim_consistency", mode: "point_and_eval", lhs: "stage4.input.stage3.registers.Rs1Value", rhs: "stage4.input.stage3.instruction.Rs1Value" },
-    Stage4OpeningClaimEqualityPlan { symbol: "stage4.registers.rs2_claim_consistency", mode: "point_and_eval", lhs: "stage4.input.stage3.registers.Rs2Value", rhs: "stage4.input.stage3.instruction.Rs2Value" },
+    Stage4OpeningClaimEqualityPlan { symbol: "stage4.registers.rs1_claim_consistency", mode: Stage4OpeningEqualityMode::PointAndEval, lhs: "stage4.input.stage3.registers.Rs1Value", rhs: "stage4.input.stage3.instruction.Rs1Value" },
+    Stage4OpeningClaimEqualityPlan { symbol: "stage4.registers.rs2_claim_consistency", mode: Stage4OpeningEqualityMode::PointAndEval, lhs: "stage4.input.stage3.registers.Rs2Value", rhs: "stage4.input.stage3.instruction.Rs2Value" },
 ];
 
 pub const STAGE4_OPENING_BATCHES: &[Stage4OpeningBatchPlan] = &[
@@ -214,14 +208,14 @@ where
     let mut artifacts = Stage4ExecutionArtifacts::default();
     for step in program.steps {
         match step.kind {
-            "transcript_squeeze" => {
+            Stage4ProgramStepKind::TranscriptSqueeze => {
                 let squeeze =
                     find_plan(program.transcript_squeezes, step.symbol).ok_or(VerifyStage4Error::MissingValue {
                         symbol: step.symbol,
                     })?;
                 verify_stage4_squeeze(program, squeeze, &mut store, transcript, &mut artifacts)?;
             }
-            "transcript_absorb_bytes" => {
+            Stage4ProgramStepKind::TranscriptAbsorbBytes => {
                 let absorb = find_plan(program.transcript_absorb_bytes, step.symbol).ok_or(
                     VerifyStage4Error::MissingValue {
                         symbol: step.symbol,
@@ -229,18 +223,12 @@ where
                 )?;
                 absorb_stage4_bytes(absorb, transcript);
             }
-            "sumcheck_driver" => {
+            Stage4ProgramStepKind::SumcheckDriver => {
                 let driver =
                     find_plan(program.drivers, step.symbol).ok_or(VerifyStage4Error::MissingProof {
                         driver: step.symbol,
                     })?;
                 verify_stage4_driver(program, driver, proof, &mut store, transcript, &mut artifacts)?;
-            }
-            _ => {
-                return Err(VerifyStage4Error::InvalidProof {
-                    driver: step.symbol,
-                    reason: "unsupported stage4 program step",
-                });
             }
         }
     }
@@ -310,12 +298,17 @@ where
         .ok_or(VerifyStage4Error::MissingProof {
             driver: driver.symbol,
         })?;
-    let relation = driver.relation.unwrap_or("<missing>");
+    let Some(relation) = driver.relation else {
+        return Err(VerifyStage4Error::InvalidProof {
+            driver: driver.symbol,
+            reason: "missing driver relation",
+        });
+    };
     let output = match relation {
-        "jolt.stage4.batched" => {
+        Stage4RelationKind::Stage4Batched => {
             verify_batched_stage4(program, driver, proof, store, transcript)?
         }
-        _ => return Err(VerifyStage4Error::UnsupportedRelation { relation }),
+        relation => return Err(VerifyStage4Error::UnsupportedRelation { relation }),
     };
     artifacts.sumchecks.push(output);
     Ok(())
@@ -428,15 +421,20 @@ fn expected_batched_output_claim(
                 expected: instance.round_offset + instance.num_rounds,
                 actual: point.len(),
             })?;
-        let relation = claim.relation.unwrap_or("<missing>");
+        let Some(relation) = claim.relation else {
+            return Err(VerifyStage4Error::InvalidProof {
+                driver: driver.symbol,
+                reason: "missing claim relation",
+            });
+        };
         let value = match relation {
-            "jolt.stage4.registers_read_write" => {
+            Stage4RelationKind::Stage4RegistersReadWrite => {
                 expected_registers_read_write(store, evals, local_point)?
             }
-            "jolt.stage4.ram_val_check" => {
+            Stage4RelationKind::Stage4RamValCheck => {
                 expected_ram_val_check(store, evals, local_point)?
             }
-            _ => return Err(VerifyStage4Error::UnsupportedRelation { relation }),
+            relation => return Err(VerifyStage4Error::UnsupportedRelation { relation }),
         };
         expected += *coefficient * value;
     }

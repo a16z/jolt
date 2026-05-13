@@ -6,11 +6,7 @@ use jolt_transcript::{Blake2bTranscript, Transcript};
 
 pub type DefaultStage6Transcript = Blake2bTranscript<Fr>;
 
-pub const STAGE6_PARAMS: Stage6Params = Stage6Params {
-    field: "bn254_fr",
-    pcs: "dory",
-    transcript: "blake2b_transcript",
-};
+pub const STAGE6_PARAMS: Stage6Params = Stage6Params { field: "bn254_fr", pcs: "dory", transcript: "blake2b_transcript" };
 pub const STAGE6_PROGRAM_STEPS: &[Stage6ProgramStepPlan] = &[
     Stage6ProgramStepPlan { kind: "transcript_squeeze", symbol: "stage6.bytecode_read_raf.gamma" },
     Stage6ProgramStepPlan { kind: "transcript_squeeze", symbol: "stage6.bytecode_read_raf.stage1_gamma" },
@@ -1886,18 +1882,12 @@ pub const STAGE6_SUMCHECK_BATCH_0_CLAIM_OPERANDS: &[&str] = &[
     "stage6.inc_claim_reduction.input",
 ];
 
-pub const STAGE6_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[
-    10,
-    16,
-];
+pub const STAGE6_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[10, 16];
 
 pub const STAGE6_SUMCHECK_BATCHES: &[Stage6SumcheckBatchPlan] = &[
     Stage6SumcheckBatchPlan { symbol: "stage6.batch", stage: "stage6", proof_slot: "stage6.sumcheck", policy: "jolt_core_stage6_aligned", count: 6, ordered_claims: STAGE6_SUMCHECK_BATCH_0_ORDERED_CLAIMS, claim_operands: STAGE6_SUMCHECK_BATCH_0_CLAIM_OPERANDS, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE6_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
 ];
-pub const STAGE6_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[
-    10,
-    16,
-];
+pub const STAGE6_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[10, 16];
 
 pub const STAGE6_SUMCHECK_DRIVERS: &[Stage6SumcheckDriverPlan] = &[
     Stage6SumcheckDriverPlan { symbol: "stage6.sumcheck", stage: "stage6", proof_slot: "stage6.sumcheck", kernel: Some("jolt.cpu.stage6.batched"), relation: None, batch: "stage6.batch", policy: "jolt_core_stage6_aligned", round_schedule: STAGE6_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 26, degree: 5 },

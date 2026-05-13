@@ -17,14 +17,19 @@ pub type Stage3OpeningInputValue<F> = super::common::StageOpeningInputValue<F>;
 pub type Stage3VerifierProgramPlan = super::common::StageVerifierProgramPlan;
 
 pub use super::common::{
-    FieldConstantPlan as Stage3FieldConstantPlan, FieldExprPlan as Stage3FieldExprPlan,
+    ClaimKind as Stage3ClaimKind, RelationKind as Stage3RelationKind, FieldConstantPlan as Stage3FieldConstantPlan,
+    FieldExprKind as Stage3FieldExprKind,
+    FieldExprPlan as Stage3FieldExprPlan,
     OpeningBatchPlan as Stage3OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage3OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage3OpeningClaimPlan, OpeningInputPlan as Stage3OpeningInputPlan,
     PointConcatPlan as Stage3PointConcatPlan, PointSlicePlan as Stage3PointSlicePlan,
-    ProgramStepPlan as Stage3ProgramStepPlan, StageParams as Stage3Params,
+    OpeningEqualityMode as Stage3OpeningEqualityMode,
+    ProgramStepKind as Stage3ProgramStepKind, ProgramStepPlan as Stage3ProgramStepPlan,
+    StageParams as Stage3Params,
     SumcheckBatchPlan as Stage3SumcheckBatchPlan, SumcheckEvalPlan as Stage3SumcheckEvalPlan,
     SumcheckInstanceResultPlan as Stage3SumcheckInstanceResultPlan,
+    TranscriptSqueezeKind as Stage3TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage3TranscriptSqueezePlan,
     SumcheckClaimPlan as Stage3SumcheckClaimPlan,
     SumcheckDriverPlan as Stage3SumcheckDriverPlan,
@@ -39,44 +44,39 @@ pub enum VerifyStage3Error {
     MissingValue { symbol: &'static str },
     InvalidInputLength { input: &'static str, expected: usize, actual: usize },
     InvalidProof { driver: &'static str, reason: &'static str },
-    UnsupportedFieldExpr { symbol: &'static str, formula: &'static str },
-    UnsupportedRelation { relation: &'static str },
+    UnsupportedRelation { relation: Stage3RelationKind },
     Sumcheck { driver: &'static str, error: SumcheckError<Fr> },
 }
 
 super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
 
-pub const STAGE3_PARAMS: Stage3Params = Stage3Params {
-    field: "bn254_fr",
-    pcs: "dory",
-    transcript: "blake2b_transcript",
-};
+pub const STAGE3_PARAMS: Stage3Params = Stage3Params { field: "bn254_fr", pcs: "dory", transcript: "blake2b_transcript" };
 pub const STAGE3_PROGRAM_STEPS: &[Stage3ProgramStepPlan] = &[
-    Stage3ProgramStepPlan { kind: "transcript_squeeze", symbol: "stage3.spartan_shift.gamma" },
-    Stage3ProgramStepPlan { kind: "transcript_squeeze", symbol: "stage3.instruction_input.gamma" },
-    Stage3ProgramStepPlan { kind: "transcript_squeeze", symbol: "stage3.registers.gamma" },
-    Stage3ProgramStepPlan { kind: "sumcheck_driver", symbol: "stage3.sumcheck" },
+    Stage3ProgramStepPlan { kind: Stage3ProgramStepKind::TranscriptSqueeze, symbol: "stage3.spartan_shift.gamma" },
+    Stage3ProgramStepPlan { kind: Stage3ProgramStepKind::TranscriptSqueeze, symbol: "stage3.instruction_input.gamma" },
+    Stage3ProgramStepPlan { kind: Stage3ProgramStepKind::TranscriptSqueeze, symbol: "stage3.registers.gamma" },
+    Stage3ProgramStepPlan { kind: Stage3ProgramStepKind::SumcheckDriver, symbol: "stage3.sumcheck" },
 ];
 
 pub const STAGE3_TRANSCRIPT_SQUEEZES: &[Stage3TranscriptSqueezePlan] = &[
-    Stage3TranscriptSqueezePlan { symbol: "stage3.spartan_shift.gamma", label: "spartan_shift_gamma", kind: "challenge_scalar", count: 1 },
-    Stage3TranscriptSqueezePlan { symbol: "stage3.instruction_input.gamma", label: "instruction_input_gamma", kind: "challenge_scalar", count: 1 },
-    Stage3TranscriptSqueezePlan { symbol: "stage3.registers.gamma", label: "registers_gamma", kind: "challenge_scalar", count: 1 },
+    Stage3TranscriptSqueezePlan { symbol: "stage3.spartan_shift.gamma", label: "spartan_shift_gamma", kind: Stage3TranscriptSqueezeKind::ChallengeScalar, count: 1 },
+    Stage3TranscriptSqueezePlan { symbol: "stage3.instruction_input.gamma", label: "instruction_input_gamma", kind: Stage3TranscriptSqueezeKind::ChallengeScalar, count: 1 },
+    Stage3TranscriptSqueezePlan { symbol: "stage3.registers.gamma", label: "registers_gamma", kind: Stage3TranscriptSqueezeKind::ChallengeScalar, count: 1 },
 ];
 
 pub const STAGE3_OPENING_INPUTS: &[Stage3OpeningInputPlan] = &[
-    Stage3OpeningInputPlan { symbol: "stage3.input.stage1.NextUnexpandedPC", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.NextUnexpandedPC", oracle: "NextUnexpandedPC", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage3OpeningInputPlan { symbol: "stage3.input.stage1.NextPC", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.NextPC", oracle: "NextPC", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage3OpeningInputPlan { symbol: "stage3.input.stage1.NextIsVirtual", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.NextIsVirtual", oracle: "NextIsVirtual", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage3OpeningInputPlan { symbol: "stage3.input.stage1.NextIsFirstInSequence", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.NextIsFirstInSequence", oracle: "NextIsFirstInSequence", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage3OpeningInputPlan { symbol: "stage3.input.stage2.product_virtual.NextIsNoop", source_stage: "stage2", source_claim: "stage2.product_virtual.remainder.opening.NextIsNoop", oracle: "NextIsNoop", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage3OpeningInputPlan { symbol: "stage3.input.stage2.product_virtual.LeftInstructionInput", source_stage: "stage2", source_claim: "stage2.product_virtual.remainder.opening.LeftInstructionInput", oracle: "LeftInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage3OpeningInputPlan { symbol: "stage3.input.stage2.product_virtual.RightInstructionInput", source_stage: "stage2", source_claim: "stage2.product_virtual.remainder.opening.RightInstructionInput", oracle: "RightInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage3OpeningInputPlan { symbol: "stage3.input.stage2.instruction_lookup.LeftInstructionInput", source_stage: "stage2", source_claim: "stage2.instruction_lookup.claim_reduction.opening.LeftInstructionInput", oracle: "LeftInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage3OpeningInputPlan { symbol: "stage3.input.stage2.instruction_lookup.RightInstructionInput", source_stage: "stage2", source_claim: "stage2.instruction_lookup.claim_reduction.opening.RightInstructionInput", oracle: "RightInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage3OpeningInputPlan { symbol: "stage3.input.stage1.RdWriteValue", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.RdWriteValue", oracle: "RdWriteValue", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage3OpeningInputPlan { symbol: "stage3.input.stage1.Rs1Value", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.Rs1Value", oracle: "Rs1Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
-    Stage3OpeningInputPlan { symbol: "stage3.input.stage1.Rs2Value", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.Rs2Value", oracle: "Rs2Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual" },
+    Stage3OpeningInputPlan { symbol: "stage3.input.stage1.NextUnexpandedPC", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.NextUnexpandedPC", oracle: "NextUnexpandedPC", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual },
+    Stage3OpeningInputPlan { symbol: "stage3.input.stage1.NextPC", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.NextPC", oracle: "NextPC", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual },
+    Stage3OpeningInputPlan { symbol: "stage3.input.stage1.NextIsVirtual", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.NextIsVirtual", oracle: "NextIsVirtual", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual },
+    Stage3OpeningInputPlan { symbol: "stage3.input.stage1.NextIsFirstInSequence", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.NextIsFirstInSequence", oracle: "NextIsFirstInSequence", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual },
+    Stage3OpeningInputPlan { symbol: "stage3.input.stage2.product_virtual.NextIsNoop", source_stage: "stage2", source_claim: "stage2.product_virtual.remainder.opening.NextIsNoop", oracle: "NextIsNoop", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual },
+    Stage3OpeningInputPlan { symbol: "stage3.input.stage2.product_virtual.LeftInstructionInput", source_stage: "stage2", source_claim: "stage2.product_virtual.remainder.opening.LeftInstructionInput", oracle: "LeftInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual },
+    Stage3OpeningInputPlan { symbol: "stage3.input.stage2.product_virtual.RightInstructionInput", source_stage: "stage2", source_claim: "stage2.product_virtual.remainder.opening.RightInstructionInput", oracle: "RightInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual },
+    Stage3OpeningInputPlan { symbol: "stage3.input.stage2.instruction_lookup.LeftInstructionInput", source_stage: "stage2", source_claim: "stage2.instruction_lookup.claim_reduction.opening.LeftInstructionInput", oracle: "LeftInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual },
+    Stage3OpeningInputPlan { symbol: "stage3.input.stage2.instruction_lookup.RightInstructionInput", source_stage: "stage2", source_claim: "stage2.instruction_lookup.claim_reduction.opening.RightInstructionInput", oracle: "RightInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual },
+    Stage3OpeningInputPlan { symbol: "stage3.input.stage1.RdWriteValue", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.RdWriteValue", oracle: "RdWriteValue", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual },
+    Stage3OpeningInputPlan { symbol: "stage3.input.stage1.Rs1Value", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.Rs1Value", oracle: "Rs1Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual },
+    Stage3OpeningInputPlan { symbol: "stage3.input.stage1.Rs2Value", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.Rs2Value", oracle: "Rs2Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual },
 ];
 
 pub const STAGE3_FIELD_CONSTANTS: &[Stage3FieldConstantPlan] = &[
@@ -84,49 +84,45 @@ pub const STAGE3_FIELD_CONSTANTS: &[Stage3FieldConstantPlan] = &[
 ];
 
 pub const STAGE3_FIELD_EXPRS: &[Stage3FieldExprPlan] = &[
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.gamma2", kind: "op", formula: "field.pow:2", operands: "stage3.spartan_shift.gamma" },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.gamma3", kind: "op", formula: "field.mul", operands: "stage3.spartan_shift.gamma2|stage3.spartan_shift.gamma" },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.gamma4", kind: "op", formula: "field.mul", operands: "stage3.spartan_shift.gamma2|stage3.spartan_shift.gamma2" },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.term.NextPC", kind: "op", formula: "field.mul", operands: "stage3.spartan_shift.gamma|stage3.input.stage1.NextPC" },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.term.NextIsVirtual", kind: "op", formula: "field.mul", operands: "stage3.spartan_shift.gamma2|stage3.input.stage1.NextIsVirtual" },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.term.NextIsFirstInSequence", kind: "op", formula: "field.mul", operands: "stage3.spartan_shift.gamma3|stage3.input.stage1.NextIsFirstInSequence" },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.one_minus.NextIsNoop", kind: "op", formula: "field.sub", operands: "stage3.field.one|stage3.input.stage2.product_virtual.NextIsNoop" },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.term.NextIsNoop", kind: "op", formula: "field.mul", operands: "stage3.spartan_shift.gamma4|stage3.spartan_shift.one_minus.NextIsNoop" },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.partial.NextUnexpandedPCNextPC", kind: "op", formula: "field.add", operands: "stage3.input.stage1.NextUnexpandedPC|stage3.spartan_shift.term.NextPC" },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.partial.NextIsVirtual", kind: "op", formula: "field.add", operands: "stage3.spartan_shift.partial.NextUnexpandedPCNextPC|stage3.spartan_shift.term.NextIsVirtual" },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.partial.NextIsFirstInSequence", kind: "op", formula: "field.add", operands: "stage3.spartan_shift.partial.NextIsVirtual|stage3.spartan_shift.term.NextIsFirstInSequence" },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.claim_expr", kind: "op", formula: "field.add", operands: "stage3.spartan_shift.partial.NextIsFirstInSequence|stage3.spartan_shift.term.NextIsNoop" },
-    Stage3FieldExprPlan { symbol: "stage3.instruction_input.term.LeftInstructionInput", kind: "op", formula: "field.mul", operands: "stage3.instruction_input.gamma|stage3.input.stage2.product_virtual.LeftInstructionInput" },
-    Stage3FieldExprPlan { symbol: "stage3.instruction_input.claim_expr", kind: "op", formula: "field.add", operands: "stage3.input.stage2.product_virtual.RightInstructionInput|stage3.instruction_input.term.LeftInstructionInput" },
-    Stage3FieldExprPlan { symbol: "stage3.registers.gamma2", kind: "op", formula: "field.pow:2", operands: "stage3.registers.gamma" },
-    Stage3FieldExprPlan { symbol: "stage3.registers.term.Rs1Value", kind: "op", formula: "field.mul", operands: "stage3.registers.gamma|stage3.input.stage1.Rs1Value" },
-    Stage3FieldExprPlan { symbol: "stage3.registers.term.Rs2Value", kind: "op", formula: "field.mul", operands: "stage3.registers.gamma2|stage3.input.stage1.Rs2Value" },
-    Stage3FieldExprPlan { symbol: "stage3.registers.partial.RdWriteValueRs1Value", kind: "op", formula: "field.add", operands: "stage3.input.stage1.RdWriteValue|stage3.registers.term.Rs1Value" },
-    Stage3FieldExprPlan { symbol: "stage3.registers.claim_expr", kind: "op", formula: "field.add", operands: "stage3.registers.partial.RdWriteValueRs1Value|stage3.registers.term.Rs2Value" },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.gamma2", kind: Stage3FieldExprKind::Pow(2), operands: "stage3.spartan_shift.gamma" },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.gamma3", kind: Stage3FieldExprKind::Mul, operands: "stage3.spartan_shift.gamma2|stage3.spartan_shift.gamma" },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.gamma4", kind: Stage3FieldExprKind::Mul, operands: "stage3.spartan_shift.gamma2|stage3.spartan_shift.gamma2" },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.term.NextPC", kind: Stage3FieldExprKind::Mul, operands: "stage3.spartan_shift.gamma|stage3.input.stage1.NextPC" },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.term.NextIsVirtual", kind: Stage3FieldExprKind::Mul, operands: "stage3.spartan_shift.gamma2|stage3.input.stage1.NextIsVirtual" },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.term.NextIsFirstInSequence", kind: Stage3FieldExprKind::Mul, operands: "stage3.spartan_shift.gamma3|stage3.input.stage1.NextIsFirstInSequence" },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.one_minus.NextIsNoop", kind: Stage3FieldExprKind::Sub, operands: "stage3.field.one|stage3.input.stage2.product_virtual.NextIsNoop" },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.term.NextIsNoop", kind: Stage3FieldExprKind::Mul, operands: "stage3.spartan_shift.gamma4|stage3.spartan_shift.one_minus.NextIsNoop" },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.partial.NextUnexpandedPCNextPC", kind: Stage3FieldExprKind::Add, operands: "stage3.input.stage1.NextUnexpandedPC|stage3.spartan_shift.term.NextPC" },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.partial.NextIsVirtual", kind: Stage3FieldExprKind::Add, operands: "stage3.spartan_shift.partial.NextUnexpandedPCNextPC|stage3.spartan_shift.term.NextIsVirtual" },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.partial.NextIsFirstInSequence", kind: Stage3FieldExprKind::Add, operands: "stage3.spartan_shift.partial.NextIsVirtual|stage3.spartan_shift.term.NextIsFirstInSequence" },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.claim_expr", kind: Stage3FieldExprKind::Add, operands: "stage3.spartan_shift.partial.NextIsFirstInSequence|stage3.spartan_shift.term.NextIsNoop" },
+    Stage3FieldExprPlan { symbol: "stage3.instruction_input.term.LeftInstructionInput", kind: Stage3FieldExprKind::Mul, operands: "stage3.instruction_input.gamma|stage3.input.stage2.product_virtual.LeftInstructionInput" },
+    Stage3FieldExprPlan { symbol: "stage3.instruction_input.claim_expr", kind: Stage3FieldExprKind::Add, operands: "stage3.input.stage2.product_virtual.RightInstructionInput|stage3.instruction_input.term.LeftInstructionInput" },
+    Stage3FieldExprPlan { symbol: "stage3.registers.gamma2", kind: Stage3FieldExprKind::Pow(2), operands: "stage3.registers.gamma" },
+    Stage3FieldExprPlan { symbol: "stage3.registers.term.Rs1Value", kind: Stage3FieldExprKind::Mul, operands: "stage3.registers.gamma|stage3.input.stage1.Rs1Value" },
+    Stage3FieldExprPlan { symbol: "stage3.registers.term.Rs2Value", kind: Stage3FieldExprKind::Mul, operands: "stage3.registers.gamma2|stage3.input.stage1.Rs2Value" },
+    Stage3FieldExprPlan { symbol: "stage3.registers.partial.RdWriteValueRs1Value", kind: Stage3FieldExprKind::Add, operands: "stage3.input.stage1.RdWriteValue|stage3.registers.term.Rs1Value" },
+    Stage3FieldExprPlan { symbol: "stage3.registers.claim_expr", kind: Stage3FieldExprKind::Add, operands: "stage3.registers.partial.RdWriteValueRs1Value|stage3.registers.term.Rs2Value" },
 ];
 pub const STAGE3_SUMCHECK_CLAIMS: &[Stage3SumcheckClaimPlan] = &[
-    Stage3SumcheckClaimPlan { symbol: "stage3.spartan_shift.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage3.spartan_shift.weighted_next_values", kernel: None, relation: Some("jolt.stage3.spartan_shift"), claim_value: "stage3.spartan_shift.claim_expr", input_openings: "stage3.input.stage1.NextUnexpandedPC|stage3.input.stage1.NextPC|stage3.input.stage1.NextIsVirtual|stage3.input.stage1.NextIsFirstInSequence|stage3.input.stage2.product_virtual.NextIsNoop" },
-    Stage3SumcheckClaimPlan { symbol: "stage3.instruction_input.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 3, claim: "stage3.instruction_input.weighted_inputs", kernel: None, relation: Some("jolt.stage3.instruction_input"), claim_value: "stage3.instruction_input.claim_expr", input_openings: "stage3.input.stage2.product_virtual.RightInstructionInput|stage3.input.stage2.product_virtual.LeftInstructionInput" },
-    Stage3SumcheckClaimPlan { symbol: "stage3.registers_claim_reduction.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage3.registers.weighted_register_values", kernel: None, relation: Some("jolt.stage3.registers_claim_reduction"), claim_value: "stage3.registers.claim_expr", input_openings: "stage3.input.stage1.RdWriteValue|stage3.input.stage1.Rs1Value|stage3.input.stage1.Rs2Value" },
+    Stage3SumcheckClaimPlan { symbol: "stage3.spartan_shift.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage3.spartan_shift.weighted_next_values", kernel: None, relation: Some(Stage3RelationKind::Stage3SpartanShift), claim_value: "stage3.spartan_shift.claim_expr", input_openings: "stage3.input.stage1.NextUnexpandedPC|stage3.input.stage1.NextPC|stage3.input.stage1.NextIsVirtual|stage3.input.stage1.NextIsFirstInSequence|stage3.input.stage2.product_virtual.NextIsNoop" },
+    Stage3SumcheckClaimPlan { symbol: "stage3.instruction_input.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 3, claim: "stage3.instruction_input.weighted_inputs", kernel: None, relation: Some(Stage3RelationKind::Stage3InstructionInput), claim_value: "stage3.instruction_input.claim_expr", input_openings: "stage3.input.stage2.product_virtual.RightInstructionInput|stage3.input.stage2.product_virtual.LeftInstructionInput" },
+    Stage3SumcheckClaimPlan { symbol: "stage3.registers_claim_reduction.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage3.registers.weighted_register_values", kernel: None, relation: Some(Stage3RelationKind::Stage3RegistersClaimReduction), claim_value: "stage3.registers.claim_expr", input_openings: "stage3.input.stage1.RdWriteValue|stage3.input.stage1.Rs1Value|stage3.input.stage1.Rs2Value" },
 ];
-pub const STAGE3_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[
-    16,
-];
+pub const STAGE3_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[16];
 
 pub const STAGE3_SUMCHECK_BATCHES: &[Stage3SumcheckBatchPlan] = &[
     Stage3SumcheckBatchPlan { symbol: "stage3.batch", stage: "stage3", proof_slot: "stage3.sumcheck", policy: "jolt_core_stage3_aligned", count: 3, ordered_claims: "stage3.spartan_shift.input|stage3.instruction_input.input|stage3.registers_claim_reduction.input", claim_operands: "stage3.spartan_shift.input|stage3.instruction_input.input|stage3.registers_claim_reduction.input", claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE3_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
 ];
-pub const STAGE3_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[
-    16,
-];
+pub const STAGE3_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[16];
 
 pub const STAGE3_SUMCHECK_DRIVERS: &[Stage3SumcheckDriverPlan] = &[
-    Stage3SumcheckDriverPlan { symbol: "stage3.sumcheck", stage: "stage3", proof_slot: "stage3.sumcheck", kernel: None, relation: Some("jolt.stage3.batched"), batch: "stage3.batch", policy: "jolt_core_stage3_aligned", round_schedule: STAGE3_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 16, degree: 3 },
+    Stage3SumcheckDriverPlan { symbol: "stage3.sumcheck", stage: "stage3", proof_slot: "stage3.sumcheck", kernel: None, relation: Some(Stage3RelationKind::Stage3Batched), batch: "stage3.batch", policy: "jolt_core_stage3_aligned", round_schedule: STAGE3_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 16, degree: 3 },
 ];
 pub const STAGE3_SUMCHECK_INSTANCE_RESULTS: &[Stage3SumcheckInstanceResultPlan] = &[
-    Stage3SumcheckInstanceResultPlan { symbol: "stage3.spartan_shift.instance", source: "stage3.sumcheck", claim: "stage3.spartan_shift.input", relation: "jolt.stage3.spartan_shift", index: 0, point_arity: 16, num_rounds: 16, round_offset: 0, point_order: "reverse", degree: 2 },
-    Stage3SumcheckInstanceResultPlan { symbol: "stage3.instruction_input.instance", source: "stage3.sumcheck", claim: "stage3.instruction_input.input", relation: "jolt.stage3.instruction_input", index: 1, point_arity: 16, num_rounds: 16, round_offset: 0, point_order: "reverse", degree: 3 },
-    Stage3SumcheckInstanceResultPlan { symbol: "stage3.registers_claim_reduction.instance", source: "stage3.sumcheck", claim: "stage3.registers_claim_reduction.input", relation: "jolt.stage3.registers_claim_reduction", index: 2, point_arity: 16, num_rounds: 16, round_offset: 0, point_order: "reverse", degree: 2 },
+    Stage3SumcheckInstanceResultPlan { symbol: "stage3.spartan_shift.instance", source: "stage3.sumcheck", claim: "stage3.spartan_shift.input", relation: Stage3RelationKind::Stage3SpartanShift, index: 0, point_arity: 16, num_rounds: 16, round_offset: 0, point_order: "reverse", degree: 2 },
+    Stage3SumcheckInstanceResultPlan { symbol: "stage3.instruction_input.instance", source: "stage3.sumcheck", claim: "stage3.instruction_input.input", relation: Stage3RelationKind::Stage3InstructionInput, index: 1, point_arity: 16, num_rounds: 16, round_offset: 0, point_order: "reverse", degree: 3 },
+    Stage3SumcheckInstanceResultPlan { symbol: "stage3.registers_claim_reduction.instance", source: "stage3.sumcheck", claim: "stage3.registers_claim_reduction.input", relation: Stage3RelationKind::Stage3RegistersClaimReduction, index: 2, point_arity: 16, num_rounds: 16, round_offset: 0, point_order: "reverse", degree: 2 },
 ];
 
 pub const STAGE3_SUMCHECK_EVALS: &[Stage3SumcheckEvalPlan] = &[
@@ -156,27 +152,27 @@ pub const STAGE3_POINT_CONCATS: &[Stage3PointConcatPlan] = &[
 
 ];
 pub const STAGE3_OPENING_CLAIMS: &[Stage3OpeningClaimPlan] = &[
-    Stage3OpeningClaimPlan { symbol: "stage3.spartan_shift.opening.UnexpandedPC", oracle: "UnexpandedPC", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage3.spartan_shift.instance", eval_source: "stage3.spartan_shift.eval.UnexpandedPC" },
-    Stage3OpeningClaimPlan { symbol: "stage3.spartan_shift.opening.PC", oracle: "PC", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage3.spartan_shift.instance", eval_source: "stage3.spartan_shift.eval.PC" },
-    Stage3OpeningClaimPlan { symbol: "stage3.spartan_shift.opening.OpFlagVirtualInstruction", oracle: "OpFlagVirtualInstruction", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage3.spartan_shift.instance", eval_source: "stage3.spartan_shift.eval.OpFlagVirtualInstruction" },
-    Stage3OpeningClaimPlan { symbol: "stage3.spartan_shift.opening.OpFlagIsFirstInSequence", oracle: "OpFlagIsFirstInSequence", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage3.spartan_shift.instance", eval_source: "stage3.spartan_shift.eval.OpFlagIsFirstInSequence" },
-    Stage3OpeningClaimPlan { symbol: "stage3.spartan_shift.opening.InstructionFlagIsNoop", oracle: "InstructionFlagIsNoop", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage3.spartan_shift.instance", eval_source: "stage3.spartan_shift.eval.InstructionFlagIsNoop" },
-    Stage3OpeningClaimPlan { symbol: "stage3.instruction_input.opening.InstructionFlagLeftOperandIsRs1Value", oracle: "InstructionFlagLeftOperandIsRs1Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage3.instruction_input.instance", eval_source: "stage3.instruction_input.eval.InstructionFlagLeftOperandIsRs1Value" },
-    Stage3OpeningClaimPlan { symbol: "stage3.instruction_input.opening.Rs1Value", oracle: "Rs1Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage3.instruction_input.instance", eval_source: "stage3.instruction_input.eval.Rs1Value" },
-    Stage3OpeningClaimPlan { symbol: "stage3.instruction_input.opening.InstructionFlagLeftOperandIsPC", oracle: "InstructionFlagLeftOperandIsPC", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage3.instruction_input.instance", eval_source: "stage3.instruction_input.eval.InstructionFlagLeftOperandIsPC" },
-    Stage3OpeningClaimPlan { symbol: "stage3.instruction_input.opening.UnexpandedPC", oracle: "UnexpandedPC", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage3.instruction_input.instance", eval_source: "stage3.instruction_input.eval.UnexpandedPC" },
-    Stage3OpeningClaimPlan { symbol: "stage3.instruction_input.opening.InstructionFlagRightOperandIsRs2Value", oracle: "InstructionFlagRightOperandIsRs2Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage3.instruction_input.instance", eval_source: "stage3.instruction_input.eval.InstructionFlagRightOperandIsRs2Value" },
-    Stage3OpeningClaimPlan { symbol: "stage3.instruction_input.opening.Rs2Value", oracle: "Rs2Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage3.instruction_input.instance", eval_source: "stage3.instruction_input.eval.Rs2Value" },
-    Stage3OpeningClaimPlan { symbol: "stage3.instruction_input.opening.InstructionFlagRightOperandIsImm", oracle: "InstructionFlagRightOperandIsImm", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage3.instruction_input.instance", eval_source: "stage3.instruction_input.eval.InstructionFlagRightOperandIsImm" },
-    Stage3OpeningClaimPlan { symbol: "stage3.instruction_input.opening.Imm", oracle: "Imm", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage3.instruction_input.instance", eval_source: "stage3.instruction_input.eval.Imm" },
-    Stage3OpeningClaimPlan { symbol: "stage3.registers_claim_reduction.opening.RdWriteValue", oracle: "RdWriteValue", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage3.registers_claim_reduction.instance", eval_source: "stage3.registers_claim_reduction.eval.RdWriteValue" },
-    Stage3OpeningClaimPlan { symbol: "stage3.registers_claim_reduction.opening.Rs1Value", oracle: "Rs1Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage3.registers_claim_reduction.instance", eval_source: "stage3.registers_claim_reduction.eval.Rs1Value" },
-    Stage3OpeningClaimPlan { symbol: "stage3.registers_claim_reduction.opening.Rs2Value", oracle: "Rs2Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage3.registers_claim_reduction.instance", eval_source: "stage3.registers_claim_reduction.eval.Rs2Value" },
+    Stage3OpeningClaimPlan { symbol: "stage3.spartan_shift.opening.UnexpandedPC", oracle: "UnexpandedPC", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual, point_source: "stage3.spartan_shift.instance", eval_source: "stage3.spartan_shift.eval.UnexpandedPC" },
+    Stage3OpeningClaimPlan { symbol: "stage3.spartan_shift.opening.PC", oracle: "PC", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual, point_source: "stage3.spartan_shift.instance", eval_source: "stage3.spartan_shift.eval.PC" },
+    Stage3OpeningClaimPlan { symbol: "stage3.spartan_shift.opening.OpFlagVirtualInstruction", oracle: "OpFlagVirtualInstruction", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual, point_source: "stage3.spartan_shift.instance", eval_source: "stage3.spartan_shift.eval.OpFlagVirtualInstruction" },
+    Stage3OpeningClaimPlan { symbol: "stage3.spartan_shift.opening.OpFlagIsFirstInSequence", oracle: "OpFlagIsFirstInSequence", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual, point_source: "stage3.spartan_shift.instance", eval_source: "stage3.spartan_shift.eval.OpFlagIsFirstInSequence" },
+    Stage3OpeningClaimPlan { symbol: "stage3.spartan_shift.opening.InstructionFlagIsNoop", oracle: "InstructionFlagIsNoop", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual, point_source: "stage3.spartan_shift.instance", eval_source: "stage3.spartan_shift.eval.InstructionFlagIsNoop" },
+    Stage3OpeningClaimPlan { symbol: "stage3.instruction_input.opening.InstructionFlagLeftOperandIsRs1Value", oracle: "InstructionFlagLeftOperandIsRs1Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual, point_source: "stage3.instruction_input.instance", eval_source: "stage3.instruction_input.eval.InstructionFlagLeftOperandIsRs1Value" },
+    Stage3OpeningClaimPlan { symbol: "stage3.instruction_input.opening.Rs1Value", oracle: "Rs1Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual, point_source: "stage3.instruction_input.instance", eval_source: "stage3.instruction_input.eval.Rs1Value" },
+    Stage3OpeningClaimPlan { symbol: "stage3.instruction_input.opening.InstructionFlagLeftOperandIsPC", oracle: "InstructionFlagLeftOperandIsPC", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual, point_source: "stage3.instruction_input.instance", eval_source: "stage3.instruction_input.eval.InstructionFlagLeftOperandIsPC" },
+    Stage3OpeningClaimPlan { symbol: "stage3.instruction_input.opening.UnexpandedPC", oracle: "UnexpandedPC", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual, point_source: "stage3.instruction_input.instance", eval_source: "stage3.instruction_input.eval.UnexpandedPC" },
+    Stage3OpeningClaimPlan { symbol: "stage3.instruction_input.opening.InstructionFlagRightOperandIsRs2Value", oracle: "InstructionFlagRightOperandIsRs2Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual, point_source: "stage3.instruction_input.instance", eval_source: "stage3.instruction_input.eval.InstructionFlagRightOperandIsRs2Value" },
+    Stage3OpeningClaimPlan { symbol: "stage3.instruction_input.opening.Rs2Value", oracle: "Rs2Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual, point_source: "stage3.instruction_input.instance", eval_source: "stage3.instruction_input.eval.Rs2Value" },
+    Stage3OpeningClaimPlan { symbol: "stage3.instruction_input.opening.InstructionFlagRightOperandIsImm", oracle: "InstructionFlagRightOperandIsImm", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual, point_source: "stage3.instruction_input.instance", eval_source: "stage3.instruction_input.eval.InstructionFlagRightOperandIsImm" },
+    Stage3OpeningClaimPlan { symbol: "stage3.instruction_input.opening.Imm", oracle: "Imm", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual, point_source: "stage3.instruction_input.instance", eval_source: "stage3.instruction_input.eval.Imm" },
+    Stage3OpeningClaimPlan { symbol: "stage3.registers_claim_reduction.opening.RdWriteValue", oracle: "RdWriteValue", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual, point_source: "stage3.registers_claim_reduction.instance", eval_source: "stage3.registers_claim_reduction.eval.RdWriteValue" },
+    Stage3OpeningClaimPlan { symbol: "stage3.registers_claim_reduction.opening.Rs1Value", oracle: "Rs1Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual, point_source: "stage3.registers_claim_reduction.instance", eval_source: "stage3.registers_claim_reduction.eval.Rs1Value" },
+    Stage3OpeningClaimPlan { symbol: "stage3.registers_claim_reduction.opening.Rs2Value", oracle: "Rs2Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual, point_source: "stage3.registers_claim_reduction.instance", eval_source: "stage3.registers_claim_reduction.eval.Rs2Value" },
 ];
 
 pub const STAGE3_OPENING_EQUALITIES: &[Stage3OpeningClaimEqualityPlan] = &[
-    Stage3OpeningClaimEqualityPlan { symbol: "stage3.instruction_input.left_claim_consistency", mode: "point_and_eval", lhs: "stage3.input.stage2.product_virtual.LeftInstructionInput", rhs: "stage3.input.stage2.instruction_lookup.LeftInstructionInput" },
-    Stage3OpeningClaimEqualityPlan { symbol: "stage3.instruction_input.right_claim_consistency", mode: "point_and_eval", lhs: "stage3.input.stage2.product_virtual.RightInstructionInput", rhs: "stage3.input.stage2.instruction_lookup.RightInstructionInput" },
+    Stage3OpeningClaimEqualityPlan { symbol: "stage3.instruction_input.left_claim_consistency", mode: Stage3OpeningEqualityMode::PointAndEval, lhs: "stage3.input.stage2.product_virtual.LeftInstructionInput", rhs: "stage3.input.stage2.instruction_lookup.LeftInstructionInput" },
+    Stage3OpeningClaimEqualityPlan { symbol: "stage3.instruction_input.right_claim_consistency", mode: Stage3OpeningEqualityMode::PointAndEval, lhs: "stage3.input.stage2.product_virtual.RightInstructionInput", rhs: "stage3.input.stage2.instruction_lookup.RightInstructionInput" },
 ];
 
 pub const STAGE3_OPENING_BATCHES: &[Stage3OpeningBatchPlan] = &[
@@ -233,21 +229,21 @@ where
     let mut artifacts = Stage3ExecutionArtifacts::default();
     for step in program.steps {
         match step.kind {
-            "transcript_squeeze" => {
+            Stage3ProgramStepKind::TranscriptSqueeze => {
                 let squeeze =
                     find_plan(program.transcript_squeezes, step.symbol).ok_or(VerifyStage3Error::MissingValue {
                         symbol: step.symbol,
                     })?;
                 verify_stage3_squeeze(program, squeeze, &mut store, transcript, &mut artifacts)?;
             }
-            "sumcheck_driver" => {
+            Stage3ProgramStepKind::SumcheckDriver => {
                 let driver =
                     find_plan(program.drivers, step.symbol).ok_or(VerifyStage3Error::MissingProof {
                         driver: step.symbol,
                     })?;
                 verify_stage3_driver(program, driver, proof, &mut store, transcript, &mut artifacts)?;
             }
-            _ => {
+            Stage3ProgramStepKind::TranscriptAbsorbBytes => {
                 return Err(VerifyStage3Error::InvalidProof {
                     driver: step.symbol,
                     reason: "unsupported stage3 program step",
@@ -310,16 +306,17 @@ where
         .ok_or(VerifyStage3Error::MissingProof {
             driver: driver.symbol,
         })?;
-    let relation = driver.relation.unwrap_or("<missing>");
+    let Some(relation) = driver.relation else {
+        return Err(VerifyStage3Error::InvalidProof {
+            driver: driver.symbol,
+            reason: "missing driver relation",
+        });
+    };
     let output = match relation {
-        "jolt.stage3.batched" => {
+        Stage3RelationKind::Stage3Batched => {
             verify_batched_stage3(program, driver, proof, store, transcript)?
         }
-        _ => {
-            return Err(VerifyStage3Error::UnsupportedRelation {
-                relation,
-            });
-        }
+        relation => return Err(VerifyStage3Error::UnsupportedRelation { relation }),
     };
     artifacts.sumchecks.push(output);
     Ok(())
@@ -430,20 +427,16 @@ fn expected_batched_output_claim(
                 actual: point.len(),
             })?;
         let value = match instance.relation {
-            "jolt.stage3.spartan_shift" => {
+            Stage3RelationKind::Stage3SpartanShift => {
                 expected_spartan_shift(store, evals, local_point)?
             }
-            "jolt.stage3.instruction_input" => {
+            Stage3RelationKind::Stage3InstructionInput => {
                 expected_instruction_input(store, evals, local_point)?
             }
-            "jolt.stage3.registers_claim_reduction" => {
+            Stage3RelationKind::Stage3RegistersClaimReduction => {
                 expected_registers(store, evals, local_point)?
             }
-            _ => {
-                return Err(VerifyStage3Error::UnsupportedRelation {
-                    relation: instance.relation,
-                });
-            }
+            relation => return Err(VerifyStage3Error::UnsupportedRelation { relation }),
         };
         expected += *coefficient * value;
     }
