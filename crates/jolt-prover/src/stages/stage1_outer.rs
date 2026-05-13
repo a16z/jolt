@@ -12,7 +12,7 @@ pub const STAGE1_PARAMS: Stage1Params = Stage1Params {
     transcript: "blake2b_transcript",
 };
 pub const STAGE1_TRANSCRIPT_SQUEEZES: &[Stage1TranscriptSqueezePlan] = &[
-    Stage1TranscriptSqueezePlan { symbol: "stage1.tau", label: "outer_tau", kind: "challenge_vector", count: 18 },
+    Stage1TranscriptSqueezePlan { symbol: "stage1.tau", label: "outer_tau", kind: "challenge_vector", count: 20 },
 ];
 
 pub const STAGE1_KERNELS: &[Stage1KernelPlan] = &[
@@ -25,8 +25,8 @@ pub const STAGE1_SUMCHECK_CLAIM_0_INPUT_OPENINGS: &[&str] = &[];
 pub const STAGE1_SUMCHECK_CLAIM_1_INPUT_OPENINGS: &[&str] = &["stage1.uniskip.opening"];
 
 pub const STAGE1_SUMCHECK_CLAIMS: &[Stage1SumcheckClaimPlan] = &[
-    Stage1SumcheckClaimPlan { symbol: "stage1.uniskip.input", stage: "stage1", domain: "jolt.stage1_uniskip_domain", num_rounds: 1, degree: 27, claim: "stage1.zero", kernel: Some("jolt.cpu.stage1.outer.uniskip"), relation: None, claim_value: "stage1.zero", input_openings: STAGE1_SUMCHECK_CLAIM_0_INPUT_OPENINGS },
-    Stage1SumcheckClaimPlan { symbol: "stage1.outer_remaining.input", stage: "stage1", domain: "jolt.trace_domain", num_rounds: 17, degree: 3, claim: "stage1.uniskip.eval", kernel: Some("jolt.cpu.stage1.outer.remaining"), relation: None, claim_value: "stage1.uniskip.eval", input_openings: STAGE1_SUMCHECK_CLAIM_1_INPUT_OPENINGS },
+    Stage1SumcheckClaimPlan { symbol: "stage1.uniskip.input", stage: "stage1", domain: "jolt.stage1_uniskip_domain", num_rounds: 1, degree: 45, claim: "stage1.zero", kernel: Some("jolt.cpu.stage1.outer.uniskip"), relation: None, claim_value: "stage1.zero", input_openings: STAGE1_SUMCHECK_CLAIM_0_INPUT_OPENINGS },
+    Stage1SumcheckClaimPlan { symbol: "stage1.outer_remaining.input", stage: "stage1", domain: "jolt.trace_domain", num_rounds: 19, degree: 3, claim: "stage1.uniskip.eval", kernel: Some("jolt.cpu.stage1.outer.remaining"), relation: None, claim_value: "stage1.uniskip.eval", input_openings: STAGE1_SUMCHECK_CLAIM_1_INPUT_OPENINGS },
 ];
 pub const STAGE1_SUMCHECK_BATCH_0_ORDERED_CLAIMS: &[&str] = &["stage1.uniskip.input"];
 
@@ -41,7 +41,7 @@ pub const STAGE1_SUMCHECK_BATCH_1_ORDERED_CLAIMS: &[&str] = &["stage1.outer_rema
 pub const STAGE1_SUMCHECK_BATCH_1_CLAIM_OPERANDS: &[&str] = &["stage1.outer_remaining.input"];
 
 pub const STAGE1_SUMCHECK_BATCH_1_ROUND_SCHEDULE: &[usize] = &[
-    17,
+    19,
 ];
 
 pub const STAGE1_SUMCHECK_BATCHES: &[Stage1SumcheckBatchPlan] = &[
@@ -53,16 +53,16 @@ pub const STAGE1_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[
 ];
 
 pub const STAGE1_SUMCHECK_DRIVER_1_ROUND_SCHEDULE: &[usize] = &[
-    17,
+    19,
 ];
 
 pub const STAGE1_SUMCHECK_DRIVERS: &[Stage1SumcheckDriverPlan] = &[
-    Stage1SumcheckDriverPlan { symbol: "stage1.uniskip.sumcheck", stage: "stage1", proof_slot: "stage1.uni_skip_first_round", kernel: Some("jolt.cpu.stage1.outer.uniskip"), relation: None, batch: "stage1.uniskip.batch", policy: "univariate_skip", round_schedule: STAGE1_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "uniskip_claim", round_label: "uniskip_poly", num_rounds: 1, degree: 27 },
-    Stage1SumcheckDriverPlan { symbol: "stage1.outer_remaining.sumcheck", stage: "stage1", proof_slot: "stage1.sumcheck", kernel: Some("jolt.cpu.stage1.outer.remaining"), relation: None, batch: "stage1.outer_remaining.batch", policy: "jolt_core_front_loaded", round_schedule: STAGE1_SUMCHECK_DRIVER_1_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 17, degree: 3 },
+    Stage1SumcheckDriverPlan { symbol: "stage1.uniskip.sumcheck", stage: "stage1", proof_slot: "stage1.uni_skip_first_round", kernel: Some("jolt.cpu.stage1.outer.uniskip"), relation: None, batch: "stage1.uniskip.batch", policy: "univariate_skip", round_schedule: STAGE1_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "uniskip_claim", round_label: "uniskip_poly", num_rounds: 1, degree: 45 },
+    Stage1SumcheckDriverPlan { symbol: "stage1.outer_remaining.sumcheck", stage: "stage1", proof_slot: "stage1.sumcheck", kernel: Some("jolt.cpu.stage1.outer.remaining"), relation: None, batch: "stage1.outer_remaining.batch", policy: "jolt_core_front_loaded", round_schedule: STAGE1_SUMCHECK_DRIVER_1_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 19, degree: 3 },
 ];
 pub const STAGE1_SUMCHECK_INSTANCE_RESULTS: &[Stage1SumcheckInstanceResultPlan] = &[
-    Stage1SumcheckInstanceResultPlan { symbol: "stage1.uniskip.instance", source: "stage1.uniskip.sumcheck", claim: "stage1.uniskip.input", relation: "jolt.stage1.outer.uniskip", index: 0, point_arity: 1, num_rounds: 1, round_offset: 0, point_order: "as_is", degree: 27 },
-    Stage1SumcheckInstanceResultPlan { symbol: "stage1.outer_remaining.instance", source: "stage1.outer_remaining.sumcheck", claim: "stage1.outer_remaining.input", relation: "jolt.stage1.outer.remaining", index: 0, point_arity: 16, num_rounds: 17, round_offset: 1, point_order: "reverse", degree: 3 },
+    Stage1SumcheckInstanceResultPlan { symbol: "stage1.uniskip.instance", source: "stage1.uniskip.sumcheck", claim: "stage1.uniskip.input", relation: "jolt.stage1.outer.uniskip", index: 0, point_arity: 1, num_rounds: 1, round_offset: 0, point_order: "as_is", degree: 45 },
+    Stage1SumcheckInstanceResultPlan { symbol: "stage1.outer_remaining.instance", source: "stage1.outer_remaining.sumcheck", claim: "stage1.outer_remaining.input", relation: "jolt.stage1.outer.remaining", index: 0, point_arity: 18, num_rounds: 19, round_offset: 1, point_order: "reverse", degree: 3 },
 ];
 
 pub const STAGE1_SUMCHECK_EVALS: &[Stage1SumcheckEvalPlan] = &[
@@ -102,45 +102,69 @@ pub const STAGE1_SUMCHECK_EVALS: &[Stage1SumcheckEvalPlan] = &[
     Stage1SumcheckEvalPlan { symbol: "stage1.outer_remaining.eval.OpFlagIsCompressed", source: "stage1.outer_remaining.sumcheck", name: "stage1.outer_remaining.eval.OpFlagIsCompressed", index: 32, oracle: "OpFlagIsCompressed" },
     Stage1SumcheckEvalPlan { symbol: "stage1.outer_remaining.eval.OpFlagIsFirstInSequence", source: "stage1.outer_remaining.sumcheck", name: "stage1.outer_remaining.eval.OpFlagIsFirstInSequence", index: 33, oracle: "OpFlagIsFirstInSequence" },
     Stage1SumcheckEvalPlan { symbol: "stage1.outer_remaining.eval.OpFlagIsLastInSequence", source: "stage1.outer_remaining.sumcheck", name: "stage1.outer_remaining.eval.OpFlagIsLastInSequence", index: 34, oracle: "OpFlagIsLastInSequence" },
+    Stage1SumcheckEvalPlan { symbol: "stage1.outer_remaining.eval.OpFlagIsFieldMul", source: "stage1.outer_remaining.sumcheck", name: "stage1.outer_remaining.eval.OpFlagIsFieldMul", index: 35, oracle: "OpFlagIsFieldMul" },
+    Stage1SumcheckEvalPlan { symbol: "stage1.outer_remaining.eval.OpFlagIsFieldAdd", source: "stage1.outer_remaining.sumcheck", name: "stage1.outer_remaining.eval.OpFlagIsFieldAdd", index: 36, oracle: "OpFlagIsFieldAdd" },
+    Stage1SumcheckEvalPlan { symbol: "stage1.outer_remaining.eval.OpFlagIsFieldSub", source: "stage1.outer_remaining.sumcheck", name: "stage1.outer_remaining.eval.OpFlagIsFieldSub", index: 37, oracle: "OpFlagIsFieldSub" },
+    Stage1SumcheckEvalPlan { symbol: "stage1.outer_remaining.eval.OpFlagIsFieldInv", source: "stage1.outer_remaining.sumcheck", name: "stage1.outer_remaining.eval.OpFlagIsFieldInv", index: 38, oracle: "OpFlagIsFieldInv" },
+    Stage1SumcheckEvalPlan { symbol: "stage1.outer_remaining.eval.OpFlagIsFieldAssertEq", source: "stage1.outer_remaining.sumcheck", name: "stage1.outer_remaining.eval.OpFlagIsFieldAssertEq", index: 39, oracle: "OpFlagIsFieldAssertEq" },
+    Stage1SumcheckEvalPlan { symbol: "stage1.outer_remaining.eval.OpFlagIsFieldMov", source: "stage1.outer_remaining.sumcheck", name: "stage1.outer_remaining.eval.OpFlagIsFieldMov", index: 40, oracle: "OpFlagIsFieldMov" },
+    Stage1SumcheckEvalPlan { symbol: "stage1.outer_remaining.eval.OpFlagIsFieldSLL64", source: "stage1.outer_remaining.sumcheck", name: "stage1.outer_remaining.eval.OpFlagIsFieldSLL64", index: 41, oracle: "OpFlagIsFieldSLL64" },
+    Stage1SumcheckEvalPlan { symbol: "stage1.outer_remaining.eval.OpFlagIsFieldSLL128", source: "stage1.outer_remaining.sumcheck", name: "stage1.outer_remaining.eval.OpFlagIsFieldSLL128", index: 42, oracle: "OpFlagIsFieldSLL128" },
+    Stage1SumcheckEvalPlan { symbol: "stage1.outer_remaining.eval.OpFlagIsFieldSLL192", source: "stage1.outer_remaining.sumcheck", name: "stage1.outer_remaining.eval.OpFlagIsFieldSLL192", index: 43, oracle: "OpFlagIsFieldSLL192" },
+    Stage1SumcheckEvalPlan { symbol: "stage1.outer_remaining.eval.FieldRs1Value", source: "stage1.outer_remaining.sumcheck", name: "stage1.outer_remaining.eval.FieldRs1Value", index: 44, oracle: "FieldRs1Value" },
+    Stage1SumcheckEvalPlan { symbol: "stage1.outer_remaining.eval.FieldRs2Value", source: "stage1.outer_remaining.sumcheck", name: "stage1.outer_remaining.eval.FieldRs2Value", index: 45, oracle: "FieldRs2Value" },
+    Stage1SumcheckEvalPlan { symbol: "stage1.outer_remaining.eval.FieldRdValue", source: "stage1.outer_remaining.sumcheck", name: "stage1.outer_remaining.eval.FieldRdValue", index: 46, oracle: "FieldRdValue" },
 ];
 
 pub const STAGE1_OPENING_CLAIMS: &[Stage1OpeningClaimPlan] = &[
     Stage1OpeningClaimPlan { symbol: "stage1.uniskip.opening", oracle: "UnivariateSkip", domain: "jolt.stage1_uniskip_domain", point_arity: 1, claim_kind: "virtual", point_source: "stage1.uniskip.instance", eval_source: "stage1.uniskip.eval" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.LeftInstructionInput", oracle: "LeftInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.LeftInstructionInput" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.RightInstructionInput", oracle: "RightInstructionInput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.RightInstructionInput" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.Product", oracle: "Product", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.Product" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.ShouldBranch", oracle: "ShouldBranch", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.ShouldBranch" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.PC", oracle: "PC", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.PC" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.UnexpandedPC", oracle: "UnexpandedPC", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.UnexpandedPC" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.Imm", oracle: "Imm", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.Imm" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.RamAddress", oracle: "RamAddress", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.RamAddress" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.Rs1Value", oracle: "Rs1Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.Rs1Value" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.Rs2Value", oracle: "Rs2Value", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.Rs2Value" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.RdWriteValue", oracle: "RdWriteValue", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.RdWriteValue" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.RamReadValue", oracle: "RamReadValue", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.RamReadValue" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.RamWriteValue", oracle: "RamWriteValue", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.RamWriteValue" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.LeftLookupOperand", oracle: "LeftLookupOperand", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.LeftLookupOperand" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.RightLookupOperand", oracle: "RightLookupOperand", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.RightLookupOperand" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.NextUnexpandedPC", oracle: "NextUnexpandedPC", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.NextUnexpandedPC" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.NextPC", oracle: "NextPC", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.NextPC" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.NextIsVirtual", oracle: "NextIsVirtual", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.NextIsVirtual" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.NextIsFirstInSequence", oracle: "NextIsFirstInSequence", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.NextIsFirstInSequence" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.LookupOutput", oracle: "LookupOutput", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.LookupOutput" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.ShouldJump", oracle: "ShouldJump", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.ShouldJump" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagAddOperands", oracle: "OpFlagAddOperands", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagAddOperands" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagSubtractOperands", oracle: "OpFlagSubtractOperands", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagSubtractOperands" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagMultiplyOperands", oracle: "OpFlagMultiplyOperands", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagMultiplyOperands" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagLoad", oracle: "OpFlagLoad", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagLoad" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagStore", oracle: "OpFlagStore", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagStore" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagJump", oracle: "OpFlagJump", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagJump" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagWriteLookupOutputToRD", oracle: "OpFlagWriteLookupOutputToRD", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagWriteLookupOutputToRD" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagVirtualInstruction", oracle: "OpFlagVirtualInstruction", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagVirtualInstruction" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagAssert", oracle: "OpFlagAssert", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagAssert" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagDoNotUpdateUnexpandedPC", oracle: "OpFlagDoNotUpdateUnexpandedPC", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagDoNotUpdateUnexpandedPC" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagAdvice", oracle: "OpFlagAdvice", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagAdvice" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagIsCompressed", oracle: "OpFlagIsCompressed", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagIsCompressed" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagIsFirstInSequence", oracle: "OpFlagIsFirstInSequence", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagIsFirstInSequence" },
-    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagIsLastInSequence", oracle: "OpFlagIsLastInSequence", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagIsLastInSequence" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.LeftInstructionInput", oracle: "LeftInstructionInput", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.LeftInstructionInput" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.RightInstructionInput", oracle: "RightInstructionInput", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.RightInstructionInput" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.Product", oracle: "Product", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.Product" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.ShouldBranch", oracle: "ShouldBranch", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.ShouldBranch" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.PC", oracle: "PC", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.PC" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.UnexpandedPC", oracle: "UnexpandedPC", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.UnexpandedPC" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.Imm", oracle: "Imm", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.Imm" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.RamAddress", oracle: "RamAddress", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.RamAddress" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.Rs1Value", oracle: "Rs1Value", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.Rs1Value" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.Rs2Value", oracle: "Rs2Value", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.Rs2Value" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.RdWriteValue", oracle: "RdWriteValue", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.RdWriteValue" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.RamReadValue", oracle: "RamReadValue", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.RamReadValue" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.RamWriteValue", oracle: "RamWriteValue", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.RamWriteValue" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.LeftLookupOperand", oracle: "LeftLookupOperand", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.LeftLookupOperand" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.RightLookupOperand", oracle: "RightLookupOperand", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.RightLookupOperand" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.NextUnexpandedPC", oracle: "NextUnexpandedPC", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.NextUnexpandedPC" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.NextPC", oracle: "NextPC", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.NextPC" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.NextIsVirtual", oracle: "NextIsVirtual", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.NextIsVirtual" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.NextIsFirstInSequence", oracle: "NextIsFirstInSequence", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.NextIsFirstInSequence" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.LookupOutput", oracle: "LookupOutput", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.LookupOutput" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.ShouldJump", oracle: "ShouldJump", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.ShouldJump" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagAddOperands", oracle: "OpFlagAddOperands", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagAddOperands" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagSubtractOperands", oracle: "OpFlagSubtractOperands", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagSubtractOperands" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagMultiplyOperands", oracle: "OpFlagMultiplyOperands", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagMultiplyOperands" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagLoad", oracle: "OpFlagLoad", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagLoad" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagStore", oracle: "OpFlagStore", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagStore" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagJump", oracle: "OpFlagJump", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagJump" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagWriteLookupOutputToRD", oracle: "OpFlagWriteLookupOutputToRD", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagWriteLookupOutputToRD" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagVirtualInstruction", oracle: "OpFlagVirtualInstruction", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagVirtualInstruction" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagAssert", oracle: "OpFlagAssert", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagAssert" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagDoNotUpdateUnexpandedPC", oracle: "OpFlagDoNotUpdateUnexpandedPC", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagDoNotUpdateUnexpandedPC" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagAdvice", oracle: "OpFlagAdvice", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagAdvice" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagIsCompressed", oracle: "OpFlagIsCompressed", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagIsCompressed" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagIsFirstInSequence", oracle: "OpFlagIsFirstInSequence", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagIsFirstInSequence" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagIsLastInSequence", oracle: "OpFlagIsLastInSequence", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagIsLastInSequence" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagIsFieldMul", oracle: "OpFlagIsFieldMul", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagIsFieldMul" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagIsFieldAdd", oracle: "OpFlagIsFieldAdd", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagIsFieldAdd" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagIsFieldSub", oracle: "OpFlagIsFieldSub", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagIsFieldSub" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagIsFieldInv", oracle: "OpFlagIsFieldInv", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagIsFieldInv" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagIsFieldAssertEq", oracle: "OpFlagIsFieldAssertEq", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagIsFieldAssertEq" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagIsFieldMov", oracle: "OpFlagIsFieldMov", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagIsFieldMov" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagIsFieldSLL64", oracle: "OpFlagIsFieldSLL64", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagIsFieldSLL64" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagIsFieldSLL128", oracle: "OpFlagIsFieldSLL128", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagIsFieldSLL128" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagIsFieldSLL192", oracle: "OpFlagIsFieldSLL192", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagIsFieldSLL192" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.FieldRs1Value", oracle: "FieldRs1Value", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.FieldRs1Value" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.FieldRs2Value", oracle: "FieldRs2Value", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.FieldRs2Value" },
+    Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.FieldRdValue", oracle: "FieldRdValue", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.FieldRdValue" },
 ];
 
 pub const STAGE1_OPENING_BATCH_0_ORDERED_CLAIMS: &[&str] = &[
@@ -179,6 +203,18 @@ pub const STAGE1_OPENING_BATCH_0_ORDERED_CLAIMS: &[&str] = &[
     "stage1.outer_remaining.opening.OpFlagIsCompressed",
     "stage1.outer_remaining.opening.OpFlagIsFirstInSequence",
     "stage1.outer_remaining.opening.OpFlagIsLastInSequence",
+    "stage1.outer_remaining.opening.OpFlagIsFieldMul",
+    "stage1.outer_remaining.opening.OpFlagIsFieldAdd",
+    "stage1.outer_remaining.opening.OpFlagIsFieldSub",
+    "stage1.outer_remaining.opening.OpFlagIsFieldInv",
+    "stage1.outer_remaining.opening.OpFlagIsFieldAssertEq",
+    "stage1.outer_remaining.opening.OpFlagIsFieldMov",
+    "stage1.outer_remaining.opening.OpFlagIsFieldSLL64",
+    "stage1.outer_remaining.opening.OpFlagIsFieldSLL128",
+    "stage1.outer_remaining.opening.OpFlagIsFieldSLL192",
+    "stage1.outer_remaining.opening.FieldRs1Value",
+    "stage1.outer_remaining.opening.FieldRs2Value",
+    "stage1.outer_remaining.opening.FieldRdValue",
 ];
 
 pub const STAGE1_OPENING_BATCH_0_CLAIM_OPERANDS: &[&str] = &[
@@ -217,10 +253,22 @@ pub const STAGE1_OPENING_BATCH_0_CLAIM_OPERANDS: &[&str] = &[
     "stage1.outer_remaining.opening.OpFlagIsCompressed",
     "stage1.outer_remaining.opening.OpFlagIsFirstInSequence",
     "stage1.outer_remaining.opening.OpFlagIsLastInSequence",
+    "stage1.outer_remaining.opening.OpFlagIsFieldMul",
+    "stage1.outer_remaining.opening.OpFlagIsFieldAdd",
+    "stage1.outer_remaining.opening.OpFlagIsFieldSub",
+    "stage1.outer_remaining.opening.OpFlagIsFieldInv",
+    "stage1.outer_remaining.opening.OpFlagIsFieldAssertEq",
+    "stage1.outer_remaining.opening.OpFlagIsFieldMov",
+    "stage1.outer_remaining.opening.OpFlagIsFieldSLL64",
+    "stage1.outer_remaining.opening.OpFlagIsFieldSLL128",
+    "stage1.outer_remaining.opening.OpFlagIsFieldSLL192",
+    "stage1.outer_remaining.opening.FieldRs1Value",
+    "stage1.outer_remaining.opening.FieldRs2Value",
+    "stage1.outer_remaining.opening.FieldRdValue",
 ];
 
 pub const STAGE1_OPENING_BATCHES: &[Stage1OpeningBatchPlan] = &[
-    Stage1OpeningBatchPlan { symbol: "stage1.outer_remaining.openings", stage: "stage1", proof_slot: "stage1.virtual_openings", policy: "jolt_r1cs_input_order", count: 35, ordered_claims: STAGE1_OPENING_BATCH_0_ORDERED_CLAIMS, claim_operands: STAGE1_OPENING_BATCH_0_CLAIM_OPERANDS },
+    Stage1OpeningBatchPlan { symbol: "stage1.outer_remaining.openings", stage: "stage1", proof_slot: "stage1.virtual_openings", policy: "jolt_r1cs_input_order", count: 47, ordered_claims: STAGE1_OPENING_BATCH_0_ORDERED_CLAIMS, claim_operands: STAGE1_OPENING_BATCH_0_CLAIM_OPERANDS },
 ];
 pub const STAGE1_PROGRAM: Stage1CpuProgramPlan = Stage1CpuProgramPlan {
     params: STAGE1_PARAMS,

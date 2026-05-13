@@ -4,6 +4,7 @@
 //! - [`riscv`]: RV64I/M base ISA + RV64 W-suffix instructions
 //! - [`virt`]: virtual (synthesized) instructions used by the proving system
 
+pub mod field;
 pub mod riscv;
 pub mod virt;
 

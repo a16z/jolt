@@ -337,7 +337,7 @@ fn jolt_evaluation_role_api_extension() -> ProtocolArtifactExtension {
         required_artifact_stages: vec!["stage8".to_owned()],
         prover: ProtocolProverApiExtension {
             lib_module: jolt_prover_lib_module(),
-            imports: "#![expect(\n    clippy::too_many_arguments,\n    reason = \"generated prover helpers mirror staged protocol ABIs\"\n)]\n\nuse jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme};\nuse jolt_field::{Field, Fr};\nuse jolt_kernels::{stage1, stage2, stage3, stage4, stage5, stage6, stage7};\nuse jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};\nuse jolt_poly::{EqPolynomial, Polynomial};\nuse jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};\nuse jolt_verifier::{JoltEvaluationProof, JoltNamedEval, JoltProof, JoltStage2RamAccess, JoltStage2RamData, JoltStage2RamOutputLayout, JoltStage6BytecodeEntry, JoltStage6BytecodeReadRafData, JoltStage6VerifierData, JoltStageChallengeVector, JoltStageExecutionArtifacts, JoltStageOpeningInputValue, JoltStageProof, JoltSumcheckOutput};\nuse jolt_witness::{stage4_ram_val_init_opening, CycleInput, Stage45SparseTraceWitness, Stage6BytecodeEntry as WitnessStage6BytecodeEntry, Stage6WitnessParams, Stage6WitnessPolynomials, Stage6WitnessSlices};\nuse rayon::prelude::*;\n\n".to_owned(),
+            imports: "#![expect(\n    clippy::too_many_arguments,\n    reason = \"generated prover helpers mirror staged protocol ABIs\"\n)]\n\nuse jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme};\nuse jolt_field::{Field, Fr};\nuse jolt_kernels::{stage1, stage2, stage3, stage4, stage5, stage6, stage7};\nuse jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};\nuse jolt_poly::{EqPolynomial, Polynomial};\nuse jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};\nuse jolt_verifier::{JoltEvaluationProof, JoltNamedEval, JoltProof, JoltStage2RamAccess, JoltStage2RamData, JoltStage2RamOutputLayout, JoltStage6BytecodeEntry, JoltStage6BytecodeReadRafData, JoltStage6VerifierData, JoltStageChallengeVector, JoltStageExecutionArtifacts, JoltStageOpeningInputValue, JoltStageProof, JoltSumcheckOutput};\nuse jolt_witness::{stage4_ram_val_init_opening, zero_field_registers_witness, CycleInput, FieldRegisterColumns, FieldRegistersWitness, Stage45SparseTraceWitness, Stage6BytecodeEntry as WitnessStage6BytecodeEntry, Stage6WitnessParams, Stage6WitnessPolynomials, Stage6WitnessSlices};\nuse rayon::prelude::*;\n\n".to_owned(),
             input_fields:
                 "    pub stage7_openings: Option<&'a [stage7::Stage7OpeningInputValue<Fr>]>,\n"
                     .to_owned(),
@@ -740,6 +740,25 @@ pub struct JoltProverWitnessInputs<'a, CommitmentInputs> {{
     pub instruction_ra_virtual_d: usize,
     pub stage7_openings: &'a [stage7::Stage7OpeningInputValue<{field_type}>],
     pub evaluation_openings: Option<&'a [stage7::Stage7OpeningInputValue<{field_type}>]>,
+    /// BN254 Fr coprocessor witness, materialized from the trace's FR
+    /// event stream via `jolt_witness::field_registers_witness`. `None`
+    /// is accepted for FR-less traces — a zero witness is materialized
+    /// internally so Bolt's Stage 3/4/5 FR ClaimReduction /
+    /// ReadWriteChecking / ValEvaluation relations get a valid kernel
+    /// input. The FR R1CS rows are flag-guarded (FR flags are zero on
+    /// non-FR cycles), so zero witness produces trivially-satisfied
+    /// claims.
+    pub field_registers: Option<FrProverWitness<'a, {field_type}>>,
+}}
+
+/// Borrowed pair of pre-computed FR witness slices produced by
+/// `jolt_witness::field_registers_witness`. The host materializes
+/// these once per proof and threads references into Stages 3 (operand
+/// columns) and 4/5 (dense Twist polynomials).
+#[derive(Clone, Copy)]
+pub struct FrProverWitness<'a, F: jolt_field::Field> {{
+    pub columns: &'a FieldRegisterColumns<F>,
+    pub witness: &'a FieldRegistersWitness<F>,
 }}
 
 pub fn prove_jolt_with_witness_inputs<CommitmentInputs, T>(
@@ -764,8 +783,52 @@ where
         inputs.ram,
     )?;
     drop(_stage2_input_span);
+    // FR witness fallback: Bolt's Stage 3/4/5 plans always emit FR
+    // ClaimReduction / ReadWriteChecking / ValEvaluation relations, so
+    // the kernels always demand `field_registers` input. Materialize
+    // zero columns + witness when the caller doesn't supply one. The
+    // R1CS row guards make zero contributions trivially satisfied on
+    // FR-less cycles.
+    let _fr_zero_span = tracing::info_span!("bolt.prove.inputs.field_registers_zero").entered();
+    let owned_fr_zero = if inputs.field_registers.is_none() {{
+        Some(zero_field_registers_witness::<{field_type}>(inputs.trace_len))
+    }} else {{
+        None
+    }};
+    drop(_fr_zero_span);
+    let effective_fr_witness: Option<FrProverWitness<'_, {field_type}>> = inputs
+        .field_registers
+        .or_else(|| {{
+            owned_fr_zero
+                .as_ref()
+                .map(|(cols, witness)| FrProverWitness {{ columns: cols, witness }})
+        }});
+    // FR Stage 3 sparse-access bridge (Rule 1): when the FR witness is
+    // `sparse_only`, the dense T-length operand columns are empty and the
+    // kernel takes the sparse path over per-cycle access entries. For
+    // FR-less traces the converted Vec is empty (zero allocation per T).
+    let stage3_fr_accesses: Option<Vec<stage3::Stage3FieldRegisterAccess<{field_type}>>> =
+        effective_fr_witness.and_then(|fr| {{
+            fr.columns.sparse_only.then(|| {{
+                fr.columns
+                    .sparse_accesses
+                    .iter()
+                    .map(|access| stage3::Stage3FieldRegisterAccess {{
+                        cycle: access.cycle,
+                        rd_value: access.rd_value,
+                        rs1_value: access.rs1_value,
+                        rs2_value: access.rs2_value,
+                    }})
+                    .collect()
+            }})
+        }});
     let _stage3_input_span = tracing::info_span!("bolt.prove.inputs.stage3").entered();
-    let stage3 = stage3_prover_inputs(inputs.stage3_openings, inputs.stage3_cycles);
+    let stage3 = stage3_prover_inputs(
+        inputs.stage3_openings,
+        inputs.stage3_cycles,
+        effective_fr_witness.map(|fr| fr.columns),
+        stage3_fr_accesses.as_deref(),
+    );
     drop(_stage3_input_span);
     let _stage45_witness_span = tracing::info_span!("bolt.prove.inputs.stage45_witness").entered();
     let stage45_witness = stage4::stage4_5_sparse_trace_witness_from_accesses(
@@ -781,6 +844,7 @@ where
         inputs.ram_k,
         inputs.register_accesses,
         &stage45_witness,
+        effective_fr_witness.map(|fr| fr.witness),
     );
     drop(_stage4_input_span);
     let _stage5_input_span = tracing::info_span!("bolt.prove.inputs.stage5").entered();
@@ -794,6 +858,7 @@ where
         inputs.is_interleaved_operands,
         inputs.ra_virtual_log_k_chunk,
         &stage45_witness,
+        effective_fr_witness.map(|fr| fr.witness),
     );
     drop(_stage5_input_span);
     let _stage6_witness_span = tracing::info_span!("bolt.prove.inputs.stage6_witness").entered();
@@ -1085,8 +1150,28 @@ where
 pub fn stage3_prover_inputs<'a>(
     opening_inputs: &'a [stage3::Stage3OpeningInputValue<{field_type}>],
     cycles: &'a [stage3::Stage3Cycle],
+    field_registers: Option<&'a FieldRegisterColumns<{field_type}>>,
+    sparse_field_register_accesses: Option<&'a [stage3::Stage3FieldRegisterAccess<{field_type}>]>,
 ) -> stage3::Stage3ProverInputs<'a, {field_type}> {{
-    stage3::Stage3ProverInputs::new(opening_inputs).with_cycles(cycles)
+    let mut inputs = stage3::Stage3ProverInputs::new(opening_inputs).with_cycles(cycles);
+    if let Some(fr_columns) = field_registers {{
+        // When the FR witness is `sparse_only`, the dense Stage 3 columns
+        // are empty by construction — hand the kernel the sparse access
+        // list (Rule 1 in `specs/bn254-fr-coprocessor.md`).
+        let accesses = if fr_columns.sparse_only {{
+            sparse_field_register_accesses.or(Some(&[]))
+        }} else {{
+            None
+        }};
+        inputs = inputs.with_field_registers(stage3::Stage3FieldRegisterColumns {{
+            rd_value: &fr_columns.rd_value,
+            rs1_value: &fr_columns.rs1_value,
+            rs2_value: &fr_columns.rs2_value,
+            trace_len: fr_columns.trace_len,
+            accesses,
+        }});
+    }}
+    inputs
 }}
 
 pub fn prove_stage3_inputs_with_program<T>(
@@ -1110,7 +1195,9 @@ pub fn prove_stage3_with_witness_inputs<T>(
 where
     T: Transcript<Challenge = {field_type}>,
 {{
-    let inputs = stage3_prover_inputs(opening_inputs, cycles);
+    let (zero_fr_cols, _zero_fr_witness) =
+        zero_field_registers_witness::<{field_type}>(cycles.len());
+    let inputs = stage3_prover_inputs(opening_inputs, cycles, Some(&zero_fr_cols), Some(&[]));
     prove_stage3_inputs_with_program(program, inputs, transcript)
 }}
 
@@ -1169,14 +1256,35 @@ pub fn stage4_prover_inputs<'a>(
     ram_k: usize,
     register_accesses: &'a [stage4::Stage4RegisterAccess],
     witness: &'a Stage45SparseTraceWitness<{field_type}>,
+    field_registers: Option<&'a FieldRegistersWitness<{field_type}>>,
 ) -> stage4::Stage4ProverInputs<'a, {field_type}> {{
-    stage4::Stage4ProverInputs::new(opening_inputs).with_stage45_sparse_trace_witness(
+    let mut inputs = stage4::Stage4ProverInputs::new(opening_inputs).with_stage45_sparse_trace_witness(
         register_count,
         trace_len,
         ram_k,
         register_accesses,
         witness,
-    )
+    );
+    if let Some(fr) = field_registers {{
+        // When the FR witness was produced via `zero_field_registers_witness`
+        // (or any sparse-only builder), the dense Twist vectors are empty
+        // and the kernel must take the sparse path with an empty access
+        // list — pass `Some(&[])` to opt in (Rule 1 in
+        // `specs/bn254-fr-coprocessor.md`).
+        let sparse_accesses: Option<&'a [stage4::Stage4FieldRegisterAccess<{field_type}>]> =
+            if fr.sparse_only {{ Some(&[]) }} else {{ None }};
+        inputs = inputs.with_field_registers(stage4::Stage4FieldRegistersWitness {{
+            field_register_count: fr.field_register_count,
+            trace_len: fr.trace_len,
+            field_registers_val: &fr.field_registers_val,
+            field_rs1_ra: &fr.field_rs1_ra,
+            field_rs2_ra: &fr.field_rs2_ra,
+            field_rd_wa: &fr.field_rd_wa,
+            field_rd_inc: &fr.field_rd_inc,
+            accesses: sparse_accesses,
+        }});
+    }}
+    inputs
 }}
 
 pub fn prove_stage4_inputs_with_program<T>(
@@ -1204,6 +1312,8 @@ pub fn prove_stage4_with_witness_inputs<T>(
 where
     T: Transcript<Challenge = {field_type}>,
 {{
+    let (_zero_fr_cols, zero_fr_witness) =
+        zero_field_registers_witness::<{field_type}>(trace_len);
     let inputs = stage4_prover_inputs(
         opening_inputs,
         register_count,
@@ -1211,6 +1321,7 @@ where
         ram_k,
         register_accesses,
         witness,
+        Some(&zero_fr_witness),
     );
     prove_stage4_inputs_with_program(program, inputs, transcript)
 }}
@@ -1305,8 +1416,9 @@ pub fn stage5_prover_inputs<'a>(
     is_interleaved_operands: &'a [bool],
     ra_virtual_log_k_chunk: usize,
     witness: &'a Stage45SparseTraceWitness<{field_type}>,
+    field_registers: Option<&'a FieldRegistersWitness<{field_type}>>,
 ) -> stage5::Stage5ProverInputs<'a, {field_type}> {{
-    stage5::Stage5ProverInputs::new(opening_inputs).with_stage45_sparse_trace_witness(
+    let mut inputs = stage5::Stage5ProverInputs::new(opening_inputs).with_stage45_sparse_trace_witness(
         trace_len,
         ram_k,
         register_count,
@@ -1315,7 +1427,27 @@ pub fn stage5_prover_inputs<'a>(
         is_interleaved_operands,
         ra_virtual_log_k_chunk,
         witness,
-    )
+    );
+    if let Some(fr) = field_registers {{
+        // When `field_rd_wa` is empty (sparse-only FR witness), opt in to
+        // Stage 5's sparse FR projection via per-cycle write addresses —
+        // Rule 1 in `specs/bn254-fr-coprocessor.md`. Saves the
+        // 16 · T dense `field_rd_wa` allocation (~33 MB at T = 2^16).
+        let field_rd_write_addresses: Option<&'a [Option<usize>]> = if fr.field_rd_wa.is_empty()
+        {{
+            Some(&fr.field_rd_write_addresses)
+        }} else {{
+            None
+        }};
+        inputs = inputs.with_field_registers_val(stage5::Stage5FieldRegistersValWitness {{
+            field_register_count: fr.field_register_count,
+            trace_len: fr.trace_len,
+            field_rd_inc: &fr.field_rd_inc,
+            field_rd_wa: &fr.field_rd_wa,
+            field_rd_write_addresses,
+        }});
+    }}
+    inputs
 }}
 
 pub fn prove_stage5_inputs_with_program<T>(
@@ -1346,6 +1478,8 @@ pub fn prove_stage5_with_witness_inputs<T>(
 where
     T: Transcript<Challenge = {field_type}>,
 {{
+    let (_zero_fr_cols, zero_fr_witness) =
+        zero_field_registers_witness::<{field_type}>(trace_len);
     let inputs = stage5_prover_inputs(
         opening_inputs,
         trace_len,
@@ -1356,6 +1490,7 @@ where
         is_interleaved_operands,
         ra_virtual_log_k_chunk,
         witness,
+        Some(&zero_fr_witness),
     );
     prove_stage5_inputs_with_program(program, inputs, transcript)
 }}

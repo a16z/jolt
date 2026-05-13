@@ -642,6 +642,9 @@ impl Stage4CpuProgram {
             }
             let expected_abi = match kernel.relation.as_str() {
                 "jolt.stage4.registers_read_write" => "jolt_stage4_registers_read_write",
+                "jolt.stage4.field_registers_read_write" => {
+                    "jolt_stage4_field_registers_read_write"
+                }
                 "jolt.stage4.ram_val_check" => "jolt_stage4_ram_val_check",
                 "jolt.stage4.batched" => "jolt_stage4_batched",
                 _ => {
@@ -2087,6 +2090,13 @@ fn observe_stage4_sumcheck_output<F: Field>(
                 "stage4_registers_rw" => {
                     point = normalize_stage4_registers_rw_point(program, output.driver, &point)?;
                 }
+                "stage4_field_registers_rw" => {
+                    point = normalize_stage4_field_registers_rw_point(
+                        program,
+                        output.driver,
+                        &point,
+                    )?;
+                }
                 _ => {
                     return Err(VerifyStage4Error::InvalidProof {
                         driver: output.driver,
@@ -2154,6 +2164,9 @@ fn expected_batched_output_claim(
             "jolt.stage4.registers_read_write" => {
                 expected_registers_read_write(store, evals, local_point)?
             }
+            "jolt.stage4.field_registers_read_write" => {
+                expected_field_registers_read_write(store, evals, local_point)?
+            }
             "jolt.stage4.ram_val_check" => {
                 expected_ram_val_check(store, evals, local_point)?
             }
@@ -2188,6 +2201,35 @@ fn expected_registers_read_write(
     Ok(eq_eval
         * (rd_wa * (registers_val + rd_inc)
             + gamma * (rs1_ra * registers_val + gamma * rs2_ra * registers_val)))
+}
+
+fn expected_field_registers_read_write(
+    store: &super::common::ValueStore<Fr>,
+    evals: &[Stage4NamedEval<Fr>],
+    local_point: &[Fr],
+) -> Result<Fr, VerifyStage4Error> {
+    let trace_point =
+        super::common::store_point(store, "stage4.input.stage3.field_registers.FieldRdValue")?;
+    let r_cycle = normalize_stage4_registers_rw_cycle_point(
+        local_point,
+        trace_point.len(),
+        "stage4.field_registers_read_write.instance",
+    )?;
+    let eq_eval = EqPolynomial::<Fr>::mle(&r_cycle, trace_point);
+    let field_registers_val = eval_by_name(
+        evals,
+        "stage4.field_registers_read_write.eval.FieldRegistersVal",
+    )?;
+    let field_rs1_ra = eval_by_name(evals, "stage4.field_registers_read_write.eval.FieldRs1Ra")?;
+    let field_rs2_ra = eval_by_name(evals, "stage4.field_registers_read_write.eval.FieldRs2Ra")?;
+    let field_rd_wa = eval_by_name(evals, "stage4.field_registers_read_write.eval.FieldRdWa")?;
+    let field_rd_inc = eval_by_name(evals, "stage4.field_registers_read_write.eval.FieldRdInc")?;
+    let gamma = super::common::store_scalar(store, "stage4.field_registers_read_write.gamma")?;
+    Ok(eq_eval
+        * (field_rd_wa * (field_registers_val + field_rd_inc)
+            + gamma
+                * (field_rs1_ra * field_registers_val
+                    + gamma * field_rs2_ra * field_registers_val)))
 }
 
 fn expected_ram_val_check(
@@ -2244,6 +2286,42 @@ fn normalize_stage4_registers_rw_point<F: Field>(
         return Err(VerifyStage4Error::InvalidInputLength {
             input: "stage4.registers_read_write.instance",
             expected: cycle_rounds + address_rounds,
+            actual: point.len(),
+        });
+    }
+    let (cycle, address) = point.split_at(cycle_rounds);
+    Ok(address
+        .iter()
+        .rev()
+        .copied()
+        .chain(cycle.iter().rev().copied())
+        .collect())
+}
+
+// FR Twist instance shares the [cycle, address] sumcheck layout with the
+// Registers instance but with `field_register_log_k` address rounds. The
+// driver's `round_schedule` is [log_t, register_log_k]; only the first element
+// (cycle rounds) is reused. The instance's local point length is therefore
+// `log_t + field_register_log_k`, shorter than the driver's full point.
+fn normalize_stage4_field_registers_rw_point<F: Field>(
+    program: &'static Stage4VerifierProgramPlan,
+    driver: &'static str,
+    point: &[F],
+) -> Result<Vec<F>, VerifyStage4Error> {
+    let driver_plan = find_plan(program.drivers, driver).ok_or(VerifyStage4Error::MissingProof {
+        driver,
+    })?;
+    if driver_plan.round_schedule.is_empty() {
+        return Err(VerifyStage4Error::InvalidProof {
+            driver,
+            reason: "stage4 field_registers point normalization requires non-empty schedule",
+        });
+    }
+    let cycle_rounds = driver_plan.round_schedule[0];
+    if point.len() < cycle_rounds {
+        return Err(VerifyStage4Error::InvalidInputLength {
+            input: "stage4.field_registers_read_write.instance",
+            expected: cycle_rounds,
             actual: point.len(),
         });
     }

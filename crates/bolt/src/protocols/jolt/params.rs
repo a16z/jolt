@@ -21,6 +21,8 @@ pub struct JoltProtocolParams {
     pub lookups_ra_virtual_log_k_chunk: usize,
     pub instruction_log_k: usize,
     pub register_log_k: usize,
+    /// log₂ of the BN254 Fr coprocessor register-file size. 16 slots → 4.
+    pub field_register_log_k: usize,
     pub lookup_table_count: usize,
     pub instruction_d: usize,
     pub instruction_ra_virtual_d: usize,
@@ -61,20 +63,29 @@ impl JoltProtocolParams {
             lookups_ra_virtual_log_k_chunk,
             instruction_log_k,
             register_log_k: 7,
+            field_register_log_k: 4,
             lookup_table_count: 40,
             instruction_d,
             instruction_ra_virtual_d,
             bytecode_d,
             ram_d,
             num_committed: 2 + instruction_d + bytecode_d + ram_d,
-            num_r1cs_constraints: 19,
-            num_r1cs_inputs: 35,
+            num_r1cs_constraints: 32, // 19 RV base + 13 BN254 Fr coprocessor
+            num_r1cs_inputs: 47,      // 35 RV + 9 FR flags + 3 FR virtual operand columns
             num_vars_padded: 64,
         }
     }
 
     pub fn fixture() -> Self {
-        Self::new(16, 10, 16)
+        // Matches `examples/bn254-fr-poseidon2-arkworks-guest` natural
+        // shape: trace ≈ 252,978 cycles (rounds to 2^18 = 262,144), bytecode
+        // ≈ 16,384 instructions (2^14), ram ≈ 11k words (2^14). This is the
+        // larger of the two FR Poseidon2 variants — the SDK variant fits at
+        // (16, 13, 14) and won't fit here (different log_k_bytecode).
+        //
+        // Multi-shape goldens (one per `(log_t, log_k_bytecode, log_k_ram)`
+        // tuple, runtime-selected) is the open follow-up — see task #79.
+        Self::new(18, 14, 14)
     }
 
     pub fn attrs(&self) -> Vec<(String, String)> {
@@ -97,6 +108,7 @@ impl JoltProtocolParams {
             ),
             int_attr("instruction_log_k", self.instruction_log_k),
             int_attr("register_log_k", self.register_log_k),
+            int_attr("field_register_log_k", self.field_register_log_k),
             int_attr("lookup_table_count", self.lookup_table_count),
             int_attr("instruction_d", self.instruction_d),
             int_attr("instruction_ra_virtual_d", self.instruction_ra_virtual_d),
@@ -265,6 +277,7 @@ fn require_jolt_params_attrs(operation: OperationRef<'_, '_>) -> Result<(), Sche
             "lookups_ra_virtual_log_k_chunk",
             "instruction_log_k",
             "register_log_k",
+            "field_register_log_k",
             "lookup_table_count",
             "instruction_d",
             "instruction_ra_virtual_d",
