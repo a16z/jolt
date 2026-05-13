@@ -27,6 +27,7 @@ pub enum Stage3Relation {
     SpartanShift,
     InstructionInput,
     RegistersClaimReduction,
+    FieldRegistersClaimReduction,
     Batched,
 }
 
@@ -36,6 +37,9 @@ impl Stage3Relation {
             "jolt.stage3.spartan_shift" => Some(Self::SpartanShift),
             "jolt.stage3.instruction_input" => Some(Self::InstructionInput),
             "jolt.stage3.registers_claim_reduction" => Some(Self::RegistersClaimReduction),
+            "jolt.stage3.field_registers_claim_reduction" => {
+                Some(Self::FieldRegistersClaimReduction)
+            }
             "jolt.stage3.batched" => Some(Self::Batched),
             _ => None,
         }
@@ -46,6 +50,7 @@ impl Stage3Relation {
             Self::SpartanShift => "jolt.stage3.spartan_shift",
             Self::InstructionInput => "jolt.stage3.instruction_input",
             Self::RegistersClaimReduction => "jolt.stage3.registers_claim_reduction",
+            Self::FieldRegistersClaimReduction => "jolt.stage3.field_registers_claim_reduction",
             Self::Batched => "jolt.stage3.batched",
         }
     }
@@ -56,6 +61,7 @@ pub enum Stage3KernelAbi {
     SpartanShift,
     InstructionInput,
     RegistersClaimReduction,
+    FieldRegistersClaimReduction,
     Batched,
 }
 
@@ -65,6 +71,9 @@ impl Stage3KernelAbi {
             "jolt_stage3_spartan_shift" => Some(Self::SpartanShift),
             "jolt_stage3_instruction_input" => Some(Self::InstructionInput),
             "jolt_stage3_registers_claim_reduction" => Some(Self::RegistersClaimReduction),
+            "jolt_stage3_field_registers_claim_reduction" => {
+                Some(Self::FieldRegistersClaimReduction)
+            }
             "jolt_stage3_batched" => Some(Self::Batched),
             _ => None,
         }
@@ -75,6 +84,7 @@ impl Stage3KernelAbi {
             Self::SpartanShift => "jolt_stage3_spartan_shift",
             Self::InstructionInput => "jolt_stage3_instruction_input",
             Self::RegistersClaimReduction => "jolt_stage3_registers_claim_reduction",
+            Self::FieldRegistersClaimReduction => "jolt_stage3_field_registers_claim_reduction",
             Self::Batched => "jolt_stage3_batched",
         }
     }
@@ -896,10 +906,48 @@ impl<F: Field> Stage3KernelExecutor<F> for UnsupportedStage3KernelExecutor {
     }
 }
 
+/// Pre-converted per-cycle BN254 Fr operand values for the Stage 3 FR
+/// ClaimReduction. The host computes these via `replay_field_regs` +
+/// limb-to-field conversion and supplies them through `Stage3ProverInputs`.
+///
+/// Two modes:
+/// - **Dense** (`accesses == None`): `rd_value`/`rs1_value`/`rs2_value` are
+///   length-`T` slices. Used by callers that already materialize the dense
+///   FR per-cycle field-element columns.
+/// - **Sparse** (`accesses == Some(&[...])`): `rd_value`/`rs1_value`/
+///   `rs2_value` MAY be empty (`&[]`); the kernel takes a sparse path that
+///   iterates only over FR-active cycles. Required for Rule 1 in
+///   `specs/bn254-fr-coprocessor.md` — avoids the `3 × T` dense
+///   column allocations on FR-less traces (zero accesses) and matches the
+///   analogous Stage 4 sparse port.
+#[derive(Clone, Copy)]
+pub struct Stage3FieldRegisterColumns<'a, F: Field> {
+    pub rd_value: &'a [F],
+    pub rs1_value: &'a [F],
+    pub rs2_value: &'a [F],
+    pub trace_len: usize,
+    pub accesses: Option<&'a [Stage3FieldRegisterAccess<F>]>,
+}
+
+/// Sparse FR access entry for the Stage 3 FR ClaimReduction path.
+///
+/// Carries the per-cycle field-element operand values needed by the claim
+/// reduction's sum-of-products (`rd + γ·rs1 + γ²·rs2`). FR-inactive cycles
+/// are omitted — they contribute zero to the sum. Entries must be sorted
+/// strictly by `cycle`.
+#[derive(Clone, Copy, Debug)]
+pub struct Stage3FieldRegisterAccess<F: Field> {
+    pub cycle: usize,
+    pub rd_value: F,
+    pub rs1_value: F,
+    pub rs2_value: F,
+}
+
 #[derive(Clone, Copy)]
 pub struct Stage3ProverInputs<'a, F: Field> {
     pub opening_inputs: &'a [Stage3OpeningInputValue<F>],
     pub cycles: Option<&'a [Stage3Cycle]>,
+    pub field_registers: Option<Stage3FieldRegisterColumns<'a, F>>,
 }
 
 impl<'a, F: Field> Stage3ProverInputs<'a, F> {
@@ -907,6 +955,7 @@ impl<'a, F: Field> Stage3ProverInputs<'a, F> {
         Self {
             opening_inputs,
             cycles: None,
+            field_registers: None,
         }
     }
 
@@ -914,11 +963,17 @@ impl<'a, F: Field> Stage3ProverInputs<'a, F> {
         Self {
             opening_inputs: &[],
             cycles: None,
+            field_registers: None,
         }
     }
 
     pub fn with_cycles(mut self, cycles: &'a [Stage3Cycle]) -> Self {
         self.cycles = Some(cycles);
+        self
+    }
+
+    pub fn with_field_registers(mut self, columns: Stage3FieldRegisterColumns<'a, F>) -> Self {
+        self.field_registers = Some(columns);
         self
     }
 }
@@ -1512,6 +1567,7 @@ impl<F: Field> Stage3BatchedInstance<'_, F> {
 enum Stage3ProverInstanceState<F: Field> {
     SpartanShift(SpartanShiftState<F>),
     SumOfProducts(SumOfProductsState<F>),
+    SparseFieldRegisters(SparseFieldRegistersState<F>),
 }
 
 impl<F: Field> Stage3ProverInstanceState<F> {
@@ -1523,15 +1579,21 @@ impl<F: Field> Stage3ProverInstanceState<F> {
     ) -> Result<Self, Stage3KernelError> {
         match claim_relation(program, claim)? {
             Stage3Relation::SpartanShift => {
-                return spartan_shift_state(claim, inputs, store).map(Self::SpartanShift);
+                spartan_shift_state(claim, inputs, store).map(Self::SpartanShift)
             }
-            Stage3Relation::InstructionInput => instruction_input_state(claim, inputs, store),
-            Stage3Relation::RegistersClaimReduction => registers_state(claim, inputs, store),
+            Stage3Relation::InstructionInput => {
+                instruction_input_state(claim, inputs, store).map(Self::SumOfProducts)
+            }
+            Stage3Relation::RegistersClaimReduction => {
+                registers_state(claim, inputs, store).map(Self::SumOfProducts)
+            }
+            Stage3Relation::FieldRegistersClaimReduction => {
+                field_registers_state(claim, inputs, store)
+            }
             relation @ Stage3Relation::Batched => Err(Stage3KernelError::KernelNotImplemented {
                 abi: relation.symbol(),
             }),
         }
-        .map(Self::SumOfProducts)
     }
 
     fn round_poly(
@@ -1542,6 +1604,7 @@ impl<F: Field> Stage3ProverInstanceState<F> {
         match self {
             Self::SpartanShift(state) => Ok(state.round_poly(previous_claim)),
             Self::SumOfProducts(state) => Ok(state.round_poly(previous_claim)),
+            Self::SparseFieldRegisters(state) => state.round_poly(previous_claim),
         }
     }
 
@@ -1549,6 +1612,7 @@ impl<F: Field> Stage3ProverInstanceState<F> {
         match self {
             Self::SpartanShift(state) => state.bind(challenge),
             Self::SumOfProducts(state) => state.bind(challenge),
+            Self::SparseFieldRegisters(state) => state.bind(challenge),
         }
     }
 
@@ -1559,6 +1623,7 @@ impl<F: Field> Stage3ProverInstanceState<F> {
         match self {
             Self::SpartanShift(state) => state.final_evals(relation),
             Self::SumOfProducts(state) => state.final_evals(relation),
+            Self::SparseFieldRegisters(state) => state.final_evals(relation),
         }
     }
 }
@@ -2169,6 +2234,348 @@ fn registers_state<F: Field>(
     ))
 }
 
+/// BN254 Fr coprocessor ClaimReduction state. Structural mirror of
+/// `registers_state` but consumes pre-converted per-cycle field-element
+/// vectors from `inputs.field_registers` rather than u64 cycle data.
+///
+/// Dispatches sparse vs. dense based on `columns.accesses`:
+/// - When `accesses == Some(&[...])`, returns a [`SparseFieldRegistersState`]
+///   that iterates only over FR-active cycles. The dense
+///   `rd_value`/`rs1_value`/`rs2_value` slices may be empty (`&[]`) — the
+///   sparse path owns its own field-element data via the access list. This
+///   avoids the `3 × T` dense column allocations on FR-less traces (Rule 1
+///   in `specs/bn254-fr-coprocessor.md`).
+/// - When `accesses == None`, falls back to the dense `SumOfProductsState`
+///   for backwards compatibility with callers that materialize the dense
+///   columns directly.
+fn field_registers_state<F: Field>(
+    claim: &Stage3SumcheckClaimPlan,
+    inputs: &Stage3ProverInputs<'_, F>,
+    store: &Stage3ValueStore<F>,
+) -> Result<Stage3ProverInstanceState<F>, Stage3KernelError> {
+    let columns = inputs
+        .field_registers
+        .ok_or(Stage3KernelError::MissingKernelInput {
+            kernel: "jolt_stage3_field_registers_claim_reduction",
+            input: "field_registers",
+        })?;
+    let expected =
+        1usize
+            .checked_shl(claim.num_rounds as u32)
+            .ok_or(Stage3KernelError::InvalidInputLength {
+                input: "stage3.field_registers.num_rounds",
+                expected: usize::BITS as usize,
+                actual: claim.num_rounds,
+            })?;
+    let eq_point = store.point("stage3.input.stage1.FieldRdValue")?;
+    let gamma = store.scalar("stage3.field_registers.gamma")?;
+    let gamma2 = store.scalar("stage3.field_registers.gamma2")?;
+
+    if let Some(accesses) = columns.accesses {
+        if columns.trace_len != expected {
+            return Err(Stage3KernelError::InvalidInputLength {
+                input: "stage3.field_registers.trace_len",
+                expected,
+                actual: columns.trace_len,
+            });
+        }
+        return SparseFieldRegistersState::new(
+            columns.trace_len,
+            accesses,
+            eq_point,
+            gamma,
+            gamma2,
+        )
+        .map(Stage3ProverInstanceState::SparseFieldRegisters);
+    }
+
+    require_operand_count(
+        "stage3.field_registers.rd_value",
+        expected,
+        columns.rd_value.len(),
+    )?;
+    require_operand_count(
+        "stage3.field_registers.rs1_value",
+        expected,
+        columns.rs1_value.len(),
+    )?;
+    require_operand_count(
+        "stage3.field_registers.rs2_value",
+        expected,
+        columns.rs2_value.len(),
+    )?;
+    let factors = vec![
+        columns.rd_value.to_vec(),
+        columns.rs1_value.to_vec(),
+        columns.rs2_value.to_vec(),
+    ];
+    Ok(Stage3ProverInstanceState::SumOfProducts(
+        SumOfProductsState::new(
+            SumOfProductsKind::Registers,
+            factors,
+            Some(SplitEqState::new_low_to_high(eq_point, None)),
+            vec![
+                ProductTerm {
+                    coefficient: F::one(),
+                },
+                ProductTerm { coefficient: gamma },
+                ProductTerm {
+                    coefficient: gamma2,
+                },
+            ],
+            vec![
+                FactorOutput {
+                    name: "stage3.field_registers_claim_reduction.eval.FieldRdValue",
+                    oracle: "FieldRdValue",
+                    factor: 0,
+                },
+                FactorOutput {
+                    name: "stage3.field_registers_claim_reduction.eval.FieldRs1Value",
+                    oracle: "FieldRs1Value",
+                    factor: 1,
+                },
+                FactorOutput {
+                    name: "stage3.field_registers_claim_reduction.eval.FieldRs2Value",
+                    oracle: "FieldRs2Value",
+                    factor: 2,
+                },
+            ],
+            Vec::new(),
+        ),
+    ))
+}
+
+/// Sparse Stage 3 FR ClaimReduction state — algebraic mirror of the dense
+/// `SumOfProductsState` over `(rd_value, rs1_value, rs2_value)` factors,
+/// but indexed by FR-active cycles only. The algebra is identical to
+/// `registers_split_round_constant` / `gruen_quadratic_poly`; FR-inactive
+/// cycles contribute zero and are elided.
+#[derive(Clone)]
+struct SparseFieldRegistersState<F: Field> {
+    entries: Vec<SparseFieldRegisterEntry<F>>,
+    entry_scratch: Vec<SparseFieldRegisterEntry<F>>,
+    eq_cycle: SplitEqState<F>,
+    gamma: F,
+    gamma2: F,
+    current_trace_len: usize,
+    bound_point: Vec<F>,
+    final_rd: F,
+    final_rs1: F,
+    final_rs2: F,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SparseFieldRegisterEntry<F: Field> {
+    cycle: usize,
+    rd: F,
+    rs1: F,
+    rs2: F,
+}
+
+impl<F: Field> SparseFieldRegistersState<F> {
+    fn new(
+        trace_len: usize,
+        accesses: &[Stage3FieldRegisterAccess<F>],
+        eq_point: &[F],
+        gamma: F,
+        gamma2: F,
+    ) -> Result<Self, Stage3KernelError> {
+        let mut entries = Vec::with_capacity(accesses.len());
+        let mut previous_cycle: Option<usize> = None;
+        for access in accesses {
+            if access.cycle >= trace_len {
+                return Err(Stage3KernelError::InvalidInputLength {
+                    input: "stage3.field_registers.accesses",
+                    expected: trace_len,
+                    actual: access.cycle + 1,
+                });
+            }
+            if let Some(prev) = previous_cycle {
+                if access.cycle <= prev {
+                    return Err(Stage3KernelError::InvalidInputLength {
+                        input: "stage3.field_registers.accesses (must be sorted strictly by cycle)",
+                        expected: prev + 1,
+                        actual: access.cycle,
+                    });
+                }
+            }
+            previous_cycle = Some(access.cycle);
+            entries.push(SparseFieldRegisterEntry {
+                cycle: access.cycle,
+                rd: access.rd_value,
+                rs1: access.rs1_value,
+                rs2: access.rs2_value,
+            });
+        }
+        let mut state = Self {
+            entries,
+            entry_scratch: Vec::new(),
+            eq_cycle: SplitEqState::new_low_to_high(eq_point, None),
+            gamma,
+            gamma2,
+            current_trace_len: trace_len,
+            bound_point: Vec::with_capacity(eq_point.len()),
+            final_rd: F::zero(),
+            final_rs1: F::zero(),
+            final_rs2: F::zero(),
+        };
+        if trace_len <= 1 {
+            state.materialize_final();
+        }
+        Ok(state)
+    }
+
+    fn round_poly(&self, previous_claim: F) -> Result<UnivariatePoly<F>, Stage3KernelError> {
+        if self.current_trace_len <= 1 {
+            return Err(Stage3KernelError::InvalidProof {
+                driver: Stage3Relation::FieldRegistersClaimReduction.symbol(),
+                reason: "sparse field registers state already materialized",
+            });
+        }
+        let q_constant = self.split_round_constant();
+        let poly =
+            gruen_quadratic_poly(self.eq_cycle.current_target(), q_constant, previous_claim);
+        #[cfg(debug_assertions)]
+        {
+            if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != previous_claim {
+                return Err(Stage3KernelError::InvalidProof {
+                    driver: Stage3Relation::FieldRegistersClaimReduction.symbol(),
+                    reason: "sparse field registers input claim mismatch",
+                });
+            }
+        }
+        Ok(poly)
+    }
+
+    fn split_round_constant(&self) -> F {
+        let e_in = self.eq_cycle.e_in();
+        let e_out = self.eq_cycle.e_out();
+        if e_in.len() > 1 {
+            self.low_round_constant(e_in, e_out)
+        } else {
+            self.high_round_constant(e_in[0], e_out)
+        }
+    }
+
+    fn low_round_constant(&self, e_in: &[F], e_out: &[F]) -> F {
+        let in_pairs = e_in.len() / 2;
+        let mut total = F::Accumulator::default();
+        for entry in &self.entries {
+            if entry.cycle & 1 != 0 {
+                continue;
+            }
+            let row = entry.cycle >> 1;
+            let x_in = row % in_pairs;
+            let x_out = row / in_pairs;
+            let weight = e_out[x_out] * (e_in[2 * x_in] + e_in[2 * x_in + 1]);
+            let value = entry.rd + self.gamma * entry.rs1 + self.gamma2 * entry.rs2;
+            total.fmadd(weight, value);
+        }
+        total.reduce()
+    }
+
+    fn high_round_constant(&self, in_weight: F, e_out: &[F]) -> F {
+        let mut total = F::Accumulator::default();
+        for entry in &self.entries {
+            if entry.cycle & 1 != 0 {
+                continue;
+            }
+            let pair = entry.cycle >> 1;
+            let weight = in_weight * (e_out[2 * pair] + e_out[2 * pair + 1]);
+            let value = entry.rd + self.gamma * entry.rs1 + self.gamma2 * entry.rs2;
+            total.fmadd(weight, value);
+        }
+        total.reduce()
+    }
+
+    fn bind(&mut self, challenge: F) {
+        self.bound_point.push(challenge);
+        self.entry_scratch.clear();
+        let mut i = 0;
+        while i < self.entries.len() {
+            let entry = self.entries[i];
+            let pair_index = entry.cycle >> 1;
+            if entry.cycle & 1 == 0 {
+                let has_high = self
+                    .entries
+                    .get(i + 1)
+                    .is_some_and(|next| next.cycle == entry.cycle + 1);
+                if has_high {
+                    let high = self.entries[i + 1];
+                    self.entry_scratch.push(SparseFieldRegisterEntry {
+                        cycle: pair_index,
+                        rd: entry.rd + challenge * (high.rd - entry.rd),
+                        rs1: entry.rs1 + challenge * (high.rs1 - entry.rs1),
+                        rs2: entry.rs2 + challenge * (high.rs2 - entry.rs2),
+                    });
+                    i += 2;
+                } else {
+                    let scale = F::one() - challenge;
+                    self.entry_scratch.push(SparseFieldRegisterEntry {
+                        cycle: pair_index,
+                        rd: entry.rd * scale,
+                        rs1: entry.rs1 * scale,
+                        rs2: entry.rs2 * scale,
+                    });
+                    i += 1;
+                }
+            } else {
+                self.entry_scratch.push(SparseFieldRegisterEntry {
+                    cycle: pair_index,
+                    rd: challenge * entry.rd,
+                    rs1: challenge * entry.rs1,
+                    rs2: challenge * entry.rs2,
+                });
+                i += 1;
+            }
+        }
+        std::mem::swap(&mut self.entries, &mut self.entry_scratch);
+        self.entry_scratch.clear();
+        self.eq_cycle.bind(challenge);
+        self.current_trace_len /= 2;
+        if self.current_trace_len == 1 {
+            self.materialize_final();
+        }
+    }
+
+    fn materialize_final(&mut self) {
+        if let Some(entry) = self.entries.iter().find(|e| e.cycle == 0) {
+            self.final_rd = entry.rd;
+            self.final_rs1 = entry.rs1;
+            self.final_rs2 = entry.rs2;
+        }
+    }
+
+    fn final_evals(
+        &self,
+        relation: Stage3Relation,
+    ) -> Result<Vec<Stage3NamedEval<F>>, Stage3KernelError> {
+        if self.current_trace_len != 1 {
+            return Err(Stage3KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "sparse field registers final eval requested before binding completed",
+            });
+        }
+        Ok(vec![
+            named_eval(
+                "stage3.field_registers_claim_reduction.eval.FieldRdValue",
+                "FieldRdValue",
+                self.final_rd,
+            ),
+            named_eval(
+                "stage3.field_registers_claim_reduction.eval.FieldRs1Value",
+                "FieldRs1Value",
+                self.final_rs1,
+            ),
+            named_eval(
+                "stage3.field_registers_claim_reduction.eval.FieldRs2Value",
+                "FieldRs2Value",
+                self.final_rs2,
+            ),
+        ])
+    }
+}
+
 fn stage3_cycles<'a, F: Field>(
     inputs: &'a Stage3ProverInputs<'_, F>,
     num_rounds: usize,
@@ -2441,6 +2848,9 @@ fn expected_batched_output_claim<F: Field>(
             Stage3Relation::RegistersClaimReduction => {
                 expected_registers(store, evals, local_point)?
             }
+            Stage3Relation::FieldRegistersClaimReduction => {
+                expected_field_registers(store, evals, local_point)?
+            }
             relation @ Stage3Relation::Batched => {
                 return Err(Stage3KernelError::KernelNotImplemented {
                     abi: relation.symbol(),
@@ -2526,6 +2936,32 @@ fn expected_registers<F: Field>(
                 * eval_by_name(evals, "stage3.registers_claim_reduction.eval.Rs1Value")?
             + store.scalar("stage3.registers.gamma2")?
                 * eval_by_name(evals, "stage3.registers_claim_reduction.eval.Rs2Value")?))
+}
+
+fn expected_field_registers<F: Field>(
+    store: &Stage3ValueStore<F>,
+    evals: &[Stage3NamedEval<F>],
+    local_point: &[F],
+) -> Result<F, Stage3KernelError> {
+    let opening_point = reverse_slice(local_point);
+    let eq_eval = EqPolynomial::<F>::mle(
+        &opening_point,
+        store.point("stage3.input.stage1.FieldRdValue")?,
+    );
+    Ok(eq_eval
+        * (eval_by_name(
+            evals,
+            "stage3.field_registers_claim_reduction.eval.FieldRdValue",
+        )? + store.scalar("stage3.field_registers.gamma")?
+            * eval_by_name(
+                evals,
+                "stage3.field_registers_claim_reduction.eval.FieldRs1Value",
+            )?
+            + store.scalar("stage3.field_registers.gamma2")?
+                * eval_by_name(
+                    evals,
+                    "stage3.field_registers_claim_reduction.eval.FieldRs2Value",
+                )?))
 }
 
 fn eval_by_name<F: Field>(

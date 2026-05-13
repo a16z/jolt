@@ -1,10 +1,6 @@
 //! Stage 4 coarse-kernel ABI used by Bolt-generated Jolt prover code.
 
 #![expect(
-    clippy::large_enum_variant,
-    reason = "kernel states stay inline to avoid boxing hot prover state"
-)]
-#![expect(
     clippy::too_many_arguments,
     reason = "kernel constructors mirror generated staged protocol inputs"
 )]
@@ -32,6 +28,7 @@ pub enum Stage4ExecutionMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage4Relation {
     RegistersReadWrite,
+    FieldRegistersReadWrite,
     RamValCheck,
     Batched,
 }
@@ -40,6 +37,7 @@ impl Stage4Relation {
     pub fn from_symbol(symbol: &str) -> Option<Self> {
         match symbol {
             "jolt.stage4.registers_read_write" => Some(Self::RegistersReadWrite),
+            "jolt.stage4.field_registers_read_write" => Some(Self::FieldRegistersReadWrite),
             "jolt.stage4.ram_val_check" => Some(Self::RamValCheck),
             "jolt.stage4.batched" => Some(Self::Batched),
             _ => None,
@@ -49,6 +47,7 @@ impl Stage4Relation {
     pub fn symbol(self) -> &'static str {
         match self {
             Self::RegistersReadWrite => "jolt.stage4.registers_read_write",
+            Self::FieldRegistersReadWrite => "jolt.stage4.field_registers_read_write",
             Self::RamValCheck => "jolt.stage4.ram_val_check",
             Self::Batched => "jolt.stage4.batched",
         }
@@ -58,6 +57,7 @@ impl Stage4Relation {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage4KernelAbi {
     RegistersReadWrite,
+    FieldRegistersReadWrite,
     RamValCheck,
     Batched,
 }
@@ -66,6 +66,7 @@ impl Stage4KernelAbi {
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "jolt_stage4_registers_read_write" => Some(Self::RegistersReadWrite),
+            "jolt_stage4_field_registers_read_write" => Some(Self::FieldRegistersReadWrite),
             "jolt_stage4_ram_val_check" => Some(Self::RamValCheck),
             "jolt_stage4_batched" => Some(Self::Batched),
             _ => None,
@@ -75,6 +76,7 @@ impl Stage4KernelAbi {
     pub fn name(self) -> &'static str {
         match self {
             Self::RegistersReadWrite => "jolt_stage4_registers_read_write",
+            Self::FieldRegistersReadWrite => "jolt_stage4_field_registers_read_write",
             Self::RamValCheck => "jolt_stage4_ram_val_check",
             Self::Batched => "jolt_stage4_batched",
         }
@@ -449,10 +451,82 @@ pub struct Stage4RamWitness<'a, F: Field> {
     pub ram_inc: &'a [F],
 }
 
+/// Sparse FR register access entry for the Stage 4 FR R/W path.
+///
+/// Mirrors `Stage4RegisterAccess` semantically but with two FR-specific
+/// adaptations:
+/// - values are full 256-bit BN254 Fr field elements (`F`) instead of `u64`
+/// - entries are *sparse over cycles*: each carries an explicit `cycle`
+///   index, so FR-active guests with thousands of FR ops out of millions
+///   of trace cycles avoid the per-cycle empty-slot overhead. The kernel
+///   sorts/iterates by row internally.
+///
+/// **Invariants** (enforced at state construction):
+/// - `cycle < trace_len`
+/// - entries are sorted by `cycle` (callers must produce a sorted list)
+/// - all FR slot indices are in `0..=15`
+#[derive(Clone, Copy, Debug)]
+pub struct Stage4FieldRegisterRead<F: Field> {
+    pub address: usize,
+    pub value: F,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Stage4FieldRegisterWrite<F: Field> {
+    pub address: usize,
+    pub pre_value: F,
+    pub post_value: F,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Stage4FieldRegisterAccess<F: Field> {
+    pub cycle: usize,
+    pub rs1: Option<Stage4FieldRegisterRead<F>>,
+    pub rs2: Option<Stage4FieldRegisterRead<F>>,
+    pub rd: Option<Stage4FieldRegisterWrite<F>>,
+}
+
+impl<F: Field> Default for Stage4FieldRegisterAccess<F> {
+    fn default() -> Self {
+        Self {
+            cycle: 0,
+            rs1: None,
+            rs2: None,
+            rd: None,
+        }
+    }
+}
+
+/// BN254 Fr coprocessor ReadWriteChecking witness — Twist polynomials over
+/// the FR register file. Same shape as `Stage4RegistersWitness` but
+/// dimensioned by `field_register_count = 16` slots (LOG_K_FR = 4).
+/// `field_rd_inc` is the committed FR delta polynomial (materialized via
+/// `field_reg_inc_polynomial` — audit C11).
+///
+/// When `accesses` is `Some`, the kernel takes the sparse path: it
+/// builds a `SparseFieldRegistersState` directly from per-cycle access
+/// entries, skipping the `4 × 16 × T` dense Twist tables. The dense
+/// slices (`field_registers_val`, `field_rs1_ra`, `field_rs2_ra`,
+/// `field_rd_wa`) may be empty (`&[]`) on the sparse path; only
+/// `field_rd_inc` (length `trace_len`) is still consumed because it
+/// participates in the inner sumcheck as the committed FR delta poly.
+#[derive(Clone, Copy)]
+pub struct Stage4FieldRegistersWitness<'a, F: Field> {
+    pub field_register_count: usize,
+    pub trace_len: usize,
+    pub field_registers_val: &'a [F],
+    pub field_rs1_ra: &'a [F],
+    pub field_rs2_ra: &'a [F],
+    pub field_rd_wa: &'a [F],
+    pub field_rd_inc: &'a [F],
+    pub accesses: Option<&'a [Stage4FieldRegisterAccess<F>]>,
+}
+
 #[derive(Clone, Copy)]
 pub struct Stage4ProverInputs<'a, F: Field> {
     pub opening_inputs: &'a [Stage4OpeningInputValue<F>],
     pub registers: Option<Stage4RegistersWitness<'a, F>>,
+    pub field_registers: Option<Stage4FieldRegistersWitness<'a, F>>,
     pub ram: Option<Stage4RamWitness<'a, F>>,
 }
 
@@ -461,6 +535,7 @@ impl<'a, F: Field> Stage4ProverInputs<'a, F> {
         Self {
             opening_inputs,
             registers: None,
+            field_registers: None,
             ram: None,
         }
     }
@@ -469,12 +544,21 @@ impl<'a, F: Field> Stage4ProverInputs<'a, F> {
         Self {
             opening_inputs: &[],
             registers: None,
+            field_registers: None,
             ram: None,
         }
     }
 
     pub fn with_registers(mut self, registers: Stage4RegistersWitness<'a, F>) -> Self {
         self.registers = Some(registers);
+        self
+    }
+
+    pub fn with_field_registers(
+        mut self,
+        field_registers: Stage4FieldRegistersWitness<'a, F>,
+    ) -> Self {
+        self.field_registers = Some(field_registers);
         self
     }
 
@@ -672,6 +756,13 @@ impl<F: Field> Stage4ValueStore<F> {
                 "stage4_registers_rw" => {
                     instance_point =
                         normalize_stage4_registers_rw_point(program, driver, &instance_point)?;
+                }
+                "stage4_field_registers_rw" => {
+                    instance_point = normalize_stage4_field_registers_rw_point(
+                        program,
+                        driver,
+                        &instance_point,
+                    )?;
                 }
                 _ => {
                     return Err(Stage4KernelError::InvalidProof {
@@ -1577,6 +1668,7 @@ impl<F: Field> Stage4BatchedInstance<'_, F> {
 enum Stage4ProverInstanceState<F: Field> {
     Dense(DenseStage4State<F>),
     SparseRegisters(SparseRegistersState<F>),
+    SparseFieldRegisters(SparseFieldRegistersState<F>),
 }
 
 impl<F: Field> Stage4ProverInstanceState<F> {
@@ -1590,6 +1682,9 @@ impl<F: Field> Stage4ProverInstanceState<F> {
         match claim_relation(program, claim)? {
             Stage4Relation::RegistersReadWrite => {
                 registers_read_write_state(claim, inputs, store, active_scale)
+            }
+            Stage4Relation::FieldRegistersReadWrite => {
+                field_registers_read_write_state(claim, inputs, store, active_scale)
             }
             Stage4Relation::RamValCheck => {
                 ram_val_check_state(claim, inputs, store, active_scale).map(Self::Dense)
@@ -1608,6 +1703,7 @@ impl<F: Field> Stage4ProverInstanceState<F> {
         match self {
             Self::Dense(state) => state.round_poly(previous_claim, relation),
             Self::SparseRegisters(state) => state.round_poly(previous_claim, relation),
+            Self::SparseFieldRegisters(state) => state.round_poly(previous_claim, relation),
         }
     }
 
@@ -1615,6 +1711,7 @@ impl<F: Field> Stage4ProverInstanceState<F> {
         match self {
             Self::Dense(state) => state.bind(challenge),
             Self::SparseRegisters(state) => state.bind(challenge),
+            Self::SparseFieldRegisters(state) => state.bind(challenge),
         }
     }
 
@@ -1625,6 +1722,7 @@ impl<F: Field> Stage4ProverInstanceState<F> {
         match self {
             Self::Dense(state) => state.final_evals(relation),
             Self::SparseRegisters(state) => state.final_evals(relation),
+            Self::SparseFieldRegisters(state) => state.final_evals(relation),
         }
     }
 }
@@ -1758,13 +1856,40 @@ struct SparseRegistersState<F: Field> {
     dense: Option<DenseStage4State<F>>,
 }
 
+/// Backing type for `prev_val`/`next_val` slots in a sparse register entry.
+/// Integer RV registers store these as `u64` (the natural register width);
+/// the BN254 Fr coprocessor stores them directly as `F` (full field
+/// elements, since FR slots are 256-bit).
+trait SparseValBacking<F: Field>: Copy + Default + Send + Sync {
+    fn to_field(self) -> F;
+}
+
+impl<F: Field> SparseValBacking<F> for u64 {
+    #[inline]
+    fn to_field(self) -> F {
+        F::from_u64(self)
+    }
+}
+
+/// Newtype around `F` so `SparseValBacking` can be implemented without
+/// conflicting with the blanket integer impl above.
+#[derive(Clone, Copy, Debug, Default)]
+struct FrVal<F: Field>(F);
+
+impl<F: Field> SparseValBacking<F> for FrVal<F> {
+    #[inline]
+    fn to_field(self) -> F {
+        self.0
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
-struct SparseRegisterEntry<F: Field> {
+struct SparseRegisterEntry<F: Field, V: SparseValBacking<F> = u64> {
     row: usize,
     col: u8,
     val: F,
-    prev_val: u64,
-    next_val: u64,
+    prev_val: V,
+    next_val: V,
     read_ra: F,
     rd_wa: F,
 }
@@ -1995,6 +2120,371 @@ impl<F: Field> SparseRegistersState<F> {
     }
 }
 
+/// Sparse Stage 4 FR R/W state — algebraic mirror of [`SparseRegistersState`]
+/// but parameterized over a 16-slot FR file (LOG_K_FR = 4) with full-Fr
+/// `prev_val`/`next_val` storage. Same Gruen cubic, same final
+/// materialization to a 16-element K-table at `current_trace_len == 1`.
+#[derive(Clone)]
+struct SparseFieldRegistersState<F: Field> {
+    register_count: usize,
+    trace_len: usize,
+    current_trace_len: usize,
+    entries: Vec<SparseRegisterEntry<F, FrVal<F>>>,
+    entry_scratch: Vec<SparseRegisterEntry<F, FrVal<F>>>,
+    rs2_reads: Vec<(usize, usize)>,
+    eq_cycle: SplitEqState<F>,
+    rd_inc: Vec<F>,
+    rd_inc_scratch: Vec<F>,
+    gamma: F,
+    gamma2: F,
+    active_scale: F,
+    bound_point: Vec<F>,
+    dense: Option<DenseStage4State<F>>,
+}
+
+impl<F: Field> SparseFieldRegistersState<F> {
+    fn new(
+        register_count: usize,
+        trace_len: usize,
+        accesses: &[Stage4FieldRegisterAccess<F>],
+        rd_inc: &[F],
+        trace_point: &[F],
+        gamma: F,
+        gamma2: F,
+        active_scale: F,
+    ) -> Result<Self, Stage4KernelError> {
+        require_operand_count("stage4.field_registers.FieldRdInc", trace_len, rd_inc.len())?;
+        let mut entries = Vec::with_capacity(accesses.len().saturating_mul(3));
+        let mut rs2_reads = Vec::with_capacity(accesses.len());
+        let mut previous_cycle: Option<usize> = None;
+        for access in accesses {
+            if access.cycle >= trace_len {
+                return Err(Stage4KernelError::InvalidInputLength {
+                    input: "stage4.field_registers.accesses",
+                    expected: trace_len,
+                    actual: access.cycle + 1,
+                });
+            }
+            if let Some(prev) = previous_cycle {
+                if access.cycle <= prev {
+                    return Err(Stage4KernelError::InvalidInputLength {
+                        input: "stage4.field_registers.accesses (must be sorted strictly by cycle)",
+                        expected: prev + 1,
+                        actual: access.cycle,
+                    });
+                }
+            }
+            previous_cycle = Some(access.cycle);
+            append_sparse_field_register_entries(
+                register_count,
+                access.cycle,
+                *access,
+                gamma,
+                gamma2,
+                &mut entries,
+            )?;
+            if let Some(rs2) = access.rs2 {
+                rs2_reads.push((access.cycle, rs2.address));
+            }
+        }
+        let eq_cycle = SplitEqState::new_low_to_high(trace_point, None);
+        let mut state = Self {
+            register_count,
+            trace_len,
+            current_trace_len: trace_len,
+            entries,
+            entry_scratch: Vec::new(),
+            rs2_reads,
+            eq_cycle,
+            rd_inc: rd_inc.to_vec(),
+            rd_inc_scratch: Vec::new(),
+            gamma,
+            gamma2,
+            active_scale,
+            bound_point: Vec::with_capacity(
+                log2_exact(register_count, "stage4.field_register_count")?
+                    + log2_exact(trace_len, "stage4.trace_len")?,
+            ),
+            dense: None,
+        };
+        if trace_len == 1 {
+            state.materialize_dense()?;
+        }
+        Ok(state)
+    }
+
+    fn round_poly(
+        &mut self,
+        previous_claim: F,
+        relation: Stage4Relation,
+    ) -> Result<UnivariatePoly<F>, Stage4KernelError> {
+        if let Some(dense) = &self.dense {
+            return dense.round_poly(previous_claim, relation);
+        }
+        if self.current_trace_len <= 1 {
+            return Err(Stage4KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "stage4 sparse field registers state was not materialized",
+            });
+        }
+        let (mut q_constant, mut q_quadratic) = sparse_register_split_round_coefficients(
+            &self.entries,
+            &self.eq_cycle,
+            &self.rd_inc,
+            self.current_trace_len,
+        )?;
+        q_constant *= self.active_scale;
+        q_quadratic *= self.active_scale;
+        let poly = gruen_cubic_poly(
+            self.eq_cycle.current_target(),
+            q_constant,
+            q_quadratic,
+            previous_claim,
+        );
+        if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != previous_claim {
+            return Err(Stage4KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "stage4 sparse field registers input claim mismatch",
+            });
+        }
+        Ok(poly)
+    }
+
+    fn bind(&mut self, challenge: F) {
+        self.bound_point.push(challenge);
+        if let Some(dense) = &mut self.dense {
+            dense.bind(challenge);
+            return;
+        }
+        bind_sparse_register_entries_into(
+            &self.entries,
+            self.current_trace_len,
+            challenge,
+            &mut self.entry_scratch,
+        );
+        std::mem::swap(&mut self.entries, &mut self.entry_scratch);
+        self.entry_scratch.clear();
+        self.eq_cycle.bind(challenge);
+        bind_dense_evals_reuse(&mut self.rd_inc, &mut self.rd_inc_scratch, challenge);
+        self.current_trace_len /= 2;
+        if self.current_trace_len == 1 {
+            let _ = self.materialize_dense();
+        }
+    }
+
+    fn final_evals(
+        &self,
+        relation: Stage4Relation,
+    ) -> Result<Vec<Stage4NamedEval<F>>, Stage4KernelError> {
+        let dense = self.dense.as_ref().ok_or(Stage4KernelError::InvalidProof {
+            driver: relation.symbol(),
+            reason: "stage4 sparse field registers state was not materialized",
+        })?;
+        let field_registers_val = dense.factor_eval(1, relation)?;
+        let combined_read_ra = dense.factor_eval(2, relation)?;
+        let rd_wa = dense.factor_eval(3, relation)?;
+        let rd_inc = dense.factor_eval(4, relation)?;
+        let rs2_ra = self.final_rs2_read_eval(relation)?;
+        let gamma_inverse = self
+            .gamma
+            .inverse()
+            .ok_or(Stage4KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "stage4 field registers challenge is not invertible",
+            })?;
+        let rs1_ra = (combined_read_ra - self.gamma2 * rs2_ra) * gamma_inverse;
+        #[cfg(debug_assertions)]
+        {
+            let expected = self.gamma * rs1_ra + self.gamma2 * rs2_ra;
+            if combined_read_ra != expected {
+                return Err(Stage4KernelError::InvalidProof {
+                    driver: relation.symbol(),
+                    reason: "stage4 sparse field registers final read claim mismatch",
+                });
+            }
+        }
+        Ok(vec![
+            named_eval(
+                "stage4.field_registers_read_write.eval.FieldRegistersVal",
+                "FieldRegistersVal",
+                field_registers_val,
+            ),
+            named_eval(
+                "stage4.field_registers_read_write.eval.FieldRs1Ra",
+                "FieldRs1Ra",
+                rs1_ra,
+            ),
+            named_eval(
+                "stage4.field_registers_read_write.eval.FieldRs2Ra",
+                "FieldRs2Ra",
+                rs2_ra,
+            ),
+            named_eval(
+                "stage4.field_registers_read_write.eval.FieldRdWa",
+                "FieldRdWa",
+                rd_wa,
+            ),
+            named_eval(
+                "stage4.field_registers_read_write.eval.FieldRdInc",
+                "FieldRdInc",
+                rd_inc,
+            ),
+        ])
+    }
+
+    fn materialize_dense(&mut self) -> Result<(), Stage4KernelError> {
+        let mut registers_val = vec![F::zero(); self.register_count];
+        let mut read_ra = vec![F::zero(); self.register_count];
+        let mut rd_wa = vec![F::zero(); self.register_count];
+        for entry in &self.entries {
+            let col = usize::from(entry.col);
+            if entry.row != 0 || col >= self.register_count {
+                return Err(Stage4KernelError::InvalidInputLength {
+                    input: "stage4.field_registers.accesses",
+                    expected: self.register_count,
+                    actual: col + 1,
+                });
+            }
+            registers_val[col] = entry.val;
+            read_ra[col] = entry.read_ra;
+            rd_wa[col] = entry.rd_wa;
+        }
+        let eq_eval = self.eq_cycle.eval();
+        let rd_inc_eval =
+            self.rd_inc
+                .first()
+                .copied()
+                .ok_or(Stage4KernelError::InvalidInputLength {
+                    input: "stage4.field_registers.FieldRdInc",
+                    expected: 1,
+                    actual: 0,
+                })?;
+        self.dense = Some(registers_combined_dense_state(
+            vec![eq_eval; self.register_count],
+            registers_val,
+            read_ra,
+            rd_wa,
+            vec![rd_inc_eval; self.register_count],
+            self.active_scale,
+        ));
+        Ok(())
+    }
+
+    fn final_rs2_read_eval(&self, relation: Stage4Relation) -> Result<F, Stage4KernelError> {
+        let trace_rounds = log2_exact(self.trace_len, "stage4.trace_len")?;
+        let register_rounds = log2_exact(self.register_count, "stage4.field_register_count")?;
+        if self.bound_point.len() != trace_rounds + register_rounds {
+            return Err(Stage4KernelError::InvalidInputLength {
+                input: "stage4.field_registers_read_write.instance",
+                expected: trace_rounds + register_rounds,
+                actual: self.bound_point.len(),
+            });
+        }
+        let (cycle_point, address_point) = self.bound_point.split_at(trace_rounds);
+        let r_cycle = reverse_slice(cycle_point);
+        let r_address = reverse_slice(address_point);
+        let (cycle_eq, address_eq) = rayon::join(
+            || EqPolynomial::<F>::evals(&r_cycle, None),
+            || EqPolynomial::<F>::evals(&r_address, None),
+        );
+        if cycle_eq.len() != self.trace_len || address_eq.len() != self.register_count {
+            return Err(Stage4KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "stage4 sparse field registers final read point has invalid shape",
+            });
+        }
+        Ok(sparse_register_read_eval(
+            &self.rs2_reads,
+            &cycle_eq,
+            &address_eq,
+        ))
+    }
+}
+
+fn append_sparse_field_register_entries<F: Field>(
+    register_count: usize,
+    row: usize,
+    access: Stage4FieldRegisterAccess<F>,
+    gamma: F,
+    gamma2: F,
+    entries: &mut Vec<SparseRegisterEntry<F, FrVal<F>>>,
+) -> Result<(), Stage4KernelError> {
+    let start = entries.len();
+    if let Some(rs1) = access.rs1 {
+        validate_field_register_address(register_count, rs1.address)?;
+        let col = sparse_field_register_col(rs1.address)?;
+        entries.push(SparseRegisterEntry {
+            row,
+            col,
+            val: rs1.value,
+            prev_val: FrVal(rs1.value),
+            next_val: FrVal(rs1.value),
+            read_ra: gamma,
+            rd_wa: F::zero(),
+        });
+    }
+    if let Some(rs2) = access.rs2 {
+        validate_field_register_address(register_count, rs2.address)?;
+        let col = sparse_field_register_col(rs2.address)?;
+        if let Some(entry) = entries[start..].iter_mut().find(|entry| entry.col == col) {
+            entry.read_ra += gamma2;
+        } else {
+            entries.push(SparseRegisterEntry {
+                row,
+                col,
+                val: rs2.value,
+                prev_val: FrVal(rs2.value),
+                next_val: FrVal(rs2.value),
+                read_ra: gamma2,
+                rd_wa: F::zero(),
+            });
+        }
+    }
+    if let Some(rd) = access.rd {
+        validate_field_register_address(register_count, rd.address)?;
+        let col = sparse_field_register_col(rd.address)?;
+        if let Some(entry) = entries[start..].iter_mut().find(|entry| entry.col == col) {
+            entry.rd_wa = F::one();
+            entry.next_val = FrVal(rd.post_value);
+        } else {
+            entries.push(SparseRegisterEntry {
+                row,
+                col,
+                val: rd.pre_value,
+                prev_val: FrVal(rd.pre_value),
+                next_val: FrVal(rd.post_value),
+                read_ra: F::zero(),
+                rd_wa: F::one(),
+            });
+        }
+    }
+    entries[start..].sort_by_key(|entry| entry.col);
+    Ok(())
+}
+
+fn sparse_field_register_col(address: usize) -> Result<u8, Stage4KernelError> {
+    u8::try_from(address).map_err(|_| Stage4KernelError::InvalidInputLength {
+        input: "stage4.field_registers.accesses",
+        expected: usize::from(u8::MAX) + 1,
+        actual: address + 1,
+    })
+}
+
+fn validate_field_register_address(
+    register_count: usize,
+    address: usize,
+) -> Result<(), Stage4KernelError> {
+    if address < register_count {
+        Ok(())
+    } else {
+        Err(Stage4KernelError::InvalidInputLength {
+            input: "stage4.field_registers.accesses",
+            expected: register_count,
+            actual: address + 1,
+        })
+    }
+}
+
 fn registers_read_write_state<F: Field>(
     claim: &Stage4SumcheckClaimPlan,
     inputs: &Stage4ProverInputs<'_, F>,
@@ -2079,6 +2569,158 @@ fn registers_read_write_state<F: Field>(
         rd_inc_expanded,
         gamma,
         gamma2,
+        active_scale,
+    )))
+}
+
+/// BN254 Fr coprocessor ReadWriteChecking state dispatcher.
+///
+/// Mirrors `registers_read_write_state`: when the witness carries an
+/// `accesses` list, returns a [`SparseFieldRegistersState`] (avoids the
+/// `4 × 16 × T` dense allocations — see Rule 1 in
+/// `specs/bn254-fr-coprocessor.md`). Otherwise falls back to a
+/// dense `DenseStage4State` for backwards compatibility with callers
+/// that still materialize the FR Twist polys eagerly.
+fn field_registers_read_write_state<F: Field>(
+    claim: &Stage4SumcheckClaimPlan,
+    inputs: &Stage4ProverInputs<'_, F>,
+    store: &Stage4ValueStore<F>,
+    active_scale: F,
+) -> Result<Stage4ProverInstanceState<F>, Stage4KernelError> {
+    let witness = inputs
+        .field_registers
+        .ok_or(Stage4KernelError::MissingKernelInput {
+            kernel: "jolt_stage4_batched",
+            input: "field_registers",
+        })?;
+    let trace_point = store.point("stage4.input.stage3.field_registers.FieldRdValue")?;
+    let register_rounds = log2_exact(witness.field_register_count, "stage4.field_register_count")?;
+    let trace_rounds = log2_exact(witness.trace_len, "stage4.trace_len")?;
+    require_operand_count(
+        "stage4.field_registers.trace_point",
+        trace_rounds,
+        trace_point.len(),
+    )?;
+    require_operand_count(
+        claim.symbol,
+        register_rounds + trace_rounds,
+        claim.num_rounds,
+    )?;
+    require_operand_count(
+        "stage4.field_registers.FieldRdInc",
+        witness.trace_len,
+        witness.field_rd_inc.len(),
+    )?;
+
+    let gamma = store.scalar("stage4.field_registers_read_write.gamma")?;
+    let gamma2 = store
+        .try_scalar("stage4.field_registers_read_write.gamma2")
+        .unwrap_or_else(|| gamma * gamma);
+
+    if let Some(accesses) = witness.accesses {
+        return SparseFieldRegistersState::new(
+            witness.field_register_count,
+            witness.trace_len,
+            accesses,
+            witness.field_rd_inc,
+            trace_point,
+            gamma,
+            gamma2,
+            active_scale,
+        )
+        .map(Stage4ProverInstanceState::SparseFieldRegisters);
+    }
+
+    let expected_len = witness
+        .field_register_count
+        .checked_mul(witness.trace_len)
+        .ok_or(Stage4KernelError::InvalidInputLength {
+            input: "stage4.field_registers",
+            expected: usize::MAX,
+            actual: witness.field_register_count,
+        })?;
+    require_operand_count(
+        "stage4.field_registers.FieldRegistersVal",
+        expected_len,
+        witness.field_registers_val.len(),
+    )?;
+    require_operand_count(
+        "stage4.field_registers.FieldRs1Ra",
+        expected_len,
+        witness.field_rs1_ra.len(),
+    )?;
+    require_operand_count(
+        "stage4.field_registers.FieldRs2Ra",
+        expected_len,
+        witness.field_rs2_ra.len(),
+    )?;
+    require_operand_count(
+        "stage4.field_registers.FieldRdWa",
+        expected_len,
+        witness.field_rd_wa.len(),
+    )?;
+
+    let eq_cycle = EqPolynomial::<F>::evals(trace_point, None);
+    let mut eq_cycle_expanded = Vec::with_capacity(expected_len);
+    let mut field_rd_inc_expanded = Vec::with_capacity(expected_len);
+    for _address in 0..witness.field_register_count {
+        eq_cycle_expanded.extend_from_slice(&eq_cycle);
+        field_rd_inc_expanded.extend_from_slice(witness.field_rd_inc);
+    }
+    Ok(Stage4ProverInstanceState::Dense(DenseStage4State::new(
+        vec![
+            eq_cycle_expanded,
+            witness.field_registers_val.to_vec(),
+            witness.field_rs1_ra.to_vec(),
+            witness.field_rs2_ra.to_vec(),
+            witness.field_rd_wa.to_vec(),
+            field_rd_inc_expanded,
+        ],
+        vec![
+            DenseTerm {
+                coefficient: F::one(),
+                factors: vec![0, 4, 1],
+            },
+            DenseTerm {
+                coefficient: F::one(),
+                factors: vec![0, 4, 5],
+            },
+            DenseTerm {
+                coefficient: gamma,
+                factors: vec![0, 2, 1],
+            },
+            DenseTerm {
+                coefficient: gamma2,
+                factors: vec![0, 3, 1],
+            },
+        ],
+        vec![
+            FactorOutput {
+                name: "stage4.field_registers_read_write.eval.FieldRegistersVal",
+                oracle: "FieldRegistersVal",
+                factor: 1,
+            },
+            FactorOutput {
+                name: "stage4.field_registers_read_write.eval.FieldRs1Ra",
+                oracle: "FieldRs1Ra",
+                factor: 2,
+            },
+            FactorOutput {
+                name: "stage4.field_registers_read_write.eval.FieldRs2Ra",
+                oracle: "FieldRs2Ra",
+                factor: 3,
+            },
+            FactorOutput {
+                name: "stage4.field_registers_read_write.eval.FieldRdWa",
+                oracle: "FieldRdWa",
+                factor: 4,
+            },
+            FactorOutput {
+                name: "stage4.field_registers_read_write.eval.FieldRdInc",
+                oracle: "FieldRdInc",
+                factor: 5,
+            },
+        ],
         active_scale,
     )))
 }
@@ -2258,8 +2900,8 @@ fn validate_register_address(
     }
 }
 
-fn sparse_register_split_round_coefficients<F: Field>(
-    entries: &[SparseRegisterEntry<F>],
+fn sparse_register_split_round_coefficients<F: Field, V: SparseValBacking<F>>(
+    entries: &[SparseRegisterEntry<F, V>],
     eq_cycle: &SplitEqState<F>,
     rd_inc: &[F],
     current_trace_len: usize,
@@ -2282,8 +2924,8 @@ fn sparse_register_split_round_coefficients<F: Field>(
     }
 }
 
-fn sparse_register_low_round_coefficients<F: Field>(
-    entries: &[SparseRegisterEntry<F>],
+fn sparse_register_low_round_coefficients<F: Field, V: SparseValBacking<F>>(
+    entries: &[SparseRegisterEntry<F, V>],
     rd_inc: &[F],
     e_in: &[F],
     e_out: &[F],
@@ -2342,8 +2984,8 @@ fn sparse_register_low_round_coefficients<F: Field>(
     Ok((accumulators[0].reduce(), accumulators[1].reduce()))
 }
 
-fn sparse_register_high_round_coefficients<F: Field>(
-    entries: &[SparseRegisterEntry<F>],
+fn sparse_register_high_round_coefficients<F: Field, V: SparseValBacking<F>>(
+    entries: &[SparseRegisterEntry<F, V>],
     rd_inc: &[F],
     in_weight: F,
     e_out: &[F],
@@ -2392,9 +3034,9 @@ fn sparse_register_high_round_coefficients<F: Field>(
     Ok((accumulators[0].reduce(), accumulators[1].reduce()))
 }
 
-fn accumulate_sparse_register_low_outer_chunk<F: Field>(
+fn accumulate_sparse_register_low_outer_chunk<F: Field, V: SparseValBacking<F>>(
     accumulators: &mut [F::Accumulator; 2],
-    entries: &[SparseRegisterEntry<F>],
+    entries: &[SparseRegisterEntry<F, V>],
     rd_inc: &[F],
     e_in: &[F],
     e_out: &[F],
@@ -2410,9 +3052,9 @@ fn accumulate_sparse_register_low_outer_chunk<F: Field>(
     }
 }
 
-fn accumulate_sparse_register_row_pair_chunk<F: Field>(
+fn accumulate_sparse_register_row_pair_chunk<F: Field, V: SparseValBacking<F>>(
     accumulators: &mut [F::Accumulator; 2],
-    entries: &[SparseRegisterEntry<F>],
+    entries: &[SparseRegisterEntry<F, V>],
     rd_inc: &[F],
     weight: F,
 ) {
@@ -2437,8 +3079,8 @@ struct SparseRegisterPairRange {
     odd: std::ops::Range<usize>,
 }
 
-fn sparse_register_pair_ranges_into<F: Field>(
-    entries: &[SparseRegisterEntry<F>],
+fn sparse_register_pair_ranges_into<F: Field, V: SparseValBacking<F>>(
+    entries: &[SparseRegisterEntry<F, V>],
     current_trace_len: usize,
     ranges: &mut Vec<SparseRegisterPairRange>,
 ) -> Result<(), Stage4KernelError> {
@@ -2471,8 +3113,8 @@ fn sparse_register_pair_ranges_into<F: Field>(
     Ok(())
 }
 
-fn sparse_register_pair_ranges<F: Field>(
-    entries: &[SparseRegisterEntry<F>],
+fn sparse_register_pair_ranges<F: Field, V: SparseValBacking<F>>(
+    entries: &[SparseRegisterEntry<F, V>],
     current_trace_len: usize,
 ) -> Result<Vec<SparseRegisterPairRange>, Stage4KernelError> {
     let mut ranges = Vec::new();
@@ -2480,10 +3122,10 @@ fn sparse_register_pair_ranges<F: Field>(
     Ok(ranges)
 }
 
-fn accumulate_sparse_register_row_pair_body_coefficients<F: Field>(
+fn accumulate_sparse_register_row_pair_body_coefficients<F: Field, V: SparseValBacking<F>>(
     accumulators: &mut [F::Accumulator; 2],
-    even: &[SparseRegisterEntry<F>],
-    odd: &[SparseRegisterEntry<F>],
+    even: &[SparseRegisterEntry<F, V>],
+    odd: &[SparseRegisterEntry<F, V>],
     inc0: F,
     inc_delta: F,
     weight: F,
@@ -2534,10 +3176,10 @@ struct SparseRegisterLinear<F: Field> {
     rd_wa_delta: F,
 }
 
-fn accumulate_sparse_register_entry_pair_body_coefficients<F: Field>(
+fn accumulate_sparse_register_entry_pair_body_coefficients<F: Field, V: SparseValBacking<F>>(
     accumulators: &mut [F::Accumulator; 2],
-    even: Option<&SparseRegisterEntry<F>>,
-    odd: Option<&SparseRegisterEntry<F>>,
+    even: Option<&SparseRegisterEntry<F, V>>,
+    odd: Option<&SparseRegisterEntry<F, V>>,
     inc0: F,
     inc_delta: F,
     weight: F,
@@ -2552,9 +3194,9 @@ fn accumulate_sparse_register_entry_pair_body_coefficients<F: Field>(
     accumulators[1].fmadd(weight, body2);
 }
 
-fn sparse_register_entry_linear<F: Field>(
-    even: Option<&SparseRegisterEntry<F>>,
-    odd: Option<&SparseRegisterEntry<F>>,
+fn sparse_register_entry_linear<F: Field, V: SparseValBacking<F>>(
+    even: Option<&SparseRegisterEntry<F, V>>,
+    odd: Option<&SparseRegisterEntry<F, V>>,
 ) -> SparseRegisterLinear<F> {
     match (even, odd) {
         (Some(even), Some(odd)) => SparseRegisterLinear {
@@ -2567,20 +3209,23 @@ fn sparse_register_entry_linear<F: Field>(
         },
         (Some(even), None) => SparseRegisterLinear {
             val0: even.val,
-            val_delta: F::from_u64(even.next_val) - even.val,
+            val_delta: even.next_val.to_field() - even.val,
             read_ra0: even.read_ra,
             read_ra_delta: -even.read_ra,
             rd_wa0: even.rd_wa,
             rd_wa_delta: -even.rd_wa,
         },
-        (None, Some(odd)) => SparseRegisterLinear {
-            val0: F::from_u64(odd.prev_val),
-            val_delta: odd.val - F::from_u64(odd.prev_val),
-            read_ra0: F::zero(),
-            read_ra_delta: odd.read_ra,
-            rd_wa0: F::zero(),
-            rd_wa_delta: odd.rd_wa,
-        },
+        (None, Some(odd)) => {
+            let prev = odd.prev_val.to_field();
+            SparseRegisterLinear {
+                val0: prev,
+                val_delta: odd.val - prev,
+                read_ra0: F::zero(),
+                read_ra_delta: odd.read_ra,
+                rd_wa0: F::zero(),
+                rd_wa_delta: odd.rd_wa,
+            }
+        }
         (None, None) => SparseRegisterLinear {
             val0: F::zero(),
             val_delta: F::zero(),
@@ -2592,9 +3237,9 @@ fn sparse_register_entry_linear<F: Field>(
     }
 }
 
-fn sparse_register_entry_eval<F: Field>(
-    even: Option<&SparseRegisterEntry<F>>,
-    odd: Option<&SparseRegisterEntry<F>>,
+fn sparse_register_entry_eval<F: Field, V: SparseValBacking<F>>(
+    even: Option<&SparseRegisterEntry<F, V>>,
+    odd: Option<&SparseRegisterEntry<F, V>>,
     x: F,
 ) -> SparseRegisterEval<F> {
     match (even, odd) {
@@ -2604,12 +3249,12 @@ fn sparse_register_entry_eval<F: Field>(
             rd_wa: linear_eval(even.rd_wa, odd.rd_wa, x),
         },
         (Some(even), None) => SparseRegisterEval {
-            val: linear_eval(even.val, F::from_u64(even.next_val), x),
+            val: linear_eval(even.val, even.next_val.to_field(), x),
             read_ra: linear_eval(even.read_ra, F::zero(), x),
             rd_wa: linear_eval(even.rd_wa, F::zero(), x),
         },
         (None, Some(odd)) => SparseRegisterEval {
-            val: linear_eval(F::from_u64(odd.prev_val), odd.val, x),
+            val: linear_eval(odd.prev_val.to_field(), odd.val, x),
             read_ra: linear_eval(F::zero(), odd.read_ra, x),
             rd_wa: linear_eval(F::zero(), odd.rd_wa, x),
         },
@@ -2621,11 +3266,11 @@ fn sparse_register_entry_eval<F: Field>(
     }
 }
 
-fn bind_sparse_register_entries_into<F: Field>(
-    entries: &[SparseRegisterEntry<F>],
+fn bind_sparse_register_entries_into<F: Field, V: SparseValBacking<F>>(
+    entries: &[SparseRegisterEntry<F, V>],
     current_trace_len: usize,
     challenge: F,
-    output: &mut Vec<SparseRegisterEntry<F>>,
+    output: &mut Vec<SparseRegisterEntry<F, V>>,
 ) {
     output.clear();
     if entries.len() >= DENSE_BIND_PAR_THRESHOLD {
@@ -2672,10 +3317,10 @@ fn bind_sparse_register_entries_into<F: Field>(
     bind_sparse_register_entries_sequential_into(entries, challenge, output);
 }
 
-fn bind_sparse_register_entries_sequential_into<F: Field>(
-    entries: &[SparseRegisterEntry<F>],
+fn bind_sparse_register_entries_sequential_into<F: Field, V: SparseValBacking<F>>(
+    entries: &[SparseRegisterEntry<F, V>],
     challenge: F,
-    output: &mut Vec<SparseRegisterEntry<F>>,
+    output: &mut Vec<SparseRegisterEntry<F, V>>,
 ) {
     output.reserve(entries.len());
     let mut cursor = 0usize;
@@ -2697,9 +3342,9 @@ fn bind_sparse_register_entries_sequential_into<F: Field>(
     }
 }
 
-fn sparse_register_row_pair_bound_len<F: Field>(
-    even: &[SparseRegisterEntry<F>],
-    odd: &[SparseRegisterEntry<F>],
+fn sparse_register_row_pair_bound_len<F: Field, V: SparseValBacking<F>>(
+    even: &[SparseRegisterEntry<F, V>],
+    odd: &[SparseRegisterEntry<F, V>],
 ) -> usize {
     let mut i = 0usize;
     let mut j = 0usize;
@@ -2718,12 +3363,12 @@ fn sparse_register_row_pair_bound_len<F: Field>(
     len
 }
 
-fn bind_sparse_register_row_pair_into<F: Field>(
-    even: &[SparseRegisterEntry<F>],
-    odd: &[SparseRegisterEntry<F>],
+fn bind_sparse_register_row_pair_into<F: Field, V: SparseValBacking<F>>(
+    even: &[SparseRegisterEntry<F, V>],
+    odd: &[SparseRegisterEntry<F, V>],
     row: usize,
     challenge: F,
-    output: &mut [MaybeUninit<SparseRegisterEntry<F>>],
+    output: &mut [MaybeUninit<SparseRegisterEntry<F, V>>],
 ) {
     let mut i = 0usize;
     let mut j = 0usize;
@@ -2752,12 +3397,12 @@ fn bind_sparse_register_row_pair_into<F: Field>(
     debug_assert_eq!(out, output.len());
 }
 
-fn bind_sparse_register_row_pair<F: Field>(
-    even: &[SparseRegisterEntry<F>],
-    odd: &[SparseRegisterEntry<F>],
+fn bind_sparse_register_row_pair<F: Field, V: SparseValBacking<F>>(
+    even: &[SparseRegisterEntry<F, V>],
+    odd: &[SparseRegisterEntry<F, V>],
     row: usize,
     challenge: F,
-    output: &mut Vec<SparseRegisterEntry<F>>,
+    output: &mut Vec<SparseRegisterEntry<F, V>>,
 ) {
     let mut i = 0usize;
     let mut j = 0usize;
@@ -2783,19 +3428,19 @@ fn bind_sparse_register_row_pair<F: Field>(
     }
 }
 
-fn bind_sparse_register_entry_pair<F: Field>(
-    even: Option<&SparseRegisterEntry<F>>,
-    odd: Option<&SparseRegisterEntry<F>>,
+fn bind_sparse_register_entry_pair<F: Field, V: SparseValBacking<F>>(
+    even: Option<&SparseRegisterEntry<F, V>>,
+    odd: Option<&SparseRegisterEntry<F, V>>,
     row: usize,
     col: u8,
     challenge: F,
-) -> SparseRegisterEntry<F> {
+) -> SparseRegisterEntry<F, V> {
     let value = sparse_register_entry_eval(even, odd, challenge);
     let (prev_val, next_val) = match (even, odd) {
         (Some(even), Some(odd)) => (even.prev_val, odd.next_val),
         (Some(even), None) => (even.prev_val, even.next_val),
         (None, Some(odd)) => (odd.prev_val, odd.next_val),
-        (None, None) => (0, 0),
+        (None, None) => (V::default(), V::default()),
     };
     SparseRegisterEntry {
         row,
@@ -3164,6 +3809,9 @@ fn expected_batched_output_claim<F: Field>(
             Stage4Relation::RegistersReadWrite => {
                 expected_registers_read_write(store, evals, local_point)?
             }
+            Stage4Relation::FieldRegistersReadWrite => {
+                expected_field_registers_read_write(store, evals, local_point)?
+            }
             Stage4Relation::RamValCheck => expected_ram_val_check(store, evals, local_point)?,
             relation @ Stage4Relation::Batched => {
                 return Err(Stage4KernelError::KernelNotImplemented {
@@ -3194,6 +3842,32 @@ fn expected_registers_read_write<F: Field>(
     let rd_wa = eval_by_name(evals, "stage4.registers_read_write.eval.RdWa")?;
     let rd_inc = eval_by_name(evals, "stage4.registers_read_write.eval.RdInc")?;
     let gamma = store.scalar("stage4.registers_read_write.gamma")?;
+    Ok(eq_eval
+        * (rd_wa * (registers_val + rd_inc)
+            + gamma * (rs1_ra * registers_val + gamma * rs2_ra * registers_val)))
+}
+
+fn expected_field_registers_read_write<F: Field>(
+    store: &Stage4ValueStore<F>,
+    evals: &[Stage4NamedEval<F>],
+    local_point: &[F],
+) -> Result<F, Stage4KernelError> {
+    let trace_point = store.point("stage4.input.stage3.field_registers.FieldRdValue")?;
+    let r_cycle = normalize_stage4_registers_rw_cycle_point(
+        local_point,
+        trace_point.len(),
+        "stage4.field_registers_read_write.instance",
+    )?;
+    let eq_eval = EqPolynomial::<F>::mle(&r_cycle, trace_point);
+    let registers_val = eval_by_name(
+        evals,
+        "stage4.field_registers_read_write.eval.FieldRegistersVal",
+    )?;
+    let rs1_ra = eval_by_name(evals, "stage4.field_registers_read_write.eval.FieldRs1Ra")?;
+    let rs2_ra = eval_by_name(evals, "stage4.field_registers_read_write.eval.FieldRs2Ra")?;
+    let rd_wa = eval_by_name(evals, "stage4.field_registers_read_write.eval.FieldRdWa")?;
+    let rd_inc = eval_by_name(evals, "stage4.field_registers_read_write.eval.FieldRdInc")?;
+    let gamma = store.scalar("stage4.field_registers_read_write.gamma")?;
     Ok(eq_eval
         * (rd_wa * (registers_val + rd_inc)
             + gamma * (rs1_ra * registers_val + gamma * rs2_ra * registers_val)))
@@ -3425,6 +4099,42 @@ fn normalize_stage4_registers_rw_point<F: Field>(
         return Err(Stage4KernelError::InvalidInputLength {
             input: "stage4.registers_read_write.instance",
             expected: cycle_rounds + address_rounds,
+            actual: point.len(),
+        });
+    }
+    let (cycle, address) = point.split_at(cycle_rounds);
+    Ok(address
+        .iter()
+        .rev()
+        .copied()
+        .chain(cycle.iter().rev().copied())
+        .collect())
+}
+
+// FR Twist instance shares the same [cycle, address] sumcheck layout as the
+// Registers instance but with `field_register_log_k` address rounds instead of
+// `register_log_k`. The driver's `round_schedule` is [log_t, register_log_k];
+// only the first element (cycle rounds) is reused. The instance's local point
+// length is therefore `log_t + field_register_log_k`, shorter than the driver's
+// full point, and the address-tail length is derived from the local point.
+fn normalize_stage4_field_registers_rw_point<F: Field>(
+    program: &'static Stage4CpuProgramPlan,
+    driver: &'static str,
+    point: &[F],
+) -> Result<Vec<F>, Stage4KernelError> {
+    let driver_plan =
+        find_driver(program, driver).ok_or(Stage4KernelError::MissingDriver { driver })?;
+    if driver_plan.round_schedule.is_empty() {
+        return Err(Stage4KernelError::InvalidProof {
+            driver,
+            reason: "stage4 field_registers point normalization requires non-empty schedule",
+        });
+    }
+    let cycle_rounds = driver_plan.round_schedule[0];
+    if point.len() < cycle_rounds {
+        return Err(Stage4KernelError::InvalidInputLength {
+            input: "stage4.field_registers_read_write.instance",
+            expected: cycle_rounds,
             actual: point.len(),
         });
     }
