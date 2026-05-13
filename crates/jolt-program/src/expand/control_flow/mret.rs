@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::expand) fn expand_mret(
-    instruction: &SourceRow,
+    instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mepc_vr = mepc_register();
     let mut asm = ExpansionBuilder::new(*instruction);

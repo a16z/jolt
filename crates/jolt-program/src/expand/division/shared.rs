@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::expand) fn expand_signed_div_rem(
-    instruction: &SourceRow,
+    instruction: &SourceInstructionRow,
     word: bool,
     remainder_output: bool,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
@@ -237,7 +237,7 @@ pub(in crate::expand) fn expand_signed_div_rem(
 }
 
 pub(in crate::expand) fn expand_unsigned_word_div_rem(
-    instruction: &SourceRow,
+    instruction: &SourceInstructionRow,
     remainder_output: bool,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);

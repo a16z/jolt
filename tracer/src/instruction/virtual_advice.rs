@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{emulator::cpu::Cpu, instruction::JoltRow};
+use crate::{emulator::cpu::Cpu, instruction::JoltInstructionRow};
 
 use super::{format::format_j::FormatJ, RISCVInstruction, RISCVTrace};
 
@@ -54,8 +54,8 @@ impl RISCVInstruction for VirtualAdvice {
     }
 }
 
-impl From<JoltRow> for VirtualAdvice {
-    fn from(ni: JoltRow) -> Self {
+impl From<JoltInstructionRow> for VirtualAdvice {
+    fn from(ni: JoltInstructionRow) -> Self {
         Self {
             address: ni.address as u64,
             operands: ni.operands.into(),
@@ -67,11 +67,11 @@ impl From<JoltRow> for VirtualAdvice {
     }
 }
 
-impl jolt_riscv::JoltRowData for VirtualAdvice {}
+impl jolt_riscv::JoltInstructionRowData for VirtualAdvice {}
 
-impl From<VirtualAdvice> for JoltRow {
+impl From<VirtualAdvice> for JoltInstructionRow {
     fn from(val: VirtualAdvice) -> Self {
-        JoltRow {
+        JoltInstructionRow {
             instruction_kind: jolt_riscv::JoltInstructionKind::VirtualAdvice,
             address: val.address as usize,
             operands: val.operands.into(),

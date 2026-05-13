@@ -1,5 +1,5 @@
 use common::jolt_device::{JoltDevice, MemoryConfig};
-use jolt_riscv::JoltRow;
+use jolt_riscv::JoltInstructionRow;
 
 use super::{ExecutionBackend, TraceError, TraceSource};
 
@@ -13,7 +13,7 @@ use super::{ExecutionBackend, TraceError, TraceSource};
 pub struct JoltProgram {
     elf_bytes: Vec<u8>,
     /// Final Jolt bytecode rows after expanding decoded RV64 instructions.
-    pub expanded_bytecode: Vec<JoltRow>,
+    pub expanded_bytecode: Vec<JoltInstructionRow>,
     /// Initial byte values for memory-backed ELF sections.
     pub memory_init: Vec<(u64, u8)>,
     /// End address of the loaded program image.
@@ -35,7 +35,7 @@ impl JoltProgram {
 
     pub fn from_parts(
         elf_bytes: Vec<u8>,
-        expanded_bytecode: Vec<JoltRow>,
+        expanded_bytecode: Vec<JoltInstructionRow>,
         memory_init: Vec<(u64, u8)>,
         program_end: u64,
         entry_address: u64,
@@ -57,7 +57,7 @@ impl JoltProgram {
     #[cfg(feature = "image")]
     pub fn from_rv64_image(
         elf_bytes: Vec<u8>,
-        expanded_bytecode: Vec<JoltRow>,
+        expanded_bytecode: Vec<JoltInstructionRow>,
         image: crate::image::Rv64ProgramImage,
     ) -> Self {
         Self::from_parts(
@@ -186,7 +186,7 @@ pub struct MemoryImage {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct TraceRow {
-    pub instruction: JoltRow,
+    pub instruction: JoltInstructionRow,
     pub registers: RegisterState,
     pub ram_access: RamAccess,
 }

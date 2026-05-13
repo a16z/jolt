@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::expand) fn expand_mulh(
-    instruction: &SourceRow,
+    instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
     let v_sx = asm.allocate()?;

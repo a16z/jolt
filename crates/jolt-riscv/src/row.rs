@@ -22,13 +22,13 @@ pub struct NormalizedOperands {
     feature = "serialization",
     derive(CanonicalSerialize, CanonicalDeserialize, Serialize, Deserialize)
 )]
-pub struct SourceInline {
+pub struct SourceInlineKey {
     pub opcode: u8,
     pub funct3: u8,
     pub funct7: u8,
 }
 
-impl SourceInline {
+impl SourceInlineKey {
     #[inline]
     pub const fn packed(self) -> u32 {
         self.opcode as u32 | ((self.funct3 as u32) << 7) | ((self.funct7 as u32) << 10)
@@ -40,22 +40,22 @@ impl SourceInline {
     feature = "serialization",
     derive(CanonicalSerialize, CanonicalDeserialize, Serialize, Deserialize)
 )]
-pub struct SourceRow {
+pub struct SourceInstructionRow {
     pub address: usize,
     pub operands: NormalizedOperands,
     #[cfg_attr(feature = "serialization", serde(default))]
-    pub inline: Option<SourceInline>,
+    pub inline: Option<SourceInlineKey>,
     pub is_compressed: bool,
 }
 
-impl SourceRow {
+impl SourceInstructionRow {
     #[inline]
-    pub fn jolt_row(self, instruction_kind: JoltInstructionKind) -> JoltRow {
+    pub fn jolt_instruction_row(self, instruction_kind: JoltInstructionKind) -> JoltInstructionRow {
         let mut operands = self.operands;
         if let Some(inline) = self.inline {
             operands.imm = inline.packed() as i128;
         }
-        JoltRow {
+        JoltInstructionRow {
             instruction_kind,
             address: self.address,
             operands,
@@ -71,7 +71,7 @@ impl SourceRow {
     feature = "serialization",
     derive(CanonicalSerialize, CanonicalDeserialize, Serialize, Deserialize)
 )]
-pub struct JoltRow {
+pub struct JoltInstructionRow {
     pub instruction_kind: JoltInstructionKind,
     pub address: usize,
     pub operands: NormalizedOperands,

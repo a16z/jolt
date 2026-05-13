@@ -1,4 +1,4 @@
-use jolt_riscv::{JoltInstructionKind, SourceInstructionKind, SourceRow};
+use jolt_riscv::{JoltInstructionKind, SourceInstructionKind, SourceInstructionRow};
 
 use crate::expand::{allocator::NUM_VIRTUAL_INSTRUCTION_REGISTERS, ExpansionError};
 
@@ -41,7 +41,7 @@ pub(super) struct InstructionTemplate<K> {
 }
 
 pub(super) type RowTemplate = InstructionTemplate<JoltInstructionKind>;
-pub(super) type SourceRowTemplate = InstructionTemplate<SourceInstructionKind>;
+pub(super) type SourceInstructionRowTemplate = InstructionTemplate<SourceInstructionKind>;
 
 impl<K> InstructionTemplate<K> {
     pub(super) fn r(
@@ -157,26 +157,26 @@ pub(super) enum ExpansionOp {
     /// Append this row directly to the output.
     Emit(RowTemplate),
     /// Recursively expand this row through the full pipeline before appending.
-    Expand(SourceRowTemplate),
+    Expand(SourceInstructionRowTemplate),
     Allocate(TempId),
     Release(TempId),
 }
 
 /// A complete symbolic recipe: source instruction paired with the ops to materialize it.
 pub(super) struct ExpandedInstructionSequence {
-    pub(super) source: SourceRow,
+    pub(super) source: SourceInstructionRow,
     pub(super) ops: Vec<ExpansionOp>,
 }
 
 /// Builds a symbolic expansion recipe from emit/expand/allocate/release calls.
 pub(super) struct ExpansionBuilder {
-    source: SourceRow,
+    source: SourceInstructionRow,
     ops: Vec<ExpansionOp>,
     next_temp: usize,
 }
 
 impl ExpansionBuilder {
-    pub(super) fn new(source: SourceRow) -> Self {
+    pub(super) fn new(source: SourceInstructionRow) -> Self {
         Self {
             source,
             ops: Vec::new(),
@@ -252,7 +252,12 @@ impl ExpansionBuilder {
         rs1: RegisterOperand,
         rs2: RegisterOperand,
     ) {
-        self.expand(SourceRowTemplate::r(instruction_kind, rd, rs1, rs2));
+        self.expand(SourceInstructionRowTemplate::r(
+            instruction_kind,
+            rd,
+            rs1,
+            rs2,
+        ));
     }
 
     pub(super) fn expand_i(
@@ -262,7 +267,12 @@ impl ExpansionBuilder {
         rs1: RegisterOperand,
         imm: i128,
     ) {
-        self.expand(SourceRowTemplate::i(instruction_kind, rd, rs1, imm));
+        self.expand(SourceInstructionRowTemplate::i(
+            instruction_kind,
+            rd,
+            rs1,
+            imm,
+        ));
     }
 
     pub(super) fn expand_j(
@@ -271,7 +281,7 @@ impl ExpansionBuilder {
         rd: RegisterOperand,
         imm: i128,
     ) {
-        self.expand(SourceRowTemplate::j(instruction_kind, rd, imm));
+        self.expand(SourceInstructionRowTemplate::j(instruction_kind, rd, imm));
     }
 
     pub(super) fn expand_u(
@@ -280,7 +290,7 @@ impl ExpansionBuilder {
         rd: RegisterOperand,
         imm: i128,
     ) {
-        self.expand(SourceRowTemplate::u(instruction_kind, rd, imm));
+        self.expand(SourceInstructionRowTemplate::u(instruction_kind, rd, imm));
     }
 
     pub(super) fn expand_b(
@@ -290,7 +300,12 @@ impl ExpansionBuilder {
         rs2: RegisterOperand,
         imm: i128,
     ) {
-        self.expand(SourceRowTemplate::b(instruction_kind, rs1, rs2, imm));
+        self.expand(SourceInstructionRowTemplate::b(
+            instruction_kind,
+            rs1,
+            rs2,
+            imm,
+        ));
     }
 
     pub(super) fn expand_s(
@@ -300,7 +315,12 @@ impl ExpansionBuilder {
         rs2: RegisterOperand,
         imm: i128,
     ) {
-        self.expand(SourceRowTemplate::s(instruction_kind, rs1, rs2, imm));
+        self.expand(SourceInstructionRowTemplate::s(
+            instruction_kind,
+            rs1,
+            rs2,
+            imm,
+        ));
     }
 
     pub(super) fn expand_address(
@@ -309,7 +329,11 @@ impl ExpansionBuilder {
         rs1: RegisterOperand,
         imm: i128,
     ) {
-        self.expand(SourceRowTemplate::address(instruction_kind, rs1, imm));
+        self.expand(SourceInstructionRowTemplate::address(
+            instruction_kind,
+            rs1,
+            imm,
+        ));
     }
 
     pub(super) fn release(&mut self, temp: TempId) {
@@ -333,7 +357,7 @@ impl ExpansionBuilder {
         self.ops.push(ExpansionOp::Emit(row));
     }
 
-    fn expand(&mut self, row: SourceRowTemplate) {
+    fn expand(&mut self, row: SourceInstructionRowTemplate) {
         self.ops.push(ExpansionOp::Expand(row));
     }
 }
@@ -414,12 +438,12 @@ pub(super) fn is_source_only(instruction_kind: SourceInstructionKind) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use jolt_riscv::{NormalizedOperands, SourceRow};
+    use jolt_riscv::{NormalizedOperands, SourceInstructionRow};
 
     use super::*;
 
-    fn source() -> SourceRow {
-        SourceRow {
+    fn source() -> SourceInstructionRow {
+        SourceInstructionRow {
             address: 0x8000_0000,
             operands: NormalizedOperands::default(),
             inline: None,

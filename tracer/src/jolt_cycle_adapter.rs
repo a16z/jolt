@@ -1,16 +1,16 @@
-use jolt_riscv::{JoltCycle, JoltRowData};
+use jolt_riscv::{JoltCycle, JoltInstructionRowData};
 
 #[cfg(feature = "test-utils")]
 use crate::instruction::format::InstructionFormat;
 
 #[cfg(feature = "test-utils")]
-use crate::instruction::JoltRow;
+use crate::instruction::JoltInstructionRow;
 
 use crate::instruction::{
     format::InstructionRegisterState, RAMAccess, RISCVCycle, RISCVInstruction,
 };
 
-impl<T: RISCVInstruction + JoltRowData> JoltCycle for RISCVCycle<T> {
+impl<T: RISCVInstruction + JoltInstructionRowData> JoltCycle for RISCVCycle<T> {
     type Instruction = T;
 
     fn instruction(&self) -> T {
@@ -59,7 +59,7 @@ impl<T: RISCVInstruction + JoltRowData> JoltCycle for RISCVCycle<T> {
     #[cfg(feature = "test-utils")]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
         let instruction = T::random(rng);
-        let normalized: JoltRow = instruction.into();
+        let normalized: JoltInstructionRow = instruction.into();
         let register_state =
             <<T::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
                 rng,

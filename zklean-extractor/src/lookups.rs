@@ -7,7 +7,7 @@ use crate::{
     DefaultMleAst,
 };
 
-/// Wrapper around a JoltRowData
+/// Wrapper around a JoltInstructionRowData
 // TODO: Can we tie the XLEN to the JoltParameterSet somehow? Seem hard w/o const generic
 // exprs...
 #[derive(Debug, Clone)]

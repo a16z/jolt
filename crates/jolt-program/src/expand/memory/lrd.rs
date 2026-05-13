@@ -3,7 +3,7 @@ use common::constants::RAM_START_ADDRESS;
 use super::*;
 
 pub(in crate::expand) fn expand_lrd(
-    instruction: &SourceRow,
+    instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let v_reservation_d = reservation_d_register();
     let v_reservation_w = reservation_w_register();

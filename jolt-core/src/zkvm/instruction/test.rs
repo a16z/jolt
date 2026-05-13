@@ -4,8 +4,8 @@ use rand::prelude::*;
 use tracer::{
     emulator::{cpu::Cpu, terminal::DummyTerminal},
     instruction::{
-        self, format::InstructionRegisterState, Cycle, JoltRow, RISCVCycle, RISCVInstruction,
-        RISCVTrace,
+        self, format::InstructionRegisterState, Cycle, JoltInstructionRow, RISCVCycle,
+        RISCVInstruction, RISCVTrace,
     },
 };
 
@@ -38,7 +38,7 @@ mod flags {
     use crate::zkvm::instruction::{Flags, InstructionFlags, SupportedInstruction};
 
     use super::CircuitFlags;
-    use jolt_riscv::{JoltInstructionKind, JoltRow, NormalizedOperands};
+    use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
     use strum::IntoEnumIterator;
     use tracer::instruction::{Cycle, Instruction};
 
@@ -128,7 +128,7 @@ mod flags {
                 continue;
             }
 
-            let normalized = instr.jolt_row();
+            let normalized = instr.jolt_instruction_row();
             assert_eq!(
                 normalized.circuit_flags(),
                 instr.circuit_flags(),
@@ -144,7 +144,7 @@ mod flags {
 
     #[test]
     fn concrete_terminal_virtual_flags_match_normalized_flags() {
-        let normalized = JoltRow {
+        let normalized = JoltInstructionRow {
             instruction_kind: JoltInstructionKind::ADDI,
             address: 0x8000_0000,
             operands: NormalizedOperands {
@@ -157,7 +157,7 @@ mod flags {
             is_first_in_sequence: false,
             is_compressed: false,
         };
-        let concrete = Instruction::try_from_jolt_row(normalized)
+        let concrete = Instruction::try_from_jolt_instruction_row(normalized)
             .expect("ADDI should convert from normalized form");
 
         assert_eq!(normalized.circuit_flags(), concrete.circuit_flags());
@@ -171,7 +171,7 @@ mod flags {
         let (bytecode, _, _, _) = program.decode();
 
         for normalized in bytecode {
-            let concrete = Instruction::try_from_jolt_row(normalized)
+            let concrete = Instruction::try_from_jolt_instruction_row(normalized)
                 .expect("expanded bytecode should convert to a concrete instruction");
             assert_eq!(
                 normalized.circuit_flags(),
@@ -251,7 +251,7 @@ mod r1cs_consistency {
                 let cycle = default_cycle.random(&mut rng);
                 let instr = cycle.instruction();
                 let flags = instr.instruction_flags();
-                let norm = instr.jolt_row();
+                let norm = instr.jolt_instruction_row();
 
                 let rs1 = cycle.rs1_read().map(|(_, v)| v).unwrap_or(0);
                 let rs2 = cycle.rs2_read().map(|(_, v)| v).unwrap_or(0);
@@ -312,7 +312,7 @@ where
     let mut rng = StdRng::seed_from_u64(12345);
     for _ in 0..10000 {
         let random_cycle = cycle.random(&mut rng);
-        let normalized_instr: JoltRow = random_cycle.instruction.into();
+        let normalized_instr: JoltInstructionRow = random_cycle.instruction.into();
         let normalized_operands = normalized_instr.operands;
 
         let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));

@@ -171,8 +171,8 @@ pub use profile::{
     JoltTargetExtension, ProfileInstructionIndex, SourceExtension, RV64IMAC_JOLT,
     RV64IMAC_JOLT_ALL_INLINES, RV64IM_JOLT,
 };
-pub use row::{JoltRow, NormalizedOperands, SourceInline, SourceRow};
-pub use row_data::JoltRowData;
+pub use row::{JoltInstructionRow, NormalizedOperands, SourceInlineKey, SourceInstructionRow};
+pub use row_data::JoltInstructionRowData;
 pub use trace::JoltCycle;
 pub use uncompress::uncompress_rv64_instruction;
 
@@ -205,10 +205,10 @@ macro_rules! jolt_instruction {
     ) => {
         $crate::jolt_instruction!(@struct $(#[$attr])* $name);
 
-        impl<T: $crate::JoltRowData> $crate::Flags for $name<T> {
+        impl<T: $crate::JoltInstructionRowData> $crate::Flags for $name<T> {
             #[inline]
             fn circuit_flags(&self) -> $crate::CircuitFlagSet {
-                let instruction: $crate::JoltRow = self.0.into();
+                let instruction: $crate::JoltInstructionRow = self.0.into();
                 let mut flags = $crate::CircuitFlagSet::default()
                     $(.set($crate::CircuitFlags::$circuit))*;
                 if let Some(virtual_sequence_remaining) = instruction.virtual_sequence_remaining {
@@ -245,10 +245,10 @@ macro_rules! jolt_instruction {
     ) => {
         $crate::jolt_instruction!(@struct $(#[$attr])* $name);
 
-        impl<T: $crate::JoltRowData> $crate::Flags for $name<T> {
+        impl<T: $crate::JoltInstructionRowData> $crate::Flags for $name<T> {
             #[inline]
             fn circuit_flags(&self) -> $crate::CircuitFlagSet {
-                let instruction: $crate::JoltRow = self.0.into();
+                let instruction: $crate::JoltInstructionRow = self.0.into();
                 let mut flags = $crate::CircuitFlagSet::default();
                 if let Some(virtual_sequence_remaining) = instruction.virtual_sequence_remaining {
                     flags = flags.set($crate::CircuitFlags::VirtualInstruction);
@@ -296,26 +296,26 @@ macro_rules! jolt_instruction {
         pub struct $name<T = ()>(pub T);
     };
 
-    // Internal: make the wrapper newtype participate in the Jolt-row
+    // Internal: make the wrapper newtype participate in Jolt instruction-row
     // conversion marker by delegating through its payload.
     (@jolt_instruction_impl $name:ident) => {
-        impl<T: $crate::JoltRowData> From<$name<T>> for $crate::JoltRow {
+        impl<T: $crate::JoltInstructionRowData> From<$name<T>> for $crate::JoltInstructionRow {
             #[inline]
             fn from(instruction: $name<T>) -> Self {
                 instruction.0.into()
             }
         }
 
-        impl<T: $crate::JoltRowData> TryFrom<$crate::JoltRow> for $name<T> {
-            type Error = <T as TryFrom<$crate::JoltRow>>::Error;
+        impl<T: $crate::JoltInstructionRowData> TryFrom<$crate::JoltInstructionRow> for $name<T> {
+            type Error = <T as TryFrom<$crate::JoltInstructionRow>>::Error;
 
             #[inline]
-            fn try_from(instruction: $crate::JoltRow) -> Result<Self, Self::Error> {
+            fn try_from(instruction: $crate::JoltInstructionRow) -> Result<Self, Self::Error> {
                 T::try_from(instruction).map($name)
             }
         }
 
-        impl<T: $crate::JoltRowData> $crate::JoltRowData for $name<T> {
+        impl<T: $crate::JoltInstructionRowData> $crate::JoltInstructionRowData for $name<T> {
         }
     };
 }

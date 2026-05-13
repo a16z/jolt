@@ -49,7 +49,7 @@ use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
 use crate::instruction::Cycle;
 use crate::instruction::Instruction;
-use crate::instruction::JoltRow;
+use crate::instruction::JoltInstructionRow;
 use crate::instruction::RISCVCycle;
 use crate::instruction::RISCVInstruction;
 use crate::instruction::RISCVTrace;
@@ -142,7 +142,7 @@ impl InstrAssembler {
         RISCVCycle<I>: Into<Cycle>,
     {
         if self.has_inline_instr_format {
-            let normalized: JoltRow = inst.into();
+            let normalized: JoltInstructionRow = inst.into();
             if !Self::is_valid_virtual_rd(normalized.operands.rd) {
                 const MIN_INLINE_REG: u8 =
                     RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
@@ -168,7 +168,7 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(JoltRow {
+        self.add_to_sequence(Op::from(JoltInstructionRow {
             instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {
@@ -194,7 +194,7 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(JoltRow {
+        self.add_to_sequence(Op::from(JoltInstructionRow {
             instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {
@@ -220,7 +220,7 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(JoltRow {
+        self.add_to_sequence(Op::from(JoltInstructionRow {
             instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {
@@ -246,7 +246,7 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(JoltRow {
+        self.add_to_sequence(Op::from(JoltInstructionRow {
             instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {
@@ -272,7 +272,7 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(JoltRow {
+        self.add_to_sequence(Op::from(JoltInstructionRow {
             instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {
@@ -294,7 +294,7 @@ impl InstrAssembler {
     where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(JoltRow {
+        self.add_to_sequence(Op::from(JoltInstructionRow {
             instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {
@@ -316,7 +316,7 @@ impl InstrAssembler {
     where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(JoltRow {
+        self.add_to_sequence(Op::from(JoltInstructionRow {
             instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {
@@ -342,7 +342,7 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(JoltRow {
+        self.add_to_sequence(Op::from(JoltInstructionRow {
             instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {
@@ -368,7 +368,7 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(JoltRow {
+        self.add_to_sequence(Op::from(JoltInstructionRow {
             instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {
@@ -393,7 +393,7 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(JoltRow {
+        self.add_to_sequence(Op::from(JoltInstructionRow {
             instruction_kind: jolt_riscv::JoltInstructionKind::Unimpl,
             address: self.address as usize,
             operands: NormalizedOperands {

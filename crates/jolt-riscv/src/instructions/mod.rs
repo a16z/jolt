@@ -22,8 +22,8 @@ pub mod m;
 pub mod virt;
 
 use crate::{
-    JoltInstructionKind, JoltRow, NormalizedOperands, SourceInline, SourceInstructionKind,
-    SourceRow,
+    JoltInstructionKind, JoltInstructionRow, NormalizedOperands, SourceInlineKey,
+    SourceInstructionKind, SourceInstructionRow,
 };
 pub use assert::AssertEq;
 pub use assert::AssertHalfwordAlignment;
@@ -180,11 +180,11 @@ macro_rules! define_source_instruction {
         ///
         /// This is the source-side phase boundary: decode produces this enum,
         /// expansion consumes it, and final bytecode is emitted as
-        /// [`JoltRow`](crate::JoltRow). The enum variant is the source
+        /// [`JoltInstructionRow`](crate::JoltInstructionRow). The enum variant is the source
         /// instruction identity; the row payload carries only row data, so the
         /// two cannot silently disagree.
         #[derive(Clone, Copy, Debug, PartialEq)]
-        pub enum SourceInstruction<T = SourceRow> {
+        pub enum SourceInstruction<T = SourceInstructionRow> {
             NoOp(Noop<T>),
             Unimpl(Unimpl<T>),
             $(
@@ -193,7 +193,7 @@ macro_rules! define_source_instruction {
             Inline(Inline<T>),
         }
 
-        impl SourceInstruction<SourceRow> {
+        impl SourceInstruction<SourceInstructionRow> {
             pub const fn kind(&self) -> SourceInstructionKind {
                 match self {
                     Self::NoOp(_) => SourceInstructionKind::NoOp,
@@ -205,7 +205,7 @@ macro_rules! define_source_instruction {
                 }
             }
 
-            pub fn new(kind: SourceInstructionKind, row: SourceRow) -> Self {
+            pub fn new(kind: SourceInstructionKind, row: SourceInstructionRow) -> Self {
                 match kind {
                     SourceInstructionKind::NoOp => Self::NoOp(Noop(row)),
                     SourceInstructionKind::Unimpl => Self::Unimpl(Unimpl(row)),
@@ -216,7 +216,7 @@ macro_rules! define_source_instruction {
                 }
             }
 
-            pub const fn row(&self) -> &SourceRow {
+            pub const fn row(&self) -> &SourceInstructionRow {
                 match self {
                     Self::NoOp(instruction) => &instruction.0,
                     Self::Unimpl(instruction) => &instruction.0,
@@ -227,12 +227,7 @@ macro_rules! define_source_instruction {
                 }
             }
 
-            pub fn try_jolt_row(&self) -> Result<JoltRow, JoltInstructionKind> {
-                let row = self.row().jolt_row(self.kind().jolt_kind());
-                JoltInstruction::try_from(row).map(|_| row)
-            }
-
-            pub fn into_row(self) -> SourceRow {
+            pub fn into_row(self) -> SourceInstructionRow {
                 match self {
                     Self::NoOp(instruction) => instruction.0,
                     Self::Unimpl(instruction) => instruction.0,
@@ -243,14 +238,23 @@ macro_rules! define_source_instruction {
                 }
             }
 
-            pub fn map_row(self, f: impl FnOnce(SourceRow) -> SourceRow) -> Self {
+            pub fn map_row(self, f: impl FnOnce(SourceInstructionRow) -> SourceInstructionRow) -> Self {
                 let kind = self.kind();
                 Self::new(kind, f(self.into_row()))
             }
         }
 
+        impl TryFrom<&SourceInstruction<SourceInstructionRow>> for JoltInstructionRow {
+            type Error = JoltInstructionKind;
+
+            fn try_from(instruction: &SourceInstruction<SourceInstructionRow>) -> Result<Self, Self::Error> {
+                let row = instruction.row().jolt_instruction_row(instruction.kind().jolt_kind());
+                JoltInstruction::try_from(row).map(|_| row)
+            }
+        }
+
         #[cfg(feature = "serialization")]
-        impl Serialize for SourceInstruction<SourceRow> {
+        impl Serialize for SourceInstruction<SourceInstructionRow> {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
             where
                 S: Serializer,
@@ -267,7 +271,7 @@ macro_rules! define_source_instruction {
         }
 
         #[cfg(feature = "serialization")]
-        impl<'de> Deserialize<'de> for SourceInstruction<SourceRow> {
+        impl<'de> Deserialize<'de> for SourceInstruction<SourceInstructionRow> {
             fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
             where
                 D: Deserializer<'de>,
@@ -278,14 +282,14 @@ macro_rules! define_source_instruction {
                     address: usize,
                     operands: NormalizedOperands,
                     #[serde(default)]
-                    inline: Option<SourceInline>,
+                    inline: Option<SourceInlineKey>,
                     is_compressed: bool,
                 }
 
                 let instruction = SerializedSourceInstruction::deserialize(deserializer)?;
                 Ok(Self::new(
                     instruction.instruction_kind,
-                    SourceRow {
+                    SourceInstructionRow {
                         address: instruction.address,
                         operands: instruction.operands,
                         inline: instruction.inline,
@@ -302,9 +306,9 @@ crate::for_each_instruction_kind!(define_source_instruction);
 /// Typed view over expanded rows that have static lookup/circuit metadata.
 ///
 /// Each variant wraps an instruction newtype parameterized by the canonical
-/// [`JoltRow`](crate::JoltRow) row. Static-flag
+/// [`JoltInstructionRow`](crate::JoltInstructionRow) row. Static-flag
 /// dispatch and the flag-exclusivity tests rely on this concretization to
-/// satisfy `T: JoltRowData` on the `Flags` impls.
+/// satisfy `T: JoltInstructionRowData` on the `Flags` impls.
 ///
 /// Deliberately omitted instruction kinds (declared and re-exported above
 /// but not proven by Jolt): the Zicsr ops (`Csrrs`, `Csrrw`), `Mret`,
@@ -315,7 +319,7 @@ crate::for_each_instruction_kind!(define_source_instruction);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
-pub enum JoltInstruction<T = JoltRow> {
+pub enum JoltInstruction<T = JoltInstructionRow> {
     Noop(Noop<T>),
     Add(Add<T>),
     Addi(Addi<T>),
@@ -386,10 +390,10 @@ pub enum JoltInstruction<T = JoltRow> {
     VirtualHostIO(VirtualHostIO<T>),
 }
 
-impl TryFrom<JoltRow> for JoltInstruction {
+impl TryFrom<JoltInstructionRow> for JoltInstruction {
     type Error = JoltInstructionKind;
 
-    fn try_from(instruction: JoltRow) -> Result<Self, Self::Error> {
+    fn try_from(instruction: JoltInstructionRow) -> Result<Self, Self::Error> {
         Ok(match instruction.instruction_kind {
             JoltInstructionKind::NoOp => Self::Noop(Noop(instruction)),
             JoltInstructionKind::ADD => Self::Add(Add(instruction)),
@@ -529,8 +533,8 @@ macro_rules! impl_jolt_instructions_flags {
 
         }
 
-        impl<T: crate::JoltRowData> JoltInstruction<T> {
-            pub fn into_row(self) -> JoltRow {
+        impl<T: crate::JoltInstructionRowData> JoltInstruction<T> {
+            pub fn into_row(self) -> JoltInstructionRow {
                 match self {
                     Self::Noop(instruction) => {
                         let mut row = instruction.0.into();
@@ -548,13 +552,13 @@ macro_rules! impl_jolt_instructions_flags {
             }
         }
 
-        impl<T: crate::JoltRowData> From<JoltInstruction<T>> for JoltRow {
+        impl<T: crate::JoltInstructionRowData> From<JoltInstruction<T>> for JoltInstructionRow {
             fn from(instruction: JoltInstruction<T>) -> Self {
                 instruction.into_row()
             }
         }
 
-        impl crate::flags::Flags for JoltInstruction<JoltRow> {
+        impl crate::flags::Flags for JoltInstruction<JoltInstructionRow> {
             fn circuit_flags(&self) -> crate::flags::CircuitFlagSet {
                 match self {
                     JoltInstruction::Noop(_) =>{
@@ -576,12 +580,12 @@ macro_rules! impl_jolt_instructions_flags {
             }
         }
 
-        impl JoltInstruction<JoltRow> {
+        impl JoltInstruction<JoltInstructionRow> {
             pub fn iter() -> impl Iterator<Item = Self> {
                 [
-                    Self::Noop(Noop(JoltRow::default())),
+                    Self::Noop(Noop(JoltInstructionRow::default())),
                     $(
-                        Self::$variant($variant(JoltRow::default())),
+                        Self::$variant($variant(JoltInstructionRow::default())),
                     )*
                 ]
                 .into_iter()
@@ -727,7 +731,7 @@ mod tests {
         assert_eq!(jolt_kind, JoltInstructionKind::AMOADDW);
         assert!(source_kind.expands_to_jolt());
         assert_eq!(
-            JoltInstruction::try_from(JoltRow {
+            JoltInstruction::try_from(JoltInstructionRow {
                 instruction_kind: jolt_kind,
                 ..Default::default()
             }),
@@ -737,7 +741,7 @@ mod tests {
 
     #[test]
     fn source_instruction_variant_is_the_source_identity() {
-        let row = SourceRow {
+        let row = SourceInstructionRow {
             address: 0x8000_0000,
             operands: crate::NormalizedOperands {
                 rd: Some(1),
@@ -755,11 +759,11 @@ mod tests {
         assert_eq!(add.kind(), SourceInstructionKind::ADD);
         assert_eq!(beq.kind(), SourceInstructionKind::BEQ);
         assert_eq!(
-            add.try_jolt_row().map(|row| row.instruction_kind),
+            JoltInstructionRow::try_from(&add).map(|row| row.instruction_kind),
             Ok(JoltInstructionKind::ADD)
         );
         assert_eq!(
-            beq.try_jolt_row().map(|row| row.instruction_kind),
+            JoltInstructionRow::try_from(&beq).map(|row| row.instruction_kind),
             Ok(JoltInstructionKind::BEQ)
         );
         assert!(matches!(add, SourceInstruction::ADD(Add(..))));
@@ -768,7 +772,7 @@ mod tests {
 
     #[test]
     fn source_instruction_uses_catalog_marker_types() {
-        let row = SourceRow::default();
+        let row = SourceInstructionRow::default();
 
         assert!(matches!(
             SourceInstruction::new(SourceInstructionKind::VirtualAssertEQ, row),
@@ -799,7 +803,7 @@ mod tests {
     #[test]
     fn jolt_instruction_identifies_explicit_final_subset() {
         assert!(matches!(
-            JoltInstruction::try_from(JoltRow {
+            JoltInstruction::try_from(JoltInstructionRow {
                 instruction_kind: JoltInstructionKind::ADD,
                 ..Default::default()
             }),
@@ -815,7 +819,7 @@ mod tests {
             JoltInstructionKind::VirtualSW,
         ] {
             assert_eq!(
-                JoltInstruction::try_from(JoltRow {
+                JoltInstruction::try_from(JoltInstructionRow {
                     instruction_kind: kind,
                     ..Default::default()
                 }),
@@ -826,23 +830,25 @@ mod tests {
 
     #[test]
     fn jolt_instruction_variant_normalizes_row_kind() {
-        let row = JoltRow {
+        let row = JoltInstructionRow {
             instruction_kind: JoltInstructionKind::SUB,
             ..Default::default()
         };
 
-        let normalized = JoltRow::from(JoltInstruction::Add(Add(row)));
+        let normalized = JoltInstructionRow::from(JoltInstruction::Add(Add(row)));
 
         assert_eq!(normalized.instruction_kind, JoltInstructionKind::ADD);
     }
 
     #[test]
     fn terminal_virtual_instruction_marks_last_in_sequence() -> Result<(), JoltInstructionKind> {
-        fn flags_for(row: JoltRow) -> Result<crate::CircuitFlagSet, JoltInstructionKind> {
+        fn flags_for(
+            row: JoltInstructionRow,
+        ) -> Result<crate::CircuitFlagSet, JoltInstructionKind> {
             JoltInstruction::try_from(row).map(|instruction| instruction.circuit_flags())
         }
 
-        let mut row = JoltRow {
+        let mut row = JoltInstructionRow {
             virtual_sequence_remaining: Some(0),
             ..Default::default()
         };

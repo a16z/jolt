@@ -1,5 +1,6 @@
 use jolt_riscv::{
-    JoltInstructionProfile, JoltRow, NormalizedOperands, SourceInstruction, SourceRow,
+    JoltInstructionProfile, JoltInstructionRow, NormalizedOperands, SourceInstruction,
+    SourceInstructionRow,
 };
 
 use crate::expand::{
@@ -7,7 +8,7 @@ use crate::expand::{
     expand_source_only_instruction,
     grammar::{
         is_source_only, ExpandedInstructionSequence, ExpansionOp, RegisterOperand, RowTemplate,
-        SourceRowTemplate, TempId, TemplateOperands,
+        SourceInstructionRowTemplate, TempId, TemplateOperands,
     },
     metadata::stamp_instruction_sequence,
     operands::{handles_rd_zero_internally, noop_for},
@@ -34,7 +35,7 @@ impl ExpansionState {
     pub(super) fn expand_source_recursive(
         &mut self,
         instruction: &SourceInstruction,
-    ) -> Result<Vec<JoltRow>, ExpansionError> {
+    ) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
         self.allocator.enter_expansion()?;
         let result = self.dispatch_source(instruction);
         self.allocator.exit_expansion();
@@ -45,7 +46,7 @@ impl ExpansionState {
     fn dispatch_source(
         &mut self,
         instruction: &SourceInstruction,
-    ) -> Result<Vec<JoltRow>, ExpansionError> {
+    ) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
         let kind = instruction.kind();
         if instruction.row().operands.rd == Some(0) && !handles_rd_zero_internally(kind) {
             if kind.jolt_kind().has_side_effects() {
@@ -65,8 +66,7 @@ impl ExpansionState {
             return Err(ExpansionError::InlineProviderRequired);
         }
         if !is_source_only(kind) {
-            return instruction
-                .try_jolt_row()
+            return JoltInstructionRow::try_from(instruction)
                 .map(|row| vec![row])
                 .map_err(ExpansionError::IllegalTargetInstruction);
         }
@@ -85,7 +85,7 @@ impl ExpansionState {
     pub(super) fn materialize(
         &mut self,
         sequence: ExpandedInstructionSequence,
-    ) -> Result<Vec<JoltRow>, ExpansionError> {
+    ) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
         let mut materializer = SequenceMaterializer::new(sequence.source, self.profile);
         for op in sequence.ops {
             match op {
@@ -111,7 +111,7 @@ impl ExpansionState {
 /// Bounded output collector — rejects sequences exceeding `MAX_FINAL_ROWS_PER_SOURCE`.
 #[derive(Debug)]
 struct ExpansionBuffer {
-    rows: Vec<JoltRow>,
+    rows: Vec<JoltInstructionRow>,
 }
 
 impl ExpansionBuffer {
@@ -121,7 +121,7 @@ impl ExpansionBuffer {
         }
     }
 
-    fn push(&mut self, row: JoltRow) -> Result<(), ExpansionError> {
+    fn push(&mut self, row: JoltInstructionRow) -> Result<(), ExpansionError> {
         if self.rows.len() == MAX_FINAL_ROWS_PER_SOURCE {
             return Err(ExpansionError::CapacityExceeded {
                 actual: self.rows.len() + 1,
@@ -132,7 +132,7 @@ impl ExpansionBuffer {
         Ok(())
     }
 
-    fn extend_vec(&mut self, rows: Vec<JoltRow>) -> Result<(), ExpansionError> {
+    fn extend_vec(&mut self, rows: Vec<JoltInstructionRow>) -> Result<(), ExpansionError> {
         for row in rows {
             self.push(row)?;
         }
@@ -149,7 +149,7 @@ impl ExpansionBuffer {
         Ok(())
     }
 
-    fn into_vec(self) -> Vec<JoltRow> {
+    fn into_vec(self) -> Vec<JoltInstructionRow> {
         self.rows
     }
 }
@@ -203,7 +203,7 @@ struct SequenceMaterializer {
 }
 
 impl SequenceMaterializer {
-    fn new(source: SourceRow, profile: JoltInstructionProfile) -> Self {
+    fn new(source: SourceInstructionRow, profile: JoltInstructionProfile) -> Self {
         Self {
             address: source.address,
             is_compressed: source.is_compressed,
@@ -218,12 +218,12 @@ impl SequenceMaterializer {
         self.rows.push(row)
     }
 
-    fn extend(&mut self, rows: Vec<JoltRow>) -> Result<(), ExpansionError> {
+    fn extend(&mut self, rows: Vec<JoltInstructionRow>) -> Result<(), ExpansionError> {
         self.rows.extend_vec(rows)
     }
 
-    fn instruction(&self, row: RowTemplate) -> Result<JoltRow, ExpansionError> {
-        Ok(JoltRow {
+    fn instruction(&self, row: RowTemplate) -> Result<JoltInstructionRow, ExpansionError> {
+        Ok(JoltInstructionRow {
             instruction_kind: row.instruction_kind,
             address: self.address,
             operands: self.resolve_operands(row.operands)?,
@@ -235,11 +235,11 @@ impl SequenceMaterializer {
 
     fn source_instruction(
         &self,
-        row: SourceRowTemplate,
+        row: SourceInstructionRowTemplate,
     ) -> Result<SourceInstruction, ExpansionError> {
         Ok(SourceInstruction::new(
             row.instruction_kind,
-            SourceRow {
+            SourceInstructionRow {
                 address: self.address,
                 operands: self.resolve_operands(row.operands)?,
                 inline: None,
@@ -285,7 +285,7 @@ impl SequenceMaterializer {
         }
     }
 
-    fn finish(self) -> Result<Vec<JoltRow>, ExpansionError> {
+    fn finish(self) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
         if let Some(index) = self.temps.first_leaked() {
             return Err(ExpansionError::LeakedTemporaryRegister { index });
         }
@@ -296,14 +296,16 @@ impl SequenceMaterializer {
 
 #[cfg(test)]
 mod tests {
-    use jolt_riscv::{JoltInstructionKind, NormalizedOperands, SourceRow, RV64IMAC_JOLT};
+    use jolt_riscv::{
+        JoltInstructionKind, NormalizedOperands, SourceInstructionRow, RV64IMAC_JOLT,
+    };
 
     use crate::expand::grammar::reg;
 
     use super::*;
 
-    fn source() -> SourceRow {
-        SourceRow {
+    fn source() -> SourceInstructionRow {
+        SourceInstructionRow {
             address: 0x8000_0000,
             operands: NormalizedOperands {
                 rd: Some(3),

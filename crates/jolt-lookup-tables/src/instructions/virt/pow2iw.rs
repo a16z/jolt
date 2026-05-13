@@ -9,7 +9,7 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Pow2IW<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         (
             0,
-            Into::<jolt_riscv::JoltRow>::into(self.0.instruction())
+            Into::<jolt_riscv::JoltInstructionRow>::into(self.0.instruction())
                 .operands
                 .imm,
         )

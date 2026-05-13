@@ -37,8 +37,8 @@ use control_flow::*;
 use division::*;
 use grammar::{reg, ExpandedInstructionSequence, ExpansionBuilder, RegisterOperand, TempId};
 use jolt_riscv::{
-    JoltInstruction, JoltInstructionKind, JoltInstructionProfile, JoltRow, NormalizedOperands,
-    SourceInstruction, SourceInstructionKind, SourceRow,
+    JoltInstruction, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow,
+    NormalizedOperands, SourceInstruction, SourceInstructionKind, SourceInstructionRow,
 };
 use materialize::ExpansionState;
 use memory::*;
@@ -142,17 +142,17 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
 }
 
 fn finalize_inline_provider_instructions(
-    source: SourceRow,
+    source: SourceInstructionRow,
     allocator: &mut ExpansionAllocator,
     instructions: Vec<JoltInstruction>,
     profile: JoltInstructionProfile,
 ) -> Result<Vec<JoltInstruction>, ExpansionError> {
     let mut rows = instructions
         .into_iter()
-        .map(JoltRow::from)
+        .map(JoltInstructionRow::from)
         .collect::<Vec<_>>();
     for register in allocator.take_registers_for_reset()? {
-        rows.push(JoltRow {
+        rows.push(JoltInstructionRow {
             instruction_kind: JoltInstructionKind::ADDI,
             address: source.address,
             operands: NormalizedOperands {
@@ -173,7 +173,7 @@ fn finalize_inline_provider_instructions(
 }
 
 fn final_rows_to_instructions(
-    rows: Vec<JoltRow>,
+    rows: Vec<JoltInstructionRow>,
     profile: JoltInstructionProfile,
 ) -> Result<Vec<JoltInstruction>, ExpansionError> {
     rows.into_iter()

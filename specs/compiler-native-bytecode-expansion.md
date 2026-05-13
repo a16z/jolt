@@ -41,8 +41,8 @@ This PR combines four related cleanups that reinforce the same boundary:
   `jolt-program::image` boundary.
 - lookup-backed instruction identity is split out of the flat instruction enum.
   The decoded-source versus expanded-Jolt boundary now uses
-  `SourceInstruction<SourceRow>` for decode/expansion input and
-  `JoltInstruction<JoltRow>` for finalized expansion output.
+  `SourceInstruction<SourceInstructionRow>` for decode/expansion input and
+  `JoltInstruction<JoltInstructionRow>` for finalized expansion output.
 - provider-free expansion is moved from a recursive assembler with borrowed
   allocator state to a recipe/materializer pass.
 - serialization derives in `jolt-riscv` and `jolt-program` are feature-gated so
@@ -85,10 +85,10 @@ operations. They are not RV32 execution support.
 
 Instruction identity is now separated at the typed row boundary:
 
-- `SourceInstruction<SourceRow>` is the decode-facing source row. The enum
+- `SourceInstruction<SourceInstructionRow>` is the decode-facing source row. The enum
   variant is the source identity; the row payload carries address, operands,
   inline metadata, and compression state.
-- `JoltInstruction<JoltRow>` is the finalized bytecode row view. Its variants
+- `JoltInstruction<JoltInstructionRow>` is the finalized bytecode row view. Its variants
   omit source-only rows such as word/narrow memory lowerings, atomics, CSRs,
   traps, and inline dispatch.
 - `JoltInstructionProfile` defines positive source legality, target legality,
@@ -107,7 +107,7 @@ Instruction identity is now separated at the typed row boundary:
 The remaining compatibility caveat is the legacy bare `JoltInstructionKind`
 tag enum: it is still broad while the typed final enum and profile legality are
 final-only. That lets existing row serialization and some tracer internals keep
-working during this PR. Source-only recipes now use `SourceRow` as their source
+working during this PR. Source-only recipes now use `SourceInstructionRow` as their source
 context, so the bare tag bridge is no longer needed merely to pass source
 operands, address, or compressed-row metadata into expansion recipes.
 
@@ -156,13 +156,13 @@ real virtual-register allocation/release.
 
 ```rust
 pub(super) struct ExpandedInstructionSequence {
-    source: SourceRow,
+    source: SourceInstructionRow,
     ops: Vec<ExpansionOp>,
 }
 
 pub(super) enum ExpansionOp {
     Emit(RowTemplate),
-    Expand(SourceRowTemplate),
+    Expand(SourceInstructionRowTemplate),
     Allocate(TempId),
     Release(TempId),
 }
@@ -348,7 +348,7 @@ When the compact parity fixture changes, treat it as a semantic review event:
 
 - record the baseline commit or intended semantic change;
 - inspect row-level diffs for each affected instruction family;
-- regenerate from deterministic serialized `Vec<SourceInstruction<SourceRow>>`
+- regenerate from deterministic serialized `Vec<SourceInstruction<SourceInstructionRow>>`
   bytes;
 - rerun the dedicated parity test and the `muldiv` e2e checks.
 
@@ -403,7 +403,7 @@ rewriting clear Rust into extractor-specific control flow.
 - Add row-diff tooling around the compact parity fixture so fixture updates are
   easier to review.
 - Shrink the legacy bare `JoltInstructionKind` enum to final-only variants once
-  source-only expansion recipes no longer need source rows shaped as `JoltRow`.
+  source-only expansion recipes no longer need source rows shaped as `JoltInstructionRow`.
 
 ## Implementation Checklist
 

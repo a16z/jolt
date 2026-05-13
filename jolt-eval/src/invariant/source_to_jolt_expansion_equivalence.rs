@@ -1,6 +1,6 @@
 use arbitrary::{Arbitrary, Unstructured};
 use jolt_program::expand::{expand_instruction, ExpansionAllocator};
-use jolt_riscv::{JoltRow, SourceInstruction, RV64IMAC_JOLT};
+use jolt_riscv::{JoltInstructionRow, SourceInstruction, RV64IMAC_JOLT};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -81,7 +81,8 @@ impl Invariant for SourceToJoltExpansionEquivalenceInvariant {
                     format!("case={}, error={error}", case.name),
                 ))
             })?;
-        let expanded_rows: Vec<JoltRow> = expanded.into_iter().map(JoltRow::from).collect();
+        let expanded_rows: Vec<JoltInstructionRow> =
+            expanded.into_iter().map(JoltInstructionRow::from).collect();
         let encoded = serde_json::to_vec(&expanded_rows).map_err(|error| {
             CheckError::Violation(InvariantViolation::with_details(
                 "expanded row serialization failed",

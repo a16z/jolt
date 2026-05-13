@@ -1,7 +1,7 @@
 use super::*;
 
 use common::constants::RAM_START_ADDRESS;
-use jolt_riscv::{JoltInstruction, SourceInline, SourceRow, RV64IMAC_JOLT};
+use jolt_riscv::{JoltInstruction, SourceInlineKey, SourceInstructionRow, RV64IMAC_JOLT};
 #[cfg(feature = "serialization")]
 use serde::Deserialize;
 #[cfg(feature = "serialization")]
@@ -19,13 +19,13 @@ fn source_row(
     instruction_kind: SourceInstructionKind,
     rd: Option<u8>,
     is_compressed: bool,
-) -> SourceRow {
-    let inline = (instruction_kind == SourceInstructionKind::Inline).then_some(SourceInline {
+) -> SourceInstructionRow {
+    let inline = (instruction_kind == SourceInstructionKind::Inline).then_some(SourceInlineKey {
         opcode: 0x2b,
         funct3: 0,
         funct7: 0,
     });
-    SourceRow {
+    SourceInstructionRow {
         address: 0x8000_0000,
         operands: NormalizedOperands {
             rd,
@@ -49,12 +49,15 @@ fn instruction(
     )
 }
 
-fn final_instruction(row: JoltRow) -> Result<JoltInstruction, ExpansionError> {
+fn final_instruction(row: JoltInstructionRow) -> Result<JoltInstruction, ExpansionError> {
     JoltInstruction::try_from(row).map_err(ExpansionError::IllegalTargetInstruction)
 }
 
-fn rows(instructions: Vec<JoltInstruction>) -> Vec<JoltRow> {
-    instructions.into_iter().map(JoltRow::from).collect()
+fn rows(instructions: Vec<JoltInstruction>) -> Vec<JoltInstructionRow> {
+    instructions
+        .into_iter()
+        .map(JoltInstructionRow::from)
+        .collect()
 }
 
 #[test]
@@ -194,7 +197,7 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
         ) -> Result<Vec<JoltInstruction>, ExpansionError> {
             self.captured = Some(*instruction);
             let row = instruction.row();
-            Ok(vec![final_instruction(JoltRow {
+            Ok(vec![final_instruction(JoltInstructionRow {
                 instruction_kind: JoltInstructionKind::ADDI,
                 address: row.address,
                 operands: NormalizedOperands {
@@ -210,7 +213,7 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
         }
     }
 
-    let input = SourceRow {
+    let input = SourceInstructionRow {
         address: 0x8000_0000,
         operands: NormalizedOperands {
             rd: Some(0),
@@ -218,7 +221,7 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
             rs2: Some(20),
             imm: 0x0b,
         },
-        inline: Some(SourceInline {
+        inline: Some(SourceInlineKey {
             opcode: 0x2b,
             funct3: 0,
             funct7: 0,
@@ -261,7 +264,7 @@ fn inline_provider_output_is_validated_and_stamped() {
             _allocator: &mut ExpansionAllocator,
             _profile: jolt_riscv::JoltInstructionProfile,
         ) -> Result<Vec<JoltInstruction>, ExpansionError> {
-            final_instruction(JoltRow {
+            final_instruction(JoltInstructionRow {
                 instruction_kind: JoltInstructionKind::Inline,
                 address: 0x8000_0000,
                 operands: Default::default(),
@@ -298,7 +301,7 @@ fn inline_provider_allocator_resets_are_appended() -> Result<(), ExpansionError>
             let row = instruction.row();
             let register = allocator.allocate_for_inline()?;
             allocator.release(register)?;
-            Ok(vec![final_instruction(JoltRow {
+            Ok(vec![final_instruction(JoltInstructionRow {
                 instruction_kind: JoltInstructionKind::ADDI,
                 address: row.address,
                 operands: NormalizedOperands {
@@ -350,7 +353,7 @@ fn inline_provider_allows_sequences_larger_than_instruction_recipes() -> Result<
             let row = instruction.row();
             (0..=materialize::MAX_FINAL_ROWS_PER_SOURCE)
                 .map(|_| {
-                    final_instruction(JoltRow {
+                    final_instruction(JoltInstructionRow {
                         instruction_kind: JoltInstructionKind::ADDI,
                         address: row.address,
                         operands: NormalizedOperands {

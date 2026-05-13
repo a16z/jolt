@@ -10,7 +10,7 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualShiftRightBit
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
         (
             0,
-            Into::<jolt_riscv::JoltRow>::into(self.0.instruction())
+            Into::<jolt_riscv::JoltInstructionRow>::into(self.0.instruction())
                 .operands
                 .imm
                 & mask as i128,

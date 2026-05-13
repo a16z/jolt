@@ -1,4 +1,4 @@
-use jolt_riscv::{JoltInstructionProfile, JoltRow};
+use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow};
 
 use crate::expand::{materialize::MAX_FINAL_ROWS_PER_SOURCE, ExpansionError};
 
@@ -6,28 +6,28 @@ const MAX_METADATA_SEQUENCE_ROWS: usize = u16::MAX as usize + 1;
 
 /// Stamps position metadata (`is_first_in_sequence`, `virtual_sequence_remaining`) on recipe output.
 pub(super) fn stamp_instruction_sequence(
-    rows: Vec<JoltRow>,
+    rows: Vec<JoltInstructionRow>,
     is_compressed: bool,
     profile: JoltInstructionProfile,
-) -> Result<Vec<JoltRow>, ExpansionError> {
+) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
     stamp_sequence_metadata(rows, is_compressed, MAX_FINAL_ROWS_PER_SOURCE, profile)
 }
 
 /// Same as `stamp_instruction_sequence` but for inline provider output (higher capacity limit).
 pub(super) fn stamp_inline_sequence(
-    rows: Vec<JoltRow>,
+    rows: Vec<JoltInstructionRow>,
     is_compressed: bool,
     profile: JoltInstructionProfile,
-) -> Result<Vec<JoltRow>, ExpansionError> {
+) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
     stamp_sequence_metadata(rows, is_compressed, MAX_METADATA_SEQUENCE_ROWS, profile)
 }
 
 fn stamp_sequence_metadata(
-    mut rows: Vec<JoltRow>,
+    mut rows: Vec<JoltInstructionRow>,
     is_compressed: bool,
     capacity: usize,
     profile: JoltInstructionProfile,
-) -> Result<Vec<JoltRow>, ExpansionError> {
+) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
     if rows.is_empty() {
         return Err(ExpansionError::EmptySequence);
     }
@@ -56,13 +56,13 @@ fn stamp_sequence_metadata(
 
 #[cfg(test)]
 mod tests {
-    use jolt_riscv::{JoltInstructionKind, JoltRow, NormalizedOperands, RV64IMAC_JOLT};
+    use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
 
     use super::*;
 
     #[test]
     fn rejects_source_only_rows_before_stamping() {
-        let rows = vec![JoltRow {
+        let rows = vec![JoltInstructionRow {
             instruction_kind: JoltInstructionKind::ADDIW,
             address: 0x8000_0000,
             operands: NormalizedOperands {

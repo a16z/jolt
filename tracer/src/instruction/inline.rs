@@ -13,7 +13,7 @@ use super::{
 };
 use crate::{
     emulator::cpu::Cpu,
-    instruction::{JoltRow, SourceInstruction},
+    instruction::{JoltInstructionRow, SourceInstruction},
     utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
 use jolt_program::expand::{ExpansionAllocator, ExpansionError, InlineExpansionProvider};
@@ -111,7 +111,7 @@ impl InlineExpansionProvider for TracerInlineExpansionProvider {
         (registration.build_sequence)(asm, inline.operands)
             .into_iter()
             .map(|instruction| {
-                JoltInstruction::try_from(instruction.jolt_row())
+                JoltInstruction::try_from(instruction.jolt_instruction_row())
                     .map_err(ExpansionError::IllegalTargetInstruction)
             })
             .collect::<Result<Vec<_>, _>>()
@@ -247,19 +247,19 @@ impl RISCVTrace for INLINE {
     }
 }
 
-impl From<JoltRow> for INLINE {
-    fn from(_: JoltRow) -> Self {
-        unimplemented!("Inline::from(JoltRow) should not be called");
+impl From<JoltInstructionRow> for INLINE {
+    fn from(_: JoltInstructionRow) -> Self {
+        unimplemented!("Inline::from(JoltInstructionRow) should not be called");
     }
 }
 
-impl jolt_riscv::JoltRowData for INLINE {}
+impl jolt_riscv::JoltInstructionRowData for INLINE {}
 
-impl From<INLINE> for JoltRow {
+impl From<INLINE> for JoltInstructionRow {
     fn from(instr: INLINE) -> Self {
         let mut operands: NormalizedOperands = instr.operands.into();
         operands.imm = (instr.opcode | (instr.funct3 << 7) | (instr.funct7 << 10)) as i128;
-        JoltRow {
+        JoltInstructionRow {
             instruction_kind: jolt_riscv::JoltInstructionKind::Inline,
             address: instr.address as usize,
             operands,

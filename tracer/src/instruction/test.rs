@@ -3,7 +3,7 @@ use std::panic;
 
 use crate::emulator::cpu::Cpu;
 use crate::instruction::format::{InstructionFormat, InstructionRegisterState};
-use crate::instruction::JoltRow;
+use crate::instruction::JoltInstructionRow;
 #[cfg(test)]
 use jolt_riscv::RV64IMAC_JOLT;
 
@@ -110,7 +110,7 @@ where
 
     for _ in 0..1000 {
         let instruction = I::random(&mut rng);
-        let instr: JoltRow = instruction.into();
+        let instr: JoltInstructionRow = instruction.into();
         let register_state =
             <<I::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
                 &mut rng,

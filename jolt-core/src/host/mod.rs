@@ -10,7 +10,14 @@ pub mod program;
 pub trait JoltProgramSource {
     fn get_elf_contents(&self) -> Option<Vec<u8>>;
     fn get_elf_compute_advice_contents(&self) -> Option<Vec<u8>>;
-    fn decode(&mut self) -> (Vec<jolt_riscv::JoltRow>, Vec<(u64, u8)>, u64, u64) {
+    fn decode(
+        &mut self,
+    ) -> (
+        Vec<jolt_riscv::JoltInstructionRow>,
+        Vec<(u64, u8)>,
+        u64,
+        u64,
+    ) {
         let elf = self.get_elf_contents().expect("ELF contents not available");
         crate::guest::program::decode(&elf)
     }
@@ -25,7 +32,14 @@ impl JoltProgramSource for Program {
         Program::get_elf_compute_advice_contents(self)
     }
 
-    fn decode(&mut self) -> (Vec<jolt_riscv::JoltRow>, Vec<(u64, u8)>, u64, u64) {
+    fn decode(
+        &mut self,
+    ) -> (
+        Vec<jolt_riscv::JoltInstructionRow>,
+        Vec<(u64, u8)>,
+        u64,
+        u64,
+    ) {
         Program::decode(self)
     }
 }

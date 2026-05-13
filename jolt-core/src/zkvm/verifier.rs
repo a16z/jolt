@@ -216,7 +216,7 @@ fn scale_batching_coefficients<
 }
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
-use jolt_riscv::{JoltRow, RV64IMAC_JOLT};
+use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT};
 use tracer::JoltDevice;
 
 pub struct JoltVerifier<
@@ -1812,7 +1812,7 @@ impl ark_serialize::Valid for JoltSharedPreprocessing {
 impl JoltSharedPreprocessing {
     #[tracing::instrument(skip_all, name = "JoltSharedPreprocessing::new")]
     pub fn new(
-        bytecode: Vec<JoltRow>,
+        bytecode: Vec<JoltInstructionRow>,
         memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
         max_padded_trace_length: usize,

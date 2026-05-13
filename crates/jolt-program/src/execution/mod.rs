@@ -9,7 +9,7 @@ use crate::{
     image::decode_elf,
 };
 #[cfg(feature = "image")]
-use jolt_riscv::{JoltInstructionProfile, JoltRow, RV64IMAC_JOLT};
+use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT};
 
 pub use backend::{ExecutionBackend, TraceSource};
 pub use error::TraceError;
@@ -23,7 +23,7 @@ pub fn build_jolt_program(elf_bytes: &[u8]) -> Result<JoltProgram, ProgramError>
     let image = decode_elf(elf_bytes, RV64IMAC_JOLT)?;
     let expanded_bytecode = expand_program(&image.instructions, RV64IMAC_JOLT)?
         .into_iter()
-        .map(JoltRow::from)
+        .map(JoltInstructionRow::from)
         .collect();
     Ok(JoltProgram::from_rv64_image(
         elf_bytes.to_vec(),
@@ -42,7 +42,7 @@ pub fn build_jolt_program_with_inline_provider<P: InlineExpansionProvider + ?Siz
     let expanded_bytecode =
         expand_program_with_provider(&image.instructions, inline_provider, profile)?
             .into_iter()
-            .map(JoltRow::from)
+            .map(JoltInstructionRow::from)
             .collect();
     Ok(JoltProgram::from_rv64_image(
         elf_bytes.to_vec(),

@@ -4,8 +4,8 @@
 )]
 
 use jolt_riscv::{
-    JoltInstructionProfile, NormalizedOperands, SourceInline, SourceInstruction,
-    SourceInstructionKind, SourceRow,
+    JoltInstructionProfile, NormalizedOperands, SourceInlineKey, SourceInstruction,
+    SourceInstructionKind, SourceInstructionRow,
 };
 
 use crate::ProgramError;
@@ -195,10 +195,11 @@ fn source_instruction(
     address: u64,
     is_compressed: bool,
 ) -> SourceInstruction {
-    let inline = (instruction_kind == SourceInstructionKind::Inline).then(|| source_inline(word));
+    let inline =
+        (instruction_kind == SourceInstructionKind::Inline).then(|| source_inline_key(word));
     SourceInstruction::new(
         instruction_kind,
-        SourceRow {
+        SourceInstructionRow {
             address: address as usize,
             operands: operands(instruction_kind, word),
             inline,
@@ -401,8 +402,8 @@ fn format_inline_operands(word: u32) -> NormalizedOperands {
     }
 }
 
-fn source_inline(word: u32) -> SourceInline {
-    SourceInline {
+fn source_inline_key(word: u32) -> SourceInlineKey {
+    SourceInlineKey {
         opcode: (word & 0x7f) as u8,
         funct3: funct3(word) as u8,
         funct7: funct7(word) as u8,
