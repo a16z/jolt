@@ -47,6 +47,16 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
+      - name: Install LLVM
+        run: |
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22 all
+          sudo apt-get install -y libmlir-22-dev mlir-22-tools
+      - name: Configure LLVM
+        run: |
+          echo "MLIR_SYS_220_PREFIX=/usr/lib/llvm-22" >> "$GITHUB_ENV"
+          echo "/usr/lib/llvm-22/bin" >> "$GITHUB_PATH"
       - name: cargo clippy --features allocative,host
         run: cargo clippy --all --all-targets --features allocative,host
       - name: cargo clippy --features allocative,host,zk
@@ -222,6 +232,18 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install LLVM
+        run: |
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22 all
+          sudo apt-get install -y libmlir-22-dev mlir-22-tools
+      - name: Configure LLVM
+        run: |
+          echo "MLIR_SYS_220_PREFIX=/usr/lib/llvm-22" >> "$GITHUB_ENV"
+          echo "/usr/lib/llvm-22/bin" >> "$GITHUB_PATH"
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Discover modular crates

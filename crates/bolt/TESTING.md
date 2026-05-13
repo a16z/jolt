@@ -8,6 +8,13 @@ gate suite while semantic construction lives in Bolt, generated crates,
 
 ## Fast Local Gates
 
+Set up and source the Bolt dev environment first:
+
+```bash
+scripts/setup-bolt-dev.sh
+source .bolt-dev-env
+```
+
 Run:
 
 ```bash
