@@ -9,6 +9,7 @@
 mod flags;
 pub mod instructions;
 mod kind;
+mod profile;
 mod row;
 mod row_data;
 pub mod trace;
@@ -165,6 +166,11 @@ pub use flags::{
 };
 pub use instructions::{JoltInstruction, SourceInstruction};
 pub use kind::{JoltInstructionKind, JoltInstructionTag, SourceInstructionKind};
+pub use profile::{
+    jolt_target_extension, source_extension, InlineExtension, JoltInstructionProfile,
+    JoltTargetExtension, ProfileInstructionIndex, SourceExtension, RV64IMAC_JOLT,
+    RV64IMAC_JOLT_ALL_INLINES, RV64IM_JOLT,
+};
 pub use row::{JoltRow, NormalizedOperands, SourceInline, SourceRow};
 pub use row_data::JoltRowData;
 pub use trace::JoltCycle;

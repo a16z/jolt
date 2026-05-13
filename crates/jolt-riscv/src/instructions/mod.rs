@@ -318,114 +318,77 @@ crate::for_each_instruction_kind!(define_source_instruction);
 /// `VirtualSw`. These are intentionally absent from `JoltInstruction` and
 /// from the flag-exclusivity tests below.
 
-#[derive(Clone, Copy, Debug, PartialEq, strum::EnumIter)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
-pub enum JoltInstruction {
-    Noop,
-    Add(Add<JoltRow>),
-    Addi(Addi<JoltRow>),
-    Sub(Sub<JoltRow>),
-    Lui(Lui<JoltRow>),
-    Auipc(Auipc<JoltRow>),
-    Mul(Mul<JoltRow>),
-    MulH(MulH<JoltRow>),
-    MulHSU(MulHSU<JoltRow>),
-    MulHU(MulHU<JoltRow>),
-    Div(Div<JoltRow>),
-    DivU(DivU<JoltRow>),
-    Rem(Rem<JoltRow>),
-    RemU(RemU<JoltRow>),
-    AddW(AddW<JoltRow>),
-    AddiW(AddiW<JoltRow>),
-    SubW(SubW<JoltRow>),
-    MulW(MulW<JoltRow>),
-    DivW(DivW<JoltRow>),
-    DivUW(DivUW<JoltRow>),
-    RemW(RemW<JoltRow>),
-    RemUW(RemUW<JoltRow>),
-    And(And<JoltRow>),
-    AndI(AndI<JoltRow>),
-    Or(Or<JoltRow>),
-    OrI(OrI<JoltRow>),
-    Xor(Xor<JoltRow>),
-    XorI(XorI<JoltRow>),
-    Andn(Andn<JoltRow>),
-    Sll(Sll<JoltRow>),
-    SllI(SllI<JoltRow>),
-    Srl(Srl<JoltRow>),
-    SrlI(SrlI<JoltRow>),
-    Sra(Sra<JoltRow>),
-    SraI(SraI<JoltRow>),
-    SllW(SllW<JoltRow>),
-    SllIW(SllIW<JoltRow>),
-    SrlW(SrlW<JoltRow>),
-    SrlIW(SrlIW<JoltRow>),
-    SraW(SraW<JoltRow>),
-    SraIW(SraIW<JoltRow>),
-    Slt(Slt<JoltRow>),
-    SltI(SltI<JoltRow>),
-    SltU(SltU<JoltRow>),
-    SltIU(SltIU<JoltRow>),
-    Beq(Beq<JoltRow>),
-    Bne(Bne<JoltRow>),
-    Blt(Blt<JoltRow>),
-    Bge(Bge<JoltRow>),
-    BltU(BltU<JoltRow>),
-    BgeU(BgeU<JoltRow>),
-    Lb(Lb<JoltRow>),
-    Lbu(Lbu<JoltRow>),
-    Lh(Lh<JoltRow>),
-    Lhu(Lhu<JoltRow>),
-    Lw(Lw<JoltRow>),
-    Lwu(Lwu<JoltRow>),
-    Ld(Ld<JoltRow>),
-    Sb(Sb<JoltRow>),
-    Sh(Sh<JoltRow>),
-    Sw(Sw<JoltRow>),
-    Sd(Sd<JoltRow>),
-    Ecall(Ecall<JoltRow>),
-    Ebreak(Ebreak<JoltRow>),
-    Fence(Fence<JoltRow>),
-    Jal(Jal<JoltRow>),
-    Jalr(Jalr<JoltRow>),
-    AssertEq(AssertEq<JoltRow>),
-    AssertLte(AssertLte<JoltRow>),
-    AssertValidDiv0(AssertValidDiv0<JoltRow>),
-    AssertValidUnsignedRemainder(AssertValidUnsignedRemainder<JoltRow>),
-    AssertMulUNoOverflow(AssertMulUNoOverflow<JoltRow>),
-    AssertWordAlignment(AssertWordAlignment<JoltRow>),
-    AssertHalfwordAlignment(AssertHalfwordAlignment<JoltRow>),
-    Pow2(Pow2<JoltRow>),
-    Pow2I(Pow2I<JoltRow>),
-    Pow2W(Pow2W<JoltRow>),
-    Pow2IW(Pow2IW<JoltRow>),
-    MulI(MulI<JoltRow>),
-    MovSign(MovSign<JoltRow>),
-    VirtualRev8W(VirtualRev8W<JoltRow>),
-    VirtualChangeDivisor(VirtualChangeDivisor<JoltRow>),
-    VirtualChangeDivisorW(VirtualChangeDivisorW<JoltRow>),
-    VirtualSignExtendWord(VirtualSignExtendWord<JoltRow>),
-    VirtualZeroExtendWord(VirtualZeroExtendWord<JoltRow>),
-    VirtualSrl(VirtualSrl<JoltRow>),
-    VirtualSrli(VirtualSrli<JoltRow>),
-    VirtualSra(VirtualSra<JoltRow>),
-    VirtualSrai(VirtualSrai<JoltRow>),
-    VirtualShiftRightBitmask(VirtualShiftRightBitmask<JoltRow>),
-    VirtualShiftRightBitmaski(VirtualShiftRightBitmaski<JoltRow>),
-    VirtualRotri(VirtualRotri<JoltRow>),
-    VirtualRotriw(VirtualRotriw<JoltRow>),
-    VirtualXorRot32(VirtualXorRot32<JoltRow>),
-    VirtualXorRot24(VirtualXorRot24<JoltRow>),
-    VirtualXorRot16(VirtualXorRot16<JoltRow>),
-    VirtualXorRot63(VirtualXorRot63<JoltRow>),
-    VirtualXorRotW16(VirtualXorRotW16<JoltRow>),
-    VirtualXorRotW12(VirtualXorRotW12<JoltRow>),
-    VirtualXorRotW8(VirtualXorRotW8<JoltRow>),
-    VirtualXorRotW7(VirtualXorRotW7<JoltRow>),
-    VirtualAdvice(VirtualAdvice<JoltRow>),
-    VirtualAdviceLen(VirtualAdviceLen<JoltRow>),
-    VirtualAdviceLoad(VirtualAdviceLoad<JoltRow>),
-    VirtualHostIO(VirtualHostIO<JoltRow>),
+pub enum JoltInstruction<T = JoltRow> {
+    Noop(Noop<T>),
+    Add(Add<T>),
+    Addi(Addi<T>),
+    Sub(Sub<T>),
+    Lui(Lui<T>),
+    Auipc(Auipc<T>),
+    Mul(Mul<T>),
+    MulHU(MulHU<T>),
+    And(And<T>),
+    AndI(AndI<T>),
+    Or(Or<T>),
+    OrI(OrI<T>),
+    Xor(Xor<T>),
+    XorI(XorI<T>),
+    Andn(Andn<T>),
+    Slt(Slt<T>),
+    SltI(SltI<T>),
+    SltU(SltU<T>),
+    SltIU(SltIU<T>),
+    Beq(Beq<T>),
+    Bne(Bne<T>),
+    Blt(Blt<T>),
+    Bge(Bge<T>),
+    BltU(BltU<T>),
+    BgeU(BgeU<T>),
+    Ld(Ld<T>),
+    Sd(Sd<T>),
+    Fence(Fence<T>),
+    Jal(Jal<T>),
+    Jalr(Jalr<T>),
+    AssertEq(AssertEq<T>),
+    AssertLte(AssertLte<T>),
+    AssertValidDiv0(AssertValidDiv0<T>),
+    AssertValidUnsignedRemainder(AssertValidUnsignedRemainder<T>),
+    AssertMulUNoOverflow(AssertMulUNoOverflow<T>),
+    AssertWordAlignment(AssertWordAlignment<T>),
+    AssertHalfwordAlignment(AssertHalfwordAlignment<T>),
+    Pow2(Pow2<T>),
+    Pow2I(Pow2I<T>),
+    Pow2W(Pow2W<T>),
+    Pow2IW(Pow2IW<T>),
+    MulI(MulI<T>),
+    MovSign(MovSign<T>),
+    VirtualRev8W(VirtualRev8W<T>),
+    VirtualChangeDivisor(VirtualChangeDivisor<T>),
+    VirtualChangeDivisorW(VirtualChangeDivisorW<T>),
+    VirtualSignExtendWord(VirtualSignExtendWord<T>),
+    VirtualZeroExtendWord(VirtualZeroExtendWord<T>),
+    VirtualSrl(VirtualSrl<T>),
+    VirtualSrli(VirtualSrli<T>),
+    VirtualSra(VirtualSra<T>),
+    VirtualSrai(VirtualSrai<T>),
+    VirtualShiftRightBitmask(VirtualShiftRightBitmask<T>),
+    VirtualShiftRightBitmaski(VirtualShiftRightBitmaski<T>),
+    VirtualRotri(VirtualRotri<T>),
+    VirtualRotriw(VirtualRotriw<T>),
+    VirtualXorRot32(VirtualXorRot32<T>),
+    VirtualXorRot24(VirtualXorRot24<T>),
+    VirtualXorRot16(VirtualXorRot16<T>),
+    VirtualXorRot63(VirtualXorRot63<T>),
+    VirtualXorRotW16(VirtualXorRotW16<T>),
+    VirtualXorRotW12(VirtualXorRotW12<T>),
+    VirtualXorRotW8(VirtualXorRotW8<T>),
+    VirtualXorRotW7(VirtualXorRotW7<T>),
+    VirtualAdvice(VirtualAdvice<T>),
+    VirtualAdviceLen(VirtualAdviceLen<T>),
+    VirtualAdviceLoad(VirtualAdviceLoad<T>),
+    VirtualHostIO(VirtualHostIO<T>),
 }
 
 impl TryFrom<JoltRow> for JoltInstruction {
@@ -433,28 +396,14 @@ impl TryFrom<JoltRow> for JoltInstruction {
 
     fn try_from(instruction: JoltRow) -> Result<Self, Self::Error> {
         Ok(match instruction.instruction_kind {
-            JoltInstructionKind::NoOp => Self::Noop,
+            JoltInstructionKind::NoOp => Self::Noop(Noop(instruction)),
             JoltInstructionKind::ADD => Self::Add(Add(instruction)),
             JoltInstructionKind::ADDI => Self::Addi(Addi(instruction)),
             JoltInstructionKind::SUB => Self::Sub(Sub(instruction)),
             JoltInstructionKind::LUI => Self::Lui(Lui(instruction)),
             JoltInstructionKind::AUIPC => Self::Auipc(Auipc(instruction)),
             JoltInstructionKind::MUL => Self::Mul(Mul(instruction)),
-            JoltInstructionKind::MULH => Self::MulH(MulH(instruction)),
-            JoltInstructionKind::MULHSU => Self::MulHSU(MulHSU(instruction)),
             JoltInstructionKind::MULHU => Self::MulHU(MulHU(instruction)),
-            JoltInstructionKind::DIV => Self::Div(Div(instruction)),
-            JoltInstructionKind::DIVU => Self::DivU(DivU(instruction)),
-            JoltInstructionKind::REM => Self::Rem(Rem(instruction)),
-            JoltInstructionKind::REMU => Self::RemU(RemU(instruction)),
-            JoltInstructionKind::ADDW => Self::AddW(AddW(instruction)),
-            JoltInstructionKind::ADDIW => Self::AddiW(AddiW(instruction)),
-            JoltInstructionKind::SUBW => Self::SubW(SubW(instruction)),
-            JoltInstructionKind::MULW => Self::MulW(MulW(instruction)),
-            JoltInstructionKind::DIVW => Self::DivW(DivW(instruction)),
-            JoltInstructionKind::DIVUW => Self::DivUW(DivUW(instruction)),
-            JoltInstructionKind::REMW => Self::RemW(RemW(instruction)),
-            JoltInstructionKind::REMUW => Self::RemUW(RemUW(instruction)),
             JoltInstructionKind::AND => Self::And(And(instruction)),
             JoltInstructionKind::ANDI => Self::AndI(AndI(instruction)),
             JoltInstructionKind::OR => Self::Or(Or(instruction)),
@@ -462,18 +411,6 @@ impl TryFrom<JoltRow> for JoltInstruction {
             JoltInstructionKind::XOR => Self::Xor(Xor(instruction)),
             JoltInstructionKind::XORI => Self::XorI(XorI(instruction)),
             JoltInstructionKind::ANDN => Self::Andn(Andn(instruction)),
-            JoltInstructionKind::SLL => Self::Sll(Sll(instruction)),
-            JoltInstructionKind::SLLI => Self::SllI(SllI(instruction)),
-            JoltInstructionKind::SRL => Self::Srl(Srl(instruction)),
-            JoltInstructionKind::SRLI => Self::SrlI(SrlI(instruction)),
-            JoltInstructionKind::SRA => Self::Sra(Sra(instruction)),
-            JoltInstructionKind::SRAI => Self::SraI(SraI(instruction)),
-            JoltInstructionKind::SLLW => Self::SllW(SllW(instruction)),
-            JoltInstructionKind::SLLIW => Self::SllIW(SllIW(instruction)),
-            JoltInstructionKind::SRLW => Self::SrlW(SrlW(instruction)),
-            JoltInstructionKind::SRLIW => Self::SrlIW(SrlIW(instruction)),
-            JoltInstructionKind::SRAW => Self::SraW(SraW(instruction)),
-            JoltInstructionKind::SRAIW => Self::SraIW(SraIW(instruction)),
             JoltInstructionKind::SLT => Self::Slt(Slt(instruction)),
             JoltInstructionKind::SLTI => Self::SltI(SltI(instruction)),
             JoltInstructionKind::SLTU => Self::SltU(SltU(instruction)),
@@ -484,19 +421,8 @@ impl TryFrom<JoltRow> for JoltInstruction {
             JoltInstructionKind::BGE => Self::Bge(Bge(instruction)),
             JoltInstructionKind::BLTU => Self::BltU(BltU(instruction)),
             JoltInstructionKind::BGEU => Self::BgeU(BgeU(instruction)),
-            JoltInstructionKind::LB => Self::Lb(Lb(instruction)),
-            JoltInstructionKind::LBU => Self::Lbu(Lbu(instruction)),
-            JoltInstructionKind::LH => Self::Lh(Lh(instruction)),
-            JoltInstructionKind::LHU => Self::Lhu(Lhu(instruction)),
-            JoltInstructionKind::LW => Self::Lw(Lw(instruction)),
-            JoltInstructionKind::LWU => Self::Lwu(Lwu(instruction)),
             JoltInstructionKind::LD => Self::Ld(Ld(instruction)),
-            JoltInstructionKind::SB => Self::Sb(Sb(instruction)),
-            JoltInstructionKind::SH => Self::Sh(Sh(instruction)),
-            JoltInstructionKind::SW => Self::Sw(Sw(instruction)),
             JoltInstructionKind::SD => Self::Sd(Sd(instruction)),
-            JoltInstructionKind::ECALL => Self::Ecall(Ecall(instruction)),
-            JoltInstructionKind::EBREAK => Self::Ebreak(Ebreak(instruction)),
             JoltInstructionKind::FENCE => Self::Fence(Fence(instruction)),
             JoltInstructionKind::JAL => Self::Jal(Jal(instruction)),
             JoltInstructionKind::JALR => Self::Jalr(Jalr(instruction)),
@@ -586,11 +512,57 @@ impl TryFrom<JoltRow> for JoltInstruction {
 }
 
 macro_rules! impl_jolt_instructions_flags {
-    ($($variant:ident),* $(,)?) => {
-        impl crate::flags::Flags for JoltInstruction {
+    ($($variant:ident => $kind:ident),* $(,)?) => {
+        impl<T> JoltInstruction<T> {
+            pub const fn kind(&self) -> JoltInstructionKind {
+                match self {
+                    Self::Noop(_) => JoltInstructionKind::NoOp,
+                    $(
+                        Self::$variant(_) => JoltInstructionKind::$kind,
+                    )*
+                }
+            }
+
+            pub const fn row(&self) -> &T {
+                match self {
+                    Self::Noop(instruction) => &instruction.0,
+                    $(
+                        Self::$variant(instruction) => &instruction.0,
+                    )*
+                }
+            }
+
+        }
+
+        impl<T: crate::JoltRowData> JoltInstruction<T> {
+            pub fn into_row(self) -> JoltRow {
+                match self {
+                    Self::Noop(instruction) => {
+                        let mut row = instruction.0.into();
+                        row.instruction_kind = JoltInstructionKind::NoOp;
+                        row
+                    }
+                    $(
+                        Self::$variant(instruction) => {
+                            let mut row = instruction.0.into();
+                            row.instruction_kind = JoltInstructionKind::$kind;
+                            row
+                        }
+                    )*
+                }
+            }
+        }
+
+        impl<T: crate::JoltRowData> From<JoltInstruction<T>> for JoltRow {
+            fn from(instruction: JoltInstruction<T>) -> Self {
+                instruction.into_row()
+            }
+        }
+
+        impl crate::flags::Flags for JoltInstruction<JoltRow> {
             fn circuit_flags(&self) -> crate::flags::CircuitFlagSet {
                 match self {
-                    JoltInstruction::Noop =>{
+                    JoltInstruction::Noop(_) =>{
                         crate::flags::CircuitFlagSet::default()
                             .set(crate::flags::CircuitFlags::DoNotUpdateUnexpandedPC)
                     },
@@ -600,7 +572,7 @@ macro_rules! impl_jolt_instructions_flags {
 
             fn instruction_flags(&self) -> crate::flags::InstructionFlagSet {
                 match self {
-                    JoltInstruction::Noop =>{
+                    JoltInstruction::Noop(_) =>{
                         crate::flags::InstructionFlagSet::default()
                             .set(crate::flags::InstructionFlags::IsNoop)
                     },
@@ -608,41 +580,94 @@ macro_rules! impl_jolt_instructions_flags {
                 }
             }
         }
+
+        impl JoltInstruction<JoltRow> {
+            pub fn iter() -> impl Iterator<Item = Self> {
+                [
+                    Self::Noop(Noop(JoltRow::default())),
+                    $(
+                        Self::$variant($variant(JoltRow::default())),
+                    )*
+                ]
+                .into_iter()
+            }
+        }
     };
 }
 
 impl_jolt_instructions_flags! {
-    Add, Addi, Sub, Lui, Auipc,
-    Mul, MulH, MulHSU, MulHU, Div, DivU, Rem, RemU,
-    AddW, AddiW, SubW, MulW, DivW, DivUW, RemW, RemUW,
-    And, AndI, Or, OrI, Xor, XorI, Andn,
-    Sll, SllI, Srl, SrlI, Sra, SraI,
-    SllW, SllIW, SrlW, SrlIW, SraW, SraIW,
-    Slt, SltI, SltU, SltIU,
-    Beq, Bne, Blt, Bge, BltU, BgeU,
-    Lb, Lbu, Lh, Lhu, Lw, Lwu, Ld,
-    Sb, Sh, Sw, Sd,
-    Ecall, Ebreak, Fence,
-    Jal, Jalr,
-    AssertEq, AssertLte, AssertValidDiv0, AssertValidUnsignedRemainder,
-    AssertMulUNoOverflow, AssertWordAlignment, AssertHalfwordAlignment,
-    Pow2, Pow2I, Pow2W, Pow2IW, MulI,
-    MovSign, VirtualRev8W,
-    VirtualChangeDivisor, VirtualChangeDivisorW,
-    VirtualSignExtendWord, VirtualZeroExtendWord,
-    VirtualSrl, VirtualSrli, VirtualSra, VirtualSrai,
-    VirtualShiftRightBitmask, VirtualShiftRightBitmaski,
-    VirtualRotri, VirtualRotriw,
-    VirtualXorRot32, VirtualXorRot24, VirtualXorRot16, VirtualXorRot63,
-    VirtualXorRotW16, VirtualXorRotW12, VirtualXorRotW8, VirtualXorRotW7,
-    VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad, VirtualHostIO,
+    Add => ADD,
+    Addi => ADDI,
+    Sub => SUB,
+    Lui => LUI,
+    Auipc => AUIPC,
+    Mul => MUL,
+    MulHU => MULHU,
+    And => AND,
+    AndI => ANDI,
+    Or => OR,
+    OrI => ORI,
+    Xor => XOR,
+    XorI => XORI,
+    Andn => ANDN,
+    Slt => SLT,
+    SltI => SLTI,
+    SltU => SLTU,
+    SltIU => SLTIU,
+    Beq => BEQ,
+    Bne => BNE,
+    Blt => BLT,
+    Bge => BGE,
+    BltU => BLTU,
+    BgeU => BGEU,
+    Ld => LD,
+    Sd => SD,
+    Fence => FENCE,
+    Jal => JAL,
+    Jalr => JALR,
+    AssertEq => VirtualAssertEQ,
+    AssertLte => VirtualAssertLTE,
+    AssertValidDiv0 => VirtualAssertValidDiv0,
+    AssertValidUnsignedRemainder => VirtualAssertValidUnsignedRemainder,
+    AssertMulUNoOverflow => VirtualAssertMulUNoOverflow,
+    AssertWordAlignment => VirtualAssertWordAlignment,
+    AssertHalfwordAlignment => VirtualAssertHalfwordAlignment,
+    Pow2 => VirtualPow2,
+    Pow2I => VirtualPow2I,
+    Pow2W => VirtualPow2W,
+    Pow2IW => VirtualPow2IW,
+    MulI => VirtualMULI,
+    MovSign => VirtualMovsign,
+    VirtualRev8W => VirtualRev8W,
+    VirtualChangeDivisor => VirtualChangeDivisor,
+    VirtualChangeDivisorW => VirtualChangeDivisorW,
+    VirtualSignExtendWord => VirtualSignExtendWord,
+    VirtualZeroExtendWord => VirtualZeroExtendWord,
+    VirtualSrl => VirtualSRL,
+    VirtualSrli => VirtualSRLI,
+    VirtualSra => VirtualSRA,
+    VirtualSrai => VirtualSRAI,
+    VirtualShiftRightBitmask => VirtualShiftRightBitmask,
+    VirtualShiftRightBitmaski => VirtualShiftRightBitmaskI,
+    VirtualRotri => VirtualROTRI,
+    VirtualRotriw => VirtualROTRIW,
+    VirtualXorRot32 => VirtualXORROT32,
+    VirtualXorRot24 => VirtualXORROT24,
+    VirtualXorRot16 => VirtualXORROT16,
+    VirtualXorRot63 => VirtualXORROT63,
+    VirtualXorRotW16 => VirtualXORROTW16,
+    VirtualXorRotW12 => VirtualXORROTW12,
+    VirtualXorRotW8 => VirtualXORROTW8,
+    VirtualXorRotW7 => VirtualXORROTW7,
+    VirtualAdvice => VirtualAdvice,
+    VirtualAdviceLen => VirtualAdviceLen,
+    VirtualAdviceLoad => VirtualAdviceLoad,
+    VirtualHostIO => VirtualHostIO,
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::flags::{CircuitFlags, Flags, InstructionFlags};
-    use strum::IntoEnumIterator;
 
     #[test]
     fn left_operand_exclusive() {
@@ -786,6 +811,10 @@ mod tests {
             Ok(JoltInstruction::Add(..))
         ));
         for kind in [
+            JoltInstructionKind::ADDW,
+            JoltInstructionKind::DIV,
+            JoltInstructionKind::LW,
+            JoltInstructionKind::SW,
             JoltInstructionKind::AMOADDW,
             JoltInstructionKind::CSRRS,
             JoltInstructionKind::VirtualSW,
@@ -798,6 +827,18 @@ mod tests {
                 Err(kind)
             );
         }
+    }
+
+    #[test]
+    fn jolt_instruction_variant_normalizes_row_kind() {
+        let row = JoltRow {
+            instruction_kind: JoltInstructionKind::SUB,
+            ..Default::default()
+        };
+
+        let normalized = JoltRow::from(JoltInstruction::Add(Add(row)));
+
+        assert_eq!(normalized.instruction_kind, JoltInstructionKind::ADD);
     }
 
     #[test]
