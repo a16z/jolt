@@ -17,7 +17,7 @@ use crate::{
     utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
 use jolt_program::expand::{ExpansionAllocator, ExpansionError, InlineExpansionProvider};
-use jolt_riscv::JoltInstruction;
+use jolt_riscv::{InlineExtension, JoltInstruction, JoltInstructionProfile};
 use serde::{Deserialize, Serialize};
 
 const FIRST_INSTRUCTION_TEMP_REGISTER: u8 = common::constants::RISCV_REGISTER_COUNT + 8;
@@ -33,6 +33,7 @@ pub struct InlineRegistration {
     pub opcode: u32,
     pub funct3: u32,
     pub funct7: u32,
+    pub extension: InlineExtension,
     pub name: &'static str,
     pub build_sequence: InlineSequenceFn,
     pub build_advice: AdviceFn,
@@ -80,6 +81,7 @@ impl InlineExpansionProvider for TracerInlineExpansionProvider {
         &mut self,
         instruction: &SourceInstruction,
         _allocator: &mut ExpansionAllocator,
+        profile: JoltInstructionProfile,
     ) -> Result<Vec<JoltInstruction>, ExpansionError> {
         let Instruction::INLINE(inline) = Instruction::try_from_source_instruction(*instruction)
             .map_err(|_| ExpansionError::MalformedInstruction("malformed inline instruction"))?
@@ -89,7 +91,13 @@ impl InlineExpansionProvider for TracerInlineExpansionProvider {
             ));
         };
 
-        if !is_inline_registered(inline.opcode, inline.funct3, inline.funct7) {
+        let registration = inventory::iter::<InlineRegistration>
+            .into_iter()
+            .find(|r| {
+                r.opcode == inline.opcode && r.funct3 == inline.funct3 && r.funct7 == inline.funct7
+            })
+            .ok_or(ExpansionError::UnsupportedInstruction)?;
+        if !profile.supports_inline(registration.extension) {
             return Err(ExpansionError::UnsupportedInstruction);
         }
 
@@ -99,8 +107,8 @@ impl InlineExpansionProvider for TracerInlineExpansionProvider {
                 .then(|| self.allocator.allocate())
         });
 
-        inline
-            .inline_sequence(&self.allocator)
+        let asm = InstrAssembler::new_inline(inline.address, inline.is_compressed, &self.allocator);
+        (registration.build_sequence)(asm, inline.operands)
             .into_iter()
             .map(|instruction| {
                 JoltInstruction::try_from(instruction.jolt_row())
@@ -265,6 +273,34 @@ impl From<INLINE> for JoltRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::instruction::addi::ADDI;
+
+    const TEST_INLINE_WORD: u32 = 0xfc00_602b;
+
+    fn test_sequence(mut asm: InstrAssembler, _operands: FormatInline) -> Vec<Instruction> {
+        asm.emit_i::<ADDI>(40, 0, 0);
+        asm.finalize_inline()
+    }
+
+    fn test_advice(
+        _asm: InstrAssembler,
+        _operands: FormatInline,
+        _cpu: &mut Cpu,
+    ) -> Option<VecDeque<u64>> {
+        None
+    }
+
+    inventory::submit! {
+        InlineRegistration {
+            opcode: 0x2b,
+            funct3: 0x6,
+            funct7: 0x7e,
+            extension: InlineExtension::Sha2,
+            name: "TEST_INLINE_PROFILE",
+            build_sequence: test_sequence,
+            build_advice: test_advice,
+        }
+    }
 
     #[test]
     fn test_inline_parsing() {
@@ -304,8 +340,43 @@ mod tests {
             .source_instruction();
 
         assert!(matches!(
-            provider.expand_inline(&instruction, &mut allocator),
+            provider.expand_inline(
+                &instruction,
+                &mut allocator,
+                jolt_riscv::RV64IMAC_JOLT_ALL_INLINES,
+            ),
             Err(ExpansionError::UnsupportedInstruction)
         ));
+    }
+
+    #[test]
+    fn provider_rejects_registered_inline_disabled_by_profile() {
+        let mut provider = TracerInlineExpansionProvider::new();
+        let mut allocator = ExpansionAllocator::new();
+        let instruction =
+            Instruction::from(INLINE::new(TEST_INLINE_WORD, 0x8000_0000, false, false))
+                .source_instruction();
+
+        assert!(matches!(
+            provider.expand_inline(&instruction, &mut allocator, jolt_riscv::RV64IMAC_JOLT,),
+            Err(ExpansionError::UnsupportedInstruction)
+        ));
+    }
+
+    #[test]
+    fn provider_accepts_registered_inline_enabled_by_profile() {
+        let mut provider = TracerInlineExpansionProvider::new();
+        let mut allocator = ExpansionAllocator::new();
+        let instruction =
+            Instruction::from(INLINE::new(TEST_INLINE_WORD, 0x8000_0000, false, false))
+                .source_instruction();
+
+        assert!(provider
+            .expand_inline(
+                &instruction,
+                &mut allocator,
+                jolt_riscv::RV64IMAC_JOLT_ALL_INLINES,
+            )
+            .is_ok());
     }
 }

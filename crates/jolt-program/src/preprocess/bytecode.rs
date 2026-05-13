@@ -1,7 +1,7 @@
 #[cfg(feature = "serialization")]
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
-use jolt_riscv::{JoltInstructionKind, JoltRow, RV64IMAC_JOLT};
+use jolt_riscv::{JoltInstructionKind, JoltInstructionProfile, JoltRow};
 
 use crate::preprocess::PreprocessingError;
 
@@ -27,9 +27,10 @@ impl BytecodePreprocessing {
     pub fn preprocess(
         mut bytecode: Vec<JoltRow>,
         entry_address: u64,
+        profile: JoltInstructionProfile,
     ) -> Result<Self, PreprocessingError> {
         for instruction in &bytecode {
-            if !RV64IMAC_JOLT.supports_jolt(instruction.instruction_kind) {
+            if !profile.supports_jolt(instruction.instruction_kind) {
                 return Err(PreprocessingError::IllegalTargetInstruction(
                     instruction.instruction_kind,
                 ));
@@ -187,7 +188,7 @@ const fn noop_instruction() -> JoltRow {
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
-    use jolt_riscv::{JoltInstructionKind, JoltRow, NormalizedOperands};
+    use jolt_riscv::{JoltInstructionKind, JoltRow, NormalizedOperands, RV64IMAC_JOLT};
 
     use super::{BytecodePCMapper, BytecodePreprocessing, PreprocessingError};
 
@@ -195,7 +196,8 @@ mod tests {
     fn preprocess_prepends_and_pads_bytecode() {
         let bytecode = vec![instruction(0x8000_0000, None)];
 
-        let preprocessing = BytecodePreprocessing::preprocess(bytecode, 0x8000_0000).unwrap();
+        let preprocessing =
+            BytecodePreprocessing::preprocess(bytecode, 0x8000_0000, RV64IMAC_JOLT).unwrap();
 
         assert_eq!(preprocessing.code_size, 2);
         assert_eq!(
@@ -213,7 +215,8 @@ mod tests {
             instruction(0x8000_0004, Some(0)),
         ];
 
-        let preprocessing = BytecodePreprocessing::preprocess(bytecode, 0x8000_0004).unwrap();
+        let preprocessing =
+            BytecodePreprocessing::preprocess(bytecode, 0x8000_0004, RV64IMAC_JOLT).unwrap();
 
         assert_eq!(preprocessing.entry_bytecode_index(), Some(3));
         assert_eq!(
@@ -291,7 +294,8 @@ mod tests {
         let mut row = instruction(0x8000_0000, None);
         row.instruction_kind = JoltInstructionKind::Inline;
 
-        let err = BytecodePreprocessing::preprocess(vec![row], 0x8000_0000).unwrap_err();
+        let err =
+            BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64IMAC_JOLT).unwrap_err();
         assert_eq!(
             err,
             PreprocessingError::IllegalTargetInstruction(JoltInstructionKind::Inline)

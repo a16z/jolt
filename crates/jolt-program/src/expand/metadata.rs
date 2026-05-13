@@ -1,4 +1,4 @@
-use jolt_riscv::{JoltRow, RV64IMAC_JOLT};
+use jolt_riscv::{JoltInstructionProfile, JoltRow};
 
 use crate::expand::{materialize::MAX_FINAL_ROWS_PER_SOURCE, ExpansionError};
 
@@ -8,22 +8,25 @@ const MAX_METADATA_SEQUENCE_ROWS: usize = u16::MAX as usize + 1;
 pub(super) fn stamp_instruction_sequence(
     rows: Vec<JoltRow>,
     is_compressed: bool,
+    profile: JoltInstructionProfile,
 ) -> Result<Vec<JoltRow>, ExpansionError> {
-    stamp_sequence_metadata(rows, is_compressed, MAX_FINAL_ROWS_PER_SOURCE)
+    stamp_sequence_metadata(rows, is_compressed, MAX_FINAL_ROWS_PER_SOURCE, profile)
 }
 
 /// Same as `stamp_instruction_sequence` but for inline provider output (higher capacity limit).
 pub(super) fn stamp_inline_sequence(
     rows: Vec<JoltRow>,
     is_compressed: bool,
+    profile: JoltInstructionProfile,
 ) -> Result<Vec<JoltRow>, ExpansionError> {
-    stamp_sequence_metadata(rows, is_compressed, MAX_METADATA_SEQUENCE_ROWS)
+    stamp_sequence_metadata(rows, is_compressed, MAX_METADATA_SEQUENCE_ROWS, profile)
 }
 
 fn stamp_sequence_metadata(
     mut rows: Vec<JoltRow>,
     is_compressed: bool,
     capacity: usize,
+    profile: JoltInstructionProfile,
 ) -> Result<Vec<JoltRow>, ExpansionError> {
     if rows.is_empty() {
         return Err(ExpansionError::EmptySequence);
@@ -35,7 +38,7 @@ fn stamp_sequence_metadata(
         });
     }
     for row in &rows {
-        if !RV64IMAC_JOLT.supports_jolt(row.instruction_kind) {
+        if !profile.supports_jolt(row.instruction_kind) {
             return Err(ExpansionError::IllegalTargetInstruction(
                 row.instruction_kind,
             ));
@@ -53,7 +56,7 @@ fn stamp_sequence_metadata(
 
 #[cfg(test)]
 mod tests {
-    use jolt_riscv::{JoltInstructionKind, JoltRow, NormalizedOperands};
+    use jolt_riscv::{JoltInstructionKind, JoltRow, NormalizedOperands, RV64IMAC_JOLT};
 
     use super::*;
 
@@ -74,7 +77,7 @@ mod tests {
         }];
 
         assert!(matches!(
-            stamp_instruction_sequence(rows, false),
+            stamp_instruction_sequence(rows, false, RV64IMAC_JOLT),
             Err(ExpansionError::IllegalTargetInstruction(
                 JoltInstructionKind::ADDIW
             ))

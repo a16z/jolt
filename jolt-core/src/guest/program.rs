@@ -1,6 +1,6 @@
 use common::constants::RAM_START_ADDRESS;
 use common::jolt_device::{JoltDevice, MemoryConfig};
-use jolt_riscv::JoltRow;
+use jolt_riscv::{JoltRow, RV64IMAC_JOLT, RV64IMAC_JOLT_ALL_INLINES};
 use std::path::PathBuf;
 use tracer::emulator::memory::Memory;
 use tracer::instruction::Cycle;
@@ -102,12 +102,14 @@ impl crate::host::JoltProgramSource for Program {
 }
 
 pub fn decode(elf: &[u8]) -> (Vec<JoltRow>, Vec<(u64, u8)>, u64, u64) {
-    let image = jolt_program::image::decode_elf(elf).expect("program ELF decoding failed");
+    let image =
+        jolt_program::image::decode_elf(elf, RV64IMAC_JOLT).expect("program ELF decoding failed");
     let program_size = image.program_end - RAM_START_ADDRESS;
     let mut inline_provider = tracer::TracerInlineExpansionProvider::new();
     let instructions = jolt_program::expand::expand_program_with_provider(
         &image.instructions,
         &mut inline_provider,
+        RV64IMAC_JOLT_ALL_INLINES,
     )
     .map(|instructions| instructions.into_iter().map(JoltRow::from).collect())
     .expect("program bytecode expansion failed");

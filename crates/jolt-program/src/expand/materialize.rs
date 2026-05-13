@@ -1,4 +1,6 @@
-use jolt_riscv::{JoltRow, NormalizedOperands, SourceInstruction, SourceRow};
+use jolt_riscv::{
+    JoltInstructionProfile, JoltRow, NormalizedOperands, SourceInstruction, SourceRow,
+};
 
 use crate::expand::{
     allocator::{ExpansionAllocator, NUM_VIRTUAL_INSTRUCTION_REGISTERS},
@@ -17,11 +19,12 @@ pub(super) const MAX_FINAL_ROWS_PER_SOURCE: usize = 64;
 /// Materializes symbolic recipes into concrete instructions (phase 2).
 pub(super) struct ExpansionState {
     allocator: ExpansionAllocator,
+    profile: JoltInstructionProfile,
 }
 
 impl ExpansionState {
-    pub(super) fn new(allocator: ExpansionAllocator) -> Self {
-        Self { allocator }
+    pub(super) fn new(allocator: ExpansionAllocator, profile: JoltInstructionProfile) -> Self {
+        Self { allocator, profile }
     }
 
     pub(super) fn into_allocator(self) -> ExpansionAllocator {
@@ -80,7 +83,7 @@ impl ExpansionState {
         &mut self,
         sequence: ExpandedInstructionSequence,
     ) -> Result<Vec<JoltRow>, ExpansionError> {
-        let mut materializer = SequenceMaterializer::new(sequence.source);
+        let mut materializer = SequenceMaterializer::new(sequence.source, self.profile);
         for op in sequence.ops {
             match op {
                 ExpansionOp::Emit(row) => materializer.emit(row)?,
@@ -191,15 +194,17 @@ impl TempBindings {
 struct SequenceMaterializer {
     address: usize,
     is_compressed: bool,
+    profile: JoltInstructionProfile,
     rows: ExpansionBuffer,
     temps: TempBindings,
 }
 
 impl SequenceMaterializer {
-    fn new(source: JoltRow) -> Self {
+    fn new(source: JoltRow, profile: JoltInstructionProfile) -> Self {
         Self {
             address: source.address,
             is_compressed: source.is_compressed,
+            profile,
             rows: ExpansionBuffer::new(),
             temps: TempBindings::new(),
         }
@@ -282,13 +287,13 @@ impl SequenceMaterializer {
             return Err(ExpansionError::LeakedTemporaryRegister { index });
         }
         self.rows.check_capacity()?;
-        stamp_instruction_sequence(self.rows.into_vec(), self.is_compressed)
+        stamp_instruction_sequence(self.rows.into_vec(), self.is_compressed, self.profile)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use jolt_riscv::{JoltInstructionKind, NormalizedOperands};
+    use jolt_riscv::{JoltInstructionKind, NormalizedOperands, RV64IMAC_JOLT};
 
     use crate::expand::grammar::reg;
 
@@ -317,7 +322,7 @@ mod tests {
             source: source(),
             ops: vec![ExpansionOp::Allocate(temp), ExpansionOp::Allocate(temp)],
         };
-        let mut state = ExpansionState::new(ExpansionAllocator::new());
+        let mut state = ExpansionState::new(ExpansionAllocator::new(), RV64IMAC_JOLT);
 
         assert!(matches!(
             state.materialize(sequence),
@@ -338,7 +343,7 @@ mod tests {
                 0,
             ))],
         };
-        let mut state = ExpansionState::new(ExpansionAllocator::new());
+        let mut state = ExpansionState::new(ExpansionAllocator::new(), RV64IMAC_JOLT);
 
         assert!(matches!(
             state.materialize(sequence),
@@ -354,7 +359,7 @@ mod tests {
             source: source(),
             ops: vec![ExpansionOp::Release(temp)],
         };
-        let mut state = ExpansionState::new(ExpansionAllocator::new());
+        let mut state = ExpansionState::new(ExpansionAllocator::new(), RV64IMAC_JOLT);
 
         assert!(matches!(
             state.materialize(sequence),
@@ -370,7 +375,7 @@ mod tests {
             source: source(),
             ops: vec![ExpansionOp::Allocate(temp)],
         };
-        let mut state = ExpansionState::new(ExpansionAllocator::new());
+        let mut state = ExpansionState::new(ExpansionAllocator::new(), RV64IMAC_JOLT);
 
         assert!(matches!(
             state.materialize(sequence),

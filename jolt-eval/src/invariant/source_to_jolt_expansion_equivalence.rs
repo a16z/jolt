@@ -1,6 +1,6 @@
 use arbitrary::{Arbitrary, Unstructured};
 use jolt_program::expand::{expand_instruction, ExpansionAllocator};
-use jolt_riscv::{JoltRow, SourceInstruction};
+use jolt_riscv::{JoltRow, SourceInstruction, RV64IMAC_JOLT};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -74,12 +74,13 @@ impl Invariant for SourceToJoltExpansionEquivalenceInvariant {
 
         let case = &cases[input.case_index as usize % cases.len()];
         let mut allocator = ExpansionAllocator::new();
-        let expanded = expand_instruction(&case.input, &mut allocator).map_err(|error| {
-            CheckError::Violation(InvariantViolation::with_details(
-                "source expansion failed",
-                format!("case={}, error={error}", case.name),
-            ))
-        })?;
+        let expanded =
+            expand_instruction(&case.input, &mut allocator, RV64IMAC_JOLT).map_err(|error| {
+                CheckError::Violation(InvariantViolation::with_details(
+                    "source expansion failed",
+                    format!("case={}, error={error}", case.name),
+                ))
+            })?;
         let expanded_rows: Vec<JoltRow> = expanded.into_iter().map(JoltRow::from).collect();
         let encoded = serde_json::to_vec(&expanded_rows).map_err(|error| {
             CheckError::Violation(InvariantViolation::with_details(

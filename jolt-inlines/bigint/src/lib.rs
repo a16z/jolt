@@ -6,5 +6,6 @@ pub use multiplication::*;
 #[cfg(feature = "host")]
 jolt_inlines_sdk::register_inlines! {
     trace_file: "bigint_mul256_trace.joltinline",
+    extension: jolt_inlines_sdk::host::InlineExtension::BigInt256,
     ops: [multiplication::sequence_builder::BigintMul256],
 }

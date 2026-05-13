@@ -4,6 +4,8 @@ use std::panic;
 use crate::emulator::cpu::Cpu;
 use crate::instruction::format::{InstructionFormat, InstructionRegisterState};
 use crate::instruction::JoltRow;
+#[cfg(test)]
+use jolt_riscv::RV64IMAC_JOLT;
 
 #[cfg(test)]
 use super::{
@@ -88,8 +90,13 @@ fn jolt_program_rv64_decode_matches_tracer_normalization() {
         let expected = Instruction::decode(word, address, compressed)
             .unwrap()
             .source_instruction();
-        let actual =
-            jolt_program::image::decode::decode_instruction(word, address, compressed).unwrap();
+        let actual = jolt_program::image::decode::decode_instruction(
+            word,
+            address,
+            compressed,
+            RV64IMAC_JOLT,
+        )
+        .unwrap();
         assert_eq!(actual, expected, "word={word:08x} compressed={compressed}");
     }
 }

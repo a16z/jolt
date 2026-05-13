@@ -63,6 +63,7 @@ fn side_effect_free_rd_zero_becomes_noop_addi() -> Result<(), ExpansionError> {
     let expanded = rows(expand_instruction(
         &instruction(SourceInstructionKind::ADD, Some(0), true),
         &mut allocator,
+        RV64IMAC_JOLT,
     )?);
 
     assert_eq!(expanded.len(), 1);
@@ -81,6 +82,7 @@ fn side_effecting_rd_zero_rewrites_to_temporary_register() -> Result<(), Expansi
     let expanded = rows(expand_instruction(
         &instruction(SourceInstructionKind::JAL, Some(0), false),
         &mut allocator,
+        RV64IMAC_JOLT,
     )?);
 
     assert_eq!(expanded.len(), 1);
@@ -93,7 +95,7 @@ fn side_effecting_rd_zero_rewrites_to_temporary_register() -> Result<(), Expansi
 fn trap_related_rd_zero_uses_instruction_expansion() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let input = instruction(SourceInstructionKind::ECALL, Some(0), false);
-    let expanded = rows(expand_instruction(&input, &mut allocator)?);
+    let expanded = rows(expand_instruction(&input, &mut allocator, RV64IMAC_JOLT)?);
 
     assert_eq!(expanded.len(), 7);
     assert_eq!(expanded[0].instruction_kind, JoltInstructionKind::AUIPC);
@@ -107,7 +109,7 @@ fn inline_requires_provider() {
     let input = instruction(SourceInstructionKind::Inline, Some(3), false);
 
     assert!(matches!(
-        expand_instruction(&input, &mut allocator),
+        expand_instruction(&input, &mut allocator, RV64IMAC_JOLT),
         Err(ExpansionError::InlineProviderRequired)
     ));
 }
@@ -121,7 +123,7 @@ fn csr_zero_is_rejected() {
         let input = SourceInstruction::new(instruction_kind, input);
 
         assert!(matches!(
-            expand_instruction(&input, &mut allocator),
+            expand_instruction(&input, &mut allocator, RV64IMAC_JOLT),
             Err(ExpansionError::UnsupportedCsr(0))
         ));
     }
@@ -139,6 +141,7 @@ fn lr_sc_expansions_restrict_address_to_ram() -> Result<(), ExpansionError> {
         let expanded = rows(expand_instruction(
             &instruction(instruction_kind, Some(3), false),
             &mut allocator,
+            RV64IMAC_JOLT,
         )?);
 
         assert_eq!(expanded[0].instruction_kind, JoltInstructionKind::LUI);
@@ -161,6 +164,7 @@ fn sc_success_advice_is_not_position_dependent() -> Result<(), ExpansionError> {
         let expanded = rows(expand_instruction(
             &instruction(instruction_kind, Some(3), false),
             &mut allocator,
+            RV64IMAC_JOLT,
         )?);
         let advice_position = expanded.iter().position(|instruction| {
             instruction.instruction_kind == JoltInstructionKind::VirtualAdvice
@@ -186,6 +190,7 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
             &mut self,
             instruction: &SourceInstruction,
             _allocator: &mut ExpansionAllocator,
+            _profile: jolt_riscv::JoltInstructionProfile,
         ) -> Result<Vec<JoltInstruction>, ExpansionError> {
             self.captured = Some(*instruction);
             let row = instruction.row();
@@ -228,6 +233,7 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
         &input,
         &mut allocator,
         &mut provider,
+        RV64IMAC_JOLT,
     )?);
 
     let expected = input.map_row(|mut row| {
@@ -253,6 +259,7 @@ fn inline_provider_output_is_validated_and_stamped() {
             &mut self,
             instruction: &SourceInstruction,
             _allocator: &mut ExpansionAllocator,
+            _profile: jolt_riscv::JoltInstructionProfile,
         ) -> Result<Vec<JoltInstruction>, ExpansionError> {
             final_instruction(instruction.jolt_row()).map(|instruction| vec![instruction])
         }
@@ -262,7 +269,7 @@ fn inline_provider_output_is_validated_and_stamped() {
     let mut allocator = ExpansionAllocator::new();
 
     assert!(matches!(
-        expand_instruction_with_provider(&input, &mut allocator, &mut BadProvider),
+        expand_instruction_with_provider(&input, &mut allocator, &mut BadProvider, RV64IMAC_JOLT),
         Err(ExpansionError::IllegalTargetInstruction(
             JoltInstructionKind::Inline
         ))
@@ -278,6 +285,7 @@ fn inline_provider_allocator_resets_are_appended() -> Result<(), ExpansionError>
             &mut self,
             instruction: &SourceInstruction,
             allocator: &mut ExpansionAllocator,
+            _profile: jolt_riscv::JoltInstructionProfile,
         ) -> Result<Vec<JoltInstruction>, ExpansionError> {
             let row = instruction.row();
             let register = allocator.allocate_for_inline()?;
@@ -304,6 +312,7 @@ fn inline_provider_allocator_resets_are_appended() -> Result<(), ExpansionError>
         &input,
         &mut allocator,
         &mut AllocatingProvider,
+        RV64IMAC_JOLT,
     )?);
 
     assert_eq!(expanded.len(), 2);
@@ -328,6 +337,7 @@ fn inline_provider_allows_sequences_larger_than_instruction_recipes() -> Result<
             &mut self,
             instruction: &SourceInstruction,
             _allocator: &mut ExpansionAllocator,
+            _profile: jolt_riscv::JoltInstructionProfile,
         ) -> Result<Vec<JoltInstruction>, ExpansionError> {
             let row = instruction.row();
             (0..=materialize::MAX_FINAL_ROWS_PER_SOURCE)
@@ -356,6 +366,7 @@ fn inline_provider_allows_sequences_larger_than_instruction_recipes() -> Result<
         &input,
         &mut allocator,
         &mut LargeProvider,
+        RV64IMAC_JOLT,
     )?);
 
     assert_eq!(expanded.len(), materialize::MAX_FINAL_ROWS_PER_SOURCE + 1);
@@ -403,7 +414,7 @@ fn source_only_expanders_are_not_target_legal() {
 fn recursive_helper_expansion_is_stamped_as_one_sequence() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let input = instruction(SourceInstructionKind::SLL, Some(3), true);
-    let expanded = rows(expand_instruction(&input, &mut allocator)?);
+    let expanded = rows(expand_instruction(&input, &mut allocator, RV64IMAC_JOLT)?);
 
     assert!(expanded.len() > 1);
     for (i, row) in expanded.iter().enumerate() {
@@ -433,7 +444,11 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
 
     for case in cases {
         let mut allocator = ExpansionAllocator::new();
-        let expanded = rows(expand_instruction(&case.input, &mut allocator)?);
+        let expanded = rows(expand_instruction(
+            &case.input,
+            &mut allocator,
+            RV64IMAC_JOLT,
+        )?);
         let encoded = serde_json::to_vec(&expanded)?;
         let output_sha256 = hex::encode(Sha256::digest(encoded));
 

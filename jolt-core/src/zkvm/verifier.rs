@@ -216,7 +216,7 @@ fn scale_batching_coefficients<
 }
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
-use jolt_riscv::JoltRow;
+use jolt_riscv::{JoltRow, RV64IMAC_JOLT};
 use tracer::JoltDevice;
 
 pub struct JoltVerifier<
@@ -1818,7 +1818,11 @@ impl JoltSharedPreprocessing {
         max_padded_trace_length: usize,
         entry_address: u64,
     ) -> Result<JoltSharedPreprocessing, PreprocessingError> {
-        let bytecode = Arc::new(BytecodePreprocessing::preprocess(bytecode, entry_address)?);
+        let bytecode = Arc::new(BytecodePreprocessing::preprocess(
+            bytecode,
+            entry_address,
+            RV64IMAC_JOLT,
+        )?);
         let ram = RAMPreprocessing::preprocess(memory_init);
         Ok(Self {
             bytecode,

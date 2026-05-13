@@ -157,7 +157,7 @@ use crate::utils::virtual_registers::{is_supported_csr, VirtualRegisterAllocator
 use derive_more::From;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
 pub use jolt_riscv::JoltRow;
-use jolt_riscv::{JoltInstructionKind, SourceInline, SourceInstructionKind};
+use jolt_riscv::{JoltInstructionKind, SourceInline, SourceInstructionKind, RV64IMAC_JOLT};
 pub use jolt_riscv::{SourceInstruction, SourceRow};
 
 pub mod format;
@@ -688,6 +688,7 @@ macro_rules! define_rv64imac_enums {
                 jolt_program::expand::expand_instruction(
                     &self.source_instruction(),
                     &mut expansion_allocator,
+                    RV64IMAC_JOLT,
                 )
                 .expect("jolt-program bytecode expansion failed")
                 .into_iter()

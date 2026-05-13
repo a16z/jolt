@@ -1,5 +1,5 @@
 use common::jolt_device::MemoryLayout;
-use jolt_riscv::JoltRow;
+use jolt_riscv::{JoltInstructionProfile, JoltRow};
 
 use crate::preprocess::{
     bytecode::BytecodePreprocessing, ram::RAMPreprocessing, PreprocessingError,
@@ -24,9 +24,10 @@ impl JoltProgramPreprocessing {
         memory_layout: MemoryLayout,
         entry_address: u64,
         max_padded_trace_length: usize,
+        profile: JoltInstructionProfile,
     ) -> Result<Self, PreprocessingError> {
         Ok(Self {
-            bytecode: BytecodePreprocessing::preprocess(bytecode, entry_address)?,
+            bytecode: BytecodePreprocessing::preprocess(bytecode, entry_address, profile)?,
             ram: RAMPreprocessing::preprocess(memory_init),
             memory_layout,
             max_padded_trace_length,

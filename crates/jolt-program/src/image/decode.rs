@@ -4,8 +4,8 @@
 )]
 
 use jolt_riscv::{
-    NormalizedOperands, SourceInline, SourceInstruction, SourceInstructionKind, SourceRow,
-    RV64IMAC_JOLT,
+    JoltInstructionProfile, NormalizedOperands, SourceInline, SourceInstruction,
+    SourceInstructionKind, SourceRow,
 };
 
 use crate::ProgramError;
@@ -14,6 +14,7 @@ pub fn decode_instruction(
     word: u32,
     address: u64,
     is_compressed: bool,
+    profile: JoltInstructionProfile,
 ) -> Result<SourceInstruction, ProgramError> {
     let opcode = word & 0x7f;
     let kind = match opcode {
@@ -62,7 +63,7 @@ pub fn decode_instruction(
         _ => return invalid("unknown RV64 opcode"),
     };
 
-    if !RV64IMAC_JOLT.supports_source(kind) {
+    if !profile.supports_source(kind) {
         return Err(ProgramError::IllegalSourceInstruction(kind));
     }
     Ok(source_instruction(kind, word, address, is_compressed))
