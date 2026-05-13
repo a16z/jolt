@@ -1,15 +1,15 @@
 //! Tracer-free runtime views of executed Jolt instructions.
 //!
-//! [`JoltCycle`] pairs the static [`JoltInstruction`](crate::JoltInstruction)
+//! [`JoltCycle`] pairs the static [`JoltRowData`](crate::JoltRowData)
 //! vocabulary with register and RAM values captured during execution, so lookup
 //! table code can operate on cycle data without depending on tracer's concrete
 //! cycle types.
 
-use crate::JoltInstruction;
+use crate::JoltRowData;
 
 /// Dynamic cycle view: a populated instruction plus runtime register state.
 pub trait JoltCycle {
-    type Instruction: JoltInstruction;
+    type Instruction: JoltRowData;
 
     /// The instruction executed during this cycle.
     fn instruction(&self) -> Self::Instruction;
