@@ -123,9 +123,23 @@ concrete regression and is enforced by tests or measurement.
 - [x] **jolt-core monolithic correctness preserved.**
   `cargo nextest run -p jolt-core muldiv --features host` succeeds — FR work
   has not regressed the monolithic prove path.
-- [ ] **FR-active perf comparison: modular FR coprocessor vs modular ark-bn254
-  software Fr.** Both routes prove the same Poseidon2 permutation; the
-  coprocessor route should run on a ~7× smaller trace.
+- [x] **FR-active perf comparison: modular FR coprocessor vs modular ark-bn254
+  software Fr.** Both routes prove the same Poseidon2 permutation at fixture
+  shape (`log_t = 18`, padded cycles = 262,144). Measured via
+  `cargo nextest run -p jolt-host perf_fr_poseidon2_{sdk,arkworks}_modular
+  --release --run-ignored only`:
+
+  | metric        | FR coprocessor (`fr_poseidon2_sdk`) | software ark-bn254 (`fr_poseidon2_arkworks`) | coprocessor advantage |
+  |---------------|-------------------------------------|----------------------------------------------|-----------------------|
+  | raw cycles    | 35,890                              | 252,978                                      | **7.05× smaller**     |
+  | prove time    | 3.53 s                              | 4.54 s                                       | 22% faster            |
+  | peak RSS      | 3,333 MB                            | 3,270 MB                                     | ~+2% (FR Twist rows)  |
+  | proof valid   | yes                                 | yes                                          | —                     |
+
+  The 7× cycle reduction matches the spec prediction. Prove-time savings
+  are smaller than the cycle ratio because the fixture log_t is held
+  constant — both runs pad to 2^18 and pay the same fixed-shape work.
+  Memory delta (~63 MB) is the linear-in-T overhead of the FR R1CS rows.
 
 ### Testing Strategy
 
