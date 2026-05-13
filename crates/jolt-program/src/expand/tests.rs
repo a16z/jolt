@@ -1,7 +1,7 @@
 use super::*;
 
 use common::constants::RAM_START_ADDRESS;
-use jolt_riscv::{SourceInline, SourceRow};
+use jolt_riscv::{JoltInstruction, SourceInline, SourceRow, RV64IMAC_JOLT};
 #[cfg(feature = "serialization")]
 use serde::Deserialize;
 #[cfg(feature = "serialization")]
@@ -49,13 +49,21 @@ fn instruction(
     )
 }
 
+fn final_instruction(row: JoltRow) -> Result<JoltInstruction, ExpansionError> {
+    JoltInstruction::try_from(row).map_err(ExpansionError::IllegalTargetInstruction)
+}
+
+fn rows(instructions: Vec<JoltInstruction>) -> Vec<JoltRow> {
+    instructions.into_iter().map(JoltRow::from).collect()
+}
+
 #[test]
 fn side_effect_free_rd_zero_becomes_noop_addi() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
-    let expanded = expand_instruction(
+    let expanded = rows(expand_instruction(
         &instruction(SourceInstructionKind::ADD, Some(0), true),
         &mut allocator,
-    )?;
+    )?);
 
     assert_eq!(expanded.len(), 1);
     assert_eq!(expanded[0].instruction_kind, JoltInstructionKind::ADDI);
@@ -70,10 +78,10 @@ fn side_effect_free_rd_zero_becomes_noop_addi() -> Result<(), ExpansionError> {
 #[test]
 fn side_effecting_rd_zero_rewrites_to_temporary_register() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
-    let expanded = expand_instruction(
+    let expanded = rows(expand_instruction(
         &instruction(SourceInstructionKind::JAL, Some(0), false),
         &mut allocator,
-    )?;
+    )?);
 
     assert_eq!(expanded.len(), 1);
     assert_eq!(expanded[0].instruction_kind, JoltInstructionKind::JAL);
@@ -85,7 +93,7 @@ fn side_effecting_rd_zero_rewrites_to_temporary_register() -> Result<(), Expansi
 fn trap_related_rd_zero_uses_instruction_expansion() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let input = instruction(SourceInstructionKind::ECALL, Some(0), false);
-    let expanded = expand_instruction(&input, &mut allocator)?;
+    let expanded = rows(expand_instruction(&input, &mut allocator)?);
 
     assert_eq!(expanded.len(), 7);
     assert_eq!(expanded[0].instruction_kind, JoltInstructionKind::AUIPC);
@@ -128,10 +136,10 @@ fn lr_sc_expansions_restrict_address_to_ram() -> Result<(), ExpansionError> {
         SourceInstructionKind::SCD,
     ] {
         let mut allocator = ExpansionAllocator::new();
-        let expanded = expand_instruction(
+        let expanded = rows(expand_instruction(
             &instruction(instruction_kind, Some(3), false),
             &mut allocator,
-        )?;
+        )?);
 
         assert_eq!(expanded[0].instruction_kind, JoltInstructionKind::LUI);
         assert_eq!(expanded[0].operands.rd, Some(40));
@@ -150,10 +158,10 @@ fn lr_sc_expansions_restrict_address_to_ram() -> Result<(), ExpansionError> {
 fn sc_success_advice_is_not_position_dependent() -> Result<(), ExpansionError> {
     for instruction_kind in [SourceInstructionKind::SCW, SourceInstructionKind::SCD] {
         let mut allocator = ExpansionAllocator::new();
-        let expanded = expand_instruction(
+        let expanded = rows(expand_instruction(
             &instruction(instruction_kind, Some(3), false),
             &mut allocator,
-        )?;
+        )?);
         let advice_position = expanded.iter().position(|instruction| {
             instruction.instruction_kind == JoltInstructionKind::VirtualAdvice
         });
@@ -178,10 +186,10 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
             &mut self,
             instruction: &SourceInstruction,
             _allocator: &mut ExpansionAllocator,
-        ) -> Result<Vec<JoltRow>, ExpansionError> {
+        ) -> Result<Vec<JoltInstruction>, ExpansionError> {
             self.captured = Some(*instruction);
             let row = instruction.row();
-            Ok(vec![JoltRow {
+            Ok(vec![final_instruction(JoltRow {
                 instruction_kind: JoltInstructionKind::ADDI,
                 address: row.address,
                 operands: NormalizedOperands {
@@ -193,7 +201,7 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
                 virtual_sequence_remaining: None,
                 is_first_in_sequence: false,
                 is_compressed: false,
-            }])
+            })?])
         }
     }
 
@@ -216,7 +224,11 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
     let mut provider = CapturingProvider::default();
     let input = SourceInstruction::new(SourceInstructionKind::Inline, input);
 
-    let expanded = expand_instruction_with_provider(&input, &mut allocator, &mut provider)?;
+    let expanded = rows(expand_instruction_with_provider(
+        &input,
+        &mut allocator,
+        &mut provider,
+    )?);
 
     let expected = input.map_row(|mut row| {
         row.operands.rd = Some(40);
@@ -241,8 +253,8 @@ fn inline_provider_output_is_validated_and_stamped() {
             &mut self,
             instruction: &SourceInstruction,
             _allocator: &mut ExpansionAllocator,
-        ) -> Result<Vec<JoltRow>, ExpansionError> {
-            Ok(vec![instruction.jolt_row()])
+        ) -> Result<Vec<JoltInstruction>, ExpansionError> {
+            final_instruction(instruction.jolt_row()).map(|instruction| vec![instruction])
         }
     }
 
@@ -266,11 +278,11 @@ fn inline_provider_allocator_resets_are_appended() -> Result<(), ExpansionError>
             &mut self,
             instruction: &SourceInstruction,
             allocator: &mut ExpansionAllocator,
-        ) -> Result<Vec<JoltRow>, ExpansionError> {
+        ) -> Result<Vec<JoltInstruction>, ExpansionError> {
             let row = instruction.row();
             let register = allocator.allocate_for_inline()?;
             allocator.release(register)?;
-            Ok(vec![JoltRow {
+            Ok(vec![final_instruction(JoltRow {
                 instruction_kind: JoltInstructionKind::ADDI,
                 address: row.address,
                 operands: NormalizedOperands {
@@ -282,14 +294,17 @@ fn inline_provider_allocator_resets_are_appended() -> Result<(), ExpansionError>
                 virtual_sequence_remaining: None,
                 is_first_in_sequence: false,
                 is_compressed: false,
-            }])
+            })?])
         }
     }
 
     let input = instruction(SourceInstructionKind::Inline, Some(3), true);
     let mut allocator = ExpansionAllocator::new();
-    let expanded =
-        expand_instruction_with_provider(&input, &mut allocator, &mut AllocatingProvider)?;
+    let expanded = rows(expand_instruction_with_provider(
+        &input,
+        &mut allocator,
+        &mut AllocatingProvider,
+    )?);
 
     assert_eq!(expanded.len(), 2);
     assert_eq!(expanded[0].virtual_sequence_remaining, Some(1));
@@ -313,29 +328,35 @@ fn inline_provider_allows_sequences_larger_than_instruction_recipes() -> Result<
             &mut self,
             instruction: &SourceInstruction,
             _allocator: &mut ExpansionAllocator,
-        ) -> Result<Vec<JoltRow>, ExpansionError> {
+        ) -> Result<Vec<JoltInstruction>, ExpansionError> {
             let row = instruction.row();
-            Ok((0..=materialize::MAX_FINAL_ROWS_PER_SOURCE)
-                .map(|_| JoltRow {
-                    instruction_kind: JoltInstructionKind::ADDI,
-                    address: row.address,
-                    operands: NormalizedOperands {
-                        rd: Some(0),
-                        rs1: Some(0),
-                        rs2: None,
-                        imm: 0,
-                    },
-                    virtual_sequence_remaining: None,
-                    is_first_in_sequence: false,
-                    is_compressed: false,
+            (0..=materialize::MAX_FINAL_ROWS_PER_SOURCE)
+                .map(|_| {
+                    final_instruction(JoltRow {
+                        instruction_kind: JoltInstructionKind::ADDI,
+                        address: row.address,
+                        operands: NormalizedOperands {
+                            rd: Some(0),
+                            rs1: Some(0),
+                            rs2: None,
+                            imm: 0,
+                        },
+                        virtual_sequence_remaining: None,
+                        is_first_in_sequence: false,
+                        is_compressed: false,
+                    })
                 })
-                .collect())
+                .collect::<Result<Vec<_>, _>>()
         }
     }
 
     let input = instruction(SourceInstructionKind::Inline, Some(3), true);
     let mut allocator = ExpansionAllocator::new();
-    let expanded = expand_instruction_with_provider(&input, &mut allocator, &mut LargeProvider)?;
+    let expanded = rows(expand_instruction_with_provider(
+        &input,
+        &mut allocator,
+        &mut LargeProvider,
+    )?);
 
     assert_eq!(expanded.len(), materialize::MAX_FINAL_ROWS_PER_SOURCE + 1);
     assert_eq!(
@@ -353,7 +374,7 @@ fn source_only_expanders_are_not_target_legal() {
         ($($kind:ident),* $(,)?) => {
             $(
                 assert!(
-                    !grammar::is_target_legal(JoltInstructionKind::$kind),
+                    !RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::$kind),
                     concat!(stringify!($kind), " has an expander but is target-legal")
                 );
             )*
@@ -375,14 +396,14 @@ fn source_only_expanders_are_not_target_legal() {
         SLL, SLLI, SLLW, SLLIW, SRL, SRLI, SRA, SRAI,
         SRLIW, SRAIW, SRLW, SRAW,
     }
-    assert!(!grammar::is_target_legal(JoltInstructionKind::Inline));
+    assert!(!RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::Inline));
 }
 
 #[test]
 fn recursive_helper_expansion_is_stamped_as_one_sequence() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let input = instruction(SourceInstructionKind::SLL, Some(3), true);
-    let expanded = expand_instruction(&input, &mut allocator)?;
+    let expanded = rows(expand_instruction(&input, &mut allocator)?);
 
     assert!(expanded.len() > 1);
     for (i, row) in expanded.iter().enumerate() {
@@ -396,7 +417,7 @@ fn recursive_helper_expansion_is_stamped_as_one_sequence() -> Result<(), Expansi
     }
     assert!(expanded
         .iter()
-        .all(|row| grammar::is_target_legal(row.instruction_kind)));
+        .all(|row| RV64IMAC_JOLT.supports_jolt(row.instruction_kind)));
 
     Ok(())
 }
@@ -412,7 +433,7 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
 
     for case in cases {
         let mut allocator = ExpansionAllocator::new();
-        let expanded = expand_instruction(&case.input, &mut allocator)?;
+        let expanded = rows(expand_instruction(&case.input, &mut allocator)?);
         let encoded = serde_json::to_vec(&expanded)?;
         let output_sha256 = hex::encode(Sha256::digest(encoded));
 

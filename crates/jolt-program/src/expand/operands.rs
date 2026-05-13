@@ -48,13 +48,13 @@ pub(super) fn csr_address(instruction: &JoltRow) -> u16 {
 }
 
 /// Instructions whose expansion recipes handle rd=x0 themselves (trap, CSR).
-pub(super) const fn handles_rd_zero_internally(instruction_kind: JoltInstructionKind) -> bool {
+pub(super) const fn handles_rd_zero_internally(instruction_kind: SourceInstructionKind) -> bool {
     matches!(
         instruction_kind,
-        JoltInstructionKind::ECALL
-            | JoltInstructionKind::MRET
-            | JoltInstructionKind::EBREAK
-            | JoltInstructionKind::CSRRW
-            | JoltInstructionKind::CSRRS
+        SourceInstructionKind::ECALL
+            | SourceInstructionKind::MRET
+            | SourceInstructionKind::EBREAK
+            | SourceInstructionKind::CSRRW
+            | SourceInstructionKind::CSRRS
     )
 }

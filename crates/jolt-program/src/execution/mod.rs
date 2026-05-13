@@ -8,6 +8,8 @@ use crate::{
     expand::{expand_program, expand_program_with_provider, InlineExpansionProvider},
     image::decode_elf,
 };
+#[cfg(feature = "image")]
+use jolt_riscv::JoltRow;
 
 pub use backend::{ExecutionBackend, TraceSource};
 pub use error::TraceError;
@@ -19,7 +21,10 @@ pub use trace::{
 #[cfg(feature = "image")]
 pub fn build_jolt_program(elf_bytes: &[u8]) -> Result<JoltProgram, ProgramError> {
     let image = decode_elf(elf_bytes)?;
-    let expanded_bytecode = expand_program(&image.instructions)?;
+    let expanded_bytecode = expand_program(&image.instructions)?
+        .into_iter()
+        .map(JoltRow::from)
+        .collect();
     Ok(JoltProgram::from_rv64_image(
         elf_bytes.to_vec(),
         expanded_bytecode,
@@ -33,7 +38,10 @@ pub fn build_jolt_program_with_inline_provider<P: InlineExpansionProvider + ?Siz
     inline_provider: &mut P,
 ) -> Result<JoltProgram, ProgramError> {
     let image = decode_elf(elf_bytes)?;
-    let expanded_bytecode = expand_program_with_provider(&image.instructions, inline_provider)?;
+    let expanded_bytecode = expand_program_with_provider(&image.instructions, inline_provider)?
+        .into_iter()
+        .map(JoltRow::from)
+        .collect();
     Ok(JoltProgram::from_rv64_image(
         elf_bytes.to_vec(),
         expanded_bytecode,

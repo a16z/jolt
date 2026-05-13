@@ -11,26 +11,26 @@ pub(in crate::expand) fn expand_lrw(
     let ram_start = asm.allocate()?;
 
     asm.expand_u(
-        JoltInstructionKind::LUI,
+        SourceInstructionKind::LUI,
         ram_start.operand(),
         RAM_START_ADDRESS as i128,
     );
     asm.expand_b(
-        JoltInstructionKind::VirtualAssertLTE,
+        SourceInstructionKind::VirtualAssertLTE,
         ram_start.operand(),
         reg(rs1(instruction)?),
         0,
     );
     asm.release(ram_start);
     asm.expand_i(
-        JoltInstructionKind::ADDI,
+        SourceInstructionKind::ADDI,
         reg(v_reservation_w),
         reg(rs1(instruction)?),
         0,
     );
-    asm.expand_i(JoltInstructionKind::ADDI, reg(v_reservation_d), reg(0), 0);
+    asm.expand_i(SourceInstructionKind::ADDI, reg(v_reservation_d), reg(0), 0);
     asm.expand_i(
-        JoltInstructionKind::LW,
+        SourceInstructionKind::LW,
         reg(rd(instruction)?),
         reg(rs1(instruction)?),
         0,

@@ -109,6 +109,7 @@ pub fn decode(elf: &[u8]) -> (Vec<JoltRow>, Vec<(u64, u8)>, u64, u64) {
         &image.instructions,
         &mut inline_provider,
     )
+    .map(|instructions| instructions.into_iter().map(JoltRow::from).collect())
     .expect("program bytecode expansion failed");
 
     (

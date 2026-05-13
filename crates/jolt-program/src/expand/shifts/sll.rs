@@ -7,7 +7,7 @@ pub(in crate::expand) fn expand_sll(
     let v_pow2 = asm.allocate()?;
 
     asm.expand_i(
-        JoltInstructionKind::VirtualPow2,
+        SourceInstructionKind::VirtualPow2,
         v_pow2.operand(),
         reg(rs2(instruction)?),
         0,

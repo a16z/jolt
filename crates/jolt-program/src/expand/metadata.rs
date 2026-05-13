@@ -1,8 +1,6 @@
-use jolt_riscv::JoltRow;
+use jolt_riscv::{JoltRow, RV64IMAC_JOLT};
 
-use crate::expand::{
-    grammar::is_target_legal, materialize::MAX_FINAL_ROWS_PER_SOURCE, ExpansionError,
-};
+use crate::expand::{materialize::MAX_FINAL_ROWS_PER_SOURCE, ExpansionError};
 
 const MAX_METADATA_SEQUENCE_ROWS: usize = u16::MAX as usize + 1;
 
@@ -37,7 +35,7 @@ fn stamp_sequence_metadata(
         });
     }
     for row in &rows {
-        if !is_target_legal(row.instruction_kind) {
+        if !RV64IMAC_JOLT.supports_jolt(row.instruction_kind) {
             return Err(ExpansionError::IllegalTargetInstruction(
                 row.instruction_kind,
             ));

@@ -1,11 +1,11 @@
-use jolt_riscv::{JoltInstructionKind, JoltRow, NormalizedOperands};
+use jolt_riscv::{JoltRow, NormalizedOperands, SourceInstruction, SourceRow};
 
 use crate::expand::{
     allocator::{ExpansionAllocator, NUM_VIRTUAL_INSTRUCTION_REGISTERS},
     expand_source_only_instruction,
     grammar::{
         is_source_only, ExpandedInstructionSequence, ExpansionOp, RegisterOperand, RowTemplate,
-        TempId, TemplateOperands,
+        SourceRowTemplate, TempId, TemplateOperands,
     },
     metadata::stamp_instruction_sequence,
     operands::{handles_rd_zero_internally, noop_for},
@@ -28,37 +28,41 @@ impl ExpansionState {
         self.allocator
     }
 
-    pub(super) fn expand_recursive(
+    pub(super) fn expand_source_recursive(
         &mut self,
-        instruction: &JoltRow,
+        instruction: &SourceInstruction,
     ) -> Result<Vec<JoltRow>, ExpansionError> {
         self.allocator.enter_expansion()?;
-        let result = self.dispatch(instruction);
+        let result = self.dispatch_source(instruction);
         self.allocator.exit_expansion();
         result
     }
 
     /// Routes: rd=x0 rewrite → recurse, native → pass-through, source-only → build recipe + materialize.
-    fn dispatch(&mut self, instruction: &JoltRow) -> Result<Vec<JoltRow>, ExpansionError> {
-        if instruction.operands.rd == Some(0)
-            && !handles_rd_zero_internally(instruction.instruction_kind)
-        {
-            if instruction.instruction_kind.has_side_effects() {
+    fn dispatch_source(
+        &mut self,
+        instruction: &SourceInstruction,
+    ) -> Result<Vec<JoltRow>, ExpansionError> {
+        let kind = instruction.kind();
+        if instruction.row().operands.rd == Some(0) && !handles_rd_zero_internally(kind) {
+            if kind.jolt_kind().has_side_effects() {
                 let virtual_register = self.allocate_register()?;
-                let mut rewritten = *instruction;
-                rewritten.operands.rd = Some(virtual_register);
-                let expanded = self.expand_recursive(&rewritten);
+                let rewritten = (*instruction).map_row(|mut row| {
+                    row.operands.rd = Some(virtual_register);
+                    row
+                });
+                let expanded = self.expand_source_recursive(&rewritten);
                 self.release_register(virtual_register)?;
                 return expanded;
             }
-            return Ok(vec![noop_for(*instruction)]);
+            return Ok(vec![noop_for(instruction.jolt_row())]);
         }
 
-        if instruction.instruction_kind == JoltInstructionKind::Inline {
+        if kind == jolt_riscv::SourceInstructionKind::Inline {
             return Err(ExpansionError::InlineProviderRequired);
         }
-        if !is_source_only(instruction.instruction_kind) {
-            return Ok(vec![*instruction]);
+        if !is_source_only(kind) {
+            return Ok(vec![instruction.jolt_row()]);
         }
         let sequence = expand_source_only_instruction(instruction)?;
         self.materialize(sequence)
@@ -81,8 +85,8 @@ impl ExpansionState {
             match op {
                 ExpansionOp::Emit(row) => materializer.emit(row)?,
                 ExpansionOp::Expand(row) => {
-                    let instruction = materializer.instruction(row)?;
-                    materializer.extend(self.expand_recursive(&instruction)?)?;
+                    let instruction = materializer.source_instruction(row)?;
+                    materializer.extend(self.expand_source_recursive(&instruction)?)?;
                 }
                 ExpansionOp::Allocate(register) => {
                     let allocated = self.allocator.allocate()?;
@@ -219,6 +223,21 @@ impl SequenceMaterializer {
             is_first_in_sequence: false,
             is_compressed: false,
         })
+    }
+
+    fn source_instruction(
+        &self,
+        row: SourceRowTemplate,
+    ) -> Result<SourceInstruction, ExpansionError> {
+        Ok(SourceInstruction::new(
+            row.instruction_kind,
+            SourceRow {
+                address: self.address,
+                operands: self.resolve_operands(row.operands)?,
+                inline: None,
+                is_compressed: false,
+            },
+        ))
     }
 
     fn bind_temp(&mut self, temp: TempId, allocated: u8) -> Result<(), ExpansionError> {

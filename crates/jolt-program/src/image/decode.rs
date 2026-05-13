@@ -4,8 +4,8 @@
 )]
 
 use jolt_riscv::{
-    JoltInstructionKind, NormalizedOperands, SourceInline, SourceInstruction,
-    SourceInstructionKind, SourceRow,
+    NormalizedOperands, SourceInline, SourceInstruction, SourceInstructionKind, SourceRow,
+    RV64IMAC_JOLT,
 };
 
 use crate::ProgramError;
@@ -62,6 +62,9 @@ pub fn decode_instruction(
         _ => return invalid("unknown RV64 opcode"),
     };
 
+    if !RV64IMAC_JOLT.supports_source(kind) {
+        return Err(ProgramError::IllegalSourceInstruction(kind));
+    }
     Ok(source_instruction(kind, word, address, is_compressed))
 }
 
@@ -191,79 +194,81 @@ fn source_instruction(
     address: u64,
     is_compressed: bool,
 ) -> SourceInstruction {
-    let jolt_kind = instruction_kind.jolt_kind();
     let inline = (instruction_kind == SourceInstructionKind::Inline).then(|| source_inline(word));
     SourceInstruction::new(
         instruction_kind,
         SourceRow {
             address: address as usize,
-            operands: operands(jolt_kind, word),
+            operands: operands(instruction_kind, word),
             inline,
             is_compressed,
         },
     )
 }
 
-fn operands(instruction_kind: JoltInstructionKind, word: u32) -> NormalizedOperands {
+fn operands(instruction_kind: SourceInstructionKind, word: u32) -> NormalizedOperands {
     match instruction_kind {
-        JoltInstructionKind::LUI | JoltInstructionKind::AUIPC => format_u_operands(word),
-        JoltInstructionKind::JAL => format_j_operands(word),
-        JoltInstructionKind::BEQ
-        | JoltInstructionKind::BNE
-        | JoltInstructionKind::BLT
-        | JoltInstructionKind::BGE
-        | JoltInstructionKind::BLTU
-        | JoltInstructionKind::BGEU
-        | JoltInstructionKind::VirtualAssertEQ => format_b_operands(word),
-        JoltInstructionKind::SB
-        | JoltInstructionKind::SH
-        | JoltInstructionKind::SW
-        | JoltInstructionKind::SD => format_s_operands(word),
-        JoltInstructionKind::LB
-        | JoltInstructionKind::LH
-        | JoltInstructionKind::LW
-        | JoltInstructionKind::LD
-        | JoltInstructionKind::LBU
-        | JoltInstructionKind::LHU
-        | JoltInstructionKind::LWU => format_load_operands(word),
-        JoltInstructionKind::LRW
-        | JoltInstructionKind::LRD
-        | JoltInstructionKind::SCW
-        | JoltInstructionKind::SCD
-        | JoltInstructionKind::AMOSWAPW
-        | JoltInstructionKind::AMOSWAPD
-        | JoltInstructionKind::AMOADDW
-        | JoltInstructionKind::AMOADDD
-        | JoltInstructionKind::AMOANDW
-        | JoltInstructionKind::AMOANDD
-        | JoltInstructionKind::AMOORW
-        | JoltInstructionKind::AMOORD
-        | JoltInstructionKind::AMOXORW
-        | JoltInstructionKind::AMOXORD
-        | JoltInstructionKind::AMOMINW
-        | JoltInstructionKind::AMOMIND
-        | JoltInstructionKind::AMOMAXW
-        | JoltInstructionKind::AMOMAXD
-        | JoltInstructionKind::AMOMINUW
-        | JoltInstructionKind::AMOMINUD
-        | JoltInstructionKind::AMOMAXUW
-        | JoltInstructionKind::AMOMAXUD => format_r_operands(word),
-        JoltInstructionKind::AdviceLB
-        | JoltInstructionKind::AdviceLH
-        | JoltInstructionKind::AdviceLW
-        | JoltInstructionKind::AdviceLD => format_advice_load_operands(word),
-        JoltInstructionKind::Inline => format_inline_operands(word),
-        JoltInstructionKind::ECALL | JoltInstructionKind::EBREAK | JoltInstructionKind::MRET => {
-            format_i_operands(word)
-        }
-        JoltInstructionKind::FENCE | JoltInstructionKind::NoOp | JoltInstructionKind::Unimpl => {
-            NormalizedOperands::default()
-        }
+        SourceInstructionKind::LUI | SourceInstructionKind::AUIPC => format_u_operands(word),
+        SourceInstructionKind::JAL => format_j_operands(word),
+        SourceInstructionKind::BEQ
+        | SourceInstructionKind::BNE
+        | SourceInstructionKind::BLT
+        | SourceInstructionKind::BGE
+        | SourceInstructionKind::BLTU
+        | SourceInstructionKind::BGEU
+        | SourceInstructionKind::VirtualAssertEQ => format_b_operands(word),
+        SourceInstructionKind::SB
+        | SourceInstructionKind::SH
+        | SourceInstructionKind::SW
+        | SourceInstructionKind::SD => format_s_operands(word),
+        SourceInstructionKind::LB
+        | SourceInstructionKind::LH
+        | SourceInstructionKind::LW
+        | SourceInstructionKind::LD
+        | SourceInstructionKind::LBU
+        | SourceInstructionKind::LHU
+        | SourceInstructionKind::LWU => format_load_operands(word),
+        SourceInstructionKind::LRW
+        | SourceInstructionKind::LRD
+        | SourceInstructionKind::SCW
+        | SourceInstructionKind::SCD
+        | SourceInstructionKind::AMOSWAPW
+        | SourceInstructionKind::AMOSWAPD
+        | SourceInstructionKind::AMOADDW
+        | SourceInstructionKind::AMOADDD
+        | SourceInstructionKind::AMOANDW
+        | SourceInstructionKind::AMOANDD
+        | SourceInstructionKind::AMOORW
+        | SourceInstructionKind::AMOORD
+        | SourceInstructionKind::AMOXORW
+        | SourceInstructionKind::AMOXORD
+        | SourceInstructionKind::AMOMINW
+        | SourceInstructionKind::AMOMIND
+        | SourceInstructionKind::AMOMAXW
+        | SourceInstructionKind::AMOMAXD
+        | SourceInstructionKind::AMOMINUW
+        | SourceInstructionKind::AMOMINUD
+        | SourceInstructionKind::AMOMAXUW
+        | SourceInstructionKind::AMOMAXUD => format_r_operands(word),
+        SourceInstructionKind::AdviceLB
+        | SourceInstructionKind::AdviceLH
+        | SourceInstructionKind::AdviceLW
+        | SourceInstructionKind::AdviceLD => format_advice_load_operands(word),
+        SourceInstructionKind::Inline => format_inline_operands(word),
+        SourceInstructionKind::ECALL
+        | SourceInstructionKind::EBREAK
+        | SourceInstructionKind::MRET => format_i_operands(word),
+        SourceInstructionKind::FENCE
+        | SourceInstructionKind::NoOp
+        | SourceInstructionKind::Unimpl => NormalizedOperands::default(),
         _ => format_i_or_r_operands(instruction_kind, word),
     }
 }
 
-fn format_i_or_r_operands(instruction_kind: JoltInstructionKind, word: u32) -> NormalizedOperands {
+fn format_i_or_r_operands(
+    instruction_kind: SourceInstructionKind,
+    word: u32,
+) -> NormalizedOperands {
     if uses_r_format(instruction_kind) {
         format_r_operands(word)
     } else {
@@ -271,37 +276,37 @@ fn format_i_or_r_operands(instruction_kind: JoltInstructionKind, word: u32) -> N
     }
 }
 
-fn uses_r_format(instruction_kind: JoltInstructionKind) -> bool {
+fn uses_r_format(instruction_kind: SourceInstructionKind) -> bool {
     matches!(
         instruction_kind,
-        JoltInstructionKind::ADD
-            | JoltInstructionKind::SUB
-            | JoltInstructionKind::SLL
-            | JoltInstructionKind::SLT
-            | JoltInstructionKind::SLTU
-            | JoltInstructionKind::XOR
-            | JoltInstructionKind::SRL
-            | JoltInstructionKind::SRA
-            | JoltInstructionKind::OR
-            | JoltInstructionKind::AND
-            | JoltInstructionKind::MUL
-            | JoltInstructionKind::MULH
-            | JoltInstructionKind::MULHSU
-            | JoltInstructionKind::MULHU
-            | JoltInstructionKind::DIV
-            | JoltInstructionKind::DIVU
-            | JoltInstructionKind::REM
-            | JoltInstructionKind::REMU
-            | JoltInstructionKind::ADDW
-            | JoltInstructionKind::SUBW
-            | JoltInstructionKind::SLLW
-            | JoltInstructionKind::DIVW
-            | JoltInstructionKind::SRLW
-            | JoltInstructionKind::SRAW
-            | JoltInstructionKind::MULW
-            | JoltInstructionKind::DIVUW
-            | JoltInstructionKind::REMW
-            | JoltInstructionKind::REMUW
+        SourceInstructionKind::ADD
+            | SourceInstructionKind::SUB
+            | SourceInstructionKind::SLL
+            | SourceInstructionKind::SLT
+            | SourceInstructionKind::SLTU
+            | SourceInstructionKind::XOR
+            | SourceInstructionKind::SRL
+            | SourceInstructionKind::SRA
+            | SourceInstructionKind::OR
+            | SourceInstructionKind::AND
+            | SourceInstructionKind::MUL
+            | SourceInstructionKind::MULH
+            | SourceInstructionKind::MULHSU
+            | SourceInstructionKind::MULHU
+            | SourceInstructionKind::DIV
+            | SourceInstructionKind::DIVU
+            | SourceInstructionKind::REM
+            | SourceInstructionKind::REMU
+            | SourceInstructionKind::ADDW
+            | SourceInstructionKind::SUBW
+            | SourceInstructionKind::SLLW
+            | SourceInstructionKind::DIVW
+            | SourceInstructionKind::SRLW
+            | SourceInstructionKind::SRAW
+            | SourceInstructionKind::MULW
+            | SourceInstructionKind::DIVUW
+            | SourceInstructionKind::REMW
+            | SourceInstructionKind::REMUW
     )
 }
 

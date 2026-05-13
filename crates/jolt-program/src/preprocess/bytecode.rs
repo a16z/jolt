@@ -1,7 +1,7 @@
 #[cfg(feature = "serialization")]
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
-use jolt_riscv::{JoltInstructionKind, JoltRow};
+use jolt_riscv::{JoltInstructionKind, JoltRow, RV64IMAC_JOLT};
 
 use crate::preprocess::PreprocessingError;
 
@@ -28,6 +28,13 @@ impl BytecodePreprocessing {
         mut bytecode: Vec<JoltRow>,
         entry_address: u64,
     ) -> Result<Self, PreprocessingError> {
+        for instruction in &bytecode {
+            if !RV64IMAC_JOLT.supports_jolt(instruction.instruction_kind) {
+                return Err(PreprocessingError::IllegalTargetInstruction(
+                    instruction.instruction_kind,
+                ));
+            }
+        }
         bytecode.insert(0, noop_instruction());
         let pc_map = BytecodePCMapper::try_new(&bytecode)?;
 
@@ -277,5 +284,17 @@ mod tests {
             is_first_in_sequence: virtual_sequence_remaining == Some(2),
             is_compressed: false,
         }
+    }
+
+    #[test]
+    fn rejects_profile_illegal_target_rows() {
+        let mut row = instruction(0x8000_0000, None);
+        row.instruction_kind = JoltInstructionKind::Inline;
+
+        let err = BytecodePreprocessing::preprocess(vec![row], 0x8000_0000).unwrap_err();
+        assert_eq!(
+            err,
+            PreprocessingError::IllegalTargetInstruction(JoltInstructionKind::Inline)
+        );
     }
 }
