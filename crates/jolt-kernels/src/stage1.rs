@@ -14,38 +14,205 @@ use rayon::prelude::*;
 mod rv64_typed;
 pub use rv64_typed::{Stage1OuterRv64Data, Stage1Rv64Cycle};
 
-const OUTER_UNISKIP_DOMAIN_SIZE: usize = 10;
-const OUTER_UNISKIP_DEGREE: usize = 9;
-const OUTER_UNISKIP_EXTENDED_SIZE: usize = 19;
-const OUTER_UNISKIP_NUM_COEFFS: usize = 28;
+const OUTER_UNISKIP_DOMAIN_SIZE: usize = 16;
+const OUTER_UNISKIP_DEGREE: usize = OUTER_UNISKIP_DOMAIN_SIZE - 1;
+const OUTER_UNISKIP_EXTENDED_SIZE: usize = 2 * OUTER_UNISKIP_DOMAIN_SIZE - 1;
+const OUTER_UNISKIP_NUM_COEFFS: usize = 3 * OUTER_UNISKIP_DEGREE + 1;
 const OUTER_UNISKIP_DEGREE_BOUND: usize = OUTER_UNISKIP_NUM_COEFFS - 1;
 const OUTER_UNISKIP_EXTENDED_START: i64 = -(OUTER_UNISKIP_DEGREE as i64);
 const OUTER_UNISKIP_BASE_START: i64 = -((OUTER_UNISKIP_DOMAIN_SIZE as i64 - 1) / 2);
 const OUTER_REMAINING_DEGREE_BOUND: usize = 3;
 const DENSE_BIND_PAR_THRESHOLD: usize = 1024;
-const OUTER_FIRST_GROUP_ROWS: [usize; 10] = [1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
-const OUTER_SECOND_GROUP_ROWS: [usize; 9] = [0, 7, 8, 9, 10, 12, 13, 15, 16];
+// Group split covers all 32 R1CS equality-conditional rows (19 RV base +
+// 13 BN254 Fr coprocessor). Each group has size DOMAIN_SIZE=16 so the
+// Lagrange-weight matvec is balanced.
+const OUTER_FIRST_GROUP_ROWS: [usize; OUTER_UNISKIP_DOMAIN_SIZE] =
+    [1, 2, 3, 4, 5, 6, 11, 14, 17, 18, 19, 20, 21, 22, 23, 24];
+const OUTER_SECOND_GROUP_ROWS: [usize; OUTER_UNISKIP_DOMAIN_SIZE] =
+    [0, 7, 8, 9, 10, 12, 13, 15, 16, 25, 26, 27, 28, 29, 30, 31];
 const OUTER_EQ_CONSTRAINT_ROWS: usize =
     OUTER_FIRST_GROUP_ROWS.len() + OUTER_SECOND_GROUP_ROWS.len();
+
+// Lagrange basis evaluations of the DOMAIN_SIZE=16 base domain at the
+// DEGREE=15 off-domain target points produced by `outer_uniskip_targets()`.
+// Row `t` of this table contains the 16 integer weights L_p(targets[t])
+// where L_p is the p-th Lagrange basis polynomial over
+// `[base_left ..= base_left + DOMAIN_SIZE - 1]`. Max |value| ≈ 1.68e9
+// (fits i32 by 1 bit, comfortably fits i64); see the
+// `uniskip_integer_coefficients_match_lagrange_weights` test.
 const OUTER_UNISKIP_TARGET_COEFFS: [[i64; OUTER_UNISKIP_DOMAIN_SIZE]; OUTER_UNISKIP_DEGREE] = [
-    [10, -45, 120, -210, 252, -210, 120, -45, 10, -1],
-    [-1, 10, -45, 120, -210, 252, -210, 120, -45, 10],
-    [55, -330, 990, -1848, 2310, -1980, 1155, -440, 99, -10],
-    [-10, 99, -440, 1155, -1980, 2310, -1848, 990, -330, 55],
+    // target = -8
     [
-        220, -1485, 4752, -9240, 11880, -10395, 6160, -2376, 540, -55,
+        16, -120, 560, -1820, 4368, -8008, 11_440, -12_870, 11_440, -8008, 4368, -1820, 560, -120,
+        16, -1,
     ],
+    // target = 9
     [
-        -55, 540, -2376, 6160, -10395, 11880, -9240, 4752, -1485, 220,
+        -1, 16, -120, 560, -1820, 4368, -8008, 11_440, -12_870, 11_440, -8008, 4368, -1820, 560,
+        -120, 16,
     ],
+    // target = -9
     [
-        715, -5148, 17160, -34320, 45045, -40040, 24024, -9360, 2145, -220,
+        136, -1360, 7140, -24_752, 61_880, -116_688, 170_170, -194_480, 175_032, -123_760, 68_068,
+        -28_560, 8840, -1904, 255, -16,
     ],
+    // target = 10
     [
-        -220, 2145, -9360, 24024, -40040, 45045, -34320, 17160, -5148, 715,
+        -16, 255, -1904, 8840, -28_560, 68_068, -123_760, 175_032, -194_480, 170_170, -116_688,
+        61_880, -24_752, 7140, -1360, 136,
     ],
+    // target = -10
     [
-        2002, -15015, 51480, -105_105, 140_140, -126_126, 76440, -30030, 6930, -715,
+        816, -9180, 51_408, -185_640, 477_360, -918_918, 1_361_360, -1_575_288, 1_432_080,
+        -1_021_020, 565_488, -238_680, 74_256, -16_065, 2160, -136,
+    ],
+    // target = 11
+    [
+        -136, 2160, -16_065, 74_256, -238_680, 565_488, -1_021_020, 1_432_080, -1_575_288,
+        1_361_360, -918_918, 477_360, -185_640, 51_408, -9180, 816,
+    ],
+    // target = -11
+    [
+        3876, -46_512, 271_320, -1_007_760, 2_645_370, -5_173_168, 7_759_752, -9_069_840,
+        8_314_020, -5_969_040, 3_325_608, -1_410_864, 440_895, -95_760, 12_920, -816,
+    ],
+    // target = 12
+    [
+        -816, 12_920, -95_760, 440_895, -1_410_864, 3_325_608, -5_969_040, 8_314_020, -9_069_840,
+        7_759_752, -5_173_168, 2_645_370, -1_007_760, 271_320, -46_512, 3876,
+    ],
+    // target = -12
+    [
+        15_504,
+        -193_800,
+        1_162_800,
+        -4_408_950,
+        11_757_200,
+        -23_279_256,
+        35_271_600,
+        -41_570_100,
+        38_372_400,
+        -27_713_400,
+        15_519_504,
+        -6_613_425,
+        2_074_800,
+        -452_200,
+        61_200,
+        -3876,
+    ],
+    // target = 13
+    [
+        -3876,
+        61_200,
+        -452_200,
+        2_074_800,
+        -6_613_425,
+        15_519_504,
+        -27_713_400,
+        38_372_400,
+        -41_570_100,
+        35_271_600,
+        -23_279_256,
+        11_757_200,
+        -4_408_950,
+        1_162_800,
+        -193_800,
+        15_504,
+    ],
+    // target = -13
+    [
+        54_264,
+        -697_680,
+        4_273_290,
+        -16_460_080,
+        44_442_216,
+        -88_884_432,
+        135_795_660,
+        -161_164_080,
+        149_652_360,
+        -108_636_528,
+        61_108_047,
+        -26_142_480,
+        8_230_040,
+        -1_799_280,
+        244_188,
+        -15_504,
+    ],
+    // target = 14
+    [
+        -15_504,
+        244_188,
+        -1_799_280,
+        8_230_040,
+        -26_142_480,
+        61_108_047,
+        -108_636_528,
+        149_652_360,
+        -161_164_080,
+        135_795_660,
+        -88_884_432,
+        44_442_216,
+        -16_460_080,
+        4_273_290,
+        -697_680,
+        54_264,
+    ],
+    // target = -14
+    [
+        170_544,
+        -2_238_390,
+        13_927_760,
+        -54_318_264,
+        148_140_720,
+        -298_750_452,
+        459_616_080,
+        -548_725_320,
+        512_143_632,
+        -373_438_065,
+        210_882_672,
+        -90_530_440,
+        28_588_560,
+        -6_267_492,
+        852_720,
+        -54_264,
+    ],
+    // target = 15
+    [
+        -54_264,
+        852_720,
+        -6_267_492,
+        28_588_560,
+        -90_530_440,
+        210_882_672,
+        -373_438_065,
+        512_143_632,
+        -548_725_320,
+        459_616_080,
+        -298_750_452,
+        148_140_720,
+        -54_318_264,
+        13_927_760,
+        -2_238_390,
+        170_544,
+    ],
+    // target = -15
+    [
+        490_314,
+        -6_537_520,
+        41_186_376,
+        -162_249_360,
+        446_185_740,
+        -906_100_272,
+        1_402_298_040,
+        -1_682_757_648,
+        1_577_585_295,
+        -1_154_833_680,
+        654_405_752,
+        -281_801_520,
+        89_237_148,
+        -19_612_560,
+        2_674_440,
+        -170_544,
     ],
 ];
 
@@ -2095,7 +2262,7 @@ fn uniskip_point_and_claim<F: Field>(sumchecks: &[Stage1SumcheckOutput<F>]) -> O
 }
 
 fn uniskip_sum_matches<F: Field>(poly: &UnivariatePoly<F>, claim: F) -> bool {
-    let power_sums = integer_domain_power_sums(
+    let power_sums = field_domain_power_sums::<F>(
         OUTER_UNISKIP_BASE_START,
         OUTER_UNISKIP_DOMAIN_SIZE,
         poly.coefficients().len(),
@@ -2105,16 +2272,23 @@ fn uniskip_sum_matches<F: Field>(poly: &UnivariatePoly<F>, claim: F) -> bool {
         .iter()
         .zip(power_sums)
         .fold(F::zero(), |acc, (coefficient, power_sum)| {
-            acc + coefficient.mul_i128(power_sum)
+            acc + *coefficient * power_sum
         });
     sum == claim
 }
 
-fn integer_domain_power_sums(domain_start: i64, domain_size: usize, count: usize) -> Vec<i128> {
-    let mut sums = vec![0i128; count];
+// Σ_{x in domain} x^k for k in 0..count, computed in the field. We can no
+// longer use i128 here because for DOMAIN_SIZE=16 the polynomial degree (~45)
+// combined with max |x|=8 makes 8^45 ≈ 2^135, well past i128's 2^127 limit.
+fn field_domain_power_sums<F: Field>(
+    domain_start: i64,
+    domain_size: usize,
+    count: usize,
+) -> Vec<F> {
+    let mut sums = vec![F::zero(); count];
     for offset in 0..domain_size {
-        let point = i128::from(domain_start + offset as i64);
-        let mut power = 1i128;
+        let point = F::from_i64(domain_start + offset as i64);
+        let mut power = F::one();
         for sum in &mut sums {
             *sum += power;
             power *= point;

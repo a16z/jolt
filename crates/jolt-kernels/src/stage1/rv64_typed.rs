@@ -188,11 +188,15 @@ impl Stage1OuterRemainingEvaluator<Fr> for Stage1OuterRv64Data<'_> {
                 || [FrSignedProductAccumulator::zero(); OUTER_UNISKIP_DEGREE],
                 |mut local, cycle| {
                     let eval = Stage1Rv64Eval::new(&self.cycles[cycle]);
-                    let (first_products, second_products) = eval.uniskip_products();
+                    let (first_products, second_products, first_corrections, second_corrections) =
+                        eval.uniskip_products();
                     let index = cycle << 1;
                     for (target, accumulator) in local.iter_mut().enumerate() {
                         accumulator.fmadd_s192(eq_evals[index], first_products[target]);
                         accumulator.fmadd_s192(eq_evals[index + 1], second_products[target]);
+                        accumulator.add_positive_field(eq_evals[index] * first_corrections[target]);
+                        accumulator
+                            .add_positive_field(eq_evals[index + 1] * second_corrections[target]);
                     }
                     local
                 },
@@ -349,6 +353,12 @@ enum Stage1Rv64Oracle {
     OpFlagIsCompressed,
     OpFlagIsFirstInSequence,
     OpFlagIsLastInSequence,
+    /// BN254 Fr coprocessor oracle slot. RV64-only data has no FR content,
+    /// so this variant evaluates to 0 unconditionally. Used to satisfy
+    /// Bolt's Stage 1 plan (which always declares the 12 FR oracle names
+    /// since step 8a) for FR-less traces — keeps the RV64 self-parity tests
+    /// passing without requiring a separate FR-aware Stage1OuterData.
+    FrZero,
 }
 
 impl Stage1Rv64Oracle {
@@ -389,6 +399,20 @@ impl Stage1Rv64Oracle {
             "OpFlagIsCompressed" => Some(Self::OpFlagIsCompressed),
             "OpFlagIsFirstInSequence" => Some(Self::OpFlagIsFirstInSequence),
             "OpFlagIsLastInSequence" => Some(Self::OpFlagIsLastInSequence),
+            // BN254 Fr coprocessor oracles (added by Bolt step 8a). RV64-only
+            // data has no FR content, so all 12 evaluate to 0.
+            "OpFlagIsFieldMul"
+            | "OpFlagIsFieldAdd"
+            | "OpFlagIsFieldSub"
+            | "OpFlagIsFieldInv"
+            | "OpFlagIsFieldAssertEq"
+            | "OpFlagIsFieldMov"
+            | "OpFlagIsFieldSLL64"
+            | "OpFlagIsFieldSLL128"
+            | "OpFlagIsFieldSLL192"
+            | "FieldRs1Value"
+            | "FieldRs2Value"
+            | "FieldRdValue" => Some(Self::FrZero),
             _ => None,
         }
     }
@@ -445,6 +469,7 @@ impl Stage1Rv64Oracle {
             Self::OpFlagIsLastInSequence => {
                 Stage1Rv64Scalar::Bool(row.flags[FLAG_IS_LAST_IN_SEQUENCE])
             }
+            Self::FrZero => Stage1Rv64Scalar::U64(0),
         }
     }
 
@@ -469,9 +494,123 @@ struct Stage1Rv64Eval<'a> {
     row: &'a Stage1Rv64Cycle,
 }
 
+#[inline]
+fn s64_to_fr(value: S64) -> Fr {
+    let mag = Fr::from_u64(value.magnitude_as_u64());
+    if value.is_positive {
+        mag
+    } else {
+        -mag
+    }
+}
+
+#[inline]
+fn s128_to_fr(value: S128) -> Fr {
+    let mag = Fr::from_u128(value.magnitude_as_u128());
+    if value.is_positive {
+        mag
+    } else {
+        -mag
+    }
+}
+
 impl<'a> Stage1Rv64Eval<'a> {
     fn new(row: &'a Stage1Rv64Cycle) -> Self {
         Self { row }
+    }
+
+    /// FR coprocessor row Bz values for first-group positions 10..=15 (rows
+    /// 19..=24). On RV64 cycles all V_FLAG_IS_FIELD_* flags are 0, so each
+    /// row's A side is 0 (no Az contribution). But the B side is a linear
+    /// combination over witness columns that mixes RV64 columns
+    /// (V_LEFT_INSTRUCTION_INPUT, V_RIGHT_INSTRUCTION_INPUT, V_PRODUCT) with
+    /// the all-zero V_FIELD_* columns, so Bz is nonzero whenever those RV64
+    /// columns are nonzero. The uniskip / dense-state matvec must fold these
+    /// contributions into bz; otherwise the typed RV64 fast path computes a
+    /// different bz polynomial than the generic R1CS path.
+    #[inline]
+    fn first_group_fr_bz(&self) -> [Fr; 6] {
+        let left = Fr::from_u64(self.row.left_input);
+        let right = s64_to_fr(self.row.right_input);
+        let product = s128_to_fr(self.row.product);
+        [
+            Fr::from_u64(0), // row 19 FAdd: 0 + 0 - 0 = 0
+            Fr::from_u64(0), // row 20 FSub: 0 - 0 - 0 = 0
+            left,            // row 21 FMul.a: V_LEFT_INSTR_INPUT - 0
+            right,           // row 22 FMul.b: V_RIGHT_INSTR_INPUT - 0
+            product,         // row 23 FMul.c: V_PRODUCT - 0
+            left,            // row 24 FInv.a: V_LEFT_INSTR_INPUT - 0
+        ]
+    }
+
+    /// FR coprocessor row Bz values for second-group positions 9..=15
+    /// (rows 25..=31). Same reasoning as `first_group_fr_bz`; rows 30/31
+    /// scale V_RS1_VALUE by 2^128 and 2^192 respectively which exceed S192's
+    /// representable range, so we compute these contributions in Fr from
+    /// the start.
+    #[inline]
+    fn second_group_fr_bz(&self) -> [Fr; 7] {
+        let right = s64_to_fr(self.row.right_input);
+        let product = s128_to_fr(self.row.product);
+        let rs1 = Fr::from_u64(self.row.rs1_read_value);
+        [
+            right,                     // row 25 FInv.b: V_RIGHT_INSTR_INPUT - 0
+            product - Fr::from_u64(1), // row 26 FInv.c: V_PRODUCT - 1
+            Fr::from_u64(0),           // row 27 FAssertEq: 0 - 0
+            rs1,                       // row 28 FMov: V_RS1_VALUE - 0
+            rs1.mul_pow_2(64),         // row 29 FSLL64
+            rs1.mul_pow_2(128),        // row 30 FSLL128
+            rs1.mul_pow_2(192),        // row 31 FSLL192
+        ]
+    }
+
+    /// Fr correction needed to add to the typed S192 product so the typed
+    /// RV64 fast path agrees with the generic R1CS path. The correction is
+    /// `az_target × Σ_{pos} OUTER_UNISKIP_TARGET_COEFFS[target][pos] × fr_bz[pos]`
+    /// summed over the 6 first-group FR positions (10..=15).
+    #[inline]
+    fn first_group_fr_correction(&self, az_target: i64, target: usize) -> Fr {
+        let coefficients = OUTER_UNISKIP_TARGET_COEFFS[target];
+        let fr_bz = self.first_group_fr_bz();
+        let mut bz_fr = Fr::from_u64(0);
+        for (i, &fr_term) in fr_bz.iter().enumerate() {
+            bz_fr += fr_term.mul_i64(coefficients[10 + i]);
+        }
+        Fr::from_i64(az_target) * bz_fr
+    }
+
+    #[inline]
+    fn second_group_fr_correction(&self, az_target: i64, target: usize) -> Fr {
+        let coefficients = OUTER_UNISKIP_TARGET_COEFFS[target];
+        let fr_bz = self.second_group_fr_bz();
+        let mut bz_fr = Fr::from_u64(0);
+        for (i, &fr_term) in fr_bz.iter().enumerate() {
+            bz_fr += fr_term.mul_i64(coefficients[9 + i]);
+        }
+        Fr::from_i64(az_target) * bz_fr
+    }
+
+    /// Fold FR Bz contributions for the linear (Lagrange-weighted) path.
+    /// Same reasoning as `first_group_fr_correction` but with Lagrange weights
+    /// instead of target coefficients.
+    #[inline]
+    fn first_group_fr_linear(&self, weights: &[Fr]) -> Fr {
+        let fr_bz = self.first_group_fr_bz();
+        let mut acc = Fr::from_u64(0);
+        for (i, &fr_term) in fr_bz.iter().enumerate() {
+            acc += weights[10 + i] * fr_term;
+        }
+        acc
+    }
+
+    #[inline]
+    fn second_group_fr_linear(&self, weights: &[Fr]) -> Fr {
+        let fr_bz = self.second_group_fr_bz();
+        let mut acc = Fr::from_u64(0);
+        for (i, &fr_term) in fr_bz.iter().enumerate() {
+            acc += weights[9 + i] * fr_term;
+        }
+        acc
     }
 
     #[inline]
@@ -568,7 +707,7 @@ impl<'a> Stage1Rv64Eval<'a> {
             S128::from_u64(u64::from(!self.row.flags[FLAG_DO_NOT_UPDATE_UNEXPANDED_PC])),
         );
 
-        (az, bz.reduce())
+        (az, bz.reduce() + self.first_group_fr_linear(weights))
     }
 
     #[inline]
@@ -654,20 +793,39 @@ impl<'a> Stage1Rv64Eval<'a> {
             )),
         );
 
-        (az, bz.reduce())
+        (az, bz.reduce() + self.second_group_fr_linear(weights))
     }
 
     #[inline]
-    fn uniskip_products(&self) -> ([S192; OUTER_UNISKIP_DEGREE], [S192; OUTER_UNISKIP_DEGREE]) {
+    fn uniskip_products(
+        &self,
+    ) -> (
+        [S192; OUTER_UNISKIP_DEGREE],
+        [S192; OUTER_UNISKIP_DEGREE],
+        [Fr; OUTER_UNISKIP_DEGREE],
+        [Fr; OUTER_UNISKIP_DEGREE],
+    ) {
         let (first_guards, first_terms) = self.first_group_terms();
         let (second_guards, second_terms) = self.second_group_terms();
+        let mut first_products = [S192::zero(); OUTER_UNISKIP_DEGREE];
+        let mut second_products = [S192::zero(); OUTER_UNISKIP_DEGREE];
+        let mut first_corrections = [Fr::from_u64(0); OUTER_UNISKIP_DEGREE];
+        let mut second_corrections = [Fr::from_u64(0); OUTER_UNISKIP_DEGREE];
+        for target in 0..OUTER_UNISKIP_DEGREE {
+            let (prod_f, az_f) =
+                Self::first_group_product_and_az(target, &first_guards, &first_terms);
+            first_products[target] = prod_f;
+            first_corrections[target] = self.first_group_fr_correction(az_f, target);
+            let (prod_s, az_s) =
+                Self::second_group_product_and_az(target, &second_guards, &second_terms);
+            second_products[target] = prod_s;
+            second_corrections[target] = self.second_group_fr_correction(az_s, target);
+        }
         (
-            core::array::from_fn(|target| {
-                Self::first_group_product_from_terms(target, &first_guards, &first_terms)
-            }),
-            core::array::from_fn(|target| {
-                Self::second_group_product_from_terms(target, &second_guards, &second_terms)
-            }),
+            first_products,
+            second_products,
+            first_corrections,
+            second_corrections,
         )
     }
 
@@ -678,6 +836,12 @@ impl<'a> Stage1Rv64Eval<'a> {
         [bool; OUTER_UNISKIP_DOMAIN_SIZE],
         [S128; OUTER_UNISKIP_DOMAIN_SIZE],
     ) {
+        // Positions 10..16 are FR coprocessor rows 19-24. On RV64 cycles their
+        // flag guards are off (Az=0), so the typed-S128 term is set to zero here.
+        // BUT their Bz LCs reference RV64 columns (V_LEFT/RIGHT_INSTRUCTION_INPUT,
+        // V_PRODUCT) and are nonzero on RV64 cycles. Those contributions are
+        // folded into bz separately by `first_group_fr_linear` /
+        // `first_group_fr_correction` so the typed product remains in S192 range.
         (
             [
                 self.not_load_store(),
@@ -691,6 +855,12 @@ impl<'a> Stage1Rv64Eval<'a> {
                 self.row.flags[FLAG_VIRTUAL_INSTRUCTION]
                     && !self.row.flags[FLAG_IS_LAST_IN_SEQUENCE],
                 self.row.next_is_virtual && !self.row.next_is_first_in_sequence,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
             ],
             [
                 S128::from_u64(self.row.ram_addr),
@@ -721,6 +891,12 @@ impl<'a> Stage1Rv64Eval<'a> {
                     self.row.pc.wrapping_add(1),
                 )),
                 S128::from_u64(u64::from(!self.row.flags[FLAG_DO_NOT_UPDATE_UNEXPANDED_PC])),
+                S128::zero(),
+                S128::zero(),
+                S128::zero(),
+                S128::zero(),
+                S128::zero(),
+                S128::zero(),
             ],
         )
     }
@@ -732,6 +908,11 @@ impl<'a> Stage1Rv64Eval<'a> {
         [bool; OUTER_SECOND_GROUP_ROWS.len()],
         [S192; OUTER_SECOND_GROUP_ROWS.len()],
     ) {
+        // Positions 9..16 are FR coprocessor rows 25-31. Az=0 on RV64 cycles
+        // (FR flag guards off), so the typed-S192 term is zero. The Bz LCs for
+        // these rows (especially FSLL128/FSLL192) can exceed S192's range, so
+        // they are folded into bz in Fr via `second_group_fr_linear` /
+        // `second_group_fr_correction`.
         (
             [
                 self.load_or_store(),
@@ -743,6 +924,13 @@ impl<'a> Stage1Rv64Eval<'a> {
                 self.row.flags[FLAG_JUMP],
                 self.row.should_branch,
                 !self.row.flags[FLAG_JUMP] && !self.row.should_branch,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
             ],
             [
                 S192::from_i128(self.ram_addr_minus_rs1_plus_imm()),
@@ -768,38 +956,48 @@ impl<'a> Stage1Rv64Eval<'a> {
                     self.row.next_unexpanded_pc,
                     self.expected_next_unexpanded_pc(),
                 )),
+                S192::zero(),
+                S192::zero(),
+                S192::zero(),
+                S192::zero(),
+                S192::zero(),
+                S192::zero(),
+                S192::zero(),
             ],
         )
     }
 
     #[inline]
-    fn first_group_product_from_terms(
+    fn first_group_product_and_az(
         target: usize,
         guards: &[bool; OUTER_UNISKIP_DOMAIN_SIZE],
         terms: &[S128; OUTER_UNISKIP_DOMAIN_SIZE],
-    ) -> S192 {
+    ) -> (S192, i64) {
         let coefficients = OUTER_UNISKIP_TARGET_COEFFS[target];
-        let mut az = 0i32;
+        // i64 accumulator: with DOMAIN_SIZE=16 the max single coefficient is
+        // ~1.68e9 (~31 bits) and a sum of 16 such values needs ~35 bits, so
+        // i32 would overflow. Coefficient itself still fits i32 by 1 bit.
+        let mut az = 0i64;
         let mut bz = S128::zero();
         for ((&guard, &term), &coefficient) in guards.iter().zip(terms).zip(&coefficients) {
-            Self::accumulate_first(&mut az, &mut bz, coefficient as i32, guard, term);
+            Self::accumulate_first(&mut az, &mut bz, coefficient, guard, term);
         }
-        S64::from_i64(az as i64).mul_trunc::<2, 3>(&bz)
+        (S64::from_i64(az).mul_trunc::<2, 3>(&bz), az)
     }
 
     #[inline]
-    fn second_group_product_from_terms(
+    fn second_group_product_and_az(
         target: usize,
         guards: &[bool; OUTER_SECOND_GROUP_ROWS.len()],
         terms: &[S192; OUTER_SECOND_GROUP_ROWS.len()],
-    ) -> S192 {
+    ) -> (S192, i64) {
         let coefficients = OUTER_UNISKIP_TARGET_COEFFS[target];
-        let mut az = 0i32;
+        let mut az = 0i64;
         let mut bz = S192::zero();
         for ((&guard, &term), &coefficient) in guards.iter().zip(terms).zip(&coefficients) {
-            Self::accumulate_second(&mut az, &mut bz, coefficient as i32, guard, term);
+            Self::accumulate_second(&mut az, &mut bz, coefficient, guard, term);
         }
-        S64::from_i64(az as i64).mul_trunc::<3, 3>(&bz)
+        (S64::from_i64(az).mul_trunc::<3, 3>(&bz), az)
     }
 
     #[inline]
@@ -833,20 +1031,20 @@ impl<'a> Stage1Rv64Eval<'a> {
     }
 
     #[inline]
-    fn accumulate_first(az: &mut i32, bz: &mut S128, coefficient: i32, guard: bool, term: S128) {
+    fn accumulate_first(az: &mut i64, bz: &mut S128, coefficient: i64, guard: bool, term: S128) {
         if guard {
             *az += coefficient;
         } else {
-            fmadd_i32_s128(bz, coefficient, term);
+            fmadd_i64_s128(bz, coefficient, term);
         }
     }
 
     #[inline]
-    fn accumulate_second(az: &mut i32, bz: &mut S192, coefficient: i32, guard: bool, term: S192) {
+    fn accumulate_second(az: &mut i64, bz: &mut S192, coefficient: i64, guard: bool, term: S192) {
         if guard {
             *az += coefficient;
         } else {
-            fmadd_i32_s192(bz, coefficient, term);
+            fmadd_i64_s192(bz, coefficient, term);
         }
     }
 
@@ -1049,20 +1247,20 @@ impl FrSignedProductAccumulator {
 }
 
 #[inline]
-fn fmadd_i32_s128(sum: &mut S128, coefficient: i32, term: S128) {
+fn fmadd_i64_s128(sum: &mut S128, coefficient: i64, term: S128) {
     if coefficient == 0 || term.magnitude_as_u128() == 0 {
         return;
     }
-    let coefficient_s64 = S64::from_i64(coefficient as i64);
+    let coefficient_s64 = S64::from_i64(coefficient);
     *sum += coefficient_s64.mul_trunc::<2, 2>(&term);
 }
 
 #[inline]
-fn fmadd_i32_s192(sum: &mut S192, coefficient: i32, term: S192) {
+fn fmadd_i64_s192(sum: &mut S192, coefficient: i64, term: S192) {
     if coefficient == 0 || term.magnitude_limbs() == [0u64; 3] {
         return;
     }
-    let coefficient_s64 = S64::from_i64(coefficient as i64);
+    let coefficient_s64 = S64::from_i64(coefficient);
     *sum += coefficient_s64.mul_trunc::<3, 3>(&term);
 }
 
