@@ -281,9 +281,14 @@ pub fn prove_program(
     let (bytecode_raw, init_mem, _program_size, entry_address) = program.decode();
 
     // ----- Phase 2: params (shape constants) -----
-    // Pad trace_length up to the goldens-baked fixture (`FIXTURE_LOG_T`) so
-    // smaller guests (e.g. muldiv at 483 cycles) reuse the same goldens
-    // as larger guests (e.g. FR Poseidon2 at ~36k cycles).
+    // The goldens-baked `jolt-prover`/`jolt-verifier` programs depend on
+    // (a) the d-regime parameters (`log_k_chunk`, `bytecode_d`, `ram_d`,
+    // `instruction_d`, `instruction_ra_virtual_d`, `register_log_k`) AND
+    // (b) the absolute trace length — dory tier-1 streaming buffers are
+    // sized at the fixture's `1 << FIXTURE_LOG_T`. So we pad small guests
+    // *up* to the fixture floor, then require exact equality on
+    // `(log_t, log_k_bytecode, log_k_ram)`. Guests whose natural shape
+    // exceeds the fixture in any dimension need regenerated goldens.
     let natural_trace_length = trace.len().next_power_of_two().max(256);
     let trace_length = natural_trace_length.max(1usize << FIXTURE_LOG_T);
     let bytecode = BytecodePreprocessing::preprocess_padded(
