@@ -268,7 +268,7 @@ impl R1CSCycleInputs {
         let instr = cycle.instruction();
         let flags_view = instr.circuit_flags();
         let instruction_flags = instr.instruction_flags();
-        let norm = instr.normalize();
+        let norm = instr.jolt_row();
 
         // Next-cycle context
         let next_cycle = if t + 1 < len {
@@ -315,7 +315,7 @@ impl R1CSCycleInputs {
         };
         let unexpanded_pc = norm.address as u64;
         let next_unexpanded_pc = if let Some(nc) = next_cycle {
-            nc.instruction().normalize().address as u64
+            nc.instruction().jolt_row().address as u64
         } else {
             0u64
         };
@@ -523,7 +523,7 @@ impl ShiftSumcheckCycleState {
         let instruction = cycle.instruction();
         let circuit_flags = instruction.circuit_flags();
         Self {
-            unexpanded_pc: instruction.normalize().address as u64,
+            unexpanded_pc: instruction.jolt_row().address as u64,
             pc: crate::zkvm::bytecode::get_pc_for_cycle(bytecode_preprocessing, cycle) as u64,
             is_virtual: circuit_flags[CircuitFlags::VirtualInstruction],
             is_first_in_sequence: circuit_flags[CircuitFlags::IsFirstInSequence],

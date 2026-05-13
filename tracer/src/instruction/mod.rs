@@ -156,8 +156,9 @@ use crate::emulator::cpu::Cpu;
 use crate::utils::virtual_registers::{is_supported_csr, VirtualRegisterAllocator};
 use derive_more::From;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
-use jolt_riscv::JoltInstructionKind;
-pub use jolt_riscv::NormalizedInstruction;
+pub use jolt_riscv::JoltRow;
+use jolt_riscv::{JoltInstructionKind, SourceInline, SourceInstructionKind};
+pub use jolt_riscv::{SourceInstruction, SourceRow};
 
 pub mod format;
 
@@ -361,12 +362,7 @@ impl From<()> for RAMAccess {
 }
 
 pub trait RISCVInstruction:
-    std::fmt::Debug
-    + Sized
-    + Copy
-    + Into<Instruction>
-    + From<NormalizedInstruction>
-    + Into<NormalizedInstruction>
+    std::fmt::Debug + Sized + Copy + Into<Instruction> + From<JoltRow> + Into<JoltRow>
 {
     const MASK: u32;
     const MATCH: u32;
@@ -385,7 +381,7 @@ pub trait RISCVInstruction:
     fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess);
 
     fn has_side_effects(&self) -> bool {
-        let instruction: NormalizedInstruction = (*self).into();
+        let instruction: JoltRow = (*self).into();
         instruction.instruction_kind.has_side_effects()
     }
 }
@@ -413,7 +409,7 @@ where
 
 macro_rules! define_rv64imac_enums {
     (
-        instructions: [$($instr:ident),* $(,)?]
+        instructions: [$($instr:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
     ) => {
         #[derive(Debug, IntoStaticStr, From, Clone, Serialize, Deserialize, EnumIter)]
         pub enum Instruction {
@@ -563,7 +559,7 @@ macro_rules! define_rv64imac_enums {
 
         impl Instruction {
             pub fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-                let normalized = self.normalize();
+                let normalized = self.jolt_row();
                 // Rewrite instructions with rd=x0 via inline_sequence so the
                 // constraint system never sees rd=x0.
                 if normalized.operands.rd == Some(0)
@@ -629,8 +625,37 @@ macro_rules! define_rv64imac_enums {
                 }
             }
 
-            pub fn normalize(&self) -> NormalizedInstruction {
+            pub fn jolt_row(&self) -> JoltRow {
                 self.into()
+            }
+
+            pub fn source_instruction(&self) -> SourceInstruction {
+                if let Instruction::INLINE(inline) = self {
+                    return SourceInstruction::new(
+                        SourceInstructionKind::Inline,
+                        SourceRow {
+                            address: inline.address as usize,
+                            operands: inline.operands.into(),
+                            inline: Some(SourceInline {
+                                opcode: inline.opcode as u8,
+                                funct3: inline.funct3 as u8,
+                                funct7: inline.funct7 as u8,
+                            }),
+                            is_compressed: inline.is_compressed,
+                        },
+                    );
+                }
+                let row = self.jolt_row();
+                SourceInstruction::new(
+                    SourceInstructionKind::from_jolt_kind(row.instruction_kind)
+                        .expect("tracer instruction should map to a source instruction kind"),
+                    SourceRow {
+                        address: row.address,
+                        operands: row.operands,
+                        inline: None,
+                        is_compressed: row.is_compressed,
+                    },
+                )
             }
 
             pub fn has_side_effects(&self) -> bool {
@@ -650,24 +675,24 @@ macro_rules! define_rv64imac_enums {
                 }
                 let mut expansion_allocator = jolt_program::expand::ExpansionAllocator::new();
                 jolt_program::expand::expand_instruction(
-                    &self.normalize(),
+                    &self.source_instruction(),
                     &mut expansion_allocator,
                 )
                 .expect("jolt-program bytecode expansion failed")
                 .into_iter()
                 .map(|instruction| {
-                    Instruction::try_from_normalized(instruction)
+                    Instruction::try_from_jolt_row(instruction)
                         .expect("jolt-program expansion produced an instruction unknown to tracer")
                 })
                 .collect()
             }
 
-            pub fn try_from_normalized(instruction: NormalizedInstruction) -> Result<Self, &'static str> {
+            pub fn try_from_jolt_row(instruction: JoltRow) -> Result<Self, &'static str> {
                 match instruction.instruction_kind {
                     JoltInstructionKind::NoOp => Ok(Instruction::NoOp),
                     JoltInstructionKind::Unimpl => Ok(Instruction::UNIMPL),
                     $(
-                        JoltInstructionKind::$instr => Ok(<$instr as From<NormalizedInstruction>>::from(instruction).into()),
+                        JoltInstructionKind::$instr => Ok(<$instr as From<JoltRow>>::from(instruction).into()),
                     )*
                     JoltInstructionKind::Inline => {
                         let metadata = instruction.operands.imm as u32;
@@ -684,6 +709,28 @@ macro_rules! define_rv64imac_enums {
                         Ok(inline.into())
                     }
                 }
+            }
+
+            pub fn try_from_source_instruction(instruction: SourceInstruction) -> Result<Self, &'static str> {
+                let kind = instruction.kind();
+                let row = instruction.into_row();
+                if kind == SourceInstructionKind::Inline {
+                    let inline = row
+                        .inline
+                        .ok_or("missing inline source metadata")?;
+                    return Ok(INLINE {
+                        opcode: inline.opcode as u32,
+                        funct3: inline.funct3 as u32,
+                        funct7: inline.funct7 as u32,
+                        address: row.address as u64,
+                        operands: row.operands.into(),
+                        virtual_sequence_remaining: None,
+                        is_first_in_sequence: false,
+                        is_compressed: row.is_compressed,
+                    }
+                    .into());
+                }
+                Self::try_from_jolt_row(row.jolt_row(kind.jolt_kind()))
             }
 
             pub fn set_virtual_sequence_remaining(&mut self, remaining: Option<u16>) {
@@ -720,13 +767,13 @@ macro_rules! define_rv64imac_enums {
             }
         }
 
-        impl From<&Instruction> for NormalizedInstruction {
+        impl From<&Instruction> for JoltRow {
             fn from(instr: &Instruction) -> Self {
                 match instr {
                     Instruction::NoOp => Default::default(),
                     Instruction::UNIMPL => Default::default(),
                     $(
-                        Instruction::$instr(instr) => NormalizedInstruction {
+                        Instruction::$instr(instr) => JoltRow {
                             instruction_kind: JoltInstructionKind::$instr,
                             address: instr.address as usize,
                             operands: instr.operands.into(),
@@ -735,7 +782,7 @@ macro_rules! define_rv64imac_enums {
                             is_compressed: instr.is_compressed,
                         },
                     )*
-                    Instruction::INLINE(instr) => NormalizedInstruction {
+                    Instruction::INLINE(instr) => JoltRow {
                         instruction_kind: JoltInstructionKind::Inline,
                         address: instr.address as usize,
                         operands: {
@@ -811,7 +858,7 @@ impl Instruction {
             return false;
         }
 
-        match self.normalize().virtual_sequence_remaining {
+        match self.jolt_row().virtual_sequence_remaining {
             None => true,     // ordinary instruction
             Some(0) => true,  // "anchor" of a inline sequence
             Some(_) => false, // helper within the sequence
@@ -1662,7 +1709,7 @@ impl<T: RISCVInstruction> RISCVCycle<T> {
         let register_state =
             <<T::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
                 rng,
-                &Into::<NormalizedInstruction>::into(instruction).operands,
+                &Into::<JoltRow>::into(instruction).operands,
             );
         Self {
             instruction,

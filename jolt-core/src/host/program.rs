@@ -10,7 +10,7 @@ use common::constants::{
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_program::execution::{ExecutionBackend, TraceError, TraceInputs, TraceOutput};
 use jolt_program::{JoltProgram, ProgramError};
-use jolt_riscv::NormalizedInstruction;
+use jolt_riscv::JoltRow;
 use std::fs::File;
 use std::io;
 use std::io::{Read, Write};
@@ -272,7 +272,7 @@ impl Program {
         jolt_program::build_jolt_program_with_inline_provider(&elf_contents, &mut inline_provider)
     }
 
-    pub fn decode(&mut self) -> (Vec<NormalizedInstruction>, Vec<(u64, u8)>, u64, u64) {
+    pub fn decode(&mut self) -> (Vec<JoltRow>, Vec<(u64, u8)>, u64, u64) {
         let program = self.jolt_program().expect("failed to build Jolt program");
         (
             program.expanded_bytecode,

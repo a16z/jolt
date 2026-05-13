@@ -248,7 +248,7 @@ impl<
                 // (`virtual_sequence_remaining` is `None`) or if it's the first instruction
                 // in a inline sequence (`virtual_sequence_remaining` is `Some(0)`)
                 if let Some(virtual_sequence_remaining) =
-                    cycle.instruction().normalize().virtual_sequence_remaining
+                    cycle.instruction().jolt_row().virtual_sequence_remaining
                 {
                     if virtual_sequence_remaining > 0 {
                         return 0;

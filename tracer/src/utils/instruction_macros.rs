@@ -72,8 +72,8 @@ macro_rules! declare_riscv_instr {
             }
         }
 
-        impl From<$crate::instruction::NormalizedInstruction> for $name {
-            fn from(ni: $crate::instruction::NormalizedInstruction) -> Self {
+        impl From<$crate::instruction::JoltRow> for $name {
+            fn from(ni: $crate::instruction::JoltRow) -> Self {
                 Self {
                     address: ni.address as u64,
                     operands: ni.operands.into(),
@@ -84,11 +84,11 @@ macro_rules! declare_riscv_instr {
             }
         }
 
-        impl ::jolt_riscv::JoltInstruction for $name {}
+        impl ::jolt_riscv::JoltRowData for $name {}
 
-        impl From<$name> for $crate::instruction::NormalizedInstruction {
-            fn from(instr: $name) -> $crate::instruction::NormalizedInstruction {
-                $crate::instruction::NormalizedInstruction {
+        impl From<$name> for $crate::instruction::JoltRow {
+            fn from(instr: $name) -> $crate::instruction::JoltRow {
+                $crate::instruction::JoltRow {
                     instruction_kind: ::jolt_riscv::JoltInstructionKind::$name,
                     address: instr.address as usize,
                     operands: instr.operands.into(),

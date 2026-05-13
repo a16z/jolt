@@ -5,7 +5,7 @@ use jolt_program::execution::{
     RamRead as ProgramRamRead, RamWrite as ProgramRamWrite, RegisterRead, RegisterState,
     RegisterWrite, TraceError, TraceInputs, TraceOutput, TraceRow,
 };
-use jolt_riscv::NormalizedInstruction;
+use jolt_riscv::JoltRow;
 
 use crate::instruction::{Cycle, RAMAccess};
 
@@ -61,13 +61,13 @@ impl ExecutionBackend for TracerBackend {
 
 fn trace_row_from_cycle(cycle: Cycle) -> TraceRow {
     TraceRow {
-        instruction: normalized_instruction(&cycle),
+        instruction: jolt_row(&cycle),
         registers: register_state(&cycle),
         ram_access: cycle.ram_access().into(),
     }
 }
 
-fn normalized_instruction(cycle: &Cycle) -> NormalizedInstruction {
+fn jolt_row(cycle: &Cycle) -> JoltRow {
     let instruction = cycle.instruction();
     (&instruction).into()
 }

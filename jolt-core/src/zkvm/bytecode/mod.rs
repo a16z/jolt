@@ -8,7 +8,7 @@ pub fn get_pc_for_cycle(bytecode: &BytecodePreprocessing, cycle: &Cycle) -> usiz
     if matches!(cycle, Cycle::NoOp) {
         return 0;
     }
-    let instruction = cycle.instruction().normalize();
+    let instruction = cycle.instruction().jolt_row();
     bytecode.get_pc(&instruction).unwrap_or(0)
 }
 

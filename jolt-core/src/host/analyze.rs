@@ -2,7 +2,7 @@ use std::{collections::HashMap, fs::File, io, path::PathBuf};
 
 use common::jolt_device::JoltDevice;
 use jolt_program::execution::TraceRow;
-use jolt_riscv::NormalizedInstruction;
+use jolt_riscv::JoltRow;
 use serde::{Deserialize, Serialize};
 
 use crate::field::JoltField;
@@ -10,7 +10,7 @@ use crate::field::JoltField;
 #[derive(Serialize, Deserialize)]
 pub struct ProgramSummary {
     pub trace: Vec<TraceRow>,
-    pub bytecode: Vec<NormalizedInstruction>,
+    pub bytecode: Vec<JoltRow>,
     pub memory_init: Vec<(u64, u8)>,
     pub io_device: JoltDevice,
 }

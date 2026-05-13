@@ -558,7 +558,7 @@ fn test_consistency(instr: &Instruction) {
         SatResult::Unsat => {}
         SatResult::Sat => {
             let mut msg = "Found differing outputs:\n".to_string();
-            let operands = instr.normalize().operands;
+            let operands = instr.jolt_row().operands;
             let model = solver.get_model().unwrap();
             let eval = |bv: &BV| model.eval(bv, true).unwrap().as_u64().unwrap();
             for i in 0..RISCV_REGISTER_COUNT as usize {

@@ -4,8 +4,7 @@ use allocative::Allocative;
 use common::constants::XLEN;
 use jolt_riscv::{
     CircuitFlagSet as RiscvCircuitFlagSet, Flags as RiscvFlags,
-    InstructionFlagSet as RiscvInstructionFlagSet, JoltInstructionKind, LookupInstruction,
-    NormalizedInstruction,
+    InstructionFlagSet as RiscvInstructionFlagSet, JoltInstruction, JoltInstructionKind, JoltRow,
 };
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter, FromRepr};
@@ -175,21 +174,21 @@ pub trait Flags {
     fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS];
 }
 
-impl Flags for NormalizedInstruction {
+impl Flags for JoltRow {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
-        LookupInstruction::try_from(*self)
+        JoltInstruction::try_from(*self)
             .map(|instruction| circuit_flags_from_riscv(instruction.circuit_flags()))
             .unwrap_or([false; NUM_CIRCUIT_FLAGS])
     }
 
     fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
-        LookupInstruction::try_from(*self)
+        JoltInstruction::try_from(*self)
             .map(|instruction| instruction_flags_from_riscv(instruction.instruction_flags()))
             .unwrap_or([false; NUM_INSTRUCTION_FLAGS])
     }
 }
 
-impl<const XLEN: usize> InstructionLookup<XLEN> for NormalizedInstruction {
+impl<const XLEN: usize> InstructionLookup<XLEN> for JoltRow {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
         Some(match self.instruction_kind {
             JoltInstructionKind::ADD
@@ -359,7 +358,7 @@ macro_rules! define_rv64imac_trait_impls {
                     Instruction::UNIMPL => [false; NUM_CIRCUIT_FLAGS],
                     _ => panic!("Unexpected instruction: {:?}", self),
                 };
-                if self.normalize().virtual_sequence_remaining == Some(0) {
+                if self.jolt_row().virtual_sequence_remaining == Some(0) {
                     flags[CircuitFlags::IsLastInSequence] = true;
                 }
                 flags

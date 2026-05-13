@@ -2,8 +2,8 @@
 
 use std::any::TypeId;
 
-use jolt_riscv::NormalizedInstruction;
-use jolt_riscv::{Flags, InstructionFlags, JoltCycle, JoltInstruction};
+use jolt_riscv::JoltRow;
+use jolt_riscv::{Flags, InstructionFlags, JoltCycle, JoltRowData};
 use rand::prelude::*;
 use tracer::emulator::{cpu::Cpu, terminal::DummyTerminal};
 use tracer::instruction::{jal::JAL, jalr::JALR, Cycle, RISCVCycle, RISCVTrace};
@@ -55,13 +55,13 @@ pub fn instruction_inputs_match_constraint_fn<C, T, I>(
 ) where
     C: JoltCycle,
     T: LookupQuery<XLEN> + core::fmt::Debug,
-    I: JoltInstruction + Flags,
+    I: JoltRowData + Flags,
 {
     let mut rng = StdRng::seed_from_u64(12345);
     for _ in 0..10_000 {
         let raw: C = C::random(&mut rng);
         let instr = raw.instruction();
-        let normalized: NormalizedInstruction = instr.into();
+        let normalized: JoltRow = instr.into();
         let unexpanded_pc = normalized.address as u64;
         let imm = normalized.operands.imm;
         let flags = instr_wrapper(instr).instruction_flags();
@@ -122,7 +122,7 @@ where
     for _ in 0..10_000 {
         let raw: C = C::random(&mut rng);
         let instr = raw.instruction();
-        let normalized: NormalizedInstruction = instr.into();
+        let normalized: JoltRow = instr.into();
         let rs1_idx = normalized.operands.rs1;
         let rs2_idx = normalized.operands.rs2;
         let rd_idx = normalized.operands.rd;

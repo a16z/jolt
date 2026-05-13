@@ -3,7 +3,7 @@ use std::panic;
 
 use crate::emulator::cpu::Cpu;
 use crate::instruction::format::{InstructionFormat, InstructionRegisterState};
-use crate::instruction::NormalizedInstruction;
+use crate::instruction::JoltRow;
 
 #[cfg(test)]
 use super::{
@@ -87,7 +87,7 @@ fn jolt_program_rv64_decode_matches_tracer_normalization() {
     for (word, compressed) in cases {
         let expected = Instruction::decode(word, address, compressed)
             .unwrap()
-            .normalize();
+            .source_instruction();
         let actual =
             jolt_program::image::decode::decode_instruction(word, address, compressed).unwrap();
         assert_eq!(actual, expected, "word={word:08x} compressed={compressed}");
@@ -103,7 +103,7 @@ where
 
     for _ in 0..1000 {
         let instruction = I::random(&mut rng);
-        let instr: NormalizedInstruction = instruction.into();
+        let instr: JoltRow = instruction.into();
         let register_state =
             <<I::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
                 &mut rng,

@@ -13,7 +13,7 @@ use super::{
 };
 use crate::{
     emulator::cpu::Cpu,
-    instruction::NormalizedInstruction,
+    instruction::{JoltRow, SourceInstruction},
     utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
 use jolt_program::expand::{ExpansionAllocator, ExpansionError, InlineExpansionProvider};
@@ -77,10 +77,10 @@ impl TracerInlineExpansionProvider {
 impl InlineExpansionProvider for TracerInlineExpansionProvider {
     fn expand_inline(
         &mut self,
-        instruction: &NormalizedInstruction,
+        instruction: &SourceInstruction,
         _allocator: &mut ExpansionAllocator,
-    ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-        let Instruction::INLINE(inline) = Instruction::try_from_normalized(*instruction)
+    ) -> Result<Vec<JoltRow>, ExpansionError> {
+        let Instruction::INLINE(inline) = Instruction::try_from_source_instruction(*instruction)
             .map_err(|_| ExpansionError::MalformedInstruction("malformed inline instruction"))?
         else {
             return Err(ExpansionError::MalformedInstruction(
@@ -92,7 +92,7 @@ impl InlineExpansionProvider for TracerInlineExpansionProvider {
             return Err(ExpansionError::UnsupportedInstruction);
         }
 
-        let _remapped_rd_guard = instruction.operands.rd.and_then(|rd| {
+        let _remapped_rd_guard = instruction.row().operands.rd.and_then(|rd| {
             (FIRST_INSTRUCTION_TEMP_REGISTER..LAST_INSTRUCTION_TEMP_REGISTER)
                 .contains(&rd)
                 .then(|| self.allocator.allocate())
@@ -101,7 +101,7 @@ impl InlineExpansionProvider for TracerInlineExpansionProvider {
         Ok(inline
             .inline_sequence(&self.allocator)
             .into_iter()
-            .map(|instruction| instruction.normalize())
+            .map(|instruction| instruction.jolt_row())
             .collect())
     }
 }
@@ -235,19 +235,19 @@ impl RISCVTrace for INLINE {
     }
 }
 
-impl From<NormalizedInstruction> for INLINE {
-    fn from(_: NormalizedInstruction) -> Self {
-        unimplemented!("Inline::from(NormalizedInstruction) should not be called");
+impl From<JoltRow> for INLINE {
+    fn from(_: JoltRow) -> Self {
+        unimplemented!("Inline::from(JoltRow) should not be called");
     }
 }
 
-impl jolt_riscv::JoltInstruction for INLINE {}
+impl jolt_riscv::JoltRowData for INLINE {}
 
-impl From<INLINE> for NormalizedInstruction {
+impl From<INLINE> for JoltRow {
     fn from(instr: INLINE) -> Self {
         let mut operands: NormalizedOperands = instr.operands.into();
         operands.imm = (instr.opcode | (instr.funct3 << 7) | (instr.funct7 << 10)) as i128;
-        NormalizedInstruction {
+        JoltRow {
             instruction_kind: jolt_riscv::JoltInstructionKind::Inline,
             address: instr.address as usize,
             operands,
@@ -296,8 +296,8 @@ mod tests {
     fn provider_rejects_unregistered_inline() {
         let mut provider = TracerInlineExpansionProvider::new();
         let mut allocator = ExpansionAllocator::new();
-        let instruction: NormalizedInstruction =
-            INLINE::new(0xfe00_7fab, 0x8000_0000, false, false).into();
+        let instruction = Instruction::from(INLINE::new(0xfe00_7fab, 0x8000_0000, false, false))
+            .source_instruction();
 
         assert!(matches!(
             provider.expand_inline(&instruction, &mut allocator),

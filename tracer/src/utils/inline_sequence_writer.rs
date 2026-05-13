@@ -170,7 +170,7 @@ fn format_instruction_with_placeholders(
     sequence_inputs: &SequenceInputs,
 ) -> String {
     let mut formatted = format!("{instruction:?}");
-    let normalized_instr = instruction.normalize();
+    let normalized_instr = instruction.jolt_row();
 
     // Replace address with placeholder (address is always in hex format)
     let address_pattern = format!("address: {:#x}", normalized_instr.address);

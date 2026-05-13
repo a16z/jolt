@@ -48,7 +48,7 @@ impl std::fmt::Display for OperandInterleaving {
     }
 }
 
-/// Wrapper around a JoltInstruction
+/// Wrapper around a JoltRowData
 // TODO: Make this generic over the instruction set
 #[derive(Debug, Clone)]
 pub struct ZkLeanInstruction<J> {
