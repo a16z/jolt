@@ -5,7 +5,6 @@ use jolt_field::Field;
 use jolt_trace::{
     instruction_circuit_flags, instruction_instruction_flags, BytecodePreprocessing,
     CircuitFlagSet, CircuitFlags, CycleRow, Instruction, InstructionFlags, InterleavedBitsMarker,
-    NUM_CIRCUIT_FLAGS,
 };
 use jolt_witness::Stage6BytecodeEntry;
 
@@ -108,9 +107,15 @@ where
     let mut is_interleaved_operands = Vec::with_capacity(size);
     for index in 0..size {
         let Some(cycle) = trace.get(index) else {
+            // Padding cycles are conceptually NoOp. NoOp's default
+            // CircuitFlagSet has no operand-combination bit set, so
+            // is_interleaved_operands is true (see jolt-riscv flags.rs).
+            // Returning false here diverges from the explicit NoOp-padded
+            // trace path used by jolt-core's fixture, causing downstream
+            // sumcheck input claim mismatches in Stage 6 bytecode_read_raf.
             lookup_indices.push(0);
             lookup_table_indices.push(None);
-            is_interleaved_operands.push(false);
+            is_interleaved_operands.push(true);
             continue;
         };
         lookup_indices.push(cycle.lookup_index());
@@ -341,7 +346,12 @@ fn instruction_product(left: u64, right: i128) -> S128 {
     S64::from_u64(left).mul_trunc::<2, 2>(&S128::from_i128(right))
 }
 
-fn stage1_rv64_flags(flags: CircuitFlagSet) -> [bool; NUM_CIRCUIT_FLAGS] {
+// RV64 Stage 1 Spartan only consumes the 14 integer-RV flags. The 9 FR
+// CircuitFlags variants are routed through a separate FR-aware Stage 1
+// path (added in the FR coprocessor port).
+const RV64_NUM_CIRCUIT_FLAGS: usize = 14;
+
+fn stage1_rv64_flags(flags: CircuitFlagSet) -> [bool; RV64_NUM_CIRCUIT_FLAGS] {
     [
         flags[CircuitFlags::AddOperands],
         flags[CircuitFlags::SubtractOperands],
@@ -360,7 +370,7 @@ fn stage1_rv64_flags(flags: CircuitFlagSet) -> [bool; NUM_CIRCUIT_FLAGS] {
     ]
 }
 
-fn stage6_circuit_flags(flags: CircuitFlagSet) -> [bool; NUM_CIRCUIT_FLAGS] {
+fn stage6_circuit_flags(flags: CircuitFlagSet) -> [bool; RV64_NUM_CIRCUIT_FLAGS] {
     stage1_rv64_flags(flags)
 }
 
