@@ -11,6 +11,7 @@ use jolt_inlines_bn254_fr::Fr;
 /// Takes 3 Fr limbs [[u64; 4]; 3], runs one permutation, returns the 3-element
 /// output state.
 #[jolt::provable(
+    backend = "modular",
     stack_size = 65536,
     heap_size = 131072,
     max_input_size = 8192,

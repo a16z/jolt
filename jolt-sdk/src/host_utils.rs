@@ -25,3 +25,12 @@ pub use jolt_core::poly::commitment::dory::{DoryContext, DoryGlobals};
 pub use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 pub use jolt_core::zkvm::ram::populate_memory_states;
 pub use jolt_core::zkvm::verifier::BlindfoldSetup;
+
+// Modular backend re-exports (used by `#[jolt::provable(backend = "modular")]`).
+// Gated on `not(feature = "zk")` so enabling the zk feature with the modular
+// backend produces a clean "cannot find `jolt_host` in crate `jolt`" build
+// error instead of a misleading runtime failure.
+#[cfg(all(feature = "host", not(feature = "zk")))]
+pub use jolt_host;
+#[cfg(all(feature = "host", not(feature = "zk")))]
+pub use jolt_trace;
