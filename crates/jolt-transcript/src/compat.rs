@@ -62,7 +62,7 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
     /// without advancing the real state. Useful for debug-only
     /// cross-verifier comparison.
     #[must_use]
-    fn state(&self) -> &[u8; 32];
+    fn state(&self) -> [u8; 32];
 
     /// Enables transcript comparison for tests; mirrors upstream's signature.
     /// Spongefish sponges have no replayable state history, so this is a
@@ -150,9 +150,6 @@ where
     F: TranscriptChallenge,
 {
     sponge: H,
-    /// 32-byte non-destructive peek of the sponge state, refreshed after
-    /// every absorb / squeeze so `state()` can return a reference cheaply.
-    state: [u8; 32],
     _field: PhantomData<F>,
 }
 
@@ -174,7 +171,6 @@ where
     fn clone(&self) -> Self {
         Self {
             sponge: self.sponge.clone(),
-            state: self.state,
             _field: PhantomData,
         }
     }
@@ -212,10 +208,8 @@ where
         absorb_encoded(&mut sponge, &PROTOCOL_ID);
         absorb_encoded(&mut sponge, &BytesMsg(label.to_vec()));
         absorb_encoded(&mut sponge, &EmptyInstance);
-        let state = peek_state(&sponge);
         Self {
             sponge,
-            state,
             _field: PhantomData,
         }
     }
@@ -236,17 +230,15 @@ where
         buf.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
         buf.extend_from_slice(bytes);
         let _ = self.sponge.absorb(&buf);
-        self.state = peek_state(&self.sponge);
     }
 
     fn challenge(&mut self) -> F {
         let mut buf = [0u8; 16];
         let _ = self.sponge.squeeze(&mut buf);
-        self.state = peek_state(&self.sponge);
         F::from_challenge_bytes(&buf)
     }
 
-    fn state(&self) -> &[u8; 32] {
-        &self.state
+    fn state(&self) -> [u8; 32] {
+        peek_state(&self.sponge)
     }
 }
