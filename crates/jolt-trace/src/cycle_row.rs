@@ -7,6 +7,7 @@
 //! so the prover sees only scalars and static flag sets.
 
 use jolt_riscv::{CircuitFlagSet, InstructionFlagSet};
+use jolt_witness::FrCycleBytecode;
 
 /// Abstract interface for one execution cycle of a RISC-V trace.
 ///
@@ -74,4 +75,13 @@ pub trait CycleRow: Copy {
     ///
     /// This is the value of V_LOOKUP_OUTPUT in the R1CS witness.
     fn lookup_output(&self) -> u64;
+
+    /// BN254 Fr coprocessor bytecode metadata for this cycle. Returns the
+    /// `frs1`/`frs2`/`frd` slot indices (masked to 4 bits) plus read/write
+    /// flags. Non-FR cycles return `FrCycleBytecode::default()` (all zeros,
+    /// `writes_frd = false`). The returned metadata feeds `replay_field_regs`
+    /// to materialize the per-cycle FR operand snapshots.
+    fn fr_meta(&self) -> FrCycleBytecode {
+        FrCycleBytecode::default()
+    }
 }

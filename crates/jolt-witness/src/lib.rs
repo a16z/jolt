@@ -7,6 +7,14 @@
 use jolt_field::Field;
 use jolt_poly::EqPolynomial;
 
+pub mod field_reg;
+
+pub use field_reg::{
+    field_reg_inc_polynomial, field_registers_witness, replay_field_regs,
+    zero_field_registers_witness, FieldRegEvent, FieldRegisterColumns, FieldRegistersWitness,
+    FrCycleBytecode, FrCycleData, FrLimbs, FIELD_REG_COUNT,
+};
+
 pub const NUM_DENSE_TRACE_COLUMNS: usize = 2;
 pub const NUM_ONE_HOT_TRACE_SOURCES: usize = 3;
 

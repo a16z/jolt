@@ -4,12 +4,19 @@
 //! derives circuit flags and instruction flags.
 
 use jolt_riscv::{CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags};
+use jolt_witness::FrCycleBytecode;
+use tracer::instruction::field_op;
 use tracer::instruction::{Cycle, Instruction, RAMAccess};
 
 use crate::CycleRow;
 
 /// Map an `Instruction` variant to its ISA struct, bind it to `$i`, evaluate `$body`.
 /// The `noop =>` arm handles `Instruction::NoOp` separately.
+///
+/// Exported so downstream crates (e.g. `jolt-host`) can dispatch a
+/// `&Instruction` to its concrete ISA struct for traits whose impls live
+/// in `jolt-lookup-tables` etc.
+#[macro_export]
 macro_rules! with_isa_struct {
     ($instr:expr, |$i:ident| $body:expr, noop => $noop:expr) => {{
         use jolt_riscv::instructions::*;
@@ -290,6 +297,56 @@ macro_rules! with_isa_struct {
                 let $i = VirtualXorRotW7(*value);
                 $body
             }
+            Instruction::FieldOp(value) => {
+                // FieldOp is the shared tracer struct for FMUL/FADD/FSUB/FINV
+                // discriminated by funct3. Dispatch to the matching jolt-riscv
+                // wrapper so per-variant circuit_flags fire correctly.
+                use tracer::instruction::field_op::{
+                    FUNCT3_FADD, FUNCT3_FINV, FUNCT3_FMUL, FUNCT3_FSUB,
+                };
+                match value.funct3 {
+                    FUNCT3_FMUL => {
+                        let $i = FieldMul(*value);
+                        $body
+                    }
+                    FUNCT3_FADD => {
+                        let $i = FieldAdd(*value);
+                        $body
+                    }
+                    FUNCT3_FSUB => {
+                        let $i = FieldSub(*value);
+                        $body
+                    }
+                    FUNCT3_FINV => {
+                        let $i = FieldInv(*value);
+                        $body
+                    }
+                    _ => panic!(
+                        "unsupported FieldOp funct3 = 0x{:02x}",
+                        value.funct3
+                    ),
+                }
+            }
+            Instruction::FieldAssertEq(value) => {
+                let $i = FieldAssertEq(*value);
+                $body
+            }
+            Instruction::FieldMov(value) => {
+                let $i = FieldMov(*value);
+                $body
+            }
+            Instruction::FieldSLL64(value) => {
+                let $i = FieldSLL64(*value);
+                $body
+            }
+            Instruction::FieldSLL128(value) => {
+                let $i = FieldSLL128(*value);
+                $body
+            }
+            Instruction::FieldSLL192(value) => {
+                let $i = FieldSLL192(*value);
+                $body
+            }
             Instruction::NoOp => $noop,
             Instruction::INLINE(x) => panic!(
                 "INLINE reached CycleRow: opcode={}, funct3={}, funct7={}",
@@ -442,6 +499,66 @@ impl CycleRow for Cycle {
             self.rd_write().map_or(0, |(_, _, post)| post)
         } else {
             0
+        }
+    }
+
+    fn fr_meta(&self) -> FrCycleBytecode {
+        // FR slot indices are 5 bits in the encoding; the high bit must be 0
+        // (slots are 0..=15). Mask once at the producer per audit N4.
+        const SLOT_MASK: u8 = 0x0F;
+        match self.instruction() {
+            Instruction::FieldOp(op) => {
+                let reads_frs2 = op.funct3 != field_op::FUNCT3_FINV;
+                FrCycleBytecode {
+                    frs1: op.operands.rs1 & SLOT_MASK,
+                    frs2: op.operands.rs2 & SLOT_MASK,
+                    frd: op.operands.rd & SLOT_MASK,
+                    reads_frs1: true,
+                    reads_frs2,
+                    writes_frd: true,
+                }
+            }
+            Instruction::FieldAssertEq(op) => FrCycleBytecode {
+                frs1: op.operands.rs1 & SLOT_MASK,
+                frs2: op.operands.rs2 & SLOT_MASK,
+                frd: 0,
+                reads_frs1: true,
+                reads_frs2: true,
+                writes_frd: false,
+            },
+            Instruction::FieldMov(op) => FrCycleBytecode {
+                frs1: 0,
+                frs2: 0,
+                frd: op.operands.rd & SLOT_MASK,
+                reads_frs1: false,
+                reads_frs2: false,
+                writes_frd: true,
+            },
+            Instruction::FieldSLL64(op) => FrCycleBytecode {
+                frs1: 0,
+                frs2: 0,
+                frd: op.operands.rd & SLOT_MASK,
+                reads_frs1: false,
+                reads_frs2: false,
+                writes_frd: true,
+            },
+            Instruction::FieldSLL128(op) => FrCycleBytecode {
+                frs1: 0,
+                frs2: 0,
+                frd: op.operands.rd & SLOT_MASK,
+                reads_frs1: false,
+                reads_frs2: false,
+                writes_frd: true,
+            },
+            Instruction::FieldSLL192(op) => FrCycleBytecode {
+                frs1: 0,
+                frs2: 0,
+                frd: op.operands.rd & SLOT_MASK,
+                reads_frs1: false,
+                reads_frs2: false,
+                writes_frd: true,
+            },
+            _ => FrCycleBytecode::default(),
         }
     }
 }

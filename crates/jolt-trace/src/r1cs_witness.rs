@@ -6,15 +6,23 @@
 use jolt_field::Field;
 use jolt_r1cs::constraints::rv64::*;
 use jolt_riscv::{CircuitFlagSet, CircuitFlags, InstructionFlags};
+use jolt_witness::FrCycleData;
 
 use crate::bytecode::BytecodePreprocessing;
 use crate::CycleRow;
 
 /// Per-cycle R1CS witness matching `jolt_r1cs::constraints::rv64` layout.
+///
+/// `fr_snapshot` is the BN254 Fr coprocessor per-cycle replay snapshot
+/// (rs1/rs2/rd field-element values + write-slot index). Pass `None` for
+/// non-FR cycles or traces without FR events; the V_FIELD_RS1/RS2/RD_VALUE
+/// slots stay zero, which is consistent with the FR R1CS rows (they all
+/// gate on a FR flag — zero flag → row trivially satisfied).
 pub fn r1cs_cycle_witness<C: CycleRow, F: Field>(
     trace: &[C],
     t: usize,
     bytecode: &BytecodePreprocessing,
+    fr_snapshot: Option<&FrCycleData>,
 ) -> [F; NUM_VARS_PER_CYCLE] {
     let cycle = &trace[t];
     let next = trace.get(t + 1);
@@ -96,6 +104,23 @@ pub fn r1cs_cycle_witness<C: CycleRow, F: Field>(
     w[V_FLAG_IS_FIRST_IN_SEQUENCE] = F::from_u64(cflags[CircuitFlags::IsFirstInSequence] as u64);
     w[V_FLAG_IS_LAST_IN_SEQUENCE] = F::from_u64(cflags[CircuitFlags::IsLastInSequence] as u64);
 
+    // BN254 Fr coprocessor flags + operand virtual columns.
+    w[V_FLAG_IS_FIELD_MUL] = F::from_u64(cflags[CircuitFlags::IsFieldMul] as u64);
+    w[V_FLAG_IS_FIELD_ADD] = F::from_u64(cflags[CircuitFlags::IsFieldAdd] as u64);
+    w[V_FLAG_IS_FIELD_SUB] = F::from_u64(cflags[CircuitFlags::IsFieldSub] as u64);
+    w[V_FLAG_IS_FIELD_INV] = F::from_u64(cflags[CircuitFlags::IsFieldInv] as u64);
+    w[V_FLAG_IS_FIELD_ASSERT_EQ] = F::from_u64(cflags[CircuitFlags::IsFieldAssertEq] as u64);
+    w[V_FLAG_IS_FIELD_MOV] = F::from_u64(cflags[CircuitFlags::IsFieldMov] as u64);
+    w[V_FLAG_IS_FIELD_SLL64] = F::from_u64(cflags[CircuitFlags::IsFieldSLL64] as u64);
+    w[V_FLAG_IS_FIELD_SLL128] = F::from_u64(cflags[CircuitFlags::IsFieldSLL128] as u64);
+    w[V_FLAG_IS_FIELD_SLL192] = F::from_u64(cflags[CircuitFlags::IsFieldSLL192] as u64);
+
+    if let Some(snap) = fr_snapshot {
+        w[V_FIELD_RS1_VALUE] = fr_limbs_to_field::<F>(snap.rs1_val);
+        w[V_FIELD_RS2_VALUE] = fr_limbs_to_field::<F>(snap.rs2_val);
+        w[V_FIELD_RD_VALUE] = fr_limbs_to_field::<F>(snap.rd_val);
+    }
+
     // Product factors
     w[V_BRANCH] = F::from_u64(iflags[InstructionFlags::Branch] as u64);
     w[V_SHOULD_BRANCH] = w[V_LOOKUP_OUTPUT] * w[V_BRANCH];
@@ -155,18 +180,30 @@ fn lookup_operands<F: Field>(
 
 /// Flat R1CS witness for the entire trace.
 ///
-/// Returns `Vec<F>` of length `trace.len() * num_vars_padded`.
+/// Returns `Vec<F>` of length `trace.len() * num_vars_padded`. `fr_snapshots`,
+/// when provided, must have one entry per cycle; pass `None` for non-FR
+/// traces.
 pub fn build_r1cs_witness<C: CycleRow, F: Field>(
     trace: &[C],
     bytecode: &BytecodePreprocessing,
     num_vars_padded: usize,
+    fr_snapshots: Option<&[FrCycleData]>,
 ) -> Vec<F> {
     let n = trace.len();
     let mut witness = vec![F::from_u64(0); n * num_vars_padded];
     for t in 0..n {
-        let row = r1cs_cycle_witness::<C, F>(trace, t, bytecode);
+        let snap = fr_snapshots.and_then(|s| s.get(t));
+        let row = r1cs_cycle_witness::<C, F>(trace, t, bytecode, snap);
         witness[t * num_vars_padded..t * num_vars_padded + NUM_VARS_PER_CYCLE]
             .copy_from_slice(&row);
     }
     witness
+}
+
+/// Convert a natural-form `[u64; 4]` Fr limb array to a field element:
+/// `a[0] + a[1]·2⁶⁴ + a[2]·2¹²⁸ + a[3]·2¹⁹²`.
+fn fr_limbs_to_field<F: Field>(limbs: [u64; 4]) -> F {
+    let lo = F::from_u128((limbs[0] as u128) | ((limbs[1] as u128) << 64));
+    let hi = F::from_u128((limbs[2] as u128) | ((limbs[3] as u128) << 64));
+    lo + hi * F::one().mul_pow_2(128)
 }

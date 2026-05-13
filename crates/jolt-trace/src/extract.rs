@@ -8,7 +8,7 @@ use common::jolt_device::MemoryLayout;
 use jolt_field::Field;
 use jolt_r1cs::constraints::rv64::*;
 use jolt_riscv::{InstructionFlagSet, InstructionFlags};
-use jolt_witness::CycleInput;
+use jolt_witness::{replay_field_regs, CycleInput, FieldRegEvent, FrCycleData};
 
 use crate::bytecode::BytecodePreprocessing;
 use crate::r1cs_witness::r1cs_cycle_witness;
@@ -26,22 +26,37 @@ pub struct InstructionFlagData<F> {
 /// Extract witness inputs, R1CS witness, and instruction flags in one pass.
 ///
 /// Produces `size`-length outputs, padding beyond `trace.len()` with defaults.
+///
+/// `fr_events` is the BN254 Fr coprocessor event stream. Pass an empty slice
+/// for traces with no FR cycles. When non-empty, populates
+/// V_FIELD_RS1/RS2/RD_VALUE in each cycle's R1CS witness from the per-cycle
+/// FR replay snapshot, so the Spartan witness matches FR Twist state.
 pub fn extract_trace<C: CycleRow, F: Field>(
     trace: &[C],
     size: usize,
     bytecode: &BytecodePreprocessing,
     memory_layout: &MemoryLayout,
     num_vars_padded: usize,
+    fr_events: &[FieldRegEvent],
 ) -> (Vec<CycleInput>, Vec<F>, InstructionFlagData<F>) {
     let mut inputs = Vec::with_capacity(size);
     let mut r1cs = vec![F::from_u64(0); size * num_vars_padded];
     let mut flags = InstructionFlagData::new(size);
+
+    // Build FR snapshots once (linear pass over events) when needed.
+    let fr_snapshots: Option<Vec<FrCycleData>> = if fr_events.is_empty() {
+        None
+    } else {
+        let bytecode_snaps: Vec<_> = trace.iter().map(|c| c.fr_meta()).collect();
+        Some(replay_field_regs(trace.len(), &bytecode_snaps, fr_events))
+    };
 
     for t in 0..size {
         let offset = t * num_vars_padded;
 
         if t < trace.len() {
             let cycle = &trace[t];
+            let snap = fr_snapshots.as_ref().and_then(|s| s.get(t));
 
             if cycle.is_noop() {
                 inputs.push(CycleInput::PADDING);
@@ -49,7 +64,7 @@ pub fn extract_trace<C: CycleRow, F: Field>(
                 inputs.push(cycle_input(cycle, bytecode, memory_layout));
             }
 
-            let row = r1cs_cycle_witness::<C, F>(trace, t, bytecode);
+            let row = r1cs_cycle_witness::<C, F>(trace, t, bytecode, snap);
             r1cs[offset..offset + NUM_VARS_PER_CYCLE].copy_from_slice(&row);
 
             flags.set(t, cycle.instruction_flags());
