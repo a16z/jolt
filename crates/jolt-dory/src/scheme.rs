@@ -110,6 +110,55 @@ impl DoryScheme {
             ),
         )
     }
+
+    #[tracing::instrument(skip_all, name = "DoryScheme::commit_evaluations_with_row_len")]
+    pub fn commit_evaluations_with_row_len(
+        evaluations: &[Fr],
+        row_len: usize,
+        setup: &DoryProverSetup,
+    ) -> (DoryCommitment, DoryHint) {
+        assert!(
+            row_len.is_power_of_two(),
+            "Dory row length ({row_len}) must be a power of two",
+        );
+        assert!(
+            row_len <= setup.0.g1_vec.len(),
+            "Dory row length ({}) exceeds G1 SRS size ({})",
+            row_len,
+            setup.0.g1_vec.len(),
+        );
+        let num_rows = evaluations
+            .len()
+            .div_ceil(row_len)
+            .max(1)
+            .next_power_of_two();
+        assert!(
+            num_rows <= setup.0.g2_vec.len(),
+            "Dory row count ({}) exceeds G2 SRS size ({})",
+            num_rows,
+            setup.0.g2_vec.len(),
+        );
+
+        let g1_bases = &setup.0.g1_vec[..row_len];
+        let row_commitments: Vec<ArkG1> = (0..num_rows)
+            .into_par_iter()
+            .map(|row_index| {
+                let start = row_index * row_len;
+                let end = (start + row_len).min(evaluations.len());
+                let row = evaluations.get(start..end).unwrap_or_default();
+                let scalars: Vec<ArkFr> = row.iter().map(jolt_fr_to_ark).collect();
+                G1Routines::msm(&g1_bases[..scalars.len()], &scalars)
+            })
+            .collect();
+        let (tier_2, _) = commit_rows_tier_2::<Transparent>(&row_commitments, setup);
+        (
+            DoryCommitment(ark_to_jolt_gt(&tier_2)),
+            DoryHint::new(
+                ark_to_jolt_g1_vec(row_commitments),
+                ark_to_jolt_fr(&<ArkFr as DoryField>::zero()),
+            ),
+        )
+    }
 }
 
 impl DeriveSetup<DoryProverSetup> for PedersenSetup<Bn254G1> {

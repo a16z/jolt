@@ -3,7 +3,7 @@ use allocative::Allocative;
 use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
-use std::ops::Mul;
+use std::ops::{Div, Mul};
 
 use crate::{
     CanonicalBitLength, CanonicalBytes, CanonicalU64, FieldCore, FixedByteSize, FixedBytes,
@@ -43,6 +43,8 @@ pub trait Field:
     + WithAccumulator
     + MulPow2
     + MulPrimitiveInt
+    + Div<Output = Self>
+    + for<'a> Div<&'a Self, Output = Self>
     + Serialize
     + DeserializeOwned
     + MaybeAllocative

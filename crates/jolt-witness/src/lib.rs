@@ -822,7 +822,7 @@ fn stage6_opening_point<'a, F: Field>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::Fr;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

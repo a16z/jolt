@@ -3070,6 +3070,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-kernels"
+version = "0.1.0"
+dependencies = [
+ "jolt-field",
+ "jolt-lookup-tables",
+ "jolt-poly",
+ "jolt-program",
+ "jolt-r1cs",
+ "jolt-riscv",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "jolt-witness",
+ "rayon",
+ "tracing",
+]
+
+[[package]]
 name = "jolt-lookup-tables"
 version = "0.1.0"
 dependencies = [
@@ -3172,6 +3189,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-prover"
+version = "0.0.0"
+dependencies = [
+ "jolt-dory",
+ "jolt-field",
+ "jolt-kernels",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-transcript",
+ "jolt-verifier",
+ "jolt-witness",
+ "rayon",
+ "tracing",
+]
+
+[[package]]
 name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
@@ -3251,6 +3284,21 @@ dependencies = [
  "light-poseidon",
  "num-traits",
  "sha3 0.11.0",
+]
+
+[[package]]
+name = "jolt-verifier"
+version = "0.0.0"
+dependencies = [
+ "jolt-dory",
+ "jolt-field",
+ "jolt-lookup-tables",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "serde",
+ "tracing",
 ]
 
 [[package]]

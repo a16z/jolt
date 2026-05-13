@@ -3,7 +3,7 @@
 
 mod common;
 
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::Fr;
 use jolt_transcript::Blake2bTranscript;
 use num_traits::Zero;
 

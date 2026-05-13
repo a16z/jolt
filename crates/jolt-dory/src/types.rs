@@ -20,6 +20,13 @@ pub const MAX_SERIALIZED_PROOF_ROUNDS: usize = 64;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DoryCommitment(pub Bn254GT);
 
+impl DoryCommitment {
+    #[inline]
+    pub fn serialized_len(&self) -> u64 {
+        self.0.serialized_len() as u64
+    }
+}
+
 impl Serialize for DoryCommitment {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         self.0.serialize(serializer)

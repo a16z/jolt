@@ -67,7 +67,7 @@ impl RingAccumulator for WideAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AdditiveAccumulator, FromPrimitiveInt};
+    use crate::AdditiveAccumulator;
 
     #[test]
     fn single_fmadd() {

@@ -927,7 +927,7 @@ impl Stage2CpuProgram {
 
     fn emit_verifier_imports() -> &'static str {
         "use super::common::{append_labeled_scalar, batch_claims, eval_by_name, find_batch, find_plan, pow_field, require_operand_count, reverse_slice, single_operand};\n\
-         use jolt_field::{Field, Fr};\n\
+         use jolt_field::{Field, Fr, MulPow2, MulPrimitiveInt, RingCore};\n\
          use jolt_poly::lagrange::{lagrange_evals, lagrange_kernel_eval};\n\
          use jolt_poly::{EqPolynomial, UnivariatePoly};\n\
          use jolt_sumcheck::{CompressedLabeledRoundPoly, SumcheckClaim, SumcheckError, SumcheckVerifier};\n\

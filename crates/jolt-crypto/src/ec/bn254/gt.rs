@@ -44,6 +44,14 @@ impl From<Bn254GT> for Fq12 {
     }
 }
 
+impl Bn254GT {
+    #[inline]
+    pub fn serialized_len(&self) -> usize {
+        use ark_serialize::CanonicalSerialize;
+        self.0.uncompressed_size()
+    }
+}
+
 impl Default for Bn254GT {
     #[inline(always)]
     fn default() -> Self {

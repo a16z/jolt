@@ -322,8 +322,8 @@ pub use verifier::{
     verify_jolt_through_stage6_with_programs, verify_jolt_through_stage7,
     verify_jolt_through_stage7_with_programs, verify_jolt_with_programs, JoltEvaluationProof,
     JoltEvaluationProofError, JoltNamedEval, JoltProof, JoltStage2RamAccess, JoltStage2RamData,
-    JoltStage2RamOutputLayout, JoltStageChallengeVector, JoltStageExecutionArtifacts,
-    JoltStage6BytecodeEntry, JoltStage6BytecodeReadRafData, JoltStage6VerifierData,
+    JoltStage2RamOutputLayout, JoltStage6BytecodeEntry, JoltStage6BytecodeReadRafData,
+    JoltStage6VerifierData, JoltStageChallengeVector, JoltStageExecutionArtifacts,
     JoltStageOpeningInputValue, JoltStageProof, JoltSumcheckOutput, JoltVerificationArtifacts,
     JoltVerifierInputs, JoltVerifierPrograms, JoltVerifierTarget, JoltVerifyError,
 };"
@@ -337,7 +337,7 @@ fn jolt_evaluation_role_api_extension() -> ProtocolArtifactExtension {
         required_artifact_stages: vec!["stage8".to_owned()],
         prover: ProtocolProverApiExtension {
             lib_module: jolt_prover_lib_module(),
-            imports: "#![expect(\n    clippy::too_many_arguments,\n    reason = \"generated prover helpers mirror staged protocol ABIs\"\n)]\n\nuse jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme};\nuse jolt_field::{Field, Fr};\nuse jolt_kernels::{stage1, stage2, stage3, stage4, stage5, stage6, stage7};\nuse jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};\nuse jolt_poly::{EqPolynomial, Polynomial};\nuse jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};\nuse jolt_verifier::{JoltEvaluationProof, JoltNamedEval, JoltProof, JoltStage2RamAccess, JoltStage2RamData, JoltStage2RamOutputLayout, JoltStage6BytecodeEntry, JoltStage6BytecodeReadRafData, JoltStage6VerifierData, JoltStageChallengeVector, JoltStageExecutionArtifacts, JoltStageOpeningInputValue, JoltStageProof, JoltSumcheckOutput};\nuse jolt_witness::{stage4_ram_val_init_opening, CycleInput, Stage45SparseTraceWitness, Stage6BytecodeEntry as WitnessStage6BytecodeEntry, Stage6WitnessParams, Stage6WitnessPolynomials, Stage6WitnessSlices};\nuse rayon::prelude::*;\n\n".to_owned(),
+            imports: "#![expect(\n    clippy::too_many_arguments,\n    reason = \"generated prover helpers mirror staged protocol ABIs\"\n)]\n\nuse jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme};\nuse jolt_field::Fr;\nuse jolt_kernels::{stage1, stage2, stage3, stage4, stage5, stage6, stage7};\nuse jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};\nuse jolt_poly::{EqPolynomial, Polynomial};\nuse jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};\nuse jolt_verifier::{JoltEvaluationProof, JoltNamedEval, JoltProof, JoltStage2RamAccess, JoltStage2RamData, JoltStage2RamOutputLayout, JoltStage6BytecodeEntry, JoltStage6BytecodeReadRafData, JoltStage6VerifierData, JoltStageChallengeVector, JoltStageExecutionArtifacts, JoltStageOpeningInputValue, JoltStageProof, JoltSumcheckOutput};\nuse jolt_witness::{stage4_ram_val_init_opening, CycleInput, Stage45SparseTraceWitness, Stage6BytecodeEntry as WitnessStage6BytecodeEntry, Stage6WitnessParams, Stage6WitnessPolynomials, Stage6WitnessSlices};\nuse rayon::prelude::*;\n\n".to_owned(),
             input_fields:
                 "    pub stage7_openings: Option<&'a [stage7::Stage7OpeningInputValue<Fr>]>,\n"
                     .to_owned(),
@@ -357,7 +357,7 @@ fn jolt_evaluation_role_api_extension() -> ProtocolArtifactExtension {
         },
         verifier: ProtocolVerifierApiExtension {
             lib_module: jolt_verifier_lib_module(),
-            imports: "use std::collections::BTreeMap;\n\nuse jolt_dory::{DoryCommitment, DoryProof, DoryScheme, DoryVerifierSetup};\nuse jolt_field::{Field, Fr};\nuse jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};\nuse jolt_poly::EqPolynomial;\nuse jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};\n".to_owned(),
+            imports: "use std::collections::BTreeMap;\n\nuse jolt_dory::{DoryCommitment, DoryProof, DoryScheme, DoryVerifierSetup};\nuse jolt_field::Fr;\nuse jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};\nuse jolt_poly::EqPolynomial;\nuse jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};\n".to_owned(),
             proof_fields: "    pub evaluation: Option<JoltEvaluationProof>,\n".to_owned(),
             proof_items: "pub type JoltStage2RamAccess = crate::stages::stage2::Stage2RamAccess;\npub type JoltStage2RamOutputLayout = crate::stages::stage2::Stage2RamOutputLayout;\npub type JoltStage2RamData<'a> = crate::stages::stage2::Stage2RamData<'a>;\npub type JoltStageChallengeVector = crate::stages::common::StageChallengeVector<Fr>;\npub type JoltStageExecutionArtifacts = crate::stages::common::StageExecutionArtifacts<Fr>;\npub type JoltStageOpeningInputValue = crate::stages::common::StageOpeningInputValue<Fr>;\n\n#[derive(Clone, Debug)]\npub struct JoltEvaluationProof {\n    pub joint_opening_proof: DoryProof,\n}\n\n".to_owned(),
             inputs_derive: Some("#[derive(Clone, Copy)]".to_owned()),

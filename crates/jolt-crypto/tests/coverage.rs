@@ -7,7 +7,7 @@ use jolt_crypto::ec::bn254::glv;
 use jolt_crypto::{
     Bn254, Bn254G1, Bn254G2, Bn254GT, HomomorphicCommitment, JoltGroup, PairingGroup,
 };
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+use jolt_field::{Fr, RandomSampling};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 

@@ -61,7 +61,7 @@ impl JoltProtocolParams {
             lookups_ra_virtual_log_k_chunk,
             instruction_log_k,
             register_log_k: 7,
-            lookup_table_count: 40,
+            lookup_table_count: 41,
             instruction_d,
             instruction_ra_virtual_d,
             bytecode_d,

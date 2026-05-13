@@ -1,7 +1,7 @@
 //! Pairing bilinearity and consistency tests for BN254.
 
 use jolt_crypto::{Bn254, Bn254G2, Bn254GT, JoltGroup, PairingGroup};
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+use jolt_field::{Fr, RandomSampling};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 

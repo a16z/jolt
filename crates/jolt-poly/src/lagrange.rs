@@ -61,6 +61,35 @@ pub fn lagrange_evals<F: Field>(domain_start: i64, domain_size: usize, r: F) -> 
     result
 }
 
+/// Evaluates the `k`-th Lagrange basis polynomial over a consecutive integer domain.
+#[expect(clippy::expect_used)]
+pub fn lagrange_basis_eval<F: Field>(domain_start: i64, domain_size: usize, k: usize, r: F) -> F {
+    let mut numerator = F::one();
+    let mut denominator = F::one();
+    for j in 0..domain_size {
+        if j == k {
+            continue;
+        }
+        numerator *= r - F::from_i64(domain_start + j as i64);
+        denominator *= F::from_i128(k as i128 - j as i128);
+    }
+    numerator
+        * denominator
+            .inverse()
+            .expect("Lagrange basis denominator must be invertible")
+}
+
+/// Evaluates `sum_k L_k(tau) * L_k(r)` over a consecutive integer domain.
+pub fn lagrange_kernel_eval<F: Field>(domain_start: i64, domain_size: usize, tau: F, r: F) -> F {
+    let tau_evals = lagrange_evals(domain_start, domain_size, tau);
+    let r_evals = lagrange_evals(domain_start, domain_size, r);
+    tau_evals
+        .iter()
+        .zip(r_evals.iter())
+        .map(|(&a, &b)| a * b)
+        .fold(F::zero(), |acc, value| acc + value)
+}
+
 /// Computes power sums $S_k = \sum_{t=-D}^{D} t^k$ for $k = 0, 1, \ldots, \text{num\_powers}-1$
 /// over the symmetric integer domain $\{-D, \ldots, D\}$ of size $2D+1$.
 ///
@@ -157,7 +186,7 @@ pub fn interpolate_to_coeffs<F: Field>(domain_start: i64, values: &[F]) -> Vec<F
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::Fr;
     use num_traits::{One, Zero};
 
     #[test]

@@ -1,7 +1,7 @@
 //! Algebraic group law tests for BN254 G1 and G2.
 
 use jolt_crypto::{Bn254, Bn254G1, Bn254G2, JoltGroup};
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+use jolt_field::{Fr, RandomSampling};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 

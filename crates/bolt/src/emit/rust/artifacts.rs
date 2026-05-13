@@ -426,7 +426,16 @@ fn generated_crate(
         path: format!("src/stages/{}.rs", artifact.stage.module_name()),
         source: artifact.source.source,
     }));
+    for file in &mut files {
+        file.source = normalized_generated_source(&file.source);
+    }
     GeneratedCrate { crate_name, files }
+}
+
+fn normalized_generated_source(source: &str) -> String {
+    let mut normalized = source.trim_end_matches(char::is_whitespace).to_owned();
+    normalized.push('\n');
+    normalized
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

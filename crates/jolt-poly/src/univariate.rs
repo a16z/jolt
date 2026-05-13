@@ -544,7 +544,6 @@ fn gaussian_elimination_augmented<F: Field>(matrix: &mut [Vec<F>]) -> Vec<F> {
 mod tests {
     use super::*;
     use jolt_field::Fr;
-    use jolt_field::FromPrimitiveInt;
     use num_traits::{One, Zero};
 
     #[test]
