@@ -361,7 +361,7 @@ fn join_or_serial<A, B>(left: impl FnOnce() -> A, right: impl FnOnce() -> B) -> 
 mod tests {
     use super::*;
     use crate::math::Math;
-    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+    use jolt_field::{Fr, RandomSampling};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;

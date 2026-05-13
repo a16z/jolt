@@ -210,7 +210,7 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
 mod tests {
     use super::*;
     use crate::{reduce_prover, reduce_verifier, ProverClaim, VerifierClaim};
-    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+    use jolt_field::{Fr, RandomSampling};
     use jolt_poly::Polynomial;
     use jolt_transcript::Blake2bTranscript;
     use rand_chacha::rand_core::SeedableRng;

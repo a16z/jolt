@@ -985,7 +985,7 @@ impl Stage7CpuProgram {
 
     fn emit_verifier_imports() -> &'static str {
         "use super::common::{batch_claims, eval_by_name, find_batch, find_plan, normalize_bytecode_read_raf_point, normalize_instruction_read_raf_point, reverse_slice};\n\
-         use jolt_field::{Field, Fr};\n\
+         use jolt_field::{Field, Fr, RingCore};\n\
          use jolt_poly::EqPolynomial;\n\
          use jolt_sumcheck::SumcheckError;\n\
          use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};"

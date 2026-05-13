@@ -1067,7 +1067,7 @@ impl Stage1CpuProgram {
 
     fn emit_verifier_imports() -> &'static str {
         "use super::common::append_labeled_scalar;\n\
-         use jolt_field::{Field, Fr};\n\
+         use jolt_field::Fr;\n\
          use jolt_sumcheck::{CompressedLabeledRoundPoly, LabeledRoundPoly, SumcheckClaim, SumcheckError, SumcheckVerifier};\n\
          use jolt_transcript::{Blake2bTranscript, Transcript};"
     }

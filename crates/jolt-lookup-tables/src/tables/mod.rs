@@ -197,6 +197,53 @@ macro_rules! dispatch {
 }
 
 impl<const XLEN: usize> LookupTableKind<XLEN> {
+    /// Returns the canonical modular Jolt lookup table list.
+    pub fn all() -> [Self; 41] {
+        [
+            Self::RangeCheck(Default::default()),
+            Self::RangeCheckAligned(Default::default()),
+            Self::And(Default::default()),
+            Self::Andn(Default::default()),
+            Self::Or(Default::default()),
+            Self::Xor(Default::default()),
+            Self::Equal(Default::default()),
+            Self::NotEqual(Default::default()),
+            Self::SignedLessThan(Default::default()),
+            Self::UnsignedLessThan(Default::default()),
+            Self::SignedGreaterThanEqual(Default::default()),
+            Self::UnsignedGreaterThanEqual(Default::default()),
+            Self::UnsignedLessThanEqual(Default::default()),
+            Self::UpperWord(Default::default()),
+            Self::LowerHalfWord(Default::default()),
+            Self::SignExtendHalfWord(Default::default()),
+            Self::SignMask(Default::default()),
+            Self::Pow2(Default::default()),
+            Self::Pow2W(Default::default()),
+            Self::ShiftRightBitmask(Default::default()),
+            Self::VirtualSRL(Default::default()),
+            Self::VirtualSRA(Default::default()),
+            Self::VirtualROTR(Default::default()),
+            Self::VirtualROTRW(Default::default()),
+            Self::ValidDiv0(Default::default()),
+            Self::ValidUnsignedRemainder(Default::default()),
+            Self::ValidSignedRemainder(Default::default()),
+            Self::VirtualChangeDivisor(Default::default()),
+            Self::VirtualChangeDivisorW(Default::default()),
+            Self::HalfwordAlignment(Default::default()),
+            Self::WordAlignment(Default::default()),
+            Self::MulUNoOverflow(Default::default()),
+            Self::VirtualRev8W(Default::default()),
+            Self::VirtualXORROT32(Default::default()),
+            Self::VirtualXORROT24(Default::default()),
+            Self::VirtualXORROT16(Default::default()),
+            Self::VirtualXORROT63(Default::default()),
+            Self::VirtualXORROTW16(Default::default()),
+            Self::VirtualXORROTW12(Default::default()),
+            Self::VirtualXORROTW8(Default::default()),
+            Self::VirtualXORROTW7(Default::default()),
+        ]
+    }
+
     /// Returns the discriminant as a `usize`, suitable for array indexing.
     #[inline]
     pub fn index(&self) -> usize {

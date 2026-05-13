@@ -575,7 +575,7 @@ impl<F: Field> Neg for Polynomial<F> {
 mod tests {
     use super::*;
     use jolt_field::Fr;
-    use jolt_field::{FromPrimitiveInt, RandomSampling};
+    use jolt_field::RandomSampling;
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;

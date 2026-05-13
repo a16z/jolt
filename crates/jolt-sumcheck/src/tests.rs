@@ -6,7 +6,7 @@
     reason = "tests may panic on assertion failures"
 )]
 
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::Fr;
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
 

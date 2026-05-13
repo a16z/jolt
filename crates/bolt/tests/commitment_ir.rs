@@ -1417,8 +1417,8 @@ fn stage5_rust_targets_extract_and_compile() {
     assert!(verifier_source
         .source
         .contains("jolt.stage5.registers_val_evaluation"));
-    assert!(verifier_source.source.contains("LookupTableFlag_39"));
-    assert!(!verifier_source.source.contains("LookupTableFlag_40"));
+    assert!(verifier_source.source.contains("LookupTableFlag_40"));
+    assert!(!verifier_source.source.contains("LookupTableFlag_41"));
     assert!(verifier_source
         .source
         .contains("stage5.instruction_read_raf.eval.InstructionRa_7"));
@@ -1453,7 +1453,7 @@ fn stage6_rust_targets_extract_and_compile() {
     assert_eq!(prover_program.steps.len(), 10);
     assert_eq!(prover_program.transcript_squeezes.len(), 9);
     assert!(prover_program.transcript_absorb_bytes.is_empty());
-    assert_eq!(prover_program.opening_inputs.len(), 90);
+    assert_eq!(prover_program.opening_inputs.len(), 91);
     assert!(prover_program.field_exprs.len() > 150);
     assert_eq!(prover_program.field_constants.len(), 1);
     assert!(prover_program.opening_equalities.is_empty());
@@ -3169,11 +3169,11 @@ fn assert_rust_source_compiles(_filename: &str, source: &str) {
     .expect("write generated cargo manifest");
     std::fs::create_dir_all(dir.join("src")).expect("create generated src dir");
     if source.contains("super::common") {
-        let common = std::fs::read_to_string(
-            workspace_root.join("crates/jolt-verifier/src/stages/common.rs"),
+        std::fs::write(
+            dir.join("src/common.rs"),
+            generated_verifier_common_source(&workspace_root),
         )
-        .expect("read generated verifier common stage source");
-        std::fs::write(dir.join("src/common.rs"), common).expect("write generated common source");
+        .expect("write generated common source");
         std::fs::write(dir.join("src/generated.rs"), source).expect("write generated source");
         std::fs::write(
             dir.join("src/lib.rs"),
@@ -3445,10 +3445,20 @@ fn assert_generated_jolt_chain_self_parity_runs(files: &[&RustSourceFile], main_
 }
 
 fn write_verifier_common_module(src_dir: &Path, workspace_root: &Path) {
+    std::fs::write(
+        src_dir.join("common.rs"),
+        generated_verifier_common_source(workspace_root),
+    )
+    .expect("write generated common source");
+}
+
+fn generated_verifier_common_source(workspace_root: &Path) -> String {
     let common =
         std::fs::read_to_string(workspace_root.join("crates/jolt-verifier/src/stages/common.rs"))
             .expect("read generated verifier common stage source");
-    std::fs::write(src_dir.join("common.rs"), common).expect("write generated common source");
+    format!(
+        "#![allow(dead_code, unused_imports, unused_macros, reason = \"generated verifier helpers are shared across generated stage subsets\")]\n{common}"
+    )
 }
 
 fn workspace_root() -> std::path::PathBuf {
@@ -3538,7 +3548,7 @@ mod verify_commitment_phase;
 use std::borrow::Cow;
 
 use jolt_dory::DoryScheme;
-use jolt_field::{Field, Fr};
+use jolt_field::Fr;
 use jolt_transcript::{Blake2bTranscript, Transcript};
 
 struct Inputs;
@@ -3600,7 +3610,7 @@ fn generated_pipeline_self_parity_main() -> String {
 mod verify_commitment_phase;
 
 use jolt_dory::DoryScheme;
-use jolt_field::{Field, Fr};
+use jolt_field::Fr;
 use jolt_transcript::{Blake2bTranscript, Transcript};
 
 "
@@ -3663,7 +3673,7 @@ fn generated_stage1_shape_self_parity_main() -> String {
     let mut source = r"mod prove_stage1_outer;
 mod verify_stage1_outer;
 
-use jolt_field::{Field, Fr};
+use jolt_field::Fr;
 use jolt_kernels::stage1::Stage1ShapeKernelExecutor;
 use jolt_transcript::{Blake2bTranscript, Transcript};
 
@@ -3768,7 +3778,7 @@ fn generated_stage1_real_dispatch_main() -> &'static str {
     r#"mod prove_stage1_outer;
 mod verify_stage1_outer;
 
-use jolt_field::{Field, Fr};
+use jolt_field::Fr;
 use jolt_kernels::stage1::{
     Stage1KernelError, Stage1ProverInputs, Stage1ProverKernelExecutor,
 };
@@ -3829,7 +3839,7 @@ fn generated_stage1_synthetic_remaining_main() -> String {
     let mut source = r"mod prove_stage1_outer;
 mod verify_stage1_outer;
 
-use jolt_field::{Field, Fr};
+use jolt_field::Fr;
 use jolt_kernels::stage1::{
     Stage1OuterRemainingContext, Stage1OuterRemainingEvaluator, Stage1ProverInputs,
     Stage1ProverKernelExecutor,
@@ -3969,7 +3979,7 @@ fn generated_stage1_r1cs_data_main() -> String {
     let mut source = r"mod prove_stage1_outer;
 mod verify_stage1_outer;
 
-use jolt_field::{Field, Fr};
+use jolt_field::Fr;
 use jolt_kernels::stage1::{
     Stage1OuterR1csData, Stage1ProverInputs, Stage1ProverKernelExecutor,
 };
@@ -4039,7 +4049,7 @@ mod verify_commitment_phase;
 mod verify_stage1_outer;
 
 use jolt_dory::DoryScheme;
-use jolt_field::{Field, Fr};
+use jolt_field::Fr;
 use jolt_kernels::stage1::{
     Stage1OuterRemainingContext, Stage1OuterRemainingEvaluator, Stage1ProverInputs,
     Stage1ProverKernelExecutor,
@@ -4178,6 +4188,7 @@ impl Transcript for TracingTranscript {
     }
 }
 
+#[allow(dead_code)]
 fn assert_transcript_step_parity(prover: &TracingTranscript, verifier: &TracingTranscript) {
     assert_eq!(prover.events, verifier.events);
     assert_eq!(prover.state(), verifier.state());

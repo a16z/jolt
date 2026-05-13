@@ -215,7 +215,7 @@ pub(crate) fn challenge_powers<F: Field>(c: F, n: usize) -> Vec<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::Fr;
     use num_traits::Zero;
 
     #[test]

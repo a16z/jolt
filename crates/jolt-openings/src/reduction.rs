@@ -168,7 +168,7 @@ fn group_verifier_claims_by_point<F: Field, C>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+    use jolt_field::{Fr, RandomSampling};
     use jolt_poly::Polynomial;
 
     #[test]

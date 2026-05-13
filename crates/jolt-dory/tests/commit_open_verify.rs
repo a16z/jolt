@@ -7,7 +7,7 @@
 
 use dory::backends::arkworks::ArkG1;
 use jolt_dory::DoryScheme;
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+use jolt_field::{Fr, RandomSampling};
 use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme,
 };

@@ -1,0 +1,21 @@
+[package]
+name = "jolt-verifier"
+version = "0.0.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Bolt-generated Jolt verifier role crate"
+repository = "https://github.com/a16z/jolt"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-dory.workspace = true
+jolt-field.workspace = true
+jolt-lookup-tables.workspace = true
+jolt-openings.workspace = true
+jolt-poly.workspace = true
+jolt-sumcheck.workspace = true
+jolt-transcript.workspace = true
+serde.workspace = true
+tracing.workspace = true

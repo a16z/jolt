@@ -256,7 +256,7 @@ impl CommitmentCpuProgram {
                 "use std::borrow::Cow;\n\
                  \n\
                  use jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme};\n\
-                 use jolt_field::{Field, Fr};\n\
+                 use jolt_field::Fr;\n\
                  use jolt_openings::CommitmentScheme as _;\n\
                  use jolt_poly::{EqPolynomial, MultilinearPoly};\n\
                  use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};\n\
@@ -540,13 +540,13 @@ impl MultilinearPoly<Fr> for AddressMajorOneHotPolynomial {
         result
     }
 
-    fn is_sparse(&self) -> bool {
+    fn is_one_hot(&self) -> bool {
         true
     }
 
-    fn for_each_nonzero(&self, f: &mut dyn FnMut(usize, Fr)) {
+    fn for_each_one(&self, f: &mut dyn FnMut(usize)) {
         for flat in self.nonzero_flat_indices() {
-            f(flat, Fr::from_u64(1));
+            f(flat);
         }
     }
 }
@@ -908,6 +908,14 @@ impl Default for OneHotChunkCounts {
                 }
             }
         }
+        let input_binding = if initializers
+            .iter()
+            .any(|initializer| initializer.contains("inputs."))
+        {
+            "inputs"
+        } else {
+            "_inputs"
+        };
         let fields = fields.join("\n");
         let provider_arms = provider_arms.join("\n");
         let initializers = initializers.join("\n");
@@ -930,7 +938,7 @@ impl CommitmentInputProvider for CommitmentOracles {{
 }}
 
 pub fn build_commitment_oracles(
-    inputs: &CommitmentOracleInputs<'_>,
+    {input_binding}: &CommitmentOracleInputs<'_>,
 ) -> Result<CommitmentOracles, CommitmentPhaseError> {{
     Ok(CommitmentOracles {{
 {initializers}

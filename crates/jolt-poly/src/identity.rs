@@ -60,7 +60,6 @@ impl<F: Field> crate::MultilinearEvaluation<F> for IdentityPolynomial {
 mod tests {
     use super::*;
     use jolt_field::Fr;
-    use jolt_field::FromPrimitiveInt;
     use num_traits::{One, Zero};
 
     #[test]

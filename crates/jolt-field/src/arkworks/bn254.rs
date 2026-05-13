@@ -285,6 +285,31 @@ impl allocative::Allocative for Fr {
 }
 
 impl Fr {
+    #[inline(always)]
+    pub fn from_bool(value: bool) -> Self {
+        <Self as FromPrimitiveInt>::from_bool(value)
+    }
+
+    #[inline(always)]
+    pub fn from_u64(value: u64) -> Self {
+        <Self as FromPrimitiveInt>::from_u64(value)
+    }
+
+    #[inline(always)]
+    pub fn from_i64(value: i64) -> Self {
+        <Self as FromPrimitiveInt>::from_i64(value)
+    }
+
+    #[inline(always)]
+    pub fn from_u128(value: u128) -> Self {
+        <Self as FromPrimitiveInt>::from_u128(value)
+    }
+
+    #[inline(always)]
+    pub fn from_i128(value: i128) -> Self {
+        <Self as FromPrimitiveInt>::from_i128(value)
+    }
+
     /// Deserializes from little-endian bytes, reducing modulo the field prime.
     #[inline]
     pub fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
@@ -296,6 +321,13 @@ impl Fr {
     #[inline]
     pub fn from_bigint_unchecked(limbs: Limbs<4>) -> Self {
         Fr(bn254_ops::from_bigint_unchecked(limbs.into()))
+    }
+
+    /// Reduces raw little-endian limbs modulo the field prime and wraps the
+    /// result as a field element.
+    #[inline]
+    pub fn from_barrett_reduced_limbs<const L: usize>(limbs: Limbs<L>) -> Self {
+        Fr(bn254_ops::from_barrett_reduced_limbs(limbs.into()))
     }
 
     /// Access the internal Montgomery-form limbs.

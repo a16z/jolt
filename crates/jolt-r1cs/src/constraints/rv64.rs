@@ -388,7 +388,7 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
 #[expect(clippy::expect_used, reason = "tests may unwind via panic")]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::Fr;
     use num_traits::Zero;
 
     /// A no-op cycle: const=1, all else zero. All eq-conditional guards
