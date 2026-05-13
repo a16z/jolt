@@ -266,29 +266,65 @@ pub fn prove_program(
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
 ) -> Result<ProveOutput, ProveProgramError> {
-    // ----- Phase 1: trace -----
-    // Two-pass advice: pass 1 runs the `compute_advice`-feature ELF (if
-    // present, e.g. for BN254 Fr coprocessor guests using
-    // `jolt-inlines-bn254-fr`) to populate the advice tape; pass 2 traces
-    // the normal ELF which then emits real FR coprocessor opcodes that
-    // consume the advice. For FR-less guests `trace_two_pass_advice`
-    // falls back to single-pass, returning an empty `field_reg_events`
-    // vector. Either way the returned trace+events are what subsequent
-    // stages consume.
     let (_lazy_trace, trace, final_memory, io_device, field_reg_events) =
         program.trace_two_pass_advice(inputs, untrusted_advice, trusted_advice);
-
     let (bytecode_raw, init_mem, _program_size, entry_address) = program.decode();
 
-    // ----- Phase 2: params (shape constants) -----
-    // The goldens-baked `jolt-prover`/`jolt-verifier` programs depend on
-    // (a) the d-regime parameters (`log_k_chunk`, `bytecode_d`, `ram_d`,
-    // `instruction_d`, `instruction_ra_virtual_d`, `register_log_k`) AND
-    // (b) the absolute trace length — dory tier-1 streaming buffers are
-    // sized at the fixture's `1 << FIXTURE_LOG_T`. So we pad small guests
-    // *up* to the fixture floor, then require exact equality on
-    // `(log_t, log_k_bytecode, log_k_ram)`. Guests whose natural shape
-    // exceeds the fixture in any dimension need regenerated goldens.
+    let shape = check_shape(&trace, &io_device, &init_mem, bytecode_raw, entry_address)?;
+    let params = ModularJoltParams::new(shape.log_t, shape.log_k_bytecode, shape.log_k_ram);
+
+    let stages = assemble_and_prove(
+        &trace,
+        &shape.bytecode,
+        &io_device,
+        &init_mem,
+        &final_memory,
+        &field_reg_events,
+        entry_address,
+        &params,
+        shape.trace_length,
+        shape.ram_k,
+    )?;
+
+    Ok(ProveOutput {
+        proof: stages.proof,
+        io_device,
+        artifacts: stages.artifacts,
+        bytecode_entries: stages.bytecode_entries,
+        entry_bytecode_index: stages.entry_bytecode_index,
+        lookup_table_count: stages.lookup_table_count,
+        initial_ram_state: stages.initial_ram_state,
+        final_ram_state: stages.final_ram_state,
+        lowest_addr: stages.lowest_addr,
+        entry_address,
+        params,
+        pcs_setup: stages.pcs_setup,
+    })
+}
+
+/// Resolved shape parameters after padding small guests up to the goldens
+/// fixture. `prove_program` rejects anything whose natural padded shape
+/// doesn't equal the fixture in `(log_t, log_k_bytecode, log_k_ram)`.
+struct ResolvedShape {
+    bytecode: BytecodePreprocessing,
+    trace_length: usize,
+    ram_k: usize,
+    log_t: usize,
+    log_k_bytecode: usize,
+    log_k_ram: usize,
+}
+
+/// Phase 1.5 + 2: pad trace/bytecode/RAM up to the goldens-baked fixture
+/// and reject anything that doesn't match exactly. The goldens depend on
+/// the d-regime AND the absolute fixture log_t (dory tier-1 streaming
+/// buffers are sized at the fixture trace length).
+fn check_shape(
+    trace: &[tracer::instruction::Cycle],
+    io_device: &JoltDevice,
+    init_mem: &[(u64, u8)],
+    bytecode_raw: Vec<Instruction>,
+    entry_address: u64,
+) -> Result<ResolvedShape, ProveProgramError> {
     let natural_trace_length = trace.len().next_power_of_two().max(256);
     let trace_length = natural_trace_length.max(1usize << FIXTURE_LOG_T);
     let bytecode = BytecodePreprocessing::preprocess_padded(
@@ -296,12 +332,12 @@ pub fn prove_program(
         entry_address,
         1usize << FIXTURE_LOG_K_BYTECODE,
     );
-    let bytecode_k = bytecode.code_size;
-    let log_t = trace_length.trailing_zeros() as usize;
-    let log_k_bytecode = bytecode_k.trailing_zeros() as usize;
     let memory_layout = io_device.memory_layout.clone();
-    let natural_ram_k = compute_min_ram_k(&init_mem, &trace, &memory_layout);
+    let natural_ram_k = compute_min_ram_k(init_mem, trace, &memory_layout);
     let ram_k = natural_ram_k.max(1usize << FIXTURE_LOG_K_RAM);
+
+    let log_t = trace_length.trailing_zeros() as usize;
+    let log_k_bytecode = bytecode.code_size.trailing_zeros() as usize;
     let log_k_ram = ram_k.trailing_zeros() as usize;
 
     if log_t != FIXTURE_LOG_T
@@ -315,7 +351,50 @@ pub fn prove_program(
         });
     }
 
-    let params = ModularJoltParams::new(log_t, log_k_bytecode, log_k_ram);
+    Ok(ResolvedShape {
+        bytecode,
+        trace_length,
+        ram_k,
+        log_t,
+        log_k_bytecode,
+        log_k_ram,
+    })
+}
+
+/// Phase 3+4+6 output bundle, owned by [`assemble_and_prove`].
+struct ProveStageOutput {
+    proof: JoltProof,
+    artifacts: JoltProverArtifacts,
+    bytecode_entries: Vec<WitnessStage6BytecodeEntry<Fr>>,
+    entry_bytecode_index: usize,
+    lookup_table_count: usize,
+    initial_ram_state: Vec<u64>,
+    final_ram_state: Vec<u64>,
+    lowest_addr: u64,
+    pcs_setup: DoryProverSetup,
+}
+
+/// Drive the full Bolt stage chain on a shape-checked trace. Mirrors
+/// `bolt_oracle.rs::assert_bolt_full_real_trace_self_parity` (the canonical
+/// staged-prove reference) modulo the two SDK-specific substitutions
+/// captured in the file header.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "thin internal helper; arguments are derived state from prove_program"
+)]
+fn assemble_and_prove(
+    trace: &[tracer::instruction::Cycle],
+    bytecode: &BytecodePreprocessing,
+    io_device: &JoltDevice,
+    init_mem: &[(u64, u8)],
+    final_memory: &tracer::emulator::memory::Memory,
+    field_reg_events: &[tracer::emulator::cpu::FieldRegEvent],
+    entry_address: u64,
+    params: &ModularJoltParams,
+    trace_length: usize,
+    ram_k: usize,
+) -> Result<ProveStageOutput, ProveProgramError> {
+    let memory_layout = io_device.memory_layout.clone();
 
     // ----- Phase 3: trace-derived data (class A) -----
     let r1cs_key = R1csKey::new(rv64::rv64_constraints::<Fr>(), trace_length);
@@ -329,16 +408,16 @@ pub fn prove_program(
         })
         .collect();
     let (cycle_inputs, r1cs_witness, _instruction_flags) = extract_trace::<_, Fr>(
-        &trace,
+        trace,
         trace_length,
-        &bytecode,
+        bytecode,
         &memory_layout,
         r1cs_key.num_vars_padded,
         &fr_events,
     );
-    let rv64_cycles: Vec<Stage1Rv64Cycle> = stage1_rv64_cycles(&trace, trace_length, &bytecode);
-    let product_virtual_cycles = stage2_product_virtual_cycles(&trace, trace_length);
-    let instruction_lookup_cycles = stage2_instruction_lookup_cycles(&trace, trace_length);
+    let rv64_cycles: Vec<Stage1Rv64Cycle> = stage1_rv64_cycles(trace, trace_length, bytecode);
+    let product_virtual_cycles = stage2_product_virtual_cycles(trace, trace_length);
+    let instruction_lookup_cycles = stage2_instruction_lookup_cycles(trace, trace_length);
     let lowest_addr = memory_layout.get_lowest_address();
     let remap_addr = |addr: u64| {
         if addr == 0 || addr < lowest_addr {
@@ -347,20 +426,20 @@ pub fn prove_program(
             Some(((addr - lowest_addr) / 8) as usize)
         }
     };
-    let ram_accesses: Vec<Stage2RamAccess> = stage2_ram_accesses(&trace, trace_length, remap_addr);
-    let stage3_cycles: Vec<Stage3Cycle> = stage3_cycles(&trace, trace_length, &bytecode);
+    let ram_accesses: Vec<Stage2RamAccess> = stage2_ram_accesses(trace, trace_length, remap_addr);
+    let stage3_cycles: Vec<Stage3Cycle> = stage3_cycles(trace, trace_length, bytecode);
     let stage4_register_accesses: Vec<Stage4RegisterAccess> =
-        stage4_register_accesses(&trace, trace_length);
-    let lookup_trace: Stage5LookupTrace = stage5_lookup_trace(&trace, trace_length, |cycle| {
+        stage4_register_accesses(trace, trace_length);
+    let lookup_trace: Stage5LookupTrace = stage5_lookup_trace(trace, trace_length, |cycle| {
         let instr = cycle.instruction();
         instruction_lookup_table_index(&instr)
     });
     let stage6_bytecode_entries_vec: Vec<WitnessStage6BytecodeEntry<Fr>> =
-        stage6_bytecode_entries::<Fr, _>(&bytecode, |instruction| {
+        stage6_bytecode_entries::<Fr, _>(bytecode, |instruction| {
             instruction_lookup_table_index(instruction)
         });
     let (initial_ram_state, final_ram_state) =
-        build_ram_states(&init_mem, &final_memory, &io_device, ram_k);
+        build_ram_states(init_mem, final_memory, io_device, ram_k);
 
     // ----- Phase 4: PCS setup -----
     // log_t + log_k_chunk = 16 + 4 = 20 for the fixture shape.
@@ -382,7 +461,7 @@ pub fn prove_program(
     let mut transcript = Blake2bTranscript::<Fr>::new(TRANSCRIPT_LABEL);
     append_bolt_preamble(
         &mut transcript,
-        &io_event_data_for_preamble(&io_device, &params, entry_address),
+        &io_event_data_for_preamble(io_device, params, entry_address),
     );
 
     // 6a. Commitment phase
@@ -579,9 +658,8 @@ pub fn prove_program(
         stage7: stage7_artifacts,
     };
 
-    Ok(ProveOutput {
+    Ok(ProveStageOutput {
         proof,
-        io_device,
         artifacts,
         bytecode_entries: stage6_bytecode_entries_vec,
         entry_bytecode_index,
@@ -589,8 +667,6 @@ pub fn prove_program(
         initial_ram_state,
         final_ram_state,
         lowest_addr,
-        entry_address,
-        params,
         pcs_setup,
     })
 }
