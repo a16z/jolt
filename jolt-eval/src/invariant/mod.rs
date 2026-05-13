@@ -2,6 +2,7 @@ pub mod field_mul_scalar;
 #[cfg(test)]
 mod macro_tests;
 pub mod soundness;
+pub mod source_to_jolt_expansion_equivalence;
 pub mod split_eq_bind;
 pub mod synthesis;
 
@@ -136,6 +137,9 @@ pub enum JoltInvariants {
     SplitEqBindHighLow(split_eq_bind::SplitEqBindHighLowInvariant),
     FieldMulScalar(field_mul_scalar::FieldMulScalarInvariant),
     Soundness(soundness::SoundnessInvariant),
+    SourceToJoltExpansionEquivalence(
+        source_to_jolt_expansion_equivalence::SourceToJoltExpansionEquivalenceInvariant,
+    ),
 }
 
 macro_rules! dispatch {
@@ -145,6 +149,7 @@ macro_rules! dispatch {
             JoltInvariants::SplitEqBindHighLow($inv) => $body,
             JoltInvariants::FieldMulScalar($inv) => $body,
             JoltInvariants::Soundness($inv) => $body,
+            JoltInvariants::SourceToJoltExpansionEquivalence($inv) => $body,
         }
     };
 }
@@ -156,6 +161,9 @@ impl JoltInvariants {
             Self::SplitEqBindHighLow(split_eq_bind::SplitEqBindHighLowInvariant),
             Self::FieldMulScalar(field_mul_scalar::FieldMulScalarInvariant),
             Self::Soundness(soundness::SoundnessInvariant),
+            Self::SourceToJoltExpansionEquivalence(
+                source_to_jolt_expansion_equivalence::SourceToJoltExpansionEquivalenceInvariant,
+            ),
         ]
     }
 
