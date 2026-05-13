@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::expand) fn expand_scw(
-    instruction: &NormalizedInstruction,
+    instruction: &JoltRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let v_reservation = reservation_w_register();
     let v_reservation_d = reservation_d_register();

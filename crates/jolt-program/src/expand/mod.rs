@@ -36,7 +36,9 @@ use arithmetic::*;
 use control_flow::*;
 use division::*;
 use grammar::{reg, ExpandedInstructionSequence, ExpansionBuilder, RegisterOperand, TempId};
-use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
+use jolt_riscv::{
+    JoltInstructionKind, JoltRow, NormalizedOperands, SourceInstruction, SourceInstructionKind,
+};
 use materialize::ExpansionState;
 use memory::*;
 use metadata::stamp_inline_sequence;
@@ -44,16 +46,16 @@ use operands::*;
 use shifts::*;
 
 pub trait InlineExpansionProvider {
-    /// Expands a registered inline row into normalized rows.
+    /// Expands a registered inline row into Jolt rows.
     ///
     /// Provider output intentionally stays outside the provider-free builder
     /// core. The top-level entry point remaps `rd = x0` before calling this
     /// hook, then validates target legality and stamps sequence metadata.
     fn expand_inline(
         &mut self,
-        instruction: &NormalizedInstruction,
+        instruction: &SourceInstruction,
         allocator: &mut ExpansionAllocator,
-    ) -> Result<Vec<NormalizedInstruction>, ExpansionError>;
+    ) -> Result<Vec<JoltRow>, ExpansionError>;
 }
 
 #[derive(Debug, Default)]
@@ -62,50 +64,61 @@ pub struct NoInlineExpansionProvider;
 impl InlineExpansionProvider for NoInlineExpansionProvider {
     fn expand_inline(
         &mut self,
-        _instruction: &NormalizedInstruction,
+        _instruction: &SourceInstruction,
         _allocator: &mut ExpansionAllocator,
-    ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+    ) -> Result<Vec<JoltRow>, ExpansionError> {
         Err(ExpansionError::InlineProviderRequired)
     }
 }
 
 pub fn expand_instruction(
-    instruction: &NormalizedInstruction,
+    instruction: &SourceInstruction,
     allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+) -> Result<Vec<JoltRow>, ExpansionError> {
     expand_instruction_with_provider(instruction, allocator, &mut NoInlineExpansionProvider)
 }
 
 pub fn expand_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
-    instruction: &NormalizedInstruction,
+    instruction: &SourceInstruction,
     allocator: &mut ExpansionAllocator,
     inline_provider: &mut P,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let mut rewritten;
+) -> Result<Vec<JoltRow>, ExpansionError> {
+    expand_source_instruction_with_provider(instruction, allocator, inline_provider)
+}
+
+fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
+    instruction: &SourceInstruction,
+    allocator: &mut ExpansionAllocator,
+    inline_provider: &mut P,
+) -> Result<Vec<JoltRow>, ExpansionError> {
+    let rewritten_source;
     let mut allocated_rd_zero_register = None;
-    let instruction = if instruction.operands.rd == Some(0)
-        && !handles_rd_zero_internally(instruction.instruction_kind)
+    let instruction = if instruction.row().operands.rd == Some(0)
+        && !handles_rd_zero_internally(instruction.kind().jolt_kind())
     {
-        if instruction.instruction_kind.has_side_effects() {
+        if instruction.kind().jolt_kind().has_side_effects() {
             let virtual_register = allocator.allocate()?;
             allocated_rd_zero_register = Some(virtual_register);
-            rewritten = *instruction;
-            rewritten.operands.rd = Some(virtual_register);
-            &rewritten
+            rewritten_source = (*instruction).map_row(|mut row| {
+                row.operands.rd = Some(virtual_register);
+                row
+            });
+            &rewritten_source
         } else {
-            return Ok(vec![noop_for(*instruction)]);
+            return Ok(vec![noop_for(instruction.jolt_row())]);
         }
     } else {
         instruction
     };
+    let jolt_instruction = instruction.jolt_row();
 
-    let result = if instruction.instruction_kind == JoltInstructionKind::Inline {
+    let result = if instruction.kind() == SourceInstructionKind::Inline {
         let rows = inline_provider.expand_inline(instruction, allocator)?;
-        finalize_inline_provider_rows(*instruction, allocator, rows)
+        finalize_inline_provider_rows(jolt_instruction, allocator, rows)
     } else {
         let owned_allocator = std::mem::take(allocator);
         let mut state = ExpansionState::new(owned_allocator);
-        let result = state.expand_recursive(instruction);
+        let result = state.expand_recursive(&jolt_instruction);
         *allocator = state.into_allocator();
         result
     };
@@ -116,12 +129,12 @@ pub fn expand_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
 }
 
 fn finalize_inline_provider_rows(
-    source: NormalizedInstruction,
+    source: JoltRow,
     allocator: &mut ExpansionAllocator,
-    mut rows: Vec<NormalizedInstruction>,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+    mut rows: Vec<JoltRow>,
+) -> Result<Vec<JoltRow>, ExpansionError> {
     for register in allocator.take_registers_for_reset()? {
-        rows.push(NormalizedInstruction {
+        rows.push(JoltRow {
             instruction_kind: JoltInstructionKind::ADDI,
             address: source.address,
             operands: NormalizedOperands {
@@ -140,7 +153,7 @@ fn finalize_inline_provider_rows(
 
 /// Dispatches a source-only instruction to its recipe builder (phase 1).
 fn expand_source_only_instruction(
-    instruction: &NormalizedInstruction,
+    instruction: &JoltRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     match instruction.instruction_kind {
         JoltInstructionKind::ADDIW => expand_addiw(instruction),
@@ -213,20 +226,18 @@ fn expand_source_only_instruction(
     }
 }
 
-pub fn expand_program(
-    instructions: &[NormalizedInstruction],
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+pub fn expand_program(instructions: &[SourceInstruction]) -> Result<Vec<JoltRow>, ExpansionError> {
     expand_program_with_provider(instructions, &mut NoInlineExpansionProvider)
 }
 
 pub fn expand_program_with_provider<P: InlineExpansionProvider + ?Sized>(
-    instructions: &[NormalizedInstruction],
+    instructions: &[SourceInstruction],
     inline_provider: &mut P,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+) -> Result<Vec<JoltRow>, ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let mut expanded = Vec::new();
     for instruction in instructions {
-        expanded.extend(expand_instruction_with_provider(
+        expanded.extend(expand_source_instruction_with_provider(
             instruction,
             &mut allocator,
             inline_provider,

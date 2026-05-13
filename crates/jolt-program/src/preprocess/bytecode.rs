@@ -1,7 +1,7 @@
 #[cfg(feature = "serialization")]
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
-use jolt_riscv::{JoltInstructionKind, NormalizedInstruction};
+use jolt_riscv::{JoltInstructionKind, JoltRow};
 
 use crate::preprocess::PreprocessingError;
 
@@ -17,7 +17,7 @@ use crate::preprocess::PreprocessingError;
 )]
 pub struct BytecodePreprocessing {
     pub code_size: usize,
-    pub bytecode: Vec<NormalizedInstruction>,
+    pub bytecode: Vec<JoltRow>,
     /// Maps each unexpanded instruction address to its virtual bytecode index.
     pub pc_map: BytecodePCMapper,
     pub entry_address: u64,
@@ -25,7 +25,7 @@ pub struct BytecodePreprocessing {
 
 impl BytecodePreprocessing {
     pub fn preprocess(
-        mut bytecode: Vec<NormalizedInstruction>,
+        mut bytecode: Vec<JoltRow>,
         entry_address: u64,
     ) -> Result<Self, PreprocessingError> {
         bytecode.insert(0, noop_instruction());
@@ -46,7 +46,7 @@ impl BytecodePreprocessing {
         self.pc_map.get_pc(self.entry_address as usize, 0)
     }
 
-    pub fn get_pc(&self, instruction: &NormalizedInstruction) -> Option<usize> {
+    pub fn get_pc(&self, instruction: &JoltRow) -> Option<usize> {
         if instruction.instruction_kind == JoltInstructionKind::NoOp {
             return Some(0);
         }
@@ -72,7 +72,7 @@ pub struct BytecodePCMapper {
 }
 
 impl BytecodePCMapper {
-    pub fn try_new(bytecode: &[NormalizedInstruction]) -> Result<Self, PreprocessingError> {
+    pub fn try_new(bytecode: &[JoltRow]) -> Result<Self, PreprocessingError> {
         let mut indices = vec![Vec::new(); Self::index_count(bytecode)];
         let mut last_pc = 0;
         indices[0].push((0, last_pc));
@@ -147,7 +147,7 @@ impl BytecodePCMapper {
         Ok(())
     }
 
-    fn index_count(bytecode: &[NormalizedInstruction]) -> usize {
+    fn index_count(bytecode: &[JoltRow]) -> usize {
         let max_address = bytecode
             .iter()
             .map(|instruction| instruction.address)
@@ -161,8 +161,8 @@ impl BytecodePCMapper {
     }
 }
 
-const fn noop_instruction() -> NormalizedInstruction {
-    NormalizedInstruction {
+const fn noop_instruction() -> JoltRow {
+    JoltRow {
         instruction_kind: JoltInstructionKind::NoOp,
         address: 0,
         operands: jolt_riscv::NormalizedOperands {
@@ -180,7 +180,7 @@ const fn noop_instruction() -> NormalizedInstruction {
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
-    use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
+    use jolt_riscv::{JoltInstructionKind, JoltRow, NormalizedOperands};
 
     use super::{BytecodePCMapper, BytecodePreprocessing, PreprocessingError};
 
@@ -263,11 +263,8 @@ mod tests {
         );
     }
 
-    fn instruction(
-        address: usize,
-        virtual_sequence_remaining: Option<u16>,
-    ) -> NormalizedInstruction {
-        NormalizedInstruction {
+    fn instruction(address: usize, virtual_sequence_remaining: Option<u16>) -> JoltRow {
+        JoltRow {
             instruction_kind: JoltInstructionKind::ADDI,
             address,
             operands: NormalizedOperands {

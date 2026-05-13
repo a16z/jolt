@@ -1,4 +1,4 @@
-use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
+use jolt_riscv::{JoltInstructionKind, JoltRow, NormalizedOperands};
 
 use crate::expand::{
     allocator::{ExpansionAllocator, NUM_VIRTUAL_INSTRUCTION_REGISTERS},
@@ -30,8 +30,8 @@ impl ExpansionState {
 
     pub(super) fn expand_recursive(
         &mut self,
-        instruction: &NormalizedInstruction,
-    ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+        instruction: &JoltRow,
+    ) -> Result<Vec<JoltRow>, ExpansionError> {
         self.allocator.enter_expansion()?;
         let result = self.dispatch(instruction);
         self.allocator.exit_expansion();
@@ -39,10 +39,7 @@ impl ExpansionState {
     }
 
     /// Routes: rd=x0 rewrite → recurse, native → pass-through, source-only → build recipe + materialize.
-    fn dispatch(
-        &mut self,
-        instruction: &NormalizedInstruction,
-    ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+    fn dispatch(&mut self, instruction: &JoltRow) -> Result<Vec<JoltRow>, ExpansionError> {
         if instruction.operands.rd == Some(0)
             && !handles_rd_zero_internally(instruction.instruction_kind)
         {
@@ -78,7 +75,7 @@ impl ExpansionState {
     pub(super) fn materialize(
         &mut self,
         sequence: ExpandedInstructionSequence,
-    ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+    ) -> Result<Vec<JoltRow>, ExpansionError> {
         let mut materializer = SequenceMaterializer::new(sequence.source);
         for op in sequence.ops {
             match op {
@@ -104,7 +101,7 @@ impl ExpansionState {
 /// Bounded output collector — rejects sequences exceeding `MAX_FINAL_ROWS_PER_SOURCE`.
 #[derive(Debug)]
 struct ExpansionBuffer {
-    rows: Vec<NormalizedInstruction>,
+    rows: Vec<JoltRow>,
 }
 
 impl ExpansionBuffer {
@@ -114,7 +111,7 @@ impl ExpansionBuffer {
         }
     }
 
-    fn push(&mut self, row: NormalizedInstruction) -> Result<(), ExpansionError> {
+    fn push(&mut self, row: JoltRow) -> Result<(), ExpansionError> {
         if self.rows.len() == MAX_FINAL_ROWS_PER_SOURCE {
             return Err(ExpansionError::CapacityExceeded {
                 actual: self.rows.len() + 1,
@@ -125,7 +122,7 @@ impl ExpansionBuffer {
         Ok(())
     }
 
-    fn extend_vec(&mut self, rows: Vec<NormalizedInstruction>) -> Result<(), ExpansionError> {
+    fn extend_vec(&mut self, rows: Vec<JoltRow>) -> Result<(), ExpansionError> {
         for row in rows {
             self.push(row)?;
         }
@@ -142,7 +139,7 @@ impl ExpansionBuffer {
         Ok(())
     }
 
-    fn into_vec(self) -> Vec<NormalizedInstruction> {
+    fn into_vec(self) -> Vec<JoltRow> {
         self.rows
     }
 }
@@ -195,7 +192,7 @@ struct SequenceMaterializer {
 }
 
 impl SequenceMaterializer {
-    fn new(source: NormalizedInstruction) -> Self {
+    fn new(source: JoltRow) -> Self {
         Self {
             address: source.address,
             is_compressed: source.is_compressed,
@@ -209,12 +206,12 @@ impl SequenceMaterializer {
         self.rows.push(row)
     }
 
-    fn extend(&mut self, rows: Vec<NormalizedInstruction>) -> Result<(), ExpansionError> {
+    fn extend(&mut self, rows: Vec<JoltRow>) -> Result<(), ExpansionError> {
         self.rows.extend_vec(rows)
     }
 
-    fn instruction(&self, row: RowTemplate) -> Result<NormalizedInstruction, ExpansionError> {
-        Ok(NormalizedInstruction {
+    fn instruction(&self, row: RowTemplate) -> Result<JoltRow, ExpansionError> {
+        Ok(JoltRow {
             instruction_kind: row.instruction_kind,
             address: self.address,
             operands: self.resolve_operands(row.operands)?,
@@ -261,7 +258,7 @@ impl SequenceMaterializer {
         }
     }
 
-    fn finish(self) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+    fn finish(self) -> Result<Vec<JoltRow>, ExpansionError> {
         if let Some(index) = self.temps.first_leaked() {
             return Err(ExpansionError::LeakedTemporaryRegister { index });
         }
@@ -278,8 +275,8 @@ mod tests {
 
     use super::*;
 
-    fn source() -> NormalizedInstruction {
-        NormalizedInstruction {
+    fn source() -> JoltRow {
+        JoltRow {
             instruction_kind: JoltInstructionKind::ADDIW,
             address: 0x8000_0000,
             operands: NormalizedOperands {

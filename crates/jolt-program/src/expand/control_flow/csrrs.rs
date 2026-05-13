@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::expand) fn expand_csrrs(
-    instruction: &NormalizedInstruction,
+    instruction: &JoltRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let csr = csr_address(instruction);
     let virtual_reg = virtual_register_for_csr(csr).ok_or(ExpansionError::UnsupportedCsr(csr))?;

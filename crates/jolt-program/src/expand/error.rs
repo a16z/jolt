@@ -24,7 +24,7 @@ pub enum ExpansionError {
     LeakedTemporaryRegister { index: usize },
     #[error("expansion allocated too many temporary registers: {actual}")]
     TooManyTemporaryRegisters { actual: usize },
-    #[error("malformed normalized instruction: {0}")]
+    #[error("malformed Jolt row: {0}")]
     MalformedInstruction(&'static str),
     #[error("instruction {0:?} is not legal in finalized provider-free bytecode")]
     IllegalTargetInstruction(jolt_riscv::JoltInstructionKind),

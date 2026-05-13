@@ -4,7 +4,8 @@
 )]
 
 use jolt_riscv::{
-    JoltInstructionKind, NormalizedInstruction, NormalizedOperands, SourceInstructionKind,
+    JoltInstructionKind, NormalizedOperands, SourceInline, SourceInstruction,
+    SourceInstructionKind, SourceRow,
 };
 
 use crate::ProgramError;
@@ -13,7 +14,7 @@ pub fn decode_instruction(
     word: u32,
     address: u64,
     is_compressed: bool,
-) -> Result<NormalizedInstruction, ProgramError> {
+) -> Result<SourceInstruction, ProgramError> {
     let opcode = word & 0x7f;
     let kind = match opcode {
         0b0110111 => SourceInstructionKind::LUI,
@@ -61,7 +62,7 @@ pub fn decode_instruction(
         _ => return invalid("unknown RV64 opcode"),
     };
 
-    Ok(normalized(kind, word, address, is_compressed))
+    Ok(source_instruction(kind, word, address, is_compressed))
 }
 
 fn decode_op_imm(word: u32) -> Result<SourceInstructionKind, ProgramError> {
@@ -184,21 +185,23 @@ fn decode_custom(word: u32) -> Result<SourceInstructionKind, ProgramError> {
     }
 }
 
-fn normalized(
+fn source_instruction(
     instruction_kind: SourceInstructionKind,
     word: u32,
     address: u64,
     is_compressed: bool,
-) -> NormalizedInstruction {
+) -> SourceInstruction {
     let jolt_kind = instruction_kind.jolt_kind();
-    NormalizedInstruction {
-        instruction_kind: jolt_kind,
-        address: address as usize,
-        operands: operands(jolt_kind, word),
-        virtual_sequence_remaining: None,
-        is_first_in_sequence: false,
-        is_compressed,
-    }
+    let inline = (instruction_kind == SourceInstructionKind::Inline).then(|| source_inline(word));
+    SourceInstruction::new(
+        instruction_kind,
+        SourceRow {
+            address: address as usize,
+            operands: operands(jolt_kind, word),
+            inline,
+            is_compressed,
+        },
+    )
 }
 
 fn operands(instruction_kind: JoltInstructionKind, word: u32) -> NormalizedOperands {
@@ -388,15 +391,16 @@ fn format_inline_operands(word: u32) -> NormalizedOperands {
         rd: Some(rd(word)),
         rs1: Some(rs1(word)),
         rs2: Some(rs2(word)),
-        imm: inline_metadata(word) as i128,
+        imm: 0,
     }
 }
 
-fn inline_metadata(word: u32) -> u32 {
-    let opcode = word & 0x7f;
-    let funct3 = funct3(word);
-    let funct7 = funct7(word);
-    opcode | (funct3 << 7) | (funct7 << 10)
+fn source_inline(word: u32) -> SourceInline {
+    SourceInline {
+        opcode: (word & 0x7f) as u8,
+        funct3: funct3(word) as u8,
+        funct7: funct7(word) as u8,
+    }
 }
 
 fn rd(word: u32) -> u8 {

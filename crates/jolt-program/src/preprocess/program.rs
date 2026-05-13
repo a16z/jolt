@@ -1,5 +1,5 @@
 use common::jolt_device::MemoryLayout;
-use jolt_riscv::NormalizedInstruction;
+use jolt_riscv::JoltRow;
 
 use crate::preprocess::{
     bytecode::BytecodePreprocessing, ram::RAMPreprocessing, PreprocessingError,
@@ -19,7 +19,7 @@ pub struct JoltProgramPreprocessing {
 
 impl JoltProgramPreprocessing {
     pub fn new(
-        bytecode: Vec<NormalizedInstruction>,
+        bytecode: Vec<JoltRow>,
         memory_init: Vec<(u64, u8)>,
         memory_layout: MemoryLayout,
         entry_address: u64,

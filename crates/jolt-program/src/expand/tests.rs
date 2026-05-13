@@ -1,6 +1,7 @@
 use super::*;
 
 use common::constants::RAM_START_ADDRESS;
+use jolt_riscv::{SourceInline, SourceRow};
 #[cfg(feature = "serialization")]
 use serde::Deserialize;
 #[cfg(feature = "serialization")]
@@ -10,17 +11,21 @@ use sha2::{Digest, Sha256};
 #[derive(Debug, Deserialize)]
 struct ExpansionParityCase {
     name: String,
-    input: NormalizedInstruction,
+    input: SourceInstruction,
     output_sha256: String,
 }
 
-fn instruction(
-    instruction_kind: JoltInstructionKind,
+fn source_row(
+    instruction_kind: SourceInstructionKind,
     rd: Option<u8>,
     is_compressed: bool,
-) -> NormalizedInstruction {
-    NormalizedInstruction {
-        instruction_kind,
+) -> SourceRow {
+    let inline = (instruction_kind == SourceInstructionKind::Inline).then_some(SourceInline {
+        opcode: 0x2b,
+        funct3: 0,
+        funct7: 0,
+    });
+    SourceRow {
         address: 0x8000_0000,
         operands: NormalizedOperands {
             rd,
@@ -28,17 +33,27 @@ fn instruction(
             rs2: Some(2),
             imm: 7,
         },
-        virtual_sequence_remaining: None,
-        is_first_in_sequence: false,
+        inline,
         is_compressed,
     }
+}
+
+fn instruction(
+    instruction_kind: SourceInstructionKind,
+    rd: Option<u8>,
+    is_compressed: bool,
+) -> SourceInstruction {
+    SourceInstruction::new(
+        instruction_kind,
+        source_row(instruction_kind, rd, is_compressed),
+    )
 }
 
 #[test]
 fn side_effect_free_rd_zero_becomes_noop_addi() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let expanded = expand_instruction(
-        &instruction(JoltInstructionKind::ADD, Some(0), true),
+        &instruction(SourceInstructionKind::ADD, Some(0), true),
         &mut allocator,
     )?;
 
@@ -56,7 +71,7 @@ fn side_effect_free_rd_zero_becomes_noop_addi() -> Result<(), ExpansionError> {
 fn side_effecting_rd_zero_rewrites_to_temporary_register() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let expanded = expand_instruction(
-        &instruction(JoltInstructionKind::JAL, Some(0), false),
+        &instruction(SourceInstructionKind::JAL, Some(0), false),
         &mut allocator,
     )?;
 
@@ -69,7 +84,7 @@ fn side_effecting_rd_zero_rewrites_to_temporary_register() -> Result<(), Expansi
 #[test]
 fn trap_related_rd_zero_uses_instruction_expansion() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
-    let input = instruction(JoltInstructionKind::ECALL, Some(0), false);
+    let input = instruction(SourceInstructionKind::ECALL, Some(0), false);
     let expanded = expand_instruction(&input, &mut allocator)?;
 
     assert_eq!(expanded.len(), 7);
@@ -81,7 +96,7 @@ fn trap_related_rd_zero_uses_instruction_expansion() -> Result<(), ExpansionErro
 #[test]
 fn inline_requires_provider() {
     let mut allocator = ExpansionAllocator::new();
-    let input = instruction(JoltInstructionKind::Inline, Some(3), false);
+    let input = instruction(SourceInstructionKind::Inline, Some(3), false);
 
     assert!(matches!(
         expand_instruction(&input, &mut allocator),
@@ -91,10 +106,11 @@ fn inline_requires_provider() {
 
 #[test]
 fn csr_zero_is_rejected() {
-    for instruction_kind in [JoltInstructionKind::CSRRW, JoltInstructionKind::CSRRS] {
+    for instruction_kind in [SourceInstructionKind::CSRRW, SourceInstructionKind::CSRRS] {
         let mut allocator = ExpansionAllocator::new();
-        let mut input = instruction(instruction_kind, Some(3), false);
+        let mut input = source_row(instruction_kind, Some(3), false);
         input.operands.imm = 0;
+        let input = SourceInstruction::new(instruction_kind, input);
 
         assert!(matches!(
             expand_instruction(&input, &mut allocator),
@@ -106,10 +122,10 @@ fn csr_zero_is_rejected() {
 #[test]
 fn lr_sc_expansions_restrict_address_to_ram() -> Result<(), ExpansionError> {
     for instruction_kind in [
-        JoltInstructionKind::LRW,
-        JoltInstructionKind::LRD,
-        JoltInstructionKind::SCW,
-        JoltInstructionKind::SCD,
+        SourceInstructionKind::LRW,
+        SourceInstructionKind::LRD,
+        SourceInstructionKind::SCW,
+        SourceInstructionKind::SCD,
     ] {
         let mut allocator = ExpansionAllocator::new();
         let expanded = expand_instruction(
@@ -132,7 +148,7 @@ fn lr_sc_expansions_restrict_address_to_ram() -> Result<(), ExpansionError> {
 
 #[test]
 fn sc_success_advice_is_not_position_dependent() -> Result<(), ExpansionError> {
-    for instruction_kind in [JoltInstructionKind::SCW, JoltInstructionKind::SCD] {
+    for instruction_kind in [SourceInstructionKind::SCW, SourceInstructionKind::SCD] {
         let mut allocator = ExpansionAllocator::new();
         let expanded = expand_instruction(
             &instruction(instruction_kind, Some(3), false),
@@ -154,21 +170,22 @@ fn sc_success_advice_is_not_position_dependent() -> Result<(), ExpansionError> {
 fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
     #[derive(Default)]
     struct CapturingProvider {
-        captured: Option<NormalizedInstruction>,
+        captured: Option<SourceInstruction>,
     }
 
     impl InlineExpansionProvider for CapturingProvider {
         fn expand_inline(
             &mut self,
-            instruction: &NormalizedInstruction,
+            instruction: &SourceInstruction,
             _allocator: &mut ExpansionAllocator,
-        ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+        ) -> Result<Vec<JoltRow>, ExpansionError> {
             self.captured = Some(*instruction);
-            Ok(vec![NormalizedInstruction {
+            let row = instruction.row();
+            Ok(vec![JoltRow {
                 instruction_kind: JoltInstructionKind::ADDI,
-                address: instruction.address,
+                address: row.address,
                 operands: NormalizedOperands {
-                    rd: instruction.operands.rd,
+                    rd: row.operands.rd,
                     rs1: Some(0),
                     rs2: None,
                     imm: 0,
@@ -180,8 +197,7 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
         }
     }
 
-    let input = NormalizedInstruction {
-        instruction_kind: JoltInstructionKind::Inline,
+    let input = SourceRow {
         address: 0x8000_0000,
         operands: NormalizedOperands {
             rd: Some(0),
@@ -189,17 +205,23 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
             rs2: Some(20),
             imm: 0x0b,
         },
-        virtual_sequence_remaining: None,
-        is_first_in_sequence: false,
+        inline: Some(SourceInline {
+            opcode: 0x2b,
+            funct3: 0,
+            funct7: 0,
+        }),
         is_compressed: false,
     };
     let mut allocator = ExpansionAllocator::new();
     let mut provider = CapturingProvider::default();
+    let input = SourceInstruction::new(SourceInstructionKind::Inline, input);
 
     let expanded = expand_instruction_with_provider(&input, &mut allocator, &mut provider)?;
 
-    let mut expected = input;
-    expected.operands.rd = Some(40);
+    let expected = input.map_row(|mut row| {
+        row.operands.rd = Some(40);
+        row
+    });
 
     assert_eq!(provider.captured, Some(expected));
     assert_eq!(expanded.len(), 1);
@@ -217,14 +239,14 @@ fn inline_provider_output_is_validated_and_stamped() {
     impl InlineExpansionProvider for BadProvider {
         fn expand_inline(
             &mut self,
-            instruction: &NormalizedInstruction,
+            instruction: &SourceInstruction,
             _allocator: &mut ExpansionAllocator,
-        ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-            Ok(vec![*instruction])
+        ) -> Result<Vec<JoltRow>, ExpansionError> {
+            Ok(vec![instruction.jolt_row()])
         }
     }
 
-    let input = instruction(JoltInstructionKind::Inline, Some(3), true);
+    let input = instruction(SourceInstructionKind::Inline, Some(3), true);
     let mut allocator = ExpansionAllocator::new();
 
     assert!(matches!(
@@ -242,14 +264,15 @@ fn inline_provider_allocator_resets_are_appended() -> Result<(), ExpansionError>
     impl InlineExpansionProvider for AllocatingProvider {
         fn expand_inline(
             &mut self,
-            instruction: &NormalizedInstruction,
+            instruction: &SourceInstruction,
             allocator: &mut ExpansionAllocator,
-        ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+        ) -> Result<Vec<JoltRow>, ExpansionError> {
+            let row = instruction.row();
             let register = allocator.allocate_for_inline()?;
             allocator.release(register)?;
-            Ok(vec![NormalizedInstruction {
+            Ok(vec![JoltRow {
                 instruction_kind: JoltInstructionKind::ADDI,
-                address: instruction.address,
+                address: row.address,
                 operands: NormalizedOperands {
                     rd: Some(register),
                     rs1: Some(0),
@@ -263,7 +286,7 @@ fn inline_provider_allocator_resets_are_appended() -> Result<(), ExpansionError>
         }
     }
 
-    let input = instruction(JoltInstructionKind::Inline, Some(3), true);
+    let input = instruction(SourceInstructionKind::Inline, Some(3), true);
     let mut allocator = ExpansionAllocator::new();
     let expanded =
         expand_instruction_with_provider(&input, &mut allocator, &mut AllocatingProvider)?;
@@ -288,13 +311,14 @@ fn inline_provider_allows_sequences_larger_than_instruction_recipes() -> Result<
     impl InlineExpansionProvider for LargeProvider {
         fn expand_inline(
             &mut self,
-            instruction: &NormalizedInstruction,
+            instruction: &SourceInstruction,
             _allocator: &mut ExpansionAllocator,
-        ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+        ) -> Result<Vec<JoltRow>, ExpansionError> {
+            let row = instruction.row();
             Ok((0..=materialize::MAX_FINAL_ROWS_PER_SOURCE)
-                .map(|_| NormalizedInstruction {
+                .map(|_| JoltRow {
                     instruction_kind: JoltInstructionKind::ADDI,
-                    address: instruction.address,
+                    address: row.address,
                     operands: NormalizedOperands {
                         rd: Some(0),
                         rs1: Some(0),
@@ -309,7 +333,7 @@ fn inline_provider_allows_sequences_larger_than_instruction_recipes() -> Result<
         }
     }
 
-    let input = instruction(JoltInstructionKind::Inline, Some(3), true);
+    let input = instruction(SourceInstructionKind::Inline, Some(3), true);
     let mut allocator = ExpansionAllocator::new();
     let expanded = expand_instruction_with_provider(&input, &mut allocator, &mut LargeProvider)?;
 
@@ -357,12 +381,12 @@ fn source_only_expanders_are_not_target_legal() {
 #[test]
 fn recursive_helper_expansion_is_stamped_as_one_sequence() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
-    let input = instruction(JoltInstructionKind::SLL, Some(3), true);
+    let input = instruction(SourceInstructionKind::SLL, Some(3), true);
     let expanded = expand_instruction(&input, &mut allocator)?;
 
     assert!(expanded.len() > 1);
     for (i, row) in expanded.iter().enumerate() {
-        assert_eq!(row.address, input.address);
+        assert_eq!(row.address, input.row().address);
         assert_eq!(
             row.virtual_sequence_remaining,
             Some((expanded.len() - i - 1) as u16)

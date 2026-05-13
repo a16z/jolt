@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::expand) fn expand_addw(
-    instruction: &NormalizedInstruction,
+    instruction: &JoltRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
 
