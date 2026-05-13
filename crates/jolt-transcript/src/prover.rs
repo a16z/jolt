@@ -4,7 +4,7 @@
 //! rule. Methods are positional, matching spongefish-native usage
 //! (WhiR, sigma-rs).
 
-use ark_bn254::Fr;
+use jolt_field::Fr;
 use rand::{CryptoRng, RngCore};
 use spongefish::{Decoding, DuplexSpongeInterface, Encoding, NargSerialize, ProverState};
 
@@ -64,7 +64,7 @@ where
     R: RngCore + CryptoRng,
 {
     fn challenge_128(&mut self) -> Fr {
-        ProverState::verifier_message::<FieldElOptimized>(self).0
+        ProverState::verifier_message::<FieldElOptimized<Fr>>(self).0
     }
 }
 
@@ -74,6 +74,6 @@ where
     R: RngCore + CryptoRng,
 {
     fn challenge_128(&mut self) -> Fr {
-        ProverState::verifier_message::<FieldElOptimized>(self).0
+        ProverState::verifier_message::<FieldElOptimized<Fr>>(self).0
     }
 }

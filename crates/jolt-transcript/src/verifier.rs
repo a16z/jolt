@@ -1,6 +1,6 @@
 //! Spongefish-native [`VerifierTranscript`] surface.
 
-use ark_bn254::Fr;
+use jolt_field::Fr;
 use spongefish::{
     Decoding, DuplexSpongeInterface, Encoding, NargDeserialize, VerificationResult, VerifierState,
 };
@@ -47,13 +47,13 @@ where
 #[cfg(feature = "transcript-blake2b")]
 impl OptimizedChallenge for VerifierState<'_, spongefish::instantiations::Blake2b512> {
     fn challenge_128(&mut self) -> Fr {
-        VerifierState::verifier_message::<FieldElOptimized>(self).0
+        VerifierState::verifier_message::<FieldElOptimized<Fr>>(self).0
     }
 }
 
 #[cfg(feature = "transcript-keccak")]
 impl OptimizedChallenge for VerifierState<'_, spongefish::instantiations::Keccak> {
     fn challenge_128(&mut self) -> Fr {
-        VerifierState::verifier_message::<FieldElOptimized>(self).0
+        VerifierState::verifier_message::<FieldElOptimized<Fr>>(self).0
     }
 }
