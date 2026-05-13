@@ -741,12 +741,10 @@ where
                 .as_ref()
                 .map(|(cols, witness)| FrProverWitness { columns: cols, witness })
         });
-    let _stage3_input_span = tracing::info_span!("bolt.prove.inputs.stage3").entered();
-    // FR Stage 3 sparse-access bridge: convert the owned per-cycle entries
-    // (held by the host-built columns) into the kernel-side access struct.
-    // For FR-less traces this is `Vec::new()` — the sparse path then sees
-    // an empty access list and contributes zero to the batched sumcheck
-    // without any `T`-sized allocations (Rule 1).
+    // FR Stage 3 sparse-access bridge (Rule 1): when the FR witness is
+    // `sparse_only`, the dense T-length operand columns are empty and the
+    // kernel takes the sparse path over per-cycle access entries. For
+    // FR-less traces the converted Vec is empty (zero allocation per T).
     let stage3_fr_accesses: Option<Vec<stage3::Stage3FieldRegisterAccess<Fr>>> =
         effective_fr_witness.and_then(|fr| {
             fr.columns.sparse_only.then(|| {
@@ -762,6 +760,7 @@ where
                     .collect()
             })
         });
+    let _stage3_input_span = tracing::info_span!("bolt.prove.inputs.stage3").entered();
     let stage3 = stage3_prover_inputs(
         inputs.stage3_openings,
         inputs.stage3_cycles,
@@ -1094,6 +1093,9 @@ pub fn stage3_prover_inputs<'a>(
 ) -> stage3::Stage3ProverInputs<'a, Fr> {
     let mut inputs = stage3::Stage3ProverInputs::new(opening_inputs).with_cycles(cycles);
     if let Some(fr_columns) = field_registers {
+        // When the FR witness is `sparse_only`, the dense Stage 3 columns
+        // are empty by construction — hand the kernel the sparse access
+        // list (Rule 1 in `specs/bn254-fr-coprocessor.md`).
         let accesses = if fr_columns.sparse_only {
             sparse_field_register_accesses.or(Some(&[]))
         } else {
@@ -1369,7 +1371,8 @@ pub fn stage5_prover_inputs<'a>(
         // Stage 5's sparse FR projection via per-cycle write addresses —
         // Rule 1 in `specs/bn254-fr-coprocessor.md`. Saves the
         // 16 · T dense `field_rd_wa` allocation (~33 MB at T = 2^16).
-        let field_rd_write_addresses: Option<&'a [Option<usize>]> = if fr.field_rd_wa.is_empty() {
+        let field_rd_write_addresses: Option<&'a [Option<usize>]> = if fr.field_rd_wa.is_empty()
+        {
             Some(&fr.field_rd_write_addresses)
         } else {
             None

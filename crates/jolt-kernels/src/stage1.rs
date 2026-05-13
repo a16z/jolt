@@ -2000,6 +2000,24 @@ fn r1cs_oracle_variable(oracle: &str) -> Option<usize> {
         "OpFlagIsCompressed" => Some(rv64::V_FLAG_IS_COMPRESSED),
         "OpFlagIsFirstInSequence" => Some(rv64::V_FLAG_IS_FIRST_IN_SEQUENCE),
         "OpFlagIsLastInSequence" => Some(rv64::V_FLAG_IS_LAST_IN_SEQUENCE),
+        // BN254 Fr coprocessor circuit flags. After the Spartan outer uniskip
+        // widening (commit 23598fee3) the Stage 1 protocol plan emits 47
+        // R1CS_INPUT_ORACLES that include the FR rows (slots 36-44). The
+        // R1csData evaluator must answer openings for these oracles or
+        // remaining_driver_evals returns MissingKernelInput.
+        "OpFlagIsFieldMul" => Some(rv64::V_FLAG_IS_FIELD_MUL),
+        "OpFlagIsFieldAdd" => Some(rv64::V_FLAG_IS_FIELD_ADD),
+        "OpFlagIsFieldSub" => Some(rv64::V_FLAG_IS_FIELD_SUB),
+        "OpFlagIsFieldInv" => Some(rv64::V_FLAG_IS_FIELD_INV),
+        "OpFlagIsFieldAssertEq" => Some(rv64::V_FLAG_IS_FIELD_ASSERT_EQ),
+        "OpFlagIsFieldMov" => Some(rv64::V_FLAG_IS_FIELD_MOV),
+        "OpFlagIsFieldSLL64" => Some(rv64::V_FLAG_IS_FIELD_SLL64),
+        "OpFlagIsFieldSLL128" => Some(rv64::V_FLAG_IS_FIELD_SLL128),
+        "OpFlagIsFieldSLL192" => Some(rv64::V_FLAG_IS_FIELD_SLL192),
+        // BN254 Fr virtual operand columns (R1CS slots 45-47).
+        "FieldRs1Value" => Some(rv64::V_FIELD_RS1_VALUE),
+        "FieldRs2Value" => Some(rv64::V_FIELD_RS2_VALUE),
+        "FieldRdValue" => Some(rv64::V_FIELD_RD_VALUE),
         _ => None,
     }
 }
