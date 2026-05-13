@@ -1,0 +1,35 @@
+[package]
+name = "jolt-inlines-bn254-fr"
+version = "0.1.0"
+edition = "2021"
+description = "BN254 Fr native-field coprocessor SDK for Jolt zkVM"
+license = "MIT"
+homepage = "https://github.com/a16z/jolt/README.md"
+repository = "https://github.com/a16z/jolt"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Host feature: pulls in ark_bn254 for reference arithmetic (used during
+# trace-generation emulation + host-side tests).
+host = ["dep:ark-bn254", "dep:ark-ff"]
+# compute_advice feature: enabled by the jolt-sdk macro on the Pass-1
+# (advice-population) ELF. Fr ops compute via ark_bn254 and write limbs
+# to the host's advice tape via VirtualHostIO; the guest is then traced
+# in Pass 2 (without this feature) and reads the advice via ADVICE_LD.
+compute_advice = ["dep:ark-bn254", "dep:ark-ff"]
+
+[dependencies]
+ark-bn254 = { workspace = true, optional = true, features = ["scalar_field"] }
+ark-ff = { workspace = true, optional = true }
+
+[dev-dependencies]
+ark-bn254 = { workspace = true, features = ["scalar_field"] }
+ark-ff.workspace = true
+jolt-field = { path = "../../crates/jolt-field", features = ["bn254"] }
+jolt-r1cs = { path = "../../crates/jolt-r1cs" }
+jolt-witness = { path = "../../crates/jolt-witness" }
+num-traits.workspace = true
+tracer = { workspace = true, features = ["std", "test-utils"] }
