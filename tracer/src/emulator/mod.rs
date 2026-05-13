@@ -126,6 +126,13 @@ impl Emulator {
         std::mem::take(&mut self.cpu.advice_tape)
     }
 
+    /// Take ownership of the FieldReg event stream, replacing it with an empty
+    /// one. Events are cycle-indexed; the host drains them to build the FR
+    /// Twist witness.
+    pub fn take_field_reg_events(&mut self) -> Vec<cpu::FieldRegEvent> {
+        std::mem::take(&mut self.cpu.field_reg_events)
+    }
+
     /// Method for running [`riscv-tests`](https://github.com/riscv/riscv-tests) program.
     /// The differences from `run_program()` are
     /// * Disassembles every instruction and dumps to terminal

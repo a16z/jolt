@@ -41,6 +41,8 @@ object.workspace = true
 tracing = { workspace = true, features = [
   "attributes",
 ], default-features = false }
+ark-bn254 = { workspace = true, features = ["scalar_field"] }
+ark-ff.workspace = true
 ark-serialize.workspace = true
 derive_more.workspace = true
 serde.workspace = true

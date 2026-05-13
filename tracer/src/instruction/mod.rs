@@ -150,6 +150,12 @@ use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, Virtual
 use virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8};
 use virtual_zero_extend_word::VirtualZeroExtendWord;
 
+use self::field_assert_eq::FieldAssertEq;
+use self::field_mov::FieldMov;
+use self::field_op::FieldOp;
+use self::field_sll128::FieldSLL128;
+use self::field_sll192::FieldSLL192;
+use self::field_sll64::FieldSLL64;
 use self::inline::INLINE;
 
 use crate::emulator::cpu::{Cpu, Xlen};
@@ -293,6 +299,14 @@ pub mod virtual_xor_rotw;
 pub mod virtual_zero_extend_word;
 pub mod xor;
 pub mod xori;
+
+// BN254 Fr native-field coprocessor instructions
+pub mod field_assert_eq;
+pub mod field_mov;
+pub mod field_op;
+pub mod field_sll128;
+pub mod field_sll192;
+pub mod field_sll64;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test;
@@ -804,6 +818,8 @@ define_rv32im_enums! {
         // XORROT
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
         VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
+        // BN254 Fr native-field coprocessor
+        FieldOp, FieldAssertEq, FieldMov, FieldSLL64, FieldSLL128, FieldSLL192,
     ]
 }
 
@@ -1102,14 +1118,41 @@ impl Instruction {
                     _ => Err("Unsupported SYSTEM instruction"),
                 }
             }
-            // 0x0B is reserved for inlines supported by Jolt in jolt-inlines crate.
-            // In attempt to standardize this space for precompiles and inlines,
-            // each new type of operation should be placed under different funct7,
-            // while funct3 should hold all necessary instructions for that operation.
-            // funct7:
-            // - 0x00: SHA256
-            // - 0x01: Keccak256
-            0b0001011 => Ok(INLINE::new(instr, address, false, compressed).into()),
+            // 0x0B is reserved for inlines + coprocessors. Each family is
+            // identified by funct7:
+            // - 0x00: SHA256 (INLINE)
+            // - 0x01: Keccak256 (INLINE)
+            // - 0x40: BN254 Fr native-field coprocessor — funct3 selects op:
+            //     0x02/0x03/0x04/0x05 = FMUL/FADD/FINV/FSUB → FieldOp (combined)
+            //     0x06 = FieldAssertEq
+            //     0x07 = FieldMov
+            // - 0x41: BN254 Fr SLL bridge ops — funct3 selects shift width:
+            //     0x00 = FieldSLL64
+            //     0x01 = FieldSLL128
+            //     0x02 = FieldSLL192
+            // All other funct7 values fall through to the generic INLINE registry.
+            0b0001011 => {
+                let funct7 = (instr >> 25) & 0x7f;
+                if funct7 == 0x40 {
+                    let funct3 = (instr >> 12) & 0x7;
+                    match funct3 {
+                        0x02..=0x05 => Ok(FieldOp::new(instr, address, true, compressed).into()),
+                        0x06 => Ok(FieldAssertEq::new(instr, address, true, compressed).into()),
+                        0x07 => Ok(FieldMov::new(instr, address, true, compressed).into()),
+                        _ => Err("Unsupported BN254 Fr coprocessor funct3"),
+                    }
+                } else if funct7 == 0x41 {
+                    let funct3 = (instr >> 12) & 0x7;
+                    match funct3 {
+                        0x00 => Ok(FieldSLL64::new(instr, address, true, compressed).into()),
+                        0x01 => Ok(FieldSLL128::new(instr, address, true, compressed).into()),
+                        0x02 => Ok(FieldSLL192::new(instr, address, true, compressed).into()),
+                        _ => Err("Unsupported BN254 Fr SLL funct3"),
+                    }
+                } else {
+                    Ok(INLINE::new(instr, address, false, compressed).into())
+                }
+            }
             // 0x2B is reserved for external inlines
             0b0101011 => Ok(INLINE::new(instr, address, false, compressed).into()),
             // 0x5B is reserved for custom/virtual instructions.

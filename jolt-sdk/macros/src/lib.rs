@@ -720,8 +720,12 @@ impl MacroBuilder {
                         program_size: Some(compute_advice_program_size),
                     };
 
-                    // First pass: run compute_advice version to populate advice tape
-                    let (_lazy_trace, _, _, _, advice_tape) = guest_trace(
+                    // First pass: run compute_advice version to populate advice tape.
+                    // The 6-tuple has a trailing `Vec<FieldRegEvent>` that
+                    // jolt-core monolithic doesn't consume (FR proving lives
+                    // on the modular stack — `prove_jolt_with_witness_inputs`
+                    // — not RV64IMACProver).
+                    let (_lazy_trace, _, _, _, advice_tape, _field_reg_events) = guest_trace(
                         &compute_advice_elf_contents,
                         None,
                         &input_bytes,

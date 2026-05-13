@@ -229,16 +229,83 @@ impl Program {
         let program_size = compute_program_size(&elf_contents);
         let memory_config = self.memory_config(program_size);
 
-        let (lazy_trace, trace_vec, memory, jolt_device, _advice_tape) = tracer::trace(
-            &elf_contents,
-            self.elf.as_ref().map(|p| p as &PathBuf),
-            inputs,
-            untrusted_advice,
-            trusted_advice,
-            &memory_config,
-            None,
-        );
+        let (lazy_trace, trace_vec, memory, jolt_device, _advice_tape, _field_reg_events) =
+            tracer::trace(
+                &elf_contents,
+                self.elf.as_ref().map(|p| p as &PathBuf),
+                inputs,
+                untrusted_advice,
+                trusted_advice,
+                &memory_config,
+                None,
+            );
         (lazy_trace, trace_vec, memory, jolt_device)
+    }
+
+    /// Two-pass trace for guests that use the BN254 Fr coprocessor SDK
+    /// (`jolt-inlines-bn254-fr`).
+    ///
+    /// Pass 1 runs the `compute_advice` ELF (built with the
+    /// `compute_advice` feature enabled) to populate the advice tape with
+    /// ark-bn254 results. Pass 2 traces the normal ELF which then emits
+    /// real FR coprocessor opcodes that consume the advice. The drained
+    /// `FieldRegEvent` stream from Pass 2 is returned for downstream
+    /// witness materialization via `jolt_witness::field_registers_witness`.
+    ///
+    /// Falls back to a single-pass trace (no advice tape, empty
+    /// `FieldRegEvent` stream) if the guest crate doesn't expose a
+    /// `compute_advice` feature.
+    #[tracing::instrument(skip_all, name = "Program::trace_two_pass_advice")]
+    pub fn trace_two_pass_advice(
+        &mut self,
+        inputs: &[u8],
+        untrusted_advice: &[u8],
+        trusted_advice: &[u8],
+    ) -> (
+        LazyTraceIterator,
+        Vec<Cycle>,
+        Memory,
+        JoltDevice,
+        Vec<tracer::emulator::cpu::FieldRegEvent>,
+    ) {
+        // Pass 1: build + run compute_advice ELF to populate the advice tape.
+        self.build_with_features(DEFAULT_TARGET_DIR, &["compute_advice"]);
+        let advice_tape = if let Some(compute_advice_elf) = self.get_elf_compute_advice_contents() {
+            let program_size = compute_program_size(&compute_advice_elf);
+            let memory_config = self.memory_config(program_size);
+            let (_, _, _, _, tape, _) = tracer::trace(
+                &compute_advice_elf,
+                None,
+                inputs,
+                untrusted_advice,
+                trusted_advice,
+                &memory_config,
+                None,
+            );
+            let mut tape = tape;
+            tape.reset_read_position();
+            Some(tape)
+        } else {
+            None
+        };
+
+        // Pass 2: build + trace the normal ELF, threading the populated tape.
+        self.build(DEFAULT_TARGET_DIR);
+        let elf_contents = self.read_elf();
+        let program_size = compute_program_size(&elf_contents);
+        let memory_config = self.memory_config(program_size);
+
+        let (lazy_trace, trace_vec, memory, jolt_device, _advice_tape, field_reg_events) =
+            tracer::trace(
+                &elf_contents,
+                self.elf.as_ref().map(|p| p as &PathBuf),
+                inputs,
+                untrusted_advice,
+                trusted_advice,
+                &memory_config,
+                advice_tape,
+            );
+        (lazy_trace, trace_vec, memory, jolt_device, field_reg_events)
     }
 
     /// Compile (if needed) and trace the guest program, writing the trace to a file.

@@ -297,15 +297,16 @@ impl Program {
             program_size: Some(program_size),
         };
 
-        let (lazy_trace, trace, memory, jolt_device, _advice_tape) = guest::program::trace(
-            &elf_contents,
-            self.elf.as_ref(),
-            inputs,
-            untrusted_advice,
-            trusted_advice,
-            &memory_config,
-            None,
-        );
+        let (lazy_trace, trace, memory, jolt_device, _advice_tape, _field_reg_events) =
+            guest::program::trace(
+                &elf_contents,
+                self.elf.as_ref(),
+                inputs,
+                untrusted_advice,
+                trusted_advice,
+                &memory_config,
+                None,
+            );
         (lazy_trace, trace, memory, jolt_device)
     }
 

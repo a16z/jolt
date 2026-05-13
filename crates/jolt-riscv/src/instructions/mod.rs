@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod a;
 pub mod assert;
+pub mod field;
 pub mod i;
 pub mod m;
 pub mod virt;
@@ -114,6 +115,12 @@ use tracer::instruction::{
     ebreak::EBREAK,
     ecall::ECALL,
     fence::FENCE,
+    field_assert_eq::FieldAssertEq as TracerFieldAssertEq,
+    field_mov::FieldMov as TracerFieldMov,
+    field_op::FieldOp as TracerFieldOp,
+    field_sll128::FieldSLL128 as TracerFieldSLL128,
+    field_sll192::FieldSLL192 as TracerFieldSLL192,
+    field_sll64::FieldSLL64 as TracerFieldSLL64,
     jal::JAL,
     jalr::JALR,
     lb::LB,
@@ -257,6 +264,17 @@ pub use virt::AdviceLw;
 pub use virt::VirtualLw;
 pub use virt::VirtualSw;
 
+// BN254 Fr native-field coprocessor v2
+pub use field::FieldAdd;
+pub use field::FieldAssertEq;
+pub use field::FieldInv;
+pub use field::FieldMov;
+pub use field::FieldMul;
+pub use field::FieldSLL128;
+pub use field::FieldSLL192;
+pub use field::FieldSLL64;
+pub use field::FieldSub;
+
 /// Enum with one variant per Jolt instruction.
 ///
 /// Each variant wraps a Jolt newtype parameterized by the corresponding tracer
@@ -378,6 +396,18 @@ pub enum JoltInstructions {
     VirtualAdviceLen(VirtualAdviceLen<TracerVirtualAdviceLen>),
     VirtualAdviceLoad(VirtualAdviceLoad<TracerVirtualAdviceLoad>),
     VirtualHostIO(VirtualHostIO<TracerVirtualHostIO>),
+    // BN254 Fr native-field coprocessor v2 — FMUL/FADD/FSUB/FINV share one
+    // tracer struct (FieldOp, discriminated by funct3); the four jolt-riscv
+    // variants exist for distinct circuit-flag dispatch.
+    FieldMul(FieldMul<TracerFieldOp>),
+    FieldAdd(FieldAdd<TracerFieldOp>),
+    FieldSub(FieldSub<TracerFieldOp>),
+    FieldInv(FieldInv<TracerFieldOp>),
+    FieldAssertEq(FieldAssertEq<TracerFieldAssertEq>),
+    FieldMov(FieldMov<TracerFieldMov>),
+    FieldSLL64(FieldSLL64<TracerFieldSLL64>),
+    FieldSLL128(FieldSLL128<TracerFieldSLL128>),
+    FieldSLL192(FieldSLL192<TracerFieldSLL192>),
 }
 
 macro_rules! impl_jolt_instructions_flags {
@@ -431,6 +461,8 @@ impl_jolt_instructions_flags! {
     VirtualXorRot32, VirtualXorRot24, VirtualXorRot16, VirtualXorRot63,
     VirtualXorRotW16, VirtualXorRotW12, VirtualXorRotW8, VirtualXorRotW7,
     VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad, VirtualHostIO,
+    FieldMul, FieldAdd, FieldSub, FieldInv, FieldAssertEq,
+    FieldMov, FieldSLL64, FieldSLL128, FieldSLL192,
 }
 
 #[cfg(test)]
