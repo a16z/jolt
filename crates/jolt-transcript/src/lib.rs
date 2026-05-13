@@ -51,6 +51,7 @@ mod blanket;
 mod digest;
 pub mod domain;
 mod keccak;
+mod mock;
 #[cfg(feature = "poseidon")]
 mod poseidon;
 mod transcript;
@@ -59,6 +60,7 @@ pub use blake2b::Blake2bTranscript;
 pub use digest::DigestTranscript;
 pub use domain::{Label, LabelWithCount, U64Word};
 pub use keccak::KeccakTranscript;
+pub use mock::MockTranscript;
 #[cfg(feature = "poseidon")]
 pub use poseidon::PoseidonTranscript;
 pub use transcript::{AppendToTranscript, Transcript};
