@@ -94,6 +94,10 @@ Instruction identity is now separated at the typed row boundary:
 - `JoltInstructionProfile` defines positive source legality, target legality,
   inline-extension availability, profile-local dense indexes, and a profile
   fingerprint.
+- Decode, expansion, sequence stamping, and bytecode preprocessing receive the
+  selected profile explicitly. Registered inline inventory entries declare their
+  `InlineExtension`, and `InlineExpansionProvider` rejects registered keys whose
+  extension is not enabled by the active profile.
 - `LookupInstructionKind` has been removed. Lookup/proving metadata remains
   owned by lookup/proving code and is keyed by final instruction identities.
 
@@ -257,8 +261,9 @@ Registered inlines are expanded through `InlineExpansionProvider`.
 Provider output is intentionally outside the provider-free grammar because
 registered inlines may need tracer-side registration, advice generation, and
 large inline-specific virtual-register use. The public expansion entry point
-still validates provider rows, appends reset rows for inline registers that must
-be cleared, and stamps the resulting sequence.
+still passes the selected profile to the provider, validates provider rows,
+appends reset rows for inline registers that must be cleared, and stamps the
+resulting sequence.
 
 Inline register clearing uses the same allocator partition as tracer:
 instruction expansion temps do not borrow from the inline register pool, and
@@ -271,6 +276,8 @@ Today they are built through tracer-side `InstrAssembler` and `InlineOp`
 registrations:
 
 - inline metadata is registered by `(opcode, funct3, funct7)`;
+- each registered inline declares its `InlineExtension` so the active profile
+  can reject linked but disabled inline packages;
 - sequence builders emit tracer `Instruction` values through generic
   `emit_r::<Op>`, `emit_i::<Op>`, `emit_s::<Op>`, and similar helpers;
 - inline builders allocate from `allocate_for_inline()`, not from the eight

@@ -933,14 +933,15 @@ Reserve these shipped preset names:
 - `RV64IMAC_JOLT_ALL_INLINES`: current workspace-wide profile with all listed
   `InlineExtension` packages enabled.
 
-Profile selection should be compile-time, not runtime plugin loading. For this
-PR, use Cargo features or marker types to select one shipped profile for the
-compiled crate graph; do not thread an arbitrary runtime
-`&'static JoltInstructionProfile` through `JoltProgram::new`. If marker types
-are more ergonomic than value-level profiles, use the same names as type names,
-for example `profile::Rv64imacJolt`. Exported presets should still use the
-constant names above. The selected profile affects legality tables and closure
-checks, not the Rust enum shape.
+Profile selection should be explicit and tied to shipped profile constants, not
+runtime plugin loading. This PR threads a `JoltInstructionProfile` value through
+decode, expansion, sequence stamping, and bytecode preprocessing boundaries so
+those phases do not silently read `RV64IMAC_JOLT` as hidden global policy.
+Top-level callers that want the current default behavior pass `RV64IMAC_JOLT`;
+callers that expand registered inline packages pass a profile whose
+`inline_extensions` contain the relevant package entries, such as
+`RV64IMAC_JOLT_ALL_INLINES`. The selected profile affects legality tables and
+closure checks, not the Rust enum shape.
 
 Inline inventory registration remains link-time, but availability is
 profile-checked. If a workspace links `jolt-inlines-sha2` while the selected
@@ -1117,8 +1118,8 @@ Current implementation status:
   return typed final `Vec<JoltInstruction>` values. `JoltProgram`,
   `jolt-core::{guest,host}` decode handoffs, and tracer conversion materialize
   `JoltRow` explicitly with `JoltRow::from`.
-- `InlineExpansionProvider` now receives a source instruction and returns typed
-  final `JoltInstruction` rows.
+- `InlineExpansionProvider` now receives a source instruction plus the selected
+  profile and returns typed final `JoltInstruction` rows.
 - `SourceRow` now carries `SourceInline { opcode, funct3, funct7 }` metadata
   directly, so tracer decode and registered inline expansion no longer recover
   source inline identity by routing through a fake final `JoltRow::Inline`.
@@ -1140,9 +1141,12 @@ Current implementation status:
   `InlineExtension`, shipped `JoltInstructionProfile` presets, positive
   source/final legality checks, profile-local dense indexes, and a profile
   fingerprint.
-- `jolt-program` decode validates source rows against the selected default
-  profile, expansion validates provider and recipe output as profile-legal
-  final rows, and bytecode preprocessing rejects profile-illegal target rows.
+- `jolt-program` decode, expansion, sequence stamping, and bytecode
+  preprocessing now take an explicit selected `JoltInstructionProfile` instead
+  of reading the default profile from inside those phase boundaries.
+- Inline inventory registrations now declare their `InlineExtension`, and the
+  tracer inline provider rejects a registered `(opcode, funct3, funct7)` key
+  when the selected profile does not enable that extension.
 - Recursive expansion recipes now distinguish source helper expansion
   (`SourceInstructionKind`) from final-row emission (`JoltInstructionKind`).
 - Tracer source conversion now builds `SourceInstruction` directly, while
