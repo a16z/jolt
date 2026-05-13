@@ -1423,5 +1423,6 @@ Current implementation status:
 - [MLIR Bytecode Format](https://mlir.llvm.org/docs/BytecodeFormat/)
 - [`specs/compiler-native-bytecode-expansion.md`](compiler-native-bytecode-expansion.md)
 - [`specs/bytecode-expansion-crate.md`](bytecode-expansion-crate.md)
+- [`specs/inline-expansion-grammar.md`](inline-expansion-grammar.md)
 - Archived extraction audit:
   `/Users/quang.dao/Documents/Notes/jolt-pr1518-extraction-audit-hax-aeneas.md`
