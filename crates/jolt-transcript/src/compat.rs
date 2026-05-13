@@ -233,6 +233,14 @@ where
     }
 
     fn challenge(&mut self) -> F {
+        // WARNING: this squeezes 16 bytes for every sponge — including
+        // Poseidon — even though the split-trait surface (`OptimizedChallenge`,
+        // see `prover.rs:53-55`) deliberately makes 128-bit challenges a
+        // compile error on Poseidon-backed states. The two surfaces
+        // disagree on purpose: the compat facade preserves the legacy
+        // jolt-core challenge width for in-flight consumers (jolt-sumcheck,
+        // jolt-openings, jolt-crypto). Once those migrate to the split-trait
+        // surface this facade goes away and the inconsistency with it.
         let mut buf = [0u8; 16];
         let _ = self.sponge.squeeze(&mut buf);
         F::from_challenge_bytes(&buf)
