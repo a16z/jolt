@@ -192,7 +192,8 @@ profile legality deciding what is accepted for a given compiled configuration.
 - [x] Recursive expansion internally distinguishes source helper dispatch from
       direct target-row emission: helper recursion is keyed by
       `SourceInstructionKind`, while direct final emission is keyed by
-      `JoltInstructionKind`.
+      `JoltInstructionKind`. Source-only recipe builders receive source-row
+      context, not synthetic final `JoltRow` inputs.
 - [x] `JoltInstruction<T>` no longer has `Inline` and contains only universal
       shipped final-row variants. Profile-specific target legality is checked by
       a positive computed target legality closure rather than by changing the
@@ -1149,13 +1150,16 @@ Current implementation status:
   when the selected profile does not enable that extension.
 - Recursive expansion recipes now distinguish source helper expansion
   (`SourceInstructionKind`) from final-row emission (`JoltInstructionKind`).
+  Source-only recipe builders carry their source context as `SourceRow`, so
+  they no longer need a broad `JoltInstructionKind` tag just to access operands,
+  address, or compressed-row metadata.
 - Tracer source conversion now builds `SourceInstruction` directly, while
   `try_from_jolt_row` rejects final `Inline` rows.
 - Remaining caveat: the legacy bare `JoltInstructionKind` row-tag enum is still
   broad for this PR slice, even though the typed `JoltInstruction<T>` enum and
-  profile legality layer are final-only. A follow-up mechanical split can reduce
-  that bare tag enum once expansion recipes no longer need source rows shaped
-  as `JoltRow`.
+  profile legality layer are final-only. It remains as a compact identity and
+  serialization bridge for existing row APIs and tracer internals, not as the
+  source-of-truth final instruction universe.
 
 1. [x] Add `SourceRow`, `SourceInline`, `JoltRow`, and operand aliases/types in
    `jolt-riscv`.

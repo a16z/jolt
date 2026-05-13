@@ -1,4 +1,4 @@
-use jolt_riscv::{JoltInstructionKind, JoltRow, SourceInstructionKind};
+use jolt_riscv::{JoltInstructionKind, SourceInstructionKind, SourceRow};
 
 use crate::expand::{allocator::NUM_VIRTUAL_INSTRUCTION_REGISTERS, ExpansionError};
 
@@ -164,19 +164,19 @@ pub(super) enum ExpansionOp {
 
 /// A complete symbolic recipe: source instruction paired with the ops to materialize it.
 pub(super) struct ExpandedInstructionSequence {
-    pub(super) source: JoltRow,
+    pub(super) source: SourceRow,
     pub(super) ops: Vec<ExpansionOp>,
 }
 
 /// Builds a symbolic expansion recipe from emit/expand/allocate/release calls.
 pub(super) struct ExpansionBuilder {
-    source: JoltRow,
+    source: SourceRow,
     ops: Vec<ExpansionOp>,
     next_temp: usize,
 }
 
 impl ExpansionBuilder {
-    pub(super) fn new(source: JoltRow) -> Self {
+    pub(super) fn new(source: SourceRow) -> Self {
         Self {
             source,
             ops: Vec::new(),
@@ -414,17 +414,15 @@ pub(super) fn is_source_only(instruction_kind: SourceInstructionKind) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use jolt_riscv::{JoltInstructionKind, JoltRow, NormalizedOperands};
+    use jolt_riscv::{NormalizedOperands, SourceRow};
 
     use super::*;
 
-    fn source() -> JoltRow {
-        JoltRow {
-            instruction_kind: JoltInstructionKind::ADDIW,
+    fn source() -> SourceRow {
+        SourceRow {
             address: 0x8000_0000,
             operands: NormalizedOperands::default(),
-            virtual_sequence_remaining: None,
-            is_first_in_sequence: false,
+            inline: None,
             is_compressed: false,
         }
     }

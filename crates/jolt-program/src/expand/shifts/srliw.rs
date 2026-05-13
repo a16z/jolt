@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::expand) fn expand_srliw(
-    instruction: &JoltRow,
+    instruction: &SourceRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
     let v_rs1 = asm.allocate()?;

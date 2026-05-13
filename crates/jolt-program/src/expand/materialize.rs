@@ -58,7 +58,7 @@ impl ExpansionState {
                 self.release_register(virtual_register)?;
                 return expanded;
             }
-            return Ok(vec![noop_for(instruction.jolt_row())]);
+            return Ok(vec![noop_for(*instruction.row())]);
         }
 
         if kind == jolt_riscv::SourceInstructionKind::Inline {
@@ -200,7 +200,7 @@ struct SequenceMaterializer {
 }
 
 impl SequenceMaterializer {
-    fn new(source: JoltRow, profile: JoltInstructionProfile) -> Self {
+    fn new(source: SourceRow, profile: JoltInstructionProfile) -> Self {
         Self {
             address: source.address,
             is_compressed: source.is_compressed,
@@ -293,15 +293,14 @@ impl SequenceMaterializer {
 
 #[cfg(test)]
 mod tests {
-    use jolt_riscv::{JoltInstructionKind, NormalizedOperands, RV64IMAC_JOLT};
+    use jolt_riscv::{JoltInstructionKind, NormalizedOperands, SourceRow, RV64IMAC_JOLT};
 
     use crate::expand::grammar::reg;
 
     use super::*;
 
-    fn source() -> JoltRow {
-        JoltRow {
-            instruction_kind: JoltInstructionKind::ADDIW,
+    fn source() -> SourceRow {
+        SourceRow {
             address: 0x8000_0000,
             operands: NormalizedOperands {
                 rd: Some(3),
@@ -309,8 +308,7 @@ mod tests {
                 rs2: None,
                 imm: 1,
             },
-            virtual_sequence_remaining: None,
-            is_first_in_sequence: false,
+            inline: None,
             is_compressed: false,
         }
     }

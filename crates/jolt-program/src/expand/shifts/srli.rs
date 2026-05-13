@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::expand) fn expand_srli(
-    instruction: &JoltRow,
+    instruction: &SourceRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let shift = instruction.operands.imm & 0x3f;
     let bitmask = super::shared::right_shift_bitmask(shift as u32, 64);

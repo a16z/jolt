@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::expand) fn expand_ecall(
-    instruction: &JoltRow,
+    instruction: &SourceRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     const MCAUSE_ECALL_FROM_MMODE: i128 = 11;
 

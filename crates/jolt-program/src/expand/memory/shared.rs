@@ -23,7 +23,7 @@ pub(in crate::expand) fn expand_ram_region_assertion(
 }
 
 pub(in crate::expand) fn expand_byte_load(
-    instruction: &JoltRow,
+    instruction: &SourceRow,
     signed: bool,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
@@ -67,7 +67,7 @@ pub(in crate::expand) fn expand_byte_load(
 }
 
 pub(in crate::expand) fn expand_halfword_load(
-    instruction: &JoltRow,
+    instruction: &SourceRow,
     signed: bool,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
@@ -116,7 +116,7 @@ pub(in crate::expand) fn expand_halfword_load(
 }
 
 pub(in crate::expand) fn expand_advice_load(
-    instruction: &JoltRow,
+    instruction: &SourceRow,
     byte_len: i128,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
@@ -146,7 +146,7 @@ pub(in crate::expand) fn expand_advice_load(
 }
 
 pub(in crate::expand) fn expand_amo_d(
-    instruction: &JoltRow,
+    instruction: &SourceRow,
     op: SourceInstructionKind,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
@@ -178,7 +178,7 @@ pub(in crate::expand) fn expand_amo_d(
 }
 
 pub(in crate::expand) fn expand_amo_minmax_d(
-    instruction: &JoltRow,
+    instruction: &SourceRow,
     compare_op: SourceInstructionKind,
     min: bool,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
@@ -235,7 +235,7 @@ pub(in crate::expand) fn expand_amo_minmax_d(
 }
 
 pub(in crate::expand) fn expand_amo_w(
-    instruction: &JoltRow,
+    instruction: &SourceRow,
     op: SourceInstructionKind,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
@@ -271,7 +271,7 @@ pub(in crate::expand) fn expand_amo_w(
 }
 
 pub(in crate::expand) fn expand_amo_minmax_w(
-    instruction: &JoltRow,
+    instruction: &SourceRow,
     compare_op: SourceInstructionKind,
     min: bool,
     signed: bool,
@@ -392,7 +392,7 @@ pub(in crate::expand) fn expand_amo_post64(
 }
 
 pub(in crate::expand) fn expand_narrow_store(
-    instruction: &JoltRow,
+    instruction: &SourceRow,
     mask: i128,
     alignment: Option<SourceInstructionKind>,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {

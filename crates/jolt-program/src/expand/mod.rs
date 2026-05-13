@@ -38,7 +38,7 @@ use division::*;
 use grammar::{reg, ExpandedInstructionSequence, ExpansionBuilder, RegisterOperand, TempId};
 use jolt_riscv::{
     JoltInstruction, JoltInstructionKind, JoltInstructionProfile, JoltRow, NormalizedOperands,
-    SourceInstruction, SourceInstructionKind,
+    SourceInstruction, SourceInstructionKind, SourceRow,
 };
 use materialize::ExpansionState;
 use memory::*;
@@ -116,16 +116,16 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
             });
             &rewritten_source
         } else {
-            return final_rows_to_instructions(vec![noop_for(instruction.jolt_row())], profile);
+            return final_rows_to_instructions(vec![noop_for(*instruction.row())], profile);
         }
     } else {
         instruction
     };
-    let jolt_instruction = instruction.jolt_row();
+    let source = *instruction.row();
 
     let result = if instruction.kind() == SourceInstructionKind::Inline {
         let instructions = inline_provider.expand_inline(instruction, allocator, profile)?;
-        finalize_inline_provider_instructions(jolt_instruction, allocator, instructions, profile)
+        finalize_inline_provider_instructions(source, allocator, instructions, profile)
     } else {
         let owned_allocator = std::mem::take(allocator);
         let mut state = ExpansionState::new(owned_allocator, profile);
@@ -142,7 +142,7 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
 }
 
 fn finalize_inline_provider_instructions(
-    source: JoltRow,
+    source: SourceRow,
     allocator: &mut ExpansionAllocator,
     instructions: Vec<JoltInstruction>,
     profile: JoltInstructionProfile,
@@ -192,74 +192,74 @@ fn final_rows_to_instructions(
 fn expand_source_only_instruction(
     instruction: &SourceInstruction,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-    let row = instruction.jolt_row();
+    let row = instruction.row();
     match instruction.kind() {
-        SourceInstructionKind::ADDIW => expand_addiw(&row),
-        SourceInstructionKind::ADDW => expand_addw(&row),
-        SourceInstructionKind::SUBW => expand_subw(&row),
-        SourceInstructionKind::MULH => expand_mulh(&row),
-        SourceInstructionKind::MULHSU => expand_mulhsu(&row),
-        SourceInstructionKind::MULW => expand_mulw(&row),
-        SourceInstructionKind::LB => expand_lb(&row),
-        SourceInstructionKind::LBU => expand_lbu(&row),
-        SourceInstructionKind::LH => expand_lh(&row),
-        SourceInstructionKind::LHU => expand_lhu(&row),
-        SourceInstructionKind::LW => expand_lw(&row),
-        SourceInstructionKind::LWU => expand_lwu(&row),
-        SourceInstructionKind::AdviceLB => expand_advice_lb(&row),
-        SourceInstructionKind::AdviceLH => expand_advice_lh(&row),
-        SourceInstructionKind::AdviceLW => expand_advice_lw(&row),
-        SourceInstructionKind::AdviceLD => expand_advice_ld(&row),
-        SourceInstructionKind::AMOADDD => expand_amoaddd(&row),
-        SourceInstructionKind::AMOANDD => expand_amoandd(&row),
-        SourceInstructionKind::AMOORD => expand_amoord(&row),
-        SourceInstructionKind::AMOXORD => expand_amoxord(&row),
-        SourceInstructionKind::AMOSWAPD => expand_amoswapd(&row),
-        SourceInstructionKind::AMOMAXD => expand_amomaxd(&row),
-        SourceInstructionKind::AMOMAXUD => expand_amomaxud(&row),
-        SourceInstructionKind::AMOMIND => expand_amomind(&row),
-        SourceInstructionKind::AMOMINUD => expand_amominud(&row),
-        SourceInstructionKind::AMOADDW => expand_amoaddw(&row),
-        SourceInstructionKind::AMOANDW => expand_amoandw(&row),
-        SourceInstructionKind::AMOORW => expand_amoorw(&row),
-        SourceInstructionKind::AMOXORW => expand_amoxorw(&row),
-        SourceInstructionKind::AMOSWAPW => expand_amoswapw(&row),
-        SourceInstructionKind::AMOMAXW => expand_amomaxw(&row),
-        SourceInstructionKind::AMOMAXUW => expand_amomaxuw(&row),
-        SourceInstructionKind::AMOMINW => expand_amominw(&row),
-        SourceInstructionKind::AMOMINUW => expand_amominuw(&row),
-        SourceInstructionKind::LRD => expand_lrd(&row),
-        SourceInstructionKind::LRW => expand_lrw(&row),
-        SourceInstructionKind::DIV => expand_div(&row),
-        SourceInstructionKind::DIVU => expand_divu(&row),
-        SourceInstructionKind::DIVW => expand_divw(&row),
-        SourceInstructionKind::DIVUW => expand_divuw(&row),
-        SourceInstructionKind::REM => expand_rem(&row),
-        SourceInstructionKind::REMU => expand_remu(&row),
-        SourceInstructionKind::REMW => expand_remw(&row),
-        SourceInstructionKind::REMUW => expand_remuw(&row),
-        SourceInstructionKind::SB => expand_sb(&row),
-        SourceInstructionKind::SCD => expand_scd(&row),
-        SourceInstructionKind::SCW => expand_scw(&row),
-        SourceInstructionKind::SH => expand_sh(&row),
-        SourceInstructionKind::SW => expand_sw(&row),
-        SourceInstructionKind::CSRRW => expand_csrrw(&row),
-        SourceInstructionKind::CSRRS => expand_csrrs(&row),
-        SourceInstructionKind::EBREAK => expand_ebreak(&row),
-        SourceInstructionKind::ECALL => expand_ecall(&row),
-        SourceInstructionKind::MRET => expand_mret(&row),
-        SourceInstructionKind::SLL => expand_sll(&row),
-        SourceInstructionKind::SLLI => expand_slli(&row),
-        SourceInstructionKind::SLLW => expand_sllw(&row),
-        SourceInstructionKind::SLLIW => expand_slliw(&row),
-        SourceInstructionKind::SRL => expand_srl(&row),
-        SourceInstructionKind::SRLI => expand_srli(&row),
-        SourceInstructionKind::SRA => expand_sra(&row),
-        SourceInstructionKind::SRAI => expand_srai(&row),
-        SourceInstructionKind::SRLIW => expand_srliw(&row),
-        SourceInstructionKind::SRAIW => expand_sraiw(&row),
-        SourceInstructionKind::SRLW => expand_srlw(&row),
-        SourceInstructionKind::SRAW => expand_sraw(&row),
+        SourceInstructionKind::ADDIW => expand_addiw(row),
+        SourceInstructionKind::ADDW => expand_addw(row),
+        SourceInstructionKind::SUBW => expand_subw(row),
+        SourceInstructionKind::MULH => expand_mulh(row),
+        SourceInstructionKind::MULHSU => expand_mulhsu(row),
+        SourceInstructionKind::MULW => expand_mulw(row),
+        SourceInstructionKind::LB => expand_lb(row),
+        SourceInstructionKind::LBU => expand_lbu(row),
+        SourceInstructionKind::LH => expand_lh(row),
+        SourceInstructionKind::LHU => expand_lhu(row),
+        SourceInstructionKind::LW => expand_lw(row),
+        SourceInstructionKind::LWU => expand_lwu(row),
+        SourceInstructionKind::AdviceLB => expand_advice_lb(row),
+        SourceInstructionKind::AdviceLH => expand_advice_lh(row),
+        SourceInstructionKind::AdviceLW => expand_advice_lw(row),
+        SourceInstructionKind::AdviceLD => expand_advice_ld(row),
+        SourceInstructionKind::AMOADDD => expand_amoaddd(row),
+        SourceInstructionKind::AMOANDD => expand_amoandd(row),
+        SourceInstructionKind::AMOORD => expand_amoord(row),
+        SourceInstructionKind::AMOXORD => expand_amoxord(row),
+        SourceInstructionKind::AMOSWAPD => expand_amoswapd(row),
+        SourceInstructionKind::AMOMAXD => expand_amomaxd(row),
+        SourceInstructionKind::AMOMAXUD => expand_amomaxud(row),
+        SourceInstructionKind::AMOMIND => expand_amomind(row),
+        SourceInstructionKind::AMOMINUD => expand_amominud(row),
+        SourceInstructionKind::AMOADDW => expand_amoaddw(row),
+        SourceInstructionKind::AMOANDW => expand_amoandw(row),
+        SourceInstructionKind::AMOORW => expand_amoorw(row),
+        SourceInstructionKind::AMOXORW => expand_amoxorw(row),
+        SourceInstructionKind::AMOSWAPW => expand_amoswapw(row),
+        SourceInstructionKind::AMOMAXW => expand_amomaxw(row),
+        SourceInstructionKind::AMOMAXUW => expand_amomaxuw(row),
+        SourceInstructionKind::AMOMINW => expand_amominw(row),
+        SourceInstructionKind::AMOMINUW => expand_amominuw(row),
+        SourceInstructionKind::LRD => expand_lrd(row),
+        SourceInstructionKind::LRW => expand_lrw(row),
+        SourceInstructionKind::DIV => expand_div(row),
+        SourceInstructionKind::DIVU => expand_divu(row),
+        SourceInstructionKind::DIVW => expand_divw(row),
+        SourceInstructionKind::DIVUW => expand_divuw(row),
+        SourceInstructionKind::REM => expand_rem(row),
+        SourceInstructionKind::REMU => expand_remu(row),
+        SourceInstructionKind::REMW => expand_remw(row),
+        SourceInstructionKind::REMUW => expand_remuw(row),
+        SourceInstructionKind::SB => expand_sb(row),
+        SourceInstructionKind::SCD => expand_scd(row),
+        SourceInstructionKind::SCW => expand_scw(row),
+        SourceInstructionKind::SH => expand_sh(row),
+        SourceInstructionKind::SW => expand_sw(row),
+        SourceInstructionKind::CSRRW => expand_csrrw(row),
+        SourceInstructionKind::CSRRS => expand_csrrs(row),
+        SourceInstructionKind::EBREAK => expand_ebreak(row),
+        SourceInstructionKind::ECALL => expand_ecall(row),
+        SourceInstructionKind::MRET => expand_mret(row),
+        SourceInstructionKind::SLL => expand_sll(row),
+        SourceInstructionKind::SLLI => expand_slli(row),
+        SourceInstructionKind::SLLW => expand_sllw(row),
+        SourceInstructionKind::SLLIW => expand_slliw(row),
+        SourceInstructionKind::SRL => expand_srl(row),
+        SourceInstructionKind::SRLI => expand_srli(row),
+        SourceInstructionKind::SRA => expand_sra(row),
+        SourceInstructionKind::SRAI => expand_srai(row),
+        SourceInstructionKind::SRLIW => expand_srliw(row),
+        SourceInstructionKind::SRAIW => expand_sraiw(row),
+        SourceInstructionKind::SRLW => expand_srlw(row),
+        SourceInstructionKind::SRAW => expand_sraw(row),
         _ => Err(ExpansionError::UnsupportedInstruction),
     }
 }

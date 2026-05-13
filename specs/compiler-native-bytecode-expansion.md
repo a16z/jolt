@@ -104,8 +104,9 @@ Instruction identity is now separated at the typed row boundary:
 The remaining compatibility caveat is the legacy bare `JoltInstructionKind`
 tag enum: it is still broad while the typed final enum and profile legality are
 final-only. That lets existing row serialization and some tracer internals keep
-working during this PR. Future mechanical cleanup can shrink the bare tag enum
-once all source-only recipes stop using `JoltRow` as their temporary row shape.
+working during this PR. Source-only recipes now use `SourceRow` as their source
+context, so the bare tag bridge is no longer needed merely to pass source
+operands, address, or compressed-row metadata into expansion recipes.
 
 ## Expansion Pipeline
 

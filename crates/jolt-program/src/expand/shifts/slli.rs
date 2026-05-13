@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::expand) fn expand_slli(
-    instruction: &JoltRow,
+    instruction: &SourceRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let shift = instruction.operands.imm & 0x3f;
     let mut asm = ExpansionBuilder::new(*instruction);
