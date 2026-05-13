@@ -22,7 +22,7 @@ pub fn main() {
 
     let rss = PeakRssSampler::start().expect("start RSS sampler");
     let prove_start = Instant::now();
-    let output = prove_fr_poseidon2_sdk(&mut program, s0, s1, s2)
+    let (final_state, output) = prove_fr_poseidon2_sdk(&mut program, s0, s1, s2)
         .expect("modular prove succeeds on FR Poseidon2");
     let prove_secs = prove_start.elapsed().as_secs_f64();
     let peak_rss_mb = rss.finish();
@@ -36,6 +36,7 @@ pub fn main() {
     info!("prove time : {prove_secs:.3} s");
     info!("verify time: {verify_secs:.3} s");
     info!("peak RSS   : {peak_rss_mb} MB");
+    info!("final state: {final_state:?}");
     info!("valid: {valid}");
 
     if let Err(err) = verify_result {

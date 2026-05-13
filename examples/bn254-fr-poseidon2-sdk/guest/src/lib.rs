@@ -15,7 +15,7 @@ use jolt_inlines_bn254_fr::Fr;
     stack_size = 65536,
     heap_size = 131072,
     max_input_size = 8192,
-    max_trace_length = 524288
+    max_trace_length = 262144
 )]
 fn fr_poseidon2_sdk(s0: [u64; 4], s1: [u64; 4], s2: [u64; 4]) -> [[u64; 4]; 3] {
     let mut state = [Fr::from_limbs(s0), Fr::from_limbs(s1), Fr::from_limbs(s2)];

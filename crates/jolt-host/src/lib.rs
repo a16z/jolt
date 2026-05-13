@@ -86,6 +86,14 @@ fn instruction_lookup_table_index(instr: &Instruction) -> Option<usize> {
 /// `TRANSCRIPT_LABEL`).
 pub const TRANSCRIPT_LABEL: &[u8] = b"Jolt";
 
+/// The single goldens-baked shape supported by `prove_program` today.
+/// Guests with naturally larger traces fail with [`ProveProgramError::UnsupportedShape`].
+/// Kept in sync with the `MAX_MODULAR_TRACE_LENGTH` cap in the
+/// `#[jolt::provable(backend = "modular")]` macro guard.
+pub const FIXTURE_LOG_T: usize = 18;
+pub const FIXTURE_LOG_K_BYTECODE: usize = 14;
+pub const FIXTURE_LOG_K_RAM: usize = 14;
+
 /// Errors produced by `prove_program`.
 #[derive(Debug)]
 pub enum ProveProgramError {
@@ -273,12 +281,9 @@ pub fn prove_program(
     let (bytecode_raw, init_mem, _program_size, entry_address) = program.decode();
 
     // ----- Phase 2: params (shape constants) -----
-    // Pad trace_length up to the goldens-baked fixture (log_t=16) so
+    // Pad trace_length up to the goldens-baked fixture (`FIXTURE_LOG_T`) so
     // smaller guests (e.g. muldiv at 483 cycles) reuse the same goldens
     // as larger guests (e.g. FR Poseidon2 at ~36k cycles).
-    const FIXTURE_LOG_T: usize = 18;
-    const FIXTURE_LOG_K_BYTECODE: usize = 14;
-    const FIXTURE_LOG_K_RAM: usize = 14;
     let natural_trace_length = trace.len().next_power_of_two().max(256);
     let trace_length = natural_trace_length.max(1usize << FIXTURE_LOG_T);
     let bytecode = BytecodePreprocessing::preprocess_padded(

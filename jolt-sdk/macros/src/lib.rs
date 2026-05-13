@@ -976,7 +976,8 @@ impl MacroBuilder {
     }
 
     /// Emit a `compile_error!` if the user enables a feature the modular
-    /// backend does not yet support (ZK proving, WASM target, trusted advice).
+    /// backend does not yet support (ZK proving, WASM target, trusted advice,
+    /// or `max_trace_length` larger than the current goldens-baked fixture).
     fn make_modular_guard(&self) -> TokenStream2 {
         let has_trusted_advice = !self.trusted_func_args.is_empty();
         let trusted_advice_err = if has_trusted_advice {
@@ -1002,6 +1003,27 @@ impl MacroBuilder {
             quote! {}
         };
 
+        // The modular backend currently runs against a single goldens shape
+        // (log_t = 18). Reject `max_trace_length` above 2^18 at expansion
+        // time so users get a build error instead of an `UnsupportedShape`
+        // surprise from `prove_program`. Kept in sync with
+        // `jolt_host::FIXTURE_LOG_T`.
+        let attributes = parse_attributes(&self.attr);
+        const FIXTURE_LOG_T: u32 = 18;
+        const MAX_MODULAR_TRACE_LENGTH: u64 = 1 << FIXTURE_LOG_T;
+        let trace_len_err = if attributes.max_trace_length > MAX_MODULAR_TRACE_LENGTH {
+            let msg = format!(
+                "#[jolt::provable(backend = \"modular\")] only supports \
+                 max_trace_length <= 2^{FIXTURE_LOG_T} ({MAX_MODULAR_TRACE_LENGTH}), \
+                 got {}. Regenerating goldens at a larger shape is required \
+                 to lift this cap.",
+                attributes.max_trace_length
+            );
+            quote! { compile_error!(#msg); }
+        } else {
+            quote! {}
+        };
+
         // Note: the `zk` feature is rejected indirectly — `jolt-sdk` only
         // re-exports `jolt_host`/`jolt_trace` when `feature = "zk"` is OFF,
         // so enabling zk with this backend produces a compile-time
@@ -1009,6 +1031,7 @@ impl MacroBuilder {
         quote! {
             #trusted_advice_err
             #wasm_err
+            #trace_len_err
         }
     }
 
@@ -1043,10 +1066,11 @@ impl MacroBuilder {
         }
     }
 
-    /// Modular `prove_<fn>(program, args...) -> ProveOutput`. Postcard-encodes
-    /// the public + untrusted-advice arguments and delegates to
-    /// `jolt_host::prove_program`. Output decoding is left to the caller via
-    /// `ProveOutput::io_device.outputs`.
+    /// Modular `prove_<fn>(program, args...) -> (T, ProveOutput)`.
+    /// Postcard-encodes public + untrusted-advice arguments, delegates to
+    /// `jolt_host::prove_program`, then decodes the guest's typed return
+    /// value `T` from `io_device.outputs` so callers don't need to touch
+    /// raw bytes.
     fn make_modular_prove_func(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
         let prove_fn_name = Ident::new(&format!("prove_{fn_name}"), fn_name.span());
@@ -1058,13 +1082,31 @@ impl MacroBuilder {
         let untrusted_arg_types: Vec<_> =
             self.untrusted_func_args.iter().map(|(_, t)| t).collect();
 
+        let (ret_ty, decode_ret) = match &self.func.sig.output {
+            ReturnType::Default => (
+                quote! { () },
+                quote! { let ret_val: () = (); },
+            ),
+            ReturnType::Type(_, ty) => (
+                quote! { #ty },
+                quote! {
+                    let max_output = output.io_device.memory_layout.max_output_size as usize;
+                    let mut output_bytes = output.io_device.outputs.clone();
+                    output_bytes.resize(max_output, 0);
+                    let ret_val: #ty = jolt::postcard::from_bytes(&output_bytes)
+                        .expect("decode guest return value via postcard");
+                },
+            ),
+        };
+
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #prove_fn_name(
                 program: &mut jolt::jolt_trace::Program,
                 #(#pub_arg_names: #pub_arg_types,)*
                 #(#untrusted_arg_names: #untrusted_arg_types,)*
-            ) -> Result<jolt::jolt_host::ProveOutput, jolt::jolt_host::ProveProgramError> {
+            ) -> Result<(#ret_ty, jolt::jolt_host::ProveOutput), jolt::jolt_host::ProveProgramError>
+            {
                 let mut input_bytes: Vec<u8> = Vec::new();
                 #(
                     input_bytes.append(&mut jolt::postcard::to_stdvec(&#pub_arg_names).unwrap());
@@ -1075,12 +1117,14 @@ impl MacroBuilder {
                         &mut jolt::postcard::to_stdvec(&#untrusted_arg_names).unwrap()
                     );
                 )*
-                jolt::jolt_host::prove_program(
+                let output = jolt::jolt_host::prove_program(
                     program,
                     &input_bytes,
                     &untrusted_advice_bytes,
                     &[],
-                )
+                )?;
+                #decode_ret
+                Ok((ret_val, output))
             }
         }
     }
