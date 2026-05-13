@@ -272,7 +272,9 @@ impl<F: JoltField> InstructionInputSumcheckProver<F> {
                     cycle,
                 )| {
                     let instruction = cycle.instruction();
-                    let instruction_norm = instruction.jolt_instruction_row();
+                    let instruction_norm = instruction
+                        .try_jolt_instruction_row()
+                        .expect("trace cycle must be a final Jolt instruction row");
                     let flags = instruction.instruction_flags();
                     *left_is_rs1_eval = flags[InstructionFlags::LeftOperandIsRs1Value];
                     *left_is_pc_eval = flags[InstructionFlags::LeftOperandIsPC];

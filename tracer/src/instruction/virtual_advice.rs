@@ -71,19 +71,4 @@ impl From<JoltInstructionRow> for VirtualAdvice {
     }
 }
 
-impl jolt_riscv::JoltInstructionRowData for VirtualAdvice {}
-
-impl From<VirtualAdvice> for JoltInstructionRow {
-    fn from(val: VirtualAdvice) -> Self {
-        JoltInstructionRow {
-            instruction_kind: jolt_riscv::JoltInstructionKind::VirtualAdvice,
-            address: val.address as usize,
-            operands: val.operands.into(),
-            is_compressed: val.is_compressed,
-            is_first_in_sequence: val.is_first_in_sequence,
-            virtual_sequence_remaining: val.virtual_sequence_remaining,
-        }
-    }
-}
-
 impl RISCVTrace for VirtualAdvice {}

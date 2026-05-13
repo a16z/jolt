@@ -362,12 +362,7 @@ impl From<()> for RAMAccess {
 }
 
 pub trait RISCVInstruction:
-    std::fmt::Debug
-    + Sized
-    + Copy
-    + Into<Instruction>
-    + From<JoltInstructionRow>
-    + Into<JoltInstructionRow>
+    std::fmt::Debug + Sized + Copy + Into<Instruction> + From<JoltInstructionRow>
 {
     const MASK: u32;
     const MATCH: u32;
@@ -630,8 +625,27 @@ macro_rules! define_rv64imac_enums {
                 }
             }
 
-            pub fn jolt_instruction_row(&self) -> JoltInstructionRow {
-                self.into()
+            pub fn try_jolt_instruction_row(&self) -> Result<JoltInstructionRow, SourceInstructionKind> {
+                match self {
+                    Instruction::NoOp => Ok(Default::default()),
+                    Instruction::UNIMPL => Err(SourceInstructionKind::Unimpl),
+                    $(
+                        Instruction::$instr(instr) => {
+                            let Some(instruction_kind) = SourceInstructionKind::$instr.jolt_kind() else {
+                                return Err(SourceInstructionKind::$instr);
+                            };
+                            Ok(JoltInstructionRow {
+                                instruction_kind,
+                                address: instr.address as usize,
+                                operands: instr.operands.into(),
+                                virtual_sequence_remaining: instr.virtual_sequence_remaining,
+                                is_first_in_sequence: instr.is_first_in_sequence,
+                                is_compressed: instr.is_compressed,
+                            })
+                        },
+                    )*
+                    Instruction::INLINE(_) => Err(SourceInstructionKind::Inline),
+                }
             }
 
             pub fn source_instruction(&self) -> SourceInstruction {
@@ -796,41 +810,35 @@ macro_rules! define_rv64imac_enums {
             }
         }
 
-        impl From<&Instruction> for JoltInstructionRow {
-            fn from(instr: &Instruction) -> Self {
-                match instr {
-                    Instruction::NoOp => Default::default(),
-                    Instruction::UNIMPL => Default::default(),
-                    $(
-                        Instruction::$instr(instr) => {
-                            let instruction_kind =
-                                match SourceInstructionKind::$instr.jolt_kind() {
-                                    Some(kind) => kind,
-                                    None => panic!(
-                                        "{} is a source-only instruction and has no direct final Jolt row",
-                                        stringify!($instr)
-                                    ),
-                                };
-                            JoltInstructionRow {
-                                instruction_kind,
-                                address: instr.address as usize,
-                                operands: instr.operands.into(),
-                                virtual_sequence_remaining: instr.virtual_sequence_remaining,
-                                is_first_in_sequence: instr.is_first_in_sequence,
-                                is_compressed: instr.is_compressed,
-                            }
-                        },
-                    )*
-                    Instruction::INLINE(_) => {
-                        panic!("inline source instructions have no direct final Jolt row")
-                    },
-                }
-            }
-        }
     };
 }
 
 jolt_riscv::for_each_instruction_kind!(define_rv64imac_enums);
+
+macro_rules! impl_final_jolt_row_data {
+    (
+        instructions: [$($instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+    ) => {
+        $(
+            impl jolt_riscv::JoltInstructionRowData for $instr {}
+
+            impl From<$instr> for JoltInstructionRow {
+                fn from(instr: $instr) -> JoltInstructionRow {
+                    JoltInstructionRow {
+                        instruction_kind: JoltInstructionKind::$instr,
+                        address: instr.address as usize,
+                        operands: instr.operands.into(),
+                        is_compressed: instr.is_compressed,
+                        virtual_sequence_remaining: instr.virtual_sequence_remaining,
+                        is_first_in_sequence: instr.is_first_in_sequence,
+                    }
+                }
+            }
+        )*
+    };
+}
+
+jolt_riscv::for_each_jolt_instruction_kind!(impl_final_jolt_row_data);
 
 impl CanonicalSerialize for Instruction {
     fn serialize_with_mode<W: ark_serialize::Write>(
@@ -1732,10 +1740,12 @@ impl<T: RISCVInstruction> RISCVCycle<T> {
     #[cfg(any(feature = "test-utils", test))]
     pub fn random(&self, rng: &mut rand::rngs::StdRng) -> Self {
         let instruction = T::random(rng);
+        let concrete: Instruction = instruction.into();
+        let source_instruction = concrete.source_instruction();
         let register_state =
             <<T::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
                 rng,
-                &Into::<JoltInstructionRow>::into(instruction).operands,
+                &source_instruction.row().operands,
             );
         Self {
             instruction,

@@ -141,8 +141,9 @@ impl InstrAssembler {
     where
         RISCVCycle<I>: Into<Cycle>,
     {
+        let instruction: Instruction = inst.into();
         if self.has_inline_instr_format {
-            let normalized: JoltInstructionRow = inst.into();
+            let normalized = instruction.source_instruction().into_row();
             if !Self::is_valid_virtual_rd(normalized.operands.rd) {
                 const MIN_INLINE_REG: u8 =
                     RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
@@ -152,7 +153,6 @@ impl InstrAssembler {
                 );
             }
         }
-        let instruction: Instruction = inst.into();
         self.sequence
             .extend(instruction.inline_sequence(&self.allocator));
     }

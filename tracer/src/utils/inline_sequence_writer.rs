@@ -170,7 +170,9 @@ fn format_instruction_with_placeholders(
     sequence_inputs: &SequenceInputs,
 ) -> String {
     let mut formatted = format!("{instruction:?}");
-    let normalized_instr = instruction.jolt_instruction_row();
+    let normalized_instr = instruction
+        .try_jolt_instruction_row()
+        .expect("inline sequence writer only formats final Jolt instructions");
 
     // Replace address with placeholder (address is always in hex format)
     let address_pattern = format!("address: {:#x}", normalized_instr.address);

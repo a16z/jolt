@@ -1,11 +1,11 @@
 use crate::{field::JoltField, zkvm::instruction::LookupQuery};
 use common::constants::XLEN;
+use jolt_riscv::JoltInstructionRowData;
 use rand::prelude::*;
 use tracer::{
     emulator::{cpu::Cpu, terminal::DummyTerminal},
     instruction::{
-        self, format::InstructionRegisterState, Cycle, JoltInstructionRow, RISCVCycle,
-        RISCVInstruction, RISCVTrace,
+        self, format::InstructionRegisterState, Cycle, RISCVCycle, RISCVInstruction, RISCVTrace,
     },
 };
 
@@ -128,7 +128,9 @@ mod flags {
                 continue;
             }
 
-            let normalized = instr.jolt_instruction_row();
+            let normalized = instr
+                .try_jolt_instruction_row()
+                .expect("trace cycle must be a final Jolt instruction row");
             assert_eq!(
                 normalized.circuit_flags(),
                 instr.circuit_flags(),
@@ -251,7 +253,9 @@ mod r1cs_consistency {
                 let cycle = default_cycle.random(&mut rng);
                 let instr = cycle.instruction();
                 let flags = instr.instruction_flags();
-                let norm = instr.jolt_instruction_row();
+                let norm = instr
+                    .try_jolt_instruction_row()
+                    .expect("trace cycle must be a final Jolt instruction row");
 
                 let rs1 = cycle.rs1_read().map(|(_, v)| v).unwrap_or(0);
                 let rs2 = cycle.rs2_read().map(|(_, v)| v).unwrap_or(0);
@@ -305,14 +309,20 @@ mod r1cs_consistency {
 
 pub fn lookup_output_matches_trace_test<T>()
 where
-    T: InstructionLookup<XLEN> + RISCVInstruction + RISCVTrace + Default + Flags + 'static,
+    T: InstructionLookup<XLEN>
+        + RISCVInstruction
+        + RISCVTrace
+        + Default
+        + Flags
+        + JoltInstructionRowData
+        + 'static,
     RISCVCycle<T>: LookupQuery<XLEN> + Into<Cycle>,
 {
     let cycle: RISCVCycle<T> = Default::default();
     let mut rng = StdRng::seed_from_u64(12345);
     for _ in 0..10000 {
         let random_cycle = cycle.random(&mut rng);
-        let normalized_instr: JoltInstructionRow = random_cycle.instruction.into();
+        let normalized_instr = random_cycle.instruction.jolt_instruction_row();
         let normalized_operands = normalized_instr.operands;
 
         let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));

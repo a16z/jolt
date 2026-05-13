@@ -3,7 +3,6 @@ use std::panic;
 
 use crate::emulator::cpu::Cpu;
 use crate::instruction::format::{InstructionFormat, InstructionRegisterState};
-use crate::instruction::JoltInstructionRow;
 #[cfg(test)]
 use jolt_riscv::RV64IMAC_JOLT;
 
@@ -20,7 +19,7 @@ use super::{
     subw::SUBW, sw::SW,
 };
 
-use super::{RISCVInstruction, RISCVTrace};
+use super::{Instruction, RISCVInstruction, RISCVTrace};
 
 use crate::emulator::terminal::DummyTerminal;
 
@@ -110,11 +109,12 @@ where
 
     for _ in 0..1000 {
         let instruction = I::random(&mut rng);
-        let instr: JoltInstructionRow = instruction.into();
+        let concrete: Instruction = instruction.into();
+        let source = concrete.source_instruction();
         let register_state =
             <<I::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
                 &mut rng,
-                &instr.operands,
+                &source.row().operands,
             );
 
         let mut original_cpu = Cpu::new(Box::new(DummyTerminal::default()));
@@ -151,12 +151,12 @@ where
             }
         }
 
-        let rs1 = instr.operands.rs1.unwrap_or(0) as usize;
+        let rs1 = source.row().operands.rs1.unwrap_or(0) as usize;
         if let Some(rs1_val) = register_state.rs1_value() {
             original_cpu.write_register(rs1, rs1_val as i64);
             virtual_cpu.write_register(rs1, rs1_val as i64);
         }
-        let rs2 = instr.operands.rs2.unwrap_or(0) as usize;
+        let rs2 = source.row().operands.rs2.unwrap_or(0) as usize;
         if let Some(rs2_val) = register_state.rs2_value() {
             original_cpu.write_register(rs2, rs2_val as i64);
             virtual_cpu.write_register(rs2, rs2_val as i64);

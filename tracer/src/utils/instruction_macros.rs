@@ -88,27 +88,5 @@ macro_rules! declare_riscv_instr {
             }
         }
 
-        impl ::jolt_riscv::JoltInstructionRowData for $name {}
-
-        impl From<$name> for $crate::instruction::JoltInstructionRow {
-            fn from(instr: $name) -> $crate::instruction::JoltInstructionRow {
-                let instruction_kind =
-                    match ::jolt_riscv::SourceInstructionKind::$name.jolt_kind() {
-                        Some(kind) => kind,
-                        None => panic!(
-                            "{} is a source-only instruction and has no direct final Jolt row",
-                            stringify!($name)
-                        ),
-                    };
-                $crate::instruction::JoltInstructionRow {
-                    instruction_kind,
-                    address: instr.address as usize,
-                    operands: instr.operands.into(),
-                    is_compressed: instr.is_compressed,
-                    virtual_sequence_remaining: instr.virtual_sequence_remaining,
-                    is_first_in_sequence: instr.is_first_in_sequence,
-                }
-            }
-        }
     };
 }

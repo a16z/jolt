@@ -48,7 +48,10 @@ impl ExecutionBackend for TracerBackend {
             None,
         );
 
-        let rows = cycles.into_iter().map(trace_row_from_cycle).collect();
+        let rows = cycles
+            .into_iter()
+            .map(trace_row_from_cycle)
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(TraceOutput::new(
             OwnedTrace::new(rows),
             device,
@@ -59,17 +62,19 @@ impl ExecutionBackend for TracerBackend {
     }
 }
 
-fn trace_row_from_cycle(cycle: Cycle) -> TraceRow {
-    TraceRow {
-        instruction: jolt_instruction_row(&cycle),
+fn trace_row_from_cycle(cycle: Cycle) -> Result<TraceRow, TraceError> {
+    Ok(TraceRow {
+        instruction: jolt_instruction_row(&cycle)?,
         registers: register_state(&cycle),
         ram_access: cycle.ram_access().into(),
-    }
+    })
 }
 
-fn jolt_instruction_row(cycle: &Cycle) -> JoltInstructionRow {
+fn jolt_instruction_row(cycle: &Cycle) -> Result<JoltInstructionRow, TraceError> {
     let instruction = cycle.instruction();
-    (&instruction).into()
+    instruction
+        .try_jolt_instruction_row()
+        .map_err(|_| TraceError::Backend("execution trace contained a source-only instruction"))
 }
 
 fn register_state(cycle: &Cycle) -> RegisterState {

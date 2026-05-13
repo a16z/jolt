@@ -176,7 +176,10 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
         let wa: Vec<Option<u8>> = trace
             .par_iter()
             .map(|cycle| {
-                let instr = cycle.instruction().jolt_instruction_row();
+                let instr = cycle
+                    .instruction()
+                    .try_jolt_instruction_row()
+                    .expect("trace cycle must be a final Jolt instruction row");
                 instr.operands.rd
             })
             .collect();

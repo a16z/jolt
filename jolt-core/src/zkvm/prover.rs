@@ -249,7 +249,8 @@ impl<
                 // in a inline sequence (`virtual_sequence_remaining` is `Some(0)`)
                 if let Some(virtual_sequence_remaining) = cycle
                     .instruction()
-                    .jolt_instruction_row()
+                    .try_jolt_instruction_row()
+                    .expect("trace cycle must be a final Jolt instruction row")
                     .virtual_sequence_remaining
                 {
                     if virtual_sequence_remaining > 0 {

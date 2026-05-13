@@ -357,7 +357,7 @@ macro_rules! define_rv64imac_trait_impls {
                     Instruction::UNIMPL => [false; NUM_CIRCUIT_FLAGS],
                     _ => panic!("Unexpected instruction: {:?}", self),
                 };
-                if self.jolt_instruction_row().virtual_sequence_remaining == Some(0) {
+                if self.try_jolt_instruction_row().expect("trace cycle must be a final Jolt instruction row").virtual_sequence_remaining == Some(0) {
                     flags[CircuitFlags::IsLastInSequence] = true;
                 }
                 flags

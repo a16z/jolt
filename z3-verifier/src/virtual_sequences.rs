@@ -558,7 +558,10 @@ fn test_consistency(instr: &Instruction) {
         SatResult::Unsat => {}
         SatResult::Sat => {
             let mut msg = "Found differing outputs:\n".to_string();
-            let operands = instr.jolt_instruction_row().operands;
+            let operands = instr
+                .try_jolt_instruction_row()
+                .expect("virtual sequence verifier only formats final Jolt instructions")
+                .operands;
             let model = solver.get_model().unwrap();
             let eval = |bv: &BV| model.eval(bv, true).unwrap().as_u64().unwrap();
             for i in 0..RISCV_REGISTER_COUNT as usize {

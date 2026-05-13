@@ -111,8 +111,10 @@ impl InlineExpansionProvider for TracerInlineExpansionProvider {
         (registration.build_sequence)(asm, inline.operands)
             .into_iter()
             .map(|instruction| {
-                JoltInstruction::try_from(instruction.jolt_instruction_row())
-                    .map_err(ExpansionError::IllegalTargetInstruction)
+                let row = instruction
+                    .try_jolt_instruction_row()
+                    .map_err(ExpansionError::IllegalSourceInstruction)?;
+                JoltInstruction::try_from(row).map_err(ExpansionError::IllegalTargetInstruction)
             })
             .collect::<Result<Vec<_>, _>>()
     }
@@ -254,14 +256,6 @@ impl RISCVTrace for INLINE {
 impl From<JoltInstructionRow> for INLINE {
     fn from(_: JoltInstructionRow) -> Self {
         unimplemented!("Inline::from(JoltInstructionRow) should not be called");
-    }
-}
-
-impl jolt_riscv::JoltInstructionRowData for INLINE {}
-
-impl From<INLINE> for JoltInstructionRow {
-    fn from(_: INLINE) -> Self {
-        panic!("inline source instructions have no direct final Jolt row")
     }
 }
 
