@@ -11,11 +11,17 @@
 
 PR #1518 moved bytecode expansion into `jolt-program`, but it deliberately kept
 one broad row type: decoded source rows and expanded Jolt bytecode rows both
-flow through `NormalizedInstruction { instruction_kind: JoltInstructionKind }`.
-That keeps the code working, but the type names still hide an important phase
-boundary. This PR should make that boundary real: decoded program instructions
-are source instructions, expansion recipes consume source instructions, and
-bytecode/preprocessing/tracing/proof rows are Jolt instructions.
+flowed through `NormalizedInstruction { instruction_kind: JoltInstructionKind }`.
+That kept the code working, but the type names hid an important phase boundary.
+This PR should make that boundary real: decoded program instructions are source
+instructions, expansion recipes consume source instructions, and
+bytecode/preprocessing/tracing/proof rows are Jolt instructions. The initial
+implementation slices rename the final row payload to `JoltRow`, rename the
+typed final-row view to `JoltInstruction`, add a decoded `SourceRow` payload,
+and cut the decode/expand boundary over so source rows flow in and final rows
+flow out. The remaining cutover should replace the broad mirrored kind tags
+with typed source/final row enums and remove source-only rows from the final
+universe.
 
 The same cutover should clean up registered inlines. Inline opcodes are source
 program opcodes identified by `(opcode, funct3, funct7)`; they are not final
@@ -89,7 +95,7 @@ profile legality deciding what is accepted for a given compiled configuration.
   adding a target-only virtual row should not automatically make it decodable
   from guest program bytes.
 - Instruction identity is not Rust declaration order. Each source/final row
-  identity has a canonical operation name such as `riscv.rv64i.add` or
+  identity has a canonical operation name such as `rv64.add` or
   `jolt.virtual.sign_extend_word`. Compact numeric tags are a binary encoding
   of those names for serialization, fixtures, and other persistent cross-crate
   references. Profile-local dense indexes may be regenerated for selected
@@ -155,8 +161,8 @@ profile legality deciding what is accepted for a given compiled configuration.
 ### Non-Goals
 
 - Do not redesign lookup-table metadata or reintroduce `LookupInstructionKind`.
-  Keep `LookupInstruction` as the typed lookup-backed view over final
-  `JoltInstruction` rows.
+  The typed lookup-backed view should be the final-row `JoltInstruction` enum
+  itself, not a second parallel instruction enum.
 - Do not move lookup-table flags, circuit flags, instruction flags, or other
   proving-system metadata into `jolt-riscv`.
 - Do not change RISC-V or Jolt instruction semantics.
@@ -175,12 +181,13 @@ profile legality deciding what is accepted for a given compiled configuration.
 
 ### Acceptance Criteria
 
-- [ ] `NormalizedInstruction` is removed or fully renamed into one of the two
+- [x] `NormalizedInstruction` is removed or fully renamed into one of the two
       phase-specific types, with no compatibility alias.
-- [ ] `jolt-program::image::decode_instruction` returns
+- [x] `jolt-program::image::decode_instruction` returns
       `SourceInstruction<SourceRow>`.
 - [ ] `jolt-program::expand` accepts `SourceInstruction` at public boundaries
-      and returns `Vec<JoltInstruction<JoltRow>>`.
+      and returns `Vec<JoltInstruction<JoltRow>>`. It now accepts
+      `SourceInstruction` but still returns `Vec<JoltRow>`.
 - [ ] Recursive expansion internally distinguishes source helper dispatch from
       direct target-row emission without relying on one broad shared enum.
 - [ ] `JoltInstruction<T>` no longer has `Inline` and contains only universal
@@ -194,6 +201,9 @@ profile legality deciding what is accepted for a given compiled configuration.
 - [ ] Source and final row universes are separate closed enums whose variants
       carry marker structs, e.g. `ADD(Add<T>)`. They are not mirrored bare tag
       enums and are not generated differently for each profile.
+- [x] `SourceRow` does not carry a duplicate source kind field. The
+      `SourceInstruction` enum variant is the source identity, and the row
+      payload carries only row data.
 - [ ] Canonical operation names and stable `u16` Jolt tags are explicit for the
       universal source/final enums supported by this catalog. Serialization does
       not depend on Rust enum declaration order, generated display order, or
@@ -415,9 +425,9 @@ expansion bodies, side-effect policy, tracer execution, lookup-table routing,
 circuit flags, or instruction flags. Those are real facts, but they belong to
 the crates that use and test them.
 
-The row enums should use the same pattern as today's `LookupInstruction`: each
-variant wraps the associated marker struct instantiated with a row payload. That
-means the enum itself owns the variant-to-struct relationship; there is no
+The row enums should use the same pattern as the former `LookupInstruction`:
+each variant wraps the associated marker struct instantiated with a row payload.
+That means the enum itself owns the variant-to-struct relationship; there is no
 separate mapping table to keep in sync.
 
 ```rust
@@ -453,9 +463,9 @@ pub struct SourceRow {
 }
 
 pub struct SourceInline {
-    pub opcode: u32,
-    pub funct3: u32,
-    pub funct7: u32,
+    pub opcode: u8,
+    pub funct3: u8,
+    pub funct7: u8,
     pub extension: InlineExtension,
 }
 
@@ -486,9 +496,9 @@ compact encodings are an implementation detail.
 Examples:
 
 ```text
-riscv.rv64i.add
-riscv.rv64m.mul
-riscv.rv64f.fadd_s
+rv64.add
+rv64.mul
+rv64.fadd_s
 jolt.virtual.sign_extend_word
 jolt.field.bn254.mul
 jolt.inline.sha2.compress
@@ -527,17 +537,17 @@ pub trait JoltOp {
 }
 
 impl<T> SourceOp for Add<T> {
-    const CANONICAL_NAME: &'static str = "riscv.rv64i.add";
+    const CANONICAL_NAME: &'static str = "rv64.add";
     const JOLT_TAG: JoltOpTag = JoltOpTag(0x0101);
 }
 
 impl<T> JoltOp for Add<T> {
-    const CANONICAL_NAME: &'static str = "riscv.rv64i.add";
+    const CANONICAL_NAME: &'static str = "rv64.add";
     const JOLT_TAG: JoltOpTag = JoltOpTag(0x0101);
 }
 
 impl<T> SourceOp for AddW<T> {
-    const CANONICAL_NAME: &'static str = "riscv.rv64i.addw";
+    const CANONICAL_NAME: &'static str = "rv64.addw";
     const JOLT_TAG: JoltOpTag = JoltOpTag(0x0102);
 }
 
@@ -551,7 +561,7 @@ The tag is allocated only for supported Jolt source/final rows. Future source
 ISA operations may be known by canonical name without receiving a Jolt tag until
 the selected Jolt catalog actually supports them. Numeric tag ranges may be used
 as a readability aid, but they must not be the source of architectural meaning.
-The robust partition is the canonical name namespace: `riscv.*`,
+The robust partition is the canonical name namespace: `rv64.*`,
 `jolt.virtual.*`, `jolt.field.*`, `jolt.inline.*`, `wasm.*`, and future
 namespaces. If a row moves from source-only to final-only, or from an inline
 helper to a first-class operation, its name and tag should change only if its
@@ -566,10 +576,10 @@ pub struct ProfileInstructionIndex(u16);
 impl Rv64imacJolt {
     pub const fn jolt_dense_index(tag: JoltOpTag) -> Option<ProfileInstructionIndex> {
         match tag {
-            tag!("riscv.rv64i.add") => Some(ProfileInstructionIndex(0)),
-            tag!("riscv.rv64i.addi") => Some(ProfileInstructionIndex(1)),
-            tag!("riscv.rv64m.mul") => Some(ProfileInstructionIndex(2)),
-            tag!("riscv.rv64i.ld") => Some(ProfileInstructionIndex(3)),
+            tag!("rv64.add") => Some(ProfileInstructionIndex(0)),
+            tag!("rv64.addi") => Some(ProfileInstructionIndex(1)),
+            tag!("rv64.mul") => Some(ProfileInstructionIndex(2)),
+            tag!("rv64.ld") => Some(ProfileInstructionIndex(3)),
             tag!("jolt.virtual.sign_extend_word") => Some(ProfileInstructionIndex(4)),
             _ => None,
         }
@@ -939,10 +949,11 @@ final-bytecode legality, and inline availability should all flow from
 profile/legalization facts and crate-owned decorations rather than from a broad
 shared instruction-kind list.
 
-Lookup support should not introduce `LookupInstructionKind`. Keep the existing
-boundary in spirit: `JoltInstruction<T>` identifies final rows,
-`LookupInstruction` is the typed lookup/proof-facing view of supported final rows, and
-`LookupTableKind` identifies concrete lookup tables in `jolt-lookup-tables`.
+Lookup support should not introduce `LookupInstructionKind` or preserve a
+parallel `LookupInstruction` enum. Keep the existing boundary in spirit:
+`JoltInstruction<T>` is the typed lookup/proof-facing view of supported final
+rows, and `LookupTableKind` identifies concrete lookup tables in
+`jolt-lookup-tables`.
 A future `LookupTableProfile` may name the compile-time table set for a
 selected proof profile, but it should be table-oriented, not another
 instruction-kind enum.
@@ -1091,11 +1102,33 @@ book update is required unless public SDK APIs expose the new names directly.
 
 ## Execution
 
+Current implementation status:
+
+- `NormalizedInstruction` has been removed in favor of phase-specific row
+  payloads.
+- `jolt-program` decode now produces `SourceInstruction<SourceRow>` values.
+- `jolt-program::expand` public APIs now consume `SourceInstruction` values and return
+  `Vec<JoltRow>`.
+- `InlineExpansionProvider` now receives a source instruction and returns final rows.
+- `SourceRow` now carries `SourceInline { opcode, funct3, funct7 }` metadata
+  directly, so tracer decode and registered inline expansion no longer recover
+  source inline identity by routing through a fake final `JoltRow::Inline`.
+- `SourceRow` no longer carries a duplicate `SourceInstructionKind`; the
+  `SourceInstruction` enum variant is the source instruction identity, and row
+  payloads carry only address, operand, inline, and compression data.
+- `SourceInstructionKind` tag serialization is now direct rather than routed
+  through `SourceInstructionKind::jolt_kind()`, so future source-only identities
+  do not need a final-row identity just to serialize.
+- The current `SourceInstruction<T>` variants carry `T` directly. The
+  marker-struct payload cutover, profile legality layer, `InlineExtension`
+  classification, final `JoltInstruction<JoltRow>` return type, and removal of
+  source-only variants from the final row universe are still pending.
+
 1. Add `SourceRow`, `SourceInline`, `JoltRow`, and operand aliases/types in
    `jolt-riscv`.
 2. Add universal `SourceInstruction<T = SourceRow>` and
    `JoltInstruction<T = JoltRow>` enums whose variants carry marker structs,
-   following the existing `LookupInstruction` pattern.
+   following the former `LookupInstruction` pattern.
 3. Add explicit canonical operation names, stable `u16` Jolt tags, and
    serialization for those universal row enums. Tags must encode canonical names
    for rows supported by this catalog and must not depend on Rust enum
