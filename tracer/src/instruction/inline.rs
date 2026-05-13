@@ -17,6 +17,7 @@ use crate::{
     utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
 use jolt_program::expand::{ExpansionAllocator, ExpansionError, InlineExpansionProvider};
+use jolt_riscv::JoltInstruction;
 use serde::{Deserialize, Serialize};
 
 const FIRST_INSTRUCTION_TEMP_REGISTER: u8 = common::constants::RISCV_REGISTER_COUNT + 8;
@@ -79,7 +80,7 @@ impl InlineExpansionProvider for TracerInlineExpansionProvider {
         &mut self,
         instruction: &SourceInstruction,
         _allocator: &mut ExpansionAllocator,
-    ) -> Result<Vec<JoltRow>, ExpansionError> {
+    ) -> Result<Vec<JoltInstruction>, ExpansionError> {
         let Instruction::INLINE(inline) = Instruction::try_from_source_instruction(*instruction)
             .map_err(|_| ExpansionError::MalformedInstruction("malformed inline instruction"))?
         else {
@@ -98,11 +99,14 @@ impl InlineExpansionProvider for TracerInlineExpansionProvider {
                 .then(|| self.allocator.allocate())
         });
 
-        Ok(inline
+        inline
             .inline_sequence(&self.allocator)
             .into_iter()
-            .map(|instruction| instruction.jolt_row())
-            .collect())
+            .map(|instruction| {
+                JoltInstruction::try_from(instruction.jolt_row())
+                    .map_err(ExpansionError::IllegalTargetInstruction)
+            })
+            .collect::<Result<Vec<_>, _>>()
     }
 }
 

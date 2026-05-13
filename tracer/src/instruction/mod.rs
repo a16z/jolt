@@ -645,17 +645,28 @@ macro_rules! define_rv64imac_enums {
                         },
                     );
                 }
-                let row = self.jolt_row();
-                SourceInstruction::new(
-                    SourceInstructionKind::from_jolt_kind(row.instruction_kind)
-                        .expect("tracer instruction should map to a source instruction kind"),
-                    SourceRow {
-                        address: row.address,
-                        operands: row.operands,
-                        inline: None,
-                        is_compressed: row.is_compressed,
-                    },
-                )
+                match self {
+                    Instruction::NoOp => SourceInstruction::new(
+                        SourceInstructionKind::NoOp,
+                        SourceRow::default(),
+                    ),
+                    Instruction::UNIMPL => SourceInstruction::new(
+                        SourceInstructionKind::Unimpl,
+                        SourceRow::default(),
+                    ),
+                    $(
+                        Instruction::$instr(instr) => SourceInstruction::new(
+                            SourceInstructionKind::$instr,
+                            SourceRow {
+                                address: instr.address as usize,
+                                operands: instr.operands.into(),
+                                inline: None,
+                                is_compressed: instr.is_compressed,
+                            },
+                        ),
+                    )*
+                    Instruction::INLINE(_) => unreachable!("inline source returned above"),
+                }
             }
 
             pub fn has_side_effects(&self) -> bool {
@@ -680,6 +691,7 @@ macro_rules! define_rv64imac_enums {
                 )
                 .expect("jolt-program bytecode expansion failed")
                 .into_iter()
+                .map(JoltRow::from)
                 .map(|instruction| {
                     Instruction::try_from_jolt_row(instruction)
                         .expect("jolt-program expansion produced an instruction unknown to tracer")
@@ -694,20 +706,7 @@ macro_rules! define_rv64imac_enums {
                     $(
                         JoltInstructionKind::$instr => Ok(<$instr as From<JoltRow>>::from(instruction).into()),
                     )*
-                    JoltInstructionKind::Inline => {
-                        let metadata = instruction.operands.imm as u32;
-                        let inline = INLINE {
-                            opcode: metadata & 0x7f,
-                            funct3: (metadata >> 7) & 0x7,
-                            funct7: (metadata >> 10) & 0x7f,
-                            address: instruction.address as u64,
-                            operands: instruction.operands.into(),
-                            virtual_sequence_remaining: instruction.virtual_sequence_remaining,
-                            is_first_in_sequence: instruction.is_first_in_sequence,
-                            is_compressed: instruction.is_compressed,
-                        };
-                        Ok(inline.into())
-                    }
+                    JoltInstructionKind::Inline => Err("inline rows are source-only"),
                 }
             }
 
