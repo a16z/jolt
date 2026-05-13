@@ -67,18 +67,14 @@ impl<F: FixedByteSize + ReducingBytes> NargDeserialize for FieldEl<F> {
 }
 
 /// 128-bit-truncating challenge wrapper. Decodes 16 squeezed bytes via
-/// `F::from_u128`. Used only as a verifier message; the `Encoding` impl
-/// is the same little-endian form as [`FieldEl`] so that absorbing one of
-/// these symmetrically with the other type stays a code error rather than
-/// a wire-format hazard.
+/// `F::from_u128`. Verifier-message-only — deliberately implements
+/// neither `Encoding` nor `NargSerialize` so that
+/// `prover_message(&FieldElOptimized(_))` is a compile error rather than
+/// a silent orphan in the NARG. (Spongefish's blanket
+/// `impl<T: Encoding<[u8]>> NargSerialize for T` would otherwise let any
+/// `Encoding` slip into `prover_message` undetected.)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FieldElOptimized<F>(pub F);
-
-impl<F: CanonicalBytes> Encoding<[u8]> for FieldElOptimized<F> {
-    fn encode(&self) -> impl AsRef<[u8]> {
-        self.0.to_bytes_le_vec()
-    }
-}
 
 impl<F: FromPrimitiveInt> Decoding<[u8]> for FieldElOptimized<F> {
     type Repr = [u8; FR_TRUNCATED_BYTES];
