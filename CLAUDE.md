@@ -42,6 +42,20 @@ cargo build -p jolt-core -q
 cargo install --path . --locked
 ```
 
+### Local Bolt/MLIR Environment
+
+Before running Bolt MLIR/codegen checks locally, generate and source the Bolt
+dev environment:
+
+```bash
+scripts/setup-bolt-dev.sh
+source .bolt-dev-env
+```
+
+Agents should source `.bolt-dev-env` before any Bolt, generated-role, or
+Jolt-on-Bolt equivalence command so `llvm-config`, `MLIR_SYS_220_PREFIX`, and
+the local `jolt` CLI all resolve consistently.
+
 ### Profiling
 
 ```bash
