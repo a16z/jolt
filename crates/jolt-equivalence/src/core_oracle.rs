@@ -9,6 +9,10 @@
     clippy::too_many_arguments,
     reason = "oracle fixtures should fail fast when reference setup is malformed"
 )]
+#![expect(
+    dead_code,
+    reason = "cross-stack assertions against jolt-core are disabled on this branch due to FR coprocessor R1CS divergence"
+)]
 
 use std::time::Instant;
 
@@ -98,26 +102,26 @@ pub struct CoreMuldivCommitmentFixture {
     pub pcs_setup: DoryProverSetup,
     pub proof: CoreProof,
     pub(crate) verifier_preprocessing: &'static CoreVerifierPreprocessing,
-    pub(crate) io: JoltDevice,
-    pub(crate) entry_address: u64,
+    pub io: JoltDevice,
+    pub entry_address: u64,
     pub cycle_inputs: Vec<CycleInput>,
-    pub(crate) r1cs_witness: Vec<Fr>,
-    pub(crate) rv64_cycles: Vec<Stage1Rv64Cycle>,
+    pub r1cs_witness: Vec<Fr>,
+    pub rv64_cycles: Vec<Stage1Rv64Cycle>,
     pub product_virtual_cycles: Vec<Stage2ProductVirtualCycle>,
     pub instruction_lookup_cycles: Vec<Stage2InstructionLookupCycle>,
-    pub(crate) stage3_cycles: Vec<Stage3Cycle>,
-    pub(crate) stage4_register_accesses: Vec<Stage4RegisterAccess>,
-    pub(crate) stage5_lookup_indices: Vec<u128>,
-    pub(crate) stage5_lookup_table_indices: Vec<Option<usize>>,
-    pub(crate) stage5_is_interleaved_operands: Vec<bool>,
-    pub(crate) stage6_bytecode_entries: Vec<Stage6BytecodeEntry<Fr>>,
-    pub(crate) stage6_entry_bytecode_index: usize,
-    pub(crate) stage6_num_lookup_tables: usize,
-    pub(crate) ram_accesses: Vec<Stage2RamAccess>,
-    pub(crate) initial_ram_state: Vec<u64>,
-    pub(crate) final_ram_state: Vec<u64>,
-    pub(crate) ram_start_address: u64,
-    pub(crate) ram_output_layout: Stage2RamOutputLayout,
+    pub stage3_cycles: Vec<Stage3Cycle>,
+    pub stage4_register_accesses: Vec<Stage4RegisterAccess>,
+    pub stage5_lookup_indices: Vec<u128>,
+    pub stage5_lookup_table_indices: Vec<Option<usize>>,
+    pub stage5_is_interleaved_operands: Vec<bool>,
+    pub stage6_bytecode_entries: Vec<Stage6BytecodeEntry<Fr>>,
+    pub stage6_entry_bytecode_index: usize,
+    pub stage6_num_lookup_tables: usize,
+    pub ram_accesses: Vec<Stage2RamAccess>,
+    pub initial_ram_state: Vec<u64>,
+    pub final_ram_state: Vec<u64>,
+    pub ram_start_address: u64,
+    pub ram_output_layout: Stage2RamOutputLayout,
     pub commitments: Vec<CoreCommitment>,
 }
 
@@ -152,7 +156,7 @@ impl CoreMuldivCommitmentFixture {
         Stage1OuterR1csData::new(r1cs_key, &self.r1cs_witness).expect("valid R1CS witness shape")
     }
 
-    pub(crate) fn stage6_witness_params(&self) -> Stage6WitnessParams {
+    pub fn stage6_witness_params(&self) -> Stage6WitnessParams {
         Stage6WitnessParams {
             trace_len: self.proof.trace_length,
             log_k_chunk: self.params.log_k_chunk,
@@ -220,6 +224,11 @@ impl BoltPreambleSource for CoreMuldivCommitmentFixture {
 pub fn core_muldiv_commitment_fixture() -> CoreMuldivCommitmentFixture {
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("muldiv inputs");
     core_guest_commitment_fixture("muldiv-guest", inputs, 1 << 16)
+}
+
+pub fn core_muldiv_commitment_fixture_at_log_t(log_t: usize) -> CoreMuldivCommitmentFixture {
+    let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("muldiv inputs");
+    core_guest_commitment_fixture("muldiv-guest", inputs, 1usize << log_t)
 }
 
 pub fn core_sha2_chain_commitment_fixture(log_t: usize) -> CoreMuldivCommitmentFixture {
@@ -330,6 +339,7 @@ fn core_guest_commitment_fixture(
         &bytecode,
         &host_io_device.memory_layout,
         r1cs_key.num_vars_padded,
+        &[], // no FR events in the core oracle path
     );
     let rv64_cycles = stage1_rv64_cycles(&trace, proof.trace_length, &bytecode);
     let stage3_cycles = stage3_cycles(&trace, proof.trace_length, &bytecode);

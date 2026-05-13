@@ -1093,6 +1093,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "bn254-fr-poseidon2-arkworks"
+version = "0.1.0"
+dependencies = [
+ "bn254-fr-poseidon2-arkworks-guest",
+ "jolt-profiling",
+ "jolt-sdk",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "bn254-fr-poseidon2-arkworks-guest"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff 0.5.0",
+ "jolt-sdk",
+]
+
+[[package]]
+name = "bn254-fr-poseidon2-sdk"
+version = "0.1.0"
+dependencies = [
+ "bn254-fr-poseidon2-sdk-guest",
+ "jolt-inlines-bn254-fr",
+ "jolt-profiling",
+ "jolt-sdk",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "bn254-fr-poseidon2-sdk-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-bn254-fr",
+ "jolt-sdk",
+]
+
+[[package]]
 name = "bolt"
 version = "0.1.0"
 dependencies = [
@@ -2952,6 +2992,7 @@ dependencies = [
  "jolt-profiling",
  "jolt-prover",
  "jolt-r1cs",
+ "jolt-riscv",
  "jolt-sumcheck",
  "jolt-trace",
  "jolt-transcript",
@@ -3021,6 +3062,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-host"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "jolt-dory",
+ "jolt-field",
+ "jolt-kernels",
+ "jolt-lookup-tables",
+ "jolt-profiling",
+ "jolt-prover",
+ "jolt-r1cs",
+ "jolt-riscv",
+ "jolt-trace",
+ "jolt-transcript",
+ "jolt-verifier",
+ "jolt-witness",
+ "postcard",
+ "tracer",
+ "tracing",
+]
+
+[[package]]
 name = "jolt-hyperkzg"
 version = "0.1.0"
 dependencies = [
@@ -3068,6 +3131,19 @@ dependencies = [
  "blake3",
  "jolt-inlines-sdk",
  "rand 0.8.6",
+ "tracer",
+]
+
+[[package]]
+name = "jolt-inlines-bn254-fr"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff 0.5.0",
+ "jolt-field",
+ "jolt-r1cs",
+ "jolt-witness",
+ "num-traits",
  "tracer",
 ]
 
@@ -3374,6 +3450,7 @@ version = "0.1.0"
 dependencies = [
  "jolt-field",
  "jolt-poly",
+ "num-traits",
 ]
 
 [[package]]
@@ -6107,6 +6184,8 @@ name = "tracer"
 version = "0.2.0"
 dependencies = [
  "addr2line 0.26.1",
+ "ark-bn254",
+ "ark-ff 0.5.0",
  "ark-serialize 0.5.0",
  "clap",
  "common",

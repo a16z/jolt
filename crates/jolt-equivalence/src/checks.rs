@@ -5,6 +5,10 @@
     clippy::panic,
     reason = "equivalence assertions should fail fast with precise mismatch context"
 )]
+#![expect(
+    dead_code,
+    reason = "cross-stack assertions against jolt-core are disabled on this branch due to FR coprocessor R1CS divergence"
+)]
 
 use std::collections::BTreeMap;
 

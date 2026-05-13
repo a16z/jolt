@@ -115,7 +115,7 @@ define_bolt_programs_with_params!(
     resolve_kernels = true
 );
 define_bolt_programs_with_params!(
-    pub(crate) bolt_stage3_programs_with_params,
+    pub bolt_stage3_programs_with_params,
     CompilerStage3CpuProgram,
     build_stage3_protocol,
     lower_stage3_to_compute,
@@ -124,7 +124,7 @@ define_bolt_programs_with_params!(
     resolve_kernels = true
 );
 define_bolt_programs_with_params!(
-    pub(crate) bolt_stage4_programs_with_params,
+    pub bolt_stage4_programs_with_params,
     CompilerStage4CpuProgram,
     build_stage4_protocol,
     lower_stage4_to_compute,
@@ -133,7 +133,7 @@ define_bolt_programs_with_params!(
     resolve_kernels = true
 );
 define_bolt_programs_with_params!(
-    pub(crate) bolt_stage5_programs_with_params,
+    pub bolt_stage5_programs_with_params,
     CompilerStage5CpuProgram,
     build_stage5_protocol,
     lower_stage5_to_compute,
@@ -142,7 +142,7 @@ define_bolt_programs_with_params!(
     resolve_kernels = true
 );
 define_bolt_programs_with_params!(
-    pub(crate) bolt_stage6_programs_with_params,
+    pub bolt_stage6_programs_with_params,
     CompilerStage6CpuProgram,
     build_stage6_protocol,
     lower_stage6_to_compute,

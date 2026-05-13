@@ -38,6 +38,7 @@ members = [
   "crates/jolt-transcript",
   "crates/bolt",
   "crates/jolt-prover",
+  "crates/jolt-host",
   "crates/jolt-verifier",
   "crates/jolt-wrapper",
   "crates/jolt-profiling",
@@ -60,6 +61,7 @@ members = [
   "jolt-inlines/secp256k1",
   "jolt-inlines/grumpkin",
   "jolt-inlines/p256",
+  "jolt-inlines/bn254-fr",
   "examples/btreemap/host",
   "examples/btreemap/guest",
   "examples/collatz",
@@ -86,6 +88,10 @@ members = [
   "examples/stdlib/guest",
   "examples/muldiv",
   "examples/muldiv/guest",
+  "examples/bn254-fr-poseidon2-sdk",
+  "examples/bn254-fr-poseidon2-sdk/guest",
+  "examples/bn254-fr-poseidon2-arkworks",
+  "examples/bn254-fr-poseidon2-arkworks/guest",
   "examples/overflow",
   "examples/overflow/guest",
   "examples/memory-ops",
@@ -398,6 +404,8 @@ jolt-dory = { path = "./crates/jolt-dory" }
 jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
 bolt = { path = "./crates/bolt" }
 jolt-prover = { path = "./crates/jolt-prover" }
+jolt-host = { path = "./crates/jolt-host" }
+jolt-profiling = { path = "./crates/jolt-profiling" }
 jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-wrapper = { path = "./crates/jolt-wrapper" }
 jolt-blindfold = { path = "./crates/jolt-blindfold" }
@@ -418,3 +426,4 @@ jolt-inlines-bigint = { path = "./jolt-inlines/bigint", default-features = false
 jolt-inlines-secp256k1 = { path = "./jolt-inlines/secp256k1", default-features = false }
 jolt-inlines-grumpkin = { path = "./jolt-inlines/grumpkin", default-features = false }
 jolt-inlines-p256 = { path = "./jolt-inlines/p256", default-features = false }
+jolt-inlines-bn254-fr = { path = "./jolt-inlines/bn254-fr", default-features = false }

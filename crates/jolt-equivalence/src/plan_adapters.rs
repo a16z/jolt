@@ -615,23 +615,23 @@ mod stage5;
 mod stage6;
 mod stage7;
 
-pub(crate) use generated_commitment::{
+pub use generated_commitment::{
     leak_generated_commitment_prover_program, leak_generated_commitment_verifier_program,
 };
 pub use generated_stage1::leak_generated_stage1_verifier_program;
 pub use generated_stage2::leak_generated_stage2_verifier_program;
-pub(crate) use generated_stage3::leak_generated_stage3_verifier_program;
-pub(crate) use generated_stage4::leak_generated_stage4_verifier_program;
-pub(crate) use generated_stage5::leak_generated_stage5_verifier_program;
-pub(crate) use generated_stage6::leak_generated_stage6_verifier_program;
-pub(crate) use generated_stage7::leak_generated_stage7_verifier_program;
+pub use generated_stage3::leak_generated_stage3_verifier_program;
+pub use generated_stage4::leak_generated_stage4_verifier_program;
+pub use generated_stage5::leak_generated_stage5_verifier_program;
+pub use generated_stage6::leak_generated_stage6_verifier_program;
+pub use generated_stage7::leak_generated_stage7_verifier_program;
 pub use stage1::leak_stage1_program;
 pub use stage2::leak_stage2_program;
-pub(crate) use stage3::leak_stage3_program;
-pub(crate) use stage4::leak_stage4_program;
-pub(crate) use stage5::leak_stage5_program;
-pub(crate) use stage6::leak_stage6_program;
-pub(crate) use stage7::leak_stage7_program;
+pub use stage3::leak_stage3_program;
+pub use stage4::leak_stage4_program;
+pub use stage5::leak_stage5_program;
+pub use stage6::leak_stage6_program;
+pub use stage7::leak_stage7_program;
 
 use bolt::protocols::jolt::Stage8CpuProgram as CompilerStage8CpuProgram;
 use bolt::Role;

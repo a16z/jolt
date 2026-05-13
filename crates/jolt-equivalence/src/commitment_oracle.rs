@@ -181,7 +181,7 @@ pub trait BoltPreambleSource {
     fn dory_layout(&self) -> u64;
 }
 
-fn append_bolt_preamble<T, P>(transcript: &mut T, preamble: &P)
+pub fn append_bolt_preamble<T, P>(transcript: &mut T, preamble: &P)
 where
     T: Transcript<Challenge = Fr>,
     P: BoltPreambleSource,
@@ -331,7 +331,7 @@ pub fn run_generated_synthetic_bolt_commitment_pair_with_cpu_programs(
     )
 }
 
-pub(crate) fn run_generated_bolt_commitment_pair_with_cycles(
+pub fn run_generated_bolt_commitment_pair_with_cycles(
     prover_program: &'static generated_commitment::CommitmentProverProgramPlan,
     verifier_program: &'static generated_verifier_commitment::CommitmentVerifierProgramPlan,
     setup: &DoryProverSetup,
