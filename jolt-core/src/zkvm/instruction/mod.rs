@@ -1,11 +1,10 @@
 use std::ops::{Index, IndexMut};
 
 use allocative::Allocative;
-use common::constants::XLEN;
 use jolt_riscv::{
     CircuitFlagSet as RiscvCircuitFlagSet, Flags as RiscvFlags,
     InstructionFlagSet as RiscvInstructionFlagSet, JoltInstruction, JoltInstructionKind,
-    JoltInstructionRow,
+    JoltInstructionRow, SourceInstructionKind,
 };
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter, FromRepr};
@@ -45,6 +44,40 @@ pub trait LookupQuery<const XLEN: usize> {
 
     /// Computes the output lookup entry for this instruction as a u64.
     fn to_lookup_output(&self) -> u64;
+}
+
+/// Proof-facing view of a tracer cycle whose instruction is backed by a final
+/// Jolt bytecode row.
+///
+/// A tracer [`Cycle`] still owns dynamic witness data such as register reads,
+/// RAM accesses, lookup operands, and lookup outputs. Static proof metadata such
+/// as circuit flags, instruction flags, and lookup-table routing must come from
+/// the final [`JoltInstructionRow`] stored here. Constructing this adapter is the
+/// phase-boundary check: decoded source-only instructions are rejected before
+/// proving code can ask proof-metadata questions about them.
+#[derive(Clone, Copy, Debug)]
+pub struct JoltTraceCycle<'a> {
+    cycle: &'a Cycle,
+    instruction: JoltInstructionRow,
+}
+
+impl<'a> JoltTraceCycle<'a> {
+    pub fn try_new(cycle: &'a Cycle) -> Result<Self, SourceInstructionKind> {
+        let instruction = cycle.instruction().try_jolt_instruction_row()?;
+        Ok(Self { cycle, instruction })
+    }
+
+    pub fn cycle(&self) -> &'a Cycle {
+        self.cycle
+    }
+
+    pub fn instruction(&self) -> &JoltInstructionRow {
+        &self.instruction
+    }
+
+    pub fn into_instruction(self) -> JoltInstructionRow {
+        self.instruction
+    }
 }
 
 /// Boolean flags used in Jolt's R1CS constraints (`opflags` in the Jolt paper).
@@ -310,6 +343,40 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
     }
 }
 
+impl<const XLEN: usize> InstructionLookup<XLEN> for JoltTraceCycle<'_> {
+    fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
+        self.instruction.lookup_table()
+    }
+}
+
+impl Flags for JoltTraceCycle<'_> {
+    fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
+        self.instruction.circuit_flags()
+    }
+
+    fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
+        self.instruction.instruction_flags()
+    }
+}
+
+impl<const XLEN: usize> LookupQuery<XLEN> for JoltTraceCycle<'_> {
+    fn to_instruction_inputs(&self) -> (u64, i128) {
+        LookupQuery::<XLEN>::to_instruction_inputs(self.cycle)
+    }
+
+    fn to_lookup_index(&self) -> u128 {
+        LookupQuery::<XLEN>::to_lookup_index(self.cycle)
+    }
+
+    fn to_lookup_operands(&self) -> (u64, u128) {
+        LookupQuery::<XLEN>::to_lookup_operands(self.cycle)
+    }
+
+    fn to_lookup_output(&self) -> u64 {
+        LookupQuery::<XLEN>::to_lookup_output(self.cycle)
+    }
+}
+
 fn circuit_flags_from_riscv(flags: RiscvCircuitFlagSet) -> [bool; NUM_CIRCUIT_FLAGS] {
     let mut converted = [false; NUM_CIRCUIT_FLAGS];
     for (index, value) in converted.iter_mut().enumerate() {
@@ -330,58 +397,6 @@ macro_rules! define_rv64imac_trait_impls {
     (
         instructions: [$($instr:ident),* $(,)?]
     ) => {
-        impl InstructionLookup<XLEN> for Instruction {
-            fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
-                match self {
-                    Instruction::NoOp => None,
-                    $(
-                        Instruction::$instr(instr) => instr.lookup_table(),
-                    )*
-                    Instruction::UNIMPL => None,
-                    _ => panic!("Unexpected instruction: {:?}", self),
-                }
-            }
-        }
-
-        impl Flags for Instruction {
-            fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
-                let mut flags = match self {
-                    Instruction::NoOp => {
-                        let mut flags = [false; NUM_CIRCUIT_FLAGS];
-                        flags[CircuitFlags::DoNotUpdateUnexpandedPC] = true;
-                        flags
-                    },
-                    $(
-                        Instruction::$instr(instr) => instr.circuit_flags(),
-                    )*
-                    Instruction::UNIMPL => [false; NUM_CIRCUIT_FLAGS],
-                    _ => panic!("Unexpected instruction: {:?}", self),
-                };
-                if self
-                    .try_jolt_instruction_row()
-                    .is_ok_and(|row| row.virtual_sequence_remaining == Some(0))
-                {
-                    flags[CircuitFlags::IsLastInSequence] = true;
-                }
-                flags
-            }
-
-            fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
-                match self {
-                    Instruction::NoOp => {
-                        let mut flags = [false; NUM_INSTRUCTION_FLAGS];
-                        flags[InstructionFlags::IsNoop] = true;
-                        flags
-                    },
-                    $(
-                        Instruction::$instr(instr) => instr.instruction_flags(),
-                    )*
-                    Instruction::UNIMPL => [false; NUM_INSTRUCTION_FLAGS],
-                    _ => panic!("Unexpected instruction: {:?}", self),
-                }
-            }
-        }
-
         impl SupportedInstruction for Instruction {
             fn is_supported_instruction(&self) -> bool {
                 match self {
@@ -389,18 +404,6 @@ macro_rules! define_rv64imac_trait_impls {
                         Instruction::$instr(_) => true,
                     )*
                     _ => false,
-                }
-            }
-        }
-
-        impl<const XLEN: usize> InstructionLookup<XLEN> for Cycle {
-            fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
-                match self {
-                    Cycle::NoOp => None,
-                    $(
-                        Cycle::$instr(cycle) => cycle.instruction.lookup_table(),
-                    )*
-                    _ => panic!("Unexpected instruction: {:?}", self),
                 }
             }
         }

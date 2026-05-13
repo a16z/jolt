@@ -33,119 +33,107 @@ where
 
 /// Test that certain combinations of circuit flags are exclusive.
 mod flags {
-    use std::panic;
-
-    use crate::zkvm::instruction::{Flags, InstructionFlags, SupportedInstruction};
+    use crate::zkvm::instruction::{Flags, InstructionFlags, JoltTraceCycle};
 
     use super::CircuitFlags;
     use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
     use strum::IntoEnumIterator;
-    use tracer::instruction::{Cycle, Instruction};
+    use tracer::instruction::Cycle;
 
     #[test]
     fn left_operand_exclusive() {
         for cycle in Cycle::iter() {
-            if let Cycle::INLINE(_) = cycle {
+            let Ok(jolt_cycle) = JoltTraceCycle::try_new(&cycle) else {
                 continue;
-            }
-            let instr = cycle.instruction();
-            if let Ok(flags) = panic::catch_unwind(|| instr.instruction_flags()) {
-                assert!(
-                    !(flags[InstructionFlags::LeftOperandIsPC]
-                        && flags[InstructionFlags::LeftOperandIsRs1Value]),
-                    "Left operand flags not exclusive for {instr:?}",
-                );
-            }
+            };
+            let flags = jolt_cycle.instruction_flags();
+            assert!(
+                !(flags[InstructionFlags::LeftOperandIsPC]
+                    && flags[InstructionFlags::LeftOperandIsRs1Value]),
+                "Left operand flags not exclusive for {:?}",
+                jolt_cycle.instruction(),
+            );
         }
     }
 
     #[test]
     fn right_operand_exclusive() {
         for cycle in Cycle::iter() {
-            if let Cycle::INLINE(_) = cycle {
+            let Ok(jolt_cycle) = JoltTraceCycle::try_new(&cycle) else {
                 continue;
-            }
-            let instr = cycle.instruction();
-            if let Ok(flags) = panic::catch_unwind(|| instr.instruction_flags()) {
-                assert!(
-                    !(flags[InstructionFlags::RightOperandIsRs2Value]
-                        && flags[InstructionFlags::RightOperandIsImm]),
-                    "Right operand flags not exclusive for {instr:?}",
-                );
-            }
+            };
+            let flags = jolt_cycle.instruction_flags();
+            assert!(
+                !(flags[InstructionFlags::RightOperandIsRs2Value]
+                    && flags[InstructionFlags::RightOperandIsImm]),
+                "Right operand flags not exclusive for {:?}",
+                jolt_cycle.instruction(),
+            );
         }
     }
 
     #[test]
     fn lookup_shape_exclusive() {
         for cycle in Cycle::iter() {
-            if let Cycle::INLINE(_) = cycle {
+            let Ok(jolt_cycle) = JoltTraceCycle::try_new(&cycle) else {
                 continue;
-            }
-            let instr = cycle.instruction();
-            if let Ok(flags) = panic::catch_unwind(|| instr.circuit_flags()) {
-                let num_true = [
-                    flags[CircuitFlags::AddOperands],
-                    flags[CircuitFlags::SubtractOperands],
-                    flags[CircuitFlags::MultiplyOperands],
-                    flags[CircuitFlags::Advice],
-                ]
-                .iter()
-                .filter(|&&b| b)
-                .count();
-                assert!(
-                    num_true <= 1,
-                    "Lookup shaping flags not exclusive for {instr:?}",
-                );
-            }
+            };
+            let flags = jolt_cycle.circuit_flags();
+            let num_true = [
+                flags[CircuitFlags::AddOperands],
+                flags[CircuitFlags::SubtractOperands],
+                flags[CircuitFlags::MultiplyOperands],
+                flags[CircuitFlags::Advice],
+            ]
+            .iter()
+            .filter(|&&b| b)
+            .count();
+            assert!(
+                num_true <= 1,
+                "Lookup shaping flags not exclusive for {:?}",
+                jolt_cycle.instruction(),
+            );
         }
     }
 
     #[test]
     fn load_store_exclusive() {
         for cycle in Cycle::iter() {
-            if let Cycle::INLINE(_) = cycle {
+            let Ok(jolt_cycle) = JoltTraceCycle::try_new(&cycle) else {
                 continue;
-            }
-            let instr = cycle.instruction();
-            if let Ok(flags) = panic::catch_unwind(|| instr.circuit_flags()) {
-                assert!(
-                    !(flags[CircuitFlags::Load] && flags[CircuitFlags::Store]),
-                    "Load/Store flags not exclusive for {instr:?}",
-                );
-            }
+            };
+            let flags = jolt_cycle.circuit_flags();
+            assert!(
+                !(flags[CircuitFlags::Load] && flags[CircuitFlags::Store]),
+                "Load/Store flags not exclusive for {:?}",
+                jolt_cycle.instruction(),
+            );
         }
     }
 
     #[test]
-    fn normalized_flags_match_concrete_instruction_flags() {
+    fn jolt_trace_cycle_flags_match_final_row_flags() {
         for cycle in Cycle::iter() {
-            if let Cycle::INLINE(_) = cycle {
-                continue;
-            }
-            let instr = cycle.instruction();
-            if !instr.is_supported_instruction() {
-                continue;
-            }
-
-            let Ok(normalized) = instr.try_jolt_instruction_row() else {
+            let Ok(jolt_cycle) = JoltTraceCycle::try_new(&cycle) else {
                 continue;
             };
             assert_eq!(
-                normalized.circuit_flags(),
-                instr.circuit_flags(),
-                "circuit flags differ for {instr:?}"
+                jolt_cycle.instruction().circuit_flags(),
+                jolt_cycle.circuit_flags(),
+                "circuit flags differ for {:?}",
+                jolt_cycle.instruction(),
             );
             assert_eq!(
-                normalized.instruction_flags(),
-                instr.instruction_flags(),
-                "instruction flags differ for {instr:?}"
+                jolt_cycle.instruction().instruction_flags(),
+                jolt_cycle.instruction_flags(),
+                "instruction flags differ for {:?}",
+                jolt_cycle.instruction(),
             );
         }
     }
 
     #[test]
-    fn concrete_terminal_virtual_flags_match_normalized_flags() {
+    fn terminal_virtual_flags_are_final_row_metadata() {
         let normalized = JoltInstructionRow {
             instruction_kind: JoltInstructionKind::ADDI,
             address: 0x8000_0000,
@@ -159,11 +147,7 @@ mod flags {
             is_first_in_sequence: false,
             is_compressed: false,
         };
-        let concrete = Instruction::try_from_jolt_instruction_row(normalized)
-            .expect("ADDI should convert from normalized form");
-
-        assert_eq!(normalized.circuit_flags(), concrete.circuit_flags());
-        assert!(concrete.circuit_flags()[CircuitFlags::IsLastInSequence]);
+        assert!(normalized.circuit_flags()[CircuitFlags::IsLastInSequence]);
     }
 
     #[cfg(feature = "host")]
@@ -173,18 +157,8 @@ mod flags {
         let (bytecode, _, _, _) = program.decode();
 
         for normalized in bytecode {
-            let concrete = Instruction::try_from_jolt_instruction_row(normalized)
-                .expect("expanded bytecode should convert to a concrete instruction");
-            assert_eq!(
-                normalized.circuit_flags(),
-                concrete.circuit_flags(),
-                "circuit flags differ for {normalized:?}"
-            );
-            assert_eq!(
-                normalized.instruction_flags(),
-                concrete.instruction_flags(),
-                "instruction flags differ for {normalized:?}"
-            );
+            let _ = normalized.circuit_flags();
+            let _ = normalized.instruction_flags();
         }
     }
 
@@ -194,18 +168,30 @@ mod flags {
         use common::constants::XLEN;
 
         for cycle in Cycle::iter() {
-            if let Cycle::INLINE(_) = cycle {
+            let Ok(jolt_cycle) = JoltTraceCycle::try_new(&cycle) else {
                 continue;
+            };
+            let instr_flags = jolt_cycle.instruction_flags();
+            if instr_flags[InstructionFlags::Branch] {
+                let out = LookupQuery::<XLEN>::to_lookup_output(&jolt_cycle);
+                assert!(
+                    out == 0 || out == 1,
+                    "Branch lookup output not boolean for {:?}: got {out}",
+                    jolt_cycle.instruction(),
+                );
             }
-            let instr = cycle.instruction();
-            if let Ok(instr_flags) = panic::catch_unwind(|| instr.instruction_flags()) {
-                if instr_flags[InstructionFlags::Branch] {
-                    let out = LookupQuery::<XLEN>::to_lookup_output(&cycle);
-                    assert!(
-                        out == 0 || out == 1,
-                        "Branch lookup output not boolean for {instr:?}: got {out}",
-                    );
-                }
+        }
+    }
+
+    #[test]
+    fn source_only_cycles_are_not_jolt_trace_cycles() {
+        for cycle in Cycle::iter() {
+            let instruction = cycle.instruction();
+            if instruction.try_jolt_instruction_row().is_err() {
+                assert!(
+                    JoltTraceCycle::try_new(&cycle).is_err(),
+                    "source-only instruction unexpectedly constructed a JoltTraceCycle: {instruction:?}",
+                );
             }
         }
     }
@@ -230,7 +216,9 @@ mod r1cs_consistency {
     use strum::IntoEnumIterator;
     use tracer::instruction::Cycle;
 
-    use crate::zkvm::instruction::{Flags, InstructionFlags, LookupQuery, SupportedInstruction};
+    use crate::zkvm::instruction::{
+        Flags, InstructionFlags, JoltTraceCycle, LookupQuery, SupportedInstruction,
+    };
 
     #[test]
     fn instruction_inputs_match_constraint() {
@@ -254,11 +242,10 @@ mod r1cs_consistency {
 
             for _ in 0..10_000 {
                 let cycle = default_cycle.random(&mut rng);
-                let instr = cycle.instruction();
-                let flags = instr.instruction_flags();
-                let norm = instr
-                    .try_jolt_instruction_row()
-                    .expect("trace cycle must be a final Jolt instruction row");
+                let jolt_cycle = JoltTraceCycle::try_new(&cycle)
+                    .expect("trace cycle must be backed by a final Jolt instruction row");
+                let flags = jolt_cycle.instruction_flags();
+                let norm = jolt_cycle.instruction();
 
                 let rs1 = cycle.rs1_read().map(|(_, v)| v).unwrap_or(0);
                 let rs2 = cycle.rs2_read().map(|(_, v)| v).unwrap_or(0);
@@ -281,7 +268,7 @@ mod r1cs_consistency {
                 };
 
                 let (left_actual, right_actual) =
-                    LookupQuery::<XLEN>::to_instruction_inputs(&cycle);
+                    LookupQuery::<XLEN>::to_instruction_inputs(&jolt_cycle);
 
                 if left_actual != left_expected || right_actual != right_expected {
                     first_failure_for_variant.get_or_insert_with(|| {

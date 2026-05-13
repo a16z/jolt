@@ -1,28 +1,6 @@
-use crate::zkvm::instruction::NUM_INSTRUCTION_FLAGS;
 use tracer::instruction::{ebreak::EBREAK, RISCVCycle};
 
-use crate::zkvm::lookup_table::LookupTables;
-
-use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
-
-impl<const XLEN: usize> InstructionLookup<XLEN> for EBREAK {
-    fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
-        None
-    }
-}
-
-impl Flags for EBREAK {
-    fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
-        let mut flags = [false; NUM_CIRCUIT_FLAGS];
-        flags[CircuitFlags::IsFirstInSequence] = self.is_first_in_sequence;
-        flags[CircuitFlags::IsCompressed] = self.is_compressed;
-        flags
-    }
-
-    fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
-        [false; NUM_INSTRUCTION_FLAGS]
-    }
-}
+use super::LookupQuery;
 
 impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<EBREAK> {
     fn to_instruction_inputs(&self) -> (u64, i128) {

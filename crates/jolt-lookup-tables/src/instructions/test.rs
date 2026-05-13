@@ -15,15 +15,19 @@ use crate::{InstructionLookupTable, LookupQuery, XLEN};
 /// tuple-struct constructor as `construct`.
 #[doc(hidden)]
 #[expect(clippy::unwrap_used)]
-pub fn materialize_entry_test_fn<T, C>(construct: impl Fn(C) -> T)
-where
-    T: InstructionLookupTable<XLEN> + LookupQuery<XLEN> + core::fmt::Debug,
+pub fn materialize_entry_test_fn<T, C, I>(
+    cycle_wrapper: impl Fn(C) -> T,
+    instr_wrapper: impl Fn(C::Instruction) -> I,
+) where
+    T: LookupQuery<XLEN> + core::fmt::Debug,
     C: JoltCycle,
+    I: InstructionLookupTable<XLEN>,
 {
     let mut rng = StdRng::seed_from_u64(12345);
     for _ in 0..10_000 {
-        let cycle: T = construct(C::random(&mut rng));
-        let table = cycle.lookup_table().unwrap();
+        let raw = C::random(&mut rng);
+        let table = instr_wrapper(raw.instruction()).lookup_table().unwrap();
+        let cycle: T = cycle_wrapper(raw);
         assert_eq!(
             cycle.to_lookup_output(),
             table.materialize_entry(cycle.to_lookup_index()),
@@ -183,7 +187,8 @@ macro_rules! materialize_entry_test {
         $crate::instructions::test::materialize_entry_test_fn::<
             $jolt<tracer::instruction::RISCVCycle<$tracer>>,
             tracer::instruction::RISCVCycle<$tracer>,
-        >($jolt)
+            $jolt<$tracer>,
+        >($jolt, $jolt)
     };
 }
 

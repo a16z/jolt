@@ -39,9 +39,11 @@ an MLIR conversion target: the operation universe is stable, while each selected
 profile defines which source rows are accepted and which final rows are legal
 after expansion. `jolt-program` should own decode and expansion facts. `tracer`
 should own execution semantics. Lookup/proving crates should own lookup-table
-and circuit metadata. The final form of this PR should not be broad mirrored
-bare `SourceInstructionKind` / `JoltInstructionKind` tag enums, and it should not
-move downstream proving-system details into `jolt-riscv`.
+and circuit metadata. Source instructions must not expose lookup tables, circuit
+flags, or instruction flags; those are properties of final Jolt rows after
+expansion. The final form of this PR should not be broad mirrored bare
+`SourceInstructionKind` / `JoltInstructionKind` tag enums, and it should not move
+downstream proving-system details into `jolt-riscv`.
 
 ## Intent
 
@@ -142,6 +144,20 @@ profile legality deciding what is accepted for a given compiled configuration.
   `JoltInstruction<T>` may provide stable final-row identities, but it must not
   encode lookup-table flags, circuit flags, instruction flags, or proof-system
   routing policy.
+- Source rows do not have proof metadata. `SourceInstruction<T>`,
+  `SourceInstructionRow`, and source-only concrete tracer instructions must not
+  implement or be accepted by flag or lookup-table APIs. Asking for
+  `circuit_flags`, `instruction_flags`, or `lookup_table` requires a final
+  `JoltInstructionRow` / `JoltInstruction<JoltInstructionRow>` view. Some final
+  rows still return no lookup table, e.g. final no-op/system-like rows such as
+  `FENCE`, loads/stores, or host-I/O rows; that is different from source rows
+  having a lookup-table notion.
+- Proof code that starts from concrete tracer cycles must first construct a
+  `JoltTraceCycle`. This adapter pairs `&Cycle` dynamic witness data with the
+  final `JoltInstructionRow` used for static proof metadata. A plain `Cycle`
+  remains the right source for register/RAM/advice values and lookup
+  operands/outputs; only `JoltTraceCycle` or `JoltInstructionRow` may answer
+  lookup-table routing, circuit flags, or instruction flags.
 - Expansion definitions should stay readable for humans authoring and reviewing
   instruction lowerings. The refactor may change the underlying recipe and row
   types, but the call-site syntax for ordinary expansions should remain at
@@ -228,6 +244,11 @@ profile legality deciding what is accepted for a given compiled configuration.
 - [x] Lookup-table routing, circuit flags, and instruction flags remain owned by
       the lookup/proving crates. They are not fields in the `jolt-riscv`
       row enum definitions or in a mega `jolt_instruction!` declaration.
+- [ ] Source rows and decoded tracer instructions cannot be used as lookup or
+      flag subjects. `Flags`, `InstructionLookupTable`, and Jolt-core
+      `InstructionLookup` impls must be available only for final Jolt row
+      views, with proof code converting trace cycles to `JoltInstructionRow`
+      before querying proof metadata.
 - [x] Tracer still owns concrete execution semantics. No row enum macro in
       `jolt-riscv` mutates CPU/RAM/advice state or constructs concrete tracer
       cycles.
@@ -285,6 +306,12 @@ Add or update tests for:
 - registered inline provider returning only target-legal `JoltInstruction`
   rows;
 - final bytecode rejecting every source-only kind at preprocessing;
+- proof metadata boundary tests proving source rows and source-only tracer
+  instructions are not accepted by flag or lookup-table APIs, while final Jolt
+  rows still expose flags and optional lookup tables;
+- trace/proof tests that derive circuit flags, instruction flags, and lookup
+  tables from final `JoltInstructionRow` views rather than decoded source
+  `Instruction` values;
 - canonical-name and compact-tag tests proving existing identities do not change
   when generated enum order changes or new instructions are appended;
 - profile dense-index tests proving unsupported rows have no index and supported
@@ -711,6 +738,90 @@ impl LookupMetadata for Add<()> {
     const INSTRUCTION_FLAGS: &'static [InstructionFlag] =
         &[InstructionFlag::LeftOperandIsRs1Value, InstructionFlag::RightOperandIsRs2Value];
 }
+```
+
+That metadata is final-row metadata, not source metadata. A source row such as
+`SourceInstruction::Ebreak(Ebreak<SourceInstructionRow>)` or
+`SourceInstruction::Inline(Inline<SourceInstructionRow>)` can be decoded,
+profile-checked, executed by tracer policy, or expanded, but it cannot answer
+which lookup table it uses and it cannot answer Jolt R1CS flags. The question is
+ill-typed until expansion produces a final row:
+
+```rust
+let source: SourceInstruction<SourceInstructionRow> = decode(word, profile)?;
+let final_rows: Vec<JoltInstruction<JoltInstructionRow>> =
+    expand_source(source, profile, provider)?;
+
+for row in final_rows {
+    let circuit_flags = row.circuit_flags();
+    let instruction_flags = row.instruction_flags();
+    let lookup_table = row.lookup_table(); // Option: some final rows still use no table.
+}
+```
+
+Concretely, lookup/flag traits should be shaped so source payloads do not satisfy
+their bounds:
+
+```rust
+impl<T: JoltInstructionRowData> Flags for Add<T> { /* final-row flags */ }
+
+impl<const XLEN: usize, T: JoltInstructionRowData> InstructionLookupTable<XLEN>
+    for Add<T>
+{
+    fn lookup_table(&self) -> Option<LookupTableKind<XLEN>> {
+        Some(LookupTableKind::RangeCheck(Default::default()))
+    }
+}
+```
+
+The bound matters: `Add<SourceInstructionRow>` is a decoded source instruction
+payload and should not compile as a lookup/flag subject. `Add<JoltInstructionRow>`
+is a final proof row payload and may compile. Source-only marker structs such as
+`Ebreak`, `Ecall`, `Inline`, AMOs, CSRs, and narrow loads/stores should not get
+lookup/flag impls just because they share the marker type system; they become
+proof metadata only after expansion emits final Jolt rows.
+
+When proof code needs both dynamic cycle values and final-row metadata, it should
+use a small adapter instead of repeatedly converting ad hoc:
+
+```rust
+/// Proof-facing view of a tracer cycle whose instruction is backed by a final
+/// Jolt bytecode row.
+///
+/// A tracer `Cycle` still owns dynamic witness data such as register reads, RAM
+/// accesses, lookup operands, and lookup outputs. Static proof metadata such as
+/// circuit flags, instruction flags, and lookup-table routing must come from the
+/// final `JoltInstructionRow` stored here. Constructing this adapter is the
+/// phase-boundary check: decoded source-only instructions are rejected before
+/// proving code can ask proof-metadata questions about them.
+pub struct JoltTraceCycle<'a> {
+    cycle: &'a Cycle,
+    instruction: JoltInstructionRow,
+}
+
+impl<'a> JoltTraceCycle<'a> {
+    pub fn try_new(cycle: &'a Cycle) -> Result<Self, SourceInstructionKind>;
+
+    pub fn cycle(&self) -> &'a Cycle;
+
+    pub fn instruction(&self) -> &JoltInstructionRow;
+}
+```
+
+The intended usage pattern is:
+
+```rust
+let jolt_cycle = JoltTraceCycle::try_new(cycle)?;
+
+// Static proof metadata comes from the final Jolt row.
+let table = jolt_cycle.lookup_table();
+let circuit_flags = jolt_cycle.circuit_flags();
+let instruction_flags = jolt_cycle.instruction_flags();
+
+// Dynamic witness values still come from the concrete executed cycle.
+let lookup_index = jolt_cycle.to_lookup_index();
+let lookup_output = jolt_cycle.to_lookup_output();
+let ram_access = jolt_cycle.cycle().ram_access();
 ```
 
 Expansion bodies are also not moved into `jolt-riscv`, because `jolt-riscv`
@@ -1169,6 +1280,26 @@ Current implementation status:
   CSRs, traps, and `Inline`, while the final enum contains only rows admitted
   into expanded Jolt bytecode. `SourceInstructionKind::jolt_kind()` is partial
   and returns `None` for source-only rows.
+- `jolt-core` now has `JoltTraceCycle<'a>`, a proof-facing adapter that pairs
+  dynamic `Cycle` witness data with a final `JoltInstructionRow`. R1CS and
+  instruction-lookup code should use this adapter whenever they need both
+  runtime cycle values and static proof metadata.
+- `jolt-core` R1CS, Spartan instruction-input, and instruction-lookup paths now
+  query flags and lookup-table routing through `JoltTraceCycle` or
+  `JoltInstructionRow`, not through decoded tracer `Instruction` values. The
+  aggregate legacy `Flags for Instruction`, `InstructionLookup for Instruction`,
+  and `InstructionLookup for Cycle` impls have been removed.
+- `jolt-lookup-tables` lookup-table metadata impls are now constrained to final
+  row payloads (`T: JoltInstructionRowData`), and source-only trap markers no
+  longer have lookup-table impls.
+- Current gap: `jolt-riscv` still owns `Flags` bitfield types and generated
+  `Flags` impls, `jolt-core` still exposes legacy `Flags` and
+  `InstructionLookup` implementations on tracer `Instruction` / `Cycle`, and
+  `jolt-lookup-tables` currently gives marker-level lookup-table impls for any
+  payload type. These compile today for source-shaped marker payloads and should
+  be cut over so lookup/flag queries require a final `JoltInstructionRow` view
+  and proof metadata is owned by proving/lookup crates rather than the RV64
+  catalog crate.
 
 1. [x] Add `SourceInstructionRow`, `SourceInlineKey`, `JoltInstructionRow`, and operand aliases/types in
    `jolt-riscv`.
@@ -1205,19 +1336,46 @@ Current implementation status:
 13. [x] Move or preserve lookup/proving metadata in the lookup/proving owner, keyed
     by final instruction identities; do not add lookup-table flags, circuit
     flags, or instruction flags to the `jolt-riscv` row enum definitions.
-14. [x] Delete obsolete normalized-row aliases, stale legality helpers, and any
+14. [ ] Move flag ownership out of `jolt-riscv` or narrow it to pure final-row
+    helper types owned by the proving side. The final state should not require
+    the RV64 catalog crate to know Jolt R1CS circuit flags or witness-routing
+    instruction flags. If keeping bitfield definitions in a shared crate is the
+    smallest durable step, the actual per-instruction metadata impls must still
+    be final-row-only and not callable from source rows.
+15. [x] Add `JoltTraceCycle<'a>` and use it in proof code that needs both
+    dynamic tracer cycle values and static final-row metadata.
+16. [x] Remove legacy flag and lookup-table APIs from decoded/source instruction
+    subjects:
+    - delete `Flags for tracer::instruction::Instruction`;
+    - delete `InstructionLookup for tracer::instruction::Instruction`;
+    - delete or narrow `InstructionLookup for tracer::instruction::Cycle` so
+      table routing comes from the cycle's final `JoltInstructionRow`;
+    - keep `LookupQuery` only where runtime register/RAM values are needed for
+      final trace rows.
+17. [x] Constrain `jolt-lookup-tables::InstructionLookupTable` impls to final-row
+    payloads, e.g. `T: JoltInstructionRowData`, and remove lookup-table impls
+    for source-only markers that cannot appear in `JoltInstruction<T>`.
+18. [x] Update Jolt-core R1CS, instruction lookup, bytecode read-RAF, and tests to
+    convert trace cycles to `JoltInstructionRow` before querying proof metadata.
+    Repeated conversions should be localized or cached only where the existing
+    hot path already materializes row data.
+19. [x] Add compile-time or API-boundary tests for the proof-metadata boundary.
+    At minimum, source-only rows such as `EBREAK`, `ECALL`, and `Inline` must not
+    be callable as flag/lookup subjects, and final rows such as `ADD`, `FENCE`,
+    `LD`, and `VirtualHostIO` must preserve the existing flag/table behavior.
+20. [x] Delete obsolete normalized-row aliases, stale legality helpers, and any
     source-only variants left in `JoltInstruction<T>`.
-15. [x] Add small default-profile legality tests that check current supported source
+21. [x] Add small default-profile legality tests that check current supported source
     extensions, inline extensions, and computed target legality closure
     accept/reject the expected source/final rows.
-16. [x] Add canonical-name, compact-tag, and dense-index tests that prove adding a
+22. [x] Add canonical-name, compact-tag, and dense-index tests that prove adding a
     row does not rename existing operations or renumber existing serialized
     tags, unsupported rows have no profile-local dense index, and
     profile/catalog fingerprinting changes when dense maps or legality sets
     change.
-17. [x] Add the `jolt-eval` `source_to_jolt_expansion_equivalence` invariant and use
+23. [x] Add the `jolt-eval` `source_to_jolt_expansion_equivalence` invariant and use
     it to gate any expansion fixture/hash regeneration.
-18. [x] Run the full validation stack and update the expansion fixture/hash only if
+24. [x] Run the full validation stack and update the expansion fixture/hash only if
     row type serialization changes while structural expansion output remains
     unchanged.
 
