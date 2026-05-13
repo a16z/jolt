@@ -2,6 +2,8 @@
 pub enum PreprocessingError {
     #[error("bytecode instruction is not legal in the selected target profile: {0:?}")]
     IllegalTargetInstruction(jolt_riscv::JoltInstructionKind),
+    #[error("bytecode instruction address is invalid for bytecode indexing: {0:#x}")]
+    InvalidBytecodeAddress(usize),
     #[error(
         "bytecode has invalid inline sequence at index {bytecode_index} (address {address:#x}): previous sequence {previous_sequence}, expected next sequence {expected_sequence}, new sequence {new_sequence}"
     )]

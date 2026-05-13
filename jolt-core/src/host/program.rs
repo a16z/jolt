@@ -10,7 +10,7 @@ use common::constants::{
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_program::execution::{ExecutionBackend, TraceError, TraceInputs, TraceOutput};
 use jolt_program::{JoltProgram, ProgramError};
-use jolt_riscv::{JoltRow, RV64IMAC_JOLT};
+use jolt_riscv::{JoltRow, RV64IMAC_JOLT, RV64IMAC_JOLT_ALL_INLINES};
 use std::fs::File;
 use std::io;
 use std::io::{Read, Write};
@@ -269,7 +269,11 @@ impl Program {
             .get_elf_contents()
             .expect("ELF contents should be available after building the guest");
         let mut inline_provider = tracer::TracerInlineExpansionProvider::new();
-        jolt_program::build_jolt_program_with_inline_provider(&elf_contents, &mut inline_provider)
+        jolt_program::build_jolt_program_with_inline_provider(
+            &elf_contents,
+            &mut inline_provider,
+            RV64IMAC_JOLT_ALL_INLINES,
+        )
     }
 
     pub fn decode(&mut self) -> (Vec<JoltRow>, Vec<(u64, u8)>, u64, u64) {

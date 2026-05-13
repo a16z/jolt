@@ -65,7 +65,10 @@ impl ExpansionState {
             return Err(ExpansionError::InlineProviderRequired);
         }
         if !is_source_only(kind) {
-            return Ok(vec![instruction.jolt_row()]);
+            return instruction
+                .try_jolt_row()
+                .map(|row| vec![row])
+                .map_err(ExpansionError::IllegalTargetInstruction);
         }
         let sequence = expand_source_only_instruction(instruction)?;
         self.materialize(sequence)

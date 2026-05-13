@@ -97,10 +97,7 @@ impl JoltInstructionProfile {
 
     pub fn supports_jolt(self, kind: JoltInstructionKind) -> bool {
         match jolt_target_extension(kind) {
-            None => matches!(
-                kind,
-                JoltInstructionKind::NoOp | JoltInstructionKind::Unimpl
-            ),
+            None => matches!(kind, JoltInstructionKind::NoOp),
             Some(extension) => self.supports_target_extension(extension),
         }
     }
@@ -497,6 +494,7 @@ mod tests {
         assert!(RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::LD));
         assert!(RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::VirtualAssertEQ));
 
+        assert!(!RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::Unimpl));
         assert!(!RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::ADDW));
         assert!(!RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::LW));
         assert!(!RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::SW));

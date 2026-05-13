@@ -9,7 +9,7 @@ use crate::{
     image::decode_elf,
 };
 #[cfg(feature = "image")]
-use jolt_riscv::{JoltRow, RV64IMAC_JOLT, RV64IMAC_JOLT_ALL_INLINES};
+use jolt_riscv::{JoltInstructionProfile, JoltRow, RV64IMAC_JOLT};
 
 pub use backend::{ExecutionBackend, TraceSource};
 pub use error::TraceError;
@@ -36,16 +36,14 @@ pub fn build_jolt_program(elf_bytes: &[u8]) -> Result<JoltProgram, ProgramError>
 pub fn build_jolt_program_with_inline_provider<P: InlineExpansionProvider + ?Sized>(
     elf_bytes: &[u8],
     inline_provider: &mut P,
+    profile: JoltInstructionProfile,
 ) -> Result<JoltProgram, ProgramError> {
     let image = decode_elf(elf_bytes, RV64IMAC_JOLT)?;
-    let expanded_bytecode = expand_program_with_provider(
-        &image.instructions,
-        inline_provider,
-        RV64IMAC_JOLT_ALL_INLINES,
-    )?
-    .into_iter()
-    .map(JoltRow::from)
-    .collect();
+    let expanded_bytecode =
+        expand_program_with_provider(&image.instructions, inline_provider, profile)?
+            .into_iter()
+            .map(JoltRow::from)
+            .collect();
     Ok(JoltProgram::from_rv64_image(
         elf_bytes.to_vec(),
         expanded_bytecode,
@@ -67,8 +65,9 @@ pub fn build_jolt_program_with_inline_provider<
 >(
     elf_bytes: &[u8],
     inline_provider: &mut P,
+    profile: jolt_riscv::JoltInstructionProfile,
 ) -> Result<JoltProgram, ProgramError> {
-    let _ = (elf_bytes, inline_provider);
+    let _ = (elf_bytes, inline_provider, profile);
     Err(ProgramError::MalformedImage(
         "building a Jolt program from ELF bytes requires the jolt-program image feature",
     ))

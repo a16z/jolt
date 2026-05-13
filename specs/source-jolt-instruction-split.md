@@ -113,10 +113,11 @@ profile legality deciding what is accepted for a given compiled configuration.
   is computed from the selected source extensions plus selected inline
   extensions: it is the positive set of final rows that can be emitted by those
   expansions.
-- Expansion behavior is unchanged relative to `main` after PR #1518:
-  `SourceInstruction<SourceRow> -> Vec<JoltInstruction<JoltRow>>` must match the
-  existing expanded bytecode for the checked fixture corpus, modulo intentional
-  type names.
+- Expansion behavior is unchanged relative to `main` after PR #1518 for the
+  representative checked fixture corpus. The durable guard is a compact
+  canonical-row baseline in `jolt-eval` that hashes the serialized
+  `SourceInstruction<SourceRow>` corpus and final `JoltInstruction<JoltRow>`
+  expansion stream after normalizing intentional type-name changes.
 - Final Jolt bytecode cannot contain source-only opcodes:
   `Inline`, `ADDW`, `LW`, `SW`, AMOs, traps, CSR rows, shifts, DIV/REM, advice
   source loads, and other source-only expansion inputs must be rejected before
@@ -357,17 +358,17 @@ lookup-backed, side-effecting, or part of a default profile.
 The expansion fixture hash may change when `NormalizedInstruction` is replaced
 by phase-specific row types, even if the emitted program is semantically
 unchanged. Regenerating that fixture is therefore not itself sufficient evidence.
-Before updating hashes, add a structural equivalence check that compares the new
-`SourceInstruction<SourceRow> -> Vec<JoltInstruction<JoltRow>>` stream with the
-post-#1518 `main` semantics modulo intentional type/compact-tag renames and the
-removal of the old `JoltInstructionKind::Inline` tag from final rows.
+The durable guard should live in `jolt-eval` as
+`source_to_jolt_expansion_equivalence`: a compact canonical-row baseline over
+the representative source corpus and its emitted final-row expansion stream.
 
-The durable invariant should live in `jolt-eval` as
-`source_to_jolt_expansion_equivalence`. It should run over the representative
-program corpus used by the expansion parity fixture and fail on differences in
-final opcode identity, operands, addresses, virtual sequence metadata, and
-compression-tail metadata. Once that invariant passes, the fixture hashes can be
-regenerated if serialization bytes changed mechanically.
+The invariant should serialize enough row structure to fail on differences in
+source opcode identity, final opcode identity, operands, addresses, virtual
+sequence metadata, and compression-tail metadata. It does not need to keep the
+entire pre-refactor byte stream alive as a compatibility layer; intentional
+type-name changes, compact-tag changes, and the removal of the old
+`JoltInstructionKind::Inline` final-row tag should be normalized into the new
+canonical row representation before hashing.
 
 ### Extraction Friendliness
 
@@ -842,8 +843,10 @@ include these `JoltTargetExtension` families:
 - `JoltTargetExtension::BitManipulation`: `ANDN`, `VirtualRev8W`, and the
   `VirtualXORROT*` / `VirtualXORROTW*` rows used by crypto inlines.
 
-Sentinel rows `NoOp` and `Unimpl` are always available and should not be modeled
-as extension-gated capabilities.
+Source sentinel rows `NoOp` and `Unimpl` are always available and should not be
+modeled as extension-gated capabilities. Final bytecode treats `NoOp` as the
+only target-legal sentinel row; `Unimpl` is decode/source-side only and must be
+rejected before preprocessing.
 
 The inline profile metadata should use the registered inline package names as
 first-class entries, not treat every inline as one anonymous extension. This
@@ -915,7 +918,7 @@ from:
   `source_extensions`;
 - recursive helper rows reachable from those expansions;
 - final rows emitted by enabled `inline_extensions`;
-- sentinel rows such as `NoOp` and `Unimpl`.
+- the target-legal `NoOp` sentinel row.
 
 This makes `RV64IM_JOLT` naturally produce a smaller legal final closure than
 `RV64IMAC_JOLT` when atomics/compressed-only source paths are disabled, without
@@ -1142,6 +1145,9 @@ Current implementation status:
   `InlineExtension`, shipped `JoltInstructionProfile` presets, positive
   source/final legality checks, profile-local dense indexes, and a profile
   fingerprint.
+- `jolt-program` bytecode and program preprocessing record the selected profile
+  fingerprint so serialized preprocessing artifacts carry the profile identity
+  used for legality and dense-index derivation.
 - `jolt-program` decode, expansion, sequence stamping, and bytecode
   preprocessing now take an explicit selected `JoltInstructionProfile` instead
   of reading the default profile from inside those phase boundaries.
@@ -1155,6 +1161,9 @@ Current implementation status:
   address, or compressed-row metadata.
 - Tracer source conversion now builds `SourceInstruction` directly, while
   `try_from_jolt_row` rejects final `Inline` rows.
+- `SourceInstruction` no longer has an implicit `From<SourceInstruction> for
+  JoltRow` conversion; native source rows that pass through expansion use a
+  checked `try_jolt_row()` conversion that rejects source-only rows.
 - Remaining caveat: the legacy bare `JoltInstructionKind` row-tag enum is still
   broad for this PR slice, even though the typed `JoltInstruction<T>` enum and
   profile legality layer are final-only. It remains as a compact identity and
@@ -1173,8 +1182,8 @@ Current implementation status:
 4. [x] Add the shipped `JoltInstructionProfile` presets and positive source/target
    legality APIs. Profiles select legal rows; they do not change enum shape.
 5. [x] Add generated profile-local dense-index maps where preprocessing/proving
-   needs compact indexes. Dense indexes must be derived from compact tags and
-   included in the selected profile/catalog artifact fingerprint.
+   needs compact indexes. Dense indexes must be derived from compact tags, and
+   preprocessing artifacts must record the selected profile/catalog fingerprint.
 6. [x] Add `jolt-program`-owned decode metadata keyed by marker structs or source
    enum variants, then change ELF/word decode to return
    `SourceInstruction<SourceRow>` after profile legality validation.

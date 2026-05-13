@@ -257,11 +257,19 @@ fn inline_provider_output_is_validated_and_stamped() {
     impl InlineExpansionProvider for BadProvider {
         fn expand_inline(
             &mut self,
-            instruction: &SourceInstruction,
+            _instruction: &SourceInstruction,
             _allocator: &mut ExpansionAllocator,
             _profile: jolt_riscv::JoltInstructionProfile,
         ) -> Result<Vec<JoltInstruction>, ExpansionError> {
-            final_instruction(instruction.jolt_row()).map(|instruction| vec![instruction])
+            final_instruction(JoltRow {
+                instruction_kind: JoltInstructionKind::Inline,
+                address: 0x8000_0000,
+                operands: Default::default(),
+                virtual_sequence_remaining: None,
+                is_first_in_sequence: false,
+                is_compressed: false,
+            })
+            .map(|instruction| vec![instruction])
         }
     }
 

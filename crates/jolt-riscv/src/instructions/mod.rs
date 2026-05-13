@@ -227,8 +227,9 @@ macro_rules! define_source_instruction {
                 }
             }
 
-            pub fn jolt_row(&self) -> JoltRow {
-                self.row().jolt_row(self.kind().jolt_kind())
+            pub fn try_jolt_row(&self) -> Result<JoltRow, JoltInstructionKind> {
+                let row = self.row().jolt_row(self.kind().jolt_kind());
+                JoltInstruction::try_from(row).map(|_| row)
             }
 
             pub fn into_row(self) -> SourceRow {
@@ -245,12 +246,6 @@ macro_rules! define_source_instruction {
             pub fn map_row(self, f: impl FnOnce(SourceRow) -> SourceRow) -> Self {
                 let kind = self.kind();
                 Self::new(kind, f(self.into_row()))
-            }
-        }
-
-        impl From<SourceInstruction<SourceRow>> for JoltRow {
-            fn from(instruction: SourceInstruction<SourceRow>) -> Self {
-                instruction.jolt_row()
             }
         }
 
@@ -760,12 +755,12 @@ mod tests {
         assert_eq!(add.kind(), SourceInstructionKind::ADD);
         assert_eq!(beq.kind(), SourceInstructionKind::BEQ);
         assert_eq!(
-            JoltRow::from(add).instruction_kind,
-            JoltInstructionKind::ADD
+            add.try_jolt_row().map(|row| row.instruction_kind),
+            Ok(JoltInstructionKind::ADD)
         );
         assert_eq!(
-            JoltRow::from(beq).instruction_kind,
-            JoltInstructionKind::BEQ
+            beq.try_jolt_row().map(|row| row.instruction_kind),
+            Ok(JoltInstructionKind::BEQ)
         );
         assert!(matches!(add, SourceInstruction::ADD(Add(..))));
         assert!(matches!(beq, SourceInstruction::BEQ(Beq(..))));

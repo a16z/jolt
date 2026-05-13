@@ -94,6 +94,9 @@ Instruction identity is now separated at the typed row boundary:
 - `JoltInstructionProfile` defines positive source legality, target legality,
   inline-extension availability, profile-local dense indexes, and a profile
   fingerprint.
+- Bytecode and program preprocessing record the selected profile fingerprint so
+  serialized preprocessing artifacts carry the profile identity used for
+  legality and dense-index derivation.
 - Decode, expansion, sequence stamping, and bytecode preprocessing receive the
   selected profile explicitly. Registered inline inventory entries declare their
   `InlineExtension`, and `InlineExpansionProvider` rejects registered keys whose
@@ -113,11 +116,11 @@ operands, address, or compressed-row metadata into expansion recipes.
 Each source-only lowerer returns an `ExpandedInstructionSequence`:
 
 ```rust
-let mut asm = ExpansionBuilder::new(*instruction);
+let mut asm = ExpansionBuilder::new(*instruction.row());
 
 let tmp = asm.allocate()?;
 asm.expand_i(
-    JoltInstructionKind::VirtualPow2,
+    SourceInstructionKind::VirtualPow2,
     tmp.operand(),
     reg(rs2(instruction)?),
     0,
@@ -153,13 +156,13 @@ real virtual-register allocation/release.
 
 ```rust
 pub(super) struct ExpandedInstructionSequence {
-    source: NormalizedInstruction,
+    source: SourceRow,
     ops: Vec<ExpansionOp>,
 }
 
 pub(super) enum ExpansionOp {
     Emit(RowTemplate),
-    Expand(RowTemplate),
+    Expand(SourceRowTemplate),
     Allocate(TempId),
     Release(TempId),
 }
@@ -345,7 +348,8 @@ When the compact parity fixture changes, treat it as a semantic review event:
 
 - record the baseline commit or intended semantic change;
 - inspect row-level diffs for each affected instruction family;
-- regenerate from deterministic serialized `Vec<NormalizedInstruction>` bytes;
+- regenerate from deterministic serialized `Vec<SourceInstruction<SourceRow>>`
+  bytes;
 - rerun the dedicated parity test and the `muldiv` e2e checks.
 
 The primary e2e correctness checks remain:
