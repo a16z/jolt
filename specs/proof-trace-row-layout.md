@@ -750,9 +750,44 @@ recover PC from `(address, virtual_sequence_remaining)`.
 
 ### Integer Width Policy
 
-`bytecode_pc` is a local index into the selected preprocessed bytecode table. It
-is not persisted instruction identity and does not need to be pointer-sized.
-Using `u32` is reasonable if the builder enforces:
+There are two different PC notions in this design:
+
+```text
+bytecode_pc    = dense local index into expanded bytecode/preprocessing
+unexpanded_pc  = original RV64 guest/source instruction address
+```
+
+They intentionally answer different questions. `bytecode_pc` identifies one
+final row in the expanded bytecode table:
+
+```text
+expanded bytecode:
+  0: NoOp
+  1: ADDI at source pc 0x8000_0000
+  2: LD   from source LW at pc 0x8000_0004
+  3: SLL  from source LW at pc 0x8000_0004
+  4: SRAI from source LW at pc 0x8000_0004
+```
+
+Here final row `3` has `bytecode_pc = 3`.
+
+`unexpanded_pc` identifies the source instruction address before expansion.
+Multiple final rows emitted for one source instruction share the same
+`unexpanded_pc`:
+
+```text
+source LW at 0x8000_0004
+  -> final LD    unexpanded_pc = 0x8000_0004
+  -> final SLL   unexpanded_pc = 0x8000_0004
+  -> final SRAI  unexpanded_pc = 0x8000_0004
+```
+
+So `bytecode_pc` is a local table position, while `unexpanded_pc` is a guest
+architectural address. They should not be given the same type merely because
+both contain "pc" in the name.
+
+`bytecode_pc` is not persisted instruction identity and does not need to be
+pointer-sized. Using `u32` is reasonable if the builder enforces:
 
 ```rust
 let pc = bytecode_preprocessing.get_pc(&row).ok_or(...)?;
@@ -764,19 +799,31 @@ layout. In practice, a 4-billion-row bytecode table is far beyond current prover
 memory budgets, but the code should reject it explicitly rather than relying on
 that practical limit.
 
-`unexpanded_pc` is different. It is a guest RV64 address, not a local table
-index. It should be represented as one of:
+`unexpanded_pc` is a guest RV64 address, not a local table index. The semantic
+representation is:
 
 ```rust
 unexpanded_pc: u64
 ```
 
-or:
+The compact representation is a checked delta from a `u64` base:
 
 ```rust
 pc_base: u64,          // stored once in preprocessing
 unexpanded_pc_delta: u32 // checked per row
 ```
+
+That compact form is valid only when every source address used by the selected
+program satisfies:
+
+```rust
+let delta = unexpanded_pc.checked_sub(pc_base).ok_or(...)?;
+let delta = u32::try_from(delta).map_err(|_| TraceRowError::PcDeltaTooWide { delta })?;
+```
+
+An absolute `u32 unexpanded_pc` is not the preferred contract. It would quietly
+impose a 32-bit guest address limit. A `u32` delta says something more precise:
+this particular program's code range fits in 32 bits relative to `pc_base`.
 
 The fixed row layout should not use `usize` for guest addresses. `usize` changes
 with the host architecture and makes memory layout depend on the prover machine
