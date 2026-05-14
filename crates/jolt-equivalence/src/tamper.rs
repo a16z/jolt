@@ -307,7 +307,7 @@ pub(crate) fn assert_monolithic_jolt_tamper_rejected(input: MonolithicJoltTamper
         .len();
     let tampered_stage7_openings = tampered_opening_input_suffix_point(
         input.inputs.stage7_openings,
-        stage8_source_symbol,
+        stage8_source_symbol.as_str(),
         stage7_address_prefix_len,
     );
     let mut tampered_stage7_opening_inputs = input.inputs;

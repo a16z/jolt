@@ -28,7 +28,7 @@ pub struct TypedPlanSymbol<Tag> {
 }
 
 impl<Tag> TypedPlanSymbol<Tag> {
-    pub(crate) const fn new(symbol: &'static str) -> Self {
+    pub const fn new(symbol: &'static str) -> Self {
         Self {
             symbol,
             _tag: PhantomData,

@@ -26,15 +26,14 @@ macro_rules! stage_field_expr {
     (generated, $module:ident, $field_expr:ident, $plan:ident) => {
         $module::$field_expr {
             symbol: super::leak_str(&$plan.symbol),
-            kind: super::leak_str(&$plan.kind),
-            formula: super::leak_str(&$plan.formula),
-            operands: super::leak_symbol_list(&$plan.operands),
+            kind: generated_field_expr_kind!($plan.formula.as_str()),
+            operands: super::leak_str_slice(&$plan.operands),
         }
     };
 }
 
 macro_rules! stage_claim {
-    ($mode:ident, $module:ident, $claim:ident, $plan:ident) => {
+    (kernel, $module:ident, $claim:ident, $plan:ident) => {
         $module::$claim {
             symbol: super::leak_str(&$plan.symbol),
             stage: super::leak_str(&$plan.stage),
@@ -45,13 +44,30 @@ macro_rules! stage_claim {
             kernel: $plan.kernel.as_deref().map(super::leak_str),
             relation: $plan.relation.as_deref().map(super::leak_str),
             claim_value: super::leak_str(&$plan.claim_value),
-            input_openings: stage_list!($mode, &$plan.input_openings),
+            input_openings: stage_list!(kernel, &$plan.input_openings),
+        }
+    };
+    (generated, $module:ident, $claim:ident, $plan:ident) => {
+        $module::$claim {
+            symbol: super::leak_str(&$plan.symbol),
+            stage: super::leak_str(&$plan.stage),
+            domain: super::leak_str(&$plan.domain),
+            num_rounds: $plan.num_rounds,
+            degree: $plan.degree,
+            claim: super::leak_str(&$plan.claim),
+            kernel: $plan.kernel.as_deref().map(super::leak_str),
+            relation: $plan
+                .relation
+                .as_deref()
+                .map(|relation| generated_relation_kind!(relation)),
+            claim_value: super::leak_str(&$plan.claim_value),
+            input_openings: stage_list!(generated, &$plan.input_openings),
         }
     };
 }
 
 macro_rules! stage_driver {
-    ($module:ident, $driver:ident, $plan:ident) => {
+    (kernel, $module:ident, $driver:ident, $plan:ident) => {
         $module::$driver {
             symbol: super::leak_str(&$plan.symbol),
             stage: super::leak_str(&$plan.stage),
@@ -66,6 +82,240 @@ macro_rules! stage_driver {
             num_rounds: $plan.num_rounds,
             degree: $plan.degree,
         }
+    };
+    (generated, $module:ident, $driver:ident, $plan:ident) => {
+        $module::$driver {
+            symbol: super::leak_str(&$plan.symbol),
+            stage: super::leak_str(&$plan.stage),
+            proof_slot: super::leak_str(&$plan.proof_slot),
+            kernel: $plan.kernel.as_deref().map(super::leak_str),
+            relation: $plan
+                .relation
+                .as_deref()
+                .map(|relation| generated_relation_kind!(relation)),
+            batch: super::leak_str(&$plan.batch),
+            policy: super::leak_str(&$plan.policy),
+            round_schedule: super::leak_usize_slice(&$plan.round_schedule),
+            claim_label: super::leak_str(&$plan.claim_label),
+            round_label: super::leak_str(&$plan.round_label),
+            num_rounds: $plan.num_rounds,
+            degree: $plan.degree,
+        }
+    };
+}
+
+macro_rules! generated_program_step_kind {
+    ($value:expr) => {
+        match $value {
+            "transcript_squeeze" => {
+                jolt_verifier::stages::common::ProgramStepKind::TranscriptSqueeze
+            }
+            "transcript_absorb_bytes" => {
+                jolt_verifier::stages::common::ProgramStepKind::TranscriptAbsorbBytes
+            }
+            "sumcheck_driver" => jolt_verifier::stages::common::ProgramStepKind::SumcheckDriver,
+            value => panic!("unsupported generated program step kind `{value}`"),
+        }
+    };
+}
+
+macro_rules! generated_transcript_squeeze_kind {
+    ($value:expr) => {
+        match $value {
+            "challenge_scalar" => {
+                jolt_verifier::stages::common::TranscriptSqueezeKind::ChallengeScalar
+            }
+            "challenge_vector" => {
+                jolt_verifier::stages::common::TranscriptSqueezeKind::ChallengeVector
+            }
+            "scalar" => jolt_verifier::stages::common::TranscriptSqueezeKind::Scalar,
+            value => panic!("unsupported generated transcript squeeze kind `{value}`"),
+        }
+    };
+}
+
+macro_rules! generated_claim_kind {
+    ($value:expr) => {
+        match $value {
+            "committed" => jolt_verifier::stages::common::ClaimKind::Committed,
+            "virtual" => jolt_verifier::stages::common::ClaimKind::Virtual,
+            value => panic!("unsupported generated claim kind `{value}`"),
+        }
+    };
+}
+
+macro_rules! generated_relation_kind {
+    ($value:expr) => {
+        match $value {
+            "jolt.stage1.outer.uniskip" => {
+                jolt_verifier::stages::common::RelationKind::Stage1OuterUniskip
+            }
+            "jolt.stage1.outer.remaining" => {
+                jolt_verifier::stages::common::RelationKind::Stage1OuterRemaining
+            }
+            "jolt.stage2.product_virtual.uniskip" => {
+                jolt_verifier::stages::common::RelationKind::Stage2ProductVirtualUniskip
+            }
+            "jolt.stage2.ram.read_write" => {
+                jolt_verifier::stages::common::RelationKind::Stage2RamReadWrite
+            }
+            "jolt.stage2.product_virtual.remainder" => {
+                jolt_verifier::stages::common::RelationKind::Stage2ProductVirtualRemainder
+            }
+            "jolt.stage2.instruction_lookup.claim_reduction" => {
+                jolt_verifier::stages::common::RelationKind::Stage2InstructionLookupClaimReduction
+            }
+            "jolt.stage2.ram.raf_evaluation" => {
+                jolt_verifier::stages::common::RelationKind::Stage2RamRafEvaluation
+            }
+            "jolt.stage2.ram.output_check" => {
+                jolt_verifier::stages::common::RelationKind::Stage2RamOutputCheck
+            }
+            "jolt.stage2.batched" => jolt_verifier::stages::common::RelationKind::Stage2Batched,
+            "jolt.stage3.spartan_shift" => {
+                jolt_verifier::stages::common::RelationKind::Stage3SpartanShift
+            }
+            "jolt.stage3.instruction_input" => {
+                jolt_verifier::stages::common::RelationKind::Stage3InstructionInput
+            }
+            "jolt.stage3.registers_claim_reduction" => {
+                jolt_verifier::stages::common::RelationKind::Stage3RegistersClaimReduction
+            }
+            "jolt.stage3.batched" => jolt_verifier::stages::common::RelationKind::Stage3Batched,
+            "jolt.stage4.registers_read_write" => {
+                jolt_verifier::stages::common::RelationKind::Stage4RegistersReadWrite
+            }
+            "jolt.stage4.ram_val_check" => {
+                jolt_verifier::stages::common::RelationKind::Stage4RamValCheck
+            }
+            "jolt.stage4.batched" => jolt_verifier::stages::common::RelationKind::Stage4Batched,
+            "jolt.stage5.instruction_read_raf" => {
+                jolt_verifier::stages::common::RelationKind::Stage5InstructionReadRaf
+            }
+            "jolt.stage5.ram_ra_claim_reduction" => {
+                jolt_verifier::stages::common::RelationKind::Stage5RamRaClaimReduction
+            }
+            "jolt.stage5.registers_val_evaluation" => {
+                jolt_verifier::stages::common::RelationKind::Stage5RegistersValEvaluation
+            }
+            "jolt.stage5.batched" => jolt_verifier::stages::common::RelationKind::Stage5Batched,
+            "jolt.stage6.bytecode_read_raf" => {
+                jolt_verifier::stages::common::RelationKind::Stage6BytecodeReadRaf
+            }
+            "jolt.stage6.booleanity" => {
+                jolt_verifier::stages::common::RelationKind::Stage6Booleanity
+            }
+            "jolt.stage6.hamming_booleanity" => {
+                jolt_verifier::stages::common::RelationKind::Stage6HammingBooleanity
+            }
+            "jolt.stage6.ram_ra_virtual" => {
+                jolt_verifier::stages::common::RelationKind::Stage6RamRaVirtual
+            }
+            "jolt.stage6.instruction_ra_virtual" => {
+                jolt_verifier::stages::common::RelationKind::Stage6InstructionRaVirtual
+            }
+            "jolt.stage6.inc_claim_reduction" => {
+                jolt_verifier::stages::common::RelationKind::Stage6IncClaimReduction
+            }
+            "jolt.stage6.batched" => jolt_verifier::stages::common::RelationKind::Stage6Batched,
+            "jolt.stage7.hamming_weight_claim_reduction" => {
+                jolt_verifier::stages::common::RelationKind::Stage7HammingWeightClaimReduction
+            }
+            "jolt.stage7.batched" => jolt_verifier::stages::common::RelationKind::Stage7Batched,
+            value => panic!("unsupported generated relation `{value}`"),
+        }
+    };
+}
+
+macro_rules! generated_field_expr_kind {
+    ($value:expr) => {{
+        let value = $value;
+        match value {
+            "opening_eval" => jolt_verifier::stages::common::FieldExprKind::OpeningEval,
+            "field.add" => jolt_verifier::stages::common::FieldExprKind::Add,
+            "field.sub" => jolt_verifier::stages::common::FieldExprKind::Sub,
+            "field.mul" => jolt_verifier::stages::common::FieldExprKind::Mul,
+            "field.neg" => jolt_verifier::stages::common::FieldExprKind::Neg,
+            value if value.starts_with("field.pow:") => {
+                let exponent = value
+                    .strip_prefix("field.pow:")
+                    .expect("field pow expression has prefix")
+                    .parse::<usize>()
+                    .expect("field pow expression has usize exponent");
+                jolt_verifier::stages::common::FieldExprKind::Pow(exponent)
+            }
+            value if value.starts_with("poly.lagrange_basis_eval:") => {
+                let spec = value
+                    .strip_prefix("poly.lagrange_basis_eval:")
+                    .expect("lagrange expression has prefix");
+                let parts = spec.split(':').collect::<Vec<_>>();
+                assert!(parts.len() == 3, "lagrange expression has three fields");
+                jolt_verifier::stages::common::FieldExprKind::LagrangeBasisEval(
+                    parts[0]
+                        .parse::<i64>()
+                        .expect("lagrange domain start is i64"),
+                    parts[1]
+                        .parse::<usize>()
+                        .expect("lagrange domain size is usize"),
+                    parts[2].parse::<usize>().expect("lagrange index is usize"),
+                )
+            }
+            value => panic!("unsupported generated field expression kind `{value}`"),
+        }
+    }};
+}
+
+macro_rules! generated_opening_equality_mode {
+    ($value:expr) => {
+        match $value {
+            "point_and_eval" => jolt_verifier::stages::common::OpeningEqualityMode::PointAndEval,
+            value => panic!("unsupported generated opening equality mode `{value}`"),
+        }
+    };
+}
+
+macro_rules! stage_program_step_kind {
+    (kernel, $module:ident, $value:expr) => {
+        super::leak_str($value)
+    };
+    (generated, $module:ident, $value:expr) => {
+        generated_program_step_kind!($value)
+    };
+}
+
+macro_rules! stage_transcript_squeeze_kind {
+    (kernel, $module:ident, $value:expr) => {
+        super::leak_str($value)
+    };
+    (generated, $module:ident, $value:expr) => {
+        generated_transcript_squeeze_kind!($value)
+    };
+}
+
+macro_rules! stage_claim_kind {
+    (kernel, $module:ident, $value:expr) => {
+        super::leak_str($value)
+    };
+    (generated, $module:ident, $value:expr) => {
+        generated_claim_kind!($value)
+    };
+}
+
+macro_rules! stage_relation_kind {
+    (kernel, $module:ident, $value:expr) => {
+        super::leak_str($value)
+    };
+    (generated, $module:ident, $value:expr) => {
+        generated_relation_kind!($value)
+    };
+}
+
+macro_rules! stage_opening_equality_mode {
+    (kernel, $module:ident, $value:expr) => {
+        super::leak_str($value)
+    };
+    (generated, $module:ident, $value:expr) => {
+        generated_opening_equality_mode!($value)
     };
 }
 
@@ -112,7 +362,7 @@ macro_rules! define_stage_adapter_impl {
                         .steps
                         .iter()
                         .map(|plan| $module::$step {
-                            kind: super::leak_str(&plan.kind),
+                            kind: stage_program_step_kind!($mode, $module, plan.kind.as_str()),
                             symbol: super::leak_str(&plan.symbol),
                         })
                         .collect(),
@@ -124,7 +374,7 @@ macro_rules! define_stage_adapter_impl {
                         .map(|plan| $module::$squeeze {
                             symbol: super::leak_str(&plan.symbol),
                             label: super::leak_str(&plan.label),
-                            kind: super::leak_str(&plan.kind),
+                            kind: stage_transcript_squeeze_kind!($mode, $module, plan.kind.as_str()),
                             count: plan.count,
                         })
                         .collect(),
@@ -153,7 +403,7 @@ macro_rules! define_stage_adapter_impl {
                             oracle: super::leak_str(&plan.oracle),
                             domain: super::leak_str(&plan.domain),
                             point_arity: plan.point_arity,
-                            claim_kind: super::leak_str(&plan.claim_kind),
+                            claim_kind: stage_claim_kind!($mode, $module, plan.claim_kind.as_str()),
                         })
                         .collect(),
                 ),
@@ -219,7 +469,7 @@ macro_rules! define_stage_adapter_impl {
                     program
                         .drivers
                         .iter()
-                        .map(|plan| stage_driver!($module, $driver, plan))
+                        .map(|plan| stage_driver!($mode, $module, $driver, plan))
                         .collect(),
                 ),
                 instance_results: super::leak_slice(
@@ -230,7 +480,7 @@ macro_rules! define_stage_adapter_impl {
                             symbol: super::leak_str(&plan.symbol),
                             source: super::leak_str(&plan.source),
                             claim: super::leak_str(&plan.claim),
-                            relation: super::leak_str(&plan.relation),
+                            relation: stage_relation_kind!($mode, $module, plan.relation.as_str()),
                             index: plan.index,
                             point_arity: plan.point_arity,
                             num_rounds: plan.num_rounds,
@@ -300,7 +550,7 @@ macro_rules! define_stage_adapter_impl {
                             oracle: super::leak_str(&plan.oracle),
                             domain: super::leak_str(&plan.domain),
                             point_arity: plan.point_arity,
-                            claim_kind: super::leak_str(&plan.claim_kind),
+                            claim_kind: stage_claim_kind!($mode, $module, plan.claim_kind.as_str()),
                             point_source: super::leak_str(&plan.point_source),
                             eval_source: super::leak_str(&plan.eval_source),
                         })
@@ -313,7 +563,7 @@ macro_rules! define_stage_adapter_impl {
                         .iter()
                         .map(|plan| $module::$opening_equality {
                             symbol: super::leak_str(&plan.symbol),
-                            mode: super::leak_str(&plan.mode),
+                            mode: stage_opening_equality_mode!($mode, $module, plan.mode.as_str()),
                             lhs: super::leak_str(&plan.lhs),
                             rhs: super::leak_str(&plan.rhs),
                         })
@@ -481,7 +731,7 @@ macro_rules! define_stage1_adapter {
                         .map(|plan| $module::$squeeze {
                             symbol: super::leak_str(&plan.symbol),
                             label: super::leak_str(&plan.label),
-                            kind: super::leak_str(&plan.kind),
+                            kind: stage_transcript_squeeze_kind!($mode, $module, plan.kind.as_str()),
                             count: plan.count,
                         })
                         .collect(),
@@ -530,7 +780,7 @@ macro_rules! define_stage1_adapter {
                     program
                         .drivers
                         .iter()
-                        .map(|plan| stage_driver!($module, $driver, plan))
+                        .map(|plan| stage_driver!($mode, $module, $driver, plan))
                         .collect(),
                 ),
                 instance_results: super::leak_slice(
@@ -541,7 +791,7 @@ macro_rules! define_stage1_adapter {
                             symbol: super::leak_str(&plan.symbol),
                             source: super::leak_str(&plan.source),
                             claim: super::leak_str(&plan.claim),
-                            relation: super::leak_str(&plan.relation),
+                            relation: stage_relation_kind!($mode, $module, plan.relation.as_str()),
                             index: plan.index,
                             point_arity: plan.point_arity,
                             num_rounds: plan.num_rounds,
@@ -573,7 +823,7 @@ macro_rules! define_stage1_adapter {
                             oracle: super::leak_str(&plan.oracle),
                             domain: super::leak_str(&plan.domain),
                             point_arity: plan.point_arity,
-                            claim_kind: super::leak_str(&plan.claim_kind),
+                            claim_kind: stage_claim_kind!($mode, $module, plan.claim_kind.as_str()),
                             point_source: super::leak_str(&plan.point_source),
                             eval_source: super::leak_str(&plan.eval_source),
                         })
@@ -638,16 +888,94 @@ use bolt::Role;
 use jolt_prover::stages::stage8 as generated_prover_stage8;
 use jolt_verifier::stages::stage8 as generated_stage8;
 
+macro_rules! stage8_source_stage {
+    ($module:ident, $value:expr) => {
+        match $value {
+            "stage6" => $module::Stage8SourceStage::Stage6,
+            "stage7" => $module::Stage8SourceStage::Stage7,
+            value => panic!("unsupported Stage 8 source stage `{value}`"),
+        }
+    };
+}
+
+macro_rules! stage8_claim_kind {
+    ($module:ident, $value:expr) => {
+        match $value {
+            "committed" => $module::Stage8ClaimKind::Committed,
+            "virtual" => $module::Stage8ClaimKind::Virtual,
+            value => panic!("unsupported Stage 8 claim kind `{value}`"),
+        }
+    };
+}
+
+macro_rules! stage8_pcs_proof_mode {
+    ($module:ident, $value:expr) => {
+        match $value {
+            "open" => $module::Stage8PcsProofMode::Open,
+            "verify" => $module::Stage8PcsProofMode::Verify,
+            value => panic!("unsupported Stage 8 PCS proof mode `{value}`"),
+        }
+    };
+}
+
 macro_rules! define_stage8_adapter {
     ($function:ident, $module:ident) => {
         pub(crate) fn $function(
             program: &CompilerStage8CpuProgram,
         ) -> &'static $module::Stage8EvaluationProgramPlan {
-            let evaluation_point_source = program
-                .opening_inputs
+            let opening_inputs = leak_slice(
+                program
+                    .opening_inputs
+                    .iter()
+                    .map(|plan| $module::Stage8OpeningInputPlan {
+                        symbol: $module::Stage8OpeningInputSymbol::new(leak_str(&plan.symbol)),
+                        source_stage: stage8_source_stage!($module, plan.source_stage.as_str()),
+                        source_claim: $module::Stage8SourceClaim::new(leak_str(&plan.source_claim)),
+                        oracle: leak_str(&plan.oracle),
+                        domain: leak_str(&plan.domain),
+                        point_arity: plan.point_arity,
+                        claim_kind: stage8_claim_kind!($module, plan.claim_kind.as_str()),
+                    })
+                    .collect(),
+            );
+            let opening_claims = leak_slice(
+                program
+                    .opening_claims
+                    .iter()
+                    .map(|plan| $module::Stage8OpeningClaimPlan {
+                        symbol: $module::Stage8OpeningClaimSymbol::new(leak_str(&plan.symbol)),
+                        oracle: leak_str(&plan.oracle),
+                        family: leak_str(&plan.family),
+                        domain: leak_str(&plan.domain),
+                        point_arity: plan.point_arity,
+                        point_source: $module::Stage8OpeningInputSymbol::new(leak_str(
+                            &plan.point_source,
+                        )),
+                        eval_source: $module::Stage8OpeningInputSymbol::new(leak_str(
+                            &plan.eval_source,
+                        )),
+                        source_stage: stage8_source_stage!($module, plan.source_stage.as_str()),
+                        source_claim: $module::Stage8SourceClaim::new(leak_str(&plan.source_claim)),
+                    })
+                    .collect(),
+            );
+            let evaluation_point_source = opening_inputs
                 .iter()
-                .find(|input| input.symbol == "stage8.evaluation.point_source")
+                .find(|input| input.symbol.as_str() == "stage8.evaluation.point_source")
+                .copied()
                 .expect("stage8 evaluation point source exists");
+            let ordered_claims = leak_slice(
+                program.opening_batches[0]
+                    .ordered_claims
+                    .iter()
+                    .map(|symbol| {
+                        *opening_claims
+                            .iter()
+                            .find(|claim| claim.symbol.as_str() == symbol)
+                            .expect("stage8 opening batch claim exists")
+                    })
+                    .collect(),
+            );
             Box::leak(Box::new($module::Stage8EvaluationProgramPlan {
                 role: role_name(&program.role),
                 function: leak_str(&program.function),
@@ -656,61 +984,27 @@ macro_rules! define_stage8_adapter {
                     pcs: leak_str(&program.params.pcs),
                     transcript: leak_str(&program.params.transcript),
                 },
-                evaluation_point_source: $module::Stage8OpeningInputPlan {
-                    symbol: leak_str(&evaluation_point_source.symbol),
-                    source_stage: leak_str(&evaluation_point_source.source_stage),
-                    source_claim: leak_str(&evaluation_point_source.source_claim),
-                    oracle: leak_str(&evaluation_point_source.oracle),
-                    domain: leak_str(&evaluation_point_source.domain),
-                    point_arity: evaluation_point_source.point_arity,
-                    claim_kind: leak_str(&evaluation_point_source.claim_kind),
-                },
-                opening_inputs: leak_slice(
-                    program
-                        .opening_inputs
-                        .iter()
-                        .map(|plan| $module::Stage8OpeningInputPlan {
-                            symbol: leak_str(&plan.symbol),
-                            source_stage: leak_str(&plan.source_stage),
-                            source_claim: leak_str(&plan.source_claim),
-                            oracle: leak_str(&plan.oracle),
-                            domain: leak_str(&plan.domain),
-                            point_arity: plan.point_arity,
-                            claim_kind: leak_str(&plan.claim_kind),
-                        })
-                        .collect(),
-                ),
-                opening_claims: leak_slice(
-                    program
-                        .opening_claims
-                        .iter()
-                        .map(|plan| $module::Stage8OpeningClaimPlan {
-                            symbol: leak_str(&plan.symbol),
-                            oracle: leak_str(&plan.oracle),
-                            family: leak_str(&plan.family),
-                            domain: leak_str(&plan.domain),
-                            point_arity: plan.point_arity,
-                            point_source: leak_str(&plan.point_source),
-                            eval_source: leak_str(&plan.eval_source),
-                            source_stage: leak_str(&plan.source_stage),
-                            source_claim: leak_str(&plan.source_claim),
-                        })
-                        .collect(),
-                ),
+                evaluation_point_source,
+                opening_inputs,
+                opening_claims,
                 opening_batch: $module::Stage8OpeningBatchPlan {
-                    symbol: leak_str(&program.opening_batches[0].symbol),
+                    symbol: $module::Stage8OpeningBatchSymbol::new(leak_str(
+                        &program.opening_batches[0].symbol,
+                    )),
                     proof_slot: leak_str(&program.opening_batches[0].proof_slot),
                     policy: leak_str(&program.opening_batches[0].policy),
                     count: program.opening_batches[0].count,
-                    ordered_claims: leak_str_slice(&program.opening_batches[0].ordered_claims),
+                    ordered_claims,
                 },
                 pcs_proof: $module::Stage8PcsProofPlan {
                     symbol: leak_str(&program.pcs_proofs[0].symbol),
-                    mode: leak_str(&program.pcs_proofs[0].mode),
+                    mode: stage8_pcs_proof_mode!($module, program.pcs_proofs[0].mode.as_str()),
                     pcs: leak_str(&program.pcs_proofs[0].pcs),
                     proof_slot: leak_str(&program.pcs_proofs[0].proof_slot),
                     transcript_label: leak_str(&program.pcs_proofs[0].transcript_label),
-                    batch: leak_str(&program.pcs_proofs[0].batch),
+                    batch: $module::Stage8OpeningBatchSymbol::new(leak_str(
+                        &program.pcs_proofs[0].batch,
+                    )),
                 },
             }))
         }
