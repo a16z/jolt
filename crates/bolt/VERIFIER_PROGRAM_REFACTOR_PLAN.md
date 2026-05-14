@@ -1,6 +1,6 @@
-# Verifier Program Refactor Plan (S2 — S6)
+# Verifier Program Refactor Plan
 
-This is the implementation plan for the post-S1 verifier refactor. It is a
+This is the implementation plan for the verifier-program refactor. It is a
 companion to `crates/bolt/GOAL.md`. Read GOAL.md first; this document assumes
 the `Audit Tiers` framing introduced there, but the scope is broader than
 follow-up LOC cleanup.
@@ -21,26 +21,49 @@ Tier B (audited Jolt verifier core)   stages/jolt_relations.rs     638 LOC
 Tier C (generated stage data + verifier.rs)                      6,430 LOC
 ```
 
-S2 — S6 below progressively replace hardcoded stage-shaped Rust with typed
-verifier-program data by lifting today's hand-written Rust into MLIR
-vocabulary. Each slice is intended to be one reviewable PR stacked on top of the
-previous one.
+The current stack has already moved beyond the original S1 framing:
+
+- `bolt-verifier-runtime` exists as a standalone crate.
+- `JoltRelationKind` is owned by the Jolt verifier layer instead of the generic
+  runtime.
+- Generated stages use typed relation enums instead of relation `&'static str`
+  dispatch.
+- The top-level verifier executes a typed verifier-program plan.
+- Structured output-claim and polynomial-eval plans have started replacing
+  handwritten verifier math.
+
+The remaining plan is therefore **pass-first, runtime-second**. The primary
+goal is not to grow a larger verifier runtime. The primary goal is to make
+verifier construction a typed planning pipeline whose final Rust emission is
+nearly mechanical:
+
+```text
+protocol / compute IR
+        |
+        v
+verifier planning passes
+        |
+        v
+typed CPU / Rust-plan IR
+        |
+        v
+dumb Rust emission
+        |
+        v
+small runtime crates for boring reusable mechanics
+```
 
 ## Guiding principle
 
-> Most code in the verifier templates is an *interpreter* for plans, not
-> protocol math. Lift the rest of the protocol math into MLIR vocabulary so
-> the interpreter is the only thing humans need to audit.
+> Verifier semantics should be resolved before Rust emission. Runtime crates are
+> allowed only for boring, reusable execution mechanics.
 
-Concrete corollary: **Tier A should not be per-protocol generated code at
-all**. It is a small, generic interpreter that happens to be checked into
-each protocol's verifier crate by historical accident. S2 corrects this.
-
-The remaining slices (S3 — S6) close the gap between "generic interpreter"
-and "Jolt-specific math evaluators" by extending the compute dialect with
-the polynomial primitives, point reorderings, indexed-eval addressing, and
-relation-expression vocabulary that Tier B currently fills with hand-written
-Rust.
+Concrete corollary: **`bolt-verifier-runtime` is not the architecture.** It is a
+useful crate for verifier-program execution, typed value interpretation,
+transcript/sumcheck/opening plumbing, and error structure. It should not become
+the bucket where all common generated verifier Rust goes. If a fact is semantic,
+it belongs in MLIR/codegen planning or in an explicit protocol boundary, not in a
+runtime helper that reconstructs meaning from strings.
 
 Numbered stages may remain as proof-layout slots and diagnostic scopes, but
 they should not remain the verifier's core execution model. A generated
@@ -50,42 +73,49 @@ many stage modules are hardcoded?"
 ## Design thesis: typed verifier IR, not better templates
 
 The plan should not optimize for making today's Rust templates shorter. The
-real target is a small typed verifier IR whose Rust rendering is nearly a
-serialization detail:
+real target is a typed verifier-planning pipeline whose Rust rendering is
+nearly a serialization detail:
 
 1. **MLIR owns semantic facts.** If verifier execution depends on a fact, the
    fact should exist as a dialect op, typed attr, or typed plan field before the
    Rust emitter sees it.
-2. **The Rust emitter projects typed plans.** It should not reconstruct protocol
+2. **Planning passes own semantic assembly.** The gap between `cpu` and emitted
+   Rust should be filled by explicit verifier-planning passes, not by ad hoc
+   emitter parsing.
+3. **The Rust emitter projects typed plans.** It should not reconstruct protocol
    meaning by parsing symbols, matching string prefixes, or emitting bespoke
    helper bodies that duplicate protocol math.
-3. **Symbols are typed handles.** Examples in this document use `&'static str`
+4. **Symbols are typed handles.** Examples in this document use `&'static str`
    where that keeps the prose readable, but implementation APIs should prefer
    `TypedPlanSymbol<Tag>`-style references. Plain strings are diagnostics and
    serialization names, not execution contracts.
-4. **The runtime interprets typed value domains.** Scalars, points, field
+5. **The runtime interprets typed value domains.** Scalars, points, field
    vectors, eval families, relation outputs, and bytecode encodings are
    different verifier value kinds. Do not force point transforms or vectors into
    `FieldExprKind` just because field expressions exist today.
-5. **Relations should be scheduled dataflow, not a second DSL.** Prefer one
+6. **Relations should be scheduled dataflow, not a second DSL.** Prefer one
    typed verifier value graph over separate mini-interpreters for field
    expressions, point expressions, eval families, and relation terms. A relation
    check should usually be "the expected sumcheck output is scalar value X"
    where X is produced by the same typed graph as other verifier values.
-6. **Protocol vocabulary stays at the protocol boundary.** Generic runtime code
+7. **Protocol vocabulary stays at the protocol boundary.** Generic runtime code
    may carry opaque IDs or be generic over protocol-specific enums, but it
    should not define Jolt relation variants such as `Stage6BytecodeReadRaf`.
-7. **No fallback execution paths.** When a typed path lands, delete the string
+8. **Polynomial utilities come from `jolt-poly`.** If verifier math needs
+   equality, less-than, identity, Lagrange, indexed equality, or projected-bit
+   polynomial helpers, first use or add the right primitive in `jolt-poly`.
+   Do not reimplement those helpers in generated verifier Rust or runtime code.
+9. **No fallback execution paths.** When a typed path lands, delete the string
    path in the same slice. Rollback by reverting the slice, not by keeping a
    compatibility parser in the verifier.
-8. **Auditability beats clever compaction.** A generated table that is longer
+10. **Auditability beats clever compaction.** A generated table that is longer
    but explains the verifier contract is better than a short table whose
    meaning only appears in the emitter.
 
 ## Verifier program model
 
-The long-term runtime boundary should look like an interpreter for typed
-verifier steps, not a sequence of bespoke `verify_stageN` functions:
+The long-term emitted boundary should look like typed verifier-program data,
+not a sequence of bespoke `verify_stageN` functions:
 
 ```rust
 pub struct VerifierProgramPlan {
@@ -112,9 +142,9 @@ pub enum VerifierStepPlan {
 `SumcheckDriverPlan` is the central verifier concept. It should contain the
 proof slot, round schedule, input-claim plan, batching plan, output-claim
 emission, value/eval observation, expected-output scalar, and opening-claim
-emission for one sumcheck driver. The runtime should not need to know whether a
-driver came from "Stage 3" or "Stage 6" except for diagnostics and proof-record
-layout.
+emission for one sumcheck driver. Planning passes should assemble this shape
+before Rust emission. The runtime should not need to rediscover whether a driver
+came from "Stage 3" or "Stage 6" except for diagnostics and proof-record layout.
 
 Commitment receipt and PCS opening verification are first-class verifier steps,
 not synthetic stages. Partial verification targets should eventually be named
@@ -154,12 +184,12 @@ an explicit decision, or weaker semantically.
 | Slice | Tier A | Tier B | Tier C | jolt-verifier total | Notes |
 |-------|-------:|-------:|-------:|--------------------:|-------|
 | post-S1 (today) | 1,265 | 638 | 6,430 | 7,905 | hard ceilings: A 1,400 / B 700 / C surface 6,100 |
-| post-S2 | ~50 | 638 | 6,430 | ~6,640 | Tier A moves to `bolt-verifier-runtime` crate |
-| post-S2.5 | ~150-250 | 638 | ~6,200 | ~6,900 | top-level verifier executes a typed verifier program |
-| post-S3 | ~50 | <=638 | ~6,300-6,500 | ~6,500 | value graph foundation + first Stage 3/4 relation plans |
-| post-S4 | ~50 | ~350 | 6,500 | ~6,500 | typed indexed-eval addressing |
-| post-S5 | ~50 | ~290 | 6,700 | ~6,700 | relations as typed plans (Tier C grows) |
-| post-S6 | ~50 | ~50 | 6,800 | ~6,800 | bytecode encoding as typed plans (optional) |
+| current stack | ~0 in generated crate | <=700 | bounded by cleanup gates | bounded by cleanup gates | runtime extraction, typed relations, top-level verifier program, output-claim plans |
+| next pass-first slice | narrow runtime | <=700 | stable or lower | stable or lower | classify runtime/codegen/poly ownership and add planning-pass seams |
+| value graph | narrow runtime | <=638 | ~6,300-6,500 | ~6,500 | typed scalar/point/vector/eval-family plans |
+| eval families | narrow runtime | ~350 | ~6,500 | ~6,500 | typed indexed-eval addressing |
+| relation plans | narrow runtime | ~290 | ~6,700 | ~6,700 | relations as typed plans (Tier C may grow temporarily) |
+| bytecode encoding | narrow runtime | ~50 | ~6,800 | ~6,800 | optional, only if audit pressure justifies it |
 
 Scoreboard numbers are planning targets for individual slices. The
 non-regression contracts above are stricter: the completed stack must not end
@@ -168,22 +198,30 @@ post-S1 baseline.
 
 ---
 
-## S2: Promote Tier A to `bolt-verifier-runtime` crate
+## S2: Runtime extraction status and boundary correction
 
-**Goal.** Stop emitting Tier A as a per-protocol template. Instead, ship it
-once as a real workspace crate that the generated `jolt-verifier` crate
-declares as a Cargo dependency.
+**Status.** The current stack has already performed the main extraction:
+`bolt-verifier-runtime` is a standalone workspace crate, generated
+`jolt-verifier` depends on it, and Tier A is no longer emitted as
+`stages/common.rs`.
 
-**Why first.** Largest leverage, smallest semantics change. Tier A is mostly
-generic Bolt scaffolding, but it is not perfectly protocol-agnostic yet:
-today it still owns Jolt-shaped IDs such as `RelationKind` and
-`SourceStage::{Stage6, Stage7}` and several `Fr`-concrete helper entry points.
-S2 should therefore be treated as both extraction and boundary correction, not
-as proof that the runtime is already pure generic infrastructure. Once Tier A
-is a real crate with an explicit public API, every subsequent slice operates
-against a stable, versionable surface.
+**Revised goal.** Keep that progress, but treat the crate as provisional and
+narrow. The runtime is useful for boring verifier-program mechanics, but it
+must not become the place where all shared generated verifier Rust accumulates.
+The remaining S2 work is classification and boundary correction:
 
-### Locked decisions
+- keep generic verifier-program sequencing, value interpretation,
+  transcript/sumcheck/opening plumbing, and structural error types in
+  `bolt-verifier-runtime`;
+- keep `JoltRelationKind`, bytecode contracts, RAM/register/lookup semantics,
+  point normalizations tied to Jolt proof layout, and other protocol math in the
+  Jolt layer or in typed MLIR/codegen plans;
+- move reusable polynomial helpers to `jolt-poly` instead of implementing them
+  in the runtime;
+- add CPU-to-Rust planning seams so future semantics move into passes instead
+  of runtime helpers or Rust emitter logic.
+
+### Locked decisions already reflected by the current stack
 
 - `bolt-verifier-runtime` is a standalone workspace crate at
   `crates/bolt-verifier-runtime/`. It is not a sub-crate of `bolt` and is not
@@ -225,7 +263,37 @@ against a stable, versionable surface.
   readability after the import cutover, but do not preserve them as API
   compatibility shims.
 
-### Concrete plumbing
+### Runtime boundary classification
+
+Keep in `bolt-verifier-runtime` only when the code is protocol-neutral
+execution machinery:
+
+- top-level verifier-program sequencing;
+- typed plan records for transcript events, sumcheck drivers, opening claims,
+  opening batches, and PCS checks;
+- `ValueStore`-style typed value interpretation once value domains are
+  explicit;
+- generic sumcheck verification loops;
+- opening equality checks and transcript append mechanics;
+- structural error reporting that can be parameterized by protocol IDs.
+
+Do not add to `bolt-verifier-runtime` when the code depends on Jolt protocol
+meaning:
+
+- `JoltRelationKind` variants;
+- bytecode row contracts and lookup-table semantics;
+- Stage 2 RAM/product/instruction-lookup algebra;
+- Stage 5 instruction read-RAF algebra;
+- Stage 6/7 bytecode, hamming, RA, inc-reduction, and point-normalization
+  semantics;
+- string-prefix eval-family lookup as a permanent API.
+
+If a helper is polynomial math rather than verifier mechanics, prefer
+`jolt-poly`. Current candidates include less-than MLE evaluation, identity
+polynomial evaluation, Lagrange basis evaluation, indexed Boolean equality, and
+projected/operand polynomial evaluation.
+
+### Concrete plumbing already done or retained
 
 1. New crate `crates/bolt-verifier-runtime/` with `src/lib.rs` seeded from
    today's `crates/bolt/src/protocols/jolt/verifier_common.rs.template`, but
@@ -258,46 +326,49 @@ against a stable, versionable surface.
    until S2.5/S4/S5 replace that source lookup with typed verifier-program /
    opening-batch data.
 
+### Follow-up cleanup created by this revision
+
+1. Rename the old "runtime extraction" milestone in future PR descriptions to
+   "runtime boundary narrowing" or "typed planning pipeline".
+2. Audit `bolt-verifier-runtime` for APIs that branch on strings or encode Jolt
+   protocol facts. Each such API needs one of three dispositions: typed planning
+   pass, Jolt verifier boundary, or `jolt-poly`.
+3. Replace runtime-local polynomial helpers with `jolt-poly` calls before adding
+   more runtime surface.
+4. Treat duplicate plan container variants in the runtime as transitional
+   emitter-shape leakage. Collapse them as the CPU-to-Rust plan layer becomes
+   explicit.
+5. Do not expand the runtime to compensate for missing MLIR/codegen passes.
+
 ### Test/gate updates
 
-- `verifier_cleanup.rs` removes `bolt_runtime_loc` (it no longer counts
-  toward the verifier crate). Add an equivalent gate over the new crate:
-  `BOLT_VERIFIER_RUNTIME_LOC_CEILING ≈ 1,400`.
-- `checked_in_generated_verifier_respects_boundary_hygiene` adds
-  `bolt-verifier-runtime` to the *allowed* import list (it is the
-  intentional runtime dependency).
-- `commitment_ir.rs::assert_rust_source_compiles` no longer needs to stage
-  `common.rs` into the test harness.
+- Keep `verifier_cleanup.rs` focused on the generated verifier surface, but add
+  or retain a separate runtime ceiling so `bolt-verifier-runtime` cannot grow
+  quietly.
+- Keep `bolt-verifier-runtime` as the only intentional verifier runtime
+  dependency. The verifier remains forbidden from depending on `jolt-prover`,
+  `jolt-kernels`, `jolt-core`, `jolt-equivalence`, and tracing/profiling crates.
+- Add targeted checks for runtime APIs that branch on string contents. Those
+  sites should ratchet down as S2.75/S3/S4 land.
+- Add `jolt-poly` reuse checks when a helper is moved out of the runtime or
+  Jolt verifier core.
 
-### Blockers and complications
+### Remaining risks and complications
 
-- **Cross-crate blast radius.** `jolt-equivalence` has many import sites
-  that name `jolt_verifier::stages::common::*`. The full-cutover rule
-  (workspace policy) forbids leaving back-compat re-exports, so all sites
-  must move to `bolt_verifier_runtime` in the same PR. Mechanical, but
-  large.
-- **Genericity debt.** `RelationKind` and `SourceStage` are the current
-  strongest evidence that Tier A is not purely generic. S2 must remove both
-  from the runtime boundary. Do not split this into an extraction-only PR that
-  leaves Jolt relation variants in `bolt-verifier-runtime`.
-- **Type aliases in stage files.** Generated stage files contain
-  `pub type Stage6FieldExprPlan = FieldExprPlan;` and similar. After S2
-  the right-hand side is `bolt_verifier_runtime::FieldExprPlan`. The
-  per-stage Bolt emitter that produces these aliases must update its import
-  path and the alias targets. This is one localized change per stage
-  emitter.
-- **`impl_runtime_plan_error_conversion!` macro.** Currently
-  `pub(crate) use`. Either promote to `pub` in the new crate, or keep it
-  per-stage by re-exporting it through `jolt-verifier`. Lean: `pub` in the
-  new crate.
-- **Generated `Cargo.toml` dependency injection.** The Bolt manifest
-  emitter must learn that `bolt-verifier-runtime` is a workspace-relative
-  path dependency for non-published builds, but a versioned
-  registry dependency for published builds. Check how `jolt-field` etc.
-  are currently wired and follow the same pattern.
-- **`cargo check` chain.** Existing CI runs
-  `cargo check -p bolt -p jolt-verifier -p jolt-prover -p jolt-equivalence`.
-  Add `-p bolt-verifier-runtime`.
+- **Runtime surface creep.** The extraction solved generated-code duplication,
+  but the crate can still become too bespoke if it accepts every helper the
+  emitter wants. Treat every new runtime API as a boundary decision.
+- **String-keyed transitional APIs.** `ValueStore`, eval-prefix helpers,
+  point-order strings, and proof/source-stage strings are useful during the
+  transition, but they should be removed or typed as planning passes land.
+- **Duplicate plan containers.** Multiple near-duplicate stage plan structs are
+  signs that emitter shape leaked into the runtime. Collapse them once typed
+  planning output is explicit.
+- **Polynomial helper ownership.** Less-than, identity, Lagrange, indexed
+  equality, and projected-bit polynomial helpers belong in `jolt-poly`, not in
+  `bolt-verifier-runtime` or generated verifier Rust.
+- **Equivalence adapters.** Any plan-shape cleanup still has cross-crate blast
+  radius in `jolt-equivalence`; keep full-cutover discipline.
 
 ### Acceptance criteria
 
@@ -310,30 +381,34 @@ cargo nextest run -p jolt-equivalence --test generated_role_crates --cargo-quiet
 cargo nextest run -p jolt-equivalence --test bolt_commitment --no-capture
 ```
 
-All green. The `verifier_cleanup` metrics output reports
-`bolt_runtime_loc = 0` (Tier A no longer in the verifier crate) and a new
-`bolt_verifier_runtime_loc` line.
+All green. The metrics output shows Tier A remains absent from the generated
+verifier crate, runtime LOC is explicitly bounded, and runtime string-dispatch
+sites are reported.
 
 ### Rollback
 
-S2 is reversible by re-introducing the `ProtocolRuntimeModule` entry for
-`common` and reverting the import-path changes. The new crate can stay (it
-is harmless) or be deleted. No data or proof-format changes are involved.
+The extraction should not be rolled back unless the runtime boundary itself
+turns out wrong. If the boundary audit overreaches, revert the specific API
+deletion or helper movement rather than reintroducing generated `common.rs`.
+No data or proof-format changes are involved.
 
 ### Estimated wall-clock
 
-One overnight implementation block. The code movement is mechanical, but it
-touches enough emitters, generated artifacts, tests, and equivalence adapters
-that the verification matrix should be allowed to run after the import churn is
-settled.
+Extraction has already happened. The remaining boundary audit is one focused
+agent slice, mostly classification, API deletion, `jolt-poly` reuse, and test
+gate updates.
 
 ---
 
-## S2.5: Introduce the verifier-program executor
+## S2.5: Verifier-program executor status and next tightening
 
-**Goal.** Make the top-level verifier execute a typed `VerifierProgramPlan`
-instead of manually calling a fixed list of numbered stages. This slice changes
-the architectural shape before the deeper algebraic cleanup starts.
+**Status.** The current stack has introduced the typed top-level
+`VerifierProgramPlan` and routes verifier execution through it. Keep this shape.
+
+**Revised goal.** Tighten the source of truth. The top-level plan should be
+assembled by verifier-planning passes instead of stringly artifact glue or
+emitter-side stage scans. This slice remains architectural: it changes how the
+verifier is scheduled, not proof serialization.
 
 This does not require fully deleting stage modules immediately. Stage modules
 may still own proof-slot conversion and local plan constants at first. The
@@ -420,8 +495,8 @@ flow.
 - Partial verification targets are typed checkpoints/proof slots.
 - No duplicate old/new verifier execution path remains.
 - Existing semantic, tamper, and import gates still pass.
-- A before/after verifier-time perf baseline is captured before landing this
-  slice, because it changes top-level execution structure.
+- Existing before/after verifier-time perf baselines remain attached to this
+  architectural change; future tightening slices should compare against them.
 
 ### Blockers and complications
 
@@ -438,8 +513,54 @@ flow.
 ### Estimated wall-clock
 
 Two to three agent sessions. This is mostly control-flow architecture and
-artifact typing, not new protocol math. It should be run after S2 and after
-capturing the perf baseline.
+artifact typing, not new protocol math. The current stack has already completed
+the main shape; remaining work belongs in S2.75 planning-pass tightening.
+
+---
+
+## S2.75: Add CPU-to-Rust verifier planning passes
+
+**Goal.** Insert an explicit planning layer between `cpu` IR and emitted Rust.
+This is the main course correction from Markos' feedback: do not make the Rust
+emitter or `bolt-verifier-runtime` responsible for discovering verifier
+semantics.
+
+The current `cpu` layer still carries protocol-plan material such as stages,
+proof slots, relation symbols, opening sources, point order, output claims, and
+PCS policies. That is acceptable as a transitional representation, but the
+Rust emitter should not parse those fields into execution meaning. It should
+consume a typed Rust-plan / verifier-plan representation produced by passes.
+
+### Proposed passes
+
+1. `resolve-cpu-program-steps`: materialize ordered program steps for
+   transcript events, sumcheck drivers, opening-batch emission, and PCS checks.
+2. `annotate-jolt-relations`: attach typed relation metadata before emission,
+   including relation kind, proof slot, output-evaluator strategy, external
+   verifier data requirements, and kernel ABI where relevant.
+3. `plan-verifier-sumchecks`: lower verifier sumcheck ops plus batches and
+   instance results into `SumcheckDriverPlan` rows.
+4. `plan-field-and-output-claims`: canonicalize field expressions, structured
+   polynomial evals, and output-claim equations into a typed scalar/point/value
+   graph.
+5. `plan-opening-flow`: resolve opening inputs, claims, equalities, batches,
+   point/eval sources, arities, and ordering.
+6. `plan-point-normalization`: replace `point_order` strings and stage-specific
+   point transforms with typed point-transform plans.
+7. `validate-rust-target-plan`: reject unsupported field/PCS/transcript
+   combinations, unresolved symbols, role-specific forbidden ops, and
+   relation/runtime-boundary violations before the emitter runs.
+
+### Acceptance criteria
+
+- New verifier semantics are added as planning-pass output, not as Rust emitter
+  parsing or new runtime string dispatch.
+- Relation strings are converted to typed relation IDs before Rust token
+  emission.
+- Output-claim and point-normalization planning can be inspected without
+  reading emitted Rust templates.
+- The Rust emitter's responsibility is mostly formatting typed const data and
+  importing the right runtime/Jolt-boundary APIs.
 
 ---
 
@@ -492,7 +613,10 @@ uses ordered scalar tuples whose meaning is not a multilinear query point.
 
 ### Runtime additions
 
-`bolt-verifier-runtime` (post-S2) gains typed value storage and interpreters:
+`bolt-verifier-runtime` may retain typed value storage and interpreters, but
+the planning passes should decide which values exist and how they are connected.
+The runtime should evaluate typed plan rows, not infer semantics from symbol
+names:
 
 ```rust
 pub enum VerifierValueKind {
@@ -534,10 +658,11 @@ pub enum FieldVectorExprKind {
 ```
 
 `ValueStore` should store each value in the correct domain. The scalar
-interpreter may call `jolt-poly`'s `EqPolynomial::mle`, but point transforms
-must be evaluated by the point interpreter and vector producers by the vector
-interpreter. This keeps the type boundary honest and prevents the runtime from
-becoming a bag of ad hoc helper functions.
+interpreter should call `jolt-poly` for equality, less-than, identity, Lagrange,
+and projected-bit polynomial helpers. Point transforms must be evaluated by the
+point interpreter and vector producers by the vector interpreter. This keeps the
+type boundary honest and prevents the runtime from becoming a bag of ad hoc
+helper functions.
 
 ### Locked conversion order
 
@@ -607,7 +732,8 @@ lowering if the dataflow ordering turns out to be subtle.
 ### Estimated wall-clock
 
 Two agent sessions, ~120-180 minutes total. Most of the time is in the
-emitter changes (Stage 6/7 bodies) and validator updates.
+planning/emitter changes for the first Stage 3/4 conversions and validator
+updates.
 
 ---
 
@@ -911,8 +1037,8 @@ If pursued: two agent sessions, ~3 hours. Otherwise zero.
 
 ### Coordination with Markos' equivalence track
 
-Each slice that touches generated stage outputs (S2, S2.5, S3, S4, S5) will
-require equivalence-side adapter updates in
+Each slice that touches generated stage outputs (S2 boundary cleanup, S2.75,
+S3, S4, S5) will require equivalence-side adapter updates in
 `crates/jolt-equivalence/src/plan_adapters/generated_stage*.rs`. The
 correct workflow is:
 
@@ -933,15 +1059,18 @@ GOAL.md's "Locked Genericity Decisions" require that generic Bolt
 compiler infrastructure not contain Jolt-specific code, and that Jolt
 emitters be progressively lifted into generic CPU emitters.
 
-S2 strengthens this only if the extraction also corrects the protocol-ID
-boundary. A crate named `bolt-verifier-runtime` should not permanently define
-Jolt relation variants. Either make relation/stage identifiers generic or keep
-the remaining Jolt vocabulary explicitly quarantined and gated until a follow-up
-removes it.
+The current stack has corrected the most important protocol-ID boundary by
+moving Jolt relation variants out of `bolt-verifier-runtime`. The next boundary
+work is subtler: do not let the runtime or the Rust emitter become a second
+home for Jolt semantics under generic names. Any branch on relation kind,
+point-order spelling, eval-name prefix, source-stage string, or proof-slot
+string must either become typed planning-pass output or stay visibly
+quarantined in `crates/bolt/src/protocols/jolt/` / `jolt_relations.rs`.
 
-S3 + S4 are pure compute-dialect extensions; no Jolt content. They should add a
+S2.75, S3, and S4 are primarily compute/planning extensions. They should add a
 typed verifier value graph (`Scalar`, `Point`, `FieldVector`, eval families)
-rather than a larger bag of scalar-only field-expression variants.
+rather than a larger bag of scalar-only field-expression variants or runtime
+string dispatch.
 
 S5 introduces `compute::relation` as generic relation metadata over the value
 graph, not a Jolt-specific relation language. Closed relation enums live at the
@@ -958,14 +1087,13 @@ The audit surface contracts as we move through the slices:
 
 ```text
 post-S1:  Tier A (1,265 LOC)  + Tier B (638 LOC)  = 1,903 LOC audited
-post-S2:  bolt-runtime crate  + Tier B (638 LOC)  = ~1,900 LOC, but
-                                                    Tier A is now
-                                                    versioned and reviewed
-                                                    once across protocols
-post-S3:  bolt-runtime crate  + Tier B (~500 LOC) = ~1,750 LOC
-post-S4:  bolt-runtime crate  + Tier B (~350 LOC) = ~1,600 LOC
-post-S5:  bolt-runtime crate  + Tier B (~290 LOC) = ~1,540 LOC
-post-S6:  bolt-runtime crate  + Tier B (~50 LOC)  = ~1,300 LOC
+current:  narrow runtime    + Tier B (<=700 LOC) = runtime reviewed once,
+                                                    Jolt math quarantined
+post-S3:  narrow runtime    + Tier B (~500 LOC)  = value graph absorbs
+                                                    simpler relation math
+post-S4:  narrow runtime    + Tier B (~350 LOC)  = eval-family strings gone
+post-S5:  narrow runtime    + Tier B (~290 LOC)  = relations become plans
+post-S6:  narrow runtime    + Tier B (~50 LOC)   = optional bytecode data
 ```
 
 The shape of the audit also changes: post-S5, almost all of Tier B is the
@@ -988,11 +1116,12 @@ us real-data core-vs-Bolt setup/prove/verify/proof-size/RSS measurements, but
 their current thresholds are broad smoke limits. Treat them as necessary but
 not sufficient for interpreter-heavy slices.
 
-Before S2.5, S3, or S5 lands, record a local verifier-time baseline from the
+Before S2.75, S3, or S5 lands, record a local verifier-time baseline from the
 SHA2-chain perf oracle and rerun it after the slice. If a verifier-time change
 is noisy, rerun before calling it real. If a repeatable regression remains,
 either fix it or explicitly document why the readability/security gain is worth
-the cost. Do not loosen perf thresholds to make a refactor pass.
+the cost. Do not loosen perf thresholds to make a refactor pass. The existing
+S2/S2.5 progress should keep its captured baselines as reference data.
 
 The expected trend is "no measurable verifier change," because the interpreter
 dispatches are straightforward and relation/value-graph evaluation happens a
@@ -1012,6 +1141,8 @@ correctness check.
 The Rust emitter should become a pretty-printer for typed plans, not the place
 where verifier semantics are invented. Use these checks during every slice:
 
+- If the emitter needs to classify a verifier fact, add or extend a planning
+  pass instead.
 - If emitted Rust contains a new helper function with protocol math, ask why
   that helper is not a typed value-graph op or relation plan row.
 - If the emitter parses or assembles meaning from a symbol string, add a typed
@@ -1027,24 +1158,24 @@ where verifier semantics are invented. Use these checks during every slice:
 
 ## Locked sequencing decisions
 
-The investigation pass resolved the implementation choices that should not need
-more user input before an overnight run:
+The investigation pass resolved the implementation choices that should guide the
+next autonomous implementation slices:
 
-1. `bolt-verifier-runtime` is a standalone workspace crate, with no
-   `bolt::*` re-export.
-2. Runtime relation-bearing plan structs are generic over `R:
-   ProtocolRelation`; Jolt relation variants live in `JoltRelationKind`.
-3. Stage 8 source-stage handling is local to Stage 8 until the PCS/opening
+1. Keep `bolt-verifier-runtime`, but define it narrowly. It is a verifier
+   interpreter crate, not a generic codegen dumping ground.
+2. Runtime relation-bearing plan structs remain generic over
+   `R: ProtocolRelation`; Jolt relation variants live in `JoltRelationKind`.
+3. Add CPU-to-Rust planning passes before adding more runtime helper surface.
+4. Stage 8 source-stage handling is local to Stage 8 until the PCS/opening
    model is made fully typed.
-4. Legacy names such as `ThroughStage5` may remain as user-facing constructors,
+5. Legacy names such as `ThroughStage5` may remain as user-facing constructors,
    but internally they resolve to `VerifierTarget { checkpoint, evaluation }`.
-5. S2 does not need a perf baseline because it is import/extraction work.
-   S2.5, S3, and S5 do need before/after verifier-time baselines because they
-   add or change interpreter execution.
-6. S3 starts with the value-graph foundation plus Stage 3/4 conversions. It
+6. S2.75, S3, and S5 need before/after verifier-time baselines because they add
+   or change interpreter/planning execution.
+7. S3 starts with the value-graph foundation plus Stage 3/4 conversions. It
    does not start with bytecode, RAM sparse evaluators, lookup-table MLEs, or
    univariate-skip verifier replacement.
-7. S6 remains optional and should be deferred unless there is a second protocol
+8. S6 remains optional and should be deferred unless there is a second protocol
    user or concrete audit pressure for typed bytecode-row encoding.
 
 ---
@@ -1052,23 +1183,20 @@ more user input before an overnight run:
 ## Sequencing decision tree
 
 ```text
-Land S2 first.                                   [unconditional]
-  Extract Tier A to standalone bolt-verifier-runtime.
-  Genericize runtime relation-bearing plans over ProtocolRelation.
-  Move JoltRelationKind and Stage8SourceStage out of the runtime.
-  Re-baseline ceilings.
-  Delete old common path; no compatibility re-export.
+Current stack.                                   [already in progress]
+  Runtime extraction, typed relation IDs, top-level verifier program,
+  output-claim plans, cleanup gates.
 
-Capture verifier perf baseline.                  [before interpreter changes]
-  Run SHA2-chain 2^16; run 2^20 if overnight budget allows.
-  Record verify_ms/proof_bytes/RSS and keep Perfetto traces.
+Do S2 boundary audit next.                        [unconditional]
+  Narrow runtime APIs.
+  Move polynomial helpers to jolt-poly.
+  Classify runtime vs Jolt verifier core vs planning-pass ownership.
 
-Land S2.5 next.                                  [unconditional]
-  Make verifier.rs execute a typed verifier program.
-  Stages become proof-slot labels / diagnostic scopes, not control flow.
-  Keep proof serialization and public artifact shape unchanged.
+Add S2.75 planning seams next.                    [unconditional]
+  Make CPU-to-Rust verifier planning explicit.
+  Prevent new semantics from landing in emitters or runtime string dispatch.
 
-Land S3 next.                                    [unconditional]
+Land S3 after planning seams.                     [unconditional]
   Establish scalar/point/field-vector/eval-family value graph.
   Convert Stage 3 then Stage 4 relation-output checks first.
   Defer bytecode, RAM sparse, lookup-table, and univariate-skip special cases.
