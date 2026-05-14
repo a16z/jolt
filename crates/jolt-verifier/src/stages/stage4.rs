@@ -106,7 +106,7 @@ pub const STAGE4_SUMCHECK_CLAIMS: &[Stage4SumcheckClaimPlan] = &[
 pub const STAGE4_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[16, 7];
 
 pub const STAGE4_SUMCHECK_BATCHES: &[Stage4SumcheckBatchPlan] = &[
-    Stage4SumcheckBatchPlan { symbol: "stage4.batch", stage: "stage4", proof_slot: "stage4.sumcheck", policy: "jolt_core_stage4_aligned", count: 2, ordered_claims: "stage4.registers_read_write.input|stage4.ram_val_check.input", claim_operands: "stage4.registers_read_write.input|stage4.ram_val_check.input", claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE4_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
+    Stage4SumcheckBatchPlan { symbol: "stage4.batch", stage: "stage4", proof_slot: "stage4.sumcheck", policy: "jolt_core_stage4_aligned", count: 2, ordered_claims: &["stage4.registers_read_write.input", "stage4.ram_val_check.input"], claim_operands: &["stage4.registers_read_write.input", "stage4.ram_val_check.input"], claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE4_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
 ];
 pub const STAGE4_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[16, 7];
 
@@ -152,7 +152,7 @@ pub const STAGE4_OPENING_EQUALITIES: &[Stage4OpeningClaimEqualityPlan] = &[
 ];
 
 pub const STAGE4_OPENING_BATCHES: &[Stage4OpeningBatchPlan] = &[
-    Stage4OpeningBatchPlan { symbol: "stage4.openings", stage: "stage4", proof_slot: "stage4.openings", policy: "jolt_stage4_output_order", count: 7, ordered_claims: "stage4.registers_read_write.opening.RegistersVal|stage4.registers_read_write.opening.Rs1Ra|stage4.registers_read_write.opening.Rs2Ra|stage4.registers_read_write.opening.RdWa|stage4.registers_read_write.opening.RdInc|stage4.ram_val_check.opening.RamRa|stage4.ram_val_check.opening.RamInc", claim_operands: "stage4.registers_read_write.opening.RegistersVal|stage4.registers_read_write.opening.Rs1Ra|stage4.registers_read_write.opening.Rs2Ra|stage4.registers_read_write.opening.RdWa|stage4.registers_read_write.opening.RdInc|stage4.ram_val_check.opening.RamRa|stage4.ram_val_check.opening.RamInc" },
+    Stage4OpeningBatchPlan { symbol: "stage4.openings", stage: "stage4", proof_slot: "stage4.openings", policy: "jolt_stage4_output_order", count: 7, ordered_claims: &["stage4.registers_read_write.opening.RegistersVal", "stage4.registers_read_write.opening.Rs1Ra", "stage4.registers_read_write.opening.Rs2Ra", "stage4.registers_read_write.opening.RdWa", "stage4.registers_read_write.opening.RdInc", "stage4.ram_val_check.opening.RamRa", "stage4.ram_val_check.opening.RamInc"], claim_operands: &["stage4.registers_read_write.opening.RegistersVal", "stage4.registers_read_write.opening.Rs1Ra", "stage4.registers_read_write.opening.Rs2Ra", "stage4.registers_read_write.opening.RdWa", "stage4.registers_read_write.opening.RdInc", "stage4.ram_val_check.opening.RamRa", "stage4.ram_val_check.opening.RamInc"] },
 ];
 pub const STAGE4_PROGRAM: Stage4VerifierProgramPlan = Stage4CpuProgramPlan {
     role: "verifier",

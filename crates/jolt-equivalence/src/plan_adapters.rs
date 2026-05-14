@@ -13,6 +13,12 @@ macro_rules! stage_list {
     };
 }
 
+macro_rules! stage_batch_list {
+    ($mode:ident, $values:expr) => {
+        super::leak_str_slice($values)
+    };
+}
+
 macro_rules! stage_field_expr {
     (kernel, $module:ident, $field_expr:ident, $plan:ident) => {
         $module::$field_expr {
@@ -457,8 +463,8 @@ macro_rules! define_stage_adapter_impl {
                             proof_slot: super::leak_str(&plan.proof_slot),
                             policy: super::leak_str(&plan.policy),
                             count: plan.count,
-                            ordered_claims: stage_list!($mode, &plan.ordered_claims),
-                            claim_operands: stage_list!($mode, &plan.claim_operands),
+                            ordered_claims: stage_batch_list!($mode, &plan.ordered_claims),
+                            claim_operands: stage_batch_list!($mode, &plan.claim_operands),
                             claim_label: super::leak_str(&plan.claim_label),
                             round_label: super::leak_str(&plan.round_label),
                             round_schedule: super::leak_usize_slice(&plan.round_schedule),
@@ -580,8 +586,8 @@ macro_rules! define_stage_adapter_impl {
                             proof_slot: super::leak_str(&plan.proof_slot),
                             policy: super::leak_str(&plan.policy),
                             count: plan.count,
-                            ordered_claims: stage_list!($mode, &plan.ordered_claims),
-                            claim_operands: stage_list!($mode, &plan.claim_operands),
+                            ordered_claims: stage_batch_list!($mode, &plan.ordered_claims),
+                            claim_operands: stage_batch_list!($mode, &plan.claim_operands),
                         })
                         .collect(),
                 ),
@@ -768,8 +774,8 @@ macro_rules! define_stage1_adapter {
                             proof_slot: super::leak_str(&plan.proof_slot),
                             policy: super::leak_str(&plan.policy),
                             count: plan.count,
-                            ordered_claims: stage_list!($mode, &plan.ordered_claims),
-                            claim_operands: stage_list!($mode, &plan.claim_operands),
+                            ordered_claims: stage_batch_list!($mode, &plan.ordered_claims),
+                            claim_operands: stage_batch_list!($mode, &plan.claim_operands),
                             claim_label: super::leak_str(&plan.claim_label),
                             round_label: super::leak_str(&plan.round_label),
                             round_schedule: super::leak_usize_slice(&plan.round_schedule),
@@ -839,8 +845,8 @@ macro_rules! define_stage1_adapter {
                             proof_slot: super::leak_str(&plan.proof_slot),
                             policy: super::leak_str(&plan.policy),
                             count: plan.count,
-                            ordered_claims: stage_list!($mode, &plan.ordered_claims),
-                            claim_operands: stage_list!($mode, &plan.claim_operands),
+                            ordered_claims: stage_batch_list!($mode, &plan.ordered_claims),
+                            claim_operands: stage_batch_list!($mode, &plan.claim_operands),
                         })
                         .collect(),
                 ),

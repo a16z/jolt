@@ -187,8 +187,8 @@ pub struct SumcheckBatchPlan {
     pub proof_slot: &'static str,
     pub policy: &'static str,
     pub count: usize,
-    pub ordered_claims: &'static str,
-    pub claim_operands: &'static str,
+    pub ordered_claims: &'static [&'static str],
+    pub claim_operands: &'static [&'static str],
     pub claim_label: &'static str,
     pub round_label: &'static str,
     pub round_schedule: &'static [usize],
@@ -288,8 +288,8 @@ pub struct OpeningBatchPlan {
     pub proof_slot: &'static str,
     pub policy: &'static str,
     pub count: usize,
-    pub ordered_claims: &'static str,
-    pub claim_operands: &'static str,
+    pub ordered_claims: &'static [&'static str],
+    pub claim_operands: &'static [&'static str],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -867,7 +867,10 @@ pub fn batch_claims<'a, C: SymbolPlan>(
     claims: &'a [C],
     batch: &SumcheckBatchPlan,
 ) -> Result<Vec<&'a C>, RuntimePlanError> {
-    symbol_list(batch.claim_operands)
+    batch
+        .claim_operands
+        .iter()
+        .copied()
         .map(|symbol| {
             find_plan(claims, symbol).ok_or(RuntimePlanError::MissingClaim {
                 batch: batch.symbol,
@@ -1822,7 +1825,7 @@ where
         })
         .collect::<Vec<_>>();
     for batch in opening_batches {
-        for symbol in symbol_list(batch.claim_operands) {
+        for &symbol in batch.claim_operands {
             let claim = opening_claims
                 .iter()
                 .find(|claim| claim.symbol == symbol)

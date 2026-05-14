@@ -1709,8 +1709,8 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage6Error);
                         rust_str(&batch.proof_slot),
                         rust_str(&batch.policy),
                         batch.count,
-                        rust_str(&batch.ordered_claims.join("|")),
-                        rust_str(&batch.claim_operands.join("|")),
+                        super::plan_tokens::rust_str_slice_expr(&batch.ordered_claims),
+                        super::plan_tokens::rust_str_slice_expr(&batch.claim_operands),
                         rust_str(&batch.claim_label),
                         rust_str(&batch.round_label)
                     )
@@ -2025,8 +2025,8 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage6Error);
                         rust_str(&batch.proof_slot),
                         rust_str(&batch.policy),
                         batch.count,
-                        rust_str(&batch.ordered_claims.join("|")),
-                        rust_str(&batch.claim_operands.join("|"))
+                        super::plan_tokens::rust_str_slice_expr(&batch.ordered_claims),
+                        super::plan_tokens::rust_str_slice_expr(&batch.claim_operands)
                     )
                 })
                 .collect::<Vec<_>>()
