@@ -74,9 +74,9 @@ impl JoltProtocolParams {
     }
 
     pub fn fixture() -> Self {
-        // Sized to cover the example guests in `examples/` (max_trace_length
-        // up to 2^18, bytecode up to 2^14 instructions, RAM up to 2^14 words).
-        // Smaller guests pad up to this shape via `jolt_host::prove_program`.
+        // Max shape supported by current jolt-kernels Stage 6 RA-virtual
+        // sumcheck (`degree_bound > 5` is hardcoded unsupported, so ram_d
+        // and bytecode_d are capped at 4 under log_k_chunk = 4).
         Self::new(18, 14, 14)
     }
 

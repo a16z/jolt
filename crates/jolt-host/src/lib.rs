@@ -69,12 +69,7 @@ fn instruction_lookup_table_index(instr: &Instruction) -> Option<usize> {
 /// `TRANSCRIPT_LABEL`).
 pub const TRANSCRIPT_LABEL: &[u8] = b"Jolt";
 
-/// The single goldens-baked shape supported by `prove_program` today.
-/// Matches `bolt::protocols::jolt::JoltProtocolParams::fixture()`.
-/// Guests with naturally larger traces fail with
-/// [`ProveProgramError::UnsupportedShape`]. Kept in sync with the
-/// `MAX_MODULAR_TRACE_LENGTH` cap in the
-/// `#[jolt::provable(backend = "modular")]` macro guard.
+/// Goldens-baked shape. Must equal `JoltProtocolParams::fixture()` in bolt.
 pub const FIXTURE_LOG_T: usize = 18;
 pub const FIXTURE_LOG_K_BYTECODE: usize = 14;
 pub const FIXTURE_LOG_K_RAM: usize = 14;
@@ -88,9 +83,7 @@ pub enum ProveProgramError {
     Openings(jolt_prover::prover::JoltOpeningInputError),
     /// The supplied guest program produced a trace shape (log_t,
     /// log_k_bytecode, log_k_ram) that doesn't match the goldens-baked
-    /// fixture. v1 of `prove_program` only supports the fixture shape
-    /// (log_t=16, log_k_bytecode=10, log_k_ram=16). Larger guests require
-    /// regenerated goldens.
+    /// fixture. Larger guests require regenerated goldens.
     UnsupportedShape {
         log_t: usize,
         log_k_bytecode: usize,
@@ -232,17 +225,15 @@ impl ModularJoltParams {
 /// Top-level entry: build a Jolt proof from a guest program + inputs by
 /// driving the modular Bolt-based prover end-to-end.
 ///
-/// # Constraints (v1)
-/// - Requires the guest's padded trace, bytecode size, and RAM size to
-///   match the goldens-baked fixture shape (`log_t=16`,
-///   `log_k_bytecode=10`, `log_k_ram=16`). Larger guests need a fresh
-///   `JOLT_UPDATE_GOLDENS=1` regen at the right params.
-/// - Currently bypasses trusted advice commitments (no
-///   `trusted_advice_commitment` argument); only untrusted advice is
-///   threaded.
+/// # Constraints
+/// - Guest's padded trace, bytecode size, and RAM size must match the
+///   goldens-baked fixture shape (`FIXTURE_LOG_T` etc). Larger guests
+///   need a fresh `JOLT_UPDATE_GOLDENS=1` regen.
+/// - Trusted advice commitments are not threaded; only untrusted advice
+///   is wired through.
 ///
 /// # Returns
-/// A [`ProofBundle`] bundle containing the proof and everything
+/// A [`ProofBundle`] containing the proof and everything
 /// [`verify_proof`] needs to run the modular verifier round-trip without
 /// re-tracing the guest.
 pub fn prove_program(
@@ -298,10 +289,10 @@ struct ResolvedShape {
     log_k_ram: usize,
 }
 
-/// Phase 1.5 + 2: pad trace/bytecode/RAM up to the goldens-baked fixture
-/// and reject anything that doesn't match exactly. The goldens depend on
-/// the d-regime AND the absolute fixture log_t (dory tier-1 streaming
-/// buffers are sized at the fixture trace length).
+/// Pad trace/bytecode/RAM up to the goldens-baked fixture and reject
+/// anything that doesn't match. Both the d-regime and the absolute
+/// fixture log_t are baked in (dory tier-1 streaming sizes its buffers
+/// at the fixture trace length).
 fn check_shape(
     trace: &[tracer::instruction::Cycle],
     io_device: &JoltDevice,
@@ -379,7 +370,6 @@ fn assemble_and_prove(
 ) -> Result<ProveStageOutput, ProveProgramError> {
     let memory_layout = io_device.memory_layout.clone();
 
-    // ----- Phase 3: trace-derived data (class A) -----
     let r1cs_key = R1csKey::new(rv64::rv64_constraints::<Fr>(), trace_length);
     let (cycle_inputs, r1cs_witness, _instruction_flags) = extract_trace::<_, Fr>(
         trace,
@@ -414,11 +404,8 @@ fn assemble_and_prove(
     let (initial_ram_state, final_ram_state) =
         build_ram_states(init_mem, final_memory, io_device, ram_k);
 
-    // ----- Phase 4: PCS setup -----
-    // log_t + log_k_chunk = 16 + 4 = 20 for the fixture shape.
     let pcs_setup = DoryScheme::setup_prover(params.log_t + params.log_k_chunk);
 
-    // ----- Phase 5: stage chain (mirrors bolt_oracle.rs:146-700) -----
     let programs = default_prover_programs();
     let mut transcript = Blake2bTranscript::<Fr>::new(TRANSCRIPT_LABEL);
     append_bolt_preamble(
@@ -426,7 +413,6 @@ fn assemble_and_prove(
         &io_event_data_for_preamble(io_device, params, entry_address),
     );
 
-    // 6a. Commitment phase
     let commitment_sources = jolt_witness::commitment_trace_sources(&cycle_inputs);
     let oracle_inputs = jolt_prover::stages::commitment::CommitmentOracleInputs::from_trace_sources(
         &commitment_sources,
@@ -444,7 +430,6 @@ fn assemble_and_prove(
         )
         .map_err(JoltProveError::Commitment)?;
 
-    // 6b. Stage 1 (Spartan outer)
     let stage1_data = Stage1OuterRv64Data::new(&r1cs_key, &r1cs_witness, &rv64_cycles)
         .map_err(JoltProveError::Stage1Outer)?;
     let stage1_artifacts = jolt_prover::prove_stage1_outer_with_witness_inputs(
@@ -455,7 +440,6 @@ fn assemble_and_prove(
     )
     .map_err(JoltProveError::Stage1Outer)?;
 
-    // 6c. Stage 2 (product virtual + lookup + RAM)
     let ram_output_layout = Stage2RamOutputLayout {
         io_start: ((memory_layout.input_start - lowest_addr) / 8) as usize,
         io_end: ((RAM_START_ADDRESS - lowest_addr) / 8) as usize,
@@ -480,7 +464,6 @@ fn assemble_and_prove(
     )
     .map_err(JoltProveError::Stage2)?;
 
-    // 6d-f. Stages 3, 4, 5 via the canonical regen'd wrappers.
     let stage3_openings = jolt_prover::stage3_opening_inputs_from_artifacts(
         programs.stage3,
         &stage1_artifacts,
@@ -533,7 +516,6 @@ fn assemble_and_prove(
     )
     .map_err(JoltProveError::Stage5)?;
 
-    // 6g. Stage 6 (bytecode read-RAF, instruction RA, booleanity, etc.)
     let stage6_openings = jolt_prover::stage6_opening_inputs_from_artifacts(
         programs.stage6,
         &stage1_artifacts,
@@ -561,7 +543,6 @@ fn assemble_and_prove(
     )
     .map_err(JoltProveError::Stage6)?;
 
-    // 6h. Stage 7 (Hamming weight, claim reductions)
     let stage7_openings = jolt_prover::stage7_opening_inputs_from_stage6_artifacts_with_program(
         programs.stage7,
         &stage6_artifacts,
@@ -576,7 +557,6 @@ fn assemble_and_prove(
     )
     .map_err(JoltProveError::Stage7)?;
 
-    // 6i. Stage 8 (evaluation / opening proof)
     let evaluation = jolt_prover::prove_jolt_evaluation_proof(
         programs.stage8,
         &mut commitment_inputs,
@@ -589,7 +569,6 @@ fn assemble_and_prove(
     )
     .map_err(JoltProveError::Evaluation)?;
 
-    // 6j. Assemble proof
     let stage5_proof = jolt_prover::stage5_proof(&stage5_artifacts);
     let stage6_proof = jolt_prover::stage6_proof(&stage6_artifacts);
     let stage7_proof = jolt_prover::stage7_proof(&stage7_artifacts);
