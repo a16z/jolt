@@ -1,28 +1,31 @@
 use std::time::Instant;
+
+use guest::{compile_muldiv, prove_muldiv, verify_muldiv};
 use tracing::info;
 
 pub fn main() {
     tracing_subscriber::fmt::init();
 
-    let target_dir = "/tmp/jolt-guest-targets";
-    let mut program = guest::compile_muldiv(target_dir);
+    let mut program = compile_muldiv();
 
-    let shared_preprocessing = guest::preprocess_shared_muldiv(&mut program).unwrap();
-    let prover_preprocessing = guest::preprocess_prover_muldiv(shared_preprocessing.clone());
-    let verifier_preprocessing = guest::preprocess_verifier_muldiv(
-        shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
-        None,
-    );
+    let prove_start = Instant::now();
+    let (output, bundle) = prove_muldiv(&mut program, 12031293, 17, 92)
+        .expect("modular prove succeeds on muldiv");
+    let prove_secs = prove_start.elapsed().as_secs_f64();
 
-    let prove = guest::build_prover_muldiv(program, prover_preprocessing);
-    let verify = guest::build_verifier_muldiv(verifier_preprocessing);
+    let verify_start = Instant::now();
+    let verify_result = verify_muldiv(&bundle, &mut program);
+    let verify_secs = verify_start.elapsed().as_secs_f64();
+    let valid = verify_result.is_ok();
 
-    let now = Instant::now();
-    let (output, proof, program_io) = prove(12031293, 17, 92);
-    info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify(12031293, 17, 92, output, program_io.panic, proof);
+    info!("=== muldiv (modular Bolt backend) ===");
+    info!("prove time : {prove_secs:.3} s");
+    info!("verify time: {verify_secs:.3} s");
+    info!("output     : {output}");
+    info!("valid      : {valid}");
 
-    info!("output: {output}");
-    info!("valid: {is_valid}");
+    if let Err(err) = verify_result {
+        info!("verify error: {err:?}");
+        std::process::exit(1);
+    }
 }
