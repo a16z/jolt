@@ -14,6 +14,7 @@ use crate::schema::{
 
 use super::super::oracles;
 use super::super::params::JoltProtocolParams;
+use super::field_formula::{FieldBinaryFormula, FieldFormulaBuilder};
 use super::lowering::{
     copy_attrs, field_lowering_attrs as field_compute_attrs, string_attr,
     transcript_squeeze_compute_result_types, transcript_squeeze_protocol_result_type,
@@ -48,6 +49,140 @@ const STAGE3_INSTRUCTION_INPUT_OUTPUTS: [&str; 8] = [
     "Imm",
 ];
 const STAGE3_REGISTER_INPUTS: [&str; 3] = ["RdWriteValue", "Rs1Value", "Rs2Value"];
+
+const STAGE3_SHIFT_OUTPUT_FORMULAS: [FieldBinaryFormula; 11] = [
+    FieldBinaryFormula::mul(
+        "stage3.spartan_shift.output.term.PC",
+        "stage3.spartan_shift.gamma",
+        "stage3.spartan_shift.eval.PC",
+    ),
+    FieldBinaryFormula::mul(
+        "stage3.spartan_shift.output.term.OpFlagVirtualInstruction",
+        "stage3.spartan_shift.gamma2",
+        "stage3.spartan_shift.eval.OpFlagVirtualInstruction",
+    ),
+    FieldBinaryFormula::mul(
+        "stage3.spartan_shift.output.term.OpFlagIsFirstInSequence",
+        "stage3.spartan_shift.gamma3",
+        "stage3.spartan_shift.eval.OpFlagIsFirstInSequence",
+    ),
+    FieldBinaryFormula::sub(
+        "stage3.spartan_shift.output.one_minus.InstructionFlagIsNoop",
+        "stage3.field.one",
+        "stage3.spartan_shift.eval.InstructionFlagIsNoop",
+    ),
+    FieldBinaryFormula::add(
+        "stage3.spartan_shift.output.partial.PC",
+        "stage3.spartan_shift.eval.UnexpandedPC",
+        "stage3.spartan_shift.output.term.PC",
+    ),
+    FieldBinaryFormula::add(
+        "stage3.spartan_shift.output.partial.OpFlagVirtualInstruction",
+        "stage3.spartan_shift.output.partial.PC",
+        "stage3.spartan_shift.output.term.OpFlagVirtualInstruction",
+    ),
+    FieldBinaryFormula::add(
+        "stage3.spartan_shift.output.weighted_outer",
+        "stage3.spartan_shift.output.partial.OpFlagVirtualInstruction",
+        "stage3.spartan_shift.output.term.OpFlagIsFirstInSequence",
+    ),
+    FieldBinaryFormula::mul(
+        "stage3.spartan_shift.output.outer",
+        "stage3.spartan_shift.output.eq.NextPC",
+        "stage3.spartan_shift.output.weighted_outer",
+    ),
+    FieldBinaryFormula::mul(
+        "stage3.spartan_shift.output.noop_product",
+        "stage3.spartan_shift.output.eq.NextIsNoop",
+        "stage3.spartan_shift.output.one_minus.InstructionFlagIsNoop",
+    ),
+    FieldBinaryFormula::mul(
+        "stage3.spartan_shift.output.noop_term",
+        "stage3.spartan_shift.gamma4",
+        "stage3.spartan_shift.output.noop_product",
+    ),
+    FieldBinaryFormula::add(
+        "stage3.spartan_shift.output.claim_expr",
+        "stage3.spartan_shift.output.outer",
+        "stage3.spartan_shift.output.noop_term",
+    ),
+];
+
+const STAGE3_INSTRUCTION_OUTPUT_FORMULAS: [FieldBinaryFormula; 9] = [
+    FieldBinaryFormula::mul(
+        "stage3.instruction_input.output.left.term.Rs1Value",
+        "stage3.instruction_input.eval.InstructionFlagLeftOperandIsRs1Value",
+        "stage3.instruction_input.eval.Rs1Value",
+    ),
+    FieldBinaryFormula::mul(
+        "stage3.instruction_input.output.left.term.PC",
+        "stage3.instruction_input.eval.InstructionFlagLeftOperandIsPC",
+        "stage3.instruction_input.eval.UnexpandedPC",
+    ),
+    FieldBinaryFormula::add(
+        "stage3.instruction_input.output.left",
+        "stage3.instruction_input.output.left.term.Rs1Value",
+        "stage3.instruction_input.output.left.term.PC",
+    ),
+    FieldBinaryFormula::mul(
+        "stage3.instruction_input.output.right.term.Rs2Value",
+        "stage3.instruction_input.eval.InstructionFlagRightOperandIsRs2Value",
+        "stage3.instruction_input.eval.Rs2Value",
+    ),
+    FieldBinaryFormula::mul(
+        "stage3.instruction_input.output.right.term.Imm",
+        "stage3.instruction_input.eval.InstructionFlagRightOperandIsImm",
+        "stage3.instruction_input.eval.Imm",
+    ),
+    FieldBinaryFormula::add(
+        "stage3.instruction_input.output.right",
+        "stage3.instruction_input.output.right.term.Rs2Value",
+        "stage3.instruction_input.output.right.term.Imm",
+    ),
+    FieldBinaryFormula::mul(
+        "stage3.instruction_input.output.left_weighted",
+        "stage3.instruction_input.gamma",
+        "stage3.instruction_input.output.left",
+    ),
+    FieldBinaryFormula::add(
+        "stage3.instruction_input.output.weighted_inputs",
+        "stage3.instruction_input.output.right",
+        "stage3.instruction_input.output.left_weighted",
+    ),
+    FieldBinaryFormula::mul(
+        "stage3.instruction_input.output.claim_expr",
+        "stage3.instruction_input.output.eq.LeftInstructionInput",
+        "stage3.instruction_input.output.weighted_inputs",
+    ),
+];
+
+const STAGE3_REGISTERS_OUTPUT_FORMULAS: [FieldBinaryFormula; 5] = [
+    FieldBinaryFormula::mul(
+        "stage3.registers.output.term.Rs1Value",
+        "stage3.registers.gamma",
+        "stage3.registers_claim_reduction.eval.Rs1Value",
+    ),
+    FieldBinaryFormula::mul(
+        "stage3.registers.output.term.Rs2Value",
+        "stage3.registers.gamma2",
+        "stage3.registers_claim_reduction.eval.Rs2Value",
+    ),
+    FieldBinaryFormula::add(
+        "stage3.registers.output.partial.RdWriteValueRs1Value",
+        "stage3.registers_claim_reduction.eval.RdWriteValue",
+        "stage3.registers.output.term.Rs1Value",
+    ),
+    FieldBinaryFormula::add(
+        "stage3.registers.output.weighted_register_values",
+        "stage3.registers.output.partial.RdWriteValueRs1Value",
+        "stage3.registers.output.term.Rs2Value",
+    ),
+    FieldBinaryFormula::mul(
+        "stage3.registers.output.claim_expr",
+        "stage3.registers.output.eq.RdWriteValue",
+        "stage3.registers.output.weighted_register_values",
+    ),
+];
 
 pub fn build_stage3_protocol<'c>(
     context: &'c MeliorContext,
@@ -1637,83 +1772,38 @@ fn append_stage3_output_claims<'c, 'a>(
         spec.instances.shift.0,
         spec.openings.product_next_is_noop.point,
     )?;
-    let shift_term_pc = append_field_mul(
-        context,
-        module,
-        "stage3.spartan_shift.output.term.PC",
-        spec.shift_gamma,
-        spec.output_evals.shift.pc,
-    )?;
-    let shift_term_virtual = append_field_mul(
-        context,
-        module,
-        "stage3.spartan_shift.output.term.OpFlagVirtualInstruction",
-        spec.shift_gamma2,
-        spec.output_evals.shift.op_flag_virtual_instruction,
-    )?;
-    let shift_term_first = append_field_mul(
-        context,
-        module,
-        "stage3.spartan_shift.output.term.OpFlagIsFirstInSequence",
-        spec.shift_gamma3,
-        spec.output_evals.shift.op_flag_is_first_in_sequence,
-    )?;
-    let shift_one_minus_noop = append_field_sub(
-        context,
-        module,
-        "stage3.spartan_shift.output.one_minus.InstructionFlagIsNoop",
-        spec.field_one,
-        spec.output_evals.shift.instruction_flag_is_noop,
-    )?;
-    let shift_partial_pc = append_field_add(
-        context,
-        module,
-        "stage3.spartan_shift.output.partial.PC",
-        spec.output_evals.shift.unexpanded_pc,
-        shift_term_pc,
-    )?;
-    let shift_partial_virtual = append_field_add(
-        context,
-        module,
-        "stage3.spartan_shift.output.partial.OpFlagVirtualInstruction",
-        shift_partial_pc,
-        shift_term_virtual,
-    )?;
-    let shift_weighted_outer = append_field_add(
-        context,
-        module,
-        "stage3.spartan_shift.output.weighted_outer",
-        shift_partial_virtual,
-        shift_term_first,
-    )?;
-    let shift_outer = append_field_mul(
-        context,
-        module,
-        "stage3.spartan_shift.output.outer",
-        shift_eq_next_pc,
-        shift_weighted_outer,
-    )?;
-    let shift_noop_product = append_field_mul(
-        context,
-        module,
-        "stage3.spartan_shift.output.noop_product",
-        shift_eq_next_is_noop,
-        shift_one_minus_noop,
-    )?;
-    let shift_noop_term = append_field_mul(
-        context,
-        module,
-        "stage3.spartan_shift.output.noop_term",
-        spec.shift_gamma4,
-        shift_noop_product,
-    )?;
-    let shift_claim = append_field_add(
-        context,
-        module,
-        "stage3.spartan_shift.output.claim_expr",
-        shift_outer,
-        shift_noop_term,
-    )?;
+    let mut formula = FieldFormulaBuilder::new(context, module);
+    formula.bind_all(&[
+        ("stage3.spartan_shift.gamma", spec.shift_gamma),
+        ("stage3.spartan_shift.gamma2", spec.shift_gamma2),
+        ("stage3.spartan_shift.gamma3", spec.shift_gamma3),
+        ("stage3.spartan_shift.gamma4", spec.shift_gamma4),
+        ("stage3.field.one", spec.field_one),
+        (
+            "stage3.spartan_shift.eval.UnexpandedPC",
+            spec.output_evals.shift.unexpanded_pc,
+        ),
+        ("stage3.spartan_shift.eval.PC", spec.output_evals.shift.pc),
+        (
+            "stage3.spartan_shift.eval.OpFlagVirtualInstruction",
+            spec.output_evals.shift.op_flag_virtual_instruction,
+        ),
+        (
+            "stage3.spartan_shift.eval.OpFlagIsFirstInSequence",
+            spec.output_evals.shift.op_flag_is_first_in_sequence,
+        ),
+        (
+            "stage3.spartan_shift.eval.InstructionFlagIsNoop",
+            spec.output_evals.shift.instruction_flag_is_noop,
+        ),
+        ("stage3.spartan_shift.output.eq.NextPC", shift_eq_next_pc),
+        (
+            "stage3.spartan_shift.output.eq.NextIsNoop",
+            shift_eq_next_is_noop,
+        ),
+    ]);
+    formula.append_all(&STAGE3_SHIFT_OUTPUT_FORMULAS)?;
+    let shift_claim = formula.value("stage3.spartan_shift.output.claim_expr")?;
     append_sumcheck_output_claim(
         context,
         module,
@@ -1743,69 +1833,48 @@ fn append_stage3_output_claims<'c, 'a>(
         spec.instances.instruction.0,
         spec.openings.product_left_instruction_input.point,
     )?;
-    let instruction_left_rs1 = append_field_mul(
-        context,
-        module,
-        "stage3.instruction_input.output.left.term.Rs1Value",
-        spec.output_evals.instruction.left_operand_is_rs1_value,
-        spec.output_evals.instruction.rs1_value,
-    )?;
-    let instruction_left_pc = append_field_mul(
-        context,
-        module,
-        "stage3.instruction_input.output.left.term.PC",
-        spec.output_evals.instruction.left_operand_is_pc,
-        spec.output_evals.instruction.unexpanded_pc,
-    )?;
-    let instruction_left = append_field_add(
-        context,
-        module,
-        "stage3.instruction_input.output.left",
-        instruction_left_rs1,
-        instruction_left_pc,
-    )?;
-    let instruction_right_rs2 = append_field_mul(
-        context,
-        module,
-        "stage3.instruction_input.output.right.term.Rs2Value",
-        spec.output_evals.instruction.right_operand_is_rs2_value,
-        spec.output_evals.instruction.rs2_value,
-    )?;
-    let instruction_right_imm = append_field_mul(
-        context,
-        module,
-        "stage3.instruction_input.output.right.term.Imm",
-        spec.output_evals.instruction.right_operand_is_imm,
-        spec.output_evals.instruction.imm,
-    )?;
-    let instruction_right = append_field_add(
-        context,
-        module,
-        "stage3.instruction_input.output.right",
-        instruction_right_rs2,
-        instruction_right_imm,
-    )?;
-    let instruction_left_weighted = append_field_mul(
-        context,
-        module,
-        "stage3.instruction_input.output.left_weighted",
-        spec.instruction_gamma,
-        instruction_left,
-    )?;
-    let instruction_weighted_inputs = append_field_add(
-        context,
-        module,
-        "stage3.instruction_input.output.weighted_inputs",
-        instruction_right,
-        instruction_left_weighted,
-    )?;
-    let instruction_claim = append_field_mul(
-        context,
-        module,
-        "stage3.instruction_input.output.claim_expr",
-        instruction_eq_left,
-        instruction_weighted_inputs,
-    )?;
+    let mut formula = FieldFormulaBuilder::new(context, module);
+    formula.bind_all(&[
+        ("stage3.instruction_input.gamma", spec.instruction_gamma),
+        (
+            "stage3.instruction_input.eval.InstructionFlagLeftOperandIsRs1Value",
+            spec.output_evals.instruction.left_operand_is_rs1_value,
+        ),
+        (
+            "stage3.instruction_input.eval.Rs1Value",
+            spec.output_evals.instruction.rs1_value,
+        ),
+        (
+            "stage3.instruction_input.eval.InstructionFlagLeftOperandIsPC",
+            spec.output_evals.instruction.left_operand_is_pc,
+        ),
+        (
+            "stage3.instruction_input.eval.UnexpandedPC",
+            spec.output_evals.instruction.unexpanded_pc,
+        ),
+        (
+            "stage3.instruction_input.eval.InstructionFlagRightOperandIsRs2Value",
+            spec.output_evals.instruction.right_operand_is_rs2_value,
+        ),
+        (
+            "stage3.instruction_input.eval.Rs2Value",
+            spec.output_evals.instruction.rs2_value,
+        ),
+        (
+            "stage3.instruction_input.eval.InstructionFlagRightOperandIsImm",
+            spec.output_evals.instruction.right_operand_is_imm,
+        ),
+        (
+            "stage3.instruction_input.eval.Imm",
+            spec.output_evals.instruction.imm,
+        ),
+        (
+            "stage3.instruction_input.output.eq.LeftInstructionInput",
+            instruction_eq_left,
+        ),
+    ]);
+    formula.append_all(&STAGE3_INSTRUCTION_OUTPUT_FORMULAS)?;
+    let instruction_claim = formula.value("stage3.instruction_input.output.claim_expr")?;
     append_sumcheck_output_claim(
         context,
         module,
@@ -1832,41 +1901,29 @@ fn append_stage3_output_claims<'c, 'a>(
         spec.instances.registers.0,
         spec.openings.rd_write_value.point,
     )?;
-    let registers_rs1 = append_field_mul(
-        context,
-        module,
-        "stage3.registers.output.term.Rs1Value",
-        spec.registers_gamma,
-        spec.output_evals.registers.rs1,
-    )?;
-    let registers_rs2 = append_field_mul(
-        context,
-        module,
-        "stage3.registers.output.term.Rs2Value",
-        spec.registers_gamma2,
-        spec.output_evals.registers.rs2,
-    )?;
-    let registers_partial = append_field_add(
-        context,
-        module,
-        "stage3.registers.output.partial.RdWriteValueRs1Value",
-        spec.output_evals.registers.rd_write,
-        registers_rs1,
-    )?;
-    let registers_weighted_values = append_field_add(
-        context,
-        module,
-        "stage3.registers.output.weighted_register_values",
-        registers_partial,
-        registers_rs2,
-    )?;
-    let registers_claim = append_field_mul(
-        context,
-        module,
-        "stage3.registers.output.claim_expr",
-        registers_eq_rd_write,
-        registers_weighted_values,
-    )?;
+    let mut formula = FieldFormulaBuilder::new(context, module);
+    formula.bind_all(&[
+        ("stage3.registers.gamma", spec.registers_gamma),
+        ("stage3.registers.gamma2", spec.registers_gamma2),
+        (
+            "stage3.registers_claim_reduction.eval.RdWriteValue",
+            spec.output_evals.registers.rd_write,
+        ),
+        (
+            "stage3.registers_claim_reduction.eval.Rs1Value",
+            spec.output_evals.registers.rs1,
+        ),
+        (
+            "stage3.registers_claim_reduction.eval.Rs2Value",
+            spec.output_evals.registers.rs2,
+        ),
+        (
+            "stage3.registers.output.eq.RdWriteValue",
+            registers_eq_rd_write,
+        ),
+    ]);
+    formula.append_all(&STAGE3_REGISTERS_OUTPUT_FORMULAS)?;
+    let registers_claim = formula.value("stage3.registers.output.claim_expr")?;
     append_sumcheck_output_claim(
         context,
         module,

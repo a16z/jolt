@@ -1,3 +1,4 @@
+mod field_formula;
 mod lowering;
 
 pub mod commitment;
