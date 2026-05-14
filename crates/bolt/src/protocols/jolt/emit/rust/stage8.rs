@@ -898,3 +898,111 @@ fn operation_name<'c: 'a, 'a>(operation: impl OperationLike<'c, 'a>) -> String {
         .unwrap_or("<invalid-operation-name>")
         .to_owned()
 }
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "tests assert exact Stage 8 validation failures"
+)]
+mod tests {
+    use super::*;
+
+    fn valid_verifier_program() -> Stage8CpuProgram {
+        Stage8CpuProgram {
+            role: Role::Verifier,
+            params: Stage8Params {
+                field: "Fr".to_owned(),
+                pcs: "Dory".to_owned(),
+                transcript: "Blake2b".to_owned(),
+            },
+            function: "jolt.stage8".to_owned(),
+            opening_inputs: vec![
+                Stage8OpeningInputPlan {
+                    symbol: EVALUATION_POINT_SOURCE_SYMBOL.to_owned(),
+                    source_stage: "stage7".to_owned(),
+                    source_claim: "stage7.input.stage6.booleanity.InstructionRa_0".to_owned(),
+                    oracle: "InstructionRa_0".to_owned(),
+                    domain: "hamming_weight".to_owned(),
+                    point_arity: 4,
+                    claim_kind: "virtual".to_owned(),
+                },
+                Stage8OpeningInputPlan {
+                    symbol: "stage8.input.stage6.RamInc".to_owned(),
+                    source_stage: "stage6".to_owned(),
+                    source_claim: "stage6.inc_claim_reduction.eval.RamInc".to_owned(),
+                    oracle: "RamInc".to_owned(),
+                    domain: "ram".to_owned(),
+                    point_arity: 4,
+                    claim_kind: "committed".to_owned(),
+                },
+            ],
+            opening_claims: vec![Stage8OpeningClaimPlan {
+                symbol: "stage8.evaluation.opening.RamInc".to_owned(),
+                oracle: "RamInc".to_owned(),
+                family: "commitment".to_owned(),
+                domain: "ram".to_owned(),
+                point_arity: 4,
+                point_source: "stage8.input.stage6.RamInc".to_owned(),
+                eval_source: "stage8.input.stage6.RamInc".to_owned(),
+                source_stage: "stage6".to_owned(),
+                source_claim: "stage6.inc_claim_reduction.eval.RamInc".to_owned(),
+            }],
+            opening_batches: vec![Stage8OpeningBatchPlan {
+                symbol: "stage8.evaluation.openings".to_owned(),
+                proof_slot: "@stage8.evaluation".to_owned(),
+                policy: "jolt_stage8_joint_rlc".to_owned(),
+                count: 1,
+                ordered_claims: vec!["stage8.evaluation.opening.RamInc".to_owned()],
+                claim_operands: vec!["stage8.evaluation.opening.RamInc".to_owned()],
+            }],
+            pcs_proofs: vec![Stage8PcsProofPlan {
+                symbol: "stage8.evaluation.proof".to_owned(),
+                mode: "verify".to_owned(),
+                pcs: "dory".to_owned(),
+                proof_slot: "@stage8.evaluation".to_owned(),
+                transcript_label: "rlc_claims".to_owned(),
+                batch: "stage8.evaluation.openings".to_owned(),
+            }],
+        }
+    }
+
+    #[test]
+    fn stage8_validation_rejects_missing_evaluation_point_source() {
+        let mut program = valid_verifier_program();
+        program
+            .opening_inputs
+            .retain(|input| input.symbol != EVALUATION_POINT_SOURCE_SYMBOL);
+
+        let error = program
+            .verify_supported_target()
+            .expect_err("missing Stage 8 evaluation point source is rejected");
+
+        assert!(
+            error.to_string().contains(
+                "stage8 program missing `stage8.evaluation.point_source` opening-point source"
+            ),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn stage8_validation_rejects_split_point_and_eval_sources() {
+        let mut program = valid_verifier_program();
+        program
+            .opening_claims
+            .first_mut()
+            .expect("fixture has an opening claim")
+            .eval_source = EVALUATION_POINT_SOURCE_SYMBOL.to_owned();
+
+        let error = program
+            .verify_supported_target()
+            .expect_err("split Stage 8 point/eval source is rejected");
+
+        assert!(
+            error.to_string().contains(
+                "stage8 claim `stage8.evaluation.opening.RamInc` must take point and eval from the same opening input"
+            ),
+            "{error}"
+        );
+    }
+}

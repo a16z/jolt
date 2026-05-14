@@ -890,134 +890,320 @@ use bolt::Role;
 use jolt_prover::stages::stage8 as generated_prover_stage8;
 use jolt_verifier::stages::stage8 as generated_stage8;
 
-macro_rules! stage8_source_stage {
-    ($module:ident, $value:expr) => {
-        match $value {
-            "stage6" => $module::Stage8SourceStage::Stage6,
-            "stage7" => $module::Stage8SourceStage::Stage7,
-            value => panic!("unsupported Stage 8 source stage `{value}`"),
-        }
-    };
+#[expect(
+    clippy::panic,
+    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated Stage 8 enum tag"
+)]
+fn generated_prover_stage8_source_stage(value: &str) -> generated_prover_stage8::Stage8SourceStage {
+    match value {
+        "stage6" => generated_prover_stage8::Stage8SourceStage::Stage6,
+        "stage7" => generated_prover_stage8::Stage8SourceStage::Stage7,
+        value => panic!("unsupported Stage 8 source stage `{value}`"),
+    }
 }
 
-macro_rules! stage8_claim_kind {
-    ($module:ident, $value:expr) => {
-        match $value {
-            "committed" => $module::Stage8ClaimKind::Committed,
-            "virtual" => $module::Stage8ClaimKind::Virtual,
-            value => panic!("unsupported Stage 8 claim kind `{value}`"),
-        }
-    };
+#[expect(
+    clippy::panic,
+    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated Stage 8 enum tag"
+)]
+fn generated_stage8_source_stage(value: &str) -> generated_stage8::Stage8SourceStage {
+    match value {
+        "stage6" => generated_stage8::Stage8SourceStage::Stage6,
+        "stage7" => generated_stage8::Stage8SourceStage::Stage7,
+        value => panic!("unsupported Stage 8 source stage `{value}`"),
+    }
 }
 
-macro_rules! stage8_pcs_proof_mode {
-    ($module:ident, $value:expr) => {
-        match $value {
-            "open" => $module::Stage8PcsProofMode::Open,
-            "verify" => $module::Stage8PcsProofMode::Verify,
-            value => panic!("unsupported Stage 8 PCS proof mode `{value}`"),
-        }
-    };
+#[expect(
+    clippy::panic,
+    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated Stage 8 enum tag"
+)]
+fn generated_prover_stage8_claim_kind(value: &str) -> generated_prover_stage8::Stage8ClaimKind {
+    match value {
+        "committed" => generated_prover_stage8::Stage8ClaimKind::Committed,
+        "virtual" => generated_prover_stage8::Stage8ClaimKind::Virtual,
+        value => panic!("unsupported Stage 8 claim kind `{value}`"),
+    }
 }
 
-macro_rules! define_stage8_adapter {
-    ($function:ident, $module:ident) => {
-        pub(crate) fn $function(
-            program: &CompilerStage8CpuProgram,
-        ) -> &'static $module::Stage8EvaluationProgramPlan {
-            let opening_inputs = leak_slice(
-                program
-                    .opening_inputs
-                    .iter()
-                    .map(|plan| $module::Stage8OpeningInputPlan {
-                        symbol: $module::Stage8OpeningInputSymbol::new(leak_str(&plan.symbol)),
-                        source_stage: stage8_source_stage!($module, plan.source_stage.as_str()),
-                        source_claim: $module::Stage8SourceClaim::new(leak_str(&plan.source_claim)),
-                        oracle: leak_str(&plan.oracle),
-                        domain: leak_str(&plan.domain),
-                        point_arity: plan.point_arity,
-                        claim_kind: stage8_claim_kind!($module, plan.claim_kind.as_str()),
-                    })
-                    .collect(),
-            );
-            let opening_claims = leak_slice(
-                program
-                    .opening_claims
-                    .iter()
-                    .map(|plan| $module::Stage8OpeningClaimPlan {
-                        symbol: $module::Stage8OpeningClaimSymbol::new(leak_str(&plan.symbol)),
-                        oracle: leak_str(&plan.oracle),
-                        family: leak_str(&plan.family),
-                        domain: leak_str(&plan.domain),
-                        point_arity: plan.point_arity,
-                        point_source: $module::Stage8OpeningInputSymbol::new(leak_str(
-                            &plan.point_source,
-                        )),
-                        eval_source: $module::Stage8OpeningInputSymbol::new(leak_str(
-                            &plan.eval_source,
-                        )),
-                        source_stage: stage8_source_stage!($module, plan.source_stage.as_str()),
-                        source_claim: $module::Stage8SourceClaim::new(leak_str(&plan.source_claim)),
-                    })
-                    .collect(),
-            );
-            let evaluation_point_source = opening_inputs
-                .iter()
-                .find(|input| input.symbol.as_str() == "stage8.evaluation.point_source")
-                .copied()
-                .expect("stage8 evaluation point source exists");
-            let ordered_claims = leak_slice(
-                program.opening_batches[0]
-                    .ordered_claims
-                    .iter()
-                    .map(|symbol| {
-                        *opening_claims
-                            .iter()
-                            .find(|claim| claim.symbol.as_str() == symbol)
-                            .expect("stage8 opening batch claim exists")
-                    })
-                    .collect(),
-            );
-            Box::leak(Box::new($module::Stage8EvaluationProgramPlan {
-                role: role_name(&program.role),
-                function: leak_str(&program.function),
-                params: $module::Stage8Params {
-                    field: leak_str(&program.params.field),
-                    pcs: leak_str(&program.params.pcs),
-                    transcript: leak_str(&program.params.transcript),
-                },
-                evaluation_point_source,
-                opening_inputs,
-                opening_claims,
-                opening_batch: $module::Stage8OpeningBatchPlan {
-                    symbol: $module::Stage8OpeningBatchSymbol::new(leak_str(
-                        &program.opening_batches[0].symbol,
-                    )),
-                    proof_slot: leak_str(&program.opening_batches[0].proof_slot),
-                    policy: leak_str(&program.opening_batches[0].policy),
-                    count: program.opening_batches[0].count,
-                    ordered_claims,
-                },
-                pcs_proof: $module::Stage8PcsProofPlan {
-                    symbol: leak_str(&program.pcs_proofs[0].symbol),
-                    mode: stage8_pcs_proof_mode!($module, program.pcs_proofs[0].mode.as_str()),
-                    pcs: leak_str(&program.pcs_proofs[0].pcs),
-                    proof_slot: leak_str(&program.pcs_proofs[0].proof_slot),
-                    transcript_label: leak_str(&program.pcs_proofs[0].transcript_label),
-                    batch: $module::Stage8OpeningBatchSymbol::new(leak_str(
-                        &program.pcs_proofs[0].batch,
-                    )),
-                },
-            }))
-        }
-    };
+#[expect(
+    clippy::panic,
+    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated Stage 8 enum tag"
+)]
+fn generated_stage8_claim_kind(value: &str) -> generated_stage8::Stage8ClaimKind {
+    match value {
+        "committed" => generated_stage8::Stage8ClaimKind::Committed,
+        "virtual" => generated_stage8::Stage8ClaimKind::Virtual,
+        value => panic!("unsupported Stage 8 claim kind `{value}`"),
+    }
 }
 
-define_stage8_adapter!(
-    leak_generated_stage8_prover_program,
-    generated_prover_stage8
-);
-define_stage8_adapter!(leak_generated_stage8_verifier_program, generated_stage8);
+#[expect(
+    clippy::panic,
+    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated Stage 8 enum tag"
+)]
+fn generated_prover_stage8_pcs_proof_mode(
+    value: &str,
+) -> generated_prover_stage8::Stage8PcsProofMode {
+    match value {
+        "open" => generated_prover_stage8::Stage8PcsProofMode::Open,
+        "verify" => generated_prover_stage8::Stage8PcsProofMode::Verify,
+        value => panic!("unsupported Stage 8 PCS proof mode `{value}`"),
+    }
+}
+
+#[expect(
+    clippy::panic,
+    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated Stage 8 enum tag"
+)]
+fn generated_stage8_pcs_proof_mode(value: &str) -> generated_stage8::Stage8PcsProofMode {
+    match value {
+        "open" => generated_stage8::Stage8PcsProofMode::Open,
+        "verify" => generated_stage8::Stage8PcsProofMode::Verify,
+        value => panic!("unsupported Stage 8 PCS proof mode `{value}`"),
+    }
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "Stage 8 adapters consume compiler-validated plans and fail fast if required generated plan rows are missing"
+)]
+fn stage8_evaluation_point_source_index(program: &CompilerStage8CpuProgram) -> usize {
+    program
+        .opening_inputs
+        .iter()
+        .position(|input| input.symbol == "stage8.evaluation.point_source")
+        .expect("stage8 evaluation point source exists")
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "Stage 8 adapters consume compiler-validated plans and fail fast if required generated plan rows are missing"
+)]
+fn stage8_ordered_claim_indices(program: &CompilerStage8CpuProgram) -> Vec<usize> {
+    let claim_index_by_symbol = program
+        .opening_claims
+        .iter()
+        .enumerate()
+        .map(|(index, claim)| (claim.symbol.as_str(), index))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    program
+        .opening_batches
+        .first()
+        .expect("stage8 opening batch exists")
+        .ordered_claims
+        .iter()
+        .map(|symbol| {
+            *claim_index_by_symbol
+                .get(symbol.as_str())
+                .expect("stage8 opening batch claim exists")
+        })
+        .collect()
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "Stage 8 adapters consume compiler-validated plans and fail fast if required generated plan rows are missing"
+)]
+pub(crate) fn leak_generated_stage8_prover_program(
+    program: &CompilerStage8CpuProgram,
+) -> &'static generated_prover_stage8::Stage8EvaluationProgramPlan {
+    let evaluation_point_source_index = stage8_evaluation_point_source_index(program);
+    let ordered_claim_indices = stage8_ordered_claim_indices(program);
+    let opening_inputs = leak_slice(
+        program
+            .opening_inputs
+            .iter()
+            .map(|plan| generated_prover_stage8::Stage8OpeningInputPlan {
+                symbol: generated_prover_stage8::Stage8OpeningInputSymbol::new(leak_str(
+                    &plan.symbol,
+                )),
+                source_stage: generated_prover_stage8_source_stage(plan.source_stage.as_str()),
+                source_claim: generated_prover_stage8::Stage8SourceClaim::new(leak_str(
+                    &plan.source_claim,
+                )),
+                oracle: leak_str(&plan.oracle),
+                domain: leak_str(&plan.domain),
+                point_arity: plan.point_arity,
+                claim_kind: generated_prover_stage8_claim_kind(plan.claim_kind.as_str()),
+            })
+            .collect(),
+    );
+    let opening_claims = leak_slice(
+        program
+            .opening_claims
+            .iter()
+            .map(|plan| generated_prover_stage8::Stage8OpeningClaimPlan {
+                symbol: generated_prover_stage8::Stage8OpeningClaimSymbol::new(leak_str(
+                    &plan.symbol,
+                )),
+                oracle: leak_str(&plan.oracle),
+                family: leak_str(&plan.family),
+                domain: leak_str(&plan.domain),
+                point_arity: plan.point_arity,
+                point_source: generated_prover_stage8::Stage8OpeningInputSymbol::new(leak_str(
+                    &plan.point_source,
+                )),
+                eval_source: generated_prover_stage8::Stage8OpeningInputSymbol::new(leak_str(
+                    &plan.eval_source,
+                )),
+                source_stage: generated_prover_stage8_source_stage(plan.source_stage.as_str()),
+                source_claim: generated_prover_stage8::Stage8SourceClaim::new(leak_str(
+                    &plan.source_claim,
+                )),
+            })
+            .collect(),
+    );
+    let evaluation_point_source = *opening_inputs
+        .get(evaluation_point_source_index)
+        .expect("stage8 evaluation point source exists");
+    let ordered_claims = leak_slice(
+        ordered_claim_indices
+            .iter()
+            .map(|index| {
+                *opening_claims
+                    .get(*index)
+                    .expect("stage8 opening batch claim exists")
+            })
+            .collect(),
+    );
+    let opening_batch = program
+        .opening_batches
+        .first()
+        .expect("stage8 opening batch exists");
+    let pcs_proof = program.pcs_proofs.first().expect("stage8 PCS proof exists");
+    Box::leak(Box::new(
+        generated_prover_stage8::Stage8EvaluationProgramPlan {
+            role: role_name(&program.role),
+            function: leak_str(&program.function),
+            params: generated_prover_stage8::Stage8Params {
+                field: leak_str(&program.params.field),
+                pcs: leak_str(&program.params.pcs),
+                transcript: leak_str(&program.params.transcript),
+            },
+            evaluation_point_source,
+            opening_inputs,
+            opening_claims,
+            opening_batch: generated_prover_stage8::Stage8OpeningBatchPlan {
+                symbol: generated_prover_stage8::Stage8OpeningBatchSymbol::new(leak_str(
+                    &opening_batch.symbol,
+                )),
+                proof_slot: leak_str(&opening_batch.proof_slot),
+                policy: leak_str(&opening_batch.policy),
+                count: opening_batch.count,
+                ordered_claims,
+            },
+            pcs_proof: generated_prover_stage8::Stage8PcsProofPlan {
+                symbol: leak_str(&pcs_proof.symbol),
+                mode: generated_prover_stage8_pcs_proof_mode(pcs_proof.mode.as_str()),
+                pcs: leak_str(&pcs_proof.pcs),
+                proof_slot: leak_str(&pcs_proof.proof_slot),
+                transcript_label: leak_str(&pcs_proof.transcript_label),
+                batch: generated_prover_stage8::Stage8OpeningBatchSymbol::new(leak_str(
+                    &pcs_proof.batch,
+                )),
+            },
+        },
+    ))
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "Stage 8 adapters consume compiler-validated plans and fail fast if required generated plan rows are missing"
+)]
+pub(crate) fn leak_generated_stage8_verifier_program(
+    program: &CompilerStage8CpuProgram,
+) -> &'static generated_stage8::Stage8EvaluationProgramPlan {
+    let evaluation_point_source_index = stage8_evaluation_point_source_index(program);
+    let ordered_claim_indices = stage8_ordered_claim_indices(program);
+    let opening_inputs = leak_slice(
+        program
+            .opening_inputs
+            .iter()
+            .map(|plan| generated_stage8::Stage8OpeningInputPlan {
+                symbol: generated_stage8::Stage8OpeningInputSymbol::new(leak_str(&plan.symbol)),
+                source_stage: generated_stage8_source_stage(plan.source_stage.as_str()),
+                source_claim: generated_stage8::Stage8SourceClaim::new(leak_str(
+                    &plan.source_claim,
+                )),
+                oracle: leak_str(&plan.oracle),
+                domain: leak_str(&plan.domain),
+                point_arity: plan.point_arity,
+                claim_kind: generated_stage8_claim_kind(plan.claim_kind.as_str()),
+            })
+            .collect(),
+    );
+    let opening_claims = leak_slice(
+        program
+            .opening_claims
+            .iter()
+            .map(|plan| generated_stage8::Stage8OpeningClaimPlan {
+                symbol: generated_stage8::Stage8OpeningClaimSymbol::new(leak_str(&plan.symbol)),
+                oracle: leak_str(&plan.oracle),
+                family: leak_str(&plan.family),
+                domain: leak_str(&plan.domain),
+                point_arity: plan.point_arity,
+                point_source: generated_stage8::Stage8OpeningInputSymbol::new(leak_str(
+                    &plan.point_source,
+                )),
+                eval_source: generated_stage8::Stage8OpeningInputSymbol::new(leak_str(
+                    &plan.eval_source,
+                )),
+                source_stage: generated_stage8_source_stage(plan.source_stage.as_str()),
+                source_claim: generated_stage8::Stage8SourceClaim::new(leak_str(
+                    &plan.source_claim,
+                )),
+            })
+            .collect(),
+    );
+    let evaluation_point_source = *opening_inputs
+        .get(evaluation_point_source_index)
+        .expect("stage8 evaluation point source exists");
+    let ordered_claims = leak_slice(
+        ordered_claim_indices
+            .iter()
+            .map(|index| {
+                *opening_claims
+                    .get(*index)
+                    .expect("stage8 opening batch claim exists")
+            })
+            .collect(),
+    );
+    let opening_batch = program
+        .opening_batches
+        .first()
+        .expect("stage8 opening batch exists");
+    let pcs_proof = program.pcs_proofs.first().expect("stage8 PCS proof exists");
+    Box::leak(Box::new(generated_stage8::Stage8EvaluationProgramPlan {
+        role: role_name(&program.role),
+        function: leak_str(&program.function),
+        params: generated_stage8::Stage8Params {
+            field: leak_str(&program.params.field),
+            pcs: leak_str(&program.params.pcs),
+            transcript: leak_str(&program.params.transcript),
+        },
+        evaluation_point_source,
+        opening_inputs,
+        opening_claims,
+        opening_batch: generated_stage8::Stage8OpeningBatchPlan {
+            symbol: generated_stage8::Stage8OpeningBatchSymbol::new(leak_str(
+                &opening_batch.symbol,
+            )),
+            proof_slot: leak_str(&opening_batch.proof_slot),
+            policy: leak_str(&opening_batch.policy),
+            count: opening_batch.count,
+            ordered_claims,
+        },
+        pcs_proof: generated_stage8::Stage8PcsProofPlan {
+            symbol: leak_str(&pcs_proof.symbol),
+            mode: generated_stage8_pcs_proof_mode(pcs_proof.mode.as_str()),
+            pcs: leak_str(&pcs_proof.pcs),
+            proof_slot: leak_str(&pcs_proof.proof_slot),
+            transcript_label: leak_str(&pcs_proof.transcript_label),
+            batch: generated_stage8::Stage8OpeningBatchSymbol::new(leak_str(&pcs_proof.batch)),
+        },
+    }))
+}
 
 fn role_name(role: &Role) -> &'static str {
     match role {
