@@ -7,12 +7,23 @@ use crate::{
     FixedByteSize, FixedBytes, FromPrimitiveInt, Invertible, Limbs, MulPrimitiveInt,
     RandomSampling, ReducingBytes, RingCore, TranscriptChallenge, WithAccumulator,
 };
-use ark_ff::{prelude::*, PrimeField, UniformRand};
+use ark_bn254::Fr as ArkFr;
+use ark_ff::{prelude::*, Field as ArkField, PrimeField, UniformRand};
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Compress, Read, SerializationError, Valid, Validate,
+    Write,
+};
 use rand_core::RngCore;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::{
+    fmt::{self, Debug, Display},
+    iter::{Product, Sum},
+    ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign},
+};
 
 use super::bn254_ops;
 
-type InnerFr = ark_bn254::Fr;
+type InnerFr = ArkFr;
 
 /// BN254 scalar field element.
 ///
@@ -21,14 +32,14 @@ type InnerFr = ark_bn254::Fr;
 #[repr(transparent)]
 pub struct Fr(pub(crate) InnerFr);
 
-impl From<ark_bn254::Fr> for Fr {
+impl From<ArkFr> for Fr {
     #[inline(always)]
-    fn from(inner: ark_bn254::Fr) -> Self {
+    fn from(inner: ArkFr) -> Self {
         Fr(inner)
     }
 }
 
-impl From<Fr> for ark_bn254::Fr {
+impl From<Fr> for ArkFr {
     #[inline(always)]
     fn from(wrapper: Fr) -> Self {
         wrapper.0
@@ -91,49 +102,49 @@ impl From<u128> for Fr {
     }
 }
 
-impl std::fmt::Debug for Fr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(&self.0, f)
+impl Debug for Fr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Debug::fmt(&self.0, f)
     }
 }
 
-impl std::fmt::Display for Fr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.0, f)
+impl Display for Fr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.0, f)
     }
 }
 
 macro_rules! delegate_binop {
     ($Trait:ident, $method:ident) => {
-        impl std::ops::$Trait for Fr {
+        impl $Trait for Fr {
             type Output = Fr;
             #[inline(always)]
             fn $method(self, rhs: Fr) -> Fr {
-                Fr(std::ops::$Trait::$method(self.0, rhs.0))
+                Fr($Trait::$method(self.0, rhs.0))
             }
         }
 
-        impl std::ops::$Trait<&Fr> for Fr {
+        impl $Trait<&Fr> for Fr {
             type Output = Fr;
             #[inline(always)]
             fn $method(self, rhs: &Fr) -> Fr {
-                Fr(std::ops::$Trait::$method(self.0, &rhs.0))
+                Fr($Trait::$method(self.0, &rhs.0))
             }
         }
 
-        impl std::ops::$Trait<Fr> for &Fr {
+        impl $Trait<Fr> for &Fr {
             type Output = Fr;
             #[inline(always)]
             fn $method(self, rhs: Fr) -> Fr {
-                Fr(std::ops::$Trait::$method(self.0, rhs.0))
+                Fr($Trait::$method(self.0, rhs.0))
             }
         }
 
-        impl<'a, 'b> std::ops::$Trait<&'b Fr> for &'a Fr {
+        impl<'a, 'b> $Trait<&'b Fr> for &'a Fr {
             type Output = Fr;
             #[inline(always)]
             fn $method(self, rhs: &'b Fr) -> Fr {
-                Fr(std::ops::$Trait::$method(self.0, &rhs.0))
+                Fr($Trait::$method(self.0, &rhs.0))
             }
         }
     };
@@ -144,7 +155,7 @@ delegate_binop!(Sub, sub);
 delegate_binop!(Mul, mul);
 delegate_binop!(Div, div);
 
-impl std::ops::Neg for Fr {
+impl Neg for Fr {
     type Output = Fr;
     #[inline(always)]
     fn neg(self) -> Fr {
@@ -152,46 +163,46 @@ impl std::ops::Neg for Fr {
     }
 }
 
-impl std::ops::AddAssign for Fr {
+impl AddAssign for Fr {
     #[inline(always)]
     fn add_assign(&mut self, rhs: Fr) {
         self.0.add_assign(rhs.0);
     }
 }
 
-impl std::ops::SubAssign for Fr {
+impl SubAssign for Fr {
     #[inline(always)]
     fn sub_assign(&mut self, rhs: Fr) {
         self.0.sub_assign(rhs.0);
     }
 }
 
-impl std::ops::MulAssign for Fr {
+impl MulAssign for Fr {
     #[inline(always)]
     fn mul_assign(&mut self, rhs: Fr) {
         self.0.mul_assign(rhs.0);
     }
 }
 
-impl std::iter::Sum for Fr {
+impl Sum for Fr {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         Fr(iter.map(|f| f.0).sum())
     }
 }
 
-impl<'a> std::iter::Sum<&'a Fr> for Fr {
+impl<'a> Sum<&'a Fr> for Fr {
     fn sum<I: Iterator<Item = &'a Fr>>(iter: I) -> Self {
         Fr(iter.map(|f| f.0).sum())
     }
 }
 
-impl std::iter::Product for Fr {
+impl Product for Fr {
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
         Fr(iter.map(|f| f.0).product())
     }
 }
 
-impl<'a> std::iter::Product<&'a Fr> for Fr {
+impl<'a> Product<&'a Fr> for Fr {
     fn product<I: Iterator<Item = &'a Fr>>(iter: I) -> Self {
         Fr(iter.map(|f| f.0).product())
     }
@@ -221,9 +232,8 @@ impl num_traits::One for Fr {
     }
 }
 
-impl serde::Serialize for Fr {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use ark_serialize::CanonicalSerialize;
+impl Serialize for Fr {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut buf = [0u8; 32];
         self.0
             .serialize_compressed(&mut buf[..])
@@ -232,41 +242,40 @@ impl serde::Serialize for Fr {
     }
 }
 
-impl<'de> serde::Deserialize<'de> for Fr {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use ark_serialize::CanonicalDeserialize;
+impl<'de> Deserialize<'de> for Fr {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let buf = <[u8; 32]>::deserialize(deserializer)?;
         let inner = InnerFr::deserialize_compressed(&buf[..]).map_err(serde::de::Error::custom)?;
         Ok(Fr(inner))
     }
 }
 
-impl ark_serialize::CanonicalSerialize for Fr {
-    fn serialize_with_mode<W: ark_serialize::Write>(
+impl CanonicalSerialize for Fr {
+    fn serialize_with_mode<W: Write>(
         &self,
         writer: W,
-        compress: ark_serialize::Compress,
-    ) -> Result<(), ark_serialize::SerializationError> {
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
         self.0.serialize_with_mode(writer, compress)
     }
 
-    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+    fn serialized_size(&self, compress: Compress) -> usize {
         self.0.serialized_size(compress)
     }
 }
 
-impl ark_serialize::Valid for Fr {
-    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+impl Valid for Fr {
+    fn check(&self) -> Result<(), SerializationError> {
         self.0.check()
     }
 }
 
-impl ark_serialize::CanonicalDeserialize for Fr {
-    fn deserialize_with_mode<R: ark_serialize::Read>(
+impl CanonicalDeserialize for Fr {
+    fn deserialize_with_mode<R: Read>(
         reader: R,
-        compress: ark_serialize::Compress,
-        validate: ark_serialize::Validate,
-    ) -> Result<Self, ark_serialize::SerializationError> {
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
         InnerFr::deserialize_with_mode(reader, compress, validate).map(Fr)
     }
 }
@@ -307,6 +316,13 @@ impl Fr {
         Limbs((self.0).0 .0)
     }
 
+    /// Multiplies this field element by a 125-bit challenge stored in the high
+    /// two Montgomery limbs used by Jolt's optimized challenge type.
+    #[inline(always)]
+    pub fn mul_by_hi_2limbs(&self, limb_lo: u64, limb_hi: u64) -> Self {
+        Fr(self.0.mul_by_hi_2limbs(limb_lo, limb_hi))
+    }
+
     /// Construct from the inner arkworks element.
     #[inline(always)]
     pub(crate) fn from_inner(inner: InnerFr) -> Self {
@@ -319,14 +335,14 @@ impl AdditiveGroup for Fr {}
 impl RingCore for Fr {
     #[inline]
     fn square(&self) -> Self {
-        Fr(<InnerFr as ark_ff::Field>::square(&self.0))
+        Fr(<InnerFr as ArkField>::square(&self.0))
     }
 }
 
 impl Invertible for Fr {
     #[inline]
     fn inverse(&self) -> Option<Self> {
-        <InnerFr as ark_ff::Field>::inverse(&self.0).map(Fr)
+        <InnerFr as ArkField>::inverse(&self.0).map(Fr)
     }
 }
 
@@ -341,7 +357,6 @@ impl CanonicalBytes for Fr {
     #[inline]
     fn to_bytes_le(&self, out: &mut [u8]) {
         assert_eq!(out.len(), <Self as FixedByteSize>::NUM_BYTES);
-        use ark_serialize::CanonicalSerialize;
         self.0
             .serialize_compressed(out)
             .expect("BN254 Fr always serializes to 32 bytes");
@@ -393,33 +408,74 @@ impl RandomSampling for Fr {
     }
 }
 
+// The custom limb reducers are a native hot path. WASM verification uses
+// arkworks' portable constructors and multiplication so proofs generated on
+// native targets verify identically in the browser/Node runtime.
 impl FromPrimitiveInt for Fr {
     #[inline]
     fn from_u64(n: u64) -> Self {
-        Fr(bn254_ops::from_u64(n))
+        #[cfg(target_arch = "wasm32")]
+        {
+            Fr(InnerFr::from(n))
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Fr(bn254_ops::from_u64(n))
+        }
     }
 
     #[inline]
     fn from_i64(val: i64) -> Self {
-        if val.is_negative() {
-            -Fr(bn254_ops::from_u64(val.unsigned_abs()))
-        } else {
-            Fr(bn254_ops::from_u64(val as u64))
+        #[cfg(target_arch = "wasm32")]
+        {
+            let abs = Fr(InnerFr::from(val.unsigned_abs()));
+            if val.is_negative() {
+                -abs
+            } else {
+                abs
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if val.is_negative() {
+                -Fr(bn254_ops::from_u64(val.unsigned_abs()))
+            } else {
+                Fr(bn254_ops::from_u64(val as u64))
+            }
         }
     }
 
     #[inline]
     fn from_i128(val: i128) -> Self {
-        if val.is_negative() {
-            -Fr(bn254_ops::from_u128(val.unsigned_abs()))
-        } else {
-            Fr(bn254_ops::from_u128(val as u128))
+        #[cfg(target_arch = "wasm32")]
+        {
+            let abs = Fr(InnerFr::from(val.unsigned_abs()));
+            if val.is_negative() {
+                -abs
+            } else {
+                abs
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if val.is_negative() {
+                -Fr(bn254_ops::from_u128(val.unsigned_abs()))
+            } else {
+                Fr(bn254_ops::from_u128(val as u128))
+            }
         }
     }
 
     #[inline]
     fn from_u128(val: u128) -> Self {
-        Fr(bn254_ops::from_u128(val))
+        #[cfg(target_arch = "wasm32")]
+        {
+            Fr(InnerFr::from(val))
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Fr(bn254_ops::from_u128(val))
+        }
     }
 }
 
@@ -432,22 +488,60 @@ impl crate::MulPow2 for Fr {}
 impl MulPrimitiveInt for Fr {
     #[inline]
     fn mul_u64(&self, n: u64) -> Self {
-        Fr(bn254_ops::mul_u64(self.0, n))
+        #[cfg(target_arch = "wasm32")]
+        {
+            Fr(self.0 * InnerFr::from(n))
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Fr(bn254_ops::mul_u64(self.0, n))
+        }
     }
 
     #[inline(always)]
     fn mul_i64(&self, n: i64) -> Self {
-        Fr(bn254_ops::mul_i64(self.0, n))
+        #[cfg(target_arch = "wasm32")]
+        {
+            let abs = Fr(self.0 * InnerFr::from(n.unsigned_abs()));
+            if n.is_negative() {
+                -abs
+            } else {
+                abs
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Fr(bn254_ops::mul_i64(self.0, n))
+        }
     }
 
     #[inline(always)]
     fn mul_u128(&self, n: u128) -> Self {
-        Fr(bn254_ops::mul_u128(self.0, n))
+        #[cfg(target_arch = "wasm32")]
+        {
+            Fr(self.0 * InnerFr::from(n))
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Fr(bn254_ops::mul_u128(self.0, n))
+        }
     }
 
     #[inline]
     fn mul_i128(&self, n: i128) -> Self {
-        Fr(bn254_ops::mul_i128(self.0, n))
+        #[cfg(target_arch = "wasm32")]
+        {
+            let abs = Fr(self.0 * InnerFr::from(n.unsigned_abs()));
+            if n.is_negative() {
+                -abs
+            } else {
+                abs
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Fr(bn254_ops::mul_i128(self.0, n))
+        }
     }
 }
 

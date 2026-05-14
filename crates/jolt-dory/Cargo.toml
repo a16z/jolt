@@ -9,16 +9,19 @@ description = "Dory commitment scheme implementation for the Jolt zkVM"
 workspace = true
 
 [dependencies]
+ark-bn254 = { workspace = true, features = ["curve"] }
+ark-ec = { workspace = true }
+ark-serialize = { workspace = true }
 jolt-crypto = { workspace = true }
 jolt-field = { workspace = true }
 jolt-openings = { workspace = true }
+jolt-optimizations = { workspace = true }
 jolt-poly = { workspace = true }
 jolt-transcript = { workspace = true }
 dory = { workspace = true }
+tracing.workspace = true
 rayon = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-tracing.workspace = true
-ark-serialize = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

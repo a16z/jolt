@@ -10,8 +10,15 @@ use serde::{Deserialize, Serialize};
 
 use jolt_crypto::HomomorphicCommitment;
 
+use crate::claims::{OpeningClaim, ProverClaim};
 use crate::error::OpeningsError;
-use crate::schemes::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
+use crate::homomorphic::{homomorphic_prove_batch, homomorphic_verify_batch};
+use crate::schemes::{
+    AdditivelyHomomorphic, AdditivelyHomomorphicVerifier, CommitmentScheme,
+    CommitmentSchemeVerifier, LinearOpeningScheme, LinearOpeningSchemeVerifier,
+    PublicVerifierSetup, ZkOpeningScheme, ZkOpeningSchemeVerifier,
+};
+use crate::sources::{materialize_source_evaluations, CommitmentSource};
 
 #[derive(Clone, Debug)]
 pub struct MockCommitmentScheme<F: Field>(PhantomData<F>);
@@ -46,44 +53,11 @@ impl<F: Field> Commitment for MockCommitmentScheme<F> {
     type Output = MockCommitment<F>;
 }
 
-impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
+impl<F: Field> CommitmentSchemeVerifier for MockCommitmentScheme<F> {
     type Field = F;
     type Proof = MockProof<F>;
-    type ProverSetup = ();
+    type BatchProof = Vec<MockProof<F>>;
     type VerifierSetup = ();
-    type Polynomial = Polynomial<F>;
-    type OpeningHint = ();
-    type SetupParams = ();
-
-    fn setup(_params: Self::SetupParams) -> ((), ()) {
-        ((), ())
-    }
-
-    fn verifier_setup(_prover_setup: &()) {}
-
-    fn commit<P: jolt_poly::MultilinearPoly<Self::Field> + ?Sized>(
-        poly: &P,
-        _setup: &Self::ProverSetup,
-    ) -> (Self::Output, ()) {
-        let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
-        poly.for_each_row(poly.num_vars(), &mut |_, row| {
-            evaluations.extend_from_slice(row);
-        });
-        (MockCommitment { evaluations }, ())
-    }
-
-    fn open(
-        poly: &Self::Polynomial,
-        _point: &[Self::Field],
-        _eval: Self::Field,
-        _setup: &Self::ProverSetup,
-        _hint: Option<()>,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Self::Proof {
-        MockProof {
-            evaluations: poly.evaluations().to_vec(),
-        }
-    }
 
     fn verify(
         commitment: &Self::Output,
@@ -115,6 +89,73 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
         _eval: &Self::Field,
     ) {
     }
+
+    fn verify_batch(
+        claims: Vec<OpeningClaim<Self::Field, Self>>,
+        proof: &Self::BatchProof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> Result<(), OpeningsError> {
+        homomorphic_verify_batch::<Self, _>(claims, proof, setup, transcript)
+    }
+}
+
+impl<F: Field> PublicVerifierSetup for MockCommitmentScheme<F> {
+    type PublicParams = ();
+
+    fn verifier_setup(_params: Self::PublicParams) -> Self::VerifierSetup {}
+}
+
+impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
+    type ProverSetup = ();
+    type OpeningHint = ();
+    type SetupParams = ();
+
+    fn setup(_params: Self::SetupParams) -> ((), ()) {
+        ((), ())
+    }
+
+    fn project_verifier_setup(_prover_setup: &()) {}
+
+    fn commit<S: CommitmentSource<Self::Field> + ?Sized>(
+        source: &S,
+        _setup: &Self::ProverSetup,
+    ) -> (Self::Output, ()) {
+        (
+            MockCommitment {
+                evaluations: materialize_source_evaluations(source),
+            },
+            (),
+        )
+    }
+
+    fn open<S>(
+        poly: &S,
+        _point: &[Self::Field],
+        _eval: Self::Field,
+        _setup: &Self::ProverSetup,
+        _hint: Option<()>,
+        _transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> Self::Proof
+    where
+        S: CommitmentSource<Self::Field> + ?Sized,
+    {
+        MockProof {
+            evaluations: materialize_source_evaluations(poly),
+        }
+    }
+
+    fn prove_batch<S>(
+        claims: Vec<ProverClaim<Self::Field, S>>,
+        hints: Vec<Self::OpeningHint>,
+        setup: &Self::ProverSetup,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> Self::BatchProof
+    where
+        S: CommitmentSource<Self::Field>,
+    {
+        homomorphic_prove_batch::<Self, _, _>(claims, hints, setup, transcript)
+    }
 }
 
 impl<F: Field> HomomorphicCommitment<F> for MockCommitment<F> {
@@ -132,7 +173,7 @@ impl<F: Field> HomomorphicCommitment<F> for MockCommitment<F> {
     }
 }
 
-impl<F: Field> AdditivelyHomomorphic for MockCommitmentScheme<F> {
+impl<F: Field> AdditivelyHomomorphicVerifier for MockCommitmentScheme<F> {
     fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output {
         assert_eq!(commitments.len(), scalars.len());
         let len = commitments.first().map_or(0, |c| c.evaluations.len());
@@ -150,6 +191,16 @@ impl<F: Field> AdditivelyHomomorphic for MockCommitmentScheme<F> {
     }
 }
 
+impl<F: Field> AdditivelyHomomorphic for MockCommitmentScheme<F> {
+    fn combine_hints(hints: Vec<Self::OpeningHint>, scalars: &[Self::Field]) -> Self::OpeningHint {
+        assert_eq!(hints.len(), scalars.len());
+    }
+}
+
+impl<F: Field> LinearOpeningSchemeVerifier for MockCommitmentScheme<F> {}
+
+impl<F: Field> LinearOpeningScheme for MockCommitmentScheme<F> {}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct MockHidingCommitment<F: Field> {
@@ -162,31 +213,8 @@ impl<F: Field> AppendToTranscript for MockHidingCommitment<F> {
     }
 }
 
-impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
+impl<F: Field> ZkOpeningSchemeVerifier for MockCommitmentScheme<F> {
     type HidingCommitment = MockHidingCommitment<F>;
-    type Blind = ();
-
-    fn commit_zk<P: jolt_poly::MultilinearPoly<Self::Field> + ?Sized>(
-        poly: &P,
-        setup: &Self::ProverSetup,
-    ) -> (Self::Output, Self::OpeningHint) {
-        Self::commit(poly, setup)
-    }
-
-    fn open_zk(
-        poly: &Self::Polynomial,
-        _point: &[Self::Field],
-        eval: Self::Field,
-        _setup: &Self::ProverSetup,
-        _hint: Self::OpeningHint,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
-        let proof = MockProof {
-            evaluations: poly.evaluations().to_vec(),
-        };
-        let eval_commitment = MockHidingCommitment { eval };
-        (proof, eval_commitment, ())
-    }
 
     fn verify_zk(
         commitment: &Self::Output,
@@ -203,15 +231,80 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
         }
         Ok(())
     }
+
+    fn verify_batch_zk(
+        claims: Vec<OpeningClaim<Self::Field, Self>>,
+        proof: &Self::BatchProof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> Result<(), OpeningsError> {
+        Self::verify_batch(claims, proof, setup, transcript)
+    }
+
+    fn bind_zk_opening_inputs(
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        point: &[Self::Field],
+        hiding_commitment: &Self::HidingCommitment,
+    ) {
+        Self::bind_opening_inputs(transcript, point, &hiding_commitment.eval);
+    }
+}
+
+impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
+    type Blind = ();
+
+    fn commit_zk<S: CommitmentSource<Self::Field> + ?Sized>(
+        source: &S,
+        setup: &Self::ProverSetup,
+    ) -> (Self::Output, Self::OpeningHint) {
+        Self::commit(source, setup)
+    }
+
+    fn open_zk<S>(
+        poly: &S,
+        _point: &[Self::Field],
+        eval: Self::Field,
+        _setup: &Self::ProverSetup,
+        _hint: Self::OpeningHint,
+        _transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> (Self::Proof, Self::HidingCommitment, Self::Blind)
+    where
+        S: CommitmentSource<Self::Field> + ?Sized,
+    {
+        let proof = MockProof {
+            evaluations: materialize_source_evaluations(poly),
+        };
+        let eval_commitment = MockHidingCommitment { eval };
+        (proof, eval_commitment, ())
+    }
+
+    fn prove_batch_zk<S>(
+        claims: Vec<ProverClaim<Self::Field, S>>,
+        hints: Vec<Self::OpeningHint>,
+        setup: &Self::ProverSetup,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> (Self::BatchProof, Self::HidingCommitment, Self::Blind)
+    where
+        S: CommitmentSource<Self::Field>,
+    {
+        let eval = claims.first().map_or_else(F::zero, |claim| claim.eval);
+        let proof = Self::prove_batch(claims, hints, setup, transcript);
+        (proof, MockHidingCommitment { eval }, ())
+    }
 }
 
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 mod tests {
     use super::*;
-    use crate::{reduce_prover, reduce_verifier, ProverClaim, VerifierClaim};
+    use crate::{
+        BatchOpeningPoint, BatchOpeningSource, BatchOutputExpression, CommitmentSource,
+        LinearCombinationOpeningSource, MaterializedLinearCombination, OneHotEntries, OneHotIndex,
+        OneHotRow, OpeningClaim, ProverBatchOpeningTerm, ProverClaim, SourceRow,
+        VerifierBatchOpeningTerm,
+    };
     use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
-    use jolt_poly::Polynomial;
+    use jolt_poly::{MultilinearPoly, Polynomial};
     use jolt_transcript::Blake2bTranscript;
     use rand_chacha::rand_core::SeedableRng;
     use rand_chacha::ChaCha20Rng;
@@ -306,6 +399,192 @@ mod tests {
         assert_eq!(c_sum_direct, c_sum_combined);
     }
 
+    #[test]
+    fn strided_source_rows_materialize_skipped_columns() {
+        struct TestSource {
+            rows: Vec<Vec<u64>>,
+            dense: Polynomial<Fr>,
+        }
+
+        impl CommitmentSource<Fr> for TestSource {
+            fn num_vars(&self) -> usize {
+                self.dense.num_vars()
+            }
+
+            fn evaluate(&self, point: &[Fr]) -> Fr {
+                self.dense.evaluate(point)
+            }
+
+            fn natural_chunk_len(&self) -> Option<usize> {
+                Some(8)
+            }
+
+            fn for_each_row<V>(&self, _chunk_len: usize, mut visit: V)
+            where
+                V: for<'row> FnMut(usize, SourceRow<'row, Fr>),
+            {
+                for (row_index, row) in self.rows.iter().enumerate() {
+                    visit(
+                        row_index,
+                        SourceRow::StridedU64 {
+                            values: row,
+                            column_stride: 4,
+                        },
+                    );
+                }
+            }
+
+            fn fold_rows(&self, left: &[Fr], chunk_len: usize) -> Vec<Fr> {
+                let sigma = chunk_len.trailing_zeros() as usize;
+                MultilinearPoly::fold_rows(&self.dense, left, sigma)
+            }
+        }
+
+        let rows = vec![vec![3, 5], vec![7, 11]];
+        let mut dense = vec![Fr::from_u64(0); 16];
+        dense[0] = Fr::from_u64(3);
+        dense[4] = Fr::from_u64(5);
+        dense[8] = Fr::from_u64(7);
+        dense[12] = Fr::from_u64(11);
+
+        let source = TestSource {
+            rows,
+            dense: Polynomial::new(dense.clone()),
+        };
+
+        let (commitment, ()) = MockPCS::commit(&source, &());
+        assert_eq!(commitment.evaluations, dense);
+    }
+
+    #[test]
+    fn one_hot_source_rows_materialize_hot_coordinate_major() {
+        struct TestSource {
+            entries: Vec<Option<OneHotIndex>>,
+            dense: Polynomial<Fr>,
+        }
+
+        impl CommitmentSource<Fr> for TestSource {
+            fn num_vars(&self) -> usize {
+                self.dense.num_vars()
+            }
+
+            fn evaluate(&self, point: &[Fr]) -> Fr {
+                self.dense.evaluate(point)
+            }
+
+            fn natural_chunk_len(&self) -> Option<usize> {
+                Some(self.entries.len())
+            }
+
+            fn for_each_row<V>(&self, _chunk_len: usize, mut visit: V)
+            where
+                V: for<'row> FnMut(usize, SourceRow<'row, Fr>),
+            {
+                visit(
+                    0,
+                    SourceRow::OneHot(OneHotRow {
+                        log_domain_size: 2,
+                        entries: OneHotEntries::MaybeZero(&self.entries),
+                    }),
+                );
+            }
+
+            fn fold_rows(&self, left: &[Fr], chunk_len: usize) -> Vec<Fr> {
+                let sigma = chunk_len.trailing_zeros() as usize;
+                MultilinearPoly::fold_rows(&self.dense, left, sigma)
+            }
+        }
+
+        let entries = vec![
+            Some(OneHotIndex::new(1, 2).expect("valid index")),
+            None,
+            Some(OneHotIndex::new(3, 2).expect("valid index")),
+            None,
+        ];
+        let mut dense = vec![Fr::from_u64(0); 16];
+        dense[4] = Fr::from_u64(1);
+        dense[14] = Fr::from_u64(1);
+
+        let source = TestSource {
+            entries,
+            dense: Polynomial::new(dense.clone()),
+        };
+
+        let (commitment, ()) = MockPCS::commit(&source, &());
+        assert_eq!(commitment.evaluations, dense);
+    }
+
+    #[test]
+    fn one_hot_source_rows_materialize_multi_row_hot_coordinate_major() {
+        struct TestSource {
+            chunks: Vec<Vec<Option<OneHotIndex>>>,
+            dense: Polynomial<Fr>,
+        }
+
+        impl CommitmentSource<Fr> for TestSource {
+            fn num_vars(&self) -> usize {
+                self.dense.num_vars()
+            }
+
+            fn evaluate(&self, point: &[Fr]) -> Fr {
+                self.dense.evaluate(point)
+            }
+
+            fn natural_chunk_len(&self) -> Option<usize> {
+                self.chunks.first().map(Vec::len)
+            }
+
+            fn for_each_row<V>(&self, _chunk_len: usize, mut visit: V)
+            where
+                V: for<'row> FnMut(usize, SourceRow<'row, Fr>),
+            {
+                for (row_index, chunk) in self.chunks.iter().enumerate() {
+                    visit(
+                        row_index,
+                        SourceRow::OneHot(OneHotRow {
+                            log_domain_size: 2,
+                            entries: OneHotEntries::MaybeZero(chunk),
+                        }),
+                    );
+                }
+            }
+
+            fn fold_rows(&self, left: &[Fr], chunk_len: usize) -> Vec<Fr> {
+                let sigma = chunk_len.trailing_zeros() as usize;
+                MultilinearPoly::fold_rows(&self.dense, left, sigma)
+            }
+        }
+
+        let chunks = vec![
+            vec![
+                Some(OneHotIndex::new(1, 2).expect("valid index")),
+                None,
+                Some(OneHotIndex::new(3, 2).expect("valid index")),
+                None,
+            ],
+            vec![
+                Some(OneHotIndex::new(0, 2).expect("valid index")),
+                Some(OneHotIndex::new(2, 2).expect("valid index")),
+                None,
+                Some(OneHotIndex::new(1, 2).expect("valid index")),
+            ],
+        ];
+        let mut dense = vec![Fr::from_u64(0); 32];
+        dense[4] = Fr::from_u64(1);
+        dense[8] = Fr::from_u64(1);
+        dense[15] = Fr::from_u64(1);
+        dense[21] = Fr::from_u64(1);
+        dense[26] = Fr::from_u64(1);
+
+        let source = TestSource {
+            chunks,
+            dense: Polynomial::new(dense.clone()),
+        };
+
+        let (commitment, ()) = MockPCS::commit(&source, &());
+        assert_eq!(commitment.evaluations, dense);
+    }
+
     fn prove_and_verify(
         prover_polys: &[(Polynomial<Fr>, Vec<Fr>)],
         verifier_evals: Option<&[Fr]>,
@@ -323,48 +602,19 @@ mod tests {
 
             let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
             let v_eval = verifier_evals.map_or(eval, |overrides| overrides[i]);
-            verifier_claims.push(VerifierClaim {
+            verifier_claims.push(OpeningClaim::<Fr, MockPCS> {
                 commitment,
                 point: point.clone(),
                 eval: v_eval,
             });
         }
 
-        // Prover: reduce + open
         let mut transcript_p = Blake2bTranscript::new(b"e2e-test");
-        let reduced_prover = reduce_prover(prover_claims, &mut transcript_p);
-        let proofs: Vec<_> = reduced_prover
-            .iter()
-            .map(|claim| {
-                MockPCS::open(
-                    &claim.polynomial,
-                    &claim.point,
-                    claim.eval,
-                    &(),
-                    None,
-                    &mut transcript_p,
-                )
-            })
-            .collect();
+        let hints = vec![(); prover_claims.len()];
+        let proof = MockPCS::prove_batch(prover_claims, hints, &(), &mut transcript_p);
 
-        // Verifier: reduce + verify
         let mut transcript_v = Blake2bTranscript::new(b"e2e-test");
-        let reduced_verifier = reduce_verifier::<MockPCS, _>(verifier_claims, &mut transcript_v)?;
-
-        assert_eq!(reduced_verifier.len(), proofs.len());
-
-        for (claim, proof) in reduced_verifier.iter().zip(proofs.iter()) {
-            MockPCS::verify(
-                &claim.commitment,
-                &claim.point,
-                claim.eval,
-                proof,
-                &(),
-                &mut transcript_v,
-            )?;
-        }
-
-        Ok(())
+        MockPCS::verify_batch(verifier_claims, &proof, &(), &mut transcript_v)
     }
 
     #[test]
@@ -455,8 +705,131 @@ mod tests {
         ];
 
         let mut transcript = Blake2bTranscript::new(b"grouping");
-        let reduced = reduce_prover(claims, &mut transcript);
-        assert_eq!(reduced.len(), 2, "two distinct points → two reduced claims");
+        let hints = vec![(); claims.len()];
+        let proofs = MockPCS::prove_batch(claims, hints, &(), &mut transcript);
+        assert_eq!(proofs.len(), 2, "two distinct points → two batch proofs");
+    }
+
+    #[test]
+    fn source_backed_opening_returns_public_relations() {
+        struct TestOpeningBatch {
+            polynomials: Vec<Polynomial<Fr>>,
+            hints: Vec<()>,
+        }
+
+        impl BatchOpeningSource<Fr, ()> for TestOpeningBatch {
+            type Id = usize;
+            type Source<'a>
+                = &'a Polynomial<Fr>
+            where
+                Self: 'a;
+
+            fn source(&self, id: Self::Id) -> Self::Source<'_> {
+                &self.polynomials[id]
+            }
+
+            fn opening_hint(&self, id: Self::Id) -> &() {
+                &self.hints[id]
+            }
+        }
+
+        impl LinearCombinationOpeningSource<Fr, ()> for TestOpeningBatch {
+            type LinearCombination<'a>
+                = MaterializedLinearCombination<Fr>
+            where
+                Self: 'a;
+
+            fn linear_combination<'a>(
+                &'a mut self,
+                terms: &[crate::LinearSourceTerm<Fr, Self::Id>],
+            ) -> Self::LinearCombination<'a> {
+                MaterializedLinearCombination::new(self, terms)
+            }
+        }
+
+        let mut rng = ChaCha20Rng::seed_from_u64(450);
+        let p1 = Polynomial::<Fr>::random(3, &mut rng);
+        let p2 = Polynomial::<Fr>::random(3, &mut rng);
+        let point: Vec<Fr> = (0..3).map(|_| Fr::random(&mut rng)).collect();
+        let eval1 = p1.evaluate(&point);
+        let eval2 = p2.evaluate(&point);
+        let scale1 = Fr::from_u64(5);
+        let scale2 = Fr::from_u64(7);
+
+        let mut batch = TestOpeningBatch {
+            polynomials: vec![p1.clone(), p2.clone()],
+            hints: vec![(), ()],
+        };
+        let (c1, ()) = MockPCS::commit(&p1, &());
+        let (c2, ()) = MockPCS::commit(&p2, &());
+
+        let prover_terms = vec![
+            ProverBatchOpeningTerm {
+                claim_id: 10u8,
+                source_id: 0usize,
+                point: BatchOpeningPoint::same(point.clone()),
+                eval: eval1,
+                eval_scale: scale1,
+            },
+            ProverBatchOpeningTerm {
+                claim_id: 11u8,
+                source_id: 1usize,
+                point: BatchOpeningPoint::same(point.clone()),
+                eval: eval2,
+                eval_scale: scale2,
+            },
+        ];
+
+        let verifier_terms = vec![
+            VerifierBatchOpeningTerm::<Fr, MockPCS, _, _> {
+                claim_id: 10u8,
+                source_id: 0usize,
+                commitment: c1,
+                point: BatchOpeningPoint::same(point.clone()),
+                eval: eval1,
+                eval_scale: scale1,
+            },
+            VerifierBatchOpeningTerm::<Fr, MockPCS, _, _> {
+                claim_id: 11u8,
+                source_id: 1usize,
+                commitment: c2,
+                point: BatchOpeningPoint::same(point),
+                eval: eval2,
+                eval_scale: scale2,
+            },
+        ];
+
+        let mut prover_transcript = Blake2bTranscript::new(b"source-backed");
+        let prover_result =
+            MockPCS::prove_batch_opening(prover_terms, &mut batch, &(), &mut prover_transcript);
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"source-backed");
+        let verifier_public = MockPCS::verify_batch_opening(
+            verifier_terms,
+            &prover_result.proof,
+            &(),
+            &mut verifier_transcript,
+        )
+        .expect("source-backed mock proof should verify");
+
+        assert_eq!(prover_result.public, verifier_public);
+        assert_eq!(verifier_public.outputs.len(), 2);
+        assert_eq!(
+            verifier_public.outputs[0].value.as_public(),
+            Some(&(eval1 * scale1)),
+        );
+        assert_eq!(
+            verifier_public.outputs[1].value.as_public(),
+            Some(&(eval2 * scale2)),
+        );
+        assert!(matches!(
+            &verifier_public.relations[0].expression,
+            BatchOutputExpression::Linear(terms) if terms == &vec![(10u8, scale1)]
+        ));
+        assert!(matches!(
+            &verifier_public.relations[1].expression,
+            BatchOutputExpression::Linear(terms) if terms == &vec![(11u8, scale2)]
+        ));
     }
 
     #[test]

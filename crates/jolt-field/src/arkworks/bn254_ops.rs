@@ -2,11 +2,14 @@
 //!
 //! Low-level field arithmetic (Montgomery/Barrett reduction, scalar multiplication,
 //! precomputed lookup tables).
-use ark_bn254::FrConfig;
+use core::cmp::Ordering;
+
+use ark_bn254::{Fr as ArkFr, FrConfig};
 use ark_ff::{BigInt, Fp, MontConfig};
+#[cfg(not(target_arch = "wasm32"))]
 use num_traits::Zero;
 
-type Fr = ark_bn254::Fr;
+type Fr = ArkFr;
 
 /// a + b * c + carry → (result, new carry)
 #[inline(always)]
@@ -36,6 +39,7 @@ const N: usize = 4;
 
 const MODULUS: [u64; N] = <FrConfig as MontConfig<N>>::MODULUS.0;
 const INV: u64 = <FrConfig as MontConfig<N>>::INV;
+#[cfg(not(target_arch = "wasm32"))]
 const R: BigInt<N> = <FrConfig as MontConfig<N>>::R;
 
 const MODULUS_HAS_SPARE_BIT: bool = MODULUS[N - 1] >> 63 == 0;
@@ -109,11 +113,13 @@ const BARRETT_MU: u64 = {
 };
 
 /// 16384-entry lookup table mapping small integers to their Montgomery form.
+#[cfg(not(target_arch = "wasm32"))]
 const PRECOMP_TABLE_SIZE: usize = 1 << 14;
 
 /// `PRECOMP_TABLE[i]` = Montgomery form of `i` for BN254 Fr.
 ///
 /// Uses `Fp::new()` which converts standard form → Montgomery form at compile time.
+#[cfg(not(target_arch = "wasm32"))]
 static PRECOMP_TABLE: [Fr; PRECOMP_TABLE_SIZE] = {
     let mut table: [Fr; PRECOMP_TABLE_SIZE] =
         [Fp::new_unchecked(BigInt([0u64; N])); PRECOMP_TABLE_SIZE];
@@ -163,16 +169,16 @@ fn barrett_cond_subtract(r_tmp: BigInt<5>) -> BigInt<N> {
 
     let r_n: [u64; N] = [r_tmp.0[0], r_tmp.0[1], r_tmp.0[2], r_tmp.0[3]];
 
-    if compare_4(r_n, m2_lo) != core::cmp::Ordering::Less {
+    if compare_4(r_n, m2_lo) != Ordering::Less {
         // r_tmp >= 2p
-        if compare_4(r_n, m3_lo) != core::cmp::Ordering::Less {
+        if compare_4(r_n, m3_lo) != Ordering::Less {
             // r_tmp >= 3p → subtract 3p
             BigInt(sub_4(r_n, m3_lo))
         } else {
             // 2p <= r_tmp < 3p → subtract 2p
             BigInt(sub_4(r_n, m2_lo))
         }
-    } else if compare_4(r_n, MODULUS) != core::cmp::Ordering::Less {
+    } else if compare_4(r_n, MODULUS) != Ordering::Less {
         // p <= r_tmp < 2p → subtract p
         BigInt(sub_4(r_n, MODULUS))
     } else {
@@ -183,19 +189,19 @@ fn barrett_cond_subtract(r_tmp: BigInt<5>) -> BigInt<N> {
 
 /// Compare two 4-limb numbers (big-endian comparison)
 #[inline(always)]
-fn compare_4(a: [u64; N], b: [u64; N]) -> core::cmp::Ordering {
+fn compare_4(a: [u64; N], b: [u64; N]) -> Ordering {
     let mut i = N;
     while i > 0 {
         i -= 1;
         if a[i] != b[i] {
             return if a[i] > b[i] {
-                core::cmp::Ordering::Greater
+                Ordering::Greater
             } else {
-                core::cmp::Ordering::Less
+                Ordering::Less
             };
         }
     }
-    core::cmp::Ordering::Equal
+    Ordering::Equal
 }
 
 /// Subtract two 4-limb numbers: a - b. Caller guarantees a >= b.
@@ -309,9 +315,9 @@ pub(crate) fn from_montgomery_reduce<const L: usize>(unreduced: BigInt<L>) -> Fr
 
     // Final conditional subtraction
     let needs_sub = if MODULUS_HAS_SPARE_BIT {
-        compare_4(result.0 .0, MODULUS) != core::cmp::Ordering::Less
+        compare_4(result.0 .0, MODULUS) != Ordering::Less
     } else {
-        carry != 0 || compare_4(result.0 .0, MODULUS) != core::cmp::Ordering::Less
+        carry != 0 || compare_4(result.0 .0, MODULUS) != Ordering::Less
     };
     if needs_sub {
         result.0 = BigInt(sub_4(result.0 .0, MODULUS));
@@ -320,6 +326,7 @@ pub(crate) fn from_montgomery_reduce<const L: usize>(unreduced: BigInt<L>) -> Fr
 }
 
 /// Multiply BigInt<4> by u64, producing BigInt<5>.
+#[cfg(not(target_arch = "wasm32"))]
 #[inline(always)]
 fn bigint4_mul_u64(a: &BigInt<N>, b: u64) -> BigInt<5> {
     let mut res = BigInt::<5>([0u64; 5]);
@@ -332,6 +339,7 @@ fn bigint4_mul_u64(a: &BigInt<N>, b: u64) -> BigInt<5> {
 }
 
 /// Multiply BigInt<4> by u128, producing BigInt<6>.
+#[cfg(not(target_arch = "wasm32"))]
 #[inline(always)]
 fn bigint4_mul_u128(a: &BigInt<N>, b: u128) -> BigInt<6> {
     if b == 0 {
@@ -360,6 +368,7 @@ fn bigint4_mul_u128(a: &BigInt<N>, b: u128) -> BigInt<6> {
 }
 
 /// Barrett reduce BigInt<5> → Fr (N+1 → field element)
+#[cfg(not(target_arch = "wasm32"))]
 #[inline(always)]
 fn from_unchecked_nplus1(element: BigInt<5>) -> Fr {
     let r = barrett_reduce_5_to_4(element);
@@ -367,6 +376,7 @@ fn from_unchecked_nplus1(element: BigInt<5>) -> Fr {
 }
 
 /// Barrett reduce BigInt<6> → Fr via two rounds
+#[cfg(not(target_arch = "wasm32"))]
 #[inline(always)]
 fn from_unchecked_nplus2(element: BigInt<6>) -> Fr {
     // Round 1: reduce top 5 limbs (indices 1..6)
@@ -386,6 +396,7 @@ fn from_unchecked_nplus2(element: BigInt<6>) -> Fr {
 }
 
 /// Multiply a field element by u64.
+#[cfg(not(target_arch = "wasm32"))]
 #[inline(always)]
 pub(crate) fn mul_u64(a: Fr, b: u64) -> Fr {
     if b == 0 || Zero::is_zero(&a) {
@@ -399,6 +410,7 @@ pub(crate) fn mul_u64(a: Fr, b: u64) -> Fr {
 }
 
 /// Multiply a field element by i64.
+#[cfg(not(target_arch = "wasm32"))]
 #[inline(always)]
 pub(crate) fn mul_i64(a: Fr, b: i64) -> Fr {
     let abs = b.unsigned_abs();
@@ -411,6 +423,7 @@ pub(crate) fn mul_i64(a: Fr, b: i64) -> Fr {
 }
 
 /// Multiply a field element by u128.
+#[cfg(not(target_arch = "wasm32"))]
 #[inline(always)]
 pub(crate) fn mul_u128(a: Fr, b: u128) -> Fr {
     if b >> 64 == 0 {
@@ -422,6 +435,7 @@ pub(crate) fn mul_u128(a: Fr, b: u128) -> Fr {
 }
 
 /// Multiply a field element by i128.
+#[cfg(not(target_arch = "wasm32"))]
 #[inline(always)]
 pub(crate) fn mul_i128(a: Fr, b: i128) -> Fr {
     if b == 0 || Zero::is_zero(&a) {
@@ -445,6 +459,7 @@ pub(crate) fn mul_i128(a: Fr, b: i128) -> Fr {
 }
 
 /// Convert u64 → Fr using precomp table for small values, mul_u64(R, n) otherwise.
+#[cfg(not(target_arch = "wasm32"))]
 #[inline(always)]
 pub(crate) fn from_u64(n: u64) -> Fr {
     if (n as usize) < PRECOMP_TABLE_SIZE {
@@ -455,6 +470,7 @@ pub(crate) fn from_u64(n: u64) -> Fr {
 }
 
 /// Convert u128 → Fr using precomp table for small values, mul_u128(R, n) otherwise.
+#[cfg(not(target_arch = "wasm32"))]
 #[inline(always)]
 pub(crate) fn from_u128(n: u128) -> Fr {
     if n < PRECOMP_TABLE_SIZE as u128 {

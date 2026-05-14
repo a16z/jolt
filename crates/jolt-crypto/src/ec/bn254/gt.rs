@@ -1,9 +1,14 @@
-use std::fmt::Debug;
+use std::fmt::{self, Debug};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use ark_bn254::{Fq12, Fr};
 use ark_ff::{AdditiveGroup, Field as ArkField, PrimeField};
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Compress, Read, SerializationError, Valid, Validate,
+    Write,
+};
 use jolt_field::Field;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use jolt_transcript::{AppendToTranscript, Transcript};
 
@@ -32,7 +37,7 @@ use super::field_to_fr;
 pub struct Bn254GT(pub(crate) Fq12);
 
 impl Debug for Bn254GT {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Bn254GT").field(&self.0).finish()
     }
 }
@@ -131,7 +136,6 @@ impl MulAssign for Bn254GT {
 #[expect(clippy::expect_used)]
 impl AppendToTranscript for Bn254GT {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        use ark_serialize::CanonicalSerialize;
         let mut buf = Vec::with_capacity(self.0.uncompressed_size());
         self.0
             .serialize_uncompressed(&mut buf)
@@ -177,9 +181,8 @@ impl JoltGroup for Bn254GT {
     }
 }
 
-impl serde::Serialize for Bn254GT {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use ark_serialize::CanonicalSerialize;
+impl Serialize for Bn254GT {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut buf = Vec::with_capacity(self.0.compressed_size());
         self.0
             .serialize_compressed(&mut buf)
@@ -188,9 +191,8 @@ impl serde::Serialize for Bn254GT {
     }
 }
 
-impl<'de> serde::Deserialize<'de> for Bn254GT {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use ark_serialize::CanonicalDeserialize;
+impl<'de> Deserialize<'de> for Bn254GT {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let buf = <Vec<u8>>::deserialize(deserializer)?;
         let inner = Fq12::deserialize_compressed(&buf[..]).map_err(serde::de::Error::custom)?;
         // Reject Fq12::ZERO: not in any multiplicative subgroup, and later
@@ -207,5 +209,35 @@ impl<'de> serde::Deserialize<'de> for Bn254GT {
             ));
         }
         Ok(Self(inner))
+    }
+}
+
+impl CanonicalSerialize for Bn254GT {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.0.serialize_with_mode(writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.0.serialized_size(compress)
+    }
+}
+
+impl Valid for Bn254GT {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.0.check()
+    }
+}
+
+impl CanonicalDeserialize for Bn254GT {
+    fn deserialize_with_mode<R: Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        Fq12::deserialize_with_mode(reader, compress, validate).map(Self)
     }
 }

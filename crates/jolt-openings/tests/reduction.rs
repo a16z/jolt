@@ -1,7 +1,7 @@
-//! Integration tests for the opening reduction pipeline.
+//! Integration tests for the homomorphic batch opening pipeline.
 //!
 //! These tests exercise the public API only — no internal imports.
-//! They verify that the full reduce → open → verify pipeline works
+//! They verify that the full prove_batch → verify_batch pipeline works
 //! end-to-end with MockCommitmentScheme across both transcript backends.
 //!
 //! Requires: `cargo nextest run -p jolt-openings --features test-utils`
@@ -13,9 +13,9 @@
     reason = "tests may panic on assertion failures"
 )]
 
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling, ReducingBytes};
+use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
 use jolt_openings::mock::MockCommitmentScheme;
-use jolt_openings::{reduce_prover, reduce_verifier, CommitmentScheme, ProverClaim, VerifierClaim};
+use jolt_openings::{CommitmentScheme, CommitmentSchemeVerifier, OpeningClaim, ProverClaim};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
@@ -23,7 +23,7 @@ use rand_core::SeedableRng;
 
 type MockPCS = MockCommitmentScheme<Fr>;
 
-/// Full reduce → open → verify pipeline.
+/// Full prove_batch → verify_batch pipeline.
 fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
     polys: &[Polynomial<Fr>],
     points: &[Vec<Fr>],
@@ -42,47 +42,20 @@ fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
             eval,
         });
         let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
-        verifier_claims.push(VerifierClaim {
+        verifier_claims.push(OpeningClaim::<Fr, MockPCS> {
             commitment,
             point: point.clone(),
             eval,
         });
     }
 
-    // Prover side
     let mut transcript_p = T::new(label);
-    let reduced_p = reduce_prover(prover_claims, &mut transcript_p);
-    let proofs: Vec<_> = reduced_p
-        .iter()
-        .map(|c| {
-            MockPCS::open(
-                &c.polynomial,
-                &c.point,
-                c.eval,
-                &(),
-                None,
-                &mut transcript_p,
-            )
-        })
-        .collect();
+    let hints = vec![(); prover_claims.len()];
+    let proof = MockPCS::prove_batch(prover_claims, hints, &(), &mut transcript_p);
 
-    // Verifier side
     let mut transcript_v = T::new(label);
-    let reduced_v = reduce_verifier::<MockPCS, _>(verifier_claims, &mut transcript_v)
-        .expect("reduction should succeed");
-
-    assert_eq!(reduced_v.len(), proofs.len());
-    for (claim, proof) in reduced_v.iter().zip(proofs.iter()) {
-        MockPCS::verify(
-            &claim.commitment,
-            &claim.point,
-            claim.eval,
-            proof,
-            &(),
-            &mut transcript_v,
-        )
+    MockPCS::verify_batch(verifier_claims, &proof, &(), &mut transcript_v)
         .expect("verification should succeed");
-    }
 }
 
 #[test]
@@ -156,12 +129,16 @@ fn mixed_shared_and_distinct_points() {
 #[test]
 fn empty_claims_is_noop() {
     let mut transcript_p = Blake2bTranscript::new(b"empty");
-    let reduced = reduce_prover::<Fr, _>(Vec::new(), &mut transcript_p);
-    assert!(reduced.is_empty());
+    let proof = MockPCS::prove_batch(
+        Vec::<ProverClaim<Fr, Polynomial<Fr>>>::new(),
+        Vec::new(),
+        &(),
+        &mut transcript_p,
+    );
+    assert!(proof.is_empty());
 
     let mut transcript_v = Blake2bTranscript::new(b"empty");
-    let reduced_v = reduce_verifier::<MockPCS, _>(Vec::new(), &mut transcript_v).unwrap();
-    assert!(reduced_v.is_empty());
+    MockPCS::verify_batch(Vec::new(), &proof, &(), &mut transcript_v).unwrap();
 }
 
 #[test]
@@ -192,12 +169,12 @@ fn tampered_eval_detected() {
     let (com_a, ()) = MockPCS::commit(poly_a.evaluations(), &());
     let (com_b, ()) = MockPCS::commit(poly_b.evaluations(), &());
     let verifier_claims = vec![
-        VerifierClaim {
+        OpeningClaim::<Fr, MockPCS> {
             commitment: com_a,
             point: point.clone(),
             eval: eval_a,
         },
-        VerifierClaim {
+        OpeningClaim::<Fr, MockPCS> {
             commitment: com_b,
             point: point.clone(),
             eval: eval_b + Fr::from_u64(1), // tampered
@@ -205,40 +182,12 @@ fn tampered_eval_detected() {
     ];
 
     let mut transcript_p = Blake2bTranscript::new(b"tampered");
-    let reduced_p = reduce_prover(prover_claims, &mut transcript_p);
-    let proofs: Vec<_> = reduced_p
-        .iter()
-        .map(|c| {
-            MockPCS::open(
-                &c.polynomial,
-                &c.point,
-                c.eval,
-                &(),
-                None,
-                &mut transcript_p,
-            )
-        })
-        .collect();
+    let hints = vec![(); prover_claims.len()];
+    let proof = MockPCS::prove_batch(prover_claims, hints, &(), &mut transcript_p);
 
     let mut transcript_v = Blake2bTranscript::new(b"tampered");
-    let reduced_v = reduce_verifier::<MockPCS, _>(verifier_claims, &mut transcript_v)
-        .expect("reduction itself should succeed");
-
-    let mut any_failed = false;
-    for (claim, proof) in reduced_v.iter().zip(proofs.iter()) {
-        if MockPCS::verify(
-            &claim.commitment,
-            &claim.point,
-            claim.eval,
-            proof,
-            &(),
-            &mut transcript_v,
-        )
-        .is_err()
-        {
-            any_failed = true;
-        }
-    }
+    let any_failed =
+        MockPCS::verify_batch(verifier_claims, &proof, &(), &mut transcript_v).is_err();
     assert!(
         any_failed,
         "tampered evaluation must cause verification failure"

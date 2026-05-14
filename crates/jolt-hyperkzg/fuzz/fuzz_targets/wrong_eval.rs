@@ -8,7 +8,7 @@
 use jolt_crypto::Bn254;
 use jolt_field::{Field, Fr};
 use jolt_hyperkzg::HyperKZGScheme;
-use jolt_openings::CommitmentScheme;
+use jolt_openings::{CommitmentScheme, CommitmentSchemeVerifier};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use libfuzzer_sys::fuzz_target;
@@ -29,7 +29,7 @@ fuzz_target!(|data: &[u8]| {
     let g1 = Bn254::g1_generator();
     let g2 = Bn254::g2_generator();
     let pk = TestScheme::setup(&mut rng, n, g1, g2);
-    let vk = TestScheme::verifier_setup(&pk);
+    let vk = TestScheme::project_verifier_setup(&pk);
 
     let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
     let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
@@ -47,7 +47,7 @@ fuzz_target!(|data: &[u8]| {
         <TestScheme as CommitmentScheme>::open(&poly, &point, eval, &pk, None, &mut pt);
 
     let mut vt = Blake2bTranscript::new(b"fuzz-wrong-eval");
-    let result = <TestScheme as CommitmentScheme>::verify(
+    let result = <TestScheme as CommitmentSchemeVerifier>::verify(
         &commitment,
         &point,
         wrong_eval,
