@@ -1295,7 +1295,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage2Error);
                     missing_role_binding("verifier claim relation", &claim.symbol)
                 })?;
                 claims.push(format!(
-                        "    Stage2SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: None, relation: Some({}), claim_value: {}, input_openings: {} }},",
+                        "    Stage2SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: None, relation: Some({}), claim_value: {} }},",
                         rust_str(&claim.symbol),
                         rust_str(&claim.stage),
                         rust_str(&claim.domain),
@@ -1307,8 +1307,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage2Error);
                             &self.role,
                             relation
                         )?,
-                        rust_str(&claim.claim_value),
-                        super::plan_tokens::rust_str_slice_expr(&claim.input_openings)
+                        rust_str(&claim.claim_value)
                     ));
             }
         }
@@ -1337,13 +1336,12 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage2Error);
                 .enumerate()
                 .map(|(index, batch)| {
                     format!(
-                        "    Stage2SumcheckBatchPlan {{ symbol: {}, stage: {}, proof_slot: {}, policy: {}, count: {}, ordered_claims: {}, claim_operands: {}, claim_label: {}, round_label: {}, round_schedule: STAGE2_SUMCHECK_BATCH_{index}_ROUND_SCHEDULE }},",
+                        "    Stage2SumcheckBatchPlan {{ symbol: {}, stage: {}, proof_slot: {}, policy: {}, count: {}, claim_operands: {}, claim_label: {}, round_label: {}, round_schedule: STAGE2_SUMCHECK_BATCH_{index}_ROUND_SCHEDULE }},",
                         rust_str(&batch.symbol),
                         rust_str(&batch.stage),
                         rust_str(&batch.proof_slot),
                         rust_str(&batch.policy),
                         batch.count,
-                        super::plan_tokens::rust_str_slice_expr(&batch.ordered_claims),
                         super::plan_tokens::rust_str_slice_expr(&batch.claim_operands),
                         rust_str(&batch.claim_label),
                         rust_str(&batch.round_label)

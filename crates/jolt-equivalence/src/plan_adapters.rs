@@ -58,7 +58,36 @@ macro_rules! stage_claim {
             kernel: $plan.kernel.as_deref().map(super::leak_str),
             relation: stage_optional_relation_kind!(generated, $plan.relation.as_deref()),
             claim_value: super::leak_str(&$plan.claim_value),
-            input_openings: super::leak_str_slice(&$plan.input_openings),
+        }
+    };
+}
+
+macro_rules! stage_sumcheck_batch {
+    (kernel, $module:ident, $batch:ident, $plan:ident) => {
+        $module::$batch {
+            symbol: super::leak_str(&$plan.symbol),
+            stage: super::leak_str(&$plan.stage),
+            proof_slot: super::leak_str(&$plan.proof_slot),
+            policy: super::leak_str(&$plan.policy),
+            count: $plan.count,
+            ordered_claims: super::leak_str_slice(&$plan.ordered_claims),
+            claim_operands: super::leak_str_slice(&$plan.claim_operands),
+            claim_label: super::leak_str(&$plan.claim_label),
+            round_label: super::leak_str(&$plan.round_label),
+            round_schedule: super::leak_usize_slice(&$plan.round_schedule),
+        }
+    };
+    (generated, $module:ident, $batch:ident, $plan:ident) => {
+        $module::$batch {
+            symbol: super::leak_str(&$plan.symbol),
+            stage: super::leak_str(&$plan.stage),
+            proof_slot: super::leak_str(&$plan.proof_slot),
+            policy: super::leak_str(&$plan.policy),
+            count: $plan.count,
+            claim_operands: super::leak_str_slice(&$plan.claim_operands),
+            claim_label: super::leak_str(&$plan.claim_label),
+            round_label: super::leak_str(&$plan.round_label),
+            round_schedule: super::leak_usize_slice(&$plan.round_schedule),
         }
     };
 }
@@ -453,18 +482,7 @@ macro_rules! define_stage_adapter_impl {
                     program
                         .batches
                         .iter()
-                        .map(|plan| $module::$batch {
-                            symbol: super::leak_str(&plan.symbol),
-                            stage: super::leak_str(&plan.stage),
-                            proof_slot: super::leak_str(&plan.proof_slot),
-                            policy: super::leak_str(&plan.policy),
-                            count: plan.count,
-                            ordered_claims: super::leak_str_slice(&plan.ordered_claims),
-                            claim_operands: super::leak_str_slice(&plan.claim_operands),
-                            claim_label: super::leak_str(&plan.claim_label),
-                            round_label: super::leak_str(&plan.round_label),
-                            round_schedule: super::leak_usize_slice(&plan.round_schedule),
-                        })
+                        .map(|plan| stage_sumcheck_batch!($mode, $module, $batch, plan))
                         .collect(),
                 ),
                 drivers: super::leak_slice(
@@ -764,18 +782,7 @@ macro_rules! define_stage1_adapter {
                     program
                         .batches
                         .iter()
-                        .map(|plan| $module::$batch {
-                            symbol: super::leak_str(&plan.symbol),
-                            stage: super::leak_str(&plan.stage),
-                            proof_slot: super::leak_str(&plan.proof_slot),
-                            policy: super::leak_str(&plan.policy),
-                            count: plan.count,
-                            ordered_claims: super::leak_str_slice(&plan.ordered_claims),
-                            claim_operands: super::leak_str_slice(&plan.claim_operands),
-                            claim_label: super::leak_str(&plan.claim_label),
-                            round_label: super::leak_str(&plan.round_label),
-                            round_schedule: super::leak_usize_slice(&plan.round_schedule),
-                        })
+                        .map(|plan| stage_sumcheck_batch!($mode, $module, $batch, plan))
                         .collect(),
                 ),
                 drivers: super::leak_slice(

@@ -177,7 +177,6 @@ pub struct SumcheckClaimPlan {
     pub kernel: Option<&'static str>,
     pub relation: Option<RelationKind>,
     pub claim_value: &'static str,
-    pub input_openings: &'static [&'static str],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -187,7 +186,6 @@ pub struct SumcheckBatchPlan {
     pub proof_slot: &'static str,
     pub policy: &'static str,
     pub count: usize,
-    pub ordered_claims: &'static [&'static str],
     pub claim_operands: &'static [&'static str],
     pub claim_label: &'static str,
     pub round_label: &'static str,

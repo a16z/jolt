@@ -100,13 +100,13 @@ pub const STAGE4_KERNELS: &[Stage4KernelPlan] = &[
 ];
 
 pub const STAGE4_SUMCHECK_CLAIMS: &[Stage4SumcheckClaimPlan] = &[
-    Stage4SumcheckClaimPlan { symbol: "stage4.registers_read_write.input", stage: "stage4", domain: "jolt.stage4_registers_rw_domain", num_rounds: 23, degree: 3, claim: "stage4.registers_read_write.weighted_values", kernel: None, relation: Some(Stage4RelationKind::Stage4RegistersReadWrite), claim_value: "stage4.registers_read_write.claim_expr", input_openings: &["stage4.input.stage3.registers.RdWriteValue", "stage4.input.stage3.registers.Rs1Value", "stage4.input.stage3.registers.Rs2Value"] },
-    Stage4SumcheckClaimPlan { symbol: "stage4.ram_val_check.input", stage: "stage4", domain: "jolt.trace_domain", num_rounds: 16, degree: 3, claim: "stage4.ram_val_check.weighted_values", kernel: None, relation: Some(Stage4RelationKind::Stage4RamValCheck), claim_value: "stage4.ram_val_check.claim_expr", input_openings: &["stage4.input.stage2.RamVal", "stage4.input.stage2.RamValFinal", "stage4.input.initial_ram.RamValInit"] },
+    Stage4SumcheckClaimPlan { symbol: "stage4.registers_read_write.input", stage: "stage4", domain: "jolt.stage4_registers_rw_domain", num_rounds: 23, degree: 3, claim: "stage4.registers_read_write.weighted_values", kernel: None, relation: Some(Stage4RelationKind::Stage4RegistersReadWrite), claim_value: "stage4.registers_read_write.claim_expr" },
+    Stage4SumcheckClaimPlan { symbol: "stage4.ram_val_check.input", stage: "stage4", domain: "jolt.trace_domain", num_rounds: 16, degree: 3, claim: "stage4.ram_val_check.weighted_values", kernel: None, relation: Some(Stage4RelationKind::Stage4RamValCheck), claim_value: "stage4.ram_val_check.claim_expr" },
 ];
 pub const STAGE4_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[16, 7];
 
 pub const STAGE4_SUMCHECK_BATCHES: &[Stage4SumcheckBatchPlan] = &[
-    Stage4SumcheckBatchPlan { symbol: "stage4.batch", stage: "stage4", proof_slot: "stage4.sumcheck", policy: "jolt_core_stage4_aligned", count: 2, ordered_claims: &["stage4.registers_read_write.input", "stage4.ram_val_check.input"], claim_operands: &["stage4.registers_read_write.input", "stage4.ram_val_check.input"], claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE4_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
+    Stage4SumcheckBatchPlan { symbol: "stage4.batch", stage: "stage4", proof_slot: "stage4.sumcheck", policy: "jolt_core_stage4_aligned", count: 2, claim_operands: &["stage4.registers_read_write.input", "stage4.ram_val_check.input"], claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE4_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
 ];
 pub const STAGE4_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[16, 7];
 

@@ -44,16 +44,16 @@ pub const STAGE1_TRANSCRIPT_SQUEEZES: &[Stage1TranscriptSqueezePlan] = &[
 ];
 
 pub const STAGE1_SUMCHECK_CLAIMS: &[Stage1SumcheckClaimPlan] = &[
-    Stage1SumcheckClaimPlan { symbol: "stage1.uniskip.input", stage: "stage1", domain: "jolt.stage1_uniskip_domain", num_rounds: 1, degree: 27, claim: "stage1.zero", kernel: None, relation: Some(Stage1RelationKind::Stage1OuterUniskip), claim_value: "stage1.zero", input_openings: &[] },
-    Stage1SumcheckClaimPlan { symbol: "stage1.outer_remaining.input", stage: "stage1", domain: "jolt.trace_domain", num_rounds: 17, degree: 3, claim: "stage1.uniskip.eval", kernel: None, relation: Some(Stage1RelationKind::Stage1OuterRemaining), claim_value: "stage1.uniskip.eval", input_openings: &["stage1.uniskip.opening"] },
+    Stage1SumcheckClaimPlan { symbol: "stage1.uniskip.input", stage: "stage1", domain: "jolt.stage1_uniskip_domain", num_rounds: 1, degree: 27, claim: "stage1.zero", kernel: None, relation: Some(Stage1RelationKind::Stage1OuterUniskip), claim_value: "stage1.zero" },
+    Stage1SumcheckClaimPlan { symbol: "stage1.outer_remaining.input", stage: "stage1", domain: "jolt.trace_domain", num_rounds: 17, degree: 3, claim: "stage1.uniskip.eval", kernel: None, relation: Some(Stage1RelationKind::Stage1OuterRemaining), claim_value: "stage1.uniskip.eval" },
 ];
 pub const STAGE1_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[1];
 
 pub const STAGE1_SUMCHECK_BATCH_1_ROUND_SCHEDULE: &[usize] = &[17];
 
 pub const STAGE1_SUMCHECK_BATCHES: &[Stage1SumcheckBatchPlan] = &[
-    Stage1SumcheckBatchPlan { symbol: "stage1.uniskip.batch", stage: "stage1", proof_slot: "stage1.uni_skip_first_round", policy: "single_instance", count: 1, ordered_claims: &["stage1.uniskip.input"], claim_operands: &["stage1.uniskip.input"], claim_label: "uniskip_claim", round_label: "uniskip_poly", round_schedule: STAGE1_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
-    Stage1SumcheckBatchPlan { symbol: "stage1.outer_remaining.batch", stage: "stage1", proof_slot: "stage1.sumcheck", policy: "jolt_core_front_loaded", count: 1, ordered_claims: &["stage1.outer_remaining.input"], claim_operands: &["stage1.outer_remaining.input"], claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE1_SUMCHECK_BATCH_1_ROUND_SCHEDULE },
+    Stage1SumcheckBatchPlan { symbol: "stage1.uniskip.batch", stage: "stage1", proof_slot: "stage1.uni_skip_first_round", policy: "single_instance", count: 1, claim_operands: &["stage1.uniskip.input"], claim_label: "uniskip_claim", round_label: "uniskip_poly", round_schedule: STAGE1_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
+    Stage1SumcheckBatchPlan { symbol: "stage1.outer_remaining.batch", stage: "stage1", proof_slot: "stage1.sumcheck", policy: "jolt_core_front_loaded", count: 1, claim_operands: &["stage1.outer_remaining.input"], claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE1_SUMCHECK_BATCH_1_ROUND_SCHEDULE },
 ];
 pub const STAGE1_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[1];
 

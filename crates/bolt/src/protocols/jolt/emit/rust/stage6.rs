@@ -1624,7 +1624,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage6Error);
                 .iter()
                 .map(|claim| {
                     Ok(format!(
-                        "    Stage6SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: {}, relation: {}, claim_value: {}, input_openings: {} }},",
+                        "    Stage6SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: {}, relation: {}, claim_value: {} }},",
                         rust_str(&claim.symbol),
                         rust_str(&claim.stage),
                         rust_str(&claim.domain),
@@ -1637,8 +1637,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage6Error);
                             &self.role,
                             claim.relation.as_deref()
                         )?,
-                        rust_str(&claim.claim_value),
-                        super::plan_tokens::rust_str_slice_expr(&claim.input_openings)
+                        rust_str(&claim.claim_value)
                     ))
                 })
                 .collect::<Result<Vec<_>, EmitError>>()?
@@ -1692,6 +1691,10 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage6Error);
         if self.role == Role::Verifier {
             let mut source = String::new();
             for (index, batch) in self.batches.iter().enumerate() {
+                source.push_str(&emit_str_array(
+                    &format!("STAGE6_SUMCHECK_BATCH_{index}_CLAIM_OPERANDS"),
+                    &batch.claim_operands,
+                ));
                 source.push_str(&emit_usize_array(
                     &format!("STAGE6_SUMCHECK_BATCH_{index}_ROUND_SCHEDULE"),
                     &batch.round_schedule,
@@ -1703,14 +1706,12 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage6Error);
                 .enumerate()
                 .map(|(index, batch)| {
                     format!(
-                        "    Stage6SumcheckBatchPlan {{ symbol: {}, stage: {}, proof_slot: {}, policy: {}, count: {}, ordered_claims: {}, claim_operands: {}, claim_label: {}, round_label: {}, round_schedule: STAGE6_SUMCHECK_BATCH_{index}_ROUND_SCHEDULE }},",
+                        "    Stage6SumcheckBatchPlan {{ symbol: {}, stage: {}, proof_slot: {}, policy: {}, count: {}, claim_operands: STAGE6_SUMCHECK_BATCH_{index}_CLAIM_OPERANDS, claim_label: {}, round_label: {}, round_schedule: STAGE6_SUMCHECK_BATCH_{index}_ROUND_SCHEDULE }},",
                         rust_str(&batch.symbol),
                         rust_str(&batch.stage),
                         rust_str(&batch.proof_slot),
                         rust_str(&batch.policy),
                         batch.count,
-                        super::plan_tokens::rust_str_slice_expr(&batch.ordered_claims),
-                        super::plan_tokens::rust_str_slice_expr(&batch.claim_operands),
                         rust_str(&batch.claim_label),
                         rust_str(&batch.round_label)
                     )
