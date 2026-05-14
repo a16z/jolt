@@ -14,7 +14,7 @@ use crate::schema::{
 
 use super::super::oracles;
 use super::super::params::JoltProtocolParams;
-use super::field_formula::{FieldBinaryFormula, FieldFormulaBuilder};
+use super::field_formula::{FieldFormulaBuilder, FieldFormulaStep};
 use super::lowering::{
     copy_attrs, field_lowering_attrs as field_compute_attrs, string_attr,
     transcript_squeeze_compute_result_types, transcript_squeeze_protocol_result_type,
@@ -50,134 +50,134 @@ const STAGE3_INSTRUCTION_INPUT_OUTPUTS: [&str; 8] = [
 ];
 const STAGE3_REGISTER_INPUTS: [&str; 3] = ["RdWriteValue", "Rs1Value", "Rs2Value"];
 
-const STAGE3_SHIFT_OUTPUT_FORMULAS: [FieldBinaryFormula; 11] = [
-    FieldBinaryFormula::mul(
+const STAGE3_SHIFT_OUTPUT_FORMULAS: [FieldFormulaStep; 11] = [
+    FieldFormulaStep::mul(
         "stage3.spartan_shift.output.term.PC",
         "stage3.spartan_shift.gamma",
         "stage3.spartan_shift.eval.PC",
     ),
-    FieldBinaryFormula::mul(
+    FieldFormulaStep::mul(
         "stage3.spartan_shift.output.term.OpFlagVirtualInstruction",
         "stage3.spartan_shift.gamma2",
         "stage3.spartan_shift.eval.OpFlagVirtualInstruction",
     ),
-    FieldBinaryFormula::mul(
+    FieldFormulaStep::mul(
         "stage3.spartan_shift.output.term.OpFlagIsFirstInSequence",
         "stage3.spartan_shift.gamma3",
         "stage3.spartan_shift.eval.OpFlagIsFirstInSequence",
     ),
-    FieldBinaryFormula::sub(
+    FieldFormulaStep::sub(
         "stage3.spartan_shift.output.one_minus.InstructionFlagIsNoop",
         "stage3.field.one",
         "stage3.spartan_shift.eval.InstructionFlagIsNoop",
     ),
-    FieldBinaryFormula::add(
+    FieldFormulaStep::add(
         "stage3.spartan_shift.output.partial.PC",
         "stage3.spartan_shift.eval.UnexpandedPC",
         "stage3.spartan_shift.output.term.PC",
     ),
-    FieldBinaryFormula::add(
+    FieldFormulaStep::add(
         "stage3.spartan_shift.output.partial.OpFlagVirtualInstruction",
         "stage3.spartan_shift.output.partial.PC",
         "stage3.spartan_shift.output.term.OpFlagVirtualInstruction",
     ),
-    FieldBinaryFormula::add(
+    FieldFormulaStep::add(
         "stage3.spartan_shift.output.weighted_outer",
         "stage3.spartan_shift.output.partial.OpFlagVirtualInstruction",
         "stage3.spartan_shift.output.term.OpFlagIsFirstInSequence",
     ),
-    FieldBinaryFormula::mul(
+    FieldFormulaStep::mul(
         "stage3.spartan_shift.output.outer",
         "stage3.spartan_shift.output.eq.NextPC",
         "stage3.spartan_shift.output.weighted_outer",
     ),
-    FieldBinaryFormula::mul(
+    FieldFormulaStep::mul(
         "stage3.spartan_shift.output.noop_product",
         "stage3.spartan_shift.output.eq.NextIsNoop",
         "stage3.spartan_shift.output.one_minus.InstructionFlagIsNoop",
     ),
-    FieldBinaryFormula::mul(
+    FieldFormulaStep::mul(
         "stage3.spartan_shift.output.noop_term",
         "stage3.spartan_shift.gamma4",
         "stage3.spartan_shift.output.noop_product",
     ),
-    FieldBinaryFormula::add(
+    FieldFormulaStep::add(
         "stage3.spartan_shift.output.claim_expr",
         "stage3.spartan_shift.output.outer",
         "stage3.spartan_shift.output.noop_term",
     ),
 ];
 
-const STAGE3_INSTRUCTION_OUTPUT_FORMULAS: [FieldBinaryFormula; 9] = [
-    FieldBinaryFormula::mul(
+const STAGE3_INSTRUCTION_OUTPUT_FORMULAS: [FieldFormulaStep; 9] = [
+    FieldFormulaStep::mul(
         "stage3.instruction_input.output.left.term.Rs1Value",
         "stage3.instruction_input.eval.InstructionFlagLeftOperandIsRs1Value",
         "stage3.instruction_input.eval.Rs1Value",
     ),
-    FieldBinaryFormula::mul(
+    FieldFormulaStep::mul(
         "stage3.instruction_input.output.left.term.PC",
         "stage3.instruction_input.eval.InstructionFlagLeftOperandIsPC",
         "stage3.instruction_input.eval.UnexpandedPC",
     ),
-    FieldBinaryFormula::add(
+    FieldFormulaStep::add(
         "stage3.instruction_input.output.left",
         "stage3.instruction_input.output.left.term.Rs1Value",
         "stage3.instruction_input.output.left.term.PC",
     ),
-    FieldBinaryFormula::mul(
+    FieldFormulaStep::mul(
         "stage3.instruction_input.output.right.term.Rs2Value",
         "stage3.instruction_input.eval.InstructionFlagRightOperandIsRs2Value",
         "stage3.instruction_input.eval.Rs2Value",
     ),
-    FieldBinaryFormula::mul(
+    FieldFormulaStep::mul(
         "stage3.instruction_input.output.right.term.Imm",
         "stage3.instruction_input.eval.InstructionFlagRightOperandIsImm",
         "stage3.instruction_input.eval.Imm",
     ),
-    FieldBinaryFormula::add(
+    FieldFormulaStep::add(
         "stage3.instruction_input.output.right",
         "stage3.instruction_input.output.right.term.Rs2Value",
         "stage3.instruction_input.output.right.term.Imm",
     ),
-    FieldBinaryFormula::mul(
+    FieldFormulaStep::mul(
         "stage3.instruction_input.output.left_weighted",
         "stage3.instruction_input.gamma",
         "stage3.instruction_input.output.left",
     ),
-    FieldBinaryFormula::add(
+    FieldFormulaStep::add(
         "stage3.instruction_input.output.weighted_inputs",
         "stage3.instruction_input.output.right",
         "stage3.instruction_input.output.left_weighted",
     ),
-    FieldBinaryFormula::mul(
+    FieldFormulaStep::mul(
         "stage3.instruction_input.output.claim_expr",
         "stage3.instruction_input.output.eq.LeftInstructionInput",
         "stage3.instruction_input.output.weighted_inputs",
     ),
 ];
 
-const STAGE3_REGISTERS_OUTPUT_FORMULAS: [FieldBinaryFormula; 5] = [
-    FieldBinaryFormula::mul(
+const STAGE3_REGISTERS_OUTPUT_FORMULAS: [FieldFormulaStep; 5] = [
+    FieldFormulaStep::mul(
         "stage3.registers.output.term.Rs1Value",
         "stage3.registers.gamma",
         "stage3.registers_claim_reduction.eval.Rs1Value",
     ),
-    FieldBinaryFormula::mul(
+    FieldFormulaStep::mul(
         "stage3.registers.output.term.Rs2Value",
         "stage3.registers.gamma2",
         "stage3.registers_claim_reduction.eval.Rs2Value",
     ),
-    FieldBinaryFormula::add(
+    FieldFormulaStep::add(
         "stage3.registers.output.partial.RdWriteValueRs1Value",
         "stage3.registers_claim_reduction.eval.RdWriteValue",
         "stage3.registers.output.term.Rs1Value",
     ),
-    FieldBinaryFormula::add(
+    FieldFormulaStep::add(
         "stage3.registers.output.weighted_register_values",
         "stage3.registers.output.partial.RdWriteValueRs1Value",
         "stage3.registers.output.term.Rs2Value",
     ),
-    FieldBinaryFormula::mul(
+    FieldFormulaStep::mul(
         "stage3.registers.output.claim_expr",
         "stage3.registers.output.eq.RdWriteValue",
         "stage3.registers.output.weighted_register_values",
