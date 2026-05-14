@@ -8,6 +8,10 @@ use crate::schema::{verify_protocol_schema, SchemaError};
 use super::super::oracles;
 use super::super::params::JoltProtocolParams;
 use super::lowering::{lower_party_to_compute, transcript_squeeze_protocol_result_type};
+use super::sumcheck_output::{
+    append_structured_polynomial_eval, append_sumcheck_output_claim, OutputClaimSpec,
+    StructuredPolynomialPointSpec, StructuredPolynomialSpec,
+};
 
 const RAM_RA_CLAIM_REDUCTION_DEGREE: usize = 2;
 const REGISTERS_VAL_EVALUATION_DEGREE: usize = 3;
@@ -694,7 +698,25 @@ fn append_stage5_batched_sumcheck<'c, 'a>(
         point,
         result_value,
     )?;
-    append_stage5_output_openings(context, module, params, inputs, instruction, ram, registers)?;
+    let output_evals = append_stage5_output_openings(
+        context,
+        module,
+        params,
+        inputs,
+        instruction,
+        ram,
+        registers,
+    )?;
+    append_stage5_output_claims(
+        context,
+        module,
+        inputs,
+        ram,
+        registers,
+        &output_evals,
+        spec.ram_gamma,
+        ram_gamma2,
+    )?;
     Ok(state)
 }
 
@@ -706,7 +728,7 @@ fn append_stage5_output_openings<'c, 'a>(
     instruction: (Value<'c, 'a>, Value<'c, 'a>),
     ram: (Value<'c, 'a>, Value<'c, 'a>),
     registers: (Value<'c, 'a>, Value<'c, 'a>),
-) -> Result<(), MlirError> {
+) -> Result<Stage5OutputEvals<'c, 'a>, MlirError> {
     let mut claims = Vec::new();
     let mut claim_symbols = Vec::new();
 
@@ -940,7 +962,157 @@ fn append_stage5_output_openings<'c, 'a>(
         &claims,
         &["!piop.opening_batch_type"],
     )?;
-    Ok(())
+    Ok(Stage5OutputEvals {
+        ram_ra: ram_ra_eval,
+        rd_inc: rd_inc_eval,
+        rd_wa: rd_wa_eval,
+    })
+}
+
+#[expect(clippy::too_many_arguments)]
+fn append_stage5_output_claims<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    inputs: &Stage5OpeningInputs<'c, 'a>,
+    ram: (Value<'c, 'a>, Value<'c, 'a>),
+    registers: (Value<'c, 'a>, Value<'c, 'a>),
+    output_evals: &Stage5OutputEvals<'c, 'a>,
+    ram_gamma: Value<'c, 'a>,
+    ram_gamma2: Value<'c, 'a>,
+) -> Result<(), MlirError> {
+    let ram_raf_eq = append_structured_polynomial_eval(
+        context,
+        module,
+        StructuredPolynomialSpec {
+            symbol: "stage5.ram_ra_claim_reduction.output.eq.Raf",
+            polynomial: "eq",
+            x_point: StructuredPolynomialPointSpec::full("reverse"),
+            y_point: StructuredPolynomialPointSpec::suffix("x_point", "as_is"),
+        },
+        ram.0,
+        inputs.ram_ra_raf.point,
+    )?;
+    let ram_rw_eq = append_structured_polynomial_eval(
+        context,
+        module,
+        StructuredPolynomialSpec {
+            symbol: "stage5.ram_ra_claim_reduction.output.eq.ReadWrite",
+            polynomial: "eq",
+            x_point: StructuredPolynomialPointSpec::full("reverse"),
+            y_point: StructuredPolynomialPointSpec::suffix("x_point", "as_is"),
+        },
+        ram.0,
+        inputs.ram_ra_rw.point,
+    )?;
+    let ram_val_eq = append_structured_polynomial_eval(
+        context,
+        module,
+        StructuredPolynomialSpec {
+            symbol: "stage5.ram_ra_claim_reduction.output.eq.ValCheck",
+            polynomial: "eq",
+            x_point: StructuredPolynomialPointSpec::full("reverse"),
+            y_point: StructuredPolynomialPointSpec::suffix("x_point", "as_is"),
+        },
+        ram.0,
+        inputs.ram_ra_val.point,
+    )?;
+    let ram_rw_term = append_field_mul(
+        context,
+        module,
+        "stage5.ram_ra_claim_reduction.output.term.ReadWrite",
+        ram_gamma,
+        ram_rw_eq,
+    )?;
+    let ram_val_term = append_field_mul(
+        context,
+        module,
+        "stage5.ram_ra_claim_reduction.output.term.ValCheck",
+        ram_gamma2,
+        ram_val_eq,
+    )?;
+    let ram_raf_rw_sum = append_field_add(
+        context,
+        module,
+        "stage5.ram_ra_claim_reduction.output.partial.RafReadWrite",
+        ram_raf_eq,
+        ram_rw_term,
+    )?;
+    let ram_eq_combined = append_field_add(
+        context,
+        module,
+        "stage5.ram_ra_claim_reduction.output.eq_combined",
+        ram_raf_rw_sum,
+        ram_val_term,
+    )?;
+    let ram_output_claim = append_field_mul(
+        context,
+        module,
+        "stage5.ram_ra_claim_reduction.output.claim_expr",
+        ram_eq_combined,
+        output_evals.ram_ra,
+    )?;
+    append_sumcheck_output_claim(
+        context,
+        module,
+        OutputClaimSpec {
+            symbol: "stage5.ram_ra_claim_reduction.output.claim",
+            stage: "stage5",
+            relation: "jolt.stage5.ram_ra_claim_reduction",
+        },
+        ram_output_claim,
+        &[
+            ("stage5.ram_ra_claim_reduction.output.eq.Raf", ram_raf_eq),
+            (
+                "stage5.ram_ra_claim_reduction.output.eq.ReadWrite",
+                ram_rw_eq,
+            ),
+            (
+                "stage5.ram_ra_claim_reduction.output.eq.ValCheck",
+                ram_val_eq,
+            ),
+        ],
+    )?;
+
+    let registers_lt = append_structured_polynomial_eval(
+        context,
+        module,
+        StructuredPolynomialSpec {
+            symbol: "stage5.registers_val_evaluation.output.lt.RegistersValCycle",
+            polynomial: "lt",
+            x_point: StructuredPolynomialPointSpec::full("reverse"),
+            y_point: StructuredPolynomialPointSpec::suffix("x_point", "as_is"),
+        },
+        registers.0,
+        inputs.registers_val.point,
+    )?;
+    let registers_eval_product = append_field_mul(
+        context,
+        module,
+        "stage5.registers_val_evaluation.output.product.RdIncRdWa",
+        output_evals.rd_inc,
+        output_evals.rd_wa,
+    )?;
+    let registers_output_claim = append_field_mul(
+        context,
+        module,
+        "stage5.registers_val_evaluation.output.claim_expr",
+        registers_eval_product,
+        registers_lt,
+    )?;
+    append_sumcheck_output_claim(
+        context,
+        module,
+        OutputClaimSpec {
+            symbol: "stage5.registers_val_evaluation.output.claim",
+            stage: "stage5",
+            relation: "jolt.stage5.registers_val_evaluation",
+        },
+        registers_output_claim,
+        &[(
+            "stage5.registers_val_evaluation.output.lt.RegistersValCycle",
+            registers_lt,
+        )],
+    )
 }
 
 fn append_opening_claim_equal<'c>(
@@ -1303,6 +1475,12 @@ struct Stage5OpeningInputs<'c, 'a> {
     ram_ra_rw: Stage5OpeningInput<'c, 'a>,
     ram_ra_val: Stage5OpeningInput<'c, 'a>,
     registers_val: Stage5OpeningInput<'c, 'a>,
+}
+
+struct Stage5OutputEvals<'c, 'a> {
+    ram_ra: Value<'c, 'a>,
+    rd_inc: Value<'c, 'a>,
+    rd_wa: Value<'c, 'a>,
 }
 
 struct StageOpeningInputSpec<'a> {

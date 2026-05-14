@@ -10,6 +10,10 @@ use crate::schema::{verify_protocol_schema, SchemaError};
 use super::super::oracles;
 use super::super::params::JoltProtocolParams;
 use super::lowering::{lower_party_to_compute, transcript_squeeze_protocol_result_type};
+use super::sumcheck_output::{
+    append_structured_polynomial_eval, append_sumcheck_output_claim, OutputClaimSpec,
+    StructuredPolynomialPointSpec, StructuredPolynomialSpec,
+};
 
 const BOOLEANITY_DEGREE: usize = 3;
 const HAMMING_BOOLEANITY_DEGREE: usize = 3;
@@ -1188,7 +1192,7 @@ fn append_stage6_batched_sumcheck<'c, 'a>(
             degree: INC_CLAIM_REDUCTION_DEGREE,
         },
     )?;
-    append_stage6_output_openings(
+    let output_evals = append_stage6_output_openings(
         context,
         module,
         params,
@@ -1199,6 +1203,19 @@ fn append_stage6_batched_sumcheck<'c, 'a>(
         ram,
         instruction,
         inc,
+    )?;
+    append_stage6_output_claims(
+        context,
+        module,
+        params,
+        inputs,
+        hamming,
+        ram,
+        instruction,
+        inc,
+        &output_evals,
+        spec.inst_ra_gamma,
+        spec.inc_gamma,
     )?;
     Ok(state)
 }
@@ -1421,9 +1438,13 @@ fn append_stage6_output_openings<'c, 'a>(
     ram: (Value<'c, 'a>, Value<'c, 'a>),
     instruction: (Value<'c, 'a>, Value<'c, 'a>),
     inc: (Value<'c, 'a>, Value<'c, 'a>),
-) -> Result<(), MlirError> {
+) -> Result<Stage6OutputEvals<'c, 'a>, MlirError> {
     let mut claims = Vec::new();
     let mut claim_symbols = Vec::new();
+    let mut ram_ra = Vec::with_capacity(params.ram_d);
+    let mut instruction_ra = Vec::with_capacity(params.instruction_d);
+    let mut ram_inc = None;
+    let mut rd_inc = None;
 
     let bytecode_cycle = append_point_slice(
         context,
@@ -1576,6 +1597,7 @@ fn append_stage6_output_openings<'c, 'a>(
             index,
             ram.1,
         )?;
+        ram_ra.push(eval);
         claim_symbols.push(symbol.clone());
         claims.push(append_opening_claim(
             context,
@@ -1624,6 +1646,7 @@ fn append_stage6_output_openings<'c, 'a>(
             index,
             instruction.1,
         )?;
+        instruction_ra.push(eval);
         claim_symbols.push(symbol.clone());
         claims.push(append_opening_claim(
             context,
@@ -1651,6 +1674,11 @@ fn append_stage6_output_openings<'c, 'a>(
             index,
             inc.1,
         )?;
+        if *oracle == "RamInc" {
+            ram_inc = Some(eval);
+        } else {
+            rd_inc = Some(eval);
+        }
         claim_symbols.push(symbol.clone());
         claims.push(append_opening_claim(
             context,
@@ -1682,7 +1710,377 @@ fn append_stage6_output_openings<'c, 'a>(
         &claims,
         &["!piop.opening_batch_type"],
     )?;
-    Ok(())
+    Ok(Stage6OutputEvals {
+        hamming_weight: hamming_eval,
+        ram_ra,
+        instruction_ra,
+        ram_inc: ram_inc.ok_or_else(|| schema_error("missing stage6 RamInc output eval"))?,
+        rd_inc: rd_inc.ok_or_else(|| schema_error("missing stage6 RdInc output eval"))?,
+    })
+}
+
+#[expect(clippy::too_many_arguments)]
+fn append_stage6_output_claims<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    params: &JoltProtocolParams,
+    inputs: &Stage6OpeningInputs<'c, 'a>,
+    hamming: (Value<'c, 'a>, Value<'c, 'a>),
+    ram: (Value<'c, 'a>, Value<'c, 'a>),
+    instruction: (Value<'c, 'a>, Value<'c, 'a>),
+    inc: (Value<'c, 'a>, Value<'c, 'a>),
+    output_evals: &Stage6OutputEvals<'c, 'a>,
+    instruction_gamma: Value<'c, 'a>,
+    inc_gamma: Value<'c, 'a>,
+) -> Result<(), MlirError> {
+    append_stage6_hamming_output_claim(context, module, inputs, hamming, output_evals)?;
+    append_stage6_ram_ra_virtual_output_claim(context, module, inputs, ram, output_evals)?;
+    append_stage6_instruction_ra_virtual_output_claim(
+        context,
+        module,
+        params,
+        inputs,
+        instruction,
+        output_evals,
+        instruction_gamma,
+    )?;
+    append_stage6_inc_output_claim(context, module, inputs, inc, output_evals, inc_gamma)
+}
+
+fn append_stage6_hamming_output_claim<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    inputs: &Stage6OpeningInputs<'c, 'a>,
+    hamming: (Value<'c, 'a>, Value<'c, 'a>),
+    output_evals: &Stage6OutputEvals<'c, 'a>,
+) -> Result<(), MlirError> {
+    let eq_lookup = append_structured_polynomial_eval(
+        context,
+        module,
+        StructuredPolynomialSpec {
+            symbol: "stage6.hamming_booleanity.output.eq.LookupOutput",
+            polynomial: "eq",
+            x_point: StructuredPolynomialPointSpec::full("as_is"),
+            y_point: StructuredPolynomialPointSpec::full("reverse"),
+        },
+        hamming.0,
+        inputs.hamming_lookup_output.point,
+    )?;
+    let hamming_square = append_field_pow(
+        context,
+        module,
+        "stage6.hamming_booleanity.output.square.HammingWeight",
+        output_evals.hamming_weight,
+        2,
+    )?;
+    let neg_hamming = append_field_neg(
+        context,
+        module,
+        "stage6.hamming_booleanity.output.neg.HammingWeight",
+        output_evals.hamming_weight,
+    )?;
+    let hamming_boolean = append_field_add(
+        context,
+        module,
+        "stage6.hamming_booleanity.output.boolean",
+        hamming_square,
+        neg_hamming,
+    )?;
+    let claim = append_field_mul(
+        context,
+        module,
+        "stage6.hamming_booleanity.output.claim_expr",
+        hamming_boolean,
+        eq_lookup,
+    )?;
+    append_sumcheck_output_claim(
+        context,
+        module,
+        OutputClaimSpec {
+            symbol: "stage6.hamming_booleanity.output.claim",
+            stage: "stage6",
+            relation: "jolt.stage6.hamming_booleanity",
+        },
+        claim,
+        &[(
+            "stage6.hamming_booleanity.output.eq.LookupOutput",
+            eq_lookup,
+        )],
+    )
+}
+
+fn append_stage6_ram_ra_virtual_output_claim<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    inputs: &Stage6OpeningInputs<'c, 'a>,
+    ram: (Value<'c, 'a>, Value<'c, 'a>),
+    output_evals: &Stage6OutputEvals<'c, 'a>,
+) -> Result<(), MlirError> {
+    let eq_cycle = append_structured_polynomial_eval(
+        context,
+        module,
+        StructuredPolynomialSpec {
+            symbol: "stage6.ram_ra_virtual.output.eq.Cycle",
+            polynomial: "eq",
+            x_point: StructuredPolynomialPointSpec::full("reverse"),
+            y_point: StructuredPolynomialPointSpec::suffix("x_point", "as_is"),
+        },
+        ram.0,
+        inputs.ram_ra_virtual.point,
+    )?;
+    let ram_product = append_field_product(
+        context,
+        module,
+        "stage6.ram_ra_virtual.output.product.RamRa",
+        &output_evals.ram_ra,
+    )?;
+    let claim = append_field_mul(
+        context,
+        module,
+        "stage6.ram_ra_virtual.output.claim_expr",
+        eq_cycle,
+        ram_product,
+    )?;
+    append_sumcheck_output_claim(
+        context,
+        module,
+        OutputClaimSpec {
+            symbol: "stage6.ram_ra_virtual.output.claim",
+            stage: "stage6",
+            relation: "jolt.stage6.ram_ra_virtual",
+        },
+        claim,
+        &[("stage6.ram_ra_virtual.output.eq.Cycle", eq_cycle)],
+    )
+}
+
+fn append_stage6_instruction_ra_virtual_output_claim<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    params: &JoltProtocolParams,
+    inputs: &Stage6OpeningInputs<'c, 'a>,
+    instruction: (Value<'c, 'a>, Value<'c, 'a>),
+    output_evals: &Stage6OutputEvals<'c, 'a>,
+    gamma: Value<'c, 'a>,
+) -> Result<(), MlirError> {
+    let eq_cycle = append_structured_polynomial_eval(
+        context,
+        module,
+        StructuredPolynomialSpec {
+            symbol: "stage6.instruction_ra_virtual.output.eq.Cycle",
+            polynomial: "eq",
+            x_point: StructuredPolynomialPointSpec::full("reverse"),
+            y_point: StructuredPolynomialPointSpec::suffix("x_point", "as_is"),
+        },
+        instruction.0,
+        inputs.instruction_ra_virtual[0].point,
+    )?;
+    let committed_per_virtual = n_committed_per_virtual(params);
+    let mut virtual_terms = Vec::with_capacity(inputs.instruction_ra_virtual.len());
+    for (index, chunk) in output_evals
+        .instruction_ra
+        .chunks(committed_per_virtual)
+        .enumerate()
+    {
+        let product = append_field_product(
+            context,
+            module,
+            &format!("stage6.instruction_ra_virtual.output.product.InstructionRa_{index}"),
+            chunk,
+        )?;
+        if index == 0 {
+            virtual_terms.push(product);
+        } else {
+            let gamma_power = append_field_pow(
+                context,
+                module,
+                &format!("stage6.instruction_ra_virtual.output.gamma_pow_{index}"),
+                gamma,
+                index,
+            )?;
+            virtual_terms.push(append_field_mul(
+                context,
+                module,
+                &format!("stage6.instruction_ra_virtual.output.term.InstructionRa_{index}"),
+                gamma_power,
+                product,
+            )?);
+        }
+    }
+    let weighted_sum = append_field_sum(
+        context,
+        module,
+        "stage6.instruction_ra_virtual.output.weighted_sum",
+        &virtual_terms,
+    )?;
+    let claim = append_field_mul(
+        context,
+        module,
+        "stage6.instruction_ra_virtual.output.claim_expr",
+        eq_cycle,
+        weighted_sum,
+    )?;
+    append_sumcheck_output_claim(
+        context,
+        module,
+        OutputClaimSpec {
+            symbol: "stage6.instruction_ra_virtual.output.claim",
+            stage: "stage6",
+            relation: "jolt.stage6.instruction_ra_virtual",
+        },
+        claim,
+        &[("stage6.instruction_ra_virtual.output.eq.Cycle", eq_cycle)],
+    )
+}
+
+fn append_stage6_inc_output_claim<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    inputs: &Stage6OpeningInputs<'c, 'a>,
+    inc: (Value<'c, 'a>, Value<'c, 'a>),
+    output_evals: &Stage6OutputEvals<'c, 'a>,
+    gamma: Value<'c, 'a>,
+) -> Result<(), MlirError> {
+    let eq_ram_stage2 = append_stage6_inc_eq(
+        context,
+        module,
+        "stage6.inc_claim_reduction.output.eq.RamIncStage2",
+        inc.0,
+        inputs.ram_inc_stage2.point,
+    )?;
+    let eq_ram_stage4 = append_stage6_inc_eq(
+        context,
+        module,
+        "stage6.inc_claim_reduction.output.eq.RamIncStage4",
+        inc.0,
+        inputs.ram_inc_stage4.point,
+    )?;
+    let eq_rd_stage4 = append_stage6_inc_eq(
+        context,
+        module,
+        "stage6.inc_claim_reduction.output.eq.RdIncStage4",
+        inc.0,
+        inputs.rd_inc_stage4.point,
+    )?;
+    let eq_rd_stage5 = append_stage6_inc_eq(
+        context,
+        module,
+        "stage6.inc_claim_reduction.output.eq.RdIncStage5",
+        inc.0,
+        inputs.rd_inc_stage5.point,
+    )?;
+    let ram_stage4_term = append_field_mul(
+        context,
+        module,
+        "stage6.inc_claim_reduction.output.term.RamIncStage4",
+        gamma,
+        eq_ram_stage4,
+    )?;
+    let ram_eq_combined = append_field_add(
+        context,
+        module,
+        "stage6.inc_claim_reduction.output.eq.RamCombined",
+        eq_ram_stage2,
+        ram_stage4_term,
+    )?;
+    let ram_term = append_field_mul(
+        context,
+        module,
+        "stage6.inc_claim_reduction.output.term.RamInc",
+        output_evals.ram_inc,
+        ram_eq_combined,
+    )?;
+    let rd_stage5_term = append_field_mul(
+        context,
+        module,
+        "stage6.inc_claim_reduction.output.term.RdIncStage5",
+        gamma,
+        eq_rd_stage5,
+    )?;
+    let rd_eq_combined = append_field_add(
+        context,
+        module,
+        "stage6.inc_claim_reduction.output.eq.RdCombined",
+        eq_rd_stage4,
+        rd_stage5_term,
+    )?;
+    let rd_eval_term = append_field_mul(
+        context,
+        module,
+        "stage6.inc_claim_reduction.output.term.RdInc",
+        output_evals.rd_inc,
+        rd_eq_combined,
+    )?;
+    let gamma2 = append_field_pow(
+        context,
+        module,
+        "stage6.inc_claim_reduction.output.gamma2",
+        gamma,
+        2,
+    )?;
+    let rd_term = append_field_mul(
+        context,
+        module,
+        "stage6.inc_claim_reduction.output.term.RdWeighted",
+        gamma2,
+        rd_eval_term,
+    )?;
+    let claim = append_field_add(
+        context,
+        module,
+        "stage6.inc_claim_reduction.output.claim_expr",
+        ram_term,
+        rd_term,
+    )?;
+    append_sumcheck_output_claim(
+        context,
+        module,
+        OutputClaimSpec {
+            symbol: "stage6.inc_claim_reduction.output.claim",
+            stage: "stage6",
+            relation: "jolt.stage6.inc_claim_reduction",
+        },
+        claim,
+        &[
+            (
+                "stage6.inc_claim_reduction.output.eq.RamIncStage2",
+                eq_ram_stage2,
+            ),
+            (
+                "stage6.inc_claim_reduction.output.eq.RamIncStage4",
+                eq_ram_stage4,
+            ),
+            (
+                "stage6.inc_claim_reduction.output.eq.RdIncStage4",
+                eq_rd_stage4,
+            ),
+            (
+                "stage6.inc_claim_reduction.output.eq.RdIncStage5",
+                eq_rd_stage5,
+            ),
+        ],
+    )
+}
+
+fn append_stage6_inc_eq<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    symbol: &str,
+    instance_point: Value<'c, 'a>,
+    input_point: Value<'c, 'a>,
+) -> Result<Value<'c, 'a>, MlirError> {
+    append_structured_polynomial_eval(
+        context,
+        module,
+        StructuredPolynomialSpec {
+            symbol,
+            polynomial: "eq",
+            x_point: StructuredPolynomialPointSpec::full("reverse"),
+            y_point: StructuredPolynomialPointSpec::suffix("x_point", "as_is"),
+        },
+        instance_point,
+        input_point,
+    )
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -1778,6 +2176,23 @@ fn append_field_mul<'c, 'a>(
     append_field_binary(context, module, "field.mul", symbol, lhs, rhs)
 }
 
+fn append_field_neg<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    symbol: &str,
+    value: Value<'c, 'a>,
+) -> Result<Value<'c, 'a>, MlirError> {
+    let op = context.append_typed_op(
+        module,
+        "field.neg",
+        Some(symbol),
+        &[],
+        &[value],
+        &["!field.scalar"],
+    )?;
+    first_result(op, "field.neg")
+}
+
 fn append_field_pow<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
@@ -1813,6 +2228,30 @@ fn append_field_sum<'c, 'a>(
             &format!("{symbol_prefix}.partial{index}"),
             value,
             term,
+        )?;
+    }
+    Ok(value)
+}
+
+fn append_field_product<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    symbol_prefix: &str,
+    factors: &[Value<'c, 'a>],
+) -> Result<Value<'c, 'a>, MlirError> {
+    let Some((&first, rest)) = factors.split_first() else {
+        return Err(schema_error(format!(
+            "{symbol_prefix} requires at least one factor"
+        )));
+    };
+    let mut value = first;
+    for (index, &factor) in rest.iter().enumerate() {
+        value = append_field_mul(
+            context,
+            module,
+            &format!("{symbol_prefix}.partial{index}"),
+            value,
+            factor,
         )?;
     }
     Ok(value)
@@ -2225,6 +2664,14 @@ struct Stage6OpeningInputs<'c, 'a> {
     ram_inc_stage4: Stage6OpeningInput<'c, 'a>,
     rd_inc_stage4: Stage6OpeningInput<'c, 'a>,
     rd_inc_stage5: Stage6OpeningInput<'c, 'a>,
+}
+
+struct Stage6OutputEvals<'c, 'a> {
+    hamming_weight: Value<'c, 'a>,
+    ram_ra: Vec<Value<'c, 'a>>,
+    instruction_ra: Vec<Value<'c, 'a>>,
+    ram_inc: Value<'c, 'a>,
+    rd_inc: Value<'c, 'a>,
 }
 
 struct Stage6OpeningInput<'c, 'a> {

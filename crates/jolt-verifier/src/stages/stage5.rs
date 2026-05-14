@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
-use bolt_verifier_runtime::{batch_claims, eval_by_name, find_batch, find_plan, indexed_evals_by_prefix_any, reverse_slice, suffix_point};
-use super::jolt_relations::{identity_polynomial_eval, lt_polynomial_eval, normalize_instruction_read_raf_point, operand_polynomial_eval};
-use jolt_field::{Field, Fr, RingCore};
+use bolt_verifier_runtime::{batch_claims, eval_by_name, find_batch, find_plan, indexed_evals_by_prefix_any, reverse_slice};
+use super::jolt_relations::{identity_polynomial_eval, normalize_instruction_read_raf_point, operand_polynomial_eval};
+use jolt_field::{Field, Fr};
 use jolt_lookup_tables::LookupTableKind;
 use jolt_poly::EqPolynomial;
 use jolt_sumcheck::SumcheckError;
@@ -18,6 +18,8 @@ pub type Stage5CpuProgramPlan = bolt_verifier_runtime::StageProgramPlanNoPointZe
 pub type Stage5SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stage5RelationKind>;
 pub type Stage5SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage5RelationKind>;
 pub type Stage5SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage5RelationKind>;
+pub type Stage5SumcheckOutputClaimPlan = bolt_verifier_runtime::SumcheckOutputClaimPlan<Stage5RelationKind>;
+pub type Stage5StructuredPolynomialEvalPlan = bolt_verifier_runtime::StructuredPolynomialEvalPlan;
 
 pub use super::jolt_relations::JoltRelationKind as Stage5RelationKind;
 pub use bolt_verifier_runtime::{
@@ -33,6 +35,11 @@ pub use bolt_verifier_runtime::{
     ProgramStepPlan as Stage5ProgramStepPlan, StageParams as Stage5Params,
     SumcheckBatchPlan as Stage5SumcheckBatchPlan,
     SumcheckEvalPlan as Stage5SumcheckEvalPlan,
+    StructuredPolynomialPointLength as Stage5StructuredPolynomialPointLength,
+    StructuredPolynomialPointOrder as Stage5StructuredPolynomialPointOrder,
+    StructuredPolynomialPointPlan as Stage5StructuredPolynomialPointPlan,
+    StructuredPolynomialPointSegment as Stage5StructuredPolynomialPointSegment,
+    StructuredPolynomialKind as Stage5StructuredPolynomialKind,
     TranscriptAbsorbBytesPlan as Stage5TranscriptAbsorbBytesPlan,
     TranscriptSqueezeKind as Stage5TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage5TranscriptSqueezePlan,
@@ -98,6 +105,13 @@ pub const STAGE5_FIELD_EXPRS: &[Stage5FieldExprPlan] = &[
     Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.term.RamRaValCheck", kind: Stage5FieldExprKind::Mul, operands: &["stage5.ram_ra_claim_reduction.gamma2", "stage5.input.stage4.ram_val_check.RamRa"] },
     Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.partial.RafReadWrite", kind: Stage5FieldExprKind::Add, operands: &["stage5.input.stage2.ram_raf.RamRa", "stage5.ram_ra_claim_reduction.term.RamRaReadWrite"] },
     Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.claim_expr", kind: Stage5FieldExprKind::Add, operands: &["stage5.ram_ra_claim_reduction.partial.RafReadWrite", "stage5.ram_ra_claim_reduction.term.RamRaValCheck"] },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.output.term.ReadWrite", kind: Stage5FieldExprKind::Mul, operands: &["stage5.ram_ra_claim_reduction.gamma", "stage5.ram_ra_claim_reduction.output.eq.ReadWrite"] },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.output.term.ValCheck", kind: Stage5FieldExprKind::Mul, operands: &["stage5.ram_ra_claim_reduction.gamma2", "stage5.ram_ra_claim_reduction.output.eq.ValCheck"] },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.output.partial.RafReadWrite", kind: Stage5FieldExprKind::Add, operands: &["stage5.ram_ra_claim_reduction.output.eq.Raf", "stage5.ram_ra_claim_reduction.output.term.ReadWrite"] },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.output.eq_combined", kind: Stage5FieldExprKind::Add, operands: &["stage5.ram_ra_claim_reduction.output.partial.RafReadWrite", "stage5.ram_ra_claim_reduction.output.term.ValCheck"] },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.output.claim_expr", kind: Stage5FieldExprKind::Mul, operands: &["stage5.ram_ra_claim_reduction.output.eq_combined", "stage5.ram_ra_claim_reduction.eval.RamRa"] },
+    Stage5FieldExprPlan { symbol: "stage5.registers_val_evaluation.output.product.RdIncRdWa", kind: Stage5FieldExprKind::Mul, operands: &["stage5.registers_val_evaluation.eval.RdInc", "stage5.registers_val_evaluation.eval.RdWa"] },
+    Stage5FieldExprPlan { symbol: "stage5.registers_val_evaluation.output.claim_expr", kind: Stage5FieldExprKind::Mul, operands: &["stage5.registers_val_evaluation.output.product.RdIncRdWa", "stage5.registers_val_evaluation.output.lt.RegistersValCycle"] },
 ];
 pub const STAGE5_KERNELS: &[Stage5KernelPlan] = &[
 
@@ -269,6 +283,21 @@ pub const STAGE5_OPENING_EQUALITIES: &[Stage5OpeningClaimEqualityPlan] = &[
 pub const STAGE5_OPENING_BATCHES: &[Stage5OpeningBatchPlan] = &[
     Stage5OpeningBatchPlan { symbol: "stage5.openings", stage: "stage5", proof_slot: "stage5.openings", policy: "jolt_stage5_output_order", count: 53, ordered_claims: &["stage5.instruction_read_raf.opening.LookupTableFlag_0", "stage5.instruction_read_raf.opening.LookupTableFlag_1", "stage5.instruction_read_raf.opening.LookupTableFlag_2", "stage5.instruction_read_raf.opening.LookupTableFlag_3", "stage5.instruction_read_raf.opening.LookupTableFlag_4", "stage5.instruction_read_raf.opening.LookupTableFlag_5", "stage5.instruction_read_raf.opening.LookupTableFlag_6", "stage5.instruction_read_raf.opening.LookupTableFlag_7", "stage5.instruction_read_raf.opening.LookupTableFlag_8", "stage5.instruction_read_raf.opening.LookupTableFlag_9", "stage5.instruction_read_raf.opening.LookupTableFlag_10", "stage5.instruction_read_raf.opening.LookupTableFlag_11", "stage5.instruction_read_raf.opening.LookupTableFlag_12", "stage5.instruction_read_raf.opening.LookupTableFlag_13", "stage5.instruction_read_raf.opening.LookupTableFlag_14", "stage5.instruction_read_raf.opening.LookupTableFlag_15", "stage5.instruction_read_raf.opening.LookupTableFlag_16", "stage5.instruction_read_raf.opening.LookupTableFlag_17", "stage5.instruction_read_raf.opening.LookupTableFlag_18", "stage5.instruction_read_raf.opening.LookupTableFlag_19", "stage5.instruction_read_raf.opening.LookupTableFlag_20", "stage5.instruction_read_raf.opening.LookupTableFlag_21", "stage5.instruction_read_raf.opening.LookupTableFlag_22", "stage5.instruction_read_raf.opening.LookupTableFlag_23", "stage5.instruction_read_raf.opening.LookupTableFlag_24", "stage5.instruction_read_raf.opening.LookupTableFlag_25", "stage5.instruction_read_raf.opening.LookupTableFlag_26", "stage5.instruction_read_raf.opening.LookupTableFlag_27", "stage5.instruction_read_raf.opening.LookupTableFlag_28", "stage5.instruction_read_raf.opening.LookupTableFlag_29", "stage5.instruction_read_raf.opening.LookupTableFlag_30", "stage5.instruction_read_raf.opening.LookupTableFlag_31", "stage5.instruction_read_raf.opening.LookupTableFlag_32", "stage5.instruction_read_raf.opening.LookupTableFlag_33", "stage5.instruction_read_raf.opening.LookupTableFlag_34", "stage5.instruction_read_raf.opening.LookupTableFlag_35", "stage5.instruction_read_raf.opening.LookupTableFlag_36", "stage5.instruction_read_raf.opening.LookupTableFlag_37", "stage5.instruction_read_raf.opening.LookupTableFlag_38", "stage5.instruction_read_raf.opening.LookupTableFlag_39", "stage5.instruction_read_raf.opening.LookupTableFlag_40", "stage5.instruction_read_raf.opening.InstructionRa_0", "stage5.instruction_read_raf.opening.InstructionRa_1", "stage5.instruction_read_raf.opening.InstructionRa_2", "stage5.instruction_read_raf.opening.InstructionRa_3", "stage5.instruction_read_raf.opening.InstructionRa_4", "stage5.instruction_read_raf.opening.InstructionRa_5", "stage5.instruction_read_raf.opening.InstructionRa_6", "stage5.instruction_read_raf.opening.InstructionRa_7", "stage5.instruction_read_raf.opening.InstructionRafFlag", "stage5.ram_ra_claim_reduction.opening.RamRa", "stage5.registers_val_evaluation.opening.RdInc", "stage5.registers_val_evaluation.opening.RdWa"], claim_operands: &["stage5.instruction_read_raf.opening.LookupTableFlag_0", "stage5.instruction_read_raf.opening.LookupTableFlag_1", "stage5.instruction_read_raf.opening.LookupTableFlag_2", "stage5.instruction_read_raf.opening.LookupTableFlag_3", "stage5.instruction_read_raf.opening.LookupTableFlag_4", "stage5.instruction_read_raf.opening.LookupTableFlag_5", "stage5.instruction_read_raf.opening.LookupTableFlag_6", "stage5.instruction_read_raf.opening.LookupTableFlag_7", "stage5.instruction_read_raf.opening.LookupTableFlag_8", "stage5.instruction_read_raf.opening.LookupTableFlag_9", "stage5.instruction_read_raf.opening.LookupTableFlag_10", "stage5.instruction_read_raf.opening.LookupTableFlag_11", "stage5.instruction_read_raf.opening.LookupTableFlag_12", "stage5.instruction_read_raf.opening.LookupTableFlag_13", "stage5.instruction_read_raf.opening.LookupTableFlag_14", "stage5.instruction_read_raf.opening.LookupTableFlag_15", "stage5.instruction_read_raf.opening.LookupTableFlag_16", "stage5.instruction_read_raf.opening.LookupTableFlag_17", "stage5.instruction_read_raf.opening.LookupTableFlag_18", "stage5.instruction_read_raf.opening.LookupTableFlag_19", "stage5.instruction_read_raf.opening.LookupTableFlag_20", "stage5.instruction_read_raf.opening.LookupTableFlag_21", "stage5.instruction_read_raf.opening.LookupTableFlag_22", "stage5.instruction_read_raf.opening.LookupTableFlag_23", "stage5.instruction_read_raf.opening.LookupTableFlag_24", "stage5.instruction_read_raf.opening.LookupTableFlag_25", "stage5.instruction_read_raf.opening.LookupTableFlag_26", "stage5.instruction_read_raf.opening.LookupTableFlag_27", "stage5.instruction_read_raf.opening.LookupTableFlag_28", "stage5.instruction_read_raf.opening.LookupTableFlag_29", "stage5.instruction_read_raf.opening.LookupTableFlag_30", "stage5.instruction_read_raf.opening.LookupTableFlag_31", "stage5.instruction_read_raf.opening.LookupTableFlag_32", "stage5.instruction_read_raf.opening.LookupTableFlag_33", "stage5.instruction_read_raf.opening.LookupTableFlag_34", "stage5.instruction_read_raf.opening.LookupTableFlag_35", "stage5.instruction_read_raf.opening.LookupTableFlag_36", "stage5.instruction_read_raf.opening.LookupTableFlag_37", "stage5.instruction_read_raf.opening.LookupTableFlag_38", "stage5.instruction_read_raf.opening.LookupTableFlag_39", "stage5.instruction_read_raf.opening.LookupTableFlag_40", "stage5.instruction_read_raf.opening.InstructionRa_0", "stage5.instruction_read_raf.opening.InstructionRa_1", "stage5.instruction_read_raf.opening.InstructionRa_2", "stage5.instruction_read_raf.opening.InstructionRa_3", "stage5.instruction_read_raf.opening.InstructionRa_4", "stage5.instruction_read_raf.opening.InstructionRa_5", "stage5.instruction_read_raf.opening.InstructionRa_6", "stage5.instruction_read_raf.opening.InstructionRa_7", "stage5.instruction_read_raf.opening.InstructionRafFlag", "stage5.ram_ra_claim_reduction.opening.RamRa", "stage5.registers_val_evaluation.opening.RdInc", "stage5.registers_val_evaluation.opening.RdWa"] },
 ];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_0_VALUES: &[Stage5StructuredPolynomialEvalPlan] = &[
+    Stage5StructuredPolynomialEvalPlan { symbol: "stage5.ram_ra_claim_reduction.output.eq.Raf", polynomial: Stage5StructuredPolynomialKind::Eq, x_point: Stage5StructuredPolynomialPointPlan { source: "stage5.ram_ra_claim_reduction.instance", segment: Stage5StructuredPolynomialPointSegment::Full, length: Stage5StructuredPolynomialPointLength::Full, order: Stage5StructuredPolynomialPointOrder::Reverse }, y_point: Stage5StructuredPolynomialPointPlan { source: "stage5.input.stage2.ram_raf.RamRa", segment: Stage5StructuredPolynomialPointSegment::Suffix, length: Stage5StructuredPolynomialPointLength::XPoint, order: Stage5StructuredPolynomialPointOrder::AsIs } },
+    Stage5StructuredPolynomialEvalPlan { symbol: "stage5.ram_ra_claim_reduction.output.eq.ReadWrite", polynomial: Stage5StructuredPolynomialKind::Eq, x_point: Stage5StructuredPolynomialPointPlan { source: "stage5.ram_ra_claim_reduction.instance", segment: Stage5StructuredPolynomialPointSegment::Full, length: Stage5StructuredPolynomialPointLength::Full, order: Stage5StructuredPolynomialPointOrder::Reverse }, y_point: Stage5StructuredPolynomialPointPlan { source: "stage5.input.stage2.ram_read_write.RamRa", segment: Stage5StructuredPolynomialPointSegment::Suffix, length: Stage5StructuredPolynomialPointLength::XPoint, order: Stage5StructuredPolynomialPointOrder::AsIs } },
+    Stage5StructuredPolynomialEvalPlan { symbol: "stage5.ram_ra_claim_reduction.output.eq.ValCheck", polynomial: Stage5StructuredPolynomialKind::Eq, x_point: Stage5StructuredPolynomialPointPlan { source: "stage5.ram_ra_claim_reduction.instance", segment: Stage5StructuredPolynomialPointSegment::Full, length: Stage5StructuredPolynomialPointLength::Full, order: Stage5StructuredPolynomialPointOrder::Reverse }, y_point: Stage5StructuredPolynomialPointPlan { source: "stage5.input.stage4.ram_val_check.RamRa", segment: Stage5StructuredPolynomialPointSegment::Suffix, length: Stage5StructuredPolynomialPointLength::XPoint, order: Stage5StructuredPolynomialPointOrder::AsIs } },
+];
+
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_1_VALUES: &[Stage5StructuredPolynomialEvalPlan] = &[
+    Stage5StructuredPolynomialEvalPlan { symbol: "stage5.registers_val_evaluation.output.lt.RegistersValCycle", polynomial: Stage5StructuredPolynomialKind::Lt, x_point: Stage5StructuredPolynomialPointPlan { source: "stage5.registers_val_evaluation.instance", segment: Stage5StructuredPolynomialPointSegment::Full, length: Stage5StructuredPolynomialPointLength::Full, order: Stage5StructuredPolynomialPointOrder::Reverse }, y_point: Stage5StructuredPolynomialPointPlan { source: "stage5.input.stage4.registers.RegistersVal", segment: Stage5StructuredPolynomialPointSegment::Suffix, length: Stage5StructuredPolynomialPointLength::XPoint, order: Stage5StructuredPolynomialPointOrder::AsIs } },
+];
+
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIMS: &[Stage5SumcheckOutputClaimPlan] = &[
+    Stage5SumcheckOutputClaimPlan { relation: Stage5RelationKind::Stage5RamRaClaimReduction, polynomial_evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_0_VALUES, claim_value: "stage5.ram_ra_claim_reduction.output.claim_expr" },
+    Stage5SumcheckOutputClaimPlan { relation: Stage5RelationKind::Stage5RegistersValEvaluation, polynomial_evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_1_VALUES, claim_value: "stage5.registers_val_evaluation.output.claim_expr" },
+];
+
 pub const STAGE5_PROGRAM: Stage5VerifierProgramPlan = Stage5CpuProgramPlan {
     role: "verifier",
     params: STAGE5_PARAMS,
@@ -284,7 +313,7 @@ pub const STAGE5_PROGRAM: Stage5VerifierProgramPlan = Stage5CpuProgramPlan {
     drivers: STAGE5_SUMCHECK_DRIVERS,
     instance_results: STAGE5_SUMCHECK_INSTANCE_RESULTS,
     evals: STAGE5_SUMCHECK_EVALS,
-    output_claims: &[],
+    output_claims: STAGE5_SUMCHECK_OUTPUT_CLAIMS,
     point_slices: STAGE5_POINT_SLICES,
     point_concats: STAGE5_POINT_CONCATS,
     opening_claims: STAGE5_OPENING_CLAIMS,
@@ -548,10 +577,38 @@ fn expected_batched_output_claim(
                 expected_instruction_read_raf(store, evals, local_point)?
             }
             Stage5RelationKind::Stage5RamRaClaimReduction => {
-                expected_ram_ra_claim_reduction(store, evals, local_point)?
+                let output_claim = program
+                    .output_claims
+                    .iter()
+                    .find(|output_claim| output_claim.relation == instance.relation)
+                    .ok_or(VerifyStage5Error::UnsupportedRelation {
+                        relation: instance.relation,
+                    })?;
+                bolt_verifier_runtime::evaluate_sumcheck_output_claim(
+                    output_claim,
+                    program.field_exprs,
+                    store,
+                    instance.symbol,
+                    evals,
+                    local_point,
+                )?
             }
             Stage5RelationKind::Stage5RegistersValEvaluation => {
-                expected_registers_val_evaluation(store, evals, local_point)?
+                let output_claim = program
+                    .output_claims
+                    .iter()
+                    .find(|output_claim| output_claim.relation == instance.relation)
+                    .ok_or(VerifyStage5Error::UnsupportedRelation {
+                        relation: instance.relation,
+                    })?;
+                bolt_verifier_runtime::evaluate_sumcheck_output_claim(
+                    output_claim,
+                    program.field_exprs,
+                    store,
+                    instance.symbol,
+                    evals,
+                    local_point,
+                )?
             }
             relation => return Err(VerifyStage5Error::UnsupportedRelation { relation }),
         };
@@ -616,51 +673,4 @@ fn expected_instruction_read_raf(
         * (left_operand_eval + gamma * right_operand_eval)
         + raf_flag_claim * gamma * identity_poly_eval;
     Ok(eq_eval_r_reduction * ra_claim * (val_claim + gamma * raf_claim))
-}
-
-fn expected_ram_ra_claim_reduction(
-    store: &bolt_verifier_runtime::ValueStore<Fr>,
-    evals: &[Stage5NamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage5Error> {
-    let r_cycle_reduced = reverse_slice(local_point);
-    let r_cycle_raf = suffix_point(
-        bolt_verifier_runtime::store_point(store, "stage5.input.stage2.ram_raf.RamRa")?,
-        r_cycle_reduced.len(),
-        "stage5.input.stage2.ram_raf.RamRa",
-    )?;
-    let r_cycle_rw = suffix_point(
-        bolt_verifier_runtime::store_point(store, "stage5.input.stage2.ram_read_write.RamRa")?,
-        r_cycle_reduced.len(),
-        "stage5.input.stage2.ram_read_write.RamRa",
-    )?;
-    let r_cycle_val = suffix_point(
-        bolt_verifier_runtime::store_point(store, "stage5.input.stage4.ram_val_check.RamRa")?,
-        r_cycle_reduced.len(),
-        "stage5.input.stage4.ram_val_check.RamRa",
-    )?;
-    let gamma = bolt_verifier_runtime::store_scalar(store, "stage5.ram_ra_claim_reduction.gamma")?;
-    let eq_combined = EqPolynomial::<Fr>::mle(r_cycle_raf, &r_cycle_reduced)
-        + gamma * EqPolynomial::<Fr>::mle(r_cycle_rw, &r_cycle_reduced)
-        + gamma.square() * EqPolynomial::<Fr>::mle(r_cycle_val, &r_cycle_reduced);
-    let ram_ra = eval_by_name(evals, "stage5.ram_ra_claim_reduction.eval.RamRa")?;
-    Ok(eq_combined * ram_ra)
-}
-
-fn expected_registers_val_evaluation(
-    store: &bolt_verifier_runtime::ValueStore<Fr>,
-    evals: &[Stage5NamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage5Error> {
-    let registers_val_point = bolt_verifier_runtime::store_point(store, "stage5.input.stage4.registers.RegistersVal")?;
-    let r_cycle = suffix_point(
-        registers_val_point,
-        local_point.len(),
-        "stage5.input.stage4.registers.RegistersVal",
-    )?;
-    let r_reduced = reverse_slice(local_point);
-    let lt_eval = lt_polynomial_eval(&r_reduced, r_cycle);
-    let rd_inc = eval_by_name(evals, "stage5.registers_val_evaluation.eval.RdInc")?;
-    let rd_wa = eval_by_name(evals, "stage5.registers_val_evaluation.eval.RdWa")?;
-    Ok(rd_inc * rd_wa * lt_eval)
 }

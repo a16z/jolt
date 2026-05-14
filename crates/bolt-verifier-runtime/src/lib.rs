@@ -446,6 +446,7 @@ pub struct StageProgramPlan<R: ProtocolRelation> {
     pub drivers: &'static [SumcheckDriverPlan<R>],
     pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
     pub evals: &'static [SumcheckEvalPlan],
+    pub output_claims: &'static [SumcheckOutputClaimPlan<R>],
     pub point_zeros: &'static [PointZeroPlan],
     pub point_slices: &'static [PointSlicePlan],
     pub point_concats: &'static [PointConcatPlan],

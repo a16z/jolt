@@ -25,5 +25,7 @@ define_stage_adapter!(
     Stage6OpeningClaimPlan,
     Stage6OpeningClaimEqualityPlan,
     Stage6OpeningBatchPlan,
-    point_zero = Stage6PointZeroPlan
+    point_zero = Stage6PointZeroPlan,
+    output_claims = Stage6SumcheckOutputClaimPlan,
+    output_values = Stage6StructuredPolynomialEvalPlan
 );

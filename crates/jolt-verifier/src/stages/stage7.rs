@@ -322,6 +322,7 @@ pub const STAGE7_PROGRAM: Stage7VerifierProgramPlan = Stage7CpuProgramPlan {
     drivers: STAGE7_SUMCHECK_DRIVERS,
     instance_results: STAGE7_SUMCHECK_INSTANCE_RESULTS,
     evals: STAGE7_SUMCHECK_EVALS,
+    output_claims: &[],
     point_zeros: STAGE7_POINT_ZEROS,
     point_slices: STAGE7_POINT_SLICES,
     point_concats: STAGE7_POINT_CONCATS,

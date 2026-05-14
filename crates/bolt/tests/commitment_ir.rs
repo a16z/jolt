@@ -816,6 +816,12 @@ fn jolt_stage5_protocol_defines_value_lookup_reduction_flow() {
     assert!(text.contains("@stage5.ram_ra_claim_reduction.opening.RamRa"));
     assert!(text.contains("@stage5.registers_val_evaluation.opening.RdInc"));
     assert!(text.contains("@stage5.registers_val_evaluation.opening.RdWa"));
+    assert!(text.contains("sym_name = \"stage5.ram_ra_claim_reduction.output.eq.Raf\""));
+    assert!(text.contains("sym_name = \"stage5.ram_ra_claim_reduction.output.claim\""));
+    assert!(
+        text.contains("sym_name = \"stage5.registers_val_evaluation.output.lt.RegistersValCycle\"")
+    );
+    assert!(text.contains("sym_name = \"stage5.registers_val_evaluation.output.claim\""));
     assert!(!text.contains("kernel = @"));
     assert!(!text.contains("\"compute."));
 }
@@ -868,6 +874,8 @@ fn jolt_stage5_lowers_to_compute_and_cpu_role_ir() {
     assert!(prover_kernel_text.contains("kernel = @jolt.cpu.stage5.batched"));
     assert!(prover_cpu_text.contains("kernel = @jolt.cpu.stage5.batched"));
     assert!(prover_cpu_text.contains("point_order = \"instruction_read_raf\""));
+    assert!(verifier_cpu_text.contains("\"cpu.structured_polynomial_eval\""));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_output_claim\""));
     assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify_claim\""));
     assert!(!verifier_kernel_text.contains("kernel = @"));
     assert!(!verifier_cpu_text.contains("kernel = @"));
@@ -908,6 +916,11 @@ fn jolt_stage6_protocol_defines_bytecode_booleanity_and_virtualization_flow() {
     assert!(text.contains("@stage6.instruction_ra_virtual.opening.InstructionRa_0"));
     assert!(text.contains("@stage6.inc_claim_reduction.opening.RamInc"));
     assert!(text.contains("@stage6.inc_claim_reduction.opening.RdInc"));
+    assert!(text.contains("sym_name = \"stage6.hamming_booleanity.output.claim\""));
+    assert!(text.contains("sym_name = \"stage6.ram_ra_virtual.output.claim\""));
+    assert!(text.contains("sym_name = \"stage6.instruction_ra_virtual.output.claim\""));
+    assert!(text.contains("sym_name = \"stage6.inc_claim_reduction.output.claim\""));
+    assert!(text.contains("sym_name = \"stage6.inc_claim_reduction.output.eq.RdIncStage5\""));
     assert!(!text.contains("kernel = @"));
     assert!(!text.contains("\"compute."));
 }
@@ -961,6 +974,8 @@ fn jolt_stage6_lowers_to_compute_and_cpu_role_ir() {
     assert!(prover_cpu_text.contains("kernel = @jolt.cpu.stage6.batched"));
     assert!(prover_cpu_text.contains("point_order = \"bytecode_read_raf\""));
     assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify_claim\""));
+    assert!(verifier_cpu_text.contains("\"cpu.structured_polynomial_eval\""));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_output_claim\""));
     assert!(!verifier_kernel_text.contains("kernel = @"));
     assert!(!verifier_cpu_text.contains("kernel = @"));
 }
@@ -1349,6 +1364,10 @@ fn stage5_rust_targets_extract_and_compile() {
         prover_program.evals.len(),
         params.lookup_table_count + params.instruction_ra_virtual_d + 4
     );
+    assert_eq!(prover_program.output_values.len(), 4);
+    assert!(prover_program.output_claims.is_empty());
+    assert_eq!(verifier_program.output_values.len(), 4);
+    assert_eq!(verifier_program.output_claims.len(), 2);
     assert_eq!(
         prover_program.point_slices.len(),
         params.instruction_ra_virtual_d + 3
@@ -1407,12 +1426,24 @@ fn stage5_rust_targets_extract_and_compile() {
     assert!(verifier_source
         .source
         .contains("use jolt_lookup_tables::LookupTableKind"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("expected_ram_ra_claim_reduction"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("expected_registers_val_evaluation"));
+    assert!(verifier_source
+        .source
+        .contains("Stage5SumcheckOutputClaimPlan"));
+    assert!(verifier_source
+        .source
+        .contains("stage5.ram_ra_claim_reduction.output.eq.ReadWrite"));
+    assert!(verifier_source
+        .source
+        .contains("stage5.registers_val_evaluation.output.lt.RegistersValCycle"));
+    assert!(verifier_source
+        .source
+        .contains("bolt_verifier_runtime::evaluate_sumcheck_output_claim"));
     assert!(verifier_source
         .source
         .contains("Stage5RelationKind::Stage5RamRaClaimReduction"));
@@ -1473,6 +1504,10 @@ fn stage6_rust_targets_extract_and_compile() {
             + params.instruction_d
             + 2
     );
+    assert_eq!(prover_program.output_values.len(), 7);
+    assert!(prover_program.output_claims.is_empty());
+    assert_eq!(verifier_program.output_values.len(), 7);
+    assert_eq!(verifier_program.output_claims.len(), 4);
     assert_eq!(prover_program.point_zeros.len(), 1);
     assert_eq!(
         prover_program.point_slices.len(),
@@ -1551,22 +1586,34 @@ fn stage6_rust_targets_extract_and_compile() {
         .source
         .contains("stage6.bytecode_read_raf.data"));
     assert!(verifier_source.source.contains("expected_booleanity"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("expected_hamming_booleanity"));
+    assert!(verifier_source
+        .source
+        .contains("expected_plan_output_claim"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.hamming_booleanity.output.eq.LookupOutput"));
     assert!(verifier_source
         .source
         .contains("Stage6RelationKind::Stage6IncClaimReduction"));
     assert!(verifier_source
         .source
         .contains("stage6.input.stage1.LookupOutput"));
-    assert!(verifier_source.source.contains("expected_ram_ra_virtual"));
-    assert!(verifier_source
+    assert!(!verifier_source.source.contains("expected_ram_ra_virtual"));
+    assert!(!verifier_source
         .source
         .contains("expected_instruction_ra_virtual"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("expected_inc_claim_reduction"));
+    assert!(verifier_source
+        .source
+        .contains("Stage6SumcheckOutputClaimPlan"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.inc_claim_reduction.output.eq.RdIncStage5"));
     assert!(verifier_source
         .source
         .contains("stage6.bytecode_read_raf.eval.BytecodeRa_0"));

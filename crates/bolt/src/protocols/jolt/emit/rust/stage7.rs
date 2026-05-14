@@ -1271,6 +1271,11 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
         source.push_str(&self.emit_sumcheck_batch_constants());
         source.push_str(&self.emit_sumcheck_driver_constants()?);
         source.push_str(&self.emit_tail_constants()?);
+        let output_claims_field = if self.role == Role::Verifier {
+            "    output_claims: &[],\n"
+        } else {
+            ""
+        };
         push_format(
             &mut source,
             format_args!(
@@ -1289,6 +1294,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
                  \x20   drivers: STAGE7_SUMCHECK_DRIVERS,\n\
                  \x20   instance_results: STAGE7_SUMCHECK_INSTANCE_RESULTS,\n\
                  \x20   evals: STAGE7_SUMCHECK_EVALS,\n\
+                 {output_claims_field}\
                  \x20   point_zeros: STAGE7_POINT_ZEROS,\n\
                  \x20   point_slices: STAGE7_POINT_SLICES,\n\
                  \x20   point_concats: STAGE7_POINT_CONCATS,\n\

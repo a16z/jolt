@@ -25,5 +25,6 @@ define_stage_adapter!(
     Stage7OpeningClaimPlan,
     Stage7OpeningClaimEqualityPlan,
     Stage7OpeningBatchPlan,
-    point_zero = Stage7PointZeroPlan
+    point_zero = Stage7PointZeroPlan,
+    empty_output_claims = yes
 );

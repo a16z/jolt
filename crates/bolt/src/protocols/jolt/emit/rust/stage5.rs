@@ -29,6 +29,8 @@ pub struct Stage5CpuProgram {
     pub drivers: Vec<Stage5SumcheckDriverPlan>,
     pub instance_results: Vec<Stage5SumcheckInstanceResultPlan>,
     pub evals: Vec<Stage5SumcheckEvalPlan>,
+    pub output_values: Vec<Stage5StructuredPolynomialEvalPlan>,
+    pub output_claims: Vec<Stage5SumcheckOutputClaimPlan>,
     pub point_slices: Vec<Stage5PointSlicePlan>,
     pub point_concats: Vec<Stage5PointConcatPlan>,
     pub opening_claims: Vec<Stage5OpeningClaimPlan>,
@@ -168,6 +170,37 @@ pub struct Stage5SumcheckEvalPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage5StructuredPolynomialPointPlan {
+    pub source: String,
+    pub segment: String,
+    pub length: String,
+    pub order: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage5StructuredPolynomialEvalPlan {
+    pub symbol: String,
+    pub polynomial: String,
+    pub x_point: Stage5StructuredPolynomialPointPlan,
+    pub y_point: Stage5StructuredPolynomialPointPlan,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage5SumcheckOutputClaimPlan {
+    pub relation: String,
+    pub polynomial_evals: Vec<Stage5StructuredPolynomialEvalPlan>,
+    pub claim_value: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Stage5SumcheckOutputClaimAst {
+    relation: String,
+    polynomial_evals: Vec<String>,
+    polynomial_eval_operands: Vec<String>,
+    claim_value: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage5PointSlicePlan {
     pub symbol: String,
     pub source: String,
@@ -245,6 +278,8 @@ impl Stage5CpuProgram {
         let mut drivers = Vec::new();
         let mut instance_results = Vec::new();
         let mut evals = Vec::new();
+        let mut output_values = Vec::new();
+        let mut output_claim_asts = Vec::new();
         let mut point_slices = Vec::new();
         let mut point_concats = Vec::new();
         let mut opening_claims = Vec::new();
@@ -456,6 +491,32 @@ impl Stage5CpuProgram {
                         oracle: symbol_attr(op, "oracle")?,
                     });
                 }
+                "cpu.structured_polynomial_eval" => {
+                    output_values.push(Stage5StructuredPolynomialEvalPlan {
+                        symbol: string_attr(op, "sym_name")?,
+                        polynomial: string_attr(op, "polynomial")?,
+                        x_point: Stage5StructuredPolynomialPointPlan {
+                            source: operand_symbol(op, 0)?,
+                            segment: string_attr(op, "x_point_segment")?,
+                            length: string_attr(op, "x_point_length")?,
+                            order: string_attr(op, "x_point_order")?,
+                        },
+                        y_point: Stage5StructuredPolynomialPointPlan {
+                            source: operand_symbol(op, 1)?,
+                            segment: string_attr(op, "y_point_segment")?,
+                            length: string_attr(op, "y_point_length")?,
+                            order: string_attr(op, "y_point_order")?,
+                        },
+                    });
+                }
+                "cpu.sumcheck_output_claim" => {
+                    output_claim_asts.push(Stage5SumcheckOutputClaimAst {
+                        relation: symbol_attr(op, "relation")?,
+                        claim_value: operand_symbol(op, 0)?,
+                        polynomial_evals: symbol_array_attr(op, "polynomial_evals")?,
+                        polynomial_eval_operands: operand_symbols(op, 1)?,
+                    });
+                }
                 "cpu.point_slice" => {
                     point_slices.push(Stage5PointSlicePlan {
                         symbol: string_attr(op, "sym_name")?,
@@ -507,11 +568,21 @@ impl Stage5CpuProgram {
             }
         }
 
+        let role = module
+            .role()
+            .ok_or_else(|| EmitError::new("missing cpu party role"))?;
+        if role == Role::Prover {
+            prune_prover_output_field_exprs(&mut field_exprs, &claims, &output_claim_asts);
+        }
+        let output_claims = if role == Role::Verifier {
+            resolve_stage5_output_claims(&output_values, output_claim_asts)?
+        } else {
+            Vec::new()
+        };
+
         Ok(Self {
             params: params.ok_or_else(|| EmitError::new("missing cpu.params"))?,
-            role: module
-                .role()
-                .ok_or_else(|| EmitError::new("missing cpu party role"))?,
+            role,
             steps,
             transcript_squeezes,
             transcript_absorb_bytes,
@@ -524,6 +595,8 @@ impl Stage5CpuProgram {
             drivers,
             instance_results,
             evals,
+            output_values,
+            output_claims,
             point_slices,
             point_concats,
             opening_claims,
@@ -545,6 +618,9 @@ impl Stage5CpuProgram {
                 self.verify_prover_driver_bindings()?;
             }
             Role::Verifier => self.verify_verifier_driver_bindings()?,
+        }
+        if self.role == Role::Verifier {
+            self.verify_output_claims()?;
         }
         self.verify_opening_flow()
     }
@@ -620,6 +696,9 @@ impl Stage5CpuProgram {
                 .iter()
                 .filter(|squeeze| matches!(squeeze.kind.as_str(), "challenge_scalar" | "scalar"))
                 .map(|squeeze| &squeeze.symbol),
+        ));
+        values.extend(symbols(
+            self.output_values.iter().map(|value| &value.symbol),
         ));
         values.extend(symbols(self.field_exprs.iter().map(|expr| &expr.symbol)));
         values.extend(symbols(self.evals.iter().map(|eval| &eval.symbol)));
@@ -799,6 +878,75 @@ impl Stage5CpuProgram {
         Ok(())
     }
 
+    fn verify_output_claims(&self) -> Result<(), EmitError> {
+        let relations = symbols(
+            self.instance_results
+                .iter()
+                .map(|instance| &instance.relation),
+        );
+        let field_values = self.field_value_symbols();
+        let mut point_values = symbols(
+            self.instance_results
+                .iter()
+                .map(|instance| &instance.symbol),
+        );
+        point_values.extend(symbols(
+            self.opening_inputs.iter().map(|input| &input.symbol),
+        ));
+        point_values.extend(symbols(self.point_slices.iter().map(|slice| &slice.symbol)));
+        point_values.extend(symbols(
+            self.point_concats.iter().map(|concat| &concat.symbol),
+        ));
+        for polynomial_eval in &self.output_values {
+            if !point_values.contains(&polynomial_eval.x_point.source) {
+                return Err(EmitError::new(format!(
+                    "stage5 structured polynomial eval @{} references missing x-point @{}",
+                    polynomial_eval.symbol, polynomial_eval.x_point.source
+                )));
+            }
+            if !point_values.contains(&polynomial_eval.y_point.source) {
+                return Err(EmitError::new(format!(
+                    "stage5 structured polynomial eval @{} references missing y-point @{}",
+                    polynomial_eval.symbol, polynomial_eval.y_point.source
+                )));
+            }
+            if !matches!(
+                polynomial_eval.polynomial.as_str(),
+                "eq" | "eq_plus_one" | "lt"
+            ) {
+                return Err(EmitError::new(format!(
+                    "stage5 structured polynomial eval @{} has unsupported polynomial `{}`",
+                    polynomial_eval.symbol, polynomial_eval.polynomial
+                )));
+            }
+            verify_structured_polynomial_point_plan(
+                "stage5",
+                polynomial_eval,
+                &polynomial_eval.x_point,
+            )?;
+            verify_structured_polynomial_point_plan(
+                "stage5",
+                polynomial_eval,
+                &polynomial_eval.y_point,
+            )?;
+        }
+        for claim in &self.output_claims {
+            if !relations.contains(&claim.relation) {
+                return Err(EmitError::new(format!(
+                    "stage5 output claim references missing relation @{}",
+                    claim.relation
+                )));
+            }
+            if !field_values.contains(&claim.claim_value) {
+                return Err(EmitError::new(format!(
+                    "stage5 output claim for @{} uses missing claim value @{}",
+                    claim.relation, claim.claim_value
+                )));
+            }
+        }
+        Ok(())
+    }
+
     fn verify_opening_flow(&self) -> Result<(), EmitError> {
         let mut point_sources = symbols(self.drivers.iter().map(|driver| &driver.symbol));
         point_sources.extend(symbols(
@@ -963,9 +1111,9 @@ impl Stage5CpuProgram {
     }
 
     fn emit_verifier_imports() -> &'static str {
-        "use bolt_verifier_runtime::{batch_claims, eval_by_name, find_batch, find_plan, indexed_evals_by_prefix_any, reverse_slice, suffix_point};\n\
-         use super::jolt_relations::{identity_polynomial_eval, lt_polynomial_eval, normalize_instruction_read_raf_point, operand_polynomial_eval};\n\
-         use jolt_field::{Field, Fr, RingCore};\n\
+        "use bolt_verifier_runtime::{batch_claims, eval_by_name, find_batch, find_plan, indexed_evals_by_prefix_any, reverse_slice};\n\
+         use super::jolt_relations::{identity_polynomial_eval, normalize_instruction_read_raf_point, operand_polynomial_eval};\n\
+         use jolt_field::{Field, Fr};\n\
          use jolt_lookup_tables::LookupTableKind;\n\
          use jolt_poly::EqPolynomial;\n\
          use jolt_sumcheck::SumcheckError;\n\
@@ -1188,6 +1336,8 @@ pub type Stage5CpuProgramPlan = bolt_verifier_runtime::StageProgramPlanNoPointZe
 pub type Stage5SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stage5RelationKind>;
 pub type Stage5SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage5RelationKind>;
 pub type Stage5SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage5RelationKind>;
+pub type Stage5SumcheckOutputClaimPlan = bolt_verifier_runtime::SumcheckOutputClaimPlan<Stage5RelationKind>;
+pub type Stage5StructuredPolynomialEvalPlan = bolt_verifier_runtime::StructuredPolynomialEvalPlan;
 
 pub use super::jolt_relations::JoltRelationKind as Stage5RelationKind;
 pub use bolt_verifier_runtime::{
@@ -1203,6 +1353,11 @@ pub use bolt_verifier_runtime::{
     ProgramStepPlan as Stage5ProgramStepPlan, StageParams as Stage5Params,
     SumcheckBatchPlan as Stage5SumcheckBatchPlan,
     SumcheckEvalPlan as Stage5SumcheckEvalPlan,
+    StructuredPolynomialPointLength as Stage5StructuredPolynomialPointLength,
+    StructuredPolynomialPointOrder as Stage5StructuredPolynomialPointOrder,
+    StructuredPolynomialPointPlan as Stage5StructuredPolynomialPointPlan,
+    StructuredPolynomialPointSegment as Stage5StructuredPolynomialPointSegment,
+    StructuredPolynomialKind as Stage5StructuredPolynomialKind,
     TranscriptAbsorbBytesPlan as Stage5TranscriptAbsorbBytesPlan,
     TranscriptSqueezeKind as Stage5TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage5TranscriptSqueezePlan,
@@ -1243,8 +1398,11 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
         source.push_str(&self.emit_sumcheck_batch_constants());
         source.push_str(&self.emit_sumcheck_driver_constants()?);
         source.push_str(&self.emit_tail_constants()?);
+        if self.role == Role::Verifier {
+            source.push_str(&self.emit_verifier_output_claim_constants()?);
+        }
         let output_claims_field = if self.role == Role::Verifier {
-            "    output_claims: &[],\n"
+            "    output_claims: STAGE5_SUMCHECK_OUTPUT_CLAIMS,\n"
         } else {
             ""
         };
@@ -1739,6 +1897,47 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
         format!("pub const STAGE5_SUMCHECK_EVALS: &[Stage5SumcheckEvalPlan] = &[\n{evals}\n];\n\n")
     }
 
+    fn emit_verifier_output_claim_constants(&self) -> Result<String, EmitError> {
+        let mut source = String::new();
+        let mut claims = Vec::new();
+        for (index, claim) in self.output_claims.iter().enumerate() {
+            let values_name = format!("STAGE5_SUMCHECK_OUTPUT_CLAIM_{index}_VALUES");
+            let values = claim
+                .polynomial_evals
+                .iter()
+                .map(|value| {
+                    Ok(format!(
+                        "    Stage5StructuredPolynomialEvalPlan {{ symbol: {}, polynomial: {}, x_point: {}, y_point: {} }},",
+                        rust_str(&value.symbol),
+                        stage5_structured_polynomial_kind_expr(&value.polynomial)?,
+                        stage5_structured_polynomial_point_expr(&value.x_point)?,
+                        stage5_structured_polynomial_point_expr(&value.y_point)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, EmitError>>()?
+                .join("\n");
+            push_format(
+                &mut source,
+                format_args!(
+                    "pub const {values_name}: &[Stage5StructuredPolynomialEvalPlan] = &[\n{values}\n];\n\n"
+                ),
+            );
+            claims.push(format!(
+                "    Stage5SumcheckOutputClaimPlan {{ relation: {}, polynomial_evals: {values_name}, claim_value: {} }},",
+                super::plan_tokens::role_relation_kind_expr("Stage5", &self.role, &claim.relation)?,
+                rust_str(&claim.claim_value)
+            ));
+        }
+        let claims = claims.join("\n");
+        push_format(
+            &mut source,
+            format_args!(
+                "pub const STAGE5_SUMCHECK_OUTPUT_CLAIMS: &[Stage5SumcheckOutputClaimPlan] = &[\n{claims}\n];\n\n"
+            ),
+        );
+        Ok(source)
+    }
+
     fn emit_point_slice_constants(&self) -> String {
         let slices = self
             .point_slices
@@ -2195,10 +2394,38 @@ fn expected_batched_output_claim(
                 expected_instruction_read_raf(store, evals, local_point)?
             }
             Stage5RelationKind::Stage5RamRaClaimReduction => {
-                expected_ram_ra_claim_reduction(store, evals, local_point)?
+                let output_claim = program
+                    .output_claims
+                    .iter()
+                    .find(|output_claim| output_claim.relation == instance.relation)
+                    .ok_or(VerifyStage5Error::UnsupportedRelation {
+                        relation: instance.relation,
+                    })?;
+                bolt_verifier_runtime::evaluate_sumcheck_output_claim(
+                    output_claim,
+                    program.field_exprs,
+                    store,
+                    instance.symbol,
+                    evals,
+                    local_point,
+                )?
             }
             Stage5RelationKind::Stage5RegistersValEvaluation => {
-                expected_registers_val_evaluation(store, evals, local_point)?
+                let output_claim = program
+                    .output_claims
+                    .iter()
+                    .find(|output_claim| output_claim.relation == instance.relation)
+                    .ok_or(VerifyStage5Error::UnsupportedRelation {
+                        relation: instance.relation,
+                    })?;
+                bolt_verifier_runtime::evaluate_sumcheck_output_claim(
+                    output_claim,
+                    program.field_exprs,
+                    store,
+                    instance.symbol,
+                    evals,
+                    local_point,
+                )?
             }
             relation => return Err(VerifyStage5Error::UnsupportedRelation { relation }),
         };
@@ -2265,53 +2492,6 @@ fn expected_instruction_read_raf(
     Ok(eq_eval_r_reduction * ra_claim * (val_claim + gamma * raf_claim))
 }
 
-fn expected_ram_ra_claim_reduction(
-    store: &bolt_verifier_runtime::ValueStore<Fr>,
-    evals: &[Stage5NamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage5Error> {
-    let r_cycle_reduced = reverse_slice(local_point);
-    let r_cycle_raf = suffix_point(
-        bolt_verifier_runtime::store_point(store, "stage5.input.stage2.ram_raf.RamRa")?,
-        r_cycle_reduced.len(),
-        "stage5.input.stage2.ram_raf.RamRa",
-    )?;
-    let r_cycle_rw = suffix_point(
-        bolt_verifier_runtime::store_point(store, "stage5.input.stage2.ram_read_write.RamRa")?,
-        r_cycle_reduced.len(),
-        "stage5.input.stage2.ram_read_write.RamRa",
-    )?;
-    let r_cycle_val = suffix_point(
-        bolt_verifier_runtime::store_point(store, "stage5.input.stage4.ram_val_check.RamRa")?,
-        r_cycle_reduced.len(),
-        "stage5.input.stage4.ram_val_check.RamRa",
-    )?;
-    let gamma = bolt_verifier_runtime::store_scalar(store, "stage5.ram_ra_claim_reduction.gamma")?;
-    let eq_combined = EqPolynomial::<Fr>::mle(r_cycle_raf, &r_cycle_reduced)
-        + gamma * EqPolynomial::<Fr>::mle(r_cycle_rw, &r_cycle_reduced)
-        + gamma.square() * EqPolynomial::<Fr>::mle(r_cycle_val, &r_cycle_reduced);
-    let ram_ra = eval_by_name(evals, "stage5.ram_ra_claim_reduction.eval.RamRa")?;
-    Ok(eq_combined * ram_ra)
-}
-
-fn expected_registers_val_evaluation(
-    store: &bolt_verifier_runtime::ValueStore<Fr>,
-    evals: &[Stage5NamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage5Error> {
-    let registers_val_point = bolt_verifier_runtime::store_point(store, "stage5.input.stage4.registers.RegistersVal")?;
-    let r_cycle = suffix_point(
-        registers_val_point,
-        local_point.len(),
-        "stage5.input.stage4.registers.RegistersVal",
-    )?;
-    let r_reduced = reverse_slice(local_point);
-    let lt_eval = lt_polynomial_eval(&r_reduced, r_cycle);
-    let rd_inc = eval_by_name(evals, "stage5.registers_val_evaluation.eval.RdInc")?;
-    let rd_wa = eval_by_name(evals, "stage5.registers_val_evaluation.eval.RdWa")?;
-    Ok(rd_inc * rd_wa * lt_eval)
-}
-
 "#
             }
         }
@@ -2339,6 +2519,182 @@ fn require_supported_symbol(kind: &str, actual: &str, expected: &str) -> Result<
         Err(EmitError::new(format!(
             "unsupported {kind} @{actual}; expected @{expected}"
         )))
+    }
+}
+
+fn resolve_stage5_output_claims(
+    output_values: &[Stage5StructuredPolynomialEvalPlan],
+    claim_asts: Vec<Stage5SumcheckOutputClaimAst>,
+) -> Result<Vec<Stage5SumcheckOutputClaimPlan>, EmitError> {
+    let output_values_by_symbol: BTreeMap<_, _> = output_values
+        .iter()
+        .map(|value| (value.symbol.as_str(), value))
+        .collect();
+    claim_asts
+        .into_iter()
+        .map(|claim| {
+            verify_count(
+                "sumcheck output claim polynomial_evals",
+                &claim.relation,
+                claim.polynomial_evals.len(),
+                claim.polynomial_eval_operands.len(),
+            )?;
+            if claim.polynomial_evals != claim.polynomial_eval_operands {
+                return Err(EmitError::new(format!(
+                    "stage5 output claim for @{} polynomial_evals do not match operands",
+                    claim.relation
+                )));
+            }
+            let polynomial_evals = claim
+                .polynomial_evals
+                .iter()
+                .map(|symbol| {
+                    output_values_by_symbol
+                        .get(symbol.as_str())
+                        .copied()
+                        .cloned()
+                        .ok_or_else(|| {
+                            EmitError::new(format!(
+                                "stage5 output claim for @{} references missing output value @{symbol}",
+                                claim.relation
+                            ))
+                        })
+                })
+                .collect::<Result<Vec<_>, EmitError>>()?;
+            Ok(Stage5SumcheckOutputClaimPlan {
+                relation: claim.relation,
+                polynomial_evals,
+                claim_value: claim.claim_value,
+            })
+        })
+        .collect()
+}
+
+fn prune_prover_output_field_exprs(
+    field_exprs: &mut Vec<Stage5FieldExprPlan>,
+    claims: &[Stage5SumcheckClaimPlan],
+    output_claims: &[Stage5SumcheckOutputClaimAst],
+) {
+    let field_exprs_by_symbol: BTreeMap<_, _> = field_exprs
+        .iter()
+        .map(|expr| (expr.symbol.as_str(), expr))
+        .collect();
+    let sumcheck_claim_closure = field_expr_dependency_closure(
+        &field_exprs_by_symbol,
+        claims.iter().map(|claim| claim.claim_value.as_str()),
+    );
+    let output_claim_closure = field_expr_dependency_closure(
+        &field_exprs_by_symbol,
+        output_claims.iter().map(|claim| claim.claim_value.as_str()),
+    );
+    field_exprs.retain(|expr| {
+        !output_claim_closure.contains(&expr.symbol)
+            || sumcheck_claim_closure.contains(&expr.symbol)
+    });
+}
+
+fn field_expr_dependency_closure<'a>(
+    field_exprs_by_symbol: &BTreeMap<&str, &Stage5FieldExprPlan>,
+    roots: impl Iterator<Item = &'a str>,
+) -> BTreeSet<String> {
+    let mut visited = BTreeSet::new();
+    let mut stack = roots.map(str::to_owned).collect::<Vec<_>>();
+    while let Some(symbol) = stack.pop() {
+        if !visited.insert(symbol.clone()) {
+            continue;
+        }
+        let Some(expr) = field_exprs_by_symbol.get(symbol.as_str()) else {
+            continue;
+        };
+        for operand in &expr.operands {
+            if field_exprs_by_symbol.contains_key(operand.as_str()) {
+                stack.push(operand.clone());
+            }
+        }
+    }
+    visited
+}
+
+fn verify_structured_polynomial_point_plan(
+    stage: &str,
+    polynomial_eval: &Stage5StructuredPolynomialEvalPlan,
+    point: &Stage5StructuredPolynomialPointPlan,
+) -> Result<(), EmitError> {
+    if !matches!(point.segment.as_str(), "full" | "prefix" | "suffix") {
+        return Err(EmitError::new(format!(
+            "{stage} structured polynomial eval @{} has unsupported point segment `{}`",
+            polynomial_eval.symbol, point.segment
+        )));
+    }
+    if !matches!(point.length.as_str(), "full" | "x_point" | "y_point") {
+        return Err(EmitError::new(format!(
+            "{stage} structured polynomial eval @{} has unsupported point length `{}`",
+            polynomial_eval.symbol, point.length
+        )));
+    }
+    if !matches!(point.order.as_str(), "as_is" | "reverse") {
+        return Err(EmitError::new(format!(
+            "{stage} structured polynomial eval @{} has unsupported point order `{}`",
+            polynomial_eval.symbol, point.order
+        )));
+    }
+    Ok(())
+}
+
+fn stage5_structured_polynomial_kind_expr(polynomial: &str) -> Result<&'static str, EmitError> {
+    match polynomial {
+        "eq" => Ok("Stage5StructuredPolynomialKind::Eq"),
+        "eq_plus_one" => Ok("Stage5StructuredPolynomialKind::EqPlusOne"),
+        "lt" => Ok("Stage5StructuredPolynomialKind::Lt"),
+        _ => Err(EmitError::new(format!(
+            "unsupported stage5 structured polynomial `{polynomial}`"
+        ))),
+    }
+}
+
+fn stage5_structured_polynomial_point_expr(
+    point: &Stage5StructuredPolynomialPointPlan,
+) -> Result<String, EmitError> {
+    Ok(format!(
+        "Stage5StructuredPolynomialPointPlan {{ source: {}, segment: {}, length: {}, order: {} }}",
+        rust_str(&point.source),
+        stage5_structured_polynomial_point_segment_expr(&point.segment)?,
+        stage5_structured_polynomial_point_length_expr(&point.length)?,
+        stage5_structured_polynomial_point_order_expr(&point.order)?,
+    ))
+}
+
+fn stage5_structured_polynomial_point_segment_expr(
+    segment: &str,
+) -> Result<&'static str, EmitError> {
+    match segment {
+        "full" => Ok("Stage5StructuredPolynomialPointSegment::Full"),
+        "prefix" => Ok("Stage5StructuredPolynomialPointSegment::Prefix"),
+        "suffix" => Ok("Stage5StructuredPolynomialPointSegment::Suffix"),
+        _ => Err(EmitError::new(format!(
+            "unsupported stage5 output point segment `{segment}`"
+        ))),
+    }
+}
+
+fn stage5_structured_polynomial_point_length_expr(length: &str) -> Result<&'static str, EmitError> {
+    match length {
+        "full" => Ok("Stage5StructuredPolynomialPointLength::Full"),
+        "x_point" => Ok("Stage5StructuredPolynomialPointLength::XPoint"),
+        "y_point" => Ok("Stage5StructuredPolynomialPointLength::YPoint"),
+        _ => Err(EmitError::new(format!(
+            "unsupported stage5 structured polynomial point length `{length}`"
+        ))),
+    }
+}
+
+fn stage5_structured_polynomial_point_order_expr(order: &str) -> Result<&'static str, EmitError> {
+    match order {
+        "as_is" => Ok("Stage5StructuredPolynomialPointOrder::AsIs"),
+        "reverse" => Ok("Stage5StructuredPolynomialPointOrder::Reverse"),
+        _ => Err(EmitError::new(format!(
+            "unsupported stage5 output point order `{order}`"
+        ))),
     }
 }
 
