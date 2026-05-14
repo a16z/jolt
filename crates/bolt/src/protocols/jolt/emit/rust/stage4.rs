@@ -962,7 +962,8 @@ impl Stage4CpuProgram {
     }
 
     fn emit_verifier_imports() -> &'static str {
-        "use super::common::{batch_claims, eval_by_name, find_batch, find_plan, lt_polynomial_eval, reverse_slice};\n\
+        "use super::common::{batch_claims, eval_by_name, find_batch, find_plan, reverse_slice};\n\
+         use super::jolt_relations::lt_polynomial_eval;\n\
          use jolt_field::{Field, Fr};\n\
          use jolt_poly::EqPolynomial;\n\
          use jolt_sumcheck::SumcheckError;\n\

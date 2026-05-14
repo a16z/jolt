@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
-use super::common::{batch_claims, eval_by_name, find_batch, find_plan, lt_polynomial_eval, reverse_slice};
+use super::common::{batch_claims, eval_by_name, find_batch, find_plan, reverse_slice};
+use super::jolt_relations::lt_polynomial_eval;
 use jolt_field::{Field, Fr};
 use jolt_poly::EqPolynomial;
 use jolt_sumcheck::SumcheckError;

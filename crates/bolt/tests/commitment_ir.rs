@@ -3172,16 +3172,25 @@ fn assert_rust_source_compiles(_filename: &str, source: &str) {
     )
     .expect("write generated cargo manifest");
     std::fs::create_dir_all(dir.join("src")).expect("create generated src dir");
-    if source.contains("super::common") {
+    if source.contains("super::common") || source.contains("super::jolt_relations") {
+        // Tier A: generic Bolt verifier scaffolding.
         std::fs::write(
             dir.join("src/common.rs"),
             generated_verifier_common_source(&workspace_root),
         )
         .expect("write generated common source");
+        // Tier B: audited Jolt verifier core. Always staged alongside
+        // common.rs because jolt_relations.rs depends on common.rs items.
+        // See crates/bolt/GOAL.md "Audit Tiers".
+        std::fs::write(
+            dir.join("src/jolt_relations.rs"),
+            generated_verifier_jolt_relations_source(&workspace_root),
+        )
+        .expect("write generated jolt_relations source");
         std::fs::write(dir.join("src/generated.rs"), source).expect("write generated source");
         std::fs::write(
             dir.join("src/lib.rs"),
-            "pub mod common;\n#[rustfmt::skip]\npub mod generated;\n",
+            "pub mod common;\npub mod jolt_relations;\n#[rustfmt::skip]\npub mod generated;\n",
         )
         .expect("write generated lib wrapper");
     } else {
@@ -3369,9 +3378,11 @@ fn assert_generated_stage1_self_parity_runs(
     .expect("write generated cargo manifest");
     let src_dir = dir.join("src");
     std::fs::create_dir_all(&src_dir).expect("create generated src dir");
-    let main_source = if verifier_source.source.contains("super::common") {
+    let main_source = if verifier_source.source.contains("super::common")
+        || verifier_source.source.contains("super::jolt_relations")
+    {
         write_verifier_common_module(&src_dir, &workspace_root);
-        format!("mod common;\n{main_source}")
+        format!("mod common;\nmod jolt_relations;\n{main_source}")
     } else {
         main_source.to_owned()
     };
@@ -3417,12 +3428,11 @@ fn assert_generated_jolt_chain_self_parity_runs(files: &[&RustSourceFile], main_
     .expect("write generated cargo manifest");
     let src_dir = dir.join("src");
     std::fs::create_dir_all(&src_dir).expect("create generated src dir");
-    let main_source = if files
-        .iter()
-        .any(|file| file.source.contains("super::common"))
-    {
+    let main_source = if files.iter().any(|file| {
+        file.source.contains("super::common") || file.source.contains("super::jolt_relations")
+    }) {
         write_verifier_common_module(&src_dir, &workspace_root);
-        format!("mod common;\n{main_source}")
+        format!("mod common;\nmod jolt_relations;\n{main_source}")
     } else {
         main_source.to_owned()
     };
@@ -3458,6 +3468,11 @@ fn write_verifier_common_module(src_dir: &Path, workspace_root: &Path) {
         generated_verifier_common_source(workspace_root),
     )
     .expect("write generated common source");
+    std::fs::write(
+        src_dir.join("jolt_relations.rs"),
+        generated_verifier_jolt_relations_source(workspace_root),
+    )
+    .expect("write generated jolt_relations source");
 }
 
 fn generated_verifier_common_source(workspace_root: &Path) -> String {
@@ -3466,6 +3481,16 @@ fn generated_verifier_common_source(workspace_root: &Path) -> String {
             .expect("read generated verifier common stage source");
     format!(
         "#![allow(dead_code, unused_imports, unused_macros, reason = \"generated verifier helpers are shared across generated stage subsets\")]\n{common}"
+    )
+}
+
+fn generated_verifier_jolt_relations_source(workspace_root: &Path) -> String {
+    let jolt_relations = std::fs::read_to_string(
+        workspace_root.join("crates/jolt-verifier/src/stages/jolt_relations.rs"),
+    )
+    .expect("read generated verifier jolt_relations stage source");
+    format!(
+        "#![allow(dead_code, unused_imports, unused_macros, reason = \"audited Jolt verifier core helpers are shared across generated stage subsets\")]\n{jolt_relations}"
     )
 }
 

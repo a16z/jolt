@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
-use super::common::{batch_claims, eval_by_name, find_batch, find_plan, identity_polynomial_eval, indexed_evals_by_prefix_any, lt_polynomial_eval, normalize_instruction_read_raf_point, operand_polynomial_eval, reverse_slice, suffix_point};
+use super::common::{batch_claims, eval_by_name, find_batch, find_plan, indexed_evals_by_prefix_any, reverse_slice, suffix_point};
+use super::jolt_relations::{identity_polynomial_eval, lt_polynomial_eval, normalize_instruction_read_raf_point, operand_polynomial_eval};
 use jolt_field::{Field, Fr, RingCore};
 use jolt_lookup_tables::LookupTableKind;
 use jolt_poly::EqPolynomial;

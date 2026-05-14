@@ -23,15 +23,19 @@ stage6 + stage7:        ~13.2k LOC
 verifier.rs:              649 LOC
 ```
 
-Current locked cleanup baseline:
+Current locked cleanup baseline (post-S1 audit-tier split):
 
 ```text
-generated jolt-verifier total:     7,755 LOC
-generated verifier surface:        5,966 LOC
-shared verifier runtime:           1,789 LOC
-stage6 + stage7:                   1,669 LOC
-verifier.rs:                         487 LOC
+generated jolt-verifier total:     7,905 LOC
+generated verifier surface:        6,002 LOC
+tier A (Bolt verifier runtime):    1,265 LOC   stages/common.rs
+tier B (Jolt verifier core):         638 LOC   stages/jolt_relations.rs
+stage6 + stage7:                   1,660 LOC
+verifier.rs:                         428 LOC
 ```
+
+The shared runtime is now split along an explicit audit boundary. See
+"Audit Tiers" below.
 
 Target:
 
@@ -40,12 +44,48 @@ generated verifier surface:        <= 4k-6k LOC
 stretch generated surface:         <= 2k-3k LOC
 verifier.rs orchestration:         <= 350-500 LOC
 stage6 + stage7 generated surface: <= 2k-3k LOC
-shared runtime/helpers:            allowed when generic, named, and reviewed
+tier A (Bolt verifier runtime):    shrink toward <= 800 LOC as more helpers
+                                   become typed plan data driven from MLIR
+tier B (Jolt verifier core):       stable around current size; growth here is
+                                   a protocol-math decision, not emitter creep
 ```
 
 The goal is to reduce the human-facing generated verifier surface by roughly an
 order of magnitude. Shared runtime code may exist, but it must be modular,
 boring to audit, and driven by explicit MLIR-derived plan data.
+
+## Audit Tiers
+
+The verifier code is partitioned into three explicit audit tiers. The `Concrete
+Gates` section enforces a per-tier LOC ceiling for each tier independently so
+growth is attributed to the right trust boundary.
+
+- **Tier A (Bolt verifier runtime):** generic, protocol-agnostic helpers
+  (plan structs, `ValueStore`, sumcheck driver loop, opening-equality
+  interpreter, transcript helpers). Lives in
+  `crates/jolt-verifier/src/stages/common.rs`, generated from
+  `crates/bolt/src/protocols/jolt/verifier_common.rs.template`. Tier A should
+  ratchet *down* over time as more helpers move into typed plan data driven
+  from MLIR.
+
+- **Tier B (audited Jolt verifier core):** hand-written Jolt-specific verifier
+  math and relations (Stage 6/7 evaluators, `normalize_*_point`,
+  `bytecode_gamma_powers`, the `Stage67Bytecode*` glue, polynomial-evaluation
+  primitives). Lives in `crates/jolt-verifier/src/stages/jolt_relations.rs`,
+  generated from
+  `crates/bolt/src/protocols/jolt/verifier_jolt_relations.rs.template`. Tier
+  B is the audit surface for Jolt-specific math; it is expected to stay
+  roughly its current size and any growth here must be reviewed as a
+  *protocol-math* decision, not emitter LOC.
+
+- **Tier C (generated declarative stage data + orchestration):** typed plans,
+  thin `verify_stageN` wrappers, and `verifier.rs`. This is everything else
+  under `crates/jolt-verifier/src/`. Tier C should be aggressively shrunk
+  toward the stretch target.
+
+This split was introduced by the S1 audit-tier refactor. The pre-split
+"shared verifier runtime" framing (a single ~1.8k-LOC `common.rs` mixing
+generic Bolt scaffolding and Jolt-specific math) is retired.
 
 This verifier cleanup is coupled to the generic protocol cleanup in
 `GENERIC_PROTOCOL_GOAL.md`: shrinking the generated verifier should move generic
@@ -407,10 +447,13 @@ generated verifier imports no forbidden crates
 
 ## Concrete Gates
 
-Readability and LOC gates:
+Readability and LOC gates (enforced by `crates/bolt/tests/verifier_cleanup.rs`):
 
 ```text
 total generated jolt-verifier LOC trends down
+generated verifier surface (Tier C) <= 6.1k, target <= 6k, stretch <= 3k
+tier A bolt verifier runtime <= 1.4k, ratcheting down
+tier B audited Jolt verifier core <= 700 (growth requires protocol-math review)
 verifier.rs <= 500 LOC, stretch <= 350
 stage6 + stage7 generated LOC <= 3k-5k, stretch <= 2k-3k
 no duplicate stage-local generic plan structs
@@ -426,7 +469,9 @@ field-expression formula strings trend to zero
 
 LOC gates are guardrails, not the quality definition. A shorter verifier that
 hides semantics in opaque runtime code or compiler-only conventions fails this
-goal.
+goal. The Tier A and Tier B ceilings are independently enforced so cleanup
+work cannot accidentally grow the audited Jolt math while shrinking generic
+scaffolding (or vice versa).
 
 Security and boundary gates:
 

@@ -987,7 +987,8 @@ impl Stage6CpuProgram {
     }
 
     fn emit_verifier_imports() -> &'static str {
-        "use super::common::{batch_claims, expected_stage67_booleanity, expected_stage67_bytecode_read_raf, expected_stage67_hamming_booleanity, expected_stage67_inc_claim_reduction, expected_stage67_instruction_ra_virtual, expected_stage67_ram_ra_virtual, find_batch, find_plan, normalize_bytecode_read_raf_point, normalize_instruction_read_raf_point, stage67_trace_rounds, Stage67BytecodeEntry, Stage67BytecodeSymbols, Stage67RelationSymbols};\n\
+        "use super::common::{batch_claims, find_batch, find_plan};\n\
+         use super::jolt_relations::{expected_stage67_booleanity, expected_stage67_bytecode_read_raf, expected_stage67_hamming_booleanity, expected_stage67_inc_claim_reduction, expected_stage67_instruction_ra_virtual, expected_stage67_ram_ra_virtual, normalize_bytecode_read_raf_point, normalize_instruction_read_raf_point, stage67_trace_rounds, Stage67BytecodeEntry, Stage67BytecodeSymbols, Stage67RelationSymbols};\n\
          use jolt_field::{Field, Fr};\n\
          use jolt_sumcheck::SumcheckError;\n\
          use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};"

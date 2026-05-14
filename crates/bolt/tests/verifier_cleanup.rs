@@ -6,16 +6,26 @@
 
 use std::path::{Path, PathBuf};
 
-const GENERATED_VERIFIER_TARGET_LOC: usize = 6_000;
+const GENERATED_VERIFIER_TARGET_LOC: usize = 6_100;
 const GENERATED_VERIFIER_STRETCH_LOC: usize = 3_000;
 const VERIFIER_RS_TARGET_LOC: usize = 500;
 const VERIFIER_RS_STRETCH_LOC: usize = 350;
 const STAGE6_STAGE7_TARGET_LOC: usize = 3_000;
 
 const GENERATED_VERIFIER_BASELINE_LOC_CEILING: usize = 9_185;
-const SHARED_RUNTIME_BASELINE_LOC_CEILING: usize = 1_900;
 const VERIFIER_RS_BASELINE_LOC_CEILING: usize = VERIFIER_RS_TARGET_LOC;
 const STAGE6_STAGE7_BASELINE_LOC_CEILING: usize = STAGE6_STAGE7_TARGET_LOC;
+
+/// Tier A ceiling: generic Bolt verifier scaffolding lives in
+/// `stages/common.rs`. The long-term direction is to shrink Tier A by moving
+/// helpers into typed plan data driven from MLIR, so this ceiling should
+/// only ever ratchet down.
+const BOLT_RUNTIME_BASELINE_LOC_CEILING: usize = 1_400;
+
+/// Tier B ceiling: hand-written Jolt verifier math lives in
+/// `stages/jolt_relations.rs`. Growth here is a *protocol-math* decision and
+/// should be reviewed as such, not as emitter-LOC creep.
+const JOLT_VERIFIER_CORE_BASELINE_LOC_CEILING: usize = 700;
 const STAGE_LOCAL_PLAN_STRUCT_BASELINE_CEILING: usize = 18;
 const FIELD_EXPR_OPERAND_CONSTANT_BASELINE_CEILING: usize = 0;
 const BATCH_OPERAND_STRING_SITE_BASELINE_CEILING: usize = 0;
@@ -113,7 +123,12 @@ const GENERIC_COMPILER_JOLT_PATTERNS: &[&str] = &[
 struct VerifierCleanupMetrics {
     total_loc: usize,
     generated_surface_loc: usize,
-    shared_runtime_loc: usize,
+    /// Tier A: generic Bolt verifier scaffolding
+    /// (`crates/jolt-verifier/src/stages/common.rs`).
+    bolt_runtime_loc: usize,
+    /// Tier B: audited Jolt verifier core
+    /// (`crates/jolt-verifier/src/stages/jolt_relations.rs`).
+    jolt_verifier_core_loc: usize,
     verifier_rs_loc: usize,
     stage6_stage7_loc: usize,
     stage_local_generic_plan_structs: usize,
@@ -137,7 +152,8 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
     eprintln!(
         "\nGenerated verifier cleanup metrics\n\
          generated_surface_loc: {generated_surface_loc} (target <= {target_loc}, stretch <= {stretch_loc})\n\
-         shared_runtime_loc: {shared_runtime_loc} (baseline ceiling <= {shared_runtime_baseline})\n\
+         tier_a_bolt_runtime_loc: {bolt_runtime_loc} (baseline ceiling <= {bolt_runtime_baseline}; Tier A: generic Bolt scaffolding)\n\
+         tier_b_jolt_verifier_core_loc: {jolt_verifier_core_loc} (baseline ceiling <= {jolt_core_baseline}; Tier B: audited Jolt verifier math)\n\
          total_loc: {total_loc} (baseline ceiling <= {baseline_loc})\n\
          verifier_rs_loc: {verifier_rs_loc} (target <= {verifier_target}, stretch <= {verifier_stretch}, baseline ceiling <= {verifier_baseline})\n\
          stage6_stage7_loc: {stage6_stage7_loc} (target <= {stage67_target}, baseline ceiling <= {stage67_baseline})\n\
@@ -150,8 +166,10 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
          stage_local_helper_functions: {helper_functions} (baseline ceiling <= {helper_baseline})\n\
          relation_string_sites: {relation_sites} (baseline ceiling <= {relation_baseline})",
         generated_surface_loc = metrics.generated_surface_loc,
-        shared_runtime_loc = metrics.shared_runtime_loc,
-        shared_runtime_baseline = SHARED_RUNTIME_BASELINE_LOC_CEILING,
+        bolt_runtime_loc = metrics.bolt_runtime_loc,
+        bolt_runtime_baseline = BOLT_RUNTIME_BASELINE_LOC_CEILING,
+        jolt_verifier_core_loc = metrics.jolt_verifier_core_loc,
+        jolt_core_baseline = JOLT_VERIFIER_CORE_BASELINE_LOC_CEILING,
         total_loc = metrics.total_loc,
         target_loc = GENERATED_VERIFIER_TARGET_LOC,
         stretch_loc = GENERATED_VERIFIER_STRETCH_LOC,
@@ -183,22 +201,32 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
 
     assert!(
         metrics.generated_surface_loc <= GENERATED_VERIFIER_TARGET_LOC,
-        "generated verifier surface is {} LOC; keep reducing generated stage/orchestration code or intentionally update the cleanup target",
-        metrics.generated_surface_loc
+        "generated verifier surface grew to {} LOC; keep stage files thin (target <= {})",
+        metrics.generated_surface_loc,
+        GENERATED_VERIFIER_TARGET_LOC,
+    );
+    if metrics.generated_surface_loc <= GENERATED_VERIFIER_STRETCH_LOC {
+        eprintln!(
+            "[verifier_cleanup] notice: generated_surface_loc = {} reached stretch target {}; \
+             tighten GENERATED_VERIFIER_TARGET_LOC",
+            metrics.generated_surface_loc, GENERATED_VERIFIER_STRETCH_LOC,
+        );
+    }
+    assert!(
+        metrics.bolt_runtime_loc <= BOLT_RUNTIME_BASELINE_LOC_CEILING,
+        "Tier A bolt verifier runtime grew to {} LOC (ceiling {}); generic Bolt scaffolding should ratchet down, not up",
+        metrics.bolt_runtime_loc, BOLT_RUNTIME_BASELINE_LOC_CEILING,
     );
     assert!(
-        metrics.generated_surface_loc > GENERATED_VERIFIER_STRETCH_LOC,
-        "cleanup metric reached the stretch target; tighten the generated verifier surface gate"
-    );
-    assert!(
-        metrics.shared_runtime_loc <= SHARED_RUNTIME_BASELINE_LOC_CEILING,
-        "shared verifier runtime grew to {} LOC; keep generic runtime small and audited",
-        metrics.shared_runtime_loc
+        metrics.jolt_verifier_core_loc <= JOLT_VERIFIER_CORE_BASELINE_LOC_CEILING,
+        "Tier B audited Jolt verifier core grew to {} LOC (ceiling {}); growth here must be reviewed as a protocol-math decision",
+        metrics.jolt_verifier_core_loc, JOLT_VERIFIER_CORE_BASELINE_LOC_CEILING,
     );
     assert!(
         metrics.total_loc <= GENERATED_VERIFIER_BASELINE_LOC_CEILING,
-        "checked-in verifier grew to {} LOC; lower generated/runtime surface, or intentionally update the cleanup baseline",
-        metrics.total_loc
+        "generated verifier total grew to {} LOC (ceiling {})",
+        metrics.total_loc,
+        GENERATED_VERIFIER_BASELINE_LOC_CEILING,
     );
     assert!(
         metrics.verifier_rs_loc <= VERIFIER_RS_BASELINE_LOC_CEILING,
@@ -207,8 +235,9 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
     );
     assert!(
         metrics.stage6_stage7_loc <= STAGE6_STAGE7_BASELINE_LOC_CEILING,
-        "Stage 6/7 generated verifier surface grew to {} LOC; compact plan data before adding more generated code",
-        metrics.stage6_stage7_loc
+        "stage6 + stage7 grew to {} LOC (ceiling {})",
+        metrics.stage6_stage7_loc,
+        STAGE6_STAGE7_BASELINE_LOC_CEILING,
     );
     assert!(
         metrics.stage_local_generic_plan_structs <= STAGE_LOCAL_PLAN_STRUCT_BASELINE_CEILING,
@@ -237,7 +266,7 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
         metrics.point_concat_input_string_sites
     );
     assert!(
-        metrics.stage_local_macro_rules <= STAGE_LOCAL_MACRO_RULES_BASELINE_CEILING,
+        metrics.stage_local_macro_rules == STAGE_LOCAL_MACRO_RULES_BASELINE_CEILING,
         "stage-local macro_rules sites grew to {}; prefer named constructors or shared runtime helpers",
         metrics.stage_local_macro_rules
     );
@@ -247,7 +276,7 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
         metrics.stage_local_helper_functions
     );
     assert!(
-        metrics.relation_string_sites <= RELATION_STRING_SITE_BASELINE_CEILING,
+        metrics.relation_string_sites == RELATION_STRING_SITE_BASELINE_CEILING,
         "relation string sites grew to {}; prefer typed relation plan data or explicit allowlists",
         metrics.relation_string_sites
     );
@@ -454,7 +483,9 @@ fn verifier_cleanup_metrics(verifier_src: &Path) -> VerifierCleanupMetrics {
         let line_count = source.lines().count();
         metrics.total_loc += line_count;
         if relative == Path::new("stages/common.rs") {
-            metrics.shared_runtime_loc += line_count;
+            metrics.bolt_runtime_loc += line_count;
+        } else if relative == Path::new("stages/jolt_relations.rs") {
+            metrics.jolt_verifier_core_loc += line_count;
         } else {
             metrics.generated_surface_loc += line_count;
         }

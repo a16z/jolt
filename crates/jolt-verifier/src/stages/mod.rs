@@ -1,4 +1,5 @@
 pub mod common;
+pub mod jolt_relations;
 #[rustfmt::skip]
 pub mod commitment;
 #[rustfmt::skip]

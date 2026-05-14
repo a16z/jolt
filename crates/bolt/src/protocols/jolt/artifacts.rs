@@ -242,13 +242,29 @@ pub fn jolt_artifact_config() -> ProtocolArtifactConfig {
         commitment_type: RustTypeRef::new("jolt_dory::DoryCommitment"),
         prover_setup_type: RustTypeRef::new("jolt_dory::DoryProverSetup"),
         role_api_extension: Some(jolt_evaluation_role_api_extension()),
-        verifier_runtime_modules: vec![ProtocolRuntimeModule {
-            module_name: "common".to_owned(),
-            file: GeneratedFile {
-                path: "src/stages/common.rs".to_owned(),
-                source: include_str!("verifier_common.rs.template").to_owned(),
+        verifier_runtime_modules: vec![
+            // Tier A: generic Bolt verifier scaffolding (typed plan
+            // structs, ValueStore, generic sumcheck verification, generic
+            // field-expr dispatch). See crates/bolt/GOAL.md "Audit Tiers".
+            ProtocolRuntimeModule {
+                module_name: "common".to_owned(),
+                file: GeneratedFile {
+                    path: "src/stages/common.rs".to_owned(),
+                    source: include_str!("verifier_common.rs.template").to_owned(),
+                },
             },
-        }],
+            // Tier B: audited Jolt verifier core (hand-written Stage 6/7
+            // relation evaluators, point normalizations, and Jolt-specific
+            // field-math helpers). NOT generated. See crates/bolt/GOAL.md
+            // "Audit Tiers".
+            ProtocolRuntimeModule {
+                module_name: "jolt_relations".to_owned(),
+                file: GeneratedFile {
+                    path: "src/stages/jolt_relations.rs".to_owned(),
+                    source: include_str!("verifier_jolt_relations.rs.template").to_owned(),
+                },
+            },
+        ],
         verifier_named_eval_type: RustTypeRef::new("crate::stages::common::StageNamedEval"),
         verifier_sumcheck_output_type: RustTypeRef::new(
             "crate::stages::common::StageSumcheckOutput",
