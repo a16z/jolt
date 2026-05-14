@@ -1,5 +1,10 @@
 use super::*;
 
+/// Lowers `SLLIW` to immediate multiplication followed by RV64 word cleanup.
+///
+/// The shift amount is restricted to five bits. After the low word has been
+/// shifted, `VirtualSignExtendWord` restores the required sign extension from
+/// bit 31 into the destination register.
 pub(in crate::expand) fn expand_slliw(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {

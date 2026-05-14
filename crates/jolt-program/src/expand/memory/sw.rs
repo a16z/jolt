@@ -1,5 +1,10 @@
 use super::*;
 
+/// Lowers word store `SW` by updating the selected lane of an aligned doubleword.
+///
+/// The sequence proves word alignment, reads the containing doubleword, builds
+/// a 32-bit lane mask, merges the low word of `rs2` into that lane, and writes
+/// the whole doubleword back with `SD`.
 pub(in crate::expand) fn expand_sw(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
@@ -9,6 +14,8 @@ pub(in crate::expand) fn expand_sw(
     let v2 = asm.allocate()?;
     let v3 = asm.allocate()?;
 
+    // Source `SW` requires word alignment even though the synthesized write is
+    // a doubleword write to the containing aligned address.
     asm.expand_address(
         SourceInstructionKind::VirtualAssertWordAlignment,
         reg(rs1(instruction)?),
@@ -28,6 +35,8 @@ pub(in crate::expand) fn expand_sw(
     );
     asm.expand_i(SourceInstructionKind::LD, v2.operand(), v1.operand(), 0);
     asm.expand_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
+    // v3 becomes a 32-bit lane mask shifted into place; v0 then carries the
+    // shifted source word and finally the masked XOR delta.
     asm.expand_i(
         SourceInstructionKind::ORI,
         v3.operand(),

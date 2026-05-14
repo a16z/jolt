@@ -2,6 +2,12 @@ use common::constants::RAM_START_ADDRESS;
 
 use super::*;
 
+/// Lowers `LR.W` by recording a word reservation and then performing `LW`.
+///
+/// Reservations live in dedicated virtual registers. The RAM-region assertion
+/// rejects I/O addresses before the reservation is recorded, because a failed
+/// store-conditional must not accidentally mutate device state through the
+/// synthesized store path.
 pub(in crate::expand) fn expand_lrw(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
@@ -10,6 +16,7 @@ pub(in crate::expand) fn expand_lrw(
     let mut asm = ExpansionBuilder::new(*instruction);
     let ram_start = asm.allocate()?;
 
+    // LR/SC reservations are only modeled for ordinary RAM.
     asm.expand_u(
         SourceInstructionKind::LUI,
         ram_start.operand(),

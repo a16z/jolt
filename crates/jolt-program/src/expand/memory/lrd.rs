@@ -2,6 +2,11 @@ use common::constants::RAM_START_ADDRESS;
 
 use super::*;
 
+/// Lowers `LR.D` by recording a doubleword reservation and then performing `LD`.
+///
+/// A doubleword reservation also covers word store-conditionals at the same
+/// address, so both reservation virtual registers are initialized. As with
+/// `LR.W`, reservations are restricted to ordinary RAM addresses.
 pub(in crate::expand) fn expand_lrd(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
@@ -10,6 +15,7 @@ pub(in crate::expand) fn expand_lrd(
     let mut asm = ExpansionBuilder::new(*instruction);
     let ram_start = asm.allocate()?;
 
+    // LR/SC reservations are only modeled for ordinary RAM.
     asm.expand_u(
         SourceInstructionKind::LUI,
         ram_start.operand(),

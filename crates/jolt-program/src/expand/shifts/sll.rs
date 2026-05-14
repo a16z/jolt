@@ -1,5 +1,10 @@
 use super::*;
 
+/// Lowers variable `SLL` to a proved power-of-two lookup followed by `MUL`.
+///
+/// `VirtualPow2` applies the RV64 shift-mask rule to `rs2` and returns
+/// `2^(rs2 & 0x3f)`. Multiplying by that value is equivalent to a left shift
+/// modulo 2^64, which is the architectural result.
 pub(in crate::expand) fn expand_sll(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {

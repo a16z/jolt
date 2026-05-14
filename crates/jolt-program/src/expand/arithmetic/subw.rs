@@ -1,5 +1,10 @@
 use super::*;
 
+/// Lowers `SUBW` by subtracting at XLEN and then sign-extending the low word.
+///
+/// This mirrors the architectural RV64 word instruction: high bits from the
+/// intermediate full-width subtraction are ignored, and bit 31 determines the
+/// final sign extension.
 pub(in crate::expand) fn expand_subw(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {

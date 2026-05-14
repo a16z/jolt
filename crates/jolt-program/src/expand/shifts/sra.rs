@@ -1,5 +1,10 @@
 use super::*;
 
+/// Lowers variable arithmetic right shift by first materializing the shift mask.
+///
+/// `VirtualShiftRightBitmask` encodes `rs2 & 0x3f` as the mask consumed by
+/// `VirtualSRA`. Splitting the sequence this way keeps dynamic shift amount
+/// checking in the lookup table while preserving the signed right-shift result.
 pub(in crate::expand) fn expand_sra(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {

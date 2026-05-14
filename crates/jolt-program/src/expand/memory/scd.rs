@@ -1,5 +1,12 @@
 use super::*;
 
+/// Lowers `SC.D` to a conditional doubleword update driven by a success witness.
+///
+/// The tracer patches the first `VirtualAdvice` to `1` only when a doubleword
+/// reservation covers `rs1`. The sequence proves that successful stores use the
+/// reserved address, conditionally selects either `rs2` or the old memory
+/// value, stores the selected doubleword, clears reservations, and returns
+/// architectural status `0` on success or `1` on failure.
 pub(in crate::expand) fn expand_scd(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
@@ -11,6 +18,8 @@ pub(in crate::expand) fn expand_scd(
     super::shared::expand_ram_region_assertion(&mut asm, reg(rs1(instruction)?), ram_start)?;
 
     let v_success = asm.allocate()?;
+    // v_success is Boolean advice supplied by the tracer's LR/SC reservation
+    // check: 1 means the SC succeeds, 0 means it fails.
     asm.expand_j(SourceInstructionKind::VirtualAdvice, v_success.operand(), 0);
 
     let v_one = asm.allocate()?;
@@ -24,6 +33,8 @@ pub(in crate::expand) fn expand_scd(
     asm.release(v_one);
 
     let v_addr_diff = asm.allocate()?;
+    // If v_success is 1, the doubleword reservation address must equal rs1.
+    // Failure leaves the address unconstrained because no write should occur.
     asm.expand_r(
         SourceInstructionKind::SUB,
         v_addr_diff.operand(),
@@ -53,6 +64,8 @@ pub(in crate::expand) fn expand_scd(
     );
 
     let v_diff = asm.allocate()?;
+    // v_diff = old_mem + success * (rs2 - old_mem), so failure stores the
+    // previous memory value and success stores rs2.
     asm.expand_r(
         SourceInstructionKind::SUB,
         v_diff.operand(),
@@ -79,6 +92,7 @@ pub(in crate::expand) fn expand_scd(
         0,
     );
     asm.release(v_diff);
+    // RISC-V invalidates the reservation after every SC, regardless of success.
     asm.expand_i(SourceInstructionKind::ADDI, reg(v_reservation), reg(0), 0);
     asm.expand_i(SourceInstructionKind::ADDI, reg(v_reservation_w), reg(0), 0);
     asm.expand_i(

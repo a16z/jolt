@@ -1,5 +1,14 @@
 use super::*;
 
+/// Builds the signed `DIV`/`REM` and `DIVW`/`REMW` verifier sequence.
+///
+/// The tracer supplies quotient `a2` and remainder data `a3` as advice. This
+/// recipe proves the RISC-V signed-division contract around those witnesses:
+/// divide-by-zero quotient, signed overflow (`MIN / -1`), product/remainder
+/// recomposition, and `abs(remainder) < abs(divisor)` whenever the divisor is
+/// nonzero. `word` selects 32-bit operand normalization and final word
+/// sign-extension; `remainder_output` selects which proved value is copied to
+/// `rd`.
 pub(in crate::expand) fn expand_signed_div_rem(
     instruction: &SourceInstructionRow,
     word: bool,
@@ -22,6 +31,8 @@ pub(in crate::expand) fn expand_signed_div_rem(
     let divisor: RegisterOperand = word_t3.map_or(a1, TempId::operand);
     let shmat = if word { 31 } else { 63 };
 
+    // a2 is the quotient witness. a3 participates in the remainder proof and
+    // later becomes the signed remainder candidate for REM/REMW.
     asm.expand_j(SourceInstructionKind::VirtualAdvice, a2.operand(), 0);
     asm.expand_j(SourceInstructionKind::VirtualAdvice, a3.operand(), 0);
     if word {
@@ -39,6 +50,9 @@ pub(in crate::expand) fn expand_signed_div_rem(
         a2.operand(),
         0,
     );
+    // RISC-V signed overflow (`MIN / -1`) returns the dividend as the
+    // quotient and zero remainder. Replacing the divisor by 1 in that one case
+    // lets the same product/remainder proof cover normal and overflow inputs.
     asm.expand_r(
         if word {
             SourceInstructionKind::VirtualChangeDivisorW
@@ -51,6 +65,8 @@ pub(in crate::expand) fn expand_signed_div_rem(
     );
 
     if word {
+        // Word mode proves that the quotient is already sign-extended from 32
+        // bits and that the supplied remainder data fits in the low word.
         let t2 = word_t2.ok_or(ExpansionError::MalformedInstruction("missing word temp"))?;
         asm.expand_i(
             SourceInstructionKind::VirtualSignExtendWord,
@@ -102,6 +118,9 @@ pub(in crate::expand) fn expand_signed_div_rem(
     }
 
     if word {
+        // Recompose the signed dividend from quotient, adjusted divisor, and
+        // signed remainder, then bound the absolute remainder by the absolute
+        // adjusted divisor.
         let t2 = word_t2.ok_or(ExpansionError::MalformedInstruction("missing word temp"))?;
         let t3 = word_t3.ok_or(ExpansionError::MalformedInstruction("missing word temp"))?;
         asm.expand_i(SourceInstructionKind::SRAI, t2.operand(), dividend, shmat);
@@ -167,6 +186,9 @@ pub(in crate::expand) fn expand_signed_div_rem(
         );
         asm.release_many([t2, t3]);
     } else {
+        // 64-bit signed division follows the same proof shape as word mode,
+        // but computes temporary absolute values for the remainder and adjusted
+        // divisor directly in 64-bit space.
         let t2 = asm.allocate()?;
         let t3 = asm.allocate()?;
         let abs_divisor = if remainder_output { t2 } else { t3 };
@@ -236,6 +258,14 @@ pub(in crate::expand) fn expand_signed_div_rem(
     asm.finalize()
 }
 
+/// Builds the unsigned `DIVUW`/`REMUW` verifier sequence.
+///
+/// Word unsigned division first zero-extends both source operands. A quotient
+/// witness is then constrained by
+/// `dividend = quotient * divisor + remainder` with `remainder < divisor`,
+/// except that the RISC-V divisor-zero quotient is admitted by
+/// `VirtualAssertValidDiv0`. The chosen output is sign-extended as a 32-bit
+/// RV64 word result.
 pub(in crate::expand) fn expand_unsigned_word_div_rem(
     instruction: &SourceInstructionRow,
     remainder_output: bool,
@@ -250,6 +280,8 @@ pub(in crate::expand) fn expand_unsigned_word_div_rem(
         asm.allocate()?
     };
 
+    // The relation is unsigned 32-bit, so both architectural inputs are
+    // explicitly normalized before any quotient checks are emitted.
     asm.expand_i(
         SourceInstructionKind::VirtualZeroExtendWord,
         rs1_extended.operand(),
@@ -262,6 +294,8 @@ pub(in crate::expand) fn expand_unsigned_word_div_rem(
         reg(rs2(instruction)?),
         0,
     );
+    // quotient is advice; tmp is first q * divisor and then the derived
+    // remainder unless this is the quotient-output path.
     asm.expand_j(SourceInstructionKind::VirtualAdvice, quotient.operand(), 0);
     asm.expand_b(
         SourceInstructionKind::VirtualAssertMulUNoOverflow,

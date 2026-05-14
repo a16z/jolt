@@ -191,7 +191,14 @@ fn final_rows_to_instructions(
         .collect()
 }
 
-/// Dispatches a source-only instruction to its recipe builder (phase 1).
+/// Dispatches one source-only instruction to the recipe that explains its
+/// final bytecode semantics.
+///
+/// Each callee returns a symbolic sequence, not concrete rows. During
+/// materialization, `emit_*` rows become final bytecode directly while
+/// `expand_*` rows are routed back through this dispatcher. That recursive
+/// route is intentional: common substeps such as narrow loads, word shifts, and
+/// virtual assertions keep one definition of their own lowering contract.
 fn expand_source_only_instruction(
     instruction: &SourceInstruction,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {

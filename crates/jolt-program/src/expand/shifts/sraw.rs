@@ -1,5 +1,10 @@
 use super::*;
 
+/// Lowers variable `SRAW` as a signed 32-bit shift embedded in RV64 rows.
+///
+/// The low word of `rs1` is sign-extended before shifting, `rs2` is masked to
+/// five bits, and the output is sign-extended again. This prevents unrelated
+/// high bits of `rs1` or `rs2` from influencing the architectural word result.
 pub(in crate::expand) fn expand_sraw(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {

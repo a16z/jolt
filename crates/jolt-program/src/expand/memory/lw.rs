@@ -1,5 +1,9 @@
 use super::*;
 
+/// Lowers signed word load `LW` by reading the containing aligned doubleword.
+///
+/// The sequence proves word alignment, loads the aligned 8-byte word, shifts
+/// the requested 32-bit lane down, and sign-extends that low word into `rd`.
 pub(in crate::expand) fn expand_lw(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
@@ -7,6 +11,8 @@ pub(in crate::expand) fn expand_lw(
     let v0 = asm.allocate()?;
     let v1 = asm.allocate()?;
 
+    // RAM is accessed at doubleword granularity here. The word alignment
+    // assertion is still required by the source `LW` semantics.
     asm.expand_address(
         SourceInstructionKind::VirtualAssertWordAlignment,
         reg(rs1(instruction)?),
@@ -18,6 +24,7 @@ pub(in crate::expand) fn expand_lw(
         reg(rs1(instruction)?),
         format_i_imm(instruction.operands.imm),
     );
+    // v1 = containing doubleword address, v0 = byte offset within it.
     asm.expand_i(
         SourceInstructionKind::ANDI,
         v1.operand(),
