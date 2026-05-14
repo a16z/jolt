@@ -24,10 +24,14 @@ columns from physical storage. Proof code still asks for `Rs1Value`,
 row layout is free to pack values that are mutually exclusive or derivable for
 final Jolt rows.
 
-The current design space ranges from a lookup-heavy 40-48 byte row to a more
-expanded 80 byte row similar to the companion C++ tracer. This spec records the
-options and tradeoffs so the implementation can be benchmarked instead of
-chosen by intuition alone.
+The trace-row choice is coupled to bytecode storage. Today
+`BytecodePreprocessing` stores bytecode as padded `Vec<JoltInstructionRow>`,
+where each row is 48 bytes in memory, plus a `BytecodePCMapper` implemented as
+`Vec<Vec<(u16, usize)>>`. A lookup-heavy trace row only makes sense if bytecode
+metadata lookups are compact and cache-friendly. This spec therefore treats
+proof trace rows and preprocessed bytecode rows as one layout design problem.
+The current design space ranges from a lookup-heavy 40-48 byte trace row to a
+more expanded 80 byte row similar to the companion C++ tracer.
 
 ## Intent
 
@@ -53,10 +57,13 @@ The follow-up should introduce or clarify these boundaries:
 - optional phase-local materialization: temporary SoA columns or dense vectors
   created for phases that repeatedly scan one derived value and benefit from
   avoiding recomputation.
+- compact preprocessed bytecode rows: an optional replacement for the current
+  48-byte `JoltInstructionRow` bytecode table when trace rows choose to recover
+  static metadata through `bytecode_pc`.
 
 The implementation should make proof code depend on logical accessors, not raw
-layout fields. That keeps the row representation benchmarkable: 48B, 64B, and
-80B layouts can be compared without changing proof semantics.
+layout fields. That keeps the row representation benchmarkable: 40B, 48B, 64B,
+and 80B layouts can be compared without changing proof semantics.
 
 ### Invariants
 
@@ -102,13 +109,27 @@ layout fields. That keeps the row representation benchmarkable: 48B, 64B, and
 - `JoltTraceRow` must not become a new source of instruction identity. Final
   row identity remains `JoltInstructionRow` plus its canonical operation name
   and compact final tag.
-- Dense bytecode/profile indexes are local indexes. They may be stored in a
-  row for speed, but they are not persistent instruction identity.
-- Any narrowed cached index or packed field must have a construction-time range
-  check. For example, a `u32` `bytecode_pc` requires an explicit bytecode-length
-  bound, and packed register ids require an explicit maximum-register bound.
+- Dense bytecode/profile indexes are local indexes. They may be stored in a row
+  for speed, but they are not persistent instruction identity.
+- `bytecode_pc` may be stored as `u32` only if construction checks
+  `bytecode_preprocessing.code_size <= u32::MAX as usize`. This is a practical
+  bound for prover memory today, but it is not a semantic fact of the protocol.
+  If Jolt ever supports bytecode tables beyond `u32::MAX` entries, the row
+  layout must switch to a wider local index or reject that program before
+  proving.
+- `unexpanded_pc` and guest addresses must not be stored as `usize` in a fixed
+  trace or bytecode layout. Use `u64` for absolute RV64 addresses, or use a
+  checked narrower offset/delta with an explicit base and range check. `usize`
+  is acceptable in transient host APIs, but it should not define row size or
+  serialized/preprocessed layout.
+- Any narrowed cached index, offset, immediate, register id, tag, or packed
+  field must have a construction-time range check. For example, packed register
+  ids require an explicit maximum-register bound, and a compact immediate field
+  requires proof that all final-row immediates fit the chosen encoding.
 - The row layout must be asserted in tests with `size_of::<JoltTraceRow>()`.
   Any future size increase should be intentional and reviewed.
+- If bytecode storage is compacted, `size_of::<CompactBytecodeRow>()` or an
+  equivalent storage-budget assertion must be added as well.
 - The selected layout must have a zero/default no-op row whose logical accessors
   return the same values as current `Cycle::NoOp` paths.
 - The verifier should not depend on `JoltTraceRow`. The verifier consumes
@@ -133,6 +154,10 @@ layout fields. That keeps the row representation benchmarkable: 48B, 64B, and
 - Do not make `jolt-riscv` own prover memory layout policy. Static row identity
   and flags may be queried through final-row metadata, but trace storage layout
   belongs to the prover/tracing boundary.
+- Do not silently change persisted verifier preprocessing or proof
+  serialization. If compact bytecode rows change serialized preprocessing, the
+  implementation PR must make that format change explicit and update
+  serialization tests.
 
 ## Evaluation
 
@@ -142,7 +167,7 @@ layout fields. That keeps the row representation benchmarkable: 48B, 64B, and
 - [ ] The row type has private physical fields and public logical accessors.
 - [ ] The selected layout has a checked size budget. The initial target should
       be chosen only after benchmarking the options below; expected candidates
-      are 48B, 64B, and 80B.
+      are 40B, 48B, 64B, and 80B.
 - [ ] A builder constructs `Vec<JoltTraceRow>` once from final trace data and
       bytecode preprocessing.
 - [ ] The builder rejects source-only cycles that do not have a final
@@ -161,6 +186,14 @@ layout fields. That keeps the row representation benchmarkable: 48B, 64B, and
 - [ ] `JoltTraceCycle::try_new` call sites in proof hot paths are removed or
       reduced to construction-time checks.
 - [ ] Standard and ZK prover tests continue to pass.
+- [ ] If the chosen trace-row layout relies on bytecode metadata lookups, a
+      compact bytecode-row design is implemented or explicitly deferred with
+      benchmark evidence showing the current 48-byte `JoltInstructionRow` table
+      is not the bottleneck.
+- [ ] Any `u32` `bytecode_pc` or compact bytecode index has a checked
+      construction path and a test for overflow/rejection.
+- [ ] Any fixed-layout guest address field is `u64` or a checked offset/delta,
+      not raw `usize`.
 
 ### Testing Strategy
 
@@ -187,6 +220,10 @@ Add focused tests:
 - size/layout tests for the chosen row representation.
 - regression tests around bytecode PC mapping, since several layouts may store
   only a local `bytecode_pc` and derive static metadata from bytecode tables.
+- bytecode storage parity tests proving any compact bytecode row reconstructs
+  the same final `JoltInstructionRow` logical metadata as the current table.
+- overflow tests for narrowed indexes and offsets, especially `bytecode_pc:
+  u32` and any compact unexpanded-PC encoding.
 
 ### Performance
 
@@ -208,7 +245,7 @@ Expected layout targets:
 
 | Layout | Approx. row size | Idea | Expected risk |
 |--------|------------------|------|---------------|
-| Minimal indexed | 40B | store dynamic value slots plus `bytecode_pc`; look up almost all static metadata | more bytecode/profile table traffic |
+| Minimal indexed | 40B | store dynamic value slots plus `bytecode_pc` and a 32-bit packed metadata word | more bytecode/profile table traffic |
 | Minimal plus PC | 48B | minimal row plus cached `unexpanded_pc` | still lookup-heavy, but avoids a common PC lookup |
 | Balanced packed | 56-64B | packed dynamic slots plus hot metadata such as `imm`, flags, table id, maybe register ids | best likely default if bytecode lookups are costly |
 | Address-cached | 64-72B | balanced or minimal row with explicit RAM address if deriving address is expensive | spends bytes on a value used heavily by RAM phases |
@@ -218,6 +255,22 @@ Expected layout targets:
 No one layout is obviously right without measurements. The benchmark should
 include both ordinary guest programs with locality and adversarial bytecode
 access patterns where bytecode-table lookup costs are more visible.
+
+Current bytecode storage baselines to measure:
+
+| Item | Current in-memory size | Notes |
+|------|------------------------|-------|
+| `JoltInstructionKind` | 2B | final tag enum |
+| `NormalizedOperands` | 32B | dominated by `imm: i128` and 16-byte alignment |
+| `JoltInstructionRow` | 48B | current bytecode table entry |
+| `Vec<JoltInstructionRow>` | 48B per padded entry | bytecode is prepended with no-op and padded to power of two |
+| `(u16, usize)` | 16B | current PC-map inner entry |
+| `Vec<(u16, usize)>` | 24B header plus entries | each outer PC-map slot has a Vec header |
+| `BytecodePreprocessing` | 64B header plus heap allocations | `code_size`, bytecode table, PC mapper, entry address |
+
+These sizes are not a criticism of the current representation; it is simple and
+typed. They matter because a trace row that stores only `bytecode_pc` shifts
+more pressure onto this table.
 
 ## Design
 
@@ -387,23 +440,36 @@ or final `JoltInstructionKind`. The exact choice should be benchmarked.
 pub struct JoltTraceRow {
     values: TraceValueSlots, // 32 bytes
     bytecode_pc: u32,        // local bytecode/preprocessing index
-    _padding: u32,
+    packed_meta: u32,        // e.g. circuit flags, instruction flags, table id
 }
 ```
 
 Approximate size: 40 bytes.
+
+The 32-bit word after `bytecode_pc` should not remain dead padding. One useful
+packing is:
+
+```text
+bits 0..15    circuit_flags
+bits 16..23   instruction_flags
+bits 24..31   lookup_table_id_plus_one, where 0 means no lookup table
+```
+
+Other packings are possible, but this word should either be removed by a
+different field ordering or spent on measured hot metadata.
 
 Pros:
 
 - smallest row vector;
 - better memory bandwidth for phases that stream over trace rows;
 - bytecode/profile metadata stays canonical in preprocessing tables.
+- caches flags/table routing without increasing the 40B size.
 
 Cons:
 
 - most static metadata needs a bytecode table lookup;
 - repeated random-ish bytecode lookup patterns may hurt cache behavior;
-- immediate, flags, table id, register ids, and unexpanded PC are not local;
+- immediate, register ids, and unexpanded PC are not local;
 - harder to reason about performance without profiling bytecode locality.
 
 This is attractive if trace memory bandwidth dominates and bytecode metadata
@@ -415,9 +481,9 @@ has excellent locality.
 #[repr(C)]
 pub struct JoltTraceRow {
     values: TraceValueSlots, // 32 bytes
-    unexpanded_pc: u64,
     bytecode_pc: u32,
-    _padding: u32,
+    packed_meta: u32,
+    unexpanded_pc: u64,
 }
 ```
 
@@ -598,6 +664,126 @@ The decision should be empirical. The implementation should make metadata
 caching a layout decision behind accessor methods, not a semantic dependency at
 call sites.
 
+### Bytecode Storage Co-Design
+
+Current bytecode preprocessing stores final rows directly:
+
+```rust
+pub struct BytecodePreprocessing {
+    pub code_size: usize,
+    pub bytecode: Vec<JoltInstructionRow>,
+    pub pc_map: BytecodePCMapper,
+    pub entry_address: u64,
+}
+
+pub struct JoltInstructionRow {
+    pub instruction_kind: JoltInstructionKind,
+    pub address: usize,
+    pub operands: NormalizedOperands,
+    pub virtual_sequence_remaining: Option<u16>,
+    pub is_first_in_sequence: bool,
+    pub is_compressed: bool,
+}
+
+pub struct NormalizedOperands {
+    pub rs1: Option<u8>,
+    pub rs2: Option<u8>,
+    pub rd: Option<u8>,
+    pub imm: i128,
+}
+```
+
+This is a good source-level and construction-level representation, but it is
+not obviously the right storage representation for repeated prover bytecode
+lookups. On a 64-bit host today, `JoltInstructionRow` is 48 bytes because
+`NormalizedOperands` is 32 bytes and aligned to 16 bytes by `imm: i128`.
+
+If `JoltTraceRow` stores only a compact `bytecode_pc`, then bytecode rows should
+also have a compact proof-facing representation. A possible row shape is:
+
+```rust
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CompactBytecodeRow {
+    /// Stable final instruction tag, not profile-local dense index.
+    tag: u16,
+    /// Sequence metadata for expanded virtual rows.
+    virtual_sequence_remaining: u16,
+    /// `rd`, `rs1`, `rs2` packed with a sentinel for None.
+    packed_registers: u16,
+    /// Circuit flags, instruction flags, table id, compression/first-row bits.
+    packed_flags_and_table: u32,
+    /// Absolute RV64 PC, or a checked offset in a different layout variant.
+    unexpanded_pc: u64,
+    /// Magnitude or compact representation of the immediate.
+    imm_abs_or_inline_key: u64,
+    /// Sign/extension metadata and spare checked bits.
+    imm_and_row_class: u32,
+}
+```
+
+That sketch is roughly 32 bytes depending on exact ordering and padding. It is
+not a final proposal; it illustrates the target direction:
+
+- keep `JoltInstructionRow` as the typed construction/API row;
+- derive `CompactBytecodeRow` during preprocessing for prover hot paths;
+- make compact bytecode reconstruct the same logical metadata as
+  `JoltInstructionRow`;
+- store absolute RV64 addresses as `u64`, or store checked offsets with a base.
+
+The current `BytecodePCMapper` should also be revisited. It is implemented as
+`Vec<Vec<(u16, usize)>>`, so it pays a 24-byte outer `Vec` header for every
+address index, plus 16 bytes for each `(virtual_sequence_remaining, pc)` pair.
+That is simple, but it is not compact. Follow-up options include:
+
+- build the map only during preprocessing/trace-row construction, then drop it
+  from proof-facing preprocessing if no later phase needs it;
+- store a sorted `Vec<(address_or_index, virtual_sequence_remaining, pc)>` and
+  binary search during construction;
+- store a dense compact vector with fixed-size entries if address density makes
+  that worthwhile;
+- store first PC plus a compact sequence range for common expanded sequences.
+
+The right choice depends on when `get_pc(address, sequence)` remains necessary.
+If trace rows store `bytecode_pc`, most prover phases should no longer need to
+recover PC from `(address, virtual_sequence_remaining)`.
+
+### Integer Width Policy
+
+`bytecode_pc` is a local index into the selected preprocessed bytecode table. It
+is not persisted instruction identity and does not need to be pointer-sized.
+Using `u32` is reasonable if the builder enforces:
+
+```rust
+let pc = bytecode_preprocessing.get_pc(&row).ok_or(...)?;
+let pc = u32::try_from(pc).map_err(|_| TraceRowError::BytecodePcTooWide { pc })?;
+```
+
+This implies a maximum of `u32::MAX + 1` bytecode entries for that trace-row
+layout. In practice, a 4-billion-row bytecode table is far beyond current prover
+memory budgets, but the code should reject it explicitly rather than relying on
+that practical limit.
+
+`unexpanded_pc` is different. It is a guest RV64 address, not a local table
+index. It should be represented as one of:
+
+```rust
+unexpanded_pc: u64
+```
+
+or:
+
+```rust
+pc_base: u64,          // stored once in preprocessing
+unexpanded_pc_delta: u32 // checked per row
+```
+
+The fixed row layout should not use `usize` for guest addresses. `usize` changes
+with the host architecture and makes memory layout depend on the prover machine
+instead of the guest ISA contract. Existing APIs can continue using `usize`
+where the surrounding code already does, but `JoltTraceRow` and compact
+bytecode storage should choose explicit widths.
+
 ### Construction Point
 
 `JoltTraceRow` should be produced after:
@@ -640,7 +826,8 @@ memory on top. This is not the right long-term shape.
 ### Fully Minimal Row Only
 
 A 40B row is appealing, but it may push too much work into bytecode table
-lookups. It should be benchmarked, not assumed.
+lookups. It should be benchmarked together with compact bytecode storage, not
+assumed in isolation.
 
 ### Fully Expanded Row Only
 
@@ -654,6 +841,21 @@ For load/store rows, `RamAddress == Rs1Value + Imm` is already an R1CS
 constraint. Deriving address can save one physical slot, but it adds an
 accessor branch and signed/wrapping immediate arithmetic. Since RAM phases use
 addresses heavily, this should be benchmarked against storing or aliasing the
+address.
+
+### Leave Bytecode As `Vec<JoltInstructionRow>`
+
+This keeps preprocessing simple and typed, but the current row is 48 bytes and
+contains construction-oriented fields such as `usize` address and `i128`
+immediate. If trace rows rely on bytecode lookups for hot metadata, this table
+may become part of the critical path. Keeping it unchanged is acceptable only if
+benchmarks show the lookup-heavy trace layouts remain competitive.
+
+### Use `usize` For Local And Guest Addresses
+
+This matches several current APIs, but it is the wrong fixed-layout contract.
+`usize` is host-width dependent. A proof-facing trace row should use `u32` or
+`u64` depending on whether the field is a checked local index or a guest RV64
 address.
 
 ### Treat RAM And Registers As One Logical Event
@@ -681,14 +883,20 @@ Suggested implementation slices:
 
 1. Add `JoltTraceRow` with logical accessors and a conservative layout. Add
    parity tests against raw `Cycle` derivations.
-2. Add a construction pass that builds `Vec<JoltTraceRow>` once in the prover
+2. Add explicit checked newtypes or construction helpers for narrowed fields
+   such as `BytecodePc(u32)` and any compact PC offsets.
+3. Add a construction pass that builds `Vec<JoltTraceRow>` once in the prover
    setup path.
-3. Cut `R1CSCycleInputs` and Spartan outer loops over to `JoltTraceRow`.
-4. Cut RAM/register/instruction-lookup/bytecode phases over to
+4. If benchmarks favor lookup-heavy trace rows, add `CompactBytecodeRow` or an
+   equivalent proof-facing bytecode table before relying on repeated
+   `bytecode_pc` lookups in hot loops.
+5. Cut `R1CSCycleInputs` and Spartan outer loops over to `JoltTraceRow`.
+6. Cut RAM/register/instruction-lookup/bytecode phases over to
    `JoltTraceRow` accessors or derived phase-local columns.
-5. Remove proof hot-path `JoltTraceCycle::try_new` usage.
-6. Benchmark 48B, 64B, and 80B candidate layouts behind the same accessor API.
-7. Choose the default layout, keep size assertions, and document any deferred
+7. Remove proof hot-path `JoltTraceCycle::try_new` usage.
+8. Benchmark 40B, 48B, 64B, and 80B candidate layouts behind the same accessor
+   API, including current versus compact bytecode tables.
+9. Choose the default layout, keep size assertions, and document any deferred
    performance work.
 
 Implementation should prefer `#[inline(always)]` for tiny accessors that sit in
