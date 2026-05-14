@@ -3,7 +3,6 @@
     reason = "generated verifier helpers mirror staged protocol ABIs"
 )]
 
-use std::cmp::Ordering;
 use std::fmt;
 use std::marker::PhantomData;
 
@@ -22,6 +21,7 @@ pub struct StageParams {
     pub transcript: &'static str,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TypedPlanSymbol<Tag> {
     symbol: &'static str,
     _tag: PhantomData<fn() -> Tag>,
@@ -40,40 +40,12 @@ impl<Tag> TypedPlanSymbol<Tag> {
     }
 }
 
-impl<Tag> Clone for TypedPlanSymbol<Tag> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<Tag> Copy for TypedPlanSymbol<Tag> {}
-
 impl<Tag> fmt::Debug for TypedPlanSymbol<Tag> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_tuple("TypedPlanSymbol")
             .field(&self.symbol)
             .finish()
-    }
-}
-
-impl<Tag> PartialEq for TypedPlanSymbol<Tag> {
-    fn eq(&self, other: &Self) -> bool {
-        self.symbol == other.symbol
-    }
-}
-
-impl<Tag> Eq for TypedPlanSymbol<Tag> {}
-
-impl<Tag> PartialOrd for TypedPlanSymbol<Tag> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<Tag> Ord for TypedPlanSymbol<Tag> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.symbol.cmp(other.symbol)
     }
 }
 

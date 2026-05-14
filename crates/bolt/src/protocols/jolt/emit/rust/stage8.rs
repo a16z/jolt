@@ -294,12 +294,16 @@ impl Stage8CpuProgram {
         match self.role {
             Role::Verifier => source.push_str(
                 "pub use super::common::{ClaimKind as Stage8ClaimKind, PcsProofMode as Stage8PcsProofMode, SourceStage as Stage8SourceStage, StageParams as Stage8Params, TypedPlanSymbol};\n\n\
+                 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]\n\
                  pub enum Stage8OpeningInputTag {}\n\
                  pub type Stage8OpeningInputSymbol = TypedPlanSymbol<Stage8OpeningInputTag>;\n\
+                 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]\n\
                  pub enum Stage8OpeningClaimTag {}\n\
                  pub type Stage8OpeningClaimSymbol = TypedPlanSymbol<Stage8OpeningClaimTag>;\n\
+                 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]\n\
                  pub enum Stage8OpeningBatchTag {}\n\
                  pub type Stage8OpeningBatchSymbol = TypedPlanSymbol<Stage8OpeningBatchTag>;\n\
+                 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]\n\
                  pub enum Stage8SourceClaimTag {}\n\
                  pub type Stage8SourceClaim = TypedPlanSymbol<Stage8SourceClaimTag>;\n\n",
             ),

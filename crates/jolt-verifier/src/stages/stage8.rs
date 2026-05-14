@@ -2,12 +2,16 @@
 
 pub use super::common::{ClaimKind as Stage8ClaimKind, PcsProofMode as Stage8PcsProofMode, SourceStage as Stage8SourceStage, StageParams as Stage8Params, TypedPlanSymbol};
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Stage8OpeningInputTag {}
 pub type Stage8OpeningInputSymbol = TypedPlanSymbol<Stage8OpeningInputTag>;
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Stage8OpeningClaimTag {}
 pub type Stage8OpeningClaimSymbol = TypedPlanSymbol<Stage8OpeningClaimTag>;
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Stage8OpeningBatchTag {}
 pub type Stage8OpeningBatchSymbol = TypedPlanSymbol<Stage8OpeningBatchTag>;
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Stage8SourceClaimTag {}
 pub type Stage8SourceClaim = TypedPlanSymbol<Stage8SourceClaimTag>;
 
