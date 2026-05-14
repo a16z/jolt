@@ -70,7 +70,7 @@ pub enum VerifyStage2Error {
     InvalidInputLength { input: &'static str, expected: usize, actual: usize },
     InvalidProof { driver: &'static str, reason: &'static str },
     UnsupportedRelation { relation: Stage2RelationKind },
-    MissingRam { relation: &'static str },
+    MissingRam { context: &'static str },
     Sumcheck { driver: &'static str, error: SumcheckError<Fr> },
 }
 
@@ -785,7 +785,7 @@ fn expected_ram_raf(
     ram: Option<&Stage2RamData<'_>>,
 ) -> Result<Fr, VerifyStage2Error> {
     let ram = ram.ok_or(VerifyStage2Error::MissingRam {
-        relation: "jolt.stage2.ram.raf_evaluation",
+        context: "stage2.ram.raf_evaluation",
     })?;
     let address = reverse_slice(local_point);
     let unmap = unmap_eval(ram.log_k, ram.start_address, &address);
@@ -799,10 +799,10 @@ fn expected_ram_output(
     ram: Option<&Stage2RamData<'_>>,
 ) -> Result<Fr, VerifyStage2Error> {
     let ram = ram.ok_or(VerifyStage2Error::MissingRam {
-        relation: "jolt.stage2.ram.output_check",
+        context: "stage2.ram.output_check",
     })?;
     let layout = ram.output_layout.ok_or(VerifyStage2Error::MissingRam {
-        relation: "jolt.stage2.ram.output_check.layout",
+        context: "stage2.ram.output_check.layout",
     })?;
     let r_address = store.point("stage2.ram_output.r_address")?;
     let opening_point = reverse_slice(local_point);

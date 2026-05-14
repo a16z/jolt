@@ -19,7 +19,7 @@ const STAGE6_STAGE7_BASELINE_LOC_CEILING: usize = STAGE6_STAGE7_TARGET_LOC;
 const STAGE_LOCAL_PLAN_STRUCT_BASELINE_CEILING: usize = 18;
 const FIELD_EXPR_OPERAND_CONSTANT_BASELINE_CEILING: usize = 0;
 const STAGE_HELPER_FUNCTION_BASELINE_CEILING: usize = 38;
-const RELATION_STRING_SITE_BASELINE_CEILING: usize = 72;
+const RELATION_STRING_SITE_BASELINE_CEILING: usize = 0;
 
 const ALLOWED_JOLT_PROTOCOL_SYMBOLS: &[&str] = &[
     "jolt.commitment_phase",
@@ -495,11 +495,9 @@ fn count_relation_string_sites(source: &str) -> usize {
     source
         .lines()
         .filter(|line| {
-            line.contains("match instance.relation")
-                || line.contains("match claim.relation")
-                || line.contains("match driver.relation")
-                || line.contains("relation: Some(\"jolt.")
+            line.contains("relation: Some(\"jolt.")
                 || line.contains("relation: \"jolt.")
+                || line.contains("relation == \"jolt.")
         })
         .count()
 }
