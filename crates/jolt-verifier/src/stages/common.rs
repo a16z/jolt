@@ -177,7 +177,7 @@ pub struct SumcheckClaimPlan {
     pub kernel: Option<&'static str>,
     pub relation: Option<RelationKind>,
     pub claim_value: &'static str,
-    pub input_openings: &'static str,
+    pub input_openings: &'static [&'static str],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

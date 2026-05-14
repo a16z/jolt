@@ -44,8 +44,8 @@ pub const STAGE1_TRANSCRIPT_SQUEEZES: &[Stage1TranscriptSqueezePlan] = &[
 ];
 
 pub const STAGE1_SUMCHECK_CLAIMS: &[Stage1SumcheckClaimPlan] = &[
-    Stage1SumcheckClaimPlan { symbol: "stage1.uniskip.input", stage: "stage1", domain: "jolt.stage1_uniskip_domain", num_rounds: 1, degree: 27, claim: "stage1.zero", kernel: None, relation: Some(Stage1RelationKind::Stage1OuterUniskip), claim_value: "stage1.zero", input_openings: "" },
-    Stage1SumcheckClaimPlan { symbol: "stage1.outer_remaining.input", stage: "stage1", domain: "jolt.trace_domain", num_rounds: 17, degree: 3, claim: "stage1.uniskip.eval", kernel: None, relation: Some(Stage1RelationKind::Stage1OuterRemaining), claim_value: "stage1.uniskip.eval", input_openings: "stage1.uniskip.opening" },
+    Stage1SumcheckClaimPlan { symbol: "stage1.uniskip.input", stage: "stage1", domain: "jolt.stage1_uniskip_domain", num_rounds: 1, degree: 27, claim: "stage1.zero", kernel: None, relation: Some(Stage1RelationKind::Stage1OuterUniskip), claim_value: "stage1.zero", input_openings: &[] },
+    Stage1SumcheckClaimPlan { symbol: "stage1.outer_remaining.input", stage: "stage1", domain: "jolt.trace_domain", num_rounds: 17, degree: 3, claim: "stage1.uniskip.eval", kernel: None, relation: Some(Stage1RelationKind::Stage1OuterRemaining), claim_value: "stage1.uniskip.eval", input_openings: &["stage1.uniskip.opening"] },
 ];
 pub const STAGE1_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[1];
 

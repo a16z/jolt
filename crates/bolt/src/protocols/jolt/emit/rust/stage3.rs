@@ -1312,7 +1312,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
                             relation
                         )?,
                         rust_str(&claim.claim_value),
-                        rust_str(&claim.input_openings.join("|"))
+                        super::plan_tokens::rust_str_slice_expr(&claim.input_openings)
                     ));
             }
         }

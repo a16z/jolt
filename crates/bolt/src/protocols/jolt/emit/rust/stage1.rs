@@ -1171,7 +1171,7 @@ pub enum VerifyStage1Error {
                         relation
                     )?,
                     rust_str(&claim.claim_value),
-                    rust_str(&claim.input_openings.join("|"))
+                    super::plan_tokens::rust_str_slice_expr(&claim.input_openings)
                 ));
         }
         let claims = claims.join("\n");

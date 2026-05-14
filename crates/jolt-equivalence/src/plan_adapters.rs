@@ -50,7 +50,7 @@ macro_rules! stage_claim {
             kernel: $plan.kernel.as_deref().map(super::leak_str),
             relation: $plan.relation.as_deref().map(super::leak_str),
             claim_value: super::leak_str(&$plan.claim_value),
-            input_openings: stage_list!(kernel, &$plan.input_openings),
+            input_openings: stage_batch_list!(kernel, &$plan.input_openings),
         }
     };
     (generated, $module:ident, $claim:ident, $plan:ident) => {
@@ -67,7 +67,7 @@ macro_rules! stage_claim {
                 .as_deref()
                 .map(|relation| generated_relation_kind!(relation)),
             claim_value: super::leak_str(&$plan.claim_value),
-            input_openings: stage_list!(generated, &$plan.input_openings),
+            input_openings: stage_batch_list!(generated, &$plan.input_openings),
         }
     };
 }

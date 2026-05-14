@@ -1498,7 +1498,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage5Error);
                             claim.relation.as_deref()
                         )?,
                         rust_str(&claim.claim_value),
-                        rust_str(&claim.input_openings.join("|"))
+                        super::plan_tokens::rust_str_slice_expr(&claim.input_openings)
                     ))
                 })
                 .collect::<Result<Vec<_>, EmitError>>()?

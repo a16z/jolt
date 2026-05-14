@@ -19,6 +19,7 @@ const STAGE6_STAGE7_BASELINE_LOC_CEILING: usize = STAGE6_STAGE7_TARGET_LOC;
 const STAGE_LOCAL_PLAN_STRUCT_BASELINE_CEILING: usize = 18;
 const FIELD_EXPR_OPERAND_CONSTANT_BASELINE_CEILING: usize = 0;
 const BATCH_OPERAND_STRING_SITE_BASELINE_CEILING: usize = 0;
+const CLAIM_INPUT_OPENING_STRING_SITE_BASELINE_CEILING: usize = 0;
 const STAGE_HELPER_FUNCTION_BASELINE_CEILING: usize = 38;
 const RELATION_STRING_SITE_BASELINE_CEILING: usize = 0;
 
@@ -116,6 +117,7 @@ struct VerifierCleanupMetrics {
     stage_local_generic_plan_structs: usize,
     field_expr_operand_constants: usize,
     batch_operand_string_sites: usize,
+    claim_input_opening_string_sites: usize,
     stage_local_helper_functions: usize,
     relation_string_sites: usize,
 }
@@ -138,6 +140,7 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
          stage_local_generic_plan_structs: {plan_structs} (baseline ceiling <= {plan_baseline})\n\
          field_expr_operand_constants: {operand_constants} (baseline ceiling <= {operand_baseline})\n\
          batch_operand_string_sites: {batch_operand_string_sites} (baseline ceiling <= {batch_operand_baseline})\n\
+         claim_input_opening_string_sites: {claim_input_opening_string_sites} (baseline ceiling <= {claim_input_opening_baseline})\n\
          stage_local_helper_functions: {helper_functions} (baseline ceiling <= {helper_baseline})\n\
          relation_string_sites: {relation_sites} (baseline ceiling <= {relation_baseline})",
         generated_surface_loc = metrics.generated_surface_loc,
@@ -160,6 +163,8 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
         operand_baseline = FIELD_EXPR_OPERAND_CONSTANT_BASELINE_CEILING,
         batch_operand_string_sites = metrics.batch_operand_string_sites,
         batch_operand_baseline = BATCH_OPERAND_STRING_SITE_BASELINE_CEILING,
+        claim_input_opening_string_sites = metrics.claim_input_opening_string_sites,
+        claim_input_opening_baseline = CLAIM_INPUT_OPENING_STRING_SITE_BASELINE_CEILING,
         helper_functions = metrics.stage_local_helper_functions,
         helper_baseline = STAGE_HELPER_FUNCTION_BASELINE_CEILING,
         relation_sites = metrics.relation_string_sites,
@@ -209,6 +214,12 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
         metrics.batch_operand_string_sites == BATCH_OPERAND_STRING_SITE_BASELINE_CEILING,
         "batch operand string sites grew to {}; prefer structured claim slices",
         metrics.batch_operand_string_sites
+    );
+    assert!(
+        metrics.claim_input_opening_string_sites
+            == CLAIM_INPUT_OPENING_STRING_SITE_BASELINE_CEILING,
+        "claim input-opening string sites grew to {}; prefer structured input-opening slices",
+        metrics.claim_input_opening_string_sites
     );
     assert!(
         metrics.stage_local_helper_functions <= STAGE_HELPER_FUNCTION_BASELINE_CEILING,
@@ -438,6 +449,8 @@ fn verifier_cleanup_metrics(verifier_src: &Path) -> VerifierCleanupMetrics {
                 count_stage_local_generic_plan_structs(&source);
             metrics.field_expr_operand_constants += count_field_expr_operand_constants(&source);
             metrics.batch_operand_string_sites += count_batch_operand_string_sites(&source);
+            metrics.claim_input_opening_string_sites +=
+                count_claim_input_opening_string_sites(&source);
             metrics.stage_local_helper_functions += count_stage_local_helper_functions(&source);
             metrics.relation_string_sites += count_relation_string_sites(&source);
         }
@@ -484,6 +497,13 @@ fn count_batch_operand_string_sites(source: &str) -> usize {
     source
         .lines()
         .filter(|line| line.contains("ordered_claims: \"") || line.contains("claim_operands: \""))
+        .count()
+}
+
+fn count_claim_input_opening_string_sites(source: &str) -> usize {
+    source
+        .lines()
+        .filter(|line| line.contains("input_openings: \""))
         .count()
 }
 
