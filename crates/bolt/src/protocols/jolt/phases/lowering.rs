@@ -429,6 +429,33 @@ pub(super) fn lower_party_to_compute<'c>(
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
                 insert_result_mapping(&mut value_map, op, operation, 1, 1)?;
             }
+            "piop.sumcheck_output_value" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["kind", "point_order"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.sumcheck_output_value",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "piop.sumcheck_output_claim" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["stage", "relation", "count", "local_values"])?;
+                let _operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.sumcheck_output_claim",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &[],
+                )?;
+            }
             "piop.opening_claim" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let symbol = string_attr(op, "sym_name")?;

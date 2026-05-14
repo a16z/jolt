@@ -23,6 +23,7 @@ pub struct Stage3CpuProgram {
     pub drivers: Vec<Stage3SumcheckDriverPlan>,
     pub instance_results: Vec<Stage3SumcheckInstanceResultPlan>,
     pub evals: Vec<Stage3SumcheckEvalPlan>,
+    pub output_values: Vec<Stage3SumcheckOutputValuePlan>,
     pub output_claims: Vec<Stage3SumcheckOutputClaimPlan>,
     pub point_slices: Vec<Stage3PointSlicePlan>,
     pub point_concats: Vec<Stage3PointConcatPlan>,
@@ -163,6 +164,14 @@ pub struct Stage3SumcheckOutputClaimPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct Stage3SumcheckOutputClaimAst {
+    relation: String,
+    claim_value: String,
+    local_values: Vec<String>,
+    local_value_operands: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage3SumcheckEvalPlan {
     pub symbol: String,
     pub source: String,
@@ -234,294 +243,6 @@ pub fn emit_stage3_rust(module: &BoltModule<'_, Cpu>) -> Result<RustSourceFile, 
     })
 }
 
-fn stage3_field_expr(symbol: &str, formula: &str, operands: &[&str]) -> Stage3FieldExprPlan {
-    Stage3FieldExprPlan {
-        symbol: symbol.to_owned(),
-        kind: "op".to_owned(),
-        formula: formula.to_owned(),
-        operand_names: operands
-            .iter()
-            .map(|operand| (*operand).to_owned())
-            .collect(),
-        operands: operands
-            .iter()
-            .map(|operand| (*operand).to_owned())
-            .collect(),
-    }
-}
-
-fn stage3_output_value(
-    symbol: &str,
-    kind: &str,
-    local_point_source: &str,
-    opening_point_source: &str,
-) -> Stage3SumcheckOutputValuePlan {
-    Stage3SumcheckOutputValuePlan {
-        symbol: symbol.to_owned(),
-        kind: kind.to_owned(),
-        point_order: "reverse".to_owned(),
-        local_point_source: local_point_source.to_owned(),
-        opening_point_source: opening_point_source.to_owned(),
-    }
-}
-
-fn stage3_output_claim(
-    relation: &str,
-    local_values: Vec<Stage3SumcheckOutputValuePlan>,
-    claim_value: &str,
-) -> Stage3SumcheckOutputClaimPlan {
-    Stage3SumcheckOutputClaimPlan {
-        relation: relation.to_owned(),
-        local_values,
-        claim_value: claim_value.to_owned(),
-    }
-}
-
-fn stage3_verifier_output_field_exprs() -> Vec<Stage3FieldExprPlan> {
-    vec![
-        stage3_field_expr(
-            "stage3.spartan_shift.output.term.PC",
-            "field.mul",
-            &["stage3.spartan_shift.gamma", "stage3.spartan_shift.eval.PC"],
-        ),
-        stage3_field_expr(
-            "stage3.spartan_shift.output.term.OpFlagVirtualInstruction",
-            "field.mul",
-            &[
-                "stage3.spartan_shift.gamma2",
-                "stage3.spartan_shift.eval.OpFlagVirtualInstruction",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.spartan_shift.output.term.OpFlagIsFirstInSequence",
-            "field.mul",
-            &[
-                "stage3.spartan_shift.gamma3",
-                "stage3.spartan_shift.eval.OpFlagIsFirstInSequence",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.spartan_shift.output.one_minus.InstructionFlagIsNoop",
-            "field.sub",
-            &[
-                "stage3.field.one",
-                "stage3.spartan_shift.eval.InstructionFlagIsNoop",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.spartan_shift.output.partial.PC",
-            "field.add",
-            &[
-                "stage3.spartan_shift.eval.UnexpandedPC",
-                "stage3.spartan_shift.output.term.PC",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.spartan_shift.output.partial.OpFlagVirtualInstruction",
-            "field.add",
-            &[
-                "stage3.spartan_shift.output.partial.PC",
-                "stage3.spartan_shift.output.term.OpFlagVirtualInstruction",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.spartan_shift.output.weighted_outer",
-            "field.add",
-            &[
-                "stage3.spartan_shift.output.partial.OpFlagVirtualInstruction",
-                "stage3.spartan_shift.output.term.OpFlagIsFirstInSequence",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.spartan_shift.output.outer",
-            "field.mul",
-            &[
-                "stage3.spartan_shift.output.eq.NextPC",
-                "stage3.spartan_shift.output.weighted_outer",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.spartan_shift.output.noop_product",
-            "field.mul",
-            &[
-                "stage3.spartan_shift.output.eq.NextIsNoop",
-                "stage3.spartan_shift.output.one_minus.InstructionFlagIsNoop",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.spartan_shift.output.noop_term",
-            "field.mul",
-            &[
-                "stage3.spartan_shift.gamma4",
-                "stage3.spartan_shift.output.noop_product",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.spartan_shift.output.claim_expr",
-            "field.add",
-            &[
-                "stage3.spartan_shift.output.outer",
-                "stage3.spartan_shift.output.noop_term",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.instruction_input.output.left.term.Rs1Value",
-            "field.mul",
-            &[
-                "stage3.instruction_input.eval.InstructionFlagLeftOperandIsRs1Value",
-                "stage3.instruction_input.eval.Rs1Value",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.instruction_input.output.left.term.PC",
-            "field.mul",
-            &[
-                "stage3.instruction_input.eval.InstructionFlagLeftOperandIsPC",
-                "stage3.instruction_input.eval.UnexpandedPC",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.instruction_input.output.left",
-            "field.add",
-            &[
-                "stage3.instruction_input.output.left.term.Rs1Value",
-                "stage3.instruction_input.output.left.term.PC",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.instruction_input.output.right.term.Rs2Value",
-            "field.mul",
-            &[
-                "stage3.instruction_input.eval.InstructionFlagRightOperandIsRs2Value",
-                "stage3.instruction_input.eval.Rs2Value",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.instruction_input.output.right.term.Imm",
-            "field.mul",
-            &[
-                "stage3.instruction_input.eval.InstructionFlagRightOperandIsImm",
-                "stage3.instruction_input.eval.Imm",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.instruction_input.output.right",
-            "field.add",
-            &[
-                "stage3.instruction_input.output.right.term.Rs2Value",
-                "stage3.instruction_input.output.right.term.Imm",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.instruction_input.output.left_weighted",
-            "field.mul",
-            &[
-                "stage3.instruction_input.gamma",
-                "stage3.instruction_input.output.left",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.instruction_input.output.weighted_inputs",
-            "field.add",
-            &[
-                "stage3.instruction_input.output.right",
-                "stage3.instruction_input.output.left_weighted",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.instruction_input.output.claim_expr",
-            "field.mul",
-            &[
-                "stage3.instruction_input.output.eq.LeftInstructionInput",
-                "stage3.instruction_input.output.weighted_inputs",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.registers.output.term.Rs1Value",
-            "field.mul",
-            &[
-                "stage3.registers.gamma",
-                "stage3.registers_claim_reduction.eval.Rs1Value",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.registers.output.term.Rs2Value",
-            "field.mul",
-            &[
-                "stage3.registers.gamma2",
-                "stage3.registers_claim_reduction.eval.Rs2Value",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.registers.output.partial.RdWriteValueRs1Value",
-            "field.add",
-            &[
-                "stage3.registers_claim_reduction.eval.RdWriteValue",
-                "stage3.registers.output.term.Rs1Value",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.registers.output.weighted_register_values",
-            "field.add",
-            &[
-                "stage3.registers.output.partial.RdWriteValueRs1Value",
-                "stage3.registers.output.term.Rs2Value",
-            ],
-        ),
-        stage3_field_expr(
-            "stage3.registers.output.claim_expr",
-            "field.mul",
-            &[
-                "stage3.registers.output.eq.RdWriteValue",
-                "stage3.registers.output.weighted_register_values",
-            ],
-        ),
-    ]
-}
-
-fn stage3_verifier_output_claims() -> Vec<Stage3SumcheckOutputClaimPlan> {
-    vec![
-        stage3_output_claim(
-            "jolt.stage3.spartan_shift",
-            vec![
-                stage3_output_value(
-                    "stage3.spartan_shift.output.eq.NextPC",
-                    "eq_plus_one",
-                    "stage3.spartan_shift.instance",
-                    "stage3.input.stage1.NextPC",
-                ),
-                stage3_output_value(
-                    "stage3.spartan_shift.output.eq.NextIsNoop",
-                    "eq_plus_one",
-                    "stage3.spartan_shift.instance",
-                    "stage3.input.stage2.product_virtual.NextIsNoop",
-                ),
-            ],
-            "stage3.spartan_shift.output.claim_expr",
-        ),
-        stage3_output_claim(
-            "jolt.stage3.instruction_input",
-            vec![stage3_output_value(
-                "stage3.instruction_input.output.eq.LeftInstructionInput",
-                "eq_mle",
-                "stage3.instruction_input.instance",
-                "stage3.input.stage2.product_virtual.LeftInstructionInput",
-            )],
-            "stage3.instruction_input.output.claim_expr",
-        ),
-        stage3_output_claim(
-            "jolt.stage3.registers_claim_reduction",
-            vec![stage3_output_value(
-                "stage3.registers.output.eq.RdWriteValue",
-                "eq_mle",
-                "stage3.registers_claim_reduction.instance",
-                "stage3.input.stage1.RdWriteValue",
-            )],
-            "stage3.registers.output.claim_expr",
-        ),
-    ]
-}
-
 impl Stage3CpuProgram {
     fn from_module(module: &BoltModule<'_, Cpu>) -> Result<Self, EmitError> {
         let mut params = None;
@@ -536,6 +257,8 @@ impl Stage3CpuProgram {
         let mut drivers = Vec::new();
         let mut instance_results = Vec::new();
         let mut evals = Vec::new();
+        let mut output_values = Vec::new();
+        let mut output_claim_asts = Vec::new();
         let mut point_slices = Vec::new();
         let mut point_concats = Vec::new();
         let mut opening_claims = Vec::new();
@@ -750,6 +473,23 @@ impl Stage3CpuProgram {
                         oracle: symbol_attr(op, "oracle")?,
                     });
                 }
+                "cpu.sumcheck_output_value" => {
+                    output_values.push(Stage3SumcheckOutputValuePlan {
+                        symbol: string_attr(op, "sym_name")?,
+                        kind: string_attr(op, "kind")?,
+                        point_order: string_attr(op, "point_order")?,
+                        local_point_source: operand_symbol(op, 0)?,
+                        opening_point_source: operand_symbol(op, 1)?,
+                    });
+                }
+                "cpu.sumcheck_output_claim" => {
+                    output_claim_asts.push(Stage3SumcheckOutputClaimAst {
+                        relation: symbol_attr(op, "relation")?,
+                        claim_value: operand_symbol(op, 0)?,
+                        local_values: symbol_array_attr(op, "local_values")?,
+                        local_value_operands: operand_symbols(op, 1)?,
+                    });
+                }
                 "cpu.point_slice" => {
                     point_slices.push(Stage3PointSlicePlan {
                         symbol: string_attr(op, "sym_name")?,
@@ -804,11 +544,11 @@ impl Stage3CpuProgram {
         let role = module
             .role()
             .ok_or_else(|| EmitError::new("missing cpu party role"))?;
-        if role == Role::Verifier {
-            field_exprs.extend(stage3_verifier_output_field_exprs());
+        if role == Role::Prover {
+            prune_prover_output_field_exprs(&mut field_exprs, &claims, &output_claim_asts);
         }
         let output_claims = if role == Role::Verifier {
-            stage3_verifier_output_claims()
+            resolve_stage3_output_claims(&output_values, output_claim_asts)?
         } else {
             Vec::new()
         };
@@ -827,6 +567,7 @@ impl Stage3CpuProgram {
             drivers,
             instance_results,
             evals,
+            output_values,
             output_claims,
             point_slices,
             point_concats,
@@ -922,9 +663,9 @@ impl Stage3CpuProgram {
         ));
         values.extend(symbols(self.field_exprs.iter().map(|expr| &expr.symbol)));
         values.extend(symbols(self.evals.iter().map(|eval| &eval.symbol)));
-        values.extend(symbols(self.output_claims.iter().flat_map(|claim| {
-            claim.local_values.iter().map(|value| &value.symbol)
-        })));
+        values.extend(symbols(
+            self.output_values.iter().map(|value| &value.symbol),
+        ));
         values
     }
 
@@ -1123,6 +864,32 @@ impl Stage3CpuProgram {
         );
         let field_values = self.field_value_symbols();
         let point_values = self.point_value_symbols();
+        for local_value in &self.output_values {
+            if !point_values.contains(&local_value.local_point_source) {
+                return Err(EmitError::new(format!(
+                    "stage3 output value @{} references missing local point @{}",
+                    local_value.symbol, local_value.local_point_source
+                )));
+            }
+            if !point_values.contains(&local_value.opening_point_source) {
+                return Err(EmitError::new(format!(
+                    "stage3 output value @{} references missing opening point @{}",
+                    local_value.symbol, local_value.opening_point_source
+                )));
+            }
+            if !matches!(local_value.kind.as_str(), "eq_mle" | "eq_plus_one") {
+                return Err(EmitError::new(format!(
+                    "stage3 output value @{} has unsupported kind `{}`",
+                    local_value.symbol, local_value.kind
+                )));
+            }
+            if !matches!(local_value.point_order.as_str(), "as_is" | "reverse") {
+                return Err(EmitError::new(format!(
+                    "stage3 output value @{} has unsupported point order `{}`",
+                    local_value.symbol, local_value.point_order
+                )));
+            }
+        }
         for claim in &self.output_claims {
             if !relations.contains(&claim.relation) {
                 return Err(EmitError::new(format!(
@@ -1135,32 +902,6 @@ impl Stage3CpuProgram {
                     "stage3 output claim for @{} uses missing claim value @{}",
                     claim.relation, claim.claim_value
                 )));
-            }
-            for local_value in &claim.local_values {
-                if !point_values.contains(&local_value.local_point_source) {
-                    return Err(EmitError::new(format!(
-                        "stage3 output value @{} references missing local point @{}",
-                        local_value.symbol, local_value.local_point_source
-                    )));
-                }
-                if !point_values.contains(&local_value.opening_point_source) {
-                    return Err(EmitError::new(format!(
-                        "stage3 output value @{} references missing opening point @{}",
-                        local_value.symbol, local_value.opening_point_source
-                    )));
-                }
-                if !matches!(local_value.kind.as_str(), "eq_mle" | "eq_plus_one") {
-                    return Err(EmitError::new(format!(
-                        "stage3 output value @{} has unsupported kind `{}`",
-                        local_value.symbol, local_value.kind
-                    )));
-                }
-                if !matches!(local_value.point_order.as_str(), "as_is" | "reverse") {
-                    return Err(EmitError::new(format!(
-                        "stage3 output value @{} has unsupported point order `{}`",
-                        local_value.symbol, local_value.point_order
-                    )));
-                }
             }
         }
         Ok(())
@@ -2433,6 +2174,92 @@ fn require_supported_symbol(kind: &str, actual: &str, expected: &str) -> Result<
             "unsupported {kind} @{actual}; expected @{expected}"
         )))
     }
+}
+
+fn resolve_stage3_output_claims(
+    output_values: &[Stage3SumcheckOutputValuePlan],
+    claim_asts: Vec<Stage3SumcheckOutputClaimAst>,
+) -> Result<Vec<Stage3SumcheckOutputClaimPlan>, EmitError> {
+    let output_values_by_symbol: BTreeMap<_, _> = output_values
+        .iter()
+        .map(|value| (value.symbol.as_str(), value))
+        .collect();
+    claim_asts
+        .into_iter()
+        .map(|claim| {
+            if claim.local_values != claim.local_value_operands {
+                return Err(EmitError::new(format!(
+                    "stage3 output claim for @{} operand order does not match local_values",
+                    claim.relation
+                )));
+            }
+            let local_values = claim
+                .local_values
+                .iter()
+                .map(|symbol| {
+                    output_values_by_symbol
+                        .get(symbol.as_str())
+                        .map(|value| (*value).clone())
+                        .ok_or_else(|| {
+                            EmitError::new(format!(
+                                "stage3 output claim for @{} references missing output value @{symbol}",
+                                claim.relation
+                            ))
+                        })
+                })
+                .collect::<Result<Vec<_>, EmitError>>()?;
+            Ok(Stage3SumcheckOutputClaimPlan {
+                relation: claim.relation,
+                local_values,
+                claim_value: claim.claim_value,
+            })
+        })
+        .collect()
+}
+
+fn prune_prover_output_field_exprs(
+    field_exprs: &mut Vec<Stage3FieldExprPlan>,
+    claims: &[Stage3SumcheckClaimPlan],
+    output_claims: &[Stage3SumcheckOutputClaimAst],
+) {
+    let field_exprs_by_symbol: BTreeMap<_, _> = field_exprs
+        .iter()
+        .map(|expr| (expr.symbol.as_str(), expr))
+        .collect();
+    let sumcheck_claim_closure = field_expr_dependency_closure(
+        &field_exprs_by_symbol,
+        claims.iter().map(|claim| claim.claim_value.as_str()),
+    );
+    let output_claim_closure = field_expr_dependency_closure(
+        &field_exprs_by_symbol,
+        output_claims.iter().map(|claim| claim.claim_value.as_str()),
+    );
+    field_exprs.retain(|expr| {
+        !output_claim_closure.contains(&expr.symbol)
+            || sumcheck_claim_closure.contains(&expr.symbol)
+    });
+}
+
+fn field_expr_dependency_closure<'a>(
+    field_exprs_by_symbol: &BTreeMap<&str, &Stage3FieldExprPlan>,
+    roots: impl Iterator<Item = &'a str>,
+) -> BTreeSet<String> {
+    let mut visited = BTreeSet::new();
+    let mut stack = roots.map(str::to_owned).collect::<Vec<_>>();
+    while let Some(symbol) = stack.pop() {
+        if !visited.insert(symbol.clone()) {
+            continue;
+        }
+        let Some(expr) = field_exprs_by_symbol.get(symbol.as_str()) else {
+            continue;
+        };
+        for operand in &expr.operands {
+            if field_exprs_by_symbol.contains_key(operand.as_str()) {
+                stack.push(operand.clone());
+            }
+        }
+    }
+    visited
 }
 
 fn stage3_output_value_kind_expr(kind: &str) -> Result<&'static str, EmitError> {

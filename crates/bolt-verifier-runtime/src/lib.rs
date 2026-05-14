@@ -1116,9 +1116,9 @@ pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
     evals: &[StageNamedEval<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, RuntimePlanError> {
-    let mut scratch = store.clone();
+    let mut scratch = Vec::new();
     for eval in evals {
-        scratch.insert_scalar(eval.name, eval.value);
+        insert_scratch_scalar(&mut scratch, eval.name, eval.value);
     }
     for local_value in plan.local_values {
         if local_value.local_point_source != instance_symbol {
@@ -1127,7 +1127,7 @@ pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
                 reason: "sumcheck output value source mismatch",
             });
         }
-        let opening_point = scratch.point_or(local_value.opening_point_source, |symbol| {
+        let opening_point = store.point_or(local_value.opening_point_source, |symbol| {
             RuntimePlanError::MissingValue { symbol }
         })?;
         let ordered_point = match local_value.point_order {
@@ -1142,12 +1142,60 @@ pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
                 EqPlusOnePolynomial::<Fr>::new(opening_point.to_vec()).evaluate(&ordered_point)
             }
         };
-        scratch.insert_scalar(local_value.symbol, value);
+        insert_scratch_scalar(&mut scratch, local_value.symbol, value);
     }
-    scratch.evaluate_available_field_exprs(field_exprs, evaluate_field_expr)?;
-    scratch.scalar_or(plan.claim_value, |symbol| RuntimePlanError::MissingValue {
-        symbol,
+    evaluate_available_field_exprs_with_scratch(field_exprs, store, &mut scratch)?;
+    scratch_scalar_or(store, &scratch, plan.claim_value).ok_or(RuntimePlanError::MissingValue {
+        symbol: plan.claim_value,
     })
+}
+
+fn insert_scratch_scalar(scratch: &mut Vec<(&'static str, Fr)>, symbol: &'static str, value: Fr) {
+    if let Some((_, existing)) = scratch.iter_mut().find(|(name, _)| *name == symbol) {
+        *existing = value;
+    } else {
+        scratch.push((symbol, value));
+    }
+}
+
+fn scratch_scalar_or(
+    store: &ValueStore<Fr>,
+    scratch: &[(&'static str, Fr)],
+    symbol: &'static str,
+) -> Option<Fr> {
+    scratch
+        .iter()
+        .find(|(name, _)| *name == symbol)
+        .map(|(_, value)| *value)
+        .or_else(|| store.try_scalar(symbol))
+}
+
+fn evaluate_available_field_exprs_with_scratch(
+    field_exprs: &[FieldExprPlan],
+    store: &ValueStore<Fr>,
+    scratch: &mut Vec<(&'static str, Fr)>,
+) -> Result<(), RuntimePlanError> {
+    loop {
+        let mut progress = 0usize;
+        for expr in field_exprs {
+            if scratch_scalar_or(store, scratch, expr.symbol).is_some() {
+                continue;
+            }
+            let Some(operands) = expr
+                .operands
+                .iter()
+                .map(|operand| scratch_scalar_or(store, scratch, operand))
+                .collect::<Option<Vec<_>>>()
+            else {
+                continue;
+            };
+            insert_scratch_scalar(scratch, expr.symbol, evaluate_field_expr(expr, &operands)?);
+            progress += 1;
+        }
+        if progress == 0 {
+            return Ok(());
+        }
+    }
 }
 
 pub fn indexed_evals_by_prefix<F: Field>(

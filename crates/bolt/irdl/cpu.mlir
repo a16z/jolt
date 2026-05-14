@@ -600,6 +600,36 @@ irdl.dialect @cpu {
     irdl.operands(input_point: %input_point, input_result: %input_result)
     irdl.results(instance_point: %output_point, instance_result: %output_result)
   }
+  irdl.operation @sumcheck_output_value {
+    %point = irdl.parametric @cpu::@point<>
+    %value = irdl.parametric @cpu::@field_value<>
+    %sym = irdl.any
+    %kind = irdl.any
+    %point_order = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "kind" = %kind,
+      "point_order" = %point_order
+    }
+    irdl.operands(local_point: %point, opening_point: %point)
+    irdl.results(value: %value)
+  }
+  irdl.operation @sumcheck_output_claim {
+    %value = irdl.parametric @cpu::@field_value<>
+    %sym = irdl.any
+    %stage = irdl.any
+    %relation = irdl.any
+    %count = irdl.any
+    %local_values = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "stage" = %stage,
+      "relation" = %relation,
+      "count" = %count,
+      "local_values" = %local_values
+    }
+    irdl.operands(claim_value: %value, local_values: variadic %value)
+  }
   irdl.operation @opening_claim {
     %point = irdl.parametric @cpu::@point<>
     %eval = irdl.parametric @cpu::@field_value<>

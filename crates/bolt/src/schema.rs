@@ -362,6 +362,19 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             )?;
             require_shape(operation, 2, 2)
         }
+        "piop.sumcheck_output_value" => {
+            require_attrs(operation, &["sym_name", "kind", "point_order"])?;
+            require_shape(operation, 2, 1)?;
+            require_sumcheck_output_value(operation)
+        }
+        "piop.sumcheck_output_claim" => {
+            require_attrs(
+                operation,
+                &["sym_name", "stage", "relation", "count", "local_values"],
+            )?;
+            require_min_shape(operation, 1, 0)?;
+            require_sumcheck_output_claim(operation)
+        }
         "piop.opening_claim" => {
             require_attrs(
                 operation,
@@ -706,6 +719,19 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             )?;
             require_shape(operation, 2, 2)
         }
+        "compute.sumcheck_output_value" => {
+            require_attrs(operation, &["sym_name", "kind", "point_order"])?;
+            require_shape(operation, 2, 1)?;
+            require_sumcheck_output_value(operation)
+        }
+        "compute.sumcheck_output_claim" => {
+            require_attrs(
+                operation,
+                &["sym_name", "stage", "relation", "count", "local_values"],
+            )?;
+            require_min_shape(operation, 1, 0)?;
+            require_sumcheck_output_claim(operation)
+        }
         "compute.opening_claim" => {
             require_attrs(
                 operation,
@@ -1033,6 +1059,19 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             )?;
             require_shape(operation, 2, 2)
         }
+        "cpu.sumcheck_output_value" => {
+            require_attrs(operation, &["sym_name", "kind", "point_order"])?;
+            require_shape(operation, 2, 1)?;
+            require_sumcheck_output_value(operation)
+        }
+        "cpu.sumcheck_output_claim" => {
+            require_attrs(
+                operation,
+                &["sym_name", "stage", "relation", "count", "local_values"],
+            )?;
+            require_min_shape(operation, 1, 0)?;
+            require_sumcheck_output_claim(operation)
+        }
         "cpu.opening_claim" => {
             require_attrs(
                 operation,
@@ -1154,6 +1193,54 @@ fn require_opening_claim_equality(operation: OperationRef<'_, '_>) -> Result<(),
             left.owner,
             right.owner
         )));
+    }
+    Ok(())
+}
+
+fn require_sumcheck_output_value(operation: OperationRef<'_, '_>) -> Result<(), SchemaError> {
+    let kind = string_attr(operation, "kind")?;
+    if !matches!(kind.as_str(), "eq_mle" | "eq_plus_one") {
+        return Err(SchemaError::new(format!(
+            "{} attr `kind` has unsupported output value kind `{kind}`",
+            operation_name(operation)
+        )));
+    }
+    let point_order = string_attr(operation, "point_order")?;
+    if !matches!(point_order.as_str(), "as_is" | "reverse") {
+        return Err(SchemaError::new(format!(
+            "{} attr `point_order` has unsupported output point order `{point_order}`",
+            operation_name(operation)
+        )));
+    }
+    Ok(())
+}
+
+fn require_sumcheck_output_claim(operation: OperationRef<'_, '_>) -> Result<(), SchemaError> {
+    let count = int_attr(operation, "count")?;
+    let local_values = symbol_array_attr(operation, "local_values")?;
+    if local_values.len() != count {
+        return Err(SchemaError::new(format!(
+            "{} attr `local_values` length {} does not match count {count}",
+            operation_name(operation),
+            local_values.len()
+        )));
+    }
+    let dynamic_count = operation.operand_count().saturating_sub(1);
+    if dynamic_count != count {
+        return Err(SchemaError::new(format!(
+            "{} attr `count` expected {dynamic_count}, got {count}",
+            operation_name(operation)
+        )));
+    }
+    for (index, expected) in local_values.iter().enumerate() {
+        let operand_index = index + 1;
+        let actual = operand_owner_symbol(operation, operand_index)?;
+        if &actual != expected {
+            return Err(SchemaError::new(format!(
+                "{} operand {operand_index} expected @{expected}, got @{actual}",
+                operation_name(operation)
+            )));
+        }
     }
     Ok(())
 }

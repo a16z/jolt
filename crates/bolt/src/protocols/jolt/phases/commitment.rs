@@ -922,6 +922,33 @@ pub fn lower_compute_to_cpu<'c>(
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
                 insert_result_mapping(&mut value_map, op, operation, 1, 1)?;
             }
+            "compute.sumcheck_output_value" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["kind", "point_order"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.sumcheck_output_value",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!cpu.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.sumcheck_output_claim" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["stage", "relation", "count", "local_values"])?;
+                let _operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.sumcheck_output_claim",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &[],
+                )?;
+            }
             "compute.opening_claim" => {
                 let operands = lowered_operands(op, &value_map)?;
                 let symbol = string_attr(op, "sym_name")?;
