@@ -1000,12 +1000,12 @@ impl MacroBuilder {
         };
 
         // The modular backend currently runs against a single goldens shape
-        // (log_t = 16). Reject `max_trace_length` above 2^16 at expansion
+        // (log_t = 18). Reject `max_trace_length` above 2^18 at expansion
         // time so users get a build error instead of an `UnsupportedShape`
         // surprise from `prove_program`. Kept in sync with
         // `jolt_host::FIXTURE_LOG_T`.
         let attributes = parse_attributes(&self.attr);
-        const FIXTURE_LOG_T: u32 = 16;
+        const FIXTURE_LOG_T: u32 = 18;
         const MAX_MODULAR_TRACE_LENGTH: u64 = 1 << FIXTURE_LOG_T;
         let trace_len_err = if attributes.max_trace_length > MAX_MODULAR_TRACE_LENGTH {
             let msg = format!(

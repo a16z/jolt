@@ -74,7 +74,10 @@ impl JoltProtocolParams {
     }
 
     pub fn fixture() -> Self {
-        Self::new(16, 10, 16)
+        // Sized to cover the example guests in `examples/` (max_trace_length
+        // up to 2^18, bytecode up to 2^14 instructions, RAM up to 2^14 words).
+        // Smaller guests pad up to this shape via `jolt_host::prove_program`.
+        Self::new(18, 14, 14)
     }
 
     pub fn attrs(&self) -> Vec<(String, String)> {

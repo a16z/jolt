@@ -75,9 +75,9 @@ pub const TRANSCRIPT_LABEL: &[u8] = b"Jolt";
 /// [`ProveProgramError::UnsupportedShape`]. Kept in sync with the
 /// `MAX_MODULAR_TRACE_LENGTH` cap in the
 /// `#[jolt::provable(backend = "modular")]` macro guard.
-pub const FIXTURE_LOG_T: usize = 16;
-pub const FIXTURE_LOG_K_BYTECODE: usize = 10;
-pub const FIXTURE_LOG_K_RAM: usize = 16;
+pub const FIXTURE_LOG_T: usize = 18;
+pub const FIXTURE_LOG_K_BYTECODE: usize = 14;
+pub const FIXTURE_LOG_K_RAM: usize = 14;
 
 /// Errors produced by `prove_program`.
 #[derive(Debug)]

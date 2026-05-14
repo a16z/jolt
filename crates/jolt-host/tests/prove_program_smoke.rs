@@ -41,7 +41,7 @@ fn muldiv_modular_prove_smoke() {
         }) => {
             panic!(
                 "muldiv shape mismatch: actual=({log_t}, {log_k_bytecode}, {log_k_ram}), \
-                 fixture=(16, 10, 16). Goldens need regen at the new shape."
+                 fixture=(18, 14, 14). Goldens need regen at the new shape."
             );
         }
         Err(other) => {
