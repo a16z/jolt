@@ -134,7 +134,7 @@ pub const STAGE4_POINT_SLICES: &[Stage4PointSlicePlan] = &[
 ];
 
 pub const STAGE4_POINT_CONCATS: &[Stage4PointConcatPlan] = &[
-    Stage4PointConcatPlan { symbol: "stage4.ram_val_check.point.RamRa", layout: "address_then_cycle", arity: 32, inputs: "stage4.ram_val_check.point.RamAddress|stage4.ram_val_check.instance" },
+    Stage4PointConcatPlan { symbol: "stage4.ram_val_check.point.RamRa", layout: "address_then_cycle", arity: 32, inputs: &["stage4.ram_val_check.point.RamAddress", "stage4.ram_val_check.instance"] },
 ];
 pub const STAGE4_OPENING_CLAIMS: &[Stage4OpeningClaimPlan] = &[
     Stage4OpeningClaimPlan { symbol: "stage4.registers_read_write.opening.RegistersVal", oracle: "RegistersVal", domain: "jolt.stage4_registers_rw_domain", point_arity: 23, claim_kind: Stage4ClaimKind::Virtual, point_source: "stage4.registers_read_write.instance", eval_source: "stage4.registers_read_write.eval.RegistersVal" },

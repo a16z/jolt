@@ -194,7 +194,7 @@ pub const STAGE2_POINT_SLICES: &[Stage2PointSlicePlan] = &[
 ];
 
 pub const STAGE2_POINT_CONCATS: &[Stage2PointConcatPlan] = &[
-    Stage2PointConcatPlan { symbol: "stage2.ram_raf.point.RamRa", layout: "address_then_cycle", arity: 32, inputs: "stage2.ram_raf.instance|stage2.input.stage1.RamAddress" },
+    Stage2PointConcatPlan { symbol: "stage2.ram_raf.point.RamRa", layout: "address_then_cycle", arity: 32, inputs: &["stage2.ram_raf.instance", "stage2.input.stage1.RamAddress"] },
 ];
 pub const STAGE2_OPENING_CLAIMS: &[Stage2OpeningClaimPlan] = &[
     Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.uniskip.opening.UnivariateSkip", oracle: "UnivariateSkip", domain: "jolt.stage2_uniskip_domain", point_arity: 1, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.product_virtual.uniskip.instance", eval_source: "stage2.product_virtual.uniskip.eval.UnivariateSkip" },

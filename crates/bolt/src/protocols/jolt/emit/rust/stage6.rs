@@ -1929,7 +1929,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage6Error);
                         rust_str(&concat.symbol),
                         rust_str(&concat.layout),
                         concat.arity,
-                        rust_str(&concat.inputs.join("|"))
+                        super::plan_tokens::rust_str_slice_expr(&concat.inputs)
                     )
                 })
                 .collect::<Vec<_>>()

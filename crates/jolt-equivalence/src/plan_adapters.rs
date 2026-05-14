@@ -4,15 +4,6 @@
 //! Bolt's owned compiler plans into the currently generated static plan shape
 //! expected by jolt-kernels, jolt-prover, and jolt-verifier.
 
-macro_rules! stage_list {
-    (kernel, $values:expr) => {
-        super::leak_str_slice($values)
-    };
-    (generated, $values:expr) => {
-        super::leak_symbol_list($values)
-    };
-}
-
 macro_rules! stage_batch_list {
     ($mode:ident, $values:expr) => {
         super::leak_str_slice($values)
@@ -543,7 +534,7 @@ macro_rules! define_stage_adapter_impl {
                             symbol: super::leak_str(&plan.symbol),
                             layout: super::leak_str(&plan.layout),
                             arity: plan.arity,
-                            inputs: stage_list!($mode, &plan.inputs),
+                            inputs: super::leak_str_slice(&plan.inputs),
                         })
                         .collect(),
                 ),
@@ -1040,10 +1031,6 @@ fn leak_str_slice(values: &[String]) -> &'static [&'static str] {
         .map(|value| leak_str(value))
         .collect::<Vec<_>>();
     Box::leak(leaked.into_boxed_slice())
-}
-
-fn leak_symbol_list(values: &[String]) -> &'static str {
-    leak_str(&values.join("|"))
 }
 
 fn leak_usize_slice(values: &[usize]) -> &'static [usize] {

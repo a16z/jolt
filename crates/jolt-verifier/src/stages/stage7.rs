@@ -255,7 +255,7 @@ pub const STAGE7_POINT_SLICES: &[Stage7PointSlicePlan] = &[
 ];
 
 pub const STAGE7_POINT_CONCATS: &[Stage7PointConcatPlan] = &[
-    Stage7PointConcatPlan { symbol: "stage7.hamming_weight_claim_reduction.point", layout: "address_chunk_then_cycle", arity: 20, inputs: "stage7.hamming_weight_claim_reduction.instance|stage7.hamming_weight_claim_reduction.point.cycle" },
+    Stage7PointConcatPlan { symbol: "stage7.hamming_weight_claim_reduction.point", layout: "address_chunk_then_cycle", arity: 20, inputs: &["stage7.hamming_weight_claim_reduction.instance", "stage7.hamming_weight_claim_reduction.point.cycle"] },
 ];
 pub const STAGE7_OPENING_CLAIMS: &[Stage7OpeningClaimPlan] = &[
     Stage7OpeningClaimPlan { symbol: "stage7.hamming_weight_claim_reduction.opening.InstructionRa_0", oracle: "InstructionRa_0", domain: "jolt.main_witness_commit_domain", point_arity: 20, claim_kind: Stage7ClaimKind::Committed, point_source: "stage7.hamming_weight_claim_reduction.point", eval_source: "stage7.hamming_weight_claim_reduction.eval.InstructionRa_0" },

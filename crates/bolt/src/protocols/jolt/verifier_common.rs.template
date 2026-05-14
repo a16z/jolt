@@ -254,7 +254,7 @@ pub struct PointConcatPlan {
     pub symbol: &'static str,
     pub layout: &'static str,
     pub arity: usize,
-    pub inputs: &'static str,
+    pub inputs: &'static [&'static str],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -840,15 +840,11 @@ impl<F: Field> ValueStore<F> {
 
     fn try_concat_point(&self, concat: &PointConcatPlan) -> Option<Vec<F>> {
         let mut point = Vec::with_capacity(concat.arity);
-        for input in symbol_list(concat.inputs) {
+        for input in concat.inputs {
             point.extend_from_slice(self.try_point(input)?);
         }
         Some(point)
     }
-}
-
-pub fn symbol_list(symbols: &'static str) -> impl Iterator<Item = &'static str> {
-    symbols.split('|').filter(|symbol| !symbol.is_empty())
 }
 
 pub fn find_plan<'a, T: SymbolPlan>(plans: &'a [T], symbol: &str) -> Option<&'a T> {
