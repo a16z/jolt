@@ -4,12 +4,6 @@
 //! Bolt's owned compiler plans into the currently generated static plan shape
 //! expected by jolt-kernels, jolt-prover, and jolt-verifier.
 
-macro_rules! stage_batch_list {
-    ($mode:ident, $values:expr) => {
-        super::leak_str_slice($values)
-    };
-}
-
 macro_rules! stage_field_expr {
     (kernel, $module:ident, $field_expr:ident, $plan:ident) => {
         $module::$field_expr {
@@ -23,9 +17,18 @@ macro_rules! stage_field_expr {
     (generated, $module:ident, $field_expr:ident, $plan:ident) => {
         $module::$field_expr {
             symbol: super::leak_str(&$plan.symbol),
-            kind: generated_field_expr_kind!($plan.formula.as_str()),
+            kind: super::generated_field_expr_kind($plan.formula.as_str()),
             operands: super::leak_str_slice(&$plan.operands),
         }
+    };
+}
+
+macro_rules! stage_optional_relation_kind {
+    (kernel, $value:expr) => {
+        $value.map(super::leak_str)
+    };
+    (generated, $value:expr) => {
+        $value.map(super::generated_relation_kind)
     };
 }
 
@@ -41,7 +44,7 @@ macro_rules! stage_claim {
             kernel: $plan.kernel.as_deref().map(super::leak_str),
             relation: $plan.relation.as_deref().map(super::leak_str),
             claim_value: super::leak_str(&$plan.claim_value),
-            input_openings: stage_batch_list!(kernel, &$plan.input_openings),
+            input_openings: super::leak_str_slice(&$plan.input_openings),
         }
     };
     (generated, $module:ident, $claim:ident, $plan:ident) => {
@@ -53,12 +56,9 @@ macro_rules! stage_claim {
             degree: $plan.degree,
             claim: super::leak_str(&$plan.claim),
             kernel: $plan.kernel.as_deref().map(super::leak_str),
-            relation: $plan
-                .relation
-                .as_deref()
-                .map(|relation| generated_relation_kind!(relation)),
+            relation: stage_optional_relation_kind!(generated, $plan.relation.as_deref()),
             claim_value: super::leak_str(&$plan.claim_value),
-            input_openings: stage_batch_list!(generated, &$plan.input_openings),
+            input_openings: super::leak_str_slice(&$plan.input_openings),
         }
     };
 }
@@ -86,10 +86,7 @@ macro_rules! stage_driver {
             stage: super::leak_str(&$plan.stage),
             proof_slot: super::leak_str(&$plan.proof_slot),
             kernel: $plan.kernel.as_deref().map(super::leak_str),
-            relation: $plan
-                .relation
-                .as_deref()
-                .map(|relation| generated_relation_kind!(relation)),
+            relation: stage_optional_relation_kind!(generated, $plan.relation.as_deref()),
             batch: super::leak_str(&$plan.batch),
             policy: super::leak_str(&$plan.policy),
             round_schedule: super::leak_usize_slice(&$plan.round_schedule),
@@ -101,174 +98,182 @@ macro_rules! stage_driver {
     };
 }
 
-macro_rules! generated_program_step_kind {
-    ($value:expr) => {
-        match $value {
-            "transcript_squeeze" => {
-                jolt_verifier::stages::common::ProgramStepKind::TranscriptSqueeze
-            }
-            "transcript_absorb_bytes" => {
-                jolt_verifier::stages::common::ProgramStepKind::TranscriptAbsorbBytes
-            }
-            "sumcheck_driver" => jolt_verifier::stages::common::ProgramStepKind::SumcheckDriver,
-            value => panic!("unsupported generated program step kind `{value}`"),
+#[expect(
+    clippy::panic,
+    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
+)]
+fn generated_program_step_kind(value: &str) -> jolt_verifier::stages::common::ProgramStepKind {
+    match value {
+        "transcript_squeeze" => jolt_verifier::stages::common::ProgramStepKind::TranscriptSqueeze,
+        "transcript_absorb_bytes" => {
+            jolt_verifier::stages::common::ProgramStepKind::TranscriptAbsorbBytes
         }
-    };
+        "sumcheck_driver" => jolt_verifier::stages::common::ProgramStepKind::SumcheckDriver,
+        value => panic!("unsupported generated program step kind `{value}`"),
+    }
 }
 
-macro_rules! generated_transcript_squeeze_kind {
-    ($value:expr) => {
-        match $value {
-            "challenge_scalar" => {
-                jolt_verifier::stages::common::TranscriptSqueezeKind::ChallengeScalar
-            }
-            "challenge_vector" => {
-                jolt_verifier::stages::common::TranscriptSqueezeKind::ChallengeVector
-            }
-            "scalar" => jolt_verifier::stages::common::TranscriptSqueezeKind::Scalar,
-            value => panic!("unsupported generated transcript squeeze kind `{value}`"),
-        }
-    };
+#[expect(
+    clippy::panic,
+    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
+)]
+fn generated_transcript_squeeze_kind(
+    value: &str,
+) -> jolt_verifier::stages::common::TranscriptSqueezeKind {
+    match value {
+        "challenge_scalar" => jolt_verifier::stages::common::TranscriptSqueezeKind::ChallengeScalar,
+        "challenge_vector" => jolt_verifier::stages::common::TranscriptSqueezeKind::ChallengeVector,
+        "scalar" => jolt_verifier::stages::common::TranscriptSqueezeKind::Scalar,
+        value => panic!("unsupported generated transcript squeeze kind `{value}`"),
+    }
 }
 
-macro_rules! generated_claim_kind {
-    ($value:expr) => {
-        match $value {
-            "committed" => jolt_verifier::stages::common::ClaimKind::Committed,
-            "virtual" => jolt_verifier::stages::common::ClaimKind::Virtual,
-            value => panic!("unsupported generated claim kind `{value}`"),
-        }
-    };
+#[expect(
+    clippy::panic,
+    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
+)]
+fn generated_claim_kind(value: &str) -> jolt_verifier::stages::common::ClaimKind {
+    match value {
+        "committed" => jolt_verifier::stages::common::ClaimKind::Committed,
+        "virtual" => jolt_verifier::stages::common::ClaimKind::Virtual,
+        value => panic!("unsupported generated claim kind `{value}`"),
+    }
 }
 
-macro_rules! generated_relation_kind {
-    ($value:expr) => {
-        match $value {
-            "jolt.stage1.outer.uniskip" => {
-                jolt_verifier::stages::common::RelationKind::Stage1OuterUniskip
-            }
-            "jolt.stage1.outer.remaining" => {
-                jolt_verifier::stages::common::RelationKind::Stage1OuterRemaining
-            }
-            "jolt.stage2.product_virtual.uniskip" => {
-                jolt_verifier::stages::common::RelationKind::Stage2ProductVirtualUniskip
-            }
-            "jolt.stage2.ram.read_write" => {
-                jolt_verifier::stages::common::RelationKind::Stage2RamReadWrite
-            }
-            "jolt.stage2.product_virtual.remainder" => {
-                jolt_verifier::stages::common::RelationKind::Stage2ProductVirtualRemainder
-            }
-            "jolt.stage2.instruction_lookup.claim_reduction" => {
-                jolt_verifier::stages::common::RelationKind::Stage2InstructionLookupClaimReduction
-            }
-            "jolt.stage2.ram.raf_evaluation" => {
-                jolt_verifier::stages::common::RelationKind::Stage2RamRafEvaluation
-            }
-            "jolt.stage2.ram.output_check" => {
-                jolt_verifier::stages::common::RelationKind::Stage2RamOutputCheck
-            }
-            "jolt.stage2.batched" => jolt_verifier::stages::common::RelationKind::Stage2Batched,
-            "jolt.stage3.spartan_shift" => {
-                jolt_verifier::stages::common::RelationKind::Stage3SpartanShift
-            }
-            "jolt.stage3.instruction_input" => {
-                jolt_verifier::stages::common::RelationKind::Stage3InstructionInput
-            }
-            "jolt.stage3.registers_claim_reduction" => {
-                jolt_verifier::stages::common::RelationKind::Stage3RegistersClaimReduction
-            }
-            "jolt.stage3.batched" => jolt_verifier::stages::common::RelationKind::Stage3Batched,
-            "jolt.stage4.registers_read_write" => {
-                jolt_verifier::stages::common::RelationKind::Stage4RegistersReadWrite
-            }
-            "jolt.stage4.ram_val_check" => {
-                jolt_verifier::stages::common::RelationKind::Stage4RamValCheck
-            }
-            "jolt.stage4.batched" => jolt_verifier::stages::common::RelationKind::Stage4Batched,
-            "jolt.stage5.instruction_read_raf" => {
-                jolt_verifier::stages::common::RelationKind::Stage5InstructionReadRaf
-            }
-            "jolt.stage5.ram_ra_claim_reduction" => {
-                jolt_verifier::stages::common::RelationKind::Stage5RamRaClaimReduction
-            }
-            "jolt.stage5.registers_val_evaluation" => {
-                jolt_verifier::stages::common::RelationKind::Stage5RegistersValEvaluation
-            }
-            "jolt.stage5.batched" => jolt_verifier::stages::common::RelationKind::Stage5Batched,
-            "jolt.stage6.bytecode_read_raf" => {
-                jolt_verifier::stages::common::RelationKind::Stage6BytecodeReadRaf
-            }
-            "jolt.stage6.booleanity" => {
-                jolt_verifier::stages::common::RelationKind::Stage6Booleanity
-            }
-            "jolt.stage6.hamming_booleanity" => {
-                jolt_verifier::stages::common::RelationKind::Stage6HammingBooleanity
-            }
-            "jolt.stage6.ram_ra_virtual" => {
-                jolt_verifier::stages::common::RelationKind::Stage6RamRaVirtual
-            }
-            "jolt.stage6.instruction_ra_virtual" => {
-                jolt_verifier::stages::common::RelationKind::Stage6InstructionRaVirtual
-            }
-            "jolt.stage6.inc_claim_reduction" => {
-                jolt_verifier::stages::common::RelationKind::Stage6IncClaimReduction
-            }
-            "jolt.stage6.batched" => jolt_verifier::stages::common::RelationKind::Stage6Batched,
-            "jolt.stage7.hamming_weight_claim_reduction" => {
-                jolt_verifier::stages::common::RelationKind::Stage7HammingWeightClaimReduction
-            }
-            "jolt.stage7.batched" => jolt_verifier::stages::common::RelationKind::Stage7Batched,
-            value => panic!("unsupported generated relation `{value}`"),
+#[expect(
+    clippy::panic,
+    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
+)]
+fn generated_relation_kind(value: &str) -> jolt_verifier::stages::common::RelationKind {
+    match value {
+        "jolt.stage1.outer.uniskip" => {
+            jolt_verifier::stages::common::RelationKind::Stage1OuterUniskip
         }
-    };
+        "jolt.stage1.outer.remaining" => {
+            jolt_verifier::stages::common::RelationKind::Stage1OuterRemaining
+        }
+        "jolt.stage2.product_virtual.uniskip" => {
+            jolt_verifier::stages::common::RelationKind::Stage2ProductVirtualUniskip
+        }
+        "jolt.stage2.ram.read_write" => {
+            jolt_verifier::stages::common::RelationKind::Stage2RamReadWrite
+        }
+        "jolt.stage2.product_virtual.remainder" => {
+            jolt_verifier::stages::common::RelationKind::Stage2ProductVirtualRemainder
+        }
+        "jolt.stage2.instruction_lookup.claim_reduction" => {
+            jolt_verifier::stages::common::RelationKind::Stage2InstructionLookupClaimReduction
+        }
+        "jolt.stage2.ram.raf_evaluation" => {
+            jolt_verifier::stages::common::RelationKind::Stage2RamRafEvaluation
+        }
+        "jolt.stage2.ram.output_check" => {
+            jolt_verifier::stages::common::RelationKind::Stage2RamOutputCheck
+        }
+        "jolt.stage2.batched" => jolt_verifier::stages::common::RelationKind::Stage2Batched,
+        "jolt.stage3.spartan_shift" => {
+            jolt_verifier::stages::common::RelationKind::Stage3SpartanShift
+        }
+        "jolt.stage3.instruction_input" => {
+            jolt_verifier::stages::common::RelationKind::Stage3InstructionInput
+        }
+        "jolt.stage3.registers_claim_reduction" => {
+            jolt_verifier::stages::common::RelationKind::Stage3RegistersClaimReduction
+        }
+        "jolt.stage3.batched" => jolt_verifier::stages::common::RelationKind::Stage3Batched,
+        "jolt.stage4.registers_read_write" => {
+            jolt_verifier::stages::common::RelationKind::Stage4RegistersReadWrite
+        }
+        "jolt.stage4.ram_val_check" => {
+            jolt_verifier::stages::common::RelationKind::Stage4RamValCheck
+        }
+        "jolt.stage4.batched" => jolt_verifier::stages::common::RelationKind::Stage4Batched,
+        "jolt.stage5.instruction_read_raf" => {
+            jolt_verifier::stages::common::RelationKind::Stage5InstructionReadRaf
+        }
+        "jolt.stage5.ram_ra_claim_reduction" => {
+            jolt_verifier::stages::common::RelationKind::Stage5RamRaClaimReduction
+        }
+        "jolt.stage5.registers_val_evaluation" => {
+            jolt_verifier::stages::common::RelationKind::Stage5RegistersValEvaluation
+        }
+        "jolt.stage5.batched" => jolt_verifier::stages::common::RelationKind::Stage5Batched,
+        "jolt.stage6.bytecode_read_raf" => {
+            jolt_verifier::stages::common::RelationKind::Stage6BytecodeReadRaf
+        }
+        "jolt.stage6.booleanity" => jolt_verifier::stages::common::RelationKind::Stage6Booleanity,
+        "jolt.stage6.hamming_booleanity" => {
+            jolt_verifier::stages::common::RelationKind::Stage6HammingBooleanity
+        }
+        "jolt.stage6.ram_ra_virtual" => {
+            jolt_verifier::stages::common::RelationKind::Stage6RamRaVirtual
+        }
+        "jolt.stage6.instruction_ra_virtual" => {
+            jolt_verifier::stages::common::RelationKind::Stage6InstructionRaVirtual
+        }
+        "jolt.stage6.inc_claim_reduction" => {
+            jolt_verifier::stages::common::RelationKind::Stage6IncClaimReduction
+        }
+        "jolt.stage6.batched" => jolt_verifier::stages::common::RelationKind::Stage6Batched,
+        "jolt.stage7.hamming_weight_claim_reduction" => {
+            jolt_verifier::stages::common::RelationKind::Stage7HammingWeightClaimReduction
+        }
+        "jolt.stage7.batched" => jolt_verifier::stages::common::RelationKind::Stage7Batched,
+        value => panic!("unsupported generated relation `{value}`"),
+    }
 }
 
-macro_rules! generated_field_expr_kind {
-    ($value:expr) => {{
-        let value = $value;
-        match value {
-            "opening_eval" => jolt_verifier::stages::common::FieldExprKind::OpeningEval,
-            "field.add" => jolt_verifier::stages::common::FieldExprKind::Add,
-            "field.sub" => jolt_verifier::stages::common::FieldExprKind::Sub,
-            "field.mul" => jolt_verifier::stages::common::FieldExprKind::Mul,
-            "field.neg" => jolt_verifier::stages::common::FieldExprKind::Neg,
-            value if value.starts_with("field.pow:") => {
-                let exponent = value
-                    .strip_prefix("field.pow:")
-                    .expect("field pow expression has prefix")
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier field expression tag"
+)]
+fn generated_field_expr_kind(value: &str) -> jolt_verifier::stages::common::FieldExprKind {
+    match value {
+        "opening_eval" => jolt_verifier::stages::common::FieldExprKind::OpeningEval,
+        "field.add" => jolt_verifier::stages::common::FieldExprKind::Add,
+        "field.sub" => jolt_verifier::stages::common::FieldExprKind::Sub,
+        "field.mul" => jolt_verifier::stages::common::FieldExprKind::Mul,
+        "field.neg" => jolt_verifier::stages::common::FieldExprKind::Neg,
+        value if value.starts_with("field.pow:") => {
+            let exponent = value
+                .strip_prefix("field.pow:")
+                .expect("field pow expression has prefix")
+                .parse::<usize>()
+                .expect("field pow expression has usize exponent");
+            jolt_verifier::stages::common::FieldExprKind::Pow(exponent)
+        }
+        value if value.starts_with("poly.lagrange_basis_eval:") => {
+            let spec = value
+                .strip_prefix("poly.lagrange_basis_eval:")
+                .expect("lagrange expression has prefix");
+            let parts = spec.split(':').collect::<Vec<_>>();
+            assert!(parts.len() == 3, "lagrange expression has three fields");
+            jolt_verifier::stages::common::FieldExprKind::LagrangeBasisEval(
+                parts[0]
+                    .parse::<i64>()
+                    .expect("lagrange domain start is i64"),
+                parts[1]
                     .parse::<usize>()
-                    .expect("field pow expression has usize exponent");
-                jolt_verifier::stages::common::FieldExprKind::Pow(exponent)
-            }
-            value if value.starts_with("poly.lagrange_basis_eval:") => {
-                let spec = value
-                    .strip_prefix("poly.lagrange_basis_eval:")
-                    .expect("lagrange expression has prefix");
-                let parts = spec.split(':').collect::<Vec<_>>();
-                assert!(parts.len() == 3, "lagrange expression has three fields");
-                jolt_verifier::stages::common::FieldExprKind::LagrangeBasisEval(
-                    parts[0]
-                        .parse::<i64>()
-                        .expect("lagrange domain start is i64"),
-                    parts[1]
-                        .parse::<usize>()
-                        .expect("lagrange domain size is usize"),
-                    parts[2].parse::<usize>().expect("lagrange index is usize"),
-                )
-            }
-            value => panic!("unsupported generated field expression kind `{value}`"),
+                    .expect("lagrange domain size is usize"),
+                parts[2].parse::<usize>().expect("lagrange index is usize"),
+            )
         }
-    }};
+        value => panic!("unsupported generated field expression kind `{value}`"),
+    }
 }
 
-macro_rules! generated_opening_equality_mode {
-    ($value:expr) => {
-        match $value {
-            "point_and_eval" => jolt_verifier::stages::common::OpeningEqualityMode::PointAndEval,
-            value => panic!("unsupported generated opening equality mode `{value}`"),
-        }
-    };
+#[expect(
+    clippy::panic,
+    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
+)]
+fn generated_opening_equality_mode(
+    value: &str,
+) -> jolt_verifier::stages::common::OpeningEqualityMode {
+    match value {
+        "point_and_eval" => jolt_verifier::stages::common::OpeningEqualityMode::PointAndEval,
+        value => panic!("unsupported generated opening equality mode `{value}`"),
+    }
 }
 
 macro_rules! stage_program_step_kind {
@@ -276,7 +281,7 @@ macro_rules! stage_program_step_kind {
         super::leak_str($value)
     };
     (generated, $module:ident, $value:expr) => {
-        generated_program_step_kind!($value)
+        super::generated_program_step_kind($value)
     };
 }
 
@@ -285,7 +290,7 @@ macro_rules! stage_transcript_squeeze_kind {
         super::leak_str($value)
     };
     (generated, $module:ident, $value:expr) => {
-        generated_transcript_squeeze_kind!($value)
+        super::generated_transcript_squeeze_kind($value)
     };
 }
 
@@ -294,7 +299,7 @@ macro_rules! stage_claim_kind {
         super::leak_str($value)
     };
     (generated, $module:ident, $value:expr) => {
-        generated_claim_kind!($value)
+        super::generated_claim_kind($value)
     };
 }
 
@@ -303,7 +308,7 @@ macro_rules! stage_relation_kind {
         super::leak_str($value)
     };
     (generated, $module:ident, $value:expr) => {
-        generated_relation_kind!($value)
+        super::generated_relation_kind($value)
     };
 }
 
@@ -312,7 +317,7 @@ macro_rules! stage_opening_equality_mode {
         super::leak_str($value)
     };
     (generated, $module:ident, $value:expr) => {
-        generated_opening_equality_mode!($value)
+        super::generated_opening_equality_mode($value)
     };
 }
 
@@ -454,8 +459,8 @@ macro_rules! define_stage_adapter_impl {
                             proof_slot: super::leak_str(&plan.proof_slot),
                             policy: super::leak_str(&plan.policy),
                             count: plan.count,
-                            ordered_claims: stage_batch_list!($mode, &plan.ordered_claims),
-                            claim_operands: stage_batch_list!($mode, &plan.claim_operands),
+                            ordered_claims: super::leak_str_slice(&plan.ordered_claims),
+                            claim_operands: super::leak_str_slice(&plan.claim_operands),
                             claim_label: super::leak_str(&plan.claim_label),
                             round_label: super::leak_str(&plan.round_label),
                             round_schedule: super::leak_usize_slice(&plan.round_schedule),
@@ -577,8 +582,8 @@ macro_rules! define_stage_adapter_impl {
                             proof_slot: super::leak_str(&plan.proof_slot),
                             policy: super::leak_str(&plan.policy),
                             count: plan.count,
-                            ordered_claims: stage_batch_list!($mode, &plan.ordered_claims),
-                            claim_operands: stage_batch_list!($mode, &plan.claim_operands),
+                            ordered_claims: super::leak_str_slice(&plan.ordered_claims),
+                            claim_operands: super::leak_str_slice(&plan.claim_operands),
                         })
                         .collect(),
                 ),
@@ -765,8 +770,8 @@ macro_rules! define_stage1_adapter {
                             proof_slot: super::leak_str(&plan.proof_slot),
                             policy: super::leak_str(&plan.policy),
                             count: plan.count,
-                            ordered_claims: stage_batch_list!($mode, &plan.ordered_claims),
-                            claim_operands: stage_batch_list!($mode, &plan.claim_operands),
+                            ordered_claims: super::leak_str_slice(&plan.ordered_claims),
+                            claim_operands: super::leak_str_slice(&plan.claim_operands),
                             claim_label: super::leak_str(&plan.claim_label),
                             round_label: super::leak_str(&plan.round_label),
                             round_schedule: super::leak_usize_slice(&plan.round_schedule),
@@ -836,8 +841,8 @@ macro_rules! define_stage1_adapter {
                             proof_slot: super::leak_str(&plan.proof_slot),
                             policy: super::leak_str(&plan.policy),
                             count: plan.count,
-                            ordered_claims: stage_batch_list!($mode, &plan.ordered_claims),
-                            claim_operands: stage_batch_list!($mode, &plan.claim_operands),
+                            ordered_claims: super::leak_str_slice(&plan.ordered_claims),
+                            claim_operands: super::leak_str_slice(&plan.claim_operands),
                         })
                         .collect(),
                 ),
