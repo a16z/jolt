@@ -48,7 +48,8 @@ use crate::core_oracle::{
     assert_core_accepts_full_bolt_proof, CoreMuldivCommitmentFixture,
 };
 use crate::perf::{
-    generated_bolt_perf_metrics, print_core_vs_bolt_perf_summary, CORE_VS_BOLT_PERF_THRESHOLDS,
+    generated_bolt_perf_metrics, print_core_vs_bolt_perf_summary, CoreVsBoltPerfSample,
+    CORE_VS_BOLT_PERF_THRESHOLDS,
 };
 use crate::plan_adapters::{
     leak_generated_commitment_prover_program, leak_generated_commitment_verifier_program,
@@ -69,7 +70,7 @@ use crate::tamper::{
 pub fn assert_bolt_full_real_trace_self_parity(
     fixture: CoreMuldivCommitmentFixture,
     enforce_perf_gate: bool,
-) {
+) -> CoreVsBoltPerfSample {
     let bolt_setup_start = Instant::now();
     let _bolt_setup_span = tracing::info_span!("bolt.setup").entered();
     let (commitment_prover_program, commitment_verifier_program) =
@@ -765,6 +766,10 @@ pub fn assert_bolt_full_real_trace_self_parity(
         &monolithic_proof,
         bolt_peak_rss_mb,
     );
+    let perf_sample = CoreVsBoltPerfSample {
+        core: fixture.core_metrics.clone(),
+        bolt: bolt_metrics.clone(),
+    };
     if enforce_perf_gate {
         let report = check_core_vs_bolt_gate(
             &fixture.core_metrics,
@@ -840,4 +845,6 @@ pub fn assert_bolt_full_real_trace_self_parity(
         jolt_inputs: generated_jolt_inputs.through_stage7(),
         programs: generated_programs,
     });
+
+    perf_sample
 }

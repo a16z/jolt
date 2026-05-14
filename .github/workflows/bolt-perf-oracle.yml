@@ -44,6 +44,7 @@ jobs:
       - name: Run perf oracle
         env:
           JOLT_BOLT_PERF_TRACE: "1"
+          JOLT_BOLT_PERF_SAMPLES: "3"
         run: >
           cargo nextest run -p jolt-equivalence --test bolt_perf --release
           --cargo-quiet --run-ignored only --no-capture
@@ -82,6 +83,7 @@ jobs:
       - name: Run perf oracle
         env:
           JOLT_BOLT_PERF_TRACE: "1"
+          JOLT_BOLT_PERF_SAMPLES: "3"
         run: >
           cargo nextest run -p jolt-equivalence --test bolt_perf --release
           --cargo-quiet --run-ignored only --no-capture
