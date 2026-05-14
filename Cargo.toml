@@ -251,7 +251,7 @@ ark-std = { version = "0.5.0", default-features = false }
 sha2 = "0.11"
 sha3 = "0.11"
 blake2 = "0.11.0-rc.6"
-blake3 = { version = "1.5.0" }
+blake3 = { version = "1.8.5" }
 light-poseidon = "0.4"
 digest = "0.11"
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
