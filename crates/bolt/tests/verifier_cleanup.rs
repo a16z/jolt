@@ -21,6 +21,7 @@ const FIELD_EXPR_OPERAND_CONSTANT_BASELINE_CEILING: usize = 0;
 const BATCH_OPERAND_STRING_SITE_BASELINE_CEILING: usize = 0;
 const CLAIM_INPUT_OPENING_STRING_SITE_BASELINE_CEILING: usize = 0;
 const POINT_CONCAT_INPUT_STRING_SITE_BASELINE_CEILING: usize = 0;
+const STAGE_LOCAL_MACRO_RULES_BASELINE_CEILING: usize = 0;
 const STAGE_HELPER_FUNCTION_BASELINE_CEILING: usize = 38;
 const RELATION_STRING_SITE_BASELINE_CEILING: usize = 0;
 
@@ -120,6 +121,7 @@ struct VerifierCleanupMetrics {
     batch_operand_string_sites: usize,
     claim_input_opening_string_sites: usize,
     point_concat_input_string_sites: usize,
+    stage_local_macro_rules: usize,
     stage_local_helper_functions: usize,
     relation_string_sites: usize,
 }
@@ -144,6 +146,7 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
          batch_operand_string_sites: {batch_operand_string_sites} (baseline ceiling <= {batch_operand_baseline})\n\
          claim_input_opening_string_sites: {claim_input_opening_string_sites} (baseline ceiling <= {claim_input_opening_baseline})\n\
          point_concat_input_string_sites: {point_concat_input_string_sites} (baseline ceiling <= {point_concat_input_baseline})\n\
+         stage_local_macro_rules: {stage_local_macro_rules} (baseline ceiling <= {macro_rules_baseline})\n\
          stage_local_helper_functions: {helper_functions} (baseline ceiling <= {helper_baseline})\n\
          relation_string_sites: {relation_sites} (baseline ceiling <= {relation_baseline})",
         generated_surface_loc = metrics.generated_surface_loc,
@@ -170,6 +173,8 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
         claim_input_opening_baseline = CLAIM_INPUT_OPENING_STRING_SITE_BASELINE_CEILING,
         point_concat_input_string_sites = metrics.point_concat_input_string_sites,
         point_concat_input_baseline = POINT_CONCAT_INPUT_STRING_SITE_BASELINE_CEILING,
+        stage_local_macro_rules = metrics.stage_local_macro_rules,
+        macro_rules_baseline = STAGE_LOCAL_MACRO_RULES_BASELINE_CEILING,
         helper_functions = metrics.stage_local_helper_functions,
         helper_baseline = STAGE_HELPER_FUNCTION_BASELINE_CEILING,
         relation_sites = metrics.relation_string_sites,
@@ -230,6 +235,11 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
         metrics.point_concat_input_string_sites == POINT_CONCAT_INPUT_STRING_SITE_BASELINE_CEILING,
         "point-concat input string sites grew to {}; prefer structured point input slices",
         metrics.point_concat_input_string_sites
+    );
+    assert!(
+        metrics.stage_local_macro_rules <= STAGE_LOCAL_MACRO_RULES_BASELINE_CEILING,
+        "stage-local macro_rules sites grew to {}; prefer named constructors or shared runtime helpers",
+        metrics.stage_local_macro_rules
     );
     assert!(
         metrics.stage_local_helper_functions <= STAGE_HELPER_FUNCTION_BASELINE_CEILING,
@@ -454,6 +464,9 @@ fn verifier_cleanup_metrics(verifier_src: &Path) -> VerifierCleanupMetrics {
         if relative == Path::new("stages/stage6.rs") || relative == Path::new("stages/stage7.rs") {
             metrics.stage6_stage7_loc += line_count;
         }
+        if relative.to_string_lossy().starts_with("stages/stage") {
+            metrics.stage_local_macro_rules += count_stage_local_macro_rules(&source);
+        }
         if relative.starts_with("stages") {
             metrics.stage_local_generic_plan_structs +=
                 count_stage_local_generic_plan_structs(&source);
@@ -523,6 +536,13 @@ fn count_point_concat_input_string_sites(source: &str) -> usize {
     source
         .lines()
         .filter(|line| line.contains("PointConcatPlan") && line.contains("inputs: \""))
+        .count()
+}
+
+fn count_stage_local_macro_rules(source: &str) -> usize {
+    source
+        .lines()
+        .filter(|line| line.trim_start().starts_with("macro_rules!"))
         .count()
 }
 

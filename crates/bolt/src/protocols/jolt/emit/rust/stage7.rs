@@ -1431,7 +1431,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage7Error);
                         .iter()
                         .map(|expr| {
                             Ok(format!(
-                                "stage7_field_expr!({}, {}, {})",
+                                "stage7_field_expr({}, {}, {})",
                                 rust_str(&expr.symbol),
                                 super::plan_tokens::role_field_expr_kind_expr(
                                     "Stage7",
@@ -1448,7 +1448,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage7Error);
                 .collect::<Result<Vec<_>, EmitError>>()?
                 .join("\n");
             return Ok(format!(
-                "macro_rules! stage7_field_expr {{\n    ($symbol:literal, $kind:expr, $operands:expr) => {{\n        Stage7FieldExprPlan {{ symbol: $symbol, kind: $kind, operands: $operands }}\n    }};\n}}\n\n#[rustfmt::skip]\npub const STAGE7_FIELD_EXPRS: &[Stage7FieldExprPlan] = &[\n{rows}\n];\n"
+                "const fn stage7_field_expr(symbol: &'static str, kind: Stage7FieldExprKind, operands: &'static [&'static str]) -> Stage7FieldExprPlan {{\n    Stage7FieldExprPlan {{ symbol, kind, operands }}\n}}\n\n#[rustfmt::skip]\npub const STAGE7_FIELD_EXPRS: &[Stage7FieldExprPlan] = &[\n{rows}\n];\n"
             ));
         }
 
@@ -1759,7 +1759,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage7Error);
                     .iter()
                     .map(|eval| {
                         format!(
-                            "stage7_sumcheck_eval!({}, {}, {}, {}, {})",
+                            "stage7_sumcheck_eval({}, {}, {}, {}, {})",
                             rust_str(&eval.symbol),
                             rust_str(&eval.source),
                             rust_str(&eval.name),
@@ -1774,7 +1774,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage7Error);
             .collect::<Vec<_>>()
             .join("\n");
         format!(
-            "macro_rules! stage7_sumcheck_eval {{\n    ($symbol:literal, $source:literal, $name:literal, $index:literal, $oracle:literal) => {{\n        Stage7SumcheckEvalPlan {{ symbol: $symbol, source: $source, name: $name, index: $index, oracle: $oracle }}\n    }};\n}}\n\n#[rustfmt::skip]\npub const STAGE7_SUMCHECK_EVALS: &[Stage7SumcheckEvalPlan] = &[\n{rows}\n];\n\n"
+            "const fn stage7_sumcheck_eval(symbol: &'static str, source: &'static str, name: &'static str, index: usize, oracle: &'static str) -> Stage7SumcheckEvalPlan {{\n    Stage7SumcheckEvalPlan {{ symbol, source, name, index, oracle }}\n}}\n\n#[rustfmt::skip]\npub const STAGE7_SUMCHECK_EVALS: &[Stage7SumcheckEvalPlan] = &[\n{rows}\n];\n\n"
         )
     }
 
