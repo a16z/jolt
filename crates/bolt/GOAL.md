@@ -87,6 +87,10 @@ This split was introduced by the S1 audit-tier refactor. The pre-split
 "shared verifier runtime" framing (a single ~1.8k-LOC `common.rs` mixing
 generic Bolt scaffolding and Jolt-specific math) is retired.
 
+The implementation plan for slices S2 — S6 (which progressively shrink
+Tier B and Tier A by lifting hand-written Rust into MLIR vocabulary) lives
+in `crates/bolt/AUDIT_TIER_FOLLOWUPS.md`.
+
 This verifier cleanup is coupled to the generic protocol cleanup in
 `GENERIC_PROTOCOL_GOAL.md`: shrinking the generated verifier should move generic
 mechanics into Bolt IR/typed plans and shared runtime, not into Jolt-specific
