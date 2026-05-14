@@ -15,7 +15,6 @@ pub struct JoltProgramPreprocessing {
     pub ram: RAMPreprocessing,
     pub memory_layout: MemoryLayout,
     pub max_padded_trace_length: usize,
-    pub profile_fingerprint: u64,
 }
 
 impl JoltProgramPreprocessing {
@@ -32,7 +31,6 @@ impl JoltProgramPreprocessing {
             ram: RAMPreprocessing::preprocess(memory_init),
             memory_layout,
             max_padded_trace_length,
-            profile_fingerprint: profile.fingerprint(),
         })
     }
 }

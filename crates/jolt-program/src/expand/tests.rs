@@ -257,6 +257,39 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
 }
 
 #[test]
+fn inline_provider_error_releases_rd_zero_temporary() -> Result<(), ExpansionError> {
+    struct FailingProvider;
+
+    impl InlineExpansionProvider for FailingProvider {
+        fn expand_inline(
+            &mut self,
+            _instruction: &SourceInstruction,
+            _allocator: &mut ExpansionAllocator,
+            _profile: jolt_riscv::JoltInstructionProfile,
+        ) -> Result<Vec<JoltInstruction>, ExpansionError> {
+            Err(ExpansionError::UnsupportedInstruction)
+        }
+    }
+
+    let input = instruction(SourceInstructionKind::Inline, Some(0), false);
+    let mut allocator = ExpansionAllocator::new();
+    assert!(matches!(
+        expand_instruction_with_provider(
+            &input,
+            &mut allocator,
+            &mut FailingProvider,
+            RV64IMAC_JOLT
+        ),
+        Err(ExpansionError::UnsupportedInstruction)
+    ));
+
+    let register = allocator.allocate()?;
+    assert_eq!(register, 40);
+    allocator.release(register)?;
+    Ok(())
+}
+
+#[test]
 fn inline_provider_output_is_validated_and_stamped() {
     const RV64I_ONLY: JoltInstructionProfile = JoltInstructionProfile {
         source_extensions: &[SourceExtension::Rv64I],

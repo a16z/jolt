@@ -213,18 +213,26 @@ pub trait Flags {
 }
 
 impl Flags for JoltInstructionRow {
+    #[expect(
+        clippy::expect_used,
+        reason = "JoltInstructionRow is generated from the final JoltInstruction universe"
+    )]
     #[inline(always)]
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         JoltInstruction::try_from(*self)
             .map(|instruction| circuit_flags_from_riscv(instruction.circuit_flags()))
-            .unwrap_or([false; NUM_CIRCUIT_FLAGS])
+            .expect("JoltInstructionRow kinds are exhaustive over JoltInstruction")
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "JoltInstructionRow is generated from the final JoltInstruction universe"
+    )]
     #[inline(always)]
     fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
         JoltInstruction::try_from(*self)
             .map(|instruction| instruction_flags_from_riscv(instruction.instruction_flags()))
-            .unwrap_or([false; NUM_INSTRUCTION_FLAGS])
+            .expect("JoltInstructionRow kinds are exhaustive over JoltInstruction")
     }
 }
 
@@ -341,11 +349,11 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             JoltInstructionKind::VirtualXORROTW7 => {
                 LookupTables::VirtualXORROTW7(Default::default())
             }
-            JoltInstructionKind::LD
+            JoltInstructionKind::NoOp
+            | JoltInstructionKind::LD
             | JoltInstructionKind::SD
             | JoltInstructionKind::FENCE
             | JoltInstructionKind::VirtualHostIO => return None,
-            _ => return None,
         })
     }
 }

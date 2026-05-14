@@ -21,7 +21,6 @@ pub struct BytecodePreprocessing {
     /// Maps each unexpanded instruction address to its virtual bytecode index.
     pub pc_map: BytecodePCMapper,
     pub entry_address: u64,
-    pub profile_fingerprint: u64,
 }
 
 impl BytecodePreprocessing {
@@ -48,7 +47,6 @@ impl BytecodePreprocessing {
             bytecode,
             pc_map,
             entry_address,
-            profile_fingerprint: profile.fingerprint(),
         })
     }
 
@@ -223,10 +221,6 @@ mod tests {
             BytecodePreprocessing::preprocess(bytecode, 0x8000_0000, RV64IMAC_JOLT).unwrap();
 
         assert_eq!(preprocessing.code_size, 2);
-        assert_eq!(
-            preprocessing.profile_fingerprint,
-            RV64IMAC_JOLT.fingerprint()
-        );
         assert_eq!(
             preprocessing.bytecode[0].instruction_kind,
             JoltInstructionKind::NoOp

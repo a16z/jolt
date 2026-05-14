@@ -104,7 +104,8 @@ profile legality deciding what is accepted for a given compiled configuration.
   of those names for serialization, fixtures, and other persistent cross-crate
   references. Profile-local dense indexes may be regenerated for selected
   legality sets, but they must be derived from canonical names/tags and tied to
-  the selected profile/catalog fingerprint.
+  the selected profile/catalog fingerprint wherever a persisted artifact later
+  consumes those dense indexes.
 - Source/final enum variants carry the marker structs directly, e.g.
   `SourceInstruction::ADD(Add<SourceInstructionRow>)` and
   `JoltInstruction::VirtualSignExtendWord(VirtualSignExtendWord<JoltInstructionRow>)`.
@@ -626,9 +627,10 @@ metadata, profile-specific legality bitsets, lookup-routing tables keyed by the
 selected final-row set, and any proving key/preprocessing structure that wants a
 contiguous `[0, profile_instruction_count)` coordinate. Dense indexes are not
 appropriate for canonical identity, serialization source of truth, fixture
-identity, or cross-profile references. Any artifact that relies on dense
-indexes must be keyed by the selected profile/catalog fingerprint so that stale
-tables cannot be reused after adding or removing legal rows.
+identity, or cross-profile references. Follow-up work should key any persisted
+artifact that relies on dense indexes by the selected profile/catalog
+fingerprint so that stale tables cannot be reused after adding or removing
+legal rows.
 
 Profiles should not change the Rust enum shape. This is intentionally closer to
 MLIR than to profile-specific generated Rust APIs: operations exist in the
@@ -1280,9 +1282,10 @@ Current implementation status:
   `InlineExtension`, shipped `JoltInstructionProfile` presets, positive
   source/final legality checks, profile-local dense indexes, and a profile
   fingerprint.
-- `jolt-program` bytecode and program preprocessing record the selected profile
-  fingerprint so serialized preprocessing artifacts carry the profile identity
-  used for legality and dense-index derivation.
+- `jolt-program` bytecode and program preprocessing enforce selected-profile
+  legality, but do not yet persist the profile fingerprint. Persisting and
+  verifying that fingerprint remains a follow-up for serialized preprocessing
+  artifacts.
 - `jolt-program` decode, expansion, sequence stamping, and bytecode
   preprocessing now take an explicit selected `JoltInstructionProfile` instead
   of reading the default profile from inside those phase boundaries.
@@ -1346,7 +1349,8 @@ Current implementation status:
 5. [x] Add generated profile-local dense-index maps where preprocessing/proving
    needs compact indexes. Final dense indexes must be derived from compact tags;
    source dense indexes are profile-local positions over canonical source names.
-   Preprocessing artifacts must record the selected profile/catalog fingerprint.
+   Persisting the selected profile/catalog fingerprint in preprocessing
+   artifacts is deferred until the artifact reader verifies it.
 6. [x] Add `jolt-program`-owned decode metadata keyed by marker structs or source
    enum variants, then change ELF/word decode to return
    `SourceInstruction<SourceInstructionRow>` after profile legality validation.

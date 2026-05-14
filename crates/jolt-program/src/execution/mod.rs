@@ -38,7 +38,7 @@ pub fn build_jolt_program_with_inline_provider<P: InlineExpansionProvider + ?Siz
     inline_provider: &mut P,
     profile: JoltInstructionProfile,
 ) -> Result<JoltProgram, ProgramError> {
-    let image = decode_elf(elf_bytes, RV64IMAC_JOLT)?;
+    let image = decode_elf(elf_bytes, profile)?;
     let expanded_bytecode =
         expand_program_with_provider(&image.instructions, inline_provider, profile)?
             .into_iter()

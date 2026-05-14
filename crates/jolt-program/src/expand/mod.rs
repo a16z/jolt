@@ -124,8 +124,11 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
     let source = *instruction.row();
 
     let result = if instruction.kind() == SourceInstructionKind::Inline {
-        let instructions = inline_provider.expand_inline(instruction, allocator, profile)?;
-        finalize_inline_provider_instructions(source, allocator, instructions, profile)
+        inline_provider
+            .expand_inline(instruction, allocator, profile)
+            .and_then(|instructions| {
+                finalize_inline_provider_instructions(source, allocator, instructions, profile)
+            })
     } else {
         let owned_allocator = std::mem::take(allocator);
         let mut state = ExpansionState::new(owned_allocator, profile);

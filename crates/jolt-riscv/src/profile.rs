@@ -126,7 +126,7 @@ impl JoltInstructionProfile {
     }
 
     pub fn fingerprint(self) -> u64 {
-        let mut hash = FNV_OFFSET_BASIS;
+        let mut hash = hash_byte(FNV_OFFSET_BASIS, FINGERPRINT_SCHEMA_VERSION);
         for extension in self.source_extensions {
             hash = hash_byte(hash, 0x01);
             hash = hash_byte(hash, source_extension_code(*extension));
@@ -143,6 +143,7 @@ impl JoltInstructionProfile {
         for kind in JoltInstructionKind::ALL {
             if self.supports_jolt(*kind) {
                 hash = hash_tag(hash_byte(hash, 0x04), kind.tag());
+                hash = hash_str(hash_byte(hash, 0x05), kind.canonical_name());
             }
         }
         hash
@@ -420,6 +421,7 @@ where
 
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+const FINGERPRINT_SCHEMA_VERSION: u8 = 1;
 
 const fn hash_byte(hash: u64, byte: u8) -> u64 {
     (hash ^ byte as u64).wrapping_mul(FNV_PRIME)
