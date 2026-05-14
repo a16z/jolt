@@ -1,7 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use melior::ir::operation::{OperationLike, OperationResult};
+use melior::ir::{Attribute, OperationRef};
+
 use crate::emit::rust::{push_format, EmitError};
-use crate::ir::Role;
+use crate::ir::{string_attribute_value, Role};
+use crate::schema::operation_name;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StructuredPolynomialPointPlan {
@@ -56,6 +60,80 @@ pub struct SumcheckOutputClaimAst {
     pub polynomial_evals: Vec<String>,
     pub polynomial_eval_operands: Vec<String>,
     pub claim_value: String,
+}
+
+pub fn parse_output_eval_family_plan(
+    stage: &str,
+    operation: OperationRef<'_, '_>,
+) -> Result<SumcheckOutputEvalFamilyPlan, EmitError> {
+    let symbol = string_attr(operation, "sym_name")?;
+    let evals = symbol_array_attr(operation, "evals")?;
+    let shared_factors = symbol_array_attr(operation, "shared_terms")?;
+    let item_factors = symbol_array_attr(operation, "item_terms")?;
+    let value_term_offsets = int_array_attr(operation, "value_term_offsets")?;
+    let shared_term_offsets = int_array_attr(operation, "shared_term_offsets")?;
+    let item_term_offsets = int_array_attr(operation, "item_term_offsets")?;
+    verify_count(
+        "output eval family shared terms",
+        &symbol,
+        shared_term_offsets.len(),
+        shared_factors.len(),
+    )?;
+    verify_count(
+        "output eval family item term factors",
+        &symbol,
+        item_term_offsets.len() * evals.len(),
+        item_factors.len(),
+    )?;
+    let gamma = operand_symbol(operation, 0)?;
+    let eval_operands = operand_symbols(operation, 1, 1 + evals.len())?;
+    if evals != eval_operands {
+        return Err(EmitError::new(format!(
+            "{stage} output eval family @{symbol} evals do not match operands"
+        )));
+    }
+    let shared_start = 1 + evals.len();
+    let shared_end = shared_start + shared_factors.len();
+    let shared_operands = operand_symbols(operation, shared_start, shared_end)?;
+    if shared_factors != shared_operands {
+        return Err(EmitError::new(format!(
+            "{stage} output eval family @{symbol} shared_terms do not match operands"
+        )));
+    }
+    let item_operands = operand_symbols(operation, shared_end, operation.operand_count())?;
+    if item_factors != item_operands {
+        return Err(EmitError::new(format!(
+            "{stage} output eval family @{symbol} item_terms do not match operands"
+        )));
+    }
+    let shared_terms = shared_term_offsets
+        .into_iter()
+        .zip(shared_factors)
+        .map(
+            |(gamma_power_offset, factor)| SumcheckOutputEvalFamilySharedTermPlan {
+                gamma_power_offset,
+                factor,
+            },
+        )
+        .collect();
+    let mut item_terms = Vec::with_capacity(item_term_offsets.len());
+    for (term_index, gamma_power_offset) in item_term_offsets.into_iter().enumerate() {
+        let start = term_index * evals.len();
+        let end = start + evals.len();
+        item_terms.push(SumcheckOutputEvalFamilyItemTermPlan {
+            gamma_power_offset,
+            factors: item_factors[start..end].to_vec(),
+        });
+    }
+    Ok(SumcheckOutputEvalFamilyPlan {
+        symbol,
+        gamma,
+        evals,
+        power_stride: int_attr(operation, "power_stride")?,
+        value_term_offsets,
+        shared_terms,
+        item_terms,
+    })
 }
 
 pub trait FieldExprDependencies {
@@ -534,4 +612,105 @@ fn usize_array(values: &[usize]) -> String {
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn string_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<String, EmitError> {
+    operation
+        .attribute(attr)
+        .ok()
+        .and_then(string_attribute_value)
+        .ok_or_else(|| attr_error(operation, attr, "string"))
+}
+
+fn symbol_array_attr(
+    operation: OperationRef<'_, '_>,
+    attr: &str,
+) -> Result<Vec<String>, EmitError> {
+    let attribute = operation
+        .attribute(attr)
+        .map(|attribute| attribute.to_string())
+        .ok()
+        .ok_or_else(|| attr_error(operation, attr, "symbol array"))?;
+    parse_symbol_array(&attribute).ok_or_else(|| attr_error(operation, attr, "symbol array"))
+}
+
+fn parse_symbol_array(attribute: &str) -> Option<Vec<String>> {
+    let inner = attribute.strip_prefix('[')?.strip_suffix(']')?.trim();
+    if inner.is_empty() {
+        return Some(Vec::new());
+    }
+    inner
+        .split(',')
+        .map(|item| item.trim().strip_prefix('@').map(ToOwned::to_owned))
+        .collect()
+}
+
+fn int_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<usize, EmitError> {
+    operation
+        .attribute(attr)
+        .map(parse_integer_attr)
+        .ok()
+        .flatten()
+        .ok_or_else(|| attr_error(operation, attr, "integer"))
+}
+
+fn parse_integer_attr(attribute: Attribute<'_>) -> Option<usize> {
+    attribute
+        .to_string()
+        .split_whitespace()
+        .next()
+        .and_then(|value| value.parse().ok())
+}
+
+fn int_array_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<Vec<usize>, EmitError> {
+    let attribute = operation
+        .attribute(attr)
+        .map(|attribute| attribute.to_string())
+        .ok()
+        .ok_or_else(|| attr_error(operation, attr, "integer array"))?;
+    parse_int_array(&attribute).ok_or_else(|| attr_error(operation, attr, "integer array"))
+}
+
+fn parse_int_array(attribute: &str) -> Option<Vec<usize>> {
+    let inner = attribute.strip_prefix('[')?.strip_suffix(']')?.trim();
+    if inner.is_empty() {
+        return Some(Vec::new());
+    }
+    inner
+        .split(',')
+        .map(|item| item.trim().parse().ok())
+        .collect()
+}
+
+fn operand_symbols(
+    operation: OperationRef<'_, '_>,
+    start_index: usize,
+    end_index: usize,
+) -> Result<Vec<String>, EmitError> {
+    (start_index..end_index)
+        .map(|index| operand_symbol(operation, index))
+        .collect()
+}
+
+fn operand_symbol(operation: OperationRef<'_, '_>, index: usize) -> Result<String, EmitError> {
+    let operand = operation.operand(index).map_err(|_| {
+        EmitError::new(format!(
+            "{} requires operand {index}",
+            operation_name(operation)
+        ))
+    })?;
+    let owner = OperationResult::try_from(operand).map_err(|_| {
+        EmitError::new(format!(
+            "{} operand {index} must be an op result",
+            operation_name(operation)
+        ))
+    })?;
+    string_attr(owner.owner(), "sym_name")
+}
+
+fn attr_error(operation: OperationRef<'_, '_>, attr: &str, expected: &str) -> EmitError {
+    EmitError::new(format!(
+        "{} attr `{attr}` is not a {expected}",
+        operation_name(operation)
+    ))
 }

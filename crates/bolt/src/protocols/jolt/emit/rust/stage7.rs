@@ -10,13 +10,12 @@ use melior::ir::operation::{OperationLike, OperationResult};
 use melior::ir::{Attribute, OperationRef};
 
 use super::output_claims::{
-    FieldExprDependencies, StructuredPolynomialEvalPlan as Stage7StructuredPolynomialEvalPlan,
+    parse_output_eval_family_plan, FieldExprDependencies,
+    StructuredPolynomialEvalPlan as Stage7StructuredPolynomialEvalPlan,
     StructuredPolynomialPointPlan as Stage7StructuredPolynomialPointPlan,
     SumcheckOutputClaimAst as Stage7SumcheckOutputClaimAst,
     SumcheckOutputClaimPlan as Stage7SumcheckOutputClaimPlan,
-    SumcheckOutputEvalFamilyItemTermPlan as Stage7SumcheckOutputEvalFamilyItemTermPlan,
     SumcheckOutputEvalFamilyPlan as Stage7SumcheckOutputEvalFamilyPlan,
-    SumcheckOutputEvalFamilySharedTermPlan as Stage7SumcheckOutputEvalFamilySharedTermPlan,
 };
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
@@ -509,7 +508,7 @@ impl Stage7CpuProgram {
                     });
                 }
                 "cpu.sumcheck_output_eval_family" => {
-                    output_families.push(output_eval_family_plan(op)?);
+                    output_families.push(parse_output_eval_family_plan("stage7", op)?);
                 }
                 "cpu.sumcheck_output_claim" => {
                     output_claim_asts.push(Stage7SumcheckOutputClaimAst {
@@ -2523,79 +2522,6 @@ fn symbols<'a>(values: impl Iterator<Item = &'a String>) -> BTreeSet<String> {
     values.cloned().collect()
 }
 
-fn output_eval_family_plan(
-    operation: OperationRef<'_, '_>,
-) -> Result<Stage7SumcheckOutputEvalFamilyPlan, EmitError> {
-    let symbol = string_attr(operation, "sym_name")?;
-    let evals = symbol_array_attr(operation, "evals")?;
-    let shared_factors = symbol_array_attr(operation, "shared_terms")?;
-    let item_factors = symbol_array_attr(operation, "item_terms")?;
-    let value_term_offsets = int_array_attr(operation, "value_term_offsets")?;
-    let shared_term_offsets = int_array_attr(operation, "shared_term_offsets")?;
-    let item_term_offsets = int_array_attr(operation, "item_term_offsets")?;
-    verify_count(
-        "output eval family shared terms",
-        &symbol,
-        shared_term_offsets.len(),
-        shared_factors.len(),
-    )?;
-    verify_count(
-        "output eval family item term factors",
-        &symbol,
-        item_term_offsets.len() * evals.len(),
-        item_factors.len(),
-    )?;
-    let gamma = operand_symbol(operation, 0)?;
-    let eval_operands = operand_symbols_range(operation, 1, 1 + evals.len())?;
-    if evals != eval_operands {
-        return Err(EmitError::new(format!(
-            "stage7 output eval family @{symbol} evals do not match operands"
-        )));
-    }
-    let shared_start = 1 + evals.len();
-    let shared_end = shared_start + shared_factors.len();
-    let shared_operands = operand_symbols_range(operation, shared_start, shared_end)?;
-    if shared_factors != shared_operands {
-        return Err(EmitError::new(format!(
-            "stage7 output eval family @{symbol} shared_terms do not match operands"
-        )));
-    }
-    let item_operands = operand_symbols_range(operation, shared_end, operation.operand_count())?;
-    if item_factors != item_operands {
-        return Err(EmitError::new(format!(
-            "stage7 output eval family @{symbol} item_terms do not match operands"
-        )));
-    }
-    let shared_terms = shared_term_offsets
-        .into_iter()
-        .zip(shared_factors)
-        .map(
-            |(gamma_power_offset, factor)| Stage7SumcheckOutputEvalFamilySharedTermPlan {
-                gamma_power_offset,
-                factor,
-            },
-        )
-        .collect();
-    let mut item_terms = Vec::with_capacity(item_term_offsets.len());
-    for (term_index, gamma_power_offset) in item_term_offsets.into_iter().enumerate() {
-        let start = term_index * evals.len();
-        let end = start + evals.len();
-        item_terms.push(Stage7SumcheckOutputEvalFamilyItemTermPlan {
-            gamma_power_offset,
-            factors: item_factors[start..end].to_vec(),
-        });
-    }
-    Ok(Stage7SumcheckOutputEvalFamilyPlan {
-        symbol,
-        gamma,
-        evals,
-        power_stride: int_attr(operation, "power_stride")?,
-        value_term_offsets,
-        shared_terms,
-        item_terms,
-    })
-}
-
 fn string_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<String, EmitError> {
     operation
         .attribute(attr)
@@ -2676,15 +2602,7 @@ fn operand_symbols(
     operation: OperationRef<'_, '_>,
     start_index: usize,
 ) -> Result<Vec<String>, EmitError> {
-    operand_symbols_range(operation, start_index, operation.operand_count())
-}
-
-fn operand_symbols_range(
-    operation: OperationRef<'_, '_>,
-    start_index: usize,
-    end_index: usize,
-) -> Result<Vec<String>, EmitError> {
-    (start_index..end_index)
+    (start_index..operation.operand_count())
         .map(|index| operand_symbol(operation, index))
         .collect()
 }

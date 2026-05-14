@@ -920,6 +920,8 @@ fn jolt_stage6_protocol_defines_bytecode_booleanity_and_virtualization_flow() {
     assert!(text.contains("sym_name = \"stage6.ram_ra_virtual.output.claim\""));
     assert!(text.contains("sym_name = \"stage6.instruction_ra_virtual.output.claim\""));
     assert!(text.contains("sym_name = \"stage6.inc_claim_reduction.output.claim\""));
+    assert!(text.contains("sym_name = \"stage6.inc_claim_reduction.output.family\""));
+    assert!(text.contains("\"piop.sumcheck_output_eval_family\""));
     assert!(text.contains("sym_name = \"stage6.inc_claim_reduction.output.eq.RdIncStage5\""));
     assert!(!text.contains("kernel = @"));
     assert!(!text.contains("\"compute."));
@@ -975,6 +977,7 @@ fn jolt_stage6_lowers_to_compute_and_cpu_role_ir() {
     assert!(prover_cpu_text.contains("point_order = \"bytecode_read_raf\""));
     assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify_claim\""));
     assert!(verifier_cpu_text.contains("\"cpu.structured_polynomial_eval\""));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_output_eval_family\""));
     assert!(verifier_cpu_text.contains("\"cpu.sumcheck_output_claim\""));
     assert!(!verifier_kernel_text.contains("kernel = @"));
     assert!(!verifier_cpu_text.contains("kernel = @"));
@@ -1519,7 +1522,48 @@ fn stage6_rust_targets_extract_and_compile() {
     assert_eq!(prover_program.output_values.len(), 7);
     assert!(prover_program.output_claims.is_empty());
     assert_eq!(verifier_program.output_values.len(), 7);
+    assert_eq!(verifier_program.output_families.len(), 1);
     assert_eq!(verifier_program.output_claims.len(), 4);
+    let inc_family = &verifier_program.output_families[0];
+    assert_eq!(
+        inc_family.symbol,
+        "stage6.inc_claim_reduction.output.family"
+    );
+    assert_eq!(inc_family.gamma, "stage6.inc_claim_reduction.gamma");
+    assert_eq!(
+        inc_family.evals,
+        vec![
+            "stage6.inc_claim_reduction.eval.RamInc".to_owned(),
+            "stage6.inc_claim_reduction.eval.RdInc".to_owned()
+        ]
+    );
+    assert_eq!(inc_family.power_stride, 2);
+    assert!(inc_family.value_term_offsets.is_empty());
+    assert!(inc_family.shared_terms.is_empty());
+    assert_eq!(inc_family.item_terms.len(), 2);
+    assert_eq!(inc_family.item_terms[0].gamma_power_offset, 0);
+    assert_eq!(
+        inc_family.item_terms[0].factors,
+        vec![
+            "stage6.inc_claim_reduction.output.eq.RamIncStage2".to_owned(),
+            "stage6.inc_claim_reduction.output.eq.RdIncStage4".to_owned()
+        ]
+    );
+    assert_eq!(inc_family.item_terms[1].gamma_power_offset, 1);
+    assert_eq!(
+        inc_family.item_terms[1].factors,
+        vec![
+            "stage6.inc_claim_reduction.output.eq.RamIncStage4".to_owned(),
+            "stage6.inc_claim_reduction.output.eq.RdIncStage5".to_owned()
+        ]
+    );
+    let inc_claims = verifier_program
+        .output_claims
+        .iter()
+        .filter(|claim| claim.claim_value == "stage6.inc_claim_reduction.output.family")
+        .collect::<Vec<_>>();
+    assert_eq!(inc_claims.len(), 1);
+    assert_eq!(inc_claims[0].eval_families, vec![inc_family.clone()]);
     assert_eq!(prover_program.point_zeros.len(), 1);
     assert_eq!(
         prover_program.point_slices.len(),
@@ -1625,7 +1669,16 @@ fn stage6_rust_targets_extract_and_compile() {
         .contains("Stage6SumcheckOutputClaimPlan"));
     assert!(verifier_source
         .source
+        .contains("STAGE6_SUMCHECK_OUTPUT_CLAIM_3_FAMILIES"));
+    assert!(verifier_source
+        .source
         .contains("stage6.inc_claim_reduction.output.eq.RdIncStage5"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.inc_claim_reduction.output.term.RamInc"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.inc_claim_reduction.output.gamma2"));
     assert!(verifier_source
         .source
         .contains("stage6.bytecode_read_raf.eval.BytecodeRa_0"));

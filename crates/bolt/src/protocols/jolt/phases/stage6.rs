@@ -11,7 +11,8 @@ use super::super::oracles;
 use super::super::params::JoltProtocolParams;
 use super::lowering::{lower_party_to_compute, transcript_squeeze_protocol_result_type};
 use super::sumcheck_output::{
-    append_structured_polynomial_eval, append_sumcheck_output_claim, OutputClaimSpec,
+    append_structured_polynomial_eval, append_sumcheck_output_claim,
+    append_sumcheck_output_eval_family, OutputClaimSpec, OutputEvalFamilySpec,
     StructuredPolynomialPointSpec, StructuredPolynomialSpec,
 };
 
@@ -1969,68 +1970,43 @@ fn append_stage6_inc_output_claim<'c, 'a>(
         inc.0,
         inputs.rd_inc_stage5.point,
     )?;
-    let ram_stage4_term = append_field_mul(
+    let claim = append_sumcheck_output_eval_family(
         context,
         module,
-        "stage6.inc_claim_reduction.output.term.RamIncStage4",
+        OutputEvalFamilySpec {
+            symbol: "stage6.inc_claim_reduction.output.family",
+            power_stride: 2,
+            value_term_offsets: &[],
+            shared_term_offsets: &[],
+            item_term_offsets: &[0, 1],
+        },
         gamma,
-        eq_ram_stage4,
-    )?;
-    let ram_eq_combined = append_field_add(
-        context,
-        module,
-        "stage6.inc_claim_reduction.output.eq.RamCombined",
-        eq_ram_stage2,
-        ram_stage4_term,
-    )?;
-    let ram_term = append_field_mul(
-        context,
-        module,
-        "stage6.inc_claim_reduction.output.term.RamInc",
-        output_evals.ram_inc,
-        ram_eq_combined,
-    )?;
-    let rd_stage5_term = append_field_mul(
-        context,
-        module,
-        "stage6.inc_claim_reduction.output.term.RdIncStage5",
-        gamma,
-        eq_rd_stage5,
-    )?;
-    let rd_eq_combined = append_field_add(
-        context,
-        module,
-        "stage6.inc_claim_reduction.output.eq.RdCombined",
-        eq_rd_stage4,
-        rd_stage5_term,
-    )?;
-    let rd_eval_term = append_field_mul(
-        context,
-        module,
-        "stage6.inc_claim_reduction.output.term.RdInc",
-        output_evals.rd_inc,
-        rd_eq_combined,
-    )?;
-    let gamma2 = append_field_pow(
-        context,
-        module,
-        "stage6.inc_claim_reduction.output.gamma2",
-        gamma,
-        2,
-    )?;
-    let rd_term = append_field_mul(
-        context,
-        module,
-        "stage6.inc_claim_reduction.output.term.RdWeighted",
-        gamma2,
-        rd_eval_term,
-    )?;
-    let claim = append_field_add(
-        context,
-        module,
-        "stage6.inc_claim_reduction.output.claim_expr",
-        ram_term,
-        rd_term,
+        &[
+            (
+                "stage6.inc_claim_reduction.eval.RamInc",
+                output_evals.ram_inc,
+            ),
+            ("stage6.inc_claim_reduction.eval.RdInc", output_evals.rd_inc),
+        ],
+        &[],
+        &[
+            (
+                "stage6.inc_claim_reduction.output.eq.RamIncStage2",
+                eq_ram_stage2,
+            ),
+            (
+                "stage6.inc_claim_reduction.output.eq.RdIncStage4",
+                eq_rd_stage4,
+            ),
+            (
+                "stage6.inc_claim_reduction.output.eq.RamIncStage4",
+                eq_ram_stage4,
+            ),
+            (
+                "stage6.inc_claim_reduction.output.eq.RdIncStage5",
+                eq_rd_stage5,
+            ),
+        ],
     )?;
     append_sumcheck_output_claim(
         context,
