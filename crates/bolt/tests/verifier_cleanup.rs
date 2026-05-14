@@ -6,9 +6,12 @@
 
 use std::path::{Path, PathBuf};
 
-const GENERATED_VERIFIER_TARGET_LOC: usize = 6_100;
+/// S2.5 intentionally moves top-level verifier-program data into
+/// `verifier.rs`. Later value-graph slices should ratchet this back down as
+/// more stage-local math becomes typed data instead of Rust helpers.
+const GENERATED_VERIFIER_TARGET_LOC: usize = 6_500;
 const GENERATED_VERIFIER_STRETCH_LOC: usize = 3_000;
-const VERIFIER_RS_TARGET_LOC: usize = 500;
+const VERIFIER_RS_TARGET_LOC: usize = 850;
 const VERIFIER_RS_STRETCH_LOC: usize = 350;
 const STAGE6_STAGE7_TARGET_LOC: usize = 3_000;
 
@@ -331,6 +334,45 @@ fn checked_in_generated_verifier_respects_boundary_hygiene() {
                 && !source.contains("Challenge = <"),
             "generated verifier source `{}` drifted away from the full-field transcript path",
             path.display()
+        );
+    }
+}
+
+#[test]
+fn checked_in_generated_verifier_uses_typed_top_level_program() {
+    let verifier_rs = workspace_root().join("crates/jolt-verifier/src/verifier.rs");
+    if !verifier_rs.exists() {
+        return;
+    }
+    let source = std::fs::read_to_string(&verifier_rs).expect("read verifier.rs");
+    for pattern in [
+        "pub const VERIFIER_PROGRAM",
+        "pub enum JoltProofSlot",
+        "pub enum JoltVerifierStepPlan",
+        "JoltVerifierStepPlan::ReceiveCommitments",
+        "JoltVerifierStepPlan::VerifySumcheckStage",
+        "JoltVerifierStepPlan::VerifyPcsOpening",
+        "fn execute_jolt_verifier_program",
+        "fn execute_jolt_verifier_step",
+        "struct JoltArtifactStore",
+    ] {
+        assert!(
+            source.contains(pattern),
+            "generated verifier.rs is missing typed top-level verifier-program pattern `{pattern}`"
+        );
+    }
+    for stale_pattern in [
+        "JoltVerifierTarget::ThroughStage",
+        "fn verifies_stage6",
+        "fn verifies_stage7",
+        "fn verifies_evaluation",
+        "fn allows_optional_evaluation",
+        "target.verifies_stage",
+        "target.allows_optional_evaluation",
+    ] {
+        assert!(
+            !source.contains(stale_pattern),
+            "generated verifier.rs still contains stale target-control-flow pattern `{stale_pattern}`"
         );
     }
 }

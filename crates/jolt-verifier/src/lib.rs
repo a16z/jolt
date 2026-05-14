@@ -17,12 +17,16 @@ pub use verifier::{
     verify_jolt_prefix_with_programs, verify_jolt_through_stage5,
     verify_jolt_through_stage5_with_programs, verify_jolt_through_stage6,
     verify_jolt_through_stage6_with_programs, verify_jolt_through_stage7,
-    verify_jolt_through_stage7_with_programs, verify_jolt_with_programs, JoltEvaluationProof,
-    JoltEvaluationProofError, JoltNamedEval, JoltProof, JoltStage2RamAccess, JoltStage2RamData,
-    JoltStage2RamOutputLayout, JoltStage6BytecodeEntry, JoltStage6BytecodeReadRafData,
-    JoltStage6VerifierData, JoltStageChallengeVector, JoltStageExecutionArtifacts,
-    JoltStageOpeningInputValue, JoltStageProof, JoltSumcheckOutput, JoltVerificationArtifacts,
-    JoltVerifierInputs, JoltVerifierPrograms, JoltVerifierTarget, JoltVerifyError,
+    verify_jolt_through_stage7_with_programs, verify_jolt_with_programs, JoltEvaluationPolicy,
+    JoltEvaluationProof, JoltEvaluationProofError, JoltNamedEval, JoltProof, JoltProofSlot,
+    JoltStage2RamAccess, JoltStage2RamData, JoltStage2RamOutputLayout, JoltStage6BytecodeEntry,
+    JoltStage6BytecodeReadRafData, JoltStage6VerifierData, JoltStageChallengeVector,
+    JoltStageExecutionArtifacts, JoltStageOpeningInputValue, JoltStageProof, JoltSumcheckOutput,
+    JoltVerificationArtifacts, JoltVerifierCheckpoint, JoltVerifierInputs,
+    JoltVerifierProgramError, JoltVerifierProgramPlan, JoltVerifierPrograms, JoltVerifierStepPlan,
+    JoltVerifierTarget, JoltVerifierTargetPlan, JoltVerifyError, JOLT_TARGET_FULL,
+    JOLT_TARGET_THROUGH_STAGE5, JOLT_TARGET_THROUGH_STAGE6, JOLT_TARGET_THROUGH_STAGE7,
+    JOLT_VERIFIER_TARGETS, VERIFIER_PROGRAM,
 };
 
 pub const TRANSCRIPT_LABEL: &[u8] = b"Jolt";

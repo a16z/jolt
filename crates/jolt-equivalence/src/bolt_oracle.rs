@@ -139,6 +139,7 @@ pub fn assert_bolt_full_real_trace_self_parity(
         stage5: generated_stage5_verifier_plan,
         stage6: generated_stage6_verifier_plan,
         stage7: generated_stage7_verifier_plan,
+        verifier: &jolt_verifier::VERIFIER_PROGRAM,
         stage8: generated_stage8_verifier_plan,
     };
     let r1cs_key = fixture.r1cs_key();

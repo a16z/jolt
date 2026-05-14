@@ -327,12 +327,16 @@ pub use verifier::{
     verify_jolt_prefix_with_programs, verify_jolt_through_stage5,
     verify_jolt_through_stage5_with_programs, verify_jolt_through_stage6,
     verify_jolt_through_stage6_with_programs, verify_jolt_through_stage7,
-    verify_jolt_through_stage7_with_programs, verify_jolt_with_programs, JoltEvaluationProof,
-    JoltEvaluationProofError, JoltNamedEval, JoltProof, JoltStage2RamAccess, JoltStage2RamData,
-    JoltStage2RamOutputLayout, JoltStage6BytecodeEntry, JoltStage6BytecodeReadRafData,
-    JoltStage6VerifierData, JoltStageChallengeVector, JoltStageExecutionArtifacts,
-    JoltStageOpeningInputValue, JoltStageProof, JoltSumcheckOutput, JoltVerificationArtifacts,
-    JoltVerifierInputs, JoltVerifierPrograms, JoltVerifierTarget, JoltVerifyError,
+    verify_jolt_through_stage7_with_programs, verify_jolt_with_programs, JoltEvaluationPolicy,
+    JoltEvaluationProof, JoltEvaluationProofError, JoltNamedEval, JoltProof, JoltProofSlot,
+    JoltStage2RamAccess, JoltStage2RamData, JoltStage2RamOutputLayout, JoltStage6BytecodeEntry,
+    JoltStage6BytecodeReadRafData, JoltStage6VerifierData, JoltStageChallengeVector,
+    JoltStageExecutionArtifacts, JoltStageOpeningInputValue, JoltStageProof, JoltSumcheckOutput,
+    JoltVerificationArtifacts, JoltVerifierCheckpoint, JoltVerifierInputs,
+    JoltVerifierProgramError, JoltVerifierProgramPlan, JoltVerifierPrograms, JoltVerifierStepPlan,
+    JoltVerifierTarget, JoltVerifierTargetPlan, JoltVerifyError, JOLT_TARGET_FULL,
+    JOLT_TARGET_THROUGH_STAGE5, JOLT_TARGET_THROUGH_STAGE6, JOLT_TARGET_THROUGH_STAGE7,
+    JOLT_VERIFIER_TARGETS, VERIFIER_PROGRAM,
 };"
     .to_owned()
 }
@@ -370,17 +374,19 @@ fn jolt_evaluation_role_api_extension() -> ProtocolArtifactExtension {
             inputs_derive: Some("#[derive(Clone, Copy)]".to_owned()),
             input_fields: "    pub evaluation_setup: Option<&'a DoryVerifierSetup>,\n".to_owned(),
             program_fields:
-                "    pub stage8: &'static stage8_stage::Stage8EvaluationProgramPlan,\n".to_owned(),
-            default_program_fields: "        stage8: &stage8_stage::STAGE8_PROGRAM,\n".to_owned(),
-            error_variants: "    Evaluation(JoltEvaluationProofError),\n".to_owned(),
-            error_items: format!("{}{}", jolt_verifier_target_items(), "#[derive(Debug)]\npub enum JoltEvaluationProofError {\n    MissingProof,\n    MissingVerifierSetup,\n    MissingStageEval { stage: &'static str, eval: &'static str },\n    MissingStage7RaEval,\n    MissingStage7EvaluationPoint,\n    MissingCommitment { oracle: &'static str },\n    InvalidPointLength {\n        artifact: &'static str,\n        expected: usize,\n        actual: usize,\n    },\n    Opening(OpeningsError),\n}\n\n"),
-            error_conversions: "impl From<JoltEvaluationProofError> for JoltVerifyError {\n    fn from(error: JoltEvaluationProofError) -> Self {\n        Self::Evaluation(error)\n    }\n}\n\nimpl From<OpeningsError> for JoltEvaluationProofError {\n    fn from(error: OpeningsError) -> Self {\n        Self::Opening(error)\n    }\n}\n\n".to_owned(),
+                "    pub verifier: &'static JoltVerifierProgramPlan,\n    pub stage8: &'static stage8_stage::Stage8EvaluationProgramPlan,\n".to_owned(),
+            default_program_fields: "        verifier: &VERIFIER_PROGRAM,\n        stage8: &stage8_stage::STAGE8_PROGRAM,\n".to_owned(),
+            error_variants: "    Program(JoltVerifierProgramError),\n    Evaluation(JoltEvaluationProofError),\n".to_owned(),
+            error_items: format!("{}{}", jolt_verifier_program_items(), "#[derive(Debug)]\npub enum JoltEvaluationProofError {\n    MissingProof,\n    MissingVerifierSetup,\n    MissingStageEval { stage: &'static str, eval: &'static str },\n    MissingStage7RaEval,\n    MissingStage7EvaluationPoint,\n    MissingCommitment { oracle: &'static str },\n    InvalidPointLength {\n        artifact: &'static str,\n        expected: usize,\n        actual: usize,\n    },\n    Opening(OpeningsError),\n}\n\n"),
+            error_conversions: "impl From<JoltVerifierProgramError> for JoltVerifyError {\n    fn from(error: JoltVerifierProgramError) -> Self {\n        Self::Program(error)\n    }\n}\n\nimpl From<JoltEvaluationProofError> for JoltVerifyError {\n    fn from(error: JoltEvaluationProofError) -> Self {\n        Self::Evaluation(error)\n    }\n}\n\nimpl From<OpeningsError> for JoltEvaluationProofError {\n    fn from(error: OpeningsError) -> Self {\n        Self::Opening(error)\n    }\n}\n\n".to_owned(),
             after_default_verify: "pub fn verify_jolt_prefix<T: Transcript<Challenge = Fr>>(proof: &JoltProof, inputs: JoltVerifierInputs<'_>, transcript: &mut T) -> Result<JoltVerificationArtifacts, JoltVerifyError> { verify_jolt_prefix_with_programs(proof, inputs, default_verifier_programs(), transcript) }\n\npub fn verify_jolt_through_stage5<T: Transcript<Challenge = Fr>>(proof: &JoltProof, inputs: JoltVerifierInputs<'_>, transcript: &mut T) -> Result<JoltVerificationArtifacts, JoltVerifyError> { verify_jolt_through_stage5_with_programs(proof, inputs, default_verifier_programs(), transcript) }\n\npub fn verify_jolt_through_stage6<T: Transcript<Challenge = Fr>>(proof: &JoltProof, inputs: JoltVerifierInputs<'_>, transcript: &mut T) -> Result<JoltVerificationArtifacts, JoltVerifyError> { verify_jolt_through_stage6_with_programs(proof, inputs, default_verifier_programs(), transcript) }\n\npub fn verify_jolt_through_stage7<T: Transcript<Challenge = Fr>>(proof: &JoltProof, inputs: JoltVerifierInputs<'_>, transcript: &mut T) -> Result<JoltVerificationArtifacts, JoltVerifyError> { verify_jolt_through_stage7_with_programs(proof, inputs, default_verifier_programs(), transcript) }\n\n".to_owned(),
-            with_programs_body_intro: "    verify_jolt_with_programs_inner(proof, inputs, programs, transcript, JoltVerifierTarget::Full)\n}\n\npub fn verify_jolt_through_stage5_with_programs<T: Transcript<Challenge = Fr>>(proof: &JoltProof, inputs: JoltVerifierInputs<'_>, programs: JoltVerifierPrograms, transcript: &mut T) -> Result<JoltVerificationArtifacts, JoltVerifyError> { verify_jolt_with_programs_inner(proof, inputs, programs, transcript, JoltVerifierTarget::ThroughStage5) }\n\npub fn verify_jolt_through_stage6_with_programs<T: Transcript<Challenge = Fr>>(proof: &JoltProof, inputs: JoltVerifierInputs<'_>, programs: JoltVerifierPrograms, transcript: &mut T) -> Result<JoltVerificationArtifacts, JoltVerifyError> { verify_jolt_with_programs_inner(proof, inputs, programs, transcript, JoltVerifierTarget::ThroughStage6) }\n\npub fn verify_jolt_through_stage7_with_programs<T: Transcript<Challenge = Fr>>(proof: &JoltProof, inputs: JoltVerifierInputs<'_>, programs: JoltVerifierPrograms, transcript: &mut T) -> Result<JoltVerificationArtifacts, JoltVerifyError> { verify_jolt_with_programs_inner(proof, inputs, programs, transcript, JoltVerifierTarget::ThroughStage7) }\n\npub fn verify_jolt_prefix_with_programs<T: Transcript<Challenge = Fr>>(proof: &JoltProof, inputs: JoltVerifierInputs<'_>, programs: JoltVerifierPrograms, transcript: &mut T) -> Result<JoltVerificationArtifacts, JoltVerifyError> { verify_jolt_through_stage7_with_programs(proof, inputs, programs, transcript) }\n\nfn verify_jolt_with_programs_inner<T: Transcript<Challenge = Fr>>(proof: &JoltProof, inputs: JoltVerifierInputs<'_>, programs: JoltVerifierPrograms, transcript: &mut T, target: JoltVerifierTarget) -> Result<JoltVerificationArtifacts, JoltVerifyError> {\n".to_owned(),
-            stage_verification_override: jolt_verifier_stage_verification(),
-            after_stage_verification: jolt_verifier_evaluation_check(),
+            with_programs_body_intro: "    verify_jolt_with_programs_inner(proof, inputs, programs, transcript, JOLT_TARGET_FULL)\n}\n\npub fn verify_jolt_through_stage5_with_programs<T: Transcript<Challenge = Fr>>(proof: &JoltProof, inputs: JoltVerifierInputs<'_>, programs: JoltVerifierPrograms, transcript: &mut T) -> Result<JoltVerificationArtifacts, JoltVerifyError> { verify_jolt_with_programs_inner(proof, inputs, programs, transcript, JOLT_TARGET_THROUGH_STAGE5) }\n\npub fn verify_jolt_through_stage6_with_programs<T: Transcript<Challenge = Fr>>(proof: &JoltProof, inputs: JoltVerifierInputs<'_>, programs: JoltVerifierPrograms, transcript: &mut T) -> Result<JoltVerificationArtifacts, JoltVerifyError> { verify_jolt_with_programs_inner(proof, inputs, programs, transcript, JOLT_TARGET_THROUGH_STAGE6) }\n\npub fn verify_jolt_through_stage7_with_programs<T: Transcript<Challenge = Fr>>(proof: &JoltProof, inputs: JoltVerifierInputs<'_>, programs: JoltVerifierPrograms, transcript: &mut T) -> Result<JoltVerificationArtifacts, JoltVerifyError> { verify_jolt_with_programs_inner(proof, inputs, programs, transcript, JOLT_TARGET_THROUGH_STAGE7) }\n\npub fn verify_jolt_prefix_with_programs<T: Transcript<Challenge = Fr>>(proof: &JoltProof, inputs: JoltVerifierInputs<'_>, programs: JoltVerifierPrograms, transcript: &mut T) -> Result<JoltVerificationArtifacts, JoltVerifyError> { verify_jolt_through_stage7_with_programs(proof, inputs, programs, transcript) }\n\nfn verify_jolt_with_programs_inner<T: Transcript<Challenge = Fr>>(proof: &JoltProof, inputs: JoltVerifierInputs<'_>, programs: JoltVerifierPrograms, transcript: &mut T, target: JoltVerifierTarget) -> Result<JoltVerificationArtifacts, JoltVerifyError> {\n".to_owned(),
+            verification_body_override: jolt_verifier_execution_body(),
+            stage_verification_override: String::new(),
+            after_stage_verification: String::new(),
             helper_items: format!(
-                "{}{}",
+                "{}{}{}",
+                jolt_verifier_program_executor(),
                 jolt_verifier_input_helpers("Jolt"),
                 jolt_verifier_evaluation_helpers("Jolt", "Fr")
             ),
@@ -388,16 +394,428 @@ fn jolt_evaluation_role_api_extension() -> ProtocolArtifactExtension {
     }
 }
 
-fn jolt_verifier_target_items() -> String {
-    "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub enum JoltVerifierTarget {\n    ThroughStage5,\n    ThroughStage6,\n    ThroughStage7,\n    Full,\n}\n\nimpl JoltVerifierTarget {\n    fn verifies_stage6(self) -> bool { matches!(self, Self::ThroughStage6 | Self::ThroughStage7 | Self::Full) }\n    fn verifies_stage7(self) -> bool { matches!(self, Self::ThroughStage7 | Self::Full) }\n    fn verifies_evaluation(self) -> bool { matches!(self, Self::Full) }\n    fn allows_optional_evaluation(self) -> bool { matches!(self, Self::ThroughStage7 | Self::Full) }\n}\n\n".to_owned()
+fn jolt_verifier_program_items() -> String {
+    r"#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JoltProofSlot {
+    Commitments,
+    Stage1Outer,
+    Stage2,
+    Stage3,
+    Stage4,
+    Stage5,
+    Stage6,
+    Stage7,
+    Evaluation,
 }
 
-fn jolt_verifier_stage_verification() -> String {
-    "    let stage1_outer = stage1_outer_stage::verify_stage1_outer_with_program(programs.stage1_outer, &proof.stage1_outer, transcript)?;\n    let stage2 = stage2_stage::verify_stage2_with_program(programs.stage2, &proof.stage2, inputs.stage2_openings, inputs.stage2_ram, transcript)?;\n    let stage3 = stage3_stage::verify_stage3_with_program(programs.stage3, &proof.stage3, inputs.stage3_openings, transcript)?;\n    let stage4 = stage4_stage::verify_stage4_with_program(programs.stage4, &proof.stage4, inputs.stage4_openings, transcript)?;\n    let stage5 = stage5_stage::verify_stage5_with_program(programs.stage5, &proof.stage5, inputs.stage5_openings, transcript)?;\n    let stage6 = if target.verifies_stage6() {\n        stage6_stage::verify_stage6_with_program(programs.stage6, &proof.stage6, inputs.stage6_openings, inputs.stage6_data, transcript)?\n    } else {\n        stage6_stage::Stage6ExecutionArtifacts::default()\n    };\n    let stage7 = if target.verifies_stage7() {\n        stage7_stage::verify_stage7_with_program(programs.stage7, &proof.stage7, inputs.stage7_openings, transcript)?\n    } else {\n        stage7_stage::Stage7ExecutionArtifacts::default()\n    };\n".to_owned()
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JoltVerifierStepPlan {
+    ReceiveCommitments { slot: JoltProofSlot },
+    VerifySumcheckStage { slot: JoltProofSlot },
+    VerifyPcsOpening { slot: JoltProofSlot },
 }
 
-fn jolt_verifier_evaluation_check() -> String {
-    "    if target.allows_optional_evaluation() {\n        match (&proof.evaluation, inputs.evaluation_setup) {\n            (Some(evaluation), Some(setup)) => {\n                verify_jolt_evaluation_proof(\n                    programs.stage8,\n                    evaluation,\n                    &commitment,\n                    &proof.stage6,\n                    &proof.stage7,\n                    inputs.stage7_openings,\n                    setup,\n                    transcript,\n                )?;\n            }\n            (Some(_), None) => return Err(JoltEvaluationProofError::MissingVerifierSetup.into()),\n            (None, Some(_)) => return Err(JoltEvaluationProofError::MissingProof.into()),\n            (None, None) if target.verifies_evaluation() => return Err(JoltEvaluationProofError::MissingProof.into()),\n            (None, None) => {}\n        }\n    }\n".to_owned()
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JoltVerifierCheckpoint {
+    AfterStage5,
+    AfterStage6,
+    AfterStage7,
+    AfterEvaluation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JoltEvaluationPolicy {
+    Skip,
+    VerifyIfPresent,
+    Required,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct JoltVerifierTarget {
+    pub checkpoint: JoltVerifierCheckpoint,
+    pub evaluation: JoltEvaluationPolicy,
+}
+
+pub const JOLT_TARGET_THROUGH_STAGE5: JoltVerifierTarget = JoltVerifierTarget {
+    checkpoint: JoltVerifierCheckpoint::AfterStage5,
+    evaluation: JoltEvaluationPolicy::Skip,
+};
+
+pub const JOLT_TARGET_THROUGH_STAGE6: JoltVerifierTarget = JoltVerifierTarget {
+    checkpoint: JoltVerifierCheckpoint::AfterStage6,
+    evaluation: JoltEvaluationPolicy::Skip,
+};
+
+pub const JOLT_TARGET_THROUGH_STAGE7: JoltVerifierTarget = JoltVerifierTarget {
+    checkpoint: JoltVerifierCheckpoint::AfterStage7,
+    evaluation: JoltEvaluationPolicy::VerifyIfPresent,
+};
+
+pub const JOLT_TARGET_FULL: JoltVerifierTarget = JoltVerifierTarget {
+    checkpoint: JoltVerifierCheckpoint::AfterEvaluation,
+    evaluation: JoltEvaluationPolicy::Required,
+};
+
+#[derive(Clone, Copy, Debug)]
+pub struct JoltVerifierTargetPlan {
+    pub target: JoltVerifierTarget,
+    pub steps: &'static [JoltVerifierStepPlan],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct JoltVerifierProgramPlan {
+    pub targets: &'static [JoltVerifierTargetPlan],
+}
+
+pub const JOLT_VERIFY_THROUGH_STAGE5_STEPS: &[JoltVerifierStepPlan] = &[
+    JoltVerifierStepPlan::ReceiveCommitments {
+        slot: JoltProofSlot::Commitments,
+    },
+    JoltVerifierStepPlan::VerifySumcheckStage {
+        slot: JoltProofSlot::Stage1Outer,
+    },
+    JoltVerifierStepPlan::VerifySumcheckStage {
+        slot: JoltProofSlot::Stage2,
+    },
+    JoltVerifierStepPlan::VerifySumcheckStage {
+        slot: JoltProofSlot::Stage3,
+    },
+    JoltVerifierStepPlan::VerifySumcheckStage {
+        slot: JoltProofSlot::Stage4,
+    },
+    JoltVerifierStepPlan::VerifySumcheckStage {
+        slot: JoltProofSlot::Stage5,
+    },
+];
+
+pub const JOLT_VERIFY_THROUGH_STAGE6_STEPS: &[JoltVerifierStepPlan] = &[
+    JoltVerifierStepPlan::ReceiveCommitments {
+        slot: JoltProofSlot::Commitments,
+    },
+    JoltVerifierStepPlan::VerifySumcheckStage {
+        slot: JoltProofSlot::Stage1Outer,
+    },
+    JoltVerifierStepPlan::VerifySumcheckStage {
+        slot: JoltProofSlot::Stage2,
+    },
+    JoltVerifierStepPlan::VerifySumcheckStage {
+        slot: JoltProofSlot::Stage3,
+    },
+    JoltVerifierStepPlan::VerifySumcheckStage {
+        slot: JoltProofSlot::Stage4,
+    },
+    JoltVerifierStepPlan::VerifySumcheckStage {
+        slot: JoltProofSlot::Stage5,
+    },
+    JoltVerifierStepPlan::VerifySumcheckStage {
+        slot: JoltProofSlot::Stage6,
+    },
+];
+
+pub const JOLT_VERIFY_THROUGH_STAGE7_STEPS: &[JoltVerifierStepPlan] = &[
+    JoltVerifierStepPlan::ReceiveCommitments {
+        slot: JoltProofSlot::Commitments,
+    },
+    JoltVerifierStepPlan::VerifySumcheckStage {
+        slot: JoltProofSlot::Stage1Outer,
+    },
+    JoltVerifierStepPlan::VerifySumcheckStage {
+        slot: JoltProofSlot::Stage2,
+    },
+    JoltVerifierStepPlan::VerifySumcheckStage {
+        slot: JoltProofSlot::Stage3,
+    },
+    JoltVerifierStepPlan::VerifySumcheckStage {
+        slot: JoltProofSlot::Stage4,
+    },
+    JoltVerifierStepPlan::VerifySumcheckStage {
+        slot: JoltProofSlot::Stage5,
+    },
+    JoltVerifierStepPlan::VerifySumcheckStage {
+        slot: JoltProofSlot::Stage6,
+    },
+    JoltVerifierStepPlan::VerifySumcheckStage {
+        slot: JoltProofSlot::Stage7,
+    },
+    JoltVerifierStepPlan::VerifyPcsOpening {
+        slot: JoltProofSlot::Evaluation,
+    },
+];
+
+pub const JOLT_VERIFY_FULL_STEPS: &[JoltVerifierStepPlan] = JOLT_VERIFY_THROUGH_STAGE7_STEPS;
+
+pub const JOLT_VERIFIER_TARGETS: &[JoltVerifierTargetPlan] = &[
+    JoltVerifierTargetPlan {
+        target: JOLT_TARGET_THROUGH_STAGE5,
+        steps: JOLT_VERIFY_THROUGH_STAGE5_STEPS,
+    },
+    JoltVerifierTargetPlan {
+        target: JOLT_TARGET_THROUGH_STAGE6,
+        steps: JOLT_VERIFY_THROUGH_STAGE6_STEPS,
+    },
+    JoltVerifierTargetPlan {
+        target: JOLT_TARGET_THROUGH_STAGE7,
+        steps: JOLT_VERIFY_THROUGH_STAGE7_STEPS,
+    },
+    JoltVerifierTargetPlan {
+        target: JOLT_TARGET_FULL,
+        steps: JOLT_VERIFY_FULL_STEPS,
+    },
+];
+
+pub const VERIFIER_PROGRAM: JoltVerifierProgramPlan = JoltVerifierProgramPlan {
+    targets: JOLT_VERIFIER_TARGETS,
+};
+
+#[derive(Debug)]
+pub enum JoltVerifierProgramError {
+    MissingTarget { target: JoltVerifierTarget },
+    MissingArtifact { slot: JoltProofSlot },
+    UnsupportedStep {
+        step: JoltVerifierStepPlan,
+        reason: &'static str,
+    },
+}
+
+"
+    .to_owned()
+}
+
+fn jolt_verifier_execution_body() -> String {
+    "    let _verify_span = tracing::info_span!(\"bolt.verify\").entered();\n    execute_jolt_verifier_program(proof, inputs, programs, transcript, target)\n}\n\n".to_owned()
+}
+
+fn jolt_verifier_program_executor() -> String {
+    r#"fn execute_jolt_verifier_program<T>(
+    proof: &JoltProof,
+    inputs: JoltVerifierInputs<'_>,
+    programs: JoltVerifierPrograms,
+    transcript: &mut T,
+    target: JoltVerifierTarget,
+) -> Result<JoltVerificationArtifacts, JoltVerifyError>
+where
+    T: Transcript<Challenge = Fr>,
+{
+    let target_plan = programs
+        .verifier
+        .targets
+        .iter()
+        .find(|plan| plan.target == target)
+        .ok_or(JoltVerifierProgramError::MissingTarget { target })?;
+    let mut artifacts = JoltArtifactStore::default();
+    for step in target_plan.steps {
+        execute_jolt_verifier_step(
+            *step,
+            proof,
+            inputs,
+            programs,
+            transcript,
+            target_plan,
+            &mut artifacts,
+        )?;
+    }
+    artifacts.into_public_artifacts().map_err(JoltVerifyError::from)
+}
+
+fn execute_jolt_verifier_step<T>(
+    step: JoltVerifierStepPlan,
+    proof: &JoltProof,
+    inputs: JoltVerifierInputs<'_>,
+    programs: JoltVerifierPrograms,
+    transcript: &mut T,
+    target_plan: &JoltVerifierTargetPlan,
+    artifacts: &mut JoltArtifactStore,
+) -> Result<(), JoltVerifyError>
+where
+    T: Transcript<Challenge = Fr>,
+{
+    match step {
+        JoltVerifierStepPlan::ReceiveCommitments {
+            slot: JoltProofSlot::Commitments,
+        } => {
+            artifacts.commitment = Some(commitment_stage::verify_commitment_phase_with_program(
+                programs.commitment,
+                &proof.commitments,
+                transcript,
+            )?);
+        }
+        JoltVerifierStepPlan::VerifySumcheckStage {
+            slot: JoltProofSlot::Stage1Outer,
+        } => {
+            artifacts.stage1_outer = Some(stage1_outer_stage::verify_stage1_outer_with_program(
+                programs.stage1_outer,
+                &proof.stage1_outer,
+                transcript,
+            )?);
+        }
+        JoltVerifierStepPlan::VerifySumcheckStage {
+            slot: JoltProofSlot::Stage2,
+        } => {
+            artifacts.stage2 = Some(stage2_stage::verify_stage2_with_program(
+                programs.stage2,
+                &proof.stage2,
+                inputs.stage2_openings,
+                inputs.stage2_ram,
+                transcript,
+            )?);
+        }
+        JoltVerifierStepPlan::VerifySumcheckStage {
+            slot: JoltProofSlot::Stage3,
+        } => {
+            artifacts.stage3 = Some(stage3_stage::verify_stage3_with_program(
+                programs.stage3,
+                &proof.stage3,
+                inputs.stage3_openings,
+                transcript,
+            )?);
+        }
+        JoltVerifierStepPlan::VerifySumcheckStage {
+            slot: JoltProofSlot::Stage4,
+        } => {
+            artifacts.stage4 = Some(stage4_stage::verify_stage4_with_program(
+                programs.stage4,
+                &proof.stage4,
+                inputs.stage4_openings,
+                transcript,
+            )?);
+        }
+        JoltVerifierStepPlan::VerifySumcheckStage {
+            slot: JoltProofSlot::Stage5,
+        } => {
+            artifacts.stage5 = Some(stage5_stage::verify_stage5_with_program(
+                programs.stage5,
+                &proof.stage5,
+                inputs.stage5_openings,
+                transcript,
+            )?);
+        }
+        JoltVerifierStepPlan::VerifySumcheckStage {
+            slot: JoltProofSlot::Stage6,
+        } => {
+            artifacts.stage6 = Some(stage6_stage::verify_stage6_with_program(
+                programs.stage6,
+                &proof.stage6,
+                inputs.stage6_openings,
+                inputs.stage6_data,
+                transcript,
+            )?);
+        }
+        JoltVerifierStepPlan::VerifySumcheckStage {
+            slot: JoltProofSlot::Stage7,
+        } => {
+            artifacts.stage7 = Some(stage7_stage::verify_stage7_with_program(
+                programs.stage7,
+                &proof.stage7,
+                inputs.stage7_openings,
+                transcript,
+            )?);
+        }
+        JoltVerifierStepPlan::VerifyPcsOpening {
+            slot: JoltProofSlot::Evaluation,
+        } => {
+            verify_jolt_evaluation_step(
+                target_plan.target.evaluation,
+                proof,
+                inputs,
+                programs,
+                transcript,
+                artifacts,
+            )?;
+        }
+        step => {
+            return Err(JoltVerifierProgramError::UnsupportedStep {
+                step,
+                reason: "step kind and proof slot are incompatible",
+            }
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn verify_jolt_evaluation_step<T>(
+    evaluation: JoltEvaluationPolicy,
+    proof: &JoltProof,
+    inputs: JoltVerifierInputs<'_>,
+    programs: JoltVerifierPrograms,
+    transcript: &mut T,
+    artifacts: &JoltArtifactStore,
+) -> Result<(), JoltVerifyError>
+where
+    T: Transcript<Challenge = Fr>,
+{
+    if evaluation == JoltEvaluationPolicy::Skip {
+        return Ok(());
+    }
+    match (&proof.evaluation, inputs.evaluation_setup) {
+        (Some(evaluation_proof), Some(setup)) => {
+            verify_jolt_evaluation_proof(
+                programs.stage8,
+                evaluation_proof,
+                artifacts.commitment()?,
+                &proof.stage6,
+                &proof.stage7,
+                inputs.stage7_openings,
+                setup,
+                transcript,
+            )?;
+        }
+        (Some(_), None) => return Err(JoltEvaluationProofError::MissingVerifierSetup.into()),
+        (None, Some(_)) => return Err(JoltEvaluationProofError::MissingProof.into()),
+        (None, None) if evaluation == JoltEvaluationPolicy::Required => {
+            return Err(JoltEvaluationProofError::MissingProof.into());
+        }
+        (None, None) => {}
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct JoltArtifactStore {
+    commitment: Option<commitment_stage::CommitmentArtifacts>,
+    stage1_outer: Option<stage1_outer_stage::Stage1ExecutionArtifacts<Fr>>,
+    stage2: Option<stage2_stage::Stage2ExecutionArtifacts<Fr>>,
+    stage3: Option<stage3_stage::Stage3ExecutionArtifacts<Fr>>,
+    stage4: Option<stage4_stage::Stage4ExecutionArtifacts<Fr>>,
+    stage5: Option<stage5_stage::Stage5ExecutionArtifacts<Fr>>,
+    stage6: Option<stage6_stage::Stage6ExecutionArtifacts<Fr>>,
+    stage7: Option<stage7_stage::Stage7ExecutionArtifacts<Fr>>,
+}
+
+impl JoltArtifactStore {
+    fn commitment(
+        &self,
+    ) -> Result<&commitment_stage::CommitmentArtifacts, JoltVerifierProgramError> {
+        self.commitment
+            .as_ref()
+            .ok_or(JoltVerifierProgramError::MissingArtifact {
+                slot: JoltProofSlot::Commitments,
+            })
+    }
+
+    fn into_public_artifacts(self) -> Result<JoltVerificationArtifacts, JoltVerifierProgramError> {
+        Ok(JoltVerificationArtifacts {
+            commitment: required_artifact(self.commitment, JoltProofSlot::Commitments)?,
+            stage1_outer: required_artifact(self.stage1_outer, JoltProofSlot::Stage1Outer)?,
+            stage2: required_artifact(self.stage2, JoltProofSlot::Stage2)?,
+            stage3: required_artifact(self.stage3, JoltProofSlot::Stage3)?,
+            stage4: required_artifact(self.stage4, JoltProofSlot::Stage4)?,
+            stage5: required_artifact(self.stage5, JoltProofSlot::Stage5)?,
+            stage6: self.stage6.unwrap_or_default(),
+            stage7: self.stage7.unwrap_or_default(),
+        })
+    }
+}
+
+fn required_artifact<T>(
+    artifact: Option<T>,
+    slot: JoltProofSlot,
+) -> Result<T, JoltVerifierProgramError> {
+    artifact.ok_or(JoltVerifierProgramError::MissingArtifact { slot })
+}
+
+"#
+    .to_owned()
 }
 
 fn jolt_verifier_input_helpers(prefix: &str) -> String {
