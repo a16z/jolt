@@ -156,7 +156,7 @@ an explicit decision, or weaker semantically.
 | post-S1 (today) | 1,265 | 638 | 6,430 | 7,905 | hard ceilings: A 1,400 / B 700 / C surface 6,100 |
 | post-S2 | ~50 | 638 | 6,430 | ~6,640 | Tier A moves to `bolt-verifier-runtime` crate |
 | post-S2.5 | ~150-250 | 638 | ~6,200 | ~6,900 | top-level verifier executes a typed verifier program |
-| post-S3 | ~50 | ~500 | 6,430 | ~6,500 | poly, point reordering, gamma-power vector ops |
+| post-S3 | ~50 | <=638 | ~6,300-6,500 | ~6,500 | value graph foundation + first Stage 3/4 relation plans |
 | post-S4 | ~50 | ~350 | 6,500 | ~6,500 | typed indexed-eval addressing |
 | post-S5 | ~50 | ~290 | 6,700 | ~6,700 | relations as typed plans (Tier C grows) |
 | post-S6 | ~50 | ~50 | 6,800 | ~6,800 | bytecode encoding as typed plans (optional) |
@@ -182,6 +182,48 @@ S2 should therefore be treated as both extraction and boundary correction, not
 as proof that the runtime is already pure generic infrastructure. Once Tier A
 is a real crate with an explicit public API, every subsequent slice operates
 against a stable, versionable surface.
+
+### Locked decisions
+
+- `bolt-verifier-runtime` is a standalone workspace crate at
+  `crates/bolt-verifier-runtime/`. It is not a sub-crate of `bolt` and is not
+  re-exported through `bolt`.
+- Relation IDs use generic enum parameterization, not opaque string-backed
+  symbols. Relations are used for verifier dispatch, so a closed protocol enum
+  gives exhaustive-match pressure and keeps strings out of execution contracts.
+- The generic runtime owns the relation trait and generic plan structs. The
+  Jolt layer owns the closed relation enum:
+
+  ```rust
+  pub trait ProtocolRelation: Copy + Eq + core::fmt::Debug + 'static {}
+  impl<T: Copy + Eq + core::fmt::Debug + 'static> ProtocolRelation for T {}
+
+  pub struct SumcheckClaimPlan<R: ProtocolRelation> {
+      pub relation: Option<R>,
+      // ...
+  }
+
+  pub struct SumcheckDriverPlan<R: ProtocolRelation> {
+      pub relation: Option<R>,
+      // ...
+  }
+
+  pub struct SumcheckInstanceResultPlan<R: ProtocolRelation> {
+      pub relation: R,
+      // ...
+  }
+  ```
+
+  `JoltRelationKind` lives in the generated Jolt verifier's
+  `jolt_relations` module, and stage files alias it as
+  `StageNRelationKind`. `TypedPlanSymbol<Tag>` remains useful for value,
+  opening, claim, and diagnostic symbols, but not for relation dispatch.
+- `SourceStage` is not part of the generic runtime. Stage 8 gets a local
+  `Stage8SourceStage` enum until the later PCS-opening plan model removes the
+  source-stage special case entirely.
+- Per-stage type aliases are not load-bearing. Keep or delete them based on
+  readability after the import cutover, but do not preserve them as API
+  compatibility shims.
 
 ### Concrete plumbing
 
@@ -209,13 +251,12 @@ against a stable, versionable surface.
 7. `crates/jolt-equivalence/src/plan_adapters/generated_stage*.rs` and the
    oracle modules update their `use jolt_verifier::stages::common::*`
    imports to `use bolt_verifier_runtime::*`.
-8. Decide and implement the protocol-ID boundary. Preferred: make runtime plan
-   structs generic over a protocol relation enum, or carry an opaque
-   `RelationId`/`TypedPlanSymbol<RelationTag>` that is defined by the protocol
-   layer. Avoid defining Jolt relation variants in `bolt-verifier-runtime`.
-   If this makes S2 too large, split it into S2a extraction and S2b
-   protocol-ID cleanup before starting S3, and keep the temporary ownership
-   debt gated.
+8. Move `RelationKind` out of Tier A and into the Jolt layer as
+   `JoltRelationKind`. Genericize relation-bearing runtime structs over
+   `R: ProtocolRelation`.
+9. Move `SourceStage` out of Tier A. Stage 8 defines a local source-stage enum
+   until S2.5/S4/S5 replace that source lookup with typed verifier-program /
+   opening-batch data.
 
 ### Test/gate updates
 
@@ -236,10 +277,9 @@ against a stable, versionable surface.
   must move to `bolt_verifier_runtime` in the same PR. Mechanical, but
   large.
 - **Genericity debt.** `RelationKind` and `SourceStage` are the current
-  strongest evidence that Tier A is not purely generic. Do not quietly move
-  those names into a crate called `bolt-verifier-runtime` and declare the
-  boundary clean. Either genericize them in S2 or document the exact remaining
-  ownership debt with a follow-up gate.
+  strongest evidence that Tier A is not purely generic. S2 must remove both
+  from the runtime boundary. Do not split this into an extraction-only PR that
+  leaves Jolt relation variants in `bolt-verifier-runtime`.
 - **Type aliases in stage files.** Generated stage files contain
   `pub type Stage6FieldExprPlan = FieldExprPlan;` and similar. After S2
   the right-hand side is `bolt_verifier_runtime::FieldExprPlan`. The
@@ -282,8 +322,10 @@ is harmless) or be deleted. No data or proof-format changes are involved.
 
 ### Estimated wall-clock
 
-One agent session, 60-90 minutes. The work is mechanical but touches many
-files because of the cross-crate import changes.
+One overnight implementation block. The code movement is mechanical, but it
+touches enough emitters, generated artifacts, tests, and equivalence adapters
+that the verification matrix should be allowed to run after the import churn is
+settled.
 
 ---
 
@@ -301,14 +343,44 @@ flow.
 
 ### Concrete plumbing
 
-1. Add shared runtime types:
+1. Add typed top-level verifier-program types:
 
    ```rust
-   VerifierProgramPlan
-   VerifierStepPlan
-   ProofSlot
-   VerifierCheckpoint
-   ArtifactStore
+   pub enum ProofSlot {
+       Commitments,
+       Stage1Outer,
+       Stage2,
+       Stage3,
+       Stage4,
+       Stage5,
+       Stage6,
+       Stage7,
+       Evaluation,
+   }
+
+   pub enum VerifierStepPlan {
+       ReceiveCommitments { slot: ProofSlot },
+       VerifyStage { slot: ProofSlot },
+       VerifyPcsOpening { slot: ProofSlot },
+   }
+
+   pub enum VerifierCheckpoint {
+       AfterStage5,
+       AfterStage6,
+       AfterStage7,
+       AfterEvaluation,
+   }
+
+   pub enum EvaluationPolicy {
+       Skip,
+       VerifyIfPresent,
+       Required,
+   }
+
+   pub struct VerifierTarget {
+       pub checkpoint: VerifierCheckpoint,
+       pub evaluation: EvaluationPolicy,
+   }
    ```
 
    `ProofSlot` is the protocol/proof-layout identity. `VerifierStepPlan` is the
@@ -316,19 +388,26 @@ flow.
 2. Represent commitment receipt, transcript absorbs/squeezes, sumcheck driver
    verification, opening-batch emission, and PCS opening verification as program
    steps.
-3. Replace the hardcoded stage call chain in `verifier.rs` with a loop over the
-   generated program. Existing `verify_stageN_with_program` functions can be
-   used as step executors during this slice, but there must be one execution
-   path, not old/manual and new/program paths side by side.
-4. Replace target APIs such as `through_stage5`, `through_stage6`, and
+3. Keep `JoltProof` serialization unchanged:
+   `commitments`, `stage1_outer`, `stage2`, ..., `stage7`, `evaluation`.
+   The verifier program is execution metadata, not proof data.
+4. Replace the hardcoded stage call chain in `verifier.rs` with a loop over the
+   generated program. Existing `verify_stageN_with_program` functions remain as
+   slot executors during this slice, but there must be one execution path, not
+   old/manual and new/program paths side by side.
+5. Replace target APIs such as `through_stage5`, `through_stage6`, and
    `through_stage7` with named checkpoints or proof-slot targets. The old names
    can survive as user-facing constructors only if they are constants for the
    new checkpoint values, not separate branches.
-5. Make stage artifacts addressable through `ArtifactStore` keyed by typed
-   proof slots / claim IDs rather than Rust fields that assume a permanent
-   number of stages.
-6. Stage 8 becomes `VerifyPcsOpening { check }` plus supporting opening-batch
+6. Make stage artifacts addressable through an internal `ArtifactStore` keyed by
+   typed proof slots. Public `JoltVerificationArtifacts` keeps its current field
+   shape for this slice and is materialized from the store at the end so
+   downstream callers are not forced to migrate yet.
+7. Stage 8 becomes `VerifyPcsOpening { check }` plus supporting opening-batch
    plans. It should not be special because it happens to be the eighth module.
+8. Keep stage-local error quality. Stage failures still map to
+   `JoltVerifyError::StageN`; only structural verifier-program failures use a
+   new top-level program error.
 
 ### Acceptance criteria
 
@@ -341,6 +420,8 @@ flow.
 - Partial verification targets are typed checkpoints/proof slots.
 - No duplicate old/new verifier execution path remains.
 - Existing semantic, tamper, and import gates still pass.
+- A before/after verifier-time perf baseline is captured before landing this
+  slice, because it changes top-level execution structure.
 
 ### Blockers and complications
 
@@ -357,19 +438,23 @@ flow.
 ### Estimated wall-clock
 
 Two to three agent sessions. This is mostly control-flow architecture and
-artifact typing, not new protocol math.
+artifact typing, not new protocol math. It should be run after S2 and after
+capturing the perf baseline.
 
 ---
 
 ## S3: Typed verifier value graph + polynomial primitives
 
-**Goal.** Lift the small set of pure-dataflow primitives in Tier B into a
-typed verifier value graph, backed by MLIR ops. Tier B's relation evaluators
-stop calling `EqPolynomial::mle`, `bytecode_gamma_powers`, `field_powers`,
-`reverse_slice`, `prefix_point`, `suffix_point`, and the `normalize_*_point`
-helpers directly. The important design point is that this is not "add more
-variants to `FieldExprKind`"; it is a typed graph over scalar, point, and
-field-vector values.
+**Goal.** Introduce the typed verifier value graph and use it for the first
+relation-output checks. This is broader than Stage 6/7 helper cleanup: stages
+2-7 all contain handwritten expected-output math. The first conversions should
+be Stage 3 and Stage 4 because they exercise the value-graph path without RAM
+external data, bytecode rows, lookup-table families, or univariate-skip proof
+shape.
+
+The important design point is that this is not "add more variants to
+`FieldExprKind`"; it is a typed graph over scalar, point, field-vector, and
+eval-family values.
 
 ### Dialect changes
 
@@ -414,6 +499,7 @@ pub enum VerifierValueKind {
     Scalar,
     Point,
     FieldVector,
+    EvalFamily,
 }
 
 pub enum ScalarExprKind {
@@ -453,17 +539,33 @@ must be evaluated by the point interpreter and vector producers by the vector
 interpreter. This keeps the type boundary honest and prevents the runtime from
 becoming a bag of ad hoc helper functions.
 
-### Tier B impact
+### Locked conversion order
 
-After S3, `verifier_jolt_relations.rs.template` no longer defines:
-`bytecode_gamma_powers`, `field_powers`, `reverse_slice`, `prefix_point`,
-`suffix_point`, `indexed_boolean_eq`, `normalize_bytecode_read_raf_point`,
-`normalize_instruction_read_raf_point`, `operand_polynomial_eval`,
-`identity_polynomial_eval`, `lt_polynomial_eval`. Total: ~140 LOC removed.
+1. Build the value-graph foundation: scalar, point, field-vector, and
+   eval-family storage and plan rows.
+2. Convert Stage 3 expected-output checks first:
+   Spartan shift, instruction input, and registers claim reduction.
+3. Convert Stage 4 next:
+   registers read-write, RAM val check, `lt` evaluation, suffix points, and
+   the Stage 4 register-read-write point normalization.
+4. Convert the small Stage 5 relations next:
+   RAM RA claim reduction and registers val evaluation.
+5. Convert Stage 2 in two parts:
+   RAM read-write / product remainder / instruction lookup first, then RAM RAF,
+   RAM output, and univariate-skip-specific logic later.
+6. Convert Stage 6/7 family relations after eval-family support:
+   booleanity, hamming booleanity, RAM RA virtual, instruction RA virtual, inc
+   reduction, and Stage 7 hamming-weight reduction.
+7. Defer S5 instruction read-RAF and S6 bytecode read-RAF until lookup-table,
+   bytecode-entry, and external-data domains are designed.
 
-The `expected_stage67_*` evaluators stay hand-written for now, but their
-*bodies* shrink because the primitives they invoke are now provided by the
-runtime.
+### Deliberate deferrals
+
+Do not start S3 by designing generic bytecode-row algebra, RAM sparse
+evaluators, lookup-table MLE plans, or univariate-skip verifier replacement.
+Those are real verifier facts, but starting there would likely create a too
+general mini-language before the scalar/point/vector graph has been validated
+on simpler relations.
 
 ### Blockers and complications
 
@@ -479,11 +581,9 @@ runtime.
   gamma-power vectors. Points are multilinear query coordinates; gamma powers
   are ordered scalar tuples. Conflating them would make later relation-plan
   typing harder and hide meaning from reviewers.
-- **Stage emitter updates.** The Stage 6/7 emitters (the largest in
-  `crates/bolt/src/protocols/jolt/emit/rust/`) currently inline calls to
-  these helpers when building `expected_stage67_*` bodies. They must learn
-  to lower those call sites to `compute.poly_mle` etc. and let the
-  generic interpreter run them.
+- **Stage emitter updates.** Stage 3/4 should be the first emitters to lower
+  relation-output math to value-graph rows. Stage 6/7 remain later consumers
+  once eval families and bytecode/external-data boundaries are clear.
 - **Validator updates.** Each new `compute::*` op needs an entry in the
   Bolt validator so malformed plans (wrong arity, wrong operand types) are
   rejected at compile time.
@@ -491,10 +591,12 @@ runtime.
 ### Acceptance criteria
 
 `muldiv` e2e test passes in both `--features host` and `--features host,zk`
-(this is the workspace's primary correctness check). Tier B drops to
-~500 LOC. New metrics in `verifier_cleanup.rs`:
-`compute_poly_op_call_sites`, `compute_point_op_call_sites` reported but
-not gated yet.
+(this is the workspace's primary correctness check). Stage 3 and Stage 4
+expected-output helper bodies are replaced by typed value-graph plan rows. New
+metrics in `verifier_cleanup.rs`: `compute_poly_op_call_sites`,
+`compute_point_op_call_sites`, `value_graph_relation_outputs`, and
+`handwritten_expected_output_functions` reported. Gate only the Stage 3/4
+cutover in this slice; do not claim Stage 6/7 relation math is solved yet.
 
 ### Rollback
 
@@ -842,10 +944,10 @@ typed verifier value graph (`Scalar`, `Point`, `FieldVector`, eval families)
 rather than a larger bag of scalar-only field-expression variants.
 
 S5 introduces `compute::relation` as generic relation metadata over the value
-graph, not a Jolt-specific relation language. If a closed enum is useful for
-readability, define it at the protocol/stage boundary and make the generic
-runtime parameterized over it; otherwise use an opaque `RelationId` and keep
-only diagnostic strings in the runtime.
+graph, not a Jolt-specific relation language. Closed relation enums live at the
+protocol/stage boundary; the generic runtime is parameterized over the protocol
+relation enum when it needs equality or dispatch. Opaque typed symbols are for
+generic storage paths that do not branch on relation kind.
 
 S6 is explicitly Jolt-specific. If pursued, it goes under
 `crates/bolt/src/protocols/jolt/`, not in `bolt-verifier-runtime`.
@@ -923,57 +1025,53 @@ where verifier semantics are invented. Use these checks during every slice:
 
 ---
 
-## Open questions
+## Locked sequencing decisions
 
-These deserve human (Markos / Quang) input before S2 starts:
+The investigation pass resolved the implementation choices that should not need
+more user input before an overnight run:
 
-1. **`bolt-verifier-runtime` location.** Standalone workspace crate under
-   `crates/bolt-verifier-runtime/`, or sub-crate of `bolt`? Recommend
-   standalone for versionability.
-2. **`bolt-verifier-runtime` re-export through `bolt`.** Should `bolt`
-   re-export `bolt_verifier_runtime` for convenience, or keep them
-   separate? Recommend separate (stricter trust boundary).
-3. **Per-stage type aliases.** Generated stage files contain
-   `pub type Stage6FieldExprPlan = FieldExprPlan` and ~20 similar aliases
-   per stage. Are these aliases load-bearing for downstream code (e.g.,
-   `jolt-equivalence` adapters) or can they be deleted along with S2?
-   Spot-checking suggests they exist purely for readability and can go.
-4. **Protocol relation IDs.** Should S2 parameterize runtime plan structs over
-   a protocol relation enum, or should it introduce an opaque `RelationId` /
-   `TypedPlanSymbol<RelationTag>`? Lean: protocol enum for readability when a
-   stage matches on relation kind, opaque ID for generic runtime storage.
-   Either is better than putting Jolt variants in the generic runtime crate.
-5. **Checkpoint naming.** What user-facing partial-verification checkpoints do
-   we want after S2.5? Lean: keep familiar names such as `ThroughStage5` only as
-   aliases for typed checkpoint constants while shifting internal execution to
-   proof slots / verifier steps.
-6. **Value graph granularity.** Should S3 implement the scalar/point/vector
-   value graph before any new polynomial op, or can it land as part of the same
-   PR? Lean: same PR if small, but stop and split if the value typing gets
-   noisy.
-7. **S6 threshold.** Is "second protocol with bytecode-row encoding"
-   the right trigger to actually do S6, or is there a different
-   readability / audit reason to do it preemptively?
+1. `bolt-verifier-runtime` is a standalone workspace crate, with no
+   `bolt::*` re-export.
+2. Runtime relation-bearing plan structs are generic over `R:
+   ProtocolRelation`; Jolt relation variants live in `JoltRelationKind`.
+3. Stage 8 source-stage handling is local to Stage 8 until the PCS/opening
+   model is made fully typed.
+4. Legacy names such as `ThroughStage5` may remain as user-facing constructors,
+   but internally they resolve to `VerifierTarget { checkpoint, evaluation }`.
+5. S2 does not need a perf baseline because it is import/extraction work.
+   S2.5, S3, and S5 do need before/after verifier-time baselines because they
+   add or change interpreter execution.
+6. S3 starts with the value-graph foundation plus Stage 3/4 conversions. It
+   does not start with bytecode, RAM sparse evaluators, lookup-table MLEs, or
+   univariate-skip verifier replacement.
+7. S6 remains optional and should be deferred unless there is a second protocol
+   user or concrete audit pressure for typed bytecode-row encoding.
 
 ---
 
 ## Sequencing decision tree
 
 ```text
-Resolve S2 protocol-ID shape.                    [before coding]
-  Choose generic relation enum parameterization or opaque RelationId.
-
 Land S2 first.                                   [unconditional]
+  Extract Tier A to standalone bolt-verifier-runtime.
+  Genericize runtime relation-bearing plans over ProtocolRelation.
+  Move JoltRelationKind and Stage8SourceStage out of the runtime.
   Re-baseline ceilings.
   Delete old common path; no compatibility re-export.
+
+Capture verifier perf baseline.                  [before interpreter changes]
+  Run SHA2-chain 2^16; run 2^20 if overnight budget allows.
+  Record verify_ms/proof_bytes/RSS and keep Perfetto traces.
 
 Land S2.5 next.                                  [unconditional]
   Make verifier.rs execute a typed verifier program.
   Stages become proof-slot labels / diagnostic scopes, not control flow.
+  Keep proof serialization and public artifact shape unchanged.
 
 Land S3 next.                                    [unconditional]
-  Establish scalar/point/field-vector value graph.
-  Tier B should drop ~140 LOC.
+  Establish scalar/point/field-vector/eval-family value graph.
+  Convert Stage 3 then Stage 4 relation-output checks first.
+  Defer bytecode, RAM sparse, lookup-table, and univariate-skip special cases.
 
 Decide on S4 vs Markos' next slice.              [coordinate]
   S4 is independent of Markos' work; either order is fine.

@@ -1,29 +1,30 @@
 #![allow(dead_code)]
 
-use super::common::append_labeled_scalar;
+use bolt_verifier_runtime::append_labeled_scalar;
 use jolt_field::Fr;
 use jolt_sumcheck::{CompressedLabeledRoundPoly, LabeledRoundPoly, SumcheckClaim, SumcheckError, SumcheckVerifier};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 
 pub type DefaultStage1Transcript = Blake2bTranscript<Fr>;
 
-pub type Stage1Params = super::common::StageParams;
-pub type Stage1NamedEval<F> = super::common::StageNamedEval<F>;
-pub type Stage1SumcheckOutput<F> = super::common::StageSumcheckOutput<F>;
-pub type Stage1ChallengeVector<F> = super::common::StageChallengeVector<F>;
-pub type Stage1ExecutionArtifacts<F> = super::common::StageExecutionArtifacts<F>;
-pub type Stage1Proof<F> = super::common::StageProof<F>;
-pub type Stage1VerifierProgramPlan = super::common::VerifierProgramPlanMinimal;
+pub type Stage1Params = bolt_verifier_runtime::StageParams;
+pub type Stage1NamedEval<F> = bolt_verifier_runtime::StageNamedEval<F>;
+pub type Stage1SumcheckOutput<F> = bolt_verifier_runtime::StageSumcheckOutput<F>;
+pub type Stage1ChallengeVector<F> = bolt_verifier_runtime::StageChallengeVector<F>;
+pub type Stage1ExecutionArtifacts<F> = bolt_verifier_runtime::StageExecutionArtifacts<F>;
+pub type Stage1Proof<F> = bolt_verifier_runtime::StageProof<F>;
+pub type Stage1VerifierProgramPlan = bolt_verifier_runtime::VerifierProgramPlanMinimal<Stage1RelationKind>;
+pub type Stage1SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stage1RelationKind>;
+pub type Stage1SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage1RelationKind>;
+pub type Stage1SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage1RelationKind>;
 
-pub use super::common::{
-    ClaimKind as Stage1ClaimKind, RelationKind as Stage1RelationKind, OpeningBatchPlan as Stage1OpeningBatchPlan,
+pub use super::jolt_relations::JoltRelationKind as Stage1RelationKind;
+pub use bolt_verifier_runtime::{
+    ClaimKind as Stage1ClaimKind, OpeningBatchPlan as Stage1OpeningBatchPlan,
     OpeningClaimPlan as Stage1OpeningClaimPlan,
     SumcheckBatchPlan as Stage1SumcheckBatchPlan, SumcheckEvalPlan as Stage1SumcheckEvalPlan,
-    SumcheckInstanceResultPlan as Stage1SumcheckInstanceResultPlan,
     TranscriptSqueezeKind as Stage1TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage1TranscriptSqueezePlan,
-    SumcheckClaimPlan as Stage1SumcheckClaimPlan,
-    SumcheckDriverPlan as Stage1SumcheckDriverPlan,
 };
 
 #[derive(Debug)]

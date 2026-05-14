@@ -962,7 +962,7 @@ impl Stage4CpuProgram {
     }
 
     fn emit_verifier_imports() -> &'static str {
-        "use super::common::{batch_claims, eval_by_name, find_batch, find_plan, reverse_slice};\n\
+        "use bolt_verifier_runtime::{batch_claims, eval_by_name, find_batch, find_plan, reverse_slice};\n\
          use super::jolt_relations::lt_polynomial_eval;\n\
          use jolt_field::{Field, Fr};\n\
          use jolt_poly::EqPolynomial;\n\
@@ -1176,15 +1176,20 @@ pub struct Stage4CpuProgramPlan {
     }
 
     fn emit_verifier_type_aliases() -> &'static str {
-        r#"pub type Stage4NamedEval<F> = super::common::StageNamedEval<F>;
-pub type Stage4SumcheckOutput<F> = super::common::StageSumcheckOutput<F>;
-pub type Stage4ChallengeVector<F> = super::common::StageChallengeVector<F>;
-pub type Stage4ExecutionArtifacts<F> = super::common::StageExecutionArtifacts<F>;
-pub type Stage4Proof<F> = super::common::StageProof<F>;
-pub type Stage4OpeningInputValue<F> = super::common::StageOpeningInputValue<F>;
+        r#"pub type Stage4NamedEval<F> = bolt_verifier_runtime::StageNamedEval<F>;
+pub type Stage4SumcheckOutput<F> = bolt_verifier_runtime::StageSumcheckOutput<F>;
+pub type Stage4ChallengeVector<F> = bolt_verifier_runtime::StageChallengeVector<F>;
+pub type Stage4ExecutionArtifacts<F> = bolt_verifier_runtime::StageExecutionArtifacts<F>;
+pub type Stage4Proof<F> = bolt_verifier_runtime::StageProof<F>;
+pub type Stage4OpeningInputValue<F> = bolt_verifier_runtime::StageOpeningInputValue<F>;
+pub type Stage4CpuProgramPlan = bolt_verifier_runtime::StageProgramPlanNoPointZeros<Stage4RelationKind>;
+pub type Stage4SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stage4RelationKind>;
+pub type Stage4SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage4RelationKind>;
+pub type Stage4SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage4RelationKind>;
 
-pub use super::common::{
-    ClaimKind as Stage4ClaimKind, RelationKind as Stage4RelationKind, FieldConstantPlan as Stage4FieldConstantPlan,
+pub use super::jolt_relations::JoltRelationKind as Stage4RelationKind;
+pub use bolt_verifier_runtime::{
+    ClaimKind as Stage4ClaimKind, FieldConstantPlan as Stage4FieldConstantPlan,
     FieldExprKind as Stage4FieldExprKind,
     FieldExprPlan as Stage4FieldExprPlan,
     KernelPlan as Stage4KernelPlan, OpeningBatchPlan as Stage4OpeningBatchPlan,
@@ -1194,11 +1199,8 @@ pub use super::common::{
     PointConcatPlan as Stage4PointConcatPlan, PointSlicePlan as Stage4PointSlicePlan,
     ProgramStepKind as Stage4ProgramStepKind,
     ProgramStepPlan as Stage4ProgramStepPlan, StageParams as Stage4Params,
-    StageProgramPlanNoPointZeros as Stage4CpuProgramPlan,
     SumcheckBatchPlan as Stage4SumcheckBatchPlan,
-    SumcheckClaimPlan as Stage4SumcheckClaimPlan, SumcheckDriverPlan as Stage4SumcheckDriverPlan,
     SumcheckEvalPlan as Stage4SumcheckEvalPlan,
-    SumcheckInstanceResultPlan as Stage4SumcheckInstanceResultPlan,
     TranscriptAbsorbBytesPlan as Stage4TranscriptAbsorbBytesPlan,
     TranscriptSqueezeKind as Stage4TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage4TranscriptSqueezePlan,
@@ -1226,7 +1228,7 @@ pub enum VerifyStage4Error {
     Sumcheck { driver: &'static str, error: SumcheckError<Fr> },
 }
 
-super::common::impl_runtime_plan_error_conversion!(VerifyStage4Error);
+bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage4Error);
 "#,
         );
         source
@@ -1956,7 +1958,7 @@ where
         });
     }
     let mut store =
-        super::common::ValueStore::with_opening_inputs(opening_inputs, program.opening_inputs)?;
+        bolt_verifier_runtime::ValueStore::with_opening_inputs(opening_inputs, program.opening_inputs)?;
     store.seed_constants(program.field_constants);
     let mut artifacts = Stage4ExecutionArtifacts::default();
     for step in program.steps {
@@ -1998,7 +2000,7 @@ pub fn stage4_verifier_program() -> &'static Stage4VerifierProgramPlan {
 fn verify_stage4_squeeze<T>(
     program: &'static Stage4VerifierProgramPlan,
     squeeze: &'static Stage4TranscriptSqueezePlan,
-    store: &mut super::common::ValueStore<Fr>,
+    store: &mut bolt_verifier_runtime::ValueStore<Fr>,
     transcript: &mut T,
     artifacts: &mut Stage4ExecutionArtifacts<Fr>,
 ) -> Result<(), VerifyStage4Error>
@@ -2014,7 +2016,7 @@ where
         }
     })?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, super::common::evaluate_field_expr)
+        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
         .map_err(VerifyStage4Error::from)?;
     artifacts.challenge_vectors.push(Stage4ChallengeVector {
         symbol: squeeze.symbol,
@@ -2038,7 +2040,7 @@ fn verify_stage4_driver<T>(
     program: &'static Stage4VerifierProgramPlan,
     driver: &'static Stage4SumcheckDriverPlan,
     proof: &Stage4Proof<Fr>,
-    store: &mut super::common::ValueStore<Fr>,
+    store: &mut bolt_verifier_runtime::ValueStore<Fr>,
     transcript: &mut T,
     artifacts: &mut Stage4ExecutionArtifacts<Fr>,
 ) -> Result<(), VerifyStage4Error>
@@ -2071,13 +2073,13 @@ fn verify_batched_stage4<T>(
     program: &'static Stage4VerifierProgramPlan,
     driver: &'static Stage4SumcheckDriverPlan,
     proof: &Stage4SumcheckOutput<Fr>,
-    store: &mut super::common::ValueStore<Fr>,
+    store: &mut bolt_verifier_runtime::ValueStore<Fr>,
     transcript: &mut T,
 ) -> Result<Stage4SumcheckOutput<Fr>, VerifyStage4Error>
 where
     T: Transcript<Challenge = Fr>,
 {
-    super::common::verify_batched_sumcheck(
+    bolt_verifier_runtime::verify_batched_sumcheck(
         driver,
         proof,
         program.claims,
@@ -2098,7 +2100,7 @@ where
 
 fn observe_stage4_sumcheck_output<F: Field>(
     program: &'static Stage4VerifierProgramPlan,
-    store: &mut super::common::ValueStore<F>,
+    store: &mut bolt_verifier_runtime::ValueStore<F>,
     output: &Stage4SumcheckOutput<F>,
 ) -> Result<(), VerifyStage4Error> {
     store.observe_sumcheck_output(
@@ -2138,7 +2140,7 @@ fn observe_stage4_sumcheck_output<F: Field>(
         },
     )?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, super::common::evaluate_field_expr)
+        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
         .map_err(VerifyStage4Error::from)?;
     store.verify_opening_equalities(
         program.opening_equalities,
@@ -2150,7 +2152,7 @@ fn observe_stage4_sumcheck_output<F: Field>(
 fn expected_batched_output_claim(
     program: &'static Stage4VerifierProgramPlan,
     driver: &'static Stage4SumcheckDriverPlan,
-    store: &super::common::ValueStore<Fr>,
+    store: &bolt_verifier_runtime::ValueStore<Fr>,
     evals: &[Stage4NamedEval<Fr>],
     point: &[Fr],
     batching_coeffs: &[Fr],
@@ -2195,11 +2197,11 @@ fn expected_batched_output_claim(
 }
 
 fn expected_registers_read_write(
-    store: &super::common::ValueStore<Fr>,
+    store: &bolt_verifier_runtime::ValueStore<Fr>,
     evals: &[Stage4NamedEval<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage4Error> {
-    let trace_point = super::common::store_point(store, "stage4.input.stage3.registers.RdWriteValue")?;
+    let trace_point = bolt_verifier_runtime::store_point(store, "stage4.input.stage3.registers.RdWriteValue")?;
     let r_cycle = normalize_stage4_registers_rw_cycle_point(
         local_point,
         trace_point.len(),
@@ -2214,18 +2216,18 @@ fn expected_registers_read_write(
     let rs2_ra = eval_by_name(evals, "stage4.registers_read_write.eval.Rs2Ra")?;
     let rd_wa = eval_by_name(evals, "stage4.registers_read_write.eval.RdWa")?;
     let rd_inc = eval_by_name(evals, "stage4.registers_read_write.eval.RdInc")?;
-    let gamma = super::common::store_scalar(store, "stage4.registers_read_write.gamma")?;
+    let gamma = bolt_verifier_runtime::store_scalar(store, "stage4.registers_read_write.gamma")?;
     Ok(eq_eval
         * (rd_wa * (registers_val + rd_inc)
             + gamma * (rs1_ra * registers_val + gamma * rs2_ra * registers_val)))
 }
 
 fn expected_ram_val_check(
-    store: &super::common::ValueStore<Fr>,
+    store: &bolt_verifier_runtime::ValueStore<Fr>,
     evals: &[Stage4NamedEval<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage4Error> {
-    let ram_val_point = super::common::store_point(store, "stage4.input.stage2.RamVal")?;
+    let ram_val_point = bolt_verifier_runtime::store_point(store, "stage4.input.stage2.RamVal")?;
     let r_cycle_prime = reverse_slice(local_point);
     let r_cycle = suffix_point(
         ram_val_point,
@@ -2233,7 +2235,7 @@ fn expected_ram_val_check(
         "stage4.input.stage2.RamVal",
     )?;
     let lt_eval = lt_polynomial_eval(&r_cycle_prime, r_cycle);
-    let gamma = super::common::store_scalar(store, "stage4.ram_val_check.gamma")?;
+    let gamma = bolt_verifier_runtime::store_scalar(store, "stage4.ram_val_check.gamma")?;
     let ram_ra = eval_by_name(evals, "stage4.ram_val_check.eval.RamRa")?;
     let ram_inc = eval_by_name(evals, "stage4.ram_val_check.eval.RamInc")?;
     Ok(ram_inc * ram_ra * (lt_eval + gamma))

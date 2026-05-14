@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use super::common::{append_labeled_scalar, batch_claims, eval_by_name, find_batch, find_plan, reverse_slice};
+use bolt_verifier_runtime::{append_labeled_scalar, batch_claims, eval_by_name, find_batch, find_plan, reverse_slice};
 use jolt_field::{Field, Fr, MulPow2, MulPrimitiveInt, RingCore};
 use jolt_poly::lagrange::{lagrange_evals, lagrange_kernel_eval};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
@@ -9,16 +9,20 @@ use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};
 
 pub type DefaultStage2Transcript = Blake2bTranscript<Fr>;
 
-pub type Stage2NamedEval<F> = super::common::StageNamedEval<F>;
-pub type Stage2SumcheckOutput<F> = super::common::StageSumcheckOutput<F>;
-pub type Stage2ChallengeVector<F> = super::common::StageChallengeVector<F>;
-pub type Stage2ExecutionArtifacts<F> = super::common::StageExecutionArtifacts<F>;
-pub type Stage2Proof<F> = super::common::StageProof<F>;
-pub type Stage2OpeningInputValue<F> = super::common::StageOpeningInputValue<F>;
-pub type Stage2VerifierProgramPlan = super::common::StageVerifierProgramPlanNoEqualities;
+pub type Stage2NamedEval<F> = bolt_verifier_runtime::StageNamedEval<F>;
+pub type Stage2SumcheckOutput<F> = bolt_verifier_runtime::StageSumcheckOutput<F>;
+pub type Stage2ChallengeVector<F> = bolt_verifier_runtime::StageChallengeVector<F>;
+pub type Stage2ExecutionArtifacts<F> = bolt_verifier_runtime::StageExecutionArtifacts<F>;
+pub type Stage2Proof<F> = bolt_verifier_runtime::StageProof<F>;
+pub type Stage2OpeningInputValue<F> = bolt_verifier_runtime::StageOpeningInputValue<F>;
+pub type Stage2VerifierProgramPlan = bolt_verifier_runtime::StageVerifierProgramPlanNoEqualities<Stage2RelationKind>;
+pub type Stage2SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stage2RelationKind>;
+pub type Stage2SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage2RelationKind>;
+pub type Stage2SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage2RelationKind>;
 
-pub use super::common::{
-    ClaimKind as Stage2ClaimKind, RelationKind as Stage2RelationKind, FieldConstantPlan as Stage2FieldConstantPlan,
+pub use super::jolt_relations::JoltRelationKind as Stage2RelationKind;
+pub use bolt_verifier_runtime::{
+    ClaimKind as Stage2ClaimKind, FieldConstantPlan as Stage2FieldConstantPlan,
     FieldExprKind as Stage2FieldExprKind,
     FieldExprPlan as Stage2FieldExprPlan,
     OpeningBatchPlan as Stage2OpeningBatchPlan, OpeningClaimPlan as Stage2OpeningClaimPlan,
@@ -27,11 +31,8 @@ pub use super::common::{
     ProgramStepPlan as Stage2ProgramStepPlan, StageParams as Stage2Params,
     SumcheckBatchPlan as Stage2SumcheckBatchPlan,
     SumcheckEvalPlan as Stage2SumcheckEvalPlan,
-    SumcheckInstanceResultPlan as Stage2SumcheckInstanceResultPlan,
     TranscriptSqueezeKind as Stage2TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage2TranscriptSqueezePlan,
-    SumcheckClaimPlan as Stage2SumcheckClaimPlan,
-    SumcheckDriverPlan as Stage2SumcheckDriverPlan,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -58,7 +59,7 @@ pub struct Stage2RamData<'a> {
 }
 
 #[derive(Clone, Debug, Default)]
-struct Stage2ValueStore<F: Field>(super::common::ValueStore<F>);
+struct Stage2ValueStore<F: Field>(bolt_verifier_runtime::ValueStore<F>);
 
 #[derive(Debug)]
 pub enum VerifyStage2Error {
@@ -74,7 +75,7 @@ pub enum VerifyStage2Error {
     Sumcheck { driver: &'static str, error: SumcheckError<Fr> },
 }
 
-super::common::impl_runtime_plan_error_conversion!(VerifyStage2Error);
+bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage2Error);
 
 pub const STAGE2_PARAMS: Stage2Params = Stage2Params { field: "bn254_fr", pcs: "dory", transcript: "blake2b_transcript" };
 pub const STAGE2_PROGRAM_STEPS: &[Stage2ProgramStepPlan] = &[
@@ -496,7 +497,7 @@ where
         proof: proof.proof.clone(),
     };
     store.observe_sumcheck_output(program, &verified)?;
-    super::common::append_opening_claims(
+    bolt_verifier_runtime::append_opening_claims(
         program.opening_inputs,
         program.opening_claims,
         program.opening_batches,
@@ -514,7 +515,7 @@ impl<F: Field> Stage2ValueStore<F> {
         program: &'static Stage2VerifierProgramPlan,
         inputs: &[Stage2OpeningInputValue<F>],
     ) -> Result<Self, VerifyStage2Error> {
-        Ok(Self(super::common::ValueStore::with_opening_inputs(
+        Ok(Self(bolt_verifier_runtime::ValueStore::with_opening_inputs(
             inputs,
             program.opening_inputs,
         )?))
@@ -620,7 +621,7 @@ impl<F: Field> Stage2ValueStore<F> {
         program: &'static Stage2VerifierProgramPlan,
     ) -> Result<(), VerifyStage2Error> {
         self.0
-            .evaluate_available_field_exprs(program.field_exprs, super::common::evaluate_field_expr)
+            .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
             .map_err(VerifyStage2Error::from)
     }
 

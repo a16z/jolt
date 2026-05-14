@@ -221,6 +221,7 @@ pub fn jolt_artifact_config() -> ProtocolArtifactConfig {
             "rayon".to_owned(),
         ],
         verifier_dependencies: vec![
+            "bolt-verifier-runtime".to_owned(),
             "jolt-dory".to_owned(),
             "jolt-lookup-tables".to_owned(),
             "jolt-sumcheck".to_owned(),
@@ -243,16 +244,6 @@ pub fn jolt_artifact_config() -> ProtocolArtifactConfig {
         prover_setup_type: RustTypeRef::new("jolt_dory::DoryProverSetup"),
         role_api_extension: Some(jolt_evaluation_role_api_extension()),
         verifier_runtime_modules: vec![
-            // Tier A: generic Bolt verifier scaffolding (typed plan
-            // structs, ValueStore, generic sumcheck verification, generic
-            // field-expr dispatch). See crates/bolt/GOAL.md "Audit Tiers".
-            ProtocolRuntimeModule {
-                module_name: "common".to_owned(),
-                file: GeneratedFile {
-                    path: "src/stages/common.rs".to_owned(),
-                    source: include_str!("verifier_common.rs.template").to_owned(),
-                },
-            },
             // Tier B: audited Jolt verifier core (hand-written Stage 6/7
             // relation evaluators, point normalizations, and Jolt-specific
             // field-math helpers). NOT generated. See crates/bolt/GOAL.md
@@ -265,11 +256,11 @@ pub fn jolt_artifact_config() -> ProtocolArtifactConfig {
                 },
             },
         ],
-        verifier_named_eval_type: RustTypeRef::new("crate::stages::common::StageNamedEval"),
+        verifier_named_eval_type: RustTypeRef::new("bolt_verifier_runtime::StageNamedEval"),
         verifier_sumcheck_output_type: RustTypeRef::new(
-            "crate::stages::common::StageSumcheckOutput",
+            "bolt_verifier_runtime::StageSumcheckOutput",
         ),
-        verifier_stage_proof_type: RustTypeRef::new("crate::stages::common::StageProof"),
+        verifier_stage_proof_type: RustTypeRef::new("bolt_verifier_runtime::StageProof"),
     }
 }
 
@@ -375,7 +366,7 @@ fn jolt_evaluation_role_api_extension() -> ProtocolArtifactExtension {
             lib_module: jolt_verifier_lib_module(),
             imports: "use std::collections::BTreeMap;\n\nuse jolt_dory::{DoryCommitment, DoryProof, DoryScheme, DoryVerifierSetup};\nuse jolt_field::Fr;\nuse jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};\nuse jolt_poly::EqPolynomial;\nuse jolt_transcript::Transcript;\n".to_owned(),
             proof_fields: "    pub evaluation: Option<JoltEvaluationProof>,\n".to_owned(),
-            proof_items: "pub type JoltStage2RamAccess = crate::stages::stage2::Stage2RamAccess;\npub type JoltStage2RamOutputLayout = crate::stages::stage2::Stage2RamOutputLayout;\npub type JoltStage2RamData<'a> = crate::stages::stage2::Stage2RamData<'a>;\npub type JoltStageChallengeVector = crate::stages::common::StageChallengeVector<Fr>;\npub type JoltStageExecutionArtifacts = crate::stages::common::StageExecutionArtifacts<Fr>;\npub type JoltStageOpeningInputValue = crate::stages::common::StageOpeningInputValue<Fr>;\n\n#[derive(Clone, Debug)]\npub struct JoltEvaluationProof {\n    pub joint_opening_proof: DoryProof,\n}\n\n".to_owned(),
+            proof_items: "pub type JoltStage2RamAccess = crate::stages::stage2::Stage2RamAccess;\npub type JoltStage2RamOutputLayout = crate::stages::stage2::Stage2RamOutputLayout;\npub type JoltStage2RamData<'a> = crate::stages::stage2::Stage2RamData<'a>;\npub type JoltStageChallengeVector = bolt_verifier_runtime::StageChallengeVector<Fr>;\npub type JoltStageExecutionArtifacts = bolt_verifier_runtime::StageExecutionArtifacts<Fr>;\npub type JoltStageOpeningInputValue = bolt_verifier_runtime::StageOpeningInputValue<Fr>;\n\n#[derive(Clone, Debug)]\npub struct JoltEvaluationProof {\n    pub joint_opening_proof: DoryProof,\n}\n\n".to_owned(),
             inputs_derive: Some("#[derive(Clone, Copy)]".to_owned()),
             input_fields: "    pub evaluation_setup: Option<&'a DoryVerifierSetup>,\n".to_owned(),
             program_fields:

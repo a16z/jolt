@@ -1,8 +1,8 @@
 //! Static plan adapters from Bolt compiler plans to generated/kernel plans.
 //!
-//! These are compatibility shims for the equivalence oracle. They translate
-//! Bolt's owned compiler plans into the currently generated static plan shape
-//! expected by jolt-kernels, jolt-prover, and jolt-verifier.
+//! The equivalence oracle compares Bolt's owned compiler plans against the
+//! generated static plans expected by jolt-kernels, jolt-prover, and
+//! jolt-verifier. These adapters keep that comparison explicit.
 
 macro_rules! stage_field_expr {
     (kernel, $module:ident, $field_expr:ident, $plan:ident) => {
@@ -131,13 +131,11 @@ macro_rules! stage_driver {
     clippy::panic,
     reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
 )]
-fn generated_program_step_kind(value: &str) -> jolt_verifier::stages::common::ProgramStepKind {
+fn generated_program_step_kind(value: &str) -> bolt_verifier_runtime::ProgramStepKind {
     match value {
-        "transcript_squeeze" => jolt_verifier::stages::common::ProgramStepKind::TranscriptSqueeze,
-        "transcript_absorb_bytes" => {
-            jolt_verifier::stages::common::ProgramStepKind::TranscriptAbsorbBytes
-        }
-        "sumcheck_driver" => jolt_verifier::stages::common::ProgramStepKind::SumcheckDriver,
+        "transcript_squeeze" => bolt_verifier_runtime::ProgramStepKind::TranscriptSqueeze,
+        "transcript_absorb_bytes" => bolt_verifier_runtime::ProgramStepKind::TranscriptAbsorbBytes,
+        "sumcheck_driver" => bolt_verifier_runtime::ProgramStepKind::SumcheckDriver,
         value => panic!("unsupported generated program step kind `{value}`"),
     }
 }
@@ -146,13 +144,11 @@ fn generated_program_step_kind(value: &str) -> jolt_verifier::stages::common::Pr
     clippy::panic,
     reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
 )]
-fn generated_transcript_squeeze_kind(
-    value: &str,
-) -> jolt_verifier::stages::common::TranscriptSqueezeKind {
+fn generated_transcript_squeeze_kind(value: &str) -> bolt_verifier_runtime::TranscriptSqueezeKind {
     match value {
-        "challenge_scalar" => jolt_verifier::stages::common::TranscriptSqueezeKind::ChallengeScalar,
-        "challenge_vector" => jolt_verifier::stages::common::TranscriptSqueezeKind::ChallengeVector,
-        "scalar" => jolt_verifier::stages::common::TranscriptSqueezeKind::Scalar,
+        "challenge_scalar" => bolt_verifier_runtime::TranscriptSqueezeKind::ChallengeScalar,
+        "challenge_vector" => bolt_verifier_runtime::TranscriptSqueezeKind::ChallengeVector,
+        "scalar" => bolt_verifier_runtime::TranscriptSqueezeKind::Scalar,
         value => panic!("unsupported generated transcript squeeze kind `{value}`"),
     }
 }
@@ -161,10 +157,10 @@ fn generated_transcript_squeeze_kind(
     clippy::panic,
     reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
 )]
-fn generated_claim_kind(value: &str) -> jolt_verifier::stages::common::ClaimKind {
+fn generated_claim_kind(value: &str) -> bolt_verifier_runtime::ClaimKind {
     match value {
-        "committed" => jolt_verifier::stages::common::ClaimKind::Committed,
-        "virtual" => jolt_verifier::stages::common::ClaimKind::Virtual,
+        "committed" => bolt_verifier_runtime::ClaimKind::Committed,
+        "virtual" => bolt_verifier_runtime::ClaimKind::Virtual,
         value => panic!("unsupported generated claim kind `{value}`"),
     }
 }
@@ -173,81 +169,81 @@ fn generated_claim_kind(value: &str) -> jolt_verifier::stages::common::ClaimKind
     clippy::panic,
     reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
 )]
-fn generated_relation_kind(value: &str) -> jolt_verifier::stages::common::RelationKind {
+fn generated_relation_kind(value: &str) -> jolt_verifier::stages::jolt_relations::JoltRelationKind {
     match value {
         "jolt.stage1.outer.uniskip" => {
-            jolt_verifier::stages::common::RelationKind::Stage1OuterUniskip
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage1OuterUniskip
         }
         "jolt.stage1.outer.remaining" => {
-            jolt_verifier::stages::common::RelationKind::Stage1OuterRemaining
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage1OuterRemaining
         }
         "jolt.stage2.product_virtual.uniskip" => {
-            jolt_verifier::stages::common::RelationKind::Stage2ProductVirtualUniskip
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage2ProductVirtualUniskip
         }
         "jolt.stage2.ram.read_write" => {
-            jolt_verifier::stages::common::RelationKind::Stage2RamReadWrite
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage2RamReadWrite
         }
         "jolt.stage2.product_virtual.remainder" => {
-            jolt_verifier::stages::common::RelationKind::Stage2ProductVirtualRemainder
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage2ProductVirtualRemainder
         }
         "jolt.stage2.instruction_lookup.claim_reduction" => {
-            jolt_verifier::stages::common::RelationKind::Stage2InstructionLookupClaimReduction
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage2InstructionLookupClaimReduction
         }
         "jolt.stage2.ram.raf_evaluation" => {
-            jolt_verifier::stages::common::RelationKind::Stage2RamRafEvaluation
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage2RamRafEvaluation
         }
         "jolt.stage2.ram.output_check" => {
-            jolt_verifier::stages::common::RelationKind::Stage2RamOutputCheck
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage2RamOutputCheck
         }
-        "jolt.stage2.batched" => jolt_verifier::stages::common::RelationKind::Stage2Batched,
+        "jolt.stage2.batched" => jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage2Batched,
         "jolt.stage3.spartan_shift" => {
-            jolt_verifier::stages::common::RelationKind::Stage3SpartanShift
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage3SpartanShift
         }
         "jolt.stage3.instruction_input" => {
-            jolt_verifier::stages::common::RelationKind::Stage3InstructionInput
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage3InstructionInput
         }
         "jolt.stage3.registers_claim_reduction" => {
-            jolt_verifier::stages::common::RelationKind::Stage3RegistersClaimReduction
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage3RegistersClaimReduction
         }
-        "jolt.stage3.batched" => jolt_verifier::stages::common::RelationKind::Stage3Batched,
+        "jolt.stage3.batched" => jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage3Batched,
         "jolt.stage4.registers_read_write" => {
-            jolt_verifier::stages::common::RelationKind::Stage4RegistersReadWrite
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage4RegistersReadWrite
         }
         "jolt.stage4.ram_val_check" => {
-            jolt_verifier::stages::common::RelationKind::Stage4RamValCheck
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage4RamValCheck
         }
-        "jolt.stage4.batched" => jolt_verifier::stages::common::RelationKind::Stage4Batched,
+        "jolt.stage4.batched" => jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage4Batched,
         "jolt.stage5.instruction_read_raf" => {
-            jolt_verifier::stages::common::RelationKind::Stage5InstructionReadRaf
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage5InstructionReadRaf
         }
         "jolt.stage5.ram_ra_claim_reduction" => {
-            jolt_verifier::stages::common::RelationKind::Stage5RamRaClaimReduction
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage5RamRaClaimReduction
         }
         "jolt.stage5.registers_val_evaluation" => {
-            jolt_verifier::stages::common::RelationKind::Stage5RegistersValEvaluation
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage5RegistersValEvaluation
         }
-        "jolt.stage5.batched" => jolt_verifier::stages::common::RelationKind::Stage5Batched,
+        "jolt.stage5.batched" => jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage5Batched,
         "jolt.stage6.bytecode_read_raf" => {
-            jolt_verifier::stages::common::RelationKind::Stage6BytecodeReadRaf
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage6BytecodeReadRaf
         }
-        "jolt.stage6.booleanity" => jolt_verifier::stages::common::RelationKind::Stage6Booleanity,
+        "jolt.stage6.booleanity" => jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage6Booleanity,
         "jolt.stage6.hamming_booleanity" => {
-            jolt_verifier::stages::common::RelationKind::Stage6HammingBooleanity
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage6HammingBooleanity
         }
         "jolt.stage6.ram_ra_virtual" => {
-            jolt_verifier::stages::common::RelationKind::Stage6RamRaVirtual
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage6RamRaVirtual
         }
         "jolt.stage6.instruction_ra_virtual" => {
-            jolt_verifier::stages::common::RelationKind::Stage6InstructionRaVirtual
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage6InstructionRaVirtual
         }
         "jolt.stage6.inc_claim_reduction" => {
-            jolt_verifier::stages::common::RelationKind::Stage6IncClaimReduction
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage6IncClaimReduction
         }
-        "jolt.stage6.batched" => jolt_verifier::stages::common::RelationKind::Stage6Batched,
+        "jolt.stage6.batched" => jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage6Batched,
         "jolt.stage7.hamming_weight_claim_reduction" => {
-            jolt_verifier::stages::common::RelationKind::Stage7HammingWeightClaimReduction
+            jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage7HammingWeightClaimReduction
         }
-        "jolt.stage7.batched" => jolt_verifier::stages::common::RelationKind::Stage7Batched,
+        "jolt.stage7.batched" => jolt_verifier::stages::jolt_relations::JoltRelationKind::Stage7Batched,
         value => panic!("unsupported generated relation `{value}`"),
     }
 }
@@ -257,20 +253,20 @@ fn generated_relation_kind(value: &str) -> jolt_verifier::stages::common::Relati
     clippy::panic,
     reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier field expression tag"
 )]
-fn generated_field_expr_kind(value: &str) -> jolt_verifier::stages::common::FieldExprKind {
+fn generated_field_expr_kind(value: &str) -> bolt_verifier_runtime::FieldExprKind {
     match value {
-        "opening_eval" => jolt_verifier::stages::common::FieldExprKind::OpeningEval,
-        "field.add" => jolt_verifier::stages::common::FieldExprKind::Add,
-        "field.sub" => jolt_verifier::stages::common::FieldExprKind::Sub,
-        "field.mul" => jolt_verifier::stages::common::FieldExprKind::Mul,
-        "field.neg" => jolt_verifier::stages::common::FieldExprKind::Neg,
+        "opening_eval" => bolt_verifier_runtime::FieldExprKind::OpeningEval,
+        "field.add" => bolt_verifier_runtime::FieldExprKind::Add,
+        "field.sub" => bolt_verifier_runtime::FieldExprKind::Sub,
+        "field.mul" => bolt_verifier_runtime::FieldExprKind::Mul,
+        "field.neg" => bolt_verifier_runtime::FieldExprKind::Neg,
         value if value.starts_with("field.pow:") => {
             let exponent = value
                 .strip_prefix("field.pow:")
                 .expect("field pow expression has prefix")
                 .parse::<usize>()
                 .expect("field pow expression has usize exponent");
-            jolt_verifier::stages::common::FieldExprKind::Pow(exponent)
+            bolt_verifier_runtime::FieldExprKind::Pow(exponent)
         }
         value if value.starts_with("poly.lagrange_basis_eval:") => {
             let spec = value
@@ -278,7 +274,7 @@ fn generated_field_expr_kind(value: &str) -> jolt_verifier::stages::common::Fiel
                 .expect("lagrange expression has prefix");
             let parts = spec.split(':').collect::<Vec<_>>();
             assert!(parts.len() == 3, "lagrange expression has three fields");
-            jolt_verifier::stages::common::FieldExprKind::LagrangeBasisEval(
+            bolt_verifier_runtime::FieldExprKind::LagrangeBasisEval(
                 parts[0]
                     .parse::<i64>()
                     .expect("lagrange domain start is i64"),
@@ -296,11 +292,9 @@ fn generated_field_expr_kind(value: &str) -> jolt_verifier::stages::common::Fiel
     clippy::panic,
     reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
 )]
-fn generated_opening_equality_mode(
-    value: &str,
-) -> jolt_verifier::stages::common::OpeningEqualityMode {
+fn generated_opening_equality_mode(value: &str) -> bolt_verifier_runtime::OpeningEqualityMode {
     match value {
-        "point_and_eval" => jolt_verifier::stages::common::OpeningEqualityMode::PointAndEval,
+        "point_and_eval" => bolt_verifier_runtime::OpeningEqualityMode::PointAndEval,
         value => panic!("unsupported generated opening equality mode `{value}`"),
     }
 }

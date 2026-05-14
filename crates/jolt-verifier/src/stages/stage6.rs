@@ -1,20 +1,25 @@
 #![allow(dead_code)]
 
-use super::common::{batch_claims, find_batch, find_plan};
+use bolt_verifier_runtime::{batch_claims, find_batch, find_plan};
 use super::jolt_relations::{expected_stage67_booleanity, expected_stage67_bytecode_read_raf, expected_stage67_hamming_booleanity, expected_stage67_inc_claim_reduction, expected_stage67_instruction_ra_virtual, expected_stage67_ram_ra_virtual, normalize_bytecode_read_raf_point, normalize_instruction_read_raf_point, stage67_trace_rounds, Stage67BytecodeEntry, Stage67BytecodeSymbols, Stage67RelationSymbols};
 use jolt_field::{Field, Fr};
 use jolt_sumcheck::SumcheckError;
 use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};
 
-pub type Stage6NamedEval<F> = super::common::StageNamedEval<F>;
-pub type Stage6SumcheckOutput<F> = super::common::StageSumcheckOutput<F>;
-pub type Stage6ChallengeVector<F> = super::common::StageChallengeVector<F>;
-pub type Stage6ExecutionArtifacts<F> = super::common::StageExecutionArtifacts<F>;
-pub type Stage6Proof<F> = super::common::StageProof<F>;
-pub type Stage6OpeningInputValue<F> = super::common::StageOpeningInputValue<F>;
+pub type Stage6NamedEval<F> = bolt_verifier_runtime::StageNamedEval<F>;
+pub type Stage6SumcheckOutput<F> = bolt_verifier_runtime::StageSumcheckOutput<F>;
+pub type Stage6ChallengeVector<F> = bolt_verifier_runtime::StageChallengeVector<F>;
+pub type Stage6ExecutionArtifacts<F> = bolt_verifier_runtime::StageExecutionArtifacts<F>;
+pub type Stage6Proof<F> = bolt_verifier_runtime::StageProof<F>;
+pub type Stage6OpeningInputValue<F> = bolt_verifier_runtime::StageOpeningInputValue<F>;
+pub type Stage6CpuProgramPlan = bolt_verifier_runtime::StageProgramPlan<Stage6RelationKind>;
+pub type Stage6SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stage6RelationKind>;
+pub type Stage6SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage6RelationKind>;
+pub type Stage6SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage6RelationKind>;
 
-pub use super::common::{
-    ClaimKind as Stage6ClaimKind, RelationKind as Stage6RelationKind, FieldConstantPlan as Stage6FieldConstantPlan,
+pub use super::jolt_relations::JoltRelationKind as Stage6RelationKind;
+pub use bolt_verifier_runtime::{
+    ClaimKind as Stage6ClaimKind, FieldConstantPlan as Stage6FieldConstantPlan,
     FieldExprKind as Stage6FieldExprKind,
     FieldExprPlan as Stage6FieldExprPlan,
     KernelPlan as Stage6KernelPlan, OpeningBatchPlan as Stage6OpeningBatchPlan,
@@ -24,11 +29,9 @@ pub use super::common::{
     PointConcatPlan as Stage6PointConcatPlan, PointSlicePlan as Stage6PointSlicePlan,
     PointZeroPlan as Stage6PointZeroPlan, ProgramStepKind as Stage6ProgramStepKind,
     ProgramStepPlan as Stage6ProgramStepPlan,
-    StageParams as Stage6Params, StageProgramPlan as Stage6CpuProgramPlan,
+    StageParams as Stage6Params,
     SumcheckBatchPlan as Stage6SumcheckBatchPlan,
-    SumcheckClaimPlan as Stage6SumcheckClaimPlan, SumcheckDriverPlan as Stage6SumcheckDriverPlan,
     SumcheckEvalPlan as Stage6SumcheckEvalPlan,
-    SumcheckInstanceResultPlan as Stage6SumcheckInstanceResultPlan,
     TranscriptAbsorbBytesPlan as Stage6TranscriptAbsorbBytesPlan,
     TranscriptSqueezeKind as Stage6TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage6TranscriptSqueezePlan,
@@ -152,7 +155,7 @@ pub enum VerifyStage6Error {
     Sumcheck { driver: &'static str, error: SumcheckError<Fr> },
 }
 
-super::common::impl_runtime_plan_error_conversion!(VerifyStage6Error);
+bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
 
 pub const STAGE6_PARAMS: Stage6Params = Stage6Params { field: "bn254_fr", pcs: "dory", transcript: "blake2b_transcript" };
 pub const STAGE6_PROGRAM_STEPS: &[Stage6ProgramStepPlan] = &[
@@ -646,7 +649,7 @@ where
         });
     }
     let mut store =
-        super::common::ValueStore::with_opening_inputs(opening_inputs, program.opening_inputs)?;
+        bolt_verifier_runtime::ValueStore::with_opening_inputs(opening_inputs, program.opening_inputs)?;
     store.seed_constants(program.field_constants);
     store.seed_point_zeros(program.point_zeros);
     let mut artifacts = Stage6ExecutionArtifacts::default();
@@ -697,7 +700,7 @@ pub fn stage6_verifier_program() -> &'static Stage6VerifierProgramPlan {
 fn verify_stage6_squeeze<T>(
     program: &'static Stage6VerifierProgramPlan,
     squeeze: &'static Stage6TranscriptSqueezePlan,
-    store: &mut super::common::ValueStore<Fr>,
+    store: &mut bolt_verifier_runtime::ValueStore<Fr>,
     transcript: &mut T,
     artifacts: &mut Stage6ExecutionArtifacts<Fr>,
 ) -> Result<(), VerifyStage6Error>
@@ -717,7 +720,7 @@ where
         }
     })?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, super::common::evaluate_field_expr)
+        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
         .map_err(VerifyStage6Error::from)?;
     artifacts.challenge_vectors.push(Stage6ChallengeVector {
         symbol: squeeze.symbol,
@@ -742,7 +745,7 @@ fn verify_stage6_driver<T>(
     driver: &'static Stage6SumcheckDriverPlan,
     proof: &Stage6Proof<Fr>,
     verifier_data: Option<&Stage6VerifierData>,
-    store: &mut super::common::ValueStore<Fr>,
+    store: &mut bolt_verifier_runtime::ValueStore<Fr>,
     transcript: &mut T,
     artifacts: &mut Stage6ExecutionArtifacts<Fr>,
 ) -> Result<(), VerifyStage6Error>
@@ -776,13 +779,13 @@ fn verify_batched_stage6<T>(
     driver: &'static Stage6SumcheckDriverPlan,
     proof: &Stage6SumcheckOutput<Fr>,
     verifier_data: Option<&Stage6VerifierData>,
-    store: &mut super::common::ValueStore<Fr>,
+    store: &mut bolt_verifier_runtime::ValueStore<Fr>,
     transcript: &mut T,
 ) -> Result<Stage6SumcheckOutput<Fr>, VerifyStage6Error>
 where
     T: Transcript<Challenge = Fr>,
 {
-    super::common::verify_batched_sumcheck(
+    bolt_verifier_runtime::verify_batched_sumcheck(
         driver,
         proof,
         program.claims,
@@ -811,7 +814,7 @@ where
 
 fn observe_stage6_sumcheck_output<F: Field>(
     program: &'static Stage6VerifierProgramPlan,
-    store: &mut super::common::ValueStore<F>,
+    store: &mut bolt_verifier_runtime::ValueStore<F>,
     output: &Stage6SumcheckOutput<F>,
 ) -> Result<(), VerifyStage6Error> {
     store.observe_sumcheck_output(
@@ -851,7 +854,7 @@ fn observe_stage6_sumcheck_output<F: Field>(
         },
     )?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, super::common::evaluate_field_expr)
+        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
         .map_err(VerifyStage6Error::from)?;
     store.verify_opening_equalities(
         program.opening_equalities,
@@ -864,7 +867,7 @@ fn expected_batched_output_claim(
     program: &'static Stage6VerifierProgramPlan,
     driver: &'static Stage6SumcheckDriverPlan,
     verifier_data: Option<&Stage6VerifierData>,
-    store: &super::common::ValueStore<Fr>,
+    store: &bolt_verifier_runtime::ValueStore<Fr>,
     evals: &[Stage6NamedEval<Fr>],
     point: &[Fr],
     batching_coeffs: &[Fr],
@@ -928,7 +931,7 @@ fn expected_batched_output_claim(
 fn expected_bytecode_read_raf(
     program: &'static Stage6VerifierProgramPlan,
     data: &Stage6BytecodeReadRafData,
-    store: &super::common::ValueStore<Fr>,
+    store: &bolt_verifier_runtime::ValueStore<Fr>,
     evals: &[Stage6NamedEval<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage6Error> {
@@ -947,7 +950,7 @@ fn expected_bytecode_read_raf(
 
 fn expected_booleanity(
     program: &'static Stage6VerifierProgramPlan,
-    store: &super::common::ValueStore<Fr>,
+    store: &bolt_verifier_runtime::ValueStore<Fr>,
     evals: &[Stage6NamedEval<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage6Error> {
@@ -956,7 +959,7 @@ fn expected_booleanity(
 }
 
 fn expected_hamming_booleanity(
-    store: &super::common::ValueStore<Fr>,
+    store: &bolt_verifier_runtime::ValueStore<Fr>,
     evals: &[Stage6NamedEval<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage6Error> {
@@ -964,7 +967,7 @@ fn expected_hamming_booleanity(
 }
 
 fn expected_ram_ra_virtual(
-    store: &super::common::ValueStore<Fr>,
+    store: &bolt_verifier_runtime::ValueStore<Fr>,
     evals: &[Stage6NamedEval<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage6Error> {
@@ -973,7 +976,7 @@ fn expected_ram_ra_virtual(
 
 fn expected_instruction_ra_virtual(
     program: &'static Stage6VerifierProgramPlan,
-    store: &super::common::ValueStore<Fr>,
+    store: &bolt_verifier_runtime::ValueStore<Fr>,
     evals: &[Stage6NamedEval<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage6Error> {
@@ -981,7 +984,7 @@ fn expected_instruction_ra_virtual(
 }
 
 fn expected_inc_claim_reduction(
-    store: &super::common::ValueStore<Fr>,
+    store: &bolt_verifier_runtime::ValueStore<Fr>,
     evals: &[Stage6NamedEval<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage6Error> {

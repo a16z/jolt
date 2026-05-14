@@ -963,7 +963,7 @@ impl Stage5CpuProgram {
     }
 
     fn emit_verifier_imports() -> &'static str {
-        "use super::common::{batch_claims, eval_by_name, find_batch, find_plan, indexed_evals_by_prefix_any, reverse_slice, suffix_point};\n\
+        "use bolt_verifier_runtime::{batch_claims, eval_by_name, find_batch, find_plan, indexed_evals_by_prefix_any, reverse_slice, suffix_point};\n\
          use super::jolt_relations::{identity_polynomial_eval, lt_polynomial_eval, normalize_instruction_read_raf_point, operand_polynomial_eval};\n\
          use jolt_field::{Field, Fr, RingCore};\n\
          use jolt_lookup_tables::LookupTableKind;\n\
@@ -1178,15 +1178,20 @@ pub struct Stage5CpuProgramPlan {
     }
 
     fn emit_verifier_type_aliases() -> &'static str {
-        r#"pub type Stage5NamedEval<F> = super::common::StageNamedEval<F>;
-pub type Stage5SumcheckOutput<F> = super::common::StageSumcheckOutput<F>;
-pub type Stage5ChallengeVector<F> = super::common::StageChallengeVector<F>;
-pub type Stage5ExecutionArtifacts<F> = super::common::StageExecutionArtifacts<F>;
-pub type Stage5Proof<F> = super::common::StageProof<F>;
-pub type Stage5OpeningInputValue<F> = super::common::StageOpeningInputValue<F>;
+        r#"pub type Stage5NamedEval<F> = bolt_verifier_runtime::StageNamedEval<F>;
+pub type Stage5SumcheckOutput<F> = bolt_verifier_runtime::StageSumcheckOutput<F>;
+pub type Stage5ChallengeVector<F> = bolt_verifier_runtime::StageChallengeVector<F>;
+pub type Stage5ExecutionArtifacts<F> = bolt_verifier_runtime::StageExecutionArtifacts<F>;
+pub type Stage5Proof<F> = bolt_verifier_runtime::StageProof<F>;
+pub type Stage5OpeningInputValue<F> = bolt_verifier_runtime::StageOpeningInputValue<F>;
+pub type Stage5CpuProgramPlan = bolt_verifier_runtime::StageProgramPlanNoPointZeros<Stage5RelationKind>;
+pub type Stage5SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stage5RelationKind>;
+pub type Stage5SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage5RelationKind>;
+pub type Stage5SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage5RelationKind>;
 
-pub use super::common::{
-    ClaimKind as Stage5ClaimKind, RelationKind as Stage5RelationKind, FieldConstantPlan as Stage5FieldConstantPlan,
+pub use super::jolt_relations::JoltRelationKind as Stage5RelationKind;
+pub use bolt_verifier_runtime::{
+    ClaimKind as Stage5ClaimKind, FieldConstantPlan as Stage5FieldConstantPlan,
     FieldExprKind as Stage5FieldExprKind,
     FieldExprPlan as Stage5FieldExprPlan,
     KernelPlan as Stage5KernelPlan, OpeningBatchPlan as Stage5OpeningBatchPlan,
@@ -1196,11 +1201,8 @@ pub use super::common::{
     PointConcatPlan as Stage5PointConcatPlan, PointSlicePlan as Stage5PointSlicePlan,
     ProgramStepKind as Stage5ProgramStepKind,
     ProgramStepPlan as Stage5ProgramStepPlan, StageParams as Stage5Params,
-    StageProgramPlanNoPointZeros as Stage5CpuProgramPlan,
     SumcheckBatchPlan as Stage5SumcheckBatchPlan,
-    SumcheckClaimPlan as Stage5SumcheckClaimPlan, SumcheckDriverPlan as Stage5SumcheckDriverPlan,
     SumcheckEvalPlan as Stage5SumcheckEvalPlan,
-    SumcheckInstanceResultPlan as Stage5SumcheckInstanceResultPlan,
     TranscriptAbsorbBytesPlan as Stage5TranscriptAbsorbBytesPlan,
     TranscriptSqueezeKind as Stage5TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage5TranscriptSqueezePlan,
@@ -1228,7 +1230,7 @@ pub enum VerifyStage5Error {
     Sumcheck { driver: &'static str, error: SumcheckError<Fr> },
 }
 
-super::common::impl_runtime_plan_error_conversion!(VerifyStage5Error);
+bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
 "#,
         );
         source
@@ -1958,7 +1960,7 @@ where
         });
     }
     let mut store =
-        super::common::ValueStore::with_opening_inputs(opening_inputs, program.opening_inputs)?;
+        bolt_verifier_runtime::ValueStore::with_opening_inputs(opening_inputs, program.opening_inputs)?;
     store.seed_constants(program.field_constants);
     let mut artifacts = Stage5ExecutionArtifacts::default();
     for step in program.steps {
@@ -2000,7 +2002,7 @@ pub fn stage5_verifier_program() -> &'static Stage5VerifierProgramPlan {
 fn verify_stage5_squeeze<T>(
     program: &'static Stage5VerifierProgramPlan,
     squeeze: &'static Stage5TranscriptSqueezePlan,
-    store: &mut super::common::ValueStore<Fr>,
+    store: &mut bolt_verifier_runtime::ValueStore<Fr>,
     transcript: &mut T,
     artifacts: &mut Stage5ExecutionArtifacts<Fr>,
 ) -> Result<(), VerifyStage5Error>
@@ -2016,7 +2018,7 @@ where
         }
     })?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, super::common::evaluate_field_expr)
+        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
         .map_err(VerifyStage5Error::from)?;
     artifacts.challenge_vectors.push(Stage5ChallengeVector {
         symbol: squeeze.symbol,
@@ -2040,7 +2042,7 @@ fn verify_stage5_driver<T>(
     program: &'static Stage5VerifierProgramPlan,
     driver: &'static Stage5SumcheckDriverPlan,
     proof: &Stage5Proof<Fr>,
-    store: &mut super::common::ValueStore<Fr>,
+    store: &mut bolt_verifier_runtime::ValueStore<Fr>,
     transcript: &mut T,
     artifacts: &mut Stage5ExecutionArtifacts<Fr>,
 ) -> Result<(), VerifyStage5Error>
@@ -2073,13 +2075,13 @@ fn verify_batched_stage5<T>(
     program: &'static Stage5VerifierProgramPlan,
     driver: &'static Stage5SumcheckDriverPlan,
     proof: &Stage5SumcheckOutput<Fr>,
-    store: &mut super::common::ValueStore<Fr>,
+    store: &mut bolt_verifier_runtime::ValueStore<Fr>,
     transcript: &mut T,
 ) -> Result<Stage5SumcheckOutput<Fr>, VerifyStage5Error>
 where
     T: Transcript<Challenge = Fr>,
 {
-    super::common::verify_batched_sumcheck(
+    bolt_verifier_runtime::verify_batched_sumcheck(
         driver,
         proof,
         program.claims,
@@ -2100,7 +2102,7 @@ where
 
 fn observe_stage5_sumcheck_output<F: Field>(
     program: &'static Stage5VerifierProgramPlan,
-    store: &mut super::common::ValueStore<F>,
+    store: &mut bolt_verifier_runtime::ValueStore<F>,
     output: &Stage5SumcheckOutput<F>,
 ) -> Result<(), VerifyStage5Error> {
     store.observe_sumcheck_output(
@@ -2140,7 +2142,7 @@ fn observe_stage5_sumcheck_output<F: Field>(
         },
     )?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, super::common::evaluate_field_expr)
+        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
         .map_err(VerifyStage5Error::from)?;
     store.verify_opening_equalities(
         program.opening_equalities,
@@ -2152,7 +2154,7 @@ fn observe_stage5_sumcheck_output<F: Field>(
 fn expected_batched_output_claim(
     program: &'static Stage5VerifierProgramPlan,
     driver: &'static Stage5SumcheckDriverPlan,
-    store: &super::common::ValueStore<Fr>,
+    store: &bolt_verifier_runtime::ValueStore<Fr>,
     evals: &[Stage5NamedEval<Fr>],
     point: &[Fr],
     batching_coeffs: &[Fr],
@@ -2200,7 +2202,7 @@ fn expected_batched_output_claim(
 }
 
 fn expected_instruction_read_raf(
-    store: &super::common::ValueStore<Fr>,
+    store: &bolt_verifier_runtime::ValueStore<Fr>,
     evals: &[Stage5NamedEval<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage5Error> {
@@ -2217,7 +2219,7 @@ fn expected_instruction_read_raf(
 
     let (r_address_prime, r_cycle) = local_point.split_at(LOG_K);
     let r_cycle_prime = reverse_slice(r_cycle);
-    let r_reduction = super::common::store_point(store, "stage5.input.stage2.instruction.LookupOutput")?;
+    let r_reduction = bolt_verifier_runtime::store_point(store, "stage5.input.stage2.instruction.LookupOutput")?;
     let eq_eval_r_reduction = EqPolynomial::<Fr>::mle(r_reduction, &r_cycle_prime);
 
     let left_operand_eval = operand_polynomial_eval(r_address_prime, true);
@@ -2249,7 +2251,7 @@ fn expected_instruction_read_raf(
         evals,
         "stage5.instruction_read_raf.eval.InstructionRafFlag",
     )?;
-    let gamma = super::common::store_scalar(store, "stage5.instruction_read_raf.gamma")?;
+    let gamma = bolt_verifier_runtime::store_scalar(store, "stage5.instruction_read_raf.gamma")?;
 
     let raf_claim = (Fr::from_u64(1) - raf_flag_claim)
         * (left_operand_eval + gamma * right_operand_eval)
@@ -2258,27 +2260,27 @@ fn expected_instruction_read_raf(
 }
 
 fn expected_ram_ra_claim_reduction(
-    store: &super::common::ValueStore<Fr>,
+    store: &bolt_verifier_runtime::ValueStore<Fr>,
     evals: &[Stage5NamedEval<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage5Error> {
     let r_cycle_reduced = reverse_slice(local_point);
     let r_cycle_raf = suffix_point(
-        super::common::store_point(store, "stage5.input.stage2.ram_raf.RamRa")?,
+        bolt_verifier_runtime::store_point(store, "stage5.input.stage2.ram_raf.RamRa")?,
         r_cycle_reduced.len(),
         "stage5.input.stage2.ram_raf.RamRa",
     )?;
     let r_cycle_rw = suffix_point(
-        super::common::store_point(store, "stage5.input.stage2.ram_read_write.RamRa")?,
+        bolt_verifier_runtime::store_point(store, "stage5.input.stage2.ram_read_write.RamRa")?,
         r_cycle_reduced.len(),
         "stage5.input.stage2.ram_read_write.RamRa",
     )?;
     let r_cycle_val = suffix_point(
-        super::common::store_point(store, "stage5.input.stage4.ram_val_check.RamRa")?,
+        bolt_verifier_runtime::store_point(store, "stage5.input.stage4.ram_val_check.RamRa")?,
         r_cycle_reduced.len(),
         "stage5.input.stage4.ram_val_check.RamRa",
     )?;
-    let gamma = super::common::store_scalar(store, "stage5.ram_ra_claim_reduction.gamma")?;
+    let gamma = bolt_verifier_runtime::store_scalar(store, "stage5.ram_ra_claim_reduction.gamma")?;
     let eq_combined = EqPolynomial::<Fr>::mle(r_cycle_raf, &r_cycle_reduced)
         + gamma * EqPolynomial::<Fr>::mle(r_cycle_rw, &r_cycle_reduced)
         + gamma.square() * EqPolynomial::<Fr>::mle(r_cycle_val, &r_cycle_reduced);
@@ -2287,11 +2289,11 @@ fn expected_ram_ra_claim_reduction(
 }
 
 fn expected_registers_val_evaluation(
-    store: &super::common::ValueStore<Fr>,
+    store: &bolt_verifier_runtime::ValueStore<Fr>,
     evals: &[Stage5NamedEval<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage5Error> {
-    let registers_val_point = super::common::store_point(store, "stage5.input.stage4.registers.RegistersVal")?;
+    let registers_val_point = bolt_verifier_runtime::store_point(store, "stage5.input.stage4.registers.RegistersVal")?;
     let r_cycle = suffix_point(
         registers_val_point,
         local_point.len(),

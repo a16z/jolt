@@ -1229,7 +1229,7 @@ fn stage3_rust_targets_extract_and_compile() {
     assert!(verifier_source.source.contains("pub fn verify_stage3"));
     assert!(verifier_source
         .source
-        .contains("super::common::verify_batched_sumcheck"));
+        .contains("bolt_verifier_runtime::verify_batched_sumcheck"));
     assert!(verifier_source
         .source
         .contains("Stage3OpeningClaimEqualityPlan"));
@@ -1314,7 +1314,7 @@ fn stage4_rust_targets_extract_and_compile() {
     assert!(verifier_source.source.contains("LabelWithCount"));
     assert!(verifier_source
         .source
-        .contains("super::common::verify_batched_sumcheck"));
+        .contains("bolt_verifier_runtime::verify_batched_sumcheck"));
     assert!(verifier_source.source.contains("stage4_verifier_program"));
     assert_or_update_fixture("tests/fixtures/prove_stage4.rs", &prover_source.source);
     assert_or_update_fixture("tests/fixtures/verify_stage4.rs", &verifier_source.source);
@@ -1433,7 +1433,7 @@ fn stage5_rust_targets_extract_and_compile() {
     assert!(!verifier_source.source.contains("jolt.stage5.ram_val_check"));
     assert!(verifier_source
         .source
-        .contains("super::common::verify_batched_sumcheck"));
+        .contains("bolt_verifier_runtime::verify_batched_sumcheck"));
     assert!(verifier_source.source.contains("stage5_verifier_program"));
     assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
     assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
@@ -1578,7 +1578,7 @@ fn stage6_rust_targets_extract_and_compile() {
         .contains("stage6.inc_claim_reduction.eval.RdInc"));
     assert!(verifier_source
         .source
-        .contains("super::common::verify_batched_sumcheck"));
+        .contains("bolt_verifier_runtime::verify_batched_sumcheck"));
     assert!(verifier_source.source.contains("stage6_verifier_program"));
     assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
     assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
@@ -1665,7 +1665,7 @@ fn stage7_rust_targets_extract_and_compile() {
         .contains("stage7.hamming_weight_claim_reduction.eval.InstructionRa_0"));
     assert!(verifier_source
         .source
-        .contains("super::common::verify_batched_sumcheck"));
+        .contains("bolt_verifier_runtime::verify_batched_sumcheck"));
     assert!(verifier_source.source.contains("stage7_verifier_program"));
     assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
     assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
@@ -3172,16 +3172,9 @@ fn assert_rust_source_compiles(_filename: &str, source: &str) {
     )
     .expect("write generated cargo manifest");
     std::fs::create_dir_all(dir.join("src")).expect("create generated src dir");
-    if source.contains("super::common") || source.contains("super::jolt_relations") {
-        // Tier A: generic Bolt verifier scaffolding.
-        std::fs::write(
-            dir.join("src/common.rs"),
-            generated_verifier_common_source(&workspace_root),
-        )
-        .expect("write generated common source");
-        // Tier B: audited Jolt verifier core. Always staged alongside
-        // common.rs because jolt_relations.rs depends on common.rs items.
-        // See crates/bolt/GOAL.md "Audit Tiers".
+    if source.contains("super::jolt_relations") {
+        // Tier B: audited Jolt verifier core. Tier A is provided by the
+        // bolt-verifier-runtime crate and is not staged as generated source.
         std::fs::write(
             dir.join("src/jolt_relations.rs"),
             generated_verifier_jolt_relations_source(&workspace_root),
@@ -3190,7 +3183,7 @@ fn assert_rust_source_compiles(_filename: &str, source: &str) {
         std::fs::write(dir.join("src/generated.rs"), source).expect("write generated source");
         std::fs::write(
             dir.join("src/lib.rs"),
-            "pub mod common;\npub mod jolt_relations;\n#[rustfmt::skip]\npub mod generated;\n",
+            "pub mod jolt_relations;\n#[rustfmt::skip]\npub mod generated;\n",
         )
         .expect("write generated lib wrapper");
     } else {
@@ -3378,11 +3371,9 @@ fn assert_generated_stage1_self_parity_runs(
     .expect("write generated cargo manifest");
     let src_dir = dir.join("src");
     std::fs::create_dir_all(&src_dir).expect("create generated src dir");
-    let main_source = if verifier_source.source.contains("super::common")
-        || verifier_source.source.contains("super::jolt_relations")
-    {
-        write_verifier_common_module(&src_dir, &workspace_root);
-        format!("mod common;\nmod jolt_relations;\n{main_source}")
+    let main_source = if verifier_source.source.contains("super::jolt_relations") {
+        write_verifier_jolt_relations_module(&src_dir, &workspace_root);
+        format!("mod jolt_relations;\n{main_source}")
     } else {
         main_source.to_owned()
     };
@@ -3428,11 +3419,12 @@ fn assert_generated_jolt_chain_self_parity_runs(files: &[&RustSourceFile], main_
     .expect("write generated cargo manifest");
     let src_dir = dir.join("src");
     std::fs::create_dir_all(&src_dir).expect("create generated src dir");
-    let main_source = if files.iter().any(|file| {
-        file.source.contains("super::common") || file.source.contains("super::jolt_relations")
-    }) {
-        write_verifier_common_module(&src_dir, &workspace_root);
-        format!("mod common;\nmod jolt_relations;\n{main_source}")
+    let main_source = if files
+        .iter()
+        .any(|file| file.source.contains("super::jolt_relations"))
+    {
+        write_verifier_jolt_relations_module(&src_dir, &workspace_root);
+        format!("mod jolt_relations;\n{main_source}")
     } else {
         main_source.to_owned()
     };
@@ -3462,26 +3454,12 @@ fn assert_generated_jolt_chain_self_parity_runs(files: &[&RustSourceFile], main_
     let _ = std::fs::remove_dir_all(dir);
 }
 
-fn write_verifier_common_module(src_dir: &Path, workspace_root: &Path) {
-    std::fs::write(
-        src_dir.join("common.rs"),
-        generated_verifier_common_source(workspace_root),
-    )
-    .expect("write generated common source");
+fn write_verifier_jolt_relations_module(src_dir: &Path, workspace_root: &Path) {
     std::fs::write(
         src_dir.join("jolt_relations.rs"),
         generated_verifier_jolt_relations_source(workspace_root),
     )
     .expect("write generated jolt_relations source");
-}
-
-fn generated_verifier_common_source(workspace_root: &Path) -> String {
-    let common =
-        std::fs::read_to_string(workspace_root.join("crates/jolt-verifier/src/stages/common.rs"))
-            .expect("read generated verifier common stage source");
-    format!(
-        "#![allow(dead_code, unused_imports, unused_macros, reason = \"generated verifier helpers are shared across generated stage subsets\")]\n{common}"
-    )
 }
 
 fn generated_verifier_jolt_relations_source(workspace_root: &Path) -> String {
@@ -3508,7 +3486,10 @@ fn generated_jolt_runtime_available() -> bool {
         .join("crates/jolt-kernels/Cargo.toml")
         .exists()
         && workspace_root
-            .join("crates/jolt-verifier/src/stages/common.rs")
+            .join("crates/bolt-verifier-runtime/Cargo.toml")
+            .exists()
+        && workspace_root
+            .join("crates/jolt-verifier/src/stages/jolt_relations.rs")
             .exists()
 }
 
@@ -3537,6 +3518,7 @@ ark-ff = {{ git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twis
 ark-serialize = {{ git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }}
 
 [dependencies]
+bolt-verifier-runtime = {{ path = "{}" }}
 jolt-dory = {{ path = "{}" }}
 jolt-field = {{ path = "{}" }}
 jolt-kernels = {{ path = "{}" }}
@@ -3551,6 +3533,9 @@ rayon = "1.12.0"
 serde = {{ version = "1.0", default-features = false, features = ["derive"] }}
 tracing = {{ version = "0.1.37", default-features = false, features = ["attributes"] }}
 "#,
+        workspace_root
+            .join("crates/bolt-verifier-runtime")
+            .display(),
         workspace_root.join("crates/jolt-dory").display(),
         workspace_root.join("crates/jolt-field").display(),
         workspace_root.join("crates/jolt-kernels").display(),

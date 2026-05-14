@@ -293,7 +293,10 @@ impl Stage8CpuProgram {
         source.push_str("#![allow(clippy::too_many_lines)]\n\n");
         match self.role {
             Role::Verifier => source.push_str(
-                "pub use super::common::{ClaimKind as Stage8ClaimKind, PcsProofMode as Stage8PcsProofMode, SourceStage as Stage8SourceStage, StageParams as Stage8Params, TypedPlanSymbol};\n\n\
+                "pub use bolt_verifier_runtime::{ClaimKind as Stage8ClaimKind, PcsProofMode as Stage8PcsProofMode, StageParams as Stage8Params, TypedPlanSymbol};\n\n\
+                 #[derive(Clone, Copy, Debug, PartialEq, Eq)]\n\
+                 pub enum Stage8SourceStage {\n    Stage6,\n    Stage7,\n}\n\n\
+                 impl Stage8SourceStage {\n    pub fn as_str(self) -> &'static str {\n        match self {\n            Self::Stage6 => \"stage6\",\n            Self::Stage7 => \"stage7\",\n        }\n    }\n}\n\n\
                  #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]\n\
                  pub enum Stage8OpeningInputTag {}\n\
                  pub type Stage8OpeningInputSymbol = TypedPlanSymbol<Stage8OpeningInputTag>;\n\

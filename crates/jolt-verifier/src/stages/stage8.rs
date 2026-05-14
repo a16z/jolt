@@ -1,6 +1,21 @@
 #![allow(clippy::too_many_lines)]
 
-pub use super::common::{ClaimKind as Stage8ClaimKind, PcsProofMode as Stage8PcsProofMode, SourceStage as Stage8SourceStage, StageParams as Stage8Params, TypedPlanSymbol};
+pub use bolt_verifier_runtime::{ClaimKind as Stage8ClaimKind, PcsProofMode as Stage8PcsProofMode, StageParams as Stage8Params, TypedPlanSymbol};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stage8SourceStage {
+    Stage6,
+    Stage7,
+}
+
+impl Stage8SourceStage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Stage6 => "stage6",
+            Self::Stage7 => "stage7",
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Stage8OpeningInputTag {}

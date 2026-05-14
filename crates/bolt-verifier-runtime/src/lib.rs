@@ -58,9 +58,9 @@ pub struct KernelPlan {
     pub abi: &'static str,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[rustfmt::skip]
-pub enum RelationKind { Stage1OuterUniskip, Stage1OuterRemaining, Stage2ProductVirtualUniskip, Stage2RamReadWrite, Stage2ProductVirtualRemainder, Stage2InstructionLookupClaimReduction, Stage2RamRafEvaluation, Stage2RamOutputCheck, Stage2Batched, Stage3SpartanShift, Stage3InstructionInput, Stage3RegistersClaimReduction, Stage3Batched, Stage4RegistersReadWrite, Stage4RamValCheck, Stage4Batched, Stage5InstructionReadRaf, Stage5RamRaClaimReduction, Stage5RegistersValEvaluation, Stage5Batched, Stage6BytecodeReadRaf, Stage6Booleanity, Stage6HammingBooleanity, Stage6RamRaVirtual, Stage6InstructionRaVirtual, Stage6IncClaimReduction, Stage6Batched, Stage7HammingWeightClaimReduction, Stage7Batched }
+pub trait ProtocolRelation: Copy + Eq + fmt::Debug + 'static {}
+
+impl<T: Copy + Eq + fmt::Debug + 'static> ProtocolRelation for T {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TranscriptSqueezeKind {
@@ -110,21 +110,6 @@ pub enum ClaimKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SourceStage {
-    Stage6,
-    Stage7,
-}
-
-impl SourceStage {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Stage6 => "stage6",
-            Self::Stage7 => "stage7",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PcsProofMode {
     Open,
     Verify,
@@ -167,7 +152,7 @@ pub struct FieldExprPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SumcheckClaimPlan {
+pub struct SumcheckClaimPlan<R: ProtocolRelation> {
     pub symbol: &'static str,
     pub stage: &'static str,
     pub domain: &'static str,
@@ -175,7 +160,7 @@ pub struct SumcheckClaimPlan {
     pub degree: usize,
     pub claim: &'static str,
     pub kernel: Option<&'static str>,
-    pub relation: Option<RelationKind>,
+    pub relation: Option<R>,
     pub claim_value: &'static str,
 }
 
@@ -193,12 +178,12 @@ pub struct SumcheckBatchPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SumcheckDriverPlan {
+pub struct SumcheckDriverPlan<R: ProtocolRelation> {
     pub symbol: &'static str,
     pub stage: &'static str,
     pub proof_slot: &'static str,
     pub kernel: Option<&'static str>,
-    pub relation: Option<RelationKind>,
+    pub relation: Option<R>,
     pub batch: &'static str,
     pub policy: &'static str,
     pub round_schedule: &'static [usize],
@@ -209,11 +194,11 @@ pub struct SumcheckDriverPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SumcheckInstanceResultPlan {
+pub struct SumcheckInstanceResultPlan<R: ProtocolRelation> {
     pub symbol: &'static str,
     pub source: &'static str,
     pub claim: &'static str,
-    pub relation: RelationKind,
+    pub relation: R,
     pub index: usize,
     pub point_arity: usize,
     pub num_rounds: usize,
@@ -291,7 +276,7 @@ pub struct OpeningBatchPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StageProgramPlan {
+pub struct StageProgramPlan<R: ProtocolRelation> {
     pub role: &'static str,
     pub params: StageParams,
     pub steps: &'static [ProgramStepPlan],
@@ -301,10 +286,10 @@ pub struct StageProgramPlan {
     pub field_constants: &'static [FieldConstantPlan],
     pub field_exprs: &'static [FieldExprPlan],
     pub kernels: &'static [KernelPlan],
-    pub claims: &'static [SumcheckClaimPlan],
+    pub claims: &'static [SumcheckClaimPlan<R>],
     pub batches: &'static [SumcheckBatchPlan],
-    pub drivers: &'static [SumcheckDriverPlan],
-    pub instance_results: &'static [SumcheckInstanceResultPlan],
+    pub drivers: &'static [SumcheckDriverPlan<R>],
+    pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
     pub evals: &'static [SumcheckEvalPlan],
     pub point_zeros: &'static [PointZeroPlan],
     pub point_slices: &'static [PointSlicePlan],
@@ -315,7 +300,7 @@ pub struct StageProgramPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StageProgramPlanNoPointZeros {
+pub struct StageProgramPlanNoPointZeros<R: ProtocolRelation> {
     pub role: &'static str,
     pub params: StageParams,
     pub steps: &'static [ProgramStepPlan],
@@ -325,10 +310,10 @@ pub struct StageProgramPlanNoPointZeros {
     pub field_constants: &'static [FieldConstantPlan],
     pub field_exprs: &'static [FieldExprPlan],
     pub kernels: &'static [KernelPlan],
-    pub claims: &'static [SumcheckClaimPlan],
+    pub claims: &'static [SumcheckClaimPlan<R>],
     pub batches: &'static [SumcheckBatchPlan],
-    pub drivers: &'static [SumcheckDriverPlan],
-    pub instance_results: &'static [SumcheckInstanceResultPlan],
+    pub drivers: &'static [SumcheckDriverPlan<R>],
+    pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
     pub evals: &'static [SumcheckEvalPlan],
     pub point_slices: &'static [PointSlicePlan],
     pub point_concats: &'static [PointConcatPlan],
@@ -338,17 +323,17 @@ pub struct StageProgramPlanNoPointZeros {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StageVerifierProgramPlan {
+pub struct StageVerifierProgramPlan<R: ProtocolRelation> {
     pub params: StageParams,
     pub steps: &'static [ProgramStepPlan],
     pub transcript_squeezes: &'static [TranscriptSqueezePlan],
     pub opening_inputs: &'static [OpeningInputPlan],
     pub field_constants: &'static [FieldConstantPlan],
     pub field_exprs: &'static [FieldExprPlan],
-    pub claims: &'static [SumcheckClaimPlan],
+    pub claims: &'static [SumcheckClaimPlan<R>],
     pub batches: &'static [SumcheckBatchPlan],
-    pub drivers: &'static [SumcheckDriverPlan],
-    pub instance_results: &'static [SumcheckInstanceResultPlan],
+    pub drivers: &'static [SumcheckDriverPlan<R>],
+    pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
     pub evals: &'static [SumcheckEvalPlan],
     pub point_slices: &'static [PointSlicePlan],
     pub point_concats: &'static [PointConcatPlan],
@@ -358,17 +343,17 @@ pub struct StageVerifierProgramPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StageVerifierProgramPlanNoEqualities {
+pub struct StageVerifierProgramPlanNoEqualities<R: ProtocolRelation> {
     pub params: StageParams,
     pub steps: &'static [ProgramStepPlan],
     pub transcript_squeezes: &'static [TranscriptSqueezePlan],
     pub opening_inputs: &'static [OpeningInputPlan],
     pub field_constants: &'static [FieldConstantPlan],
     pub field_exprs: &'static [FieldExprPlan],
-    pub claims: &'static [SumcheckClaimPlan],
+    pub claims: &'static [SumcheckClaimPlan<R>],
     pub batches: &'static [SumcheckBatchPlan],
-    pub drivers: &'static [SumcheckDriverPlan],
-    pub instance_results: &'static [SumcheckInstanceResultPlan],
+    pub drivers: &'static [SumcheckDriverPlan<R>],
+    pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
     pub evals: &'static [SumcheckEvalPlan],
     pub point_slices: &'static [PointSlicePlan],
     pub point_concats: &'static [PointConcatPlan],
@@ -377,13 +362,13 @@ pub struct StageVerifierProgramPlanNoEqualities {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct VerifierProgramPlanMinimal {
+pub struct VerifierProgramPlanMinimal<R: ProtocolRelation> {
     pub params: StageParams,
     pub transcript_squeezes: &'static [TranscriptSqueezePlan],
-    pub claims: &'static [SumcheckClaimPlan],
+    pub claims: &'static [SumcheckClaimPlan<R>],
     pub batches: &'static [SumcheckBatchPlan],
-    pub drivers: &'static [SumcheckDriverPlan],
-    pub instance_results: &'static [SumcheckInstanceResultPlan],
+    pub drivers: &'static [SumcheckDriverPlan<R>],
+    pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
     pub evals: &'static [SumcheckEvalPlan],
     pub opening_claims: &'static [OpeningClaimPlan],
     pub opening_batches: &'static [OpeningBatchPlan],
@@ -463,21 +448,22 @@ pub enum RuntimePlanError {
     },
 }
 
+#[macro_export]
 macro_rules! impl_runtime_plan_error_conversion {
     ($error:ident) => {
-        impl From<super::common::RuntimePlanError> for $error {
-            fn from(error: super::common::RuntimePlanError) -> Self {
+        impl From<$crate::RuntimePlanError> for $error {
+            fn from(error: $crate::RuntimePlanError) -> Self {
                 match error {
-                    super::common::RuntimePlanError::MissingBatch { driver, batch } => {
+                    $crate::RuntimePlanError::MissingBatch { driver, batch } => {
                         Self::MissingBatch { driver, batch }
                     }
-                    super::common::RuntimePlanError::MissingClaim { batch, claim } => {
+                    $crate::RuntimePlanError::MissingClaim { batch, claim } => {
                         Self::MissingClaim { batch, claim }
                     }
-                    super::common::RuntimePlanError::MissingValue { symbol } => {
+                    $crate::RuntimePlanError::MissingValue { symbol } => {
                         Self::MissingValue { symbol }
                     }
-                    super::common::RuntimePlanError::InvalidInputLength {
+                    $crate::RuntimePlanError::InvalidInputLength {
                         input,
                         expected,
                         actual,
@@ -486,7 +472,7 @@ macro_rules! impl_runtime_plan_error_conversion {
                         expected,
                         actual,
                     },
-                    super::common::RuntimePlanError::InvalidProof { driver, reason } => {
+                    $crate::RuntimePlanError::InvalidProof { driver, reason } => {
                         Self::InvalidProof { driver, reason }
                     }
                 }
@@ -494,8 +480,6 @@ macro_rules! impl_runtime_plan_error_conversion {
         }
     };
 }
-
-pub(crate) use impl_runtime_plan_error_conversion;
 
 pub trait SymbolPlan {
     fn symbol(&self) -> &'static str;
@@ -519,13 +503,13 @@ impl SymbolPlan for SumcheckBatchPlan {
     }
 }
 
-impl SymbolPlan for SumcheckClaimPlan {
+impl<R: ProtocolRelation> SymbolPlan for SumcheckClaimPlan<R> {
     fn symbol(&self) -> &'static str {
         self.symbol
     }
 }
 
-impl SymbolPlan for SumcheckDriverPlan {
+impl<R: ProtocolRelation> SymbolPlan for SumcheckDriverPlan<R> {
     fn symbol(&self) -> &'static str {
         self.symbol
     }
@@ -542,7 +526,7 @@ pub trait SumcheckClaimInfo: SymbolPlan {
     fn claim_value(&self) -> &'static str;
 }
 
-impl SumcheckClaimInfo for SumcheckClaimPlan {
+impl<R: ProtocolRelation> SumcheckClaimInfo for SumcheckClaimPlan<R> {
     fn num_rounds(&self) -> usize {
         self.num_rounds
     }
@@ -559,7 +543,7 @@ pub trait SumcheckDriverInfo: SymbolPlan {
     fn round_label(&self) -> &'static str;
 }
 
-impl SumcheckDriverInfo for SumcheckDriverPlan {
+impl<R: ProtocolRelation> SumcheckDriverInfo for SumcheckDriverPlan<R> {
     fn batch(&self) -> &'static str {
         self.batch
     }
@@ -653,12 +637,12 @@ impl<F: Field> ValueStore<F> {
         Ok(())
     }
 
-    pub fn observe_sumcheck_output<E>(
+    pub fn observe_sumcheck_output<E, R: ProtocolRelation>(
         &mut self,
-        instance_results: &[SumcheckInstanceResultPlan],
+        instance_results: &[SumcheckInstanceResultPlan<R>],
         evals: &[SumcheckEvalPlan],
         output: &StageSumcheckOutput<F>,
-        normalize_point: impl Fn(&SumcheckInstanceResultPlan, Vec<F>) -> Result<Vec<F>, E>,
+        normalize_point: impl Fn(&SumcheckInstanceResultPlan<R>, Vec<F>) -> Result<Vec<F>, E>,
         invalid_input_length: impl Fn(&'static str, usize, usize) -> E,
         missing_value: impl Fn(&'static str) -> E,
     ) -> Result<(), E> {

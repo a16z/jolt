@@ -23,18 +23,22 @@
 //! Treat changes here as Jolt protocol changes, not as compiler-output
 //! cleanups. Generic Bolt verifier scaffolding (typed plan structs,
 //! `ValueStore`, generic sumcheck verification, generic field-expr
-//! dispatch) lives in `super::common` instead.
+//! dispatch) lives in `bolt_verifier_runtime` instead.
 //!
 //! See `crates/bolt/GOAL.md` "Audit Tiers" for the full tier definition.
 
 use jolt_field::{Field, Fr, MulPow2, RingCore};
 use jolt_poly::EqPolynomial;
 
-use super::common::{
+use bolt_verifier_runtime::{
     eval_by_name, field_powers, indexed_boolean_eq, indexed_evals_by_prefix_any, prefix_point,
-    reverse_slice, store_point, store_scalar, suffix_point, OpeningInputPlan, RelationKind,
-    RuntimePlanError, StageNamedEval, SumcheckInstanceResultPlan, ValueStore,
+    reverse_slice, store_point, store_scalar, suffix_point, OpeningInputPlan, RuntimePlanError,
+    StageNamedEval, SumcheckInstanceResultPlan, ValueStore,
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[rustfmt::skip]
+pub enum JoltRelationKind { Stage1OuterUniskip, Stage1OuterRemaining, Stage2ProductVirtualUniskip, Stage2RamReadWrite, Stage2ProductVirtualRemainder, Stage2InstructionLookupClaimReduction, Stage2RamRafEvaluation, Stage2RamOutputCheck, Stage2Batched, Stage3SpartanShift, Stage3InstructionInput, Stage3RegistersClaimReduction, Stage3Batched, Stage4RegistersReadWrite, Stage4RamValCheck, Stage4Batched, Stage5InstructionReadRaf, Stage5RamRaClaimReduction, Stage5RegistersValEvaluation, Stage5Batched, Stage6BytecodeReadRaf, Stage6Booleanity, Stage6HammingBooleanity, Stage6RamRaVirtual, Stage6InstructionRaVirtual, Stage6IncClaimReduction, Stage6Batched, Stage7HammingWeightClaimReduction, Stage7Batched }
 
 pub fn bytecode_gamma_powers(gamma: Fr) -> [Fr; 8] {
     let mut powers = [Fr::from_u64(1); 8];
@@ -142,12 +146,12 @@ pub trait Stage67BytecodeEntry {
 }
 
 pub fn stage67_trace_rounds(
-    instance_results: &[SumcheckInstanceResultPlan],
+    instance_results: &[SumcheckInstanceResultPlan<JoltRelationKind>],
     symbols: &Stage67RelationSymbols,
 ) -> Result<usize, RuntimePlanError> {
     instance_results
         .iter()
-        .find(|instance| instance.relation == RelationKind::Stage6HammingBooleanity)
+        .find(|instance| instance.relation == JoltRelationKind::Stage6HammingBooleanity)
         .map(|instance| instance.num_rounds)
         .ok_or(RuntimePlanError::MissingValue {
             symbol: symbols.hamming_booleanity_instance,

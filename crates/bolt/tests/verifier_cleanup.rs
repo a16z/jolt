@@ -16,11 +16,10 @@ const GENERATED_VERIFIER_BASELINE_LOC_CEILING: usize = 9_185;
 const VERIFIER_RS_BASELINE_LOC_CEILING: usize = VERIFIER_RS_TARGET_LOC;
 const STAGE6_STAGE7_BASELINE_LOC_CEILING: usize = STAGE6_STAGE7_TARGET_LOC;
 
-/// Tier A ceiling: generic Bolt verifier scaffolding lives in
-/// `stages/common.rs`. The long-term direction is to shrink Tier A by moving
-/// helpers into typed plan data driven from MLIR, so this ceiling should
-/// only ever ratchet down.
-const BOLT_RUNTIME_BASELINE_LOC_CEILING: usize = 1_400;
+/// Tier A ceiling inside the generated verifier crate. S2 moves generic Bolt
+/// verifier scaffolding into `crates/bolt-verifier-runtime`, so this generated
+/// surface should stay at zero after the extraction.
+const BOLT_RUNTIME_BASELINE_LOC_CEILING: usize = 0;
 
 /// Tier B ceiling: hand-written Jolt verifier math lives in
 /// `stages/jolt_relations.rs`. Growth here is a *protocol-math* decision and
@@ -123,8 +122,8 @@ const GENERIC_COMPILER_JOLT_PATTERNS: &[&str] = &[
 struct VerifierCleanupMetrics {
     total_loc: usize,
     generated_surface_loc: usize,
-    /// Tier A: generic Bolt verifier scaffolding
-    /// (`crates/jolt-verifier/src/stages/common.rs`).
+    /// Tier A: generic Bolt verifier scaffolding still emitted inside
+    /// `crates/jolt-verifier/src` after extraction.
     bolt_runtime_loc: usize,
     /// Tier B: audited Jolt verifier core
     /// (`crates/jolt-verifier/src/stages/jolt_relations.rs`).
@@ -212,10 +211,10 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
             metrics.generated_surface_loc, GENERATED_VERIFIER_STRETCH_LOC,
         );
     }
-    assert!(
-        metrics.bolt_runtime_loc <= BOLT_RUNTIME_BASELINE_LOC_CEILING,
-        "Tier A bolt verifier runtime grew to {} LOC (ceiling {}); generic Bolt scaffolding should ratchet down, not up",
+    assert_eq!(
         metrics.bolt_runtime_loc, BOLT_RUNTIME_BASELINE_LOC_CEILING,
+        "Tier A bolt verifier runtime grew to {} LOC (ceiling {}); generic Bolt scaffolding should ratchet down, not up",
+        metrics.bolt_runtime_loc, BOLT_RUNTIME_BASELINE_LOC_CEILING
     );
     assert!(
         metrics.jolt_verifier_core_loc <= JOLT_VERIFIER_CORE_BASELINE_LOC_CEILING,
@@ -536,6 +535,9 @@ fn count_stage_local_generic_plan_structs(source: &str) -> usize {
         .lines()
         .filter(|line| {
             let line = line.trim_start();
+            if line.starts_with("pub type Stage") && line.contains("bolt_verifier_runtime::") {
+                return false;
+            }
             (line.starts_with("pub struct Stage") || line.starts_with("pub type Stage"))
                 && PLAN_SUFFIXES.iter().any(|suffix| line.contains(suffix))
         })

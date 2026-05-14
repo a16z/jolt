@@ -8,9 +8,9 @@ use jolt_transcript::Transcript;
 
 use crate::stages::{commitment as commitment_stage, stage1_outer as stage1_outer_stage, stage2 as stage2_stage, stage3 as stage3_stage, stage4 as stage4_stage, stage5 as stage5_stage, stage6 as stage6_stage, stage7 as stage7_stage, stage8 as stage8_stage};
 
-pub type JoltNamedEval = crate::stages::common::StageNamedEval<Fr>;
-pub type JoltSumcheckOutput = crate::stages::common::StageSumcheckOutput<Fr>;
-pub type JoltStageProof = crate::stages::common::StageProof<Fr>;
+pub type JoltNamedEval = bolt_verifier_runtime::StageNamedEval<Fr>;
+pub type JoltSumcheckOutput = bolt_verifier_runtime::StageSumcheckOutput<Fr>;
+pub type JoltStageProof = bolt_verifier_runtime::StageProof<Fr>;
 
 #[derive(Clone, Debug)]
 pub struct JoltProof {
@@ -28,9 +28,9 @@ pub struct JoltProof {
 pub type JoltStage2RamAccess = crate::stages::stage2::Stage2RamAccess;
 pub type JoltStage2RamOutputLayout = crate::stages::stage2::Stage2RamOutputLayout;
 pub type JoltStage2RamData<'a> = crate::stages::stage2::Stage2RamData<'a>;
-pub type JoltStageChallengeVector = crate::stages::common::StageChallengeVector<Fr>;
-pub type JoltStageExecutionArtifacts = crate::stages::common::StageExecutionArtifacts<Fr>;
-pub type JoltStageOpeningInputValue = crate::stages::common::StageOpeningInputValue<Fr>;
+pub type JoltStageChallengeVector = bolt_verifier_runtime::StageChallengeVector<Fr>;
+pub type JoltStageExecutionArtifacts = bolt_verifier_runtime::StageExecutionArtifacts<Fr>;
+pub type JoltStageOpeningInputValue = bolt_verifier_runtime::StageOpeningInputValue<Fr>;
 
 #[derive(Clone, Debug)]
 pub struct JoltEvaluationProof {
