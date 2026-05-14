@@ -1045,6 +1045,13 @@ impl MacroBuilder {
         let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
         let max_untrusted_advice_size =
             proc_macro2::Literal::u64_unsuffixed(attributes.max_untrusted_advice_size);
+        // Guests that depend on std (via the `guest-std` feature on jolt-sdk)
+        // must build for `riscv64imac-zero-linux-musl` rather than the default
+        // `*-unknown-none-elf` target. `self.std` reflects the macro's
+        // `guest-std` cfg detection (see MacroBuilder::new).
+        let set_std = self.make_set_std();
+        let set_backtrace = self.make_set_backtrace();
+        let set_profile = self.make_set_profile();
 
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
@@ -1057,6 +1064,9 @@ impl MacroBuilder {
                     .set_max_input_size(#max_input_size)
                     .set_max_output_size(#max_output_size)
                     .set_max_untrusted_advice_size(#max_untrusted_advice_size);
+                #set_std
+                #set_profile
+                #set_backtrace
                 program
             }
         }
