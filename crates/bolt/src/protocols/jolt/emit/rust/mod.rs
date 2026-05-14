@@ -1,4 +1,5 @@
 mod commitment;
+mod output_claims;
 mod plan_tokens;
 mod stage1;
 mod stage2;
