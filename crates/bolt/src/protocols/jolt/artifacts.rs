@@ -225,7 +225,6 @@ pub fn jolt_artifact_config() -> ProtocolArtifactConfig {
             "jolt-dory".to_owned(),
             "jolt-lookup-tables".to_owned(),
             "jolt-sumcheck".to_owned(),
-            "serde".to_owned(),
         ],
         instrumentation_prefix: Some("bolt".to_owned()),
         prover_forbidden_imports: PROVER_FORBIDDEN_IMPORTS
@@ -333,8 +332,8 @@ pub use verifier::{
     JoltStage6BytecodeReadRafData, JoltStage6VerifierData, JoltStageChallengeVector,
     JoltStageExecutionArtifacts, JoltStageOpeningInputValue, JoltStageProof, JoltSumcheckOutput,
     JoltVerificationArtifacts, JoltVerifierCheckpoint, JoltVerifierInputs,
-    JoltVerifierProgramError, JoltVerifierProgramPlan, JoltVerifierPrograms, JoltVerifierStepPlan,
-    JoltVerifierStepKind, JoltVerifierTarget, JoltVerifierTargetPlan, JoltVerifyError,
+    JoltVerifierProgramError, JoltVerifierProgramPlan, JoltVerifierPrograms, JoltVerifierStepKind,
+    JoltVerifierStepPlan, JoltVerifierTarget, JoltVerifierTargetPlan, JoltVerifyError,
     JOLT_TARGET_FULL, JOLT_TARGET_THROUGH_STAGE5, JOLT_TARGET_THROUGH_STAGE6,
     JOLT_TARGET_THROUGH_STAGE7, JOLT_VERIFIER_STEPS, JOLT_VERIFIER_TARGETS, VERIFIER_PROGRAM,
 };"

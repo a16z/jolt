@@ -3342,7 +3342,6 @@ dependencies = [
  "jolt-poly",
  "jolt-sumcheck",
  "jolt-transcript",
- "serde",
  "tracing",
 ]
 

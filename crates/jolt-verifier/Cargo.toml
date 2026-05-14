@@ -18,5 +18,4 @@ jolt-openings.workspace = true
 jolt-poly.workspace = true
 jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
-serde.workspace = true
 tracing.workspace = true
