@@ -333,6 +333,7 @@ impl Stage8CpuProgram {
         source.push_str(
             "pub struct Stage8EvaluationProgramPlan {\n    pub role: &'static str,\n    pub function: &'static str,\n    pub params: Stage8Params,\n    pub evaluation_point_source: Stage8OpeningInputPlan,\n    pub opening_inputs: &'static [Stage8OpeningInputPlan],\n    pub opening_claims: &'static [Stage8OpeningClaimPlan],\n    pub opening_batch: Stage8OpeningBatchPlan,\n    pub pcs_proof: Stage8PcsProofPlan,\n}\n\n",
         );
+        source.push_str(stage8_plan_constructors());
         source.push_str(stage8_evaluation_helpers());
 
         push_format(
@@ -413,6 +414,52 @@ fn params_literal(params: &Stage8Params) -> String {
         rust_str(&params.pcs),
         rust_str(&params.transcript),
     )
+}
+
+fn stage8_plan_constructors() -> &'static str {
+    r"const fn stage8_opening_input(
+    symbol: &'static str,
+    source_stage: Stage8SourceStage,
+    source_claim: &'static str,
+    oracle: &'static str,
+    domain: &'static str,
+    point_arity: usize,
+    claim_kind: Stage8ClaimKind,
+) -> Stage8OpeningInputPlan {
+    Stage8OpeningInputPlan {
+        symbol: Stage8OpeningInputSymbol::new(symbol),
+        source_stage,
+        source_claim: Stage8SourceClaim::new(source_claim),
+        oracle,
+        domain,
+        point_arity,
+        claim_kind,
+    }
+}
+
+const fn stage8_opening_claim(
+    symbol: &'static str,
+    oracle: &'static str,
+    family: &'static str,
+    domain: &'static str,
+    point_arity: usize,
+    input_symbol: &'static str,
+    source: (Stage8SourceStage, &'static str),
+) -> Stage8OpeningClaimPlan {
+    Stage8OpeningClaimPlan {
+        symbol: Stage8OpeningClaimSymbol::new(symbol),
+        oracle,
+        family,
+        domain,
+        point_arity,
+        point_source: Stage8OpeningInputSymbol::new(input_symbol),
+        eval_source: Stage8OpeningInputSymbol::new(input_symbol),
+        source_stage: source.0,
+        source_claim: Stage8SourceClaim::new(source.1),
+    }
+}
+
+"
 }
 
 fn prover_local_plan_types() -> &'static str {
@@ -693,10 +740,10 @@ where
 
 fn opening_input_literal(input: &Stage8OpeningInputPlan) -> Result<String, EmitError> {
     Ok(format!(
-        "Stage8OpeningInputPlan {{ symbol: {}, source_stage: {}, source_claim: {}, oracle: {}, domain: {}, point_arity: {}, claim_kind: {} }}",
-        symbol_expr("Stage8OpeningInputSymbol", &input.symbol),
+        "stage8_opening_input({}, {}, {}, {}, {}, {}, {})",
+        rust_str(&input.symbol),
         source_stage_expr(&input.source_stage)?,
-        source_claim_expr(&input.source_claim),
+        rust_str(&input.source_claim),
         rust_str(&input.oracle),
         rust_str(&input.domain),
         input.point_arity,
@@ -706,16 +753,15 @@ fn opening_input_literal(input: &Stage8OpeningInputPlan) -> Result<String, EmitE
 
 fn opening_claim_literal(claim: &Stage8OpeningClaimPlan) -> Result<String, EmitError> {
     Ok(format!(
-        "Stage8OpeningClaimPlan {{ symbol: {}, oracle: {}, family: {}, domain: {}, point_arity: {}, point_source: {}, eval_source: {}, source_stage: {}, source_claim: {} }}",
-        symbol_expr("Stage8OpeningClaimSymbol", &claim.symbol),
+        "stage8_opening_claim({}, {}, {}, {}, {}, {}, ({}, {}))",
+        rust_str(&claim.symbol),
         rust_str(&claim.oracle),
         rust_str(&claim.family),
         rust_str(&claim.domain),
         claim.point_arity,
-        symbol_expr("Stage8OpeningInputSymbol", &claim.point_source),
-        symbol_expr("Stage8OpeningInputSymbol", &claim.eval_source),
+        rust_str(&claim.point_source),
         source_stage_expr(&claim.source_stage)?,
-        source_claim_expr(&claim.source_claim),
+        rust_str(&claim.source_claim),
     ))
 }
 
@@ -734,10 +780,6 @@ fn source_stage_expr(source_stage: &str) -> Result<String, EmitError> {
 
 fn symbol_expr(type_name: &str, symbol: &str) -> String {
     format!("{type_name}::new({})", rust_str(symbol))
-}
-
-fn source_claim_expr(source_claim: &str) -> String {
-    format!("Stage8SourceClaim::new({})", rust_str(source_claim))
 }
 
 fn opening_batch_literal(batch: &Stage8OpeningBatchPlan) -> String {
