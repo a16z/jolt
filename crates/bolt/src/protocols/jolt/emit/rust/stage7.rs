@@ -9,6 +9,12 @@ use melior::ir::block::BlockLike;
 use melior::ir::operation::{OperationLike, OperationResult};
 use melior::ir::{Attribute, OperationRef};
 
+use super::output_claims::{
+    FieldExprDependencies, StructuredPolynomialEvalPlan as Stage7StructuredPolynomialEvalPlan,
+    StructuredPolynomialPointPlan as Stage7StructuredPolynomialPointPlan,
+    SumcheckOutputClaimAst as Stage7SumcheckOutputClaimAst,
+    SumcheckOutputClaimPlan as Stage7SumcheckOutputClaimPlan,
+};
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
 use crate::schema::verify_cpu_schema;
@@ -29,6 +35,8 @@ pub struct Stage7CpuProgram {
     pub drivers: Vec<Stage7SumcheckDriverPlan>,
     pub instance_results: Vec<Stage7SumcheckInstanceResultPlan>,
     pub evals: Vec<Stage7SumcheckEvalPlan>,
+    pub output_values: Vec<Stage7StructuredPolynomialEvalPlan>,
+    pub output_claims: Vec<Stage7SumcheckOutputClaimPlan>,
     pub point_zeros: Vec<Stage7PointZeroPlan>,
     pub point_slices: Vec<Stage7PointSlicePlan>,
     pub point_concats: Vec<Stage7PointConcatPlan>,
@@ -99,6 +107,16 @@ pub struct Stage7FieldExprPlan {
     pub formula: String,
     pub operand_names: Vec<String>,
     pub operands: Vec<String>,
+}
+
+impl FieldExprDependencies for Stage7FieldExprPlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn operands(&self) -> &[String] {
+        &self.operands
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -253,6 +271,8 @@ impl Stage7CpuProgram {
         let mut drivers = Vec::new();
         let mut instance_results = Vec::new();
         let mut evals = Vec::new();
+        let mut output_values = Vec::new();
+        let mut output_claim_asts = Vec::new();
         let mut point_zeros = Vec::new();
         let mut point_slices = Vec::new();
         let mut point_concats = Vec::new();
@@ -465,6 +485,32 @@ impl Stage7CpuProgram {
                         oracle: symbol_attr(op, "oracle")?,
                     });
                 }
+                "cpu.structured_polynomial_eval" => {
+                    output_values.push(Stage7StructuredPolynomialEvalPlan {
+                        symbol: string_attr(op, "sym_name")?,
+                        polynomial: string_attr(op, "polynomial")?,
+                        x_point: Stage7StructuredPolynomialPointPlan {
+                            source: operand_symbol(op, 0)?,
+                            segment: string_attr(op, "x_point_segment")?,
+                            length: string_attr(op, "x_point_length")?,
+                            order: string_attr(op, "x_point_order")?,
+                        },
+                        y_point: Stage7StructuredPolynomialPointPlan {
+                            source: operand_symbol(op, 1)?,
+                            segment: string_attr(op, "y_point_segment")?,
+                            length: string_attr(op, "y_point_length")?,
+                            order: string_attr(op, "y_point_order")?,
+                        },
+                    });
+                }
+                "cpu.sumcheck_output_claim" => {
+                    output_claim_asts.push(Stage7SumcheckOutputClaimAst {
+                        relation: symbol_attr(op, "relation")?,
+                        claim_value: operand_symbol(op, 0)?,
+                        polynomial_evals: symbol_array_attr(op, "polynomial_evals")?,
+                        polynomial_eval_operands: operand_symbols(op, 1)?,
+                    });
+                }
                 "cpu.point_zero" => {
                     point_zeros.push(Stage7PointZeroPlan {
                         symbol: string_attr(op, "sym_name")?,
@@ -523,11 +569,31 @@ impl Stage7CpuProgram {
             }
         }
 
+        let role = module
+            .role()
+            .ok_or_else(|| EmitError::new("missing cpu party role"))?;
+        if role == Role::Prover {
+            super::output_claims::prune_output_only_field_exprs(
+                &mut field_exprs,
+                claims.iter().map(|claim| claim.claim_value.as_str()),
+                output_claim_asts
+                    .iter()
+                    .map(|claim| claim.claim_value.as_str()),
+            );
+        }
+        let output_claims = if role == Role::Verifier {
+            super::output_claims::resolve_output_claims(
+                "stage7",
+                &output_values,
+                output_claim_asts,
+            )?
+        } else {
+            Vec::new()
+        };
+
         Ok(Self {
             params: params.ok_or_else(|| EmitError::new("missing cpu.params"))?,
-            role: module
-                .role()
-                .ok_or_else(|| EmitError::new("missing cpu party role"))?,
+            role,
             steps,
             transcript_squeezes,
             transcript_absorb_bytes,
@@ -540,6 +606,8 @@ impl Stage7CpuProgram {
             drivers,
             instance_results,
             evals,
+            output_values,
+            output_claims,
             point_zeros,
             point_slices,
             point_concats,
@@ -562,6 +630,9 @@ impl Stage7CpuProgram {
                 self.verify_prover_driver_bindings()?;
             }
             Role::Verifier => self.verify_verifier_driver_bindings()?,
+        }
+        if self.role == Role::Verifier {
+            self.verify_output_claims()?;
         }
         self.verify_opening_flow()
     }
@@ -640,6 +711,26 @@ impl Stage7CpuProgram {
         ));
         values.extend(symbols(self.field_exprs.iter().map(|expr| &expr.symbol)));
         values.extend(symbols(self.evals.iter().map(|eval| &eval.symbol)));
+        values.extend(symbols(
+            self.output_values.iter().map(|value| &value.symbol),
+        ));
+        values
+    }
+
+    fn point_value_symbols(&self) -> BTreeSet<String> {
+        let mut values = symbols(
+            self.instance_results
+                .iter()
+                .map(|instance| &instance.symbol),
+        );
+        values.extend(symbols(
+            self.opening_inputs.iter().map(|input| &input.symbol),
+        ));
+        values.extend(symbols(self.point_zeros.iter().map(|zero| &zero.symbol)));
+        values.extend(symbols(self.point_slices.iter().map(|slice| &slice.symbol)));
+        values.extend(symbols(
+            self.point_concats.iter().map(|concat| &concat.symbol),
+        ));
         values
     }
 
@@ -816,6 +907,24 @@ impl Stage7CpuProgram {
         Ok(())
     }
 
+    fn verify_output_claims(&self) -> Result<(), EmitError> {
+        let relations = symbols(
+            self.instance_results
+                .iter()
+                .map(|instance| &instance.relation),
+        );
+        let field_values = self.field_value_symbols();
+        let point_values = self.point_value_symbols();
+        super::output_claims::verify_output_claims(
+            "stage7",
+            &self.output_values,
+            &self.output_claims,
+            &relations,
+            &field_values,
+            &point_values,
+        )
+    }
+
     fn verify_opening_flow(&self) -> Result<(), EmitError> {
         let mut point_sources = symbols(self.drivers.iter().map(|driver| &driver.symbol));
         point_sources.extend(symbols(
@@ -984,9 +1093,8 @@ impl Stage7CpuProgram {
     }
 
     fn emit_verifier_imports() -> &'static str {
-        "use bolt_verifier_runtime::{batch_claims, eval_by_name, find_batch, find_plan, reverse_slice};\n\
-         use jolt_field::{Field, Fr, RingCore};\n\
-         use jolt_poly::EqPolynomial;\n\
+        "use bolt_verifier_runtime::{batch_claims, find_batch, find_plan};\n\
+         use jolt_field::{Field, Fr};\n\
          use jolt_sumcheck::SumcheckError;\n\
          use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};"
     }
@@ -1215,6 +1323,8 @@ pub type Stage7CpuProgramPlan = bolt_verifier_runtime::StageProgramPlan<Stage7Re
 pub type Stage7SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stage7RelationKind>;
 pub type Stage7SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage7RelationKind>;
 pub type Stage7SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage7RelationKind>;
+pub type Stage7SumcheckOutputClaimPlan = bolt_verifier_runtime::SumcheckOutputClaimPlan<Stage7RelationKind>;
+pub type Stage7StructuredPolynomialEvalPlan = bolt_verifier_runtime::StructuredPolynomialEvalPlan;
 
 pub use super::jolt_relations::JoltRelationKind as Stage7RelationKind;
 pub use bolt_verifier_runtime::{
@@ -1231,6 +1341,11 @@ pub use bolt_verifier_runtime::{
     StageParams as Stage7Params,
     SumcheckBatchPlan as Stage7SumcheckBatchPlan,
     SumcheckEvalPlan as Stage7SumcheckEvalPlan,
+    StructuredPolynomialKind as Stage7StructuredPolynomialKind,
+    StructuredPolynomialPointLength as Stage7StructuredPolynomialPointLength,
+    StructuredPolynomialPointOrder as Stage7StructuredPolynomialPointOrder,
+    StructuredPolynomialPointPlan as Stage7StructuredPolynomialPointPlan,
+    StructuredPolynomialPointSegment as Stage7StructuredPolynomialPointSegment,
     TranscriptAbsorbBytesPlan as Stage7TranscriptAbsorbBytesPlan,
     TranscriptSqueezeKind as Stage7TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage7TranscriptSqueezePlan,
@@ -1270,9 +1385,12 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
         source.push_str(&self.emit_sumcheck_claim_constants()?);
         source.push_str(&self.emit_sumcheck_batch_constants());
         source.push_str(&self.emit_sumcheck_driver_constants()?);
+        if self.role == Role::Verifier {
+            source.push_str(&self.emit_verifier_output_claim_constants()?);
+        }
         source.push_str(&self.emit_tail_constants()?);
         let output_claims_field = if self.role == Role::Verifier {
-            "    output_claims: &[],\n"
+            "    output_claims: STAGE7_SUMCHECK_OUTPUT_CLAIMS,\n"
         } else {
             ""
         };
@@ -1788,6 +1906,14 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
         )
     }
 
+    fn emit_verifier_output_claim_constants(&self) -> Result<String, EmitError> {
+        super::output_claims::emit_verifier_output_claim_constants(
+            "Stage7",
+            &self.role,
+            &self.output_claims,
+        )
+    }
+
     fn emit_point_zero_constants(&self) -> String {
         let zeros = self
             .point_zeros
@@ -2264,82 +2390,27 @@ fn expected_batched_output_claim(
         };
         let value = match relation {
             Stage7RelationKind::Stage7HammingWeightClaimReduction => {
-                expected_hamming_weight_claim_reduction(program, driver, store, evals, local_point)?
+                let output_claim = program
+                    .output_claims
+                    .iter()
+                    .find(|output_claim| output_claim.relation == instance.relation)
+                    .ok_or(VerifyStage7Error::UnsupportedRelation {
+                        relation: instance.relation,
+                    })?;
+                bolt_verifier_runtime::evaluate_sumcheck_output_claim(
+                    output_claim,
+                    program.field_exprs,
+                    store,
+                    instance.symbol,
+                    evals,
+                    local_point,
+                )?
             }
             relation => return Err(VerifyStage7Error::UnsupportedRelation { relation }),
         };
         expected += *coefficient * value;
     }
     Ok(expected)
-}
-
-fn expected_hamming_weight_claim_reduction(
-    program: &'static Stage7VerifierProgramPlan,
-    driver: &'static Stage7SumcheckDriverPlan,
-    store: &bolt_verifier_runtime::ValueStore<Fr>,
-    evals: &[Stage7NamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage7Error> {
-    let rho_rev = reverse_slice(local_point);
-    let booleanity_point = bolt_verifier_runtime::store_point(store, "stage7.input.stage6.booleanity.InstructionRa_0")?;
-    let r_addr_bool =
-        booleanity_point
-            .get(..local_point.len())
-            .ok_or(VerifyStage7Error::InvalidInputLength {
-                input: "stage7.input.stage6.booleanity.InstructionRa_0",
-                expected: local_point.len(),
-                actual: booleanity_point.len(),
-            })?;
-    let eq_bool = EqPolynomial::<Fr>::mle(&rho_rev, r_addr_bool);
-    let gamma = bolt_verifier_runtime::store_scalar(store, "stage7.hamming_weight_claim_reduction.gamma")?;
-    let mut gamma_power = Fr::from_u64(1);
-    let mut expected = Fr::from_u64(0);
-    let mut eval_plans = program
-        .evals
-        .iter()
-        .filter(|eval| eval.source == driver.symbol)
-        .collect::<Vec<_>>();
-    eval_plans.sort_by_key(|eval| eval.index);
-    for eval_plan in eval_plans {
-        let g_i = eval_by_name(evals, eval_plan.name)?;
-        let virt_point =
-            stage7_virtualization_point(store, eval_plan.oracle, local_point.len())?;
-        let eq_virt = EqPolynomial::<Fr>::mle(&rho_rev, virt_point);
-        expected += g_i * (gamma_power + gamma_power * gamma * eq_bool
-            + gamma_power * gamma.square() * eq_virt);
-        gamma_power *= gamma;
-        gamma_power *= gamma;
-        gamma_power *= gamma;
-    }
-    Ok(expected)
-}
-
-fn stage7_virtualization_point<'a>(
-    store: &'a bolt_verifier_runtime::ValueStore<Fr>,
-    oracle: &str,
-    log_k_chunk: usize,
-) -> Result<&'a [Fr], VerifyStage7Error> {
-    let symbol = if oracle.starts_with("InstructionRa_") {
-        format!("stage7.input.stage6.instruction_ra_virtual.{oracle}")
-    } else if oracle.starts_with("BytecodeRa_") {
-        format!("stage7.input.stage6.bytecode_read_raf.{oracle}")
-    } else if oracle.starts_with("RamRa_") {
-        format!("stage7.input.stage6.ram_ra_virtual.{oracle}")
-    } else {
-        return Err(VerifyStage7Error::MissingValue {
-            symbol: "stage7.hamming_weight_claim_reduction.oracle",
-        });
-    };
-    let point = store.try_point(&symbol).ok_or(VerifyStage7Error::MissingValue {
-        symbol: "stage7.hamming_weight_claim_reduction.virtualization_point",
-    })?;
-    point
-        .get(..log_k_chunk)
-        .ok_or(VerifyStage7Error::InvalidInputLength {
-            input: "stage7.hamming_weight_claim_reduction.virtualization_point",
-            expected: log_k_chunk,
-            actual: point.len(),
-        })
 }
 "#
             }

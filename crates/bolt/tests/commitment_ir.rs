@@ -1006,6 +1006,13 @@ fn jolt_stage7_protocol_defines_hamming_weight_claim_reduction_flow() {
     assert!(text.contains("source_claim = @stage6.hamming_booleanity.opening.HammingWeight"));
     assert!(text.contains("sym_name = \"stage7.hamming_weight_claim_reduction.point.cycle\""));
     assert!(text.contains("sym_name = \"stage7.hamming_weight_claim_reduction.point\""));
+    assert!(
+        text.contains("sym_name = \"stage7.hamming_weight_claim_reduction.output.eq.Booleanity\"")
+    );
+    assert!(text.contains(
+        "sym_name = \"stage7.hamming_weight_claim_reduction.output.eq.InstructionRa_0.virtualization\""
+    ));
+    assert!(text.contains("sym_name = \"stage7.hamming_weight_claim_reduction.output\""));
     assert!(text.contains("@stage7.hamming_weight_claim_reduction.opening.InstructionRa_0"));
     assert!(text.contains("@stage7.hamming_weight_claim_reduction.opening.BytecodeRa_0"));
     assert!(text.contains("@stage7.hamming_weight_claim_reduction.opening.RamRa_0"));
@@ -1062,6 +1069,8 @@ fn jolt_stage7_lowers_to_compute_and_cpu_role_ir() {
     assert!(prover_kernel_text.contains("kernel = @jolt.cpu.stage7.batched"));
     assert!(prover_cpu_text.contains("kernel = @jolt.cpu.stage7.batched"));
     assert!(prover_cpu_text.contains("point_order = \"reverse\""));
+    assert!(verifier_cpu_text.contains("\"cpu.structured_polynomial_eval\""));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_output_claim\""));
     assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify_claim\""));
     assert!(!verifier_kernel_text.contains("kernel = @"));
     assert!(!verifier_cpu_text.contains("kernel = @"));
@@ -1656,6 +1665,10 @@ fn stage7_rust_targets_extract_and_compile() {
     assert_eq!(prover_program.drivers.len(), 1);
     assert_eq!(prover_program.instance_results.len(), 1);
     assert_eq!(prover_program.evals.len(), total_ra);
+    assert_eq!(prover_program.output_values.len(), total_ra + 1);
+    assert!(prover_program.output_claims.is_empty());
+    assert_eq!(verifier_program.output_values.len(), total_ra + 1);
+    assert_eq!(verifier_program.output_claims.len(), 1);
     assert!(prover_program.point_zeros.is_empty());
     assert_eq!(prover_program.point_slices.len(), 1);
     assert_eq!(prover_program.point_concats.len(), 1);
@@ -1701,9 +1714,21 @@ fn stage7_rust_targets_extract_and_compile() {
     assert!(verifier_source
         .source
         .contains("Stage7RelationKind::Stage7HammingWeightClaimReduction"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("expected_hamming_weight_claim_reduction"));
+    assert!(verifier_source
+        .source
+        .contains("Stage7SumcheckOutputClaimPlan"));
+    assert!(verifier_source
+        .source
+        .contains("stage7.hamming_weight_claim_reduction.output.eq.Booleanity"));
+    assert!(verifier_source.source.contains(
+        "stage7.hamming_weight_claim_reduction.output.eq.InstructionRa_0.virtualization"
+    ));
+    assert!(verifier_source
+        .source
+        .contains("bolt_verifier_runtime::evaluate_sumcheck_output_claim"));
     assert!(verifier_source
         .source
         .contains("stage7.input.stage6.booleanity.InstructionRa_0"));
