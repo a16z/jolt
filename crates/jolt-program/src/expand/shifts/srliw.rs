@@ -26,7 +26,9 @@ pub(in crate::expand) fn expand_srliw(
         bitmask as i128,
     );
     asm.emit_i(
-        JoltInstructionKind::VirtualSignExtendWord,
+        JoltInstructionKind::VirtualSignExtendWord(
+            jolt_riscv::instructions::VirtualSignExtendWord(()),
+        ),
         reg(rd(instruction)?),
         reg(rd(instruction)?),
         0,

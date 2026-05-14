@@ -18,7 +18,9 @@ pub(in crate::expand) fn expand_slliw(
         1i128 << shift,
     );
     asm.emit_i(
-        JoltInstructionKind::VirtualSignExtendWord,
+        JoltInstructionKind::VirtualSignExtendWord(
+            jolt_riscv::instructions::VirtualSignExtendWord(()),
+        ),
         reg(rd(instruction)?),
         reg(rd(instruction)?),
         0,

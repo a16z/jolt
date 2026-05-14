@@ -13,7 +13,7 @@ use super::{
 };
 use crate::{
     emulator::cpu::Cpu,
-    instruction::{JoltInstructionRow, SourceInstruction},
+    instruction::SourceInstruction,
     utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
 use jolt_program::expand::{ExpansionAllocator, ExpansionError, InlineExpansionProvider};
@@ -250,12 +250,6 @@ impl RISCVTrace for INLINE {
                 instr.trace_raw(cpu, trace.as_deref_mut());
             }
         }
-    }
-}
-
-impl From<JoltInstructionRow> for INLINE {
-    fn from(_: JoltInstructionRow) -> Self {
-        unimplemented!("Inline::from(JoltInstructionRow) should not be called");
     }
 }
 

@@ -33,16 +33,33 @@ pub(in crate::expand) fn expand_signed_div_rem(
 
     // a2 is the quotient witness. a3 participates in the remainder proof and
     // later becomes the signed remainder candidate for REM/REMW.
-    asm.expand_j(SourceInstructionKind::VirtualAdvice, a2.operand(), 0);
-    asm.expand_j(SourceInstructionKind::VirtualAdvice, a3.operand(), 0);
+    asm.expand_j(
+        SourceInstructionKind::VirtualAdvice(jolt_riscv::instructions::VirtualAdvice(())),
+        a2.operand(),
+        0,
+    );
+    asm.expand_j(
+        SourceInstructionKind::VirtualAdvice(jolt_riscv::instructions::VirtualAdvice(())),
+        a3.operand(),
+        0,
+    );
     if word {
         asm.expand_i(
-            SourceInstructionKind::VirtualSignExtendWord,
+            SourceInstructionKind::VirtualSignExtendWord(
+                jolt_riscv::instructions::VirtualSignExtendWord(()),
+            ),
             dividend,
             a0,
             0,
         );
-        asm.expand_i(SourceInstructionKind::VirtualSignExtendWord, divisor, a1, 0);
+        asm.expand_i(
+            SourceInstructionKind::VirtualSignExtendWord(
+                jolt_riscv::instructions::VirtualSignExtendWord(()),
+            ),
+            divisor,
+            a1,
+            0,
+        );
     }
     asm.expand_b(
         SourceInstructionKind::VirtualAssertValidDiv0,
@@ -55,9 +72,13 @@ pub(in crate::expand) fn expand_signed_div_rem(
     // lets the same product/remainder proof cover normal and overflow inputs.
     asm.expand_r(
         if word {
-            SourceInstructionKind::VirtualChangeDivisorW
+            SourceInstructionKind::VirtualChangeDivisorW(
+                jolt_riscv::instructions::VirtualChangeDivisorW(()),
+            )
         } else {
-            SourceInstructionKind::VirtualChangeDivisor
+            SourceInstructionKind::VirtualChangeDivisor(
+                jolt_riscv::instructions::VirtualChangeDivisor(()),
+            )
         },
         t0.operand(),
         dividend,
@@ -69,7 +90,9 @@ pub(in crate::expand) fn expand_signed_div_rem(
         // bits and that the supplied remainder data fits in the low word.
         let t2 = word_t2.ok_or(ExpansionError::MalformedInstruction("missing word temp"))?;
         asm.expand_i(
-            SourceInstructionKind::VirtualSignExtendWord,
+            SourceInstructionKind::VirtualSignExtendWord(
+                jolt_riscv::instructions::VirtualSignExtendWord(()),
+            ),
             t1.operand(),
             a2.operand(),
             0,
@@ -179,7 +202,9 @@ pub(in crate::expand) fn expand_signed_div_rem(
             a2.operand()
         };
         asm.expand_i(
-            SourceInstructionKind::VirtualSignExtendWord,
+            SourceInstructionKind::VirtualSignExtendWord(
+                jolt_riscv::instructions::VirtualSignExtendWord(()),
+            ),
             reg(rd(instruction)?),
             output,
             0,
@@ -283,20 +308,28 @@ pub(in crate::expand) fn expand_unsigned_word_div_rem(
     // The relation is unsigned 32-bit, so both architectural inputs are
     // explicitly normalized before any quotient checks are emitted.
     asm.expand_i(
-        SourceInstructionKind::VirtualZeroExtendWord,
+        SourceInstructionKind::VirtualZeroExtendWord(
+            jolt_riscv::instructions::VirtualZeroExtendWord(()),
+        ),
         rs1_extended.operand(),
         reg(rs1(instruction)?),
         0,
     );
     asm.expand_i(
-        SourceInstructionKind::VirtualZeroExtendWord,
+        SourceInstructionKind::VirtualZeroExtendWord(
+            jolt_riscv::instructions::VirtualZeroExtendWord(()),
+        ),
         rs2_extended.operand(),
         reg(rs2(instruction)?),
         0,
     );
     // quotient is advice; tmp is first q * divisor and then the derived
     // remainder unless this is the quotient-output path.
-    asm.expand_j(SourceInstructionKind::VirtualAdvice, quotient.operand(), 0);
+    asm.expand_j(
+        SourceInstructionKind::VirtualAdvice(jolt_riscv::instructions::VirtualAdvice(())),
+        quotient.operand(),
+        0,
+    );
     asm.expand_b(
         SourceInstructionKind::VirtualAssertMulUNoOverflow,
         quotient.operand(),
@@ -330,14 +363,18 @@ pub(in crate::expand) fn expand_unsigned_word_div_rem(
 
     if remainder_output {
         asm.expand_i(
-            SourceInstructionKind::VirtualSignExtendWord,
+            SourceInstructionKind::VirtualSignExtendWord(
+                jolt_riscv::instructions::VirtualSignExtendWord(()),
+            ),
             reg(rd(instruction)?),
             tmp.operand(),
             0,
         );
     } else {
         asm.expand_i(
-            SourceInstructionKind::VirtualSignExtendWord,
+            SourceInstructionKind::VirtualSignExtendWord(
+                jolt_riscv::instructions::VirtualSignExtendWord(()),
+            ),
             tmp.operand(),
             quotient.operand(),
             0,

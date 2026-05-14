@@ -173,7 +173,8 @@ fn sc_success_advice_is_not_position_dependent() -> Result<(), ExpansionError> {
             RV64IMAC_JOLT,
         )?);
         let advice_position = expanded.iter().position(|instruction| {
-            instruction.instruction_kind == JoltInstructionKind::VirtualAdvice
+            instruction.instruction_kind
+                == JoltInstructionKind::VirtualAdvice(jolt_riscv::instructions::VirtualAdvice(()))
         });
 
         assert!(

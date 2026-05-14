@@ -150,7 +150,7 @@ pub(in crate::expand) fn expand_advice_load(
     let mut asm = ExpansionBuilder::new(*instruction);
 
     asm.expand_j(
-        SourceInstructionKind::VirtualAdviceLoad,
+        SourceInstructionKind::VirtualAdviceLoad(jolt_riscv::instructions::VirtualAdviceLoad(())),
         reg(rd(instruction)?),
         byte_len,
     );
@@ -345,9 +345,13 @@ pub(in crate::expand) fn expand_amo_minmax_w(
     let v_rs2 = asm.allocate()?;
     let v0 = asm.allocate()?;
     let extend_op = if signed {
-        SourceInstructionKind::VirtualSignExtendWord
+        SourceInstructionKind::VirtualSignExtendWord(
+            jolt_riscv::instructions::VirtualSignExtendWord(()),
+        )
     } else {
-        SourceInstructionKind::VirtualZeroExtendWord
+        SourceInstructionKind::VirtualZeroExtendWord(
+            jolt_riscv::instructions::VirtualZeroExtendWord(()),
+        )
     };
     // Compare normalized word values, but keep the original low-word payload
     // for the value that will be merged back into memory.
@@ -460,7 +464,14 @@ pub(in crate::expand) fn expand_amo_post64(
     asm.expand_r(SourceInstructionKind::XOR, v_dword, v_dword, v_shift);
     asm.expand_i(SourceInstructionKind::ANDI, v_mask, rs1, format_i_imm(-8));
     asm.expand_s(SourceInstructionKind::SD, v_mask, v_dword, 0);
-    asm.expand_i(SourceInstructionKind::VirtualSignExtendWord, rd, v_rd, 0);
+    asm.expand_i(
+        SourceInstructionKind::VirtualSignExtendWord(
+            jolt_riscv::instructions::VirtualSignExtendWord(()),
+        ),
+        rd,
+        v_rd,
+        0,
+    );
     Ok(())
 }
 

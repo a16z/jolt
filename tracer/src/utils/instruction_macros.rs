@@ -32,7 +32,10 @@ macro_rules! declare_riscv_instr {
             }
 
             fn source_kind(&self) -> ::jolt_riscv::SourceInstructionKind {
-                ::jolt_riscv::SourceInstructionKind::$name
+                match ::jolt_riscv::SourceInstructionKind::from_name(stringify!($name)) {
+                    Some(kind) => kind,
+                    None => unreachable!("unknown tracer instruction source kind"),
+                }
             }
 
             fn new(word: u32, address: u64, validate: bool, compressed: bool) -> Self {
@@ -76,14 +79,14 @@ macro_rules! declare_riscv_instr {
             }
         }
 
-        impl From<$crate::instruction::JoltInstructionRow> for $name {
-            fn from(ni: $crate::instruction::JoltInstructionRow) -> Self {
+        impl From<$crate::instruction::SourceInstructionRow> for $name {
+            fn from(row: $crate::instruction::SourceInstructionRow) -> Self {
                 Self {
-                    address: ni.address as u64,
-                    operands: ni.operands.into(),
-                    virtual_sequence_remaining: ni.virtual_sequence_remaining,
-                    is_first_in_sequence: ni.is_first_in_sequence,
-                    is_compressed: ni.is_compressed,
+                    address: row.address as u64,
+                    operands: row.operands.into(),
+                    virtual_sequence_remaining: None,
+                    is_first_in_sequence: false,
+                    is_compressed: row.is_compressed,
                 }
             }
         }

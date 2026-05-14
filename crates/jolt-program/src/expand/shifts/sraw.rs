@@ -13,7 +13,9 @@ pub(in crate::expand) fn expand_sraw(
     let v_bitmask = asm.allocate()?;
 
     asm.emit_i(
-        JoltInstructionKind::VirtualSignExtendWord,
+        JoltInstructionKind::VirtualSignExtendWord(
+            jolt_riscv::instructions::VirtualSignExtendWord(()),
+        ),
         v_rs1.operand(),
         reg(rs1(instruction)?),
         0,
@@ -25,7 +27,9 @@ pub(in crate::expand) fn expand_sraw(
         0x1f,
     );
     asm.emit_i(
-        JoltInstructionKind::VirtualShiftRightBitmask,
+        JoltInstructionKind::VirtualShiftRightBitmask(
+            jolt_riscv::instructions::VirtualShiftRightBitmask(()),
+        ),
         v_bitmask.operand(),
         v_bitmask.operand(),
         0,
@@ -37,7 +41,9 @@ pub(in crate::expand) fn expand_sraw(
         v_bitmask.operand(),
     );
     asm.emit_i(
-        JoltInstructionKind::VirtualSignExtendWord,
+        JoltInstructionKind::VirtualSignExtendWord(
+            jolt_riscv::instructions::VirtualSignExtendWord(()),
+        ),
         reg(rd(instruction)?),
         reg(rd(instruction)?),
         0,

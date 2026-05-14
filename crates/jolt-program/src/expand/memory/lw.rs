@@ -40,7 +40,9 @@ pub(in crate::expand) fn expand_lw(
         v0.operand(),
     );
     asm.expand_i(
-        SourceInstructionKind::VirtualSignExtendWord,
+        SourceInstructionKind::VirtualSignExtendWord(
+            jolt_riscv::instructions::VirtualSignExtendWord(()),
+        ),
         reg(rd(instruction)?),
         v1.operand(),
         0,

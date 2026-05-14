@@ -3096,6 +3096,7 @@ dependencies = [
  "ark-serialize 0.5.0",
  "rand 0.8.5",
  "serde",
+ "serde_json",
  "strum 0.28.0",
 ]
 

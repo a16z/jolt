@@ -242,7 +242,10 @@ pub use flags::{
     InterleavedBitsMarker, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
 pub use instructions::{JoltInstruction, SourceInstruction};
-pub use kind::{JoltInstructionKind, JoltInstructionTag, SourceInstructionKind};
+pub use kind::{
+    JoltInstructionKind, JoltInstructionMeta, JoltInstructionTag, SourceInstructionKind,
+    SourceInstructionMeta,
+};
 pub use profile::{
     jolt_target_extension, source_extension, InlineExtension, JoltInstructionProfile,
     JoltTargetExtension, ProfileInstructionIndex, SourceExtension, RV64IMAC_JOLT,

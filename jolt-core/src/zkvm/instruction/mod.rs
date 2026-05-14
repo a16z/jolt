@@ -247,9 +247,9 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             | JoltInstructionKind::LUI
             | JoltInstructionKind::MUL
             | JoltInstructionKind::SUB
-            | JoltInstructionKind::VirtualAdvice
-            | JoltInstructionKind::VirtualAdviceLen
-            | JoltInstructionKind::VirtualAdviceLoad
+            | JoltInstruction::VirtualAdvice(_)
+            | JoltInstruction::VirtualAdviceLen(_)
+            | JoltInstruction::VirtualAdviceLoad(_)
             | JoltInstructionKind::VirtualMULI => LookupTables::RangeCheck(Default::default()),
             JoltInstructionKind::JALR => LookupTables::RangeCheckAligned(Default::default()),
             JoltInstructionKind::AND | JoltInstructionKind::ANDI => {
@@ -291,10 +291,10 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             JoltInstructionKind::VirtualAssertWordAlignment => {
                 LookupTables::WordAlignment(Default::default())
             }
-            JoltInstructionKind::VirtualZeroExtendWord => {
+            JoltInstruction::VirtualZeroExtendWord(_) => {
                 LookupTables::LowerHalfWord(Default::default())
             }
-            JoltInstructionKind::VirtualSignExtendWord => {
+            JoltInstruction::VirtualSignExtendWord(_) => {
                 LookupTables::SignExtendHalfWord(Default::default())
             }
             JoltInstructionKind::VirtualPow2 | JoltInstructionKind::VirtualPow2I => {
@@ -303,11 +303,11 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             JoltInstructionKind::VirtualPow2W | JoltInstructionKind::VirtualPow2IW => {
                 LookupTables::Pow2W(Default::default())
             }
-            JoltInstructionKind::VirtualShiftRightBitmask
+            JoltInstruction::VirtualShiftRightBitmask(_)
             | JoltInstructionKind::VirtualShiftRightBitmaskI => {
                 LookupTables::ShiftRightBitmask(Default::default())
             }
-            JoltInstructionKind::VirtualRev8W => LookupTables::VirtualRev8W(Default::default()),
+            JoltInstruction::VirtualRev8W(_) => LookupTables::VirtualRev8W(Default::default()),
             JoltInstructionKind::VirtualSRL | JoltInstructionKind::VirtualSRLI => {
                 LookupTables::VirtualSRL(Default::default())
             }
@@ -316,10 +316,10 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             }
             JoltInstructionKind::VirtualROTRI => LookupTables::VirtualROTR(Default::default()),
             JoltInstructionKind::VirtualROTRIW => LookupTables::VirtualROTRW(Default::default()),
-            JoltInstructionKind::VirtualChangeDivisor => {
+            JoltInstruction::VirtualChangeDivisor(_) => {
                 LookupTables::VirtualChangeDivisor(Default::default())
             }
-            JoltInstructionKind::VirtualChangeDivisorW => {
+            JoltInstruction::VirtualChangeDivisorW(_) => {
                 LookupTables::VirtualChangeDivisorW(Default::default())
             }
             JoltInstructionKind::VirtualAssertMulUNoOverflow => {
@@ -353,7 +353,7 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             | JoltInstructionKind::LD
             | JoltInstructionKind::SD
             | JoltInstructionKind::FENCE
-            | JoltInstructionKind::VirtualHostIO => return None,
+            | JoltInstruction::VirtualHostIO(_) => return None,
         })
     }
 }

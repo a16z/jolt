@@ -20,7 +20,11 @@ pub(in crate::expand) fn expand_scd(
     let v_success = asm.allocate()?;
     // v_success is Boolean advice supplied by the tracer's LR/SC reservation
     // check: 1 means the SC succeeds, 0 means it fails.
-    asm.expand_j(SourceInstructionKind::VirtualAdvice, v_success.operand(), 0);
+    asm.expand_j(
+        SourceInstructionKind::VirtualAdvice(jolt_riscv::instructions::VirtualAdvice(())),
+        v_success.operand(),
+        0,
+    );
 
     let v_one = asm.allocate()?;
     asm.expand_i(SourceInstructionKind::ADDI, v_one.operand(), reg(0), 1);

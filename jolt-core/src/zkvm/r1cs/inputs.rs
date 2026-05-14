@@ -270,9 +270,11 @@ impl R1CSCycleInputs {
         let instruction_flags = cycle.instruction_flags();
         let norm = cycle.instruction();
 
-        // Next-cycle context
         let next_cycle = if t + 1 < len {
-            Some(&trace[t + 1])
+            Some(
+                JoltTraceCycle::try_new(&trace[t + 1])
+                    .expect("trace cycle must be backed by a final Jolt instruction row"),
+            )
         } else {
             None
         };
@@ -309,20 +311,14 @@ impl R1CSCycleInputs {
         // PCs
         let pc =
             crate::zkvm::bytecode::get_pc_for_cycle(bytecode_preprocessing, cycle.cycle()) as u64;
-        let next_pc = if let Some(nc) = next_cycle {
-            crate::zkvm::bytecode::get_pc_for_cycle(bytecode_preprocessing, nc) as u64
-        } else {
-            0u64
-        };
+        let next_pc = next_cycle.as_ref().map_or(0, |next_cycle| {
+            crate::zkvm::bytecode::get_pc_for_cycle(bytecode_preprocessing, next_cycle.cycle())
+                as u64
+        });
         let unexpanded_pc = norm.address as u64;
-        let next_unexpanded_pc = if let Some(nc) = next_cycle {
-            JoltTraceCycle::try_new(nc)
-                .expect("trace cycle must be backed by a final Jolt instruction row")
-                .instruction()
-                .address as u64
-        } else {
-            0u64
-        };
+        let next_unexpanded_pc = next_cycle
+            .as_ref()
+            .map_or(0, |next_cycle| next_cycle.instruction().address as u64);
 
         // Immediate
         let imm_i128 = norm.operands.imm;
@@ -338,27 +334,22 @@ impl R1CSCycleInputs {
         for flag in CircuitFlags::iter() {
             flags[flag] = flags_view[flag];
         }
-        let next_is_noop = if let Some(nc) = next_cycle {
-            JoltTraceCycle::try_new(nc)
-                .expect("trace cycle must be backed by a final Jolt instruction row")
-                .instruction_flags()[InstructionFlags::IsNoop]
-        } else {
-            false // There is no next cycle, so cannot be a noop
-        };
+        let next_is_noop = next_cycle
+            .as_ref()
+            .is_some_and(|next_cycle| next_cycle.instruction_flags()[InstructionFlags::IsNoop]);
         let should_jump = flags_view[CircuitFlags::Jump] && !next_is_noop;
         let should_branch = instruction_flags[InstructionFlags::Branch] && (lookup_output == 1);
 
-        let (next_is_virtual, next_is_first_in_sequence) = if let Some(nc) = next_cycle {
-            let flags = JoltTraceCycle::try_new(nc)
-                .expect("trace cycle must be backed by a final Jolt instruction row")
-                .circuit_flags();
-            (
-                flags[CircuitFlags::VirtualInstruction],
-                flags[CircuitFlags::IsFirstInSequence],
-            )
-        } else {
-            (false, false)
-        };
+        let (next_is_virtual, next_is_first_in_sequence) =
+            if let Some(next_cycle) = next_cycle.as_ref() {
+                let flags = next_cycle.circuit_flags();
+                (
+                    flags[CircuitFlags::VirtualInstruction],
+                    flags[CircuitFlags::IsFirstInSequence],
+                )
+            } else {
+                (false, false)
+            };
 
         Self {
             left_input,
@@ -491,9 +482,9 @@ impl ProductCycleInputs {
         // Next-is-noop and its complement (1 - NextIsNoop)
         let not_next_noop = {
             if t + 1 < len {
-                !JoltTraceCycle::try_new(&trace[t + 1])
-                    .expect("trace cycle must be backed by a final Jolt instruction row")
-                    .instruction_flags()[InstructionFlags::IsNoop]
+                let next_cycle = JoltTraceCycle::try_new(&trace[t + 1])
+                    .expect("trace cycle must be backed by a final Jolt instruction row");
+                !next_cycle.instruction_flags()[InstructionFlags::IsNoop]
             } else {
                 // Needs final not_next_noop to be false for the shift sumcheck
                 // (since EqPlusOne does not do overflow)
