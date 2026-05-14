@@ -36,6 +36,15 @@ const SUMCHECK_OUTPUT_EVAL_FAMILY_ATTRS: &[&str] = &[
     "item_terms",
 ];
 
+const SUMCHECK_OUTPUT_PRODUCT_FAMILY_ATTRS: &[&str] = &[
+    "sym_name",
+    "term_gamma_power_offsets",
+    "term_eval_counts",
+    "term_factor_counts",
+    "evals",
+    "factors",
+];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaError {
     message: String,
@@ -393,6 +402,11 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             require_attrs(operation, SUMCHECK_OUTPUT_EVAL_FAMILY_ATTRS)?;
             require_min_shape(operation, 1, 1)?;
             require_sumcheck_output_eval_family(operation)
+        }
+        "piop.sumcheck_output_product_family" => {
+            require_attrs(operation, SUMCHECK_OUTPUT_PRODUCT_FAMILY_ATTRS)?;
+            require_min_shape(operation, 1, 1)?;
+            require_sumcheck_output_product_family(operation)
         }
         "piop.sumcheck_output_claim" => {
             require_attrs(
@@ -756,6 +770,11 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             require_min_shape(operation, 1, 1)?;
             require_sumcheck_output_eval_family(operation)
         }
+        "compute.sumcheck_output_product_family" => {
+            require_attrs(operation, SUMCHECK_OUTPUT_PRODUCT_FAMILY_ATTRS)?;
+            require_min_shape(operation, 1, 1)?;
+            require_sumcheck_output_product_family(operation)
+        }
         "compute.sumcheck_output_claim" => {
             require_attrs(
                 operation,
@@ -1101,6 +1120,11 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             require_min_shape(operation, 1, 1)?;
             require_sumcheck_output_eval_family(operation)
         }
+        "cpu.sumcheck_output_product_family" => {
+            require_attrs(operation, SUMCHECK_OUTPUT_PRODUCT_FAMILY_ATTRS)?;
+            require_min_shape(operation, 1, 1)?;
+            require_sumcheck_output_product_family(operation)
+        }
         "cpu.sumcheck_output_claim" => {
             require_attrs(
                 operation,
@@ -1321,6 +1345,82 @@ fn require_sumcheck_output_eval_family(operation: OperationRef<'_, '_>) -> Resul
         .chain(shared_terms.iter())
         .chain(item_terms.iter())
         .collect::<Vec<_>>();
+    for (index, expected) in expected_symbols.iter().enumerate() {
+        let operand_index = index + 1;
+        let actual = operand_owner_symbol(operation, operand_index)?;
+        if &actual != *expected {
+            return Err(SchemaError::new(format!(
+                "{} operand {operand_index} expected @{expected}, got @{actual}",
+                operation_name(operation)
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn require_sumcheck_output_product_family(
+    operation: OperationRef<'_, '_>,
+) -> Result<(), SchemaError> {
+    let evals = symbol_array_attr(operation, "evals")?;
+    let factors = symbol_array_attr(operation, "factors")?;
+    let term_gamma_power_offsets = int_array_attr(operation, "term_gamma_power_offsets")?;
+    let term_eval_counts = int_array_attr(operation, "term_eval_counts")?;
+    let term_factor_counts = int_array_attr(operation, "term_factor_counts")?;
+    if term_eval_counts.len() != term_gamma_power_offsets.len() {
+        return Err(SchemaError::new(format!(
+            "{} attr `term_eval_counts` length {} does not match term_gamma_power_offsets length {}",
+            operation_name(operation),
+            term_eval_counts.len(),
+            term_gamma_power_offsets.len()
+        )));
+    }
+    if term_factor_counts.len() != term_gamma_power_offsets.len() {
+        return Err(SchemaError::new(format!(
+            "{} attr `term_factor_counts` length {} does not match term_gamma_power_offsets length {}",
+            operation_name(operation),
+            term_factor_counts.len(),
+            term_gamma_power_offsets.len()
+        )));
+    }
+    for ((index, eval_count), factor_count) in term_eval_counts
+        .iter()
+        .enumerate()
+        .zip(term_factor_counts.iter())
+    {
+        if *eval_count == 0 && *factor_count == 0 {
+            return Err(SchemaError::new(format!(
+                "{} product-family term {index} is empty",
+                operation_name(operation)
+            )));
+        }
+    }
+    let expected_evals: usize = term_eval_counts.iter().sum();
+    if evals.len() != expected_evals {
+        return Err(SchemaError::new(format!(
+            "{} attr `evals` length {} does not match sum(term_eval_counts) {}",
+            operation_name(operation),
+            evals.len(),
+            expected_evals
+        )));
+    }
+    let expected_factors: usize = term_factor_counts.iter().sum();
+    if factors.len() != expected_factors {
+        return Err(SchemaError::new(format!(
+            "{} attr `factors` length {} does not match sum(term_factor_counts) {}",
+            operation_name(operation),
+            factors.len(),
+            expected_factors
+        )));
+    }
+    let expected_operands = 1 + evals.len() + factors.len();
+    if operation.operand_count() != expected_operands {
+        return Err(SchemaError::new(format!(
+            "{} expected {expected_operands} operands, got {}",
+            operation_name(operation),
+            operation.operand_count()
+        )));
+    }
+    let expected_symbols = evals.iter().chain(factors.iter()).collect::<Vec<_>>();
     for (index, expected) in expected_symbols.iter().enumerate() {
         let operand_index = index + 1;
         let actual = operand_owner_symbol(operation, operand_index)?;

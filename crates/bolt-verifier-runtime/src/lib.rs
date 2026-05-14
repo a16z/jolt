@@ -379,10 +379,25 @@ pub struct SumcheckOutputEvalFamilyPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SumcheckOutputProductFamilyTermPlan {
+    pub gamma_power_offset: usize,
+    pub evals: &'static [&'static str],
+    pub factors: &'static [&'static str],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SumcheckOutputProductFamilyPlan {
+    pub symbol: &'static str,
+    pub gamma: &'static str,
+    pub terms: &'static [SumcheckOutputProductFamilyTermPlan],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SumcheckOutputClaimPlan<R: ProtocolRelation> {
     pub relation: R,
     pub polynomial_evals: &'static [StructuredPolynomialEvalPlan],
     pub eval_families: &'static [SumcheckOutputEvalFamilyPlan],
+    pub product_families: &'static [SumcheckOutputProductFamilyPlan],
     pub claim_value: &'static str,
 }
 
@@ -1198,6 +1213,10 @@ pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
         let value = evaluate_sumcheck_output_eval_family(family, store, &scratch)?;
         scratch.insert(family.symbol, value);
     }
+    for family in plan.product_families {
+        let value = evaluate_sumcheck_output_product_family(family, store, &scratch)?;
+        scratch.insert(family.symbol, value);
+    }
     evaluate_available_field_exprs_with_scratch(field_exprs, store, &mut scratch)?;
     scratch
         .scalar_or(store, plan.claim_value)
@@ -1268,6 +1287,37 @@ fn evaluate_sumcheck_output_eval_family(
             result += weighted_eval * factor * *offset_power;
         }
         gamma_base *= gamma_stride;
+    }
+    Ok(result)
+}
+
+fn evaluate_sumcheck_output_product_family(
+    family: &SumcheckOutputProductFamilyPlan,
+    store: &ValueStore<Fr>,
+    scratch: &ScratchScalars,
+) -> Result<Fr, RuntimePlanError> {
+    let gamma = scratch
+        .scalar_or(store, family.gamma)
+        .ok_or(RuntimePlanError::MissingValue {
+            symbol: family.gamma,
+        })?;
+    let mut result = Fr::from_u64(0);
+    for term in family.terms {
+        if term.evals.is_empty() && term.factors.is_empty() {
+            return Err(RuntimePlanError::InvalidInputLength {
+                input: family.symbol,
+                expected: 1,
+                actual: 0,
+            });
+        }
+        let mut product = pow_field(gamma, term.gamma_power_offset);
+        for &symbol in term.evals.iter().chain(term.factors.iter()) {
+            let value = scratch
+                .scalar_or(store, symbol)
+                .ok_or(RuntimePlanError::MissingValue { symbol })?;
+            product *= value;
+        }
+        result += product;
     }
     Ok(result)
 }

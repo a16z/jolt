@@ -652,6 +652,38 @@ macro_rules! define_stage_adapter_impl {
                                     })
                                     .collect(),
                             ),
+                            product_families: super::leak_slice(
+                                plan.product_families
+                                    .iter()
+                                    .map(|family| bolt_verifier_runtime::SumcheckOutputProductFamilyPlan {
+                                        symbol: super::leak_str(&family.symbol),
+                                        gamma: super::leak_str(&family.gamma),
+                                        terms: super::leak_slice(
+                                            family
+                                                .terms
+                                                .iter()
+                                                .map(|term| bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan {
+                                                    gamma_power_offset: term.gamma_power_offset,
+                                                    evals: super::leak_slice(
+                                                        term
+                                                            .evals
+                                                            .iter()
+                                                            .map(|symbol| super::leak_str(symbol))
+                                                            .collect(),
+                                                    ),
+                                                    factors: super::leak_slice(
+                                                        term
+                                                            .factors
+                                                            .iter()
+                                                            .map(|symbol| super::leak_str(symbol))
+                                                            .collect(),
+                                                    ),
+                                                })
+                                                .collect(),
+                                        ),
+                                    })
+                                    .collect(),
+                            ),
                             claim_value: super::leak_str(&plan.claim_value),
                         })
                         .collect(),

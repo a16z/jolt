@@ -294,8 +294,8 @@ pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_1_VALUES: &[Stage5StructuredPolynomialEva
 ];
 
 pub const STAGE5_SUMCHECK_OUTPUT_CLAIMS: &[Stage5SumcheckOutputClaimPlan] = &[
-    Stage5SumcheckOutputClaimPlan { relation: Stage5RelationKind::Stage5RamRaClaimReduction, polynomial_evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_0_VALUES, eval_families: &[], claim_value: "stage5.ram_ra_claim_reduction.output.claim_expr" },
-    Stage5SumcheckOutputClaimPlan { relation: Stage5RelationKind::Stage5RegistersValEvaluation, polynomial_evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_1_VALUES, eval_families: &[], claim_value: "stage5.registers_val_evaluation.output.claim_expr" },
+    Stage5SumcheckOutputClaimPlan { relation: Stage5RelationKind::Stage5RamRaClaimReduction, polynomial_evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_0_VALUES, eval_families: &[], product_families: &[], claim_value: "stage5.ram_ra_claim_reduction.output.claim_expr" },
+    Stage5SumcheckOutputClaimPlan { relation: Stage5RelationKind::Stage5RegistersValEvaluation, polynomial_evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_1_VALUES, eval_families: &[], product_families: &[], claim_value: "stage5.registers_val_evaluation.output.claim_expr" },
 ];
 
 pub const STAGE5_PROGRAM: Stage5VerifierProgramPlan = Stage5CpuProgramPlan {

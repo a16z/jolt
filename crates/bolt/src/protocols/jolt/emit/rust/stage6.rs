@@ -10,12 +10,13 @@ use melior::ir::operation::{OperationLike, OperationResult};
 use melior::ir::{Attribute, OperationRef};
 
 use super::output_claims::{
-    parse_output_eval_family_plan, FieldExprDependencies,
+    parse_output_eval_family_plan, parse_output_product_family_plan, FieldExprDependencies,
     StructuredPolynomialEvalPlan as Stage6StructuredPolynomialEvalPlan,
     StructuredPolynomialPointPlan as Stage6StructuredPolynomialPointPlan,
     SumcheckOutputClaimAst as Stage6SumcheckOutputClaimAst,
     SumcheckOutputClaimPlan as Stage6SumcheckOutputClaimPlan,
     SumcheckOutputEvalFamilyPlan as Stage6SumcheckOutputEvalFamilyPlan,
+    SumcheckOutputProductFamilyPlan as Stage6SumcheckOutputProductFamilyPlan,
 };
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
@@ -39,6 +40,7 @@ pub struct Stage6CpuProgram {
     pub evals: Vec<Stage6SumcheckEvalPlan>,
     pub output_values: Vec<Stage6StructuredPolynomialEvalPlan>,
     pub output_families: Vec<Stage6SumcheckOutputEvalFamilyPlan>,
+    pub output_product_families: Vec<Stage6SumcheckOutputProductFamilyPlan>,
     pub output_claims: Vec<Stage6SumcheckOutputClaimPlan>,
     pub point_zeros: Vec<Stage6PointZeroPlan>,
     pub point_slices: Vec<Stage6PointSlicePlan>,
@@ -276,6 +278,7 @@ impl Stage6CpuProgram {
         let mut evals = Vec::new();
         let mut output_values = Vec::new();
         let mut output_families = Vec::new();
+        let mut output_product_families = Vec::new();
         let mut output_claim_asts = Vec::new();
         let mut point_zeros = Vec::new();
         let mut point_slices = Vec::new();
@@ -510,6 +513,9 @@ impl Stage6CpuProgram {
                 "cpu.sumcheck_output_eval_family" => {
                     output_families.push(parse_output_eval_family_plan("stage6", op)?);
                 }
+                "cpu.sumcheck_output_product_family" => {
+                    output_product_families.push(parse_output_product_family_plan("stage6", op)?);
+                }
                 "cpu.sumcheck_output_claim" => {
                     output_claim_asts.push(Stage6SumcheckOutputClaimAst {
                         relation: symbol_attr(op, "relation")?,
@@ -593,6 +599,7 @@ impl Stage6CpuProgram {
                 "stage6",
                 &output_values,
                 &output_families,
+                &output_product_families,
                 &field_exprs,
                 output_claim_asts,
             )?
@@ -617,6 +624,7 @@ impl Stage6CpuProgram {
             evals,
             output_values,
             output_families,
+            output_product_families,
             output_claims,
             point_zeros,
             point_slices,
@@ -724,6 +732,11 @@ impl Stage6CpuProgram {
         ));
         values.extend(symbols(
             self.output_families.iter().map(|family| &family.symbol),
+        ));
+        values.extend(symbols(
+            self.output_product_families
+                .iter()
+                .map(|family| &family.symbol),
         ));
         values.extend(symbols(self.field_exprs.iter().map(|expr| &expr.symbol)));
         values.extend(symbols(self.evals.iter().map(|eval| &eval.symbol)));
@@ -933,12 +946,15 @@ impl Stage6CpuProgram {
         let point_values = self.point_value_symbols();
         super::output_claims::verify_output_claims(
             "stage6",
-            &self.output_values,
-            &self.output_families,
-            &self.output_claims,
-            &relations,
-            &field_values,
-            &point_values,
+            super::output_claims::OutputClaimVerification {
+                output_values: &self.output_values,
+                output_families: &self.output_families,
+                output_product_families: &self.output_product_families,
+                output_claims: &self.output_claims,
+                relations: &relations,
+                field_values: &field_values,
+                point_values: &point_values,
+            },
         )
     }
 

@@ -647,6 +647,25 @@ irdl.dialect @cpu {
     irdl.operands(gamma: %value, inputs: variadic %value)
     irdl.results(value: %value)
   }
+  irdl.operation @sumcheck_output_product_family {
+    %value = irdl.parametric @cpu::@field_value<>
+    %sym = irdl.any
+    %term_gamma_power_offsets = irdl.any
+    %term_eval_counts = irdl.any
+    %term_factor_counts = irdl.any
+    %evals = irdl.any
+    %factors = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "term_gamma_power_offsets" = %term_gamma_power_offsets,
+      "term_eval_counts" = %term_eval_counts,
+      "term_factor_counts" = %term_factor_counts,
+      "evals" = %evals,
+      "factors" = %factors
+    }
+    irdl.operands(gamma: %value, inputs: variadic %value)
+    irdl.results(value: %value)
+  }
   irdl.operation @sumcheck_output_claim {
     %value = irdl.parametric @cpu::@field_value<>
     %sym = irdl.any

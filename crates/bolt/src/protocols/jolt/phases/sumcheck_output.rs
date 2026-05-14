@@ -60,6 +60,17 @@ pub(crate) struct OutputEvalFamilySpec<'a> {
     pub(crate) item_term_offsets: &'a [usize],
 }
 
+pub(crate) struct OutputProductFamilyTermSpec<'c, 'a> {
+    pub(crate) gamma_power_offset: usize,
+    pub(crate) evals: Vec<(String, Value<'c, 'a>)>,
+    pub(crate) factors: Vec<(String, Value<'c, 'a>)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct OutputProductFamilySpec<'a> {
+    pub(crate) symbol: &'a str,
+}
+
 pub(crate) fn append_structured_polynomial_eval<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
@@ -165,6 +176,67 @@ pub(crate) fn append_sumcheck_output_eval_family<'c, 'a>(
         &["!field.scalar"],
     )?;
     first_result(op, "piop.sumcheck_output_eval_family")
+}
+
+pub(crate) fn append_sumcheck_output_product_family<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    spec: OutputProductFamilySpec<'_>,
+    gamma: Value<'c, 'a>,
+    terms: &[OutputProductFamilyTermSpec<'c, 'a>],
+) -> Result<Value<'c, 'a>, MlirError> {
+    let term_gamma_power_offsets = terms
+        .iter()
+        .map(|term| term.gamma_power_offset)
+        .collect::<Vec<_>>();
+    let term_eval_counts = terms
+        .iter()
+        .map(|term| term.evals.len())
+        .collect::<Vec<_>>();
+    let term_factor_counts = terms
+        .iter()
+        .map(|term| term.factors.len())
+        .collect::<Vec<_>>();
+    let mut operands = Vec::with_capacity(
+        1 + term_eval_counts.iter().sum::<usize>() + term_factor_counts.iter().sum::<usize>(),
+    );
+    operands.push(gamma);
+    operands.extend(
+        terms
+            .iter()
+            .flat_map(|term| term.evals.iter().map(|(_, value)| *value)),
+    );
+    operands.extend(
+        terms
+            .iter()
+            .flat_map(|term| term.factors.iter().map(|(_, value)| *value)),
+    );
+    let eval_symbols = terms
+        .iter()
+        .flat_map(|term| term.evals.iter().map(|(symbol, _)| symbol.as_str()))
+        .collect::<Vec<_>>();
+    let factor_symbols = terms
+        .iter()
+        .flat_map(|term| term.factors.iter().map(|(symbol, _)| symbol.as_str()))
+        .collect::<Vec<_>>();
+    let op = context.append_typed_op(
+        module,
+        "piop.sumcheck_output_product_family",
+        Some(spec.symbol),
+        &[
+            (
+                "term_gamma_power_offsets",
+                &usize_array_attr(&term_gamma_power_offsets),
+            ),
+            ("term_eval_counts", &usize_array_attr(&term_eval_counts)),
+            ("term_factor_counts", &usize_array_attr(&term_factor_counts)),
+            ("evals", &symbol_array_attr(&eval_symbols)),
+            ("factors", &symbol_array_attr(&factor_symbols)),
+        ],
+        &operands,
+        &["!field.scalar"],
+    )?;
+    first_result(op, "piop.sumcheck_output_product_family")
 }
 
 fn first_result<'c, 'a>(

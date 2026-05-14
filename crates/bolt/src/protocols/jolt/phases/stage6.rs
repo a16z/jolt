@@ -12,7 +12,8 @@ use super::super::params::JoltProtocolParams;
 use super::lowering::{lower_party_to_compute, transcript_squeeze_protocol_result_type};
 use super::sumcheck_output::{
     append_structured_polynomial_eval, append_sumcheck_output_claim,
-    append_sumcheck_output_eval_family, OutputClaimSpec, OutputEvalFamilySpec,
+    append_sumcheck_output_eval_family, append_sumcheck_output_product_family, OutputClaimSpec,
+    OutputEvalFamilySpec, OutputProductFamilySpec, OutputProductFamilyTermSpec,
     StructuredPolynomialPointSpec, StructuredPolynomialSpec,
 };
 
@@ -1829,18 +1830,28 @@ fn append_stage6_ram_ra_virtual_output_claim<'c, 'a>(
         ram.0,
         inputs.ram_ra_virtual.point,
     )?;
-    let ram_product = append_field_product(
+    let gamma_identity = append_field_one(
         context,
         module,
-        "stage6.ram_ra_virtual.output.product.RamRa",
-        &output_evals.ram_ra,
+        "stage6.ram_ra_virtual.output.gamma_identity",
     )?;
-    let claim = append_field_mul(
+    let claim = append_sumcheck_output_product_family(
         context,
         module,
-        "stage6.ram_ra_virtual.output.claim_expr",
-        eq_cycle,
-        ram_product,
+        OutputProductFamilySpec {
+            symbol: "stage6.ram_ra_virtual.output.family",
+        },
+        gamma_identity,
+        &[OutputProductFamilyTermSpec {
+            gamma_power_offset: 0,
+            evals: output_evals
+                .ram_ra
+                .iter()
+                .enumerate()
+                .map(|(index, eval)| (format!("stage6.ram_ra_virtual.eval.RamRa_{index}"), *eval))
+                .collect(),
+            factors: vec![("stage6.ram_ra_virtual.output.eq.Cycle".to_owned(), eq_cycle)],
+        }],
     )?;
     append_sumcheck_output_claim(
         context,
@@ -1877,49 +1888,39 @@ fn append_stage6_instruction_ra_virtual_output_claim<'c, 'a>(
         inputs.instruction_ra_virtual[0].point,
     )?;
     let committed_per_virtual = n_committed_per_virtual(params);
-    let mut virtual_terms = Vec::with_capacity(inputs.instruction_ra_virtual.len());
-    for (index, chunk) in output_evals
+    let mut family_terms = Vec::with_capacity(inputs.instruction_ra_virtual.len());
+    for (virtual_index, chunk) in output_evals
         .instruction_ra
         .chunks(committed_per_virtual)
         .enumerate()
     {
-        let product = append_field_product(
-            context,
-            module,
-            &format!("stage6.instruction_ra_virtual.output.product.InstructionRa_{index}"),
-            chunk,
-        )?;
-        if index == 0 {
-            virtual_terms.push(product);
-        } else {
-            let gamma_power = append_field_pow(
-                context,
-                module,
-                &format!("stage6.instruction_ra_virtual.output.gamma_pow_{index}"),
-                gamma,
-                index,
-            )?;
-            virtual_terms.push(append_field_mul(
-                context,
-                module,
-                &format!("stage6.instruction_ra_virtual.output.term.InstructionRa_{index}"),
-                gamma_power,
-                product,
-            )?);
-        }
+        family_terms.push(OutputProductFamilyTermSpec {
+            gamma_power_offset: virtual_index,
+            evals: chunk
+                .iter()
+                .enumerate()
+                .map(|(chunk_index, eval)| {
+                    let index = virtual_index * committed_per_virtual + chunk_index;
+                    (
+                        format!("stage6.instruction_ra_virtual.eval.InstructionRa_{index}"),
+                        *eval,
+                    )
+                })
+                .collect(),
+            factors: vec![(
+                "stage6.instruction_ra_virtual.output.eq.Cycle".to_owned(),
+                eq_cycle,
+            )],
+        });
     }
-    let weighted_sum = append_field_sum(
+    let claim = append_sumcheck_output_product_family(
         context,
         module,
-        "stage6.instruction_ra_virtual.output.weighted_sum",
-        &virtual_terms,
-    )?;
-    let claim = append_field_mul(
-        context,
-        module,
-        "stage6.instruction_ra_virtual.output.claim_expr",
-        eq_cycle,
-        weighted_sum,
+        OutputProductFamilySpec {
+            symbol: "stage6.instruction_ra_virtual.output.family",
+        },
+        gamma,
+        &family_terms,
     )?;
     append_sumcheck_output_claim(
         context,
@@ -2113,6 +2114,22 @@ fn append_field_zero<'c, 'a>(
     first_result(op, "field.zero")
 }
 
+fn append_field_one<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    symbol: &str,
+) -> Result<Value<'c, 'a>, MlirError> {
+    let op = context.append_typed_op(
+        module,
+        "field.one",
+        Some(symbol),
+        &[("field", "@bn254_fr")],
+        &[],
+        &["!field.scalar"],
+    )?;
+    first_result(op, "field.one")
+}
+
 fn append_field_binary<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
@@ -2204,30 +2221,6 @@ fn append_field_sum<'c, 'a>(
             &format!("{symbol_prefix}.partial{index}"),
             value,
             term,
-        )?;
-    }
-    Ok(value)
-}
-
-fn append_field_product<'c, 'a>(
-    context: &'c MeliorContext,
-    module: &'a BoltModule<'c, Protocol>,
-    symbol_prefix: &str,
-    factors: &[Value<'c, 'a>],
-) -> Result<Value<'c, 'a>, MlirError> {
-    let Some((&first, rest)) = factors.split_first() else {
-        return Err(schema_error(format!(
-            "{symbol_prefix} requires at least one factor"
-        )));
-    };
-    let mut value = first;
-    for (index, &factor) in rest.iter().enumerate() {
-        value = append_field_mul(
-            context,
-            module,
-            &format!("{symbol_prefix}.partial{index}"),
-            value,
-            factor,
         )?;
     }
     Ok(value)

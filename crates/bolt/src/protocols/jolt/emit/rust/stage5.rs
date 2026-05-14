@@ -570,6 +570,7 @@ impl Stage5CpuProgram {
                 "stage5",
                 &output_values,
                 &[],
+                &[],
                 &field_exprs,
                 output_claim_asts,
             )?
@@ -901,12 +902,15 @@ impl Stage5CpuProgram {
         let point_values = self.point_value_symbols();
         super::output_claims::verify_output_claims(
             "stage5",
-            &self.output_values,
-            &[],
-            &self.output_claims,
-            &relations,
-            &field_values,
-            &point_values,
+            super::output_claims::OutputClaimVerification {
+                output_values: &self.output_values,
+                output_families: &[],
+                output_product_families: &[],
+                output_claims: &self.output_claims,
+                relations: &relations,
+                field_values: &field_values,
+                point_values: &point_values,
+            },
         )
     }
 
