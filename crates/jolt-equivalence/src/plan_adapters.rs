@@ -299,6 +299,34 @@ fn generated_opening_equality_mode(value: &str) -> bolt_verifier_runtime::Openin
     }
 }
 
+#[expect(
+    clippy::panic,
+    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
+)]
+fn generated_sumcheck_output_value_kind(
+    value: &str,
+) -> bolt_verifier_runtime::SumcheckOutputValueKind {
+    match value {
+        "eq_mle" => bolt_verifier_runtime::SumcheckOutputValueKind::EqMle,
+        "eq_plus_one" => bolt_verifier_runtime::SumcheckOutputValueKind::EqPlusOne,
+        value => panic!("unsupported generated sumcheck output value kind `{value}`"),
+    }
+}
+
+#[expect(
+    clippy::panic,
+    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
+)]
+fn generated_sumcheck_output_point_order(
+    value: &str,
+) -> bolt_verifier_runtime::SumcheckOutputPointOrder {
+    match value {
+        "as_is" => bolt_verifier_runtime::SumcheckOutputPointOrder::AsIs,
+        "reverse" => bolt_verifier_runtime::SumcheckOutputPointOrder::Reverse,
+        value => panic!("unsupported generated sumcheck output point order `{value}`"),
+    }
+}
+
 macro_rules! stage_program_step_kind {
     (kernel, $module:ident, $value:expr) => {
         super::leak_str($value)
@@ -370,6 +398,7 @@ macro_rules! define_stage_adapter_impl {
         $(, transcript_absorb_bytes = $absorb:ident)?
         $(, kernels = $kernel:ident)?
         $(, point_zeros = $point_zero:ident)?
+        $(, output_claims = $output_claim:ident, output_values = $output_value:ident)?
         $(, opening_equalities = $opening_equality:ident)?
     ) => {
         pub fn $function(program: &$compiler) -> &'static $module::$program {
@@ -517,6 +546,36 @@ macro_rules! define_stage_adapter_impl {
                         })
                         .collect(),
                 ),
+                $(
+                output_claims: super::leak_slice(
+                    program
+                        .output_claims
+                        .iter()
+                        .map(|plan| $module::$output_claim {
+                            relation: super::generated_relation_kind(&plan.relation),
+                            local_values: super::leak_slice(
+                                plan.local_values
+                                    .iter()
+                                    .map(|value| $module::$output_value {
+                                        symbol: super::leak_str(&value.symbol),
+                                        kind: super::generated_sumcheck_output_value_kind(&value.kind),
+                                        point_order: super::generated_sumcheck_output_point_order(
+                                            &value.point_order,
+                                        ),
+                                        local_point_source: super::leak_str(
+                                            &value.local_point_source,
+                                        ),
+                                        opening_point_source: super::leak_str(
+                                            &value.opening_point_source,
+                                        ),
+                                    })
+                                    .collect(),
+                            ),
+                            claim_value: super::leak_str(&plan.claim_value),
+                        })
+                        .collect(),
+                ),
+                )?
                 $(
                 point_zeros: super::leak_slice(
                     program
@@ -684,6 +743,7 @@ macro_rules! define_stage_adapter_no_absorb {
         $opening_claim:ident,
         $opening_batch:ident
         $(, kernels = $kernel:ident)?
+        $(, output_claims = $output_claim:ident, output_values = $output_value:ident)?
         $(, opening_equalities = $opening_equality:ident)?
     ) => {
         define_stage_adapter_impl!(
@@ -708,6 +768,7 @@ macro_rules! define_stage_adapter_no_absorb {
             $opening_claim,
             $opening_batch
             $(, kernels = $kernel)?
+            $(, output_claims = $output_claim, output_values = $output_value)?
             $(, opening_equalities = $opening_equality)?
         );
     };

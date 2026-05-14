@@ -7,7 +7,7 @@ use std::fmt;
 use std::marker::PhantomData;
 
 use jolt_field::{Field, Fr, MulPow2};
-use jolt_poly::lagrange::lagrange_evals;
+use jolt_poly::{lagrange::lagrange_evals, EqPlusOnePolynomial, EqPolynomial};
 use jolt_sumcheck::{
     CompressedLabeledRoundPoly, SumcheckClaim, SumcheckError, SumcheckProof, SumcheckVerifier,
 };
@@ -312,6 +312,34 @@ pub struct SumcheckInstanceResultPlan<R: ProtocolRelation> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SumcheckOutputPointOrder {
+    AsIs,
+    Reverse,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SumcheckOutputValueKind {
+    EqMle,
+    EqPlusOne,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SumcheckOutputValuePlan {
+    pub symbol: &'static str,
+    pub kind: SumcheckOutputValueKind,
+    pub point_order: SumcheckOutputPointOrder,
+    pub local_point_source: &'static str,
+    pub opening_point_source: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SumcheckOutputClaimPlan<R: ProtocolRelation> {
+    pub relation: R,
+    pub local_values: &'static [SumcheckOutputValuePlan],
+    pub claim_value: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SumcheckEvalPlan {
     pub symbol: &'static str,
     pub source: &'static str,
@@ -439,6 +467,7 @@ pub struct StageVerifierProgramPlan<R: ProtocolRelation> {
     pub drivers: &'static [SumcheckDriverPlan<R>],
     pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
     pub evals: &'static [SumcheckEvalPlan],
+    pub output_claims: &'static [SumcheckOutputClaimPlan<R>],
     pub point_slices: &'static [PointSlicePlan],
     pub point_concats: &'static [PointConcatPlan],
     pub opening_claims: &'static [OpeningClaimPlan],
@@ -1077,6 +1106,48 @@ pub fn eval_by_name<F: Field>(
         .find(|eval| eval.name == name)
         .map(|eval| eval.value)
         .ok_or(RuntimePlanError::MissingValue { symbol: name })
+}
+
+pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
+    plan: &SumcheckOutputClaimPlan<R>,
+    field_exprs: &[FieldExprPlan],
+    store: &ValueStore<Fr>,
+    instance_symbol: &'static str,
+    evals: &[StageNamedEval<Fr>],
+    local_point: &[Fr],
+) -> Result<Fr, RuntimePlanError> {
+    let mut scratch = store.clone();
+    for eval in evals {
+        scratch.insert_scalar(eval.name, eval.value);
+    }
+    for local_value in plan.local_values {
+        if local_value.local_point_source != instance_symbol {
+            return Err(RuntimePlanError::InvalidProof {
+                driver: instance_symbol,
+                reason: "sumcheck output value source mismatch",
+            });
+        }
+        let opening_point = scratch.point_or(local_value.opening_point_source, |symbol| {
+            RuntimePlanError::MissingValue { symbol }
+        })?;
+        let ordered_point = match local_value.point_order {
+            SumcheckOutputPointOrder::AsIs => local_point.to_vec(),
+            SumcheckOutputPointOrder::Reverse => reverse_slice(local_point),
+        };
+        let value = match local_value.kind {
+            SumcheckOutputValueKind::EqMle => {
+                EqPolynomial::<Fr>::mle(&ordered_point, opening_point)
+            }
+            SumcheckOutputValueKind::EqPlusOne => {
+                EqPlusOnePolynomial::<Fr>::new(opening_point.to_vec()).evaluate(&ordered_point)
+            }
+        };
+        scratch.insert_scalar(local_value.symbol, value);
+    }
+    scratch.evaluate_available_field_exprs(field_exprs, evaluate_field_expr)?;
+    scratch.scalar_or(plan.claim_value, |symbol| RuntimePlanError::MissingValue {
+        symbol,
+    })
 }
 
 pub fn indexed_evals_by_prefix<F: Field>(
