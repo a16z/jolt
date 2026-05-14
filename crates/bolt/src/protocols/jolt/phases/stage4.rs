@@ -10,8 +10,8 @@ use super::super::params::JoltProtocolParams;
 use super::field_formula::{FieldFormulaBuilder, FieldFormulaStep};
 use super::lowering::{lower_party_to_compute, transcript_squeeze_protocol_result_type};
 use super::sumcheck_output::{
-    append_sumcheck_output_claim, append_sumcheck_output_value, OutputClaimSpec, OutputPointSpec,
-    OutputValueSpec,
+    append_structured_polynomial_eval, append_sumcheck_output_claim, OutputClaimSpec,
+    StructuredPolynomialPointSpec, StructuredPolynomialSpec,
 };
 
 const REGISTERS_RW_DEGREE: usize = 3;
@@ -933,14 +933,14 @@ fn append_stage4_output_claims<'c, 'a>(
     module: &'a BoltModule<'c, Protocol>,
     spec: Stage4OutputClaimInputs<'c, 'a, '_>,
 ) -> Result<(), MlirError> {
-    let registers_eq_trace = append_sumcheck_output_value(
+    let registers_eq_trace = append_structured_polynomial_eval(
         context,
         module,
-        OutputValueSpec {
+        StructuredPolynomialSpec {
             symbol: "stage4.registers_read_write.output.eq.RdWriteValue",
-            kind: "eq_mle",
-            local_point: OutputPointSpec::prefix("opening_point", "reverse"),
-            opening_point: OutputPointSpec::full("as_is"),
+            polynomial: "eq",
+            x_point: StructuredPolynomialPointSpec::prefix("y_point", "reverse"),
+            y_point: StructuredPolynomialPointSpec::full("as_is"),
         },
         spec.registers.0,
         spec.openings.rd_write_value.point,
@@ -978,14 +978,14 @@ fn append_stage4_output_claims<'c, 'a>(
         )],
     )?;
 
-    let ram_lt = append_sumcheck_output_value(
+    let ram_lt = append_structured_polynomial_eval(
         context,
         module,
-        OutputValueSpec {
+        StructuredPolynomialSpec {
             symbol: "stage4.ram_val_check.output.lt.RamValCycle",
-            kind: "lt",
-            local_point: OutputPointSpec::full("reverse"),
-            opening_point: OutputPointSpec::suffix("local_point", "as_is"),
+            polynomial: "lt",
+            x_point: StructuredPolynomialPointSpec::full("reverse"),
+            y_point: StructuredPolynomialPointSpec::suffix("x_point", "as_is"),
         },
         spec.ram_val_check.0,
         spec.openings.ram_val.point,

@@ -18,7 +18,7 @@ pub type Stage3SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stag
 pub type Stage3SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage3RelationKind>;
 pub type Stage3SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage3RelationKind>;
 pub type Stage3SumcheckOutputClaimPlan = bolt_verifier_runtime::SumcheckOutputClaimPlan<Stage3RelationKind>;
-pub type Stage3SumcheckOutputValuePlan = bolt_verifier_runtime::SumcheckOutputValuePlan;
+pub type Stage3StructuredPolynomialEvalPlan = bolt_verifier_runtime::StructuredPolynomialEvalPlan;
 
 pub use super::jolt_relations::JoltRelationKind as Stage3RelationKind;
 pub use bolt_verifier_runtime::{
@@ -33,11 +33,11 @@ pub use bolt_verifier_runtime::{
     ProgramStepKind as Stage3ProgramStepKind, ProgramStepPlan as Stage3ProgramStepPlan,
     StageParams as Stage3Params,
     SumcheckBatchPlan as Stage3SumcheckBatchPlan, SumcheckEvalPlan as Stage3SumcheckEvalPlan,
-    SumcheckOutputPointLength as Stage3SumcheckOutputPointLength,
-    SumcheckOutputPointOrder as Stage3SumcheckOutputPointOrder,
-    SumcheckOutputPointPlan as Stage3SumcheckOutputPointPlan,
-    SumcheckOutputPointSegment as Stage3SumcheckOutputPointSegment,
-    SumcheckOutputValueKind as Stage3SumcheckOutputValueKind,
+    StructuredPolynomialPointLength as Stage3StructuredPolynomialPointLength,
+    StructuredPolynomialPointOrder as Stage3StructuredPolynomialPointOrder,
+    StructuredPolynomialPointPlan as Stage3StructuredPolynomialPointPlan,
+    StructuredPolynomialPointSegment as Stage3StructuredPolynomialPointSegment,
+    StructuredPolynomialKind as Stage3StructuredPolynomialKind,
     TranscriptSqueezeKind as Stage3TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage3TranscriptSqueezePlan,
 };
@@ -210,23 +210,23 @@ pub const STAGE3_OPENING_EQUALITIES: &[Stage3OpeningClaimEqualityPlan] = &[
 pub const STAGE3_OPENING_BATCHES: &[Stage3OpeningBatchPlan] = &[
     Stage3OpeningBatchPlan { symbol: "stage3.openings", stage: "stage3", proof_slot: "stage3.openings", policy: "jolt_stage3_output_order", count: 16, ordered_claims: &["stage3.spartan_shift.opening.UnexpandedPC", "stage3.spartan_shift.opening.PC", "stage3.spartan_shift.opening.OpFlagVirtualInstruction", "stage3.spartan_shift.opening.OpFlagIsFirstInSequence", "stage3.spartan_shift.opening.InstructionFlagIsNoop", "stage3.instruction_input.opening.InstructionFlagLeftOperandIsRs1Value", "stage3.instruction_input.opening.Rs1Value", "stage3.instruction_input.opening.InstructionFlagLeftOperandIsPC", "stage3.instruction_input.opening.UnexpandedPC", "stage3.instruction_input.opening.InstructionFlagRightOperandIsRs2Value", "stage3.instruction_input.opening.Rs2Value", "stage3.instruction_input.opening.InstructionFlagRightOperandIsImm", "stage3.instruction_input.opening.Imm", "stage3.registers_claim_reduction.opening.RdWriteValue", "stage3.registers_claim_reduction.opening.Rs1Value", "stage3.registers_claim_reduction.opening.Rs2Value"], claim_operands: &["stage3.spartan_shift.opening.UnexpandedPC", "stage3.spartan_shift.opening.PC", "stage3.spartan_shift.opening.OpFlagVirtualInstruction", "stage3.spartan_shift.opening.OpFlagIsFirstInSequence", "stage3.spartan_shift.opening.InstructionFlagIsNoop", "stage3.instruction_input.opening.InstructionFlagLeftOperandIsRs1Value", "stage3.instruction_input.opening.Rs1Value", "stage3.instruction_input.opening.InstructionFlagLeftOperandIsPC", "stage3.instruction_input.opening.UnexpandedPC", "stage3.instruction_input.opening.InstructionFlagRightOperandIsRs2Value", "stage3.instruction_input.opening.Rs2Value", "stage3.instruction_input.opening.InstructionFlagRightOperandIsImm", "stage3.instruction_input.opening.Imm", "stage3.registers_claim_reduction.opening.RdWriteValue", "stage3.registers_claim_reduction.opening.Rs1Value", "stage3.registers_claim_reduction.opening.Rs2Value"] },
 ];
-pub const STAGE3_SUMCHECK_OUTPUT_CLAIM_0_VALUES: &[Stage3SumcheckOutputValuePlan] = &[
-    Stage3SumcheckOutputValuePlan { symbol: "stage3.spartan_shift.output.eq.NextPC", kind: Stage3SumcheckOutputValueKind::EqPlusOne, local_point: Stage3SumcheckOutputPointPlan { source: "stage3.spartan_shift.instance", segment: Stage3SumcheckOutputPointSegment::Full, length: Stage3SumcheckOutputPointLength::Full, order: Stage3SumcheckOutputPointOrder::Reverse }, opening_point: Stage3SumcheckOutputPointPlan { source: "stage3.input.stage1.NextPC", segment: Stage3SumcheckOutputPointSegment::Full, length: Stage3SumcheckOutputPointLength::Full, order: Stage3SumcheckOutputPointOrder::AsIs } },
-    Stage3SumcheckOutputValuePlan { symbol: "stage3.spartan_shift.output.eq.NextIsNoop", kind: Stage3SumcheckOutputValueKind::EqPlusOne, local_point: Stage3SumcheckOutputPointPlan { source: "stage3.spartan_shift.instance", segment: Stage3SumcheckOutputPointSegment::Full, length: Stage3SumcheckOutputPointLength::Full, order: Stage3SumcheckOutputPointOrder::Reverse }, opening_point: Stage3SumcheckOutputPointPlan { source: "stage3.input.stage2.product_virtual.NextIsNoop", segment: Stage3SumcheckOutputPointSegment::Full, length: Stage3SumcheckOutputPointLength::Full, order: Stage3SumcheckOutputPointOrder::AsIs } },
+pub const STAGE3_SUMCHECK_OUTPUT_CLAIM_0_VALUES: &[Stage3StructuredPolynomialEvalPlan] = &[
+    Stage3StructuredPolynomialEvalPlan { symbol: "stage3.spartan_shift.output.eq.NextPC", polynomial: Stage3StructuredPolynomialKind::EqPlusOne, x_point: Stage3StructuredPolynomialPointPlan { source: "stage3.spartan_shift.instance", segment: Stage3StructuredPolynomialPointSegment::Full, length: Stage3StructuredPolynomialPointLength::Full, order: Stage3StructuredPolynomialPointOrder::Reverse }, y_point: Stage3StructuredPolynomialPointPlan { source: "stage3.input.stage1.NextPC", segment: Stage3StructuredPolynomialPointSegment::Full, length: Stage3StructuredPolynomialPointLength::Full, order: Stage3StructuredPolynomialPointOrder::AsIs } },
+    Stage3StructuredPolynomialEvalPlan { symbol: "stage3.spartan_shift.output.eq.NextIsNoop", polynomial: Stage3StructuredPolynomialKind::EqPlusOne, x_point: Stage3StructuredPolynomialPointPlan { source: "stage3.spartan_shift.instance", segment: Stage3StructuredPolynomialPointSegment::Full, length: Stage3StructuredPolynomialPointLength::Full, order: Stage3StructuredPolynomialPointOrder::Reverse }, y_point: Stage3StructuredPolynomialPointPlan { source: "stage3.input.stage2.product_virtual.NextIsNoop", segment: Stage3StructuredPolynomialPointSegment::Full, length: Stage3StructuredPolynomialPointLength::Full, order: Stage3StructuredPolynomialPointOrder::AsIs } },
 ];
 
-pub const STAGE3_SUMCHECK_OUTPUT_CLAIM_1_VALUES: &[Stage3SumcheckOutputValuePlan] = &[
-    Stage3SumcheckOutputValuePlan { symbol: "stage3.instruction_input.output.eq.LeftInstructionInput", kind: Stage3SumcheckOutputValueKind::EqMle, local_point: Stage3SumcheckOutputPointPlan { source: "stage3.instruction_input.instance", segment: Stage3SumcheckOutputPointSegment::Full, length: Stage3SumcheckOutputPointLength::Full, order: Stage3SumcheckOutputPointOrder::Reverse }, opening_point: Stage3SumcheckOutputPointPlan { source: "stage3.input.stage2.product_virtual.LeftInstructionInput", segment: Stage3SumcheckOutputPointSegment::Full, length: Stage3SumcheckOutputPointLength::Full, order: Stage3SumcheckOutputPointOrder::AsIs } },
+pub const STAGE3_SUMCHECK_OUTPUT_CLAIM_1_VALUES: &[Stage3StructuredPolynomialEvalPlan] = &[
+    Stage3StructuredPolynomialEvalPlan { symbol: "stage3.instruction_input.output.eq.LeftInstructionInput", polynomial: Stage3StructuredPolynomialKind::Eq, x_point: Stage3StructuredPolynomialPointPlan { source: "stage3.instruction_input.instance", segment: Stage3StructuredPolynomialPointSegment::Full, length: Stage3StructuredPolynomialPointLength::Full, order: Stage3StructuredPolynomialPointOrder::Reverse }, y_point: Stage3StructuredPolynomialPointPlan { source: "stage3.input.stage2.product_virtual.LeftInstructionInput", segment: Stage3StructuredPolynomialPointSegment::Full, length: Stage3StructuredPolynomialPointLength::Full, order: Stage3StructuredPolynomialPointOrder::AsIs } },
 ];
 
-pub const STAGE3_SUMCHECK_OUTPUT_CLAIM_2_VALUES: &[Stage3SumcheckOutputValuePlan] = &[
-    Stage3SumcheckOutputValuePlan { symbol: "stage3.registers.output.eq.RdWriteValue", kind: Stage3SumcheckOutputValueKind::EqMle, local_point: Stage3SumcheckOutputPointPlan { source: "stage3.registers_claim_reduction.instance", segment: Stage3SumcheckOutputPointSegment::Full, length: Stage3SumcheckOutputPointLength::Full, order: Stage3SumcheckOutputPointOrder::Reverse }, opening_point: Stage3SumcheckOutputPointPlan { source: "stage3.input.stage1.RdWriteValue", segment: Stage3SumcheckOutputPointSegment::Full, length: Stage3SumcheckOutputPointLength::Full, order: Stage3SumcheckOutputPointOrder::AsIs } },
+pub const STAGE3_SUMCHECK_OUTPUT_CLAIM_2_VALUES: &[Stage3StructuredPolynomialEvalPlan] = &[
+    Stage3StructuredPolynomialEvalPlan { symbol: "stage3.registers.output.eq.RdWriteValue", polynomial: Stage3StructuredPolynomialKind::Eq, x_point: Stage3StructuredPolynomialPointPlan { source: "stage3.registers_claim_reduction.instance", segment: Stage3StructuredPolynomialPointSegment::Full, length: Stage3StructuredPolynomialPointLength::Full, order: Stage3StructuredPolynomialPointOrder::Reverse }, y_point: Stage3StructuredPolynomialPointPlan { source: "stage3.input.stage1.RdWriteValue", segment: Stage3StructuredPolynomialPointSegment::Full, length: Stage3StructuredPolynomialPointLength::Full, order: Stage3StructuredPolynomialPointOrder::AsIs } },
 ];
 
 pub const STAGE3_SUMCHECK_OUTPUT_CLAIMS: &[Stage3SumcheckOutputClaimPlan] = &[
-    Stage3SumcheckOutputClaimPlan { relation: Stage3RelationKind::Stage3SpartanShift, local_values: STAGE3_SUMCHECK_OUTPUT_CLAIM_0_VALUES, claim_value: "stage3.spartan_shift.output.claim_expr" },
-    Stage3SumcheckOutputClaimPlan { relation: Stage3RelationKind::Stage3InstructionInput, local_values: STAGE3_SUMCHECK_OUTPUT_CLAIM_1_VALUES, claim_value: "stage3.instruction_input.output.claim_expr" },
-    Stage3SumcheckOutputClaimPlan { relation: Stage3RelationKind::Stage3RegistersClaimReduction, local_values: STAGE3_SUMCHECK_OUTPUT_CLAIM_2_VALUES, claim_value: "stage3.registers.output.claim_expr" },
+    Stage3SumcheckOutputClaimPlan { relation: Stage3RelationKind::Stage3SpartanShift, polynomial_evals: STAGE3_SUMCHECK_OUTPUT_CLAIM_0_VALUES, claim_value: "stage3.spartan_shift.output.claim_expr" },
+    Stage3SumcheckOutputClaimPlan { relation: Stage3RelationKind::Stage3InstructionInput, polynomial_evals: STAGE3_SUMCHECK_OUTPUT_CLAIM_1_VALUES, claim_value: "stage3.instruction_input.output.claim_expr" },
+    Stage3SumcheckOutputClaimPlan { relation: Stage3RelationKind::Stage3RegistersClaimReduction, polynomial_evals: STAGE3_SUMCHECK_OUTPUT_CLAIM_2_VALUES, claim_value: "stage3.registers.output.claim_expr" },
 ];
 
 pub const STAGE3_PROGRAM: Stage3VerifierProgramPlan = Stage3VerifierProgramPlan {

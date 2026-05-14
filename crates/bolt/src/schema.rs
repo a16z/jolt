@@ -14,15 +14,15 @@ use crate::ir::{
 use crate::mlir::MlirError;
 use crate::pass::{verify_concrete_transcript, VerifyError};
 
-const SUMCHECK_OUTPUT_VALUE_ATTRS: &[&str] = &[
+const STRUCTURED_POLYNOMIAL_EVAL_ATTRS: &[&str] = &[
     "sym_name",
-    "kind",
-    "local_point_segment",
-    "local_point_length",
-    "local_point_order",
-    "opening_point_segment",
-    "opening_point_length",
-    "opening_point_order",
+    "polynomial",
+    "x_point_segment",
+    "x_point_length",
+    "x_point_order",
+    "y_point_segment",
+    "y_point_length",
+    "y_point_order",
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -373,15 +373,15 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             )?;
             require_shape(operation, 2, 2)
         }
-        "piop.sumcheck_output_value" => {
-            require_attrs(operation, SUMCHECK_OUTPUT_VALUE_ATTRS)?;
+        "piop.structured_polynomial_eval" => {
+            require_attrs(operation, STRUCTURED_POLYNOMIAL_EVAL_ATTRS)?;
             require_shape(operation, 2, 1)?;
-            require_sumcheck_output_value(operation)
+            require_structured_polynomial_eval(operation)
         }
         "piop.sumcheck_output_claim" => {
             require_attrs(
                 operation,
-                &["sym_name", "stage", "relation", "count", "local_values"],
+                &["sym_name", "stage", "relation", "count", "polynomial_evals"],
             )?;
             require_min_shape(operation, 1, 0)?;
             require_sumcheck_output_claim(operation)
@@ -730,15 +730,15 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             )?;
             require_shape(operation, 2, 2)
         }
-        "compute.sumcheck_output_value" => {
-            require_attrs(operation, SUMCHECK_OUTPUT_VALUE_ATTRS)?;
+        "compute.structured_polynomial_eval" => {
+            require_attrs(operation, STRUCTURED_POLYNOMIAL_EVAL_ATTRS)?;
             require_shape(operation, 2, 1)?;
-            require_sumcheck_output_value(operation)
+            require_structured_polynomial_eval(operation)
         }
         "compute.sumcheck_output_claim" => {
             require_attrs(
                 operation,
-                &["sym_name", "stage", "relation", "count", "local_values"],
+                &["sym_name", "stage", "relation", "count", "polynomial_evals"],
             )?;
             require_min_shape(operation, 1, 0)?;
             require_sumcheck_output_claim(operation)
@@ -1070,15 +1070,15 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             )?;
             require_shape(operation, 2, 2)
         }
-        "cpu.sumcheck_output_value" => {
-            require_attrs(operation, SUMCHECK_OUTPUT_VALUE_ATTRS)?;
+        "cpu.structured_polynomial_eval" => {
+            require_attrs(operation, STRUCTURED_POLYNOMIAL_EVAL_ATTRS)?;
             require_shape(operation, 2, 1)?;
-            require_sumcheck_output_value(operation)
+            require_structured_polynomial_eval(operation)
         }
         "cpu.sumcheck_output_claim" => {
             require_attrs(
                 operation,
-                &["sym_name", "stage", "relation", "count", "local_values"],
+                &["sym_name", "stage", "relation", "count", "polynomial_evals"],
             )?;
             require_min_shape(operation, 1, 0)?;
             require_sumcheck_output_claim(operation)
@@ -1208,20 +1208,20 @@ fn require_opening_claim_equality(operation: OperationRef<'_, '_>) -> Result<(),
     Ok(())
 }
 
-fn require_sumcheck_output_value(operation: OperationRef<'_, '_>) -> Result<(), SchemaError> {
-    let kind = string_attr(operation, "kind")?;
-    if !matches!(kind.as_str(), "eq_mle" | "eq_plus_one" | "lt") {
+fn require_structured_polynomial_eval(operation: OperationRef<'_, '_>) -> Result<(), SchemaError> {
+    let polynomial = string_attr(operation, "polynomial")?;
+    if !matches!(polynomial.as_str(), "eq" | "eq_plus_one" | "lt") {
         return Err(SchemaError::new(format!(
-            "{} attr `kind` has unsupported output value kind `{kind}`",
+            "{} attr `polynomial` has unsupported structured polynomial `{polynomial}`",
             operation_name(operation)
         )));
     }
-    require_sumcheck_output_point_attrs(operation, "local_point")?;
-    require_sumcheck_output_point_attrs(operation, "opening_point")?;
+    require_structured_polynomial_point_attrs(operation, "x_point")?;
+    require_structured_polynomial_point_attrs(operation, "y_point")?;
     Ok(())
 }
 
-fn require_sumcheck_output_point_attrs(
+fn require_structured_polynomial_point_attrs(
     operation: OperationRef<'_, '_>,
     prefix: &str,
 ) -> Result<(), SchemaError> {
@@ -1235,7 +1235,7 @@ fn require_sumcheck_output_point_attrs(
     }
     let length_attr = format!("{prefix}_length");
     let length = string_attr(operation, &length_attr)?;
-    if !matches!(length.as_str(), "full" | "local_point" | "opening_point") {
+    if !matches!(length.as_str(), "full" | "x_point" | "y_point") {
         return Err(SchemaError::new(format!(
             "{} attr `{length_attr}` has unsupported output point length `{length}`",
             operation_name(operation)
@@ -1260,12 +1260,12 @@ fn require_sumcheck_output_point_attrs(
 
 fn require_sumcheck_output_claim(operation: OperationRef<'_, '_>) -> Result<(), SchemaError> {
     let count = int_attr(operation, "count")?;
-    let local_values = symbol_array_attr(operation, "local_values")?;
-    if local_values.len() != count {
+    let polynomial_evals = symbol_array_attr(operation, "polynomial_evals")?;
+    if polynomial_evals.len() != count {
         return Err(SchemaError::new(format!(
-            "{} attr `local_values` length {} does not match count {count}",
+            "{} attr `polynomial_evals` length {} does not match count {count}",
             operation_name(operation),
-            local_values.len()
+            polynomial_evals.len()
         )));
     }
     let dynamic_count = operation.operand_count().saturating_sub(1);
@@ -1275,7 +1275,7 @@ fn require_sumcheck_output_claim(operation: OperationRef<'_, '_>) -> Result<(), 
             operation_name(operation)
         )));
     }
-    for (index, expected) in local_values.iter().enumerate() {
+    for (index, expected) in polynomial_evals.iter().enumerate() {
         let operand_index = index + 1;
         let actual = operand_owner_symbol(operation, operand_index)?;
         if &actual != expected {

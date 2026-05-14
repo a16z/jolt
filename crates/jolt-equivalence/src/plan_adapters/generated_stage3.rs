@@ -23,6 +23,6 @@ define_stage_adapter_no_absorb!(
     Stage3OpeningClaimPlan,
     Stage3OpeningBatchPlan,
     output_claims = Stage3SumcheckOutputClaimPlan,
-    output_values = Stage3SumcheckOutputValuePlan,
+    output_values = Stage3StructuredPolynomialEvalPlan,
     opening_equalities = Stage3OpeningClaimEqualityPlan
 );

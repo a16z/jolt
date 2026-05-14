@@ -303,14 +303,14 @@ fn generated_opening_equality_mode(value: &str) -> bolt_verifier_runtime::Openin
     clippy::panic,
     reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
 )]
-fn generated_sumcheck_output_value_kind(
+fn generated_structured_polynomial_kind(
     value: &str,
-) -> bolt_verifier_runtime::SumcheckOutputValueKind {
+) -> bolt_verifier_runtime::StructuredPolynomialKind {
     match value {
-        "eq_mle" => bolt_verifier_runtime::SumcheckOutputValueKind::EqMle,
-        "eq_plus_one" => bolt_verifier_runtime::SumcheckOutputValueKind::EqPlusOne,
-        "lt" => bolt_verifier_runtime::SumcheckOutputValueKind::Lt,
-        value => panic!("unsupported generated sumcheck output value kind `{value}`"),
+        "eq" => bolt_verifier_runtime::StructuredPolynomialKind::Eq,
+        "eq_plus_one" => bolt_verifier_runtime::StructuredPolynomialKind::EqPlusOne,
+        "lt" => bolt_verifier_runtime::StructuredPolynomialKind::Lt,
+        value => panic!("unsupported generated structured polynomial `{value}`"),
     }
 }
 
@@ -318,14 +318,14 @@ fn generated_sumcheck_output_value_kind(
     clippy::panic,
     reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
 )]
-fn generated_sumcheck_output_point_segment(
+fn generated_structured_polynomial_point_segment(
     value: &str,
-) -> bolt_verifier_runtime::SumcheckOutputPointSegment {
+) -> bolt_verifier_runtime::StructuredPolynomialPointSegment {
     match value {
-        "full" => bolt_verifier_runtime::SumcheckOutputPointSegment::Full,
-        "prefix" => bolt_verifier_runtime::SumcheckOutputPointSegment::Prefix,
-        "suffix" => bolt_verifier_runtime::SumcheckOutputPointSegment::Suffix,
-        value => panic!("unsupported generated sumcheck output point segment `{value}`"),
+        "full" => bolt_verifier_runtime::StructuredPolynomialPointSegment::Full,
+        "prefix" => bolt_verifier_runtime::StructuredPolynomialPointSegment::Prefix,
+        "suffix" => bolt_verifier_runtime::StructuredPolynomialPointSegment::Suffix,
+        value => panic!("unsupported generated structured polynomial point segment `{value}`"),
     }
 }
 
@@ -333,14 +333,14 @@ fn generated_sumcheck_output_point_segment(
     clippy::panic,
     reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
 )]
-fn generated_sumcheck_output_point_length(
+fn generated_structured_polynomial_point_length(
     value: &str,
-) -> bolt_verifier_runtime::SumcheckOutputPointLength {
+) -> bolt_verifier_runtime::StructuredPolynomialPointLength {
     match value {
-        "full" => bolt_verifier_runtime::SumcheckOutputPointLength::Full,
-        "local_point" => bolt_verifier_runtime::SumcheckOutputPointLength::LocalPoint,
-        "opening_point" => bolt_verifier_runtime::SumcheckOutputPointLength::OpeningPoint,
-        value => panic!("unsupported generated sumcheck output point length `{value}`"),
+        "full" => bolt_verifier_runtime::StructuredPolynomialPointLength::Full,
+        "x_point" => bolt_verifier_runtime::StructuredPolynomialPointLength::XPoint,
+        "y_point" => bolt_verifier_runtime::StructuredPolynomialPointLength::YPoint,
+        value => panic!("unsupported generated structured polynomial point length `{value}`"),
     }
 }
 
@@ -348,13 +348,13 @@ fn generated_sumcheck_output_point_length(
     clippy::panic,
     reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
 )]
-fn generated_sumcheck_output_point_order(
+fn generated_structured_polynomial_point_order(
     value: &str,
-) -> bolt_verifier_runtime::SumcheckOutputPointOrder {
+) -> bolt_verifier_runtime::StructuredPolynomialPointOrder {
     match value {
-        "as_is" => bolt_verifier_runtime::SumcheckOutputPointOrder::AsIs,
-        "reverse" => bolt_verifier_runtime::SumcheckOutputPointOrder::Reverse,
-        value => panic!("unsupported generated sumcheck output point order `{value}`"),
+        "as_is" => bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs,
+        "reverse" => bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse,
+        value => panic!("unsupported generated structured polynomial point order `{value}`"),
     }
 }
 
@@ -585,23 +585,23 @@ macro_rules! define_stage_adapter_impl {
                         .iter()
                         .map(|plan| $module::$output_claim {
                             relation: super::generated_relation_kind(&plan.relation),
-                            local_values: super::leak_slice(
-                                plan.local_values
+                            polynomial_evals: super::leak_slice(
+                                plan.polynomial_evals
                                     .iter()
                                     .map(|value| $module::$output_value {
                                         symbol: super::leak_str(&value.symbol),
-                                        kind: super::generated_sumcheck_output_value_kind(&value.kind),
-                                        local_point: bolt_verifier_runtime::SumcheckOutputPointPlan {
-                                            source: super::leak_str(&value.local_point.source),
-                                            segment: super::generated_sumcheck_output_point_segment(&value.local_point.segment),
-                                            length: super::generated_sumcheck_output_point_length(&value.local_point.length),
-                                            order: super::generated_sumcheck_output_point_order(&value.local_point.order),
+                                        polynomial: super::generated_structured_polynomial_kind(&value.polynomial),
+                                        x_point: bolt_verifier_runtime::StructuredPolynomialPointPlan {
+                                            source: super::leak_str(&value.x_point.source),
+                                            segment: super::generated_structured_polynomial_point_segment(&value.x_point.segment),
+                                            length: super::generated_structured_polynomial_point_length(&value.x_point.length),
+                                            order: super::generated_structured_polynomial_point_order(&value.x_point.order),
                                         },
-                                        opening_point: bolt_verifier_runtime::SumcheckOutputPointPlan {
-                                            source: super::leak_str(&value.opening_point.source),
-                                            segment: super::generated_sumcheck_output_point_segment(&value.opening_point.segment),
-                                            length: super::generated_sumcheck_output_point_length(&value.opening_point.length),
-                                            order: super::generated_sumcheck_output_point_order(&value.opening_point.order),
+                                        y_point: bolt_verifier_runtime::StructuredPolynomialPointPlan {
+                                            source: super::leak_str(&value.y_point.source),
+                                            segment: super::generated_structured_polynomial_point_segment(&value.y_point.segment),
+                                            length: super::generated_structured_polynomial_point_length(&value.y_point.length),
+                                            order: super::generated_structured_polynomial_point_order(&value.y_point.order),
                                         },
                                     })
                                     .collect(),

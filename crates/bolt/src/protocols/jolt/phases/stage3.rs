@@ -20,8 +20,8 @@ use super::lowering::{
     transcript_squeeze_compute_result_types, transcript_squeeze_protocol_result_type,
 };
 use super::sumcheck_output::{
-    append_sumcheck_output_claim, append_sumcheck_output_value, OutputClaimSpec, OutputPointSpec,
-    OutputValueSpec,
+    append_structured_polynomial_eval, append_sumcheck_output_claim, OutputClaimSpec,
+    StructuredPolynomialPointSpec, StructuredPolynomialSpec,
 };
 
 const SPARTAN_SHIFT_DEGREE: usize = 2;
@@ -612,24 +612,24 @@ pub fn lower_stage3_to_compute<'c>(
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
                 insert_result_mapping(&mut value_map, op, operation, 1, 1)?;
             }
-            "piop.sumcheck_output_value" => {
+            "piop.structured_polynomial_eval" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let symbol = string_attr(op, "sym_name")?;
                 let attrs = copy_attrs(
                     op,
                     &[
-                        "kind",
-                        "local_point_segment",
-                        "local_point_length",
-                        "local_point_order",
-                        "opening_point_segment",
-                        "opening_point_length",
-                        "opening_point_order",
+                        "polynomial",
+                        "x_point_segment",
+                        "x_point_length",
+                        "x_point_order",
+                        "y_point_segment",
+                        "y_point_length",
+                        "y_point_order",
                     ],
                 )?;
                 let operation = context.append_typed_op_with_owned_attrs(
                     &compute,
-                    "compute.sumcheck_output_value",
+                    "compute.structured_polynomial_eval",
                     Some(&symbol),
                     &attrs,
                     &operands,
@@ -640,7 +640,7 @@ pub fn lower_stage3_to_compute<'c>(
             "piop.sumcheck_output_claim" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let symbol = string_attr(op, "sym_name")?;
-                let attrs = copy_attrs(op, &["stage", "relation", "count", "local_values"])?;
+                let attrs = copy_attrs(op, &["stage", "relation", "count", "polynomial_evals"])?;
                 let _operation = context.append_typed_op_with_owned_attrs(
                     &compute,
                     "compute.sumcheck_output_claim",
@@ -1765,26 +1765,26 @@ fn append_stage3_output_claims<'c, 'a>(
     module: &'a BoltModule<'c, Protocol>,
     spec: Stage3OutputClaimInputs<'c, 'a, '_>,
 ) -> Result<(), MlirError> {
-    let shift_eq_next_pc = append_sumcheck_output_value(
+    let shift_eq_next_pc = append_structured_polynomial_eval(
         context,
         module,
-        OutputValueSpec {
+        StructuredPolynomialSpec {
             symbol: "stage3.spartan_shift.output.eq.NextPC",
-            kind: "eq_plus_one",
-            local_point: OutputPointSpec::full("reverse"),
-            opening_point: OutputPointSpec::full("as_is"),
+            polynomial: "eq_plus_one",
+            x_point: StructuredPolynomialPointSpec::full("reverse"),
+            y_point: StructuredPolynomialPointSpec::full("as_is"),
         },
         spec.instances.shift.0,
         spec.openings.next_pc.point,
     )?;
-    let shift_eq_next_is_noop = append_sumcheck_output_value(
+    let shift_eq_next_is_noop = append_structured_polynomial_eval(
         context,
         module,
-        OutputValueSpec {
+        StructuredPolynomialSpec {
             symbol: "stage3.spartan_shift.output.eq.NextIsNoop",
-            kind: "eq_plus_one",
-            local_point: OutputPointSpec::full("reverse"),
-            opening_point: OutputPointSpec::full("as_is"),
+            polynomial: "eq_plus_one",
+            x_point: StructuredPolynomialPointSpec::full("reverse"),
+            y_point: StructuredPolynomialPointSpec::full("as_is"),
         },
         spec.instances.shift.0,
         spec.openings.product_next_is_noop.point,
@@ -1839,14 +1839,14 @@ fn append_stage3_output_claims<'c, 'a>(
         ],
     )?;
 
-    let instruction_eq_left = append_sumcheck_output_value(
+    let instruction_eq_left = append_structured_polynomial_eval(
         context,
         module,
-        OutputValueSpec {
+        StructuredPolynomialSpec {
             symbol: "stage3.instruction_input.output.eq.LeftInstructionInput",
-            kind: "eq_mle",
-            local_point: OutputPointSpec::full("reverse"),
-            opening_point: OutputPointSpec::full("as_is"),
+            polynomial: "eq",
+            x_point: StructuredPolynomialPointSpec::full("reverse"),
+            y_point: StructuredPolynomialPointSpec::full("as_is"),
         },
         spec.instances.instruction.0,
         spec.openings.product_left_instruction_input.point,
@@ -1908,14 +1908,14 @@ fn append_stage3_output_claims<'c, 'a>(
         )],
     )?;
 
-    let registers_eq_rd_write = append_sumcheck_output_value(
+    let registers_eq_rd_write = append_structured_polynomial_eval(
         context,
         module,
-        OutputValueSpec {
+        StructuredPolynomialSpec {
             symbol: "stage3.registers.output.eq.RdWriteValue",
-            kind: "eq_mle",
-            local_point: OutputPointSpec::full("reverse"),
-            opening_point: OutputPointSpec::full("as_is"),
+            polynomial: "eq",
+            x_point: StructuredPolynomialPointSpec::full("reverse"),
+            y_point: StructuredPolynomialPointSpec::full("as_is"),
         },
         spec.instances.registers.0,
         spec.openings.rd_write_value.point,

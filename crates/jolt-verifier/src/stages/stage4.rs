@@ -16,7 +16,7 @@ pub type Stage4SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stag
 pub type Stage4SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage4RelationKind>;
 pub type Stage4SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage4RelationKind>;
 pub type Stage4SumcheckOutputClaimPlan = bolt_verifier_runtime::SumcheckOutputClaimPlan<Stage4RelationKind>;
-pub type Stage4SumcheckOutputValuePlan = bolt_verifier_runtime::SumcheckOutputValuePlan;
+pub type Stage4StructuredPolynomialEvalPlan = bolt_verifier_runtime::StructuredPolynomialEvalPlan;
 
 pub use super::jolt_relations::JoltRelationKind as Stage4RelationKind;
 pub use bolt_verifier_runtime::{
@@ -32,11 +32,11 @@ pub use bolt_verifier_runtime::{
     ProgramStepPlan as Stage4ProgramStepPlan, StageParams as Stage4Params,
     SumcheckBatchPlan as Stage4SumcheckBatchPlan,
     SumcheckEvalPlan as Stage4SumcheckEvalPlan,
-    SumcheckOutputPointLength as Stage4SumcheckOutputPointLength,
-    SumcheckOutputPointOrder as Stage4SumcheckOutputPointOrder,
-    SumcheckOutputPointPlan as Stage4SumcheckOutputPointPlan,
-    SumcheckOutputPointSegment as Stage4SumcheckOutputPointSegment,
-    SumcheckOutputValueKind as Stage4SumcheckOutputValueKind,
+    StructuredPolynomialPointLength as Stage4StructuredPolynomialPointLength,
+    StructuredPolynomialPointOrder as Stage4StructuredPolynomialPointOrder,
+    StructuredPolynomialPointPlan as Stage4StructuredPolynomialPointPlan,
+    StructuredPolynomialPointSegment as Stage4StructuredPolynomialPointSegment,
+    StructuredPolynomialKind as Stage4StructuredPolynomialKind,
     TranscriptAbsorbBytesPlan as Stage4TranscriptAbsorbBytesPlan,
     TranscriptSqueezeKind as Stage4TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage4TranscriptSqueezePlan,
@@ -174,17 +174,17 @@ pub const STAGE4_OPENING_EQUALITIES: &[Stage4OpeningClaimEqualityPlan] = &[
 pub const STAGE4_OPENING_BATCHES: &[Stage4OpeningBatchPlan] = &[
     Stage4OpeningBatchPlan { symbol: "stage4.openings", stage: "stage4", proof_slot: "stage4.openings", policy: "jolt_stage4_output_order", count: 7, ordered_claims: &["stage4.registers_read_write.opening.RegistersVal", "stage4.registers_read_write.opening.Rs1Ra", "stage4.registers_read_write.opening.Rs2Ra", "stage4.registers_read_write.opening.RdWa", "stage4.registers_read_write.opening.RdInc", "stage4.ram_val_check.opening.RamRa", "stage4.ram_val_check.opening.RamInc"], claim_operands: &["stage4.registers_read_write.opening.RegistersVal", "stage4.registers_read_write.opening.Rs1Ra", "stage4.registers_read_write.opening.Rs2Ra", "stage4.registers_read_write.opening.RdWa", "stage4.registers_read_write.opening.RdInc", "stage4.ram_val_check.opening.RamRa", "stage4.ram_val_check.opening.RamInc"] },
 ];
-pub const STAGE4_SUMCHECK_OUTPUT_CLAIM_0_VALUES: &[Stage4SumcheckOutputValuePlan] = &[
-    Stage4SumcheckOutputValuePlan { symbol: "stage4.registers_read_write.output.eq.RdWriteValue", kind: Stage4SumcheckOutputValueKind::EqMle, local_point: Stage4SumcheckOutputPointPlan { source: "stage4.registers_read_write.instance", segment: Stage4SumcheckOutputPointSegment::Prefix, length: Stage4SumcheckOutputPointLength::OpeningPoint, order: Stage4SumcheckOutputPointOrder::Reverse }, opening_point: Stage4SumcheckOutputPointPlan { source: "stage4.input.stage3.registers.RdWriteValue", segment: Stage4SumcheckOutputPointSegment::Full, length: Stage4SumcheckOutputPointLength::Full, order: Stage4SumcheckOutputPointOrder::AsIs } },
+pub const STAGE4_SUMCHECK_OUTPUT_CLAIM_0_VALUES: &[Stage4StructuredPolynomialEvalPlan] = &[
+    Stage4StructuredPolynomialEvalPlan { symbol: "stage4.registers_read_write.output.eq.RdWriteValue", polynomial: Stage4StructuredPolynomialKind::Eq, x_point: Stage4StructuredPolynomialPointPlan { source: "stage4.registers_read_write.instance", segment: Stage4StructuredPolynomialPointSegment::Prefix, length: Stage4StructuredPolynomialPointLength::YPoint, order: Stage4StructuredPolynomialPointOrder::Reverse }, y_point: Stage4StructuredPolynomialPointPlan { source: "stage4.input.stage3.registers.RdWriteValue", segment: Stage4StructuredPolynomialPointSegment::Full, length: Stage4StructuredPolynomialPointLength::Full, order: Stage4StructuredPolynomialPointOrder::AsIs } },
 ];
 
-pub const STAGE4_SUMCHECK_OUTPUT_CLAIM_1_VALUES: &[Stage4SumcheckOutputValuePlan] = &[
-    Stage4SumcheckOutputValuePlan { symbol: "stage4.ram_val_check.output.lt.RamValCycle", kind: Stage4SumcheckOutputValueKind::Lt, local_point: Stage4SumcheckOutputPointPlan { source: "stage4.ram_val_check.instance", segment: Stage4SumcheckOutputPointSegment::Full, length: Stage4SumcheckOutputPointLength::Full, order: Stage4SumcheckOutputPointOrder::Reverse }, opening_point: Stage4SumcheckOutputPointPlan { source: "stage4.input.stage2.RamVal", segment: Stage4SumcheckOutputPointSegment::Suffix, length: Stage4SumcheckOutputPointLength::LocalPoint, order: Stage4SumcheckOutputPointOrder::AsIs } },
+pub const STAGE4_SUMCHECK_OUTPUT_CLAIM_1_VALUES: &[Stage4StructuredPolynomialEvalPlan] = &[
+    Stage4StructuredPolynomialEvalPlan { symbol: "stage4.ram_val_check.output.lt.RamValCycle", polynomial: Stage4StructuredPolynomialKind::Lt, x_point: Stage4StructuredPolynomialPointPlan { source: "stage4.ram_val_check.instance", segment: Stage4StructuredPolynomialPointSegment::Full, length: Stage4StructuredPolynomialPointLength::Full, order: Stage4StructuredPolynomialPointOrder::Reverse }, y_point: Stage4StructuredPolynomialPointPlan { source: "stage4.input.stage2.RamVal", segment: Stage4StructuredPolynomialPointSegment::Suffix, length: Stage4StructuredPolynomialPointLength::XPoint, order: Stage4StructuredPolynomialPointOrder::AsIs } },
 ];
 
 pub const STAGE4_SUMCHECK_OUTPUT_CLAIMS: &[Stage4SumcheckOutputClaimPlan] = &[
-    Stage4SumcheckOutputClaimPlan { relation: Stage4RelationKind::Stage4RegistersReadWrite, local_values: STAGE4_SUMCHECK_OUTPUT_CLAIM_0_VALUES, claim_value: "stage4.registers_read_write.output.claim_expr" },
-    Stage4SumcheckOutputClaimPlan { relation: Stage4RelationKind::Stage4RamValCheck, local_values: STAGE4_SUMCHECK_OUTPUT_CLAIM_1_VALUES, claim_value: "stage4.ram_val_check.output.claim_expr" },
+    Stage4SumcheckOutputClaimPlan { relation: Stage4RelationKind::Stage4RegistersReadWrite, polynomial_evals: STAGE4_SUMCHECK_OUTPUT_CLAIM_0_VALUES, claim_value: "stage4.registers_read_write.output.claim_expr" },
+    Stage4SumcheckOutputClaimPlan { relation: Stage4RelationKind::Stage4RamValCheck, polynomial_evals: STAGE4_SUMCHECK_OUTPUT_CLAIM_1_VALUES, claim_value: "stage4.ram_val_check.output.claim_expr" },
 ];
 
 pub const STAGE4_PROGRAM: Stage4VerifierProgramPlan = Stage4CpuProgramPlan {

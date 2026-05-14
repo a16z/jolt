@@ -313,52 +313,52 @@ pub struct SumcheckInstanceResultPlan<R: ProtocolRelation> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SumcheckOutputPointOrder {
+pub enum StructuredPolynomialPointOrder {
     AsIs,
     Reverse,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SumcheckOutputPointSegment {
+pub enum StructuredPolynomialPointSegment {
     Full,
     Prefix,
     Suffix,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SumcheckOutputPointLength {
+pub enum StructuredPolynomialPointLength {
     Full,
-    LocalPoint,
-    OpeningPoint,
+    XPoint,
+    YPoint,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SumcheckOutputPointPlan {
+pub struct StructuredPolynomialPointPlan {
     pub source: &'static str,
-    pub segment: SumcheckOutputPointSegment,
-    pub length: SumcheckOutputPointLength,
-    pub order: SumcheckOutputPointOrder,
+    pub segment: StructuredPolynomialPointSegment,
+    pub length: StructuredPolynomialPointLength,
+    pub order: StructuredPolynomialPointOrder,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SumcheckOutputValueKind {
-    EqMle,
+pub enum StructuredPolynomialKind {
+    Eq,
     EqPlusOne,
     Lt,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SumcheckOutputValuePlan {
+pub struct StructuredPolynomialEvalPlan {
     pub symbol: &'static str,
-    pub kind: SumcheckOutputValueKind,
-    pub local_point: SumcheckOutputPointPlan,
-    pub opening_point: SumcheckOutputPointPlan,
+    pub polynomial: StructuredPolynomialKind,
+    pub x_point: StructuredPolynomialPointPlan,
+    pub y_point: StructuredPolynomialPointPlan,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SumcheckOutputClaimPlan<R: ProtocolRelation> {
     pub relation: R,
-    pub local_values: &'static [SumcheckOutputValuePlan],
+    pub polynomial_evals: &'static [StructuredPolynomialEvalPlan],
     pub claim_value: &'static str,
 }
 
@@ -1144,40 +1144,30 @@ pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
     for eval in evals {
         scratch.insert(eval.name, eval.value);
     }
-    for local_value in plan.local_values {
-        if local_value.local_point.source != instance_symbol {
+    for polynomial_eval in plan.polynomial_evals {
+        if polynomial_eval.x_point.source != instance_symbol {
             return Err(RuntimePlanError::InvalidProof {
                 driver: instance_symbol,
-                reason: "sumcheck output value source mismatch",
+                reason: "structured polynomial x-point source mismatch",
             });
         }
-        let opening_point = store.point_or(local_value.opening_point.source, |symbol| {
+        let y_raw_point = store.point_or(polynomial_eval.y_point.source, |symbol| {
             RuntimePlanError::MissingValue { symbol }
         })?;
-        let local_output_point = evaluate_sumcheck_output_point(
-            local_value.local_point,
+        let x_point = evaluate_structured_polynomial_point(
+            polynomial_eval.x_point,
             local_point,
             local_point,
-            opening_point,
+            y_raw_point,
         )?;
-        let opening_output_point = evaluate_sumcheck_output_point(
-            local_value.opening_point,
-            opening_point,
+        let y_point = evaluate_structured_polynomial_point(
+            polynomial_eval.y_point,
+            y_raw_point,
             local_point,
-            opening_point,
+            y_raw_point,
         )?;
-        let value = match local_value.kind {
-            SumcheckOutputValueKind::EqMle => {
-                EqPolynomial::<Fr>::mle(&local_output_point, &opening_output_point)
-            }
-            SumcheckOutputValueKind::EqPlusOne => {
-                EqPlusOnePolynomial::<Fr>::new(opening_output_point).evaluate(&local_output_point)
-            }
-            SumcheckOutputValueKind::Lt => {
-                lt_polynomial_eval(&local_output_point, &opening_output_point)?
-            }
-        };
-        scratch.insert(local_value.symbol, value);
+        let value = evaluate_structured_polynomial(polynomial_eval.polynomial, &x_point, y_point)?;
+        scratch.insert(polynomial_eval.symbol, value);
     }
     evaluate_available_field_exprs_with_scratch(field_exprs, store, &mut scratch)?;
     scratch
@@ -1187,14 +1177,14 @@ pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
         })
 }
 
-fn evaluate_sumcheck_output_point(
-    plan: SumcheckOutputPointPlan,
+fn evaluate_structured_polynomial_point(
+    plan: StructuredPolynomialPointPlan,
     raw_point: &[Fr],
-    local_point: &[Fr],
-    opening_point: &[Fr],
+    x_point: &[Fr],
+    y_point: &[Fr],
 ) -> Result<Vec<Fr>, RuntimePlanError> {
-    if matches!(plan.segment, SumcheckOutputPointSegment::Full)
-        && !matches!(plan.length, SumcheckOutputPointLength::Full)
+    if matches!(plan.segment, StructuredPolynomialPointSegment::Full)
+        && !matches!(plan.length, StructuredPolynomialPointLength::Full)
     {
         return Err(RuntimePlanError::InvalidProof {
             driver: plan.source,
@@ -1202,13 +1192,13 @@ fn evaluate_sumcheck_output_point(
         });
     }
     let length = match plan.length {
-        SumcheckOutputPointLength::Full => raw_point.len(),
-        SumcheckOutputPointLength::LocalPoint => local_point.len(),
-        SumcheckOutputPointLength::OpeningPoint => opening_point.len(),
+        StructuredPolynomialPointLength::Full => raw_point.len(),
+        StructuredPolynomialPointLength::XPoint => x_point.len(),
+        StructuredPolynomialPointLength::YPoint => y_point.len(),
     };
     let segment = match plan.segment {
-        SumcheckOutputPointSegment::Full => raw_point,
-        SumcheckOutputPointSegment::Prefix => raw_point
+        StructuredPolynomialPointSegment::Full => raw_point,
+        StructuredPolynomialPointSegment::Prefix => raw_point
             .get(..length)
             .filter(|prefix| prefix.len() == length)
             .ok_or(RuntimePlanError::InvalidInputLength {
@@ -1216,7 +1206,7 @@ fn evaluate_sumcheck_output_point(
                 expected: length,
                 actual: raw_point.len(),
             })?,
-        SumcheckOutputPointSegment::Suffix => raw_point
+        StructuredPolynomialPointSegment::Suffix => raw_point
             .get(raw_point.len().saturating_sub(length)..)
             .filter(|suffix| suffix.len() == length)
             .ok_or(RuntimePlanError::InvalidInputLength {
@@ -1226,12 +1216,24 @@ fn evaluate_sumcheck_output_point(
             })?,
     };
     Ok(match plan.order {
-        SumcheckOutputPointOrder::AsIs => segment.to_vec(),
-        SumcheckOutputPointOrder::Reverse => reverse_slice(segment),
+        StructuredPolynomialPointOrder::AsIs => segment.to_vec(),
+        StructuredPolynomialPointOrder::Reverse => reverse_slice(segment),
     })
 }
 
-fn lt_polynomial_eval(x: &[Fr], y: &[Fr]) -> Result<Fr, RuntimePlanError> {
+fn evaluate_structured_polynomial(
+    polynomial: StructuredPolynomialKind,
+    x: &[Fr],
+    y: Vec<Fr>,
+) -> Result<Fr, RuntimePlanError> {
+    Ok(match polynomial {
+        StructuredPolynomialKind::Eq => EqPolynomial::<Fr>::mle(x, &y),
+        StructuredPolynomialKind::EqPlusOne => EqPlusOnePolynomial::<Fr>::new(y).evaluate(x),
+        StructuredPolynomialKind::Lt => evaluate_lt_polynomial_mle(x, &y)?,
+    })
+}
+
+fn evaluate_lt_polynomial_mle(x: &[Fr], y: &[Fr]) -> Result<Fr, RuntimePlanError> {
     if x.len() != y.len() {
         return Err(RuntimePlanError::InvalidInputLength {
             input: "sumcheck_output.lt",

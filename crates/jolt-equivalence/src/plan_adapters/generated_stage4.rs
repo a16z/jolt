@@ -26,5 +26,5 @@ define_stage_adapter!(
     Stage4OpeningClaimEqualityPlan,
     Stage4OpeningBatchPlan,
     output_claims = Stage4SumcheckOutputClaimPlan,
-    output_values = Stage4SumcheckOutputValuePlan
+    output_values = Stage4StructuredPolynomialEvalPlan
 );

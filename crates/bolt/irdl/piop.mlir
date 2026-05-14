@@ -218,28 +218,28 @@ irdl.dialect @piop {
     irdl.operands(input_point: %input_point, input_result: %input_result)
     irdl.results(instance_point: %output_point, instance_result: %output_result)
   }
-  irdl.operation @sumcheck_output_value {
+  irdl.operation @structured_polynomial_eval {
     %point = irdl.parametric @poly::@point<>
     %value = irdl.parametric @field::@scalar<>
     %sym = irdl.any
-    %kind = irdl.any
-    %local_point_segment = irdl.any
-    %local_point_length = irdl.any
-    %local_point_order = irdl.any
-    %opening_point_segment = irdl.any
-    %opening_point_length = irdl.any
-    %opening_point_order = irdl.any
+    %polynomial = irdl.any
+    %x_point_segment = irdl.any
+    %x_point_length = irdl.any
+    %x_point_order = irdl.any
+    %y_point_segment = irdl.any
+    %y_point_length = irdl.any
+    %y_point_order = irdl.any
     irdl.attributes {
       "sym_name" = %sym,
-      "kind" = %kind,
-      "local_point_segment" = %local_point_segment,
-      "local_point_length" = %local_point_length,
-      "local_point_order" = %local_point_order,
-      "opening_point_segment" = %opening_point_segment,
-      "opening_point_length" = %opening_point_length,
-      "opening_point_order" = %opening_point_order
+      "polynomial" = %polynomial,
+      "x_point_segment" = %x_point_segment,
+      "x_point_length" = %x_point_length,
+      "x_point_order" = %x_point_order,
+      "y_point_segment" = %y_point_segment,
+      "y_point_length" = %y_point_length,
+      "y_point_order" = %y_point_order
     }
-    irdl.operands(local_point: %point, opening_point: %point)
+    irdl.operands(x_point: %point, y_point: %point)
     irdl.results(value: %value)
   }
   irdl.operation @sumcheck_output_claim {
@@ -248,15 +248,15 @@ irdl.dialect @piop {
     %stage = irdl.any
     %relation = irdl.any
     %count = irdl.any
-    %local_values = irdl.any
+    %polynomial_evals = irdl.any
     irdl.attributes {
       "sym_name" = %sym,
       "stage" = %stage,
       "relation" = %relation,
       "count" = %count,
-      "local_values" = %local_values
+      "polynomial_evals" = %polynomial_evals
     }
-    irdl.operands(claim_value: %value, local_values: variadic %value)
+    irdl.operands(claim_value: %value, polynomial_evals: variadic %value)
   }
   irdl.operation @opening_claim {
     %point = irdl.parametric @poly::@point<>

@@ -23,7 +23,7 @@ pub struct Stage3CpuProgram {
     pub drivers: Vec<Stage3SumcheckDriverPlan>,
     pub instance_results: Vec<Stage3SumcheckInstanceResultPlan>,
     pub evals: Vec<Stage3SumcheckEvalPlan>,
-    pub output_values: Vec<Stage3SumcheckOutputValuePlan>,
+    pub output_values: Vec<Stage3StructuredPolynomialEvalPlan>,
     pub output_claims: Vec<Stage3SumcheckOutputClaimPlan>,
     pub point_slices: Vec<Stage3PointSlicePlan>,
     pub point_concats: Vec<Stage3PointConcatPlan>,
@@ -148,7 +148,7 @@ pub struct Stage3SumcheckInstanceResultPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3SumcheckOutputPointPlan {
+pub struct Stage3StructuredPolynomialPointPlan {
     pub source: String,
     pub segment: String,
     pub length: String,
@@ -156,17 +156,17 @@ pub struct Stage3SumcheckOutputPointPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3SumcheckOutputValuePlan {
+pub struct Stage3StructuredPolynomialEvalPlan {
     pub symbol: String,
-    pub kind: String,
-    pub local_point: Stage3SumcheckOutputPointPlan,
-    pub opening_point: Stage3SumcheckOutputPointPlan,
+    pub polynomial: String,
+    pub x_point: Stage3StructuredPolynomialPointPlan,
+    pub y_point: Stage3StructuredPolynomialPointPlan,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage3SumcheckOutputClaimPlan {
     pub relation: String,
-    pub local_values: Vec<Stage3SumcheckOutputValuePlan>,
+    pub polynomial_evals: Vec<Stage3StructuredPolynomialEvalPlan>,
     pub claim_value: String,
 }
 
@@ -174,8 +174,8 @@ pub struct Stage3SumcheckOutputClaimPlan {
 struct Stage3SumcheckOutputClaimAst {
     relation: String,
     claim_value: String,
-    local_values: Vec<String>,
-    local_value_operands: Vec<String>,
+    polynomial_evals: Vec<String>,
+    polynomial_eval_operands: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -480,21 +480,21 @@ impl Stage3CpuProgram {
                         oracle: symbol_attr(op, "oracle")?,
                     });
                 }
-                "cpu.sumcheck_output_value" => {
-                    output_values.push(Stage3SumcheckOutputValuePlan {
+                "cpu.structured_polynomial_eval" => {
+                    output_values.push(Stage3StructuredPolynomialEvalPlan {
                         symbol: string_attr(op, "sym_name")?,
-                        kind: string_attr(op, "kind")?,
-                        local_point: Stage3SumcheckOutputPointPlan {
+                        polynomial: string_attr(op, "polynomial")?,
+                        x_point: Stage3StructuredPolynomialPointPlan {
                             source: operand_symbol(op, 0)?,
-                            segment: string_attr(op, "local_point_segment")?,
-                            length: string_attr(op, "local_point_length")?,
-                            order: string_attr(op, "local_point_order")?,
+                            segment: string_attr(op, "x_point_segment")?,
+                            length: string_attr(op, "x_point_length")?,
+                            order: string_attr(op, "x_point_order")?,
                         },
-                        opening_point: Stage3SumcheckOutputPointPlan {
+                        y_point: Stage3StructuredPolynomialPointPlan {
                             source: operand_symbol(op, 1)?,
-                            segment: string_attr(op, "opening_point_segment")?,
-                            length: string_attr(op, "opening_point_length")?,
-                            order: string_attr(op, "opening_point_order")?,
+                            segment: string_attr(op, "y_point_segment")?,
+                            length: string_attr(op, "y_point_length")?,
+                            order: string_attr(op, "y_point_order")?,
                         },
                     });
                 }
@@ -502,8 +502,8 @@ impl Stage3CpuProgram {
                     output_claim_asts.push(Stage3SumcheckOutputClaimAst {
                         relation: symbol_attr(op, "relation")?,
                         claim_value: operand_symbol(op, 0)?,
-                        local_values: symbol_array_attr(op, "local_values")?,
-                        local_value_operands: operand_symbols(op, 1)?,
+                        polynomial_evals: symbol_array_attr(op, "polynomial_evals")?,
+                        polynomial_eval_operands: operand_symbols(op, 1)?,
                     });
                 }
                 "cpu.point_slice" => {
@@ -880,27 +880,38 @@ impl Stage3CpuProgram {
         );
         let field_values = self.field_value_symbols();
         let point_values = self.point_value_symbols();
-        for local_value in &self.output_values {
-            if !point_values.contains(&local_value.local_point.source) {
+        for polynomial_eval in &self.output_values {
+            if !point_values.contains(&polynomial_eval.x_point.source) {
                 return Err(EmitError::new(format!(
-                    "stage3 output value @{} references missing local point @{}",
-                    local_value.symbol, local_value.local_point.source
+                    "stage3 structured polynomial eval @{} references missing x-point @{}",
+                    polynomial_eval.symbol, polynomial_eval.x_point.source
                 )));
             }
-            if !point_values.contains(&local_value.opening_point.source) {
+            if !point_values.contains(&polynomial_eval.y_point.source) {
                 return Err(EmitError::new(format!(
-                    "stage3 output value @{} references missing opening point @{}",
-                    local_value.symbol, local_value.opening_point.source
+                    "stage3 structured polynomial eval @{} references missing y-point @{}",
+                    polynomial_eval.symbol, polynomial_eval.y_point.source
                 )));
             }
-            if !matches!(local_value.kind.as_str(), "eq_mle" | "eq_plus_one" | "lt") {
+            if !matches!(
+                polynomial_eval.polynomial.as_str(),
+                "eq" | "eq_plus_one" | "lt"
+            ) {
                 return Err(EmitError::new(format!(
-                    "stage3 output value @{} has unsupported kind `{}`",
-                    local_value.symbol, local_value.kind
+                    "stage3 structured polynomial eval @{} has unsupported polynomial `{}`",
+                    polynomial_eval.symbol, polynomial_eval.polynomial
                 )));
             }
-            verify_output_point_plan("stage3", local_value, &local_value.local_point)?;
-            verify_output_point_plan("stage3", local_value, &local_value.opening_point)?;
+            verify_structured_polynomial_point_plan(
+                "stage3",
+                polynomial_eval,
+                &polynomial_eval.x_point,
+            )?;
+            verify_structured_polynomial_point_plan(
+                "stage3",
+                polynomial_eval,
+                &polynomial_eval.y_point,
+            )?;
         }
         for claim in &self.output_claims {
             if !relations.contains(&claim.relation) {
@@ -1114,7 +1125,7 @@ pub type Stage3SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stag
 pub type Stage3SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage3RelationKind>;
 pub type Stage3SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage3RelationKind>;
 pub type Stage3SumcheckOutputClaimPlan = bolt_verifier_runtime::SumcheckOutputClaimPlan<Stage3RelationKind>;
-pub type Stage3SumcheckOutputValuePlan = bolt_verifier_runtime::SumcheckOutputValuePlan;
+pub type Stage3StructuredPolynomialEvalPlan = bolt_verifier_runtime::StructuredPolynomialEvalPlan;
 
 pub use super::jolt_relations::JoltRelationKind as Stage3RelationKind;
 pub use bolt_verifier_runtime::{
@@ -1129,11 +1140,11 @@ pub use bolt_verifier_runtime::{
     ProgramStepKind as Stage3ProgramStepKind, ProgramStepPlan as Stage3ProgramStepPlan,
     StageParams as Stage3Params,
     SumcheckBatchPlan as Stage3SumcheckBatchPlan, SumcheckEvalPlan as Stage3SumcheckEvalPlan,
-    SumcheckOutputPointLength as Stage3SumcheckOutputPointLength,
-    SumcheckOutputPointOrder as Stage3SumcheckOutputPointOrder,
-    SumcheckOutputPointPlan as Stage3SumcheckOutputPointPlan,
-    SumcheckOutputPointSegment as Stage3SumcheckOutputPointSegment,
-    SumcheckOutputValueKind as Stage3SumcheckOutputValueKind,
+    StructuredPolynomialPointLength as Stage3StructuredPolynomialPointLength,
+    StructuredPolynomialPointOrder as Stage3StructuredPolynomialPointOrder,
+    StructuredPolynomialPointPlan as Stage3StructuredPolynomialPointPlan,
+    StructuredPolynomialPointSegment as Stage3StructuredPolynomialPointSegment,
+    StructuredPolynomialKind as Stage3StructuredPolynomialKind,
     TranscriptSqueezeKind as Stage3TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage3TranscriptSqueezePlan,
 };
@@ -1689,15 +1700,15 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
         for (index, claim) in self.output_claims.iter().enumerate() {
             let values_name = format!("STAGE3_SUMCHECK_OUTPUT_CLAIM_{index}_VALUES");
             let values = claim
-                .local_values
+                .polynomial_evals
                 .iter()
                 .map(|value| {
                     Ok(format!(
-                        "    Stage3SumcheckOutputValuePlan {{ symbol: {}, kind: {}, local_point: {}, opening_point: {} }},",
+                        "    Stage3StructuredPolynomialEvalPlan {{ symbol: {}, polynomial: {}, x_point: {}, y_point: {} }},",
                         rust_str(&value.symbol),
-                        stage3_output_value_kind_expr(&value.kind)?,
-                        stage3_output_point_expr(&value.local_point)?,
-                        stage3_output_point_expr(&value.opening_point)?,
+                        stage3_structured_polynomial_kind_expr(&value.polynomial)?,
+                        stage3_structured_polynomial_point_expr(&value.x_point)?,
+                        stage3_structured_polynomial_point_expr(&value.y_point)?,
                     ))
                 })
                 .collect::<Result<Vec<_>, EmitError>>()?
@@ -1705,11 +1716,11 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
             push_format(
                 &mut source,
                 format_args!(
-                    "pub const {values_name}: &[Stage3SumcheckOutputValuePlan] = &[\n{values}\n];\n\n"
+                    "pub const {values_name}: &[Stage3StructuredPolynomialEvalPlan] = &[\n{values}\n];\n\n"
                 ),
             );
             claims.push(format!(
-                "    Stage3SumcheckOutputClaimPlan {{ relation: {}, local_values: {values_name}, claim_value: {} }},",
+                "    Stage3SumcheckOutputClaimPlan {{ relation: {}, polynomial_evals: {values_name}, claim_value: {} }},",
                 super::plan_tokens::role_relation_kind_expr("Stage3", &self.role, &claim.relation)?,
                 rust_str(&claim.claim_value)
             ));
@@ -2191,7 +2202,7 @@ fn require_supported_symbol(kind: &str, actual: &str, expected: &str) -> Result<
 }
 
 fn resolve_stage3_output_claims(
-    output_values: &[Stage3SumcheckOutputValuePlan],
+    output_values: &[Stage3StructuredPolynomialEvalPlan],
     claim_asts: Vec<Stage3SumcheckOutputClaimAst>,
 ) -> Result<Vec<Stage3SumcheckOutputClaimPlan>, EmitError> {
     let output_values_by_symbol: BTreeMap<_, _> = output_values
@@ -2201,14 +2212,14 @@ fn resolve_stage3_output_claims(
     claim_asts
         .into_iter()
         .map(|claim| {
-            if claim.local_values != claim.local_value_operands {
+            if claim.polynomial_evals != claim.polynomial_eval_operands {
                 return Err(EmitError::new(format!(
-                    "stage3 output claim for @{} operand order does not match local_values",
+                    "stage3 output claim for @{} operand order does not match polynomial_evals",
                     claim.relation
                 )));
             }
-            let local_values = claim
-                .local_values
+            let polynomial_evals = claim
+                .polynomial_evals
                 .iter()
                 .map(|symbol| {
                     output_values_by_symbol
@@ -2224,7 +2235,7 @@ fn resolve_stage3_output_claims(
                 .collect::<Result<Vec<_>, EmitError>>()?;
             Ok(Stage3SumcheckOutputClaimPlan {
                 relation: claim.relation,
-                local_values,
+                polynomial_evals,
                 claim_value: claim.claim_value,
             })
         })
@@ -2276,82 +2287,83 @@ fn field_expr_dependency_closure<'a>(
     visited
 }
 
-fn verify_output_point_plan(
+fn verify_structured_polynomial_point_plan(
     stage: &str,
-    local_value: &Stage3SumcheckOutputValuePlan,
-    point: &Stage3SumcheckOutputPointPlan,
+    polynomial_eval: &Stage3StructuredPolynomialEvalPlan,
+    point: &Stage3StructuredPolynomialPointPlan,
 ) -> Result<(), EmitError> {
     if !matches!(point.segment.as_str(), "full" | "prefix" | "suffix") {
         return Err(EmitError::new(format!(
-            "{stage} output value @{} has unsupported point segment `{}`",
-            local_value.symbol, point.segment
+            "{stage} structured polynomial eval @{} has unsupported point segment `{}`",
+            polynomial_eval.symbol, point.segment
         )));
     }
-    if !matches!(
-        point.length.as_str(),
-        "full" | "local_point" | "opening_point"
-    ) {
+    if !matches!(point.length.as_str(), "full" | "x_point" | "y_point") {
         return Err(EmitError::new(format!(
-            "{stage} output value @{} has unsupported point length `{}`",
-            local_value.symbol, point.length
+            "{stage} structured polynomial eval @{} has unsupported point length `{}`",
+            polynomial_eval.symbol, point.length
         )));
     }
     if !matches!(point.order.as_str(), "as_is" | "reverse") {
         return Err(EmitError::new(format!(
-            "{stage} output value @{} has unsupported point order `{}`",
-            local_value.symbol, point.order
+            "{stage} structured polynomial eval @{} has unsupported point order `{}`",
+            polynomial_eval.symbol, point.order
         )));
     }
     Ok(())
 }
 
-fn stage3_output_value_kind_expr(kind: &str) -> Result<&'static str, EmitError> {
-    match kind {
-        "eq_mle" => Ok("Stage3SumcheckOutputValueKind::EqMle"),
-        "eq_plus_one" => Ok("Stage3SumcheckOutputValueKind::EqPlusOne"),
-        "lt" => Ok("Stage3SumcheckOutputValueKind::Lt"),
+fn stage3_structured_polynomial_kind_expr(polynomial: &str) -> Result<&'static str, EmitError> {
+    match polynomial {
+        "eq" => Ok("Stage3StructuredPolynomialKind::Eq"),
+        "eq_plus_one" => Ok("Stage3StructuredPolynomialKind::EqPlusOne"),
+        "lt" => Ok("Stage3StructuredPolynomialKind::Lt"),
         _ => Err(EmitError::new(format!(
-            "unsupported stage3 output value kind `{kind}`"
+            "unsupported stage3 structured polynomial `{polynomial}`"
         ))),
     }
 }
 
-fn stage3_output_point_expr(point: &Stage3SumcheckOutputPointPlan) -> Result<String, EmitError> {
+fn stage3_structured_polynomial_point_expr(
+    point: &Stage3StructuredPolynomialPointPlan,
+) -> Result<String, EmitError> {
     Ok(format!(
-        "Stage3SumcheckOutputPointPlan {{ source: {}, segment: {}, length: {}, order: {} }}",
+        "Stage3StructuredPolynomialPointPlan {{ source: {}, segment: {}, length: {}, order: {} }}",
         rust_str(&point.source),
-        stage3_output_point_segment_expr(&point.segment)?,
-        stage3_output_point_length_expr(&point.length)?,
-        stage3_output_point_order_expr(&point.order)?,
+        stage3_structured_polynomial_point_segment_expr(&point.segment)?,
+        stage3_structured_polynomial_point_length_expr(&point.length)?,
+        stage3_structured_polynomial_point_order_expr(&point.order)?,
     ))
 }
 
-fn stage3_output_point_segment_expr(segment: &str) -> Result<&'static str, EmitError> {
+fn stage3_structured_polynomial_point_segment_expr(
+    segment: &str,
+) -> Result<&'static str, EmitError> {
     match segment {
-        "full" => Ok("Stage3SumcheckOutputPointSegment::Full"),
-        "prefix" => Ok("Stage3SumcheckOutputPointSegment::Prefix"),
-        "suffix" => Ok("Stage3SumcheckOutputPointSegment::Suffix"),
+        "full" => Ok("Stage3StructuredPolynomialPointSegment::Full"),
+        "prefix" => Ok("Stage3StructuredPolynomialPointSegment::Prefix"),
+        "suffix" => Ok("Stage3StructuredPolynomialPointSegment::Suffix"),
         _ => Err(EmitError::new(format!(
             "unsupported stage3 output point segment `{segment}`"
         ))),
     }
 }
 
-fn stage3_output_point_length_expr(length: &str) -> Result<&'static str, EmitError> {
+fn stage3_structured_polynomial_point_length_expr(length: &str) -> Result<&'static str, EmitError> {
     match length {
-        "full" => Ok("Stage3SumcheckOutputPointLength::Full"),
-        "local_point" => Ok("Stage3SumcheckOutputPointLength::LocalPoint"),
-        "opening_point" => Ok("Stage3SumcheckOutputPointLength::OpeningPoint"),
+        "full" => Ok("Stage3StructuredPolynomialPointLength::Full"),
+        "x_point" => Ok("Stage3StructuredPolynomialPointLength::XPoint"),
+        "y_point" => Ok("Stage3StructuredPolynomialPointLength::YPoint"),
         _ => Err(EmitError::new(format!(
-            "unsupported stage3 output point length `{length}`"
+            "unsupported stage3 structured polynomial point length `{length}`"
         ))),
     }
 }
 
-fn stage3_output_point_order_expr(order: &str) -> Result<&'static str, EmitError> {
+fn stage3_structured_polynomial_point_order_expr(order: &str) -> Result<&'static str, EmitError> {
     match order {
-        "as_is" => Ok("Stage3SumcheckOutputPointOrder::AsIs"),
-        "reverse" => Ok("Stage3SumcheckOutputPointOrder::Reverse"),
+        "as_is" => Ok("Stage3StructuredPolynomialPointOrder::AsIs"),
+        "reverse" => Ok("Stage3StructuredPolynomialPointOrder::Reverse"),
         _ => Err(EmitError::new(format!(
             "unsupported stage3 output point order `{order}`"
         ))),

@@ -4,13 +4,13 @@ use crate::ir::{BoltModule, Protocol};
 use crate::mlir::{MeliorContext, MlirError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct OutputPointSpec<'a> {
+pub(crate) struct StructuredPolynomialPointSpec<'a> {
     segment: &'a str,
     length: &'a str,
     order: &'a str,
 }
 
-impl<'a> OutputPointSpec<'a> {
+impl<'a> StructuredPolynomialPointSpec<'a> {
     pub(crate) const fn full(order: &'a str) -> Self {
         Self {
             segment: "full",
@@ -37,11 +37,11 @@ impl<'a> OutputPointSpec<'a> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct OutputValueSpec<'a> {
+pub(crate) struct StructuredPolynomialSpec<'a> {
     pub(crate) symbol: &'a str,
-    pub(crate) kind: &'a str,
-    pub(crate) local_point: OutputPointSpec<'a>,
-    pub(crate) opening_point: OutputPointSpec<'a>,
+    pub(crate) polynomial: &'a str,
+    pub(crate) x_point: StructuredPolynomialPointSpec<'a>,
+    pub(crate) y_point: StructuredPolynomialPointSpec<'a>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,48 +51,30 @@ pub(crate) struct OutputClaimSpec<'a> {
     pub(crate) relation: &'a str,
 }
 
-pub(crate) fn append_sumcheck_output_value<'c, 'a>(
+pub(crate) fn append_structured_polynomial_eval<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
-    spec: OutputValueSpec<'_>,
-    local_point: Value<'c, 'a>,
-    opening_point: Value<'c, 'a>,
+    spec: StructuredPolynomialSpec<'_>,
+    x_point: Value<'c, 'a>,
+    y_point: Value<'c, 'a>,
 ) -> Result<Value<'c, 'a>, MlirError> {
     let op = context.append_typed_op(
         module,
-        "piop.sumcheck_output_value",
+        "piop.structured_polynomial_eval",
         Some(spec.symbol),
         &[
-            ("kind", &format!("\"{}\"", spec.kind)),
-            (
-                "local_point_segment",
-                &format!("\"{}\"", spec.local_point.segment),
-            ),
-            (
-                "local_point_length",
-                &format!("\"{}\"", spec.local_point.length),
-            ),
-            (
-                "local_point_order",
-                &format!("\"{}\"", spec.local_point.order),
-            ),
-            (
-                "opening_point_segment",
-                &format!("\"{}\"", spec.opening_point.segment),
-            ),
-            (
-                "opening_point_length",
-                &format!("\"{}\"", spec.opening_point.length),
-            ),
-            (
-                "opening_point_order",
-                &format!("\"{}\"", spec.opening_point.order),
-            ),
+            ("polynomial", &format!("\"{}\"", spec.polynomial)),
+            ("x_point_segment", &format!("\"{}\"", spec.x_point.segment)),
+            ("x_point_length", &format!("\"{}\"", spec.x_point.length)),
+            ("x_point_order", &format!("\"{}\"", spec.x_point.order)),
+            ("y_point_segment", &format!("\"{}\"", spec.y_point.segment)),
+            ("y_point_length", &format!("\"{}\"", spec.y_point.length)),
+            ("y_point_order", &format!("\"{}\"", spec.y_point.order)),
         ],
-        &[local_point, opening_point],
+        &[x_point, y_point],
         &["!field.scalar"],
     )?;
-    first_result(op, "piop.sumcheck_output_value")
+    first_result(op, "piop.structured_polynomial_eval")
 }
 
 pub(crate) fn append_sumcheck_output_claim<'c, 'a>(
@@ -100,12 +82,12 @@ pub(crate) fn append_sumcheck_output_claim<'c, 'a>(
     module: &'a BoltModule<'c, Protocol>,
     spec: OutputClaimSpec<'_>,
     claim_value: Value<'c, 'a>,
-    local_values: &[(&str, Value<'c, 'a>)],
+    polynomial_evals: &[(&str, Value<'c, 'a>)],
 ) -> Result<(), MlirError> {
-    let mut operands = Vec::with_capacity(local_values.len() + 1);
+    let mut operands = Vec::with_capacity(polynomial_evals.len() + 1);
     operands.push(claim_value);
-    operands.extend(local_values.iter().map(|(_, value)| *value));
-    let local_value_symbols = local_values
+    operands.extend(polynomial_evals.iter().map(|(_, value)| *value));
+    let local_value_symbols = polynomial_evals
         .iter()
         .map(|(symbol, _)| *symbol)
         .collect::<Vec<_>>();
@@ -116,8 +98,8 @@ pub(crate) fn append_sumcheck_output_claim<'c, 'a>(
         &[
             ("stage", &format!("@{}", spec.stage)),
             ("relation", &format!("@{}", spec.relation)),
-            ("count", &int_attr(local_values.len())),
-            ("local_values", &symbol_array_attr(&local_value_symbols)),
+            ("count", &int_attr(polynomial_evals.len())),
+            ("polynomial_evals", &symbol_array_attr(&local_value_symbols)),
         ],
         &operands,
         &[],
