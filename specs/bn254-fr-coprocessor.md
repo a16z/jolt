@@ -282,6 +282,74 @@ templates.
   feature builds a Pass-1 ELF that pre-computes ark-bn254 results into the
   advice tape, consumed by Pass-2 which emits the real FR opcodes.
 
+### Fixture Shape Contract
+
+The modular stack today proves at exactly one goldens-baked shape, fixed
+by three parameters:
+
+| Parameter            | Source of truth                                     | Current value |
+|----------------------|------------------------------------------------------|---------------|
+| `FIXTURE_LOG_T`        | `crates/jolt-host/src/lib.rs`                       | 18            |
+| `FIXTURE_LOG_K_BYTECODE` | `crates/jolt-host/src/lib.rs`                     | 14            |
+| `FIXTURE_LOG_K_RAM`      | `crates/jolt-host/src/lib.rs`                     | 14            |
+| `JoltProtocolParams::fixture()` | `crates/bolt/src/protocols/jolt/params.rs` | `Self::new(18, 14, 14)` |
+
+`prove_program` pads small guests up to this floor and rejects anything
+above it with `ProveProgramError::UnsupportedShape`. Both prover and
+verifier reference the same constants so the goldens-baked
+`default_prover_programs()` / `default_verifier_programs()` match the
+runtime shape.
+
+**Why the triple is locked together.** The goldens encode two independent
+families of structural parameters, and both must hold for the emitted
+prover/verifier programs to apply:
+
+1. **d-regime** (function of `log_t`):
+   - `log_k_chunk = 4` when `log_t < 25`, else `8`
+   - `instruction_d = 128 / log_k_chunk` → 32 or 16
+   - `bytecode_d = ceil(log_k_bytecode / log_k_chunk)`
+   - `ram_d = ceil(log_k_ram / log_k_chunk)`
+   - `instruction_ra_virtual_d = 128 / lookups_ra_virtual_log_k_chunk` → 8 or 4
+
+   `d` is the chunking depth for one-hot Ra polynomial decomposition.
+   Each Ra polynomial splits its `log_k`-bit index into `d` chunks of
+   `log_k_chunk` bits. The prover materializes Ra in `d` phases via
+   `RaPolynomial`'s state machine; the verifier checks `d` opening
+   claims per Ra. Bolt's emitted programs hard-code per-stage kernel
+   counts derived from these `d` values, so changing any `d` requires
+   regen.
+
+2. **Absolute `log_t`** (independent of d-regime): the dory tier-1
+   streaming commitment in `crates/jolt-dory/src/streaming.rs` sizes
+   buffers at exactly `1 << FIXTURE_LOG_T`. Running prove at a smaller
+   natural `log_t` panics with a slice-range overflow even when the
+   d-values match. Empirically verified by attempting to relax
+   `prove_program` to a d-only compatibility check (commit `467acadce`).
+
+**Example coverage at the current fixture.** Trace-length spread across
+the 28 example guests:
+
+| `max_trace_length` (log_t) | Examples | Fits fixture? |
+|---|---|---|
+| 2^16 = 65,536 | multi-function, sha2-ex, sha3-ex, stdlib (small), overflow, random | Yes (padded up) |
+| 2^17 = 131,072 | stdlib variant | Yes (padded up) |
+| **2^18 = 262,144 (FIXTURE)** | **bn254-fr-poseidon2-sdk, secp256k1-ecdsa** | **Yes (native)** |
+| 2^19 = 524,288 | p256-ecdsa | No (rejected) |
+| 2^20 = 1,048,576 | collatz, recover-ecdsa, stdlib (large) | No |
+| 2^22 = 4,194,304 | sha2-chain, sha3-chain | No |
+| 2^25 = 33,554,432 | sig-recovery | No (also crosses d-regime) |
+
+Today only the log_t ≤ 18 examples are runnable through the modular
+stack. Of those, only `bn254-fr-poseidon2-sdk` has actually opted in via
+`#[jolt::provable(backend = "modular")]`; the rest still route through
+the legacy jolt-core path.
+
+**Lifting the cap is upstream work** (multi-shape goldens, dory tier-1
+parameterization, bolt regen tooling). See Non-Goals above and the
+"Multi-shape goldens" entry in the implementation tracker. Until that
+lands, the macro emits a `compile_error!` for `max_trace_length >
+2^FIXTURE_LOG_T`.
+
 ### Alternatives Considered
 
 - **Dense K×T tables for FR Twist polynomials.** This was the initial
