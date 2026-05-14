@@ -9,11 +9,13 @@ preserving the existing full-`Fr` Jolt semantics.
 ## Objective
 
 Refactor the Bolt-generated Jolt verifier pipeline so the generated verifier is
-a small orchestration layer plus declarative verifier plans, backed by reusable
-verifier runtime modules. The compiler should continue to own protocol facts
-through MLIR and typed plan data; generated Rust should not rediscover Jolt
-semantics late through ad hoc string matching or repeated stage-local helper
-code.
+a typed verifier program: a small orchestration layer plus declarative plans for
+commitments, transcript events, sumcheck drivers, value-graph computations,
+opening batches, and PCS checks, backed by reusable verifier runtime modules.
+The compiler should continue to own protocol facts through MLIR and typed plan
+data; generated Rust should not rediscover Jolt semantics late through ad hoc
+string matching, repeated stage-local helper code, or hardcoded assumptions that
+the verifier must always have a fixed number of numbered stages.
 
 Starting baseline:
 
@@ -87,14 +89,47 @@ This split was introduced by the S1 audit-tier refactor. The pre-split
 "shared verifier runtime" framing (a single ~1.8k-LOC `common.rs` mixing
 generic Bolt scaffolding and Jolt-specific math) is retired.
 
-The implementation plan for slices S2 — S6 (which progressively shrink
-Tier B and Tier A by lifting hand-written Rust into MLIR vocabulary) lives
-in `crates/bolt/AUDIT_TIER_FOLLOWUPS.md`.
+The implementation plan for slices S2 — S6 (which progressively replace
+stage-shaped Rust with a typed verifier-program model by lifting hand-written
+Rust into MLIR vocabulary) lives in
+`crates/bolt/VERIFIER_PROGRAM_REFACTOR_PLAN.md`.
+
+## Design Philosophy
+
+The end state is a typed verifier IR, not a cleverer Rust template system.
+Generated verifier Rust should be mostly const plan data plus thin calls into
+reviewed interpreters. The Rust emitter should project MLIR-derived facts; it
+should not infer verifier semantics from string names, stage-local naming
+conventions, or generated helper bodies.
+
+Typed symbol handles should carry verifier references wherever possible. Plain
+strings may remain as diagnostics and serialization names, but they should not
+be the execution contract for claim, eval, point, relation, or opening lookup.
+
+Verifier values should live in explicit domains:
+
+```text
+scalar field values
+multilinear query points
+ordered field vectors / eval families
+opening claims and batches
+relation expected-output values
+protocol-specific encoding tables
+```
+
+When a cleanup slice moves logic out of generated Rust, the semantics must stay
+visible in MLIR, typed attrs, or typed plan rows. Moving semantics into opaque
+runtime code without a readable generated plan is not progress.
 
 This verifier cleanup is coupled to the generic protocol cleanup in
 `GENERIC_PROTOCOL_GOAL.md`: shrinking the generated verifier should move generic
 mechanics into Bolt IR/typed plans and shared runtime, not into Jolt-specific
 emitter special cases.
+
+Numbered stages may remain as proof-layout slots and diagnostic scopes, but
+they are not the final architecture. The final architecture is an explicit
+verifier program whose steps describe commitment receipt, transcript events,
+sumcheck verification, value evaluation, opening batching, and PCS verification.
 
 ## Locked Genericity Decisions
 
@@ -277,6 +312,16 @@ oracles.
 
 - Preserve the current full-field non-zk Jolt protocol path:
   `Transcript<Challenge = Fr>`.
+- Preserve or improve readability. A slice that reduces LOC by hiding verifier
+  semantics in opaque runtime code, compiler-only conventions, or dense tables
+  that blind reviewers cannot audit fails this goal.
+- Do not regress final LOC. Temporary slice-local growth is acceptable only when
+  it moves hand-written protocol math into declarative typed plan data and the
+  completed stack remains no larger than the locked post-S1 baselines above.
+- Do not silently regress performance. Existing SHA2-chain core-vs-Bolt perf
+  oracles are required smoke gates; interpreter-heavy slices must also record a
+  before/after verifier-time baseline and fix or explicitly justify any
+  repeatable regression.
 - `jolt-verifier` must not depend on `jolt-prover`, `jolt-kernels`,
   `jolt-core`, `jolt-equivalence`, `jolt-profiling`, or tracer internals.
 - Bolt compiler boundaries remain:
@@ -287,6 +332,9 @@ oracles.
   validators, lowering passes, or typed verifier plans. The Rust emitter should
   not infer protocol meaning from loose strings when a typed enum, attr, op, or
   plan field can carry it.
+- Do not keep old stage-local execution paths as verifier fallbacks once typed
+  verifier-program execution lands. Rollback is a git operation, not an
+  alternate runtime path.
 - Generated verifier files should be mostly declarative:
 
 ```rust
@@ -307,7 +355,8 @@ crates/jolt-verifier
   src/verifier.rs
     public API
     proof shape
-    stage ordering
+    verifier-program execution
+    proof-slot/checkpoint layout
     error mapping
 
   src/stages/
@@ -344,6 +393,11 @@ How is a stage plan verified?
 How are opening/eval consistency checks performed?
 How are proof records converted into runtime verifier inputs?
 ```
+
+The checked-in generated Rust should expose a top-level `VERIFIER_PROGRAM` (or
+equivalent) that a reviewer can scan to see the whole verifier flow. A reviewer
+should not need to know how many stage files the emitter happened to produce in
+order to understand verifier control flow.
 
 ## Main Refactor Tracks
 
@@ -492,6 +546,15 @@ all relation dispatch is typed or allowlisted
 missing proof data returns typed verifier errors
 duplicate or inconsistent opening claims reject explicitly
 name-then-position eval fallback is absent from verifier execution
+```
+
+Performance gates:
+
+```text
+existing SHA2-chain core-vs-Bolt perf oracles remain runnable and green
+before/after verifier-time baseline recorded for interpreter-heavy slices
+repeatable verifier-time regressions are fixed or explicitly approved
+perf thresholds are not loosened to land readability refactors
 ```
 
 Semantic gates:
