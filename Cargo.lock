@@ -2983,6 +2983,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-host"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "jolt-dory",
+ "jolt-field",
+ "jolt-kernels",
+ "jolt-lookup-tables",
+ "jolt-openings",
+ "jolt-prover",
+ "jolt-r1cs",
+ "jolt-riscv",
+ "jolt-trace",
+ "jolt-transcript",
+ "jolt-verifier",
+ "jolt-witness",
+ "postcard",
+ "tracer",
+ "tracing",
+]
+
+[[package]]
 name = "jolt-hyperkzg"
 version = "0.1.0"
 dependencies = [
@@ -3253,8 +3275,10 @@ dependencies = [
  "cfg-if",
  "common",
  "jolt-core",
+ "jolt-host",
  "jolt-platform",
  "jolt-sdk-macros",
+ "jolt-trace",
  "postcard",
  "riscv 0.16.0",
  "serde",

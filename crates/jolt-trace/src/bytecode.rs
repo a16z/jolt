@@ -49,6 +49,29 @@ impl BytecodePreprocessing {
         }
     }
 
+    /// Like [`preprocess`] but pads the bytecode up to at least `min_code_size`
+    /// (rounded up to the next power of two). Lets a small guest reuse a
+    /// larger goldens-baked fixture shape.
+    #[tracing::instrument(skip_all, name = "BytecodePreprocessing::preprocess_padded")]
+    pub fn preprocess_padded(
+        mut bytecode: Vec<Instruction>,
+        entry_address: u64,
+        min_code_size: usize,
+    ) -> Self {
+        bytecode.insert(0, Instruction::NoOp);
+        let pc_map = BytecodePCMapper::new(&bytecode);
+        let natural = bytecode.len().next_power_of_two().max(2);
+        let code_size = natural.max(min_code_size.next_power_of_two());
+        bytecode.resize(code_size, Instruction::NoOp);
+
+        Self {
+            code_size,
+            bytecode,
+            pc_map,
+            entry_address,
+        }
+    }
+
     /// Dense bytecode table index for the ELF entry point.
     pub fn entry_bytecode_index(&self) -> usize {
         self.pc_map.get_pc(self.entry_address as usize, 0)

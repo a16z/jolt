@@ -10,6 +10,7 @@ use crate::CycleRow;
 
 /// Map an `Instruction` variant to its ISA struct, bind it to `$i`, evaluate `$body`.
 /// The `noop =>` arm handles `Instruction::NoOp` separately.
+#[macro_export]
 macro_rules! with_isa_struct {
     ($instr:expr, |$i:ident| $body:expr, noop => $noop:expr) => {{
         use jolt_riscv::instructions::*;
