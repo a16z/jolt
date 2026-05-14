@@ -922,6 +922,29 @@ pub fn resolve_compute_kernels<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
+            "compute.sumcheck_output_function_family" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "term_gamma_power_offsets",
+                        "term_functions",
+                        "term_factor_counts",
+                        "evals",
+                        "factors",
+                    ],
+                )?;
+                let symbol = string_attr(op, "sym_name")?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.sumcheck_output_function_family",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
             "compute.sumcheck_output_claim" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let attrs = copy_attrs(op, &["stage", "relation", "count", "polynomial_evals"])?;

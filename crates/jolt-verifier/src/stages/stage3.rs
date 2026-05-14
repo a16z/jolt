@@ -224,9 +224,9 @@ pub const STAGE3_SUMCHECK_OUTPUT_CLAIM_2_VALUES: &[Stage3StructuredPolynomialEva
 ];
 
 pub const STAGE3_SUMCHECK_OUTPUT_CLAIMS: &[Stage3SumcheckOutputClaimPlan] = &[
-    Stage3SumcheckOutputClaimPlan { relation: Stage3RelationKind::Stage3SpartanShift, polynomial_evals: STAGE3_SUMCHECK_OUTPUT_CLAIM_0_VALUES, eval_families: &[], product_families: &[], claim_value: "stage3.spartan_shift.output.claim_expr" },
-    Stage3SumcheckOutputClaimPlan { relation: Stage3RelationKind::Stage3InstructionInput, polynomial_evals: STAGE3_SUMCHECK_OUTPUT_CLAIM_1_VALUES, eval_families: &[], product_families: &[], claim_value: "stage3.instruction_input.output.claim_expr" },
-    Stage3SumcheckOutputClaimPlan { relation: Stage3RelationKind::Stage3RegistersClaimReduction, polynomial_evals: STAGE3_SUMCHECK_OUTPUT_CLAIM_2_VALUES, eval_families: &[], product_families: &[], claim_value: "stage3.registers.output.claim_expr" },
+    Stage3SumcheckOutputClaimPlan { relation: Stage3RelationKind::Stage3SpartanShift, polynomial_evals: STAGE3_SUMCHECK_OUTPUT_CLAIM_0_VALUES, eval_families: &[], product_families: &[], function_families: &[], claim_value: "stage3.spartan_shift.output.claim_expr" },
+    Stage3SumcheckOutputClaimPlan { relation: Stage3RelationKind::Stage3InstructionInput, polynomial_evals: STAGE3_SUMCHECK_OUTPUT_CLAIM_1_VALUES, eval_families: &[], product_families: &[], function_families: &[], claim_value: "stage3.instruction_input.output.claim_expr" },
+    Stage3SumcheckOutputClaimPlan { relation: Stage3RelationKind::Stage3RegistersClaimReduction, polynomial_evals: STAGE3_SUMCHECK_OUTPUT_CLAIM_2_VALUES, eval_families: &[], product_families: &[], function_families: &[], claim_value: "stage3.registers.output.claim_expr" },
 ];
 
 pub const STAGE3_PROGRAM: Stage3VerifierProgramPlan = Stage3VerifierProgramPlan {

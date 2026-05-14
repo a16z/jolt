@@ -920,9 +920,11 @@ fn jolt_stage6_protocol_defines_bytecode_booleanity_and_virtualization_flow() {
     assert!(text.contains("sym_name = \"stage6.ram_ra_virtual.output.claim\""));
     assert!(text.contains("sym_name = \"stage6.instruction_ra_virtual.output.claim\""));
     assert!(text.contains("sym_name = \"stage6.inc_claim_reduction.output.claim\""));
+    assert!(text.contains("sym_name = \"stage6.hamming_booleanity.output.family\""));
     assert!(text.contains("sym_name = \"stage6.ram_ra_virtual.output.family\""));
     assert!(text.contains("sym_name = \"stage6.instruction_ra_virtual.output.family\""));
     assert!(text.contains("sym_name = \"stage6.inc_claim_reduction.output.family\""));
+    assert!(text.contains("\"piop.sumcheck_output_function_family\""));
     assert!(text.contains("\"piop.sumcheck_output_product_family\""));
     assert!(text.contains("\"piop.sumcheck_output_eval_family\""));
     assert!(text.contains("sym_name = \"stage6.inc_claim_reduction.output.eq.RdIncStage5\""));
@@ -1506,7 +1508,7 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(prover_program.transcript_absorb_bytes.is_empty());
     assert_eq!(prover_program.opening_inputs.len(), 91);
     assert!(prover_program.field_exprs.len() > 150);
-    assert_eq!(prover_program.field_constants.len(), 2);
+    assert_eq!(prover_program.field_constants.len(), 3);
     assert!(prover_program.opening_equalities.is_empty());
     assert_eq!(prover_program.claims.len(), 6);
     assert_eq!(prover_program.drivers.len(), 1);
@@ -1527,7 +1529,30 @@ fn stage6_rust_targets_extract_and_compile() {
     assert_eq!(verifier_program.output_values.len(), 7);
     assert_eq!(verifier_program.output_families.len(), 1);
     assert_eq!(verifier_program.output_product_families.len(), 2);
+    assert_eq!(verifier_program.output_function_families.len(), 1);
     assert_eq!(verifier_program.output_claims.len(), 4);
+    let hamming_function_families = verifier_program
+        .output_function_families
+        .iter()
+        .filter(|family| family.symbol == "stage6.hamming_booleanity.output.family")
+        .collect::<Vec<_>>();
+    assert_eq!(hamming_function_families.len(), 1);
+    let hamming_function_family = hamming_function_families[0];
+    assert_eq!(
+        hamming_function_family.gamma,
+        "stage6.hamming_booleanity.output.gamma_identity"
+    );
+    assert_eq!(hamming_function_family.terms.len(), 1);
+    assert_eq!(hamming_function_family.terms[0].gamma_power_offset, 0);
+    assert_eq!(hamming_function_family.terms[0].function, "boolean_zero");
+    assert_eq!(
+        hamming_function_family.terms[0].eval,
+        "stage6.hamming_booleanity.eval.HammingWeight"
+    );
+    assert_eq!(
+        hamming_function_family.terms[0].factors,
+        vec!["stage6.hamming_booleanity.output.eq.LookupOutput".to_owned()]
+    );
     let ram_product_families = verifier_program
         .output_product_families
         .iter()
@@ -1624,6 +1649,19 @@ fn stage6_rust_targets_extract_and_compile() {
     assert_eq!(inc_claims.len(), 1);
     assert_eq!(inc_claims[0].eval_families, vec![inc_family.clone()]);
     assert!(inc_claims[0].product_families.is_empty());
+    assert!(inc_claims[0].function_families.is_empty());
+    let hamming_claims = verifier_program
+        .output_claims
+        .iter()
+        .filter(|claim| claim.claim_value == "stage6.hamming_booleanity.output.family")
+        .collect::<Vec<_>>();
+    assert_eq!(hamming_claims.len(), 1);
+    assert!(hamming_claims[0].eval_families.is_empty());
+    assert!(hamming_claims[0].product_families.is_empty());
+    assert_eq!(
+        hamming_claims[0].function_families,
+        vec![hamming_function_family.clone()]
+    );
     let ram_ra_claims = verifier_program
         .output_claims
         .iter()
@@ -1635,6 +1673,7 @@ fn stage6_rust_targets_extract_and_compile() {
         ram_ra_claims[0].product_families,
         vec![ram_product_family.clone()]
     );
+    assert!(ram_ra_claims[0].function_families.is_empty());
     let instruction_ra_claims = verifier_program
         .output_claims
         .iter()
@@ -1646,6 +1685,7 @@ fn stage6_rust_targets_extract_and_compile() {
         instruction_ra_claims[0].product_families,
         vec![instruction_product_family.clone()]
     );
+    assert!(instruction_ra_claims[0].function_families.is_empty());
     assert_eq!(prover_program.point_zeros.len(), 1);
     assert_eq!(
         prover_program.point_slices.len(),
@@ -1751,6 +1791,12 @@ fn stage6_rust_targets_extract_and_compile() {
         .contains("Stage6SumcheckOutputClaimPlan"));
     assert!(verifier_source
         .source
+        .contains("SumcheckOutputFunctionFamilyPlan"));
+    assert!(verifier_source
+        .source
+        .contains("STAGE6_SUMCHECK_OUTPUT_CLAIM_0_FUNCTION_FAMILIES"));
+    assert!(verifier_source
+        .source
         .contains("STAGE6_SUMCHECK_OUTPUT_CLAIM_3_FAMILIES"));
     assert!(verifier_source
         .source
@@ -1763,6 +1809,9 @@ fn stage6_rust_targets_extract_and_compile() {
         .contains("STAGE6_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILIES"));
     assert!(verifier_source
         .source
+        .contains("stage6.hamming_booleanity.output.family"));
+    assert!(verifier_source
+        .source
         .contains("stage6.ram_ra_virtual.output.family"));
     assert!(verifier_source
         .source
@@ -1770,6 +1819,18 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(verifier_source
         .source
         .contains("stage6.inc_claim_reduction.output.eq.RdIncStage5"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.hamming_booleanity.output.square.HammingWeight"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.hamming_booleanity.output.neg.HammingWeight"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.hamming_booleanity.output.boolean"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.hamming_booleanity.output.claim_expr"));
     assert!(!verifier_source
         .source
         .contains("stage6.ram_ra_virtual.output.product.RamRa"));

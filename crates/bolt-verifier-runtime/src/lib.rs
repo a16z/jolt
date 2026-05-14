@@ -393,11 +393,32 @@ pub struct SumcheckOutputProductFamilyPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SumcheckOutputFunctionKind {
+    BooleanZero,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SumcheckOutputFunctionFamilyTermPlan {
+    pub gamma_power_offset: usize,
+    pub function: SumcheckOutputFunctionKind,
+    pub eval: &'static str,
+    pub factors: &'static [&'static str],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SumcheckOutputFunctionFamilyPlan {
+    pub symbol: &'static str,
+    pub gamma: &'static str,
+    pub terms: &'static [SumcheckOutputFunctionFamilyTermPlan],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SumcheckOutputClaimPlan<R: ProtocolRelation> {
     pub relation: R,
     pub polynomial_evals: &'static [StructuredPolynomialEvalPlan],
     pub eval_families: &'static [SumcheckOutputEvalFamilyPlan],
     pub product_families: &'static [SumcheckOutputProductFamilyPlan],
+    pub function_families: &'static [SumcheckOutputFunctionFamilyPlan],
     pub claim_value: &'static str,
 }
 
@@ -1213,6 +1234,10 @@ pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
         let value = evaluate_sumcheck_output_eval_family(family, store, &scratch)?;
         scratch.insert(family.symbol, value);
     }
+    for family in plan.function_families {
+        let value = evaluate_sumcheck_output_function_family(family, store, &scratch)?;
+        scratch.insert(family.symbol, value);
+    }
     for family in plan.product_families {
         let value = evaluate_sumcheck_output_product_family(family, store, &scratch)?;
         scratch.insert(family.symbol, value);
@@ -1320,6 +1345,40 @@ fn evaluate_sumcheck_output_product_family(
         result += product;
     }
     Ok(result)
+}
+
+fn evaluate_sumcheck_output_function_family(
+    family: &SumcheckOutputFunctionFamilyPlan,
+    store: &ValueStore<Fr>,
+    scratch: &ScratchScalars,
+) -> Result<Fr, RuntimePlanError> {
+    let gamma = scratch
+        .scalar_or(store, family.gamma)
+        .ok_or(RuntimePlanError::MissingValue {
+            symbol: family.gamma,
+        })?;
+    let mut result = Fr::from_u64(0);
+    for term in family.terms {
+        let eval = scratch
+            .scalar_or(store, term.eval)
+            .ok_or(RuntimePlanError::MissingValue { symbol: term.eval })?;
+        let mut product = pow_field(gamma, term.gamma_power_offset)
+            * evaluate_output_function(term.function, eval);
+        for &symbol in term.factors {
+            let value = scratch
+                .scalar_or(store, symbol)
+                .ok_or(RuntimePlanError::MissingValue { symbol })?;
+            product *= value;
+        }
+        result += product;
+    }
+    Ok(result)
+}
+
+fn evaluate_output_function(function: SumcheckOutputFunctionKind, eval: Fr) -> Fr {
+    match function {
+        SumcheckOutputFunctionKind::BooleanZero => eval * eval - eval,
+    }
 }
 
 fn evaluate_structured_polynomial_point(

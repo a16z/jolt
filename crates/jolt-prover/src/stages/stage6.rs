@@ -132,6 +132,7 @@ pub const STAGE6_OPENING_INPUTS: &[Stage6OpeningInputPlan] = &[
 
 pub const STAGE6_FIELD_CONSTANTS: &[Stage6FieldConstantPlan] = &[
     Stage6FieldConstantPlan { symbol: "stage6.zero", field: "bn254_fr", value: 0 },
+    Stage6FieldConstantPlan { symbol: "stage6.hamming_booleanity.output.gamma_identity", field: "bn254_fr", value: 1 },
     Stage6FieldConstantPlan { symbol: "stage6.ram_ra_virtual.output.gamma_identity", field: "bn254_fr", value: 1 },
 ];
 

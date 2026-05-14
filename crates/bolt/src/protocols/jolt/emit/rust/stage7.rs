@@ -10,12 +10,14 @@ use melior::ir::operation::{OperationLike, OperationResult};
 use melior::ir::{Attribute, OperationRef};
 
 use super::output_claims::{
-    parse_output_eval_family_plan, parse_output_product_family_plan, FieldExprDependencies,
+    parse_output_eval_family_plan, parse_output_function_family_plan,
+    parse_output_product_family_plan, FieldExprDependencies,
     StructuredPolynomialEvalPlan as Stage7StructuredPolynomialEvalPlan,
     StructuredPolynomialPointPlan as Stage7StructuredPolynomialPointPlan,
     SumcheckOutputClaimAst as Stage7SumcheckOutputClaimAst,
     SumcheckOutputClaimPlan as Stage7SumcheckOutputClaimPlan,
     SumcheckOutputEvalFamilyPlan as Stage7SumcheckOutputEvalFamilyPlan,
+    SumcheckOutputFunctionFamilyPlan as Stage7SumcheckOutputFunctionFamilyPlan,
     SumcheckOutputProductFamilyPlan as Stage7SumcheckOutputProductFamilyPlan,
 };
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
@@ -41,6 +43,7 @@ pub struct Stage7CpuProgram {
     pub output_values: Vec<Stage7StructuredPolynomialEvalPlan>,
     pub output_families: Vec<Stage7SumcheckOutputEvalFamilyPlan>,
     pub output_product_families: Vec<Stage7SumcheckOutputProductFamilyPlan>,
+    pub output_function_families: Vec<Stage7SumcheckOutputFunctionFamilyPlan>,
     pub output_claims: Vec<Stage7SumcheckOutputClaimPlan>,
     pub point_zeros: Vec<Stage7PointZeroPlan>,
     pub point_slices: Vec<Stage7PointSlicePlan>,
@@ -279,6 +282,7 @@ impl Stage7CpuProgram {
         let mut output_values = Vec::new();
         let mut output_families = Vec::new();
         let mut output_product_families = Vec::new();
+        let mut output_function_families = Vec::new();
         let mut output_claim_asts = Vec::new();
         let mut point_zeros = Vec::new();
         let mut point_slices = Vec::new();
@@ -516,6 +520,9 @@ impl Stage7CpuProgram {
                 "cpu.sumcheck_output_product_family" => {
                     output_product_families.push(parse_output_product_family_plan("stage7", op)?);
                 }
+                "cpu.sumcheck_output_function_family" => {
+                    output_function_families.push(parse_output_function_family_plan("stage7", op)?);
+                }
                 "cpu.sumcheck_output_claim" => {
                     output_claim_asts.push(Stage7SumcheckOutputClaimAst {
                         relation: symbol_attr(op, "relation")?,
@@ -600,6 +607,7 @@ impl Stage7CpuProgram {
                 &output_values,
                 &output_families,
                 &output_product_families,
+                &output_function_families,
                 &field_exprs,
                 output_claim_asts,
             )?
@@ -625,6 +633,7 @@ impl Stage7CpuProgram {
             output_values,
             output_families,
             output_product_families,
+            output_function_families,
             output_claims,
             point_zeros,
             point_slices,
@@ -737,6 +746,11 @@ impl Stage7CpuProgram {
         ));
         values.extend(symbols(
             self.output_product_families
+                .iter()
+                .map(|family| &family.symbol),
+        ));
+        values.extend(symbols(
+            self.output_function_families
                 .iter()
                 .map(|family| &family.symbol),
         ));
@@ -947,6 +961,7 @@ impl Stage7CpuProgram {
                 output_values: &self.output_values,
                 output_families: &self.output_families,
                 output_product_families: &self.output_product_families,
+                output_function_families: &self.output_function_families,
                 output_claims: &self.output_claims,
                 relations: &relations,
                 field_values: &field_values,

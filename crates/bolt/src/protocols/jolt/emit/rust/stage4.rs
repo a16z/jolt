@@ -571,6 +571,7 @@ impl Stage4CpuProgram {
                 &output_values,
                 &[],
                 &[],
+                &[],
                 &field_exprs,
                 output_claim_asts,
             )?
@@ -905,6 +906,7 @@ impl Stage4CpuProgram {
                 output_values: &self.output_values,
                 output_families: &[],
                 output_product_families: &[],
+                output_function_families: &[],
                 output_claims: &self.output_claims,
                 relations: &relations,
                 field_values: &field_values,

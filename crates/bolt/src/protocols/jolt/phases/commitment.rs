@@ -995,6 +995,29 @@ pub fn lower_compute_to_cpu<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
+            "compute.sumcheck_output_function_family" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "term_gamma_power_offsets",
+                        "term_functions",
+                        "term_factor_counts",
+                        "evals",
+                        "factors",
+                    ],
+                )?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.sumcheck_output_function_family",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!cpu.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
             "compute.sumcheck_output_claim" => {
                 let operands = lowered_operands(op, &value_map)?;
                 let symbol = string_attr(op, "sym_name")?;

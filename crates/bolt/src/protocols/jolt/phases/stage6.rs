@@ -12,9 +12,10 @@ use super::super::params::JoltProtocolParams;
 use super::lowering::{lower_party_to_compute, transcript_squeeze_protocol_result_type};
 use super::sumcheck_output::{
     append_structured_polynomial_eval, append_sumcheck_output_claim,
-    append_sumcheck_output_eval_family, append_sumcheck_output_product_family, OutputClaimSpec,
-    OutputEvalFamilySpec, OutputProductFamilySpec, OutputProductFamilyTermSpec,
-    StructuredPolynomialPointSpec, StructuredPolynomialSpec,
+    append_sumcheck_output_eval_family, append_sumcheck_output_function_family,
+    append_sumcheck_output_product_family, OutputClaimSpec, OutputEvalFamilySpec,
+    OutputFunctionFamilySpec, OutputFunctionFamilyTermSpec, OutputProductFamilySpec,
+    OutputProductFamilyTermSpec, StructuredPolynomialPointSpec, StructuredPolynomialSpec,
 };
 
 const BOOLEANITY_DEGREE: usize = 3;
@@ -1768,32 +1769,30 @@ fn append_stage6_hamming_output_claim<'c, 'a>(
         hamming.0,
         inputs.hamming_lookup_output.point,
     )?;
-    let hamming_square = append_field_pow(
+    let gamma_identity = append_field_one(
         context,
         module,
-        "stage6.hamming_booleanity.output.square.HammingWeight",
-        output_evals.hamming_weight,
-        2,
+        "stage6.hamming_booleanity.output.gamma_identity",
     )?;
-    let neg_hamming = append_field_neg(
+    let claim = append_sumcheck_output_function_family(
         context,
         module,
-        "stage6.hamming_booleanity.output.neg.HammingWeight",
-        output_evals.hamming_weight,
-    )?;
-    let hamming_boolean = append_field_add(
-        context,
-        module,
-        "stage6.hamming_booleanity.output.boolean",
-        hamming_square,
-        neg_hamming,
-    )?;
-    let claim = append_field_mul(
-        context,
-        module,
-        "stage6.hamming_booleanity.output.claim_expr",
-        hamming_boolean,
-        eq_lookup,
+        OutputFunctionFamilySpec {
+            symbol: "stage6.hamming_booleanity.output.family",
+        },
+        gamma_identity,
+        &[OutputFunctionFamilyTermSpec {
+            gamma_power_offset: 0,
+            function: "boolean_zero",
+            eval: (
+                "stage6.hamming_booleanity.eval.HammingWeight".to_owned(),
+                output_evals.hamming_weight,
+            ),
+            factors: vec![(
+                "stage6.hamming_booleanity.output.eq.LookupOutput".to_owned(),
+                eq_lookup,
+            )],
+        }],
     )?;
     append_sumcheck_output_claim(
         context,
@@ -2167,23 +2166,6 @@ fn append_field_mul<'c, 'a>(
     rhs: Value<'c, 'a>,
 ) -> Result<Value<'c, 'a>, MlirError> {
     append_field_binary(context, module, "field.mul", symbol, lhs, rhs)
-}
-
-fn append_field_neg<'c, 'a>(
-    context: &'c MeliorContext,
-    module: &'a BoltModule<'c, Protocol>,
-    symbol: &str,
-    value: Value<'c, 'a>,
-) -> Result<Value<'c, 'a>, MlirError> {
-    let op = context.append_typed_op(
-        module,
-        "field.neg",
-        Some(symbol),
-        &[],
-        &[value],
-        &["!field.scalar"],
-    )?;
-    first_result(op, "field.neg")
 }
 
 fn append_field_pow<'c, 'a>(

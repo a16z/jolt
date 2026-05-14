@@ -71,6 +71,18 @@ pub(crate) struct OutputProductFamilySpec<'a> {
     pub(crate) symbol: &'a str,
 }
 
+pub(crate) struct OutputFunctionFamilyTermSpec<'c, 'a> {
+    pub(crate) gamma_power_offset: usize,
+    pub(crate) function: &'static str,
+    pub(crate) eval: (String, Value<'c, 'a>),
+    pub(crate) factors: Vec<(String, Value<'c, 'a>)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct OutputFunctionFamilySpec<'a> {
+    pub(crate) symbol: &'a str,
+}
+
 pub(crate) fn append_structured_polynomial_eval<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
@@ -239,6 +251,59 @@ pub(crate) fn append_sumcheck_output_product_family<'c, 'a>(
     first_result(op, "piop.sumcheck_output_product_family")
 }
 
+pub(crate) fn append_sumcheck_output_function_family<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    spec: OutputFunctionFamilySpec<'_>,
+    gamma: Value<'c, 'a>,
+    terms: &[OutputFunctionFamilyTermSpec<'c, 'a>],
+) -> Result<Value<'c, 'a>, MlirError> {
+    let term_gamma_power_offsets = terms
+        .iter()
+        .map(|term| term.gamma_power_offset)
+        .collect::<Vec<_>>();
+    let term_factor_counts = terms
+        .iter()
+        .map(|term| term.factors.len())
+        .collect::<Vec<_>>();
+    let mut operands =
+        Vec::with_capacity(1 + terms.len() + term_factor_counts.iter().sum::<usize>());
+    operands.push(gamma);
+    operands.extend(terms.iter().map(|term| term.eval.1));
+    operands.extend(
+        terms
+            .iter()
+            .flat_map(|term| term.factors.iter().map(|(_, value)| *value)),
+    );
+    let functions = terms.iter().map(|term| term.function).collect::<Vec<_>>();
+    let eval_symbols = terms
+        .iter()
+        .map(|term| term.eval.0.as_str())
+        .collect::<Vec<_>>();
+    let factor_symbols = terms
+        .iter()
+        .flat_map(|term| term.factors.iter().map(|(symbol, _)| symbol.as_str()))
+        .collect::<Vec<_>>();
+    let op = context.append_typed_op(
+        module,
+        "piop.sumcheck_output_function_family",
+        Some(spec.symbol),
+        &[
+            (
+                "term_gamma_power_offsets",
+                &usize_array_attr(&term_gamma_power_offsets),
+            ),
+            ("term_functions", &string_array_attr(&functions)),
+            ("term_factor_counts", &usize_array_attr(&term_factor_counts)),
+            ("evals", &symbol_array_attr(&eval_symbols)),
+            ("factors", &symbol_array_attr(&factor_symbols)),
+        ],
+        &operands,
+        &["!field.scalar"],
+    )?;
+    first_result(op, "piop.sumcheck_output_function_family")
+}
+
 fn first_result<'c, 'a>(
     operation: melior::ir::operation::OperationRef<'c, 'a>,
     operation_name: &str,
@@ -265,6 +330,15 @@ fn symbol_array_attr(values: &[&str]) -> String {
     let values = values
         .iter()
         .map(|value| format!("@{value}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{values}]")
+}
+
+fn string_array_attr(values: &[&str]) -> String {
+    let values = values
+        .iter()
+        .map(|value| format!("\"{value}\""))
         .collect::<Vec<_>>()
         .join(", ");
     format!("[{values}]")

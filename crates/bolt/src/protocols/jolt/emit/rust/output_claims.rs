@@ -61,11 +61,27 @@ pub struct SumcheckOutputProductFamilyPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SumcheckOutputFunctionFamilyTermPlan {
+    pub gamma_power_offset: usize,
+    pub function: String,
+    pub eval: String,
+    pub factors: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SumcheckOutputFunctionFamilyPlan {
+    pub symbol: String,
+    pub gamma: String,
+    pub terms: Vec<SumcheckOutputFunctionFamilyTermPlan>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SumcheckOutputClaimPlan {
     pub relation: String,
     pub polynomial_evals: Vec<StructuredPolynomialEvalPlan>,
     pub eval_families: Vec<SumcheckOutputEvalFamilyPlan>,
     pub product_families: Vec<SumcheckOutputProductFamilyPlan>,
+    pub function_families: Vec<SumcheckOutputFunctionFamilyPlan>,
     pub claim_value: String,
 }
 
@@ -229,6 +245,79 @@ pub fn parse_output_product_family_plan(
     })
 }
 
+pub fn parse_output_function_family_plan(
+    stage: &str,
+    operation: OperationRef<'_, '_>,
+) -> Result<SumcheckOutputFunctionFamilyPlan, EmitError> {
+    let symbol = string_attr(operation, "sym_name")?;
+    let evals = symbol_array_attr(operation, "evals")?;
+    let factors = symbol_array_attr(operation, "factors")?;
+    let term_gamma_power_offsets = int_array_attr(operation, "term_gamma_power_offsets")?;
+    let term_functions = string_array_attr(operation, "term_functions")?;
+    let term_factor_counts = int_array_attr(operation, "term_factor_counts")?;
+    verify_count(
+        "output function family term functions",
+        &symbol,
+        term_gamma_power_offsets.len(),
+        term_functions.len(),
+    )?;
+    verify_count(
+        "output function family term factor counts",
+        &symbol,
+        term_gamma_power_offsets.len(),
+        term_factor_counts.len(),
+    )?;
+    verify_count(
+        "output function family evals",
+        &symbol,
+        term_gamma_power_offsets.len(),
+        evals.len(),
+    )?;
+    verify_count(
+        "output function family factors",
+        &symbol,
+        term_factor_counts.iter().sum(),
+        factors.len(),
+    )?;
+    let gamma = operand_symbol(operation, 0)?;
+    let eval_end = 1 + evals.len();
+    let eval_operands = operand_symbols(operation, 1, eval_end)?;
+    if evals != eval_operands {
+        return Err(EmitError::new(format!(
+            "{stage} output function family @{symbol} evals do not match operands"
+        )));
+    }
+    let factor_operands = operand_symbols(operation, eval_end, operation.operand_count())?;
+    if factors != factor_operands {
+        return Err(EmitError::new(format!(
+            "{stage} output function family @{symbol} factors do not match operands"
+        )));
+    }
+    let mut factor_offset = 0;
+    let mut terms = Vec::with_capacity(term_gamma_power_offsets.len());
+    for (((gamma_power_offset, function), eval), factor_count) in term_gamma_power_offsets
+        .into_iter()
+        .zip(term_functions)
+        .zip(evals)
+        .zip(term_factor_counts)
+    {
+        require_output_function(stage, &symbol, &function)?;
+        let factor_end = factor_offset + factor_count;
+        terms.push(SumcheckOutputFunctionFamilyTermPlan {
+            gamma_power_offset,
+            function,
+            eval,
+            factors: factors[factor_offset..factor_end].to_vec(),
+        });
+        factor_offset = factor_end;
+    }
+    Ok(SumcheckOutputFunctionFamilyPlan {
+        symbol,
+        gamma,
+        terms,
+    })
+}
+
 pub trait FieldExprDependencies {
     fn symbol(&self) -> &str;
     fn operands(&self) -> &[String];
@@ -239,6 +328,7 @@ pub fn resolve_output_claims<T>(
     output_values: &[StructuredPolynomialEvalPlan],
     output_families: &[SumcheckOutputEvalFamilyPlan],
     output_product_families: &[SumcheckOutputProductFamilyPlan],
+    output_function_families: &[SumcheckOutputFunctionFamilyPlan],
     field_exprs: &[T],
     claim_asts: Vec<SumcheckOutputClaimAst>,
 ) -> Result<Vec<SumcheckOutputClaimPlan>, EmitError>
@@ -254,6 +344,10 @@ where
         .map(|family| (family.symbol.as_str(), family))
         .collect();
     let output_product_families_by_symbol: BTreeMap<_, _> = output_product_families
+        .iter()
+        .map(|family| (family.symbol.as_str(), family))
+        .collect();
+    let output_function_families_by_symbol: BTreeMap<_, _> = output_function_families
         .iter()
         .map(|family| (family.symbol.as_str(), family))
         .collect();
@@ -295,17 +389,23 @@ where
             let family_symbols = output_family_dependency_closure(
                 &output_families_by_symbol,
                 &output_product_families_by_symbol,
+                &output_function_families_by_symbol,
                 &field_exprs_by_symbol,
                 std::iter::once(claim.claim_value.as_str()),
             );
             let eval_families = output_families
                 .iter()
-                .filter(|family| family_symbols.eval_families.contains(&family.symbol))
+                .filter(|family| family_symbols.eval.contains(&family.symbol))
                 .cloned()
                 .collect();
             let product_families = output_product_families
                 .iter()
-                .filter(|family| family_symbols.product_families.contains(&family.symbol))
+                .filter(|family| family_symbols.product.contains(&family.symbol))
+                .cloned()
+                .collect();
+            let function_families = output_function_families
+                .iter()
+                .filter(|family| family_symbols.function.contains(&family.symbol))
                 .cloned()
                 .collect();
             Ok(SumcheckOutputClaimPlan {
@@ -313,6 +413,7 @@ where
                 polynomial_evals,
                 eval_families,
                 product_families,
+                function_families,
                 claim_value: claim.claim_value,
             })
         })
@@ -320,13 +421,15 @@ where
 }
 
 struct OutputFamilyDependencyClosure {
-    eval_families: BTreeSet<String>,
-    product_families: BTreeSet<String>,
+    eval: BTreeSet<String>,
+    product: BTreeSet<String>,
+    function: BTreeSet<String>,
 }
 
 fn output_family_dependency_closure<'a, T>(
     output_families_by_symbol: &BTreeMap<&str, &SumcheckOutputEvalFamilyPlan>,
     output_product_families_by_symbol: &BTreeMap<&str, &SumcheckOutputProductFamilyPlan>,
+    output_function_families_by_symbol: &BTreeMap<&str, &SumcheckOutputFunctionFamilyPlan>,
     field_exprs_by_symbol: &BTreeMap<&str, &T>,
     roots: impl Iterator<Item = &'a str>,
 ) -> OutputFamilyDependencyClosure
@@ -336,6 +439,7 @@ where
     let mut visited = BTreeSet::new();
     let mut eval_families = BTreeSet::new();
     let mut product_families = BTreeSet::new();
+    let mut function_families = BTreeSet::new();
     let mut stack = roots.map(str::to_owned).collect::<Vec<_>>();
     while let Some(symbol) = stack.pop() {
         if !visited.insert(symbol.clone()) {
@@ -361,13 +465,22 @@ where
                 stack.extend(term.factors.iter().cloned());
             }
         }
+        if let Some(family) = output_function_families_by_symbol.get(symbol.as_str()) {
+            let _inserted = function_families.insert(family.symbol.clone());
+            stack.push(family.gamma.clone());
+            for term in &family.terms {
+                stack.push(term.eval.clone());
+                stack.extend(term.factors.iter().cloned());
+            }
+        }
         if let Some(expr) = field_exprs_by_symbol.get(symbol.as_str()) {
             stack.extend(expr.operands().iter().cloned());
         }
     }
     OutputFamilyDependencyClosure {
-        eval_families,
-        product_families,
+        eval: eval_families,
+        product: product_families,
+        function: function_families,
     }
 }
 
@@ -396,6 +509,7 @@ pub struct OutputClaimVerification<'a> {
     pub output_values: &'a [StructuredPolynomialEvalPlan],
     pub output_families: &'a [SumcheckOutputEvalFamilyPlan],
     pub output_product_families: &'a [SumcheckOutputProductFamilyPlan],
+    pub output_function_families: &'a [SumcheckOutputFunctionFamilyPlan],
     pub output_claims: &'a [SumcheckOutputClaimPlan],
     pub relations: &'a BTreeSet<String>,
     pub field_values: &'a BTreeSet<String>,
@@ -410,6 +524,7 @@ pub fn verify_output_claims(
         output_values,
         output_families,
         output_product_families,
+        output_function_families,
         output_claims,
         relations,
         field_values,
@@ -512,6 +627,31 @@ pub fn verify_output_claims(
             }
         }
     }
+    for family in output_function_families {
+        if !field_values.contains(&family.gamma) {
+            return Err(EmitError::new(format!(
+                "{stage} output function family @{} references missing gamma @{}",
+                family.symbol, family.gamma
+            )));
+        }
+        for term in &family.terms {
+            require_output_function(stage, &family.symbol, &term.function)?;
+            if !field_values.contains(&term.eval) {
+                return Err(EmitError::new(format!(
+                    "{stage} output function family @{} references missing eval @{}",
+                    family.symbol, term.eval
+                )));
+            }
+            for factor in &term.factors {
+                if !field_values.contains(factor) {
+                    return Err(EmitError::new(format!(
+                        "{stage} output function family @{} references missing factor @{}",
+                        family.symbol, factor
+                    )));
+                }
+            }
+        }
+    }
     for claim in output_claims {
         if !relations.contains(&claim.relation) {
             return Err(EmitError::new(format!(
@@ -563,8 +703,10 @@ pub fn emit_verifier_output_claim_constants(
         );
         let eval_families = emit_eval_family_constants(&mut source, stage_type, index, claim);
         let product_families = emit_product_family_constants(&mut source, stage_type, index, claim);
+        let function_families =
+            emit_function_family_constants(&mut source, stage_type, index, claim)?;
         claims.push(format!(
-            "    {stage_type}SumcheckOutputClaimPlan {{ relation: {}, polynomial_evals: {values_name}, eval_families: {eval_families}, product_families: {product_families}, claim_value: {} }},",
+            "    {stage_type}SumcheckOutputClaimPlan {{ relation: {}, polynomial_evals: {values_name}, eval_families: {eval_families}, product_families: {product_families}, function_families: {function_families}, claim_value: {} }},",
             super::plan_tokens::role_relation_kind_expr(stage_type, role, &claim.relation)?,
             rust_str(&claim.claim_value)
         ));
@@ -723,6 +865,82 @@ fn emit_product_family_constants(
         ),
     );
     families_name
+}
+
+fn emit_function_family_constants(
+    source: &mut String,
+    stage_type: &str,
+    claim_index: usize,
+    claim: &SumcheckOutputClaimPlan,
+) -> Result<String, EmitError> {
+    if claim.function_families.is_empty() {
+        return Ok("&[]".to_owned());
+    }
+    let upper_stage = stage_type.to_ascii_uppercase();
+    let mut family_rows = Vec::new();
+    for (family_index, family) in claim.function_families.iter().enumerate() {
+        let prefix = format!(
+            "{upper_stage}_SUMCHECK_OUTPUT_CLAIM_{claim_index}_FUNCTION_FAMILY_{family_index}"
+        );
+        let mut term_rows = Vec::new();
+        for (term_index, term) in family.terms.iter().enumerate() {
+            let factors_name = format!("{prefix}_TERM_{term_index}_FACTORS");
+            let factors = rust_str_array(&term.factors);
+            push_format(
+                source,
+                format_args!("pub const {factors_name}: &[&str] = &[{factors}];\n"),
+            );
+            term_rows.push(format!(
+                "    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan {{ gamma_power_offset: {}, function: {}, eval: {}, factors: {factors_name} }},",
+                term.gamma_power_offset,
+                output_function_kind_expr(&term.function)?,
+                rust_str(&term.eval)
+            ));
+        }
+        let terms_name = format!("{prefix}_TERMS");
+        let terms = term_rows.join("\n");
+        push_format(
+            source,
+            format_args!(
+                "pub const {terms_name}: &[bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan] = &[\n{terms}\n];\n"
+            ),
+        );
+        family_rows.push(format!(
+            "    bolt_verifier_runtime::SumcheckOutputFunctionFamilyPlan {{ symbol: {}, gamma: {}, terms: {terms_name} }},",
+            rust_str(&family.symbol),
+            rust_str(&family.gamma),
+        ));
+    }
+    let families_name =
+        format!("{upper_stage}_SUMCHECK_OUTPUT_CLAIM_{claim_index}_FUNCTION_FAMILIES");
+    let families = family_rows.join("\n");
+    push_format(
+        source,
+        format_args!(
+            "pub const {families_name}: &[bolt_verifier_runtime::SumcheckOutputFunctionFamilyPlan] = &[\n{families}\n];\n\n"
+        ),
+    );
+    Ok(families_name)
+}
+
+fn output_function_kind_expr(function: &str) -> Result<&'static str, EmitError> {
+    require_output_function("verifier output", "generated constants", function)?;
+    match function {
+        "boolean_zero" => Ok("bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero"),
+        _ => Err(EmitError::new(format!(
+            "unsupported output function `{function}`"
+        ))),
+    }
+}
+
+fn require_output_function(stage: &str, family: &str, function: &str) -> Result<(), EmitError> {
+    if function == "boolean_zero" {
+        Ok(())
+    } else {
+        Err(EmitError::new(format!(
+            "{stage} output function family @{family} has unsupported function `{function}`"
+        )))
+    }
 }
 
 fn field_expr_dependency_closure<'a, T>(
@@ -923,6 +1141,34 @@ fn parse_symbol_array(attribute: &str) -> Option<Vec<String>> {
         .collect()
 }
 
+fn string_array_attr(
+    operation: OperationRef<'_, '_>,
+    attr: &str,
+) -> Result<Vec<String>, EmitError> {
+    let attribute = operation
+        .attribute(attr)
+        .map(|attribute| attribute.to_string())
+        .ok()
+        .ok_or_else(|| attr_error(operation, attr, "string array"))?;
+    parse_string_array(&attribute).ok_or_else(|| attr_error(operation, attr, "string array"))
+}
+
+fn parse_string_array(attribute: &str) -> Option<Vec<String>> {
+    let inner = attribute.strip_prefix('[')?.strip_suffix(']')?.trim();
+    if inner.is_empty() {
+        return Some(Vec::new());
+    }
+    inner
+        .split(',')
+        .map(|item| {
+            item.trim()
+                .strip_prefix('"')?
+                .strip_suffix('"')
+                .map(ToOwned::to_owned)
+        })
+        .collect()
+}
+
 fn int_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<usize, EmitError> {
     operation
         .attribute(attr)
@@ -1000,7 +1246,8 @@ mod tests {
     use super::{
         resolve_output_claims, FieldExprDependencies, SumcheckOutputClaimAst,
         SumcheckOutputEvalFamilyItemTermPlan, SumcheckOutputEvalFamilyPlan,
-        SumcheckOutputEvalFamilySharedTermPlan, SumcheckOutputProductFamilyPlan,
+        SumcheckOutputEvalFamilySharedTermPlan, SumcheckOutputFunctionFamilyPlan,
+        SumcheckOutputFunctionFamilyTermPlan, SumcheckOutputProductFamilyPlan,
         SumcheckOutputProductFamilyTermPlan,
     };
 
@@ -1067,6 +1314,7 @@ mod tests {
             &[],
             &[inner_family, outer_family],
             &[],
+            &[],
             &field_exprs,
             claim_asts,
         )?;
@@ -1080,6 +1328,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(family_symbols, vec!["inner.family", "outer.family"]);
         assert!(claim.product_families.is_empty());
+        assert!(claim.function_families.is_empty());
         Ok(())
     }
 
@@ -1116,6 +1365,7 @@ mod tests {
             &[],
             &[],
             &[product_family],
+            &[],
             &field_exprs,
             claim_asts,
         )?;
@@ -1129,6 +1379,59 @@ mod tests {
             .map(|family| family.symbol.as_str())
             .collect::<Vec<_>>();
         assert_eq!(family_symbols, vec!["product.family"]);
+        assert!(claim.function_families.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn resolves_function_families_reachable_through_field_expressions() -> Result<(), EmitError> {
+        let function_family = SumcheckOutputFunctionFamilyPlan {
+            symbol: "function.family".to_owned(),
+            gamma: "function.gamma".to_owned(),
+            terms: vec![SumcheckOutputFunctionFamilyTermPlan {
+                gamma_power_offset: 0,
+                function: "boolean_zero".to_owned(),
+                eval: "function.eval".to_owned(),
+                factors: vec!["function.factor.expr".to_owned()],
+            }],
+        };
+        let field_exprs = vec![
+            TestFieldExpr {
+                symbol: "claim.expr".to_owned(),
+                operands: vec!["function.family".to_owned()],
+            },
+            TestFieldExpr {
+                symbol: "function.factor.expr".to_owned(),
+                operands: vec!["unrelated.scalar".to_owned()],
+            },
+        ];
+        let claim_asts = vec![SumcheckOutputClaimAst {
+            relation: "relation".to_owned(),
+            polynomial_evals: Vec::new(),
+            polynomial_eval_operands: Vec::new(),
+            claim_value: "claim.expr".to_owned(),
+        }];
+
+        let claims = resolve_output_claims(
+            "test",
+            &[],
+            &[],
+            &[],
+            &[function_family],
+            &field_exprs,
+            claim_asts,
+        )?;
+        let claim = claims
+            .first()
+            .ok_or_else(|| EmitError::new("missing resolved output claim"))?;
+        assert!(claim.eval_families.is_empty());
+        assert!(claim.product_families.is_empty());
+        let family_symbols = claim
+            .function_families
+            .iter()
+            .map(|family| family.symbol.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(family_symbols, vec!["function.family"]);
         Ok(())
     }
 }
