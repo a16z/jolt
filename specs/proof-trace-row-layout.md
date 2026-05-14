@@ -110,13 +110,19 @@ and 80B layouts can be compared without changing proof semantics.
   row identity remains `JoltInstructionRow` plus its canonical operation name
   and compact final tag.
 - Dense bytecode/profile indexes are local indexes. They may be stored in a row
-  for speed, but they are not persistent instruction identity.
-- `bytecode_pc` may be stored as `u32` only if construction checks
+  for speed, but they are not persistent instruction identity. Public proof code
+  should see a logical bytecode index accessor, not a public `u32` field.
+- `bytecode_pc` may be stored physically as `u32` only if construction checks
   `bytecode_preprocessing.code_size <= u32::MAX as usize`. This is a practical
-  bound for prover memory today, but it is not a semantic fact of the protocol.
-  If Jolt ever supports bytecode tables beyond `u32::MAX` entries, the row
-  layout must switch to a wider local index or reject that program before
-  proving.
+  compact-storage choice for current prover memory budgets, not a semantic fact
+  of the protocol.
+- If Jolt ever supports bytecode tables beyond `u32::MAX` entries, we should not
+  need to rewrite every proving loop. The row's physical fields should be
+  private, so the implementation can widen the local index in one storage module,
+  introduce a vector-level compact/wide trace storage enum, or materialize a
+  phase-local wide index column. The initial implementation may reject oversized
+  bytecode explicitly, but that rejection must be documented as a storage-format
+  limitation rather than an instruction-catalog or proof-system limitation.
 - `unexpanded_pc` and guest addresses must not be stored as `usize` in a fixed
   trace or bytecode layout. Use `u64` for absolute RV64 addresses, or use a
   checked narrower offset/delta with an explicit base and range check. `usize`
@@ -192,6 +198,9 @@ and 80B layouts can be compared without changing proof semantics.
       is not the bottleneck.
 - [ ] Any `u32` `bytecode_pc` or compact bytecode index has a checked
       construction path and a test for overflow/rejection.
+- [ ] Proving code does not depend directly on the physical width of
+      `bytecode_pc`. It should use an accessor/logical index type, so widening
+      the physical storage later is localized to trace construction and storage.
 - [ ] Any fixed-layout guest address field is `u64` or a checked offset/delta,
       not raw `usize`.
 
@@ -787,7 +796,35 @@ architectural address. They should not be given the same type merely because
 both contain "pc" in the name.
 
 `bytecode_pc` is not persisted instruction identity and does not need to be
-pointer-sized. Using `u32` is reasonable if the builder enforces:
+pointer-sized. It should still have a logical type that is wider than the
+initial compact storage, so public prover code does not bake in the `u32`
+choice:
+
+```rust
+#[repr(transparent)]
+pub struct BytecodeIndex(u64);
+```
+
+The compact row can store a checked `u32` and expose the logical index through
+an accessor:
+
+```rust
+#[repr(C)]
+pub struct JoltTraceRowCompact {
+    values: TraceValueSlots,
+    bytecode_pc: u32,
+    packed_meta: u32,
+}
+
+impl JoltTraceRowCompact {
+    #[inline]
+    pub fn bytecode_index(&self) -> BytecodeIndex {
+        BytecodeIndex(u64::from(self.bytecode_pc))
+    }
+}
+```
+
+Using compact `u32` storage is reasonable if the builder enforces:
 
 ```rust
 let pc = bytecode_preprocessing.get_pc(&row).ok_or(...)?;
@@ -798,6 +835,33 @@ This implies a maximum of `u32::MAX + 1` bytecode entries for that trace-row
 layout. In practice, a 4-billion-row bytecode table is far beyond current prover
 memory budgets, but the code should reject it explicitly rather than relying on
 that practical limit.
+
+If this assumption stops being true, widening should be a storage decision, not
+a semantic redesign. Two viable upgrade paths are:
+
+```rust
+#[repr(C)]
+pub struct JoltTraceRowWide {
+    values: TraceValueSlots,
+    bytecode_pc: u64,
+    packed_meta: u32,
+    // padding or additional measured hot metadata
+}
+```
+
+or a vector-level enum that chooses the layout once for the whole trace:
+
+```rust
+pub enum JoltTraceRows {
+    Compact32(Vec<JoltTraceRowCompact>),
+    Wide64(Vec<JoltTraceRowWide>),
+}
+```
+
+The enum should be at the trace-vector level, not inside each row, so ordinary
+hot loops do not pay a per-row tag. This keeps the initial compact layout agile:
+the first implementation can reject oversized bytecode, while the public API and
+proof phases are shaped so a future wide layout is a localized extension.
 
 `unexpanded_pc` is a guest RV64 address, not a local table index. The semantic
 representation is:
