@@ -334,9 +334,9 @@ pub use verifier::{
     JoltStageExecutionArtifacts, JoltStageOpeningInputValue, JoltStageProof, JoltSumcheckOutput,
     JoltVerificationArtifacts, JoltVerifierCheckpoint, JoltVerifierInputs,
     JoltVerifierProgramError, JoltVerifierProgramPlan, JoltVerifierPrograms, JoltVerifierStepPlan,
-    JoltVerifierTarget, JoltVerifierTargetPlan, JoltVerifyError, JOLT_TARGET_FULL,
-    JOLT_TARGET_THROUGH_STAGE5, JOLT_TARGET_THROUGH_STAGE6, JOLT_TARGET_THROUGH_STAGE7,
-    JOLT_VERIFIER_TARGETS, VERIFIER_PROGRAM,
+    JoltVerifierStepKind, JoltVerifierTarget, JoltVerifierTargetPlan, JoltVerifyError,
+    JOLT_TARGET_FULL, JOLT_TARGET_THROUGH_STAGE5, JOLT_TARGET_THROUGH_STAGE6,
+    JOLT_TARGET_THROUGH_STAGE7, JOLT_VERIFIER_STEPS, JOLT_VERIFIER_TARGETS, VERIFIER_PROGRAM,
 };"
     .to_owned()
 }
@@ -408,12 +408,8 @@ pub enum JoltProofSlot {
     Evaluation,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum JoltVerifierStepPlan {
-    ReceiveCommitments { slot: JoltProofSlot },
-    VerifySumcheckStage { slot: JoltProofSlot },
-    VerifyPcsOpening { slot: JoltProofSlot },
-}
+pub type JoltVerifierStepKind = bolt_verifier_runtime::VerifierProgramStepKind;
+pub type JoltVerifierStepPlan = bolt_verifier_runtime::VerifierProgramStepPlan<JoltProofSlot>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JoltVerifierCheckpoint {
@@ -423,18 +419,13 @@ pub enum JoltVerifierCheckpoint {
     AfterEvaluation,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum JoltEvaluationPolicy {
-    Skip,
-    VerifyIfPresent,
-    Required,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct JoltVerifierTarget {
-    pub checkpoint: JoltVerifierCheckpoint,
-    pub evaluation: JoltEvaluationPolicy,
-}
+pub type JoltEvaluationPolicy = bolt_verifier_runtime::VerifierEvaluationPolicy;
+pub type JoltVerifierTarget = bolt_verifier_runtime::VerifierTarget<JoltVerifierCheckpoint>;
+pub type JoltVerifierTargetPlan = bolt_verifier_runtime::VerifierTargetPlan<JoltVerifierCheckpoint>;
+pub type JoltVerifierProgramPlan =
+    bolt_verifier_runtime::VerifierProgramPlan<JoltProofSlot, JoltVerifierCheckpoint>;
+pub type JoltVerifierProgramError =
+    bolt_verifier_runtime::VerifierProgramError<JoltProofSlot, JoltVerifierTarget>;
 
 pub const JOLT_TARGET_THROUGH_STAGE5: JoltVerifierTarget = JoltVerifierTarget {
     checkpoint: JoltVerifierCheckpoint::AfterStage5,
@@ -456,126 +447,68 @@ pub const JOLT_TARGET_FULL: JoltVerifierTarget = JoltVerifierTarget {
     evaluation: JoltEvaluationPolicy::Required,
 };
 
-#[derive(Clone, Copy, Debug)]
-pub struct JoltVerifierTargetPlan {
-    pub target: JoltVerifierTarget,
-    pub steps: &'static [JoltVerifierStepPlan],
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct JoltVerifierProgramPlan {
-    pub targets: &'static [JoltVerifierTargetPlan],
-}
-
-pub const JOLT_VERIFY_THROUGH_STAGE5_STEPS: &[JoltVerifierStepPlan] = &[
-    JoltVerifierStepPlan::ReceiveCommitments {
+pub const JOLT_VERIFIER_STEPS: &[JoltVerifierStepPlan] = &[
+    JoltVerifierStepPlan {
+        kind: JoltVerifierStepKind::ReceiveCommitments,
         slot: JoltProofSlot::Commitments,
     },
-    JoltVerifierStepPlan::VerifySumcheckStage {
+    JoltVerifierStepPlan {
+        kind: JoltVerifierStepKind::VerifySumcheckStage,
         slot: JoltProofSlot::Stage1Outer,
     },
-    JoltVerifierStepPlan::VerifySumcheckStage {
+    JoltVerifierStepPlan {
+        kind: JoltVerifierStepKind::VerifySumcheckStage,
         slot: JoltProofSlot::Stage2,
     },
-    JoltVerifierStepPlan::VerifySumcheckStage {
+    JoltVerifierStepPlan {
+        kind: JoltVerifierStepKind::VerifySumcheckStage,
         slot: JoltProofSlot::Stage3,
     },
-    JoltVerifierStepPlan::VerifySumcheckStage {
+    JoltVerifierStepPlan {
+        kind: JoltVerifierStepKind::VerifySumcheckStage,
         slot: JoltProofSlot::Stage4,
     },
-    JoltVerifierStepPlan::VerifySumcheckStage {
+    JoltVerifierStepPlan {
+        kind: JoltVerifierStepKind::VerifySumcheckStage,
         slot: JoltProofSlot::Stage5,
     },
-];
-
-pub const JOLT_VERIFY_THROUGH_STAGE6_STEPS: &[JoltVerifierStepPlan] = &[
-    JoltVerifierStepPlan::ReceiveCommitments {
-        slot: JoltProofSlot::Commitments,
-    },
-    JoltVerifierStepPlan::VerifySumcheckStage {
-        slot: JoltProofSlot::Stage1Outer,
-    },
-    JoltVerifierStepPlan::VerifySumcheckStage {
-        slot: JoltProofSlot::Stage2,
-    },
-    JoltVerifierStepPlan::VerifySumcheckStage {
-        slot: JoltProofSlot::Stage3,
-    },
-    JoltVerifierStepPlan::VerifySumcheckStage {
-        slot: JoltProofSlot::Stage4,
-    },
-    JoltVerifierStepPlan::VerifySumcheckStage {
-        slot: JoltProofSlot::Stage5,
-    },
-    JoltVerifierStepPlan::VerifySumcheckStage {
+    JoltVerifierStepPlan {
+        kind: JoltVerifierStepKind::VerifySumcheckStage,
         slot: JoltProofSlot::Stage6,
     },
-];
-
-pub const JOLT_VERIFY_THROUGH_STAGE7_STEPS: &[JoltVerifierStepPlan] = &[
-    JoltVerifierStepPlan::ReceiveCommitments {
-        slot: JoltProofSlot::Commitments,
-    },
-    JoltVerifierStepPlan::VerifySumcheckStage {
-        slot: JoltProofSlot::Stage1Outer,
-    },
-    JoltVerifierStepPlan::VerifySumcheckStage {
-        slot: JoltProofSlot::Stage2,
-    },
-    JoltVerifierStepPlan::VerifySumcheckStage {
-        slot: JoltProofSlot::Stage3,
-    },
-    JoltVerifierStepPlan::VerifySumcheckStage {
-        slot: JoltProofSlot::Stage4,
-    },
-    JoltVerifierStepPlan::VerifySumcheckStage {
-        slot: JoltProofSlot::Stage5,
-    },
-    JoltVerifierStepPlan::VerifySumcheckStage {
-        slot: JoltProofSlot::Stage6,
-    },
-    JoltVerifierStepPlan::VerifySumcheckStage {
+    JoltVerifierStepPlan {
+        kind: JoltVerifierStepKind::VerifySumcheckStage,
         slot: JoltProofSlot::Stage7,
     },
-    JoltVerifierStepPlan::VerifyPcsOpening {
+    JoltVerifierStepPlan {
+        kind: JoltVerifierStepKind::VerifyPcsOpening,
         slot: JoltProofSlot::Evaluation,
     },
 ];
 
-pub const JOLT_VERIFY_FULL_STEPS: &[JoltVerifierStepPlan] = JOLT_VERIFY_THROUGH_STAGE7_STEPS;
-
 pub const JOLT_VERIFIER_TARGETS: &[JoltVerifierTargetPlan] = &[
     JoltVerifierTargetPlan {
         target: JOLT_TARGET_THROUGH_STAGE5,
-        steps: JOLT_VERIFY_THROUGH_STAGE5_STEPS,
+        step_count: 6,
     },
     JoltVerifierTargetPlan {
         target: JOLT_TARGET_THROUGH_STAGE6,
-        steps: JOLT_VERIFY_THROUGH_STAGE6_STEPS,
+        step_count: 7,
     },
     JoltVerifierTargetPlan {
         target: JOLT_TARGET_THROUGH_STAGE7,
-        steps: JOLT_VERIFY_THROUGH_STAGE7_STEPS,
+        step_count: 9,
     },
     JoltVerifierTargetPlan {
         target: JOLT_TARGET_FULL,
-        steps: JOLT_VERIFY_FULL_STEPS,
+        step_count: 9,
     },
 ];
 
 pub const VERIFIER_PROGRAM: JoltVerifierProgramPlan = JoltVerifierProgramPlan {
+    steps: JOLT_VERIFIER_STEPS,
     targets: JOLT_VERIFIER_TARGETS,
 };
-
-#[derive(Debug)]
-pub enum JoltVerifierProgramError {
-    MissingTarget { target: JoltVerifierTarget },
-    MissingArtifact { slot: JoltProofSlot },
-    UnsupportedStep {
-        step: JoltVerifierStepPlan,
-        reason: &'static str,
-    },
-}
 
 "
     .to_owned()
@@ -596,24 +529,18 @@ fn jolt_verifier_program_executor() -> String {
 where
     T: Transcript<Challenge = Fr>,
 {
-    let target_plan = programs
-        .verifier
-        .targets
-        .iter()
-        .find(|plan| plan.target == target)
-        .ok_or(JoltVerifierProgramError::MissingTarget { target })?;
     let mut artifacts = JoltArtifactStore::default();
-    for step in target_plan.steps {
+    bolt_verifier_runtime::execute_verifier_program(programs.verifier, target, |step| {
         execute_jolt_verifier_step(
-            *step,
+            step,
             proof,
             inputs,
             programs,
             transcript,
-            target_plan,
+            target.evaluation,
             &mut artifacts,
-        )?;
-    }
+        )
+    })?;
     artifacts.into_public_artifacts().map_err(JoltVerifyError::from)
 }
 
@@ -623,34 +550,29 @@ fn execute_jolt_verifier_step<T>(
     inputs: JoltVerifierInputs<'_>,
     programs: JoltVerifierPrograms,
     transcript: &mut T,
-    target_plan: &JoltVerifierTargetPlan,
+    evaluation: JoltEvaluationPolicy,
     artifacts: &mut JoltArtifactStore,
 ) -> Result<(), JoltVerifyError>
 where
     T: Transcript<Challenge = Fr>,
 {
-    match step {
-        JoltVerifierStepPlan::ReceiveCommitments {
-            slot: JoltProofSlot::Commitments,
-        } => {
+    let step_plan = step;
+    match (step.kind, step.slot) {
+        (JoltVerifierStepKind::ReceiveCommitments, JoltProofSlot::Commitments) => {
             artifacts.commitment = Some(commitment_stage::verify_commitment_phase_with_program(
                 programs.commitment,
                 &proof.commitments,
                 transcript,
             )?);
         }
-        JoltVerifierStepPlan::VerifySumcheckStage {
-            slot: JoltProofSlot::Stage1Outer,
-        } => {
+        (JoltVerifierStepKind::VerifySumcheckStage, JoltProofSlot::Stage1Outer) => {
             artifacts.stage1_outer = Some(stage1_outer_stage::verify_stage1_outer_with_program(
                 programs.stage1_outer,
                 &proof.stage1_outer,
                 transcript,
             )?);
         }
-        JoltVerifierStepPlan::VerifySumcheckStage {
-            slot: JoltProofSlot::Stage2,
-        } => {
+        (JoltVerifierStepKind::VerifySumcheckStage, JoltProofSlot::Stage2) => {
             artifacts.stage2 = Some(stage2_stage::verify_stage2_with_program(
                 programs.stage2,
                 &proof.stage2,
@@ -659,9 +581,7 @@ where
                 transcript,
             )?);
         }
-        JoltVerifierStepPlan::VerifySumcheckStage {
-            slot: JoltProofSlot::Stage3,
-        } => {
+        (JoltVerifierStepKind::VerifySumcheckStage, JoltProofSlot::Stage3) => {
             artifacts.stage3 = Some(stage3_stage::verify_stage3_with_program(
                 programs.stage3,
                 &proof.stage3,
@@ -669,9 +589,7 @@ where
                 transcript,
             )?);
         }
-        JoltVerifierStepPlan::VerifySumcheckStage {
-            slot: JoltProofSlot::Stage4,
-        } => {
+        (JoltVerifierStepKind::VerifySumcheckStage, JoltProofSlot::Stage4) => {
             artifacts.stage4 = Some(stage4_stage::verify_stage4_with_program(
                 programs.stage4,
                 &proof.stage4,
@@ -679,9 +597,7 @@ where
                 transcript,
             )?);
         }
-        JoltVerifierStepPlan::VerifySumcheckStage {
-            slot: JoltProofSlot::Stage5,
-        } => {
+        (JoltVerifierStepKind::VerifySumcheckStage, JoltProofSlot::Stage5) => {
             artifacts.stage5 = Some(stage5_stage::verify_stage5_with_program(
                 programs.stage5,
                 &proof.stage5,
@@ -689,9 +605,7 @@ where
                 transcript,
             )?);
         }
-        JoltVerifierStepPlan::VerifySumcheckStage {
-            slot: JoltProofSlot::Stage6,
-        } => {
+        (JoltVerifierStepKind::VerifySumcheckStage, JoltProofSlot::Stage6) => {
             artifacts.stage6 = Some(stage6_stage::verify_stage6_with_program(
                 programs.stage6,
                 &proof.stage6,
@@ -700,9 +614,7 @@ where
                 transcript,
             )?);
         }
-        JoltVerifierStepPlan::VerifySumcheckStage {
-            slot: JoltProofSlot::Stage7,
-        } => {
+        (JoltVerifierStepKind::VerifySumcheckStage, JoltProofSlot::Stage7) => {
             artifacts.stage7 = Some(stage7_stage::verify_stage7_with_program(
                 programs.stage7,
                 &proof.stage7,
@@ -710,11 +622,9 @@ where
                 transcript,
             )?);
         }
-        JoltVerifierStepPlan::VerifyPcsOpening {
-            slot: JoltProofSlot::Evaluation,
-        } => {
+        (JoltVerifierStepKind::VerifyPcsOpening, JoltProofSlot::Evaluation) => {
             verify_jolt_evaluation_step(
-                target_plan.target.evaluation,
+                evaluation,
                 proof,
                 inputs,
                 programs,
@@ -722,9 +632,9 @@ where
                 artifacts,
             )?;
         }
-        step => {
+        _ => {
             return Err(JoltVerifierProgramError::UnsupportedStep {
-                step,
+                step: step_plan,
                 reason: "step kind and proof slot are incompatible",
             }
             .into());

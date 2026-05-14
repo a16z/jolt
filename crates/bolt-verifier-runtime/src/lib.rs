@@ -62,6 +62,110 @@ pub trait ProtocolRelation: Copy + Eq + fmt::Debug + 'static {}
 
 impl<T: Copy + Eq + fmt::Debug + 'static> ProtocolRelation for T {}
 
+pub trait VerifierProgramSlot: Copy + Eq + fmt::Debug + 'static {}
+
+impl<T: Copy + Eq + fmt::Debug + 'static> VerifierProgramSlot for T {}
+
+pub trait VerifierProgramCheckpoint: Copy + Eq + fmt::Debug + 'static {}
+
+impl<T: Copy + Eq + fmt::Debug + 'static> VerifierProgramCheckpoint for T {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerifierProgramStepKind {
+    ReceiveCommitments,
+    VerifySumcheckStage,
+    VerifyPcsOpening,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VerifierProgramStepPlan<S: VerifierProgramSlot> {
+    pub kind: VerifierProgramStepKind,
+    pub slot: S,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerifierEvaluationPolicy {
+    Skip,
+    VerifyIfPresent,
+    Required,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VerifierTarget<C: VerifierProgramCheckpoint> {
+    pub checkpoint: C,
+    pub evaluation: VerifierEvaluationPolicy,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VerifierTargetPlan<C: VerifierProgramCheckpoint> {
+    pub target: VerifierTarget<C>,
+    pub step_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VerifierProgramPlan<S: VerifierProgramSlot, C: VerifierProgramCheckpoint> {
+    pub steps: &'static [VerifierProgramStepPlan<S>],
+    pub targets: &'static [VerifierTargetPlan<C>],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VerifierProgramError<S: VerifierProgramSlot, T: Copy + Eq + fmt::Debug + 'static> {
+    MissingTarget {
+        target: T,
+    },
+    InvalidStepCount {
+        target: T,
+        step_count: usize,
+        total_steps: usize,
+    },
+    MissingArtifact {
+        slot: S,
+    },
+    UnsupportedStep {
+        step: VerifierProgramStepPlan<S>,
+        reason: &'static str,
+    },
+}
+
+impl<S: VerifierProgramSlot, C: VerifierProgramCheckpoint> VerifierProgramPlan<S, C> {
+    pub fn steps_for(
+        &self,
+        target: VerifierTarget<C>,
+    ) -> Result<&'static [VerifierProgramStepPlan<S>], VerifierProgramError<S, VerifierTarget<C>>>
+    {
+        let target_plan = self
+            .targets
+            .iter()
+            .find(|plan| plan.target == target)
+            .ok_or(VerifierProgramError::MissingTarget { target })?;
+        let step_count = target_plan.step_count;
+        if step_count > self.steps.len() {
+            return Err(VerifierProgramError::InvalidStepCount {
+                target,
+                step_count,
+                total_steps: self.steps.len(),
+            });
+        }
+        Ok(&self.steps[..step_count])
+    }
+}
+
+pub fn execute_verifier_program<S, C, E>(
+    program: &VerifierProgramPlan<S, C>,
+    target: VerifierTarget<C>,
+    mut execute_step: impl FnMut(VerifierProgramStepPlan<S>) -> Result<(), E>,
+) -> Result<(), E>
+where
+    S: VerifierProgramSlot,
+    C: VerifierProgramCheckpoint,
+    E: From<VerifierProgramError<S, VerifierTarget<C>>>,
+{
+    for step in program.steps_for(target).map_err(E::from)? {
+        execute_step(*step)?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TranscriptSqueezeKind {
     ChallengeScalar,

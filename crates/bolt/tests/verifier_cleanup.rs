@@ -6,9 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
-/// S2.5 intentionally moves top-level verifier-program data into
-/// `verifier.rs`. Later value-graph slices should ratchet this back down as
-/// more stage-local math becomes typed data instead of Rust helpers.
+/// S2.5 keeps only Jolt-specific verifier-program data in generated
+/// `verifier.rs`; reusable program shape and dispatch live in
+/// `crates/bolt-verifier-runtime`.
 const GENERATED_VERIFIER_TARGET_LOC: usize = 6_500;
 const GENERATED_VERIFIER_STRETCH_LOC: usize = 3_000;
 const VERIFIER_RS_TARGET_LOC: usize = 850;
@@ -347,11 +347,17 @@ fn checked_in_generated_verifier_uses_typed_top_level_program() {
     let source = std::fs::read_to_string(&verifier_rs).expect("read verifier.rs");
     for pattern in [
         "pub const VERIFIER_PROGRAM",
+        "pub const JOLT_VERIFIER_STEPS",
         "pub enum JoltProofSlot",
-        "pub enum JoltVerifierStepPlan",
-        "JoltVerifierStepPlan::ReceiveCommitments",
-        "JoltVerifierStepPlan::VerifySumcheckStage",
-        "JoltVerifierStepPlan::VerifyPcsOpening",
+        "pub enum JoltVerifierCheckpoint",
+        "pub type JoltVerifierStepKind = bolt_verifier_runtime::VerifierProgramStepKind",
+        "pub type JoltVerifierStepPlan = bolt_verifier_runtime::VerifierProgramStepPlan<JoltProofSlot>",
+        "pub type JoltVerifierTargetPlan = bolt_verifier_runtime::VerifierTargetPlan<JoltVerifierCheckpoint>",
+        "JoltVerifierStepKind::ReceiveCommitments",
+        "JoltVerifierStepKind::VerifySumcheckStage",
+        "JoltVerifierStepKind::VerifyPcsOpening",
+        "step_count:",
+        "bolt_verifier_runtime::execute_verifier_program",
         "fn execute_jolt_verifier_program",
         "fn execute_jolt_verifier_step",
         "struct JoltArtifactStore",

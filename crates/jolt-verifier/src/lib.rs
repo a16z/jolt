@@ -23,10 +23,10 @@ pub use verifier::{
     JoltStage6BytecodeReadRafData, JoltStage6VerifierData, JoltStageChallengeVector,
     JoltStageExecutionArtifacts, JoltStageOpeningInputValue, JoltStageProof, JoltSumcheckOutput,
     JoltVerificationArtifacts, JoltVerifierCheckpoint, JoltVerifierInputs,
-    JoltVerifierProgramError, JoltVerifierProgramPlan, JoltVerifierPrograms, JoltVerifierStepPlan,
-    JoltVerifierTarget, JoltVerifierTargetPlan, JoltVerifyError, JOLT_TARGET_FULL,
-    JOLT_TARGET_THROUGH_STAGE5, JOLT_TARGET_THROUGH_STAGE6, JOLT_TARGET_THROUGH_STAGE7,
-    JOLT_VERIFIER_TARGETS, VERIFIER_PROGRAM,
+    JoltVerifierProgramError, JoltVerifierProgramPlan, JoltVerifierPrograms, JoltVerifierStepKind,
+    JoltVerifierStepPlan, JoltVerifierTarget, JoltVerifierTargetPlan, JoltVerifyError,
+    JOLT_TARGET_FULL, JOLT_TARGET_THROUGH_STAGE5, JOLT_TARGET_THROUGH_STAGE6,
+    JOLT_TARGET_THROUGH_STAGE7, JOLT_VERIFIER_STEPS, JOLT_VERIFIER_TARGETS, VERIFIER_PROGRAM,
 };
 
 pub const TRANSCRIPT_LABEL: &[u8] = b"Jolt";
