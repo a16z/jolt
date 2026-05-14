@@ -356,9 +356,33 @@ pub struct StructuredPolynomialEvalPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SumcheckOutputEvalFamilySharedTermPlan {
+    pub gamma_power_offset: usize,
+    pub factor: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SumcheckOutputEvalFamilyItemTermPlan {
+    pub gamma_power_offset: usize,
+    pub factors: &'static [&'static str],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SumcheckOutputEvalFamilyPlan {
+    pub symbol: &'static str,
+    pub gamma: &'static str,
+    pub evals: &'static [&'static str],
+    pub power_stride: usize,
+    pub value_term_offsets: &'static [usize],
+    pub shared_terms: &'static [SumcheckOutputEvalFamilySharedTermPlan],
+    pub item_terms: &'static [SumcheckOutputEvalFamilyItemTermPlan],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SumcheckOutputClaimPlan<R: ProtocolRelation> {
     pub relation: R,
     pub polynomial_evals: &'static [StructuredPolynomialEvalPlan],
+    pub eval_families: &'static [SumcheckOutputEvalFamilyPlan],
     pub claim_value: &'static str,
 }
 
@@ -1170,12 +1194,82 @@ pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
         let value = evaluate_structured_polynomial(polynomial_eval.polynomial, &x_point, y_point)?;
         scratch.insert(polynomial_eval.symbol, value);
     }
+    for family in plan.eval_families {
+        let value = evaluate_sumcheck_output_eval_family(family, store, &scratch)?;
+        scratch.insert(family.symbol, value);
+    }
     evaluate_available_field_exprs_with_scratch(field_exprs, store, &mut scratch)?;
     scratch
         .scalar_or(store, plan.claim_value)
         .ok_or(RuntimePlanError::MissingValue {
             symbol: plan.claim_value,
         })
+}
+
+fn evaluate_sumcheck_output_eval_family(
+    family: &SumcheckOutputEvalFamilyPlan,
+    store: &ValueStore<Fr>,
+    scratch: &ScratchScalars,
+) -> Result<Fr, RuntimePlanError> {
+    let gamma = scratch
+        .scalar_or(store, family.gamma)
+        .ok_or(RuntimePlanError::MissingValue {
+            symbol: family.gamma,
+        })?;
+    for term in family.item_terms {
+        require_operand_count(family.symbol, family.evals.len(), term.factors.len())?;
+    }
+    let value_offset_powers = family
+        .value_term_offsets
+        .iter()
+        .map(|&offset| pow_field(gamma, offset))
+        .collect::<Vec<_>>();
+    let shared_terms = family
+        .shared_terms
+        .iter()
+        .map(|term| (term, pow_field(gamma, term.gamma_power_offset)))
+        .collect::<Vec<_>>();
+    let item_terms = family
+        .item_terms
+        .iter()
+        .map(|term| (term, pow_field(gamma, term.gamma_power_offset)))
+        .collect::<Vec<_>>();
+    let gamma_stride = pow_field(gamma, family.power_stride);
+    let mut gamma_base = Fr::from_u64(1);
+
+    let mut result = Fr::from_u64(0);
+    for (index, eval_symbol) in family.evals.iter().enumerate() {
+        let eval = scratch
+            .scalar_or(store, eval_symbol)
+            .ok_or(RuntimePlanError::MissingValue {
+                symbol: eval_symbol,
+            })?;
+        let weighted_eval = eval * gamma_base;
+        for offset_power in &value_offset_powers {
+            result += weighted_eval * *offset_power;
+        }
+        for (term, offset_power) in &shared_terms {
+            let factor =
+                scratch
+                    .scalar_or(store, term.factor)
+                    .ok_or(RuntimePlanError::MissingValue {
+                        symbol: term.factor,
+                    })?;
+            result += weighted_eval * factor * *offset_power;
+        }
+        for (term, offset_power) in &item_terms {
+            let factor_symbol = term.factors[index];
+            let factor =
+                scratch
+                    .scalar_or(store, factor_symbol)
+                    .ok_or(RuntimePlanError::MissingValue {
+                        symbol: factor_symbol,
+                    })?;
+            result += weighted_eval * factor * *offset_power;
+        }
+        gamma_base *= gamma_stride;
+    }
+    Ok(result)
 }
 
 fn evaluate_structured_polynomial_point(

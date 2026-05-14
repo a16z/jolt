@@ -9,7 +9,8 @@ use super::super::oracles;
 use super::super::params::JoltProtocolParams;
 use super::lowering::{lower_party_to_compute, transcript_squeeze_protocol_result_type};
 use super::sumcheck_output::{
-    append_structured_polynomial_eval, append_sumcheck_output_claim, OutputClaimSpec,
+    append_structured_polynomial_eval, append_sumcheck_output_claim,
+    append_sumcheck_output_eval_family, OutputClaimSpec, OutputEvalFamilySpec,
     StructuredPolynomialPointSpec, StructuredPolynomialSpec,
 };
 
@@ -636,35 +637,9 @@ fn append_stage7_output_claim<'c, 'a>(
 
     let mut polynomial_evals = Vec::with_capacity(output_evals.len() + 1);
     polynomial_evals.push((booleanity_eq_symbol.to_owned(), booleanity_eq));
-    let mut terms = Vec::with_capacity(3 * output_evals.len());
-    for (index, (input, &output_eval)) in inputs.ra_inputs.iter().zip(output_evals).enumerate() {
-        terms.push(append_weighted_eval(
-            context,
-            module,
-            &format!("stage7.hamming_weight_claim_reduction.output.term.{index}.value"),
-            output_eval,
-            gamma,
-            3 * index,
-        )?);
-
-        let booleanity_product = append_field_mul(
-            context,
-            module,
-            &format!(
-                "stage7.hamming_weight_claim_reduction.output.term.{index}.booleanity_product"
-            ),
-            output_eval,
-            booleanity_eq,
-        )?;
-        terms.push(append_weighted_eval(
-            context,
-            module,
-            &format!("stage7.hamming_weight_claim_reduction.output.term.{index}.booleanity"),
-            booleanity_product,
-            gamma,
-            3 * index + 1,
-        )?);
-
+    let mut eval_terms = Vec::with_capacity(output_evals.len());
+    let mut item_terms = Vec::with_capacity(output_evals.len());
+    for (input, &output_eval) in inputs.ra_inputs.iter().zip(output_evals) {
         let virtualization_eq_symbol = format!(
             "stage7.hamming_weight_claim_reduction.output.eq.{}.virtualization",
             input.oracle
@@ -681,30 +656,38 @@ fn append_stage7_output_claim<'c, 'a>(
             instance_point,
             input.virtualization.point,
         )?;
-        polynomial_evals.push((virtualization_eq_symbol, virtualization_eq));
-        let virtualization_product = append_field_mul(
-            context,
-            module,
-            &format!(
-                "stage7.hamming_weight_claim_reduction.output.term.{index}.virtualization_product"
+        polynomial_evals.push((virtualization_eq_symbol.clone(), virtualization_eq));
+        eval_terms.push((
+            format!(
+                "stage7.hamming_weight_claim_reduction.eval.{}",
+                input.oracle
             ),
             output_eval,
-            virtualization_eq,
-        )?;
-        terms.push(append_weighted_eval(
-            context,
-            module,
-            &format!("stage7.hamming_weight_claim_reduction.output.term.{index}.virtualization"),
-            virtualization_product,
-            gamma,
-            3 * index + 2,
-        )?);
+        ));
+        item_terms.push((virtualization_eq_symbol, virtualization_eq));
     }
-    let output_claim = append_field_sum(
+    let eval_term_refs = eval_terms
+        .iter()
+        .map(|(symbol, value)| (symbol.as_str(), *value))
+        .collect::<Vec<_>>();
+    let item_term_refs = item_terms
+        .iter()
+        .map(|(symbol, value)| (symbol.as_str(), *value))
+        .collect::<Vec<_>>();
+    let output_claim = append_sumcheck_output_eval_family(
         context,
         module,
-        "stage7.hamming_weight_claim_reduction.output.claim_expr",
-        &terms,
+        OutputEvalFamilySpec {
+            symbol: "stage7.hamming_weight_claim_reduction.output.family",
+            power_stride: 3,
+            value_term_offsets: &[0],
+            shared_term_offsets: &[1],
+            item_term_offsets: &[2],
+        },
+        gamma,
+        &eval_term_refs,
+        &[(booleanity_eq_symbol, booleanity_eq)],
+        &item_term_refs,
     )?;
     let polynomial_eval_refs = polynomial_evals
         .iter()

@@ -25,6 +25,17 @@ const STRUCTURED_POLYNOMIAL_EVAL_ATTRS: &[&str] = &[
     "y_point_order",
 ];
 
+const SUMCHECK_OUTPUT_EVAL_FAMILY_ATTRS: &[&str] = &[
+    "sym_name",
+    "power_stride",
+    "value_term_offsets",
+    "shared_term_offsets",
+    "item_term_offsets",
+    "evals",
+    "shared_terms",
+    "item_terms",
+];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaError {
     message: String,
@@ -377,6 +388,11 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             require_attrs(operation, STRUCTURED_POLYNOMIAL_EVAL_ATTRS)?;
             require_shape(operation, 2, 1)?;
             require_structured_polynomial_eval(operation)
+        }
+        "piop.sumcheck_output_eval_family" => {
+            require_attrs(operation, SUMCHECK_OUTPUT_EVAL_FAMILY_ATTRS)?;
+            require_min_shape(operation, 1, 1)?;
+            require_sumcheck_output_eval_family(operation)
         }
         "piop.sumcheck_output_claim" => {
             require_attrs(
@@ -735,6 +751,11 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             require_shape(operation, 2, 1)?;
             require_structured_polynomial_eval(operation)
         }
+        "compute.sumcheck_output_eval_family" => {
+            require_attrs(operation, SUMCHECK_OUTPUT_EVAL_FAMILY_ATTRS)?;
+            require_min_shape(operation, 1, 1)?;
+            require_sumcheck_output_eval_family(operation)
+        }
         "compute.sumcheck_output_claim" => {
             require_attrs(
                 operation,
@@ -1075,6 +1096,11 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             require_shape(operation, 2, 1)?;
             require_structured_polynomial_eval(operation)
         }
+        "cpu.sumcheck_output_eval_family" => {
+            require_attrs(operation, SUMCHECK_OUTPUT_EVAL_FAMILY_ATTRS)?;
+            require_min_shape(operation, 1, 1)?;
+            require_sumcheck_output_eval_family(operation)
+        }
         "cpu.sumcheck_output_claim" => {
             require_attrs(
                 operation,
@@ -1254,6 +1280,56 @@ fn require_structured_polynomial_point_attrs(
             "{} attr `{order_attr}` has unsupported output point order `{order}`",
             operation_name(operation)
         )));
+    }
+    Ok(())
+}
+
+fn require_sumcheck_output_eval_family(operation: OperationRef<'_, '_>) -> Result<(), SchemaError> {
+    let evals = symbol_array_attr(operation, "evals")?;
+    let shared_terms = symbol_array_attr(operation, "shared_terms")?;
+    let item_terms = symbol_array_attr(operation, "item_terms")?;
+    let shared_offsets = int_array_attr(operation, "shared_term_offsets")?;
+    let item_offsets = int_array_attr(operation, "item_term_offsets")?;
+    if shared_terms.len() != shared_offsets.len() {
+        return Err(SchemaError::new(format!(
+            "{} attr `shared_terms` length {} does not match shared_term_offsets length {}",
+            operation_name(operation),
+            shared_terms.len(),
+            shared_offsets.len()
+        )));
+    }
+    let expected_item_terms = item_offsets.len() * evals.len();
+    if item_terms.len() != expected_item_terms {
+        return Err(SchemaError::new(format!(
+            "{} attr `item_terms` length {} does not match item_term_offsets length {} times evals length {}",
+            operation_name(operation),
+            item_terms.len(),
+            item_offsets.len(),
+            evals.len()
+        )));
+    }
+    let expected_operands = 1 + evals.len() + shared_terms.len() + item_terms.len();
+    if operation.operand_count() != expected_operands {
+        return Err(SchemaError::new(format!(
+            "{} expected {expected_operands} operands, got {}",
+            operation_name(operation),
+            operation.operand_count()
+        )));
+    }
+    let expected_symbols = evals
+        .iter()
+        .chain(shared_terms.iter())
+        .chain(item_terms.iter())
+        .collect::<Vec<_>>();
+    for (index, expected) in expected_symbols.iter().enumerate() {
+        let operand_index = index + 1;
+        let actual = operand_owner_symbol(operation, operand_index)?;
+        if &actual != *expected {
+            return Err(SchemaError::new(format!(
+                "{} operand {operand_index} expected @{expected}, got @{actual}",
+                operation_name(operation)
+            )));
+        }
     }
     Ok(())
 }
@@ -1532,6 +1608,26 @@ fn parse_symbol_array(attribute: &str) -> Option<Vec<String>> {
     inner
         .split(',')
         .map(|item| item.trim().strip_prefix('@').map(ToOwned::to_owned))
+        .collect()
+}
+
+fn int_array_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<Vec<usize>, SchemaError> {
+    let attribute = operation
+        .attribute(attr)
+        .map(|attribute| attribute.to_string())
+        .ok()
+        .ok_or_else(|| attr_error(operation, attr, "integer array"))?;
+    parse_int_array(&attribute).ok_or_else(|| attr_error(operation, attr, "integer array"))
+}
+
+fn parse_int_array(attribute: &str) -> Option<Vec<usize>> {
+    let inner = attribute.strip_prefix('[')?.strip_suffix(']')?.trim();
+    if inner.is_empty() {
+        return Some(Vec::new());
+    }
+    inner
+        .split(',')
+        .map(|item| item.trim().parse().ok())
         .collect()
 }
 

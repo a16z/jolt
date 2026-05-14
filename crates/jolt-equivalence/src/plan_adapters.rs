@@ -606,6 +606,52 @@ macro_rules! define_stage_adapter_impl {
                                     })
                                     .collect(),
                             ),
+                            eval_families: super::leak_slice(
+                                plan.eval_families
+                                    .iter()
+                                    .map(|family| bolt_verifier_runtime::SumcheckOutputEvalFamilyPlan {
+                                        symbol: super::leak_str(&family.symbol),
+                                        gamma: super::leak_str(&family.gamma),
+                                        evals: super::leak_slice(
+                                            family
+                                                .evals
+                                                .iter()
+                                                .map(|symbol| super::leak_str(symbol))
+                                                .collect(),
+                                        ),
+                                        power_stride: family.power_stride,
+                                        value_term_offsets: super::leak_slice(
+                                            family.value_term_offsets.clone(),
+                                        ),
+                                        shared_terms: super::leak_slice(
+                                            family
+                                                .shared_terms
+                                                .iter()
+                                                .map(|term| bolt_verifier_runtime::SumcheckOutputEvalFamilySharedTermPlan {
+                                                    gamma_power_offset: term.gamma_power_offset,
+                                                    factor: super::leak_str(&term.factor),
+                                                })
+                                                .collect(),
+                                        ),
+                                        item_terms: super::leak_slice(
+                                            family
+                                                .item_terms
+                                                .iter()
+                                                .map(|term| bolt_verifier_runtime::SumcheckOutputEvalFamilyItemTermPlan {
+                                                    gamma_power_offset: term.gamma_power_offset,
+                                                    factors: super::leak_slice(
+                                                        term
+                                                            .factors
+                                                            .iter()
+                                                            .map(|symbol| super::leak_str(symbol))
+                                                            .collect(),
+                                                    ),
+                                                })
+                                                .collect(),
+                                        ),
+                                    })
+                                    .collect(),
+                            ),
                             claim_value: super::leak_str(&plan.claim_value),
                         })
                         .collect(),

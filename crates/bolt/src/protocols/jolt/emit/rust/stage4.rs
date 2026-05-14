@@ -569,6 +569,7 @@ impl Stage4CpuProgram {
             super::output_claims::resolve_output_claims(
                 "stage4",
                 &output_values,
+                &[],
                 output_claim_asts,
             )?
         } else {
@@ -899,6 +900,7 @@ impl Stage4CpuProgram {
         super::output_claims::verify_output_claims(
             "stage4",
             &self.output_values,
+            &[],
             &self.output_claims,
             &relations,
             &field_values,

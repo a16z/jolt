@@ -1012,6 +1012,8 @@ fn jolt_stage7_protocol_defines_hamming_weight_claim_reduction_flow() {
     assert!(text.contains(
         "sym_name = \"stage7.hamming_weight_claim_reduction.output.eq.InstructionRa_0.virtualization\""
     ));
+    assert!(text.contains("sym_name = \"stage7.hamming_weight_claim_reduction.output.family\""));
+    assert!(text.contains("\"piop.sumcheck_output_eval_family\""));
     assert!(text.contains("sym_name = \"stage7.hamming_weight_claim_reduction.output\""));
     assert!(text.contains("@stage7.hamming_weight_claim_reduction.opening.InstructionRa_0"));
     assert!(text.contains("@stage7.hamming_weight_claim_reduction.opening.BytecodeRa_0"));
@@ -1070,6 +1072,7 @@ fn jolt_stage7_lowers_to_compute_and_cpu_role_ir() {
     assert!(prover_cpu_text.contains("kernel = @jolt.cpu.stage7.batched"));
     assert!(prover_cpu_text.contains("point_order = \"reverse\""));
     assert!(verifier_cpu_text.contains("\"cpu.structured_polynomial_eval\""));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_output_eval_family\""));
     assert!(verifier_cpu_text.contains("\"cpu.sumcheck_output_claim\""));
     assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify_claim\""));
     assert!(!verifier_kernel_text.contains("kernel = @"));
@@ -1668,7 +1671,33 @@ fn stage7_rust_targets_extract_and_compile() {
     assert_eq!(prover_program.output_values.len(), total_ra + 1);
     assert!(prover_program.output_claims.is_empty());
     assert_eq!(verifier_program.output_values.len(), total_ra + 1);
+    assert_eq!(verifier_program.output_families.len(), 1);
     assert_eq!(verifier_program.output_claims.len(), 1);
+    let output_family = &verifier_program.output_families[0];
+    assert_eq!(
+        output_family.symbol,
+        "stage7.hamming_weight_claim_reduction.output.family"
+    );
+    assert_eq!(
+        output_family.gamma,
+        "stage7.hamming_weight_claim_reduction.gamma"
+    );
+    assert_eq!(output_family.evals.len(), total_ra);
+    assert_eq!(output_family.power_stride, 3);
+    assert_eq!(output_family.value_term_offsets, vec![0]);
+    assert_eq!(output_family.shared_terms.len(), 1);
+    assert_eq!(output_family.shared_terms[0].gamma_power_offset, 1);
+    assert_eq!(
+        output_family.shared_terms[0].factor,
+        "stage7.hamming_weight_claim_reduction.output.eq.Booleanity"
+    );
+    assert_eq!(output_family.item_terms.len(), 1);
+    assert_eq!(output_family.item_terms[0].gamma_power_offset, 2);
+    assert_eq!(output_family.item_terms[0].factors.len(), total_ra);
+    assert_eq!(
+        verifier_program.output_claims[0].eval_families,
+        vec![output_family.clone()]
+    );
     assert!(prover_program.point_zeros.is_empty());
     assert_eq!(prover_program.point_slices.len(), 1);
     assert_eq!(prover_program.point_concats.len(), 1);
@@ -1722,10 +1751,19 @@ fn stage7_rust_targets_extract_and_compile() {
         .contains("Stage7SumcheckOutputClaimPlan"));
     assert!(verifier_source
         .source
+        .contains("SumcheckOutputEvalFamilyPlan"));
+    assert!(verifier_source
+        .source
+        .contains("STAGE7_SUMCHECK_OUTPUT_CLAIM_0_FAMILY_0_EVALS"));
+    assert!(verifier_source
+        .source
         .contains("stage7.hamming_weight_claim_reduction.output.eq.Booleanity"));
     assert!(verifier_source.source.contains(
         "stage7.hamming_weight_claim_reduction.output.eq.InstructionRa_0.virtualization"
     ));
+    assert!(!verifier_source
+        .source
+        .contains("stage7.hamming_weight_claim_reduction.output.term"));
     assert!(verifier_source
         .source
         .contains("bolt_verifier_runtime::evaluate_sumcheck_output_claim"));

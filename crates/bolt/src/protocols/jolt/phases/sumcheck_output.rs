@@ -51,6 +51,15 @@ pub(crate) struct OutputClaimSpec<'a> {
     pub(crate) relation: &'a str,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct OutputEvalFamilySpec<'a> {
+    pub(crate) symbol: &'a str,
+    pub(crate) power_stride: usize,
+    pub(crate) value_term_offsets: &'a [usize],
+    pub(crate) shared_term_offsets: &'a [usize],
+    pub(crate) item_term_offsets: &'a [usize],
+}
+
 pub(crate) fn append_structured_polynomial_eval<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
@@ -107,6 +116,57 @@ pub(crate) fn append_sumcheck_output_claim<'c, 'a>(
     Ok(())
 }
 
+pub(crate) fn append_sumcheck_output_eval_family<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    spec: OutputEvalFamilySpec<'_>,
+    gamma: Value<'c, 'a>,
+    evals: &[(&str, Value<'c, 'a>)],
+    shared_terms: &[(&str, Value<'c, 'a>)],
+    item_terms: &[(&str, Value<'c, 'a>)],
+) -> Result<Value<'c, 'a>, MlirError> {
+    let mut operands = Vec::with_capacity(1 + evals.len() + shared_terms.len() + item_terms.len());
+    operands.push(gamma);
+    operands.extend(evals.iter().map(|(_, value)| *value));
+    operands.extend(shared_terms.iter().map(|(_, value)| *value));
+    operands.extend(item_terms.iter().map(|(_, value)| *value));
+    let eval_symbols = evals.iter().map(|(symbol, _)| *symbol).collect::<Vec<_>>();
+    let shared_symbols = shared_terms
+        .iter()
+        .map(|(symbol, _)| *symbol)
+        .collect::<Vec<_>>();
+    let item_symbols = item_terms
+        .iter()
+        .map(|(symbol, _)| *symbol)
+        .collect::<Vec<_>>();
+    let op = context.append_typed_op(
+        module,
+        "piop.sumcheck_output_eval_family",
+        Some(spec.symbol),
+        &[
+            ("power_stride", &int_attr(spec.power_stride)),
+            (
+                "value_term_offsets",
+                &usize_array_attr(spec.value_term_offsets),
+            ),
+            (
+                "shared_term_offsets",
+                &usize_array_attr(spec.shared_term_offsets),
+            ),
+            (
+                "item_term_offsets",
+                &usize_array_attr(spec.item_term_offsets),
+            ),
+            ("evals", &symbol_array_attr(&eval_symbols)),
+            ("shared_terms", &symbol_array_attr(&shared_symbols)),
+            ("item_terms", &symbol_array_attr(&item_symbols)),
+        ],
+        &operands,
+        &["!field.scalar"],
+    )?;
+    first_result(op, "piop.sumcheck_output_eval_family")
+}
+
 fn first_result<'c, 'a>(
     operation: melior::ir::operation::OperationRef<'c, 'a>,
     operation_name: &str,
@@ -118,6 +178,15 @@ fn first_result<'c, 'a>(
 
 fn int_attr(value: usize) -> String {
     format!("{value} : i64")
+}
+
+fn usize_array_attr(values: &[usize]) -> String {
+    let values = values
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{values}]")
 }
 
 fn symbol_array_attr(values: &[&str]) -> String {

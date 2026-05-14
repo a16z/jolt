@@ -632,10 +632,10 @@ pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_3_VALUES: &[Stage6StructuredPolynomialEva
 ];
 
 pub const STAGE6_SUMCHECK_OUTPUT_CLAIMS: &[Stage6SumcheckOutputClaimPlan] = &[
-    Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6HammingBooleanity, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_0_VALUES, claim_value: "stage6.hamming_booleanity.output.claim_expr" },
-    Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6RamRaVirtual, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_1_VALUES, claim_value: "stage6.ram_ra_virtual.output.claim_expr" },
-    Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6InstructionRaVirtual, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_2_VALUES, claim_value: "stage6.instruction_ra_virtual.output.claim_expr" },
-    Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6IncClaimReduction, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_3_VALUES, claim_value: "stage6.inc_claim_reduction.output.claim_expr" },
+    Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6HammingBooleanity, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_0_VALUES, eval_families: &[], claim_value: "stage6.hamming_booleanity.output.claim_expr" },
+    Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6RamRaVirtual, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_1_VALUES, eval_families: &[], claim_value: "stage6.ram_ra_virtual.output.claim_expr" },
+    Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6InstructionRaVirtual, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_2_VALUES, eval_families: &[], claim_value: "stage6.instruction_ra_virtual.output.claim_expr" },
+    Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6IncClaimReduction, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_3_VALUES, eval_families: &[], claim_value: "stage6.inc_claim_reduction.output.claim_expr" },
 ];
 
 pub const STAGE6_PROGRAM: Stage6VerifierProgramPlan = Stage6CpuProgramPlan {

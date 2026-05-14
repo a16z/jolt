@@ -183,8 +183,8 @@ pub const STAGE4_SUMCHECK_OUTPUT_CLAIM_1_VALUES: &[Stage4StructuredPolynomialEva
 ];
 
 pub const STAGE4_SUMCHECK_OUTPUT_CLAIMS: &[Stage4SumcheckOutputClaimPlan] = &[
-    Stage4SumcheckOutputClaimPlan { relation: Stage4RelationKind::Stage4RegistersReadWrite, polynomial_evals: STAGE4_SUMCHECK_OUTPUT_CLAIM_0_VALUES, claim_value: "stage4.registers_read_write.output.claim_expr" },
-    Stage4SumcheckOutputClaimPlan { relation: Stage4RelationKind::Stage4RamValCheck, polynomial_evals: STAGE4_SUMCHECK_OUTPUT_CLAIM_1_VALUES, claim_value: "stage4.ram_val_check.output.claim_expr" },
+    Stage4SumcheckOutputClaimPlan { relation: Stage4RelationKind::Stage4RegistersReadWrite, polynomial_evals: STAGE4_SUMCHECK_OUTPUT_CLAIM_0_VALUES, eval_families: &[], claim_value: "stage4.registers_read_write.output.claim_expr" },
+    Stage4SumcheckOutputClaimPlan { relation: Stage4RelationKind::Stage4RamValCheck, polynomial_evals: STAGE4_SUMCHECK_OUTPUT_CLAIM_1_VALUES, eval_families: &[], claim_value: "stage4.ram_val_check.output.claim_expr" },
 ];
 
 pub const STAGE4_PROGRAM: Stage4VerifierProgramPlan = Stage4CpuProgramPlan {

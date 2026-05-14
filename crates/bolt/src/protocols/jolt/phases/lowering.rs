@@ -454,6 +454,31 @@ pub(super) fn lower_party_to_compute<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
+            "piop.sumcheck_output_eval_family" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "power_stride",
+                        "value_term_offsets",
+                        "shared_term_offsets",
+                        "item_term_offsets",
+                        "evals",
+                        "shared_terms",
+                        "item_terms",
+                    ],
+                )?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.sumcheck_output_eval_family",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
             "piop.sumcheck_output_claim" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let symbol = string_attr(op, "sym_name")?;

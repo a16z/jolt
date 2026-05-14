@@ -694,6 +694,29 @@ irdl.dialect @compute {
     irdl.operands(x_point: %point, y_point: %point)
     irdl.results(value: %value)
   }
+  irdl.operation @sumcheck_output_eval_family {
+    %value = irdl.parametric @compute::@field_value<>
+    %sym = irdl.any
+    %power_stride = irdl.any
+    %value_term_offsets = irdl.any
+    %shared_term_offsets = irdl.any
+    %item_term_offsets = irdl.any
+    %evals = irdl.any
+    %shared_terms = irdl.any
+    %item_terms = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "power_stride" = %power_stride,
+      "value_term_offsets" = %value_term_offsets,
+      "shared_term_offsets" = %shared_term_offsets,
+      "item_term_offsets" = %item_term_offsets,
+      "evals" = %evals,
+      "shared_terms" = %shared_terms,
+      "item_terms" = %item_terms
+    }
+    irdl.operands(gamma: %value, inputs: variadic %value)
+    irdl.results(value: %value)
+  }
   irdl.operation @sumcheck_output_claim {
     %value = irdl.parametric @compute::@field_value<>
     %sym = irdl.any
