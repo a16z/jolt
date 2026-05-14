@@ -19,6 +19,10 @@ use super::lowering::{
     copy_attrs, field_lowering_attrs as field_compute_attrs, string_attr,
     transcript_squeeze_compute_result_types, transcript_squeeze_protocol_result_type,
 };
+use super::sumcheck_output::{
+    append_sumcheck_output_claim, append_sumcheck_output_value, OutputClaimSpec, OutputPointSpec,
+    OutputValueSpec,
+};
 
 const SPARTAN_SHIFT_DEGREE: usize = 2;
 const INSTRUCTION_INPUT_DEGREE: usize = 3;
@@ -611,7 +615,18 @@ pub fn lower_stage3_to_compute<'c>(
             "piop.sumcheck_output_value" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let symbol = string_attr(op, "sym_name")?;
-                let attrs = copy_attrs(op, &["kind", "point_order"])?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "kind",
+                        "local_point_segment",
+                        "local_point_length",
+                        "local_point_order",
+                        "opening_point_segment",
+                        "opening_point_length",
+                        "opening_point_order",
+                    ],
+                )?;
                 let operation = context.append_typed_op_with_owned_attrs(
                     &compute,
                     "compute.sumcheck_output_value",
@@ -1756,7 +1771,8 @@ fn append_stage3_output_claims<'c, 'a>(
         OutputValueSpec {
             symbol: "stage3.spartan_shift.output.eq.NextPC",
             kind: "eq_plus_one",
-            point_order: "reverse",
+            local_point: OutputPointSpec::full("reverse"),
+            opening_point: OutputPointSpec::full("as_is"),
         },
         spec.instances.shift.0,
         spec.openings.next_pc.point,
@@ -1767,7 +1783,8 @@ fn append_stage3_output_claims<'c, 'a>(
         OutputValueSpec {
             symbol: "stage3.spartan_shift.output.eq.NextIsNoop",
             kind: "eq_plus_one",
-            point_order: "reverse",
+            local_point: OutputPointSpec::full("reverse"),
+            opening_point: OutputPointSpec::full("as_is"),
         },
         spec.instances.shift.0,
         spec.openings.product_next_is_noop.point,
@@ -1828,7 +1845,8 @@ fn append_stage3_output_claims<'c, 'a>(
         OutputValueSpec {
             symbol: "stage3.instruction_input.output.eq.LeftInstructionInput",
             kind: "eq_mle",
-            point_order: "reverse",
+            local_point: OutputPointSpec::full("reverse"),
+            opening_point: OutputPointSpec::full("as_is"),
         },
         spec.instances.instruction.0,
         spec.openings.product_left_instruction_input.point,
@@ -1896,7 +1914,8 @@ fn append_stage3_output_claims<'c, 'a>(
         OutputValueSpec {
             symbol: "stage3.registers.output.eq.RdWriteValue",
             kind: "eq_mle",
-            point_order: "reverse",
+            local_point: OutputPointSpec::full("reverse"),
+            opening_point: OutputPointSpec::full("as_is"),
         },
         spec.instances.registers.0,
         spec.openings.rd_write_value.point,
@@ -1938,57 +1957,6 @@ fn append_stage3_output_claims<'c, 'a>(
             registers_eq_rd_write,
         )],
     )
-}
-
-fn append_sumcheck_output_value<'c, 'a>(
-    context: &'c MeliorContext,
-    module: &'a BoltModule<'c, Protocol>,
-    spec: OutputValueSpec<'_>,
-    local_point: Value<'c, 'a>,
-    opening_point: Value<'c, 'a>,
-) -> Result<Value<'c, 'a>, MlirError> {
-    let op = context.append_typed_op(
-        module,
-        "piop.sumcheck_output_value",
-        Some(spec.symbol),
-        &[
-            ("kind", &format!("\"{}\"", spec.kind)),
-            ("point_order", &format!("\"{}\"", spec.point_order)),
-        ],
-        &[local_point, opening_point],
-        &["!field.scalar"],
-    )?;
-    first_result(op, "piop.sumcheck_output_value")
-}
-
-fn append_sumcheck_output_claim<'c, 'a>(
-    context: &'c MeliorContext,
-    module: &'a BoltModule<'c, Protocol>,
-    spec: OutputClaimSpec<'_>,
-    claim_value: Value<'c, 'a>,
-    local_values: &[(&str, Value<'c, 'a>)],
-) -> Result<(), MlirError> {
-    let mut operands = Vec::with_capacity(local_values.len() + 1);
-    operands.push(claim_value);
-    operands.extend(local_values.iter().map(|(_, value)| *value));
-    let local_value_symbols = local_values
-        .iter()
-        .map(|(symbol, _)| *symbol)
-        .collect::<Vec<_>>();
-    let _op = context.append_typed_op(
-        module,
-        "piop.sumcheck_output_claim",
-        Some(spec.symbol),
-        &[
-            ("stage", &format!("@{}", spec.stage)),
-            ("relation", &format!("@{}", spec.relation)),
-            ("count", &int_attr(local_values.len())),
-            ("local_values", &symbol_array_attr(&local_value_symbols)),
-        ],
-        &operands,
-        &[],
-    )?;
-    Ok(())
 }
 
 fn append_sumcheck_claim<'c, 'a>(
@@ -2471,16 +2439,4 @@ struct Stage3OutputClaimInputs<'c, 'a, 'b> {
     instruction_gamma: Value<'c, 'a>,
     registers_gamma: Value<'c, 'a>,
     registers_gamma2: Value<'c, 'a>,
-}
-
-struct OutputValueSpec<'a> {
-    symbol: &'a str,
-    kind: &'a str,
-    point_order: &'a str,
-}
-
-struct OutputClaimSpec<'a> {
-    symbol: &'a str,
-    stage: &'a str,
-    relation: &'a str,
 }

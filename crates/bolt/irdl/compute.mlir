@@ -675,11 +675,21 @@ irdl.dialect @compute {
     %value = irdl.parametric @compute::@field_value<>
     %sym = irdl.any
     %kind = irdl.any
-    %point_order = irdl.any
+    %local_point_segment = irdl.any
+    %local_point_length = irdl.any
+    %local_point_order = irdl.any
+    %opening_point_segment = irdl.any
+    %opening_point_length = irdl.any
+    %opening_point_order = irdl.any
     irdl.attributes {
       "sym_name" = %sym,
       "kind" = %kind,
-      "point_order" = %point_order
+      "local_point_segment" = %local_point_segment,
+      "local_point_length" = %local_point_length,
+      "local_point_order" = %local_point_order,
+      "opening_point_segment" = %opening_point_segment,
+      "opening_point_length" = %opening_point_length,
+      "opening_point_order" = %opening_point_order
     }
     irdl.operands(local_point: %point, opening_point: %point)
     irdl.results(value: %value)

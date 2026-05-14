@@ -319,18 +319,40 @@ pub enum SumcheckOutputPointOrder {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SumcheckOutputPointSegment {
+    Full,
+    Prefix,
+    Suffix,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SumcheckOutputPointLength {
+    Full,
+    LocalPoint,
+    OpeningPoint,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SumcheckOutputPointPlan {
+    pub source: &'static str,
+    pub segment: SumcheckOutputPointSegment,
+    pub length: SumcheckOutputPointLength,
+    pub order: SumcheckOutputPointOrder,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SumcheckOutputValueKind {
     EqMle,
     EqPlusOne,
+    Lt,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SumcheckOutputValuePlan {
     pub symbol: &'static str,
     pub kind: SumcheckOutputValueKind,
-    pub point_order: SumcheckOutputPointOrder,
-    pub local_point_source: &'static str,
-    pub opening_point_source: &'static str,
+    pub local_point: SumcheckOutputPointPlan,
+    pub opening_point: SumcheckOutputPointPlan,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -448,6 +470,7 @@ pub struct StageProgramPlanNoPointZeros<R: ProtocolRelation> {
     pub drivers: &'static [SumcheckDriverPlan<R>],
     pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
     pub evals: &'static [SumcheckEvalPlan],
+    pub output_claims: &'static [SumcheckOutputClaimPlan<R>],
     pub point_slices: &'static [PointSlicePlan],
     pub point_concats: &'static [PointConcatPlan],
     pub opening_claims: &'static [OpeningClaimPlan],
@@ -1122,25 +1145,36 @@ pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
         scratch.insert(eval.name, eval.value);
     }
     for local_value in plan.local_values {
-        if local_value.local_point_source != instance_symbol {
+        if local_value.local_point.source != instance_symbol {
             return Err(RuntimePlanError::InvalidProof {
                 driver: instance_symbol,
                 reason: "sumcheck output value source mismatch",
             });
         }
-        let opening_point = store.point_or(local_value.opening_point_source, |symbol| {
+        let opening_point = store.point_or(local_value.opening_point.source, |symbol| {
             RuntimePlanError::MissingValue { symbol }
         })?;
-        let ordered_point = match local_value.point_order {
-            SumcheckOutputPointOrder::AsIs => local_point.to_vec(),
-            SumcheckOutputPointOrder::Reverse => reverse_slice(local_point),
-        };
+        let local_output_point = evaluate_sumcheck_output_point(
+            local_value.local_point,
+            local_point,
+            local_point,
+            opening_point,
+        )?;
+        let opening_output_point = evaluate_sumcheck_output_point(
+            local_value.opening_point,
+            opening_point,
+            local_point,
+            opening_point,
+        )?;
         let value = match local_value.kind {
             SumcheckOutputValueKind::EqMle => {
-                EqPolynomial::<Fr>::mle(&ordered_point, opening_point)
+                EqPolynomial::<Fr>::mle(&local_output_point, &opening_output_point)
             }
             SumcheckOutputValueKind::EqPlusOne => {
-                EqPlusOnePolynomial::<Fr>::new(opening_point.to_vec()).evaluate(&ordered_point)
+                EqPlusOnePolynomial::<Fr>::new(opening_output_point).evaluate(&local_output_point)
+            }
+            SumcheckOutputValueKind::Lt => {
+                lt_polynomial_eval(&local_output_point, &opening_output_point)?
             }
         };
         scratch.insert(local_value.symbol, value);
@@ -1151,6 +1185,67 @@ pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
         .ok_or(RuntimePlanError::MissingValue {
             symbol: plan.claim_value,
         })
+}
+
+fn evaluate_sumcheck_output_point(
+    plan: SumcheckOutputPointPlan,
+    raw_point: &[Fr],
+    local_point: &[Fr],
+    opening_point: &[Fr],
+) -> Result<Vec<Fr>, RuntimePlanError> {
+    if matches!(plan.segment, SumcheckOutputPointSegment::Full)
+        && !matches!(plan.length, SumcheckOutputPointLength::Full)
+    {
+        return Err(RuntimePlanError::InvalidProof {
+            driver: plan.source,
+            reason: "full output point segment requires full length",
+        });
+    }
+    let length = match plan.length {
+        SumcheckOutputPointLength::Full => raw_point.len(),
+        SumcheckOutputPointLength::LocalPoint => local_point.len(),
+        SumcheckOutputPointLength::OpeningPoint => opening_point.len(),
+    };
+    let segment = match plan.segment {
+        SumcheckOutputPointSegment::Full => raw_point,
+        SumcheckOutputPointSegment::Prefix => raw_point
+            .get(..length)
+            .filter(|prefix| prefix.len() == length)
+            .ok_or(RuntimePlanError::InvalidInputLength {
+                input: plan.source,
+                expected: length,
+                actual: raw_point.len(),
+            })?,
+        SumcheckOutputPointSegment::Suffix => raw_point
+            .get(raw_point.len().saturating_sub(length)..)
+            .filter(|suffix| suffix.len() == length)
+            .ok_or(RuntimePlanError::InvalidInputLength {
+                input: plan.source,
+                expected: length,
+                actual: raw_point.len(),
+            })?,
+    };
+    Ok(match plan.order {
+        SumcheckOutputPointOrder::AsIs => segment.to_vec(),
+        SumcheckOutputPointOrder::Reverse => reverse_slice(segment),
+    })
+}
+
+fn lt_polynomial_eval(x: &[Fr], y: &[Fr]) -> Result<Fr, RuntimePlanError> {
+    if x.len() != y.len() {
+        return Err(RuntimePlanError::InvalidInputLength {
+            input: "sumcheck_output.lt",
+            expected: x.len(),
+            actual: y.len(),
+        });
+    }
+    let mut lt_eval = Fr::from_u64(0);
+    let mut eq_term = Fr::from_u64(1);
+    for (x_i, y_i) in x.iter().zip(y) {
+        lt_eval += (Fr::from_u64(1) - *x_i) * *y_i * eq_term;
+        eq_term *= Fr::from_u64(1) - *x_i - *y_i + *x_i * *y_i + *x_i * *y_i;
+    }
+    Ok(lt_eval)
 }
 
 #[derive(Default)]

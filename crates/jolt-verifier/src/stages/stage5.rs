@@ -284,6 +284,7 @@ pub const STAGE5_PROGRAM: Stage5VerifierProgramPlan = Stage5CpuProgramPlan {
     drivers: STAGE5_SUMCHECK_DRIVERS,
     instance_results: STAGE5_SUMCHECK_INSTANCE_RESULTS,
     evals: STAGE5_SUMCHECK_EVALS,
+    output_claims: &[],
     point_slices: STAGE5_POINT_SLICES,
     point_concats: STAGE5_POINT_CONCATS,
     opening_claims: STAGE5_OPENING_CLAIMS,

@@ -7,7 +7,12 @@ use crate::schema::{verify_protocol_schema, SchemaError};
 
 use super::super::oracles;
 use super::super::params::JoltProtocolParams;
+use super::field_formula::{FieldFormulaBuilder, FieldFormulaStep};
 use super::lowering::{lower_party_to_compute, transcript_squeeze_protocol_result_type};
+use super::sumcheck_output::{
+    append_sumcheck_output_claim, append_sumcheck_output_value, OutputClaimSpec, OutputPointSpec,
+    OutputValueSpec,
+};
 
 const REGISTERS_RW_DEGREE: usize = 3;
 const RAM_VAL_CHECK_DEGREE: usize = 3;
@@ -16,6 +21,72 @@ const STAGE4_BATCHED_DEGREE: usize = 3;
 const STAGE4_REGISTER_INPUTS: [&str; 3] = ["RdWriteValue", "Rs1Value", "Rs2Value"];
 const STAGE4_REGISTER_OUTPUTS: [&str; 5] = ["RegistersVal", "Rs1Ra", "Rs2Ra", "RdWa", "RdInc"];
 const STAGE4_RAM_VAL_OUTPUTS: [&str; 2] = ["RamRa", "RamInc"];
+
+const STAGE4_REGISTERS_OUTPUT_FORMULAS: [FieldFormulaStep; 9] = [
+    FieldFormulaStep::add(
+        "stage4.registers_read_write.output.sum.RegistersValRdInc",
+        "stage4.registers_read_write.eval.RegistersVal",
+        "stage4.registers_read_write.eval.RdInc",
+    ),
+    FieldFormulaStep::mul(
+        "stage4.registers_read_write.output.term.RdWa",
+        "stage4.registers_read_write.eval.RdWa",
+        "stage4.registers_read_write.output.sum.RegistersValRdInc",
+    ),
+    FieldFormulaStep::mul(
+        "stage4.registers_read_write.output.term.Rs1Ra",
+        "stage4.registers_read_write.eval.Rs1Ra",
+        "stage4.registers_read_write.eval.RegistersVal",
+    ),
+    FieldFormulaStep::mul(
+        "stage4.registers_read_write.output.term.Rs2Ra",
+        "stage4.registers_read_write.eval.Rs2Ra",
+        "stage4.registers_read_write.eval.RegistersVal",
+    ),
+    FieldFormulaStep::mul(
+        "stage4.registers_read_write.output.weighted.Rs2Ra",
+        "stage4.registers_read_write.gamma",
+        "stage4.registers_read_write.output.term.Rs2Ra",
+    ),
+    FieldFormulaStep::add(
+        "stage4.registers_read_write.output.read_terms",
+        "stage4.registers_read_write.output.term.Rs1Ra",
+        "stage4.registers_read_write.output.weighted.Rs2Ra",
+    ),
+    FieldFormulaStep::mul(
+        "stage4.registers_read_write.output.weighted.read_terms",
+        "stage4.registers_read_write.gamma",
+        "stage4.registers_read_write.output.read_terms",
+    ),
+    FieldFormulaStep::add(
+        "stage4.registers_read_write.output.weighted_values",
+        "stage4.registers_read_write.output.term.RdWa",
+        "stage4.registers_read_write.output.weighted.read_terms",
+    ),
+    FieldFormulaStep::mul(
+        "stage4.registers_read_write.output.claim_expr",
+        "stage4.registers_read_write.output.eq.RdWriteValue",
+        "stage4.registers_read_write.output.weighted_values",
+    ),
+];
+
+const STAGE4_RAM_VAL_OUTPUT_FORMULAS: [FieldFormulaStep; 3] = [
+    FieldFormulaStep::add(
+        "stage4.ram_val_check.output.lt_plus_gamma",
+        "stage4.ram_val_check.output.lt.RamValCycle",
+        "stage4.ram_val_check.gamma",
+    ),
+    FieldFormulaStep::mul(
+        "stage4.ram_val_check.output.term.RamIncRamRa",
+        "stage4.ram_val_check.eval.RamInc",
+        "stage4.ram_val_check.eval.RamRa",
+    ),
+    FieldFormulaStep::mul(
+        "stage4.ram_val_check.output.claim_expr",
+        "stage4.ram_val_check.output.term.RamIncRamRa",
+        "stage4.ram_val_check.output.lt_plus_gamma",
+    ),
+];
 
 pub fn build_stage4_protocol<'c>(
     context: &'c MeliorContext,
@@ -656,7 +727,18 @@ fn append_stage4_batched_sumcheck<'c, 'a>(
         point,
         result_value,
     )?;
-    append_stage4_output_openings(context, module, params, inputs, registers, ram_val_check)?;
+    append_stage4_output_openings(
+        context,
+        module,
+        params,
+        Stage4OutputOpeningsInputs {
+            openings: inputs,
+            registers,
+            ram_val_check,
+            registers_gamma: spec.registers_gamma,
+            ram_val_check_gamma: spec.ram_val_check_gamma,
+        },
+    )?;
     Ok(state)
 }
 
@@ -664,12 +746,14 @@ fn append_stage4_output_openings<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
     params: &JoltProtocolParams,
-    inputs: &Stage4OpeningInputs<'c, 'a>,
-    registers: (Value<'c, 'a>, Value<'c, 'a>),
-    ram_val_check: (Value<'c, 'a>, Value<'c, 'a>),
+    spec: Stage4OutputOpeningsInputs<'c, 'a, '_>,
 ) -> Result<(), MlirError> {
+    let inputs = spec.openings;
+    let registers = spec.registers;
+    let ram_val_check = spec.ram_val_check;
     let mut claims = Vec::new();
     let mut claim_symbols = Vec::new();
+    let mut register_evals = Vec::new();
 
     for (index, &oracle) in ["RegistersVal", "Rs1Ra", "Rs2Ra", "RdWa"]
         .iter()
@@ -685,6 +769,7 @@ fn append_stage4_output_openings<'c, 'a>(
             index,
             registers.1,
         )?;
+        register_evals.push(eval);
         claim_symbols.push(symbol.clone());
         claims.push(append_opening_claim(
             context,
@@ -799,6 +884,32 @@ fn append_stage4_output_openings<'c, 'a>(
         },
     )?);
 
+    let [registers_val_eval, rs1_ra_eval, rs2_ra_eval, rd_wa_eval] = register_evals.as_slice()
+    else {
+        return Err(schema_error(format!(
+            "stage4 registers output eval count mismatch: expected 4, got {}",
+            register_evals.len()
+        )));
+    };
+    append_stage4_output_claims(
+        context,
+        module,
+        Stage4OutputClaimInputs {
+            openings: inputs,
+            registers,
+            ram_val_check,
+            registers_gamma: spec.registers_gamma,
+            ram_val_check_gamma: spec.ram_val_check_gamma,
+            registers_val_eval: *registers_val_eval,
+            rs1_ra_eval: *rs1_ra_eval,
+            rs2_ra_eval: *rs2_ra_eval,
+            rd_wa_eval: *rd_wa_eval,
+            rd_inc_eval,
+            ram_ra_eval,
+            ram_inc_eval,
+        },
+    )?;
+
     let claim_names = claim_symbols.iter().map(String::as_str).collect::<Vec<_>>();
     let _batch = context.append_typed_op(
         module,
@@ -815,6 +926,90 @@ fn append_stage4_output_openings<'c, 'a>(
         &["!piop.opening_batch_type"],
     )?;
     Ok(())
+}
+
+fn append_stage4_output_claims<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    spec: Stage4OutputClaimInputs<'c, 'a, '_>,
+) -> Result<(), MlirError> {
+    let registers_eq_trace = append_sumcheck_output_value(
+        context,
+        module,
+        OutputValueSpec {
+            symbol: "stage4.registers_read_write.output.eq.RdWriteValue",
+            kind: "eq_mle",
+            local_point: OutputPointSpec::prefix("opening_point", "reverse"),
+            opening_point: OutputPointSpec::full("as_is"),
+        },
+        spec.registers.0,
+        spec.openings.rd_write_value.point,
+    )?;
+    let mut formula = FieldFormulaBuilder::new(context, module);
+    formula.bind_all(&[
+        ("stage4.registers_read_write.gamma", spec.registers_gamma),
+        (
+            "stage4.registers_read_write.eval.RegistersVal",
+            spec.registers_val_eval,
+        ),
+        ("stage4.registers_read_write.eval.Rs1Ra", spec.rs1_ra_eval),
+        ("stage4.registers_read_write.eval.Rs2Ra", spec.rs2_ra_eval),
+        ("stage4.registers_read_write.eval.RdWa", spec.rd_wa_eval),
+        ("stage4.registers_read_write.eval.RdInc", spec.rd_inc_eval),
+        (
+            "stage4.registers_read_write.output.eq.RdWriteValue",
+            registers_eq_trace,
+        ),
+    ]);
+    formula.append_all(&STAGE4_REGISTERS_OUTPUT_FORMULAS)?;
+    let registers_claim = formula.value("stage4.registers_read_write.output.claim_expr")?;
+    append_sumcheck_output_claim(
+        context,
+        module,
+        OutputClaimSpec {
+            symbol: "stage4.registers_read_write.output.claim",
+            stage: "stage4",
+            relation: "jolt.stage4.registers_read_write",
+        },
+        registers_claim,
+        &[(
+            "stage4.registers_read_write.output.eq.RdWriteValue",
+            registers_eq_trace,
+        )],
+    )?;
+
+    let ram_lt = append_sumcheck_output_value(
+        context,
+        module,
+        OutputValueSpec {
+            symbol: "stage4.ram_val_check.output.lt.RamValCycle",
+            kind: "lt",
+            local_point: OutputPointSpec::full("reverse"),
+            opening_point: OutputPointSpec::suffix("local_point", "as_is"),
+        },
+        spec.ram_val_check.0,
+        spec.openings.ram_val.point,
+    )?;
+    let mut formula = FieldFormulaBuilder::new(context, module);
+    formula.bind_all(&[
+        ("stage4.ram_val_check.gamma", spec.ram_val_check_gamma),
+        ("stage4.ram_val_check.eval.RamRa", spec.ram_ra_eval),
+        ("stage4.ram_val_check.eval.RamInc", spec.ram_inc_eval),
+        ("stage4.ram_val_check.output.lt.RamValCycle", ram_lt),
+    ]);
+    formula.append_all(&STAGE4_RAM_VAL_OUTPUT_FORMULAS)?;
+    let ram_val_claim = formula.value("stage4.ram_val_check.output.claim_expr")?;
+    append_sumcheck_output_claim(
+        context,
+        module,
+        OutputClaimSpec {
+            symbol: "stage4.ram_val_check.output.claim",
+            stage: "stage4",
+            relation: "jolt.stage4.ram_val_check",
+        },
+        ram_val_claim,
+        &[("stage4.ram_val_check.output.lt.RamValCycle", ram_lt)],
+    )
 }
 
 fn append_opening_claim_equal<'c>(
@@ -1181,6 +1376,29 @@ struct Stage4BatchedSumcheckInputs<'c, 'a, 'b> {
     openings: &'b Stage4OpeningInputs<'c, 'a>,
     registers_gamma: Value<'c, 'a>,
     ram_val_check_gamma: Value<'c, 'a>,
+}
+
+struct Stage4OutputOpeningsInputs<'c, 'a, 'b> {
+    openings: &'b Stage4OpeningInputs<'c, 'a>,
+    registers: (Value<'c, 'a>, Value<'c, 'a>),
+    ram_val_check: (Value<'c, 'a>, Value<'c, 'a>),
+    registers_gamma: Value<'c, 'a>,
+    ram_val_check_gamma: Value<'c, 'a>,
+}
+
+struct Stage4OutputClaimInputs<'c, 'a, 'b> {
+    openings: &'b Stage4OpeningInputs<'c, 'a>,
+    registers: (Value<'c, 'a>, Value<'c, 'a>),
+    ram_val_check: (Value<'c, 'a>, Value<'c, 'a>),
+    registers_gamma: Value<'c, 'a>,
+    ram_val_check_gamma: Value<'c, 'a>,
+    registers_val_eval: Value<'c, 'a>,
+    rs1_ra_eval: Value<'c, 'a>,
+    rs2_ra_eval: Value<'c, 'a>,
+    rd_wa_eval: Value<'c, 'a>,
+    rd_inc_eval: Value<'c, 'a>,
+    ram_ra_eval: Value<'c, 'a>,
+    ram_inc_eval: Value<'c, 'a>,
 }
 
 struct SumcheckClaimSpec<'a> {

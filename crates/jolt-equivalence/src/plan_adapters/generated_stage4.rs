@@ -24,5 +24,7 @@ define_stage_adapter!(
     Stage4PointConcatPlan,
     Stage4OpeningClaimPlan,
     Stage4OpeningClaimEqualityPlan,
-    Stage4OpeningBatchPlan
+    Stage4OpeningBatchPlan,
+    output_claims = Stage4SumcheckOutputClaimPlan,
+    output_values = Stage4SumcheckOutputValuePlan
 );

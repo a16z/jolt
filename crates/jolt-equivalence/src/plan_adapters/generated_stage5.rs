@@ -24,5 +24,6 @@ define_stage_adapter!(
     Stage5PointConcatPlan,
     Stage5OpeningClaimPlan,
     Stage5OpeningClaimEqualityPlan,
-    Stage5OpeningBatchPlan
+    Stage5OpeningBatchPlan,
+    empty_output_claims = yes
 );

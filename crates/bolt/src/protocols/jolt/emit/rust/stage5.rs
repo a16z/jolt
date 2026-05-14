@@ -1243,6 +1243,11 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
         source.push_str(&self.emit_sumcheck_batch_constants());
         source.push_str(&self.emit_sumcheck_driver_constants()?);
         source.push_str(&self.emit_tail_constants()?);
+        let output_claims_field = if self.role == Role::Verifier {
+            "    output_claims: &[],\n"
+        } else {
+            ""
+        };
         push_format(
             &mut source,
             format_args!(
@@ -1261,6 +1266,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
                  \x20   drivers: STAGE5_SUMCHECK_DRIVERS,\n\
                  \x20   instance_results: STAGE5_SUMCHECK_INSTANCE_RESULTS,\n\
                  \x20   evals: STAGE5_SUMCHECK_EVALS,\n\
+                 {output_claims_field}\
                  \x20   point_slices: STAGE5_POINT_SLICES,\n\
                  \x20   point_concats: STAGE5_POINT_CONCATS,\n\
                  \x20   opening_claims: STAGE5_OPENING_CLAIMS,\n\

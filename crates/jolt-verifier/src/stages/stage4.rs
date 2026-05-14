@@ -1,9 +1,7 @@
 #![allow(dead_code)]
 
-use bolt_verifier_runtime::{batch_claims, eval_by_name, find_batch, find_plan, reverse_slice};
-use super::jolt_relations::lt_polynomial_eval;
+use bolt_verifier_runtime::{batch_claims, find_batch, find_plan};
 use jolt_field::{Field, Fr};
-use jolt_poly::EqPolynomial;
 use jolt_sumcheck::SumcheckError;
 use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};
 
@@ -17,6 +15,8 @@ pub type Stage4CpuProgramPlan = bolt_verifier_runtime::StageProgramPlanNoPointZe
 pub type Stage4SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stage4RelationKind>;
 pub type Stage4SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage4RelationKind>;
 pub type Stage4SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage4RelationKind>;
+pub type Stage4SumcheckOutputClaimPlan = bolt_verifier_runtime::SumcheckOutputClaimPlan<Stage4RelationKind>;
+pub type Stage4SumcheckOutputValuePlan = bolt_verifier_runtime::SumcheckOutputValuePlan;
 
 pub use super::jolt_relations::JoltRelationKind as Stage4RelationKind;
 pub use bolt_verifier_runtime::{
@@ -32,6 +32,11 @@ pub use bolt_verifier_runtime::{
     ProgramStepPlan as Stage4ProgramStepPlan, StageParams as Stage4Params,
     SumcheckBatchPlan as Stage4SumcheckBatchPlan,
     SumcheckEvalPlan as Stage4SumcheckEvalPlan,
+    SumcheckOutputPointLength as Stage4SumcheckOutputPointLength,
+    SumcheckOutputPointOrder as Stage4SumcheckOutputPointOrder,
+    SumcheckOutputPointPlan as Stage4SumcheckOutputPointPlan,
+    SumcheckOutputPointSegment as Stage4SumcheckOutputPointSegment,
+    SumcheckOutputValueKind as Stage4SumcheckOutputValueKind,
     TranscriptAbsorbBytesPlan as Stage4TranscriptAbsorbBytesPlan,
     TranscriptSqueezeKind as Stage4TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage4TranscriptSqueezePlan,
@@ -97,6 +102,18 @@ pub const STAGE4_FIELD_EXPRS: &[Stage4FieldExprPlan] = &[
     Stage4FieldExprPlan { symbol: "stage4.ram_val_check.delta.RamValFinal", kind: Stage4FieldExprKind::Sub, operands: &["stage4.input.stage2.RamValFinal", "stage4.input.initial_ram.RamValInit"] },
     Stage4FieldExprPlan { symbol: "stage4.ram_val_check.term.RamValFinal", kind: Stage4FieldExprKind::Mul, operands: &["stage4.ram_val_check.gamma", "stage4.ram_val_check.delta.RamValFinal"] },
     Stage4FieldExprPlan { symbol: "stage4.ram_val_check.claim_expr", kind: Stage4FieldExprKind::Add, operands: &["stage4.ram_val_check.delta.RamVal", "stage4.ram_val_check.term.RamValFinal"] },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.output.sum.RegistersValRdInc", kind: Stage4FieldExprKind::Add, operands: &["stage4.registers_read_write.eval.RegistersVal", "stage4.registers_read_write.eval.RdInc"] },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.output.term.RdWa", kind: Stage4FieldExprKind::Mul, operands: &["stage4.registers_read_write.eval.RdWa", "stage4.registers_read_write.output.sum.RegistersValRdInc"] },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.output.term.Rs1Ra", kind: Stage4FieldExprKind::Mul, operands: &["stage4.registers_read_write.eval.Rs1Ra", "stage4.registers_read_write.eval.RegistersVal"] },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.output.term.Rs2Ra", kind: Stage4FieldExprKind::Mul, operands: &["stage4.registers_read_write.eval.Rs2Ra", "stage4.registers_read_write.eval.RegistersVal"] },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.output.weighted.Rs2Ra", kind: Stage4FieldExprKind::Mul, operands: &["stage4.registers_read_write.gamma", "stage4.registers_read_write.output.term.Rs2Ra"] },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.output.read_terms", kind: Stage4FieldExprKind::Add, operands: &["stage4.registers_read_write.output.term.Rs1Ra", "stage4.registers_read_write.output.weighted.Rs2Ra"] },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.output.weighted.read_terms", kind: Stage4FieldExprKind::Mul, operands: &["stage4.registers_read_write.gamma", "stage4.registers_read_write.output.read_terms"] },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.output.weighted_values", kind: Stage4FieldExprKind::Add, operands: &["stage4.registers_read_write.output.term.RdWa", "stage4.registers_read_write.output.weighted.read_terms"] },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.output.claim_expr", kind: Stage4FieldExprKind::Mul, operands: &["stage4.registers_read_write.output.eq.RdWriteValue", "stage4.registers_read_write.output.weighted_values"] },
+    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.output.lt_plus_gamma", kind: Stage4FieldExprKind::Add, operands: &["stage4.ram_val_check.output.lt.RamValCycle", "stage4.ram_val_check.gamma"] },
+    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.output.term.RamIncRamRa", kind: Stage4FieldExprKind::Mul, operands: &["stage4.ram_val_check.eval.RamInc", "stage4.ram_val_check.eval.RamRa"] },
+    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.output.claim_expr", kind: Stage4FieldExprKind::Mul, operands: &["stage4.ram_val_check.output.term.RamIncRamRa", "stage4.ram_val_check.output.lt_plus_gamma"] },
 ];
 pub const STAGE4_KERNELS: &[Stage4KernelPlan] = &[
 
@@ -157,6 +174,19 @@ pub const STAGE4_OPENING_EQUALITIES: &[Stage4OpeningClaimEqualityPlan] = &[
 pub const STAGE4_OPENING_BATCHES: &[Stage4OpeningBatchPlan] = &[
     Stage4OpeningBatchPlan { symbol: "stage4.openings", stage: "stage4", proof_slot: "stage4.openings", policy: "jolt_stage4_output_order", count: 7, ordered_claims: &["stage4.registers_read_write.opening.RegistersVal", "stage4.registers_read_write.opening.Rs1Ra", "stage4.registers_read_write.opening.Rs2Ra", "stage4.registers_read_write.opening.RdWa", "stage4.registers_read_write.opening.RdInc", "stage4.ram_val_check.opening.RamRa", "stage4.ram_val_check.opening.RamInc"], claim_operands: &["stage4.registers_read_write.opening.RegistersVal", "stage4.registers_read_write.opening.Rs1Ra", "stage4.registers_read_write.opening.Rs2Ra", "stage4.registers_read_write.opening.RdWa", "stage4.registers_read_write.opening.RdInc", "stage4.ram_val_check.opening.RamRa", "stage4.ram_val_check.opening.RamInc"] },
 ];
+pub const STAGE4_SUMCHECK_OUTPUT_CLAIM_0_VALUES: &[Stage4SumcheckOutputValuePlan] = &[
+    Stage4SumcheckOutputValuePlan { symbol: "stage4.registers_read_write.output.eq.RdWriteValue", kind: Stage4SumcheckOutputValueKind::EqMle, local_point: Stage4SumcheckOutputPointPlan { source: "stage4.registers_read_write.instance", segment: Stage4SumcheckOutputPointSegment::Prefix, length: Stage4SumcheckOutputPointLength::OpeningPoint, order: Stage4SumcheckOutputPointOrder::Reverse }, opening_point: Stage4SumcheckOutputPointPlan { source: "stage4.input.stage3.registers.RdWriteValue", segment: Stage4SumcheckOutputPointSegment::Full, length: Stage4SumcheckOutputPointLength::Full, order: Stage4SumcheckOutputPointOrder::AsIs } },
+];
+
+pub const STAGE4_SUMCHECK_OUTPUT_CLAIM_1_VALUES: &[Stage4SumcheckOutputValuePlan] = &[
+    Stage4SumcheckOutputValuePlan { symbol: "stage4.ram_val_check.output.lt.RamValCycle", kind: Stage4SumcheckOutputValueKind::Lt, local_point: Stage4SumcheckOutputPointPlan { source: "stage4.ram_val_check.instance", segment: Stage4SumcheckOutputPointSegment::Full, length: Stage4SumcheckOutputPointLength::Full, order: Stage4SumcheckOutputPointOrder::Reverse }, opening_point: Stage4SumcheckOutputPointPlan { source: "stage4.input.stage2.RamVal", segment: Stage4SumcheckOutputPointSegment::Suffix, length: Stage4SumcheckOutputPointLength::LocalPoint, order: Stage4SumcheckOutputPointOrder::AsIs } },
+];
+
+pub const STAGE4_SUMCHECK_OUTPUT_CLAIMS: &[Stage4SumcheckOutputClaimPlan] = &[
+    Stage4SumcheckOutputClaimPlan { relation: Stage4RelationKind::Stage4RegistersReadWrite, local_values: STAGE4_SUMCHECK_OUTPUT_CLAIM_0_VALUES, claim_value: "stage4.registers_read_write.output.claim_expr" },
+    Stage4SumcheckOutputClaimPlan { relation: Stage4RelationKind::Stage4RamValCheck, local_values: STAGE4_SUMCHECK_OUTPUT_CLAIM_1_VALUES, claim_value: "stage4.ram_val_check.output.claim_expr" },
+];
+
 pub const STAGE4_PROGRAM: Stage4VerifierProgramPlan = Stage4CpuProgramPlan {
     role: "verifier",
     params: STAGE4_PARAMS,
@@ -172,6 +202,7 @@ pub const STAGE4_PROGRAM: Stage4VerifierProgramPlan = Stage4CpuProgramPlan {
     drivers: STAGE4_SUMCHECK_DRIVERS,
     instance_results: STAGE4_SUMCHECK_INSTANCE_RESULTS,
     evals: STAGE4_SUMCHECK_EVALS,
+    output_claims: STAGE4_SUMCHECK_OUTPUT_CLAIMS,
     point_slices: STAGE4_POINT_SLICES,
     point_concats: STAGE4_POINT_CONCATS,
     opening_claims: STAGE4_OPENING_CLAIMS,
@@ -424,84 +455,24 @@ fn expected_batched_output_claim(
                 expected: instance.round_offset + instance.num_rounds,
                 actual: point.len(),
             })?;
-        let Some(relation) = claim.relation else {
-            return Err(VerifyStage4Error::InvalidProof {
-                driver: driver.symbol,
-                reason: "missing claim relation",
-            });
-        };
-        let value = match relation {
-            Stage4RelationKind::Stage4RegistersReadWrite => {
-                expected_registers_read_write(store, evals, local_point)?
-            }
-            Stage4RelationKind::Stage4RamValCheck => {
-                expected_ram_val_check(store, evals, local_point)?
-            }
-            relation => return Err(VerifyStage4Error::UnsupportedRelation { relation }),
-        };
+        let output_claim = program
+            .output_claims
+            .iter()
+            .find(|output_claim| output_claim.relation == instance.relation)
+            .ok_or(VerifyStage4Error::UnsupportedRelation {
+                relation: instance.relation,
+            })?;
+        let value = bolt_verifier_runtime::evaluate_sumcheck_output_claim(
+            output_claim,
+            program.field_exprs,
+            store,
+            instance.symbol,
+            evals,
+            local_point,
+        )?;
         expected += *coefficient * value;
     }
     Ok(expected)
-}
-
-fn expected_registers_read_write(
-    store: &bolt_verifier_runtime::ValueStore<Fr>,
-    evals: &[Stage4NamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage4Error> {
-    let trace_point = bolt_verifier_runtime::store_point(store, "stage4.input.stage3.registers.RdWriteValue")?;
-    let r_cycle = normalize_stage4_registers_rw_cycle_point(
-        local_point,
-        trace_point.len(),
-        "stage4.registers_read_write.instance",
-    )?;
-    let eq_eval = EqPolynomial::<Fr>::mle(&r_cycle, trace_point);
-    let registers_val = eval_by_name(
-        evals,
-        "stage4.registers_read_write.eval.RegistersVal",
-    )?;
-    let rs1_ra = eval_by_name(evals, "stage4.registers_read_write.eval.Rs1Ra")?;
-    let rs2_ra = eval_by_name(evals, "stage4.registers_read_write.eval.Rs2Ra")?;
-    let rd_wa = eval_by_name(evals, "stage4.registers_read_write.eval.RdWa")?;
-    let rd_inc = eval_by_name(evals, "stage4.registers_read_write.eval.RdInc")?;
-    let gamma = bolt_verifier_runtime::store_scalar(store, "stage4.registers_read_write.gamma")?;
-    Ok(eq_eval
-        * (rd_wa * (registers_val + rd_inc)
-            + gamma * (rs1_ra * registers_val + gamma * rs2_ra * registers_val)))
-}
-
-fn expected_ram_val_check(
-    store: &bolt_verifier_runtime::ValueStore<Fr>,
-    evals: &[Stage4NamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage4Error> {
-    let ram_val_point = bolt_verifier_runtime::store_point(store, "stage4.input.stage2.RamVal")?;
-    let r_cycle_prime = reverse_slice(local_point);
-    let r_cycle = suffix_point(
-        ram_val_point,
-        r_cycle_prime.len(),
-        "stage4.input.stage2.RamVal",
-    )?;
-    let lt_eval = lt_polynomial_eval(&r_cycle_prime, r_cycle);
-    let gamma = bolt_verifier_runtime::store_scalar(store, "stage4.ram_val_check.gamma")?;
-    let ram_ra = eval_by_name(evals, "stage4.ram_val_check.eval.RamRa")?;
-    let ram_inc = eval_by_name(evals, "stage4.ram_val_check.eval.RamInc")?;
-    Ok(ram_inc * ram_ra * (lt_eval + gamma))
-}
-
-fn suffix_point<'a>(
-    point: &'a [Fr],
-    length: usize,
-    input: &'static str,
-) -> Result<&'a [Fr], VerifyStage4Error> {
-    point
-        .get(point.len().saturating_sub(length)..)
-        .filter(|suffix| suffix.len() == length)
-        .ok_or(VerifyStage4Error::InvalidInputLength {
-            input,
-            expected: length,
-            actual: point.len(),
-        })
 }
 
 fn normalize_stage4_registers_rw_point<F: Field>(
@@ -534,20 +505,4 @@ fn normalize_stage4_registers_rw_point<F: Field>(
         .copied()
         .chain(cycle.iter().rev().copied())
         .collect())
-}
-
-fn normalize_stage4_registers_rw_cycle_point<F: Field>(
-    point: &[F],
-    cycle_rounds: usize,
-    input: &'static str,
-) -> Result<Vec<F>, VerifyStage4Error> {
-    let cycle = point
-        .get(..cycle_rounds)
-        .filter(|cycle| cycle.len() == cycle_rounds)
-        .ok_or(VerifyStage4Error::InvalidInputLength {
-            input,
-            expected: cycle_rounds,
-            actual: point.len(),
-        })?;
-    Ok(cycle.iter().rev().copied().collect())
 }

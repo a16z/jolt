@@ -309,7 +309,38 @@ fn generated_sumcheck_output_value_kind(
     match value {
         "eq_mle" => bolt_verifier_runtime::SumcheckOutputValueKind::EqMle,
         "eq_plus_one" => bolt_verifier_runtime::SumcheckOutputValueKind::EqPlusOne,
+        "lt" => bolt_verifier_runtime::SumcheckOutputValueKind::Lt,
         value => panic!("unsupported generated sumcheck output value kind `{value}`"),
+    }
+}
+
+#[expect(
+    clippy::panic,
+    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
+)]
+fn generated_sumcheck_output_point_segment(
+    value: &str,
+) -> bolt_verifier_runtime::SumcheckOutputPointSegment {
+    match value {
+        "full" => bolt_verifier_runtime::SumcheckOutputPointSegment::Full,
+        "prefix" => bolt_verifier_runtime::SumcheckOutputPointSegment::Prefix,
+        "suffix" => bolt_verifier_runtime::SumcheckOutputPointSegment::Suffix,
+        value => panic!("unsupported generated sumcheck output point segment `{value}`"),
+    }
+}
+
+#[expect(
+    clippy::panic,
+    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
+)]
+fn generated_sumcheck_output_point_length(
+    value: &str,
+) -> bolt_verifier_runtime::SumcheckOutputPointLength {
+    match value {
+        "full" => bolt_verifier_runtime::SumcheckOutputPointLength::Full,
+        "local_point" => bolt_verifier_runtime::SumcheckOutputPointLength::LocalPoint,
+        "opening_point" => bolt_verifier_runtime::SumcheckOutputPointLength::OpeningPoint,
+        value => panic!("unsupported generated sumcheck output point length `{value}`"),
     }
 }
 
@@ -399,6 +430,7 @@ macro_rules! define_stage_adapter_impl {
         $(, kernels = $kernel:ident)?
         $(, point_zeros = $point_zero:ident)?
         $(, output_claims = $output_claim:ident, output_values = $output_value:ident)?
+        $(, empty_output_claims = $empty_output_claims:ident)?
         $(, opening_equalities = $opening_equality:ident)?
     ) => {
         pub fn $function(program: &$compiler) -> &'static $module::$program {
@@ -559,15 +591,18 @@ macro_rules! define_stage_adapter_impl {
                                     .map(|value| $module::$output_value {
                                         symbol: super::leak_str(&value.symbol),
                                         kind: super::generated_sumcheck_output_value_kind(&value.kind),
-                                        point_order: super::generated_sumcheck_output_point_order(
-                                            &value.point_order,
-                                        ),
-                                        local_point_source: super::leak_str(
-                                            &value.local_point_source,
-                                        ),
-                                        opening_point_source: super::leak_str(
-                                            &value.opening_point_source,
-                                        ),
+                                        local_point: bolt_verifier_runtime::SumcheckOutputPointPlan {
+                                            source: super::leak_str(&value.local_point.source),
+                                            segment: super::generated_sumcheck_output_point_segment(&value.local_point.segment),
+                                            length: super::generated_sumcheck_output_point_length(&value.local_point.length),
+                                            order: super::generated_sumcheck_output_point_order(&value.local_point.order),
+                                        },
+                                        opening_point: bolt_verifier_runtime::SumcheckOutputPointPlan {
+                                            source: super::leak_str(&value.opening_point.source),
+                                            segment: super::generated_sumcheck_output_point_segment(&value.opening_point.segment),
+                                            length: super::generated_sumcheck_output_point_length(&value.opening_point.length),
+                                            order: super::generated_sumcheck_output_point_order(&value.opening_point.order),
+                                        },
                                     })
                                     .collect(),
                             ),
@@ -575,6 +610,12 @@ macro_rules! define_stage_adapter_impl {
                         })
                         .collect(),
                 ),
+                )?
+                $(
+                output_claims: {
+                    let _ = stringify!($empty_output_claims);
+                    &[]
+                },
                 )?
                 $(
                 point_zeros: super::leak_slice(
@@ -689,6 +730,8 @@ macro_rules! define_stage_adapter {
         $opening_equality:ident,
         $opening_batch:ident
         $(, point_zero = $point_zero:ident)?
+        $(, output_claims = $output_claim:ident, output_values = $output_value:ident)?
+        $(, empty_output_claims = $empty_output_claims:ident)?
     ) => {
         define_stage_adapter_impl!(
             $mode,
@@ -714,7 +757,10 @@ macro_rules! define_stage_adapter {
             role = role,
             transcript_absorb_bytes = $absorb,
             kernels = $kernel
-            $(, point_zeros = $point_zero)?,
+            $(, point_zeros = $point_zero)?
+            $(, output_claims = $output_claim, output_values = $output_value)?
+            $(, empty_output_claims = $empty_output_claims)?
+            ,
             opening_equalities = $opening_equality
         );
     };
@@ -744,6 +790,7 @@ macro_rules! define_stage_adapter_no_absorb {
         $opening_batch:ident
         $(, kernels = $kernel:ident)?
         $(, output_claims = $output_claim:ident, output_values = $output_value:ident)?
+        $(, empty_output_claims = $empty_output_claims:ident)?
         $(, opening_equalities = $opening_equality:ident)?
     ) => {
         define_stage_adapter_impl!(
@@ -769,6 +816,7 @@ macro_rules! define_stage_adapter_no_absorb {
             $opening_batch
             $(, kernels = $kernel)?
             $(, output_claims = $output_claim, output_values = $output_value)?
+            $(, empty_output_claims = $empty_output_claims)?
             $(, opening_equalities = $opening_equality)?
         );
     };

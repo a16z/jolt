@@ -14,6 +14,17 @@ use crate::ir::{
 use crate::mlir::MlirError;
 use crate::pass::{verify_concrete_transcript, VerifyError};
 
+const SUMCHECK_OUTPUT_VALUE_ATTRS: &[&str] = &[
+    "sym_name",
+    "kind",
+    "local_point_segment",
+    "local_point_length",
+    "local_point_order",
+    "opening_point_segment",
+    "opening_point_length",
+    "opening_point_order",
+];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaError {
     message: String,
@@ -363,7 +374,7 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             require_shape(operation, 2, 2)
         }
         "piop.sumcheck_output_value" => {
-            require_attrs(operation, &["sym_name", "kind", "point_order"])?;
+            require_attrs(operation, SUMCHECK_OUTPUT_VALUE_ATTRS)?;
             require_shape(operation, 2, 1)?;
             require_sumcheck_output_value(operation)
         }
@@ -720,7 +731,7 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             require_shape(operation, 2, 2)
         }
         "compute.sumcheck_output_value" => {
-            require_attrs(operation, &["sym_name", "kind", "point_order"])?;
+            require_attrs(operation, SUMCHECK_OUTPUT_VALUE_ATTRS)?;
             require_shape(operation, 2, 1)?;
             require_sumcheck_output_value(operation)
         }
@@ -1060,7 +1071,7 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             require_shape(operation, 2, 2)
         }
         "cpu.sumcheck_output_value" => {
-            require_attrs(operation, &["sym_name", "kind", "point_order"])?;
+            require_attrs(operation, SUMCHECK_OUTPUT_VALUE_ATTRS)?;
             require_shape(operation, 2, 1)?;
             require_sumcheck_output_value(operation)
         }
@@ -1199,16 +1210,48 @@ fn require_opening_claim_equality(operation: OperationRef<'_, '_>) -> Result<(),
 
 fn require_sumcheck_output_value(operation: OperationRef<'_, '_>) -> Result<(), SchemaError> {
     let kind = string_attr(operation, "kind")?;
-    if !matches!(kind.as_str(), "eq_mle" | "eq_plus_one") {
+    if !matches!(kind.as_str(), "eq_mle" | "eq_plus_one" | "lt") {
         return Err(SchemaError::new(format!(
             "{} attr `kind` has unsupported output value kind `{kind}`",
             operation_name(operation)
         )));
     }
-    let point_order = string_attr(operation, "point_order")?;
-    if !matches!(point_order.as_str(), "as_is" | "reverse") {
+    require_sumcheck_output_point_attrs(operation, "local_point")?;
+    require_sumcheck_output_point_attrs(operation, "opening_point")?;
+    Ok(())
+}
+
+fn require_sumcheck_output_point_attrs(
+    operation: OperationRef<'_, '_>,
+    prefix: &str,
+) -> Result<(), SchemaError> {
+    let segment_attr = format!("{prefix}_segment");
+    let segment = string_attr(operation, &segment_attr)?;
+    if !matches!(segment.as_str(), "full" | "prefix" | "suffix") {
         return Err(SchemaError::new(format!(
-            "{} attr `point_order` has unsupported output point order `{point_order}`",
+            "{} attr `{segment_attr}` has unsupported output point segment `{segment}`",
+            operation_name(operation)
+        )));
+    }
+    let length_attr = format!("{prefix}_length");
+    let length = string_attr(operation, &length_attr)?;
+    if !matches!(length.as_str(), "full" | "local_point" | "opening_point") {
+        return Err(SchemaError::new(format!(
+            "{} attr `{length_attr}` has unsupported output point length `{length}`",
+            operation_name(operation)
+        )));
+    }
+    if segment == "full" && length != "full" {
+        return Err(SchemaError::new(format!(
+            "{} output point `{prefix}` uses segment `full` but length `{length}`; full segments must use length `full`",
+            operation_name(operation)
+        )));
+    }
+    let order_attr = format!("{prefix}_order");
+    let order = string_attr(operation, &order_attr)?;
+    if !matches!(order.as_str(), "as_is" | "reverse") {
+        return Err(SchemaError::new(format!(
+            "{} attr `{order_attr}` has unsupported output point order `{order}`",
             operation_name(operation)
         )));
     }

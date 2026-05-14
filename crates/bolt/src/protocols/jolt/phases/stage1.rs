@@ -851,7 +851,18 @@ pub fn resolve_compute_kernels<'c>(
             }
             "compute.sumcheck_output_value" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
-                let attrs = copy_attrs(op, &["kind", "point_order"])?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "kind",
+                        "local_point_segment",
+                        "local_point_length",
+                        "local_point_order",
+                        "opening_point_segment",
+                        "opening_point_length",
+                        "opening_point_order",
+                    ],
+                )?;
                 let symbol = string_attr(op, "sym_name")?;
                 let operation = context.append_typed_op_with_owned_attrs(
                     &kernelized,
