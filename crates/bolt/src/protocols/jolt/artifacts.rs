@@ -337,7 +337,7 @@ fn jolt_evaluation_role_api_extension() -> ProtocolArtifactExtension {
         required_artifact_stages: vec!["stage8".to_owned()],
         prover: ProtocolProverApiExtension {
             lib_module: jolt_prover_lib_module(),
-            imports: "#![expect(\n    clippy::too_many_arguments,\n    reason = \"generated prover helpers mirror staged protocol ABIs\"\n)]\n\nuse jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme};\nuse jolt_field::Fr;\nuse jolt_kernels::{stage1, stage2, stage3, stage4, stage5, stage6, stage7};\nuse jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};\nuse jolt_poly::{EqPolynomial, Polynomial};\nuse jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};\nuse jolt_verifier::{JoltEvaluationProof, JoltNamedEval, JoltProof, JoltStage2RamAccess, JoltStage2RamData, JoltStage2RamOutputLayout, JoltStage6BytecodeEntry, JoltStage6BytecodeReadRafData, JoltStage6VerifierData, JoltStageChallengeVector, JoltStageExecutionArtifacts, JoltStageOpeningInputValue, JoltStageProof, JoltSumcheckOutput};\nuse jolt_witness::{stage4_ram_val_init_opening, CycleInput, Stage45SparseTraceWitness, Stage6BytecodeEntry as WitnessStage6BytecodeEntry, Stage6WitnessParams, Stage6WitnessPolynomials, Stage6WitnessSlices};\nuse rayon::prelude::*;\n\n".to_owned(),
+            imports: "#![expect(\n    clippy::too_many_arguments,\n    reason = \"generated prover helpers mirror staged protocol ABIs\"\n)]\n\nuse jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme};\nuse jolt_field::Fr;\nuse jolt_kernels::{stage1, stage2, stage3, stage4, stage5, stage6, stage7};\nuse jolt_openings::CommitmentScheme;\nuse jolt_poly::{EqPolynomial, Polynomial};\nuse jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};\nuse jolt_verifier::{JoltEvaluationProof, JoltNamedEval, JoltProof, JoltStage2RamAccess, JoltStage2RamData, JoltStage2RamOutputLayout, JoltStage6BytecodeEntry, JoltStage6BytecodeReadRafData, JoltStage6VerifierData, JoltStageChallengeVector, JoltStageExecutionArtifacts, JoltStageOpeningInputValue, JoltStageProof, JoltSumcheckOutput};\nuse jolt_witness::{stage4_ram_val_init_opening, CycleInput, Stage45SparseTraceWitness, Stage6BytecodeEntry as WitnessStage6BytecodeEntry, Stage6WitnessParams, Stage6WitnessPolynomials, Stage6WitnessSlices};\nuse rayon::prelude::*;\n\n".to_owned(),
             input_fields:
                 "    pub stage7_openings: Option<&'a [stage7::Stage7OpeningInputValue<Fr>]>,\n"
                     .to_owned(),
@@ -2295,20 +2295,18 @@ fn joint_opening_hint(
         scalars.push(coefficient);
     }}
 
-    Ok(<DoryScheme as AdditivelyHomomorphic>::combine_hints(
-        hints, &scalars,
-    ))
+    Ok(DoryScheme::combine_hint_refs(&hints, &scalars))
 }}
 
-fn opening_hint_for_oracle(
-    commitments: &commitment_stage::CommitmentArtifacts,
+fn opening_hint_for_oracle<'a>(
+    commitments: &'a commitment_stage::CommitmentArtifacts,
     oracle: &'static str,
-) -> Result<DoryHint, JoltEvaluationProveError> {{
+) -> Result<&'a DoryHint, JoltEvaluationProveError> {{
     commitments
         .hints
         .iter()
         .find(|hint| hint.oracle == oracle)
-        .map(|hint| hint.hint.clone())
+        .map(|hint| &hint.hint)
         .ok_or(JoltEvaluationProveError::MissingOpeningHint {{ oracle }})
 }}
 

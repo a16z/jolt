@@ -97,11 +97,7 @@ where
 
     #[inline]
     fn challenge_bytes32(&mut self, out: &mut [u8; 32]) {
-        let hash: [u8; 32] = self
-            .hasher()
-            .chain_update([0x01]) // squeeze domain tag
-            .finalize()
-            .into();
+        let hash: [u8; 32] = self.hasher().finalize().into();
         out.copy_from_slice(&hash);
         self.update_state(hash);
     }
@@ -155,16 +151,18 @@ where
     }
 
     fn append_bytes(&mut self, bytes: &[u8]) {
-        let hash: [u8; 32] = self
-            .hasher()
-            .chain_update([0x00]) // absorb domain tag
-            .chain_update(bytes)
-            .finalize()
-            .into();
+        let hash: [u8; 32] = self.hasher().chain_update(bytes).finalize().into();
         self.update_state(hash);
     }
 
     fn challenge(&mut self) -> F {
+        let mut buf = vec![0u8; 16];
+        self.challenge_bytes(&mut buf);
+        buf.reverse();
+        F::from_challenge_bytes(&buf)
+    }
+
+    fn challenge_optimized(&mut self) -> F {
         let mut buf = [0u8; 16];
         self.challenge_bytes(&mut buf);
         F::from_challenge_bytes(&buf)

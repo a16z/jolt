@@ -1268,7 +1268,7 @@ where
     }
     let mut artifacts = Stage1ExecutionArtifacts::default();
     for squeeze in program.transcript_squeezes {
-        let values = transcript.challenge_vector(squeeze.count);
+        let values = transcript.challenge_vector_optimized(squeeze.count);
         artifacts.challenge_vectors.push(Stage1ChallengeVector {
             symbol: squeeze.symbol,
             values,
@@ -1333,7 +1333,7 @@ where
         .iter()
         .map(|poly| LabeledRoundPoly::new(poly, driver.round_label.as_bytes()))
         .collect::<Vec<_>>();
-    let output = SumcheckVerifier::verify(&claim, &round_proofs, transcript)
+    let output = SumcheckVerifier::verify_optimized(&claim, &round_proofs, transcript)
         .map_err(|error| VerifyStage1Error::Sumcheck {
             driver: driver.symbol,
             error,
@@ -1388,7 +1388,7 @@ where
         .iter()
         .map(|poly| CompressedLabeledRoundPoly::new(poly, driver.round_label.as_bytes()))
         .collect::<Vec<_>>();
-    let output = SumcheckVerifier::verify(&claim, &round_proofs, transcript)
+    let output = SumcheckVerifier::verify_optimized(&claim, &round_proofs, transcript)
         .map_err(|error| VerifyStage1Error::Sumcheck {
             driver: driver.symbol,
             error,

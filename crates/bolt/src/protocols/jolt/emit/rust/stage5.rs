@@ -963,7 +963,7 @@ impl Stage5CpuProgram {
     }
 
     fn emit_verifier_imports() -> &'static str {
-        "use super::common::{batch_claims, eval_by_name, find_batch, find_plan, identity_polynomial_eval, indexed_evals_by_prefix, indexed_evals_by_prefix_any, lt_polynomial_eval, normalize_instruction_read_raf_point, operand_polynomial_eval, reverse_slice, suffix_point};\n\
+        "use super::common::{batch_claims, eval_by_name, find_batch, find_plan, identity_polynomial_eval, indexed_evals_by_prefix_any, lt_polynomial_eval, normalize_instruction_read_raf_point, operand_polynomial_eval, reverse_slice, suffix_point};\n\
          use jolt_field::{Field, Fr, RingCore};\n\
          use jolt_lookup_tables::LookupTableKind;\n\
          use jolt_poly::EqPolynomial;\n\
@@ -2194,15 +2194,15 @@ fn expected_instruction_read_raf(
     let right_operand_eval = operand_polynomial_eval(r_address_prime, false);
     let identity_poly_eval = identity_polynomial_eval(r_address_prime);
 
-    let table_values = LookupTableKind::<XLEN>::all()
-        .iter()
-        .map(|table| table.evaluate_mle::<Fr, Fr>(r_address_prime))
-        .collect::<Vec<_>>();
-    let table_flag_claims = indexed_evals_by_prefix(
+    let table_flag_claims = indexed_evals_by_prefix_any(
         evals,
         "stage5.instruction_read_raf.eval.LookupTableFlag_",
-        table_values.len(),
     )?;
+    let table_values = LookupTableKind::<XLEN>::all()
+        .iter()
+        .take(table_flag_claims.len())
+        .map(|table| table.evaluate_mle::<Fr, Fr>(r_address_prime))
+        .collect::<Vec<_>>();
     let val_claim = table_values
         .into_iter()
         .zip(table_flag_claims)

@@ -2878,6 +2878,7 @@ dependencies = [
 name = "jolt-dory"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254",
  "ark-serialize 0.5.0",
  "criterion",
  "dory-pcs",
@@ -2891,6 +2892,37 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "jolt-equivalence"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-serialize 0.5.0",
+ "bolt",
+ "common",
+ "jolt-core",
+ "jolt-dory",
+ "jolt-field",
+ "jolt-inlines-sha2",
+ "jolt-kernels",
+ "jolt-lookup-tables",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-profiling",
+ "jolt-program",
+ "jolt-prover",
+ "jolt-r1cs",
+ "jolt-riscv",
+ "jolt-transcript",
+ "jolt-verifier",
+ "jolt-witness",
+ "postcard",
+ "serde",
+ "strum 0.28.0",
+ "tracer",
  "tracing",
 ]
 

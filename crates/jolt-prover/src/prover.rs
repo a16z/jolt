@@ -6,7 +6,7 @@
 use jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme};
 use jolt_field::Fr;
 use jolt_kernels::{stage1, stage2, stage3, stage4, stage5, stage6, stage7};
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
+use jolt_openings::CommitmentScheme;
 use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
 use jolt_verifier::{JoltEvaluationProof, JoltNamedEval, JoltProof, JoltStage2RamAccess, JoltStage2RamData, JoltStage2RamOutputLayout, JoltStage6BytecodeEntry, JoltStage6BytecodeReadRafData, JoltStage6VerifierData, JoltStageChallengeVector, JoltStageExecutionArtifacts, JoltStageOpeningInputValue, JoltStageProof, JoltSumcheckOutput};
@@ -567,20 +567,18 @@ fn joint_opening_hint(
         scalars.push(coefficient);
     }
 
-    Ok(<DoryScheme as AdditivelyHomomorphic>::combine_hints(
-        hints, &scalars,
-    ))
+    Ok(DoryScheme::combine_hint_refs(&hints, &scalars))
 }
 
-fn opening_hint_for_oracle(
-    commitments: &commitment_stage::CommitmentArtifacts,
+fn opening_hint_for_oracle<'a>(
+    commitments: &'a commitment_stage::CommitmentArtifacts,
     oracle: &'static str,
-) -> Result<DoryHint, JoltEvaluationProveError> {
+) -> Result<&'a DoryHint, JoltEvaluationProveError> {
     commitments
         .hints
         .iter()
         .find(|hint| hint.oracle == oracle)
-        .map(|hint| hint.hint.clone())
+        .map(|hint| &hint.hint)
         .ok_or(JoltEvaluationProveError::MissingOpeningHint { oracle })
 }
 

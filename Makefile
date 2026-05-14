@@ -1,4 +1,4 @@
-.PHONY: help bootstrap build-emulator \
+.PHONY: help bootstrap bolt-dev-setup build-emulator \
         arch-tests-64imac arch-tests-generate arch-tests-run arch-tests-smoke
 
 MAKEFILE_DIR      := $(abspath $(dir $(firstword $(MAKEFILE_LIST))))
@@ -25,6 +25,9 @@ help:
 
 bootstrap: ## Install arch-test prerequisites (riscv64 toolchain, sail_riscv_sim)
 	./scripts/bootstrap
+
+bolt-dev-setup: ## Install/configure the local Bolt LLVM/MLIR toolchain
+	./scripts/setup-bolt-dev.sh
 
 build-emulator: ## Build the jolt-emu binary in debug mode
 	# Debug build is intentional — arch tests are correctness-sensitive and

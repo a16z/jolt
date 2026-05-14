@@ -50,10 +50,25 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
     #[must_use]
     fn challenge(&mut self) -> Self::Challenge;
 
+    /// Squeezes an optimized challenge from the transcript.
+    ///
+    /// Implementations may use a smaller challenge representation for prover
+    /// hot paths while preserving the same transcript state transition.
+    #[must_use]
+    fn challenge_optimized(&mut self) -> Self::Challenge {
+        self.challenge()
+    }
+
     /// Squeezes multiple challenges from the transcript.
     #[must_use]
     fn challenge_vector(&mut self, len: usize) -> Vec<Self::Challenge> {
         (0..len).map(|_| self.challenge()).collect()
+    }
+
+    /// Squeezes multiple optimized challenges from the transcript.
+    #[must_use]
+    fn challenge_vector_optimized(&mut self, len: usize) -> Vec<Self::Challenge> {
+        (0..len).map(|_| self.challenge_optimized()).collect()
     }
 
     /// Returns the current 256-bit transcript state.

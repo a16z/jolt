@@ -133,7 +133,7 @@ jobs:
           curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
           mkdir -p ~/.zeroos
           tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
-      - name: Build and install jolt CLI
+      - name: Build and install jolt CLI for core-backed modular harnesses
         run: cargo install --path . --locked --force
       - name: Install nextest
         uses: taiki-e/install-action@nextest

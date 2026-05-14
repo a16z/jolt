@@ -7,7 +7,7 @@
     reason = "ZK proof y_com/y_blinding are Dory-mode invariants; dory::prove/verify errors are caller-precondition violations surfaced via panic; the dory adapter's commit is unreachable because DoryScheme pre-computes row commitments"
 )]
 
-use dory::backends::arkworks::{ArkworksProverSetup, G1Routines, G2Routines};
+use dory::backends::arkworks::ArkworksProverSetup;
 use dory::mode::Transparent;
 use dory::primitives::arithmetic::{
     DoryRoutines, Field as DoryField, Group as DoryGroup, PairingCurve,
@@ -21,6 +21,7 @@ use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 use rayon::prelude::*;
 
+use crate::routines::{JoltG1Routines, JoltG2Routines};
 use crate::transcript::JoltToDoryTranscript;
 use crate::types::{DoryCommitment, DoryHint, DoryProof, DoryProverSetup, DoryVerifierSetup};
 
@@ -45,6 +46,25 @@ pub(crate) fn jolt_fr_to_ark(f: &Fr) -> ArkFr {
 pub(crate) fn ark_to_jolt_fr(ark: &ArkFr) -> Fr {
     // SAFETY: same layout as jolt_fr_to_ark.
     unsafe { std::mem::transmute_copy(ark) }
+}
+
+#[inline]
+pub(crate) fn jolt_fr_slice_to_ark(v: &[Fr]) -> &[ArkFr] {
+    // SAFETY: Fr and ArkFr are both repr(transparent) over ark_bn254::Fr.
+    unsafe { std::slice::from_raw_parts(v.as_ptr().cast::<ArkFr>(), v.len()) }
+}
+
+#[inline]
+pub(crate) fn ark_fr_slice_to_jolt(v: &[ArkFr]) -> &[Fr] {
+    // SAFETY: same layout as jolt_fr_slice_to_ark.
+    unsafe { std::slice::from_raw_parts(v.as_ptr().cast::<Fr>(), v.len()) }
+}
+
+#[inline]
+pub(crate) fn jolt_fr_vec_to_ark(v: Vec<Fr>) -> Vec<ArkFr> {
+    // SAFETY: Fr and ArkFr have identical size/align (repr(transparent)
+    // over ark_bn254::Fr), so Vec layout is identical.
+    unsafe { std::mem::transmute(v) }
 }
 
 #[inline]
@@ -146,8 +166,8 @@ impl DoryScheme {
                 let start = row_index * row_len;
                 let end = (start + row_len).min(evaluations.len());
                 let row = evaluations.get(start..end).unwrap_or_default();
-                let scalars: Vec<ArkFr> = row.iter().map(jolt_fr_to_ark).collect();
-                G1Routines::msm(&g1_bases[..scalars.len()], &scalars)
+                let scalars = jolt_fr_slice_to_ark(row);
+                JoltG1Routines::msm(&g1_bases[..scalars.len()], scalars)
             })
             .collect();
         let (tier_2, _) = commit_rows_tier_2::<Transparent>(&row_commitments, setup);
@@ -236,7 +256,7 @@ impl CommitmentScheme for DoryScheme {
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
         let (proof, _blind) =
-            dory::prove::<ArkFr, InnerBN254, G1Routines, G2Routines, _, _, Transparent>(
+            dory::prove::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _, _, Transparent>(
                 &adapter,
                 &ark_point,
                 row_commitments,
@@ -265,7 +285,7 @@ impl CommitmentScheme for DoryScheme {
         let ark_commitment = jolt_gt_to_ark(&commitment.0);
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
-        dory::verify::<ArkFr, InnerBN254, G1Routines, G2Routines, _>(
+        dory::verify::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _>(
             ark_commitment,
             ark_eval,
             &ark_point,
@@ -306,14 +326,21 @@ impl AdditivelyHomomorphic for DoryScheme {
 
     #[tracing::instrument(skip_all, name = "DoryScheme::combine_hints")]
     fn combine_hints(hints: Vec<Self::OpeningHint>, scalars: &[Self::Field]) -> Self::OpeningHint {
+        let hint_refs: Vec<_> = hints.iter().collect();
+        Self::combine_hint_refs(&hint_refs, scalars)
+    }
+}
+
+impl DoryScheme {
+    pub fn combine_hint_refs(hints: &[&DoryHint], scalars: &[Fr]) -> DoryHint {
         assert_eq!(hints.len(), scalars.len());
         assert!(!hints.is_empty(), "combine_hints: empty hint set");
 
-        let num_rows = hints[0].row_commitments.len();
-        assert!(
-            hints.iter().all(|h| h.row_commitments.len() == num_rows),
-            "combine_hints: ragged hint lengths",
-        );
+        let num_rows = hints
+            .iter()
+            .map(|hint| hint.row_commitments.len())
+            .max()
+            .expect("combine_hints checked for non-empty hint set");
 
         let combined_blind = hints
             .iter()
@@ -325,8 +352,12 @@ impl AdditivelyHomomorphic for DoryScheme {
             .into_par_iter()
             .map(|row| {
                 let mut acc = Bn254G1::default();
-                for (hint, &scalar) in hints.iter().zip(scalars.iter()) {
-                    acc += hint.row_commitments[row].scalar_mul(&scalar);
+                for (&hint, &scalar) in hints.iter().zip(scalars.iter()) {
+                    // Shorter row layouts represent the same polynomial zero-extended
+                    // into the larger joint opening domain.
+                    if let Some(commitment) = hint.row_commitments.get(row) {
+                        acc += commitment.scalar_mul(&scalar);
+                    }
                 }
                 acc
             })
@@ -366,7 +397,7 @@ impl ZkOpeningScheme for DoryScheme {
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
         let (proof, y_blinding) =
-            dory::prove::<ArkFr, InnerBN254, G1Routines, G2Routines, _, _, dory::mode::ZK>(
+            dory::prove::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _, _, dory::mode::ZK>(
                 &adapter,
                 &ark_point,
                 row_commitments,
@@ -399,7 +430,7 @@ impl ZkOpeningScheme for DoryScheme {
         let ark_commitment = jolt_gt_to_ark(&commitment.0);
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
-        dory::verify::<ArkFr, InnerBN254, G1Routines, G2Routines, _>(
+        dory::verify::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _>(
             ark_commitment,
             dummy_eval,
             &ark_point,
@@ -425,8 +456,8 @@ fn commit_rows_dense<P: MultilinearPoly<Fr> + ?Sized>(
 
     rows.par_iter()
         .map(|row| {
-            let scalars: Vec<ArkFr> = row.iter().map(jolt_fr_to_ark).collect();
-            G1Routines::msm(&g1_bases[..scalars.len()], &scalars)
+            let scalars = jolt_fr_slice_to_ark(row);
+            JoltG1Routines::msm(&g1_bases[..scalars.len()], scalars)
         })
         .collect()
 }
@@ -541,9 +572,9 @@ impl<S: MultilinearPoly<Fr>> DoryPolynomial<ArkFr> for DorySourceAdapter<'_, S> 
 
 impl<S: MultilinearPoly<Fr>> MultilinearLagrange<ArkFr> for DorySourceAdapter<'_, S> {
     fn vector_matrix_product(&self, left_vec: &[ArkFr], _nu: usize, sigma: usize) -> Vec<ArkFr> {
-        let native_left: Vec<Fr> = left_vec.iter().map(ark_to_jolt_fr).collect();
-        let result = self.source.fold_rows(&native_left, sigma);
-        result.iter().map(jolt_fr_to_ark).collect()
+        let native_left = ark_fr_slice_to_jolt(left_vec);
+        let result = self.source.fold_rows(native_left, sigma);
+        jolt_fr_vec_to_ark(result)
     }
 }
 

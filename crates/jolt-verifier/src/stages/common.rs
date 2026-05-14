@@ -865,7 +865,7 @@ where
         .iter()
         .map(|poly| CompressedLabeledRoundPoly::new(poly, driver.round_label().as_bytes()))
         .collect::<Vec<_>>();
-    let output = SumcheckVerifier::verify(&claim, &round_proofs, transcript)
+    let output = SumcheckVerifier::verify_optimized(&claim, &round_proofs, transcript)
         .map_err(|error| map_sumcheck(driver.symbol(), error))?;
     if !proof.point.is_empty() && proof.point != output.point {
         return Err(RuntimePlanError::InvalidProof {

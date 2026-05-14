@@ -5,6 +5,10 @@
 //! - **Tracing subscriber setup** — configures `tracing-chrome` (Perfetto/Chrome JSON)
 //!   and `tracing-subscriber` (console output) for the host binary.
 //! - **Memory profiling** — tracks memory deltas across proving stages via `memory-stats`.
+//! - **Measurement helpers** — shared timing, median, and peak RSS helpers for
+//!   core-vs-Bolt perf gates.
+//! - **Perf gate primitives** — shared core-vs-Bolt metric and span contracts
+//!   for CI or semantic-oracle harnesses.
 //! - **System metrics monitoring** (`monitor` feature) — background thread sampling
 //!   CPU usage, memory, active cores, and thread count. Outputs structured counter events
 //!   compatible with the Perfetto postprocessing script.
@@ -16,7 +20,7 @@
 //! # Usage
 //!
 //! Individual crates add `tracing` as a dependency and instrument their functions with
-//! `#[tracing::instrument]`. The host binary (e.g. `jolt-zkvm` CLI) depends on
+//! `#[tracing::instrument]`. Host binaries and benchmark runners depend on
 //! `jolt-profiling` to configure the subscriber that captures those spans.
 //!
 //! ```no_run
@@ -41,11 +45,16 @@
 //!
 //! This is a leaf crate — imported by host binaries and benchmarks.
 //! Library crates depend only on `tracing` for instrumentation.
+//!
+//! Jolt-on-Bolt perf oracles should use the same `jolt-profiling` spans and
+//! measurement helpers for the `jolt-core` reference path and the generated Bolt
+//! path so regressions are comparable.
 
-pub mod setup;
-
+pub mod measurement;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod memory;
+pub mod perf_gate;
+pub mod setup;
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "monitor"))]
 pub mod monitor;
@@ -59,9 +68,20 @@ pub use flamegraph::{print_data_structure_heap_usage, write_flamegraph_svg};
 
 mod units;
 
-pub use setup::{setup_tracing, TracingFormat, TracingGuards};
+pub use measurement::{median_f64, median_u64, time_it};
+pub use perf_gate::{
+    check_core_vs_bolt_gate, check_core_vs_bolt_gate_with_spans, CoreVsBoltGateReport, MetricRatio,
+    PerfGateThresholds, PerfGateViolation, PerfMetric, PerfMetrics, PerfPath,
+    CORE_VS_BOLT_REQUIRED_SPANS,
+};
+pub use setup::{
+    observed_span_names, observed_span_names_with_prefix, setup_tracing, TracingFormat,
+    TracingGuards,
+};
 pub use units::{format_memory_size, BYTES_PER_GIB, BYTES_PER_MIB};
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use measurement::PeakRssSampler;
 #[cfg(not(target_arch = "wasm32"))]
 pub use memory::{
     end_memory_tracing_span, print_current_memory_usage, report_memory_usage,

@@ -54,6 +54,40 @@ impl SumcheckVerifier {
         T: Transcript<Challenge = F>,
         P: RoundProof<F>,
     {
+        Self::verify_with_challenge(claim, round_proofs, transcript, |transcript| {
+            transcript.challenge()
+        })
+    }
+
+    /// Verifies a sumcheck proof using optimized Fiat-Shamir round challenges.
+    #[tracing::instrument(skip_all, name = "SumcheckVerifier::verify_optimized")]
+    pub fn verify_optimized<F, T, P>(
+        claim: &SumcheckClaim<F>,
+        round_proofs: &[P],
+        transcript: &mut T,
+    ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
+    where
+        F: SumcheckScalar,
+        T: Transcript<Challenge = F>,
+        P: RoundProof<F>,
+    {
+        Self::verify_with_challenge(claim, round_proofs, transcript, |transcript| {
+            transcript.challenge_optimized()
+        })
+    }
+
+    fn verify_with_challenge<F, T, P, Squeeze>(
+        claim: &SumcheckClaim<F>,
+        round_proofs: &[P],
+        transcript: &mut T,
+        mut squeeze: Squeeze,
+    ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
+    where
+        F: SumcheckScalar,
+        T: Transcript<Challenge = F>,
+        P: RoundProof<F>,
+        Squeeze: FnMut(&mut T) -> F,
+    {
         if round_proofs.len() != claim.num_vars {
             return Err(SumcheckError::WrongNumberOfRounds {
                 expected: claim.num_vars,
@@ -73,7 +107,7 @@ impl SumcheckVerifier {
             }
             round_proof.check_sum(running_sum, round)?;
             round_proof.append_to_transcript(transcript);
-            let r: F = transcript.challenge();
+            let r = squeeze(transcript);
             running_sum = round_proof.evaluate(r);
             challenges.push(r);
         }

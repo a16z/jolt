@@ -1553,7 +1553,7 @@ where
         });
     }
     append_univariate_poly(transcript, context.driver.round_label, &poly);
-    let r0 = transcript.challenge();
+    let r0 = transcript.challenge_optimized();
     let eval = poly.evaluate(r0);
     append_labeled_scalar(transcript, "opening_claim", &eval);
     Ok(Stage2SumcheckOutput {
@@ -1612,7 +1612,7 @@ where
         });
     }
     append_univariate_poly(transcript, context.driver.round_label, poly);
-    let r0 = transcript.challenge();
+    let r0 = transcript.challenge_optimized();
     if !proof.point.is_empty() && proof.point != [r0] {
         return Err(Stage2KernelError::InvalidProof {
             driver: context.driver.symbol,
@@ -1707,7 +1707,7 @@ where
             }
         }
         append_compressed_univariate_poly(transcript, context.driver.round_label, &batched_poly);
-        let challenge = transcript.challenge();
+        let challenge = transcript.challenge_optimized();
         point.push(challenge);
         batched_claim = batched_poly.evaluate(challenge);
 
@@ -1803,7 +1803,7 @@ where
             });
         }
         append_compressed_univariate_poly(transcript, context.driver.round_label, poly);
-        let challenge = transcript.challenge();
+        let challenge = transcript.challenge_optimized();
         running_claim = poly.evaluate(challenge);
         point.push(challenge);
     }
@@ -4490,7 +4490,14 @@ where
     E: Stage2KernelExecutor<F>,
     T: Transcript<Challenge = F>,
 {
-    let values = transcript.challenge_vector(squeeze.count);
+    let values = if matches!(
+        squeeze.symbol,
+        "stage2.product_virtual.tau_high" | "stage2.ram_output.r_address"
+    ) {
+        transcript.challenge_vector_optimized(squeeze.count)
+    } else {
+        transcript.challenge_vector(squeeze.count)
+    };
     executor.observe_challenge_vector(squeeze, &values)?;
     artifacts.challenge_vectors.push(Stage2ChallengeVector {
         symbol: squeeze.symbol,

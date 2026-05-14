@@ -12,6 +12,8 @@
 //! distributes across constituents, avoiding allocation of the combined table.
 
 use jolt_field::Field;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use crate::Polynomial;
 
@@ -154,22 +156,7 @@ impl<F: Field> MultilinearPoly<F> for Polynomial<F> {
     }
 
     fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
-        let num_cols = 1usize << sigma;
-        let evals = self.evaluations();
-        debug_assert_eq!(
-            left.len(),
-            evals.len() / num_cols,
-            "left vector length must equal number of rows"
-        );
-
-        let mut result = crate::thread::unsafe_allocate_zero_vec(num_cols);
-        for (row_idx, row) in evals.chunks(num_cols).enumerate() {
-            let l = left[row_idx];
-            for (r, &val) in result.iter_mut().zip(row.iter()) {
-                *r += l * val;
-            }
-        }
-        result
+        fold_dense_rows(self.evaluations(), left, sigma)
     }
 }
 
@@ -200,16 +187,44 @@ impl<F: Field> MultilinearPoly<F> for [F] {
     }
 
     fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
-        let num_cols = 1usize << sigma;
-        let mut result = crate::thread::unsafe_allocate_zero_vec(num_cols);
-        for (row_idx, row) in self.chunks(num_cols).enumerate() {
-            let l = left[row_idx];
-            for (r, &val) in result.iter_mut().zip(row.iter()) {
-                *r += l * val;
-            }
-        }
-        result
+        fold_dense_rows(self, left, sigma)
     }
+}
+
+fn fold_dense_rows<F: Field>(evals: &[F], left: &[F], sigma: usize) -> Vec<F> {
+    let num_cols = 1usize << sigma;
+    let num_rows = evals.len().div_ceil(num_cols);
+    debug_assert_eq!(
+        left.len(),
+        num_rows,
+        "left vector length must equal number of rows"
+    );
+
+    #[cfg(feature = "parallel")]
+    if evals.len() >= 1 << 15 {
+        return (0..num_cols)
+            .into_par_iter()
+            .map(|col_idx| {
+                let mut sum = F::default();
+                for (row_idx, &left_value) in left.iter().enumerate().take(num_rows) {
+                    let coeff_idx = row_idx * num_cols + col_idx;
+                    if coeff_idx < evals.len() {
+                        sum += evals[coeff_idx] * left_value;
+                    }
+                }
+                sum
+            })
+            .collect();
+    }
+
+    let mut result = crate::thread::unsafe_allocate_zero_vec(num_cols);
+    for (row_idx, row) in evals.chunks(num_cols).enumerate() {
+        let l = left[row_idx];
+        for (r, &val) in result.iter_mut().zip(row.iter()) {
+            *r += l * val;
+        }
+    }
+    result
 }
 
 impl<F: Field> MultilinearPoly<F> for Vec<F> {
