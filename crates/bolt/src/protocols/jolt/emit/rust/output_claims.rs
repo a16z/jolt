@@ -141,12 +141,16 @@ pub trait FieldExprDependencies {
     fn operands(&self) -> &[String];
 }
 
-pub fn resolve_output_claims(
+pub fn resolve_output_claims<T>(
     stage: &str,
     output_values: &[StructuredPolynomialEvalPlan],
     output_families: &[SumcheckOutputEvalFamilyPlan],
+    field_exprs: &[T],
     claim_asts: Vec<SumcheckOutputClaimAst>,
-) -> Result<Vec<SumcheckOutputClaimPlan>, EmitError> {
+) -> Result<Vec<SumcheckOutputClaimPlan>, EmitError>
+where
+    T: FieldExprDependencies,
+{
     let output_values_by_symbol: BTreeMap<_, _> = output_values
         .iter()
         .map(|value| (value.symbol.as_str(), value))
@@ -154,6 +158,10 @@ pub fn resolve_output_claims(
     let output_families_by_symbol: BTreeMap<_, _> = output_families
         .iter()
         .map(|family| (family.symbol.as_str(), family))
+        .collect();
+    let field_exprs_by_symbol: BTreeMap<_, _> = field_exprs
+        .iter()
+        .map(|expr| (expr.symbol(), expr))
         .collect();
     claim_asts
         .into_iter()
@@ -186,10 +194,16 @@ pub fn resolve_output_claims(
                         })
                 })
                 .collect::<Result<Vec<_>, EmitError>>()?;
-            let eval_families = output_families_by_symbol
-                .get(claim.claim_value.as_str())
-                .map(|family| vec![(*family).clone()])
-                .unwrap_or_default();
+            let eval_family_symbols = output_family_dependency_closure(
+                &output_families_by_symbol,
+                &field_exprs_by_symbol,
+                std::iter::once(claim.claim_value.as_str()),
+            );
+            let eval_families = output_families
+                .iter()
+                .filter(|family| eval_family_symbols.contains(&family.symbol))
+                .cloned()
+                .collect();
             Ok(SumcheckOutputClaimPlan {
                 relation: claim.relation,
                 polynomial_evals,
@@ -198,6 +212,40 @@ pub fn resolve_output_claims(
             })
         })
         .collect()
+}
+
+fn output_family_dependency_closure<'a, T>(
+    output_families_by_symbol: &BTreeMap<&str, &SumcheckOutputEvalFamilyPlan>,
+    field_exprs_by_symbol: &BTreeMap<&str, &T>,
+    roots: impl Iterator<Item = &'a str>,
+) -> BTreeSet<String>
+where
+    T: FieldExprDependencies,
+{
+    let mut visited = BTreeSet::new();
+    let mut output_families = BTreeSet::new();
+    let mut stack = roots.map(str::to_owned).collect::<Vec<_>>();
+    while let Some(symbol) = stack.pop() {
+        if !visited.insert(symbol.clone()) {
+            continue;
+        }
+        if let Some(family) = output_families_by_symbol.get(symbol.as_str()) {
+            let _inserted = output_families.insert(family.symbol.clone());
+            stack.push(family.gamma.clone());
+            stack.extend(family.evals.iter().cloned());
+            stack.extend(family.shared_terms.iter().map(|term| term.factor.clone()));
+            stack.extend(
+                family
+                    .item_terms
+                    .iter()
+                    .flat_map(|term| term.factors.iter().cloned()),
+            );
+        }
+        if let Some(expr) = field_exprs_by_symbol.get(symbol.as_str()) {
+            stack.extend(expr.operands().iter().cloned());
+        }
+    }
+    output_families
 }
 
 pub fn prune_output_only_field_exprs<'a, 'b, T>(
@@ -612,6 +660,91 @@ fn usize_array(values: &[usize]) -> String {
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        resolve_output_claims, FieldExprDependencies, SumcheckOutputClaimAst,
+        SumcheckOutputEvalFamilyItemTermPlan, SumcheckOutputEvalFamilyPlan,
+        SumcheckOutputEvalFamilySharedTermPlan,
+    };
+
+    struct TestFieldExpr {
+        symbol: String,
+        operands: Vec<String>,
+    }
+
+    impl FieldExprDependencies for TestFieldExpr {
+        fn symbol(&self) -> &str {
+            &self.symbol
+        }
+
+        fn operands(&self) -> &[String] {
+            &self.operands
+        }
+    }
+
+    #[test]
+    fn resolves_output_families_reachable_through_field_expressions() {
+        let inner_family = SumcheckOutputEvalFamilyPlan {
+            symbol: "inner.family".to_owned(),
+            gamma: "inner.gamma".to_owned(),
+            evals: vec!["inner.eval".to_owned()],
+            power_stride: 1,
+            value_term_offsets: vec![0],
+            shared_terms: Vec::new(),
+            item_terms: Vec::new(),
+        };
+        let outer_family = SumcheckOutputEvalFamilyPlan {
+            symbol: "outer.family".to_owned(),
+            gamma: "outer.gamma".to_owned(),
+            evals: vec!["outer.eval".to_owned()],
+            power_stride: 1,
+            value_term_offsets: Vec::new(),
+            shared_terms: vec![SumcheckOutputEvalFamilySharedTermPlan {
+                gamma_power_offset: 0,
+                factor: "outer.shared.factor".to_owned(),
+            }],
+            item_terms: vec![SumcheckOutputEvalFamilyItemTermPlan {
+                gamma_power_offset: 1,
+                factors: vec!["factor.expr".to_owned()],
+            }],
+        };
+        let field_exprs = vec![
+            TestFieldExpr {
+                symbol: "claim.expr".to_owned(),
+                operands: vec!["outer.family".to_owned()],
+            },
+            TestFieldExpr {
+                symbol: "factor.expr".to_owned(),
+                operands: vec!["inner.family".to_owned()],
+            },
+        ];
+        let claim_asts = vec![SumcheckOutputClaimAst {
+            relation: "relation".to_owned(),
+            polynomial_evals: Vec::new(),
+            polynomial_eval_operands: Vec::new(),
+            claim_value: "claim.expr".to_owned(),
+        }];
+
+        let claims = match resolve_output_claims(
+            "test",
+            &[],
+            &[inner_family, outer_family],
+            &field_exprs,
+            claim_asts,
+        ) {
+            Ok(claims) => claims,
+            Err(err) => panic!("unexpected output claim resolution error: {err:?}"),
+        };
+        let family_symbols = claims[0]
+            .eval_families
+            .iter()
+            .map(|family| family.symbol.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(family_symbols, vec!["inner.family", "outer.family"]);
+    }
 }
 
 fn string_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<String, EmitError> {

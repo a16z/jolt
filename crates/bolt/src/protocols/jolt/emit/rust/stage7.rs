@@ -593,6 +593,7 @@ impl Stage7CpuProgram {
                 "stage7",
                 &output_values,
                 &output_families,
+                &field_exprs,
                 output_claim_asts,
             )?
         } else {

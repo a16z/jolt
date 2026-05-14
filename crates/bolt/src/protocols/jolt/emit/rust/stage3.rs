@@ -559,6 +559,7 @@ impl Stage3CpuProgram {
                 "stage3",
                 &output_values,
                 &[],
+                &field_exprs,
                 output_claim_asts,
             )?
         } else {
