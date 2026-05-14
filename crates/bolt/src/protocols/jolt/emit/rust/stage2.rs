@@ -1183,7 +1183,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage2Error);
                             &self.role,
                             &expr.formula
                         )?,
-                        rust_str(&expr.operands.join("|"))
+                        super::plan_tokens::rust_str_slice_expr(&expr.operands)
                     ))
                 })
                 .collect::<Result<Vec<_>, EmitError>>()?

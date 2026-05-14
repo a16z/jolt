@@ -85,16 +85,16 @@ pub const STAGE5_FIELD_CONSTANTS: &[Stage5FieldConstantPlan] = &[
 ];
 
 pub const STAGE5_FIELD_EXPRS: &[Stage5FieldExprPlan] = &[
-    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.gamma2", kind: Stage5FieldExprKind::Pow(2), operands: "stage5.instruction_read_raf.gamma" },
-    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.term.LeftLookupOperand", kind: Stage5FieldExprKind::Mul, operands: "stage5.instruction_read_raf.gamma|stage5.input.stage2.instruction.LeftLookupOperand" },
-    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.term.RightLookupOperand", kind: Stage5FieldExprKind::Mul, operands: "stage5.instruction_read_raf.gamma2|stage5.input.stage2.instruction.RightLookupOperand" },
-    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.partial.LookupOutputLeftOperand", kind: Stage5FieldExprKind::Add, operands: "stage5.input.stage2.instruction.LookupOutput|stage5.instruction_read_raf.term.LeftLookupOperand" },
-    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.claim_expr", kind: Stage5FieldExprKind::Add, operands: "stage5.instruction_read_raf.partial.LookupOutputLeftOperand|stage5.instruction_read_raf.term.RightLookupOperand" },
-    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.gamma2", kind: Stage5FieldExprKind::Pow(2), operands: "stage5.ram_ra_claim_reduction.gamma" },
-    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.term.RamRaReadWrite", kind: Stage5FieldExprKind::Mul, operands: "stage5.ram_ra_claim_reduction.gamma|stage5.input.stage2.ram_read_write.RamRa" },
-    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.term.RamRaValCheck", kind: Stage5FieldExprKind::Mul, operands: "stage5.ram_ra_claim_reduction.gamma2|stage5.input.stage4.ram_val_check.RamRa" },
-    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.partial.RafReadWrite", kind: Stage5FieldExprKind::Add, operands: "stage5.input.stage2.ram_raf.RamRa|stage5.ram_ra_claim_reduction.term.RamRaReadWrite" },
-    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.claim_expr", kind: Stage5FieldExprKind::Add, operands: "stage5.ram_ra_claim_reduction.partial.RafReadWrite|stage5.ram_ra_claim_reduction.term.RamRaValCheck" },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.gamma2", kind: Stage5FieldExprKind::Pow(2), operands: &["stage5.instruction_read_raf.gamma"] },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.term.LeftLookupOperand", kind: Stage5FieldExprKind::Mul, operands: &["stage5.instruction_read_raf.gamma", "stage5.input.stage2.instruction.LeftLookupOperand"] },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.term.RightLookupOperand", kind: Stage5FieldExprKind::Mul, operands: &["stage5.instruction_read_raf.gamma2", "stage5.input.stage2.instruction.RightLookupOperand"] },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.partial.LookupOutputLeftOperand", kind: Stage5FieldExprKind::Add, operands: &["stage5.input.stage2.instruction.LookupOutput", "stage5.instruction_read_raf.term.LeftLookupOperand"] },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.claim_expr", kind: Stage5FieldExprKind::Add, operands: &["stage5.instruction_read_raf.partial.LookupOutputLeftOperand", "stage5.instruction_read_raf.term.RightLookupOperand"] },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.gamma2", kind: Stage5FieldExprKind::Pow(2), operands: &["stage5.ram_ra_claim_reduction.gamma"] },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.term.RamRaReadWrite", kind: Stage5FieldExprKind::Mul, operands: &["stage5.ram_ra_claim_reduction.gamma", "stage5.input.stage2.ram_read_write.RamRa"] },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.term.RamRaValCheck", kind: Stage5FieldExprKind::Mul, operands: &["stage5.ram_ra_claim_reduction.gamma2", "stage5.input.stage4.ram_val_check.RamRa"] },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.partial.RafReadWrite", kind: Stage5FieldExprKind::Add, operands: &["stage5.input.stage2.ram_raf.RamRa", "stage5.ram_ra_claim_reduction.term.RamRaReadWrite"] },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.claim_expr", kind: Stage5FieldExprKind::Add, operands: &["stage5.ram_ra_claim_reduction.partial.RafReadWrite", "stage5.ram_ra_claim_reduction.term.RamRaValCheck"] },
 ];
 pub const STAGE5_KERNELS: &[Stage5KernelPlan] = &[
 

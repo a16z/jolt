@@ -163,7 +163,7 @@ pub enum FieldExprKind {
 pub struct FieldExprPlan {
     pub symbol: &'static str,
     pub kind: FieldExprKind,
-    pub operands: &'static str,
+    pub operands: &'static [&'static str],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -832,11 +832,8 @@ impl<F: Field> ValueStore<F> {
     }
 
     fn try_expr_operands(&self, expr: &FieldExprPlan) -> Option<Vec<F>> {
-        if expr.operands.is_empty() {
-            return Some(Vec::new());
-        }
         expr.operands
-            .split('|')
+            .iter()
             .map(|operand| self.try_scalar(operand))
             .collect()
     }

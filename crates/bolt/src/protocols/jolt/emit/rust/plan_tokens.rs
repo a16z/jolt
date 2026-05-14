@@ -45,6 +45,18 @@ pub(super) fn role_field_expr_kind_expr(
     field_expr_kind_expr(stage_type_prefix, formula)
 }
 
+pub(super) fn rust_str_slice_expr(values: &[String]) -> String {
+    if values.is_empty() {
+        return "&[]".to_owned();
+    }
+    let values = values
+        .iter()
+        .map(|value| format!("{value:?}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("&[{values}]")
+}
+
 pub(super) fn role_relation_kind_expr(
     stage_type_prefix: &str,
     role: &Role,

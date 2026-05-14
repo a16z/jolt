@@ -85,15 +85,15 @@ pub const STAGE4_FIELD_CONSTANTS: &[Stage4FieldConstantPlan] = &[
 ];
 
 pub const STAGE4_FIELD_EXPRS: &[Stage4FieldExprPlan] = &[
-    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.gamma2", kind: Stage4FieldExprKind::Pow(2), operands: "stage4.registers_read_write.gamma" },
-    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.term.Rs1Value", kind: Stage4FieldExprKind::Mul, operands: "stage4.registers_read_write.gamma|stage4.input.stage3.registers.Rs1Value" },
-    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.term.Rs2Value", kind: Stage4FieldExprKind::Mul, operands: "stage4.registers_read_write.gamma2|stage4.input.stage3.registers.Rs2Value" },
-    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.partial.RdWriteValueRs1Value", kind: Stage4FieldExprKind::Add, operands: "stage4.input.stage3.registers.RdWriteValue|stage4.registers_read_write.term.Rs1Value" },
-    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.claim_expr", kind: Stage4FieldExprKind::Add, operands: "stage4.registers_read_write.partial.RdWriteValueRs1Value|stage4.registers_read_write.term.Rs2Value" },
-    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.delta.RamVal", kind: Stage4FieldExprKind::Sub, operands: "stage4.input.stage2.RamVal|stage4.input.initial_ram.RamValInit" },
-    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.delta.RamValFinal", kind: Stage4FieldExprKind::Sub, operands: "stage4.input.stage2.RamValFinal|stage4.input.initial_ram.RamValInit" },
-    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.term.RamValFinal", kind: Stage4FieldExprKind::Mul, operands: "stage4.ram_val_check.gamma|stage4.ram_val_check.delta.RamValFinal" },
-    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.claim_expr", kind: Stage4FieldExprKind::Add, operands: "stage4.ram_val_check.delta.RamVal|stage4.ram_val_check.term.RamValFinal" },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.gamma2", kind: Stage4FieldExprKind::Pow(2), operands: &["stage4.registers_read_write.gamma"] },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.term.Rs1Value", kind: Stage4FieldExprKind::Mul, operands: &["stage4.registers_read_write.gamma", "stage4.input.stage3.registers.Rs1Value"] },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.term.Rs2Value", kind: Stage4FieldExprKind::Mul, operands: &["stage4.registers_read_write.gamma2", "stage4.input.stage3.registers.Rs2Value"] },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.partial.RdWriteValueRs1Value", kind: Stage4FieldExprKind::Add, operands: &["stage4.input.stage3.registers.RdWriteValue", "stage4.registers_read_write.term.Rs1Value"] },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.claim_expr", kind: Stage4FieldExprKind::Add, operands: &["stage4.registers_read_write.partial.RdWriteValueRs1Value", "stage4.registers_read_write.term.Rs2Value"] },
+    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.delta.RamVal", kind: Stage4FieldExprKind::Sub, operands: &["stage4.input.stage2.RamVal", "stage4.input.initial_ram.RamValInit"] },
+    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.delta.RamValFinal", kind: Stage4FieldExprKind::Sub, operands: &["stage4.input.stage2.RamValFinal", "stage4.input.initial_ram.RamValInit"] },
+    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.term.RamValFinal", kind: Stage4FieldExprKind::Mul, operands: &["stage4.ram_val_check.gamma", "stage4.ram_val_check.delta.RamValFinal"] },
+    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.claim_expr", kind: Stage4FieldExprKind::Add, operands: &["stage4.ram_val_check.delta.RamVal", "stage4.ram_val_check.term.RamValFinal"] },
 ];
 pub const STAGE4_KERNELS: &[Stage4KernelPlan] = &[
 

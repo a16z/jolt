@@ -1438,7 +1438,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage7Error);
                                     &self.role,
                                     &expr.formula
                                 )?,
-                                rust_str(&expr.operands.join("|"))
+                                super::plan_tokens::rust_str_slice_expr(&expr.operands)
                             ))
                         })
                         .collect::<Result<Vec<_>, EmitError>>()?
@@ -1448,7 +1448,7 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage7Error);
                 .collect::<Result<Vec<_>, EmitError>>()?
                 .join("\n");
             return Ok(format!(
-                "macro_rules! stage7_field_expr {{\n    ($symbol:literal, $kind:expr, $operands:literal) => {{\n        Stage7FieldExprPlan {{ symbol: $symbol, kind: $kind, operands: $operands }}\n    }};\n}}\n\n#[rustfmt::skip]\npub const STAGE7_FIELD_EXPRS: &[Stage7FieldExprPlan] = &[\n{rows}\n];\n"
+                "macro_rules! stage7_field_expr {{\n    ($symbol:literal, $kind:expr, $operands:expr) => {{\n        Stage7FieldExprPlan {{ symbol: $symbol, kind: $kind, operands: $operands }}\n    }};\n}}\n\n#[rustfmt::skip]\npub const STAGE7_FIELD_EXPRS: &[Stage7FieldExprPlan] = &[\n{rows}\n];\n"
             ));
         }
 
