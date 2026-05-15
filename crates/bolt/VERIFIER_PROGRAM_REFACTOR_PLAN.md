@@ -749,15 +749,16 @@ Jolt relation code and `bolt-verifier-runtime` no longer call
 `indexed_evals_by_prefix*`, and `verifier_cleanup` now gates both generated
 relation code and the runtime against reintroducing indexed eval-prefix APIs.
 
-Stage 5 instruction read-RAF and Stage 6 bytecode read-RAF share a Bolt-side
-`IndexedEvalFamilyPlan` helper for contiguous indexed families. This is a
-planning seam, not the final architecture: the helper still derives family
-membership from emitted eval names or oracle names during Rust planning.
+Stage 5 instruction read-RAF and Stage 6 bytecode read-RAF now carry explicit
+Bolt-side `IndexedEvalFamilyPlan` rows in the verifier-stage plan. The relevant
+relation/output-claim planners consume those rows instead of re-deriving the
+family from raw evals at the point of Rust token emission.
 
-The remaining S4 work is therefore not "delete the runtime helper"; it is
-"promote eval-family membership to CPU/verifier-plan rows so Rust emission
-formats typed family data instead of discovering indexed families from symbol
-spelling."
+This is still not the final architecture. The temporary CPU-to-verifier row
+builders derive Stage 5/6 family membership from existing eval names/oracle
+names because the CPU IR does not yet have a first-class eval-family op. The
+remaining S4 work is therefore to move the source of those family rows into
+typed CPU/MLIR data instead of constructing them at the Rust planning boundary.
 
 ### Dialect changes
 
@@ -813,9 +814,10 @@ deleting more Tier B prefix code.
 - **Prover/verifier symmetry.** The prover-side emitter must annotate the
   same eval block as a family. If this is a separate emitter, both must be
   updated together.
-- **Typed source of truth.** `IndexedEvalFamilyPlan` is still an emitter helper.
-  The next step is a CPU/verifier-plan row for named eval families so the Rust
-  emitter consumes explicit family data.
+- **Typed source of truth.** `IndexedEvalFamilyPlan` is now a verifier-plan row
+  consumed by Stage 5/6 relation planning. The next step is replacing the
+  temporary boundary derivation with CPU/MLIR eval-family rows, so the
+  verifier plan does not infer family membership from symbol spelling at all.
 - **Testing.** Add a `verifier_cleanup` gate
   `RELATION_INDEXED_EVAL_PREFIX_SITES_CEILING = 0` that fires if any
   generated stage source still calls `indexed_evals_by_prefix*` or exposes

@@ -9,6 +9,20 @@ pub(crate) struct IndexedEvalFamilyPlan {
 }
 
 impl IndexedEvalFamilyPlan {
+    pub(crate) fn find<'a>(
+        families: &'a [Self],
+        symbol: &str,
+    ) -> Result<&'a IndexedEvalFamilyPlan, EmitError> {
+        let mut matching_families = families.iter().filter(|family| family.symbol == symbol);
+        let family = matching_families
+            .next()
+            .ok_or_else(|| EmitError::new(format!("missing eval family `{symbol}`")))?;
+        if matching_families.next().is_some() {
+            return Err(EmitError::new(format!("duplicate eval family `{symbol}`")));
+        }
+        Ok(family)
+    }
+
     pub(crate) fn from_indexed_oracles<'a>(
         symbol: &str,
         oracle_prefix: &str,

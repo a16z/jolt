@@ -13,6 +13,7 @@ use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
 use crate::protocols::jolt::stage6_bytecode_read_raf_plan::{
     emit_stage6_bytecode_read_raf_plan_constants, stage6_bytecode_read_raf_output_claim_plan,
+    STAGE6_BYTECODE_RA_EVAL_FAMILY,
 };
 use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 use crate::protocols::jolt::verifier_output_claims::{
@@ -60,6 +61,7 @@ const STAGE6_KERNEL_ABIS: &[(&str, &str)] = &[
 pub struct Stage6CpuProgram {
     pub role: Role,
     pub(crate) verifier_plan: Option<VerifierStagePlan>,
+    pub(crate) indexed_eval_families: Vec<IndexedEvalFamilyPlan>,
     pub params: Stage6Params,
     pub steps: Vec<Stage6ProgramStepPlan>,
     pub transcript_squeezes: Vec<Stage6TranscriptSqueezePlan>,
@@ -298,6 +300,7 @@ verifier_plan::impl_verifier_plan_source_traits!(
     opening_batch = Stage6OpeningBatchPlan,
     absorb = Stage6TranscriptAbsorbBytesPlan,
     point_zero = Stage6PointZeroPlan,
+    indexed_eval_families = indexed_eval_families,
 );
 
 pub fn stage6_cpu_program(module: &BoltModule<'_, Cpu>) -> Result<Stage6CpuProgram, EmitError> {
@@ -657,6 +660,11 @@ impl Stage6CpuProgram {
                     .map(|claim| claim.claim_value.as_str()),
             );
         }
+        let indexed_eval_families = if role == Role::Verifier {
+            stage6_indexed_eval_families(&evals)?
+        } else {
+            Vec::new()
+        };
         let mut output_claims = if role == Role::Verifier {
             verifier_output_claims::resolve_output_claims(
                 "stage6",
@@ -671,9 +679,9 @@ impl Stage6CpuProgram {
             Vec::new()
         };
         if role == Role::Verifier {
-            let bytecode_ra_evals = stage6_bytecode_read_raf_eval_family(&evals)?;
+            let bytecode_ra_evals = stage6_bytecode_read_raf_eval_family(&indexed_eval_families)?;
             output_claims.push(stage6_bytecode_read_raf_output_claim_plan(
-                &bytecode_ra_evals,
+                bytecode_ra_evals,
             ));
         }
 
@@ -681,6 +689,7 @@ impl Stage6CpuProgram {
             params: params.ok_or_else(|| EmitError::new("missing cpu.params"))?,
             role,
             verifier_plan: None,
+            indexed_eval_families,
             steps,
             transcript_squeezes,
             transcript_absorb_bytes,
@@ -1615,9 +1624,10 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
         source.push_str(&self.emit_sumcheck_driver_constants()?);
         source.push_str(&self.emit_tail_constants()?);
         if self.role == Role::Verifier {
-            let bytecode_ra_evals = stage6_bytecode_read_raf_eval_family(&self.evals)?;
+            let bytecode_ra_evals =
+                stage6_bytecode_read_raf_eval_family(&self.verifier_plan()?.indexed_eval_families)?;
             source.push_str(&emit_stage6_bytecode_read_raf_plan_constants(
-                &bytecode_ra_evals,
+                bytecode_ra_evals,
             ));
             source.push_str(&self.emit_verifier_output_claim_constants()?);
         }
@@ -2729,14 +2739,20 @@ fn stage6_kernel_abi(relation: &str) -> Option<&'static str> {
         .find_map(|(candidate, abi)| (*candidate == relation).then_some(*abi))
 }
 
-fn stage6_bytecode_read_raf_eval_family(
+fn stage6_indexed_eval_families(
     evals: &[Stage6SumcheckEvalPlan],
-) -> Result<IndexedEvalFamilyPlan, EmitError> {
-    IndexedEvalFamilyPlan::from_indexed_names(
-        "stage6.bytecode_read_raf.eval.BytecodeRa",
+) -> Result<Vec<IndexedEvalFamilyPlan>, EmitError> {
+    Ok(vec![IndexedEvalFamilyPlan::from_indexed_names(
+        STAGE6_BYTECODE_RA_EVAL_FAMILY,
         "stage6.bytecode_read_raf.eval.BytecodeRa_",
         evals.iter().map(|eval| eval.name.as_str()),
-    )
+    )?])
+}
+
+fn stage6_bytecode_read_raf_eval_family(
+    eval_families: &[IndexedEvalFamilyPlan],
+) -> Result<&IndexedEvalFamilyPlan, EmitError> {
+    IndexedEvalFamilyPlan::find(eval_families, STAGE6_BYTECODE_RA_EVAL_FAMILY)
 }
 
 fn string_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<String, EmitError> {
@@ -2859,10 +2875,11 @@ fn operation_name<'c: 'a, 'a>(operation: impl OperationLike<'c, 'a>) -> String {
 #[cfg(test)]
 mod tests {
     use crate::emit::rust::EmitError;
+    use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 
     use super::{
-        stage6_bytecode_read_raf_eval_family, stage6_kernel_abi, Stage6SumcheckEvalPlan,
-        STAGE6_KERNEL_ABIS,
+        stage6_bytecode_read_raf_eval_family, stage6_indexed_eval_families, stage6_kernel_abi,
+        Stage6SumcheckEvalPlan, STAGE6_BYTECODE_RA_EVAL_FAMILY, STAGE6_KERNEL_ABIS,
     };
 
     #[test]
@@ -2888,7 +2905,8 @@ mod tests {
             eval("stage6.bytecode_read_raf.eval.BytecodeRa_1"),
         ];
 
-        let family = stage6_bytecode_read_raf_eval_family(&evals)?;
+        let families = stage6_indexed_eval_families(&evals)?;
+        let family = stage6_bytecode_read_raf_eval_family(&families)?;
         assert_eq!(
             family.evals,
             vec![
@@ -2907,7 +2925,7 @@ mod tests {
             eval("stage6.bytecode_read_raf.eval.BytecodeRa_2"),
         ];
 
-        let result = stage6_bytecode_read_raf_eval_family(&evals);
+        let result = stage6_indexed_eval_families(&evals);
         assert!(result.is_err(), "expected gap error, got {result:?}");
         let error = result
             .err()
@@ -2915,6 +2933,23 @@ mod tests {
             .unwrap_or_default();
 
         assert!(error.contains("non-contiguous eval family"));
+    }
+
+    #[test]
+    fn stage6_bytecode_read_raf_eval_family_requires_explicit_plan_row() {
+        let families = [IndexedEvalFamilyPlan {
+            symbol: "stage6.other.eval.BytecodeRa".to_owned(),
+            evals: vec!["stage6.other.eval.BytecodeRa_0".to_owned()],
+        }];
+
+        let error = stage6_bytecode_read_raf_eval_family(&families)
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+
+        assert!(error.contains(&format!(
+            "missing eval family `{STAGE6_BYTECODE_RA_EVAL_FAMILY}`"
+        )));
     }
 
     fn eval(name: &'static str) -> Stage6SumcheckEvalPlan {

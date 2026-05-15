@@ -13,7 +13,9 @@ use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
 use crate::protocols::jolt::stage5_instruction_read_raf_plan::{
     Stage5InstructionReadRafEmitPlan, Stage5InstructionReadRafOutputFieldExprPlan,
+    STAGE5_INSTRUCTION_RA_EVAL_FAMILY, STAGE5_TABLE_FLAG_EVAL_FAMILY,
 };
+use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 use crate::protocols::jolt::verifier_output_claims::{
     self, parse_output_eval_family_plan, parse_output_function_family_plan,
     parse_output_product_family_plan, FieldExprDependencies,
@@ -31,8 +33,8 @@ use crate::schema::verify_cpu_schema;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage5CpuProgram {
     pub role: Role,
-    pub(crate) instruction_read_raf_plan: Option<Stage5InstructionReadRafEmitPlan>,
     pub(crate) verifier_plan: Option<VerifierStagePlan>,
+    pub(crate) indexed_eval_families: Vec<IndexedEvalFamilyPlan>,
     pub params: Stage5Params,
     pub steps: Vec<Stage5ProgramStepPlan>,
     pub transcript_squeezes: Vec<Stage5TranscriptSqueezePlan>,
@@ -272,6 +274,7 @@ verifier_plan::impl_verifier_plan_source_traits!(
     opening_equality = Stage5OpeningClaimEqualityPlan,
     opening_batch = Stage5OpeningBatchPlan,
     absorb = Stage5TranscriptAbsorbBytesPlan,
+    indexed_eval_families = indexed_eval_families,
 );
 
 pub fn stage5_cpu_program(module: &BoltModule<'_, Cpu>) -> Result<Stage5CpuProgram, EmitError> {
@@ -623,14 +626,10 @@ impl Stage5CpuProgram {
                     .map(|claim| claim.claim_value.as_str()),
             );
         }
-        let instruction_read_raf_plan = if role == Role::Verifier {
-            Some(Stage5InstructionReadRafEmitPlan::from_evals(
-                evals
-                    .iter()
-                    .map(|eval| (eval.oracle.as_str(), eval.name.as_str())),
-            )?)
+        let indexed_eval_families = if role == Role::Verifier {
+            stage5_instruction_read_raf_eval_families(&evals)?
         } else {
-            None
+            Vec::new()
         };
         let mut output_claims = if role == Role::Verifier {
             verifier_output_claims::resolve_output_claims(
@@ -645,8 +644,10 @@ impl Stage5CpuProgram {
         } else {
             Vec::new()
         };
-        if let Some(plan) = &instruction_read_raf_plan {
-            let output_plan = plan.output_claim_plan();
+        if role == Role::Verifier {
+            let output_plan =
+                Stage5InstructionReadRafEmitPlan::from_eval_families(&indexed_eval_families)?
+                    .output_claim_plan();
             field_exprs.extend(output_plan.field_exprs.into_iter().map(stage5_field_expr));
             output_claims.push(output_plan.claim);
         }
@@ -654,8 +655,8 @@ impl Stage5CpuProgram {
         let mut program = Self {
             params: params.ok_or_else(|| EmitError::new("missing cpu.params"))?,
             role,
-            instruction_read_raf_plan,
             verifier_plan: None,
+            indexed_eval_families,
             steps,
             transcript_squeezes,
             transcript_absorb_bytes,
@@ -2015,10 +2016,9 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
     }
 
     fn emit_named_eval_family_constants(&self) -> Result<String, EmitError> {
-        let plan = self
-            .instruction_read_raf_plan
-            .as_ref()
-            .ok_or_else(|| EmitError::new("missing stage5 instruction read-RAF plan"))?;
+        let plan = Stage5InstructionReadRafEmitPlan::from_eval_families(
+            &self.verifier_plan()?.indexed_eval_families,
+        )?;
         Ok(plan.emit_runtime_constants())
     }
 
@@ -2543,6 +2543,27 @@ fn expected_batched_output_claim(
             Role::Verifier => "Stage5VerifierProgramPlan",
         }
     }
+}
+
+fn stage5_instruction_read_raf_eval_families(
+    evals: &[Stage5SumcheckEvalPlan],
+) -> Result<Vec<IndexedEvalFamilyPlan>, EmitError> {
+    Ok(vec![
+        IndexedEvalFamilyPlan::from_indexed_oracles(
+            STAGE5_TABLE_FLAG_EVAL_FAMILY,
+            "LookupTableFlag_",
+            evals
+                .iter()
+                .map(|eval| (eval.oracle.as_str(), eval.name.as_str())),
+        )?,
+        IndexedEvalFamilyPlan::from_indexed_oracles(
+            STAGE5_INSTRUCTION_RA_EVAL_FAMILY,
+            "InstructionRa_",
+            evals
+                .iter()
+                .map(|eval| (eval.oracle.as_str(), eval.name.as_str())),
+        )?,
+    ])
 }
 
 fn require_supported_symbol(kind: &str, actual: &str, expected: &str) -> Result<(), EmitError> {

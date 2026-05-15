@@ -5,6 +5,7 @@ use crate::protocols::jolt::rust_target_plan::{
     ClaimKind, FieldExprKind, JoltVerifierRelationKind, OpeningEqualityMode, ProgramStepKind,
     RustTargetPlanError, SumcheckPointOrder, TranscriptSqueezeKind,
 };
+use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VerifierProgramStepPlan {
@@ -235,6 +236,7 @@ pub(crate) struct VerifierStagePlan {
     pub(crate) batches: Vec<VerifierSumcheckBatchPlan>,
     pub(crate) drivers: Vec<VerifierSumcheckDriverPlan>,
     pub(crate) instance_results: Vec<VerifierSumcheckInstanceResultPlan>,
+    pub(crate) indexed_eval_families: Vec<IndexedEvalFamilyPlan>,
     pub(crate) point_zeros: Vec<VerifierPointZeroPlan>,
     pub(crate) point_slices: Vec<VerifierPointSlicePlan>,
     pub(crate) point_concats: Vec<VerifierPointConcatPlan>,
@@ -399,6 +401,7 @@ pub(crate) trait VerifierStagePlanSource {
     fn batches(&self) -> &[Self::Batch];
     fn drivers(&self) -> &[Self::Driver];
     fn instance_results(&self) -> &[Self::Instance];
+    fn indexed_eval_families(&self) -> &[IndexedEvalFamilyPlan];
     fn point_zeros(&self) -> Vec<VerifierPointZeroPlan>;
     fn point_slices(&self) -> &[Self::PointSlice];
     fn point_concats(&self) -> &[Self::PointConcat];
@@ -530,6 +533,7 @@ where
                 })
             })
             .collect::<Result<Vec<_>, EmitError>>()?,
+        indexed_eval_families: source.indexed_eval_families().to_vec(),
         point_zeros: source.point_zeros(),
         point_slices: source
             .point_slices()
@@ -641,6 +645,7 @@ macro_rules! impl_verifier_plan_source_traits {
         opening_batch = $opening_batch:ty
         $(, absorb = $absorb:ty)?
         $(, point_zero = $point_zero:ty)?
+        $(, indexed_eval_families = $indexed_eval_families:ident)?
         $(,)?
     ) => {
         impl $crate::protocols::jolt::verifier_plan::VerifierStagePlanSource for $program {
@@ -671,6 +676,11 @@ macro_rules! impl_verifier_plan_source_traits {
             fn batches(&self) -> &[Self::Batch] { &self.batches }
             fn drivers(&self) -> &[Self::Driver] { &self.drivers }
             fn instance_results(&self) -> &[Self::Instance] { &self.instance_results }
+            fn indexed_eval_families(&self) -> &[$crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan] {
+                $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
+                    @indexed_eval_families self $(, $indexed_eval_families)?
+                )
+            }
             fn point_zeros(&self) -> Vec<$crate::protocols::jolt::verifier_plan::VerifierPointZeroPlan> {
                 $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
                     @point_zeros self $(, $point_zero)?
@@ -832,6 +842,12 @@ macro_rules! impl_verifier_plan_source_traits {
     };
     (@point_zeros $self:ident) => {
         Vec::new()
+    };
+    (@indexed_eval_families $self:ident, $indexed_eval_families:ident) => {
+        &$self.$indexed_eval_families
+    };
+    (@indexed_eval_families $self:ident) => {
+        &[]
     };
 }
 

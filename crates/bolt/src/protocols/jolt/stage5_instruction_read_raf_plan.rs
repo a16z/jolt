@@ -7,6 +7,11 @@ use crate::protocols::jolt::verifier_output_claims::{
     SumcheckOutputProductFamilyTermPlan,
 };
 
+pub(crate) const STAGE5_TABLE_FLAG_EVAL_FAMILY: &str =
+    "stage5.instruction_read_raf.eval.LookupTableFlag";
+pub(crate) const STAGE5_INSTRUCTION_RA_EVAL_FAMILY: &str =
+    "stage5.instruction_read_raf.eval.InstructionRa";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Stage5InstructionReadRafEmitPlan {
     pub(crate) point: String,
@@ -20,20 +25,13 @@ pub(crate) struct Stage5InstructionReadRafEmitPlan {
 }
 
 impl Stage5InstructionReadRafEmitPlan {
-    pub(crate) fn from_evals<'a>(
-        evals: impl IntoIterator<Item = (&'a str, &'a str)>,
+    pub(crate) fn from_eval_families(
+        eval_families: &[IndexedEvalFamilyPlan],
     ) -> Result<Self, EmitError> {
-        let evals = evals.into_iter().collect::<Vec<_>>();
-        let table_flag_evals = IndexedEvalFamilyPlan::from_indexed_oracles(
-            "stage5.instruction_read_raf.eval.LookupTableFlag",
-            "LookupTableFlag_",
-            evals.iter().copied(),
-        )?;
-        let instruction_ra_evals = IndexedEvalFamilyPlan::from_indexed_oracles(
-            "stage5.instruction_read_raf.eval.InstructionRa",
-            "InstructionRa_",
-            evals.iter().copied(),
-        )?;
+        let table_flag_evals =
+            IndexedEvalFamilyPlan::find(eval_families, STAGE5_TABLE_FLAG_EVAL_FAMILY)?.clone();
+        let instruction_ra_evals =
+            IndexedEvalFamilyPlan::find(eval_families, STAGE5_INSTRUCTION_RA_EVAL_FAMILY)?.clone();
         Ok(Self {
             point: "stage5.instruction_read_raf.point".to_owned(),
             lookup_output_point: "stage5.input.stage2.instruction.LookupOutput".to_owned(),
@@ -344,12 +342,16 @@ fn rust_str(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use crate::emit::rust::EmitError;
+    use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 
-    use super::Stage5InstructionReadRafEmitPlan;
+    use super::{
+        Stage5InstructionReadRafEmitPlan, STAGE5_INSTRUCTION_RA_EVAL_FAMILY,
+        STAGE5_TABLE_FLAG_EVAL_FAMILY,
+    };
 
     #[test]
     fn instruction_read_raf_plan_groups_indexed_eval_families() -> Result<(), EmitError> {
-        let plan = Stage5InstructionReadRafEmitPlan::from_evals([
+        let families = instruction_read_raf_families([
             (
                 "LookupTableFlag_1",
                 "stage5.instruction_read_raf.eval.LookupTableFlag_1",
@@ -367,6 +369,7 @@ mod tests {
                 "stage5.instruction_read_raf.eval.LookupTableFlag_0",
             ),
         ])?;
+        let plan = Stage5InstructionReadRafEmitPlan::from_eval_families(&families)?;
 
         assert_eq!(
             plan.table_flag_evals.evals,
@@ -384,7 +387,7 @@ mod tests {
 
     #[test]
     fn instruction_read_raf_output_claim_plan_is_typed() -> Result<(), EmitError> {
-        let plan = Stage5InstructionReadRafEmitPlan::from_evals([
+        let families = instruction_read_raf_families([
             (
                 "LookupTableFlag_0",
                 "stage5.instruction_read_raf.eval.LookupTableFlag_0",
@@ -398,6 +401,7 @@ mod tests {
                 "stage5.instruction_read_raf.eval.InstructionRa_0",
             ),
         ])?;
+        let plan = Stage5InstructionReadRafEmitPlan::from_eval_families(&families)?;
         let output_plan = plan.output_claim_plan();
 
         assert_eq!(
@@ -453,7 +457,7 @@ mod tests {
 
     #[test]
     fn instruction_read_raf_plan_rejects_non_contiguous_eval_families() -> Result<(), EmitError> {
-        let error = match Stage5InstructionReadRafEmitPlan::from_evals([
+        let error = match instruction_read_raf_families([
             (
                 "LookupTableFlag_1",
                 "stage5.instruction_read_raf.eval.LookupTableFlag_1",
@@ -475,5 +479,40 @@ mod tests {
             "non-contiguous eval family `stage5.instruction_read_raf.eval.LookupTableFlag`"
         ));
         Ok(())
+    }
+
+    #[test]
+    fn instruction_read_raf_plan_requires_explicit_eval_family_rows() {
+        let families = [IndexedEvalFamilyPlan {
+            symbol: STAGE5_TABLE_FLAG_EVAL_FAMILY.to_owned(),
+            evals: vec!["stage5.instruction_read_raf.eval.LookupTableFlag_0".to_owned()],
+        }];
+
+        let error = Stage5InstructionReadRafEmitPlan::from_eval_families(&families)
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+
+        assert!(
+            error.contains("missing eval family `stage5.instruction_read_raf.eval.InstructionRa`")
+        );
+    }
+
+    fn instruction_read_raf_families<'a>(
+        evals: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Result<Vec<IndexedEvalFamilyPlan>, EmitError> {
+        let evals = evals.into_iter().collect::<Vec<_>>();
+        Ok(vec![
+            IndexedEvalFamilyPlan::from_indexed_oracles(
+                STAGE5_TABLE_FLAG_EVAL_FAMILY,
+                "LookupTableFlag_",
+                evals.iter().copied(),
+            )?,
+            IndexedEvalFamilyPlan::from_indexed_oracles(
+                STAGE5_INSTRUCTION_RA_EVAL_FAMILY,
+                "InstructionRa_",
+                evals.iter().copied(),
+            )?,
+        ])
     }
 }

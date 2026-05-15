@@ -4,6 +4,8 @@ use crate::protocols::jolt::verifier_output_claims::{
     SumcheckOutputClaimPlan, SumcheckOutputProductFamilyPlan, SumcheckOutputProductFamilyTermPlan,
 };
 
+pub(crate) const STAGE6_BYTECODE_RA_EVAL_FAMILY: &str = "stage6.bytecode_read_raf.eval.BytecodeRa";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BytecodeReadRafPlan {
     pub(crate) const_name: &'static str,
@@ -315,7 +317,7 @@ const STAGE6_BYTECODE_READ_RAF_PLAN: BytecodeReadRafPlan = BytecodeReadRafPlan {
     gamma: "stage6.bytecode_read_raf.gamma",
     bytecode_ra_eval_names_const: "STAGE6_BYTECODE_RA_EVAL_NAMES",
     bytecode_ra_eval_family_const: "STAGE6_BYTECODE_RA_EVALS",
-    bytecode_ra_eval_family_symbol: "stage6.bytecode_read_raf.eval.BytecodeRa",
+    bytecode_ra_eval_family_symbol: STAGE6_BYTECODE_RA_EVAL_FAMILY,
     entries: "stage6.bytecode_read_raf.entries",
     entry_bytecode_index: "stage6.bytecode_read_raf.entry_bytecode_index",
     stages_const: "STAGE6_BYTECODE_STAGES",
