@@ -6,6 +6,7 @@ pub mod phases;
 pub(crate) mod rust_target_plan;
 pub(crate) mod stage6_bytecode_read_raf_plan;
 pub mod validate;
+pub(crate) mod verifier_plan;
 
 pub use artifacts::{
     assemble_jolt_generated_crates, assemble_jolt_workspace_generated_crates, jolt_artifact_config,
