@@ -110,6 +110,7 @@ impl Stage5InstructionReadRafEmitPlan {
                     |(flag_eval, table_value)| SumcheckOutputProductFamilyTermPlan {
                         gamma_power_offset: 0,
                         evals: vec![table_value.symbol.clone(), flag_eval.clone()],
+                        eval_families: Vec::new(),
                         factors: Vec::new(),
                     },
                 )
@@ -120,7 +121,8 @@ impl Stage5InstructionReadRafEmitPlan {
             gamma: None,
             terms: vec![SumcheckOutputProductFamilyTermPlan {
                 gamma_power_offset: 0,
-                evals: self.instruction_ra_evals.evals.clone(),
+                evals: Vec::new(),
+                eval_families: vec![self.instruction_ra_evals.symbol.clone()],
                 factors: Vec::new(),
             }],
         };
@@ -431,7 +433,11 @@ mod tests {
         );
         assert_eq!(
             output_plan.claim.product_families[1].terms[0].evals,
-            vec!["stage5.instruction_read_raf.eval.InstructionRa_0".to_owned()]
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            output_plan.claim.product_families[1].terms[0].eval_families,
+            vec![STAGE5_INSTRUCTION_RA_EVAL_FAMILY.to_owned()]
         );
         assert_eq!(
             output_plan.claim.local_scalars,

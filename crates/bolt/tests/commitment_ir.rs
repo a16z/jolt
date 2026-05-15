@@ -1776,12 +1776,11 @@ fn stage6_rust_targets_extract_and_compile() {
     assert_eq!(bytecode_claims[0].product_families.len(), 1);
     assert_eq!(
         bytecode_claims[0].product_families[0].terms[0].evals,
-        vec![
-            "stage6.bytecode_read_raf.output.contribution".to_owned(),
-            "stage6.bytecode_read_raf.eval.BytecodeRa_0".to_owned(),
-            "stage6.bytecode_read_raf.eval.BytecodeRa_1".to_owned(),
-            "stage6.bytecode_read_raf.eval.BytecodeRa_2".to_owned()
-        ]
+        vec!["stage6.bytecode_read_raf.output.contribution".to_owned()]
+    );
+    assert_eq!(
+        bytecode_claims[0].product_families[0].terms[0].eval_families,
+        vec!["stage6.bytecode_read_raf.eval.BytecodeRa".to_owned()]
     );
     assert!(bytecode_claims[0].function_families.is_empty());
     assert_eq!(prover_program.point_zeros.len(), 1);

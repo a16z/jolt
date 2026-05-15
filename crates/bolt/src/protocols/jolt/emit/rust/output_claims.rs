@@ -178,10 +178,13 @@ fn emit_product_family_constants(
         for (term_index, term) in family.terms.iter().enumerate() {
             let evals_name = format!("{prefix}_TERM_{term_index}_EVALS");
             let evals = emit_str_slice_or_inline(source, &evals_name, &term.evals);
+            let eval_families_name = format!("{prefix}_TERM_{term_index}_EVAL_FAMILIES");
+            let eval_families =
+                emit_str_slice_or_inline(source, &eval_families_name, &term.eval_families);
             let factors_name = format!("{prefix}_TERM_{term_index}_FACTORS");
             let factors = emit_str_slice_or_inline(source, &factors_name, &term.factors);
             term_rows.push(format!(
-                "    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan {{ gamma_power_offset: {}, evals: {evals}, factors: {factors} }},",
+                "    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan {{ gamma_power_offset: {}, evals: {evals}, eval_families: {eval_families}, factors: {factors} }},",
                 term.gamma_power_offset
             ));
         }

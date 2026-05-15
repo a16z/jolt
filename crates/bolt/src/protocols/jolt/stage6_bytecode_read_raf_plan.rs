@@ -360,9 +360,8 @@ impl BytecodeReadRafPlan {
             gamma: None,
             terms: vec![SumcheckOutputProductFamilyTermPlan {
                 gamma_power_offset: 0,
-                evals: std::iter::once(self.output_contribution.to_owned())
-                    .chain(bytecode_ra_evals.evals.iter().cloned())
-                    .collect(),
+                evals: vec![self.output_contribution.to_owned()],
+                eval_families: vec![bytecode_ra_evals.symbol.clone()],
                 factors: Vec::new(),
             }],
         };
@@ -577,7 +576,8 @@ mod tests {
     use super::{
         emit_stage6_bytecode_read_raf_plan_constants, stage6_bytecode_read_raf_output_claim_plan,
         stage6_bytecode_read_raf_output_contribution_symbol, BytecodeFlag, BytecodeOutputTermPlan,
-        BytecodeReadRafTermPlan, BytecodeRegister, STAGE6_BYTECODE_READ_RAF_PLAN,
+        BytecodeReadRafTermPlan, BytecodeRegister, STAGE6_BYTECODE_RA_EVAL_FAMILY,
+        STAGE6_BYTECODE_READ_RAF_PLAN,
     };
 
     fn bytecode_ra_evals() -> IndexedEvalFamilyPlan {
@@ -699,13 +699,11 @@ mod tests {
         );
         assert_eq!(
             claim.product_families[0].terms[0].evals,
-            vec![
-                stage6_bytecode_read_raf_output_contribution_symbol().to_owned(),
-                "stage6.bytecode_read_raf.eval.BytecodeRa_0".to_owned(),
-                "stage6.bytecode_read_raf.eval.BytecodeRa_1".to_owned(),
-                "stage6.bytecode_read_raf.eval.BytecodeRa_2".to_owned(),
-                "stage6.bytecode_read_raf.eval.BytecodeRa_3".to_owned(),
-            ]
+            vec![stage6_bytecode_read_raf_output_contribution_symbol().to_owned()]
+        );
+        assert_eq!(
+            claim.product_families[0].terms[0].eval_families,
+            vec![STAGE6_BYTECODE_RA_EVAL_FAMILY.to_owned()]
         );
     }
 

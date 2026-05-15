@@ -405,6 +405,7 @@ pub struct SumcheckOutputEvalFamilyPlan {
 pub struct SumcheckOutputProductFamilyTermPlan {
     pub gamma_power_offset: usize,
     pub evals: &'static [&'static str],
+    pub eval_families: &'static [&'static str],
     pub factors: &'static [&'static str],
 }
 
@@ -1483,7 +1484,7 @@ fn evaluate_sumcheck_output_product_family(
     let gamma = output_family_gamma(family.gamma, store, scratch)?;
     let mut result = Fr::from_u64(0);
     for term in family.terms {
-        if term.evals.is_empty() && term.factors.is_empty() {
+        if term.evals.is_empty() && term.eval_families.is_empty() && term.factors.is_empty() {
             return Err(RuntimePlanError::InvalidInputLength {
                 input: family.symbol,
                 expected: 1,
@@ -1496,6 +1497,21 @@ fn evaluate_sumcheck_output_product_family(
                 .scalar_or(store, symbol)
                 .ok_or(RuntimePlanError::MissingValue { symbol })?;
             product *= value;
+        }
+        for &family_symbol in term.eval_families {
+            let values = store.field_vector_or(family_symbol, |symbol| {
+                RuntimePlanError::MissingValue { symbol }
+            })?;
+            if values.is_empty() {
+                return Err(RuntimePlanError::InvalidInputLength {
+                    input: family_symbol,
+                    expected: 1,
+                    actual: 0,
+                });
+            }
+            for value in values {
+                product *= *value;
+            }
         }
         result += product;
     }
@@ -1849,7 +1865,11 @@ pub fn reverse_slice(values: &[Fr]) -> Vec<Fr> {
     reason = "tests assert the success and error paths directly"
 )]
 mod tests {
-    use super::{Fr, NamedEvalFamilyPlan, RuntimePlanError, ValueStore};
+    use super::{
+        evaluate_sumcheck_output_product_family, Fr, NamedEvalFamilyPlan, RuntimePlanError,
+        ScratchScalars, SumcheckOutputProductFamilyPlan, SumcheckOutputProductFamilyTermPlan,
+        ValueStore,
+    };
 
     #[test]
     fn value_store_evaluates_named_eval_families_as_field_vectors() {
@@ -1886,5 +1906,30 @@ mod tests {
                 symbol: "eval.missing"
             }
         );
+    }
+
+    #[test]
+    fn product_family_multiplies_field_vector_terms() {
+        let mut store = ValueStore::default();
+        store.insert_scalar("scalar.factor", Fr::from_u64(5));
+        store.insert_field_vector("family.ab", vec![Fr::from_u64(2), Fr::from_u64(3)]);
+
+        let value = evaluate_sumcheck_output_product_family(
+            &SumcheckOutputProductFamilyPlan {
+                symbol: "product.family",
+                gamma: None,
+                terms: &[SumcheckOutputProductFamilyTermPlan {
+                    gamma_power_offset: 0,
+                    evals: &["scalar.factor"],
+                    eval_families: &["family.ab"],
+                    factors: &[],
+                }],
+            },
+            &store,
+            &ScratchScalars::default(),
+        )
+        .unwrap();
+
+        assert_eq!(value, Fr::from_u64(30));
     }
 }

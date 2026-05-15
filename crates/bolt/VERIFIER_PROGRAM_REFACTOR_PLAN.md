@@ -590,8 +590,10 @@ source builders are explicitly scoped to prover/role-neutral validation.
 Stage 5/6 verifier programs now also emit explicit indexed eval-family rows as
 runtime `NamedEvalFamilyPlan` slices and seed them into `ValueStore` as
 field-vector values after sumcheck output observation. Relation-output execution
-is not yet lowered through a single typed graph, and output eval families are
-still scalar-output claim machinery rather than first-class value rows.
+has started consuming those vectors: output product-family terms can reference
+an eval-family vector by symbol, and Stage 5 instruction RA / Stage 6 bytecode
+RA products use that path. Output eval families are still scalar-output claim
+machinery rather than first-class value rows.
 
 ### Dialect changes
 

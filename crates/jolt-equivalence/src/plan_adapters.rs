@@ -711,6 +711,13 @@ macro_rules! define_stage_adapter_impl {
                                                             .map(|symbol| super::leak_str(symbol))
                                                             .collect(),
                                                     ),
+                                                    eval_families: super::leak_slice(
+                                                        term
+                                                            .eval_families
+                                                            .iter()
+                                                            .map(|symbol| super::leak_str(symbol))
+                                                            .collect(),
+                                                    ),
                                                     factors: super::leak_slice(
                                                         term
                                                             .factors

@@ -220,6 +220,7 @@ pub struct SumcheckOutputEvalFamilyPlan {
 pub struct SumcheckOutputProductFamilyTermPlan {
     pub gamma_power_offset: usize,
     pub evals: Vec<String>,
+    pub eval_families: Vec<String>,
     pub factors: Vec<String>,
 }
 
@@ -413,6 +414,7 @@ pub fn parse_output_product_family_plan(
         terms.push(SumcheckOutputProductFamilyTermPlan {
             gamma_power_offset,
             evals: evals[eval_offset..eval_end].to_vec(),
+            eval_families: Vec::new(),
             factors: factors[factor_offset..factor_end].to_vec(),
         });
         eval_offset = eval_end;
@@ -1303,6 +1305,7 @@ mod tests {
             terms: vec![SumcheckOutputProductFamilyTermPlan {
                 gamma_power_offset: 2,
                 evals: vec!["product.eval".to_owned()],
+                eval_families: Vec::new(),
                 factors: vec!["product.factor.expr".to_owned()],
             }],
         };
