@@ -26,6 +26,8 @@ pub struct JoltProtocolParams {
     pub instruction_ra_virtual_d: usize,
     pub bytecode_d: usize,
     pub ram_d: usize,
+    pub field_reg_log_k: usize,
+    pub field_reg_d: usize,
     pub num_committed: usize,
     pub num_r1cs_constraints: usize,
     pub num_r1cs_inputs: usize,
@@ -45,6 +47,15 @@ impl JoltProtocolParams {
         let instruction_ra_virtual_d = instruction_log_k / lookups_ra_virtual_log_k_chunk;
         let bytecode_d = log_k_bytecode.div_ceil(log_k_chunk);
         let ram_d = log_k_ram.div_ceil(log_k_chunk);
+        // BN254 Fr coprocessor: 16 = 2^4 registers, so log_k_fr = 4.
+        // Phase 3 leaves `field_reg_d = 0` so the FR oracle family (FieldRegInc
+        // + FieldRegRa_*) is not yet registered on the MLIR side — that wiring
+        // is part of Phase 4, alongside the sumchecks that produce the source
+        // claims those openings reference. The witness-side scaffolding
+        // (`crates/jolt-witness/src/field_reg.rs`, `CycleInput` FR slots) is
+        // ready ahead of time and stays inert until Phase 4 toggles this on.
+        let field_reg_log_k: usize = 4;
+        let field_reg_d: usize = 0;
         Self {
             field: "bn254_fr",
             pcs: "dory",
@@ -66,9 +77,16 @@ impl JoltProtocolParams {
             instruction_ra_virtual_d,
             bytecode_d,
             ram_d,
-            num_committed: 2 + instruction_d + bytecode_d + ram_d,
-            num_r1cs_constraints: 19,
-            num_r1cs_inputs: 35,
+            field_reg_log_k,
+            field_reg_d,
+            // Adds `field_reg_d` for the FieldRegRa_* one-hot oracle family,
+            // and a constant `+1` for the FieldRegInc dense oracle, but only
+            // when FR oracles are active. Phase 3 keeps `field_reg_d = 0`,
+            // collapsing the formula back to the Phase 2 shape (2 + i + b + r).
+            num_committed: 2 + instruction_d + bytecode_d + ram_d
+                + if field_reg_d > 0 { 1 + field_reg_d } else { 0 },
+            num_r1cs_constraints: 32,
+            num_r1cs_inputs: 47,
             num_vars_padded: 64,
         }
     }
@@ -106,6 +124,8 @@ impl JoltProtocolParams {
             int_attr("instruction_ra_virtual_d", self.instruction_ra_virtual_d),
             int_attr("bytecode_d", self.bytecode_d),
             int_attr("ram_d", self.ram_d),
+            int_attr("field_reg_log_k", self.field_reg_log_k),
+            int_attr("field_reg_d", self.field_reg_d),
             int_attr("num_committed", self.num_committed),
             int_attr("num_r1cs_constraints", self.num_r1cs_constraints),
             int_attr("num_r1cs_inputs", self.num_r1cs_inputs),
@@ -141,6 +161,12 @@ pub(crate) struct ParsedJoltProtocolParams {
     pub(crate) instruction_ra_virtual_d: usize,
     pub(crate) bytecode_d: usize,
     pub(crate) ram_d: usize,
+    // Read off the parsed MLIR schema but only consumed by the Phase-4 FR
+    // Twist wiring once `field_reg_d > 0`. Annotated to suppress the
+    // dead-code lint on the Phase-3 shape (`field_reg_d = 0`).
+    #[expect(dead_code, reason = "consumed by Phase 4 FR Twist wiring")]
+    pub(crate) field_reg_log_k: usize,
+    pub(crate) field_reg_d: usize,
     pub(crate) num_committed: usize,
 }
 
@@ -168,6 +194,8 @@ impl ParsedJoltProtocolParams {
             instruction_ra_virtual_d: mlir_int_attr(operation, "instruction_ra_virtual_d")?,
             bytecode_d: mlir_int_attr(operation, "bytecode_d")?,
             ram_d: mlir_int_attr(operation, "ram_d")?,
+            field_reg_log_k: mlir_int_attr(operation, "field_reg_log_k")?,
+            field_reg_d: mlir_int_attr(operation, "field_reg_d")?,
             num_committed: mlir_int_attr(operation, "num_committed")?,
         })
     }
@@ -232,19 +260,28 @@ impl ParsedJoltProtocolParams {
         )?;
         require_eq("bytecode_d", self.bytecode_d, bytecode_d)?;
         require_eq("ram_d", self.ram_d, ram_d)?;
+        let field_reg_extra = if self.field_reg_d > 0 {
+            1 + self.field_reg_d
+        } else {
+            0
+        };
         require_eq(
             "num_committed",
             self.num_committed,
-            2 + instruction_d + bytecode_d + ram_d,
+            2 + instruction_d + bytecode_d + ram_d + field_reg_extra,
         )?;
         Ok(())
     }
 
     pub(crate) fn main_witness_oracles(&self) -> Vec<String> {
         let mut oracles = vec!["RdInc".to_owned(), "RamInc".to_owned()];
+        if self.field_reg_d > 0 {
+            oracles.push("FieldRegInc".to_owned());
+        }
         oracles.extend((0..self.instruction_d).map(|index| format!("InstructionRa_{index}")));
         oracles.extend((0..self.ram_d).map(|index| format!("RamRa_{index}")));
         oracles.extend((0..self.bytecode_d).map(|index| format!("BytecodeRa_{index}")));
+        oracles.extend((0..self.field_reg_d).map(|index| format!("FieldRegRa_{index}")));
         oracles
     }
 }
@@ -274,6 +311,8 @@ fn require_jolt_params_attrs(operation: OperationRef<'_, '_>) -> Result<(), Sche
             "instruction_ra_virtual_d",
             "bytecode_d",
             "ram_d",
+            "field_reg_log_k",
+            "field_reg_d",
             "num_committed",
             "num_r1cs_constraints",
             "num_r1cs_inputs",

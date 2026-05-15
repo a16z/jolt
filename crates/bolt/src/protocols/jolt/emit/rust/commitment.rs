@@ -1724,9 +1724,11 @@ fn rust_input_field(source: &str) -> Result<&'static str, EmitError> {
     match source {
         "trace.rd_inc" => Ok("rd_inc"),
         "trace.ram_inc" => Ok("ram_inc"),
+        "trace.field_reg_inc" => Ok("field_reg_inc"),
         "trace.instruction_keys" => Ok("instruction_keys"),
         "trace.ram_addresses" => Ok("ram_addresses"),
         "trace.bytecode_indices" => Ok("bytecode_indices"),
+        "trace.field_reg_indices" => Ok("field_reg_indices"),
         "advice.untrusted" => Ok("untrusted_advice"),
         "advice.trusted" => Ok("trusted_advice"),
         _ => Err(EmitError::new(format!(

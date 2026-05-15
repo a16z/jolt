@@ -689,11 +689,14 @@ pub fn cycle_input(
     });
 
     CycleInput {
-        dense: [rd_inc, ram_inc],
+        // FieldRegInc is 0 on every non-FR cycle (Phase 3 inert default).
+        dense: [rd_inc, ram_inc, 0],
         one_hot: [
             Some(cycle.lookup_index()),
             Some(bytecode_pc(bytecode, &cycle.instruction()) as u128),
             ram_address,
+            // FieldReg accesses default to register 0 on non-FR cycles.
+            Some(0),
         ],
     }
 }

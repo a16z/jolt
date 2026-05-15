@@ -7052,8 +7052,8 @@ mod tests {
         };
         let cycle_inputs = [
             CycleInput {
-                dense: [2, 3],
-                one_hot: [Some(1), Some(0), Some(1)],
+                dense: [2, 3, 0],
+                one_hot: [Some(1), Some(0), Some(1), Some(0)],
             },
             CycleInput::PADDING,
         ];
