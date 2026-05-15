@@ -474,6 +474,78 @@ pub trait FieldExprDependencies {
     fn operands(&self) -> &[String];
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerifierScalarSourceKind {
+    OpeningInput,
+    FieldConstant,
+    TranscriptScalar,
+    FieldExpr,
+    SumcheckEval,
+    StructuredPolynomialEval,
+    OutputEvalFamily,
+    OutputProductFamily,
+    OutputFunctionFamily,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct VerifierScalarSourceSet {
+    symbols: BTreeMap<String, VerifierScalarSourceKind>,
+}
+
+impl VerifierScalarSourceSet {
+    pub fn insert(&mut self, symbol: &str, kind: VerifierScalarSourceKind) {
+        let _old = self.symbols.insert(symbol.to_owned(), kind);
+    }
+
+    pub fn extend<'a>(
+        &mut self,
+        symbols: impl IntoIterator<Item = &'a String>,
+        kind: VerifierScalarSourceKind,
+    ) {
+        for symbol in symbols {
+            self.insert(symbol, kind);
+        }
+    }
+
+    pub fn contains(&self, symbol: &str) -> bool {
+        self.symbols.contains_key(symbol)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerifierPointSourceKind {
+    OpeningInput,
+    SumcheckInstance,
+    PointZero,
+    PointSlice,
+    PointConcat,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct VerifierPointSourceSet {
+    symbols: BTreeMap<String, VerifierPointSourceKind>,
+}
+
+impl VerifierPointSourceSet {
+    pub fn insert(&mut self, symbol: &str, kind: VerifierPointSourceKind) {
+        let _old = self.symbols.insert(symbol.to_owned(), kind);
+    }
+
+    pub fn extend<'a>(
+        &mut self,
+        symbols: impl IntoIterator<Item = &'a String>,
+        kind: VerifierPointSourceKind,
+    ) {
+        for symbol in symbols {
+            self.insert(symbol, kind);
+        }
+    }
+
+    pub fn contains(&self, symbol: &str) -> bool {
+        self.symbols.contains_key(symbol)
+    }
+}
+
 pub fn resolve_output_claims<T>(
     stage: &str,
     output_values: &[StructuredPolynomialEvalPlan],
@@ -824,8 +896,8 @@ pub struct OutputClaimVerification<'a> {
     pub output_function_families: &'a [SumcheckOutputFunctionFamilyPlan],
     pub output_claims: &'a [SumcheckOutputClaimPlan],
     pub relations: &'a BTreeSet<String>,
-    pub field_values: &'a BTreeSet<String>,
-    pub point_values: &'a BTreeSet<String>,
+    pub field_values: &'a VerifierScalarSourceSet,
+    pub point_values: &'a VerifierPointSourceSet,
 }
 
 pub fn verify_output_claims(

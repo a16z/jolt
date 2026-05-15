@@ -775,38 +775,58 @@ impl Stage5CpuProgram {
         Ok(())
     }
 
-    fn field_value_symbols(&self) -> BTreeSet<String> {
-        let mut values = symbols(self.opening_inputs.iter().map(|input| &input.symbol));
-        values.extend(symbols(
+    fn field_value_symbols(&self) -> verifier_output_claims::VerifierScalarSourceSet {
+        let mut values = verifier_output_claims::VerifierScalarSourceSet::default();
+        values.extend(
+            self.opening_inputs.iter().map(|input| &input.symbol),
+            verifier_output_claims::VerifierScalarSourceKind::OpeningInput,
+        );
+        values.extend(
             self.field_constants.iter().map(|constant| &constant.symbol),
-        ));
-        values.extend(symbols(
+            verifier_output_claims::VerifierScalarSourceKind::FieldConstant,
+        );
+        values.extend(
             self.transcript_squeezes
                 .iter()
                 .filter(|squeeze| matches!(squeeze.kind.as_str(), "challenge_scalar" | "scalar"))
                 .map(|squeeze| &squeeze.symbol),
-        ));
-        values.extend(symbols(
+            verifier_output_claims::VerifierScalarSourceKind::TranscriptScalar,
+        );
+        values.extend(
             self.output_values.iter().map(|value| &value.symbol),
-        ));
-        values.extend(symbols(self.field_exprs.iter().map(|expr| &expr.symbol)));
-        values.extend(symbols(self.evals.iter().map(|eval| &eval.symbol)));
+            verifier_output_claims::VerifierScalarSourceKind::StructuredPolynomialEval,
+        );
+        values.extend(
+            self.field_exprs.iter().map(|expr| &expr.symbol),
+            verifier_output_claims::VerifierScalarSourceKind::FieldExpr,
+        );
+        values.extend(
+            self.evals.iter().map(|eval| &eval.symbol),
+            verifier_output_claims::VerifierScalarSourceKind::SumcheckEval,
+        );
         values
     }
 
-    fn point_value_symbols(&self) -> BTreeSet<String> {
-        let mut values = symbols(
+    fn point_value_symbols(&self) -> verifier_output_claims::VerifierPointSourceSet {
+        let mut values = verifier_output_claims::VerifierPointSourceSet::default();
+        values.extend(
             self.instance_results
                 .iter()
                 .map(|instance| &instance.symbol),
+            verifier_output_claims::VerifierPointSourceKind::SumcheckInstance,
         );
-        values.extend(symbols(
+        values.extend(
             self.opening_inputs.iter().map(|input| &input.symbol),
-        ));
-        values.extend(symbols(self.point_slices.iter().map(|slice| &slice.symbol)));
-        values.extend(symbols(
+            verifier_output_claims::VerifierPointSourceKind::OpeningInput,
+        );
+        values.extend(
+            self.point_slices.iter().map(|slice| &slice.symbol),
+            verifier_output_claims::VerifierPointSourceKind::PointSlice,
+        );
+        values.extend(
             self.point_concats.iter().map(|concat| &concat.symbol),
-        ));
+            verifier_output_claims::VerifierPointSourceKind::PointConcat,
+        );
         values
     }
 
