@@ -1290,6 +1290,31 @@ pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
         })
 }
 
+pub fn evaluate_sumcheck_instance_output_claim<R: ProtocolRelation>(
+    output_claims: &[SumcheckOutputClaimPlan<R>],
+    field_exprs: &[FieldExprPlan],
+    store: &ValueStore<Fr>,
+    instance: &SumcheckInstanceResultPlan<R>,
+    evals: &[StageNamedEval<Fr>],
+    local_point: &[Fr],
+) -> Result<Fr, RuntimePlanError> {
+    let output_claim = output_claims
+        .iter()
+        .find(|output_claim| output_claim.relation == instance.relation)
+        .ok_or(RuntimePlanError::InvalidProof {
+            driver: instance.symbol,
+            reason: "missing output claim for relation",
+        })?;
+    evaluate_sumcheck_output_claim(
+        output_claim,
+        field_exprs,
+        store,
+        instance.symbol,
+        evals,
+        local_point,
+    )
+}
+
 fn evaluate_sumcheck_output_eval_family(
     family: &SumcheckOutputEvalFamilyPlan,
     store: &ValueStore<Fr>,

@@ -1176,18 +1176,11 @@ fn expected_plan_output_claim(
     evals: &[Stage6NamedEval<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage6Error> {
-    let output_claim = program
-        .output_claims
-        .iter()
-        .find(|output_claim| output_claim.relation == instance.relation)
-        .ok_or(VerifyStage6Error::UnsupportedRelation {
-            relation: instance.relation,
-        })?;
-    Ok(bolt_verifier_runtime::evaluate_sumcheck_output_claim(
-        output_claim,
+    Ok(bolt_verifier_runtime::evaluate_sumcheck_instance_output_claim(
+        program.output_claims,
         program.field_exprs,
         store,
-        instance.symbol,
+        instance,
         evals,
         local_point,
     )?)

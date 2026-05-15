@@ -1465,7 +1465,7 @@ fn stage5_rust_targets_extract_and_compile() {
         .contains("stage5.registers_val_evaluation.output.lt.RegistersValCycle"));
     assert!(verifier_source
         .source
-        .contains("bolt_verifier_runtime::evaluate_sumcheck_output_claim"));
+        .contains("bolt_verifier_runtime::evaluate_sumcheck_instance_output_claim"));
     assert!(verifier_source
         .source
         .contains("Stage5RelationKind::Stage5RamRaClaimReduction"));
@@ -2108,7 +2108,7 @@ fn stage7_rust_targets_extract_and_compile() {
         .contains("stage7.hamming_weight_claim_reduction.output.term"));
     assert!(verifier_source
         .source
-        .contains("bolt_verifier_runtime::evaluate_sumcheck_output_claim"));
+        .contains("bolt_verifier_runtime::evaluate_sumcheck_instance_output_claim"));
     assert!(verifier_source
         .source
         .contains("stage7.input.stage6.booleanity.InstructionRa_0"));

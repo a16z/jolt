@@ -2469,58 +2469,28 @@ fn expected_batched_output_claim(
         };
         let value = match relation {
             Stage5RelationKind::Stage5InstructionReadRaf => {
-                let output_claim = program
-                    .output_claims
-                    .iter()
-                    .find(|output_claim| output_claim.relation == instance.relation)
-                    .ok_or(VerifyStage5Error::UnsupportedRelation {
-                        relation: instance.relation,
-                    })?;
                 let mut local_store = store.clone();
                 evaluate_stage5_instruction_read_raf_point_values(
                     &STAGE5_INSTRUCTION_READ_RAF_PLAN,
                     &mut local_store,
                     local_point,
                 )?;
-                bolt_verifier_runtime::evaluate_sumcheck_output_claim(
-                    output_claim,
+                bolt_verifier_runtime::evaluate_sumcheck_instance_output_claim(
+                    program.output_claims,
                     program.field_exprs,
                     &local_store,
-                    instance.symbol,
+                    instance,
                     evals,
                     local_point,
                 )?
             }
-            Stage5RelationKind::Stage5RamRaClaimReduction => {
-                let output_claim = program
-                    .output_claims
-                    .iter()
-                    .find(|output_claim| output_claim.relation == instance.relation)
-                    .ok_or(VerifyStage5Error::UnsupportedRelation {
-                        relation: instance.relation,
-                    })?;
-                bolt_verifier_runtime::evaluate_sumcheck_output_claim(
-                    output_claim,
+            Stage5RelationKind::Stage5RamRaClaimReduction
+            | Stage5RelationKind::Stage5RegistersValEvaluation => {
+                bolt_verifier_runtime::evaluate_sumcheck_instance_output_claim(
+                    program.output_claims,
                     program.field_exprs,
                     store,
-                    instance.symbol,
-                    evals,
-                    local_point,
-                )?
-            }
-            Stage5RelationKind::Stage5RegistersValEvaluation => {
-                let output_claim = program
-                    .output_claims
-                    .iter()
-                    .find(|output_claim| output_claim.relation == instance.relation)
-                    .ok_or(VerifyStage5Error::UnsupportedRelation {
-                        relation: instance.relation,
-                    })?;
-                bolt_verifier_runtime::evaluate_sumcheck_output_claim(
-                    output_claim,
-                    program.field_exprs,
-                    store,
-                    instance.symbol,
+                    instance,
                     evals,
                     local_point,
                 )?

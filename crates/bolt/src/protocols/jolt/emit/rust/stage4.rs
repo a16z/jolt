@@ -2546,18 +2546,11 @@ fn expected_batched_output_claim(
                 expected: instance.round_offset + instance.num_rounds,
                 actual: point.len(),
             })?;
-        let output_claim = program
-            .output_claims
-            .iter()
-            .find(|output_claim| output_claim.relation == instance.relation)
-            .ok_or(VerifyStage4Error::UnsupportedRelation {
-                relation: instance.relation,
-            })?;
-        let value = bolt_verifier_runtime::evaluate_sumcheck_output_claim(
-            output_claim,
+        let value = bolt_verifier_runtime::evaluate_sumcheck_instance_output_claim(
+            program.output_claims,
             program.field_exprs,
             store,
-            instance.symbol,
+            instance,
             evals,
             local_point,
         )?;
