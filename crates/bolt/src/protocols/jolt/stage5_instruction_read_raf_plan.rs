@@ -1,4 +1,5 @@
 use crate::emit::rust::{push_format, EmitError};
+use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 use crate::protocols::jolt::verifier_output_claims::{
     StructuredPolynomialEvalPlan, StructuredPolynomialKind, StructuredPolynomialPointLength,
     StructuredPolynomialPointOrder, StructuredPolynomialPointPlan,
@@ -10,8 +11,8 @@ use crate::protocols::jolt::verifier_output_claims::{
 pub(crate) struct Stage5InstructionReadRafEmitPlan {
     pub(crate) point: String,
     pub(crate) lookup_output_point: String,
-    pub(crate) table_flag_evals: Stage5NamedEvalFamilyEmitPlan,
-    pub(crate) instruction_ra_evals: Stage5NamedEvalFamilyEmitPlan,
+    pub(crate) table_flag_evals: IndexedEvalFamilyPlan,
+    pub(crate) instruction_ra_evals: IndexedEvalFamilyPlan,
     pub(crate) raf_flag_eval: String,
     pub(crate) gamma: String,
     pub(crate) point_values: Vec<Stage5InstructionReadRafPointValueEmitPlan>,
@@ -23,12 +24,12 @@ impl Stage5InstructionReadRafEmitPlan {
         evals: impl IntoIterator<Item = (&'a str, &'a str)>,
     ) -> Result<Self, EmitError> {
         let evals = evals.into_iter().collect::<Vec<_>>();
-        let table_flag_evals = Stage5NamedEvalFamilyEmitPlan::from_indexed_oracles(
+        let table_flag_evals = IndexedEvalFamilyPlan::from_indexed_oracles(
             "stage5.instruction_read_raf.eval.LookupTableFlag",
             "LookupTableFlag_",
             evals.iter().copied(),
         )?;
-        let instruction_ra_evals = Stage5NamedEvalFamilyEmitPlan::from_indexed_oracles(
+        let instruction_ra_evals = IndexedEvalFamilyPlan::from_indexed_oracles(
             "stage5.instruction_read_raf.eval.InstructionRa",
             "InstructionRa_",
             evals.iter().copied(),
@@ -61,25 +62,12 @@ impl Stage5InstructionReadRafEmitPlan {
 
         let mut source = String::new();
         for (names_const, family_const, family) in families {
-            let names_source = family
-                .evals
-                .iter()
-                .map(|name| rust_str(name))
-                .collect::<Vec<_>>()
-                .join(", ");
-            push_format(
-                &mut source,
-                format_args!(
-                    "#[rustfmt::skip]\npub const {names_const}: &[&str] = &[{names_source}];\n"
-                ),
-            );
-            push_format(
-                &mut source,
-                format_args!(
-                    "pub const {family_const}: NamedEvalFamilyPlan = NamedEvalFamilyPlan {{ symbol: {}, evals: {names_const} }};\n\n",
-                    rust_str(&family.symbol),
-                ),
-            );
+            source.push_str(&family.emit_runtime_constant(
+                "pub ",
+                names_const,
+                family_const,
+                "NamedEvalFamilyPlan",
+            ));
         }
         source.push_str(&emit_point_value_constants(&self.point_values));
         push_format(
@@ -277,51 +265,6 @@ pub(crate) enum Stage5InstructionReadRafPointValueKind {
     LeftOperand,
     RightOperand,
     Identity,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Stage5NamedEvalFamilyEmitPlan {
-    pub(crate) symbol: String,
-    pub(crate) evals: Vec<String>,
-}
-
-impl Stage5NamedEvalFamilyEmitPlan {
-    fn from_indexed_oracles<'a>(
-        symbol: &str,
-        oracle_prefix: &str,
-        evals: impl IntoIterator<Item = (&'a str, &'a str)>,
-    ) -> Result<Self, EmitError> {
-        let mut indexed_names = Vec::new();
-        for (oracle, name) in evals {
-            let Some(suffix) = oracle.strip_prefix(oracle_prefix) else {
-                continue;
-            };
-            let index = suffix.parse::<usize>().map_err(|_| {
-                EmitError::new(format!(
-                    "invalid indexed eval oracle `{oracle}` for family `{symbol}`"
-                ))
-            })?;
-            indexed_names.push((index, name.to_owned()));
-        }
-        if indexed_names.is_empty() {
-            return Err(EmitError::new(format!("missing eval family `{symbol}`")));
-        }
-        indexed_names.sort_by_key(|(index, _)| *index);
-        for (expected, (actual, _)) in indexed_names.iter().enumerate() {
-            if expected != *actual {
-                return Err(EmitError::new(format!(
-                    "non-contiguous eval family `{symbol}` at index {actual}"
-                )));
-            }
-        }
-        Ok(Self {
-            symbol: symbol.to_owned(),
-            evals: indexed_names
-                .into_iter()
-                .map(|(_, name)| name)
-                .collect::<Vec<_>>(),
-        })
-    }
 }
 
 fn point_value_plans(table_count: usize) -> Vec<Stage5InstructionReadRafPointValueEmitPlan> {
@@ -528,11 +471,9 @@ mod tests {
             Err(error) => error,
         };
 
-        assert!(
-            error
-                .to_string()
-                .contains("non-contiguous eval family `stage5.instruction_read_raf.eval.LookupTableFlag` at index 1")
-        );
+        assert!(error.to_string().contains(
+            "non-contiguous eval family `stage5.instruction_read_raf.eval.LookupTableFlag`"
+        ));
         Ok(())
     }
 }

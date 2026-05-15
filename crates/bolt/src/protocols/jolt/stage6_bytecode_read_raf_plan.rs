@@ -1,4 +1,5 @@
 use crate::emit::rust::push_format;
+use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 use crate::protocols::jolt::verifier_output_claims::{
     SumcheckOutputClaimPlan, SumcheckOutputProductFamilyPlan, SumcheckOutputProductFamilyTermPlan,
 };
@@ -330,7 +331,9 @@ const STAGE6_BYTECODE_READ_RAF_PLAN: BytecodeReadRafPlan = BytecodeReadRafPlan {
     entry_lookup_table: "stage6.bytecode.entry.lookup_table",
 };
 
-pub(crate) fn emit_stage6_bytecode_read_raf_plan_constants(bytecode_ra_evals: &[String]) -> String {
+pub(crate) fn emit_stage6_bytecode_read_raf_plan_constants(
+    bytecode_ra_evals: &IndexedEvalFamilyPlan,
+) -> String {
     emit_bytecode_read_raf_plan(&STAGE6_BYTECODE_READ_RAF_PLAN, bytecode_ra_evals)
 }
 
@@ -340,20 +343,23 @@ pub(crate) fn stage6_bytecode_read_raf_output_contribution_symbol() -> &'static 
 }
 
 pub(crate) fn stage6_bytecode_read_raf_output_claim_plan(
-    bytecode_ra_evals: &[String],
+    bytecode_ra_evals: &IndexedEvalFamilyPlan,
 ) -> SumcheckOutputClaimPlan {
     STAGE6_BYTECODE_READ_RAF_PLAN.output_claim_plan(bytecode_ra_evals)
 }
 
 impl BytecodeReadRafPlan {
-    fn output_claim_plan(&self, bytecode_ra_evals: &[String]) -> SumcheckOutputClaimPlan {
+    fn output_claim_plan(
+        &self,
+        bytecode_ra_evals: &IndexedEvalFamilyPlan,
+    ) -> SumcheckOutputClaimPlan {
         let product_family = SumcheckOutputProductFamilyPlan {
             symbol: "stage6.bytecode_read_raf.output.product.BytecodeReadRaf".to_owned(),
             gamma: None,
             terms: vec![SumcheckOutputProductFamilyTermPlan {
                 gamma_power_offset: 0,
                 evals: std::iter::once(self.output_contribution.to_owned())
-                    .chain(bytecode_ra_evals.iter().cloned())
+                    .chain(bytecode_ra_evals.evals.iter().cloned())
                     .collect(),
                 factors: Vec::new(),
             }],
@@ -370,30 +376,18 @@ impl BytecodeReadRafPlan {
     }
 }
 
-fn emit_bytecode_read_raf_plan(plan: &BytecodeReadRafPlan, bytecode_ra_evals: &[String]) -> String {
+fn emit_bytecode_read_raf_plan(
+    plan: &BytecodeReadRafPlan,
+    bytecode_ra_evals: &IndexedEvalFamilyPlan,
+) -> String {
     let mut source = "\n".to_owned();
 
-    push_format(
-        &mut source,
-        format_args!(
-            "#[rustfmt::skip]\nconst {}: &[&str] = &[{}];\n",
-            plan.bytecode_ra_eval_names_const,
-            bytecode_ra_evals
-                .iter()
-                .map(|eval| rust_str(eval))
-                .collect::<Vec<_>>()
-                .join(", "),
-        ),
-    );
-    push_format(
-        &mut source,
-        format_args!(
-            "const {}: bolt_verifier_runtime::NamedEvalFamilyPlan = bolt_verifier_runtime::NamedEvalFamilyPlan {{ symbol: {}, evals: {} }};\n\n",
-            plan.bytecode_ra_eval_family_const,
-            rust_str(plan.bytecode_ra_eval_family_symbol),
-            plan.bytecode_ra_eval_names_const,
-        ),
-    );
+    source.push_str(&bytecode_ra_evals.emit_runtime_constant(
+        "",
+        plan.bytecode_ra_eval_names_const,
+        plan.bytecode_ra_eval_family_const,
+        "bolt_verifier_runtime::NamedEvalFamilyPlan",
+    ));
 
     for stage in plan.stages {
         push_format(
@@ -576,16 +570,21 @@ fn rust_option_str(value: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
+
     use super::{
         emit_stage6_bytecode_read_raf_plan_constants, stage6_bytecode_read_raf_output_claim_plan,
         stage6_bytecode_read_raf_output_contribution_symbol, BytecodeFlag, BytecodeOutputTermPlan,
         BytecodeReadRafTermPlan, BytecodeRegister, STAGE6_BYTECODE_READ_RAF_PLAN,
     };
 
-    fn bytecode_ra_evals() -> Vec<String> {
-        (0..4)
-            .map(|index| format!("stage6.bytecode_read_raf.eval.BytecodeRa_{index}"))
-            .collect()
+    fn bytecode_ra_evals() -> IndexedEvalFamilyPlan {
+        IndexedEvalFamilyPlan {
+            symbol: "stage6.bytecode_read_raf.eval.BytecodeRa".to_owned(),
+            evals: (0..4)
+                .map(|index| format!("stage6.bytecode_read_raf.eval.BytecodeRa_{index}"))
+                .collect(),
+        }
     }
 
     #[test]

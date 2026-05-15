@@ -14,6 +14,7 @@ use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu,
 use crate::protocols::jolt::stage6_bytecode_read_raf_plan::{
     emit_stage6_bytecode_read_raf_plan_constants, stage6_bytecode_read_raf_output_claim_plan,
 };
+use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 use crate::protocols::jolt::verifier_output_claims::{
     self, parse_output_eval_family_plan, parse_output_function_family_plan,
     parse_output_product_family_plan, FieldExprDependencies,
@@ -670,7 +671,7 @@ impl Stage6CpuProgram {
             Vec::new()
         };
         if role == Role::Verifier {
-            let bytecode_ra_evals = stage6_bytecode_read_raf_eval_names(&evals)?;
+            let bytecode_ra_evals = stage6_bytecode_read_raf_eval_family(&evals)?;
             output_claims.push(stage6_bytecode_read_raf_output_claim_plan(
                 &bytecode_ra_evals,
             ));
@@ -1614,7 +1615,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
         source.push_str(&self.emit_sumcheck_driver_constants()?);
         source.push_str(&self.emit_tail_constants()?);
         if self.role == Role::Verifier {
-            let bytecode_ra_evals = stage6_bytecode_read_raf_eval_names(&self.evals)?;
+            let bytecode_ra_evals = stage6_bytecode_read_raf_eval_family(&self.evals)?;
             source.push_str(&emit_stage6_bytecode_read_raf_plan_constants(
                 &bytecode_ra_evals,
             ));
@@ -2728,44 +2729,14 @@ fn stage6_kernel_abi(relation: &str) -> Option<&'static str> {
         .find_map(|(candidate, abi)| (*candidate == relation).then_some(*abi))
 }
 
-fn stage6_bytecode_read_raf_eval_names(
+fn stage6_bytecode_read_raf_eval_family(
     evals: &[Stage6SumcheckEvalPlan],
-) -> Result<Vec<String>, EmitError> {
-    const PREFIX: &str = "stage6.bytecode_read_raf.eval.BytecodeRa_";
-
-    let mut indexed_evals = BTreeMap::new();
-    for eval in evals {
-        let Some(suffix) = eval.name.strip_prefix(PREFIX) else {
-            continue;
-        };
-        let index = suffix.parse::<usize>().map_err(|_| {
-            EmitError::new(format!(
-                "stage6 bytecode read-RAF eval `{}` has non-numeric BytecodeRa suffix",
-                eval.name
-            ))
-        })?;
-        if indexed_evals.insert(index, eval.name.clone()).is_some() {
-            return Err(EmitError::new(format!(
-                "stage6 bytecode read-RAF eval family has duplicate BytecodeRa_{index}"
-            )));
-        }
-    }
-    if indexed_evals.is_empty() {
-        return Err(EmitError::new(
-            "stage6 bytecode read-RAF eval family is missing BytecodeRa evals",
-        ));
-    }
-
-    let mut eval_names = Vec::with_capacity(indexed_evals.len());
-    for (expected, (index, eval)) in indexed_evals.into_iter().enumerate() {
-        if index != expected {
-            return Err(EmitError::new(format!(
-                "stage6 bytecode read-RAF eval family is not contiguous: expected BytecodeRa_{expected}, got BytecodeRa_{index}"
-            )));
-        }
-        eval_names.push(eval);
-    }
-    Ok(eval_names)
+) -> Result<IndexedEvalFamilyPlan, EmitError> {
+    IndexedEvalFamilyPlan::from_indexed_names(
+        "stage6.bytecode_read_raf.eval.BytecodeRa",
+        "stage6.bytecode_read_raf.eval.BytecodeRa_",
+        evals.iter().map(|eval| eval.name.as_str()),
+    )
 }
 
 fn string_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<String, EmitError> {
@@ -2890,7 +2861,7 @@ mod tests {
     use crate::emit::rust::EmitError;
 
     use super::{
-        stage6_bytecode_read_raf_eval_names, stage6_kernel_abi, Stage6SumcheckEvalPlan,
+        stage6_bytecode_read_raf_eval_family, stage6_kernel_abi, Stage6SumcheckEvalPlan,
         STAGE6_KERNEL_ABIS,
     };
 
@@ -2917,9 +2888,9 @@ mod tests {
             eval("stage6.bytecode_read_raf.eval.BytecodeRa_1"),
         ];
 
-        let names = stage6_bytecode_read_raf_eval_names(&evals)?;
+        let family = stage6_bytecode_read_raf_eval_family(&evals)?;
         assert_eq!(
-            names,
+            family.evals,
             vec![
                 "stage6.bytecode_read_raf.eval.BytecodeRa_0".to_owned(),
                 "stage6.bytecode_read_raf.eval.BytecodeRa_1".to_owned(),
@@ -2936,14 +2907,14 @@ mod tests {
             eval("stage6.bytecode_read_raf.eval.BytecodeRa_2"),
         ];
 
-        let result = stage6_bytecode_read_raf_eval_names(&evals);
+        let result = stage6_bytecode_read_raf_eval_family(&evals);
         assert!(result.is_err(), "expected gap error, got {result:?}");
         let error = result
             .err()
             .map(|error| error.to_string())
             .unwrap_or_default();
 
-        assert!(error.contains("not contiguous"));
+        assert!(error.contains("non-contiguous eval family"));
     }
 
     fn eval(name: &'static str) -> Stage6SumcheckEvalPlan {
