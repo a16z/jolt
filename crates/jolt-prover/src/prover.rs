@@ -2088,3 +2088,4 @@ fn stage7_eval(eval: &stage7::Stage7NamedEval<Fr>) -> JoltNamedEval {
         value: eval.value,
     }
 }
+

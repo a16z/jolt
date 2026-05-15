@@ -491,3 +491,4 @@ fn commitment_for_oracle(
     }
     Err(JoltEvaluationProofError::MissingCommitment { oracle })
 }
+
