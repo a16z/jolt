@@ -38,7 +38,7 @@ impl ExecutionBackend for TracerBackend {
             return Err(TraceError::MissingElfBytes);
         }
 
-        let (_lazy_trace, cycles, final_memory, device, _advice_tape) = crate::trace(
+        let (_lazy_trace, cycles, final_memory, device, _advice_tape, _field_reg_events) = crate::trace(
             program.elf_bytes(),
             self.elf_path.as_ref(),
             &inputs.inputs,

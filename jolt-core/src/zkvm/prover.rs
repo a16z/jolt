@@ -228,7 +228,7 @@ impl<
             program_size: Some(preprocessing.shared.memory_layout.program_size),
         };
 
-        let (lazy_trace, trace, final_memory_state, program_io, _advice_tape_out) = {
+        let (lazy_trace, trace, final_memory_state, program_io, _advice_tape_out, _field_reg_events) = {
             let _pprof_trace = pprof_scope!("trace");
             guest::program::trace(
                 elf_contents,

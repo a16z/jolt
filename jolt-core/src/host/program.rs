@@ -322,7 +322,7 @@ impl Program {
         let memory_config =
             self.memory_config_with_program_size(image.program_end - RAM_START_ADDRESS);
 
-        let (lazy_trace, trace, memory, jolt_device, _advice_tape) = guest::program::trace(
+        let (lazy_trace, trace, memory, jolt_device, _advice_tape, _field_reg_events) = guest::program::trace(
             &elf_contents,
             self.elf.as_ref(),
             inputs,
