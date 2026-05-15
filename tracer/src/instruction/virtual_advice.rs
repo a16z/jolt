@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{emulator::cpu::Cpu, instruction::JoltInstructionRow};
+use crate::{
+    emulator::cpu::Cpu,
+    instruction::{JoltInstructionRow, SourceInstructionRow},
+};
 
 use super::{format::format_j::FormatJ, RISCVInstruction, RISCVTrace};
 
@@ -32,7 +35,9 @@ impl RISCVInstruction for VirtualAdvice {
     }
 
     fn source_kind(&self) -> jolt_riscv::SourceInstructionKind {
-        jolt_riscv::SourceInstructionKind::VirtualAdvice
+        jolt_riscv::SourceInstructionKind::VirtualAdvice(
+            jolt_riscv::instructions::VirtualAdvice(()),
+        )
     }
 
     fn new(_: u32, _: u64, _: bool, _: bool) -> Self {
@@ -67,6 +72,19 @@ impl From<JoltInstructionRow> for VirtualAdvice {
             virtual_sequence_remaining: ni.virtual_sequence_remaining,
             is_first_in_sequence: ni.is_first_in_sequence,
             is_compressed: ni.is_compressed,
+        }
+    }
+}
+
+impl From<SourceInstructionRow> for VirtualAdvice {
+    fn from(row: SourceInstructionRow) -> Self {
+        Self {
+            address: row.address as u64,
+            operands: row.operands.into(),
+            advice: 0,
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: row.is_compressed,
         }
     }
 }

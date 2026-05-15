@@ -16,7 +16,11 @@ pub(in crate::expand) fn expand_divu(
 
     // v0 is the quotient supplied by the tracer. The following assertions bind
     // it to the architectural unsigned division relation before copying to rd.
-    asm.expand_j(SourceInstructionKind::VirtualAdvice, v0.operand(), 0);
+    asm.expand_j(
+        SourceInstructionKind::VirtualAdvice(jolt_riscv::instructions::VirtualAdvice(())),
+        v0.operand(),
+        0,
+    );
     asm.expand_b(
         SourceInstructionKind::VirtualAssertValidDiv0,
         reg(rs2(instruction)?),

@@ -177,14 +177,20 @@ fn decode_system(word: u32) -> Result<SourceInstructionKind, ProgramError> {
 
 fn decode_custom(word: u32) -> Result<SourceInstructionKind, ProgramError> {
     match funct3(word) {
-        0b000 => Ok(SourceInstructionKind::VirtualRev8W),
+        0b000 => Ok(SourceInstructionKind::VirtualRev8W(
+            jolt_riscv::instructions::VirtualRev8W(()),
+        )),
         0b001 => Ok(SourceInstructionKind::VirtualAssertEQ),
-        0b010 => Ok(SourceInstructionKind::VirtualHostIO),
+        0b010 => Ok(SourceInstructionKind::VirtualHostIO(
+            jolt_riscv::instructions::VirtualHostIO(()),
+        )),
         0b011 => Ok(SourceInstructionKind::AdviceLB),
         0b100 => Ok(SourceInstructionKind::AdviceLH),
         0b101 => Ok(SourceInstructionKind::AdviceLW),
         0b110 => Ok(SourceInstructionKind::AdviceLD),
-        0b111 => Ok(SourceInstructionKind::VirtualAdviceLen),
+        0b111 => Ok(SourceInstructionKind::VirtualAdviceLen(
+            jolt_riscv::instructions::VirtualAdviceLen(()),
+        )),
         _ => invalid("invalid custom instruction"),
     }
 }

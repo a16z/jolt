@@ -183,58 +183,58 @@ macro_rules! define_source_instruction {
         /// [`JoltInstructionRow`](crate::JoltInstructionRow). The enum variant is the source
         /// instruction identity; the row payload carries only row data, so the
         /// two cannot silently disagree.
-        #[derive(Clone, Copy, Debug, PartialEq)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         pub enum SourceInstruction<T = SourceInstructionRow> {
-            NoOp(Noop<T>),
-            Unimpl(Unimpl<T>),
+            Noop(Noop<T>),
+            Unimplemented(Unimpl<T>),
             $(
-                $instr($marker<T>),
+                $marker($marker<T>),
             )*
-            Inline(Inline<T>),
+            InlineDispatch(Inline<T>),
         }
 
         impl SourceInstruction<SourceInstructionRow> {
             pub const fn kind(&self) -> SourceInstructionKind {
                 match self {
-                    Self::NoOp(_) => SourceInstructionKind::NoOp,
-                    Self::Unimpl(_) => SourceInstructionKind::Unimpl,
+                    Self::Noop(_) => SourceInstruction::Noop(Noop(())),
+                    Self::Unimplemented(_) => SourceInstruction::Unimplemented(Unimpl(())),
                     $(
-                        Self::$instr(_) => SourceInstructionKind::$instr,
+                        Self::$marker(_) => SourceInstruction::$marker($marker(())),
                     )*
-                    Self::Inline(_) => SourceInstructionKind::Inline,
+                    Self::InlineDispatch(_) => SourceInstruction::InlineDispatch(Inline(())),
                 }
             }
 
             pub fn new(kind: SourceInstructionKind, row: SourceInstructionRow) -> Self {
                 match kind {
-                    SourceInstructionKind::NoOp => Self::NoOp(Noop(row)),
-                    SourceInstructionKind::Unimpl => Self::Unimpl(Unimpl(row)),
+                    SourceInstruction::Noop(_) => Self::Noop(Noop(row)),
+                    SourceInstruction::Unimplemented(_) => Self::Unimplemented(Unimpl(row)),
                     $(
-                        SourceInstructionKind::$instr => Self::$instr($marker(row)),
+                        SourceInstruction::$marker(_) => Self::$marker($marker(row)),
                     )*
-                    SourceInstructionKind::Inline => Self::Inline(Inline(row)),
+                    SourceInstruction::InlineDispatch(_) => Self::InlineDispatch(Inline(row)),
                 }
             }
 
             pub const fn row(&self) -> &SourceInstructionRow {
                 match self {
-                    Self::NoOp(instruction) => &instruction.0,
-                    Self::Unimpl(instruction) => &instruction.0,
+                    Self::Noop(instruction) => &instruction.0,
+                    Self::Unimplemented(instruction) => &instruction.0,
                     $(
-                        Self::$instr(instruction) => &instruction.0,
+                        Self::$marker(instruction) => &instruction.0,
                     )*
-                    Self::Inline(instruction) => &instruction.0,
+                    Self::InlineDispatch(instruction) => &instruction.0,
                 }
             }
 
             pub fn into_row(self) -> SourceInstructionRow {
                 match self {
-                    Self::NoOp(instruction) => instruction.0,
-                    Self::Unimpl(instruction) => instruction.0,
+                    Self::Noop(instruction) => instruction.0,
+                    Self::Unimplemented(instruction) => instruction.0,
                     $(
-                        Self::$instr(instruction) => instruction.0,
+                        Self::$marker(instruction) => instruction.0,
                     )*
-                    Self::Inline(instruction) => instruction.0,
+                    Self::InlineDispatch(instruction) => instruction.0,
                 }
             }
 
@@ -323,8 +323,7 @@ crate::for_each_instruction_kind!(define_source_instruction);
 /// `VirtualSw`. These are intentionally absent from `JoltInstruction` and
 /// from the flag-exclusivity tests below.
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum JoltInstruction<T = JoltInstructionRow> {
     Noop(Noop<T>),
     Add(Add<T>),
@@ -396,133 +395,35 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     VirtualHostIO(VirtualHostIO<T>),
 }
 
-impl TryFrom<JoltInstructionRow> for JoltInstruction {
-    type Error = JoltInstructionKind;
+macro_rules! impl_jolt_instruction_try_from_row {
+    (
+        instructions: [$($instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+    ) => {
+        impl TryFrom<JoltInstructionRow> for JoltInstruction {
+            type Error = JoltInstructionKind;
 
-    fn try_from(instruction: JoltInstructionRow) -> Result<Self, Self::Error> {
-        Ok(match instruction.instruction_kind {
-            JoltInstructionKind::NoOp => Self::Noop(Noop(instruction)),
-            JoltInstructionKind::ADD => Self::Add(Add(instruction)),
-            JoltInstructionKind::ADDI => Self::Addi(Addi(instruction)),
-            JoltInstructionKind::SUB => Self::Sub(Sub(instruction)),
-            JoltInstructionKind::LUI => Self::Lui(Lui(instruction)),
-            JoltInstructionKind::AUIPC => Self::Auipc(Auipc(instruction)),
-            JoltInstructionKind::MUL => Self::Mul(Mul(instruction)),
-            JoltInstructionKind::MULHU => Self::MulHU(MulHU(instruction)),
-            JoltInstructionKind::AND => Self::And(And(instruction)),
-            JoltInstructionKind::ANDI => Self::AndI(AndI(instruction)),
-            JoltInstructionKind::OR => Self::Or(Or(instruction)),
-            JoltInstructionKind::ORI => Self::OrI(OrI(instruction)),
-            JoltInstructionKind::XOR => Self::Xor(Xor(instruction)),
-            JoltInstructionKind::XORI => Self::XorI(XorI(instruction)),
-            JoltInstructionKind::ANDN => Self::Andn(Andn(instruction)),
-            JoltInstructionKind::SLT => Self::Slt(Slt(instruction)),
-            JoltInstructionKind::SLTI => Self::SltI(SltI(instruction)),
-            JoltInstructionKind::SLTU => Self::SltU(SltU(instruction)),
-            JoltInstructionKind::SLTIU => Self::SltIU(SltIU(instruction)),
-            JoltInstructionKind::BEQ => Self::Beq(Beq(instruction)),
-            JoltInstructionKind::BNE => Self::Bne(Bne(instruction)),
-            JoltInstructionKind::BLT => Self::Blt(Blt(instruction)),
-            JoltInstructionKind::BGE => Self::Bge(Bge(instruction)),
-            JoltInstructionKind::BLTU => Self::BltU(BltU(instruction)),
-            JoltInstructionKind::BGEU => Self::BgeU(BgeU(instruction)),
-            JoltInstructionKind::LD => Self::Ld(Ld(instruction)),
-            JoltInstructionKind::SD => Self::Sd(Sd(instruction)),
-            JoltInstructionKind::FENCE => Self::Fence(Fence(instruction)),
-            JoltInstructionKind::JAL => Self::Jal(Jal(instruction)),
-            JoltInstructionKind::JALR => Self::Jalr(Jalr(instruction)),
-            JoltInstructionKind::VirtualAssertEQ => Self::AssertEq(AssertEq(instruction)),
-            JoltInstructionKind::VirtualAssertLTE => Self::AssertLte(AssertLte(instruction)),
-            JoltInstructionKind::VirtualAssertValidDiv0 => {
-                Self::AssertValidDiv0(AssertValidDiv0(instruction))
+            fn try_from(instruction: JoltInstructionRow) -> Result<Self, Self::Error> {
+                Ok(match instruction.instruction_kind {
+                    JoltInstruction::Noop(_) => Self::Noop(Noop(instruction)),
+                    $(
+                        JoltInstruction::$marker(_) => Self::$marker($marker(instruction)),
+                    )*
+                })
             }
-            JoltInstructionKind::VirtualAssertValidUnsignedRemainder => {
-                Self::AssertValidUnsignedRemainder(AssertValidUnsignedRemainder(instruction))
-            }
-            JoltInstructionKind::VirtualAssertMulUNoOverflow => {
-                Self::AssertMulUNoOverflow(AssertMulUNoOverflow(instruction))
-            }
-            JoltInstructionKind::VirtualAssertWordAlignment => {
-                Self::AssertWordAlignment(AssertWordAlignment(instruction))
-            }
-            JoltInstructionKind::VirtualAssertHalfwordAlignment => {
-                Self::AssertHalfwordAlignment(AssertHalfwordAlignment(instruction))
-            }
-            JoltInstructionKind::VirtualPow2 => Self::Pow2(Pow2(instruction)),
-            JoltInstructionKind::VirtualPow2I => Self::Pow2I(Pow2I(instruction)),
-            JoltInstructionKind::VirtualPow2W => Self::Pow2W(Pow2W(instruction)),
-            JoltInstructionKind::VirtualPow2IW => Self::Pow2IW(Pow2IW(instruction)),
-            JoltInstructionKind::VirtualMULI => Self::MulI(MulI(instruction)),
-            JoltInstructionKind::VirtualMovsign => Self::MovSign(MovSign(instruction)),
-            JoltInstructionKind::VirtualRev8W => Self::VirtualRev8W(VirtualRev8W(instruction)),
-            JoltInstructionKind::VirtualChangeDivisor => {
-                Self::VirtualChangeDivisor(VirtualChangeDivisor(instruction))
-            }
-            JoltInstructionKind::VirtualChangeDivisorW => {
-                Self::VirtualChangeDivisorW(VirtualChangeDivisorW(instruction))
-            }
-            JoltInstructionKind::VirtualSignExtendWord => {
-                Self::VirtualSignExtendWord(VirtualSignExtendWord(instruction))
-            }
-            JoltInstructionKind::VirtualZeroExtendWord => {
-                Self::VirtualZeroExtendWord(VirtualZeroExtendWord(instruction))
-            }
-            JoltInstructionKind::VirtualSRL => Self::VirtualSrl(VirtualSrl(instruction)),
-            JoltInstructionKind::VirtualSRLI => Self::VirtualSrli(VirtualSrli(instruction)),
-            JoltInstructionKind::VirtualSRA => Self::VirtualSra(VirtualSra(instruction)),
-            JoltInstructionKind::VirtualSRAI => Self::VirtualSrai(VirtualSrai(instruction)),
-            JoltInstructionKind::VirtualShiftRightBitmask => {
-                Self::VirtualShiftRightBitmask(VirtualShiftRightBitmask(instruction))
-            }
-            JoltInstructionKind::VirtualShiftRightBitmaskI => {
-                Self::VirtualShiftRightBitmaski(VirtualShiftRightBitmaski(instruction))
-            }
-            JoltInstructionKind::VirtualROTRI => Self::VirtualRotri(VirtualRotri(instruction)),
-            JoltInstructionKind::VirtualROTRIW => Self::VirtualRotriw(VirtualRotriw(instruction)),
-            JoltInstructionKind::VirtualXORROT32 => {
-                Self::VirtualXorRot32(VirtualXorRot32(instruction))
-            }
-            JoltInstructionKind::VirtualXORROT24 => {
-                Self::VirtualXorRot24(VirtualXorRot24(instruction))
-            }
-            JoltInstructionKind::VirtualXORROT16 => {
-                Self::VirtualXorRot16(VirtualXorRot16(instruction))
-            }
-            JoltInstructionKind::VirtualXORROT63 => {
-                Self::VirtualXorRot63(VirtualXorRot63(instruction))
-            }
-            JoltInstructionKind::VirtualXORROTW16 => {
-                Self::VirtualXorRotW16(VirtualXorRotW16(instruction))
-            }
-            JoltInstructionKind::VirtualXORROTW12 => {
-                Self::VirtualXorRotW12(VirtualXorRotW12(instruction))
-            }
-            JoltInstructionKind::VirtualXORROTW8 => {
-                Self::VirtualXorRotW8(VirtualXorRotW8(instruction))
-            }
-            JoltInstructionKind::VirtualXORROTW7 => {
-                Self::VirtualXorRotW7(VirtualXorRotW7(instruction))
-            }
-            JoltInstructionKind::VirtualAdvice => Self::VirtualAdvice(VirtualAdvice(instruction)),
-            JoltInstructionKind::VirtualAdviceLen => {
-                Self::VirtualAdviceLen(VirtualAdviceLen(instruction))
-            }
-            JoltInstructionKind::VirtualAdviceLoad => {
-                Self::VirtualAdviceLoad(VirtualAdviceLoad(instruction))
-            }
-            JoltInstructionKind::VirtualHostIO => Self::VirtualHostIO(VirtualHostIO(instruction)),
-        })
-    }
+        }
+    };
 }
+
+crate::for_each_jolt_instruction_kind!(impl_jolt_instruction_try_from_row);
 
 macro_rules! impl_jolt_instructions_flags {
     ($($variant:ident => $kind:ident),* $(,)?) => {
         impl<T> JoltInstruction<T> {
             pub const fn kind(&self) -> JoltInstructionKind {
                 match self {
-                    Self::Noop(_) => JoltInstructionKind::NoOp,
+                    Self::Noop(_) => JoltInstruction::Noop(Noop(())),
                     $(
-                        Self::$variant(_) => JoltInstructionKind::$kind,
+                        Self::$variant(_) => JoltInstruction::$variant($variant(())),
                     )*
                 }
             }
@@ -543,13 +444,13 @@ macro_rules! impl_jolt_instructions_flags {
                 match self {
                     Self::Noop(instruction) => {
                         let mut row = instruction.0.into();
-                        row.instruction_kind = JoltInstructionKind::NoOp;
+                        row.instruction_kind = JoltInstruction::Noop(Noop(()));
                         row
                     }
                     $(
                         Self::$variant(instruction) => {
                             let mut row = instruction.0.into();
-                            row.instruction_kind = JoltInstructionKind::$kind;
+                            row.instruction_kind = JoltInstruction::$variant($variant(()));
                             row
                         }
                     )*
@@ -763,8 +664,8 @@ mod tests {
             JoltInstructionRow::try_from(&beq).map(|row| row.instruction_kind),
             Ok(JoltInstructionKind::BEQ)
         );
-        assert!(matches!(add, SourceInstruction::ADD(Add(..))));
-        assert!(matches!(beq, SourceInstruction::BEQ(Beq(..))));
+        assert!(matches!(add, SourceInstruction::Add(Add(..))));
+        assert!(matches!(beq, SourceInstruction::Beq(Beq(..))));
     }
 
     #[test]
@@ -773,27 +674,27 @@ mod tests {
 
         assert!(matches!(
             SourceInstruction::new(SourceInstructionKind::VirtualAssertEQ, row),
-            SourceInstruction::VirtualAssertEQ(AssertEq(..))
+            SourceInstruction::AssertEq(AssertEq(..))
         ));
         assert!(matches!(
             SourceInstruction::new(SourceInstructionKind::VirtualMULI, row),
-            SourceInstruction::VirtualMULI(MulI(..))
+            SourceInstruction::MulI(MulI(..))
         ));
         assert!(matches!(
             SourceInstruction::new(SourceInstructionKind::VirtualROTRI, row),
-            SourceInstruction::VirtualROTRI(VirtualRotri(..))
+            SourceInstruction::VirtualRotri(VirtualRotri(..))
         ));
         assert!(matches!(
             SourceInstruction::new(SourceInstructionKind::AMOMAXUD, row),
-            SourceInstruction::AMOMAXUD(AmoMaxUD(..))
+            SourceInstruction::AmoMaxUD(AmoMaxUD(..))
         ));
         assert!(matches!(
             SourceInstruction::new(SourceInstructionKind::Inline, row),
-            SourceInstruction::Inline(Inline(..))
+            SourceInstruction::InlineDispatch(Inline(..))
         ));
         assert!(matches!(
             SourceInstruction::new(SourceInstructionKind::Unimpl, row),
-            SourceInstruction::Unimpl(Unimpl(..))
+            SourceInstruction::Unimplemented(Unimpl(..))
         ));
     }
 
