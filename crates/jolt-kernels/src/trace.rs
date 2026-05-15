@@ -253,9 +253,12 @@ where
     let mut is_interleaved_operands = Vec::with_capacity(size);
     for index in 0..size {
         let Some(cycle) = trace.get(index) else {
+            // Padding cycles are conceptually NoOp. NoOp's default
+            // CircuitFlagSet has no operand-combination bit set, so
+            // is_interleaved_operands is true (see jolt-riscv flags.rs).
             lookup_indices.push(0);
             lookup_table_indices.push(None);
-            is_interleaved_operands.push(false);
+            is_interleaved_operands.push(true);
             continue;
         };
         lookup_indices.push(cycle.lookup_index());

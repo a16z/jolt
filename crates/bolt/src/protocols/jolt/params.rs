@@ -74,7 +74,11 @@ impl JoltProtocolParams {
     }
 
     pub fn fixture() -> Self {
-        Self::new(16, 10, 16)
+        // Max shape supported by current jolt-kernels Stage 6 RA-virtual
+        // sumcheck: DENSE_STAGE6_MAX_DEGREE=5 caps bytecode_d and ram_d at 4
+        // under log_k_chunk=4, so log_k_bytecode <= 16 and log_k_ram <= 16.
+        // log_t=18 gives a 2^18 universal trace ceiling.
+        Self::new(18, 14, 14)
     }
 
     pub fn attrs(&self) -> Vec<(String, String)> {
