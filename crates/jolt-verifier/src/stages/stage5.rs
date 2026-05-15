@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use bolt_verifier_runtime::{batch_claims, find_batch, find_plan, NamedEvalFamilyPlan};
-use super::jolt_relations::{evaluate_stage5_instruction_read_raf, normalize_instruction_read_raf_point, Stage5InstructionReadRafPlan, Stage5InstructionReadRafPointValueKind, Stage5InstructionReadRafPointValuePlan};
+use super::jolt_relations::{evaluate_stage5_instruction_read_raf_point_values, normalize_instruction_read_raf_point, Stage5InstructionReadRafPlan, Stage5InstructionReadRafPointValueKind, Stage5InstructionReadRafPointValuePlan};
 use jolt_field::{Field, Fr};
 use jolt_sumcheck::SumcheckError;
 use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};
@@ -110,6 +110,17 @@ pub const STAGE5_FIELD_EXPRS: &[Stage5FieldExprPlan] = &[
     Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.output.claim_expr", kind: Stage5FieldExprKind::Mul, operands: &["stage5.ram_ra_claim_reduction.output.eq_combined", "stage5.ram_ra_claim_reduction.eval.RamRa"] },
     Stage5FieldExprPlan { symbol: "stage5.registers_val_evaluation.output.product.RdIncRdWa", kind: Stage5FieldExprKind::Mul, operands: &["stage5.registers_val_evaluation.eval.RdInc", "stage5.registers_val_evaluation.eval.RdWa"] },
     Stage5FieldExprPlan { symbol: "stage5.registers_val_evaluation.output.claim_expr", kind: Stage5FieldExprKind::Mul, operands: &["stage5.registers_val_evaluation.output.product.RdIncRdWa", "stage5.registers_val_evaluation.output.lt.RegistersValCycle"] },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.term.GammaRightLookupOperand", kind: Stage5FieldExprKind::Mul, operands: &["stage5.instruction_read_raf.gamma", "stage5.instruction_read_raf.point_value.RightLookupOperand"] },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.partial.LeftPlusGammaRight", kind: Stage5FieldExprKind::Add, operands: &["stage5.instruction_read_raf.point_value.LeftLookupOperand", "stage5.instruction_read_raf.output.term.GammaRightLookupOperand"] },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.term.RafFlagLeftPlusGammaRight", kind: Stage5FieldExprKind::Mul, operands: &["stage5.instruction_read_raf.eval.InstructionRafFlag", "stage5.instruction_read_raf.output.partial.LeftPlusGammaRight"] },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.partial.NonRafLookupOperands", kind: Stage5FieldExprKind::Sub, operands: &["stage5.instruction_read_raf.output.partial.LeftPlusGammaRight", "stage5.instruction_read_raf.output.term.RafFlagLeftPlusGammaRight"] },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.term.GammaIdentity", kind: Stage5FieldExprKind::Mul, operands: &["stage5.instruction_read_raf.gamma", "stage5.instruction_read_raf.point_value.Identity"] },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.term.RafFlagGammaIdentity", kind: Stage5FieldExprKind::Mul, operands: &["stage5.instruction_read_raf.eval.InstructionRafFlag", "stage5.instruction_read_raf.output.term.GammaIdentity"] },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.partial.RafClaim", kind: Stage5FieldExprKind::Add, operands: &["stage5.instruction_read_raf.output.partial.NonRafLookupOperands", "stage5.instruction_read_raf.output.term.RafFlagGammaIdentity"] },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.term.GammaRafClaim", kind: Stage5FieldExprKind::Mul, operands: &["stage5.instruction_read_raf.gamma", "stage5.instruction_read_raf.output.partial.RafClaim"] },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.partial.LookupOrRaf", kind: Stage5FieldExprKind::Add, operands: &["stage5.instruction_read_raf.output.product.LookupTableValues", "stage5.instruction_read_raf.output.term.GammaRafClaim"] },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.partial.EqRa", kind: Stage5FieldExprKind::Mul, operands: &["stage5.instruction_read_raf.output.eq.LookupOutputCycle", "stage5.instruction_read_raf.output.product.InstructionRa"] },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.claim_expr", kind: Stage5FieldExprKind::Mul, operands: &["stage5.instruction_read_raf.output.partial.EqRa", "stage5.instruction_read_raf.output.partial.LookupOrRaf"] },
 ];
 pub const STAGE5_KERNELS: &[Stage5KernelPlan] = &[
 
@@ -357,9 +368,149 @@ pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_1_VALUES: &[Stage5StructuredPolynomialEva
     Stage5StructuredPolynomialEvalPlan { symbol: "stage5.registers_val_evaluation.output.lt.RegistersValCycle", polynomial: Stage5StructuredPolynomialKind::Lt, x_point: Stage5StructuredPolynomialPointPlan { source: "stage5.registers_val_evaluation.instance", segment: Stage5StructuredPolynomialPointSegment::Full, length: Stage5StructuredPolynomialPointLength::Full, order: Stage5StructuredPolynomialPointOrder::Reverse }, y_point: Stage5StructuredPolynomialPointPlan { source: "stage5.input.stage4.registers.RegistersVal", segment: Stage5StructuredPolynomialPointSegment::Suffix, length: Stage5StructuredPolynomialPointLength::XPoint, order: Stage5StructuredPolynomialPointOrder::AsIs } },
 ];
 
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_VALUES: &[Stage5StructuredPolynomialEvalPlan] = &[
+    Stage5StructuredPolynomialEvalPlan { symbol: "stage5.instruction_read_raf.output.eq.LookupOutputCycle", polynomial: Stage5StructuredPolynomialKind::Eq, x_point: Stage5StructuredPolynomialPointPlan { source: "stage5.instruction_read_raf.point", segment: Stage5StructuredPolynomialPointSegment::Suffix, length: Stage5StructuredPolynomialPointLength::YPoint, order: Stage5StructuredPolynomialPointOrder::Reverse }, y_point: Stage5StructuredPolynomialPointPlan { source: "stage5.input.stage2.instruction.LookupOutput", segment: Stage5StructuredPolynomialPointSegment::Full, length: Stage5StructuredPolynomialPointLength::Full, order: Stage5StructuredPolynomialPointOrder::AsIs } },
+];
+
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_0_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_0", "stage5.instruction_read_raf.eval.LookupTableFlag_0"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_0_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_1_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_1", "stage5.instruction_read_raf.eval.LookupTableFlag_1"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_1_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_2_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_2", "stage5.instruction_read_raf.eval.LookupTableFlag_2"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_2_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_3_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_3", "stage5.instruction_read_raf.eval.LookupTableFlag_3"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_3_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_4_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_4", "stage5.instruction_read_raf.eval.LookupTableFlag_4"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_4_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_5_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_5", "stage5.instruction_read_raf.eval.LookupTableFlag_5"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_5_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_6_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_6", "stage5.instruction_read_raf.eval.LookupTableFlag_6"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_6_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_7_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_7", "stage5.instruction_read_raf.eval.LookupTableFlag_7"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_7_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_8_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_8", "stage5.instruction_read_raf.eval.LookupTableFlag_8"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_8_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_9_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_9", "stage5.instruction_read_raf.eval.LookupTableFlag_9"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_9_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_10_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_10", "stage5.instruction_read_raf.eval.LookupTableFlag_10"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_10_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_11_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_11", "stage5.instruction_read_raf.eval.LookupTableFlag_11"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_11_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_12_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_12", "stage5.instruction_read_raf.eval.LookupTableFlag_12"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_12_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_13_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_13", "stage5.instruction_read_raf.eval.LookupTableFlag_13"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_13_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_14_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_14", "stage5.instruction_read_raf.eval.LookupTableFlag_14"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_14_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_15_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_15", "stage5.instruction_read_raf.eval.LookupTableFlag_15"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_15_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_16_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_16", "stage5.instruction_read_raf.eval.LookupTableFlag_16"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_16_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_17_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_17", "stage5.instruction_read_raf.eval.LookupTableFlag_17"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_17_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_18_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_18", "stage5.instruction_read_raf.eval.LookupTableFlag_18"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_18_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_19_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_19", "stage5.instruction_read_raf.eval.LookupTableFlag_19"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_19_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_20_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_20", "stage5.instruction_read_raf.eval.LookupTableFlag_20"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_20_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_21_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_21", "stage5.instruction_read_raf.eval.LookupTableFlag_21"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_21_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_22_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_22", "stage5.instruction_read_raf.eval.LookupTableFlag_22"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_22_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_23_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_23", "stage5.instruction_read_raf.eval.LookupTableFlag_23"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_23_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_24_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_24", "stage5.instruction_read_raf.eval.LookupTableFlag_24"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_24_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_25_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_25", "stage5.instruction_read_raf.eval.LookupTableFlag_25"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_25_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_26_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_26", "stage5.instruction_read_raf.eval.LookupTableFlag_26"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_26_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_27_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_27", "stage5.instruction_read_raf.eval.LookupTableFlag_27"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_27_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_28_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_28", "stage5.instruction_read_raf.eval.LookupTableFlag_28"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_28_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_29_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_29", "stage5.instruction_read_raf.eval.LookupTableFlag_29"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_29_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_30_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_30", "stage5.instruction_read_raf.eval.LookupTableFlag_30"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_30_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_31_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_31", "stage5.instruction_read_raf.eval.LookupTableFlag_31"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_31_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_32_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_32", "stage5.instruction_read_raf.eval.LookupTableFlag_32"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_32_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_33_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_33", "stage5.instruction_read_raf.eval.LookupTableFlag_33"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_33_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_34_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_34", "stage5.instruction_read_raf.eval.LookupTableFlag_34"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_34_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_35_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_35", "stage5.instruction_read_raf.eval.LookupTableFlag_35"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_35_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_36_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_36", "stage5.instruction_read_raf.eval.LookupTableFlag_36"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_36_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_37_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_37", "stage5.instruction_read_raf.eval.LookupTableFlag_37"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_37_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_38_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_38", "stage5.instruction_read_raf.eval.LookupTableFlag_38"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_38_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_39_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_39", "stage5.instruction_read_raf.eval.LookupTableFlag_39"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_39_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_40_EVALS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_40", "stage5.instruction_read_raf.eval.LookupTableFlag_40"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_40_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERMS: &[bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan] = &[
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_0_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_0_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_1_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_1_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_2_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_2_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_3_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_3_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_4_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_4_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_5_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_5_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_6_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_6_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_7_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_7_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_8_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_8_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_9_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_9_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_10_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_10_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_11_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_11_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_12_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_12_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_13_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_13_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_14_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_14_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_15_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_15_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_16_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_16_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_17_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_17_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_18_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_18_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_19_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_19_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_20_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_20_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_21_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_21_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_22_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_22_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_23_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_23_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_24_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_24_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_25_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_25_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_26_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_26_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_27_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_27_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_28_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_28_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_29_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_29_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_30_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_30_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_31_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_31_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_32_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_32_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_33_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_33_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_34_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_34_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_35_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_35_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_36_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_36_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_37_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_37_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_38_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_38_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_39_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_39_FACTORS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_40_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_40_FACTORS },
+];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_1_TERM_0_EVALS: &[&str] = &["stage5.instruction_read_raf.eval.InstructionRa_0", "stage5.instruction_read_raf.eval.InstructionRa_1", "stage5.instruction_read_raf.eval.InstructionRa_2", "stage5.instruction_read_raf.eval.InstructionRa_3", "stage5.instruction_read_raf.eval.InstructionRa_4", "stage5.instruction_read_raf.eval.InstructionRa_5", "stage5.instruction_read_raf.eval.InstructionRa_6", "stage5.instruction_read_raf.eval.InstructionRa_7"];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_1_TERM_0_FACTORS: &[&str] = &[];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_1_TERMS: &[bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan] = &[
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_1_TERM_0_EVALS, factors: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_1_TERM_0_FACTORS },
+];
+pub const STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILIES: &[bolt_verifier_runtime::SumcheckOutputProductFamilyPlan] = &[
+    bolt_verifier_runtime::SumcheckOutputProductFamilyPlan { symbol: "stage5.instruction_read_raf.output.product.LookupTableValues", gamma: None, terms: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERMS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyPlan { symbol: "stage5.instruction_read_raf.output.product.InstructionRa", gamma: None, terms: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_1_TERMS },
+];
+
 pub const STAGE5_SUMCHECK_OUTPUT_CLAIMS: &[Stage5SumcheckOutputClaimPlan] = &[
     Stage5SumcheckOutputClaimPlan { relation: Stage5RelationKind::Stage5RamRaClaimReduction, polynomial_evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_0_VALUES, eval_families: &[], product_families: &[], function_families: &[], claim_value: "stage5.ram_ra_claim_reduction.output.claim_expr" },
     Stage5SumcheckOutputClaimPlan { relation: Stage5RelationKind::Stage5RegistersValEvaluation, polynomial_evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_1_VALUES, eval_families: &[], product_families: &[], function_families: &[], claim_value: "stage5.registers_val_evaluation.output.claim_expr" },
+    Stage5SumcheckOutputClaimPlan { relation: Stage5RelationKind::Stage5InstructionReadRaf, polynomial_evals: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_VALUES, eval_families: &[], product_families: STAGE5_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILIES, function_families: &[], claim_value: "stage5.instruction_read_raf.output.claim_expr" },
 ];
 
 pub const STAGE5_PROGRAM: Stage5VerifierProgramPlan = Stage5CpuProgramPlan {
@@ -647,9 +798,24 @@ fn expected_batched_output_claim(
         };
         let value = match relation {
             Stage5RelationKind::Stage5InstructionReadRaf => {
-                evaluate_stage5_instruction_read_raf(
+                let output_claim = program
+                    .output_claims
+                    .iter()
+                    .find(|output_claim| output_claim.relation == instance.relation)
+                    .ok_or(VerifyStage5Error::UnsupportedRelation {
+                        relation: instance.relation,
+                    })?;
+                let mut local_store = store.clone();
+                evaluate_stage5_instruction_read_raf_point_values(
                     &STAGE5_INSTRUCTION_READ_RAF_PLAN,
-                    store,
+                    &mut local_store,
+                    local_point,
+                )?;
+                bolt_verifier_runtime::evaluate_sumcheck_output_claim(
+                    output_claim,
+                    program.field_exprs,
+                    &local_store,
+                    instance.symbol,
                     evals,
                     local_point,
                 )?

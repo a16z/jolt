@@ -480,6 +480,7 @@ pub enum VerifierScalarSourceKind {
     FieldConstant,
     TranscriptScalar,
     FieldExpr,
+    PointDerived,
     SumcheckEval,
     StructuredPolynomialEval,
     OutputEvalFamily,

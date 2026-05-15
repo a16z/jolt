@@ -1389,7 +1389,7 @@ fn stage5_rust_targets_extract_and_compile() {
     assert_eq!(prover_program.output_values.len(), 4);
     assert!(prover_program.output_claims.is_empty());
     assert_eq!(verifier_program.output_values.len(), 4);
-    assert_eq!(verifier_program.output_claims.len(), 2);
+    assert_eq!(verifier_program.output_claims.len(), 3);
     assert_eq!(
         prover_program.point_slices.len(),
         params.instruction_ra_virtual_d + 3
@@ -1438,16 +1438,13 @@ fn stage5_rust_targets_extract_and_compile() {
         .contains("relation: Some(Stage5RelationKind::Stage5Batched)"));
     assert!(verifier_source
         .source
-        .contains("expected_instruction_read_raf"));
+        .contains("evaluate_stage5_instruction_read_raf_point_values"));
     assert!(verifier_source
         .source
         .contains("Stage5RelationKind::Stage5InstructionReadRaf"));
     assert!(verifier_source
         .source
-        .contains("LookupTableKind::<XLEN>::all"));
-    assert!(verifier_source
-        .source
-        .contains("use jolt_lookup_tables::LookupTableKind"));
+        .contains("Stage5InstructionReadRafPointValueKind::LookupTable"));
     assert!(!verifier_source
         .source
         .contains("expected_ram_ra_claim_reduction"));
@@ -1457,6 +1454,9 @@ fn stage5_rust_targets_extract_and_compile() {
     assert!(verifier_source
         .source
         .contains("Stage5SumcheckOutputClaimPlan"));
+    assert!(verifier_source
+        .source
+        .contains("stage5.instruction_read_raf.output.claim_expr"));
     assert!(verifier_source
         .source
         .contains("stage5.ram_ra_claim_reduction.output.eq.ReadWrite"));

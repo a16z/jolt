@@ -29,9 +29,8 @@ use jolt_lookup_tables::LookupTableKind;
 use jolt_poly::EqPolynomial;
 
 use bolt_verifier_runtime::{
-    eval_by_name, eval_family_values, field_powers, prefix_point, reverse_slice, store_point,
-    store_scalar, suffix_point, NamedEvalFamilyPlan, RuntimePlanError, StageNamedEval,
-    SumcheckInstanceResultPlan, ValueStore,
+    eval_family_values, field_powers, prefix_point, store_point, store_scalar, suffix_point,
+    NamedEvalFamilyPlan, RuntimePlanError, StageNamedEval, SumcheckInstanceResultPlan, ValueStore,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -214,62 +213,6 @@ pub trait Stage67BytecodeEntry {
     fn is_noop(&self) -> bool;
 }
 
-pub fn evaluate_stage5_instruction_read_raf(
-    plan: &Stage5InstructionReadRafPlan,
-    store: &ValueStore<Fr>,
-    evals: &[StageNamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, RuntimePlanError> {
-    let mut local_store = store.clone();
-    evaluate_stage5_instruction_read_raf_point_values(plan, &mut local_store, local_point)?;
-    let (_, r_cycle) = instruction_read_raf_point_parts(plan, local_point)?;
-    let r_cycle_prime = reverse_slice(r_cycle);
-    let r_reduction = store_point(store, plan.lookup_output_point)?;
-    let eq_eval_r_reduction = EqPolynomial::<Fr>::mle(r_reduction, &r_cycle_prime);
-
-    let left_operand_eval = instruction_read_raf_point_value(
-        plan,
-        &local_store,
-        Stage5InstructionReadRafPointValueKind::LeftOperand,
-    )?;
-    let right_operand_eval = instruction_read_raf_point_value(
-        plan,
-        &local_store,
-        Stage5InstructionReadRafPointValueKind::RightOperand,
-    )?;
-    let identity_poly_eval = instruction_read_raf_point_value(
-        plan,
-        &local_store,
-        Stage5InstructionReadRafPointValueKind::Identity,
-    )?;
-
-    let table_flag_claims = eval_family_values(evals, plan.table_flag_evals)?;
-    let table_values = instruction_read_raf_lookup_table_values(plan, &local_store)?;
-    if table_values.len() != table_flag_claims.len() {
-        return Err(RuntimePlanError::InvalidInputLength {
-            input: plan.table_flag_evals.symbol,
-            expected: table_flag_claims.len(),
-            actual: table_values.len(),
-        });
-    }
-    let val_claim = table_values
-        .into_iter()
-        .zip(table_flag_claims)
-        .map(|(table_value, flag_claim)| table_value * flag_claim)
-        .sum::<Fr>();
-
-    let ra_claim = eval_family_values(evals, plan.instruction_ra_evals)?
-        .into_iter()
-        .product::<Fr>();
-    let raf_flag_claim = eval_by_name(evals, plan.raf_flag_eval)?;
-    let gamma = store_scalar(store, plan.gamma)?;
-
-    let raf_claim = (Fr::from_u64(1) - raf_flag_claim)
-        * (left_operand_eval + gamma * right_operand_eval)
-        + raf_flag_claim * gamma * identity_poly_eval;
-    Ok(eq_eval_r_reduction * ra_claim * (val_claim + gamma * raf_claim))
-}
-
 pub fn evaluate_stage5_instruction_read_raf_point_values(
     plan: &Stage5InstructionReadRafPlan,
     store: &mut ValueStore<Fr>,
@@ -308,40 +251,6 @@ fn evaluate_stage5_instruction_read_raf_point_value(
         }
         Stage5InstructionReadRafPointValueKind::Identity => identity_polynomial_eval(r_address_prime),
     })
-}
-
-fn instruction_read_raf_point_value(
-    plan: &Stage5InstructionReadRafPlan,
-    store: &ValueStore<Fr>,
-    kind: Stage5InstructionReadRafPointValueKind,
-) -> Result<Fr, RuntimePlanError> {
-    let value = plan
-        .point_values
-        .iter()
-        .find(|value| value.kind == kind)
-        .ok_or(RuntimePlanError::MissingValue { symbol: plan.point })?;
-    store_scalar(store, value.symbol)
-}
-
-fn instruction_read_raf_lookup_table_values(
-    plan: &Stage5InstructionReadRafPlan,
-    store: &ValueStore<Fr>,
-) -> Result<Vec<Fr>, RuntimePlanError> {
-    let mut values = plan
-        .point_values
-        .iter()
-        .filter_map(|value| match value.kind {
-            Stage5InstructionReadRafPointValueKind::LookupTable { index } => {
-                Some((index, value.symbol))
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    values.sort_by_key(|(index, _)| *index);
-    values
-        .into_iter()
-        .map(|(_, symbol)| store_scalar(store, symbol))
-        .collect()
 }
 
 fn instruction_read_raf_point_parts<'a>(

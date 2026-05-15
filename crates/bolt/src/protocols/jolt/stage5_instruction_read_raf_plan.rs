@@ -106,6 +106,15 @@ pub(crate) struct Stage5InstructionReadRafPointValueEmitPlan {
     pub(crate) kind: Stage5InstructionReadRafPointValueKind,
 }
 
+impl Stage5InstructionReadRafPointValueEmitPlan {
+    pub(crate) fn is_lookup_table(&self) -> bool {
+        matches!(
+            self.kind,
+            Stage5InstructionReadRafPointValueKind::LookupTable { .. }
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Stage5InstructionReadRafPointValueKind {
     LookupTable { index: usize },
