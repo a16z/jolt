@@ -490,11 +490,26 @@ pub enum VerifierScalarSourceKind {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct VerifierScalarSourceSet {
     symbols: BTreeMap<String, VerifierScalarSourceKind>,
+    conflicts: Vec<VerifierSourceConflict<VerifierScalarSourceKind>>,
 }
 
 impl VerifierScalarSourceSet {
     pub fn insert(&mut self, symbol: &str, kind: VerifierScalarSourceKind) {
-        let _old = self.symbols.insert(symbol.to_owned(), kind);
+        match self.symbols.entry(symbol.to_owned()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let _entry = entry.insert(kind);
+            }
+            std::collections::btree_map::Entry::Occupied(entry) => {
+                let existing = *entry.get();
+                if existing != kind {
+                    self.conflicts.push(VerifierSourceConflict {
+                        symbol: symbol.to_owned(),
+                        existing,
+                        incoming: kind,
+                    });
+                }
+            }
+        }
     }
 
     pub fn extend<'a>(
@@ -510,6 +525,13 @@ impl VerifierScalarSourceSet {
     pub fn contains(&self, symbol: &str) -> bool {
         self.symbols.contains_key(symbol)
     }
+
+    fn verify_no_conflicts(&self, stage: &str) -> Result<(), EmitError> {
+        let Some(conflict) = self.conflicts.first() else {
+            return Ok(());
+        };
+        Err(conflicting_source_error(stage, "scalar", conflict))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -524,11 +546,26 @@ pub enum VerifierPointSourceKind {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct VerifierPointSourceSet {
     symbols: BTreeMap<String, VerifierPointSourceKind>,
+    conflicts: Vec<VerifierSourceConflict<VerifierPointSourceKind>>,
 }
 
 impl VerifierPointSourceSet {
     pub fn insert(&mut self, symbol: &str, kind: VerifierPointSourceKind) {
-        let _old = self.symbols.insert(symbol.to_owned(), kind);
+        match self.symbols.entry(symbol.to_owned()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let _entry = entry.insert(kind);
+            }
+            std::collections::btree_map::Entry::Occupied(entry) => {
+                let existing = *entry.get();
+                if existing != kind {
+                    self.conflicts.push(VerifierSourceConflict {
+                        symbol: symbol.to_owned(),
+                        existing,
+                        incoming: kind,
+                    });
+                }
+            }
+        }
     }
 
     pub fn extend<'a>(
@@ -544,6 +581,34 @@ impl VerifierPointSourceSet {
     pub fn contains(&self, symbol: &str) -> bool {
         self.symbols.contains_key(symbol)
     }
+
+    fn verify_no_conflicts(&self, stage: &str) -> Result<(), EmitError> {
+        let Some(conflict) = self.conflicts.first() else {
+            return Ok(());
+        };
+        Err(conflicting_source_error(stage, "point", conflict))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct VerifierSourceConflict<K> {
+    symbol: String,
+    existing: K,
+    incoming: K,
+}
+
+fn conflicting_source_error<K>(
+    stage: &str,
+    value_kind: &str,
+    conflict: &VerifierSourceConflict<K>,
+) -> EmitError
+where
+    K: std::fmt::Debug,
+{
+    EmitError::new(format!(
+        "{stage} {value_kind} source @{} has conflicting kinds {:?} and {:?}",
+        conflict.symbol, conflict.existing, conflict.incoming
+    ))
 }
 
 pub fn resolve_output_claims<T>(
@@ -914,6 +979,8 @@ pub fn verify_output_claims(
         field_values,
         point_values,
     } = verification;
+    field_values.verify_no_conflicts(stage)?;
+    point_values.verify_no_conflicts(stage)?;
     for polynomial_eval in output_values {
         if !point_values.contains(&polynomial_eval.x_point.source) {
             return Err(EmitError::new(format!(
@@ -1227,14 +1294,18 @@ fn attr_error(operation: OperationRef<'_, '_>, attr: &str, expected: &str) -> Em
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use crate::emit::rust::EmitError;
 
     use super::{
-        resolve_output_claims, FieldExprDependencies, SumcheckOutputClaimAst,
-        SumcheckOutputEvalFamilyItemTermPlan, SumcheckOutputEvalFamilyPlan,
-        SumcheckOutputEvalFamilySharedTermPlan, SumcheckOutputFunctionFamilyPlan,
-        SumcheckOutputFunctionFamilyTermPlan, SumcheckOutputFunctionKind,
-        SumcheckOutputProductFamilyPlan, SumcheckOutputProductFamilyTermPlan,
+        resolve_output_claims, verify_output_claims, FieldExprDependencies,
+        OutputClaimVerification, SumcheckOutputClaimAst, SumcheckOutputEvalFamilyItemTermPlan,
+        SumcheckOutputEvalFamilyPlan, SumcheckOutputEvalFamilySharedTermPlan,
+        SumcheckOutputFunctionFamilyPlan, SumcheckOutputFunctionFamilyTermPlan,
+        SumcheckOutputFunctionKind, SumcheckOutputProductFamilyPlan,
+        SumcheckOutputProductFamilyTermPlan, VerifierPointSourceKind, VerifierPointSourceSet,
+        VerifierScalarSourceKind, VerifierScalarSourceSet,
     };
 
     struct TestFieldExpr {
@@ -1418,6 +1489,76 @@ mod tests {
             .map(|family| family.symbol.as_str())
             .collect::<Vec<_>>();
         assert_eq!(family_symbols, vec!["function.family"]);
+        Ok(())
+    }
+
+    #[test]
+    fn output_claim_verification_rejects_conflicting_scalar_sources() -> Result<(), EmitError> {
+        let mut field_values = VerifierScalarSourceSet::default();
+        field_values.insert("value", VerifierScalarSourceKind::OpeningInput);
+        field_values.insert("value", VerifierScalarSourceKind::FieldExpr);
+        let point_values = VerifierPointSourceSet::default();
+        let relations = BTreeSet::new();
+
+        let error = match verify_output_claims(
+            "stage",
+            OutputClaimVerification {
+                output_values: &[],
+                output_families: &[],
+                output_product_families: &[],
+                output_function_families: &[],
+                output_claims: &[],
+                relations: &relations,
+                field_values: &field_values,
+                point_values: &point_values,
+            },
+        ) {
+            Ok(()) => {
+                return Err(EmitError::new(
+                    "conflicting scalar sources should fail verification",
+                ));
+            }
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains(
+            "stage scalar source @value has conflicting kinds OpeningInput and FieldExpr"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn output_claim_verification_rejects_conflicting_point_sources() -> Result<(), EmitError> {
+        let field_values = VerifierScalarSourceSet::default();
+        let mut point_values = VerifierPointSourceSet::default();
+        point_values.insert("point", VerifierPointSourceKind::OpeningInput);
+        point_values.insert("point", VerifierPointSourceKind::PointSlice);
+        let relations = BTreeSet::new();
+
+        let error = match verify_output_claims(
+            "stage",
+            OutputClaimVerification {
+                output_values: &[],
+                output_families: &[],
+                output_product_families: &[],
+                output_function_families: &[],
+                output_claims: &[],
+                relations: &relations,
+                field_values: &field_values,
+                point_values: &point_values,
+            },
+        ) {
+            Ok(()) => {
+                return Err(EmitError::new(
+                    "conflicting point sources should fail verification",
+                ));
+            }
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains(
+            "stage point source @point has conflicting kinds OpeningInput and PointSlice"
+        ));
         Ok(())
     }
 }
