@@ -62,7 +62,12 @@ use divw::DIVW;
 use ebreak::EBREAK;
 use ecall::ECALL;
 use fence::FENCE;
+use field_assert_eq::FieldAssertEq;
+use field_mov::FieldMov;
 use field_op::FieldOp;
+use field_sll128::FieldSLL128;
+use field_sll192::FieldSLL192;
+use field_sll64::FieldSLL64;
 use jal::JAL;
 use jalr::JALR;
 use lb::LB;
@@ -225,7 +230,12 @@ pub mod divw;
 pub mod ebreak;
 pub mod ecall;
 pub mod fence;
+pub mod field_assert_eq;
+pub mod field_mov;
 pub mod field_op;
+pub mod field_sll128;
+pub mod field_sll192;
+pub mod field_sll64;
 pub mod inline;
 pub mod jal;
 pub mod jalr;
@@ -1077,11 +1087,34 @@ impl Instruction {
             // funct7:
             // - 0x00: SHA256
             // - 0x01: Keccak256
-            // - 0x40: BN254 Fr coprocessor (FieldOp — FMUL/FADD/FSUB/FINV)
+            // - 0x40: BN254 Fr coprocessor (FieldOp — FMUL/FADD/FSUB/FINV; FieldAssertEq; FieldMov)
+            // - 0x41: BN254 Fr SLL sub-family (FieldSLL64/128/192)
             0b0001011 => {
                 let funct7 = (instr >> 25) & 0x7f;
+                let funct3 = ((instr >> 12) & 0x7) as u8;
                 if funct7 == field_op::BN254_FR_FUNCT7 {
-                    Ok(field_op::FieldOp::new(instr, address, false, compressed).into())
+                    match funct3 {
+                        field_assert_eq::FUNCT3_FIELD_ASSERT_EQ => {
+                            Ok(FieldAssertEq::new(instr, address, false, compressed).into())
+                        }
+                        field_mov::FUNCT3_FIELD_MOV => {
+                            Ok(FieldMov::new(instr, address, false, compressed).into())
+                        }
+                        _ => Ok(FieldOp::new(instr, address, false, compressed).into()),
+                    }
+                } else if funct7 == field_sll64::BN254_FR_SLL_FUNCT7 {
+                    match funct3 {
+                        field_sll64::FUNCT3_FIELD_SLL64 => {
+                            Ok(FieldSLL64::new(instr, address, false, compressed).into())
+                        }
+                        field_sll128::FUNCT3_FIELD_SLL128 => {
+                            Ok(FieldSLL128::new(instr, address, false, compressed).into())
+                        }
+                        field_sll192::FUNCT3_FIELD_SLL192 => {
+                            Ok(FieldSLL192::new(instr, address, false, compressed).into())
+                        }
+                        _ => Ok(INLINE::new(instr, address, false, compressed).into()),
+                    }
                 } else {
                     Ok(INLINE::new(instr, address, false, compressed).into())
                 }

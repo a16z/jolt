@@ -198,6 +198,11 @@ macro_rules! define_instruction_kind {
                         | Self::VirtualHostIO
                         | Self::VirtualSW
                         | Self::FieldOp
+                        | Self::FieldAssertEq
+                        | Self::FieldMov
+                        | Self::FieldSLL64
+                        | Self::FieldSLL128
+                        | Self::FieldSLL192
                 )
             }
         }
