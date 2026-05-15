@@ -788,7 +788,11 @@ impl Stage6CpuProgram {
         for constant in &self.field_constants {
             require_supported_symbol("field constant field", &constant.field, "bn254_fr")?;
         }
-        let field_values = self.field_value_symbols();
+        let field_values = if self.role == Role::Verifier {
+            self.verifier_plan()?.scalar_value_sources()
+        } else {
+            self.cpu_field_value_sources()
+        };
         for expr in &self.field_exprs {
             verify_count(
                 "field expr operands",
@@ -816,7 +820,7 @@ impl Stage6CpuProgram {
         Ok(())
     }
 
-    fn field_value_symbols(&self) -> verifier_values::VerifierScalarSourceSet {
+    fn cpu_field_value_sources(&self) -> verifier_values::VerifierScalarSourceSet {
         let mut values = verifier_values::VerifierScalarSourceSet::default();
         values.extend(
             self.opening_inputs.iter().map(|input| &input.symbol),
@@ -1129,7 +1133,7 @@ impl Stage6CpuProgram {
         let eval_sources = if self.role == Role::Verifier {
             self.verifier_plan()?.scalar_value_sources()
         } else {
-            self.field_value_symbols()
+            self.cpu_field_value_sources()
         };
         let mut opening_sources = symbols(self.opening_inputs.iter().map(|input| &input.symbol));
         opening_sources.extend(symbols(
