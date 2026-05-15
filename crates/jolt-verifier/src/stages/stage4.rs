@@ -470,6 +470,7 @@ fn expected_batched_output_claim(
             store,
             instance,
             evals,
+            &[],
             local_point,
         )?;
         expected += *coefficient * value;

@@ -622,6 +622,12 @@ pub struct StageNamedEval<F: Field> {
     pub value: F,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NamedScalar<F: Field> {
+    pub symbol: &'static str,
+    pub value: F,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NamedEvalFamilyPlan {
     pub symbol: &'static str,
@@ -1239,9 +1245,13 @@ pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
     store: &ValueStore<Fr>,
     instance_symbol: &'static str,
     evals: &[StageNamedEval<Fr>],
+    local_scalars: &[NamedScalar<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, RuntimePlanError> {
     let mut scratch = ScratchScalars::default();
+    for scalar in local_scalars {
+        scratch.insert(scalar.symbol, scalar.value);
+    }
     for eval in evals {
         scratch.insert(eval.name, eval.value);
     }
@@ -1296,6 +1306,7 @@ pub fn evaluate_sumcheck_instance_output_claim<R: ProtocolRelation>(
     store: &ValueStore<Fr>,
     instance: &SumcheckInstanceResultPlan<R>,
     evals: &[StageNamedEval<Fr>],
+    local_scalars: &[NamedScalar<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, RuntimePlanError> {
     let output_claim = output_claims
@@ -1311,6 +1322,7 @@ pub fn evaluate_sumcheck_instance_output_claim<R: ProtocolRelation>(
         store,
         instance.symbol,
         evals,
+        local_scalars,
         local_point,
     )
 }

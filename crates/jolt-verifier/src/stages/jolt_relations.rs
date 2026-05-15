@@ -30,7 +30,7 @@ use jolt_poly::EqPolynomial;
 
 use bolt_verifier_runtime::{
     field_powers, prefix_point, store_point, store_scalar, suffix_point, NamedEvalFamilyPlan,
-    RuntimePlanError, SumcheckInstanceResultPlan, ValueStore,
+    NamedScalar, RuntimePlanError, SumcheckInstanceResultPlan, ValueStore,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -214,17 +214,20 @@ pub trait Stage67BytecodeEntry {
     fn is_noop(&self) -> bool;
 }
 
-pub fn evaluate_stage5_instruction_read_raf_point_values(
+pub fn evaluate_stage5_instruction_read_raf_point_scalars(
     plan: &Stage5InstructionReadRafPlan,
-    store: &mut ValueStore<Fr>,
     local_point: &[Fr],
-) -> Result<(), RuntimePlanError> {
+) -> Result<Vec<NamedScalar<Fr>>, RuntimePlanError> {
     let (r_address_prime, _) = instruction_read_raf_point_parts(plan, local_point)?;
+    let mut scalars = Vec::with_capacity(plan.point_values.len());
     for value in plan.point_values {
         let scalar = evaluate_stage5_instruction_read_raf_point_value(value.kind, r_address_prime)?;
-        store.insert_scalar(value.symbol, scalar);
+        scalars.push(NamedScalar {
+            symbol: value.symbol,
+            value: scalar,
+        });
     }
-    Ok(())
+    Ok(scalars)
 }
 
 fn evaluate_stage5_instruction_read_raf_point_value(
@@ -250,7 +253,9 @@ fn evaluate_stage5_instruction_read_raf_point_value(
         Stage5InstructionReadRafPointValueKind::RightOperand => {
             operand_polynomial_eval(r_address_prime, false)
         }
-        Stage5InstructionReadRafPointValueKind::Identity => identity_polynomial_eval(r_address_prime),
+        Stage5InstructionReadRafPointValueKind::Identity => {
+            identity_polynomial_eval(r_address_prime)
+        }
     })
 }
 
@@ -281,15 +286,15 @@ pub fn stage67_trace_rounds(
         })
 }
 
-pub fn evaluate_stage67_bytecode_read_raf_output_values<E: Stage67BytecodeEntry>(
+pub fn evaluate_stage67_bytecode_read_raf_output_scalars<E: Stage67BytecodeEntry>(
     plan: &Stage67BytecodeReadRafPlan,
     entries: &[E],
     entry_bytecode_index: usize,
     num_lookup_tables: usize,
-    store: &mut ValueStore<Fr>,
+    store: &ValueStore<Fr>,
     local_point: &[Fr],
     log_t: usize,
-) -> Result<(), RuntimePlanError> {
+) -> Result<Vec<NamedScalar<Fr>>, RuntimePlanError> {
     let output = stage67_bytecode_read_raf_output_contribution(
         plan,
         entries,
@@ -299,8 +304,10 @@ pub fn evaluate_stage67_bytecode_read_raf_output_values<E: Stage67BytecodeEntry>
         local_point,
         log_t,
     )?;
-    store.insert_scalar(plan.output_contribution, output);
-    Ok(())
+    Ok(vec![NamedScalar {
+        symbol: plan.output_contribution,
+        value: output,
+    }])
 }
 
 fn stage67_bytecode_read_raf_output_contribution<E: Stage67BytecodeEntry>(

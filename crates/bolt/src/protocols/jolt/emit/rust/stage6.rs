@@ -1224,7 +1224,7 @@ impl Stage6CpuProgram {
 
     fn emit_verifier_imports() -> &'static str {
         "use bolt_verifier_runtime::{batch_claims, find_batch, find_plan};\n\
-         use super::jolt_relations::{evaluate_stage67_bytecode_read_raf_output_values, normalize_bytecode_read_raf_point, stage67_trace_rounds, Stage67BytecodeEntry, Stage67BytecodeFlag, Stage67BytecodeOutputTermPlan, Stage67BytecodeReadRafPlan, Stage67BytecodeRegister, Stage67BytecodeRegisterSymbols, Stage67BytecodeStagePlan, Stage67BytecodeTermPlan, Stage67RelationSymbols};\n\
+         use super::jolt_relations::{evaluate_stage67_bytecode_read_raf_output_scalars, normalize_bytecode_read_raf_point, stage67_trace_rounds, Stage67BytecodeEntry, Stage67BytecodeFlag, Stage67BytecodeOutputTermPlan, Stage67BytecodeReadRafPlan, Stage67BytecodeRegister, Stage67BytecodeRegisterSymbols, Stage67BytecodeStagePlan, Stage67BytecodeTermPlan, Stage67RelationSymbols};\n\
          use jolt_field::{Field, Fr};\n\
          use jolt_sumcheck::SumcheckError;\n\
          use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};"
@@ -2613,18 +2613,17 @@ fn expected_batched_output_claim(
                     .ok_or(VerifyStage6Error::MissingValue {
                         symbol: "stage6.bytecode_read_raf.data",
                 })?;
-                let mut local_store = store.clone();
                 let log_t = stage6_trace_rounds(program)?;
-                evaluate_stage67_bytecode_read_raf_output_values(
+                let local_scalars = evaluate_stage67_bytecode_read_raf_output_scalars(
                     &STAGE6_BYTECODE_PLAN,
                     &data.entries,
                     data.entry_bytecode_index,
                     data.num_lookup_tables,
-                    &mut local_store,
+                    store,
                     local_point,
                     log_t,
                 )?;
-                expected_plan_output_claim(program, instance, &local_store, evals, local_point)?
+                expected_plan_output_claim(program, instance, store, evals, &local_scalars, local_point)?
             }
             Stage6RelationKind::Stage6Booleanity
             | Stage6RelationKind::Stage6HammingBooleanity
@@ -2635,6 +2634,7 @@ fn expected_batched_output_claim(
                 instance,
                 store,
                 evals,
+                &[],
                 local_point,
             )?,
             relation => return Err(VerifyStage6Error::UnsupportedRelation { relation }),
@@ -2649,6 +2649,7 @@ fn expected_plan_output_claim(
     instance: &'static Stage6SumcheckInstanceResultPlan,
     store: &bolt_verifier_runtime::ValueStore<Fr>,
     evals: &[Stage6NamedEval<Fr>],
+    local_scalars: &[bolt_verifier_runtime::NamedScalar<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage6Error> {
     Ok(bolt_verifier_runtime::evaluate_sumcheck_instance_output_claim(
@@ -2657,6 +2658,7 @@ fn expected_plan_output_claim(
         store,
         instance,
         evals,
+        local_scalars,
         local_point,
     )?)
 }

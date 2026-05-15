@@ -1438,7 +1438,7 @@ fn stage5_rust_targets_extract_and_compile() {
         .contains("relation: Some(Stage5RelationKind::Stage5Batched)"));
     assert!(verifier_source
         .source
-        .contains("evaluate_stage5_instruction_read_raf_point_values"));
+        .contains("evaluate_stage5_instruction_read_raf_point_scalars"));
     assert!(verifier_source
         .source
         .contains("Stage5RelationKind::Stage5InstructionReadRaf"));
@@ -1841,7 +1841,7 @@ fn stage6_rust_targets_extract_and_compile() {
         .contains("Stage67BytecodeTermPlan::RegisterEq"));
     assert!(verifier_source
         .source
-        .contains("evaluate_stage67_bytecode_read_raf_output_values"));
+        .contains("evaluate_stage67_bytecode_read_raf_output_scalars"));
     assert!(verifier_source
         .source
         .contains("stage6.bytecode_read_raf.output.product.BytecodeReadRaf"));

@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use bolt_verifier_runtime::{batch_claims, find_batch, find_plan, NamedEvalFamilyPlan};
-use super::jolt_relations::{evaluate_stage5_instruction_read_raf_point_values, normalize_instruction_read_raf_point, Stage5InstructionReadRafPlan, Stage5InstructionReadRafPointValueKind, Stage5InstructionReadRafPointValuePlan};
+use super::jolt_relations::{evaluate_stage5_instruction_read_raf_point_scalars, normalize_instruction_read_raf_point, Stage5InstructionReadRafPlan, Stage5InstructionReadRafPointValueKind, Stage5InstructionReadRafPointValuePlan};
 use jolt_field::{Field, Fr};
 use jolt_sumcheck::SumcheckError;
 use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};
@@ -798,18 +798,17 @@ fn expected_batched_output_claim(
         };
         let value = match relation {
             Stage5RelationKind::Stage5InstructionReadRaf => {
-                let mut local_store = store.clone();
-                evaluate_stage5_instruction_read_raf_point_values(
+                let local_scalars = evaluate_stage5_instruction_read_raf_point_scalars(
                     &STAGE5_INSTRUCTION_READ_RAF_PLAN,
-                    &mut local_store,
                     local_point,
                 )?;
                 bolt_verifier_runtime::evaluate_sumcheck_instance_output_claim(
                     program.output_claims,
                     program.field_exprs,
-                    &local_store,
+                    store,
                     instance,
                     evals,
+                    &local_scalars,
                     local_point,
                 )?
             }
@@ -821,6 +820,7 @@ fn expected_batched_output_claim(
                     store,
                     instance,
                     evals,
+                    &[],
                     local_point,
                 )?
             }
