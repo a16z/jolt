@@ -1142,7 +1142,7 @@ impl Stage6CpuProgram {
 
     fn emit_verifier_imports() -> &'static str {
         "use bolt_verifier_runtime::{batch_claims, find_batch, find_plan};\n\
-         use super::jolt_relations::{expected_stage67_booleanity, expected_stage67_bytecode_read_raf, normalize_bytecode_read_raf_point, normalize_instruction_read_raf_point, stage67_trace_rounds, Stage67BytecodeEntry, Stage67BytecodeSymbols, Stage67RelationSymbols};\n\
+         use super::jolt_relations::{expected_stage67_bytecode_read_raf, normalize_bytecode_read_raf_point, normalize_instruction_read_raf_point, stage67_trace_rounds, Stage67BytecodeEntry, Stage67BytecodeSymbols, Stage67RelationSymbols};\n\
          use jolt_field::{Field, Fr};\n\
          use jolt_sumcheck::SumcheckError;\n\
          use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};"
@@ -1459,13 +1459,6 @@ pub struct Stage6VerifierData {
 
 const STAGE6_RELATION_SYMBOLS: Stage67RelationSymbols = Stage67RelationSymbols {
     hamming_booleanity_instance: "stage6.hamming_booleanity.instance",
-    booleanity_point: "stage6.booleanity.point",
-    stage5_instruction_ra0: "stage6.input.stage5.instruction_read_raf.InstructionRa_0",
-    booleanity_combined_point: "stage6.booleanity.combined_point",
-    booleanity_gamma: "stage6.booleanity.gamma",
-    booleanity_instruction_ra_prefix: "stage6.booleanity.eval.InstructionRa_",
-    booleanity_bytecode_ra_prefix: "stage6.booleanity.eval.BytecodeRa_",
-    booleanity_ram_ra_prefix: "stage6.booleanity.eval.RamRa_",
 };
 
 const STAGE6_BYTECODE_SYMBOLS: Stage67BytecodeSymbols = Stage67BytecodeSymbols {
@@ -2553,10 +2546,8 @@ fn expected_batched_output_claim(
                 })?;
                 expected_bytecode_read_raf(program, data, store, evals, local_point)?
             }
-            Stage6RelationKind::Stage6Booleanity => {
-                expected_booleanity(program, store, evals, local_point)?
-            }
-            Stage6RelationKind::Stage6HammingBooleanity
+            Stage6RelationKind::Stage6Booleanity
+            | Stage6RelationKind::Stage6HammingBooleanity
             | Stage6RelationKind::Stage6RamRaVirtual
             | Stage6RelationKind::Stage6InstructionRaVirtual
             | Stage6RelationKind::Stage6IncClaimReduction => expected_plan_output_claim(
@@ -2615,16 +2606,6 @@ fn expected_bytecode_read_raf(
         log_t,
         &STAGE6_BYTECODE_SYMBOLS,
     )?)
-}
-
-fn expected_booleanity(
-    program: &'static Stage6VerifierProgramPlan,
-    store: &bolt_verifier_runtime::ValueStore<Fr>,
-    evals: &[Stage6NamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage6Error> {
-    let log_t = stage6_trace_rounds(program)?;
-    Ok(expected_stage67_booleanity(store, evals, local_point, log_t, &STAGE6_RELATION_SYMBOLS)?)
 }
 
 fn stage6_trace_rounds(

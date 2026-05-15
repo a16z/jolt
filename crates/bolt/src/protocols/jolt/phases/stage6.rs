@@ -143,7 +143,6 @@ pub fn build_stage6_protocol<'c>(
         "challenge_scalar",
         1,
     )?;
-    append_booleanity_power_placeholders(context, &module, params, booleanity_gamma)?;
     let (state, inst_ra_gamma) = append_transcript_squeeze(
         context,
         &module,
@@ -177,6 +176,7 @@ pub fn build_stage6_protocol<'c>(
             bc_stage3_gamma,
             bc_stage4_gamma,
             bc_stage5_gamma,
+            booleanity_gamma,
             inst_ra_gamma,
             inc_gamma,
         },
@@ -911,34 +911,6 @@ fn append_transcript_squeeze<'c, 'a>(
     ))
 }
 
-fn append_booleanity_power_placeholders<'c, 'a>(
-    context: &'c MeliorContext,
-    module: &'a BoltModule<'c, Protocol>,
-    params: &JoltProtocolParams,
-    booleanity_gamma: Value<'c, 'a>,
-) -> Result<(), MlirError> {
-    let total = total_ra_oracles(params);
-    for index in 0..total {
-        let _ = append_field_pow(
-            context,
-            module,
-            &format!("stage6.booleanity.gamma_sq_{index}"),
-            booleanity_gamma,
-            2 * index,
-        )?;
-    }
-    for index in 0..total {
-        let _ = append_field_pow(
-            context,
-            module,
-            &format!("stage6.booleanity.gamma_pow_{index}"),
-            booleanity_gamma,
-            index,
-        )?;
-    }
-    Ok(())
-}
-
 fn append_stage6_batched_sumcheck<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
@@ -1212,11 +1184,13 @@ fn append_stage6_batched_sumcheck<'c, 'a>(
         module,
         params,
         inputs,
+        booleanity,
         hamming,
         ram,
         instruction,
         inc,
         &output_evals,
+        spec.booleanity_gamma,
         spec.inst_ra_gamma,
         spec.inc_gamma,
     )?;
@@ -1444,6 +1418,7 @@ fn append_stage6_output_openings<'c, 'a>(
 ) -> Result<Stage6OutputEvals<'c, 'a>, MlirError> {
     let mut claims = Vec::new();
     let mut claim_symbols = Vec::new();
+    let mut booleanity_ra = Vec::with_capacity(total_ra_oracles(params));
     let mut ram_ra = Vec::with_capacity(params.ram_d);
     let mut instruction_ra = Vec::with_capacity(params.instruction_d);
     let mut ram_inc = None;
@@ -1507,7 +1482,7 @@ fn append_stage6_output_openings<'c, 'a>(
 
     let mut eval_index = 0;
     for index in 0..params.instruction_d {
-        append_booleanity_output_opening(
+        booleanity_ra.push(append_booleanity_output_opening(
             context,
             module,
             params,
@@ -1516,11 +1491,11 @@ fn append_stage6_output_openings<'c, 'a>(
             booleanity,
             &format!("InstructionRa_{index}"),
             eval_index,
-        )?;
+        )?);
         eval_index += 1;
     }
     for index in 0..params.bytecode_d {
-        append_booleanity_output_opening(
+        booleanity_ra.push(append_booleanity_output_opening(
             context,
             module,
             params,
@@ -1529,11 +1504,11 @@ fn append_stage6_output_openings<'c, 'a>(
             booleanity,
             &format!("BytecodeRa_{index}"),
             eval_index,
-        )?;
+        )?);
         eval_index += 1;
     }
     for index in 0..params.ram_d {
-        append_booleanity_output_opening(
+        booleanity_ra.push(append_booleanity_output_opening(
             context,
             module,
             params,
@@ -1542,7 +1517,7 @@ fn append_stage6_output_openings<'c, 'a>(
             booleanity,
             &format!("RamRa_{index}"),
             eval_index,
-        )?;
+        )?);
         eval_index += 1;
     }
 
@@ -1714,6 +1689,7 @@ fn append_stage6_output_openings<'c, 'a>(
         &["!piop.opening_batch_type"],
     )?;
     Ok(Stage6OutputEvals {
+        booleanity_ra,
         hamming_weight: hamming_eval,
         ram_ra,
         instruction_ra,
@@ -1728,14 +1704,25 @@ fn append_stage6_output_claims<'c, 'a>(
     module: &'a BoltModule<'c, Protocol>,
     params: &JoltProtocolParams,
     inputs: &Stage6OpeningInputs<'c, 'a>,
+    booleanity: (Value<'c, 'a>, Value<'c, 'a>),
     hamming: (Value<'c, 'a>, Value<'c, 'a>),
     ram: (Value<'c, 'a>, Value<'c, 'a>),
     instruction: (Value<'c, 'a>, Value<'c, 'a>),
     inc: (Value<'c, 'a>, Value<'c, 'a>),
     output_evals: &Stage6OutputEvals<'c, 'a>,
+    booleanity_gamma: Value<'c, 'a>,
     instruction_gamma: Value<'c, 'a>,
     inc_gamma: Value<'c, 'a>,
 ) -> Result<(), MlirError> {
+    append_stage6_booleanity_output_claim(
+        context,
+        module,
+        params,
+        inputs,
+        booleanity,
+        output_evals,
+        booleanity_gamma,
+    )?;
     append_stage6_hamming_output_claim(context, module, inputs, hamming, output_evals)?;
     append_stage6_ram_ra_virtual_output_claim(context, module, inputs, ram, output_evals)?;
     append_stage6_instruction_ra_virtual_output_claim(
@@ -1748,6 +1735,90 @@ fn append_stage6_output_claims<'c, 'a>(
         instruction_gamma,
     )?;
     append_stage6_inc_output_claim(context, module, inputs, inc, output_evals, inc_gamma)
+}
+
+fn append_stage6_booleanity_output_claim<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    params: &JoltProtocolParams,
+    inputs: &Stage6OpeningInputs<'c, 'a>,
+    booleanity: (Value<'c, 'a>, Value<'c, 'a>),
+    output_evals: &Stage6OutputEvals<'c, 'a>,
+    gamma: Value<'c, 'a>,
+) -> Result<(), MlirError> {
+    let instruction_ra0 = inputs
+        .instruction_ra_virtual
+        .first()
+        .ok_or_else(|| schema_error("stage6 Booleanity output requires InstructionRa_0 input"))?;
+    let address = append_point_slice(
+        context,
+        module,
+        "stage6.booleanity.output.point.Address",
+        "stage6.input.stage5.instruction_read_raf.InstructionRa_0",
+        0,
+        params.log_k_chunk,
+        instruction_ra0.point,
+    )?;
+    let cycle = append_point_slice(
+        context,
+        module,
+        "stage6.booleanity.output.point.Cycle",
+        "stage6.input.stage5.instruction_read_raf.InstructionRa_0",
+        params.lookups_ra_virtual_log_k_chunk,
+        params.log_t,
+        instruction_ra0.point,
+    )?;
+    let expected_point = append_point_concat(
+        context,
+        module,
+        "stage6.booleanity.output.point",
+        "address_prefix_then_cycle",
+        booleanity_rounds(params),
+        &[address, cycle],
+    )?;
+    let eq = append_structured_polynomial_eval(
+        context,
+        module,
+        StructuredPolynomialSpec {
+            symbol: "stage6.booleanity.output.eq.InstructionRa0",
+            polynomial: "eq",
+            x_point: StructuredPolynomialPointSpec::full("as_is"),
+            y_point: StructuredPolynomialPointSpec::full("as_is"),
+        },
+        booleanity.0,
+        expected_point,
+    )?;
+    let family_terms = output_evals
+        .booleanity_ra
+        .iter()
+        .enumerate()
+        .map(|(index, (symbol, eval))| OutputFunctionFamilyTermSpec {
+            gamma_power_offset: 2 * index,
+            function: "boolean_zero",
+            eval: (symbol.clone(), *eval),
+            factors: vec![("stage6.booleanity.output.eq.InstructionRa0".to_owned(), eq)],
+        })
+        .collect::<Vec<_>>();
+    let claim = append_sumcheck_output_function_family(
+        context,
+        module,
+        OutputFunctionFamilySpec {
+            symbol: "stage6.booleanity.output.family",
+        },
+        Some(("stage6.booleanity.gamma", gamma)),
+        &family_terms,
+    )?;
+    append_sumcheck_output_claim(
+        context,
+        module,
+        OutputClaimSpec {
+            symbol: "stage6.booleanity.output.claim",
+            stage: "stage6",
+            relation: "jolt.stage6.booleanity",
+        },
+        claim,
+        &[("stage6.booleanity.output.eq.InstructionRa0", eq)],
+    )
 }
 
 fn append_stage6_hamming_output_claim<'c, 'a>(
@@ -2059,12 +2130,13 @@ fn append_booleanity_output_opening<'c, 'a>(
     booleanity: (Value<'c, 'a>, Value<'c, 'a>),
     oracle: &str,
     eval_index: usize,
-) -> Result<(), MlirError> {
+) -> Result<(String, Value<'c, 'a>), MlirError> {
     let symbol = format!("stage6.booleanity.opening.{oracle}");
+    let eval_symbol = format!("stage6.booleanity.eval.{oracle}");
     let eval = append_sumcheck_eval(
         context,
         module,
-        &format!("stage6.booleanity.eval.{oracle}"),
+        &eval_symbol,
         "stage6.sumcheck",
         oracle,
         eval_index,
@@ -2084,7 +2156,7 @@ fn append_booleanity_output_opening<'c, 'a>(
             claim_kind: "committed",
         },
     )?);
-    Ok(())
+    Ok((eval_symbol, eval))
 }
 
 fn append_field_zero<'c, 'a>(
@@ -2576,6 +2648,7 @@ struct Stage6BatchedSumcheckInputs<'c, 'a, 'b> {
     bc_stage3_gamma: Value<'c, 'a>,
     bc_stage4_gamma: Value<'c, 'a>,
     bc_stage5_gamma: Value<'c, 'a>,
+    booleanity_gamma: Value<'c, 'a>,
     inst_ra_gamma: Value<'c, 'a>,
     inc_gamma: Value<'c, 'a>,
 }
@@ -2592,6 +2665,7 @@ struct Stage6OpeningInputs<'c, 'a> {
 }
 
 struct Stage6OutputEvals<'c, 'a> {
+    booleanity_ra: Vec<(String, Value<'c, 'a>)>,
     hamming_weight: Value<'c, 'a>,
     ram_ra: Vec<Value<'c, 'a>>,
     instruction_ra: Vec<Value<'c, 'a>>,

@@ -134,1613 +134,1533 @@ pub const STAGE6_FIELD_CONSTANTS: &[Stage6FieldConstantPlan] = &[
     Stage6FieldConstantPlan { symbol: "stage6.zero", field: "bn254_fr", value: 0 },
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_0: &[&str] = &["stage6.booleanity.gamma"];
+pub const STAGE6_FIELD_EXPR_OPERANDS_0: &[&str] = &["stage6.bytecode_read_raf.stage1_gamma"];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_1: &[&str] = &["stage6.bytecode_read_raf.stage1_gamma"];
-
-pub const STAGE6_FIELD_EXPR_OPERANDS_2: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_1: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term1.stage_gamma_pow",
     "stage6.input.stage1.Imm",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_3: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_2: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term2.stage_gamma_pow",
     "stage6.input.stage1.OpFlagAddOperands",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_4: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_3: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term3.stage_gamma_pow",
     "stage6.input.stage1.OpFlagSubtractOperands",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_5: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_4: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term4.stage_gamma_pow",
     "stage6.input.stage1.OpFlagMultiplyOperands",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_6: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_5: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term5.stage_gamma_pow",
     "stage6.input.stage1.OpFlagLoad",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_7: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_6: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term6.stage_gamma_pow",
     "stage6.input.stage1.OpFlagStore",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_8: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_7: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term7.stage_gamma_pow",
     "stage6.input.stage1.OpFlagJump",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_9: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_8: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term8.stage_gamma_pow",
     "stage6.input.stage1.OpFlagWriteLookupOutputToRD",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_10: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_9: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term9.stage_gamma_pow",
     "stage6.input.stage1.OpFlagVirtualInstruction",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_11: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_10: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term10.stage_gamma_pow",
     "stage6.input.stage1.OpFlagAssert",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_12: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_11: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term11.stage_gamma_pow",
     "stage6.input.stage1.OpFlagDoNotUpdateUnexpandedPC",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_13: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_12: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term12.stage_gamma_pow",
     "stage6.input.stage1.OpFlagAdvice",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_14: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_13: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term13.stage_gamma_pow",
     "stage6.input.stage1.OpFlagIsCompressed",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_15: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_14: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term14.stage_gamma_pow",
     "stage6.input.stage1.OpFlagIsFirstInSequence",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_16: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_15: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term15.stage_gamma_pow",
     "stage6.input.stage1.OpFlagIsLastInSequence",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_17: &[&str] = &["stage6.bytecode_read_raf.gamma"];
+pub const STAGE6_FIELD_EXPR_OPERANDS_16: &[&str] = &["stage6.bytecode_read_raf.gamma"];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_18: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_17: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term16.gamma_pow",
     "stage6.input.stage2.OpFlagJump",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_19: &[&str] = &["stage6.bytecode_read_raf.stage2_gamma"];
+pub const STAGE6_FIELD_EXPR_OPERANDS_18: &[&str] = &["stage6.bytecode_read_raf.stage2_gamma"];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_20: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_19: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term17.stage_gamma_pow",
     "stage6.input.stage2.InstructionFlagBranch",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_21: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_20: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term17.gamma_pow",
     "stage6.bytecode_read_raf.claim.term17.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_22: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_21: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term18.stage_gamma_pow",
     "stage6.input.stage2.OpFlagWriteLookupOutputToRD",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_23: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_22: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term18.gamma_pow",
     "stage6.bytecode_read_raf.claim.term18.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_24: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_23: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term19.stage_gamma_pow",
     "stage6.input.stage2.OpFlagVirtualInstruction",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_25: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_24: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term19.gamma_pow",
     "stage6.bytecode_read_raf.claim.term19.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_26: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_25: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term20.gamma_pow",
     "stage6.input.stage3.instruction_input.Imm",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_27: &[&str] = &["stage6.bytecode_read_raf.stage3_gamma"];
+pub const STAGE6_FIELD_EXPR_OPERANDS_26: &[&str] = &["stage6.bytecode_read_raf.stage3_gamma"];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_28: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_27: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term21.stage_gamma_pow",
     "stage6.input.stage3.spartan_shift.UnexpandedPC",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_29: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_28: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term21.gamma_pow",
     "stage6.bytecode_read_raf.claim.term21.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_30: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_29: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term22.stage_gamma_pow",
     "stage6.input.stage3.instruction_input.InstructionFlagLeftOperandIsRs1Value",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_31: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_30: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term22.gamma_pow",
     "stage6.bytecode_read_raf.claim.term22.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_32: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_31: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term23.stage_gamma_pow",
     "stage6.input.stage3.instruction_input.InstructionFlagLeftOperandIsPC",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_33: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_32: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term23.gamma_pow",
     "stage6.bytecode_read_raf.claim.term23.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_34: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_33: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term24.stage_gamma_pow",
     "stage6.input.stage3.instruction_input.InstructionFlagRightOperandIsRs2Value",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_35: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_34: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term24.gamma_pow",
     "stage6.bytecode_read_raf.claim.term24.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_36: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_35: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term25.stage_gamma_pow",
     "stage6.input.stage3.instruction_input.InstructionFlagRightOperandIsImm",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_37: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_36: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term25.gamma_pow",
     "stage6.bytecode_read_raf.claim.term25.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_38: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_37: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term26.stage_gamma_pow",
     "stage6.input.stage3.spartan_shift.InstructionFlagIsNoop",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_39: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_38: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term26.gamma_pow",
     "stage6.bytecode_read_raf.claim.term26.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_40: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_39: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term27.stage_gamma_pow",
     "stage6.input.stage3.spartan_shift.OpFlagVirtualInstruction",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_41: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_40: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term27.gamma_pow",
     "stage6.bytecode_read_raf.claim.term27.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_42: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_41: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term28.stage_gamma_pow",
     "stage6.input.stage3.spartan_shift.OpFlagIsFirstInSequence",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_43: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_42: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term28.gamma_pow",
     "stage6.bytecode_read_raf.claim.term28.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_44: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_43: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term29.gamma_pow",
     "stage6.input.stage4.RdWa",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_45: &[&str] = &["stage6.bytecode_read_raf.stage4_gamma"];
+pub const STAGE6_FIELD_EXPR_OPERANDS_44: &[&str] = &["stage6.bytecode_read_raf.stage4_gamma"];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_46: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_45: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term30.stage_gamma_pow",
     "stage6.input.stage4.Rs1Ra",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_47: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_46: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term30.gamma_pow",
     "stage6.bytecode_read_raf.claim.term30.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_48: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_47: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term31.stage_gamma_pow",
     "stage6.input.stage4.Rs2Ra",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_49: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_48: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term31.gamma_pow",
     "stage6.bytecode_read_raf.claim.term31.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_50: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_49: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term32.gamma_pow",
     "stage6.input.stage5.registers_val_evaluation.RdWa",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_51: &[&str] = &["stage6.bytecode_read_raf.stage5_gamma"];
+pub const STAGE6_FIELD_EXPR_OPERANDS_50: &[&str] = &["stage6.bytecode_read_raf.stage5_gamma"];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_52: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_51: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term33.stage_gamma_pow",
     "stage6.input.stage5.InstructionRafFlag",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_53: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_52: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term33.gamma_pow",
     "stage6.bytecode_read_raf.claim.term33.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_54: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_53: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term34.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_0",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_55: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_54: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term34.gamma_pow",
     "stage6.bytecode_read_raf.claim.term34.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_56: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_55: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term35.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_1",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_57: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_56: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term35.gamma_pow",
     "stage6.bytecode_read_raf.claim.term35.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_58: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_57: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term36.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_2",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_59: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_58: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term36.gamma_pow",
     "stage6.bytecode_read_raf.claim.term36.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_60: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_59: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term37.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_3",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_61: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_60: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term37.gamma_pow",
     "stage6.bytecode_read_raf.claim.term37.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_62: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_61: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term38.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_4",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_63: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_62: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term38.gamma_pow",
     "stage6.bytecode_read_raf.claim.term38.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_64: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_63: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term39.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_5",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_65: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_64: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term39.gamma_pow",
     "stage6.bytecode_read_raf.claim.term39.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_66: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_65: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term40.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_6",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_67: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_66: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term40.gamma_pow",
     "stage6.bytecode_read_raf.claim.term40.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_68: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_67: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term41.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_7",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_69: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_68: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term41.gamma_pow",
     "stage6.bytecode_read_raf.claim.term41.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_70: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_69: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term42.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_8",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_71: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_70: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term42.gamma_pow",
     "stage6.bytecode_read_raf.claim.term42.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_72: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_71: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term43.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_9",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_73: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_72: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term43.gamma_pow",
     "stage6.bytecode_read_raf.claim.term43.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_74: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_73: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term44.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_10",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_75: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_74: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term44.gamma_pow",
     "stage6.bytecode_read_raf.claim.term44.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_76: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_75: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term45.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_11",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_77: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_76: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term45.gamma_pow",
     "stage6.bytecode_read_raf.claim.term45.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_78: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_77: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term46.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_12",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_79: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_78: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term46.gamma_pow",
     "stage6.bytecode_read_raf.claim.term46.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_80: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_79: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term47.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_13",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_81: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_80: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term47.gamma_pow",
     "stage6.bytecode_read_raf.claim.term47.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_82: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_81: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term48.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_14",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_83: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_82: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term48.gamma_pow",
     "stage6.bytecode_read_raf.claim.term48.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_84: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_83: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term49.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_15",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_85: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_84: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term49.gamma_pow",
     "stage6.bytecode_read_raf.claim.term49.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_86: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_85: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term50.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_16",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_87: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_86: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term50.gamma_pow",
     "stage6.bytecode_read_raf.claim.term50.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_88: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_87: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term51.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_17",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_89: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_88: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term51.gamma_pow",
     "stage6.bytecode_read_raf.claim.term51.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_90: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_89: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term52.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_18",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_91: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_90: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term52.gamma_pow",
     "stage6.bytecode_read_raf.claim.term52.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_92: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_91: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term53.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_19",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_93: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_92: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term53.gamma_pow",
     "stage6.bytecode_read_raf.claim.term53.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_94: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_93: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term54.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_20",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_95: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_94: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term54.gamma_pow",
     "stage6.bytecode_read_raf.claim.term54.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_96: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_95: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term55.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_21",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_97: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_96: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term55.gamma_pow",
     "stage6.bytecode_read_raf.claim.term55.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_98: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_97: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term56.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_22",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_99: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_98: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term56.gamma_pow",
     "stage6.bytecode_read_raf.claim.term56.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_100: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_99: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term57.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_23",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_101: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_100: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term57.gamma_pow",
     "stage6.bytecode_read_raf.claim.term57.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_102: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_101: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term58.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_24",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_103: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_102: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term58.gamma_pow",
     "stage6.bytecode_read_raf.claim.term58.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_104: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_103: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term59.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_25",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_105: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_104: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term59.gamma_pow",
     "stage6.bytecode_read_raf.claim.term59.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_106: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_105: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term60.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_26",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_107: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_106: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term60.gamma_pow",
     "stage6.bytecode_read_raf.claim.term60.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_108: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_107: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term61.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_27",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_109: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_108: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term61.gamma_pow",
     "stage6.bytecode_read_raf.claim.term61.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_110: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_109: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term62.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_28",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_111: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_110: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term62.gamma_pow",
     "stage6.bytecode_read_raf.claim.term62.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_112: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_111: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term63.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_29",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_113: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_112: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term63.gamma_pow",
     "stage6.bytecode_read_raf.claim.term63.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_114: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_113: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term64.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_30",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_115: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_114: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term64.gamma_pow",
     "stage6.bytecode_read_raf.claim.term64.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_116: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_115: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term65.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_31",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_117: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_116: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term65.gamma_pow",
     "stage6.bytecode_read_raf.claim.term65.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_118: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_117: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term66.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_32",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_119: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_118: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term66.gamma_pow",
     "stage6.bytecode_read_raf.claim.term66.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_120: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_119: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term67.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_33",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_121: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_120: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term67.gamma_pow",
     "stage6.bytecode_read_raf.claim.term67.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_122: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_121: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term68.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_34",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_123: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_122: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term68.gamma_pow",
     "stage6.bytecode_read_raf.claim.term68.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_124: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_123: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term69.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_35",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_125: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_124: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term69.gamma_pow",
     "stage6.bytecode_read_raf.claim.term69.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_126: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_125: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term70.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_36",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_127: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_126: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term70.gamma_pow",
     "stage6.bytecode_read_raf.claim.term70.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_128: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_127: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term71.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_37",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_129: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_128: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term71.gamma_pow",
     "stage6.bytecode_read_raf.claim.term71.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_130: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_129: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term72.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_38",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_131: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_130: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term72.gamma_pow",
     "stage6.bytecode_read_raf.claim.term72.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_132: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_131: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term73.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_39",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_133: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_132: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term73.gamma_pow",
     "stage6.bytecode_read_raf.claim.term73.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_134: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_133: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term74.stage_gamma_pow",
     "stage6.input.stage5.LookupTableFlag_40",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_135: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_134: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term74.gamma_pow",
     "stage6.bytecode_read_raf.claim.term74.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_136: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_135: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term75.gamma_pow",
     "stage6.input.stage1.PC",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_137: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_136: &[&str] = &[
     "stage6.bytecode_read_raf.claim.term76.gamma_pow",
     "stage6.input.stage3.spartan_shift.PC",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_138: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_137: &[&str] = &[
     "stage6.input.stage1.UnexpandedPC",
     "stage6.bytecode_read_raf.claim.term1.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_139: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_138: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial0",
     "stage6.bytecode_read_raf.claim.term2.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_140: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_139: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial1",
     "stage6.bytecode_read_raf.claim.term3.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_141: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_140: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial2",
     "stage6.bytecode_read_raf.claim.term4.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_142: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_141: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial3",
     "stage6.bytecode_read_raf.claim.term5.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_143: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_142: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial4",
     "stage6.bytecode_read_raf.claim.term6.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_144: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_143: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial5",
     "stage6.bytecode_read_raf.claim.term7.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_145: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_144: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial6",
     "stage6.bytecode_read_raf.claim.term8.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_146: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_145: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial7",
     "stage6.bytecode_read_raf.claim.term9.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_147: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_146: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial8",
     "stage6.bytecode_read_raf.claim.term10.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_148: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_147: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial9",
     "stage6.bytecode_read_raf.claim.term11.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_149: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_148: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial10",
     "stage6.bytecode_read_raf.claim.term12.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_150: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_149: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial11",
     "stage6.bytecode_read_raf.claim.term13.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_151: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_150: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial12",
     "stage6.bytecode_read_raf.claim.term14.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_152: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_151: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial13",
     "stage6.bytecode_read_raf.claim.term15.stage_gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_153: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_152: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial14",
     "stage6.bytecode_read_raf.claim.term16.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_154: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_153: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial15",
     "stage6.bytecode_read_raf.claim.term17.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_155: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_154: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial16",
     "stage6.bytecode_read_raf.claim.term18.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_156: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_155: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial17",
     "stage6.bytecode_read_raf.claim.term19.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_157: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_156: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial18",
     "stage6.bytecode_read_raf.claim.term20.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_158: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_157: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial19",
     "stage6.bytecode_read_raf.claim.term21.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_159: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_158: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial20",
     "stage6.bytecode_read_raf.claim.term22.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_160: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_159: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial21",
     "stage6.bytecode_read_raf.claim.term23.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_161: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_160: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial22",
     "stage6.bytecode_read_raf.claim.term24.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_162: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_161: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial23",
     "stage6.bytecode_read_raf.claim.term25.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_163: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_162: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial24",
     "stage6.bytecode_read_raf.claim.term26.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_164: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_163: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial25",
     "stage6.bytecode_read_raf.claim.term27.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_165: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_164: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial26",
     "stage6.bytecode_read_raf.claim.term28.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_166: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_165: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial27",
     "stage6.bytecode_read_raf.claim.term29.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_167: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_166: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial28",
     "stage6.bytecode_read_raf.claim.term30.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_168: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_167: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial29",
     "stage6.bytecode_read_raf.claim.term31.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_169: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_168: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial30",
     "stage6.bytecode_read_raf.claim.term32.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_170: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_169: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial31",
     "stage6.bytecode_read_raf.claim.term33.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_171: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_170: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial32",
     "stage6.bytecode_read_raf.claim.term34.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_172: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_171: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial33",
     "stage6.bytecode_read_raf.claim.term35.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_173: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_172: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial34",
     "stage6.bytecode_read_raf.claim.term36.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_174: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_173: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial35",
     "stage6.bytecode_read_raf.claim.term37.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_175: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_174: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial36",
     "stage6.bytecode_read_raf.claim.term38.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_176: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_175: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial37",
     "stage6.bytecode_read_raf.claim.term39.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_177: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_176: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial38",
     "stage6.bytecode_read_raf.claim.term40.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_178: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_177: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial39",
     "stage6.bytecode_read_raf.claim.term41.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_179: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_178: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial40",
     "stage6.bytecode_read_raf.claim.term42.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_180: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_179: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial41",
     "stage6.bytecode_read_raf.claim.term43.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_181: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_180: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial42",
     "stage6.bytecode_read_raf.claim.term44.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_182: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_181: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial43",
     "stage6.bytecode_read_raf.claim.term45.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_183: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_182: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial44",
     "stage6.bytecode_read_raf.claim.term46.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_184: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_183: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial45",
     "stage6.bytecode_read_raf.claim.term47.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_185: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_184: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial46",
     "stage6.bytecode_read_raf.claim.term48.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_186: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_185: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial47",
     "stage6.bytecode_read_raf.claim.term49.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_187: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_186: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial48",
     "stage6.bytecode_read_raf.claim.term50.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_188: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_187: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial49",
     "stage6.bytecode_read_raf.claim.term51.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_189: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_188: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial50",
     "stage6.bytecode_read_raf.claim.term52.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_190: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_189: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial51",
     "stage6.bytecode_read_raf.claim.term53.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_191: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_190: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial52",
     "stage6.bytecode_read_raf.claim.term54.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_192: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_191: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial53",
     "stage6.bytecode_read_raf.claim.term55.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_193: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_192: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial54",
     "stage6.bytecode_read_raf.claim.term56.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_194: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_193: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial55",
     "stage6.bytecode_read_raf.claim.term57.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_195: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_194: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial56",
     "stage6.bytecode_read_raf.claim.term58.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_196: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_195: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial57",
     "stage6.bytecode_read_raf.claim.term59.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_197: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_196: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial58",
     "stage6.bytecode_read_raf.claim.term60.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_198: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_197: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial59",
     "stage6.bytecode_read_raf.claim.term61.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_199: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_198: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial60",
     "stage6.bytecode_read_raf.claim.term62.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_200: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_199: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial61",
     "stage6.bytecode_read_raf.claim.term63.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_201: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_200: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial62",
     "stage6.bytecode_read_raf.claim.term64.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_202: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_201: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial63",
     "stage6.bytecode_read_raf.claim.term65.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_203: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_202: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial64",
     "stage6.bytecode_read_raf.claim.term66.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_204: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_203: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial65",
     "stage6.bytecode_read_raf.claim.term67.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_205: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_204: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial66",
     "stage6.bytecode_read_raf.claim.term68.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_206: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_205: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial67",
     "stage6.bytecode_read_raf.claim.term69.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_207: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_206: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial68",
     "stage6.bytecode_read_raf.claim.term70.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_208: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_207: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial69",
     "stage6.bytecode_read_raf.claim.term71.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_209: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_208: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial70",
     "stage6.bytecode_read_raf.claim.term72.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_210: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_209: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial71",
     "stage6.bytecode_read_raf.claim.term73.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_211: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_210: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial72",
     "stage6.bytecode_read_raf.claim.term74.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_212: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_211: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial73",
     "stage6.bytecode_read_raf.claim.term75.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_213: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_212: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial74",
     "stage6.bytecode_read_raf.claim.term76.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_214: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_213: &[&str] = &[
     "stage6.bytecode_read_raf.claim_expr.partial75",
     "stage6.bytecode_read_raf.claim.entry_constant",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_215: &[&str] = &["stage6.instruction_ra_virtual.gamma"];
+pub const STAGE6_FIELD_EXPR_OPERANDS_214: &[&str] = &["stage6.instruction_ra_virtual.gamma"];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_216: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_215: &[&str] = &[
     "stage6.instruction_ra_virtual.claim.term1.gamma_pow",
     "stage6.input.stage5.instruction_read_raf.InstructionRa_1",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_217: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_216: &[&str] = &[
     "stage6.instruction_ra_virtual.claim.term2.gamma_pow",
     "stage6.input.stage5.instruction_read_raf.InstructionRa_2",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_218: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_217: &[&str] = &[
     "stage6.instruction_ra_virtual.claim.term3.gamma_pow",
     "stage6.input.stage5.instruction_read_raf.InstructionRa_3",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_219: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_218: &[&str] = &[
     "stage6.instruction_ra_virtual.claim.term4.gamma_pow",
     "stage6.input.stage5.instruction_read_raf.InstructionRa_4",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_220: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_219: &[&str] = &[
     "stage6.instruction_ra_virtual.claim.term5.gamma_pow",
     "stage6.input.stage5.instruction_read_raf.InstructionRa_5",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_221: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_220: &[&str] = &[
     "stage6.instruction_ra_virtual.claim.term6.gamma_pow",
     "stage6.input.stage5.instruction_read_raf.InstructionRa_6",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_222: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_221: &[&str] = &[
     "stage6.instruction_ra_virtual.claim.term7.gamma_pow",
     "stage6.input.stage5.instruction_read_raf.InstructionRa_7",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_223: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_222: &[&str] = &[
     "stage6.input.stage5.instruction_read_raf.InstructionRa_0",
     "stage6.instruction_ra_virtual.claim.term1.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_224: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_223: &[&str] = &[
     "stage6.instruction_ra_virtual.claim_expr.partial0",
     "stage6.instruction_ra_virtual.claim.term2.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_225: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_224: &[&str] = &[
     "stage6.instruction_ra_virtual.claim_expr.partial1",
     "stage6.instruction_ra_virtual.claim.term3.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_226: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_225: &[&str] = &[
     "stage6.instruction_ra_virtual.claim_expr.partial2",
     "stage6.instruction_ra_virtual.claim.term4.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_227: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_226: &[&str] = &[
     "stage6.instruction_ra_virtual.claim_expr.partial3",
     "stage6.instruction_ra_virtual.claim.term5.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_228: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_227: &[&str] = &[
     "stage6.instruction_ra_virtual.claim_expr.partial4",
     "stage6.instruction_ra_virtual.claim.term6.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_229: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_228: &[&str] = &[
     "stage6.instruction_ra_virtual.claim_expr.partial5",
     "stage6.instruction_ra_virtual.claim.term7.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_230: &[&str] = &["stage6.inc_claim_reduction.gamma"];
+pub const STAGE6_FIELD_EXPR_OPERANDS_229: &[&str] = &["stage6.inc_claim_reduction.gamma"];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_231: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_230: &[&str] = &[
     "stage6.inc_claim_reduction.claim.ram_inc_stage4.gamma_pow",
     "stage6.input.stage4.ram_val_check.RamInc",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_232: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_231: &[&str] = &[
     "stage6.inc_claim_reduction.claim.rd_inc_stage4.gamma_pow",
     "stage6.input.stage4.registers_read_write.RdInc",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_233: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_232: &[&str] = &[
     "stage6.inc_claim_reduction.claim.rd_inc_stage5.gamma_pow",
     "stage6.input.stage5.registers_val_evaluation.RdInc",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_234: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_233: &[&str] = &[
     "stage6.input.stage2.ram_read_write.RamInc",
     "stage6.inc_claim_reduction.claim.ram_inc_stage4.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_235: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_234: &[&str] = &[
     "stage6.inc_claim_reduction.claim_expr.partial0",
     "stage6.inc_claim_reduction.claim.rd_inc_stage4.gamma_term",
 ];
 
-pub const STAGE6_FIELD_EXPR_OPERANDS_236: &[&str] = &[
+pub const STAGE6_FIELD_EXPR_OPERANDS_235: &[&str] = &[
     "stage6.inc_claim_reduction.claim_expr.partial1",
     "stage6.inc_claim_reduction.claim.rd_inc_stage5.gamma_term",
 ];
 
 pub const STAGE6_FIELD_EXPRS: &[Stage6FieldExprPlan] = &[
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_0", kind: "op", formula: "field.pow:0", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_1", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_2", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_3", kind: "op", formula: "field.pow:6", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_4", kind: "op", formula: "field.pow:8", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_5", kind: "op", formula: "field.pow:10", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_6", kind: "op", formula: "field.pow:12", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_7", kind: "op", formula: "field.pow:14", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_8", kind: "op", formula: "field.pow:16", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_9", kind: "op", formula: "field.pow:18", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_10", kind: "op", formula: "field.pow:20", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_11", kind: "op", formula: "field.pow:22", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_12", kind: "op", formula: "field.pow:24", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_13", kind: "op", formula: "field.pow:26", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_14", kind: "op", formula: "field.pow:28", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_15", kind: "op", formula: "field.pow:30", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_16", kind: "op", formula: "field.pow:32", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_17", kind: "op", formula: "field.pow:34", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_18", kind: "op", formula: "field.pow:36", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_19", kind: "op", formula: "field.pow:38", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_20", kind: "op", formula: "field.pow:40", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_21", kind: "op", formula: "field.pow:42", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_22", kind: "op", formula: "field.pow:44", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_23", kind: "op", formula: "field.pow:46", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_24", kind: "op", formula: "field.pow:48", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_25", kind: "op", formula: "field.pow:50", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_26", kind: "op", formula: "field.pow:52", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_27", kind: "op", formula: "field.pow:54", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_28", kind: "op", formula: "field.pow:56", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_29", kind: "op", formula: "field.pow:58", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_30", kind: "op", formula: "field.pow:60", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_31", kind: "op", formula: "field.pow:62", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_32", kind: "op", formula: "field.pow:64", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_33", kind: "op", formula: "field.pow:66", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_34", kind: "op", formula: "field.pow:68", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_35", kind: "op", formula: "field.pow:70", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_36", kind: "op", formula: "field.pow:72", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_37", kind: "op", formula: "field.pow:74", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_sq_38", kind: "op", formula: "field.pow:76", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_0", kind: "op", formula: "field.pow:0", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_1", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_2", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_3", kind: "op", formula: "field.pow:3", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_4", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_5", kind: "op", formula: "field.pow:5", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_6", kind: "op", formula: "field.pow:6", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_7", kind: "op", formula: "field.pow:7", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_8", kind: "op", formula: "field.pow:8", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_9", kind: "op", formula: "field.pow:9", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_10", kind: "op", formula: "field.pow:10", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_11", kind: "op", formula: "field.pow:11", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_12", kind: "op", formula: "field.pow:12", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_13", kind: "op", formula: "field.pow:13", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_14", kind: "op", formula: "field.pow:14", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_15", kind: "op", formula: "field.pow:15", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_16", kind: "op", formula: "field.pow:16", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_17", kind: "op", formula: "field.pow:17", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_18", kind: "op", formula: "field.pow:18", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_19", kind: "op", formula: "field.pow:19", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_20", kind: "op", formula: "field.pow:20", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_21", kind: "op", formula: "field.pow:21", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_22", kind: "op", formula: "field.pow:22", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_23", kind: "op", formula: "field.pow:23", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_24", kind: "op", formula: "field.pow:24", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_25", kind: "op", formula: "field.pow:25", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_26", kind: "op", formula: "field.pow:26", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_27", kind: "op", formula: "field.pow:27", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_28", kind: "op", formula: "field.pow:28", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_29", kind: "op", formula: "field.pow:29", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_30", kind: "op", formula: "field.pow:30", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_31", kind: "op", formula: "field.pow:31", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_32", kind: "op", formula: "field.pow:32", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_33", kind: "op", formula: "field.pow:33", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_34", kind: "op", formula: "field.pow:34", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_35", kind: "op", formula: "field.pow:35", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_36", kind: "op", formula: "field.pow:36", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_37", kind: "op", formula: "field.pow:37", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.booleanity.gamma_pow_38", kind: "op", formula: "field.pow:38", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term1.stage_gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_1, operands: STAGE6_FIELD_EXPR_OPERANDS_1 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term1.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_2, operands: STAGE6_FIELD_EXPR_OPERANDS_2 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term2.stage_gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_1, operands: STAGE6_FIELD_EXPR_OPERANDS_1 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term2.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_3, operands: STAGE6_FIELD_EXPR_OPERANDS_3 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term3.stage_gamma_pow", kind: "op", formula: "field.pow:3", operand_names: STAGE6_FIELD_EXPR_OPERANDS_1, operands: STAGE6_FIELD_EXPR_OPERANDS_1 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term3.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_4, operands: STAGE6_FIELD_EXPR_OPERANDS_4 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term4.stage_gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_1, operands: STAGE6_FIELD_EXPR_OPERANDS_1 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term4.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_5, operands: STAGE6_FIELD_EXPR_OPERANDS_5 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term5.stage_gamma_pow", kind: "op", formula: "field.pow:5", operand_names: STAGE6_FIELD_EXPR_OPERANDS_1, operands: STAGE6_FIELD_EXPR_OPERANDS_1 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term5.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_6, operands: STAGE6_FIELD_EXPR_OPERANDS_6 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term6.stage_gamma_pow", kind: "op", formula: "field.pow:6", operand_names: STAGE6_FIELD_EXPR_OPERANDS_1, operands: STAGE6_FIELD_EXPR_OPERANDS_1 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term6.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_7, operands: STAGE6_FIELD_EXPR_OPERANDS_7 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term7.stage_gamma_pow", kind: "op", formula: "field.pow:7", operand_names: STAGE6_FIELD_EXPR_OPERANDS_1, operands: STAGE6_FIELD_EXPR_OPERANDS_1 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term7.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_8, operands: STAGE6_FIELD_EXPR_OPERANDS_8 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term8.stage_gamma_pow", kind: "op", formula: "field.pow:8", operand_names: STAGE6_FIELD_EXPR_OPERANDS_1, operands: STAGE6_FIELD_EXPR_OPERANDS_1 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term8.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_9, operands: STAGE6_FIELD_EXPR_OPERANDS_9 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term9.stage_gamma_pow", kind: "op", formula: "field.pow:9", operand_names: STAGE6_FIELD_EXPR_OPERANDS_1, operands: STAGE6_FIELD_EXPR_OPERANDS_1 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term9.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_10, operands: STAGE6_FIELD_EXPR_OPERANDS_10 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term10.stage_gamma_pow", kind: "op", formula: "field.pow:10", operand_names: STAGE6_FIELD_EXPR_OPERANDS_1, operands: STAGE6_FIELD_EXPR_OPERANDS_1 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term10.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_11, operands: STAGE6_FIELD_EXPR_OPERANDS_11 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term11.stage_gamma_pow", kind: "op", formula: "field.pow:11", operand_names: STAGE6_FIELD_EXPR_OPERANDS_1, operands: STAGE6_FIELD_EXPR_OPERANDS_1 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term11.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_12, operands: STAGE6_FIELD_EXPR_OPERANDS_12 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term12.stage_gamma_pow", kind: "op", formula: "field.pow:12", operand_names: STAGE6_FIELD_EXPR_OPERANDS_1, operands: STAGE6_FIELD_EXPR_OPERANDS_1 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term12.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_13, operands: STAGE6_FIELD_EXPR_OPERANDS_13 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term13.stage_gamma_pow", kind: "op", formula: "field.pow:13", operand_names: STAGE6_FIELD_EXPR_OPERANDS_1, operands: STAGE6_FIELD_EXPR_OPERANDS_1 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term13.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_14, operands: STAGE6_FIELD_EXPR_OPERANDS_14 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term14.stage_gamma_pow", kind: "op", formula: "field.pow:14", operand_names: STAGE6_FIELD_EXPR_OPERANDS_1, operands: STAGE6_FIELD_EXPR_OPERANDS_1 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term14.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_15, operands: STAGE6_FIELD_EXPR_OPERANDS_15 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term15.stage_gamma_pow", kind: "op", formula: "field.pow:15", operand_names: STAGE6_FIELD_EXPR_OPERANDS_1, operands: STAGE6_FIELD_EXPR_OPERANDS_1 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term15.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term16.gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term16.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_18, operands: STAGE6_FIELD_EXPR_OPERANDS_18 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term17.stage_gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_19, operands: STAGE6_FIELD_EXPR_OPERANDS_19 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term17.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_20, operands: STAGE6_FIELD_EXPR_OPERANDS_20 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term17.gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term17.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_21, operands: STAGE6_FIELD_EXPR_OPERANDS_21 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term18.stage_gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_19, operands: STAGE6_FIELD_EXPR_OPERANDS_19 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term18.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_22, operands: STAGE6_FIELD_EXPR_OPERANDS_22 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term18.gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term18.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_23, operands: STAGE6_FIELD_EXPR_OPERANDS_23 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term19.stage_gamma_pow", kind: "op", formula: "field.pow:3", operand_names: STAGE6_FIELD_EXPR_OPERANDS_19, operands: STAGE6_FIELD_EXPR_OPERANDS_19 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term19.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_24, operands: STAGE6_FIELD_EXPR_OPERANDS_24 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term19.gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term19.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_25, operands: STAGE6_FIELD_EXPR_OPERANDS_25 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term20.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term20.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_26, operands: STAGE6_FIELD_EXPR_OPERANDS_26 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term21.stage_gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_27, operands: STAGE6_FIELD_EXPR_OPERANDS_27 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term21.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_28, operands: STAGE6_FIELD_EXPR_OPERANDS_28 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term21.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term21.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_29, operands: STAGE6_FIELD_EXPR_OPERANDS_29 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term22.stage_gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_27, operands: STAGE6_FIELD_EXPR_OPERANDS_27 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term22.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_30, operands: STAGE6_FIELD_EXPR_OPERANDS_30 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term22.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term22.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_31, operands: STAGE6_FIELD_EXPR_OPERANDS_31 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term23.stage_gamma_pow", kind: "op", formula: "field.pow:3", operand_names: STAGE6_FIELD_EXPR_OPERANDS_27, operands: STAGE6_FIELD_EXPR_OPERANDS_27 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term23.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_32, operands: STAGE6_FIELD_EXPR_OPERANDS_32 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term23.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term23.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_33, operands: STAGE6_FIELD_EXPR_OPERANDS_33 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term24.stage_gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_27, operands: STAGE6_FIELD_EXPR_OPERANDS_27 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term24.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_34, operands: STAGE6_FIELD_EXPR_OPERANDS_34 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term24.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term24.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_35, operands: STAGE6_FIELD_EXPR_OPERANDS_35 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term25.stage_gamma_pow", kind: "op", formula: "field.pow:5", operand_names: STAGE6_FIELD_EXPR_OPERANDS_27, operands: STAGE6_FIELD_EXPR_OPERANDS_27 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term25.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_36, operands: STAGE6_FIELD_EXPR_OPERANDS_36 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term25.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term25.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_37, operands: STAGE6_FIELD_EXPR_OPERANDS_37 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term26.stage_gamma_pow", kind: "op", formula: "field.pow:6", operand_names: STAGE6_FIELD_EXPR_OPERANDS_27, operands: STAGE6_FIELD_EXPR_OPERANDS_27 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term26.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_38, operands: STAGE6_FIELD_EXPR_OPERANDS_38 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term26.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term26.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_39, operands: STAGE6_FIELD_EXPR_OPERANDS_39 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term27.stage_gamma_pow", kind: "op", formula: "field.pow:7", operand_names: STAGE6_FIELD_EXPR_OPERANDS_27, operands: STAGE6_FIELD_EXPR_OPERANDS_27 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term27.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_40, operands: STAGE6_FIELD_EXPR_OPERANDS_40 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term27.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term27.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_41, operands: STAGE6_FIELD_EXPR_OPERANDS_41 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term28.stage_gamma_pow", kind: "op", formula: "field.pow:8", operand_names: STAGE6_FIELD_EXPR_OPERANDS_27, operands: STAGE6_FIELD_EXPR_OPERANDS_27 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term28.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_42, operands: STAGE6_FIELD_EXPR_OPERANDS_42 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term28.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term28.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_43, operands: STAGE6_FIELD_EXPR_OPERANDS_43 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term29.gamma_pow", kind: "op", formula: "field.pow:3", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term29.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_44, operands: STAGE6_FIELD_EXPR_OPERANDS_44 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term30.stage_gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_45, operands: STAGE6_FIELD_EXPR_OPERANDS_45 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term30.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_46, operands: STAGE6_FIELD_EXPR_OPERANDS_46 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term30.gamma_pow", kind: "op", formula: "field.pow:3", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term30.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_47, operands: STAGE6_FIELD_EXPR_OPERANDS_47 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term31.stage_gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_45, operands: STAGE6_FIELD_EXPR_OPERANDS_45 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term31.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_48, operands: STAGE6_FIELD_EXPR_OPERANDS_48 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term31.gamma_pow", kind: "op", formula: "field.pow:3", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term31.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_49, operands: STAGE6_FIELD_EXPR_OPERANDS_49 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term32.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term32.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term33.stage_gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term33.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_52, operands: STAGE6_FIELD_EXPR_OPERANDS_52 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term33.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term33.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_53, operands: STAGE6_FIELD_EXPR_OPERANDS_53 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term34.stage_gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term34.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_54, operands: STAGE6_FIELD_EXPR_OPERANDS_54 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term34.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term34.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_55, operands: STAGE6_FIELD_EXPR_OPERANDS_55 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term35.stage_gamma_pow", kind: "op", formula: "field.pow:3", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term35.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_56, operands: STAGE6_FIELD_EXPR_OPERANDS_56 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term35.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term35.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_57, operands: STAGE6_FIELD_EXPR_OPERANDS_57 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term36.stage_gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term36.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_58, operands: STAGE6_FIELD_EXPR_OPERANDS_58 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term36.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term36.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_59, operands: STAGE6_FIELD_EXPR_OPERANDS_59 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term37.stage_gamma_pow", kind: "op", formula: "field.pow:5", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term37.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_60, operands: STAGE6_FIELD_EXPR_OPERANDS_60 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term37.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term37.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_61, operands: STAGE6_FIELD_EXPR_OPERANDS_61 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term38.stage_gamma_pow", kind: "op", formula: "field.pow:6", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term38.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_62, operands: STAGE6_FIELD_EXPR_OPERANDS_62 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term38.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term38.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_63, operands: STAGE6_FIELD_EXPR_OPERANDS_63 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term39.stage_gamma_pow", kind: "op", formula: "field.pow:7", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term39.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_64, operands: STAGE6_FIELD_EXPR_OPERANDS_64 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term39.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term39.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_65, operands: STAGE6_FIELD_EXPR_OPERANDS_65 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term40.stage_gamma_pow", kind: "op", formula: "field.pow:8", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term40.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_66, operands: STAGE6_FIELD_EXPR_OPERANDS_66 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term40.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term40.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_67, operands: STAGE6_FIELD_EXPR_OPERANDS_67 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term41.stage_gamma_pow", kind: "op", formula: "field.pow:9", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term41.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_68, operands: STAGE6_FIELD_EXPR_OPERANDS_68 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term41.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term41.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_69, operands: STAGE6_FIELD_EXPR_OPERANDS_69 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term42.stage_gamma_pow", kind: "op", formula: "field.pow:10", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term42.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_70, operands: STAGE6_FIELD_EXPR_OPERANDS_70 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term42.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term42.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_71, operands: STAGE6_FIELD_EXPR_OPERANDS_71 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term43.stage_gamma_pow", kind: "op", formula: "field.pow:11", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term43.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_72, operands: STAGE6_FIELD_EXPR_OPERANDS_72 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term43.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term43.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_73, operands: STAGE6_FIELD_EXPR_OPERANDS_73 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term44.stage_gamma_pow", kind: "op", formula: "field.pow:12", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term44.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_74, operands: STAGE6_FIELD_EXPR_OPERANDS_74 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term44.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term44.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_75, operands: STAGE6_FIELD_EXPR_OPERANDS_75 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term45.stage_gamma_pow", kind: "op", formula: "field.pow:13", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term45.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_76, operands: STAGE6_FIELD_EXPR_OPERANDS_76 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term45.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term45.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_77, operands: STAGE6_FIELD_EXPR_OPERANDS_77 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term46.stage_gamma_pow", kind: "op", formula: "field.pow:14", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term46.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_78, operands: STAGE6_FIELD_EXPR_OPERANDS_78 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term46.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term46.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_79, operands: STAGE6_FIELD_EXPR_OPERANDS_79 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term47.stage_gamma_pow", kind: "op", formula: "field.pow:15", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term47.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_80, operands: STAGE6_FIELD_EXPR_OPERANDS_80 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term47.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term47.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_81, operands: STAGE6_FIELD_EXPR_OPERANDS_81 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term48.stage_gamma_pow", kind: "op", formula: "field.pow:16", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term48.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_82, operands: STAGE6_FIELD_EXPR_OPERANDS_82 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term48.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term48.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_83, operands: STAGE6_FIELD_EXPR_OPERANDS_83 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term49.stage_gamma_pow", kind: "op", formula: "field.pow:17", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term49.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_84, operands: STAGE6_FIELD_EXPR_OPERANDS_84 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term49.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term49.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_85, operands: STAGE6_FIELD_EXPR_OPERANDS_85 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term50.stage_gamma_pow", kind: "op", formula: "field.pow:18", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term50.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_86, operands: STAGE6_FIELD_EXPR_OPERANDS_86 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term50.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term50.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_87, operands: STAGE6_FIELD_EXPR_OPERANDS_87 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term51.stage_gamma_pow", kind: "op", formula: "field.pow:19", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term51.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_88, operands: STAGE6_FIELD_EXPR_OPERANDS_88 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term51.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term51.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_89, operands: STAGE6_FIELD_EXPR_OPERANDS_89 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term52.stage_gamma_pow", kind: "op", formula: "field.pow:20", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term52.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_90, operands: STAGE6_FIELD_EXPR_OPERANDS_90 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term52.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term52.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_91, operands: STAGE6_FIELD_EXPR_OPERANDS_91 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term53.stage_gamma_pow", kind: "op", formula: "field.pow:21", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term53.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_92, operands: STAGE6_FIELD_EXPR_OPERANDS_92 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term53.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term53.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_93, operands: STAGE6_FIELD_EXPR_OPERANDS_93 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term54.stage_gamma_pow", kind: "op", formula: "field.pow:22", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term54.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_94, operands: STAGE6_FIELD_EXPR_OPERANDS_94 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term54.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term54.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_95, operands: STAGE6_FIELD_EXPR_OPERANDS_95 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term55.stage_gamma_pow", kind: "op", formula: "field.pow:23", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term55.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_96, operands: STAGE6_FIELD_EXPR_OPERANDS_96 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term55.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term55.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_97, operands: STAGE6_FIELD_EXPR_OPERANDS_97 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term56.stage_gamma_pow", kind: "op", formula: "field.pow:24", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term56.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_98, operands: STAGE6_FIELD_EXPR_OPERANDS_98 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term56.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term56.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_99, operands: STAGE6_FIELD_EXPR_OPERANDS_99 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term57.stage_gamma_pow", kind: "op", formula: "field.pow:25", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term57.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_100, operands: STAGE6_FIELD_EXPR_OPERANDS_100 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term57.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term57.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_101, operands: STAGE6_FIELD_EXPR_OPERANDS_101 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term58.stage_gamma_pow", kind: "op", formula: "field.pow:26", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term58.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_102, operands: STAGE6_FIELD_EXPR_OPERANDS_102 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term58.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term58.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_103, operands: STAGE6_FIELD_EXPR_OPERANDS_103 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term59.stage_gamma_pow", kind: "op", formula: "field.pow:27", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term59.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_104, operands: STAGE6_FIELD_EXPR_OPERANDS_104 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term59.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term59.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_105, operands: STAGE6_FIELD_EXPR_OPERANDS_105 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term60.stage_gamma_pow", kind: "op", formula: "field.pow:28", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term60.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_106, operands: STAGE6_FIELD_EXPR_OPERANDS_106 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term60.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term60.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_107, operands: STAGE6_FIELD_EXPR_OPERANDS_107 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term61.stage_gamma_pow", kind: "op", formula: "field.pow:29", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term61.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_108, operands: STAGE6_FIELD_EXPR_OPERANDS_108 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term61.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term61.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_109, operands: STAGE6_FIELD_EXPR_OPERANDS_109 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term62.stage_gamma_pow", kind: "op", formula: "field.pow:30", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term62.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_110, operands: STAGE6_FIELD_EXPR_OPERANDS_110 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term62.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term62.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_111, operands: STAGE6_FIELD_EXPR_OPERANDS_111 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term63.stage_gamma_pow", kind: "op", formula: "field.pow:31", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term63.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_112, operands: STAGE6_FIELD_EXPR_OPERANDS_112 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term63.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term63.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_113, operands: STAGE6_FIELD_EXPR_OPERANDS_113 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term64.stage_gamma_pow", kind: "op", formula: "field.pow:32", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term64.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_114, operands: STAGE6_FIELD_EXPR_OPERANDS_114 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term64.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term64.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_115, operands: STAGE6_FIELD_EXPR_OPERANDS_115 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term65.stage_gamma_pow", kind: "op", formula: "field.pow:33", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term65.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_116, operands: STAGE6_FIELD_EXPR_OPERANDS_116 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term65.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term65.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_117, operands: STAGE6_FIELD_EXPR_OPERANDS_117 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term66.stage_gamma_pow", kind: "op", formula: "field.pow:34", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term66.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_118, operands: STAGE6_FIELD_EXPR_OPERANDS_118 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term66.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term66.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_119, operands: STAGE6_FIELD_EXPR_OPERANDS_119 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term67.stage_gamma_pow", kind: "op", formula: "field.pow:35", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term67.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_120, operands: STAGE6_FIELD_EXPR_OPERANDS_120 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term67.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term67.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_121, operands: STAGE6_FIELD_EXPR_OPERANDS_121 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term68.stage_gamma_pow", kind: "op", formula: "field.pow:36", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term68.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_122, operands: STAGE6_FIELD_EXPR_OPERANDS_122 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term68.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term68.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_123, operands: STAGE6_FIELD_EXPR_OPERANDS_123 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term69.stage_gamma_pow", kind: "op", formula: "field.pow:37", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term69.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_124, operands: STAGE6_FIELD_EXPR_OPERANDS_124 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term69.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term69.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_125, operands: STAGE6_FIELD_EXPR_OPERANDS_125 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term70.stage_gamma_pow", kind: "op", formula: "field.pow:38", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term70.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_126, operands: STAGE6_FIELD_EXPR_OPERANDS_126 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term70.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term70.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_127, operands: STAGE6_FIELD_EXPR_OPERANDS_127 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term71.stage_gamma_pow", kind: "op", formula: "field.pow:39", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term71.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_128, operands: STAGE6_FIELD_EXPR_OPERANDS_128 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term71.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term71.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_129, operands: STAGE6_FIELD_EXPR_OPERANDS_129 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term72.stage_gamma_pow", kind: "op", formula: "field.pow:40", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term72.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_130, operands: STAGE6_FIELD_EXPR_OPERANDS_130 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term72.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term72.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_131, operands: STAGE6_FIELD_EXPR_OPERANDS_131 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term73.stage_gamma_pow", kind: "op", formula: "field.pow:41", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term73.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_132, operands: STAGE6_FIELD_EXPR_OPERANDS_132 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term73.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term73.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_133, operands: STAGE6_FIELD_EXPR_OPERANDS_133 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term74.stage_gamma_pow", kind: "op", formula: "field.pow:42", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term74.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_134, operands: STAGE6_FIELD_EXPR_OPERANDS_134 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term74.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term74.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_135, operands: STAGE6_FIELD_EXPR_OPERANDS_135 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term75.gamma_pow", kind: "op", formula: "field.pow:5", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term75.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_136, operands: STAGE6_FIELD_EXPR_OPERANDS_136 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term76.gamma_pow", kind: "op", formula: "field.pow:6", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term76.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_137, operands: STAGE6_FIELD_EXPR_OPERANDS_137 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.entry_constant", kind: "op", formula: "field.pow:7", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial0", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_138, operands: STAGE6_FIELD_EXPR_OPERANDS_138 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial1", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_139, operands: STAGE6_FIELD_EXPR_OPERANDS_139 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial2", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_140, operands: STAGE6_FIELD_EXPR_OPERANDS_140 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial3", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_141, operands: STAGE6_FIELD_EXPR_OPERANDS_141 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial4", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_142, operands: STAGE6_FIELD_EXPR_OPERANDS_142 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial5", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_143, operands: STAGE6_FIELD_EXPR_OPERANDS_143 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial6", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_144, operands: STAGE6_FIELD_EXPR_OPERANDS_144 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial7", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_145, operands: STAGE6_FIELD_EXPR_OPERANDS_145 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial8", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_146, operands: STAGE6_FIELD_EXPR_OPERANDS_146 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial9", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_147, operands: STAGE6_FIELD_EXPR_OPERANDS_147 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial10", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_148, operands: STAGE6_FIELD_EXPR_OPERANDS_148 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial11", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_149, operands: STAGE6_FIELD_EXPR_OPERANDS_149 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial12", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_150, operands: STAGE6_FIELD_EXPR_OPERANDS_150 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial13", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_151, operands: STAGE6_FIELD_EXPR_OPERANDS_151 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial14", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_152, operands: STAGE6_FIELD_EXPR_OPERANDS_152 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial15", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_153, operands: STAGE6_FIELD_EXPR_OPERANDS_153 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial16", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_154, operands: STAGE6_FIELD_EXPR_OPERANDS_154 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial17", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_155, operands: STAGE6_FIELD_EXPR_OPERANDS_155 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial18", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_156, operands: STAGE6_FIELD_EXPR_OPERANDS_156 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial19", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_157, operands: STAGE6_FIELD_EXPR_OPERANDS_157 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial20", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_158, operands: STAGE6_FIELD_EXPR_OPERANDS_158 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial21", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_159, operands: STAGE6_FIELD_EXPR_OPERANDS_159 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial22", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_160, operands: STAGE6_FIELD_EXPR_OPERANDS_160 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial23", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_161, operands: STAGE6_FIELD_EXPR_OPERANDS_161 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial24", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_162, operands: STAGE6_FIELD_EXPR_OPERANDS_162 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial25", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_163, operands: STAGE6_FIELD_EXPR_OPERANDS_163 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial26", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_164, operands: STAGE6_FIELD_EXPR_OPERANDS_164 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial27", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_165, operands: STAGE6_FIELD_EXPR_OPERANDS_165 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial28", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_166, operands: STAGE6_FIELD_EXPR_OPERANDS_166 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial29", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_167, operands: STAGE6_FIELD_EXPR_OPERANDS_167 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial30", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_168, operands: STAGE6_FIELD_EXPR_OPERANDS_168 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial31", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_169, operands: STAGE6_FIELD_EXPR_OPERANDS_169 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial32", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_170, operands: STAGE6_FIELD_EXPR_OPERANDS_170 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial33", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_171, operands: STAGE6_FIELD_EXPR_OPERANDS_171 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial34", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_172, operands: STAGE6_FIELD_EXPR_OPERANDS_172 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial35", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_173, operands: STAGE6_FIELD_EXPR_OPERANDS_173 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial36", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_174, operands: STAGE6_FIELD_EXPR_OPERANDS_174 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial37", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_175, operands: STAGE6_FIELD_EXPR_OPERANDS_175 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial38", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_176, operands: STAGE6_FIELD_EXPR_OPERANDS_176 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial39", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_177, operands: STAGE6_FIELD_EXPR_OPERANDS_177 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial40", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_178, operands: STAGE6_FIELD_EXPR_OPERANDS_178 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial41", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_179, operands: STAGE6_FIELD_EXPR_OPERANDS_179 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial42", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_180, operands: STAGE6_FIELD_EXPR_OPERANDS_180 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial43", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_181, operands: STAGE6_FIELD_EXPR_OPERANDS_181 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial44", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_182, operands: STAGE6_FIELD_EXPR_OPERANDS_182 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial45", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_183, operands: STAGE6_FIELD_EXPR_OPERANDS_183 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial46", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_184, operands: STAGE6_FIELD_EXPR_OPERANDS_184 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial47", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_185, operands: STAGE6_FIELD_EXPR_OPERANDS_185 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial48", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_186, operands: STAGE6_FIELD_EXPR_OPERANDS_186 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial49", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_187, operands: STAGE6_FIELD_EXPR_OPERANDS_187 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial50", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_188, operands: STAGE6_FIELD_EXPR_OPERANDS_188 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial51", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_189, operands: STAGE6_FIELD_EXPR_OPERANDS_189 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial52", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_190, operands: STAGE6_FIELD_EXPR_OPERANDS_190 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial53", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_191, operands: STAGE6_FIELD_EXPR_OPERANDS_191 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial54", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_192, operands: STAGE6_FIELD_EXPR_OPERANDS_192 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial55", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_193, operands: STAGE6_FIELD_EXPR_OPERANDS_193 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial56", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_194, operands: STAGE6_FIELD_EXPR_OPERANDS_194 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial57", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_195, operands: STAGE6_FIELD_EXPR_OPERANDS_195 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial58", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_196, operands: STAGE6_FIELD_EXPR_OPERANDS_196 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial59", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_197, operands: STAGE6_FIELD_EXPR_OPERANDS_197 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial60", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_198, operands: STAGE6_FIELD_EXPR_OPERANDS_198 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial61", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_199, operands: STAGE6_FIELD_EXPR_OPERANDS_199 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial62", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_200, operands: STAGE6_FIELD_EXPR_OPERANDS_200 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial63", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_201, operands: STAGE6_FIELD_EXPR_OPERANDS_201 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial64", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_202, operands: STAGE6_FIELD_EXPR_OPERANDS_202 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial65", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_203, operands: STAGE6_FIELD_EXPR_OPERANDS_203 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial66", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_204, operands: STAGE6_FIELD_EXPR_OPERANDS_204 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial67", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_205, operands: STAGE6_FIELD_EXPR_OPERANDS_205 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial68", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_206, operands: STAGE6_FIELD_EXPR_OPERANDS_206 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial69", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_207, operands: STAGE6_FIELD_EXPR_OPERANDS_207 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial70", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_208, operands: STAGE6_FIELD_EXPR_OPERANDS_208 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial71", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_209, operands: STAGE6_FIELD_EXPR_OPERANDS_209 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial72", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_210, operands: STAGE6_FIELD_EXPR_OPERANDS_210 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial73", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_211, operands: STAGE6_FIELD_EXPR_OPERANDS_211 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial74", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_212, operands: STAGE6_FIELD_EXPR_OPERANDS_212 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial75", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_213, operands: STAGE6_FIELD_EXPR_OPERANDS_213 },
-    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial76", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_214, operands: STAGE6_FIELD_EXPR_OPERANDS_214 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term1.gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_215, operands: STAGE6_FIELD_EXPR_OPERANDS_215 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term1.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_216, operands: STAGE6_FIELD_EXPR_OPERANDS_216 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term2.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_215, operands: STAGE6_FIELD_EXPR_OPERANDS_215 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term2.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_217, operands: STAGE6_FIELD_EXPR_OPERANDS_217 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term3.gamma_pow", kind: "op", formula: "field.pow:3", operand_names: STAGE6_FIELD_EXPR_OPERANDS_215, operands: STAGE6_FIELD_EXPR_OPERANDS_215 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term3.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_218, operands: STAGE6_FIELD_EXPR_OPERANDS_218 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term4.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_215, operands: STAGE6_FIELD_EXPR_OPERANDS_215 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term4.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_219, operands: STAGE6_FIELD_EXPR_OPERANDS_219 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term5.gamma_pow", kind: "op", formula: "field.pow:5", operand_names: STAGE6_FIELD_EXPR_OPERANDS_215, operands: STAGE6_FIELD_EXPR_OPERANDS_215 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term5.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_220, operands: STAGE6_FIELD_EXPR_OPERANDS_220 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term6.gamma_pow", kind: "op", formula: "field.pow:6", operand_names: STAGE6_FIELD_EXPR_OPERANDS_215, operands: STAGE6_FIELD_EXPR_OPERANDS_215 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term6.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_221, operands: STAGE6_FIELD_EXPR_OPERANDS_221 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term7.gamma_pow", kind: "op", formula: "field.pow:7", operand_names: STAGE6_FIELD_EXPR_OPERANDS_215, operands: STAGE6_FIELD_EXPR_OPERANDS_215 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term7.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_222, operands: STAGE6_FIELD_EXPR_OPERANDS_222 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim_expr.partial0", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_223, operands: STAGE6_FIELD_EXPR_OPERANDS_223 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim_expr.partial1", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_224, operands: STAGE6_FIELD_EXPR_OPERANDS_224 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim_expr.partial2", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_225, operands: STAGE6_FIELD_EXPR_OPERANDS_225 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim_expr.partial3", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_226, operands: STAGE6_FIELD_EXPR_OPERANDS_226 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim_expr.partial4", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_227, operands: STAGE6_FIELD_EXPR_OPERANDS_227 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim_expr.partial5", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_228, operands: STAGE6_FIELD_EXPR_OPERANDS_228 },
-    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim_expr.partial6", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_229, operands: STAGE6_FIELD_EXPR_OPERANDS_229 },
-    Stage6FieldExprPlan { symbol: "stage6.inc_claim_reduction.claim.ram_inc_stage4.gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_230, operands: STAGE6_FIELD_EXPR_OPERANDS_230 },
-    Stage6FieldExprPlan { symbol: "stage6.inc_claim_reduction.claim.ram_inc_stage4.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_231, operands: STAGE6_FIELD_EXPR_OPERANDS_231 },
-    Stage6FieldExprPlan { symbol: "stage6.inc_claim_reduction.claim.rd_inc_stage4.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_230, operands: STAGE6_FIELD_EXPR_OPERANDS_230 },
-    Stage6FieldExprPlan { symbol: "stage6.inc_claim_reduction.claim.rd_inc_stage4.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_232, operands: STAGE6_FIELD_EXPR_OPERANDS_232 },
-    Stage6FieldExprPlan { symbol: "stage6.inc_claim_reduction.claim.rd_inc_stage5.gamma_pow", kind: "op", formula: "field.pow:3", operand_names: STAGE6_FIELD_EXPR_OPERANDS_230, operands: STAGE6_FIELD_EXPR_OPERANDS_230 },
-    Stage6FieldExprPlan { symbol: "stage6.inc_claim_reduction.claim.rd_inc_stage5.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_233, operands: STAGE6_FIELD_EXPR_OPERANDS_233 },
-    Stage6FieldExprPlan { symbol: "stage6.inc_claim_reduction.claim_expr.partial0", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_234, operands: STAGE6_FIELD_EXPR_OPERANDS_234 },
-    Stage6FieldExprPlan { symbol: "stage6.inc_claim_reduction.claim_expr.partial1", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_235, operands: STAGE6_FIELD_EXPR_OPERANDS_235 },
-    Stage6FieldExprPlan { symbol: "stage6.inc_claim_reduction.claim_expr.partial2", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_236, operands: STAGE6_FIELD_EXPR_OPERANDS_236 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term1.stage_gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term1.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_1, operands: STAGE6_FIELD_EXPR_OPERANDS_1 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term2.stage_gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term2.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_2, operands: STAGE6_FIELD_EXPR_OPERANDS_2 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term3.stage_gamma_pow", kind: "op", formula: "field.pow:3", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term3.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_3, operands: STAGE6_FIELD_EXPR_OPERANDS_3 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term4.stage_gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term4.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_4, operands: STAGE6_FIELD_EXPR_OPERANDS_4 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term5.stage_gamma_pow", kind: "op", formula: "field.pow:5", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term5.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_5, operands: STAGE6_FIELD_EXPR_OPERANDS_5 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term6.stage_gamma_pow", kind: "op", formula: "field.pow:6", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term6.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_6, operands: STAGE6_FIELD_EXPR_OPERANDS_6 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term7.stage_gamma_pow", kind: "op", formula: "field.pow:7", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term7.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_7, operands: STAGE6_FIELD_EXPR_OPERANDS_7 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term8.stage_gamma_pow", kind: "op", formula: "field.pow:8", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term8.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_8, operands: STAGE6_FIELD_EXPR_OPERANDS_8 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term9.stage_gamma_pow", kind: "op", formula: "field.pow:9", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term9.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_9, operands: STAGE6_FIELD_EXPR_OPERANDS_9 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term10.stage_gamma_pow", kind: "op", formula: "field.pow:10", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term10.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_10, operands: STAGE6_FIELD_EXPR_OPERANDS_10 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term11.stage_gamma_pow", kind: "op", formula: "field.pow:11", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term11.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_11, operands: STAGE6_FIELD_EXPR_OPERANDS_11 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term12.stage_gamma_pow", kind: "op", formula: "field.pow:12", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term12.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_12, operands: STAGE6_FIELD_EXPR_OPERANDS_12 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term13.stage_gamma_pow", kind: "op", formula: "field.pow:13", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term13.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_13, operands: STAGE6_FIELD_EXPR_OPERANDS_13 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term14.stage_gamma_pow", kind: "op", formula: "field.pow:14", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term14.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_14, operands: STAGE6_FIELD_EXPR_OPERANDS_14 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term15.stage_gamma_pow", kind: "op", formula: "field.pow:15", operand_names: STAGE6_FIELD_EXPR_OPERANDS_0, operands: STAGE6_FIELD_EXPR_OPERANDS_0 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term15.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_15, operands: STAGE6_FIELD_EXPR_OPERANDS_15 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term16.gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term16.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_17, operands: STAGE6_FIELD_EXPR_OPERANDS_17 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term17.stage_gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_18, operands: STAGE6_FIELD_EXPR_OPERANDS_18 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term17.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_19, operands: STAGE6_FIELD_EXPR_OPERANDS_19 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term17.gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term17.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_20, operands: STAGE6_FIELD_EXPR_OPERANDS_20 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term18.stage_gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_18, operands: STAGE6_FIELD_EXPR_OPERANDS_18 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term18.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_21, operands: STAGE6_FIELD_EXPR_OPERANDS_21 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term18.gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term18.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_22, operands: STAGE6_FIELD_EXPR_OPERANDS_22 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term19.stage_gamma_pow", kind: "op", formula: "field.pow:3", operand_names: STAGE6_FIELD_EXPR_OPERANDS_18, operands: STAGE6_FIELD_EXPR_OPERANDS_18 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term19.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_23, operands: STAGE6_FIELD_EXPR_OPERANDS_23 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term19.gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term19.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_24, operands: STAGE6_FIELD_EXPR_OPERANDS_24 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term20.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term20.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_25, operands: STAGE6_FIELD_EXPR_OPERANDS_25 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term21.stage_gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_26, operands: STAGE6_FIELD_EXPR_OPERANDS_26 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term21.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_27, operands: STAGE6_FIELD_EXPR_OPERANDS_27 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term21.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term21.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_28, operands: STAGE6_FIELD_EXPR_OPERANDS_28 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term22.stage_gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_26, operands: STAGE6_FIELD_EXPR_OPERANDS_26 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term22.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_29, operands: STAGE6_FIELD_EXPR_OPERANDS_29 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term22.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term22.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_30, operands: STAGE6_FIELD_EXPR_OPERANDS_30 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term23.stage_gamma_pow", kind: "op", formula: "field.pow:3", operand_names: STAGE6_FIELD_EXPR_OPERANDS_26, operands: STAGE6_FIELD_EXPR_OPERANDS_26 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term23.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_31, operands: STAGE6_FIELD_EXPR_OPERANDS_31 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term23.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term23.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_32, operands: STAGE6_FIELD_EXPR_OPERANDS_32 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term24.stage_gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_26, operands: STAGE6_FIELD_EXPR_OPERANDS_26 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term24.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_33, operands: STAGE6_FIELD_EXPR_OPERANDS_33 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term24.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term24.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_34, operands: STAGE6_FIELD_EXPR_OPERANDS_34 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term25.stage_gamma_pow", kind: "op", formula: "field.pow:5", operand_names: STAGE6_FIELD_EXPR_OPERANDS_26, operands: STAGE6_FIELD_EXPR_OPERANDS_26 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term25.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_35, operands: STAGE6_FIELD_EXPR_OPERANDS_35 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term25.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term25.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_36, operands: STAGE6_FIELD_EXPR_OPERANDS_36 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term26.stage_gamma_pow", kind: "op", formula: "field.pow:6", operand_names: STAGE6_FIELD_EXPR_OPERANDS_26, operands: STAGE6_FIELD_EXPR_OPERANDS_26 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term26.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_37, operands: STAGE6_FIELD_EXPR_OPERANDS_37 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term26.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term26.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_38, operands: STAGE6_FIELD_EXPR_OPERANDS_38 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term27.stage_gamma_pow", kind: "op", formula: "field.pow:7", operand_names: STAGE6_FIELD_EXPR_OPERANDS_26, operands: STAGE6_FIELD_EXPR_OPERANDS_26 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term27.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_39, operands: STAGE6_FIELD_EXPR_OPERANDS_39 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term27.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term27.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_40, operands: STAGE6_FIELD_EXPR_OPERANDS_40 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term28.stage_gamma_pow", kind: "op", formula: "field.pow:8", operand_names: STAGE6_FIELD_EXPR_OPERANDS_26, operands: STAGE6_FIELD_EXPR_OPERANDS_26 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term28.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_41, operands: STAGE6_FIELD_EXPR_OPERANDS_41 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term28.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term28.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_42, operands: STAGE6_FIELD_EXPR_OPERANDS_42 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term29.gamma_pow", kind: "op", formula: "field.pow:3", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term29.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_43, operands: STAGE6_FIELD_EXPR_OPERANDS_43 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term30.stage_gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_44, operands: STAGE6_FIELD_EXPR_OPERANDS_44 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term30.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_45, operands: STAGE6_FIELD_EXPR_OPERANDS_45 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term30.gamma_pow", kind: "op", formula: "field.pow:3", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term30.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_46, operands: STAGE6_FIELD_EXPR_OPERANDS_46 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term31.stage_gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_44, operands: STAGE6_FIELD_EXPR_OPERANDS_44 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term31.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_47, operands: STAGE6_FIELD_EXPR_OPERANDS_47 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term31.gamma_pow", kind: "op", formula: "field.pow:3", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term31.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_48, operands: STAGE6_FIELD_EXPR_OPERANDS_48 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term32.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term32.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_49, operands: STAGE6_FIELD_EXPR_OPERANDS_49 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term33.stage_gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term33.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_51, operands: STAGE6_FIELD_EXPR_OPERANDS_51 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term33.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term33.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_52, operands: STAGE6_FIELD_EXPR_OPERANDS_52 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term34.stage_gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term34.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_53, operands: STAGE6_FIELD_EXPR_OPERANDS_53 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term34.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term34.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_54, operands: STAGE6_FIELD_EXPR_OPERANDS_54 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term35.stage_gamma_pow", kind: "op", formula: "field.pow:3", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term35.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_55, operands: STAGE6_FIELD_EXPR_OPERANDS_55 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term35.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term35.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_56, operands: STAGE6_FIELD_EXPR_OPERANDS_56 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term36.stage_gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term36.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_57, operands: STAGE6_FIELD_EXPR_OPERANDS_57 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term36.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term36.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_58, operands: STAGE6_FIELD_EXPR_OPERANDS_58 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term37.stage_gamma_pow", kind: "op", formula: "field.pow:5", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term37.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_59, operands: STAGE6_FIELD_EXPR_OPERANDS_59 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term37.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term37.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_60, operands: STAGE6_FIELD_EXPR_OPERANDS_60 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term38.stage_gamma_pow", kind: "op", formula: "field.pow:6", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term38.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_61, operands: STAGE6_FIELD_EXPR_OPERANDS_61 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term38.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term38.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_62, operands: STAGE6_FIELD_EXPR_OPERANDS_62 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term39.stage_gamma_pow", kind: "op", formula: "field.pow:7", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term39.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_63, operands: STAGE6_FIELD_EXPR_OPERANDS_63 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term39.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term39.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_64, operands: STAGE6_FIELD_EXPR_OPERANDS_64 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term40.stage_gamma_pow", kind: "op", formula: "field.pow:8", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term40.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_65, operands: STAGE6_FIELD_EXPR_OPERANDS_65 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term40.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term40.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_66, operands: STAGE6_FIELD_EXPR_OPERANDS_66 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term41.stage_gamma_pow", kind: "op", formula: "field.pow:9", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term41.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_67, operands: STAGE6_FIELD_EXPR_OPERANDS_67 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term41.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term41.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_68, operands: STAGE6_FIELD_EXPR_OPERANDS_68 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term42.stage_gamma_pow", kind: "op", formula: "field.pow:10", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term42.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_69, operands: STAGE6_FIELD_EXPR_OPERANDS_69 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term42.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term42.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_70, operands: STAGE6_FIELD_EXPR_OPERANDS_70 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term43.stage_gamma_pow", kind: "op", formula: "field.pow:11", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term43.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_71, operands: STAGE6_FIELD_EXPR_OPERANDS_71 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term43.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term43.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_72, operands: STAGE6_FIELD_EXPR_OPERANDS_72 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term44.stage_gamma_pow", kind: "op", formula: "field.pow:12", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term44.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_73, operands: STAGE6_FIELD_EXPR_OPERANDS_73 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term44.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term44.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_74, operands: STAGE6_FIELD_EXPR_OPERANDS_74 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term45.stage_gamma_pow", kind: "op", formula: "field.pow:13", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term45.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_75, operands: STAGE6_FIELD_EXPR_OPERANDS_75 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term45.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term45.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_76, operands: STAGE6_FIELD_EXPR_OPERANDS_76 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term46.stage_gamma_pow", kind: "op", formula: "field.pow:14", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term46.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_77, operands: STAGE6_FIELD_EXPR_OPERANDS_77 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term46.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term46.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_78, operands: STAGE6_FIELD_EXPR_OPERANDS_78 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term47.stage_gamma_pow", kind: "op", formula: "field.pow:15", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term47.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_79, operands: STAGE6_FIELD_EXPR_OPERANDS_79 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term47.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term47.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_80, operands: STAGE6_FIELD_EXPR_OPERANDS_80 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term48.stage_gamma_pow", kind: "op", formula: "field.pow:16", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term48.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_81, operands: STAGE6_FIELD_EXPR_OPERANDS_81 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term48.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term48.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_82, operands: STAGE6_FIELD_EXPR_OPERANDS_82 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term49.stage_gamma_pow", kind: "op", formula: "field.pow:17", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term49.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_83, operands: STAGE6_FIELD_EXPR_OPERANDS_83 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term49.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term49.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_84, operands: STAGE6_FIELD_EXPR_OPERANDS_84 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term50.stage_gamma_pow", kind: "op", formula: "field.pow:18", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term50.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_85, operands: STAGE6_FIELD_EXPR_OPERANDS_85 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term50.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term50.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_86, operands: STAGE6_FIELD_EXPR_OPERANDS_86 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term51.stage_gamma_pow", kind: "op", formula: "field.pow:19", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term51.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_87, operands: STAGE6_FIELD_EXPR_OPERANDS_87 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term51.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term51.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_88, operands: STAGE6_FIELD_EXPR_OPERANDS_88 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term52.stage_gamma_pow", kind: "op", formula: "field.pow:20", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term52.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_89, operands: STAGE6_FIELD_EXPR_OPERANDS_89 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term52.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term52.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_90, operands: STAGE6_FIELD_EXPR_OPERANDS_90 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term53.stage_gamma_pow", kind: "op", formula: "field.pow:21", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term53.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_91, operands: STAGE6_FIELD_EXPR_OPERANDS_91 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term53.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term53.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_92, operands: STAGE6_FIELD_EXPR_OPERANDS_92 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term54.stage_gamma_pow", kind: "op", formula: "field.pow:22", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term54.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_93, operands: STAGE6_FIELD_EXPR_OPERANDS_93 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term54.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term54.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_94, operands: STAGE6_FIELD_EXPR_OPERANDS_94 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term55.stage_gamma_pow", kind: "op", formula: "field.pow:23", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term55.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_95, operands: STAGE6_FIELD_EXPR_OPERANDS_95 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term55.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term55.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_96, operands: STAGE6_FIELD_EXPR_OPERANDS_96 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term56.stage_gamma_pow", kind: "op", formula: "field.pow:24", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term56.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_97, operands: STAGE6_FIELD_EXPR_OPERANDS_97 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term56.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term56.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_98, operands: STAGE6_FIELD_EXPR_OPERANDS_98 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term57.stage_gamma_pow", kind: "op", formula: "field.pow:25", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term57.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_99, operands: STAGE6_FIELD_EXPR_OPERANDS_99 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term57.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term57.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_100, operands: STAGE6_FIELD_EXPR_OPERANDS_100 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term58.stage_gamma_pow", kind: "op", formula: "field.pow:26", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term58.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_101, operands: STAGE6_FIELD_EXPR_OPERANDS_101 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term58.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term58.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_102, operands: STAGE6_FIELD_EXPR_OPERANDS_102 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term59.stage_gamma_pow", kind: "op", formula: "field.pow:27", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term59.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_103, operands: STAGE6_FIELD_EXPR_OPERANDS_103 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term59.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term59.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_104, operands: STAGE6_FIELD_EXPR_OPERANDS_104 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term60.stage_gamma_pow", kind: "op", formula: "field.pow:28", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term60.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_105, operands: STAGE6_FIELD_EXPR_OPERANDS_105 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term60.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term60.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_106, operands: STAGE6_FIELD_EXPR_OPERANDS_106 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term61.stage_gamma_pow", kind: "op", formula: "field.pow:29", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term61.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_107, operands: STAGE6_FIELD_EXPR_OPERANDS_107 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term61.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term61.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_108, operands: STAGE6_FIELD_EXPR_OPERANDS_108 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term62.stage_gamma_pow", kind: "op", formula: "field.pow:30", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term62.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_109, operands: STAGE6_FIELD_EXPR_OPERANDS_109 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term62.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term62.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_110, operands: STAGE6_FIELD_EXPR_OPERANDS_110 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term63.stage_gamma_pow", kind: "op", formula: "field.pow:31", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term63.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_111, operands: STAGE6_FIELD_EXPR_OPERANDS_111 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term63.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term63.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_112, operands: STAGE6_FIELD_EXPR_OPERANDS_112 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term64.stage_gamma_pow", kind: "op", formula: "field.pow:32", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term64.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_113, operands: STAGE6_FIELD_EXPR_OPERANDS_113 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term64.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term64.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_114, operands: STAGE6_FIELD_EXPR_OPERANDS_114 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term65.stage_gamma_pow", kind: "op", formula: "field.pow:33", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term65.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_115, operands: STAGE6_FIELD_EXPR_OPERANDS_115 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term65.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term65.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_116, operands: STAGE6_FIELD_EXPR_OPERANDS_116 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term66.stage_gamma_pow", kind: "op", formula: "field.pow:34", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term66.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_117, operands: STAGE6_FIELD_EXPR_OPERANDS_117 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term66.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term66.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_118, operands: STAGE6_FIELD_EXPR_OPERANDS_118 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term67.stage_gamma_pow", kind: "op", formula: "field.pow:35", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term67.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_119, operands: STAGE6_FIELD_EXPR_OPERANDS_119 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term67.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term67.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_120, operands: STAGE6_FIELD_EXPR_OPERANDS_120 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term68.stage_gamma_pow", kind: "op", formula: "field.pow:36", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term68.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_121, operands: STAGE6_FIELD_EXPR_OPERANDS_121 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term68.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term68.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_122, operands: STAGE6_FIELD_EXPR_OPERANDS_122 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term69.stage_gamma_pow", kind: "op", formula: "field.pow:37", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term69.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_123, operands: STAGE6_FIELD_EXPR_OPERANDS_123 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term69.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term69.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_124, operands: STAGE6_FIELD_EXPR_OPERANDS_124 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term70.stage_gamma_pow", kind: "op", formula: "field.pow:38", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term70.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_125, operands: STAGE6_FIELD_EXPR_OPERANDS_125 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term70.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term70.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_126, operands: STAGE6_FIELD_EXPR_OPERANDS_126 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term71.stage_gamma_pow", kind: "op", formula: "field.pow:39", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term71.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_127, operands: STAGE6_FIELD_EXPR_OPERANDS_127 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term71.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term71.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_128, operands: STAGE6_FIELD_EXPR_OPERANDS_128 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term72.stage_gamma_pow", kind: "op", formula: "field.pow:40", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term72.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_129, operands: STAGE6_FIELD_EXPR_OPERANDS_129 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term72.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term72.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_130, operands: STAGE6_FIELD_EXPR_OPERANDS_130 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term73.stage_gamma_pow", kind: "op", formula: "field.pow:41", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term73.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_131, operands: STAGE6_FIELD_EXPR_OPERANDS_131 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term73.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term73.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_132, operands: STAGE6_FIELD_EXPR_OPERANDS_132 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term74.stage_gamma_pow", kind: "op", formula: "field.pow:42", operand_names: STAGE6_FIELD_EXPR_OPERANDS_50, operands: STAGE6_FIELD_EXPR_OPERANDS_50 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term74.stage_gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_133, operands: STAGE6_FIELD_EXPR_OPERANDS_133 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term74.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term74.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_134, operands: STAGE6_FIELD_EXPR_OPERANDS_134 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term75.gamma_pow", kind: "op", formula: "field.pow:5", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term75.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_135, operands: STAGE6_FIELD_EXPR_OPERANDS_135 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term76.gamma_pow", kind: "op", formula: "field.pow:6", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.term76.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_136, operands: STAGE6_FIELD_EXPR_OPERANDS_136 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim.entry_constant", kind: "op", formula: "field.pow:7", operand_names: STAGE6_FIELD_EXPR_OPERANDS_16, operands: STAGE6_FIELD_EXPR_OPERANDS_16 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial0", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_137, operands: STAGE6_FIELD_EXPR_OPERANDS_137 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial1", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_138, operands: STAGE6_FIELD_EXPR_OPERANDS_138 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial2", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_139, operands: STAGE6_FIELD_EXPR_OPERANDS_139 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial3", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_140, operands: STAGE6_FIELD_EXPR_OPERANDS_140 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial4", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_141, operands: STAGE6_FIELD_EXPR_OPERANDS_141 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial5", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_142, operands: STAGE6_FIELD_EXPR_OPERANDS_142 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial6", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_143, operands: STAGE6_FIELD_EXPR_OPERANDS_143 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial7", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_144, operands: STAGE6_FIELD_EXPR_OPERANDS_144 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial8", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_145, operands: STAGE6_FIELD_EXPR_OPERANDS_145 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial9", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_146, operands: STAGE6_FIELD_EXPR_OPERANDS_146 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial10", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_147, operands: STAGE6_FIELD_EXPR_OPERANDS_147 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial11", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_148, operands: STAGE6_FIELD_EXPR_OPERANDS_148 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial12", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_149, operands: STAGE6_FIELD_EXPR_OPERANDS_149 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial13", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_150, operands: STAGE6_FIELD_EXPR_OPERANDS_150 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial14", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_151, operands: STAGE6_FIELD_EXPR_OPERANDS_151 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial15", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_152, operands: STAGE6_FIELD_EXPR_OPERANDS_152 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial16", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_153, operands: STAGE6_FIELD_EXPR_OPERANDS_153 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial17", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_154, operands: STAGE6_FIELD_EXPR_OPERANDS_154 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial18", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_155, operands: STAGE6_FIELD_EXPR_OPERANDS_155 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial19", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_156, operands: STAGE6_FIELD_EXPR_OPERANDS_156 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial20", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_157, operands: STAGE6_FIELD_EXPR_OPERANDS_157 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial21", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_158, operands: STAGE6_FIELD_EXPR_OPERANDS_158 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial22", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_159, operands: STAGE6_FIELD_EXPR_OPERANDS_159 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial23", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_160, operands: STAGE6_FIELD_EXPR_OPERANDS_160 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial24", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_161, operands: STAGE6_FIELD_EXPR_OPERANDS_161 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial25", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_162, operands: STAGE6_FIELD_EXPR_OPERANDS_162 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial26", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_163, operands: STAGE6_FIELD_EXPR_OPERANDS_163 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial27", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_164, operands: STAGE6_FIELD_EXPR_OPERANDS_164 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial28", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_165, operands: STAGE6_FIELD_EXPR_OPERANDS_165 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial29", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_166, operands: STAGE6_FIELD_EXPR_OPERANDS_166 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial30", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_167, operands: STAGE6_FIELD_EXPR_OPERANDS_167 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial31", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_168, operands: STAGE6_FIELD_EXPR_OPERANDS_168 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial32", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_169, operands: STAGE6_FIELD_EXPR_OPERANDS_169 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial33", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_170, operands: STAGE6_FIELD_EXPR_OPERANDS_170 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial34", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_171, operands: STAGE6_FIELD_EXPR_OPERANDS_171 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial35", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_172, operands: STAGE6_FIELD_EXPR_OPERANDS_172 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial36", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_173, operands: STAGE6_FIELD_EXPR_OPERANDS_173 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial37", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_174, operands: STAGE6_FIELD_EXPR_OPERANDS_174 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial38", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_175, operands: STAGE6_FIELD_EXPR_OPERANDS_175 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial39", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_176, operands: STAGE6_FIELD_EXPR_OPERANDS_176 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial40", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_177, operands: STAGE6_FIELD_EXPR_OPERANDS_177 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial41", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_178, operands: STAGE6_FIELD_EXPR_OPERANDS_178 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial42", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_179, operands: STAGE6_FIELD_EXPR_OPERANDS_179 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial43", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_180, operands: STAGE6_FIELD_EXPR_OPERANDS_180 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial44", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_181, operands: STAGE6_FIELD_EXPR_OPERANDS_181 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial45", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_182, operands: STAGE6_FIELD_EXPR_OPERANDS_182 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial46", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_183, operands: STAGE6_FIELD_EXPR_OPERANDS_183 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial47", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_184, operands: STAGE6_FIELD_EXPR_OPERANDS_184 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial48", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_185, operands: STAGE6_FIELD_EXPR_OPERANDS_185 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial49", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_186, operands: STAGE6_FIELD_EXPR_OPERANDS_186 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial50", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_187, operands: STAGE6_FIELD_EXPR_OPERANDS_187 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial51", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_188, operands: STAGE6_FIELD_EXPR_OPERANDS_188 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial52", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_189, operands: STAGE6_FIELD_EXPR_OPERANDS_189 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial53", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_190, operands: STAGE6_FIELD_EXPR_OPERANDS_190 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial54", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_191, operands: STAGE6_FIELD_EXPR_OPERANDS_191 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial55", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_192, operands: STAGE6_FIELD_EXPR_OPERANDS_192 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial56", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_193, operands: STAGE6_FIELD_EXPR_OPERANDS_193 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial57", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_194, operands: STAGE6_FIELD_EXPR_OPERANDS_194 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial58", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_195, operands: STAGE6_FIELD_EXPR_OPERANDS_195 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial59", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_196, operands: STAGE6_FIELD_EXPR_OPERANDS_196 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial60", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_197, operands: STAGE6_FIELD_EXPR_OPERANDS_197 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial61", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_198, operands: STAGE6_FIELD_EXPR_OPERANDS_198 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial62", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_199, operands: STAGE6_FIELD_EXPR_OPERANDS_199 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial63", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_200, operands: STAGE6_FIELD_EXPR_OPERANDS_200 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial64", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_201, operands: STAGE6_FIELD_EXPR_OPERANDS_201 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial65", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_202, operands: STAGE6_FIELD_EXPR_OPERANDS_202 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial66", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_203, operands: STAGE6_FIELD_EXPR_OPERANDS_203 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial67", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_204, operands: STAGE6_FIELD_EXPR_OPERANDS_204 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial68", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_205, operands: STAGE6_FIELD_EXPR_OPERANDS_205 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial69", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_206, operands: STAGE6_FIELD_EXPR_OPERANDS_206 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial70", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_207, operands: STAGE6_FIELD_EXPR_OPERANDS_207 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial71", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_208, operands: STAGE6_FIELD_EXPR_OPERANDS_208 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial72", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_209, operands: STAGE6_FIELD_EXPR_OPERANDS_209 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial73", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_210, operands: STAGE6_FIELD_EXPR_OPERANDS_210 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial74", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_211, operands: STAGE6_FIELD_EXPR_OPERANDS_211 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial75", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_212, operands: STAGE6_FIELD_EXPR_OPERANDS_212 },
+    Stage6FieldExprPlan { symbol: "stage6.bytecode_read_raf.claim_expr.partial76", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_213, operands: STAGE6_FIELD_EXPR_OPERANDS_213 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term1.gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_214, operands: STAGE6_FIELD_EXPR_OPERANDS_214 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term1.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_215, operands: STAGE6_FIELD_EXPR_OPERANDS_215 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term2.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_214, operands: STAGE6_FIELD_EXPR_OPERANDS_214 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term2.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_216, operands: STAGE6_FIELD_EXPR_OPERANDS_216 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term3.gamma_pow", kind: "op", formula: "field.pow:3", operand_names: STAGE6_FIELD_EXPR_OPERANDS_214, operands: STAGE6_FIELD_EXPR_OPERANDS_214 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term3.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_217, operands: STAGE6_FIELD_EXPR_OPERANDS_217 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term4.gamma_pow", kind: "op", formula: "field.pow:4", operand_names: STAGE6_FIELD_EXPR_OPERANDS_214, operands: STAGE6_FIELD_EXPR_OPERANDS_214 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term4.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_218, operands: STAGE6_FIELD_EXPR_OPERANDS_218 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term5.gamma_pow", kind: "op", formula: "field.pow:5", operand_names: STAGE6_FIELD_EXPR_OPERANDS_214, operands: STAGE6_FIELD_EXPR_OPERANDS_214 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term5.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_219, operands: STAGE6_FIELD_EXPR_OPERANDS_219 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term6.gamma_pow", kind: "op", formula: "field.pow:6", operand_names: STAGE6_FIELD_EXPR_OPERANDS_214, operands: STAGE6_FIELD_EXPR_OPERANDS_214 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term6.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_220, operands: STAGE6_FIELD_EXPR_OPERANDS_220 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term7.gamma_pow", kind: "op", formula: "field.pow:7", operand_names: STAGE6_FIELD_EXPR_OPERANDS_214, operands: STAGE6_FIELD_EXPR_OPERANDS_214 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim.term7.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_221, operands: STAGE6_FIELD_EXPR_OPERANDS_221 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim_expr.partial0", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_222, operands: STAGE6_FIELD_EXPR_OPERANDS_222 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim_expr.partial1", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_223, operands: STAGE6_FIELD_EXPR_OPERANDS_223 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim_expr.partial2", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_224, operands: STAGE6_FIELD_EXPR_OPERANDS_224 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim_expr.partial3", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_225, operands: STAGE6_FIELD_EXPR_OPERANDS_225 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim_expr.partial4", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_226, operands: STAGE6_FIELD_EXPR_OPERANDS_226 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim_expr.partial5", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_227, operands: STAGE6_FIELD_EXPR_OPERANDS_227 },
+    Stage6FieldExprPlan { symbol: "stage6.instruction_ra_virtual.claim_expr.partial6", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_228, operands: STAGE6_FIELD_EXPR_OPERANDS_228 },
+    Stage6FieldExprPlan { symbol: "stage6.inc_claim_reduction.claim.ram_inc_stage4.gamma_pow", kind: "op", formula: "field.pow:1", operand_names: STAGE6_FIELD_EXPR_OPERANDS_229, operands: STAGE6_FIELD_EXPR_OPERANDS_229 },
+    Stage6FieldExprPlan { symbol: "stage6.inc_claim_reduction.claim.ram_inc_stage4.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_230, operands: STAGE6_FIELD_EXPR_OPERANDS_230 },
+    Stage6FieldExprPlan { symbol: "stage6.inc_claim_reduction.claim.rd_inc_stage4.gamma_pow", kind: "op", formula: "field.pow:2", operand_names: STAGE6_FIELD_EXPR_OPERANDS_229, operands: STAGE6_FIELD_EXPR_OPERANDS_229 },
+    Stage6FieldExprPlan { symbol: "stage6.inc_claim_reduction.claim.rd_inc_stage4.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_231, operands: STAGE6_FIELD_EXPR_OPERANDS_231 },
+    Stage6FieldExprPlan { symbol: "stage6.inc_claim_reduction.claim.rd_inc_stage5.gamma_pow", kind: "op", formula: "field.pow:3", operand_names: STAGE6_FIELD_EXPR_OPERANDS_229, operands: STAGE6_FIELD_EXPR_OPERANDS_229 },
+    Stage6FieldExprPlan { symbol: "stage6.inc_claim_reduction.claim.rd_inc_stage5.gamma_term", kind: "op", formula: "field.mul", operand_names: STAGE6_FIELD_EXPR_OPERANDS_232, operands: STAGE6_FIELD_EXPR_OPERANDS_232 },
+    Stage6FieldExprPlan { symbol: "stage6.inc_claim_reduction.claim_expr.partial0", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_233, operands: STAGE6_FIELD_EXPR_OPERANDS_233 },
+    Stage6FieldExprPlan { symbol: "stage6.inc_claim_reduction.claim_expr.partial1", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_234, operands: STAGE6_FIELD_EXPR_OPERANDS_234 },
+    Stage6FieldExprPlan { symbol: "stage6.inc_claim_reduction.claim_expr.partial2", kind: "op", formula: "field.add", operand_names: STAGE6_FIELD_EXPR_OPERANDS_235, operands: STAGE6_FIELD_EXPR_OPERANDS_235 },
 ];
 pub const STAGE6_KERNELS: &[Stage6KernelPlan] = &[
     Stage6KernelPlan { symbol: "jolt.cpu.stage6.bytecode_read_raf", relation: "jolt.stage6.bytecode_read_raf", kind: "sumcheck", backend: "cpu", abi: "jolt_stage6_bytecode_read_raf" },
@@ -1975,6 +1895,8 @@ pub const STAGE6_POINT_SLICES: &[Stage6PointSlicePlan] = &[
     Stage6PointSlicePlan { symbol: "stage6.instruction_ra_virtual.point.InstructionRa_29.address", source: "stage6.input.stage5.instruction_read_raf.InstructionRa_7", offset: 4, length: 4, input: "stage6.input.stage5.instruction_read_raf.InstructionRa_7" },
     Stage6PointSlicePlan { symbol: "stage6.instruction_ra_virtual.point.InstructionRa_30.address", source: "stage6.input.stage5.instruction_read_raf.InstructionRa_7", offset: 8, length: 4, input: "stage6.input.stage5.instruction_read_raf.InstructionRa_7" },
     Stage6PointSlicePlan { symbol: "stage6.instruction_ra_virtual.point.InstructionRa_31.address", source: "stage6.input.stage5.instruction_read_raf.InstructionRa_7", offset: 12, length: 4, input: "stage6.input.stage5.instruction_read_raf.InstructionRa_7" },
+    Stage6PointSlicePlan { symbol: "stage6.booleanity.output.point.Address", source: "stage6.input.stage5.instruction_read_raf.InstructionRa_0", offset: 0, length: 4, input: "stage6.input.stage5.instruction_read_raf.InstructionRa_0" },
+    Stage6PointSlicePlan { symbol: "stage6.booleanity.output.point.Cycle", source: "stage6.input.stage5.instruction_read_raf.InstructionRa_0", offset: 16, length: 16, input: "stage6.input.stage5.instruction_read_raf.InstructionRa_0" },
 ];
 
 pub const STAGE6_POINT_CONCAT_0_INPUTS: &[&str] = &[
@@ -2177,6 +2099,11 @@ pub const STAGE6_POINT_CONCAT_39_INPUTS: &[&str] = &[
     "stage6.instruction_ra_virtual.instance",
 ];
 
+pub const STAGE6_POINT_CONCAT_40_INPUTS: &[&str] = &[
+    "stage6.booleanity.output.point.Address",
+    "stage6.booleanity.output.point.Cycle",
+];
+
 pub const STAGE6_POINT_CONCATS: &[Stage6PointConcatPlan] = &[
     Stage6PointConcatPlan { symbol: "stage6.bytecode_read_raf.point.BytecodeRa_0.address", layout: "left_zero_padded_address_chunk", arity: 4, inputs: STAGE6_POINT_CONCAT_0_INPUTS },
     Stage6PointConcatPlan { symbol: "stage6.bytecode_read_raf.point.BytecodeRa_0", layout: "address_chunk_then_cycle", arity: 20, inputs: STAGE6_POINT_CONCAT_1_INPUTS },
@@ -2218,6 +2145,7 @@ pub const STAGE6_POINT_CONCATS: &[Stage6PointConcatPlan] = &[
     Stage6PointConcatPlan { symbol: "stage6.instruction_ra_virtual.point.InstructionRa_29", layout: "address_chunk_then_cycle", arity: 20, inputs: STAGE6_POINT_CONCAT_37_INPUTS },
     Stage6PointConcatPlan { symbol: "stage6.instruction_ra_virtual.point.InstructionRa_30", layout: "address_chunk_then_cycle", arity: 20, inputs: STAGE6_POINT_CONCAT_38_INPUTS },
     Stage6PointConcatPlan { symbol: "stage6.instruction_ra_virtual.point.InstructionRa_31", layout: "address_chunk_then_cycle", arity: 20, inputs: STAGE6_POINT_CONCAT_39_INPUTS },
+    Stage6PointConcatPlan { symbol: "stage6.booleanity.output.point", layout: "address_prefix_then_cycle", arity: 20, inputs: STAGE6_POINT_CONCAT_40_INPUTS },
 ];
 pub const STAGE6_OPENING_CLAIMS: &[Stage6OpeningClaimPlan] = &[
     Stage6OpeningClaimPlan { symbol: "stage6.bytecode_read_raf.opening.BytecodeRa_0", oracle: "BytecodeRa_0", domain: "jolt.main_witness_commit_domain", point_arity: 20, claim_kind: "committed", point_source: "stage6.bytecode_read_raf.point.BytecodeRa_0", eval_source: "stage6.bytecode_read_raf.eval.BytecodeRa_0" },

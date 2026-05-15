@@ -12,8 +12,8 @@
 //! - point normalizations for the Jolt bytecode and instruction RA
 //!   read-RAF lookup arguments
 //! - the `Stage67BytecodeEntry` contract a Jolt bytecode row must implement
-//! - the remaining `expected_stage67_*` relation evaluators for Stage 6
-//!   booleanity and bytecode-read-RAF relations
+//! - the remaining `expected_stage67_*` relation evaluator for the Stage 6
+//!   bytecode-read-RAF relation
 //! - the small Jolt-specific field-math helpers
 //!   (`operand_polynomial_eval`, `identity_polynomial_eval`,
 //!   `lt_polynomial_eval`, `bytecode_gamma_powers`) used only by Jolt
@@ -26,7 +26,7 @@
 //!
 //! See `crates/bolt/GOAL.md` "Audit Tiers" for the full tier definition.
 
-use jolt_field::{Field, Fr, MulPow2, RingCore};
+use jolt_field::{Field, Fr, MulPow2};
 use jolt_poly::EqPolynomial;
 
 use bolt_verifier_runtime::{
@@ -86,13 +86,6 @@ pub fn normalize_instruction_read_raf_point<F: Field>(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stage67RelationSymbols {
     pub hamming_booleanity_instance: &'static str,
-    pub booleanity_point: &'static str,
-    pub stage5_instruction_ra0: &'static str,
-    pub booleanity_combined_point: &'static str,
-    pub booleanity_gamma: &'static str,
-    pub booleanity_instruction_ra_prefix: &'static str,
-    pub booleanity_bytecode_ra_prefix: &'static str,
-    pub booleanity_ram_ra_prefix: &'static str,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,83 +189,6 @@ pub fn expected_stage67_bytecode_read_raf<E: Stage67BytecodeEntry>(
         .into_iter()
         .product::<Fr>();
     Ok((val + entry_contrib) * bytecode_ra)
-}
-
-pub fn expected_stage67_booleanity(
-    store: &ValueStore<Fr>,
-    evals: &[StageNamedEval<Fr>],
-    local_point: &[Fr],
-    log_t: usize,
-    symbols: &Stage67RelationSymbols,
-) -> Result<Fr, RuntimePlanError> {
-    let log_k_chunk =
-        local_point
-            .len()
-            .checked_sub(log_t)
-            .ok_or(RuntimePlanError::InvalidInputLength {
-                input: symbols.booleanity_point,
-                expected: log_t,
-                actual: local_point.len(),
-            })?;
-    let stage5_point = store_point(store, symbols.stage5_instruction_ra0)?;
-    let stage5_address_len =
-        stage5_point
-            .len()
-            .checked_sub(log_t)
-            .ok_or(RuntimePlanError::InvalidInputLength {
-                input: symbols.stage5_instruction_ra0,
-                expected: log_t,
-                actual: stage5_point.len(),
-            })?;
-    if stage5_address_len < log_k_chunk {
-        return Err(RuntimePlanError::InvalidInputLength {
-            input: symbols.stage5_instruction_ra0,
-            expected: log_k_chunk + log_t,
-            actual: stage5_point.len(),
-        });
-    }
-
-    let mut stage5_addr = stage5_point[..stage5_address_len].to_vec();
-    stage5_addr.reverse();
-    let mut combined_r = stage5_addr[stage5_address_len - log_k_chunk..].to_vec();
-    combined_r.extend(stage5_point[stage5_address_len..].iter().rev().copied());
-    if combined_r.len() != local_point.len() {
-        return Err(RuntimePlanError::InvalidInputLength {
-            input: symbols.booleanity_combined_point,
-            expected: local_point.len(),
-            actual: combined_r.len(),
-        });
-    }
-    let mut verifier_point = combined_r[..log_k_chunk].to_vec();
-    verifier_point.reverse();
-    verifier_point.extend(combined_r[log_k_chunk..].iter().rev().copied());
-    let eq_eval = EqPolynomial::<Fr>::mle(local_point, &verifier_point);
-
-    let gamma = store_scalar(store, symbols.booleanity_gamma)?;
-    let gamma_sq = gamma.square();
-    let mut gamma_power = Fr::from_u64(1);
-    let mut booleanity = Fr::from_u64(0);
-    for ra in stage67_booleanity_evals(evals, symbols)? {
-        booleanity += gamma_power * (ra.square() - ra);
-        gamma_power *= gamma_sq;
-    }
-    Ok(eq_eval * booleanity)
-}
-
-fn stage67_booleanity_evals(
-    evals: &[StageNamedEval<Fr>],
-    symbols: &Stage67RelationSymbols,
-) -> Result<Vec<Fr>, RuntimePlanError> {
-    let mut values = indexed_evals_by_prefix_any(evals, symbols.booleanity_instruction_ra_prefix)?;
-    values.extend(indexed_evals_by_prefix_any(
-        evals,
-        symbols.booleanity_bytecode_ra_prefix,
-    )?);
-    values.extend(indexed_evals_by_prefix_any(
-        evals,
-        symbols.booleanity_ram_ra_prefix,
-    )?);
-    Ok(values)
 }
 
 fn stage67_bytecode_stage_cycle_points(

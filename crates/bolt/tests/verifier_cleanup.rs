@@ -398,6 +398,7 @@ fn stage67_output_plan_cutover_removed_obsolete_relation_helpers() {
     for path in relation_sources {
         let source = std::fs::read_to_string(&path).expect("read Jolt relation source");
         for stale in [
+            "expected_stage67_booleanity",
             "expected_stage67_hamming_booleanity",
             "expected_stage67_ram_ra_virtual",
             "expected_stage67_instruction_ra_virtual",
@@ -415,6 +416,12 @@ fn stage67_output_plan_cutover_removed_obsolete_relation_helpers() {
         std::fs::read_to_string(root.join("crates/jolt-verifier/src/stages/stage6.rs"))
             .expect("read generated Stage 6 verifier source");
     for stale_field in [
+        "booleanity_point",
+        "stage5_instruction_ra0",
+        "booleanity_combined_point",
+        "booleanity_instruction_ra_prefix",
+        "booleanity_bytecode_ra_prefix",
+        "booleanity_ram_ra_prefix",
         "hamming_weight_eval",
         "hamming_lookup_output",
         "ram_ra_virtual_cycle",
