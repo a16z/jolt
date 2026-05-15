@@ -10,8 +10,7 @@ pub fn main() {
     let mut program = compile_fib(target_dir);
 
     let prove_start = Instant::now();
-    let (output, bundle) =
-        prove_fib(&mut program, 50).expect("modular prove succeeds on fib");
+    let (output, bundle) = prove_fib(&mut program, 50).expect("modular prove succeeds on fib");
     let prove_secs = prove_start.elapsed().as_secs_f64();
 
     let verify_start = Instant::now();

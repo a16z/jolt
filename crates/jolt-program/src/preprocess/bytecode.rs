@@ -43,11 +43,7 @@ impl BytecodePreprocessing {
         bytecode.insert(0, noop_instruction());
         let pc_map = BytecodePCMapper::try_new(&bytecode)?;
 
-        let code_size = bytecode
-            .len()
-            .next_power_of_two()
-            .max(min_code_size)
-            .max(2);
+        let code_size = bytecode.len().next_power_of_two().max(min_code_size).max(2);
         bytecode.resize(code_size, noop_instruction());
 
         Ok(Self {

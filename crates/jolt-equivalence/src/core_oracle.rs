@@ -499,7 +499,6 @@ fn core_guest_commitment_fixture(
     }
 }
 
-
 pub fn assert_core_accepts_bolt_stage1(
     fixture: &CoreMuldivCommitmentFixture,
     artifacts: &Stage1ExecutionArtifacts<Fr>,

@@ -24,8 +24,8 @@ use common::jolt_device::{JoltDevice, MemoryLayout};
 use jolt_core::host::Program;
 use jolt_core::zkvm::instruction::InstructionLookup;
 use jolt_core::zkvm::lookup_table::LookupTables as CoreLookupTables;
+use jolt_core::zkvm::ram::gen_ram_memory_states;
 use jolt_dory::{DoryProverSetup, DoryScheme};
-use jolt_lookup_tables::tables::LookupTableKind;
 use jolt_field::Fr;
 use jolt_kernels::stage1::{Stage1OuterRv64Data, Stage1Rv64Cycle};
 use jolt_kernels::stage2::{Stage2RamAccess, Stage2RamData, Stage2RamOutputLayout};
@@ -36,8 +36,8 @@ use jolt_kernels::trace::{
     stage2_product_virtual_cycles, stage2_ram_accesses, stage3_cycles, stage4_register_accesses,
     stage5_lookup_trace, stage6_bytecode_entries, CycleRow, Stage5LookupTrace,
 };
+use jolt_lookup_tables::tables::LookupTableKind;
 use jolt_openings::CommitmentScheme as _;
-use jolt_core::zkvm::ram::gen_ram_memory_states;
 use jolt_program::execution::TraceRow;
 use jolt_program::preprocess::{BytecodePreprocessing, RAMPreprocessing};
 use jolt_r1cs::{constraints::rv64, R1csKey};
@@ -46,9 +46,7 @@ use jolt_verifier::{
     default_verifier_programs, verify_jolt_with_programs, JoltProof, JoltVerifierInputs,
     JoltVerifyError,
 };
-use jolt_witness::{
-    Stage6BytecodeEntry as WitnessStage6BytecodeEntry, Stage6WitnessParams,
-};
+use jolt_witness::{Stage6BytecodeEntry as WitnessStage6BytecodeEntry, Stage6WitnessParams};
 use strum::EnumCount;
 use tracer::emulator::memory::Memory;
 use tracer::trace_row_from_cycle;
@@ -71,50 +69,112 @@ fn instruction_lookup_table_index(instr: &jolt_riscv::NormalizedInstruction) -> 
 /// `LookupTableKind<XLEN>::index()`. Verbatim copy of
 /// `jolt_equivalence::core_oracle::core_lookup_table_to_modular_index`;
 /// kept private here to avoid a heavy dep on jolt-equivalence.
-fn core_lookup_table_to_modular_index<const XL: usize>(
-    table: &CoreLookupTables<XL>,
-) -> usize {
+fn core_lookup_table_to_modular_index<const XL: usize>(table: &CoreLookupTables<XL>) -> usize {
     match table {
-        CoreLookupTables::RangeCheck(_) => LookupTableKind::<XL>::RangeCheck(Default::default()).index(),
-        CoreLookupTables::RangeCheckAligned(_) => LookupTableKind::<XL>::RangeCheckAligned(Default::default()).index(),
+        CoreLookupTables::RangeCheck(_) => {
+            LookupTableKind::<XL>::RangeCheck(Default::default()).index()
+        }
+        CoreLookupTables::RangeCheckAligned(_) => {
+            LookupTableKind::<XL>::RangeCheckAligned(Default::default()).index()
+        }
         CoreLookupTables::And(_) => LookupTableKind::<XL>::And(Default::default()).index(),
         CoreLookupTables::Andn(_) => LookupTableKind::<XL>::Andn(Default::default()).index(),
         CoreLookupTables::Or(_) => LookupTableKind::<XL>::Or(Default::default()).index(),
         CoreLookupTables::Xor(_) => LookupTableKind::<XL>::Xor(Default::default()).index(),
         CoreLookupTables::Equal(_) => LookupTableKind::<XL>::Equal(Default::default()).index(),
-        CoreLookupTables::SignedGreaterThanEqual(_) => LookupTableKind::<XL>::SignedGreaterThanEqual(Default::default()).index(),
-        CoreLookupTables::UnsignedGreaterThanEqual(_) => LookupTableKind::<XL>::UnsignedGreaterThanEqual(Default::default()).index(),
-        CoreLookupTables::NotEqual(_) => LookupTableKind::<XL>::NotEqual(Default::default()).index(),
-        CoreLookupTables::SignedLessThan(_) => LookupTableKind::<XL>::SignedLessThan(Default::default()).index(),
-        CoreLookupTables::UnsignedLessThan(_) => LookupTableKind::<XL>::UnsignedLessThan(Default::default()).index(),
+        CoreLookupTables::SignedGreaterThanEqual(_) => {
+            LookupTableKind::<XL>::SignedGreaterThanEqual(Default::default()).index()
+        }
+        CoreLookupTables::UnsignedGreaterThanEqual(_) => {
+            LookupTableKind::<XL>::UnsignedGreaterThanEqual(Default::default()).index()
+        }
+        CoreLookupTables::NotEqual(_) => {
+            LookupTableKind::<XL>::NotEqual(Default::default()).index()
+        }
+        CoreLookupTables::SignedLessThan(_) => {
+            LookupTableKind::<XL>::SignedLessThan(Default::default()).index()
+        }
+        CoreLookupTables::UnsignedLessThan(_) => {
+            LookupTableKind::<XL>::UnsignedLessThan(Default::default()).index()
+        }
         CoreLookupTables::Movsign(_) => LookupTableKind::<XL>::SignMask(Default::default()).index(),
-        CoreLookupTables::UpperWord(_) => LookupTableKind::<XL>::UpperWord(Default::default()).index(),
-        CoreLookupTables::LessThanEqual(_) => LookupTableKind::<XL>::UnsignedLessThanEqual(Default::default()).index(),
-        CoreLookupTables::ValidUnsignedRemainder(_) => LookupTableKind::<XL>::ValidUnsignedRemainder(Default::default()).index(),
-        CoreLookupTables::ValidDiv0(_) => LookupTableKind::<XL>::ValidDiv0(Default::default()).index(),
-        CoreLookupTables::HalfwordAlignment(_) => LookupTableKind::<XL>::HalfwordAlignment(Default::default()).index(),
-        CoreLookupTables::WordAlignment(_) => LookupTableKind::<XL>::WordAlignment(Default::default()).index(),
-        CoreLookupTables::LowerHalfWord(_) => LookupTableKind::<XL>::LowerHalfWord(Default::default()).index(),
-        CoreLookupTables::SignExtendHalfWord(_) => LookupTableKind::<XL>::SignExtendHalfWord(Default::default()).index(),
+        CoreLookupTables::UpperWord(_) => {
+            LookupTableKind::<XL>::UpperWord(Default::default()).index()
+        }
+        CoreLookupTables::LessThanEqual(_) => {
+            LookupTableKind::<XL>::UnsignedLessThanEqual(Default::default()).index()
+        }
+        CoreLookupTables::ValidUnsignedRemainder(_) => {
+            LookupTableKind::<XL>::ValidUnsignedRemainder(Default::default()).index()
+        }
+        CoreLookupTables::ValidDiv0(_) => {
+            LookupTableKind::<XL>::ValidDiv0(Default::default()).index()
+        }
+        CoreLookupTables::HalfwordAlignment(_) => {
+            LookupTableKind::<XL>::HalfwordAlignment(Default::default()).index()
+        }
+        CoreLookupTables::WordAlignment(_) => {
+            LookupTableKind::<XL>::WordAlignment(Default::default()).index()
+        }
+        CoreLookupTables::LowerHalfWord(_) => {
+            LookupTableKind::<XL>::LowerHalfWord(Default::default()).index()
+        }
+        CoreLookupTables::SignExtendHalfWord(_) => {
+            LookupTableKind::<XL>::SignExtendHalfWord(Default::default()).index()
+        }
         CoreLookupTables::Pow2(_) => LookupTableKind::<XL>::Pow2(Default::default()).index(),
         CoreLookupTables::Pow2W(_) => LookupTableKind::<XL>::Pow2W(Default::default()).index(),
-        CoreLookupTables::ShiftRightBitmask(_) => LookupTableKind::<XL>::ShiftRightBitmask(Default::default()).index(),
-        CoreLookupTables::VirtualRev8W(_) => LookupTableKind::<XL>::VirtualRev8W(Default::default()).index(),
-        CoreLookupTables::VirtualSRL(_) => LookupTableKind::<XL>::VirtualSRL(Default::default()).index(),
-        CoreLookupTables::VirtualSRA(_) => LookupTableKind::<XL>::VirtualSRA(Default::default()).index(),
-        CoreLookupTables::VirtualROTR(_) => LookupTableKind::<XL>::VirtualROTR(Default::default()).index(),
-        CoreLookupTables::VirtualROTRW(_) => LookupTableKind::<XL>::VirtualROTRW(Default::default()).index(),
-        CoreLookupTables::VirtualChangeDivisor(_) => LookupTableKind::<XL>::VirtualChangeDivisor(Default::default()).index(),
-        CoreLookupTables::VirtualChangeDivisorW(_) => LookupTableKind::<XL>::VirtualChangeDivisorW(Default::default()).index(),
-        CoreLookupTables::MulUNoOverflow(_) => LookupTableKind::<XL>::MulUNoOverflow(Default::default()).index(),
-        CoreLookupTables::VirtualXORROT32(_) => LookupTableKind::<XL>::VirtualXORROT32(Default::default()).index(),
-        CoreLookupTables::VirtualXORROT24(_) => LookupTableKind::<XL>::VirtualXORROT24(Default::default()).index(),
-        CoreLookupTables::VirtualXORROT16(_) => LookupTableKind::<XL>::VirtualXORROT16(Default::default()).index(),
-        CoreLookupTables::VirtualXORROT63(_) => LookupTableKind::<XL>::VirtualXORROT63(Default::default()).index(),
-        CoreLookupTables::VirtualXORROTW16(_) => LookupTableKind::<XL>::VirtualXORROTW16(Default::default()).index(),
-        CoreLookupTables::VirtualXORROTW12(_) => LookupTableKind::<XL>::VirtualXORROTW12(Default::default()).index(),
-        CoreLookupTables::VirtualXORROTW8(_) => LookupTableKind::<XL>::VirtualXORROTW8(Default::default()).index(),
-        CoreLookupTables::VirtualXORROTW7(_) => LookupTableKind::<XL>::VirtualXORROTW7(Default::default()).index(),
+        CoreLookupTables::ShiftRightBitmask(_) => {
+            LookupTableKind::<XL>::ShiftRightBitmask(Default::default()).index()
+        }
+        CoreLookupTables::VirtualRev8W(_) => {
+            LookupTableKind::<XL>::VirtualRev8W(Default::default()).index()
+        }
+        CoreLookupTables::VirtualSRL(_) => {
+            LookupTableKind::<XL>::VirtualSRL(Default::default()).index()
+        }
+        CoreLookupTables::VirtualSRA(_) => {
+            LookupTableKind::<XL>::VirtualSRA(Default::default()).index()
+        }
+        CoreLookupTables::VirtualROTR(_) => {
+            LookupTableKind::<XL>::VirtualROTR(Default::default()).index()
+        }
+        CoreLookupTables::VirtualROTRW(_) => {
+            LookupTableKind::<XL>::VirtualROTRW(Default::default()).index()
+        }
+        CoreLookupTables::VirtualChangeDivisor(_) => {
+            LookupTableKind::<XL>::VirtualChangeDivisor(Default::default()).index()
+        }
+        CoreLookupTables::VirtualChangeDivisorW(_) => {
+            LookupTableKind::<XL>::VirtualChangeDivisorW(Default::default()).index()
+        }
+        CoreLookupTables::MulUNoOverflow(_) => {
+            LookupTableKind::<XL>::MulUNoOverflow(Default::default()).index()
+        }
+        CoreLookupTables::VirtualXORROT32(_) => {
+            LookupTableKind::<XL>::VirtualXORROT32(Default::default()).index()
+        }
+        CoreLookupTables::VirtualXORROT24(_) => {
+            LookupTableKind::<XL>::VirtualXORROT24(Default::default()).index()
+        }
+        CoreLookupTables::VirtualXORROT16(_) => {
+            LookupTableKind::<XL>::VirtualXORROT16(Default::default()).index()
+        }
+        CoreLookupTables::VirtualXORROT63(_) => {
+            LookupTableKind::<XL>::VirtualXORROT63(Default::default()).index()
+        }
+        CoreLookupTables::VirtualXORROTW16(_) => {
+            LookupTableKind::<XL>::VirtualXORROTW16(Default::default()).index()
+        }
+        CoreLookupTables::VirtualXORROTW12(_) => {
+            LookupTableKind::<XL>::VirtualXORROTW12(Default::default()).index()
+        }
+        CoreLookupTables::VirtualXORROTW8(_) => {
+            LookupTableKind::<XL>::VirtualXORROTW8(Default::default()).index()
+        }
+        CoreLookupTables::VirtualXORROTW7(_) => {
+            LookupTableKind::<XL>::VirtualXORROTW7(Default::default()).index()
+        }
     }
 }
 
@@ -408,8 +468,13 @@ fn assemble_and_prove(
     let memory_layout = io_device.memory_layout.clone();
 
     let r1cs_key = R1csKey::new(rv64::rv64_constraints::<Fr>(), trace_length);
-    let (cycle_inputs, r1cs_witness) =
-        extract_trace_rows::<Fr>(trace, trace_length, bytecode, &memory_layout, r1cs_key.num_vars_padded);
+    let (cycle_inputs, r1cs_witness) = extract_trace_rows::<Fr>(
+        trace,
+        trace_length,
+        bytecode,
+        &memory_layout,
+        r1cs_key.num_vars_padded,
+    );
     let rv64_cycles: Vec<Stage1Rv64Cycle> = stage1_rv64_cycles(trace, trace_length, bytecode);
     let product_virtual_cycles = stage2_product_virtual_cycles(trace, trace_length);
     let instruction_lookup_cycles = stage2_instruction_lookup_cycles(trace, trace_length);
@@ -438,12 +503,8 @@ fn assemble_and_prove(
     // gen_ram_memory_states is generic over `F: jolt_core::field::JoltField`;
     // jolt_field::Fr is a transparent newtype around ark_bn254::Fr without
     // that bound, so we instantiate with the inner ark type.
-    let (initial_ram_state, final_ram_state) = gen_ram_memory_states::<ark_bn254::Fr>(
-        ram_k,
-        &ram_preprocessing,
-        io_device,
-        final_memory,
-    );
+    let (initial_ram_state, final_ram_state) =
+        gen_ram_memory_states::<ark_bn254::Fr>(ram_k, &ram_preprocessing, io_device, final_memory);
 
     let pcs_setup = DoryScheme::setup_prover(params.log_t + params.log_k_chunk);
 
@@ -790,9 +851,21 @@ where
     append_u64(transcript, b"ram_K", data.params.ram_k as u64);
     append_u64(transcript, b"trace_length", data.params.trace_length as u64);
     append_u64(transcript, b"entry_address", data.entry_address);
-    append_u64(transcript, b"ram_rw_phase1_num_rounds", data.params.log_t as u64);
-    append_u64(transcript, b"ram_rw_phase2_num_rounds", data.params.log_k_ram as u64);
-    append_u64(transcript, b"registers_rw_phase1_num_rounds", data.params.log_t as u64);
+    append_u64(
+        transcript,
+        b"ram_rw_phase1_num_rounds",
+        data.params.log_t as u64,
+    );
+    append_u64(
+        transcript,
+        b"ram_rw_phase2_num_rounds",
+        data.params.log_k_ram as u64,
+    );
+    append_u64(
+        transcript,
+        b"registers_rw_phase1_num_rounds",
+        data.params.log_t as u64,
+    );
     append_u64(
         transcript,
         b"registers_rw_phase2_num_rounds",

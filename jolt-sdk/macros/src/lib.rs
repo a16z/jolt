@@ -220,10 +220,8 @@ impl MacroBuilder {
 
         let pub_arg_names: Vec<_> = self.pub_func_args.iter().map(|(n, _)| n).collect();
         let pub_arg_types: Vec<_> = self.pub_func_args.iter().map(|(_, t)| t).collect();
-        let untrusted_arg_names: Vec<_> =
-            self.untrusted_func_args.iter().map(|(n, _)| n).collect();
-        let untrusted_arg_types: Vec<_> =
-            self.untrusted_func_args.iter().map(|(_, t)| t).collect();
+        let untrusted_arg_names: Vec<_> = self.untrusted_func_args.iter().map(|(n, _)| n).collect();
+        let untrusted_arg_types: Vec<_> = self.untrusted_func_args.iter().map(|(_, t)| t).collect();
 
         let (ret_ty, decode_ret) = match &self.func.sig.output {
             ReturnType::Default => (quote! { () }, quote! { let ret_val: () = (); }),

@@ -2915,7 +2915,6 @@ dependencies = [
  "jolt-program",
  "jolt-prover",
  "jolt-r1cs",
- "jolt-riscv",
  "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
@@ -3002,7 +3001,6 @@ dependencies = [
  "postcard",
  "strum 0.28.0",
  "tracer",
- "tracing",
 ]
 
 [[package]]
