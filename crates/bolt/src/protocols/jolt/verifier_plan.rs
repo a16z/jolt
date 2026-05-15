@@ -171,6 +171,13 @@ pub(crate) struct VerifierSumcheckInstanceResultPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VerifierPointZeroPlan {
+    pub(crate) symbol: String,
+    pub(crate) field: String,
+    pub(crate) arity: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VerifierPointSlicePlan {
     pub(crate) symbol: String,
     pub(crate) source: String,
@@ -228,6 +235,7 @@ pub(crate) struct VerifierStagePlan {
     pub(crate) batches: Vec<VerifierSumcheckBatchPlan>,
     pub(crate) drivers: Vec<VerifierSumcheckDriverPlan>,
     pub(crate) instance_results: Vec<VerifierSumcheckInstanceResultPlan>,
+    pub(crate) point_zeros: Vec<VerifierPointZeroPlan>,
     pub(crate) point_slices: Vec<VerifierPointSlicePlan>,
     pub(crate) point_concats: Vec<VerifierPointConcatPlan>,
     pub(crate) opening_claims: Vec<VerifierOpeningClaimPlan>,
@@ -432,6 +440,37 @@ pub(crate) fn emit_field_expr_constants(
     )
 }
 
+pub(crate) fn emit_field_expr_constants_chunked(
+    stage_type_prefix: &str,
+    const_prefix: &str,
+    helper_name: &str,
+    exprs: &[VerifierFieldExprPlan],
+    chunk_size: usize,
+) -> String {
+    let rows = exprs
+        .chunks(chunk_size)
+        .map(|chunk| {
+            let exprs = chunk
+                .iter()
+                .map(|expr| {
+                    format!(
+                        "{helper_name}({}, {}, {})",
+                        rust_str(&expr.symbol),
+                        field_expr_kind_expr(stage_type_prefix, expr.kind),
+                        rust_str_slice_expr(&expr.operands)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("    {exprs},")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "const fn {helper_name}(symbol: &'static str, kind: {stage_type_prefix}FieldExprKind, operands: &'static [&'static str]) -> {stage_type_prefix}FieldExprPlan {{\n    {stage_type_prefix}FieldExprPlan {{ symbol, kind, operands }}\n}}\n\n#[rustfmt::skip]\npub const {const_prefix}_FIELD_EXPRS: &[{stage_type_prefix}FieldExprPlan] = &[\n{rows}\n];\n"
+    )
+}
+
 pub(crate) fn emit_sumcheck_claim_constants(
     stage_type_prefix: &str,
     const_prefix: &str,
@@ -466,6 +505,12 @@ pub(crate) fn emit_sumcheck_batch_constants(
 ) -> String {
     let mut source = String::new();
     for (index, batch) in batches.iter().enumerate() {
+        emit_str_array_if_not_inline(
+            &mut source,
+            &format!("{const_prefix}_SUMCHECK_BATCH_{index}_CLAIM_OPERANDS"),
+            &batch.claim_operands,
+            4,
+        );
         source.push_str(&emit_usize_array(
             &format!("{const_prefix}_SUMCHECK_BATCH_{index}_ROUND_SCHEDULE"),
             &batch.round_schedule,
@@ -475,6 +520,11 @@ pub(crate) fn emit_sumcheck_batch_constants(
         .iter()
         .enumerate()
         .map(|(index, batch)| {
+            let claim_operands = str_slice_ref_expr(
+                &format!("{const_prefix}_SUMCHECK_BATCH_{index}_CLAIM_OPERANDS"),
+                &batch.claim_operands,
+                4,
+            );
             format!(
                 "    {stage_type_prefix}SumcheckBatchPlan {{ symbol: {}, stage: {}, proof_slot: {}, policy: {}, count: {}, claim_operands: {}, claim_label: {}, round_label: {}, round_schedule: {const_prefix}_SUMCHECK_BATCH_{index}_ROUND_SCHEDULE }},",
                 rust_str(&batch.symbol),
@@ -482,7 +532,7 @@ pub(crate) fn emit_sumcheck_batch_constants(
                 rust_str(&batch.proof_slot),
                 rust_str(&batch.policy),
                 batch.count,
-                rust_str_slice_expr(&batch.claim_operands),
+                claim_operands,
                 rust_str(&batch.claim_label),
                 rust_str(&batch.round_label)
             )
@@ -585,6 +635,28 @@ pub(crate) fn emit_point_slice_constants(
         .join("\n");
     format!(
         "pub const {const_prefix}_POINT_SLICES: &[{stage_type_prefix}PointSlicePlan] = &[\n{slices}\n];\n\n"
+    )
+}
+
+pub(crate) fn emit_point_zero_constants(
+    stage_type_prefix: &str,
+    const_prefix: &str,
+    zeros: &[VerifierPointZeroPlan],
+) -> String {
+    let zeros = zeros
+        .iter()
+        .map(|zero| {
+            format!(
+                "    {stage_type_prefix}PointZeroPlan {{ symbol: {}, field: {}, arity: {} }},",
+                rust_str(&zero.symbol),
+                rust_str(&zero.field),
+                zero.arity
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "pub const {const_prefix}_POINT_ZEROS: &[{stage_type_prefix}PointZeroPlan] = &[\n{zeros}\n];\n\n"
     )
 }
 
@@ -705,6 +777,33 @@ fn rust_str_slice_expr(values: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("&[{values}]")
+}
+
+fn str_slice_ref_expr(name: &str, values: &[String], inline_limit: usize) -> String {
+    if values.len() <= inline_limit {
+        return rust_str_slice_expr(values);
+    }
+    name.to_owned()
+}
+
+fn emit_str_array_if_not_inline(
+    source: &mut String,
+    name: &str,
+    values: &[String],
+    inline_limit: usize,
+) {
+    if values.len() <= inline_limit {
+        return;
+    }
+    let entries = values
+        .iter()
+        .map(|value| rust_str(value))
+        .collect::<Vec<_>>()
+        .join(",\n    ");
+    let _ = write!(
+        source,
+        "pub const {name}: &[&str] = &[\n    {entries},\n];\n\n"
+    );
 }
 
 fn rust_str(value: &str) -> String {

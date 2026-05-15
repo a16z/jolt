@@ -752,6 +752,7 @@ impl Stage4CpuProgram {
                     })
                 })
                 .collect::<Result<Vec<_>, EmitError>>()?,
+            point_zeros: Vec::new(),
             point_slices: self
                 .point_slices
                 .iter()
