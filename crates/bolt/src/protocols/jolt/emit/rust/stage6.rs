@@ -289,11 +289,13 @@ verifier_plan::impl_verifier_plan_source_traits!(
     step = Stage6ProgramStepPlan,
     squeeze = Stage6TranscriptSqueezePlan,
     opening_input = Stage6OpeningInputPlan,
+    field_constant = Stage6FieldConstantPlan,
     field_expr = Stage6FieldExprPlan,
     claim = Stage6SumcheckClaimPlan,
     batch = Stage6SumcheckBatchPlan,
     driver = Stage6SumcheckDriverPlan,
     instance = Stage6SumcheckInstanceResultPlan,
+    eval = Stage6SumcheckEvalPlan,
     point_slice = Stage6PointSlicePlan,
     point_concat = Stage6PointConcatPlan,
     opening_claim = Stage6OpeningClaimPlan,
@@ -302,6 +304,9 @@ verifier_plan::impl_verifier_plan_source_traits!(
     absorb = Stage6TranscriptAbsorbBytesPlan,
     point_zero = Stage6PointZeroPlan,
     indexed_eval_families = indexed_eval_families,
+    output_families = output_families,
+    output_product_families = output_product_families,
+    output_function_families = output_function_families,
 );
 
 pub fn stage6_cpu_program(module: &BoltModule<'_, Cpu>) -> Result<Stage6CpuProgram, EmitError> {
@@ -889,33 +894,6 @@ impl Stage6CpuProgram {
         values
     }
 
-    fn point_value_symbols(&self) -> verifier_values::VerifierPointSourceSet {
-        let mut values = verifier_values::VerifierPointSourceSet::default();
-        values.extend(
-            self.instance_results
-                .iter()
-                .map(|instance| &instance.symbol),
-            verifier_values::VerifierPointSourceKind::SumcheckInstance,
-        );
-        values.extend(
-            self.opening_inputs.iter().map(|input| &input.symbol),
-            verifier_values::VerifierPointSourceKind::OpeningInput,
-        );
-        values.extend(
-            self.point_zeros.iter().map(|zero| &zero.symbol),
-            verifier_values::VerifierPointSourceKind::PointZero,
-        );
-        values.extend(
-            self.point_slices.iter().map(|slice| &slice.symbol),
-            verifier_values::VerifierPointSourceKind::PointSlice,
-        );
-        values.extend(
-            self.point_concats.iter().map(|concat| &concat.symbol),
-            verifier_values::VerifierPointSourceKind::PointConcat,
-        );
-        values
-    }
-
     fn verify_kernel_definitions(&self) -> Result<(), EmitError> {
         for kernel in &self.kernels {
             if kernel.backend != "cpu" {
@@ -1089,8 +1067,9 @@ impl Stage6CpuProgram {
                 .iter()
                 .map(|instance| &instance.relation),
         );
-        let field_values = self.field_value_symbols();
-        let point_values = self.point_value_symbols();
+        let plan = self.verifier_plan()?;
+        let field_values = plan.scalar_value_sources();
+        let point_values = plan.point_value_sources();
         verifier_output_claims::verify_output_claims(
             "stage6",
             verifier_output_claims::OutputClaimVerification {

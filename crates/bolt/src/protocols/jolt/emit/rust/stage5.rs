@@ -263,11 +263,13 @@ verifier_plan::impl_verifier_plan_source_traits!(
     step = Stage5ProgramStepPlan,
     squeeze = Stage5TranscriptSqueezePlan,
     opening_input = Stage5OpeningInputPlan,
+    field_constant = Stage5FieldConstantPlan,
     field_expr = Stage5FieldExprPlan,
     claim = Stage5SumcheckClaimPlan,
     batch = Stage5SumcheckBatchPlan,
     driver = Stage5SumcheckDriverPlan,
     instance = Stage5SumcheckInstanceResultPlan,
+    eval = Stage5SumcheckEvalPlan,
     point_slice = Stage5PointSlicePlan,
     point_concat = Stage5PointConcatPlan,
     opening_claim = Stage5OpeningClaimPlan,
@@ -275,6 +277,9 @@ verifier_plan::impl_verifier_plan_source_traits!(
     opening_batch = Stage5OpeningBatchPlan,
     absorb = Stage5TranscriptAbsorbBytesPlan,
     indexed_eval_families = indexed_eval_families,
+    output_families = output_families,
+    output_product_families = output_product_families,
+    output_function_families = output_function_families,
 );
 
 pub fn stage5_cpu_program(module: &BoltModule<'_, Cpu>) -> Result<Stage5CpuProgram, EmitError> {
@@ -854,29 +859,6 @@ impl Stage5CpuProgram {
         values
     }
 
-    fn point_value_symbols(&self) -> verifier_values::VerifierPointSourceSet {
-        let mut values = verifier_values::VerifierPointSourceSet::default();
-        values.extend(
-            self.instance_results
-                .iter()
-                .map(|instance| &instance.symbol),
-            verifier_values::VerifierPointSourceKind::SumcheckInstance,
-        );
-        values.extend(
-            self.opening_inputs.iter().map(|input| &input.symbol),
-            verifier_values::VerifierPointSourceKind::OpeningInput,
-        );
-        values.extend(
-            self.point_slices.iter().map(|slice| &slice.symbol),
-            verifier_values::VerifierPointSourceKind::PointSlice,
-        );
-        values.extend(
-            self.point_concats.iter().map(|concat| &concat.symbol),
-            verifier_values::VerifierPointSourceKind::PointConcat,
-        );
-        values
-    }
-
     fn verify_kernel_definitions(&self) -> Result<(), EmitError> {
         for kernel in &self.kernels {
             if kernel.backend != "cpu" {
@@ -1056,8 +1038,9 @@ impl Stage5CpuProgram {
                 .iter()
                 .map(|instance| &instance.relation),
         );
-        let field_values = self.field_value_symbols();
-        let point_values = self.point_value_symbols();
+        let plan = self.verifier_plan()?;
+        let field_values = plan.scalar_value_sources();
+        let point_values = plan.point_value_sources();
         verifier_output_claims::verify_output_claims(
             "stage5",
             verifier_output_claims::OutputClaimVerification {

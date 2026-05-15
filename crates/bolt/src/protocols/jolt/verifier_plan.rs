@@ -6,6 +6,14 @@ use crate::protocols::jolt::rust_target_plan::{
     RustTargetPlanError, SumcheckPointOrder, TranscriptSqueezeKind,
 };
 use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
+use crate::protocols::jolt::verifier_output_claims::{
+    StructuredPolynomialEvalPlan, SumcheckOutputClaimPlan, SumcheckOutputEvalFamilyPlan,
+    SumcheckOutputFunctionFamilyPlan, SumcheckOutputProductFamilyPlan,
+};
+use crate::protocols::jolt::verifier_values::{
+    VerifierPointSourceKind, VerifierPointSourceSet, VerifierScalarSourceKind,
+    VerifierScalarSourceSet,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VerifierProgramStepPlan {
@@ -97,6 +105,13 @@ impl VerifierOpeningInputPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VerifierFieldConstantPlan {
+    pub(crate) symbol: String,
+    pub(crate) field: String,
+    pub(crate) value: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VerifierFieldExprPlan {
     pub(crate) symbol: String,
     pub(crate) kind: FieldExprKind,
@@ -115,6 +130,15 @@ impl VerifierFieldExprPlan {
             operands: operands.to_vec(),
         })
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VerifierSumcheckEvalPlan {
+    pub(crate) symbol: String,
+    pub(crate) source: String,
+    pub(crate) name: String,
+    pub(crate) index: usize,
+    pub(crate) oracle: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -231,18 +255,137 @@ pub(crate) struct VerifierStagePlan {
     pub(crate) transcript_squeezes: Vec<VerifierTranscriptSqueezePlan>,
     pub(crate) transcript_absorb_bytes: Vec<VerifierTranscriptAbsorbBytesPlan>,
     pub(crate) opening_inputs: Vec<VerifierOpeningInputPlan>,
+    pub(crate) field_constants: Vec<VerifierFieldConstantPlan>,
     pub(crate) field_exprs: Vec<VerifierFieldExprPlan>,
     pub(crate) claims: Vec<VerifierSumcheckClaimPlan>,
     pub(crate) batches: Vec<VerifierSumcheckBatchPlan>,
     pub(crate) drivers: Vec<VerifierSumcheckDriverPlan>,
     pub(crate) instance_results: Vec<VerifierSumcheckInstanceResultPlan>,
+    pub(crate) sumcheck_evals: Vec<VerifierSumcheckEvalPlan>,
     pub(crate) indexed_eval_families: Vec<IndexedEvalFamilyPlan>,
+    pub(crate) output_values: Vec<StructuredPolynomialEvalPlan>,
+    pub(crate) output_families: Vec<SumcheckOutputEvalFamilyPlan>,
+    pub(crate) output_product_families: Vec<SumcheckOutputProductFamilyPlan>,
+    pub(crate) output_function_families: Vec<SumcheckOutputFunctionFamilyPlan>,
+    pub(crate) output_claims: Vec<SumcheckOutputClaimPlan>,
     pub(crate) point_zeros: Vec<VerifierPointZeroPlan>,
     pub(crate) point_slices: Vec<VerifierPointSlicePlan>,
     pub(crate) point_concats: Vec<VerifierPointConcatPlan>,
     pub(crate) opening_claims: Vec<VerifierOpeningClaimPlan>,
     pub(crate) opening_equalities: Vec<VerifierOpeningClaimEqualityPlan>,
     pub(crate) opening_batches: Vec<VerifierOpeningBatchPlan>,
+}
+
+impl VerifierStagePlan {
+    pub(crate) fn scalar_value_sources(&self) -> VerifierScalarSourceSet {
+        let mut values = VerifierScalarSourceSet::default();
+        values.extend(
+            self.opening_inputs.iter().map(|input| &input.symbol),
+            VerifierScalarSourceKind::OpeningInput,
+        );
+        values.extend(
+            self.field_constants.iter().map(|constant| &constant.symbol),
+            VerifierScalarSourceKind::FieldConstant,
+        );
+        values.extend(
+            self.transcript_squeezes
+                .iter()
+                .filter(|squeeze| {
+                    matches!(
+                        squeeze.kind,
+                        TranscriptSqueezeKind::ChallengeScalar | TranscriptSqueezeKind::Scalar
+                    )
+                })
+                .map(|squeeze| &squeeze.symbol),
+            VerifierScalarSourceKind::TranscriptScalar,
+        );
+        values.extend(
+            self.output_values.iter().map(|value| &value.symbol),
+            VerifierScalarSourceKind::StructuredPolynomialEval,
+        );
+        values.extend(
+            self.output_claims
+                .iter()
+                .flat_map(|claim| claim.polynomial_evals.iter().map(|value| &value.symbol)),
+            VerifierScalarSourceKind::StructuredPolynomialEval,
+        );
+        values.extend(
+            self.output_families.iter().map(|family| &family.symbol),
+            VerifierScalarSourceKind::OutputEvalFamily,
+        );
+        values.extend(
+            self.output_product_families
+                .iter()
+                .map(|family| &family.symbol),
+            VerifierScalarSourceKind::OutputProductFamily,
+        );
+        values.extend(
+            self.output_function_families
+                .iter()
+                .map(|family| &family.symbol),
+            VerifierScalarSourceKind::OutputFunctionFamily,
+        );
+        values.extend(
+            self.output_claims
+                .iter()
+                .flat_map(|claim| claim.eval_families.iter().map(|family| &family.symbol)),
+            VerifierScalarSourceKind::OutputEvalFamily,
+        );
+        values.extend(
+            self.output_claims
+                .iter()
+                .flat_map(|claim| claim.product_families.iter().map(|family| &family.symbol)),
+            VerifierScalarSourceKind::OutputProductFamily,
+        );
+        values.extend(
+            self.output_claims
+                .iter()
+                .flat_map(|claim| claim.function_families.iter().map(|family| &family.symbol)),
+            VerifierScalarSourceKind::OutputFunctionFamily,
+        );
+        values.extend(
+            self.field_exprs.iter().map(|expr| &expr.symbol),
+            VerifierScalarSourceKind::FieldExpr,
+        );
+        values.extend(
+            self.output_claims
+                .iter()
+                .flat_map(|claim| claim.local_scalars.iter()),
+            VerifierScalarSourceKind::PointDerived,
+        );
+        values.extend(
+            self.sumcheck_evals.iter().map(|eval| &eval.symbol),
+            VerifierScalarSourceKind::SumcheckEval,
+        );
+        values
+    }
+
+    pub(crate) fn point_value_sources(&self) -> VerifierPointSourceSet {
+        let mut values = VerifierPointSourceSet::default();
+        values.extend(
+            self.instance_results
+                .iter()
+                .map(|instance| &instance.symbol),
+            VerifierPointSourceKind::SumcheckInstance,
+        );
+        values.extend(
+            self.opening_inputs.iter().map(|input| &input.symbol),
+            VerifierPointSourceKind::OpeningInput,
+        );
+        values.extend(
+            self.point_zeros.iter().map(|zero| &zero.symbol),
+            VerifierPointSourceKind::PointZero,
+        );
+        values.extend(
+            self.point_slices.iter().map(|slice| &slice.symbol),
+            VerifierPointSourceKind::PointSlice,
+        );
+        values.extend(
+            self.point_concats.iter().map(|concat| &concat.symbol),
+            VerifierPointSourceKind::PointConcat,
+        );
+        values
+    }
 }
 
 pub(crate) trait VerifierProgramStepSource {
@@ -273,10 +416,24 @@ pub(crate) trait VerifierOpeningInputSource {
     fn claim_kind(&self) -> &str;
 }
 
+pub(crate) trait VerifierFieldConstantSource {
+    fn symbol(&self) -> &str;
+    fn field(&self) -> &str;
+    fn value(&self) -> usize;
+}
+
 pub(crate) trait VerifierFieldExprSource {
     fn symbol(&self) -> &str;
     fn formula(&self) -> &str;
     fn operands(&self) -> &[String];
+}
+
+pub(crate) trait VerifierSumcheckEvalSource {
+    fn symbol(&self) -> &str;
+    fn source(&self) -> &str;
+    fn name(&self) -> &str;
+    fn index(&self) -> usize;
+    fn oracle(&self) -> &str;
 }
 
 pub(crate) trait VerifierSumcheckClaimSource {
@@ -381,11 +538,13 @@ pub(crate) trait VerifierStagePlanSource {
     type Step: VerifierProgramStepSource;
     type Squeeze: VerifierTranscriptSqueezeSource;
     type OpeningInput: VerifierOpeningInputSource;
+    type FieldConstant: VerifierFieldConstantSource;
     type FieldExpr: VerifierFieldExprSource;
     type Claim: VerifierSumcheckClaimSource;
     type Batch: VerifierSumcheckBatchSource;
     type Driver: VerifierSumcheckDriverSource;
     type Instance: VerifierSumcheckInstanceResultSource;
+    type Eval: VerifierSumcheckEvalSource;
     type PointSlice: VerifierPointSliceSource;
     type PointConcat: VerifierPointConcatSource;
     type OpeningClaim: VerifierOpeningClaimSource;
@@ -396,12 +555,25 @@ pub(crate) trait VerifierStagePlanSource {
     fn transcript_squeezes(&self) -> &[Self::Squeeze];
     fn transcript_absorb_bytes(&self) -> Vec<VerifierTranscriptAbsorbBytesPlan>;
     fn opening_inputs(&self) -> &[Self::OpeningInput];
+    fn field_constants(&self) -> &[Self::FieldConstant];
     fn field_exprs(&self) -> &[Self::FieldExpr];
     fn claims(&self) -> &[Self::Claim];
     fn batches(&self) -> &[Self::Batch];
     fn drivers(&self) -> &[Self::Driver];
     fn instance_results(&self) -> &[Self::Instance];
+    fn sumcheck_evals(&self) -> &[Self::Eval];
     fn indexed_eval_families(&self) -> &[IndexedEvalFamilyPlan];
+    fn output_values(&self) -> &[StructuredPolynomialEvalPlan];
+    fn output_families(&self) -> &[SumcheckOutputEvalFamilyPlan] {
+        &[]
+    }
+    fn output_product_families(&self) -> &[SumcheckOutputProductFamilyPlan] {
+        &[]
+    }
+    fn output_function_families(&self) -> &[SumcheckOutputFunctionFamilyPlan] {
+        &[]
+    }
+    fn output_claims(&self) -> &[SumcheckOutputClaimPlan];
     fn point_zeros(&self) -> Vec<VerifierPointZeroPlan>;
     fn point_slices(&self) -> &[Self::PointSlice];
     fn point_concats(&self) -> &[Self::PointConcat];
@@ -450,6 +622,15 @@ where
                 )
             })
             .collect::<Result<Vec<_>, EmitError>>()?,
+        field_constants: source
+            .field_constants()
+            .iter()
+            .map(|constant| VerifierFieldConstantPlan {
+                symbol: constant.symbol().to_owned(),
+                field: constant.field().to_owned(),
+                value: constant.value(),
+            })
+            .collect(),
         field_exprs: source
             .field_exprs()
             .iter()
@@ -533,7 +714,23 @@ where
                 })
             })
             .collect::<Result<Vec<_>, EmitError>>()?,
+        sumcheck_evals: source
+            .sumcheck_evals()
+            .iter()
+            .map(|eval| VerifierSumcheckEvalPlan {
+                symbol: eval.symbol().to_owned(),
+                source: eval.source().to_owned(),
+                name: eval.name().to_owned(),
+                index: eval.index(),
+                oracle: eval.oracle().to_owned(),
+            })
+            .collect(),
         indexed_eval_families: source.indexed_eval_families().to_vec(),
+        output_values: source.output_values().to_vec(),
+        output_families: source.output_families().to_vec(),
+        output_product_families: source.output_product_families().to_vec(),
+        output_function_families: source.output_function_families().to_vec(),
+        output_claims: source.output_claims().to_vec(),
         point_zeros: source.point_zeros(),
         point_slices: source
             .point_slices()
@@ -633,11 +830,13 @@ macro_rules! impl_verifier_plan_source_traits {
         step = $step:ty,
         squeeze = $squeeze:ty,
         opening_input = $opening_input:ty,
+        field_constant = $field_constant:ty,
         field_expr = $field_expr:ty,
         claim = $claim:ty,
         batch = $batch:ty,
         driver = $driver:ty,
         instance = $instance:ty,
+        eval = $eval:ty,
         point_slice = $point_slice:ty,
         point_concat = $point_concat:ty,
         opening_claim = $opening_claim:ty,
@@ -646,17 +845,22 @@ macro_rules! impl_verifier_plan_source_traits {
         $(, absorb = $absorb:ty)?
         $(, point_zero = $point_zero:ty)?
         $(, indexed_eval_families = $indexed_eval_families:ident)?
+        $(, output_families = $output_families:ident)?
+        $(, output_product_families = $output_product_families:ident)?
+        $(, output_function_families = $output_function_families:ident)?
         $(,)?
     ) => {
         impl $crate::protocols::jolt::verifier_plan::VerifierStagePlanSource for $program {
             type Step = $step;
             type Squeeze = $squeeze;
             type OpeningInput = $opening_input;
+            type FieldConstant = $field_constant;
             type FieldExpr = $field_expr;
             type Claim = $claim;
             type Batch = $batch;
             type Driver = $driver;
             type Instance = $instance;
+            type Eval = $eval;
             type PointSlice = $point_slice;
             type PointConcat = $point_concat;
             type OpeningClaim = $opening_claim;
@@ -671,15 +875,38 @@ macro_rules! impl_verifier_plan_source_traits {
                 )
             }
             fn opening_inputs(&self) -> &[Self::OpeningInput] { &self.opening_inputs }
+            fn field_constants(&self) -> &[Self::FieldConstant] { &self.field_constants }
             fn field_exprs(&self) -> &[Self::FieldExpr] { &self.field_exprs }
             fn claims(&self) -> &[Self::Claim] { &self.claims }
             fn batches(&self) -> &[Self::Batch] { &self.batches }
             fn drivers(&self) -> &[Self::Driver] { &self.drivers }
             fn instance_results(&self) -> &[Self::Instance] { &self.instance_results }
+            fn sumcheck_evals(&self) -> &[Self::Eval] { &self.evals }
             fn indexed_eval_families(&self) -> &[$crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan] {
                 $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
                     @indexed_eval_families self $(, $indexed_eval_families)?
                 )
+            }
+            fn output_values(&self) -> &[$crate::protocols::jolt::verifier_output_claims::StructuredPolynomialEvalPlan] {
+                &self.output_values
+            }
+            fn output_families(&self) -> &[$crate::protocols::jolt::verifier_output_claims::SumcheckOutputEvalFamilyPlan] {
+                $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
+                    @output_families self $(, $output_families)?
+                )
+            }
+            fn output_product_families(&self) -> &[$crate::protocols::jolt::verifier_output_claims::SumcheckOutputProductFamilyPlan] {
+                $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
+                    @output_product_families self $(, $output_product_families)?
+                )
+            }
+            fn output_function_families(&self) -> &[$crate::protocols::jolt::verifier_output_claims::SumcheckOutputFunctionFamilyPlan] {
+                $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
+                    @output_function_families self $(, $output_function_families)?
+                )
+            }
+            fn output_claims(&self) -> &[$crate::protocols::jolt::verifier_output_claims::SumcheckOutputClaimPlan] {
+                &self.output_claims
             }
             fn point_zeros(&self) -> Vec<$crate::protocols::jolt::verifier_plan::VerifierPointZeroPlan> {
                 $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
@@ -723,10 +950,24 @@ macro_rules! impl_verifier_plan_source_traits {
             fn claim_kind(&self) -> &str { &self.claim_kind }
         }
 
+        impl $crate::protocols::jolt::verifier_plan::VerifierFieldConstantSource for $field_constant {
+            fn symbol(&self) -> &str { &self.symbol }
+            fn field(&self) -> &str { &self.field }
+            fn value(&self) -> usize { self.value }
+        }
+
         impl $crate::protocols::jolt::verifier_plan::VerifierFieldExprSource for $field_expr {
             fn symbol(&self) -> &str { &self.symbol }
             fn formula(&self) -> &str { &self.formula }
             fn operands(&self) -> &[String] { &self.operands }
+        }
+
+        impl $crate::protocols::jolt::verifier_plan::VerifierSumcheckEvalSource for $eval {
+            fn symbol(&self) -> &str { &self.symbol }
+            fn source(&self) -> &str { &self.source }
+            fn name(&self) -> &str { &self.name }
+            fn index(&self) -> usize { self.index }
+            fn oracle(&self) -> &str { &self.oracle }
         }
 
         impl $crate::protocols::jolt::verifier_plan::VerifierSumcheckClaimSource for $claim {
@@ -847,6 +1088,24 @@ macro_rules! impl_verifier_plan_source_traits {
         &$self.$indexed_eval_families
     };
     (@indexed_eval_families $self:ident) => {
+        &[]
+    };
+    (@output_families $self:ident, $output_families:ident) => {
+        &$self.$output_families
+    };
+    (@output_families $self:ident) => {
+        &[]
+    };
+    (@output_product_families $self:ident, $output_product_families:ident) => {
+        &$self.$output_product_families
+    };
+    (@output_product_families $self:ident) => {
+        &[]
+    };
+    (@output_function_families $self:ident, $output_function_families:ident) => {
+        &$self.$output_function_families
+    };
+    (@output_function_families $self:ident) => {
         &[]
     };
 }
