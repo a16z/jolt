@@ -384,6 +384,61 @@ fn checked_in_generated_verifier_uses_typed_top_level_program() {
 }
 
 #[test]
+fn stage67_output_plan_cutover_removed_obsolete_relation_helpers() {
+    let root = workspace_root();
+    let generated_relations = root.join("crates/jolt-verifier/src/stages/jolt_relations.rs");
+    if !generated_relations.exists() {
+        return;
+    }
+
+    let relation_sources = [
+        generated_relations,
+        root.join("crates/bolt/src/protocols/jolt/verifier_jolt_relations.rs.template"),
+    ];
+    for path in relation_sources {
+        let source = std::fs::read_to_string(&path).expect("read Jolt relation source");
+        for stale in [
+            "expected_stage67_hamming_booleanity",
+            "expected_stage67_ram_ra_virtual",
+            "expected_stage67_instruction_ra_virtual",
+            "expected_stage67_inc_claim_reduction",
+        ] {
+            assert!(
+                !source.contains(stale),
+                "`{}` still contains obsolete Stage 6/7 relation helper `{stale}`",
+                path.display()
+            );
+        }
+    }
+
+    let stage6_source =
+        std::fs::read_to_string(root.join("crates/jolt-verifier/src/stages/stage6.rs"))
+            .expect("read generated Stage 6 verifier source");
+    for stale_field in [
+        "hamming_weight_eval",
+        "hamming_lookup_output",
+        "ram_ra_virtual_cycle",
+        "ram_ra_virtual_eval_prefix",
+        "instruction_ra_virtual_cycle",
+        "instruction_ra_virtual_eval_prefix",
+        "instruction_ra_virtual_input_prefix",
+        "instruction_ra_virtual_gamma",
+        "inc_ram_stage2",
+        "inc_ram_stage4",
+        "inc_rd_stage4",
+        "inc_rd_stage5",
+        "inc_gamma",
+        "inc_ram_eval",
+        "inc_rd_eval",
+    ] {
+        assert!(
+            !stage6_source.contains(stale_field),
+            "generated Stage 6 relation symbol table still exposes obsolete field `{stale_field}`"
+        );
+    }
+}
+
+#[test]
 fn verifier_cpu_fixtures_are_kernel_free() {
     let fixtures = workspace_root().join("crates/bolt/tests/fixtures");
     if !fixtures.exists() {

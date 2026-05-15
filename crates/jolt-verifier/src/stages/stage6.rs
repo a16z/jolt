@@ -104,21 +104,6 @@ const STAGE6_RELATION_SYMBOLS: Stage67RelationSymbols = Stage67RelationSymbols {
     booleanity_instruction_ra_prefix: "stage6.booleanity.eval.InstructionRa_",
     booleanity_bytecode_ra_prefix: "stage6.booleanity.eval.BytecodeRa_",
     booleanity_ram_ra_prefix: "stage6.booleanity.eval.RamRa_",
-    hamming_weight_eval: "stage6.hamming_booleanity.eval.HammingWeight",
-    hamming_lookup_output: "stage6.input.stage1.LookupOutput",
-    ram_ra_virtual_cycle: "stage6.input.stage5.ram_ra_claim_reduction.RamRa",
-    ram_ra_virtual_eval_prefix: "stage6.ram_ra_virtual.eval.RamRa_",
-    instruction_ra_virtual_cycle: "stage6.input.stage5.instruction_read_raf.InstructionRa_0",
-    instruction_ra_virtual_eval_prefix: "stage6.instruction_ra_virtual.eval.InstructionRa_",
-    instruction_ra_virtual_input_prefix: "stage6.input.stage5.instruction_read_raf.InstructionRa_",
-    instruction_ra_virtual_gamma: "stage6.instruction_ra_virtual.gamma",
-    inc_ram_stage2: "stage6.input.stage2.ram_read_write.RamInc",
-    inc_ram_stage4: "stage6.input.stage4.ram_val_check.RamInc",
-    inc_rd_stage4: "stage6.input.stage4.registers_read_write.RdInc",
-    inc_rd_stage5: "stage6.input.stage5.registers_val_evaluation.RdInc",
-    inc_gamma: "stage6.inc_claim_reduction.gamma",
-    inc_ram_eval: "stage6.inc_claim_reduction.eval.RamInc",
-    inc_rd_eval: "stage6.inc_claim_reduction.eval.RdInc",
 };
 
 const STAGE6_BYTECODE_SYMBOLS: Stage67BytecodeSymbols = Stage67BytecodeSymbols {

@@ -12,9 +12,8 @@
 //! - point normalizations for the Jolt bytecode and instruction RA
 //!   read-RAF lookup arguments
 //! - the `Stage67BytecodeEntry` contract a Jolt bytecode row must implement
-//! - the `expected_stage67_*` relation evaluators for Stage 6/7 booleanity,
-//!   bytecode-read-RAF, hamming booleanity, RAM RA virtual,
-//!   instruction RA virtual, and inc-claim-reduction relations
+//! - the remaining `expected_stage67_*` relation evaluators for Stage 6
+//!   booleanity and bytecode-read-RAF relations
 //! - the small Jolt-specific field-math helpers
 //!   (`operand_polynomial_eval`, `identity_polynomial_eval`,
 //!   `lt_polynomial_eval`, `bytecode_gamma_powers`) used only by Jolt
@@ -31,9 +30,9 @@ use jolt_field::{Field, Fr, MulPow2, RingCore};
 use jolt_poly::EqPolynomial;
 
 use bolt_verifier_runtime::{
-    eval_by_name, field_powers, indexed_boolean_eq, indexed_evals_by_prefix_any, prefix_point,
-    reverse_slice, store_point, store_scalar, suffix_point, OpeningInputPlan, RuntimePlanError,
-    StageNamedEval, SumcheckInstanceResultPlan, ValueStore,
+    field_powers, indexed_boolean_eq, indexed_evals_by_prefix_any, prefix_point, store_point,
+    store_scalar, suffix_point, RuntimePlanError, StageNamedEval, SumcheckInstanceResultPlan,
+    ValueStore,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,21 +93,6 @@ pub struct Stage67RelationSymbols {
     pub booleanity_instruction_ra_prefix: &'static str,
     pub booleanity_bytecode_ra_prefix: &'static str,
     pub booleanity_ram_ra_prefix: &'static str,
-    pub hamming_weight_eval: &'static str,
-    pub hamming_lookup_output: &'static str,
-    pub ram_ra_virtual_cycle: &'static str,
-    pub ram_ra_virtual_eval_prefix: &'static str,
-    pub instruction_ra_virtual_cycle: &'static str,
-    pub instruction_ra_virtual_eval_prefix: &'static str,
-    pub instruction_ra_virtual_input_prefix: &'static str,
-    pub instruction_ra_virtual_gamma: &'static str,
-    pub inc_ram_stage2: &'static str,
-    pub inc_ram_stage4: &'static str,
-    pub inc_rd_stage4: &'static str,
-    pub inc_rd_stage5: &'static str,
-    pub inc_gamma: &'static str,
-    pub inc_ram_eval: &'static str,
-    pub inc_rd_eval: &'static str,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -273,123 +257,6 @@ pub fn expected_stage67_booleanity(
         gamma_power *= gamma_sq;
     }
     Ok(eq_eval * booleanity)
-}
-
-pub fn expected_stage67_hamming_booleanity(
-    store: &ValueStore<Fr>,
-    evals: &[StageNamedEval<Fr>],
-    local_point: &[Fr],
-    symbols: &Stage67RelationSymbols,
-) -> Result<Fr, RuntimePlanError> {
-    let hamming = eval_by_name(evals, symbols.hamming_weight_eval)?;
-    let lookup_output_point = reverse_slice(store_point(store, symbols.hamming_lookup_output)?);
-    if lookup_output_point.len() != local_point.len() {
-        return Err(RuntimePlanError::InvalidInputLength {
-            input: symbols.hamming_lookup_output,
-            expected: local_point.len(),
-            actual: lookup_output_point.len(),
-        });
-    }
-    let eq_eval = EqPolynomial::<Fr>::mle(local_point, &lookup_output_point);
-    Ok((hamming.square() - hamming) * eq_eval)
-}
-
-pub fn expected_stage67_ram_ra_virtual(
-    store: &ValueStore<Fr>,
-    evals: &[StageNamedEval<Fr>],
-    local_point: &[Fr],
-    symbols: &Stage67RelationSymbols,
-) -> Result<Fr, RuntimePlanError> {
-    let r_cycle_reduced = reverse_slice(local_point);
-    let r_cycle = suffix_point(
-        store_point(store, symbols.ram_ra_virtual_cycle)?,
-        r_cycle_reduced.len(),
-        symbols.ram_ra_virtual_cycle,
-    )?;
-    let eq_eval = EqPolynomial::<Fr>::mle(r_cycle, &r_cycle_reduced);
-    let ram_ra = indexed_evals_by_prefix_any(evals, symbols.ram_ra_virtual_eval_prefix)?
-        .into_iter()
-        .product::<Fr>();
-    Ok(eq_eval * ram_ra)
-}
-
-pub fn expected_stage67_instruction_ra_virtual(
-    opening_inputs: &[OpeningInputPlan],
-    store: &ValueStore<Fr>,
-    evals: &[StageNamedEval<Fr>],
-    local_point: &[Fr],
-    symbols: &Stage67RelationSymbols,
-) -> Result<Fr, RuntimePlanError> {
-    let r_cycle_reduced = reverse_slice(local_point);
-    let r_cycle = suffix_point(
-        store_point(store, symbols.instruction_ra_virtual_cycle)?,
-        r_cycle_reduced.len(),
-        symbols.instruction_ra_virtual_cycle,
-    )?;
-    let eq_eval = EqPolynomial::<Fr>::mle(r_cycle, &r_cycle_reduced);
-    let committed_ra =
-        indexed_evals_by_prefix_any(evals, symbols.instruction_ra_virtual_eval_prefix)?;
-    let virtual_count = opening_inputs
-        .iter()
-        .filter(|input| {
-            input
-                .symbol
-                .starts_with(symbols.instruction_ra_virtual_input_prefix)
-        })
-        .count();
-    if virtual_count == 0 || committed_ra.len() % virtual_count != 0 {
-        return Err(RuntimePlanError::InvalidInputLength {
-            input: symbols.instruction_ra_virtual_eval_prefix,
-            expected: virtual_count,
-            actual: committed_ra.len(),
-        });
-    }
-    let committed_per_virtual = committed_ra.len() / virtual_count;
-    let gamma = store_scalar(store, symbols.instruction_ra_virtual_gamma)?;
-    let mut gamma_power = Fr::from_u64(1);
-    let mut value = Fr::from_u64(0);
-    for chunk in committed_ra.chunks(committed_per_virtual) {
-        value += gamma_power * chunk.iter().copied().product::<Fr>();
-        gamma_power *= gamma;
-    }
-    Ok(eq_eval * value)
-}
-
-pub fn expected_stage67_inc_claim_reduction(
-    store: &ValueStore<Fr>,
-    evals: &[StageNamedEval<Fr>],
-    local_point: &[Fr],
-    symbols: &Stage67RelationSymbols,
-) -> Result<Fr, RuntimePlanError> {
-    let r_cycle_reduced = reverse_slice(local_point);
-    let ram_inc_stage2 = suffix_point(
-        store_point(store, symbols.inc_ram_stage2)?,
-        r_cycle_reduced.len(),
-        symbols.inc_ram_stage2,
-    )?;
-    let ram_inc_stage4 = suffix_point(
-        store_point(store, symbols.inc_ram_stage4)?,
-        r_cycle_reduced.len(),
-        symbols.inc_ram_stage4,
-    )?;
-    let rd_inc_stage4 = suffix_point(
-        store_point(store, symbols.inc_rd_stage4)?,
-        r_cycle_reduced.len(),
-        symbols.inc_rd_stage4,
-    )?;
-    let rd_inc_stage5 = suffix_point(
-        store_point(store, symbols.inc_rd_stage5)?,
-        r_cycle_reduced.len(),
-        symbols.inc_rd_stage5,
-    )?;
-    let gamma = store_scalar(store, symbols.inc_gamma)?;
-    let eq_ram_combined = EqPolynomial::<Fr>::mle(ram_inc_stage2, &r_cycle_reduced)
-        + gamma * EqPolynomial::<Fr>::mle(ram_inc_stage4, &r_cycle_reduced);
-    let eq_rd_combined = EqPolynomial::<Fr>::mle(rd_inc_stage4, &r_cycle_reduced)
-        + gamma * EqPolynomial::<Fr>::mle(rd_inc_stage5, &r_cycle_reduced);
-    let ram_inc = eval_by_name(evals, symbols.inc_ram_eval)?;
-    let rd_inc = eval_by_name(evals, symbols.inc_rd_eval)?;
-    Ok(ram_inc * eq_ram_combined + gamma.square() * rd_inc * eq_rd_combined)
 }
 
 fn stage67_booleanity_evals(
