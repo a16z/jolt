@@ -537,7 +537,7 @@ where
                         })
                 })
                 .collect::<Result<Vec<_>, EmitError>>()?;
-            let family_symbols = output_family_dependency_closure(
+            let dependencies = output_dependency_closure(
                 &output_families_by_symbol,
                 &output_product_families_by_symbol,
                 &output_function_families_by_symbol,
@@ -546,17 +546,17 @@ where
             );
             let eval_families = output_families
                 .iter()
-                .filter(|family| family_symbols.eval.contains(&family.symbol))
+                .filter(|family| dependencies.contains_eval_family(&family.symbol))
                 .cloned()
                 .collect();
             let product_families = output_product_families
                 .iter()
-                .filter(|family| family_symbols.product.contains(&family.symbol))
+                .filter(|family| dependencies.contains_product_family(&family.symbol))
                 .cloned()
                 .collect();
             let function_families = output_function_families
                 .iter()
-                .filter(|family| family_symbols.function.contains(&family.symbol))
+                .filter(|family| dependencies.contains_function_family(&family.symbol))
                 .cloned()
                 .collect();
             Ok(SumcheckOutputClaimPlan {
@@ -571,67 +571,191 @@ where
         .collect()
 }
 
-struct OutputFamilyDependencyClosure {
-    eval: BTreeSet<String>,
-    product: BTreeSet<String>,
-    function: BTreeSet<String>,
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum OutputDependencyNode {
+    Field(String),
+    EvalFamily(String),
+    ProductFamily(String),
+    FunctionFamily(String),
 }
 
-fn output_family_dependency_closure<'a, T>(
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum OutputFamilyDependency {
+    Eval(String),
+    Product(String),
+    Function(String),
+}
+
+#[derive(Default)]
+struct OutputDependencyClosure {
+    families: BTreeSet<OutputFamilyDependency>,
+}
+
+impl OutputDependencyClosure {
+    fn contains_eval_family(&self, symbol: &str) -> bool {
+        self.families
+            .iter()
+            .any(|family| matches!(family, OutputFamilyDependency::Eval(value) if value == symbol))
+    }
+
+    fn contains_product_family(&self, symbol: &str) -> bool {
+        self.families.iter().any(
+            |family| matches!(family, OutputFamilyDependency::Product(value) if value == symbol),
+        )
+    }
+
+    fn contains_function_family(&self, symbol: &str) -> bool {
+        self.families.iter().any(
+            |family| matches!(family, OutputFamilyDependency::Function(value) if value == symbol),
+        )
+    }
+}
+
+fn output_dependency_closure<'a, T>(
     output_families_by_symbol: &BTreeMap<&str, &SumcheckOutputEvalFamilyPlan>,
     output_product_families_by_symbol: &BTreeMap<&str, &SumcheckOutputProductFamilyPlan>,
     output_function_families_by_symbol: &BTreeMap<&str, &SumcheckOutputFunctionFamilyPlan>,
     field_exprs_by_symbol: &BTreeMap<&str, &T>,
     roots: impl Iterator<Item = &'a str>,
-) -> OutputFamilyDependencyClosure
+) -> OutputDependencyClosure
 where
     T: FieldExprDependencies,
 {
     let mut visited = BTreeSet::new();
-    let mut eval_families = BTreeSet::new();
-    let mut product_families = BTreeSet::new();
-    let mut function_families = BTreeSet::new();
-    let mut stack = roots.map(str::to_owned).collect::<Vec<_>>();
-    while let Some(symbol) = stack.pop() {
-        if !visited.insert(symbol.clone()) {
+    let mut dependencies = OutputDependencyClosure::default();
+    let mut stack = roots
+        .map(|symbol| {
+            output_dependency_node(
+                output_families_by_symbol,
+                output_product_families_by_symbol,
+                output_function_families_by_symbol,
+                symbol,
+            )
+        })
+        .collect::<Vec<_>>();
+    while let Some(node) = stack.pop() {
+        if !visited.insert(node.clone()) {
             continue;
         }
-        if let Some(family) = output_families_by_symbol.get(symbol.as_str()) {
-            let _inserted = eval_families.insert(family.symbol.clone());
-            stack.push(family.gamma.clone());
-            stack.extend(family.evals.iter().cloned());
-            stack.extend(family.shared_terms.iter().map(|term| term.factor.clone()));
-            stack.extend(
-                family
-                    .item_terms
-                    .iter()
-                    .flat_map(|term| term.factors.iter().cloned()),
-            );
-        }
-        if let Some(family) = output_product_families_by_symbol.get(symbol.as_str()) {
-            let _inserted = product_families.insert(family.symbol.clone());
-            stack.extend(family.gamma.iter().cloned());
-            for term in &family.terms {
-                stack.extend(term.evals.iter().cloned());
-                stack.extend(term.factors.iter().cloned());
+        match node {
+            OutputDependencyNode::Field(symbol) => {
+                let Some(expr) = field_exprs_by_symbol.get(symbol.as_str()) else {
+                    continue;
+                };
+                stack.extend(expr.operands().iter().map(|operand| {
+                    output_dependency_node(
+                        output_families_by_symbol,
+                        output_product_families_by_symbol,
+                        output_function_families_by_symbol,
+                        operand,
+                    )
+                }));
             }
-        }
-        if let Some(family) = output_function_families_by_symbol.get(symbol.as_str()) {
-            let _inserted = function_families.insert(family.symbol.clone());
-            stack.extend(family.gamma.iter().cloned());
-            for term in &family.terms {
-                stack.push(term.eval.clone());
-                stack.extend(term.factors.iter().cloned());
+            OutputDependencyNode::EvalFamily(symbol) => {
+                let Some(family) = output_families_by_symbol.get(symbol.as_str()) else {
+                    continue;
+                };
+                let _inserted = dependencies
+                    .families
+                    .insert(OutputFamilyDependency::Eval(family.symbol.clone()));
+                stack.push(OutputDependencyNode::Field(family.gamma.clone()));
+                stack.extend(
+                    family
+                        .evals
+                        .iter()
+                        .cloned()
+                        .map(OutputDependencyNode::Field),
+                );
+                stack.extend(family.shared_terms.iter().map(|term| {
+                    output_dependency_node(
+                        output_families_by_symbol,
+                        output_product_families_by_symbol,
+                        output_function_families_by_symbol,
+                        &term.factor,
+                    )
+                }));
+                stack.extend(family.item_terms.iter().flat_map(|term| {
+                    term.factors.iter().map(|factor| {
+                        output_dependency_node(
+                            output_families_by_symbol,
+                            output_product_families_by_symbol,
+                            output_function_families_by_symbol,
+                            factor,
+                        )
+                    })
+                }));
             }
-        }
-        if let Some(expr) = field_exprs_by_symbol.get(symbol.as_str()) {
-            stack.extend(expr.operands().iter().cloned());
+            OutputDependencyNode::ProductFamily(symbol) => {
+                let Some(family) = output_product_families_by_symbol.get(symbol.as_str()) else {
+                    continue;
+                };
+                let _inserted = dependencies
+                    .families
+                    .insert(OutputFamilyDependency::Product(family.symbol.clone()));
+                stack.extend(
+                    family
+                        .gamma
+                        .iter()
+                        .cloned()
+                        .map(OutputDependencyNode::Field),
+                );
+                for term in &family.terms {
+                    stack.extend(term.evals.iter().cloned().map(OutputDependencyNode::Field));
+                    stack.extend(term.factors.iter().map(|factor| {
+                        output_dependency_node(
+                            output_families_by_symbol,
+                            output_product_families_by_symbol,
+                            output_function_families_by_symbol,
+                            factor,
+                        )
+                    }));
+                }
+            }
+            OutputDependencyNode::FunctionFamily(symbol) => {
+                let Some(family) = output_function_families_by_symbol.get(symbol.as_str()) else {
+                    continue;
+                };
+                let _inserted = dependencies
+                    .families
+                    .insert(OutputFamilyDependency::Function(family.symbol.clone()));
+                stack.extend(
+                    family
+                        .gamma
+                        .iter()
+                        .cloned()
+                        .map(OutputDependencyNode::Field),
+                );
+                for term in &family.terms {
+                    stack.push(OutputDependencyNode::Field(term.eval.clone()));
+                    stack.extend(term.factors.iter().map(|factor| {
+                        output_dependency_node(
+                            output_families_by_symbol,
+                            output_product_families_by_symbol,
+                            output_function_families_by_symbol,
+                            factor,
+                        )
+                    }));
+                }
+            }
         }
     }
-    OutputFamilyDependencyClosure {
-        eval: eval_families,
-        product: product_families,
-        function: function_families,
+    dependencies
+}
+
+fn output_dependency_node(
+    output_families_by_symbol: &BTreeMap<&str, &SumcheckOutputEvalFamilyPlan>,
+    output_product_families_by_symbol: &BTreeMap<&str, &SumcheckOutputProductFamilyPlan>,
+    output_function_families_by_symbol: &BTreeMap<&str, &SumcheckOutputFunctionFamilyPlan>,
+    symbol: &str,
+) -> OutputDependencyNode {
+    if output_families_by_symbol.contains_key(symbol) {
+        OutputDependencyNode::EvalFamily(symbol.to_owned())
+    } else if output_product_families_by_symbol.contains_key(symbol) {
+        OutputDependencyNode::ProductFamily(symbol.to_owned())
+    } else if output_function_families_by_symbol.contains_key(symbol) {
+        OutputDependencyNode::FunctionFamily(symbol.to_owned())
+    } else {
+        OutputDependencyNode::Field(symbol.to_owned())
     }
 }
 
