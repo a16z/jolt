@@ -260,6 +260,114 @@ pub(crate) fn opening_equality_mode_expr(
     )
 }
 
+pub(crate) fn emit_program_step_constants(
+    stage_type_prefix: &str,
+    const_prefix: &str,
+    steps: &[VerifierProgramStepPlan],
+) -> String {
+    let steps = steps
+        .iter()
+        .map(|step| {
+            format!(
+                "    {stage_type_prefix}ProgramStepPlan {{ kind: {}, symbol: {} }},",
+                program_step_kind_expr(stage_type_prefix, step.kind),
+                rust_str(&step.symbol),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "pub const {const_prefix}_PROGRAM_STEPS: &[{stage_type_prefix}ProgramStepPlan] = &[\n{steps}\n];\n\n"
+    )
+}
+
+pub(crate) fn emit_transcript_squeeze_constants(
+    stage_type_prefix: &str,
+    const_prefix: &str,
+    squeezes: &[VerifierTranscriptSqueezePlan],
+) -> String {
+    let squeezes = squeezes
+        .iter()
+        .map(|squeeze| {
+            format!(
+                "    {stage_type_prefix}TranscriptSqueezePlan {{ symbol: {}, label: {}, kind: {}, count: {} }},",
+                rust_str(&squeeze.symbol),
+                rust_str(&squeeze.label),
+                transcript_squeeze_kind_expr(stage_type_prefix, squeeze.kind),
+                squeeze.count,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "pub const {const_prefix}_TRANSCRIPT_SQUEEZES: &[{stage_type_prefix}TranscriptSqueezePlan] = &[\n{squeezes}\n];\n\n"
+    )
+}
+
+pub(crate) fn emit_opening_input_constants(
+    stage_type_prefix: &str,
+    const_prefix: &str,
+    inputs: &[VerifierOpeningInputPlan],
+) -> String {
+    let inputs = inputs
+        .iter()
+        .map(|input| {
+            format!(
+                "    {stage_type_prefix}OpeningInputPlan {{ symbol: {}, source_stage: {}, source_claim: {}, oracle: {}, domain: {}, point_arity: {}, claim_kind: {} }},",
+                rust_str(&input.symbol),
+                rust_str(&input.source_stage),
+                rust_str(&input.source_claim),
+                rust_str(&input.oracle),
+                rust_str(&input.domain),
+                input.point_arity,
+                claim_kind_expr(stage_type_prefix, input.claim_kind),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "pub const {const_prefix}_OPENING_INPUTS: &[{stage_type_prefix}OpeningInputPlan] = &[\n{inputs}\n];\n\n"
+    )
+}
+
+pub(crate) fn emit_field_expr_constants(
+    stage_type_prefix: &str,
+    const_prefix: &str,
+    exprs: &[VerifierFieldExprPlan],
+) -> String {
+    let exprs = exprs
+        .iter()
+        .map(|expr| {
+            format!(
+                "    {stage_type_prefix}FieldExprPlan {{ symbol: {}, kind: {}, operands: {} }},",
+                rust_str(&expr.symbol),
+                field_expr_kind_expr(stage_type_prefix, expr.kind),
+                rust_str_slice_expr(&expr.operands),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "pub const {const_prefix}_FIELD_EXPRS: &[{stage_type_prefix}FieldExprPlan] = &[\n{exprs}\n];\n"
+    )
+}
+
+fn rust_str_slice_expr(values: &[String]) -> String {
+    if values.is_empty() {
+        return "&[]".to_owned();
+    }
+    let values = values
+        .iter()
+        .map(|value| rust_str(value))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("&[{values}]")
+}
+
+fn rust_str(value: &str) -> String {
+    format!("{value:?}")
+}
+
 fn missing_plan_row(kind: &'static str, index: usize) -> EmitError {
     EmitError::new(format!("missing verifier-plan {kind} at index {index}"))
 }

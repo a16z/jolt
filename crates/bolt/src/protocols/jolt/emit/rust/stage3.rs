@@ -1314,20 +1314,10 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
     fn emit_program_step_constants(&self) -> Result<String, EmitError> {
         if self.role == Role::Verifier {
             let plan = self.verifier_plan()?;
-            let steps = plan
-                .steps
-                .iter()
-                .map(|step| {
-                    format!(
-                        "    Stage3ProgramStepPlan {{ kind: {}, symbol: {} }},",
-                        verifier_plan::program_step_kind_expr("Stage3", step.kind),
-                        rust_str(&step.symbol),
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            return Ok(format!(
-                "pub const STAGE3_PROGRAM_STEPS: &[Stage3ProgramStepPlan] = &[\n{steps}\n];\n\n"
+            return Ok(verifier_plan::emit_program_step_constants(
+                "Stage3",
+                "STAGE3",
+                &plan.steps,
             ));
         }
         let steps = self
@@ -1352,22 +1342,10 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
     fn emit_transcript_squeeze_constants(&self) -> Result<String, EmitError> {
         if self.role == Role::Verifier {
             let plan = self.verifier_plan()?;
-            let squeezes = plan
-                .transcript_squeezes
-                .iter()
-                .map(|squeeze| {
-                    format!(
-                        "    Stage3TranscriptSqueezePlan {{ symbol: {}, label: {}, kind: {}, count: {} }},",
-                        rust_str(&squeeze.symbol),
-                        rust_str(&squeeze.label),
-                        verifier_plan::transcript_squeeze_kind_expr("Stage3", squeeze.kind),
-                        squeeze.count,
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            return Ok(format!(
-                "pub const STAGE3_TRANSCRIPT_SQUEEZES: &[Stage3TranscriptSqueezePlan] = &[\n{squeezes}\n];\n\n"
+            return Ok(verifier_plan::emit_transcript_squeeze_constants(
+                "Stage3",
+                "STAGE3",
+                &plan.transcript_squeezes,
             ));
         }
         let squeezes = self
@@ -1396,25 +1374,10 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
     fn emit_opening_input_constants(&self) -> Result<String, EmitError> {
         if self.role == Role::Verifier {
             let plan = self.verifier_plan()?;
-            let inputs = plan
-                .opening_inputs
-                .iter()
-                .map(|input| {
-                    format!(
-                        "    Stage3OpeningInputPlan {{ symbol: {}, source_stage: {}, source_claim: {}, oracle: {}, domain: {}, point_arity: {}, claim_kind: {} }},",
-                        rust_str(&input.symbol),
-                        rust_str(&input.source_stage),
-                        rust_str(&input.source_claim),
-                        rust_str(&input.oracle),
-                        rust_str(&input.domain),
-                        input.point_arity,
-                        verifier_plan::claim_kind_expr("Stage3", input.claim_kind)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            return Ok(format!(
-                "pub const STAGE3_OPENING_INPUTS: &[Stage3OpeningInputPlan] = &[\n{inputs}\n];\n\n"
+            return Ok(verifier_plan::emit_opening_input_constants(
+                "Stage3",
+                "STAGE3",
+                &plan.opening_inputs,
             ));
         }
         let inputs = self
@@ -1461,21 +1424,10 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
     fn emit_field_expr_constants(&self) -> Result<String, EmitError> {
         if self.role == Role::Verifier {
             let plan = self.verifier_plan()?;
-            let exprs = plan
-                .field_exprs
-                .iter()
-                .map(|expr| {
-                    format!(
-                        "    Stage3FieldExprPlan {{ symbol: {}, kind: {}, operands: {} }},",
-                        rust_str(&expr.symbol),
-                        verifier_plan::field_expr_kind_expr("Stage3", expr.kind),
-                        super::plan_tokens::rust_str_slice_expr(&expr.operands)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            return Ok(format!(
-                "pub const STAGE3_FIELD_EXPRS: &[Stage3FieldExprPlan] = &[\n{exprs}\n];\n"
+            return Ok(verifier_plan::emit_field_expr_constants(
+                "Stage3",
+                "STAGE3",
+                &plan.field_exprs,
             ));
         }
 
