@@ -1033,6 +1033,15 @@ pub struct Stage2RamData<'a> {
     pub output_layout: Option<Stage2RamOutputLayout>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct Stage2RamReadWriteOutputPlan {
+    pub cycle_point: &'static str,
+    pub gamma: &'static str,
+    pub val_eval: &'static str,
+    pub ra_eval: &'static str,
+    pub inc_eval: &'static str,
+}
+
 #[derive(Clone, Debug, Default)]
 struct Stage2ValueStore<F: Field>(bolt_verifier_runtime::ValueStore<F>);
 
@@ -1090,6 +1099,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage2Error);
         source.push_str(&self.emit_sumcheck_batch_constants());
         source.push_str(&self.emit_verifier_sumcheck_driver_constants()?);
         source.push_str(&self.emit_tail_constants()?);
+        source.push_str(Self::emit_verifier_relation_output_constants());
         source.push_str(
             "pub const STAGE2_PROGRAM: Stage2VerifierProgramPlan = Stage2VerifierProgramPlan {\n\
              \x20   params: STAGE2_PARAMS,\n\
@@ -1110,6 +1120,16 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage2Error);
              };\n",
         );
         Ok(source)
+    }
+
+    fn emit_verifier_relation_output_constants() -> &'static str {
+        "pub const STAGE2_RAM_READ_WRITE_OUTPUT: Stage2RamReadWriteOutputPlan = Stage2RamReadWriteOutputPlan {\n\
+         \x20   cycle_point: \"stage2.input.stage1.RamReadValue\",\n\
+         \x20   gamma: \"stage2.ram_read_write.gamma\",\n\
+         \x20   val_eval: \"stage2.ram_read_write.eval.RamVal\",\n\
+         \x20   ra_eval: \"stage2.ram_read_write.eval.RamRa\",\n\
+         \x20   inc_eval: \"stage2.ram_read_write.eval.RamInc\",\n\
+         };\n\n"
     }
 
     fn emit_shared_constants(&self) -> Result<String, EmitError> {
@@ -2186,7 +2206,12 @@ fn expected_batched_output_claim(
             })?;
         let value = match instance.relation {
             Stage2RelationKind::Stage2RamReadWrite => {
-                expected_ram_read_write(store, evals, local_point)?
+                expected_ram_read_write(
+                    &STAGE2_RAM_READ_WRITE_OUTPUT,
+                    store,
+                    evals,
+                    local_point,
+                )?
             }
             Stage2RelationKind::Stage2ProductVirtualRemainder => {
                 expected_product_remainder(store, evals, local_point)?
@@ -2206,18 +2231,19 @@ fn expected_batched_output_claim(
 }
 
 fn expected_ram_read_write(
+    plan: &'static Stage2RamReadWriteOutputPlan,
     store: &Stage2ValueStore<Fr>,
     evals: &[Stage2NamedEval<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage2Error> {
-    let r_cycle_stage1 = store.point("stage2.input.stage1.RamReadValue")?;
+    let r_cycle_stage1 = store.point(plan.cycle_point)?;
     let log_t = r_cycle_stage1.len();
     let r_cycle = reverse_slice(&local_point[..log_t]);
     let eq_eval = EqPolynomial::<Fr>::mle(r_cycle_stage1, &r_cycle);
-    let gamma = store.scalar("stage2.ram_read_write.gamma")?;
-    let val = eval_by_name(evals, "stage2.ram_read_write.eval.RamVal")?;
-    let ra = eval_by_name(evals, "stage2.ram_read_write.eval.RamRa")?;
-    let inc = eval_by_name(evals, "stage2.ram_read_write.eval.RamInc")?;
+    let gamma = store.scalar(plan.gamma)?;
+    let val = eval_by_name(evals, plan.val_eval)?;
+    let ra = eval_by_name(evals, plan.ra_eval)?;
+    let inc = eval_by_name(evals, plan.inc_eval)?;
     Ok(eq_eval * ra * (val + gamma * (val + inc)))
 }
 

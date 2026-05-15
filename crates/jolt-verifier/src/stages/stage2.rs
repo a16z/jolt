@@ -58,6 +58,15 @@ pub struct Stage2RamData<'a> {
     pub output_layout: Option<Stage2RamOutputLayout>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct Stage2RamReadWriteOutputPlan {
+    pub cycle_point: &'static str,
+    pub gamma: &'static str,
+    pub val_eval: &'static str,
+    pub ra_eval: &'static str,
+    pub inc_eval: &'static str,
+}
+
 #[derive(Clone, Debug, Default)]
 struct Stage2ValueStore<F: Field>(bolt_verifier_runtime::ValueStore<F>);
 
@@ -222,6 +231,14 @@ pub const STAGE2_OPENING_CLAIMS: &[Stage2OpeningClaimPlan] = &[
 pub const STAGE2_OPENING_BATCHES: &[Stage2OpeningBatchPlan] = &[
     Stage2OpeningBatchPlan { symbol: "stage2.openings", stage: "stage2", proof_slot: "stage2.openings", policy: "jolt_stage2_output_order", count: 18, ordered_claims: &["stage2.ram_read_write.opening.RamVal", "stage2.ram_read_write.opening.RamRa", "stage2.ram_read_write.opening.RamInc", "stage2.product_virtual.remainder.opening.LeftInstructionInput", "stage2.product_virtual.remainder.opening.RightInstructionInput", "stage2.product_virtual.remainder.opening.OpFlagJump", "stage2.product_virtual.remainder.opening.OpFlagWriteLookupOutputToRD", "stage2.product_virtual.remainder.opening.LookupOutput", "stage2.product_virtual.remainder.opening.InstructionFlagBranch", "stage2.product_virtual.remainder.opening.NextIsNoop", "stage2.product_virtual.remainder.opening.OpFlagVirtualInstruction", "stage2.instruction_lookup.claim_reduction.opening.LookupOutput", "stage2.instruction_lookup.claim_reduction.opening.LeftLookupOperand", "stage2.instruction_lookup.claim_reduction.opening.RightLookupOperand", "stage2.instruction_lookup.claim_reduction.opening.LeftInstructionInput", "stage2.instruction_lookup.claim_reduction.opening.RightInstructionInput", "stage2.ram_raf.opening.RamRa", "stage2.ram_output.opening.RamValFinal"], claim_operands: &["stage2.ram_read_write.opening.RamVal", "stage2.ram_read_write.opening.RamRa", "stage2.ram_read_write.opening.RamInc", "stage2.product_virtual.remainder.opening.LeftInstructionInput", "stage2.product_virtual.remainder.opening.RightInstructionInput", "stage2.product_virtual.remainder.opening.OpFlagJump", "stage2.product_virtual.remainder.opening.OpFlagWriteLookupOutputToRD", "stage2.product_virtual.remainder.opening.LookupOutput", "stage2.product_virtual.remainder.opening.InstructionFlagBranch", "stage2.product_virtual.remainder.opening.NextIsNoop", "stage2.product_virtual.remainder.opening.OpFlagVirtualInstruction", "stage2.instruction_lookup.claim_reduction.opening.LookupOutput", "stage2.instruction_lookup.claim_reduction.opening.LeftLookupOperand", "stage2.instruction_lookup.claim_reduction.opening.RightLookupOperand", "stage2.instruction_lookup.claim_reduction.opening.LeftInstructionInput", "stage2.instruction_lookup.claim_reduction.opening.RightInstructionInput", "stage2.ram_raf.opening.RamRa", "stage2.ram_output.opening.RamValFinal"] },
 ];
+pub const STAGE2_RAM_READ_WRITE_OUTPUT: Stage2RamReadWriteOutputPlan = Stage2RamReadWriteOutputPlan {
+    cycle_point: "stage2.input.stage1.RamReadValue",
+    gamma: "stage2.ram_read_write.gamma",
+    val_eval: "stage2.ram_read_write.eval.RamVal",
+    ra_eval: "stage2.ram_read_write.eval.RamRa",
+    inc_eval: "stage2.ram_read_write.eval.RamInc",
+};
+
 pub const STAGE2_PROGRAM: Stage2VerifierProgramPlan = Stage2VerifierProgramPlan {
     params: STAGE2_PARAMS,
     steps: STAGE2_PROGRAM_STEPS,
@@ -670,7 +687,12 @@ fn expected_batched_output_claim(
             })?;
         let value = match instance.relation {
             Stage2RelationKind::Stage2RamReadWrite => {
-                expected_ram_read_write(store, evals, local_point)?
+                expected_ram_read_write(
+                    &STAGE2_RAM_READ_WRITE_OUTPUT,
+                    store,
+                    evals,
+                    local_point,
+                )?
             }
             Stage2RelationKind::Stage2ProductVirtualRemainder => {
                 expected_product_remainder(store, evals, local_point)?
@@ -690,18 +712,19 @@ fn expected_batched_output_claim(
 }
 
 fn expected_ram_read_write(
+    plan: &'static Stage2RamReadWriteOutputPlan,
     store: &Stage2ValueStore<Fr>,
     evals: &[Stage2NamedEval<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage2Error> {
-    let r_cycle_stage1 = store.point("stage2.input.stage1.RamReadValue")?;
+    let r_cycle_stage1 = store.point(plan.cycle_point)?;
     let log_t = r_cycle_stage1.len();
     let r_cycle = reverse_slice(&local_point[..log_t]);
     let eq_eval = EqPolynomial::<Fr>::mle(r_cycle_stage1, &r_cycle);
-    let gamma = store.scalar("stage2.ram_read_write.gamma")?;
-    let val = eval_by_name(evals, "stage2.ram_read_write.eval.RamVal")?;
-    let ra = eval_by_name(evals, "stage2.ram_read_write.eval.RamRa")?;
-    let inc = eval_by_name(evals, "stage2.ram_read_write.eval.RamInc")?;
+    let gamma = store.scalar(plan.gamma)?;
+    let val = eval_by_name(evals, plan.val_eval)?;
+    let ra = eval_by_name(evals, plan.ra_eval)?;
+    let inc = eval_by_name(evals, plan.inc_eval)?;
     Ok(eq_eval * ra * (val + gamma * (val + inc)))
 }
 
