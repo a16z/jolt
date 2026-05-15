@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use crate::emit::rust::EmitError;
 use crate::protocols::jolt::rust_target_plan::{
     ClaimKind, FieldExprKind, JoltVerifierRelationKind, OpeningEqualityMode, ProgramStepKind,
@@ -99,75 +101,62 @@ impl VerifierFieldExprPlan {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VerifierSumcheckClaimPlan {
-    pub(crate) relation: Option<JoltVerifierRelationKind>,
-}
-
-impl VerifierSumcheckClaimPlan {
-    pub(crate) fn from_cpu(relation: Option<&str>) -> Result<Self, EmitError> {
-        Ok(Self {
-            relation: relation
-                .map(JoltVerifierRelationKind::from_cpu_attr)
-                .transpose()
-                .map_err(plan_error)?,
-        })
-    }
+    pub(crate) symbol: String,
+    pub(crate) stage: String,
+    pub(crate) domain: String,
+    pub(crate) num_rounds: usize,
+    pub(crate) degree: usize,
+    pub(crate) claim: String,
+    pub(crate) relation: JoltVerifierRelationKind,
+    pub(crate) claim_value: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VerifierSumcheckDriverPlan {
-    pub(crate) relation: Option<JoltVerifierRelationKind>,
-}
-
-impl VerifierSumcheckDriverPlan {
-    pub(crate) fn from_cpu(relation: Option<&str>) -> Result<Self, EmitError> {
-        Ok(Self {
-            relation: relation
-                .map(JoltVerifierRelationKind::from_cpu_attr)
-                .transpose()
-                .map_err(plan_error)?,
-        })
-    }
+    pub(crate) symbol: String,
+    pub(crate) stage: String,
+    pub(crate) proof_slot: String,
+    pub(crate) relation: JoltVerifierRelationKind,
+    pub(crate) batch: String,
+    pub(crate) policy: String,
+    pub(crate) round_schedule: Vec<usize>,
+    pub(crate) claim_label: String,
+    pub(crate) round_label: String,
+    pub(crate) num_rounds: usize,
+    pub(crate) degree: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VerifierSumcheckInstanceResultPlan {
+    pub(crate) symbol: String,
+    pub(crate) source: String,
+    pub(crate) claim: String,
     pub(crate) relation: JoltVerifierRelationKind,
+    pub(crate) index: usize,
+    pub(crate) point_arity: usize,
+    pub(crate) num_rounds: usize,
+    pub(crate) round_offset: usize,
     pub(crate) point_order: SumcheckPointOrder,
-}
-
-impl VerifierSumcheckInstanceResultPlan {
-    pub(crate) fn from_cpu(relation: &str, point_order: &str) -> Result<Self, EmitError> {
-        Ok(Self {
-            relation: JoltVerifierRelationKind::from_cpu_attr(relation).map_err(plan_error)?,
-            point_order: SumcheckPointOrder::from_cpu_attr(point_order).map_err(plan_error)?,
-        })
-    }
+    pub(crate) degree: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VerifierOpeningClaimPlan {
+    pub(crate) symbol: String,
+    pub(crate) oracle: String,
+    pub(crate) domain: String,
+    pub(crate) point_arity: usize,
     pub(crate) claim_kind: ClaimKind,
-}
-
-impl VerifierOpeningClaimPlan {
-    pub(crate) fn from_cpu(claim_kind: &str) -> Result<Self, EmitError> {
-        Ok(Self {
-            claim_kind: ClaimKind::from_cpu_attr(claim_kind).map_err(plan_error)?,
-        })
-    }
+    pub(crate) point_source: String,
+    pub(crate) eval_source: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VerifierOpeningClaimEqualityPlan {
+    pub(crate) symbol: String,
     pub(crate) mode: OpeningEqualityMode,
-}
-
-impl VerifierOpeningClaimEqualityPlan {
-    pub(crate) fn from_cpu(mode: &str) -> Result<Self, EmitError> {
-        Ok(Self {
-            mode: OpeningEqualityMode::from_cpu_attr(mode).map_err(plan_error)?,
-        })
-    }
+    pub(crate) lhs: String,
+    pub(crate) rhs: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -183,26 +172,32 @@ pub(crate) struct VerifierStagePlan {
     pub(crate) opening_equalities: Vec<VerifierOpeningClaimEqualityPlan>,
 }
 
-impl VerifierStagePlan {
-    pub(crate) fn claim_relation(
-        &self,
-        index: usize,
-    ) -> Result<JoltVerifierRelationKind, EmitError> {
-        self.claims
-            .get(index)
-            .and_then(|claim| claim.relation)
-            .ok_or_else(|| missing_plan_row("claim relation", index))
-    }
+pub(crate) fn relation_from_cpu(value: &str) -> Result<JoltVerifierRelationKind, EmitError> {
+    JoltVerifierRelationKind::from_cpu_attr(value).map_err(plan_error)
+}
 
-    pub(crate) fn driver_relation(
-        &self,
-        index: usize,
-    ) -> Result<JoltVerifierRelationKind, EmitError> {
-        self.drivers
-            .get(index)
-            .and_then(|driver| driver.relation)
-            .ok_or_else(|| missing_plan_row("driver relation", index))
-    }
+pub(crate) fn required_relation_from_cpu(
+    value: Option<&str>,
+    kind: &str,
+    symbol: &str,
+) -> Result<JoltVerifierRelationKind, EmitError> {
+    value
+        .ok_or_else(|| EmitError::new(format!("missing verifier {kind} relation for `{symbol}`")))
+        .and_then(relation_from_cpu)
+}
+
+pub(crate) fn claim_kind_from_cpu(value: &str) -> Result<ClaimKind, EmitError> {
+    ClaimKind::from_cpu_attr(value).map_err(plan_error)
+}
+
+pub(crate) fn sumcheck_point_order_from_cpu(value: &str) -> Result<SumcheckPointOrder, EmitError> {
+    SumcheckPointOrder::from_cpu_attr(value).map_err(plan_error)
+}
+
+pub(crate) fn opening_equality_mode_from_cpu(
+    value: &str,
+) -> Result<OpeningEqualityMode, EmitError> {
+    OpeningEqualityMode::from_cpu_attr(value).map_err(plan_error)
 }
 
 pub(crate) fn relation_kind_expr(
@@ -352,6 +347,159 @@ pub(crate) fn emit_field_expr_constants(
     )
 }
 
+pub(crate) fn emit_sumcheck_claim_constants(
+    stage_type_prefix: &str,
+    const_prefix: &str,
+    claims: &[VerifierSumcheckClaimPlan],
+) -> String {
+    let claims = claims
+        .iter()
+        .map(|claim| {
+            format!(
+                "    {stage_type_prefix}SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: None, relation: Some({}), claim_value: {} }},",
+                rust_str(&claim.symbol),
+                rust_str(&claim.stage),
+                rust_str(&claim.domain),
+                claim.num_rounds,
+                claim.degree,
+                rust_str(&claim.claim),
+                relation_kind_expr(stage_type_prefix, claim.relation),
+                rust_str(&claim.claim_value),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "pub const {const_prefix}_SUMCHECK_CLAIMS: &[{stage_type_prefix}SumcheckClaimPlan] = &[\n{claims}\n];\n"
+    )
+}
+
+pub(crate) fn emit_sumcheck_driver_constants(
+    stage_type_prefix: &str,
+    const_prefix: &str,
+    drivers: &[VerifierSumcheckDriverPlan],
+) -> String {
+    let mut source = String::new();
+    for (index, driver) in drivers.iter().enumerate() {
+        source.push_str(&emit_usize_array(
+            &format!("{const_prefix}_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE"),
+            &driver.round_schedule,
+        ));
+    }
+    let drivers = drivers
+        .iter()
+        .enumerate()
+        .map(|(index, driver)| {
+            format!(
+                "    {stage_type_prefix}SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, kernel: None, relation: Some({}), batch: {}, policy: {}, round_schedule: {const_prefix}_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
+                rust_str(&driver.symbol),
+                rust_str(&driver.stage),
+                rust_str(&driver.proof_slot),
+                relation_kind_expr(stage_type_prefix, driver.relation),
+                rust_str(&driver.batch),
+                rust_str(&driver.policy),
+                rust_str(&driver.claim_label),
+                rust_str(&driver.round_label),
+                driver.num_rounds,
+                driver.degree,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _ = write!(
+        source,
+        "pub const {const_prefix}_SUMCHECK_DRIVERS: &[{stage_type_prefix}SumcheckDriverPlan] = &[\n{drivers}\n];\n"
+    );
+    source
+}
+
+pub(crate) fn emit_sumcheck_instance_result_constants(
+    stage_type_prefix: &str,
+    const_prefix: &str,
+    instances: &[VerifierSumcheckInstanceResultPlan],
+) -> String {
+    let instances = instances
+        .iter()
+        .map(|instance| {
+            format!(
+                "    {stage_type_prefix}SumcheckInstanceResultPlan {{ symbol: {}, source: {}, claim: {}, relation: {}, index: {}, point_arity: {}, num_rounds: {}, round_offset: {}, point_order: {}, degree: {} }},",
+                rust_str(&instance.symbol),
+                rust_str(&instance.source),
+                rust_str(&instance.claim),
+                relation_kind_expr(stage_type_prefix, instance.relation),
+                instance.index,
+                instance.point_arity,
+                instance.num_rounds,
+                instance.round_offset,
+                sumcheck_point_order_expr(instance.point_order),
+                instance.degree,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "pub const {const_prefix}_SUMCHECK_INSTANCE_RESULTS: &[{stage_type_prefix}SumcheckInstanceResultPlan] = &[\n{instances}\n];\n\n"
+    )
+}
+
+pub(crate) fn emit_opening_claim_constants(
+    stage_type_prefix: &str,
+    const_prefix: &str,
+    claims: &[VerifierOpeningClaimPlan],
+) -> String {
+    let claims = claims
+        .iter()
+        .map(|claim| {
+            format!(
+                "    {stage_type_prefix}OpeningClaimPlan {{ symbol: {}, oracle: {}, domain: {}, point_arity: {}, claim_kind: {}, point_source: {}, eval_source: {} }},",
+                rust_str(&claim.symbol),
+                rust_str(&claim.oracle),
+                rust_str(&claim.domain),
+                claim.point_arity,
+                claim_kind_expr(stage_type_prefix, claim.claim_kind),
+                rust_str(&claim.point_source),
+                rust_str(&claim.eval_source),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "pub const {const_prefix}_OPENING_CLAIMS: &[{stage_type_prefix}OpeningClaimPlan] = &[\n{claims}\n];\n\n"
+    )
+}
+
+pub(crate) fn emit_opening_claim_equality_constants(
+    stage_type_prefix: &str,
+    const_prefix: &str,
+    equalities: &[VerifierOpeningClaimEqualityPlan],
+) -> String {
+    let equalities = equalities
+        .iter()
+        .map(|equality| {
+            format!(
+                "    {stage_type_prefix}OpeningClaimEqualityPlan {{ symbol: {}, mode: {}, lhs: {}, rhs: {} }},",
+                rust_str(&equality.symbol),
+                opening_equality_mode_expr(stage_type_prefix, equality.mode),
+                rust_str(&equality.lhs),
+                rust_str(&equality.rhs),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "pub const {const_prefix}_OPENING_EQUALITIES: &[{stage_type_prefix}OpeningClaimEqualityPlan] = &[\n{equalities}\n];\n\n"
+    )
+}
+
+fn emit_usize_array(name: &str, values: &[usize]) -> String {
+    let entries = values
+        .iter()
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("pub const {name}: &[usize] = &[{entries}];\n\n")
+}
+
 fn rust_str_slice_expr(values: &[String]) -> String {
     if values.is_empty() {
         return "&[]".to_owned();
@@ -366,10 +514,6 @@ fn rust_str_slice_expr(values: &[String]) -> String {
 
 fn rust_str(value: &str) -> String {
     format!("{value:?}")
-}
-
-fn missing_plan_row(kind: &'static str, index: usize) -> EmitError {
-    EmitError::new(format!("missing verifier-plan {kind} at index {index}"))
 }
 
 fn plan_error(error: RustTargetPlanError) -> EmitError {
