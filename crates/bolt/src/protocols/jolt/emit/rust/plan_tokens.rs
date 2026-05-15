@@ -239,5 +239,5 @@ fn opening_equality_mode_expr(stage_type_prefix: &str, mode: &str) -> Result<Str
 }
 
 fn plan_error(error: RustTargetPlanError) -> EmitError {
-    EmitError::new(format!("unsupported {} `{}`", error.kind(), error.value()))
+    EmitError::new(error.to_string())
 }

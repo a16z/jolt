@@ -1,3 +1,5 @@
+use std::fmt::{self, Display, Formatter};
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RustTargetPlanError {
     kind: &'static str,
@@ -11,13 +13,11 @@ impl RustTargetPlanError {
             value: value.to_owned(),
         }
     }
+}
 
-    pub(crate) fn kind(&self) -> &'static str {
-        self.kind
-    }
-
-    pub(crate) fn value(&self) -> &str {
-        &self.value
+impl Display for RustTargetPlanError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        write!(formatter, "unsupported {} `{}`", self.kind, self.value)
     }
 }
 

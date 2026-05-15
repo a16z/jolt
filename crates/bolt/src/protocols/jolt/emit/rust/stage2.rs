@@ -6,6 +6,10 @@ use melior::ir::{Attribute, OperationRef};
 
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
+use crate::protocols::jolt::rust_target_plan::{
+    ClaimKind, FieldExprKind, JoltVerifierRelationKind, ProgramStepKind, RustTargetPlanError,
+    TranscriptSqueezeKind,
+};
 use crate::schema::verify_cpu_schema;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -513,7 +517,10 @@ impl Stage2CpuProgram {
                 self.verify_kernel_definitions()?;
                 self.verify_prover_driver_bindings()?;
             }
-            Role::Verifier => self.verify_verifier_driver_bindings()?,
+            Role::Verifier => {
+                self.verify_verifier_driver_bindings()?;
+                self.verify_verifier_rust_target()?;
+            }
         }
         self.verify_opening_flow()
     }
@@ -761,6 +768,46 @@ impl Stage2CpuProgram {
                     driver.symbol, batch.symbol
                 )));
             }
+        }
+        Ok(())
+    }
+
+    fn verify_verifier_rust_target(&self) -> Result<(), EmitError> {
+        for step in &self.steps {
+            let _ = ProgramStepKind::from_cpu_attr(&step.kind).map_err(rust_target_plan_error)?;
+        }
+        for squeeze in &self.transcript_squeezes {
+            let _ = TranscriptSqueezeKind::from_cpu_attr(&squeeze.kind)
+                .map_err(rust_target_plan_error)?;
+        }
+        for input in &self.opening_inputs {
+            let _ = ClaimKind::from_cpu_attr(&input.claim_kind).map_err(rust_target_plan_error)?;
+        }
+        for expr in &self.field_exprs {
+            let _ = FieldExprKind::from_cpu_attr(&expr.formula).map_err(rust_target_plan_error)?;
+        }
+        for claim in &self.claims {
+            let relation = claim
+                .relation
+                .as_deref()
+                .ok_or_else(|| missing_role_binding("verifier claim relation", &claim.symbol))?;
+            let _ = JoltVerifierRelationKind::from_cpu_attr(relation)
+                .map_err(rust_target_plan_error)?;
+        }
+        for driver in &self.drivers {
+            let relation = driver
+                .relation
+                .as_deref()
+                .ok_or_else(|| missing_role_binding("verifier driver relation", &driver.symbol))?;
+            let _ = JoltVerifierRelationKind::from_cpu_attr(relation)
+                .map_err(rust_target_plan_error)?;
+        }
+        for instance in &self.instance_results {
+            let _ = JoltVerifierRelationKind::from_cpu_attr(&instance.relation)
+                .map_err(rust_target_plan_error)?;
+        }
+        for claim in &self.opening_claims {
+            let _ = ClaimKind::from_cpu_attr(&claim.claim_kind).map_err(rust_target_plan_error)?;
         }
         Ok(())
     }
@@ -2438,6 +2485,10 @@ fn require_supported_symbol(kind: &str, actual: &str, expected: &str) -> Result<
             "unsupported {kind} @{actual}; expected @{expected}"
         )))
     }
+}
+
+fn rust_target_plan_error(error: RustTargetPlanError) -> EmitError {
+    EmitError::new(error.to_string())
 }
 
 fn emit_str_array(name: &str, values: &[String]) -> String {
