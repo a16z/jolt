@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use crate::emit::rust::EmitError;
@@ -383,6 +384,25 @@ impl VerifierStagePlan {
         values.extend(
             self.point_concats.iter().map(|concat| &concat.symbol),
             VerifierPointSourceKind::PointConcat,
+        );
+        values
+    }
+
+    pub(crate) fn opening_point_sources(&self) -> BTreeSet<String> {
+        let mut values = BTreeSet::new();
+        values.extend(self.drivers.iter().map(|driver| driver.symbol.clone()));
+        values.extend(
+            self.instance_results
+                .iter()
+                .map(|instance| instance.symbol.clone()),
+        );
+        values.extend(self.opening_inputs.iter().map(|input| input.symbol.clone()));
+        values.extend(self.point_zeros.iter().map(|zero| zero.symbol.clone()));
+        values.extend(self.point_slices.iter().map(|slice| slice.symbol.clone()));
+        values.extend(
+            self.point_concats
+                .iter()
+                .map(|concat| concat.symbol.clone()),
         );
         values
     }

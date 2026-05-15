@@ -583,9 +583,10 @@ The scalar/point source registry has been moved out of
 `verifier_output_claims` into `verifier_values`. This is only the foundation:
 it gives scalar and point domains an explicit home. `VerifierStagePlan` now
 carries enough scalar/point source data for Stage 3-7 output-claim validation
-to consume plan-derived value sources instead of rebuilding point sources in
-each stage. Field-vector values, eval-family values, and relation-output
-execution are not yet lowered through a single typed graph.
+and verifier opening-flow validation to consume plan-derived value sources
+instead of rebuilding point sources in each stage. Field-vector values,
+eval-family values, and relation-output execution are not yet lowered through a
+single typed graph.
 
 ### Dialect changes
 
