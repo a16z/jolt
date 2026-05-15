@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use bolt_verifier_runtime::{batch_claims, find_batch, find_plan};
-use super::jolt_relations::{evaluate_stage67_bytecode_read_raf, normalize_bytecode_read_raf_point, stage67_trace_rounds, Stage67BytecodeEntry, Stage67BytecodeFlag, Stage67BytecodeOutputTermPlan, Stage67BytecodeReadRafPlan, Stage67BytecodeRegister, Stage67BytecodeRegisterSymbols, Stage67BytecodeStagePlan, Stage67BytecodeTermPlan, Stage67RelationSymbols};
+use super::jolt_relations::{evaluate_stage67_bytecode_read_raf_output_values, normalize_bytecode_read_raf_point, stage67_trace_rounds, Stage67BytecodeEntry, Stage67BytecodeFlag, Stage67BytecodeOutputTermPlan, Stage67BytecodeReadRafPlan, Stage67BytecodeRegister, Stage67BytecodeRegisterSymbols, Stage67BytecodeStagePlan, Stage67BytecodeTermPlan, Stage67RelationSymbols};
 use jolt_field::{Field, Fr};
 use jolt_sumcheck::SumcheckError;
 use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};
@@ -173,6 +173,7 @@ const STAGE6_BYTECODE_PLAN: Stage67BytecodeReadRafPlan = Stage67BytecodeReadRafP
     entry_bytecode_index: "stage6.bytecode_read_raf.entry_bytecode_index",
     stages: STAGE6_BYTECODE_STAGES,
     output_terms: STAGE6_BYTECODE_OUTPUT_TERMS,
+    output_contribution: "stage6.bytecode_read_raf.output.contribution",
     registers: Stage67BytecodeRegisterSymbols {
         rd: "stage6.bytecode.entry.rd",
         rs1: "stage6.bytecode.entry.rs1",
@@ -799,12 +800,26 @@ pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_4_FAMILIES: &[bolt_verifier_runtime::Sumc
     bolt_verifier_runtime::SumcheckOutputEvalFamilyPlan { symbol: "stage6.inc_claim_reduction.output.family", gamma: "stage6.inc_claim_reduction.gamma", evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_4_FAMILY_0_EVALS, power_stride: 2, value_term_offsets: STAGE6_SUMCHECK_OUTPUT_CLAIM_4_FAMILY_0_VALUE_TERM_OFFSETS, shared_terms: STAGE6_SUMCHECK_OUTPUT_CLAIM_4_FAMILY_0_SHARED_TERMS, item_terms: STAGE6_SUMCHECK_OUTPUT_CLAIM_4_FAMILY_0_ITEM_TERMS },
 ];
 
+pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_5_VALUES: &[Stage6StructuredPolynomialEvalPlan] = &[
+
+];
+
+pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_5_PRODUCT_FAMILY_0_TERM_0_EVALS: &[&str] = &["stage6.bytecode_read_raf.output.contribution", "stage6.bytecode_read_raf.eval.BytecodeRa_0", "stage6.bytecode_read_raf.eval.BytecodeRa_1", "stage6.bytecode_read_raf.eval.BytecodeRa_2"];
+pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_5_PRODUCT_FAMILY_0_TERM_0_FACTORS: &[&str] = &[];
+pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_5_PRODUCT_FAMILY_0_TERMS: &[bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan] = &[
+    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_5_PRODUCT_FAMILY_0_TERM_0_EVALS, factors: STAGE6_SUMCHECK_OUTPUT_CLAIM_5_PRODUCT_FAMILY_0_TERM_0_FACTORS },
+];
+pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_5_PRODUCT_FAMILIES: &[bolt_verifier_runtime::SumcheckOutputProductFamilyPlan] = &[
+    bolt_verifier_runtime::SumcheckOutputProductFamilyPlan { symbol: "stage6.bytecode_read_raf.output.product.BytecodeReadRaf", gamma: None, terms: STAGE6_SUMCHECK_OUTPUT_CLAIM_5_PRODUCT_FAMILY_0_TERMS },
+];
+
 pub const STAGE6_SUMCHECK_OUTPUT_CLAIMS: &[Stage6SumcheckOutputClaimPlan] = &[
     Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6Booleanity, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_0_VALUES, eval_families: &[], product_families: &[], function_families: STAGE6_SUMCHECK_OUTPUT_CLAIM_0_FUNCTION_FAMILIES, claim_value: "stage6.booleanity.output.family" },
     Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6HammingBooleanity, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_1_VALUES, eval_families: &[], product_families: &[], function_families: STAGE6_SUMCHECK_OUTPUT_CLAIM_1_FUNCTION_FAMILIES, claim_value: "stage6.hamming_booleanity.output.family" },
     Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6RamRaVirtual, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_2_VALUES, eval_families: &[], product_families: STAGE6_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILIES, function_families: &[], claim_value: "stage6.ram_ra_virtual.output.family" },
     Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6InstructionRaVirtual, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_3_VALUES, eval_families: &[], product_families: STAGE6_SUMCHECK_OUTPUT_CLAIM_3_PRODUCT_FAMILIES, function_families: &[], claim_value: "stage6.instruction_ra_virtual.output.family" },
     Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6IncClaimReduction, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_4_VALUES, eval_families: STAGE6_SUMCHECK_OUTPUT_CLAIM_4_FAMILIES, product_families: &[], function_families: &[], claim_value: "stage6.inc_claim_reduction.output.family" },
+    Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6BytecodeReadRaf, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_5_VALUES, eval_families: &[], product_families: STAGE6_SUMCHECK_OUTPUT_CLAIM_5_PRODUCT_FAMILIES, function_families: &[], claim_value: "stage6.bytecode_read_raf.output.product.BytecodeReadRaf" },
 ];
 
 pub const STAGE6_PROGRAM: Stage6VerifierProgramPlan = Stage6CpuProgramPlan {
@@ -1123,7 +1138,18 @@ fn expected_batched_output_claim(
                     .ok_or(VerifyStage6Error::MissingValue {
                         symbol: "stage6.bytecode_read_raf.data",
                 })?;
-                expected_bytecode_read_raf(program, data, store, evals, local_point)?
+                let mut local_store = store.clone();
+                let log_t = stage6_trace_rounds(program)?;
+                evaluate_stage67_bytecode_read_raf_output_values(
+                    &STAGE6_BYTECODE_PLAN,
+                    &data.entries,
+                    data.entry_bytecode_index,
+                    data.num_lookup_tables,
+                    &mut local_store,
+                    local_point,
+                    log_t,
+                )?;
+                expected_plan_output_claim(program, instance, &local_store, evals, local_point)?
             }
             Stage6RelationKind::Stage6Booleanity
             | Stage6RelationKind::Stage6HammingBooleanity
@@ -1164,26 +1190,6 @@ fn expected_plan_output_claim(
         instance.symbol,
         evals,
         local_point,
-    )?)
-}
-
-fn expected_bytecode_read_raf(
-    program: &'static Stage6VerifierProgramPlan,
-    data: &Stage6BytecodeReadRafData,
-    store: &bolt_verifier_runtime::ValueStore<Fr>,
-    evals: &[Stage6NamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage6Error> {
-    let log_t = stage6_trace_rounds(program)?;
-    Ok(evaluate_stage67_bytecode_read_raf(
-        &STAGE6_BYTECODE_PLAN,
-        &data.entries,
-        data.entry_bytecode_index,
-        data.num_lookup_tables,
-        store,
-        evals,
-        local_point,
-        log_t,
     )?)
 }
 

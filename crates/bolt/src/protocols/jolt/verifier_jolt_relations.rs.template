@@ -29,8 +29,8 @@ use jolt_lookup_tables::LookupTableKind;
 use jolt_poly::EqPolynomial;
 
 use bolt_verifier_runtime::{
-    eval_family_values, field_powers, prefix_point, store_point, store_scalar, suffix_point,
-    NamedEvalFamilyPlan, RuntimePlanError, StageNamedEval, SumcheckInstanceResultPlan, ValueStore,
+    field_powers, prefix_point, store_point, store_scalar, suffix_point, NamedEvalFamilyPlan,
+    RuntimePlanError, SumcheckInstanceResultPlan, ValueStore,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,6 +121,7 @@ pub struct Stage67BytecodeReadRafPlan {
     pub entry_bytecode_index: &'static str,
     pub stages: &'static [Stage67BytecodeStagePlan],
     pub output_terms: &'static [Stage67BytecodeOutputTermPlan],
+    pub output_contribution: &'static str,
     pub registers: Stage67BytecodeRegisterSymbols,
     pub entry_lookup_table: &'static str,
 }
@@ -280,13 +281,34 @@ pub fn stage67_trace_rounds(
         })
 }
 
-pub fn evaluate_stage67_bytecode_read_raf<E: Stage67BytecodeEntry>(
+pub fn evaluate_stage67_bytecode_read_raf_output_values<E: Stage67BytecodeEntry>(
+    plan: &Stage67BytecodeReadRafPlan,
+    entries: &[E],
+    entry_bytecode_index: usize,
+    num_lookup_tables: usize,
+    store: &mut ValueStore<Fr>,
+    local_point: &[Fr],
+    log_t: usize,
+) -> Result<(), RuntimePlanError> {
+    let output = stage67_bytecode_read_raf_output_contribution(
+        plan,
+        entries,
+        entry_bytecode_index,
+        num_lookup_tables,
+        store,
+        local_point,
+        log_t,
+    )?;
+    store.insert_scalar(plan.output_contribution, output);
+    Ok(())
+}
+
+fn stage67_bytecode_read_raf_output_contribution<E: Stage67BytecodeEntry>(
     plan: &Stage67BytecodeReadRafPlan,
     entries: &[E],
     entry_bytecode_index: usize,
     num_lookup_tables: usize,
     store: &ValueStore<Fr>,
-    evals: &[StageNamedEval<Fr>],
     local_point: &[Fr],
     log_t: usize,
 ) -> Result<Fr, RuntimePlanError> {
@@ -315,10 +337,7 @@ pub fn evaluate_stage67_bytecode_read_raf<E: Stage67BytecodeEntry>(
         r_cycle_prime,
         log_k,
     )?;
-    let bytecode_ra = eval_family_values(evals, plan.bytecode_ra_evals)?
-        .into_iter()
-        .product::<Fr>();
-    Ok(output_contrib * bytecode_ra)
+    Ok(output_contrib)
 }
 
 fn stage67_bytecode_output_contribution(

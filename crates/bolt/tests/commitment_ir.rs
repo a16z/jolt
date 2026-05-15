@@ -1532,7 +1532,7 @@ fn stage6_rust_targets_extract_and_compile() {
     assert_eq!(verifier_program.output_families.len(), 1);
     assert_eq!(verifier_program.output_product_families.len(), 2);
     assert_eq!(verifier_program.output_function_families.len(), 2);
-    assert_eq!(verifier_program.output_claims.len(), 5);
+    assert_eq!(verifier_program.output_claims.len(), 6);
     let total_booleanity_ra = params.instruction_d + params.bytecode_d + params.ram_d;
     let booleanity_function_families = verifier_program
         .output_function_families
@@ -1734,6 +1734,27 @@ fn stage6_rust_targets_extract_and_compile() {
         vec![instruction_product_family.clone()]
     );
     assert!(instruction_ra_claims[0].function_families.is_empty());
+    let bytecode_claims = verifier_program
+        .output_claims
+        .iter()
+        .filter(|claim| {
+            claim.claim_value == "stage6.bytecode_read_raf.output.product.BytecodeReadRaf"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(bytecode_claims.len(), 1);
+    assert!(bytecode_claims[0].polynomial_evals.is_empty());
+    assert!(bytecode_claims[0].eval_families.is_empty());
+    assert_eq!(bytecode_claims[0].product_families.len(), 1);
+    assert_eq!(
+        bytecode_claims[0].product_families[0].terms[0].evals,
+        vec![
+            "stage6.bytecode_read_raf.output.contribution".to_owned(),
+            "stage6.bytecode_read_raf.eval.BytecodeRa_0".to_owned(),
+            "stage6.bytecode_read_raf.eval.BytecodeRa_1".to_owned(),
+            "stage6.bytecode_read_raf.eval.BytecodeRa_2".to_owned()
+        ]
+    );
+    assert!(bytecode_claims[0].function_families.is_empty());
     assert_eq!(prover_program.point_zeros.len(), 1);
     assert_eq!(
         prover_program.point_slices.len(),
@@ -1805,7 +1826,7 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(verifier_source.source.contains("Stage6VerifierData"));
     assert!(verifier_source.source.contains("Stage6BytecodeReadRafData"));
     assert!(verifier_source.source.contains("Stage6BytecodeEntry"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("expected_bytecode_read_raf"));
     assert!(verifier_source.source.contains("STAGE6_BYTECODE_PLAN"));
@@ -1820,7 +1841,10 @@ fn stage6_rust_targets_extract_and_compile() {
         .contains("Stage67BytecodeTermPlan::RegisterEq"));
     assert!(verifier_source
         .source
-        .contains("evaluate_stage67_bytecode_read_raf"));
+        .contains("evaluate_stage67_bytecode_read_raf_output_values"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.bytecode_read_raf.output.product.BytecodeReadRaf"));
     assert!(!verifier_source
         .source
         .contains("expected_stage67_bytecode_read_raf"));

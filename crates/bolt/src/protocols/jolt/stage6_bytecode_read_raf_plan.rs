@@ -1,4 +1,7 @@
 use crate::emit::rust::push_format;
+use crate::protocols::jolt::verifier_output_claims::{
+    SumcheckOutputClaimPlan, SumcheckOutputProductFamilyPlan, SumcheckOutputProductFamilyTermPlan,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BytecodeReadRafPlan {
@@ -15,6 +18,7 @@ pub(crate) struct BytecodeReadRafPlan {
     pub(crate) stages: &'static [BytecodeReadRafStagePlan],
     pub(crate) output_terms_const: &'static str,
     pub(crate) output_terms: &'static [BytecodeOutputTermPlan],
+    pub(crate) output_contribution: &'static str,
     pub(crate) registers: BytecodeRegisterSymbols,
     pub(crate) entry_lookup_table: &'static str,
 }
@@ -323,6 +327,7 @@ const STAGE6_BYTECODE_READ_RAF_PLAN: BytecodeReadRafPlan = BytecodeReadRafPlan {
     stages: STAGE6_BYTECODE_STAGES,
     output_terms_const: "STAGE6_BYTECODE_OUTPUT_TERMS",
     output_terms: STAGE6_BYTECODE_OUTPUT_TERMS,
+    output_contribution: "stage6.bytecode_read_raf.output.contribution",
     registers: BytecodeRegisterSymbols {
         rd: "stage6.bytecode.entry.rd",
         rs1: "stage6.bytecode.entry.rs1",
@@ -333,6 +338,38 @@ const STAGE6_BYTECODE_READ_RAF_PLAN: BytecodeReadRafPlan = BytecodeReadRafPlan {
 
 pub(crate) fn emit_stage6_bytecode_read_raf_plan_constants() -> String {
     emit_bytecode_read_raf_plan(&STAGE6_BYTECODE_READ_RAF_PLAN)
+}
+
+pub(crate) fn stage6_bytecode_read_raf_output_contribution_symbol() -> &'static str {
+    STAGE6_BYTECODE_READ_RAF_PLAN.output_contribution
+}
+
+pub(crate) fn stage6_bytecode_read_raf_output_claim_plan() -> SumcheckOutputClaimPlan {
+    STAGE6_BYTECODE_READ_RAF_PLAN.output_claim_plan()
+}
+
+impl BytecodeReadRafPlan {
+    fn output_claim_plan(&self) -> SumcheckOutputClaimPlan {
+        let product_family = SumcheckOutputProductFamilyPlan {
+            symbol: "stage6.bytecode_read_raf.output.product.BytecodeReadRaf".to_owned(),
+            gamma: None,
+            terms: vec![SumcheckOutputProductFamilyTermPlan {
+                gamma_power_offset: 0,
+                evals: std::iter::once(self.output_contribution.to_owned())
+                    .chain(self.bytecode_ra_evals.iter().map(|eval| (*eval).to_owned()))
+                    .collect(),
+                factors: Vec::new(),
+            }],
+        };
+        SumcheckOutputClaimPlan {
+            relation: "jolt.stage6.bytecode_read_raf".to_owned(),
+            polynomial_evals: Vec::new(),
+            eval_families: Vec::new(),
+            product_families: vec![product_family.clone()],
+            function_families: Vec::new(),
+            claim_value: product_family.symbol,
+        }
+    }
 }
 
 fn emit_bytecode_read_raf_plan(plan: &BytecodeReadRafPlan) -> String {
@@ -423,7 +460,7 @@ fn emit_bytecode_read_raf_plan(plan: &BytecodeReadRafPlan) -> String {
     push_format(
         &mut source,
         format_args!(
-            "    point: {},\n    gamma: {},\n    bytecode_ra_evals: &{},\n    entries: {},\n    entry_bytecode_index: {},\n    stages: {},\n    output_terms: {},\n",
+            "    point: {},\n    gamma: {},\n    bytecode_ra_evals: &{},\n    entries: {},\n    entry_bytecode_index: {},\n    stages: {},\n    output_terms: {},\n    output_contribution: {},\n",
             rust_str(plan.point),
             rust_str(plan.gamma),
             plan.bytecode_ra_eval_family_const,
@@ -431,6 +468,7 @@ fn emit_bytecode_read_raf_plan(plan: &BytecodeReadRafPlan) -> String {
             rust_str(plan.entry_bytecode_index),
             plan.stages_const,
             plan.output_terms_const,
+            rust_str(plan.output_contribution),
         ),
     );
     source.push_str("    registers: Stage67BytecodeRegisterSymbols {\n");
@@ -541,7 +579,8 @@ fn rust_option_str(value: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        emit_stage6_bytecode_read_raf_plan_constants, BytecodeFlag, BytecodeOutputTermPlan,
+        emit_stage6_bytecode_read_raf_plan_constants, stage6_bytecode_read_raf_output_claim_plan,
+        stage6_bytecode_read_raf_output_contribution_symbol, BytecodeFlag, BytecodeOutputTermPlan,
         BytecodeReadRafTermPlan, BytecodeRegister, STAGE6_BYTECODE_READ_RAF_PLAN,
     };
 
@@ -555,6 +594,10 @@ mod tests {
         assert_eq!(
             plan.entry_lookup_table,
             "stage6.bytecode.entry.lookup_table"
+        );
+        assert_eq!(
+            plan.output_contribution,
+            "stage6.bytecode_read_raf.output.contribution"
         );
 
         let stage1 = &plan.stages[0];
@@ -632,6 +675,30 @@ mod tests {
     }
 
     #[test]
+    fn stage6_bytecode_output_claim_plan_uses_point_derived_contribution() {
+        let claim = stage6_bytecode_read_raf_output_claim_plan();
+
+        assert_eq!(claim.relation, "jolt.stage6.bytecode_read_raf");
+        assert_eq!(
+            claim.claim_value,
+            "stage6.bytecode_read_raf.output.product.BytecodeReadRaf"
+        );
+        assert!(claim.polynomial_evals.is_empty());
+        assert!(claim.eval_families.is_empty());
+        assert_eq!(claim.product_families.len(), 1);
+        assert_eq!(claim.product_families[0].terms.len(), 1);
+        assert_eq!(
+            claim.product_families[0].terms[0].evals,
+            vec![
+                stage6_bytecode_read_raf_output_contribution_symbol().to_owned(),
+                "stage6.bytecode_read_raf.eval.BytecodeRa_0".to_owned(),
+                "stage6.bytecode_read_raf.eval.BytecodeRa_1".to_owned(),
+                "stage6.bytecode_read_raf.eval.BytecodeRa_2".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
     fn stage6_bytecode_plan_renderer_emits_stage67_constants() {
         let source = emit_stage6_bytecode_read_raf_plan_constants();
 
@@ -645,6 +712,8 @@ mod tests {
         ));
         assert!(source.contains("const STAGE6_BYTECODE_OUTPUT_TERMS"));
         assert!(source.contains("Stage67BytecodeOutputTermPlan::Entry { gamma_power: 7 }"));
+        assert!(source
+            .contains("output_contribution: \"stage6.bytecode_read_raf.output.contribution\""));
         assert!(source.contains("const STAGE6_BYTECODE_PLAN: Stage67BytecodeReadRafPlan"));
     }
 }

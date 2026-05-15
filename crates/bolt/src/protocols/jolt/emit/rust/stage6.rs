@@ -11,7 +11,10 @@ use melior::ir::{Attribute, OperationRef};
 
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
-use crate::protocols::jolt::stage6_bytecode_read_raf_plan::emit_stage6_bytecode_read_raf_plan_constants;
+use crate::protocols::jolt::stage6_bytecode_read_raf_plan::{
+    emit_stage6_bytecode_read_raf_plan_constants, stage6_bytecode_read_raf_output_claim_plan,
+    stage6_bytecode_read_raf_output_contribution_symbol,
+};
 use crate::protocols::jolt::verifier_output_claims::{
     self, parse_output_eval_family_plan, parse_output_function_family_plan,
     parse_output_product_family_plan, FieldExprDependencies,
@@ -632,7 +635,7 @@ impl Stage6CpuProgram {
                     .map(|claim| claim.claim_value.as_str()),
             );
         }
-        let output_claims = if role == Role::Verifier {
+        let mut output_claims = if role == Role::Verifier {
             verifier_output_claims::resolve_output_claims(
                 "stage6",
                 &output_values,
@@ -645,6 +648,9 @@ impl Stage6CpuProgram {
         } else {
             Vec::new()
         };
+        if role == Role::Verifier {
+            output_claims.push(stage6_bytecode_read_raf_output_claim_plan());
+        }
 
         Ok(Self {
             params: params.ok_or_else(|| EmitError::new("missing cpu.params"))?,
@@ -778,6 +784,12 @@ impl Stage6CpuProgram {
             verifier_output_claims::VerifierScalarSourceKind::StructuredPolynomialEval,
         );
         values.extend(
+            self.output_claims
+                .iter()
+                .flat_map(|claim| claim.polynomial_evals.iter().map(|value| &value.symbol)),
+            verifier_output_claims::VerifierScalarSourceKind::StructuredPolynomialEval,
+        );
+        values.extend(
             self.output_families.iter().map(|family| &family.symbol),
             verifier_output_claims::VerifierScalarSourceKind::OutputEvalFamily,
         );
@@ -794,8 +806,30 @@ impl Stage6CpuProgram {
             verifier_output_claims::VerifierScalarSourceKind::OutputFunctionFamily,
         );
         values.extend(
+            self.output_claims
+                .iter()
+                .flat_map(|claim| claim.eval_families.iter().map(|family| &family.symbol)),
+            verifier_output_claims::VerifierScalarSourceKind::OutputEvalFamily,
+        );
+        values.extend(
+            self.output_claims
+                .iter()
+                .flat_map(|claim| claim.product_families.iter().map(|family| &family.symbol)),
+            verifier_output_claims::VerifierScalarSourceKind::OutputProductFamily,
+        );
+        values.extend(
+            self.output_claims
+                .iter()
+                .flat_map(|claim| claim.function_families.iter().map(|family| &family.symbol)),
+            verifier_output_claims::VerifierScalarSourceKind::OutputFunctionFamily,
+        );
+        values.extend(
             self.field_exprs.iter().map(|expr| &expr.symbol),
             verifier_output_claims::VerifierScalarSourceKind::FieldExpr,
+        );
+        values.insert(
+            stage6_bytecode_read_raf_output_contribution_symbol(),
+            verifier_output_claims::VerifierScalarSourceKind::PointDerived,
         );
         values.extend(
             self.evals.iter().map(|eval| &eval.symbol),
@@ -1190,7 +1224,7 @@ impl Stage6CpuProgram {
 
     fn emit_verifier_imports() -> &'static str {
         "use bolt_verifier_runtime::{batch_claims, find_batch, find_plan};\n\
-         use super::jolt_relations::{evaluate_stage67_bytecode_read_raf, normalize_bytecode_read_raf_point, stage67_trace_rounds, Stage67BytecodeEntry, Stage67BytecodeFlag, Stage67BytecodeOutputTermPlan, Stage67BytecodeReadRafPlan, Stage67BytecodeRegister, Stage67BytecodeRegisterSymbols, Stage67BytecodeStagePlan, Stage67BytecodeTermPlan, Stage67RelationSymbols};\n\
+         use super::jolt_relations::{evaluate_stage67_bytecode_read_raf_output_values, normalize_bytecode_read_raf_point, stage67_trace_rounds, Stage67BytecodeEntry, Stage67BytecodeFlag, Stage67BytecodeOutputTermPlan, Stage67BytecodeReadRafPlan, Stage67BytecodeRegister, Stage67BytecodeRegisterSymbols, Stage67BytecodeStagePlan, Stage67BytecodeTermPlan, Stage67RelationSymbols};\n\
          use jolt_field::{Field, Fr};\n\
          use jolt_sumcheck::SumcheckError;\n\
          use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};"
@@ -2579,7 +2613,18 @@ fn expected_batched_output_claim(
                     .ok_or(VerifyStage6Error::MissingValue {
                         symbol: "stage6.bytecode_read_raf.data",
                 })?;
-                expected_bytecode_read_raf(program, data, store, evals, local_point)?
+                let mut local_store = store.clone();
+                let log_t = stage6_trace_rounds(program)?;
+                evaluate_stage67_bytecode_read_raf_output_values(
+                    &STAGE6_BYTECODE_PLAN,
+                    &data.entries,
+                    data.entry_bytecode_index,
+                    data.num_lookup_tables,
+                    &mut local_store,
+                    local_point,
+                    log_t,
+                )?;
+                expected_plan_output_claim(program, instance, &local_store, evals, local_point)?
             }
             Stage6RelationKind::Stage6Booleanity
             | Stage6RelationKind::Stage6HammingBooleanity
@@ -2620,26 +2665,6 @@ fn expected_plan_output_claim(
         instance.symbol,
         evals,
         local_point,
-    )?)
-}
-
-fn expected_bytecode_read_raf(
-    program: &'static Stage6VerifierProgramPlan,
-    data: &Stage6BytecodeReadRafData,
-    store: &bolt_verifier_runtime::ValueStore<Fr>,
-    evals: &[Stage6NamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage6Error> {
-    let log_t = stage6_trace_rounds(program)?;
-    Ok(evaluate_stage67_bytecode_read_raf(
-        &STAGE6_BYTECODE_PLAN,
-        &data.entries,
-        data.entry_bytecode_index,
-        data.num_lookup_tables,
-        store,
-        evals,
-        local_point,
-        log_t,
     )?)
 }
 
