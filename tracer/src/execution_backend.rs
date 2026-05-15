@@ -59,7 +59,12 @@ impl ExecutionBackend for TracerBackend {
     }
 }
 
-fn trace_row_from_cycle(cycle: Cycle) -> TraceRow {
+/// Adapt a single tracer `Cycle` into the program-side `TraceRow` view
+/// consumed by `jolt-kernels::trace::*` helpers. Public because the
+/// modular SDK path (`jolt-host`) wants to drive `tracer::trace`
+/// directly so it can also hand the tracer's `Memory` to
+/// `jolt_core::zkvm::ram::gen_ram_memory_states`.
+pub fn trace_row_from_cycle(cycle: Cycle) -> TraceRow {
     TraceRow {
         instruction: normalized_instruction(&cycle),
         registers: register_state(&cycle),

@@ -23,6 +23,7 @@ host = [
   "jolt-core/default",
   "jolt-platform/std",
   "dep:common",
+  "dep:jolt-host",
   "dep:jolt-program",
   "dep:tracer",
   "postcard/use-std",
@@ -82,6 +83,7 @@ jolt-sdk-macros.workspace = true
 # Host-only dependencies
 common = { workspace = true, optional = true }
 jolt-core = { workspace = true, default-features = false, optional = true }
+jolt-host = { workspace = true, optional = true }
 jolt-program = { workspace = true, optional = true }
 tracer = { workspace = true, default-features = false, features = [
   "std",

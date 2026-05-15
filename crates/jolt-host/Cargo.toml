@@ -13,6 +13,7 @@ workspace = true
 postcard = { workspace = true, features = ["alloc"] }
 
 [dependencies]
+ark-bn254 = { workspace = true, default-features = false }
 common.workspace = true
 jolt-core = { workspace = true, features = ["host"] }
 jolt-dory.workspace = true

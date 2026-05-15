@@ -37,8 +37,9 @@ use jolt_kernels::trace::{
     stage5_lookup_trace, stage6_bytecode_entries, CycleRow, Stage5LookupTrace,
 };
 use jolt_openings::CommitmentScheme as _;
-use jolt_program::execution::{MemoryImage, TraceRow};
-use jolt_program::preprocess::BytecodePreprocessing;
+use jolt_core::zkvm::ram::gen_ram_memory_states;
+use jolt_program::execution::TraceRow;
+use jolt_program::preprocess::{BytecodePreprocessing, RAMPreprocessing};
 use jolt_r1cs::{constraints::rv64, R1csKey};
 use jolt_transcript::{Blake2bTranscript, Label, LabelWithCount, Transcript, U64Word};
 use jolt_verifier::{
@@ -49,7 +50,8 @@ use jolt_witness::{
     Stage6BytecodeEntry as WitnessStage6BytecodeEntry, Stage6WitnessParams,
 };
 use strum::EnumCount;
-use tracer::TracerBackend;
+use tracer::emulator::memory::Memory;
+use tracer::trace_row_from_cycle;
 
 use jolt_prover::{default_prover_programs, JoltProveError, JoltProverArtifacts};
 
@@ -283,13 +285,15 @@ pub fn prove_program(
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
 ) -> Result<ProofBundle, ProveProgramError> {
+    // Use the legacy `Program::trace` (not `TracerBackend`/MemoryImage)
+    // so we retain the tracer's `Memory` for jolt-core's
+    // `gen_ram_memory_states`. MemoryImage's byte-pair representation
+    // discards info that gen_ram_memory_states reads via
+    // `get_doubleword`, producing a different RAM state vs the verifier.
     let (bytecode_raw, init_mem, _program_size, entry_address) = program.decode();
-    let mut trace_backend = TracerBackend::new();
-    let trace_output =
-        program.trace_with_backend(&mut trace_backend, inputs, untrusted_advice, trusted_advice)?;
-    let trace = trace_output.trace.into_rows();
-    let io_device = trace_output.device;
-    let final_memory = trace_output.final_memory;
+    let (_lazy, cycles, final_memory, io_device) =
+        program.trace(inputs, untrusted_advice, trusted_advice);
+    let trace: Vec<TraceRow> = cycles.into_iter().map(trace_row_from_cycle).collect();
 
     let shape = check_shape(&trace, &io_device, &init_mem, bytecode_raw, entry_address)?;
     let params = ModularJoltParams::new(shape.log_t, shape.log_k_bytecode, shape.log_k_ram);
@@ -299,7 +303,7 @@ pub fn prove_program(
         &shape.bytecode,
         &io_device,
         &init_mem,
-        final_memory.as_ref(),
+        &final_memory,
         entry_address,
         &params,
         shape.trace_length,
@@ -395,7 +399,7 @@ fn assemble_and_prove(
     bytecode: &BytecodePreprocessing,
     io_device: &JoltDevice,
     init_mem: &[(u64, u8)],
-    final_memory: Option<&MemoryImage>,
+    final_memory: &Memory,
     entry_address: u64,
     params: &ModularJoltParams,
     trace_length: usize,
@@ -426,8 +430,20 @@ fn assemble_and_prove(
     });
     let stage6_bytecode_entries_vec: Vec<WitnessStage6BytecodeEntry<Fr>> =
         stage6_bytecode_entries::<Fr, _>(bytecode, instruction_lookup_table_index);
-    let (initial_ram_state, final_ram_state) =
-        build_ram_states(init_mem, final_memory, io_device, ram_k);
+    // Use jolt-core's canonical RAM state builder so prover/verifier
+    // agree on init+final cells exactly. RAMPreprocessing handles the
+    // bytecode-byte → u64-word packing the verifier-side RAM checks
+    // expect.
+    let ram_preprocessing = RAMPreprocessing::preprocess(init_mem.to_vec());
+    // gen_ram_memory_states is generic over `F: jolt_core::field::JoltField`;
+    // jolt_field::Fr is a transparent newtype around ark_bn254::Fr without
+    // that bound, so we instantiate with the inner ark type.
+    let (initial_ram_state, final_ram_state) = gen_ram_memory_states::<ark_bn254::Fr>(
+        ram_k,
+        &ram_preprocessing,
+        io_device,
+        final_memory,
+    );
 
     let pcs_setup = DoryScheme::setup_prover(params.log_t + params.log_k_chunk);
 
@@ -806,124 +822,6 @@ where
 {
     transcript.append(&LabelWithCount(label, bytes.len() as u64));
     transcript.append_bytes(bytes);
-}
-
-/// Build K-element initial and final RAM state arrays. Mirrors
-/// `jolt_core::zkvm::ram::gen_ram_memory_states` but takes a
-/// `MemoryImage` (byte pairs) from the new tracer backend instead of
-/// the legacy `tracer::emulator::memory::Memory` (doubleword indexed).
-fn build_ram_states(
-    init_mem: &[(u64, u8)],
-    final_memory: Option<&MemoryImage>,
-    io_device: &JoltDevice,
-    ram_k: usize,
-) -> (Vec<u64>, Vec<u64>) {
-    let layout = &io_device.memory_layout;
-    let lowest = layout.get_lowest_address();
-
-    let mut initial = vec![0u64; ram_k];
-    let mut final_state = vec![0u64; ram_k];
-
-    // 1. ELF bytecode image into initial state
-    pack_byte_pairs_into(init_mem, lowest, ram_k, &mut initial);
-
-    // 2. I/O region: inputs into both
-    populate_words(layout.input_start, lowest, &io_device.inputs, ram_k, &mut initial, Some(&mut final_state));
-
-    // 3. Trusted advice into both
-    populate_words(
-        layout.trusted_advice_start,
-        lowest,
-        &io_device.trusted_advice,
-        ram_k,
-        &mut initial,
-        Some(&mut final_state),
-    );
-
-    // 4. Untrusted advice into both
-    populate_words(
-        layout.untrusted_advice_start,
-        lowest,
-        &io_device.untrusted_advice,
-        ram_k,
-        &mut initial,
-        Some(&mut final_state),
-    );
-
-    // 5. Final memory (DRAM, addresses >= RAM_START_ADDRESS)
-    if let Some(image) = final_memory {
-        pack_byte_pairs_into(&image.bytes, lowest, ram_k, &mut final_state);
-    }
-
-    // 6. Outputs into final state only
-    populate_words(
-        layout.output_start,
-        lowest,
-        &io_device.outputs,
-        ram_k,
-        &mut final_state,
-        None,
-    );
-
-    // 7. Panic and termination bits
-    let panic_idx = ((layout.panic - lowest) / 8) as usize;
-    if panic_idx < ram_k {
-        final_state[panic_idx] = io_device.panic as u64;
-    }
-    if !io_device.panic {
-        let term_idx = ((layout.termination - lowest) / 8) as usize;
-        if term_idx < ram_k {
-            final_state[term_idx] = 1;
-        }
-    }
-
-    (initial, final_state)
-}
-
-fn pack_byte_pairs_into(pairs: &[(u64, u8)], lowest: u64, ram_k: usize, out: &mut [u64]) {
-    for &(addr, byte_val) in pairs {
-        if addr < lowest {
-            continue;
-        }
-        let word_idx = ((addr - lowest) / 8) as usize;
-        if word_idx >= ram_k {
-            continue;
-        }
-        let byte_offset = ((addr - lowest) % 8) as u32;
-        out[word_idx] |= (byte_val as u64) << (byte_offset * 8);
-    }
-}
-
-#[expect(clippy::too_many_arguments, reason = "thin helper")]
-fn populate_words(
-    start_addr: u64,
-    lowest: u64,
-    bytes: &[u8],
-    ram_k: usize,
-    primary: &mut [u64],
-    secondary: Option<&mut [u64]>,
-) {
-    let start_idx = ((start_addr - lowest) / 8) as usize;
-    let mut sec = secondary;
-    for (i, chunk) in bytes.chunks(8).enumerate() {
-        let idx = start_idx + i;
-        if idx >= ram_k {
-            break;
-        }
-        let word = pack_le(chunk);
-        primary[idx] = word;
-        if let Some(s) = sec.as_mut() {
-            s[idx] = word;
-        }
-    }
-}
-
-fn pack_le(bytes: &[u8]) -> u64 {
-    let mut word = 0u64;
-    for (j, &b) in bytes.iter().enumerate() {
-        word |= (b as u64) << (j * 8);
-    }
-    word
 }
 
 fn compute_min_ram_k(

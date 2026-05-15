@@ -2984,6 +2984,7 @@ dependencies = [
 name = "jolt-host"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254",
  "common",
  "jolt-core",
  "jolt-dory",
@@ -3293,6 +3294,7 @@ dependencies = [
  "cfg-if",
  "common",
  "jolt-core",
+ "jolt-host",
  "jolt-platform",
  "jolt-program",
  "jolt-sdk-macros",

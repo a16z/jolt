@@ -3,7 +3,7 @@ extern crate proc_macro;
 use core::panic;
 
 use common::{
-    attributes::parse_attributes,
+    attributes::{parse_attributes, Backend},
     jolt_device::{MemoryConfig, MemoryLayout},
 };
 use proc_macro::TokenStream;
@@ -70,21 +70,13 @@ impl MacroBuilder {
     }
 
     fn build(&mut self) -> TokenStream {
+        let attributes = parse_attributes(&self.attr);
+
         let memory_config_fn = self.make_memory_config_fn();
-        let build_prover_fn = self.make_build_prover_fn();
-        let build_verifier_fn = self.make_build_verifier_fn();
         let analyze_fn = self.make_analyze_function();
         let trace_fn = self.make_trace_func();
         let trace_to_file_fn = self.make_trace_to_file_func();
-        let compile_fn = self.make_compile_func();
-        let preprocess_shared_fn = self.make_preprocess_shared_func();
-        let preprocess_prover_fn = self.make_preprocess_prover_func();
-        let preprocess_verifier_fn = self.make_preprocess_verifier_func();
-        let verifier_preprocess_from_prover_fn = self.make_preprocess_from_prover_func();
-        let commit_trusted_advice_fn = self.make_commit_trusted_advice_func();
-        let prove_fn = self.make_prove_func();
 
-        let attributes = parse_attributes(&self.attr);
         let mut execute_fn = quote! {};
         if !attributes.guest_only {
             execute_fn = self.make_execute_function();
@@ -102,25 +94,195 @@ impl MacroBuilder {
 
         let require_zk = self.make_require_zk_check();
 
+        let backend_fns = match attributes.backend {
+            Backend::Legacy => {
+                let build_prover_fn = self.make_build_prover_fn();
+                let build_verifier_fn = self.make_build_verifier_fn();
+                let compile_fn = self.make_compile_func();
+                let preprocess_shared_fn = self.make_preprocess_shared_func();
+                let preprocess_prover_fn = self.make_preprocess_prover_func();
+                let preprocess_verifier_fn = self.make_preprocess_verifier_func();
+                let verifier_preprocess_from_prover_fn = self.make_preprocess_from_prover_func();
+                let commit_trusted_advice_fn = self.make_commit_trusted_advice_func();
+                let prove_fn = self.make_prove_func();
+                quote! {
+                    #build_prover_fn
+                    #build_verifier_fn
+                    #compile_fn
+                    #preprocess_shared_fn
+                    #preprocess_prover_fn
+                    #preprocess_verifier_fn
+                    #verifier_preprocess_from_prover_fn
+                    #commit_trusted_advice_fn
+                    #prove_fn
+                }
+            }
+            Backend::Modular => {
+                let guard = self.make_modular_guard();
+                let compile_fn = self.make_modular_compile_func();
+                let prove_fn = self.make_modular_prove_func();
+                let verify_fn = self.make_modular_verify_func();
+                quote! {
+                    #guard
+                    #compile_fn
+                    #prove_fn
+                    #verify_fn
+                }
+            }
+        };
+
         quote! {
             #require_zk
             #memory_config_fn
-            #build_prover_fn
-            #build_verifier_fn
             #execute_fn
             #analyze_fn
             #trace_fn
             #trace_to_file_fn
-            #compile_fn
-            #preprocess_shared_fn
-            #preprocess_prover_fn
-            #preprocess_verifier_fn
-            #verifier_preprocess_from_prover_fn
-            #commit_trusted_advice_fn
-            #prove_fn
+            #backend_fns
             #main_fn
         }
         .into()
+    }
+
+    /// Compile-time gate that rejects unsupported combinations of the
+    /// modular backend with other macro features.
+    fn make_modular_guard(&self) -> TokenStream2 {
+        let attributes = parse_attributes(&self.attr);
+        let wasm_err = if self.has_wasm_attr() {
+            quote! {
+                compile_error!(
+                    "#[jolt::provable(backend = \"modular\")] is not compatible \
+                     with the `wasm` attribute."
+                );
+            }
+        } else {
+            quote! {}
+        };
+        // Modular backend currently runs against the goldens-baked shape
+        // (log_t = 18, see jolt_host::FIXTURE_LOG_T). Reject larger
+        // max_trace_length at expansion time.
+        const MAX_MODULAR_TRACE_LENGTH: u64 = 1 << 18;
+        let trace_err = if attributes.max_trace_length > MAX_MODULAR_TRACE_LENGTH {
+            quote! {
+                compile_error!(
+                    "#[jolt::provable(backend = \"modular\")]: max_trace_length \
+                     exceeds 2^18 (the current goldens-baked fixture ceiling)."
+                );
+            }
+        } else {
+            quote! {}
+        };
+        quote! {
+            #wasm_err
+            #trace_err
+        }
+    }
+
+    /// Modular `compile_<fn>(target_dir: &str) -> jolt::host::Program`.
+    /// Same Program builder the legacy backend uses; the modular path
+    /// just consumes the resulting Program through `jolt_host`.
+    fn make_modular_compile_func(&self) -> TokenStream2 {
+        let imports = self.make_imports();
+        let guest_name = self.get_guest_name();
+        let set_mem_size = self.make_set_linker_parameters();
+        let set_std = self.make_set_std();
+        let set_backtrace = self.make_set_backtrace();
+        let set_profile = self.make_set_profile();
+
+        let fn_name = self.get_func_name();
+        let fn_name_str = fn_name.to_string();
+        let compile_fn_name = Ident::new(&format!("compile_{fn_name}"), fn_name.span());
+        quote! {
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            pub fn #compile_fn_name(target_dir: &str) -> jolt::host::Program {
+                #imports
+                let mut program = Program::new(#guest_name);
+                program.set_func(#fn_name_str);
+                #set_std
+                #set_profile
+                #set_backtrace
+                #set_mem_size
+                program.build_with_features(target_dir, &["compute_advice"]);
+                program.build_with_features(target_dir, &[]);
+                program
+            }
+        }
+    }
+
+    /// Modular `prove_<fn>(program, args...) -> Result<(T, ProofBundle),
+    /// ProveProgramError>`. Serializes args via postcard, drives the
+    /// modular prover via `jolt_host::prove_program`, and decodes the
+    /// return value `T` from `io_device.outputs` so callers don't need
+    /// to touch raw bytes.
+    fn make_modular_prove_func(&self) -> TokenStream2 {
+        let fn_name = self.get_func_name();
+        let prove_fn_name = Ident::new(&format!("prove_{fn_name}"), fn_name.span());
+
+        let pub_arg_names: Vec<_> = self.pub_func_args.iter().map(|(n, _)| n).collect();
+        let pub_arg_types: Vec<_> = self.pub_func_args.iter().map(|(_, t)| t).collect();
+        let untrusted_arg_names: Vec<_> =
+            self.untrusted_func_args.iter().map(|(n, _)| n).collect();
+        let untrusted_arg_types: Vec<_> =
+            self.untrusted_func_args.iter().map(|(_, t)| t).collect();
+
+        let (ret_ty, decode_ret) = match &self.func.sig.output {
+            ReturnType::Default => (quote! { () }, quote! { let ret_val: () = (); }),
+            ReturnType::Type(_, ty) => (
+                quote! { #ty },
+                quote! {
+                    let max_output = output.io_device.memory_layout.max_output_size as usize;
+                    let mut output_bytes = output.io_device.outputs.clone();
+                    output_bytes.resize(max_output, 0);
+                    let ret_val: #ty = jolt::postcard::from_bytes(&output_bytes)
+                        .expect("decode guest return value via postcard");
+                },
+            ),
+        };
+
+        quote! {
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            pub fn #prove_fn_name(
+                program: &mut jolt::host::Program,
+                #(#pub_arg_names: #pub_arg_types,)*
+                #(#untrusted_arg_names: #untrusted_arg_types,)*
+            ) -> Result<(#ret_ty, jolt::modular::ProofBundle), jolt::modular::ProveProgramError>
+            {
+                let mut input_bytes: Vec<u8> = Vec::new();
+                #(
+                    input_bytes.append(&mut jolt::postcard::to_stdvec(&#pub_arg_names).unwrap());
+                )*
+                let mut untrusted_advice_bytes: Vec<u8> = Vec::new();
+                #(
+                    untrusted_advice_bytes.append(
+                        &mut jolt::postcard::to_stdvec(&#untrusted_arg_names).unwrap()
+                    );
+                )*
+                let output = jolt::modular::prove_program(
+                    program,
+                    &input_bytes,
+                    &untrusted_advice_bytes,
+                    &[],
+                )?;
+                #decode_ret
+                Ok((ret_val, output))
+            }
+        }
+    }
+
+    /// Modular `verify_<fn>(&bundle, program) -> Result<(), VerifyProgramError>`.
+    /// Thin wrapper around `jolt_host::verify_proof`.
+    fn make_modular_verify_func(&self) -> TokenStream2 {
+        let fn_name = self.get_func_name();
+        let verify_fn_name = Ident::new(&format!("verify_{fn_name}"), fn_name.span());
+        quote! {
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            pub fn #verify_fn_name(
+                output: &jolt::modular::ProofBundle,
+                program: &mut jolt::host::Program,
+            ) -> Result<(), jolt::modular::VerifyProgramError> {
+                jolt::modular::verify_proof(output, program)
+            }
+        }
     }
 
     fn make_memory_config_fn(&self) -> TokenStream2 {
