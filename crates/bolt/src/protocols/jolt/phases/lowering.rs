@@ -485,6 +485,7 @@ pub(super) fn lower_party_to_compute<'c>(
                 let attrs = copy_attrs(
                     op,
                     &[
+                        "gamma",
                         "term_gamma_power_offsets",
                         "term_eval_counts",
                         "term_factor_counts",
@@ -508,6 +509,7 @@ pub(super) fn lower_party_to_compute<'c>(
                 let attrs = copy_attrs(
                     op,
                     &[
+                        "gamma",
                         "term_gamma_power_offsets",
                         "term_functions",
                         "term_factor_counts",

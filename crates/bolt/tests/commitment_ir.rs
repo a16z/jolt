@@ -1508,7 +1508,7 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(prover_program.transcript_absorb_bytes.is_empty());
     assert_eq!(prover_program.opening_inputs.len(), 91);
     assert!(prover_program.field_exprs.len() > 150);
-    assert_eq!(prover_program.field_constants.len(), 3);
+    assert_eq!(prover_program.field_constants.len(), 1);
     assert!(prover_program.opening_equalities.is_empty());
     assert_eq!(prover_program.claims.len(), 6);
     assert_eq!(prover_program.drivers.len(), 1);
@@ -1538,10 +1538,7 @@ fn stage6_rust_targets_extract_and_compile() {
         .collect::<Vec<_>>();
     assert_eq!(hamming_function_families.len(), 1);
     let hamming_function_family = hamming_function_families[0];
-    assert_eq!(
-        hamming_function_family.gamma,
-        "stage6.hamming_booleanity.output.gamma_identity"
-    );
+    assert_eq!(hamming_function_family.gamma, None);
     assert_eq!(hamming_function_family.terms.len(), 1);
     assert_eq!(hamming_function_family.terms[0].gamma_power_offset, 0);
     assert_eq!(hamming_function_family.terms[0].function, "boolean_zero");
@@ -1560,10 +1557,7 @@ fn stage6_rust_targets_extract_and_compile() {
         .collect::<Vec<_>>();
     assert_eq!(ram_product_families.len(), 1);
     let ram_product_family = ram_product_families[0];
-    assert_eq!(
-        ram_product_family.gamma,
-        "stage6.ram_ra_virtual.output.gamma_identity"
-    );
+    assert_eq!(ram_product_family.gamma, None);
     assert_eq!(ram_product_family.terms.len(), 1);
     assert_eq!(ram_product_family.terms[0].gamma_power_offset, 0);
     assert_eq!(
@@ -1585,7 +1579,7 @@ fn stage6_rust_targets_extract_and_compile() {
     let instruction_product_family = instruction_product_families[0];
     assert_eq!(
         instruction_product_family.gamma,
-        "stage6.instruction_ra_virtual.gamma"
+        Some("stage6.instruction_ra_virtual.gamma".to_owned())
     );
     assert_eq!(
         instruction_product_family.terms.len(),
@@ -1833,10 +1827,16 @@ fn stage6_rust_targets_extract_and_compile() {
         .contains("stage6.hamming_booleanity.output.claim_expr"));
     assert!(!verifier_source
         .source
+        .contains("stage6.hamming_booleanity.output.gamma_identity"));
+    assert!(!verifier_source
+        .source
         .contains("stage6.ram_ra_virtual.output.product.RamRa"));
     assert!(!verifier_source
         .source
         .contains("stage6.ram_ra_virtual.output.claim_expr"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.ram_ra_virtual.output.gamma_identity"));
     assert!(!verifier_source
         .source
         .contains("stage6.instruction_ra_virtual.output.product.InstructionRa_0"));

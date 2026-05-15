@@ -388,7 +388,7 @@ pub struct SumcheckOutputProductFamilyTermPlan {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SumcheckOutputProductFamilyPlan {
     pub symbol: &'static str,
-    pub gamma: &'static str,
+    pub gamma: Option<&'static str>,
     pub terms: &'static [SumcheckOutputProductFamilyTermPlan],
 }
 
@@ -408,7 +408,7 @@ pub struct SumcheckOutputFunctionFamilyTermPlan {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SumcheckOutputFunctionFamilyPlan {
     pub symbol: &'static str,
-    pub gamma: &'static str,
+    pub gamma: Option<&'static str>,
     pub terms: &'static [SumcheckOutputFunctionFamilyTermPlan],
 }
 
@@ -1321,11 +1321,7 @@ fn evaluate_sumcheck_output_product_family(
     store: &ValueStore<Fr>,
     scratch: &ScratchScalars,
 ) -> Result<Fr, RuntimePlanError> {
-    let gamma = scratch
-        .scalar_or(store, family.gamma)
-        .ok_or(RuntimePlanError::MissingValue {
-            symbol: family.gamma,
-        })?;
+    let gamma = output_family_gamma(family.gamma, store, scratch)?;
     let mut result = Fr::from_u64(0);
     for term in family.terms {
         if term.evals.is_empty() && term.factors.is_empty() {
@@ -1352,11 +1348,7 @@ fn evaluate_sumcheck_output_function_family(
     store: &ValueStore<Fr>,
     scratch: &ScratchScalars,
 ) -> Result<Fr, RuntimePlanError> {
-    let gamma = scratch
-        .scalar_or(store, family.gamma)
-        .ok_or(RuntimePlanError::MissingValue {
-            symbol: family.gamma,
-        })?;
+    let gamma = output_family_gamma(family.gamma, store, scratch)?;
     let mut result = Fr::from_u64(0);
     for term in family.terms {
         let eval = scratch
@@ -1378,6 +1370,19 @@ fn evaluate_sumcheck_output_function_family(
 fn evaluate_output_function(function: SumcheckOutputFunctionKind, eval: Fr) -> Fr {
     match function {
         SumcheckOutputFunctionKind::BooleanZero => eval * eval - eval,
+    }
+}
+
+fn output_family_gamma(
+    gamma: Option<&'static str>,
+    store: &ValueStore<Fr>,
+    scratch: &ScratchScalars,
+) -> Result<Fr, RuntimePlanError> {
+    match gamma {
+        Some(symbol) => scratch
+            .scalar_or(store, symbol)
+            .ok_or(RuntimePlanError::MissingValue { symbol }),
+        None => Ok(Fr::from_u64(1)),
     }
 }
 

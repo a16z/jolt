@@ -978,6 +978,7 @@ pub fn lower_compute_to_cpu<'c>(
                 let attrs = copy_attrs(
                     op,
                     &[
+                        "gamma",
                         "term_gamma_power_offsets",
                         "term_eval_counts",
                         "term_factor_counts",
@@ -1001,6 +1002,7 @@ pub fn lower_compute_to_cpu<'c>(
                 let attrs = copy_attrs(
                     op,
                     &[
+                        "gamma",
                         "term_gamma_power_offsets",
                         "term_functions",
                         "term_factor_counts",

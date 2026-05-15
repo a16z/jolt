@@ -290,8 +290,6 @@ pub const STAGE6_OPENING_INPUTS: &[Stage6OpeningInputPlan] = &[
 
 pub const STAGE6_FIELD_CONSTANTS: &[Stage6FieldConstantPlan] = &[
     Stage6FieldConstantPlan { symbol: "stage6.zero", field: "bn254_fr", value: 0 },
-    Stage6FieldConstantPlan { symbol: "stage6.hamming_booleanity.output.gamma_identity", field: "bn254_fr", value: 1 },
-    Stage6FieldConstantPlan { symbol: "stage6.ram_ra_virtual.output.gamma_identity", field: "bn254_fr", value: 1 },
 ];
 
 const fn stage6_field_expr(symbol: &'static str, kind: Stage6FieldExprKind, operands: &'static [&'static str]) -> Stage6FieldExprPlan {
@@ -615,7 +613,7 @@ pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_0_FUNCTION_FAMILY_0_TERMS: &[bolt_verifie
     bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 0, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.hamming_booleanity.eval.HammingWeight", factors: STAGE6_SUMCHECK_OUTPUT_CLAIM_0_FUNCTION_FAMILY_0_TERM_0_FACTORS },
 ];
 pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_0_FUNCTION_FAMILIES: &[bolt_verifier_runtime::SumcheckOutputFunctionFamilyPlan] = &[
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyPlan { symbol: "stage6.hamming_booleanity.output.family", gamma: "stage6.hamming_booleanity.output.gamma_identity", terms: STAGE6_SUMCHECK_OUTPUT_CLAIM_0_FUNCTION_FAMILY_0_TERMS },
+    bolt_verifier_runtime::SumcheckOutputFunctionFamilyPlan { symbol: "stage6.hamming_booleanity.output.family", gamma: None, terms: STAGE6_SUMCHECK_OUTPUT_CLAIM_0_FUNCTION_FAMILY_0_TERMS },
 ];
 
 pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_1_VALUES: &[Stage6StructuredPolynomialEvalPlan] = &[
@@ -628,7 +626,7 @@ pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_1_PRODUCT_FAMILY_0_TERMS: &[bolt_verifier
     bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_1_PRODUCT_FAMILY_0_TERM_0_EVALS, factors: STAGE6_SUMCHECK_OUTPUT_CLAIM_1_PRODUCT_FAMILY_0_TERM_0_FACTORS },
 ];
 pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_1_PRODUCT_FAMILIES: &[bolt_verifier_runtime::SumcheckOutputProductFamilyPlan] = &[
-    bolt_verifier_runtime::SumcheckOutputProductFamilyPlan { symbol: "stage6.ram_ra_virtual.output.family", gamma: "stage6.ram_ra_virtual.output.gamma_identity", terms: STAGE6_SUMCHECK_OUTPUT_CLAIM_1_PRODUCT_FAMILY_0_TERMS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyPlan { symbol: "stage6.ram_ra_virtual.output.family", gamma: None, terms: STAGE6_SUMCHECK_OUTPUT_CLAIM_1_PRODUCT_FAMILY_0_TERMS },
 ];
 
 pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_2_VALUES: &[Stage6StructuredPolynomialEvalPlan] = &[
@@ -662,7 +660,7 @@ pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERMS: &[bolt_verifier
     bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 7, evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_7_EVALS, factors: STAGE6_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERM_7_FACTORS },
 ];
 pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILIES: &[bolt_verifier_runtime::SumcheckOutputProductFamilyPlan] = &[
-    bolt_verifier_runtime::SumcheckOutputProductFamilyPlan { symbol: "stage6.instruction_ra_virtual.output.family", gamma: "stage6.instruction_ra_virtual.gamma", terms: STAGE6_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERMS },
+    bolt_verifier_runtime::SumcheckOutputProductFamilyPlan { symbol: "stage6.instruction_ra_virtual.output.family", gamma: Some("stage6.instruction_ra_virtual.gamma"), terms: STAGE6_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERMS },
 ];
 
 pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_3_VALUES: &[Stage6StructuredPolynomialEvalPlan] = &[

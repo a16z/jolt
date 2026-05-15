@@ -194,7 +194,7 @@ pub(crate) fn append_sumcheck_output_product_family<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
     spec: OutputProductFamilySpec<'_>,
-    gamma: Value<'c, 'a>,
+    gamma: Option<(&str, Value<'c, 'a>)>,
     terms: &[OutputProductFamilyTermSpec<'c, 'a>],
 ) -> Result<Value<'c, 'a>, MlirError> {
     let term_gamma_power_offsets = terms
@@ -210,9 +210,13 @@ pub(crate) fn append_sumcheck_output_product_family<'c, 'a>(
         .map(|term| term.factors.len())
         .collect::<Vec<_>>();
     let mut operands = Vec::with_capacity(
-        1 + term_eval_counts.iter().sum::<usize>() + term_factor_counts.iter().sum::<usize>(),
+        gamma.map_or(0, |_| 1)
+            + term_eval_counts.iter().sum::<usize>()
+            + term_factor_counts.iter().sum::<usize>(),
     );
-    operands.push(gamma);
+    if let Some((_, gamma)) = gamma {
+        operands.push(gamma);
+    }
     operands.extend(
         terms
             .iter()
@@ -231,11 +235,13 @@ pub(crate) fn append_sumcheck_output_product_family<'c, 'a>(
         .iter()
         .flat_map(|term| term.factors.iter().map(|(symbol, _)| symbol.as_str()))
         .collect::<Vec<_>>();
+    let gamma_symbols = gamma.map(|(symbol, _)| vec![symbol]).unwrap_or_default();
     let op = context.append_typed_op(
         module,
         "piop.sumcheck_output_product_family",
         Some(spec.symbol),
         &[
+            ("gamma", &symbol_array_attr(&gamma_symbols)),
             (
                 "term_gamma_power_offsets",
                 &usize_array_attr(&term_gamma_power_offsets),
@@ -255,7 +261,7 @@ pub(crate) fn append_sumcheck_output_function_family<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
     spec: OutputFunctionFamilySpec<'_>,
-    gamma: Value<'c, 'a>,
+    gamma: Option<(&str, Value<'c, 'a>)>,
     terms: &[OutputFunctionFamilyTermSpec<'c, 'a>],
 ) -> Result<Value<'c, 'a>, MlirError> {
     let term_gamma_power_offsets = terms
@@ -266,9 +272,12 @@ pub(crate) fn append_sumcheck_output_function_family<'c, 'a>(
         .iter()
         .map(|term| term.factors.len())
         .collect::<Vec<_>>();
-    let mut operands =
-        Vec::with_capacity(1 + terms.len() + term_factor_counts.iter().sum::<usize>());
-    operands.push(gamma);
+    let mut operands = Vec::with_capacity(
+        gamma.map_or(0, |_| 1) + terms.len() + term_factor_counts.iter().sum::<usize>(),
+    );
+    if let Some((_, gamma)) = gamma {
+        operands.push(gamma);
+    }
     operands.extend(terms.iter().map(|term| term.eval.1));
     operands.extend(
         terms
@@ -284,11 +293,13 @@ pub(crate) fn append_sumcheck_output_function_family<'c, 'a>(
         .iter()
         .flat_map(|term| term.factors.iter().map(|(symbol, _)| symbol.as_str()))
         .collect::<Vec<_>>();
+    let gamma_symbols = gamma.map(|(symbol, _)| vec![symbol]).unwrap_or_default();
     let op = context.append_typed_op(
         module,
         "piop.sumcheck_output_function_family",
         Some(spec.symbol),
         &[
+            ("gamma", &symbol_array_attr(&gamma_symbols)),
             (
                 "term_gamma_power_offsets",
                 &usize_array_attr(&term_gamma_power_offsets),

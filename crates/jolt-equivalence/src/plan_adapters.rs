@@ -670,7 +670,7 @@ macro_rules! define_stage_adapter_impl {
                                     .iter()
                                     .map(|family| bolt_verifier_runtime::SumcheckOutputProductFamilyPlan {
                                         symbol: super::leak_str(&family.symbol),
-                                        gamma: super::leak_str(&family.gamma),
+                                        gamma: family.gamma.as_ref().map(|gamma| super::leak_str(gamma)),
                                         terms: super::leak_slice(
                                             family
                                                 .terms
@@ -702,7 +702,7 @@ macro_rules! define_stage_adapter_impl {
                                     .iter()
                                     .map(|family| bolt_verifier_runtime::SumcheckOutputFunctionFamilyPlan {
                                         symbol: super::leak_str(&family.symbol),
-                                        gamma: super::leak_str(&family.gamma),
+                                        gamma: family.gamma.as_ref().map(|gamma| super::leak_str(gamma)),
                                         terms: super::leak_slice(
                                             family
                                                 .terms

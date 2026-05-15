@@ -268,6 +268,7 @@ irdl.dialect @piop {
   irdl.operation @sumcheck_output_product_family {
     %value = irdl.parametric @field::@scalar<>
     %sym = irdl.any
+    %gamma = irdl.any
     %term_gamma_power_offsets = irdl.any
     %term_eval_counts = irdl.any
     %term_factor_counts = irdl.any
@@ -275,18 +276,20 @@ irdl.dialect @piop {
     %factors = irdl.any
     irdl.attributes {
       "sym_name" = %sym,
+      "gamma" = %gamma,
       "term_gamma_power_offsets" = %term_gamma_power_offsets,
       "term_eval_counts" = %term_eval_counts,
       "term_factor_counts" = %term_factor_counts,
       "evals" = %evals,
       "factors" = %factors
     }
-    irdl.operands(gamma: %value, inputs: variadic %value)
+    irdl.operands(inputs: variadic %value)
     irdl.results(value: %value)
   }
   irdl.operation @sumcheck_output_function_family {
     %value = irdl.parametric @field::@scalar<>
     %sym = irdl.any
+    %gamma = irdl.any
     %term_gamma_power_offsets = irdl.any
     %term_functions = irdl.any
     %term_factor_counts = irdl.any
@@ -294,13 +297,14 @@ irdl.dialect @piop {
     %factors = irdl.any
     irdl.attributes {
       "sym_name" = %sym,
+      "gamma" = %gamma,
       "term_gamma_power_offsets" = %term_gamma_power_offsets,
       "term_functions" = %term_functions,
       "term_factor_counts" = %term_factor_counts,
       "evals" = %evals,
       "factors" = %factors
     }
-    irdl.operands(gamma: %value, inputs: variadic %value)
+    irdl.operands(inputs: variadic %value)
     irdl.results(value: %value)
   }
   irdl.operation @sumcheck_output_claim {

@@ -1769,18 +1769,13 @@ fn append_stage6_hamming_output_claim<'c, 'a>(
         hamming.0,
         inputs.hamming_lookup_output.point,
     )?;
-    let gamma_identity = append_field_one(
-        context,
-        module,
-        "stage6.hamming_booleanity.output.gamma_identity",
-    )?;
     let claim = append_sumcheck_output_function_family(
         context,
         module,
         OutputFunctionFamilySpec {
             symbol: "stage6.hamming_booleanity.output.family",
         },
-        gamma_identity,
+        None,
         &[OutputFunctionFamilyTermSpec {
             gamma_power_offset: 0,
             function: "boolean_zero",
@@ -1829,18 +1824,13 @@ fn append_stage6_ram_ra_virtual_output_claim<'c, 'a>(
         ram.0,
         inputs.ram_ra_virtual.point,
     )?;
-    let gamma_identity = append_field_one(
-        context,
-        module,
-        "stage6.ram_ra_virtual.output.gamma_identity",
-    )?;
     let claim = append_sumcheck_output_product_family(
         context,
         module,
         OutputProductFamilySpec {
             symbol: "stage6.ram_ra_virtual.output.family",
         },
-        gamma_identity,
+        None,
         &[OutputProductFamilyTermSpec {
             gamma_power_offset: 0,
             evals: output_evals
@@ -1918,7 +1908,7 @@ fn append_stage6_instruction_ra_virtual_output_claim<'c, 'a>(
         OutputProductFamilySpec {
             symbol: "stage6.instruction_ra_virtual.output.family",
         },
-        gamma,
+        Some(("stage6.instruction_ra_virtual.gamma", gamma)),
         &family_terms,
     )?;
     append_sumcheck_output_claim(
@@ -2111,22 +2101,6 @@ fn append_field_zero<'c, 'a>(
         &["!field.scalar"],
     )?;
     first_result(op, "field.zero")
-}
-
-fn append_field_one<'c, 'a>(
-    context: &'c MeliorContext,
-    module: &'a BoltModule<'c, Protocol>,
-    symbol: &str,
-) -> Result<Value<'c, 'a>, MlirError> {
-    let op = context.append_typed_op(
-        module,
-        "field.one",
-        Some(symbol),
-        &[("field", "@bn254_fr")],
-        &[],
-        &["!field.scalar"],
-    )?;
-    first_result(op, "field.one")
 }
 
 fn append_field_binary<'c, 'a>(

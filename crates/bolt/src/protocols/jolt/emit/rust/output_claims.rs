@@ -56,7 +56,7 @@ pub struct SumcheckOutputProductFamilyTermPlan {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SumcheckOutputProductFamilyPlan {
     pub symbol: String,
-    pub gamma: String,
+    pub gamma: Option<String>,
     pub terms: Vec<SumcheckOutputProductFamilyTermPlan>,
 }
 
@@ -71,7 +71,7 @@ pub struct SumcheckOutputFunctionFamilyTermPlan {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SumcheckOutputFunctionFamilyPlan {
     pub symbol: String,
-    pub gamma: String,
+    pub gamma: Option<String>,
     pub terms: Vec<SumcheckOutputFunctionFamilyTermPlan>,
 }
 
@@ -172,6 +172,7 @@ pub fn parse_output_product_family_plan(
     operation: OperationRef<'_, '_>,
 ) -> Result<SumcheckOutputProductFamilyPlan, EmitError> {
     let symbol = string_attr(operation, "sym_name")?;
+    let gamma = optional_symbol_array_attr(operation, "gamma")?;
     let evals = symbol_array_attr(operation, "evals")?;
     let factors = symbol_array_attr(operation, "factors")?;
     let term_gamma_power_offsets = int_array_attr(operation, "term_gamma_power_offsets")?;
@@ -201,9 +202,17 @@ pub fn parse_output_product_family_plan(
         term_factor_counts.iter().sum(),
         factors.len(),
     )?;
-    let gamma = operand_symbol(operation, 0)?;
-    let eval_end = 1 + evals.len();
-    let eval_operands = operand_symbols(operation, 1, eval_end)?;
+    let eval_start = gamma.len();
+    if let Some(gamma_symbol) = gamma.first() {
+        let gamma_operand = operand_symbol(operation, 0)?;
+        if gamma_operand != *gamma_symbol {
+            return Err(EmitError::new(format!(
+                "{stage} output product family @{symbol} gamma does not match operand"
+            )));
+        }
+    }
+    let eval_end = eval_start + evals.len();
+    let eval_operands = operand_symbols(operation, eval_start, eval_end)?;
     if evals != eval_operands {
         return Err(EmitError::new(format!(
             "{stage} output product family @{symbol} evals do not match operands"
@@ -240,7 +249,7 @@ pub fn parse_output_product_family_plan(
     }
     Ok(SumcheckOutputProductFamilyPlan {
         symbol,
-        gamma,
+        gamma: gamma.into_iter().next(),
         terms,
     })
 }
@@ -250,6 +259,7 @@ pub fn parse_output_function_family_plan(
     operation: OperationRef<'_, '_>,
 ) -> Result<SumcheckOutputFunctionFamilyPlan, EmitError> {
     let symbol = string_attr(operation, "sym_name")?;
+    let gamma = optional_symbol_array_attr(operation, "gamma")?;
     let evals = symbol_array_attr(operation, "evals")?;
     let factors = symbol_array_attr(operation, "factors")?;
     let term_gamma_power_offsets = int_array_attr(operation, "term_gamma_power_offsets")?;
@@ -279,9 +289,17 @@ pub fn parse_output_function_family_plan(
         term_factor_counts.iter().sum(),
         factors.len(),
     )?;
-    let gamma = operand_symbol(operation, 0)?;
-    let eval_end = 1 + evals.len();
-    let eval_operands = operand_symbols(operation, 1, eval_end)?;
+    let eval_start = gamma.len();
+    if let Some(gamma_symbol) = gamma.first() {
+        let gamma_operand = operand_symbol(operation, 0)?;
+        if gamma_operand != *gamma_symbol {
+            return Err(EmitError::new(format!(
+                "{stage} output function family @{symbol} gamma does not match operand"
+            )));
+        }
+    }
+    let eval_end = eval_start + evals.len();
+    let eval_operands = operand_symbols(operation, eval_start, eval_end)?;
     if evals != eval_operands {
         return Err(EmitError::new(format!(
             "{stage} output function family @{symbol} evals do not match operands"
@@ -313,7 +331,7 @@ pub fn parse_output_function_family_plan(
     }
     Ok(SumcheckOutputFunctionFamilyPlan {
         symbol,
-        gamma,
+        gamma: gamma.into_iter().next(),
         terms,
     })
 }
@@ -459,7 +477,7 @@ where
         }
         if let Some(family) = output_product_families_by_symbol.get(symbol.as_str()) {
             let _inserted = product_families.insert(family.symbol.clone());
-            stack.push(family.gamma.clone());
+            stack.extend(family.gamma.iter().cloned());
             for term in &family.terms {
                 stack.extend(term.evals.iter().cloned());
                 stack.extend(term.factors.iter().cloned());
@@ -467,7 +485,7 @@ where
         }
         if let Some(family) = output_function_families_by_symbol.get(symbol.as_str()) {
             let _inserted = function_families.insert(family.symbol.clone());
-            stack.push(family.gamma.clone());
+            stack.extend(family.gamma.iter().cloned());
             for term in &family.terms {
                 stack.push(term.eval.clone());
                 stack.extend(term.factors.iter().cloned());
@@ -596,11 +614,13 @@ pub fn verify_output_claims(
         }
     }
     for family in output_product_families {
-        if !field_values.contains(&family.gamma) {
-            return Err(EmitError::new(format!(
-                "{stage} output product family @{} references missing gamma @{}",
-                family.symbol, family.gamma
-            )));
+        if let Some(gamma) = &family.gamma {
+            if !field_values.contains(gamma) {
+                return Err(EmitError::new(format!(
+                    "{stage} output product family @{} references missing gamma @{}",
+                    family.symbol, gamma
+                )));
+            }
         }
         for term in &family.terms {
             if term.evals.is_empty() && term.factors.is_empty() {
@@ -628,11 +648,13 @@ pub fn verify_output_claims(
         }
     }
     for family in output_function_families {
-        if !field_values.contains(&family.gamma) {
-            return Err(EmitError::new(format!(
-                "{stage} output function family @{} references missing gamma @{}",
-                family.symbol, family.gamma
-            )));
+        if let Some(gamma) = &family.gamma {
+            if !field_values.contains(gamma) {
+                return Err(EmitError::new(format!(
+                    "{stage} output function family @{} references missing gamma @{}",
+                    family.symbol, gamma
+                )));
+            }
         }
         for term in &family.terms {
             require_output_function(stage, &family.symbol, &term.function)?;
@@ -852,7 +874,7 @@ fn emit_product_family_constants(
         family_rows.push(format!(
             "    bolt_verifier_runtime::SumcheckOutputProductFamilyPlan {{ symbol: {}, gamma: {}, terms: {terms_name} }},",
             rust_str(&family.symbol),
-            rust_str(&family.gamma),
+            optional_rust_str(family.gamma.as_deref()),
         ));
     }
     let families_name =
@@ -908,7 +930,7 @@ fn emit_function_family_constants(
         family_rows.push(format!(
             "    bolt_verifier_runtime::SumcheckOutputFunctionFamilyPlan {{ symbol: {}, gamma: {}, terms: {terms_name} }},",
             rust_str(&family.symbol),
-            rust_str(&family.gamma),
+            optional_rust_str(family.gamma.as_deref()),
         ));
     }
     let families_name =
@@ -1094,6 +1116,13 @@ fn rust_str(value: &str) -> String {
     format!("{value:?}")
 }
 
+fn optional_rust_str(value: Option<&str>) -> String {
+    value.map_or_else(
+        || "None".to_owned(),
+        |value| format!("Some({})", rust_str(value)),
+    )
+}
+
 fn rust_str_array(values: &[String]) -> String {
     values
         .iter()
@@ -1128,6 +1157,22 @@ fn symbol_array_attr(
         .ok()
         .ok_or_else(|| attr_error(operation, attr, "symbol array"))?;
     parse_symbol_array(&attribute).ok_or_else(|| attr_error(operation, attr, "symbol array"))
+}
+
+fn optional_symbol_array_attr(
+    operation: OperationRef<'_, '_>,
+    attr: &str,
+) -> Result<Vec<String>, EmitError> {
+    let values = symbol_array_attr(operation, attr)?;
+    if values.len() <= 1 {
+        Ok(values)
+    } else {
+        Err(EmitError::new(format!(
+            "{} attr `{attr}` expected zero or one symbols, got {}",
+            operation_name(operation),
+            values.len()
+        )))
+    }
 }
 
 fn parse_symbol_array(attribute: &str) -> Option<Vec<String>> {
@@ -1336,7 +1381,7 @@ mod tests {
     fn resolves_product_families_reachable_through_field_expressions() -> Result<(), EmitError> {
         let product_family = SumcheckOutputProductFamilyPlan {
             symbol: "product.family".to_owned(),
-            gamma: "product.gamma".to_owned(),
+            gamma: Some("product.gamma".to_owned()),
             terms: vec![SumcheckOutputProductFamilyTermPlan {
                 gamma_power_offset: 2,
                 evals: vec!["product.eval".to_owned()],
@@ -1387,7 +1432,7 @@ mod tests {
     fn resolves_function_families_reachable_through_field_expressions() -> Result<(), EmitError> {
         let function_family = SumcheckOutputFunctionFamilyPlan {
             symbol: "function.family".to_owned(),
-            gamma: "function.gamma".to_owned(),
+            gamma: Some("function.gamma".to_owned()),
             terms: vec![SumcheckOutputFunctionFamilyTermPlan {
                 gamma_power_offset: 0,
                 function: "boolean_zero".to_owned(),

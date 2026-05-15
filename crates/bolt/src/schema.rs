@@ -38,6 +38,7 @@ const SUMCHECK_OUTPUT_EVAL_FAMILY_ATTRS: &[&str] = &[
 
 const SUMCHECK_OUTPUT_PRODUCT_FAMILY_ATTRS: &[&str] = &[
     "sym_name",
+    "gamma",
     "term_gamma_power_offsets",
     "term_eval_counts",
     "term_factor_counts",
@@ -47,6 +48,7 @@ const SUMCHECK_OUTPUT_PRODUCT_FAMILY_ATTRS: &[&str] = &[
 
 const SUMCHECK_OUTPUT_FUNCTION_FAMILY_ATTRS: &[&str] = &[
     "sym_name",
+    "gamma",
     "term_gamma_power_offsets",
     "term_functions",
     "term_factor_counts",
@@ -1385,6 +1387,7 @@ fn require_sumcheck_output_eval_family(operation: OperationRef<'_, '_>) -> Resul
 fn require_sumcheck_output_product_family(
     operation: OperationRef<'_, '_>,
 ) -> Result<(), SchemaError> {
+    let gamma = optional_symbol_array_attr(operation, "gamma")?;
     let evals = symbol_array_attr(operation, "evals")?;
     let factors = symbol_array_attr(operation, "factors")?;
     let term_gamma_power_offsets = int_array_attr(operation, "term_gamma_power_offsets")?;
@@ -1436,7 +1439,7 @@ fn require_sumcheck_output_product_family(
             expected_factors
         )));
     }
-    let expected_operands = 1 + evals.len() + factors.len();
+    let expected_operands = gamma.len() + evals.len() + factors.len();
     if operation.operand_count() != expected_operands {
         return Err(SchemaError::new(format!(
             "{} expected {expected_operands} operands, got {}",
@@ -1444,9 +1447,13 @@ fn require_sumcheck_output_product_family(
             operation.operand_count()
         )));
     }
-    let expected_symbols = evals.iter().chain(factors.iter()).collect::<Vec<_>>();
+    let expected_symbols = gamma
+        .iter()
+        .chain(evals.iter())
+        .chain(factors.iter())
+        .collect::<Vec<_>>();
     for (index, expected) in expected_symbols.iter().enumerate() {
-        let operand_index = index + 1;
+        let operand_index = index;
         let actual = operand_owner_symbol(operation, operand_index)?;
         if &actual != *expected {
             return Err(SchemaError::new(format!(
@@ -1461,6 +1468,7 @@ fn require_sumcheck_output_product_family(
 fn require_sumcheck_output_function_family(
     operation: OperationRef<'_, '_>,
 ) -> Result<(), SchemaError> {
+    let gamma = optional_symbol_array_attr(operation, "gamma")?;
     let evals = symbol_array_attr(operation, "evals")?;
     let factors = symbol_array_attr(operation, "factors")?;
     let term_gamma_power_offsets = int_array_attr(operation, "term_gamma_power_offsets")?;
@@ -1507,7 +1515,7 @@ fn require_sumcheck_output_function_family(
             expected_factors
         )));
     }
-    let expected_operands = 1 + evals.len() + factors.len();
+    let expected_operands = gamma.len() + evals.len() + factors.len();
     if operation.operand_count() != expected_operands {
         return Err(SchemaError::new(format!(
             "{} expected {expected_operands} operands, got {}",
@@ -1515,9 +1523,13 @@ fn require_sumcheck_output_function_family(
             operation.operand_count()
         )));
     }
-    let expected_symbols = evals.iter().chain(factors.iter()).collect::<Vec<_>>();
+    let expected_symbols = gamma
+        .iter()
+        .chain(evals.iter())
+        .chain(factors.iter())
+        .collect::<Vec<_>>();
     for (index, expected) in expected_symbols.iter().enumerate() {
-        let operand_index = index + 1;
+        let operand_index = index;
         let actual = operand_owner_symbol(operation, operand_index)?;
         if &actual != *expected {
             return Err(SchemaError::new(format!(
@@ -1793,6 +1805,22 @@ pub(crate) fn symbol_array_attr(
         .ok()
         .ok_or_else(|| attr_error(operation, attr, "symbol array"))?;
     parse_symbol_array(&attribute).ok_or_else(|| attr_error(operation, attr, "symbol array"))
+}
+
+fn optional_symbol_array_attr(
+    operation: OperationRef<'_, '_>,
+    attr: &str,
+) -> Result<Vec<String>, SchemaError> {
+    let values = symbol_array_attr(operation, attr)?;
+    if values.len() <= 1 {
+        Ok(values)
+    } else {
+        Err(SchemaError::new(format!(
+            "{} attr `{attr}` expected zero or one symbols, got {}",
+            operation_name(operation),
+            values.len()
+        )))
+    }
 }
 
 fn parse_symbol_array(attribute: &str) -> Option<Vec<String>> {
