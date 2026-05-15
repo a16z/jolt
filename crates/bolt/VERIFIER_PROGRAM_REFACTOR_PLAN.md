@@ -754,48 +754,47 @@ Bolt-side `IndexedEvalFamilyPlan` rows in the verifier-stage plan. The relevant
 relation/output-claim planners consume those rows instead of re-deriving the
 family from raw evals at the point of Rust token emission.
 
-This is still not the final architecture. The temporary CPU-to-verifier row
-builders derive Stage 5/6 family membership from existing eval names/oracle
-names because the CPU IR does not yet have a first-class eval-family op. The
-remaining S4 work is therefore to move the source of those family rows into
-typed CPU/MLIR data instead of constructing them at the Rust planning boundary.
+Stage 5/6 family membership now originates as first-class
+`piop.sumcheck_eval_family`, `compute.sumcheck_eval_family`, and
+`cpu.sumcheck_eval_family` rows. The CPU-to-verifier planning layer parses those
+rows directly; it no longer infers family membership from symbol spelling,
+oracle prefixes, or raw eval ordering.
+
+This is still not the final architecture. The current family op is typed
+planning metadata with explicit `evals` membership, not yet a first-class
+field-vector value in the verifier value graph. S3 should decide how field
+vectors/eval families flow as typed values; S4's job is to make the existing
+Stage 5/6 family facts explicit and non-prefix-derived before Rust token
+emission.
 
 ### Dialect changes
 
-Extend `compute::sumcheck_eval` with an `eval_family` attribute (or add a
-sibling `compute::sumcheck_eval_family` op):
+Add a sibling no-result eval-family op in the PIOP, compute, and CPU dialects:
 
 ```mlir
 compute.sumcheck_eval_family {
-  sym_name = "stage6.booleanity.instruction_ra_family"
-  produced_by = @stage6_booleanity_driver
-  oracle_family = "InstructionRa"
+  sym_name = "stage6.bytecode_read_raf.eval.BytecodeRa"
+  source = "stage6.sumcheck"
+  oracle_family = "BytecodeRa"
   count = 3
-} -> %eval_vec : !field_vector
-```
-
-The existing `compute::sumcheck_eval` ops with names like
-`...InstructionRa_0`, `...InstructionRa_1`, ... are replaced by a single
-family op when the consumer needs the block as a vector. The prover side
-already emits these as a contiguous block; the verifier side gains a typed
-`!field_vector` handle to the whole block.
-
-### Runtime additions
-
-Add `EvalFamilyPlan` to `bolt-verifier-runtime`:
-
-```rust
-pub struct EvalFamilyPlan {
-    pub symbol: &'static str,
-    pub source: &'static str,        // sumcheck driver symbol
-    pub oracle_family: &'static str, // diagnostic
-    pub count: usize,
+  evals = [@stage6.bytecode_read_raf.eval.BytecodeRa_0,
+           @stage6.bytecode_read_raf.eval.BytecodeRa_1,
+           @stage6.bytecode_read_raf.eval.BytecodeRa_2]
 }
 ```
 
-`ValueStore` learns to materialize a `FieldVector` value for family symbols
-when the parent sumcheck output is observed. Consumers ask for a typed vector,
-not a set of scalars recovered by prefix matching.
+The existing scalar `sumcheck_eval` ops remain the source of the serialized
+named evals. The family row is an explicit membership declaration consumed by
+the verifier-plan layer. A later S3/S5 value-graph slice can promote this shape
+to a typed field-vector value if that makes the Rust emission smaller and
+clearer.
+
+### Runtime additions
+
+No runtime API is added for the metadata-row phase. `bolt-verifier-runtime`
+continues to expose only the boring reusable mechanics, while the Jolt verifier
+plan carries `IndexedEvalFamilyPlan` rows. Runtime `FieldVector`/`ValueStore`
+support belongs in S3 only if the typed verifier value graph needs it.
 
 ### Tier B impact
 
@@ -814,10 +813,10 @@ deleting more Tier B prefix code.
 - **Prover/verifier symmetry.** The prover-side emitter must annotate the
   same eval block as a family. If this is a separate emitter, both must be
   updated together.
-- **Typed source of truth.** `IndexedEvalFamilyPlan` is now a verifier-plan row
-  consumed by Stage 5/6 relation planning. The next step is replacing the
-  temporary boundary derivation with CPU/MLIR eval-family rows, so the
-  verifier plan does not infer family membership from symbol spelling at all.
+- **Typed source of truth.** `IndexedEvalFamilyPlan` is now parsed from
+  CPU/MLIR eval-family rows for Stage 5/6. Remaining risk is scope, not
+  ambiguity: Stage 7 and future relation plans need the same rule when they
+  start consuming family-shaped data.
 - **Testing.** Add a `verifier_cleanup` gate
   `RELATION_INDEXED_EVAL_PREFIX_SITES_CEILING = 0` that fires if any
   generated stage source still calls `indexed_evals_by_prefix*` or exposes

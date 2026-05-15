@@ -334,6 +334,7 @@ impl Stage6CpuProgram {
         let mut drivers = Vec::new();
         let mut instance_results = Vec::new();
         let mut evals = Vec::new();
+        let mut indexed_eval_families = Vec::new();
         let mut output_values = Vec::new();
         let mut output_families = Vec::new();
         let mut output_product_families = Vec::new();
@@ -551,6 +552,9 @@ impl Stage6CpuProgram {
                         oracle: symbol_attr(op, "oracle")?,
                     });
                 }
+                "cpu.sumcheck_eval_family" => {
+                    indexed_eval_families.push(parse_indexed_eval_family(op)?);
+                }
                 "cpu.structured_polynomial_eval" => {
                     let symbol = string_attr(op, "sym_name")?;
                     let x_point = Stage6StructuredPolynomialPointPlan::from_cpu(
@@ -660,11 +664,6 @@ impl Stage6CpuProgram {
                     .map(|claim| claim.claim_value.as_str()),
             );
         }
-        let indexed_eval_families = if role == Role::Verifier {
-            stage6_indexed_eval_families(&evals)?
-        } else {
-            Vec::new()
-        };
         let mut output_claims = if role == Role::Verifier {
             verifier_output_claims::resolve_output_claims(
                 "stage6",
@@ -2739,14 +2738,18 @@ fn stage6_kernel_abi(relation: &str) -> Option<&'static str> {
         .find_map(|(candidate, abi)| (*candidate == relation).then_some(*abi))
 }
 
-fn stage6_indexed_eval_families(
-    evals: &[Stage6SumcheckEvalPlan],
-) -> Result<Vec<IndexedEvalFamilyPlan>, EmitError> {
-    Ok(vec![IndexedEvalFamilyPlan::from_indexed_names(
-        STAGE6_BYTECODE_RA_EVAL_FAMILY,
-        "stage6.bytecode_read_raf.eval.BytecodeRa_",
-        evals.iter().map(|eval| eval.name.as_str()),
-    )?])
+fn parse_indexed_eval_family(
+    operation: OperationRef<'_, '_>,
+) -> Result<IndexedEvalFamilyPlan, EmitError> {
+    let symbol = string_attr(operation, "sym_name")?;
+    let evals = symbol_array_attr(operation, "evals")?;
+    verify_count(
+        "indexed eval family",
+        &symbol,
+        int_attr(operation, "count")?,
+        evals.len(),
+    )?;
+    Ok(IndexedEvalFamilyPlan { symbol, evals })
 }
 
 fn stage6_bytecode_read_raf_eval_family(
@@ -2878,8 +2881,8 @@ mod tests {
     use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 
     use super::{
-        stage6_bytecode_read_raf_eval_family, stage6_indexed_eval_families, stage6_kernel_abi,
-        Stage6SumcheckEvalPlan, STAGE6_BYTECODE_RA_EVAL_FAMILY, STAGE6_KERNEL_ABIS,
+        stage6_bytecode_read_raf_eval_family, stage6_kernel_abi, STAGE6_BYTECODE_RA_EVAL_FAMILY,
+        STAGE6_KERNEL_ABIS,
     };
 
     #[test]
@@ -2897,42 +2900,25 @@ mod tests {
     }
 
     #[test]
-    fn stage6_bytecode_read_raf_eval_family_is_sorted_by_suffix() -> Result<(), EmitError> {
-        let evals = vec![
-            eval("stage6.bytecode_read_raf.eval.BytecodeRa_2"),
-            eval("stage6.booleanity.eval.BytecodeRa_0"),
-            eval("stage6.bytecode_read_raf.eval.BytecodeRa_0"),
-            eval("stage6.bytecode_read_raf.eval.BytecodeRa_1"),
-        ];
-
-        let families = stage6_indexed_eval_families(&evals)?;
+    fn stage6_bytecode_read_raf_eval_family_uses_explicit_row_order() -> Result<(), EmitError> {
+        let families = [IndexedEvalFamilyPlan {
+            symbol: STAGE6_BYTECODE_RA_EVAL_FAMILY.to_owned(),
+            evals: vec![
+                "stage6.bytecode_read_raf.eval.BytecodeRa_2".to_owned(),
+                "stage6.bytecode_read_raf.eval.BytecodeRa_0".to_owned(),
+                "stage6.bytecode_read_raf.eval.BytecodeRa_1".to_owned(),
+            ],
+        }];
         let family = stage6_bytecode_read_raf_eval_family(&families)?;
         assert_eq!(
             family.evals,
             vec![
+                "stage6.bytecode_read_raf.eval.BytecodeRa_2".to_owned(),
                 "stage6.bytecode_read_raf.eval.BytecodeRa_0".to_owned(),
                 "stage6.bytecode_read_raf.eval.BytecodeRa_1".to_owned(),
-                "stage6.bytecode_read_raf.eval.BytecodeRa_2".to_owned(),
             ]
         );
         Ok(())
-    }
-
-    #[test]
-    fn stage6_bytecode_read_raf_eval_family_rejects_gaps() {
-        let evals = vec![
-            eval("stage6.bytecode_read_raf.eval.BytecodeRa_0"),
-            eval("stage6.bytecode_read_raf.eval.BytecodeRa_2"),
-        ];
-
-        let result = stage6_indexed_eval_families(&evals);
-        assert!(result.is_err(), "expected gap error, got {result:?}");
-        let error = result
-            .err()
-            .map(|error| error.to_string())
-            .unwrap_or_default();
-
-        assert!(error.contains("non-contiguous eval family"));
     }
 
     #[test]
@@ -2950,15 +2936,5 @@ mod tests {
         assert!(error.contains(&format!(
             "missing eval family `{STAGE6_BYTECODE_RA_EVAL_FAMILY}`"
         )));
-    }
-
-    fn eval(name: &'static str) -> Stage6SumcheckEvalPlan {
-        Stage6SumcheckEvalPlan {
-            symbol: name.to_owned(),
-            source: "stage6.sumcheck".to_owned(),
-            name: name.to_owned(),
-            index: 0,
-            oracle: "BytecodeRa_0".to_owned(),
-        }
     }
 }

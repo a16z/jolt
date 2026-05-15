@@ -386,6 +386,14 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             )?;
             require_shape(operation, 1, 1)
         }
+        "piop.sumcheck_eval_family" => {
+            require_attrs(
+                operation,
+                &["sym_name", "source", "oracle_family", "count", "evals"],
+            )?;
+            require_shape(operation, 0, 0)?;
+            require_counted_symbols(operation, "evals")
+        }
         "piop.sumcheck_instance_result" => {
             require_attrs(
                 operation,
@@ -758,6 +766,14 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             )?;
             require_shape(operation, 1, 1)
         }
+        "compute.sumcheck_eval_family" => {
+            require_attrs(
+                operation,
+                &["sym_name", "source", "oracle_family", "count", "evals"],
+            )?;
+            require_shape(operation, 0, 0)?;
+            require_counted_symbols(operation, "evals")
+        }
         "compute.sumcheck_instance_result" => {
             require_attrs(
                 operation,
@@ -1112,6 +1128,14 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
                 &["sym_name", "source", "name", "index", "oracle"],
             )?;
             require_shape(operation, 1, 1)
+        }
+        "cpu.sumcheck_eval_family" => {
+            require_attrs(
+                operation,
+                &["sym_name", "source", "oracle_family", "count", "evals"],
+            )?;
+            require_shape(operation, 0, 0)?;
+            require_counted_symbols(operation, "evals")
         }
         "cpu.sumcheck_instance_result" => {
             require_attrs(
@@ -1689,6 +1713,28 @@ fn require_counted_operands(
                 operation_name(operation)
             )));
         }
+    }
+    Ok(())
+}
+
+fn require_counted_symbols(
+    operation: OperationRef<'_, '_>,
+    ordered_attr: &str,
+) -> Result<(), SchemaError> {
+    let count = int_attr(operation, "count")?;
+    let ordered = symbol_array_attr(operation, ordered_attr)?;
+    if count == 0 {
+        return Err(SchemaError::new(format!(
+            "{} attr `{ordered_attr}` must contain at least one symbol",
+            operation_name(operation)
+        )));
+    }
+    if ordered.len() != count {
+        return Err(SchemaError::new(format!(
+            "{} attr `{ordered_attr}` length {} does not match count {count}",
+            operation_name(operation),
+            ordered.len()
+        )));
     }
     Ok(())
 }

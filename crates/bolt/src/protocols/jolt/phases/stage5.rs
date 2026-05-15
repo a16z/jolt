@@ -741,10 +741,12 @@ fn append_stage5_output_openings<'c, 'a>(
         params.log_t,
         instruction.0,
     )?;
+    let mut table_flag_eval_symbols = Vec::with_capacity(params.lookup_table_count);
     for index in 0..params.lookup_table_count {
         let oracle = format!("LookupTableFlag_{index}");
         let symbol = format!("stage5.instruction_read_raf.opening.{oracle}");
         let eval_symbol = format!("stage5.instruction_read_raf.eval.{oracle}");
+        table_flag_eval_symbols.push(eval_symbol.clone());
         let eval = append_sumcheck_eval(
             context,
             module,
@@ -769,7 +771,16 @@ fn append_stage5_output_openings<'c, 'a>(
             },
         )?);
     }
+    append_sumcheck_eval_family(
+        context,
+        module,
+        "stage5.instruction_read_raf.eval.LookupTableFlag",
+        "stage5.sumcheck",
+        "LookupTableFlag",
+        &table_flag_eval_symbols,
+    )?;
 
+    let mut instruction_ra_eval_symbols = Vec::with_capacity(params.instruction_ra_virtual_d);
     for index in 0..params.instruction_ra_virtual_d {
         let oracle = format!("InstructionRa_{index}");
         let symbol = format!("stage5.instruction_read_raf.opening.{oracle}");
@@ -791,6 +802,7 @@ fn append_stage5_output_openings<'c, 'a>(
             &[address_chunk, instruction_cycle],
         )?;
         let eval_symbol = format!("stage5.instruction_read_raf.eval.{oracle}");
+        instruction_ra_eval_symbols.push(eval_symbol.clone());
         let eval = append_sumcheck_eval(
             context,
             module,
@@ -815,6 +827,14 @@ fn append_stage5_output_openings<'c, 'a>(
             },
         )?);
     }
+    append_sumcheck_eval_family(
+        context,
+        module,
+        "stage5.instruction_read_raf.eval.InstructionRa",
+        "stage5.sumcheck",
+        "InstructionRa",
+        &instruction_ra_eval_symbols,
+    )?;
 
     let raf_flag_eval_index = params.lookup_table_count + params.instruction_ra_virtual_d;
     let raf_flag_eval = append_sumcheck_eval(
@@ -1339,6 +1359,29 @@ fn append_sumcheck_eval<'c, 'a>(
         &["!field.scalar"],
     )?;
     first_result(op, "piop.sumcheck_eval")
+}
+
+fn append_sumcheck_eval_family(
+    context: &MeliorContext,
+    module: &BoltModule<'_, Protocol>,
+    symbol: &str,
+    source: &str,
+    oracle_family: &str,
+    evals: &[String],
+) -> Result<(), MlirError> {
+    let eval_symbols = evals.iter().map(String::as_str).collect::<Vec<_>>();
+    context.append_op(
+        module,
+        "piop.sumcheck_eval_family",
+        Some(symbol),
+        &[
+            ("source", &format!("@{}", source)),
+            ("oracle_family", &format!("@{}", oracle_family)),
+            ("count", &int_attr(eval_symbols.len())),
+            ("evals", &symbol_array_attr(&eval_symbols)),
+        ],
+    )?;
+    Ok(())
 }
 
 fn append_point_slice<'c, 'a>(

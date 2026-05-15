@@ -368,7 +368,7 @@ mod tests {
                 "LookupTableFlag_0",
                 "stage5.instruction_read_raf.eval.LookupTableFlag_0",
             ),
-        ])?;
+        ]);
         let plan = Stage5InstructionReadRafEmitPlan::from_eval_families(&families)?;
 
         assert_eq!(
@@ -400,7 +400,7 @@ mod tests {
                 "InstructionRa_0",
                 "stage5.instruction_read_raf.eval.InstructionRa_0",
             ),
-        ])?;
+        ]);
         let plan = Stage5InstructionReadRafEmitPlan::from_eval_families(&families)?;
         let output_plan = plan.output_claim_plan();
 
@@ -456,32 +456,6 @@ mod tests {
     }
 
     #[test]
-    fn instruction_read_raf_plan_rejects_non_contiguous_eval_families() -> Result<(), EmitError> {
-        let error = match instruction_read_raf_families([
-            (
-                "LookupTableFlag_1",
-                "stage5.instruction_read_raf.eval.LookupTableFlag_1",
-            ),
-            (
-                "InstructionRa_0",
-                "stage5.instruction_read_raf.eval.InstructionRa_0",
-            ),
-        ]) {
-            Ok(_) => {
-                return Err(EmitError::new(
-                    "non-contiguous table flag family should fail planning",
-                ));
-            }
-            Err(error) => error,
-        };
-
-        assert!(error.to_string().contains(
-            "non-contiguous eval family `stage5.instruction_read_raf.eval.LookupTableFlag`"
-        ));
-        Ok(())
-    }
-
-    #[test]
     fn instruction_read_raf_plan_requires_explicit_eval_family_rows() {
         let families = [IndexedEvalFamilyPlan {
             symbol: STAGE5_TABLE_FLAG_EVAL_FAMILY.to_owned(),
@@ -500,19 +474,31 @@ mod tests {
 
     fn instruction_read_raf_families<'a>(
         evals: impl IntoIterator<Item = (&'a str, &'a str)>,
-    ) -> Result<Vec<IndexedEvalFamilyPlan>, EmitError> {
+    ) -> Vec<IndexedEvalFamilyPlan> {
         let evals = evals.into_iter().collect::<Vec<_>>();
-        Ok(vec![
-            IndexedEvalFamilyPlan::from_indexed_oracles(
-                STAGE5_TABLE_FLAG_EVAL_FAMILY,
-                "LookupTableFlag_",
-                evals.iter().copied(),
-            )?,
-            IndexedEvalFamilyPlan::from_indexed_oracles(
-                STAGE5_INSTRUCTION_RA_EVAL_FAMILY,
-                "InstructionRa_",
-                evals.iter().copied(),
-            )?,
-        ])
+        vec![
+            IndexedEvalFamilyPlan {
+                symbol: STAGE5_TABLE_FLAG_EVAL_FAMILY.to_owned(),
+                evals: indexed_names("LookupTableFlag_", &evals),
+            },
+            IndexedEvalFamilyPlan {
+                symbol: STAGE5_INSTRUCTION_RA_EVAL_FAMILY.to_owned(),
+                evals: indexed_names("InstructionRa_", &evals),
+            },
+        ]
+    }
+
+    fn indexed_names(prefix: &str, evals: &[(&str, &str)]) -> Vec<String> {
+        let mut names = evals
+            .iter()
+            .filter_map(|(oracle, name)| {
+                oracle
+                    .strip_prefix(prefix)
+                    .and_then(|index| index.parse::<usize>().ok())
+                    .map(|index| (index, (*name).to_owned()))
+            })
+            .collect::<Vec<_>>();
+        names.sort_by_key(|(index, _)| *index);
+        names.into_iter().map(|(_, name)| name).collect()
     }
 }

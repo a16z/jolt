@@ -821,6 +821,16 @@ pub fn resolve_compute_kernels<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
+            "compute.sumcheck_eval_family" => {
+                let attrs = copy_attrs(op, &["source", "oracle_family", "count", "evals"])?;
+                let symbol = string_attr(op, "sym_name")?;
+                context.append_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.sumcheck_eval_family",
+                    Some(&symbol),
+                    &attrs,
+                )?;
+            }
             "compute.sumcheck_instance_result" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let attrs = copy_attrs(

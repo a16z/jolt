@@ -329,6 +329,35 @@ fn protocol_schema_accepts_explicit_sumcheck_and_opening_flow() {
 }
 
 #[test]
+fn protocol_schema_rejects_eval_family_count_mismatch() {
+    let context = MeliorContext::new();
+    let protocol = context
+        .parse_module::<bolt::Protocol>(&explicit_sumcheck_protocol_with_eval_family(
+            2,
+            "[@stage1.outer.eval]",
+        ))
+        .expect("parse protocol with mismatched eval family");
+
+    let error = verify_protocol_schema(&protocol).expect_err("eval family count mismatch");
+    assert!(error
+        .to_string()
+        .contains("piop.sumcheck_eval_family attr `evals` length 1 does not match count 2"));
+}
+
+#[test]
+fn protocol_schema_rejects_empty_eval_family() {
+    let context = MeliorContext::new();
+    let protocol = context
+        .parse_module::<bolt::Protocol>(&explicit_sumcheck_protocol_with_eval_family(0, "[]"))
+        .expect("parse protocol with empty eval family");
+
+    let error = verify_protocol_schema(&protocol).expect_err("empty eval family rejected");
+    assert!(error
+        .to_string()
+        .contains("piop.sumcheck_eval_family attr `evals` must contain at least one symbol"));
+}
+
+#[test]
 fn opening_batch_schema_rejects_hidden_or_reordered_claims() {
     let context = MeliorContext::new();
     let protocol = context
@@ -3574,6 +3603,16 @@ module @explicit.sumcheck attributes {bolt.phase = "protocol"} {
   %3, %opening_proof = "pcs.batch_open"(%2, %openings) {pcs = @dory, proof_slot = @stage1.openings, sym_name = "stage1.open", transcript_label = "opening_proof"} : (!transcript.state_type, !pcs.opening_batch_type) -> (!transcript.state_type, !pcs.opening_proof_type)
 }
 "#
+}
+
+fn explicit_sumcheck_protocol_with_eval_family(count: usize, evals: &str) -> String {
+    explicit_sumcheck_protocol().replace(
+        r#"  %opening = "pcs.opening_claim""#,
+        &format!(
+            r#"  "piop.sumcheck_eval_family"() {{count = {count} : i64, evals = {evals}, oracle_family = @RdInc, source = @stage1.outer.sumcheck, sym_name = "stage1.outer.eval.family"}} : () -> ()
+  %opening = "pcs.opening_claim""#
+        ),
+    )
 }
 
 fn explicit_sumcheck_compute() -> &'static str {

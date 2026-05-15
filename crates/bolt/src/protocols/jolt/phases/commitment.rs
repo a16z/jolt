@@ -894,6 +894,16 @@ pub fn lower_compute_to_cpu<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
+            "compute.sumcheck_eval_family" => {
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["source", "oracle_family", "count", "evals"])?;
+                context.append_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.sumcheck_eval_family",
+                    Some(&symbol),
+                    &attrs,
+                )?;
+            }
             "compute.sumcheck_instance_result" => {
                 let operands = lowered_operands(op, &value_map)?;
                 let symbol = string_attr(op, "sym_name")?;

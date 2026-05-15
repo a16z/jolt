@@ -13,7 +13,6 @@ use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
 use crate::protocols::jolt::stage5_instruction_read_raf_plan::{
     Stage5InstructionReadRafEmitPlan, Stage5InstructionReadRafOutputFieldExprPlan,
-    STAGE5_INSTRUCTION_RA_EVAL_FAMILY, STAGE5_TABLE_FLAG_EVAL_FAMILY,
 };
 use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 use crate::protocols::jolt::verifier_output_claims::{
@@ -308,6 +307,7 @@ impl Stage5CpuProgram {
         let mut drivers = Vec::new();
         let mut instance_results = Vec::new();
         let mut evals = Vec::new();
+        let mut indexed_eval_families = Vec::new();
         let mut output_values = Vec::new();
         let mut output_families = Vec::new();
         let mut output_product_families = Vec::new();
@@ -524,6 +524,9 @@ impl Stage5CpuProgram {
                         oracle: symbol_attr(op, "oracle")?,
                     });
                 }
+                "cpu.sumcheck_eval_family" => {
+                    indexed_eval_families.push(parse_indexed_eval_family(op)?);
+                }
                 "cpu.structured_polynomial_eval" => {
                     let symbol = string_attr(op, "sym_name")?;
                     let x_point = Stage5StructuredPolynomialPointPlan::from_cpu(
@@ -626,11 +629,6 @@ impl Stage5CpuProgram {
                     .map(|claim| claim.claim_value.as_str()),
             );
         }
-        let indexed_eval_families = if role == Role::Verifier {
-            stage5_instruction_read_raf_eval_families(&evals)?
-        } else {
-            Vec::new()
-        };
         let mut output_claims = if role == Role::Verifier {
             verifier_output_claims::resolve_output_claims(
                 "stage5",
@@ -2545,25 +2543,18 @@ fn expected_batched_output_claim(
     }
 }
 
-fn stage5_instruction_read_raf_eval_families(
-    evals: &[Stage5SumcheckEvalPlan],
-) -> Result<Vec<IndexedEvalFamilyPlan>, EmitError> {
-    Ok(vec![
-        IndexedEvalFamilyPlan::from_indexed_oracles(
-            STAGE5_TABLE_FLAG_EVAL_FAMILY,
-            "LookupTableFlag_",
-            evals
-                .iter()
-                .map(|eval| (eval.oracle.as_str(), eval.name.as_str())),
-        )?,
-        IndexedEvalFamilyPlan::from_indexed_oracles(
-            STAGE5_INSTRUCTION_RA_EVAL_FAMILY,
-            "InstructionRa_",
-            evals
-                .iter()
-                .map(|eval| (eval.oracle.as_str(), eval.name.as_str())),
-        )?,
-    ])
+fn parse_indexed_eval_family(
+    operation: OperationRef<'_, '_>,
+) -> Result<IndexedEvalFamilyPlan, EmitError> {
+    let symbol = string_attr(operation, "sym_name")?;
+    let evals = symbol_array_attr(operation, "evals")?;
+    verify_count(
+        "indexed eval family",
+        &symbol,
+        int_attr(operation, "count")?,
+        evals.len(),
+    )?;
+    Ok(IndexedEvalFamilyPlan { symbol, evals })
 }
 
 fn require_supported_symbol(kind: &str, actual: &str, expected: &str) -> Result<(), EmitError> {

@@ -188,6 +188,20 @@ irdl.dialect @piop {
     irdl.operands(result: %result)
     irdl.results(eval: %eval)
   }
+  irdl.operation @sumcheck_eval_family {
+    %sym = irdl.any
+    %source = irdl.any
+    %oracle_family = irdl.any
+    %count = irdl.any
+    %evals = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "source" = %source,
+      "oracle_family" = %oracle_family,
+      "count" = %count,
+      "evals" = %evals
+    }
+  }
   irdl.operation @sumcheck_instance_result {
     %input_point = irdl.parametric @poly::@point<>
     %output_point = irdl.parametric @poly::@point<>

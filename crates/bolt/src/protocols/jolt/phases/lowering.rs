@@ -401,6 +401,16 @@ pub(super) fn lower_party_to_compute<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
+            "piop.sumcheck_eval_family" => {
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["source", "oracle_family", "count", "evals"])?;
+                context.append_op_with_owned_attrs(
+                    &compute,
+                    "compute.sumcheck_eval_family",
+                    Some(&symbol),
+                    &attrs,
+                )?;
+            }
             "piop.sumcheck_instance_result" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let symbol = string_attr(op, "sym_name")?;

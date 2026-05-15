@@ -1433,9 +1433,11 @@ fn append_stage6_output_openings<'c, 'a>(
         params.log_t,
         bytecode.0,
     )?;
+    let mut bytecode_ra_eval_symbols = Vec::with_capacity(params.bytecode_d);
     for index in 0..params.bytecode_d {
         let oracle = format!("BytecodeRa_{index}");
         let eval_symbol = format!("stage6.bytecode_read_raf.eval.{oracle}");
+        bytecode_ra_eval_symbols.push(eval_symbol.clone());
         let eval = append_sumcheck_eval(
             context,
             module,
@@ -1479,6 +1481,14 @@ fn append_stage6_output_openings<'c, 'a>(
             },
         )?);
     }
+    append_sumcheck_eval_family(
+        context,
+        module,
+        "stage6.bytecode_read_raf.eval.BytecodeRa",
+        "stage6.sumcheck",
+        "BytecodeRa",
+        &bytecode_ra_eval_symbols,
+    )?;
 
     let mut eval_index = 0;
     for index in 0..params.instruction_d {
@@ -2403,6 +2413,29 @@ fn append_sumcheck_eval<'c, 'a>(
         &["!field.scalar"],
     )?;
     first_result(op, "piop.sumcheck_eval")
+}
+
+fn append_sumcheck_eval_family(
+    context: &MeliorContext,
+    module: &BoltModule<'_, Protocol>,
+    symbol: &str,
+    source: &str,
+    oracle_family: &str,
+    evals: &[String],
+) -> Result<(), MlirError> {
+    let eval_symbols = evals.iter().map(String::as_str).collect::<Vec<_>>();
+    context.append_op(
+        module,
+        "piop.sumcheck_eval_family",
+        Some(symbol),
+        &[
+            ("source", &format!("@{}", source)),
+            ("oracle_family", &format!("@{}", oracle_family)),
+            ("count", &int_attr(eval_symbols.len())),
+            ("evals", &symbol_array_attr(&eval_symbols)),
+        ],
+    )?;
+    Ok(())
 }
 
 fn append_point_slice<'c, 'a>(
