@@ -197,6 +197,7 @@ macro_rules! define_instruction_kind {
                         | Self::VirtualAdviceLoad
                         | Self::VirtualHostIO
                         | Self::VirtualSW
+                        | Self::FieldOp
                 )
             }
         }

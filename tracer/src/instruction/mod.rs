@@ -62,6 +62,7 @@ use divw::DIVW;
 use ebreak::EBREAK;
 use ecall::ECALL;
 use fence::FENCE;
+use field_op::FieldOp;
 use jal::JAL;
 use jalr::JALR;
 use lb::LB;
@@ -224,6 +225,7 @@ pub mod divw;
 pub mod ebreak;
 pub mod ecall;
 pub mod fence;
+pub mod field_op;
 pub mod inline;
 pub mod jal;
 pub mod jalr;
@@ -1075,7 +1077,15 @@ impl Instruction {
             // funct7:
             // - 0x00: SHA256
             // - 0x01: Keccak256
-            0b0001011 => Ok(INLINE::new(instr, address, false, compressed).into()),
+            // - 0x40: BN254 Fr coprocessor (FieldOp — FMUL/FADD/FSUB/FINV)
+            0b0001011 => {
+                let funct7 = (instr >> 25) & 0x7f;
+                if funct7 == field_op::BN254_FR_FUNCT7 {
+                    Ok(field_op::FieldOp::new(instr, address, false, compressed).into())
+                } else {
+                    Ok(INLINE::new(instr, address, false, compressed).into())
+                }
+            }
             // 0x2B is reserved for external inlines
             0b0101011 => Ok(INLINE::new(instr, address, false, compressed).into()),
             // 0x5B is reserved for custom/virtual instructions.
