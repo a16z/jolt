@@ -1,4 +1,4 @@
-use jolt_riscv::{JoltInstructionKind, NormalizedInstruction};
+use jolt_riscv::{JoltInstructionKind, SourceInstructionKind, SourceInstructionRow};
 
 use crate::expand::{allocator::NUM_VIRTUAL_INSTRUCTION_REGISTERS, ExpansionError};
 
@@ -35,14 +35,17 @@ pub(super) struct TemplateOperands {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct RowTemplate {
-    pub(super) instruction_kind: JoltInstructionKind,
+pub(super) struct InstructionTemplate<K> {
+    pub(super) instruction_kind: K,
     pub(super) operands: TemplateOperands,
 }
 
-impl RowTemplate {
+pub(super) type RowTemplate = InstructionTemplate<JoltInstructionKind>;
+pub(super) type SourceInstructionRowTemplate = InstructionTemplate<SourceInstructionKind>;
+
+impl<K> InstructionTemplate<K> {
     pub(super) fn r(
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: K,
         rd: RegisterOperand,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
@@ -59,7 +62,7 @@ impl RowTemplate {
     }
 
     pub(super) fn i(
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: K,
         rd: RegisterOperand,
         rs1: RegisterOperand,
         imm: i128,
@@ -75,7 +78,7 @@ impl RowTemplate {
         }
     }
 
-    pub(super) fn j(instruction_kind: JoltInstructionKind, rd: RegisterOperand, imm: i128) -> Self {
+    pub(super) fn j(instruction_kind: K, rd: RegisterOperand, imm: i128) -> Self {
         Self {
             instruction_kind,
             operands: TemplateOperands {
@@ -87,7 +90,7 @@ impl RowTemplate {
         }
     }
 
-    pub(super) fn u(instruction_kind: JoltInstructionKind, rd: RegisterOperand, imm: i128) -> Self {
+    pub(super) fn u(instruction_kind: K, rd: RegisterOperand, imm: i128) -> Self {
         Self {
             instruction_kind,
             operands: TemplateOperands {
@@ -100,7 +103,7 @@ impl RowTemplate {
     }
 
     pub(super) fn b(
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: K,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
         imm: i128,
@@ -117,7 +120,7 @@ impl RowTemplate {
     }
 
     pub(super) fn s(
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: K,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
         imm: i128,
@@ -135,11 +138,7 @@ impl RowTemplate {
 
     /// Pseudo-I format for address/alignment assertions that read `rs1` and an
     /// immediate offset but do not write `rd`.
-    pub(super) fn address(
-        instruction_kind: JoltInstructionKind,
-        rs1: RegisterOperand,
-        imm: i128,
-    ) -> Self {
+    pub(super) fn address(instruction_kind: K, rs1: RegisterOperand, imm: i128) -> Self {
         Self {
             instruction_kind,
             operands: TemplateOperands {
@@ -158,26 +157,26 @@ pub(super) enum ExpansionOp {
     /// Append this row directly to the output.
     Emit(RowTemplate),
     /// Recursively expand this row through the full pipeline before appending.
-    Expand(RowTemplate),
+    Expand(SourceInstructionRowTemplate),
     Allocate(TempId),
     Release(TempId),
 }
 
 /// A complete symbolic recipe: source instruction paired with the ops to materialize it.
 pub(super) struct ExpandedInstructionSequence {
-    pub(super) source: NormalizedInstruction,
+    pub(super) source: SourceInstructionRow,
     pub(super) ops: Vec<ExpansionOp>,
 }
 
 /// Builds a symbolic expansion recipe from emit/expand/allocate/release calls.
 pub(super) struct ExpansionBuilder {
-    source: NormalizedInstruction,
+    source: SourceInstructionRow,
     ops: Vec<ExpansionOp>,
     next_temp: usize,
 }
 
 impl ExpansionBuilder {
-    pub(super) fn new(source: NormalizedInstruction) -> Self {
+    pub(super) fn new(source: SourceInstructionRow) -> Self {
         Self {
             source,
             ops: Vec::new(),
@@ -248,69 +247,93 @@ impl ExpansionBuilder {
     /// stay centralized.
     pub(super) fn expand_r(
         &mut self,
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: SourceInstructionKind,
         rd: RegisterOperand,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
     ) {
-        self.expand(RowTemplate::r(instruction_kind, rd, rs1, rs2));
+        self.expand(SourceInstructionRowTemplate::r(
+            instruction_kind,
+            rd,
+            rs1,
+            rs2,
+        ));
     }
 
     pub(super) fn expand_i(
         &mut self,
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: SourceInstructionKind,
         rd: RegisterOperand,
         rs1: RegisterOperand,
         imm: i128,
     ) {
-        self.expand(RowTemplate::i(instruction_kind, rd, rs1, imm));
+        self.expand(SourceInstructionRowTemplate::i(
+            instruction_kind,
+            rd,
+            rs1,
+            imm,
+        ));
     }
 
     pub(super) fn expand_j(
         &mut self,
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: SourceInstructionKind,
         rd: RegisterOperand,
         imm: i128,
     ) {
-        self.expand(RowTemplate::j(instruction_kind, rd, imm));
+        self.expand(SourceInstructionRowTemplate::j(instruction_kind, rd, imm));
     }
 
     pub(super) fn expand_u(
         &mut self,
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: SourceInstructionKind,
         rd: RegisterOperand,
         imm: i128,
     ) {
-        self.expand(RowTemplate::u(instruction_kind, rd, imm));
+        self.expand(SourceInstructionRowTemplate::u(instruction_kind, rd, imm));
     }
 
     pub(super) fn expand_b(
         &mut self,
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: SourceInstructionKind,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
         imm: i128,
     ) {
-        self.expand(RowTemplate::b(instruction_kind, rs1, rs2, imm));
+        self.expand(SourceInstructionRowTemplate::b(
+            instruction_kind,
+            rs1,
+            rs2,
+            imm,
+        ));
     }
 
     pub(super) fn expand_s(
         &mut self,
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: SourceInstructionKind,
         rs1: RegisterOperand,
         rs2: RegisterOperand,
         imm: i128,
     ) {
-        self.expand(RowTemplate::s(instruction_kind, rs1, rs2, imm));
+        self.expand(SourceInstructionRowTemplate::s(
+            instruction_kind,
+            rs1,
+            rs2,
+            imm,
+        ));
     }
 
     pub(super) fn expand_address(
         &mut self,
-        instruction_kind: JoltInstructionKind,
+        instruction_kind: SourceInstructionKind,
         rs1: RegisterOperand,
         imm: i128,
     ) {
-        self.expand(RowTemplate::address(instruction_kind, rs1, imm));
+        self.expand(SourceInstructionRowTemplate::address(
+            instruction_kind,
+            rs1,
+            imm,
+        ));
     }
 
     pub(super) fn release(&mut self, temp: TempId) {
@@ -334,102 +357,96 @@ impl ExpansionBuilder {
         self.ops.push(ExpansionOp::Emit(row));
     }
 
-    fn expand(&mut self, row: RowTemplate) {
+    fn expand(&mut self, row: SourceInstructionRowTemplate) {
         self.ops.push(ExpansionOp::Expand(row));
     }
 }
 
 /// Instructions that exist only in decoded source and must be expanded into target-legal sequences.
-pub(super) fn is_source_only(instruction_kind: JoltInstructionKind) -> bool {
+pub(super) fn is_source_only(instruction_kind: SourceInstructionKind) -> bool {
     matches!(
         instruction_kind,
-        JoltInstructionKind::Inline
-            | JoltInstructionKind::ADDIW
-            | JoltInstructionKind::ADDW
-            | JoltInstructionKind::SUBW
-            | JoltInstructionKind::MULH
-            | JoltInstructionKind::MULHSU
-            | JoltInstructionKind::MULW
-            | JoltInstructionKind::LB
-            | JoltInstructionKind::LBU
-            | JoltInstructionKind::LH
-            | JoltInstructionKind::LHU
-            | JoltInstructionKind::LW
-            | JoltInstructionKind::LWU
-            | JoltInstructionKind::AdviceLB
-            | JoltInstructionKind::AdviceLH
-            | JoltInstructionKind::AdviceLW
-            | JoltInstructionKind::AdviceLD
-            | JoltInstructionKind::AMOADDD
-            | JoltInstructionKind::AMOANDD
-            | JoltInstructionKind::AMOORD
-            | JoltInstructionKind::AMOXORD
-            | JoltInstructionKind::AMOSWAPD
-            | JoltInstructionKind::AMOMAXD
-            | JoltInstructionKind::AMOMAXUD
-            | JoltInstructionKind::AMOMIND
-            | JoltInstructionKind::AMOMINUD
-            | JoltInstructionKind::AMOADDW
-            | JoltInstructionKind::AMOANDW
-            | JoltInstructionKind::AMOORW
-            | JoltInstructionKind::AMOXORW
-            | JoltInstructionKind::AMOSWAPW
-            | JoltInstructionKind::AMOMAXW
-            | JoltInstructionKind::AMOMAXUW
-            | JoltInstructionKind::AMOMINW
-            | JoltInstructionKind::AMOMINUW
-            | JoltInstructionKind::LRD
-            | JoltInstructionKind::LRW
-            | JoltInstructionKind::DIV
-            | JoltInstructionKind::DIVU
-            | JoltInstructionKind::DIVW
-            | JoltInstructionKind::DIVUW
-            | JoltInstructionKind::REM
-            | JoltInstructionKind::REMU
-            | JoltInstructionKind::REMW
-            | JoltInstructionKind::REMUW
-            | JoltInstructionKind::SB
-            | JoltInstructionKind::SCD
-            | JoltInstructionKind::SCW
-            | JoltInstructionKind::SH
-            | JoltInstructionKind::SW
-            | JoltInstructionKind::CSRRW
-            | JoltInstructionKind::CSRRS
-            | JoltInstructionKind::EBREAK
-            | JoltInstructionKind::ECALL
-            | JoltInstructionKind::MRET
-            | JoltInstructionKind::SLL
-            | JoltInstructionKind::SLLI
-            | JoltInstructionKind::SLLW
-            | JoltInstructionKind::SLLIW
-            | JoltInstructionKind::SRL
-            | JoltInstructionKind::SRLI
-            | JoltInstructionKind::SRA
-            | JoltInstructionKind::SRAI
-            | JoltInstructionKind::SRLIW
-            | JoltInstructionKind::SRAIW
-            | JoltInstructionKind::SRLW
-            | JoltInstructionKind::SRAW
+        SourceInstructionKind::Inline
+            | SourceInstructionKind::ADDIW
+            | SourceInstructionKind::ADDW
+            | SourceInstructionKind::SUBW
+            | SourceInstructionKind::MULH
+            | SourceInstructionKind::MULHSU
+            | SourceInstructionKind::MULW
+            | SourceInstructionKind::LB
+            | SourceInstructionKind::LBU
+            | SourceInstructionKind::LH
+            | SourceInstructionKind::LHU
+            | SourceInstructionKind::LW
+            | SourceInstructionKind::LWU
+            | SourceInstructionKind::AdviceLB
+            | SourceInstructionKind::AdviceLH
+            | SourceInstructionKind::AdviceLW
+            | SourceInstructionKind::AdviceLD
+            | SourceInstructionKind::AMOADDD
+            | SourceInstructionKind::AMOANDD
+            | SourceInstructionKind::AMOORD
+            | SourceInstructionKind::AMOXORD
+            | SourceInstructionKind::AMOSWAPD
+            | SourceInstructionKind::AMOMAXD
+            | SourceInstructionKind::AMOMAXUD
+            | SourceInstructionKind::AMOMIND
+            | SourceInstructionKind::AMOMINUD
+            | SourceInstructionKind::AMOADDW
+            | SourceInstructionKind::AMOANDW
+            | SourceInstructionKind::AMOORW
+            | SourceInstructionKind::AMOXORW
+            | SourceInstructionKind::AMOSWAPW
+            | SourceInstructionKind::AMOMAXW
+            | SourceInstructionKind::AMOMAXUW
+            | SourceInstructionKind::AMOMINW
+            | SourceInstructionKind::AMOMINUW
+            | SourceInstructionKind::LRD
+            | SourceInstructionKind::LRW
+            | SourceInstructionKind::DIV
+            | SourceInstructionKind::DIVU
+            | SourceInstructionKind::DIVW
+            | SourceInstructionKind::DIVUW
+            | SourceInstructionKind::REM
+            | SourceInstructionKind::REMU
+            | SourceInstructionKind::REMW
+            | SourceInstructionKind::REMUW
+            | SourceInstructionKind::SB
+            | SourceInstructionKind::SCD
+            | SourceInstructionKind::SCW
+            | SourceInstructionKind::SH
+            | SourceInstructionKind::SW
+            | SourceInstructionKind::CSRRW
+            | SourceInstructionKind::CSRRS
+            | SourceInstructionKind::EBREAK
+            | SourceInstructionKind::ECALL
+            | SourceInstructionKind::MRET
+            | SourceInstructionKind::SLL
+            | SourceInstructionKind::SLLI
+            | SourceInstructionKind::SLLW
+            | SourceInstructionKind::SLLIW
+            | SourceInstructionKind::SRL
+            | SourceInstructionKind::SRLI
+            | SourceInstructionKind::SRA
+            | SourceInstructionKind::SRAI
+            | SourceInstructionKind::SRLIW
+            | SourceInstructionKind::SRAIW
+            | SourceInstructionKind::SRLW
+            | SourceInstructionKind::SRAW
     )
-}
-
-pub(super) fn is_target_legal(instruction_kind: JoltInstructionKind) -> bool {
-    !is_source_only(instruction_kind)
 }
 
 #[cfg(test)]
 mod tests {
-    use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
+    use jolt_riscv::{NormalizedOperands, SourceInstructionRow};
 
     use super::*;
 
-    fn source() -> NormalizedInstruction {
-        NormalizedInstruction {
-            instruction_kind: JoltInstructionKind::ADDIW,
+    fn source() -> SourceInstructionRow {
+        SourceInstructionRow {
             address: 0x8000_0000,
             operands: NormalizedOperands::default(),
-            virtual_sequence_remaining: None,
-            is_first_in_sequence: false,
+            inline: None,
             is_compressed: false,
         }
     }

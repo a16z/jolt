@@ -1,32 +1,33 @@
-use jolt_riscv::NormalizedInstruction;
+use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow};
 
-use crate::expand::{
-    grammar::is_target_legal, materialize::MAX_FINAL_ROWS_PER_SOURCE, ExpansionError,
-};
+use crate::expand::{materialize::MAX_FINAL_ROWS_PER_SOURCE, ExpansionError};
 
 const MAX_METADATA_SEQUENCE_ROWS: usize = u16::MAX as usize + 1;
 
 /// Stamps position metadata (`is_first_in_sequence`, `virtual_sequence_remaining`) on recipe output.
 pub(super) fn stamp_instruction_sequence(
-    rows: Vec<NormalizedInstruction>,
+    rows: Vec<JoltInstructionRow>,
     is_compressed: bool,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    stamp_sequence_metadata(rows, is_compressed, MAX_FINAL_ROWS_PER_SOURCE)
+    profile: JoltInstructionProfile,
+) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
+    stamp_sequence_metadata(rows, is_compressed, MAX_FINAL_ROWS_PER_SOURCE, profile)
 }
 
 /// Same as `stamp_instruction_sequence` but for inline provider output (higher capacity limit).
 pub(super) fn stamp_inline_sequence(
-    rows: Vec<NormalizedInstruction>,
+    rows: Vec<JoltInstructionRow>,
     is_compressed: bool,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    stamp_sequence_metadata(rows, is_compressed, MAX_METADATA_SEQUENCE_ROWS)
+    profile: JoltInstructionProfile,
+) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
+    stamp_sequence_metadata(rows, is_compressed, MAX_METADATA_SEQUENCE_ROWS, profile)
 }
 
 fn stamp_sequence_metadata(
-    mut rows: Vec<NormalizedInstruction>,
+    mut rows: Vec<JoltInstructionRow>,
     is_compressed: bool,
     capacity: usize,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+    profile: JoltInstructionProfile,
+) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
     if rows.is_empty() {
         return Err(ExpansionError::EmptySequence);
     }
@@ -37,7 +38,7 @@ fn stamp_sequence_metadata(
         });
     }
     for row in &rows {
-        if !is_target_legal(row.instruction_kind) {
+        if !profile.supports_jolt(row.instruction_kind) {
             return Err(ExpansionError::IllegalTargetInstruction(
                 row.instruction_kind,
             ));
@@ -55,14 +56,22 @@ fn stamp_sequence_metadata(
 
 #[cfg(test)]
 mod tests {
-    use jolt_riscv::{JoltInstructionKind, NormalizedInstruction, NormalizedOperands};
+    use jolt_riscv::{
+        JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, NormalizedOperands,
+        SourceExtension,
+    };
 
     use super::*;
 
     #[test]
-    fn rejects_source_only_rows_before_stamping() {
-        let rows = vec![NormalizedInstruction {
-            instruction_kind: JoltInstructionKind::ADDIW,
+    fn rejects_profile_illegal_rows_before_stamping() {
+        const RV64I_ONLY: JoltInstructionProfile = JoltInstructionProfile {
+            source_extensions: &[SourceExtension::Rv64I],
+            inline_extensions: &[],
+        };
+
+        let rows = vec![JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::MUL,
             address: 0x8000_0000,
             operands: NormalizedOperands {
                 rd: Some(1),
@@ -76,9 +85,9 @@ mod tests {
         }];
 
         assert!(matches!(
-            stamp_instruction_sequence(rows, false),
+            stamp_instruction_sequence(rows, false, RV64I_ONLY),
             Err(ExpansionError::IllegalTargetInstruction(
-                JoltInstructionKind::ADDIW
+                JoltInstructionKind::MUL
             ))
         ));
     }

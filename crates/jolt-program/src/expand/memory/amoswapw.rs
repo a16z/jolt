@@ -1,7 +1,12 @@
 use super::*;
 
+/// Lowers `AMOSWAP.W` through the shared word-AMO lane update helpers.
+///
+/// The pre-helper extracts and sign-extends the old word; the post-helper
+/// merges the low word of `rs2` into the containing doubleword and returns the
+/// old word in `rd`.
 pub(in crate::expand) fn expand_amoswapw(
-    instruction: &NormalizedInstruction,
+    instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
     let v_mask = asm.allocate()?;

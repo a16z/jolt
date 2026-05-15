@@ -12,6 +12,7 @@ pub use tracer::instruction::Instruction;
 pub use tracer::utils::inline_helpers::{InstrAssembler, Value};
 pub use tracer::utils::inline_sequence_writer::AppendMode;
 pub use tracer::utils::virtual_registers::VirtualRegisterGuard;
+pub use tracer::InlineExtension;
 
 /// Convert a slice of `u64` limbs (little-endian) to `NBigUint`.
 pub fn limbs_to_nbiguint(limbs: &[u64]) -> NBigUint {
@@ -336,6 +337,7 @@ impl MulAccExt for InstrAssembler {
 /// ```ignore
 /// register_inlines! {
 ///     trace_file: "sha256_trace.joltinline",
+///     extension: jolt_inlines_sdk::host::InlineExtension::Sha2,
 ///     ops: [Sha256Compression, Sha256CompressionInitial],
 /// }
 /// ```
@@ -343,6 +345,7 @@ impl MulAccExt for InstrAssembler {
 macro_rules! register_inlines {
     (
         trace_file: $trace_file:expr,
+        extension: $extension:expr,
         ops: [$first:ty $(, $rest:ty)*$(,)?]$(,)?
     ) => {
         pub fn store_inlines() -> Result<(), String> {
@@ -357,15 +360,15 @@ macro_rules! register_inlines {
             Ok(())
         }
 
-        $crate::__submit_inline_op!($first);
-        $($crate::__submit_inline_op!($rest);)*
+        $crate::__submit_inline_op!($first, $extension);
+        $($crate::__submit_inline_op!($rest, $extension);)*
     };
 }
 
 /// Helper macro to submit a single `InlineOp` to inventory.
 #[macro_export]
 macro_rules! __submit_inline_op {
-    ($op:ty) => {
+    ($op:ty, $extension:expr) => {
         const _: () = {
             assert!(
                 <$op as $crate::host::InlineOp>::OPCODE == 0x0B
@@ -381,6 +384,7 @@ macro_rules! __submit_inline_op {
                 opcode: <$op as $crate::host::InlineOp>::OPCODE,
                 funct3: <$op as $crate::host::InlineOp>::FUNCT3,
                 funct7: <$op as $crate::host::InlineOp>::FUNCT7,
+                extension: $extension,
                 name: <$op as $crate::host::InlineOp>::NAME,
                 build_sequence: <$op as $crate::host::InlineOp>::build_sequence,
                 build_advice: <$op as $crate::host::InlineOp>::build_advice,

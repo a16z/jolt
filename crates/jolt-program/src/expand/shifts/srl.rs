@@ -1,13 +1,19 @@
 use super::*;
 
+/// Lowers variable logical right shift through a dynamic bitmask helper.
+///
+/// `VirtualShiftRightBitmask` applies the RV64 `rs2 & 0x3f` rule and produces
+/// the mask consumed by `VirtualSRL`, which then performs the unsigned shift.
 pub(in crate::expand) fn expand_srl(
-    instruction: &NormalizedInstruction,
+    instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
     let v_bitmask = asm.allocate()?;
 
     asm.emit_i(
-        JoltInstructionKind::VirtualShiftRightBitmask,
+        JoltInstructionKind::VirtualShiftRightBitmask(
+            jolt_riscv::instructions::VirtualShiftRightBitmask(()),
+        ),
         v_bitmask.operand(),
         reg(rs2(instruction)?),
         0,

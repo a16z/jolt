@@ -1,7 +1,12 @@
 use super::*;
 
+/// Lowers `SRLIW` by shifting the source word through the high half first.
+///
+/// Multiplying by `2^32` moves the low 32 bits into bits 63:32. A logical
+/// right shift by `32 + shamt` then yields the zero-filled word result, after
+/// which `VirtualSignExtendWord` applies RV64's required word sign extension.
 pub(in crate::expand) fn expand_srliw(
-    instruction: &NormalizedInstruction,
+    instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
     let v_rs1 = asm.allocate()?;
@@ -21,7 +26,9 @@ pub(in crate::expand) fn expand_srliw(
         bitmask as i128,
     );
     asm.emit_i(
-        JoltInstructionKind::VirtualSignExtendWord,
+        JoltInstructionKind::VirtualSignExtendWord(
+            jolt_riscv::instructions::VirtualSignExtendWord(()),
+        ),
         reg(rd(instruction)?),
         reg(rd(instruction)?),
         0,

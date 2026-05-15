@@ -5,6 +5,7 @@ use crate::sequence_builder::{
 
 jolt_inlines_sdk::register_inlines! {
     trace_file: "secp256k1_trace.joltinline",
+    extension: jolt_inlines_sdk::host::InlineExtension::Secp256k1,
     ops: [
         Secp256k1MulQ,
         Secp256k1SquareQ,

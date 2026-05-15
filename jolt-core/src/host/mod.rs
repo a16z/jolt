@@ -13,7 +13,7 @@ pub trait JoltProgramSource {
     fn decode(
         &mut self,
     ) -> (
-        Vec<jolt_riscv::NormalizedInstruction>,
+        Vec<jolt_riscv::JoltInstructionRow>,
         Vec<(u64, u8)>,
         u64,
         u64,
@@ -35,7 +35,7 @@ impl JoltProgramSource for Program {
     fn decode(
         &mut self,
     ) -> (
-        Vec<jolt_riscv::NormalizedInstruction>,
+        Vec<jolt_riscv::JoltInstructionRow>,
         Vec<(u64, u8)>,
         u64,
         u64,
