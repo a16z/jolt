@@ -739,24 +739,25 @@ updates.
 
 ## S4: Typed indexed-eval addressing
 
-**Goal.** Eliminate the last big string-dispatch site in Tier B:
-`indexed_evals_by_prefix_any(evals, "stage6.booleanity.eval.InstructionRa_")`
-and friends. Replace with a typed eval-family vocabulary.
+**Goal.** Keep eval-family reconstruction out of verifier runtime/Tier B and
+finish moving indexed-eval family facts into typed verifier-plan data.
 
-### The problem today
+### Current status
 
-Stage 6/7 evaluators do:
+The original Tier B problem has been removed on the current stack. Generated
+Jolt relation code and `bolt-verifier-runtime` no longer call
+`indexed_evals_by_prefix*`, and `verifier_cleanup` now gates both generated
+relation code and the runtime against reintroducing indexed eval-prefix APIs.
 
-```rust
-let booleanity_evals =
-    indexed_evals_by_prefix_any(evals, "stage6.booleanity.eval.InstructionRa_")?;
-```
+Stage 5 instruction read-RAF and Stage 6 bytecode read-RAF share a Bolt-side
+`IndexedEvalFamilyPlan` helper for contiguous indexed families. This is a
+planning seam, not the final architecture: the helper still derives family
+membership from emitted eval names or oracle names during Rust planning.
 
-This works because the prover emits evals named `..._0, ..._1, ..._2` and
-the verifier wants them as `Vec<Fr>`. The verifier reconstructs the family
-by string-prefix matching plus integer-suffix parsing. This is the *only*
-remaining "execution-relevant string dispatch" that the current
-`verifier_cleanup` gates do not yet enforce-to-zero.
+The remaining S4 work is therefore not "delete the runtime helper"; it is
+"promote eval-family membership to CPU/verifier-plan rows so Rust emission
+formats typed family data instead of discovering indexed families from symbol
+spelling."
 
 ### Dialect changes
 
@@ -797,9 +798,10 @@ not a set of scalars recovered by prefix matching.
 
 ### Tier B impact
 
-Each `expected_stage67_*` that today calls `indexed_evals_by_prefix_any`
-instead reads a typed `&[Fr]` from the store. Estimated ~60 LOC reduction
-in Tier B.
+Stage 6/7 relation evaluators should continue to receive typed eval-family
+plans or typed field-vector values, never reconstruct families from prefixes.
+Remaining reductions are expected on the Bolt emitter/planning side, not from
+deleting more Tier B prefix code.
 
 ### Blockers and complications
 
@@ -811,17 +813,19 @@ in Tier B.
 - **Prover/verifier symmetry.** The prover-side emitter must annotate the
   same eval block as a family. If this is a separate emitter, both must be
   updated together.
-- **`indexed_evals_by_prefix` and `indexed_evals_by_prefix_any` removal.**
-  These two helpers in Tier A become unused after S4. They can be deleted
-  from `bolt-verifier-runtime` to keep the API surface minimal.
+- **Typed source of truth.** `IndexedEvalFamilyPlan` is still an emitter helper.
+  The next step is a CPU/verifier-plan row for named eval families so the Rust
+  emitter consumes explicit family data.
 - **Testing.** Add a `verifier_cleanup` gate
   `RELATION_INDEXED_EVAL_PREFIX_SITES_CEILING = 0` that fires if any
-  generated stage source still calls `indexed_evals_by_prefix*`.
+  generated stage source still calls `indexed_evals_by_prefix*` or exposes
+  eval-prefix fields. This gate is now present.
 
 ### Acceptance criteria
 
 `muldiv` passes in both modes. Zero `indexed_evals_by_prefix*` call sites
-in the generated verifier. Tier B drops to ~350 LOC.
+in the generated verifier and runtime. Indexed eval-family membership is
+represented as typed CPU/verifier-plan data before Rust token emission.
 
 ### Rollback
 

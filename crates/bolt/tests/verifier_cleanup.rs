@@ -37,6 +37,7 @@ const STAGE_LOCAL_MACRO_RULES_BASELINE_CEILING: usize = 0;
 const STAGE_HELPER_FUNCTION_BASELINE_CEILING: usize = 38;
 const RELATION_STRING_SITE_BASELINE_CEILING: usize = 0;
 const SUMCHECK_POINT_ORDER_STRING_SITE_BASELINE_CEILING: usize = 0;
+const RELATION_INDEXED_EVAL_PREFIX_SITE_BASELINE_CEILING: usize = 0;
 
 const ALLOWED_JOLT_PROTOCOL_SYMBOLS: &[&str] = &[
     "jolt.commitment_phase",
@@ -143,6 +144,7 @@ struct VerifierCleanupMetrics {
     stage_local_helper_functions: usize,
     relation_string_sites: usize,
     sumcheck_point_order_string_sites: usize,
+    relation_indexed_eval_prefix_sites: usize,
 }
 
 #[test]
@@ -169,7 +171,8 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
          stage_local_macro_rules: {stage_local_macro_rules} (baseline ceiling <= {macro_rules_baseline})\n\
          stage_local_helper_functions: {helper_functions} (baseline ceiling <= {helper_baseline})\n\
          relation_string_sites: {relation_sites} (baseline ceiling <= {relation_baseline})\n\
-         sumcheck_point_order_string_sites: {point_order_sites} (baseline ceiling <= {point_order_baseline})",
+         sumcheck_point_order_string_sites: {point_order_sites} (baseline ceiling <= {point_order_baseline})\n\
+         relation_indexed_eval_prefix_sites: {indexed_eval_prefix_sites} (baseline ceiling <= {indexed_eval_prefix_baseline})",
         generated_surface_loc = metrics.generated_surface_loc,
         bolt_runtime_loc = metrics.bolt_runtime_loc,
         bolt_runtime_baseline = BOLT_RUNTIME_BASELINE_LOC_CEILING,
@@ -204,6 +207,8 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
         relation_baseline = RELATION_STRING_SITE_BASELINE_CEILING,
         point_order_sites = metrics.sumcheck_point_order_string_sites,
         point_order_baseline = SUMCHECK_POINT_ORDER_STRING_SITE_BASELINE_CEILING,
+        indexed_eval_prefix_sites = metrics.relation_indexed_eval_prefix_sites,
+        indexed_eval_prefix_baseline = RELATION_INDEXED_EVAL_PREFIX_SITE_BASELINE_CEILING,
     );
 
     assert!(
@@ -292,6 +297,12 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
             == SUMCHECK_POINT_ORDER_STRING_SITE_BASELINE_CEILING,
         "sumcheck point-order string sites grew to {}; prefer typed point-order plan data",
         metrics.sumcheck_point_order_string_sites
+    );
+    assert!(
+        metrics.relation_indexed_eval_prefix_sites
+            == RELATION_INDEXED_EVAL_PREFIX_SITE_BASELINE_CEILING,
+        "relation indexed-eval prefix sites grew to {}; prefer typed eval-family plan data",
+        metrics.relation_indexed_eval_prefix_sites
     );
 }
 
@@ -453,6 +464,21 @@ fn stage67_output_plan_cutover_removed_obsolete_relation_helpers() {
         assert!(
             !stage6_source.contains(stale_field),
             "generated Stage 6 relation symbol table still exposes obsolete field `{stale_field}`"
+        );
+    }
+}
+
+#[test]
+fn verifier_runtime_has_no_indexed_eval_prefix_api() {
+    let runtime = workspace_root().join("crates/bolt-verifier-runtime/src/lib.rs");
+    if !runtime.exists() {
+        return;
+    }
+    let source = std::fs::read_to_string(&runtime).expect("read verifier runtime source");
+    for stale in ["indexed_evals_by_prefix", "eval_prefix"] {
+        assert!(
+            !source.contains(stale),
+            "bolt-verifier-runtime still exposes indexed eval-prefix API `{stale}`"
         );
     }
 }
@@ -632,6 +658,8 @@ fn verifier_cleanup_metrics(verifier_src: &Path) -> VerifierCleanupMetrics {
             metrics.relation_string_sites += count_relation_string_sites(&source);
             metrics.sumcheck_point_order_string_sites +=
                 count_sumcheck_point_order_string_sites(&source);
+            metrics.relation_indexed_eval_prefix_sites +=
+                count_relation_indexed_eval_prefix_sites(&source);
         }
     }
     metrics
@@ -740,6 +768,13 @@ fn count_sumcheck_point_order_string_sites(source: &str) -> usize {
     source
         .lines()
         .filter(|line| line.contains("point_order: \""))
+        .count()
+}
+
+fn count_relation_indexed_eval_prefix_sites(source: &str) -> usize {
+    source
+        .lines()
+        .filter(|line| line.contains("indexed_evals_by_prefix") || line.contains("eval_prefix"))
         .count()
 }
 
