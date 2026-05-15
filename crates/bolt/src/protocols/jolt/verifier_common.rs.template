@@ -1195,7 +1195,7 @@ pub struct Stage67BytecodeSymbols {
 pub trait Stage67BytecodeEntry {
     fn address(&self) -> Fr;
     fn imm(&self) -> Fr;
-    fn circuit_flags(&self) -> &[bool; 14];
+    fn circuit_flags(&self) -> &[bool; 23];
     fn rd(&self) -> Option<usize>;
     fn rs1(&self) -> Option<usize>;
     fn rs2(&self) -> Option<usize>;

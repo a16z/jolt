@@ -14,7 +14,9 @@ use super::{
     OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_TARGET_COEFFS,
 };
 
-const RV64_NUM_CIRCUIT_FLAGS: usize = 14;
+// Must equal jolt_riscv::NUM_CIRCUIT_FLAGS. Bumped 14 → 23 for the
+// BN254 Fr coprocessor (9 new IsField* flags).
+const RV64_NUM_CIRCUIT_FLAGS: usize = 23;
 const FLAG_ADD_OPERANDS: usize = 0;
 const FLAG_SUBTRACT_OPERANDS: usize = 1;
 const FLAG_MULTIPLY_OPERANDS: usize = 2;

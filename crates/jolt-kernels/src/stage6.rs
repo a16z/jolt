@@ -368,7 +368,7 @@ pub struct Stage6BooleanityWitness<'a, F: Field> {
 pub struct Stage6BytecodeEntry<F: Field> {
     pub address: F,
     pub imm: F,
-    pub circuit_flags: [bool; 14],
+    pub circuit_flags: [bool; 23],
     pub rd: Option<usize>,
     pub rs1: Option<usize>,
     pub rs2: Option<usize>,
@@ -7634,7 +7634,7 @@ mod tests {
         rs2: Option<usize>,
         lookup_table: Option<usize>,
     ) -> Stage6BytecodeEntry<Fr> {
-        let mut circuit_flags = [false; 14];
+        let mut circuit_flags = [false; 23];
         for &flag in flags {
             circuit_flags[flag] = true;
         }

@@ -552,6 +552,15 @@ fn stage1_rv64_flags(flags: CircuitFlagSet) -> [bool; NUM_CIRCUIT_FLAGS] {
         flags[CircuitFlags::IsCompressed],
         flags[CircuitFlags::IsFirstInSequence],
         flags[CircuitFlags::IsLastInSequence],
+        flags[CircuitFlags::IsFieldMul],
+        flags[CircuitFlags::IsFieldAdd],
+        flags[CircuitFlags::IsFieldSub],
+        flags[CircuitFlags::IsFieldInv],
+        flags[CircuitFlags::IsFieldAssertEq],
+        flags[CircuitFlags::IsFieldMov],
+        flags[CircuitFlags::IsFieldSLL64],
+        flags[CircuitFlags::IsFieldSLL128],
+        flags[CircuitFlags::IsFieldSLL192],
     ]
 }
 

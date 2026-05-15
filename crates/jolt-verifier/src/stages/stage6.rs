@@ -35,7 +35,7 @@ pub type Stage6VerifierProgramPlan = Stage6CpuProgramPlan;
 pub struct Stage6BytecodeEntry {
     pub address: Fr,
     pub imm: Fr,
-    pub circuit_flags: [bool; 14],
+    pub circuit_flags: [bool; 23],
     pub rd: Option<usize>,
     pub rs1: Option<usize>,
     pub rs2: Option<usize>,
@@ -52,7 +52,7 @@ pub struct Stage6BytecodeEntry {
 impl Stage67BytecodeEntry for Stage6BytecodeEntry {
     fn address(&self) -> Fr { self.address }
     fn imm(&self) -> Fr { self.imm }
-    fn circuit_flags(&self) -> &[bool; 14] { &self.circuit_flags }
+    fn circuit_flags(&self) -> &[bool; 23] { &self.circuit_flags }
     fn rd(&self) -> Option<usize> { self.rd }
     fn rs1(&self) -> Option<usize> { self.rs1 }
     fn rs2(&self) -> Option<usize> { self.rs2 }

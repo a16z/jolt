@@ -542,7 +542,7 @@ pub struct Stage6WitnessParams {
 pub struct Stage6BytecodeEntry<F: Field> {
     pub address: F,
     pub imm: F,
-    pub circuit_flags: [bool; 14],
+    pub circuit_flags: [bool; 23],
     pub rd: Option<usize>,
     pub rs1: Option<usize>,
     pub rs2: Option<usize>,
