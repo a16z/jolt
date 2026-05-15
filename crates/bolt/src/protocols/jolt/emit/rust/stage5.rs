@@ -23,6 +23,7 @@ use crate::schema::verify_cpu_schema;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage5CpuProgram {
     pub role: Role,
+    pub(crate) instruction_read_raf_plan: Option<Stage5InstructionReadRafEmitPlan>,
     pub params: Stage5Params,
     pub steps: Vec<Stage5ProgramStepPlan>,
     pub transcript_squeezes: Vec<Stage5TranscriptSqueezePlan>,
@@ -184,6 +185,85 @@ pub struct Stage5SumcheckEvalPlan {
     pub name: String,
     pub index: usize,
     pub oracle: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Stage5InstructionReadRafEmitPlan {
+    pub(crate) point: String,
+    pub(crate) lookup_output_point: String,
+    pub(crate) table_flag_evals: Stage5NamedEvalFamilyEmitPlan,
+    pub(crate) instruction_ra_evals: Stage5NamedEvalFamilyEmitPlan,
+    pub(crate) raf_flag_eval: String,
+    pub(crate) gamma: String,
+    pub(crate) log_k: usize,
+}
+
+impl Stage5InstructionReadRafEmitPlan {
+    fn from_evals(evals: &[Stage5SumcheckEvalPlan]) -> Result<Self, EmitError> {
+        Ok(Self {
+            point: "stage5.instruction_read_raf.point".to_owned(),
+            lookup_output_point: "stage5.input.stage2.instruction.LookupOutput".to_owned(),
+            table_flag_evals: Stage5NamedEvalFamilyEmitPlan::from_indexed_oracles(
+                "stage5.instruction_read_raf.eval.LookupTableFlag",
+                "LookupTableFlag_",
+                evals,
+            )?,
+            instruction_ra_evals: Stage5NamedEvalFamilyEmitPlan::from_indexed_oracles(
+                "stage5.instruction_read_raf.eval.InstructionRa",
+                "InstructionRa_",
+                evals,
+            )?,
+            raf_flag_eval: "stage5.instruction_read_raf.eval.InstructionRafFlag".to_owned(),
+            gamma: "stage5.instruction_read_raf.gamma".to_owned(),
+            log_k: 128,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Stage5NamedEvalFamilyEmitPlan {
+    pub(crate) symbol: String,
+    pub(crate) evals: Vec<String>,
+}
+
+impl Stage5NamedEvalFamilyEmitPlan {
+    fn from_indexed_oracles(
+        symbol: &str,
+        oracle_prefix: &str,
+        evals: &[Stage5SumcheckEvalPlan],
+    ) -> Result<Self, EmitError> {
+        let mut indexed_names = Vec::new();
+        for eval in evals {
+            let Some(suffix) = eval.oracle.strip_prefix(oracle_prefix) else {
+                continue;
+            };
+            let index = suffix.parse::<usize>().map_err(|_| {
+                EmitError::new(format!(
+                    "invalid indexed eval oracle `{}` for family `{symbol}`",
+                    eval.oracle
+                ))
+            })?;
+            indexed_names.push((index, eval.name.clone()));
+        }
+        if indexed_names.is_empty() {
+            return Err(EmitError::new(format!("missing eval family `{symbol}`")));
+        }
+        indexed_names.sort_by_key(|(index, _)| *index);
+        for (expected, (actual, _)) in indexed_names.iter().enumerate() {
+            if expected != *actual {
+                return Err(EmitError::new(format!(
+                    "non-contiguous eval family `{symbol}` at index {actual}"
+                )));
+            }
+        }
+        Ok(Self {
+            symbol: symbol.to_owned(),
+            evals: indexed_names
+                .into_iter()
+                .map(|(_, name)| name)
+                .collect::<Vec<_>>(),
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -582,10 +662,16 @@ impl Stage5CpuProgram {
         } else {
             Vec::new()
         };
+        let instruction_read_raf_plan = if role == Role::Verifier {
+            Some(Stage5InstructionReadRafEmitPlan::from_evals(&evals)?)
+        } else {
+            None
+        };
 
         Ok(Self {
             params: params.ok_or_else(|| EmitError::new("missing cpu.params"))?,
             role,
+            instruction_read_raf_plan,
             steps,
             transcript_squeezes,
             transcript_absorb_bytes,
@@ -1875,25 +1961,27 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
     }
 
     fn emit_named_eval_family_constants(&self) -> Result<String, EmitError> {
-        const FAMILIES: &[(&str, &str, &str, &str)] = &[
+        let plan = self
+            .instruction_read_raf_plan
+            .as_ref()
+            .ok_or_else(|| EmitError::new("missing stage5 instruction read-RAF plan"))?;
+        let families = [
             (
                 "STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVAL_NAMES",
                 "STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVALS",
-                "stage5.instruction_read_raf.eval.LookupTableFlag",
-                "LookupTableFlag_",
+                &plan.table_flag_evals,
             ),
             (
                 "STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVAL_NAMES",
                 "STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVALS",
-                "stage5.instruction_read_raf.eval.InstructionRa",
-                "InstructionRa_",
+                &plan.instruction_ra_evals,
             ),
         ];
 
         let mut source = String::new();
-        for (names_const, family_const, family_symbol, oracle_prefix) in FAMILIES {
-            let names = self.indexed_eval_family_names(family_symbol, oracle_prefix)?;
-            let names_source = names
+        for (names_const, family_const, family) in families {
+            let names_source = family
+                .evals
                 .iter()
                 .map(|name| rust_str(name))
                 .collect::<Vec<_>>()
@@ -1908,59 +1996,30 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
                 &mut source,
                 format_args!(
                     "pub const {family_const}: NamedEvalFamilyPlan = NamedEvalFamilyPlan {{ symbol: {}, evals: {names_const} }};\n\n",
-                    rust_str(family_symbol),
+                    rust_str(&family.symbol),
                 ),
             );
         }
-        source.push_str(
-            "pub const STAGE5_INSTRUCTION_READ_RAF_PLAN: Stage5InstructionReadRafPlan = Stage5InstructionReadRafPlan {\n\
-             \x20   point: \"stage5.instruction_read_raf.point\",\n\
-             \x20   lookup_output_point: \"stage5.input.stage2.instruction.LookupOutput\",\n\
-             \x20   table_flag_evals: &STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVALS,\n\
-             \x20   instruction_ra_evals: &STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVALS,\n\
-             \x20   raf_flag_eval: \"stage5.instruction_read_raf.eval.InstructionRafFlag\",\n\
-             \x20   gamma: \"stage5.instruction_read_raf.gamma\",\n\
-             \x20   log_k: 128,\n\
-             };\n\n",
+        push_format(
+            &mut source,
+            format_args!(
+                "pub const STAGE5_INSTRUCTION_READ_RAF_PLAN: Stage5InstructionReadRafPlan = Stage5InstructionReadRafPlan {{\n\
+                 \x20   point: {},\n\
+                 \x20   lookup_output_point: {},\n\
+                 \x20   table_flag_evals: &STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVALS,\n\
+                 \x20   instruction_ra_evals: &STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVALS,\n\
+                 \x20   raf_flag_eval: {},\n\
+                 \x20   gamma: {},\n\
+                 \x20   log_k: {},\n\
+                 }};\n\n",
+                rust_str(&plan.point),
+                rust_str(&plan.lookup_output_point),
+                rust_str(&plan.raf_flag_eval),
+                rust_str(&plan.gamma),
+                plan.log_k,
+            ),
         );
         Ok(source)
-    }
-
-    fn indexed_eval_family_names(
-        &self,
-        family_symbol: &str,
-        oracle_prefix: &str,
-    ) -> Result<Vec<&str>, EmitError> {
-        let mut indexed_names = Vec::new();
-        for eval in &self.evals {
-            let Some(suffix) = eval.oracle.strip_prefix(oracle_prefix) else {
-                continue;
-            };
-            let index = suffix.parse::<usize>().map_err(|_| {
-                EmitError::new(format!(
-                    "invalid indexed eval oracle `{}` for family `{family_symbol}`",
-                    eval.oracle
-                ))
-            })?;
-            indexed_names.push((index, eval.name.as_str()));
-        }
-        if indexed_names.is_empty() {
-            return Err(EmitError::new(format!(
-                "missing eval family `{family_symbol}`"
-            )));
-        }
-        indexed_names.sort_by_key(|(index, _)| *index);
-        for (expected, (actual, _)) in indexed_names.iter().enumerate() {
-            if expected != *actual {
-                return Err(EmitError::new(format!(
-                    "non-contiguous eval family `{family_symbol}` at index {actual}"
-                )));
-            }
-        }
-        Ok(indexed_names
-            .into_iter()
-            .map(|(_, name)| name)
-            .collect::<Vec<_>>())
     }
 
     fn emit_verifier_output_claim_constants(&self) -> Result<String, EmitError> {
