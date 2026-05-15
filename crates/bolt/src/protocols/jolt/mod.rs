@@ -10,6 +10,7 @@ pub mod validate;
 pub(crate) mod verifier_eval_families;
 pub(crate) mod verifier_output_claims;
 pub(crate) mod verifier_plan;
+pub(crate) mod verifier_values;
 
 pub use artifacts::{
     assemble_jolt_generated_crates, assemble_jolt_workspace_generated_crates, jolt_artifact_config,

@@ -14,6 +14,7 @@ use crate::protocols::jolt::verifier_output_claims::{
     SumcheckOutputClaimPlan as Stage3SumcheckOutputClaimPlan,
 };
 use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
+use crate::protocols::jolt::verifier_values;
 use crate::schema::verify_cpu_schema;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -704,57 +705,57 @@ impl Stage3CpuProgram {
         Ok(())
     }
 
-    fn field_value_symbols(&self) -> verifier_output_claims::VerifierScalarSourceSet {
-        let mut values = verifier_output_claims::VerifierScalarSourceSet::default();
+    fn field_value_symbols(&self) -> verifier_values::VerifierScalarSourceSet {
+        let mut values = verifier_values::VerifierScalarSourceSet::default();
         values.extend(
             self.opening_inputs.iter().map(|input| &input.symbol),
-            verifier_output_claims::VerifierScalarSourceKind::OpeningInput,
+            verifier_values::VerifierScalarSourceKind::OpeningInput,
         );
         values.extend(
             self.field_constants.iter().map(|constant| &constant.symbol),
-            verifier_output_claims::VerifierScalarSourceKind::FieldConstant,
+            verifier_values::VerifierScalarSourceKind::FieldConstant,
         );
         values.extend(
             self.transcript_squeezes
                 .iter()
                 .filter(|squeeze| matches!(squeeze.kind.as_str(), "challenge_scalar" | "scalar"))
                 .map(|squeeze| &squeeze.symbol),
-            verifier_output_claims::VerifierScalarSourceKind::TranscriptScalar,
+            verifier_values::VerifierScalarSourceKind::TranscriptScalar,
         );
         values.extend(
             self.field_exprs.iter().map(|expr| &expr.symbol),
-            verifier_output_claims::VerifierScalarSourceKind::FieldExpr,
+            verifier_values::VerifierScalarSourceKind::FieldExpr,
         );
         values.extend(
             self.evals.iter().map(|eval| &eval.symbol),
-            verifier_output_claims::VerifierScalarSourceKind::SumcheckEval,
+            verifier_values::VerifierScalarSourceKind::SumcheckEval,
         );
         values.extend(
             self.output_values.iter().map(|value| &value.symbol),
-            verifier_output_claims::VerifierScalarSourceKind::StructuredPolynomialEval,
+            verifier_values::VerifierScalarSourceKind::StructuredPolynomialEval,
         );
         values
     }
 
-    fn point_value_symbols(&self) -> verifier_output_claims::VerifierPointSourceSet {
-        let mut values = verifier_output_claims::VerifierPointSourceSet::default();
+    fn point_value_symbols(&self) -> verifier_values::VerifierPointSourceSet {
+        let mut values = verifier_values::VerifierPointSourceSet::default();
         values.extend(
             self.opening_inputs.iter().map(|input| &input.symbol),
-            verifier_output_claims::VerifierPointSourceKind::OpeningInput,
+            verifier_values::VerifierPointSourceKind::OpeningInput,
         );
         values.extend(
             self.instance_results
                 .iter()
                 .map(|instance| &instance.symbol),
-            verifier_output_claims::VerifierPointSourceKind::SumcheckInstance,
+            verifier_values::VerifierPointSourceKind::SumcheckInstance,
         );
         values.extend(
             self.point_slices.iter().map(|slice| &slice.symbol),
-            verifier_output_claims::VerifierPointSourceKind::PointSlice,
+            verifier_values::VerifierPointSourceKind::PointSlice,
         );
         values.extend(
             self.point_concats.iter().map(|concat| &concat.symbol),
-            verifier_output_claims::VerifierPointSourceKind::PointConcat,
+            verifier_values::VerifierPointSourceKind::PointConcat,
         );
         values
     }

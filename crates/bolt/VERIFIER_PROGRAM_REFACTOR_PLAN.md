@@ -577,6 +577,14 @@ The important design point is that this is not "add more variants to
 `FieldExprKind`"; it is a typed graph over scalar, point, field-vector, and
 eval-family values.
 
+### Current status
+
+The scalar/point source registry has been moved out of
+`verifier_output_claims` into `verifier_values`. This is only the foundation:
+it gives scalar and point domains an explicit home, but field-vector values,
+eval-family values, and relation-output execution are not yet lowered through a
+single typed graph.
+
 ### Dialect changes
 
 Extend `crates/bolt/irdl/compute.mlir` (no new dialect; these are dataflow
