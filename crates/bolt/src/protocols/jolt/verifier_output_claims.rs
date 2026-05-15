@@ -573,7 +573,8 @@ where
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum OutputDependencyNode {
-    Field(String),
+    Scalar(String),
+    FieldExpr(String),
     EvalFamily(String),
     ProductFamily(String),
     FunctionFamily(String),
@@ -629,6 +630,7 @@ where
                 output_families_by_symbol,
                 output_product_families_by_symbol,
                 output_function_families_by_symbol,
+                field_exprs_by_symbol,
                 symbol,
             )
         })
@@ -638,7 +640,8 @@ where
             continue;
         }
         match node {
-            OutputDependencyNode::Field(symbol) => {
+            OutputDependencyNode::Scalar(_) => {}
+            OutputDependencyNode::FieldExpr(symbol) => {
                 let Some(expr) = field_exprs_by_symbol.get(symbol.as_str()) else {
                     continue;
                 };
@@ -647,6 +650,7 @@ where
                         output_families_by_symbol,
                         output_product_families_by_symbol,
                         output_function_families_by_symbol,
+                        field_exprs_by_symbol,
                         operand,
                     )
                 }));
@@ -658,19 +662,28 @@ where
                 let _inserted = dependencies
                     .families
                     .insert(OutputFamilyDependency::Eval(family.symbol.clone()));
-                stack.push(OutputDependencyNode::Field(family.gamma.clone()));
-                stack.extend(
-                    family
-                        .evals
-                        .iter()
-                        .cloned()
-                        .map(OutputDependencyNode::Field),
-                );
+                stack.push(output_dependency_node(
+                    output_families_by_symbol,
+                    output_product_families_by_symbol,
+                    output_function_families_by_symbol,
+                    field_exprs_by_symbol,
+                    &family.gamma,
+                ));
+                stack.extend(family.evals.iter().map(|eval| {
+                    output_dependency_node(
+                        output_families_by_symbol,
+                        output_product_families_by_symbol,
+                        output_function_families_by_symbol,
+                        field_exprs_by_symbol,
+                        eval,
+                    )
+                }));
                 stack.extend(family.shared_terms.iter().map(|term| {
                     output_dependency_node(
                         output_families_by_symbol,
                         output_product_families_by_symbol,
                         output_function_families_by_symbol,
+                        field_exprs_by_symbol,
                         &term.factor,
                     )
                 }));
@@ -680,6 +693,7 @@ where
                             output_families_by_symbol,
                             output_product_families_by_symbol,
                             output_function_families_by_symbol,
+                            field_exprs_by_symbol,
                             factor,
                         )
                     })
@@ -692,20 +706,31 @@ where
                 let _inserted = dependencies
                     .families
                     .insert(OutputFamilyDependency::Product(family.symbol.clone()));
-                stack.extend(
-                    family
-                        .gamma
-                        .iter()
-                        .cloned()
-                        .map(OutputDependencyNode::Field),
-                );
+                stack.extend(family.gamma.iter().map(|gamma| {
+                    output_dependency_node(
+                        output_families_by_symbol,
+                        output_product_families_by_symbol,
+                        output_function_families_by_symbol,
+                        field_exprs_by_symbol,
+                        gamma,
+                    )
+                }));
                 for term in &family.terms {
-                    stack.extend(term.evals.iter().cloned().map(OutputDependencyNode::Field));
+                    stack.extend(term.evals.iter().map(|eval| {
+                        output_dependency_node(
+                            output_families_by_symbol,
+                            output_product_families_by_symbol,
+                            output_function_families_by_symbol,
+                            field_exprs_by_symbol,
+                            eval,
+                        )
+                    }));
                     stack.extend(term.factors.iter().map(|factor| {
                         output_dependency_node(
                             output_families_by_symbol,
                             output_product_families_by_symbol,
                             output_function_families_by_symbol,
+                            field_exprs_by_symbol,
                             factor,
                         )
                     }));
@@ -718,20 +743,29 @@ where
                 let _inserted = dependencies
                     .families
                     .insert(OutputFamilyDependency::Function(family.symbol.clone()));
-                stack.extend(
-                    family
-                        .gamma
-                        .iter()
-                        .cloned()
-                        .map(OutputDependencyNode::Field),
-                );
+                stack.extend(family.gamma.iter().map(|gamma| {
+                    output_dependency_node(
+                        output_families_by_symbol,
+                        output_product_families_by_symbol,
+                        output_function_families_by_symbol,
+                        field_exprs_by_symbol,
+                        gamma,
+                    )
+                }));
                 for term in &family.terms {
-                    stack.push(OutputDependencyNode::Field(term.eval.clone()));
+                    stack.push(output_dependency_node(
+                        output_families_by_symbol,
+                        output_product_families_by_symbol,
+                        output_function_families_by_symbol,
+                        field_exprs_by_symbol,
+                        &term.eval,
+                    ));
                     stack.extend(term.factors.iter().map(|factor| {
                         output_dependency_node(
                             output_families_by_symbol,
                             output_product_families_by_symbol,
                             output_function_families_by_symbol,
+                            field_exprs_by_symbol,
                             factor,
                         )
                     }));
@@ -746,6 +780,7 @@ fn output_dependency_node(
     output_families_by_symbol: &BTreeMap<&str, &SumcheckOutputEvalFamilyPlan>,
     output_product_families_by_symbol: &BTreeMap<&str, &SumcheckOutputProductFamilyPlan>,
     output_function_families_by_symbol: &BTreeMap<&str, &SumcheckOutputFunctionFamilyPlan>,
+    field_exprs_by_symbol: &BTreeMap<&str, &impl FieldExprDependencies>,
     symbol: &str,
 ) -> OutputDependencyNode {
     if output_families_by_symbol.contains_key(symbol) {
@@ -754,8 +789,10 @@ fn output_dependency_node(
         OutputDependencyNode::ProductFamily(symbol.to_owned())
     } else if output_function_families_by_symbol.contains_key(symbol) {
         OutputDependencyNode::FunctionFamily(symbol.to_owned())
+    } else if field_exprs_by_symbol.contains_key(symbol) {
+        OutputDependencyNode::FieldExpr(symbol.to_owned())
     } else {
-        OutputDependencyNode::Field(symbol.to_owned())
+        OutputDependencyNode::Scalar(symbol.to_owned())
     }
 }
 
