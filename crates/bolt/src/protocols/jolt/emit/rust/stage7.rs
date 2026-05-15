@@ -510,22 +510,25 @@ impl Stage7CpuProgram {
                     });
                 }
                 "cpu.structured_polynomial_eval" => {
-                    output_values.push(Stage7StructuredPolynomialEvalPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        polynomial: string_attr(op, "polynomial")?,
-                        x_point: Stage7StructuredPolynomialPointPlan {
-                            source: operand_symbol(op, 0)?,
-                            segment: string_attr(op, "x_point_segment")?,
-                            length: string_attr(op, "x_point_length")?,
-                            order: string_attr(op, "x_point_order")?,
-                        },
-                        y_point: Stage7StructuredPolynomialPointPlan {
-                            source: operand_symbol(op, 1)?,
-                            segment: string_attr(op, "y_point_segment")?,
-                            length: string_attr(op, "y_point_length")?,
-                            order: string_attr(op, "y_point_order")?,
-                        },
-                    });
+                    let symbol = string_attr(op, "sym_name")?;
+                    let x_point = Stage7StructuredPolynomialPointPlan::from_cpu(
+                        operand_symbol(op, 0)?,
+                        string_attr(op, "x_point_segment")?,
+                        string_attr(op, "x_point_length")?,
+                        string_attr(op, "x_point_order")?,
+                    )?;
+                    let y_point = Stage7StructuredPolynomialPointPlan::from_cpu(
+                        operand_symbol(op, 1)?,
+                        string_attr(op, "y_point_segment")?,
+                        string_attr(op, "y_point_length")?,
+                        string_attr(op, "y_point_order")?,
+                    )?;
+                    output_values.push(Stage7StructuredPolynomialEvalPlan::from_cpu(
+                        symbol,
+                        string_attr(op, "polynomial")?,
+                        x_point,
+                        y_point,
+                    )?);
                 }
                 "cpu.sumcheck_output_eval_family" => {
                     output_families.push(parse_output_eval_family_plan("stage7", op)?);

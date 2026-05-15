@@ -7,20 +7,152 @@ use crate::emit::rust::EmitError;
 use crate::ir::string_attribute_value;
 use crate::schema::operation_name;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StructuredPolynomialKind {
+    Eq,
+    EqPlusOne,
+    Lt,
+}
+
+impl StructuredPolynomialKind {
+    pub fn from_cpu_attr(value: &str) -> Result<Self, EmitError> {
+        match value {
+            "eq" => Ok(Self::Eq),
+            "eq_plus_one" => Ok(Self::EqPlusOne),
+            "lt" => Ok(Self::Lt),
+            _ => Err(EmitError::new(format!(
+                "unsupported structured polynomial `{value}`"
+            ))),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StructuredPolynomialPointSegment {
+    Full,
+    Prefix,
+    Suffix,
+}
+
+impl StructuredPolynomialPointSegment {
+    pub fn from_cpu_attr(value: &str) -> Result<Self, EmitError> {
+        match value {
+            "full" => Ok(Self::Full),
+            "prefix" => Ok(Self::Prefix),
+            "suffix" => Ok(Self::Suffix),
+            _ => Err(EmitError::new(format!(
+                "unsupported structured polynomial point segment `{value}`"
+            ))),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StructuredPolynomialPointLength {
+    Full,
+    XPoint,
+    YPoint,
+}
+
+impl StructuredPolynomialPointLength {
+    pub fn from_cpu_attr(value: &str) -> Result<Self, EmitError> {
+        match value {
+            "full" => Ok(Self::Full),
+            "x_point" => Ok(Self::XPoint),
+            "y_point" => Ok(Self::YPoint),
+            _ => Err(EmitError::new(format!(
+                "unsupported structured polynomial point length `{value}`"
+            ))),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StructuredPolynomialPointOrder {
+    AsIs,
+    Reverse,
+}
+
+impl StructuredPolynomialPointOrder {
+    pub fn from_cpu_attr(value: &str) -> Result<Self, EmitError> {
+        match value {
+            "as_is" => Ok(Self::AsIs),
+            "reverse" => Ok(Self::Reverse),
+            _ => Err(EmitError::new(format!(
+                "unsupported structured polynomial point order `{value}`"
+            ))),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SumcheckOutputFunctionKind {
+    BooleanZero,
+}
+
+impl SumcheckOutputFunctionKind {
+    pub fn from_cpu_attr(value: &str) -> Result<Self, EmitError> {
+        match value {
+            "boolean_zero" => Ok(Self::BooleanZero),
+            _ => Err(EmitError::new(format!(
+                "unsupported output function `{value}`"
+            ))),
+        }
+    }
+}
+
+impl PartialEq<&str> for SumcheckOutputFunctionKind {
+    fn eq(&self, other: &&str) -> bool {
+        matches!((self, *other), (Self::BooleanZero, "boolean_zero"))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StructuredPolynomialPointPlan {
     pub source: String,
-    pub segment: String,
-    pub length: String,
-    pub order: String,
+    pub segment: StructuredPolynomialPointSegment,
+    pub length: StructuredPolynomialPointLength,
+    pub order: StructuredPolynomialPointOrder,
+}
+
+impl StructuredPolynomialPointPlan {
+    pub fn from_cpu(
+        source: String,
+        segment: String,
+        length: String,
+        order: String,
+    ) -> Result<Self, EmitError> {
+        Ok(Self {
+            source,
+            segment: StructuredPolynomialPointSegment::from_cpu_attr(&segment)?,
+            length: StructuredPolynomialPointLength::from_cpu_attr(&length)?,
+            order: StructuredPolynomialPointOrder::from_cpu_attr(&order)?,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StructuredPolynomialEvalPlan {
     pub symbol: String,
-    pub polynomial: String,
+    pub polynomial: StructuredPolynomialKind,
     pub x_point: StructuredPolynomialPointPlan,
     pub y_point: StructuredPolynomialPointPlan,
+}
+
+impl StructuredPolynomialEvalPlan {
+    pub fn from_cpu(
+        symbol: String,
+        polynomial: String,
+        x_point: StructuredPolynomialPointPlan,
+        y_point: StructuredPolynomialPointPlan,
+    ) -> Result<Self, EmitError> {
+        Ok(Self {
+            symbol,
+            polynomial: StructuredPolynomialKind::from_cpu_attr(&polynomial)?,
+            x_point,
+            y_point,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -63,7 +195,7 @@ pub struct SumcheckOutputProductFamilyPlan {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SumcheckOutputFunctionFamilyTermPlan {
     pub gamma_power_offset: usize,
-    pub function: String,
+    pub function: SumcheckOutputFunctionKind,
     pub eval: String,
     pub factors: Vec<String>,
 }
@@ -319,11 +451,12 @@ pub fn parse_output_function_family_plan(
         .zip(evals)
         .zip(term_factor_counts)
     {
-        require_output_function(stage, &symbol, &function)?;
         let factor_end = factor_offset + factor_count;
         terms.push(SumcheckOutputFunctionFamilyTermPlan {
             gamma_power_offset,
-            function,
+            function: SumcheckOutputFunctionKind::from_cpu_attr(&function).map_err(|error| {
+                EmitError::new(format!("{stage} output function family @{symbol}: {error}"))
+            })?,
             eval,
             factors: factors[factor_offset..factor_end].to_vec(),
         });
@@ -561,17 +694,6 @@ pub fn verify_output_claims(
                 polynomial_eval.symbol, polynomial_eval.y_point.source
             )));
         }
-        if !matches!(
-            polynomial_eval.polynomial.as_str(),
-            "eq" | "eq_plus_one" | "lt"
-        ) {
-            return Err(EmitError::new(format!(
-                "{stage} structured polynomial eval @{} has unsupported polynomial `{}`",
-                polynomial_eval.symbol, polynomial_eval.polynomial
-            )));
-        }
-        verify_structured_polynomial_point_plan(stage, polynomial_eval, &polynomial_eval.x_point)?;
-        verify_structured_polynomial_point_plan(stage, polynomial_eval, &polynomial_eval.y_point)?;
     }
     for family in output_families {
         if !field_values.contains(&family.gamma) {
@@ -657,7 +779,6 @@ pub fn verify_output_claims(
             }
         }
         for term in &family.terms {
-            require_output_function(stage, &family.symbol, &term.function)?;
             if !field_values.contains(&term.eval) {
                 return Err(EmitError::new(format!(
                     "{stage} output function family @{} references missing eval @{}",
@@ -691,16 +812,6 @@ pub fn verify_output_claims(
     Ok(())
 }
 
-fn require_output_function(stage: &str, family: &str, function: &str) -> Result<(), EmitError> {
-    if function == "boolean_zero" {
-        Ok(())
-    } else {
-        Err(EmitError::new(format!(
-            "{stage} output function family @{family} has unsupported function `{function}`"
-        )))
-    }
-}
-
 fn field_expr_dependency_closure<'a, T>(
     field_exprs_by_symbol: &BTreeMap<&str, &T>,
     roots: impl Iterator<Item = &'a str>,
@@ -724,32 +835,6 @@ where
         }
     }
     visited
-}
-
-fn verify_structured_polynomial_point_plan(
-    stage: &str,
-    polynomial_eval: &StructuredPolynomialEvalPlan,
-    point: &StructuredPolynomialPointPlan,
-) -> Result<(), EmitError> {
-    if !matches!(point.segment.as_str(), "full" | "prefix" | "suffix") {
-        return Err(EmitError::new(format!(
-            "{stage} structured polynomial eval @{} has unsupported point segment `{}`",
-            polynomial_eval.symbol, point.segment
-        )));
-    }
-    if !matches!(point.length.as_str(), "full" | "x_point" | "y_point") {
-        return Err(EmitError::new(format!(
-            "{stage} structured polynomial eval @{} has unsupported point length `{}`",
-            polynomial_eval.symbol, point.length
-        )));
-    }
-    if !matches!(point.order.as_str(), "as_is" | "reverse") {
-        return Err(EmitError::new(format!(
-            "{stage} structured polynomial eval @{} has unsupported point order `{}`",
-            polynomial_eval.symbol, point.order
-        )));
-    }
-    Ok(())
 }
 
 fn verify_count(kind: &str, symbol: &str, expected: usize, actual: usize) -> Result<(), EmitError> {
@@ -915,8 +1000,8 @@ mod tests {
         resolve_output_claims, FieldExprDependencies, SumcheckOutputClaimAst,
         SumcheckOutputEvalFamilyItemTermPlan, SumcheckOutputEvalFamilyPlan,
         SumcheckOutputEvalFamilySharedTermPlan, SumcheckOutputFunctionFamilyPlan,
-        SumcheckOutputFunctionFamilyTermPlan, SumcheckOutputProductFamilyPlan,
-        SumcheckOutputProductFamilyTermPlan,
+        SumcheckOutputFunctionFamilyTermPlan, SumcheckOutputFunctionKind,
+        SumcheckOutputProductFamilyPlan, SumcheckOutputProductFamilyTermPlan,
     };
 
     struct TestFieldExpr {
@@ -1058,7 +1143,7 @@ mod tests {
             gamma: Some("function.gamma".to_owned()),
             terms: vec![SumcheckOutputFunctionFamilyTermPlan {
                 gamma_power_offset: 0,
-                function: "boolean_zero".to_owned(),
+                function: SumcheckOutputFunctionKind::BooleanZero,
                 eval: "function.eval".to_owned(),
                 factors: vec!["function.factor.expr".to_owned()],
             }],
