@@ -1808,6 +1808,23 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(verifier_source
         .source
         .contains("expected_bytecode_read_raf"));
+    assert!(verifier_source.source.contains("STAGE6_BYTECODE_PLAN"));
+    assert!(verifier_source
+        .source
+        .contains("Stage67BytecodeReadRafPlan"));
+    assert!(verifier_source
+        .source
+        .contains("Stage67BytecodeTermPlan::LookupTable"));
+    assert!(verifier_source
+        .source
+        .contains("Stage67BytecodeTermPlan::RegisterEq"));
+    assert!(verifier_source
+        .source
+        .contains("evaluate_stage67_bytecode_read_raf"));
+    assert!(!verifier_source
+        .source
+        .contains("expected_stage67_bytecode_read_raf"));
+    assert!(!verifier_source.source.contains("Stage67BytecodeSymbols"));
     assert!(verifier_source
         .source
         .contains("stage6.bytecode_read_raf.data"));

@@ -1142,7 +1142,7 @@ impl Stage6CpuProgram {
 
     fn emit_verifier_imports() -> &'static str {
         "use bolt_verifier_runtime::{batch_claims, find_batch, find_plan};\n\
-         use super::jolt_relations::{expected_stage67_bytecode_read_raf, normalize_bytecode_read_raf_point, normalize_instruction_read_raf_point, stage67_trace_rounds, Stage67BytecodeEntry, Stage67BytecodeSymbols, Stage67RelationSymbols};\n\
+         use super::jolt_relations::{evaluate_stage67_bytecode_read_raf, normalize_bytecode_read_raf_point, normalize_instruction_read_raf_point, stage67_trace_rounds, Stage67BytecodeEntry, Stage67BytecodeEntryContributionPlan, Stage67BytecodeFlag, Stage67BytecodeReadRafPlan, Stage67BytecodeRegister, Stage67BytecodeRegisterSymbols, Stage67BytecodeStagePlan, Stage67BytecodeTermPlan, Stage67RelationSymbols};\n\
          use jolt_field::{Field, Fr};\n\
          use jolt_sumcheck::SumcheckError;\n\
          use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};"
@@ -1461,31 +1461,72 @@ const STAGE6_RELATION_SYMBOLS: Stage67RelationSymbols = Stage67RelationSymbols {
     hamming_booleanity_instance: "stage6.hamming_booleanity.instance",
 };
 
-const STAGE6_BYTECODE_SYMBOLS: Stage67BytecodeSymbols = Stage67BytecodeSymbols {
+const STAGE6_BYTECODE_STAGE1_TERMS: &[Stage67BytecodeTermPlan] = &[
+    Stage67BytecodeTermPlan::Address { gamma_power: 0 },
+    Stage67BytecodeTermPlan::Imm { gamma_power: 1 },
+    Stage67BytecodeTermPlan::CircuitFlag { index: 0, gamma_power: 2 },
+    Stage67BytecodeTermPlan::CircuitFlag { index: 1, gamma_power: 3 },
+    Stage67BytecodeTermPlan::CircuitFlag { index: 2, gamma_power: 4 },
+    Stage67BytecodeTermPlan::CircuitFlag { index: 3, gamma_power: 5 },
+    Stage67BytecodeTermPlan::CircuitFlag { index: 4, gamma_power: 6 },
+    Stage67BytecodeTermPlan::CircuitFlag { index: 5, gamma_power: 7 },
+    Stage67BytecodeTermPlan::CircuitFlag { index: 6, gamma_power: 8 },
+    Stage67BytecodeTermPlan::CircuitFlag { index: 7, gamma_power: 9 },
+    Stage67BytecodeTermPlan::CircuitFlag { index: 8, gamma_power: 10 },
+    Stage67BytecodeTermPlan::CircuitFlag { index: 9, gamma_power: 11 },
+    Stage67BytecodeTermPlan::CircuitFlag { index: 10, gamma_power: 12 },
+    Stage67BytecodeTermPlan::CircuitFlag { index: 11, gamma_power: 13 },
+    Stage67BytecodeTermPlan::CircuitFlag { index: 12, gamma_power: 14 },
+    Stage67BytecodeTermPlan::CircuitFlag { index: 13, gamma_power: 15 },
+];
+const STAGE6_BYTECODE_STAGE2_TERMS: &[Stage67BytecodeTermPlan] = &[
+    Stage67BytecodeTermPlan::CircuitFlag { index: 5, gamma_power: 0 },
+    Stage67BytecodeTermPlan::EntryFlag { flag: Stage67BytecodeFlag::IsBranch, expected: true, gamma_power: 1 },
+    Stage67BytecodeTermPlan::CircuitFlag { index: 6, gamma_power: 2 },
+    Stage67BytecodeTermPlan::CircuitFlag { index: 7, gamma_power: 3 },
+];
+const STAGE6_BYTECODE_STAGE3_TERMS: &[Stage67BytecodeTermPlan] = &[
+    Stage67BytecodeTermPlan::Imm { gamma_power: 0 },
+    Stage67BytecodeTermPlan::Address { gamma_power: 1 },
+    Stage67BytecodeTermPlan::EntryFlag { flag: Stage67BytecodeFlag::LeftIsRs1, expected: true, gamma_power: 2 },
+    Stage67BytecodeTermPlan::EntryFlag { flag: Stage67BytecodeFlag::LeftIsPc, expected: true, gamma_power: 3 },
+    Stage67BytecodeTermPlan::EntryFlag { flag: Stage67BytecodeFlag::RightIsRs2, expected: true, gamma_power: 4 },
+    Stage67BytecodeTermPlan::EntryFlag { flag: Stage67BytecodeFlag::RightIsImm, expected: true, gamma_power: 5 },
+    Stage67BytecodeTermPlan::EntryFlag { flag: Stage67BytecodeFlag::IsNoop, expected: true, gamma_power: 6 },
+    Stage67BytecodeTermPlan::CircuitFlag { index: 7, gamma_power: 7 },
+    Stage67BytecodeTermPlan::CircuitFlag { index: 12, gamma_power: 8 },
+];
+const STAGE6_BYTECODE_STAGE4_TERMS: &[Stage67BytecodeTermPlan] = &[
+    Stage67BytecodeTermPlan::RegisterEq { register: Stage67BytecodeRegister::Rd, gamma_power: 0 },
+    Stage67BytecodeTermPlan::RegisterEq { register: Stage67BytecodeRegister::Rs1, gamma_power: 1 },
+    Stage67BytecodeTermPlan::RegisterEq { register: Stage67BytecodeRegister::Rs2, gamma_power: 2 },
+];
+const STAGE6_BYTECODE_STAGE5_TERMS: &[Stage67BytecodeTermPlan] = &[
+    Stage67BytecodeTermPlan::RegisterEq { register: Stage67BytecodeRegister::Rd, gamma_power: 0 },
+    Stage67BytecodeTermPlan::EntryFlag { flag: Stage67BytecodeFlag::IsInterleaved, expected: false, gamma_power: 1 },
+    Stage67BytecodeTermPlan::LookupTable { gamma_base: 2 },
+];
+const STAGE6_BYTECODE_STAGES: &[Stage67BytecodeStagePlan] = &[
+    Stage67BytecodeStagePlan { gamma: "stage6.bytecode_read_raf.stage1_gamma", cycle_point: "stage6.input.stage1.Imm", register_point: None, output_gamma_power: 0, identity_gamma_power: Some(5), terms: STAGE6_BYTECODE_STAGE1_TERMS },
+    Stage67BytecodeStagePlan { gamma: "stage6.bytecode_read_raf.stage2_gamma", cycle_point: "stage6.input.stage2.OpFlagJump", register_point: None, output_gamma_power: 1, identity_gamma_power: None, terms: STAGE6_BYTECODE_STAGE2_TERMS },
+    Stage67BytecodeStagePlan { gamma: "stage6.bytecode_read_raf.stage3_gamma", cycle_point: "stage6.input.stage3.spartan_shift.UnexpandedPC", register_point: None, output_gamma_power: 2, identity_gamma_power: Some(4), terms: STAGE6_BYTECODE_STAGE3_TERMS },
+    Stage67BytecodeStagePlan { gamma: "stage6.bytecode_read_raf.stage4_gamma", cycle_point: "stage6.input.stage4.Rs1Ra", register_point: Some("stage6.input.stage4.Rs1Ra"), output_gamma_power: 3, identity_gamma_power: None, terms: STAGE6_BYTECODE_STAGE4_TERMS },
+    Stage67BytecodeStagePlan { gamma: "stage6.bytecode_read_raf.stage5_gamma", cycle_point: "stage6.input.stage5.registers_val_evaluation.RdWa", register_point: Some("stage6.input.stage5.registers_val_evaluation.RdWa"), output_gamma_power: 4, identity_gamma_power: None, terms: STAGE6_BYTECODE_STAGE5_TERMS },
+];
+
+const STAGE6_BYTECODE_PLAN: Stage67BytecodeReadRafPlan = Stage67BytecodeReadRafPlan {
     point: "stage6.bytecode_read_raf.point",
     gamma: "stage6.bytecode_read_raf.gamma",
     bytecode_ra_eval_prefix: "stage6.bytecode_read_raf.eval.BytecodeRa_",
     entries: "stage6.bytecode_read_raf.entries",
     entry_bytecode_index: "stage6.bytecode_read_raf.entry_bytecode_index",
-    stage_gammas: [
-        "stage6.bytecode_read_raf.stage1_gamma",
-        "stage6.bytecode_read_raf.stage2_gamma",
-        "stage6.bytecode_read_raf.stage3_gamma",
-        "stage6.bytecode_read_raf.stage4_gamma",
-        "stage6.bytecode_read_raf.stage5_gamma",
-    ],
-    stage_cycle_points: [
-        "stage6.input.stage1.Imm",
-        "stage6.input.stage2.OpFlagJump",
-        "stage6.input.stage3.spartan_shift.UnexpandedPC",
-        "stage6.input.stage4.Rs1Ra",
-        "stage6.input.stage5.registers_val_evaluation.RdWa",
-    ],
-    stage4_register_point: "stage6.input.stage4.Rs1Ra",
-    stage5_register_point: "stage6.input.stage5.registers_val_evaluation.RdWa",
-    entry_rd: "stage6.bytecode.entry.rd",
-    entry_rs1: "stage6.bytecode.entry.rs1",
-    entry_rs2: "stage6.bytecode.entry.rs2",
+    stages: STAGE6_BYTECODE_STAGES,
+    entry_contribution: Stage67BytecodeEntryContributionPlan { gamma_power: 7 },
+    registers: Stage67BytecodeRegisterSymbols {
+        rd: "stage6.bytecode.entry.rd",
+        rs1: "stage6.bytecode.entry.rs1",
+        rs2: "stage6.bytecode.entry.rs2",
+    },
     entry_lookup_table: "stage6.bytecode.entry.lookup_table",
 };
 
@@ -2596,7 +2637,8 @@ fn expected_bytecode_read_raf(
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage6Error> {
     let log_t = stage6_trace_rounds(program)?;
-    Ok(expected_stage67_bytecode_read_raf(
+    Ok(evaluate_stage67_bytecode_read_raf(
+        &STAGE6_BYTECODE_PLAN,
         &data.entries,
         data.entry_bytecode_index,
         data.num_lookup_tables,
@@ -2604,7 +2646,6 @@ fn expected_bytecode_read_raf(
         evals,
         local_point,
         log_t,
-        &STAGE6_BYTECODE_SYMBOLS,
     )?)
 }
 

@@ -12,8 +12,7 @@
 //! - point normalizations for the Jolt bytecode and instruction RA
 //!   read-RAF lookup arguments
 //! - the `Stage67BytecodeEntry` contract a Jolt bytecode row must implement
-//! - the remaining `expected_stage67_*` relation evaluator for the Stage 6
-//!   bytecode-read-RAF relation
+//! - typed bytecode read-RAF plan data and its small Jolt-specific evaluator
 //! - the small Jolt-specific field-math helpers
 //!   (`operand_polynomial_eval`, `identity_polynomial_eval`,
 //!   `lt_polynomial_eval`, `bytecode_gamma_powers`) used only by Jolt
@@ -89,20 +88,82 @@ pub struct Stage67RelationSymbols {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage67BytecodeSymbols {
+pub struct Stage67BytecodeReadRafPlan {
     pub point: &'static str,
     pub gamma: &'static str,
     pub bytecode_ra_eval_prefix: &'static str,
     pub entries: &'static str,
     pub entry_bytecode_index: &'static str,
-    pub stage_gammas: [&'static str; 5],
-    pub stage_cycle_points: [&'static str; 5],
-    pub stage4_register_point: &'static str,
-    pub stage5_register_point: &'static str,
-    pub entry_rd: &'static str,
-    pub entry_rs1: &'static str,
-    pub entry_rs2: &'static str,
+    pub stages: &'static [Stage67BytecodeStagePlan],
+    pub entry_contribution: Stage67BytecodeEntryContributionPlan,
+    pub registers: Stage67BytecodeRegisterSymbols,
     pub entry_lookup_table: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stage67BytecodeStagePlan {
+    pub gamma: &'static str,
+    pub cycle_point: &'static str,
+    pub register_point: Option<&'static str>,
+    pub output_gamma_power: usize,
+    pub identity_gamma_power: Option<usize>,
+    pub terms: &'static [Stage67BytecodeTermPlan],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stage67BytecodeEntryContributionPlan {
+    pub gamma_power: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stage67BytecodeRegisterSymbols {
+    pub rd: &'static str,
+    pub rs1: &'static str,
+    pub rs2: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stage67BytecodeTermPlan {
+    Address {
+        gamma_power: usize,
+    },
+    Imm {
+        gamma_power: usize,
+    },
+    CircuitFlag {
+        index: usize,
+        gamma_power: usize,
+    },
+    EntryFlag {
+        flag: Stage67BytecodeFlag,
+        expected: bool,
+        gamma_power: usize,
+    },
+    RegisterEq {
+        register: Stage67BytecodeRegister,
+        gamma_power: usize,
+    },
+    LookupTable {
+        gamma_base: usize,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stage67BytecodeFlag {
+    IsInterleaved,
+    IsBranch,
+    LeftIsRs1,
+    LeftIsPc,
+    RightIsRs2,
+    RightIsImm,
+    IsNoop,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stage67BytecodeRegister {
+    Rd,
+    Rs1,
+    Rs2,
 }
 
 pub trait Stage67BytecodeEntry {
@@ -135,7 +196,8 @@ pub fn stage67_trace_rounds(
         })
 }
 
-pub fn expected_stage67_bytecode_read_raf<E: Stage67BytecodeEntry>(
+pub fn evaluate_stage67_bytecode_read_raf<E: Stage67BytecodeEntry>(
+    plan: &Stage67BytecodeReadRafPlan,
     entries: &[E],
     entry_bytecode_index: usize,
     num_lookup_tables: usize,
@@ -143,127 +205,115 @@ pub fn expected_stage67_bytecode_read_raf<E: Stage67BytecodeEntry>(
     evals: &[StageNamedEval<Fr>],
     local_point: &[Fr],
     log_t: usize,
-    symbols: &Stage67BytecodeSymbols,
 ) -> Result<Fr, RuntimePlanError> {
-    let opening_point = normalize_bytecode_read_raf_point(local_point, log_t, symbols.point)?;
+    let opening_point = normalize_bytecode_read_raf_point(local_point, log_t, plan.point)?;
     let log_k = opening_point.len() - log_t;
     let (r_address_prime, r_cycle_prime) = opening_point.split_at(log_k);
 
-    let gamma = store_scalar(store, symbols.gamma)?;
+    let gamma = store_scalar(store, plan.gamma)?;
     let gamma_powers = bytecode_gamma_powers(gamma);
     let int_eval = identity_polynomial_eval(r_address_prime);
     let stage_value_evals = stage67_bytecode_stage_value_evals(
+        plan,
         entries,
         entry_bytecode_index,
         num_lookup_tables,
         store,
         r_address_prime,
         r_cycle_prime.len(),
-        symbols,
     )?;
-    let stage_cycle_points =
-        stage67_bytecode_stage_cycle_points(store, r_cycle_prime.len(), symbols)?;
-    let int_contrib = [
-        gamma_powers[5] * int_eval,
-        Fr::from_u64(0),
-        gamma_powers[4] * int_eval,
-        Fr::from_u64(0),
-        Fr::from_u64(0),
-    ];
 
     let mut val = Fr::from_u64(0);
-    for index in 0..stage_value_evals.len() {
-        val += (stage_value_evals[index] + int_contrib[index])
-            * EqPolynomial::<Fr>::mle(&stage_cycle_points[index], r_cycle_prime)
-            * gamma_powers[index];
+    for (index, stage) in plan.stages.iter().enumerate() {
+        let cycle_point = stage67_bytecode_stage_cycle_point(store, stage, r_cycle_prime.len())?;
+        let int_contrib = stage
+            .identity_gamma_power
+            .map_or(Fr::from_u64(0), |power| gamma_powers[power] * int_eval);
+        val += (stage_value_evals[index] + int_contrib)
+            * EqPolynomial::<Fr>::mle(&cycle_point, r_cycle_prime)
+            * gamma_powers[stage.output_gamma_power];
     }
 
     let entry_bits = (0..log_k)
         .map(|index| Fr::from_u64(((entry_bytecode_index >> (log_k - 1 - index)) & 1) as u64))
         .collect::<Vec<_>>();
     let zero_cycle = vec![Fr::from_u64(0); r_cycle_prime.len()];
-    let entry_contrib = gamma_powers[7]
+    let entry_contrib = gamma_powers[plan.entry_contribution.gamma_power]
         * EqPolynomial::<Fr>::mle(&entry_bits, r_address_prime)
         * EqPolynomial::<Fr>::mle(&zero_cycle, r_cycle_prime);
-    let bytecode_ra = indexed_evals_by_prefix_any(evals, symbols.bytecode_ra_eval_prefix)?
+    let bytecode_ra = indexed_evals_by_prefix_any(evals, plan.bytecode_ra_eval_prefix)?
         .into_iter()
         .product::<Fr>();
     Ok((val + entry_contrib) * bytecode_ra)
 }
 
-fn stage67_bytecode_stage_cycle_points(
+fn stage67_bytecode_stage_cycle_point(
     store: &ValueStore<Fr>,
+    stage: &Stage67BytecodeStagePlan,
     log_t: usize,
-    symbols: &Stage67BytecodeSymbols,
-) -> Result<[Vec<Fr>; 5], RuntimePlanError> {
-    let point = |index| {
-        let symbol = symbols.stage_cycle_points[index];
-        suffix_point(store_point(store, symbol)?, log_t, symbol).map(|point| point.to_vec())
-    };
-    Ok([point(0)?, point(1)?, point(2)?, point(3)?, point(4)?])
+) -> Result<Vec<Fr>, RuntimePlanError> {
+    suffix_point(
+        store_point(store, stage.cycle_point)?,
+        log_t,
+        stage.cycle_point,
+    )
+    .map(|point| point.to_vec())
 }
 
 fn stage67_bytecode_stage_value_evals<E: Stage67BytecodeEntry>(
+    plan: &Stage67BytecodeReadRafPlan,
     entries: &[E],
     entry_bytecode_index: usize,
     num_lookup_tables: usize,
     store: &ValueStore<Fr>,
     r_address: &[Fr],
     log_t: usize,
-    symbols: &Stage67BytecodeSymbols,
-) -> Result<[Fr; 5], RuntimePlanError> {
+) -> Result<Vec<Fr>, RuntimePlanError> {
     let expected_len =
         1usize
             .checked_shl(r_address.len() as u32)
             .ok_or(RuntimePlanError::InvalidInputLength {
-                input: symbols.entries,
+                input: plan.entries,
                 expected: usize::BITS as usize,
                 actual: r_address.len(),
             })?;
     if entries.len() != expected_len {
         return Err(RuntimePlanError::InvalidInputLength {
-            input: symbols.entries,
+            input: plan.entries,
             expected: expected_len,
             actual: entries.len(),
         });
     }
     if entry_bytecode_index >= expected_len {
         return Err(RuntimePlanError::InvalidInputLength {
-            input: symbols.entry_bytecode_index,
+            input: plan.entry_bytecode_index,
             expected: expected_len,
             actual: entry_bytecode_index + 1,
         });
     }
 
-    let stage1_gamma_powers = field_powers(store_scalar(store, symbols.stage_gammas[0])?, 16);
-    let stage2_gamma_powers = field_powers(store_scalar(store, symbols.stage_gammas[1])?, 4);
-    let stage3_gamma_powers = field_powers(store_scalar(store, symbols.stage_gammas[2])?, 9);
-    let stage4_gamma_powers = field_powers(store_scalar(store, symbols.stage_gammas[3])?, 3);
-    let stage5_gamma_powers = field_powers(
-        store_scalar(store, symbols.stage_gammas[4])?,
-        num_lookup_tables + 2,
-    );
+    let stage_contexts = plan
+        .stages
+        .iter()
+        .map(|stage| {
+            Ok(Stage67BytecodeStageContext {
+                plan: stage,
+                gamma_powers: field_powers(
+                    store_scalar(store, stage.gamma)?,
+                    stage67_bytecode_stage_gamma_power_count(stage, num_lookup_tables),
+                ),
+                register_point: match stage.register_point {
+                    Some(symbol) => Some(stage67_register_prefix_point(store, symbol, log_t)?),
+                    None => None,
+                },
+            })
+        })
+        .collect::<Result<Vec<_>, RuntimePlanError>>()?;
 
-    let stage4_register_point =
-        stage67_register_prefix_point(store, symbols.stage4_register_point, log_t)?;
-    let stage5_register_point =
-        stage67_register_prefix_point(store, symbols.stage5_register_point, log_t)?;
-
-    let mut evals = [Fr::from_u64(0); 5];
+    let mut evals = vec![Fr::from_u64(0); plan.stages.len()];
     for (index, entry) in entries.iter().enumerate() {
         let eq = indexed_boolean_eq(index, r_address);
-        let values = stage67_bytecode_entry_stage_values(
-            entry,
-            num_lookup_tables,
-            stage4_register_point,
-            stage5_register_point,
-            &stage1_gamma_powers,
-            &stage2_gamma_powers,
-            &stage3_gamma_powers,
-            &stage4_gamma_powers,
-            &stage5_gamma_powers,
-            symbols,
-        )?;
+        let values = stage67_bytecode_entry_stage_values(plan, entry, &stage_contexts)?;
         for stage in 0..evals.len() {
             evals[stage] += eq * values[stage];
         }
@@ -271,87 +321,147 @@ fn stage67_bytecode_stage_value_evals<E: Stage67BytecodeEntry>(
     Ok(evals)
 }
 
+struct Stage67BytecodeStageContext<'a> {
+    plan: &'a Stage67BytecodeStagePlan,
+    gamma_powers: Vec<Fr>,
+    register_point: Option<&'a [Fr]>,
+}
+
 fn stage67_bytecode_entry_stage_values<E: Stage67BytecodeEntry>(
+    plan: &Stage67BytecodeReadRafPlan,
     entry: &E,
+    stage_contexts: &[Stage67BytecodeStageContext<'_>],
+) -> Result<Vec<Fr>, RuntimePlanError> {
+    stage_contexts
+        .iter()
+        .map(|context| stage67_bytecode_entry_stage_value(plan, entry, context))
+        .collect()
+}
+
+fn stage67_bytecode_entry_stage_value<E: Stage67BytecodeEntry>(
+    plan: &Stage67BytecodeReadRafPlan,
+    entry: &E,
+    context: &Stage67BytecodeStageContext<'_>,
+) -> Result<Fr, RuntimePlanError> {
+    let mut value = Fr::from_u64(0);
+    for term in context.plan.terms {
+        value += match *term {
+            Stage67BytecodeTermPlan::Address { gamma_power } => {
+                entry.address() * context.gamma_powers[gamma_power]
+            }
+            Stage67BytecodeTermPlan::Imm { gamma_power } => {
+                entry.imm() * context.gamma_powers[gamma_power]
+            }
+            Stage67BytecodeTermPlan::CircuitFlag { index, gamma_power } => {
+                if entry.circuit_flags()[index] {
+                    context.gamma_powers[gamma_power]
+                } else {
+                    Fr::from_u64(0)
+                }
+            }
+            Stage67BytecodeTermPlan::EntryFlag {
+                flag,
+                expected,
+                gamma_power,
+            } => {
+                if stage67_bytecode_entry_flag(entry, flag) == expected {
+                    context.gamma_powers[gamma_power]
+                } else {
+                    Fr::from_u64(0)
+                }
+            }
+            Stage67BytecodeTermPlan::RegisterEq {
+                register,
+                gamma_power,
+            } => {
+                let register_point =
+                    context
+                        .register_point
+                        .ok_or(RuntimePlanError::MissingValue {
+                            symbol: context.plan.cycle_point,
+                        })?;
+                stage67_register_eq(
+                    stage67_bytecode_entry_register(entry, register),
+                    register_point,
+                    stage67_bytecode_register_symbol(plan, register),
+                )? * context.gamma_powers[gamma_power]
+            }
+            Stage67BytecodeTermPlan::LookupTable { gamma_base } => {
+                let Some(table) = entry.lookup_table() else {
+                    continue;
+                };
+                if table >= plan_lookup_table_count(context, gamma_base) {
+                    return Err(RuntimePlanError::InvalidInputLength {
+                        input: plan.entry_lookup_table,
+                        expected: plan_lookup_table_count(context, gamma_base),
+                        actual: table + 1,
+                    });
+                }
+                context.gamma_powers[gamma_base + table]
+            }
+        };
+    }
+    Ok(value)
+}
+
+fn stage67_bytecode_stage_gamma_power_count(
+    stage: &Stage67BytecodeStagePlan,
     num_lookup_tables: usize,
-    stage4_register_point: &[Fr],
-    stage5_register_point: &[Fr],
-    stage1_gamma_powers: &[Fr],
-    stage2_gamma_powers: &[Fr],
-    stage3_gamma_powers: &[Fr],
-    stage4_gamma_powers: &[Fr],
-    stage5_gamma_powers: &[Fr],
-    symbols: &Stage67BytecodeSymbols,
-) -> Result<[Fr; 5], RuntimePlanError> {
-    let flags = entry.circuit_flags();
-    let mut stage1 = entry.address() + entry.imm() * stage1_gamma_powers[1];
-    for (flag, gamma) in flags.iter().zip(stage1_gamma_powers.iter().skip(2)) {
-        if *flag {
-            stage1 += *gamma;
-        }
-    }
+) -> usize {
+    stage
+        .terms
+        .iter()
+        .map(|term| match *term {
+            Stage67BytecodeTermPlan::Address { gamma_power }
+            | Stage67BytecodeTermPlan::Imm { gamma_power }
+            | Stage67BytecodeTermPlan::CircuitFlag { gamma_power, .. }
+            | Stage67BytecodeTermPlan::EntryFlag { gamma_power, .. }
+            | Stage67BytecodeTermPlan::RegisterEq { gamma_power, .. } => gamma_power + 1,
+            Stage67BytecodeTermPlan::LookupTable { gamma_base } => gamma_base + num_lookup_tables,
+        })
+        .max()
+        .unwrap_or(0)
+}
 
-    let mut stage2 = Fr::from_u64(0);
-    if flags[5] {
-        stage2 += stage2_gamma_powers[0];
-    }
-    if entry.is_branch() {
-        stage2 += stage2_gamma_powers[1];
-    }
-    if flags[6] {
-        stage2 += stage2_gamma_powers[2];
-    }
-    if flags[7] {
-        stage2 += stage2_gamma_powers[3];
-    }
+fn plan_lookup_table_count(context: &Stage67BytecodeStageContext<'_>, gamma_base: usize) -> usize {
+    context.gamma_powers.len().saturating_sub(gamma_base)
+}
 
-    let mut stage3 = entry.imm() + entry.address() * stage3_gamma_powers[1];
-    if entry.left_is_rs1() {
-        stage3 += stage3_gamma_powers[2];
+fn stage67_bytecode_entry_flag<E: Stage67BytecodeEntry>(
+    entry: &E,
+    flag: Stage67BytecodeFlag,
+) -> bool {
+    match flag {
+        Stage67BytecodeFlag::IsInterleaved => entry.is_interleaved(),
+        Stage67BytecodeFlag::IsBranch => entry.is_branch(),
+        Stage67BytecodeFlag::LeftIsRs1 => entry.left_is_rs1(),
+        Stage67BytecodeFlag::LeftIsPc => entry.left_is_pc(),
+        Stage67BytecodeFlag::RightIsRs2 => entry.right_is_rs2(),
+        Stage67BytecodeFlag::RightIsImm => entry.right_is_imm(),
+        Stage67BytecodeFlag::IsNoop => entry.is_noop(),
     }
-    if entry.left_is_pc() {
-        stage3 += stage3_gamma_powers[3];
-    }
-    if entry.right_is_rs2() {
-        stage3 += stage3_gamma_powers[4];
-    }
-    if entry.right_is_imm() {
-        stage3 += stage3_gamma_powers[5];
-    }
-    if entry.is_noop() {
-        stage3 += stage3_gamma_powers[6];
-    }
-    if flags[7] {
-        stage3 += stage3_gamma_powers[7];
-    }
-    if flags[12] {
-        stage3 += stage3_gamma_powers[8];
-    }
+}
 
-    let stage4 = stage67_register_eq(entry.rd(), stage4_register_point, symbols.entry_rd)?
-        * stage4_gamma_powers[0]
-        + stage67_register_eq(entry.rs1(), stage4_register_point, symbols.entry_rs1)?
-            * stage4_gamma_powers[1]
-        + stage67_register_eq(entry.rs2(), stage4_register_point, symbols.entry_rs2)?
-            * stage4_gamma_powers[2];
-
-    let mut stage5 = stage67_register_eq(entry.rd(), stage5_register_point, symbols.entry_rd)?
-        * stage5_gamma_powers[0];
-    if !entry.is_interleaved() {
-        stage5 += stage5_gamma_powers[1];
+fn stage67_bytecode_entry_register<E: Stage67BytecodeEntry>(
+    entry: &E,
+    register: Stage67BytecodeRegister,
+) -> Option<usize> {
+    match register {
+        Stage67BytecodeRegister::Rd => entry.rd(),
+        Stage67BytecodeRegister::Rs1 => entry.rs1(),
+        Stage67BytecodeRegister::Rs2 => entry.rs2(),
     }
-    if let Some(table) = entry.lookup_table() {
-        if table >= num_lookup_tables {
-            return Err(RuntimePlanError::InvalidInputLength {
-                input: symbols.entry_lookup_table,
-                expected: num_lookup_tables,
-                actual: table + 1,
-            });
-        }
-        stage5 += stage5_gamma_powers[2 + table];
-    }
+}
 
-    Ok([stage1, stage2, stage3, stage4, stage5])
+fn stage67_bytecode_register_symbol(
+    plan: &Stage67BytecodeReadRafPlan,
+    register: Stage67BytecodeRegister,
+) -> &'static str {
+    match register {
+        Stage67BytecodeRegister::Rd => plan.registers.rd,
+        Stage67BytecodeRegister::Rs1 => plan.registers.rs1,
+        Stage67BytecodeRegister::Rs2 => plan.registers.rs2,
+    }
 }
 
 fn stage67_register_eq(

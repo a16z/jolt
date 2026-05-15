@@ -398,6 +398,7 @@ fn stage67_output_plan_cutover_removed_obsolete_relation_helpers() {
     for path in relation_sources {
         let source = std::fs::read_to_string(&path).expect("read Jolt relation source");
         for stale in [
+            "expected_stage67_bytecode_read_raf",
             "expected_stage67_booleanity",
             "expected_stage67_hamming_booleanity",
             "expected_stage67_ram_ra_virtual",
