@@ -15,6 +15,7 @@ pub const STAGE3_PROGRAM_STEPS: &[Stage3ProgramStepPlan] = &[
     Stage3ProgramStepPlan { kind: "transcript_squeeze", symbol: "stage3.spartan_shift.gamma" },
     Stage3ProgramStepPlan { kind: "transcript_squeeze", symbol: "stage3.instruction_input.gamma" },
     Stage3ProgramStepPlan { kind: "transcript_squeeze", symbol: "stage3.registers.gamma" },
+    Stage3ProgramStepPlan { kind: "transcript_squeeze", symbol: "stage3.field_reg.gamma" },
     Stage3ProgramStepPlan { kind: "sumcheck_driver", symbol: "stage3.sumcheck" },
 ];
 
@@ -22,6 +23,7 @@ pub const STAGE3_TRANSCRIPT_SQUEEZES: &[Stage3TranscriptSqueezePlan] = &[
     Stage3TranscriptSqueezePlan { symbol: "stage3.spartan_shift.gamma", label: "spartan_shift_gamma", kind: "challenge_scalar", count: 1 },
     Stage3TranscriptSqueezePlan { symbol: "stage3.instruction_input.gamma", label: "instruction_input_gamma", kind: "challenge_scalar", count: 1 },
     Stage3TranscriptSqueezePlan { symbol: "stage3.registers.gamma", label: "registers_gamma", kind: "challenge_scalar", count: 1 },
+    Stage3TranscriptSqueezePlan { symbol: "stage3.field_reg.gamma", label: "field_reg_gamma", kind: "challenge_scalar", count: 1 },
 ];
 
 pub const STAGE3_OPENING_INPUTS: &[Stage3OpeningInputPlan] = &[
@@ -37,6 +39,9 @@ pub const STAGE3_OPENING_INPUTS: &[Stage3OpeningInputPlan] = &[
     Stage3OpeningInputPlan { symbol: "stage3.input.stage1.RdWriteValue", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.RdWriteValue", oracle: "RdWriteValue", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual" },
     Stage3OpeningInputPlan { symbol: "stage3.input.stage1.Rs1Value", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.Rs1Value", oracle: "Rs1Value", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual" },
     Stage3OpeningInputPlan { symbol: "stage3.input.stage1.Rs2Value", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.Rs2Value", oracle: "Rs2Value", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual" },
+    Stage3OpeningInputPlan { symbol: "stage3.input.stage1.FieldRdWriteValue", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.FieldRdWriteValue", oracle: "FieldRdWriteValue", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual" },
+    Stage3OpeningInputPlan { symbol: "stage3.input.stage1.FieldRs1Value", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.FieldRs1Value", oracle: "FieldRs1Value", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual" },
+    Stage3OpeningInputPlan { symbol: "stage3.input.stage1.FieldRs2Value", source_stage: "stage1", source_claim: "stage1.outer_remaining.opening.FieldRs2Value", oracle: "FieldRs2Value", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual" },
 ];
 
 pub const STAGE3_FIELD_CONSTANTS: &[Stage3FieldConstantPlan] = &[
@@ -132,6 +137,28 @@ pub const STAGE3_FIELD_EXPR_OPERANDS_18: &[&str] = &[
     "stage3.registers.term.Rs2Value",
 ];
 
+pub const STAGE3_FIELD_EXPR_OPERANDS_19: &[&str] = &["stage3.field_reg.gamma"];
+
+pub const STAGE3_FIELD_EXPR_OPERANDS_20: &[&str] = &[
+    "stage3.field_reg.gamma",
+    "stage3.input.stage1.FieldRs1Value",
+];
+
+pub const STAGE3_FIELD_EXPR_OPERANDS_21: &[&str] = &[
+    "stage3.field_reg.gamma2",
+    "stage3.input.stage1.FieldRs2Value",
+];
+
+pub const STAGE3_FIELD_EXPR_OPERANDS_22: &[&str] = &[
+    "stage3.input.stage1.FieldRdWriteValue",
+    "stage3.field_reg.term.FieldRs1Value",
+];
+
+pub const STAGE3_FIELD_EXPR_OPERANDS_23: &[&str] = &[
+    "stage3.field_reg.partial.FieldRdWriteValueFieldRs1Value",
+    "stage3.field_reg.term.FieldRs2Value",
+];
+
 pub const STAGE3_FIELD_EXPRS: &[Stage3FieldExprPlan] = &[
     Stage3FieldExprPlan { symbol: "stage3.spartan_shift.gamma2", kind: "op", formula: "field.pow:2", operand_names: STAGE3_FIELD_EXPR_OPERANDS_0, operands: STAGE3_FIELD_EXPR_OPERANDS_0 },
     Stage3FieldExprPlan { symbol: "stage3.spartan_shift.gamma3", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_OPERANDS_1, operands: STAGE3_FIELD_EXPR_OPERANDS_1 },
@@ -152,11 +179,17 @@ pub const STAGE3_FIELD_EXPRS: &[Stage3FieldExprPlan] = &[
     Stage3FieldExprPlan { symbol: "stage3.registers.term.Rs2Value", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_OPERANDS_16, operands: STAGE3_FIELD_EXPR_OPERANDS_16 },
     Stage3FieldExprPlan { symbol: "stage3.registers.partial.RdWriteValueRs1Value", kind: "op", formula: "field.add", operand_names: STAGE3_FIELD_EXPR_OPERANDS_17, operands: STAGE3_FIELD_EXPR_OPERANDS_17 },
     Stage3FieldExprPlan { symbol: "stage3.registers.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE3_FIELD_EXPR_OPERANDS_18, operands: STAGE3_FIELD_EXPR_OPERANDS_18 },
+    Stage3FieldExprPlan { symbol: "stage3.field_reg.gamma2", kind: "op", formula: "field.pow:2", operand_names: STAGE3_FIELD_EXPR_OPERANDS_19, operands: STAGE3_FIELD_EXPR_OPERANDS_19 },
+    Stage3FieldExprPlan { symbol: "stage3.field_reg.term.FieldRs1Value", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_OPERANDS_20, operands: STAGE3_FIELD_EXPR_OPERANDS_20 },
+    Stage3FieldExprPlan { symbol: "stage3.field_reg.term.FieldRs2Value", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_OPERANDS_21, operands: STAGE3_FIELD_EXPR_OPERANDS_21 },
+    Stage3FieldExprPlan { symbol: "stage3.field_reg.partial.FieldRdWriteValueFieldRs1Value", kind: "op", formula: "field.add", operand_names: STAGE3_FIELD_EXPR_OPERANDS_22, operands: STAGE3_FIELD_EXPR_OPERANDS_22 },
+    Stage3FieldExprPlan { symbol: "stage3.field_reg.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE3_FIELD_EXPR_OPERANDS_23, operands: STAGE3_FIELD_EXPR_OPERANDS_23 },
 ];
 pub const STAGE3_KERNELS: &[Stage3KernelPlan] = &[
     Stage3KernelPlan { symbol: "jolt.cpu.stage3.spartan_shift", relation: "jolt.stage3.spartan_shift", kind: "sumcheck", backend: "cpu", abi: "jolt_stage3_spartan_shift" },
     Stage3KernelPlan { symbol: "jolt.cpu.stage3.instruction_input", relation: "jolt.stage3.instruction_input", kind: "sumcheck", backend: "cpu", abi: "jolt_stage3_instruction_input" },
     Stage3KernelPlan { symbol: "jolt.cpu.stage3.registers_claim_reduction", relation: "jolt.stage3.registers_claim_reduction", kind: "sumcheck", backend: "cpu", abi: "jolt_stage3_registers_claim_reduction" },
+    Stage3KernelPlan { symbol: "jolt.cpu.stage3.field_reg_claim_reduction", relation: "jolt.stage3.field_reg_claim_reduction", kind: "sumcheck", backend: "cpu", abi: "jolt_stage3_field_reg_claim_reduction" },
     Stage3KernelPlan { symbol: "jolt.cpu.stage3.batched", relation: "jolt.stage3.batched", kind: "sumcheck", backend: "cpu", abi: "jolt_stage3_batched" },
 ];
 
@@ -179,21 +212,30 @@ pub const STAGE3_SUMCHECK_CLAIM_2_INPUT_OPENINGS: &[&str] = &[
     "stage3.input.stage1.Rs2Value",
 ];
 
+pub const STAGE3_SUMCHECK_CLAIM_3_INPUT_OPENINGS: &[&str] = &[
+    "stage3.input.stage1.FieldRdWriteValue",
+    "stage3.input.stage1.FieldRs1Value",
+    "stage3.input.stage1.FieldRs2Value",
+];
+
 pub const STAGE3_SUMCHECK_CLAIMS: &[Stage3SumcheckClaimPlan] = &[
     Stage3SumcheckClaimPlan { symbol: "stage3.spartan_shift.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 18, degree: 2, claim: "stage3.spartan_shift.weighted_next_values", kernel: Some("jolt.cpu.stage3.spartan_shift"), relation: None, claim_value: "stage3.spartan_shift.claim_expr", input_openings: STAGE3_SUMCHECK_CLAIM_0_INPUT_OPENINGS },
     Stage3SumcheckClaimPlan { symbol: "stage3.instruction_input.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 18, degree: 3, claim: "stage3.instruction_input.weighted_inputs", kernel: Some("jolt.cpu.stage3.instruction_input"), relation: None, claim_value: "stage3.instruction_input.claim_expr", input_openings: STAGE3_SUMCHECK_CLAIM_1_INPUT_OPENINGS },
     Stage3SumcheckClaimPlan { symbol: "stage3.registers_claim_reduction.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 18, degree: 2, claim: "stage3.registers.weighted_register_values", kernel: Some("jolt.cpu.stage3.registers_claim_reduction"), relation: None, claim_value: "stage3.registers.claim_expr", input_openings: STAGE3_SUMCHECK_CLAIM_2_INPUT_OPENINGS },
+    Stage3SumcheckClaimPlan { symbol: "stage3.field_reg_claim_reduction.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 18, degree: 2, claim: "stage3.field_reg.weighted_field_reg_values", kernel: Some("jolt.cpu.stage3.field_reg_claim_reduction"), relation: None, claim_value: "stage3.field_reg.claim_expr", input_openings: STAGE3_SUMCHECK_CLAIM_3_INPUT_OPENINGS },
 ];
 pub const STAGE3_SUMCHECK_BATCH_0_ORDERED_CLAIMS: &[&str] = &[
     "stage3.spartan_shift.input",
     "stage3.instruction_input.input",
     "stage3.registers_claim_reduction.input",
+    "stage3.field_reg_claim_reduction.input",
 ];
 
 pub const STAGE3_SUMCHECK_BATCH_0_CLAIM_OPERANDS: &[&str] = &[
     "stage3.spartan_shift.input",
     "stage3.instruction_input.input",
     "stage3.registers_claim_reduction.input",
+    "stage3.field_reg_claim_reduction.input",
 ];
 
 pub const STAGE3_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[
@@ -201,7 +243,7 @@ pub const STAGE3_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[
 ];
 
 pub const STAGE3_SUMCHECK_BATCHES: &[Stage3SumcheckBatchPlan] = &[
-    Stage3SumcheckBatchPlan { symbol: "stage3.batch", stage: "stage3", proof_slot: "stage3.sumcheck", policy: "jolt_core_stage3_aligned", count: 3, ordered_claims: STAGE3_SUMCHECK_BATCH_0_ORDERED_CLAIMS, claim_operands: STAGE3_SUMCHECK_BATCH_0_CLAIM_OPERANDS, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE3_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
+    Stage3SumcheckBatchPlan { symbol: "stage3.batch", stage: "stage3", proof_slot: "stage3.sumcheck", policy: "jolt_core_stage3_aligned", count: 4, ordered_claims: STAGE3_SUMCHECK_BATCH_0_ORDERED_CLAIMS, claim_operands: STAGE3_SUMCHECK_BATCH_0_CLAIM_OPERANDS, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE3_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
 ];
 pub const STAGE3_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[
     18,
@@ -214,6 +256,7 @@ pub const STAGE3_SUMCHECK_INSTANCE_RESULTS: &[Stage3SumcheckInstanceResultPlan] 
     Stage3SumcheckInstanceResultPlan { symbol: "stage3.spartan_shift.instance", source: "stage3.sumcheck", claim: "stage3.spartan_shift.input", relation: "jolt.stage3.spartan_shift", index: 0, point_arity: 18, num_rounds: 18, round_offset: 0, point_order: "reverse", degree: 2 },
     Stage3SumcheckInstanceResultPlan { symbol: "stage3.instruction_input.instance", source: "stage3.sumcheck", claim: "stage3.instruction_input.input", relation: "jolt.stage3.instruction_input", index: 1, point_arity: 18, num_rounds: 18, round_offset: 0, point_order: "reverse", degree: 3 },
     Stage3SumcheckInstanceResultPlan { symbol: "stage3.registers_claim_reduction.instance", source: "stage3.sumcheck", claim: "stage3.registers_claim_reduction.input", relation: "jolt.stage3.registers_claim_reduction", index: 2, point_arity: 18, num_rounds: 18, round_offset: 0, point_order: "reverse", degree: 2 },
+    Stage3SumcheckInstanceResultPlan { symbol: "stage3.field_reg_claim_reduction.instance", source: "stage3.sumcheck", claim: "stage3.field_reg_claim_reduction.input", relation: "jolt.stage3.field_reg_claim_reduction", index: 3, point_arity: 18, num_rounds: 18, round_offset: 0, point_order: "reverse", degree: 2 },
 ];
 
 pub const STAGE3_SUMCHECK_EVALS: &[Stage3SumcheckEvalPlan] = &[
@@ -233,6 +276,9 @@ pub const STAGE3_SUMCHECK_EVALS: &[Stage3SumcheckEvalPlan] = &[
     Stage3SumcheckEvalPlan { symbol: "stage3.registers_claim_reduction.eval.RdWriteValue", source: "stage3.sumcheck", name: "stage3.registers_claim_reduction.eval.RdWriteValue", index: 13, oracle: "RdWriteValue" },
     Stage3SumcheckEvalPlan { symbol: "stage3.registers_claim_reduction.eval.Rs1Value", source: "stage3.sumcheck", name: "stage3.registers_claim_reduction.eval.Rs1Value", index: 14, oracle: "Rs1Value" },
     Stage3SumcheckEvalPlan { symbol: "stage3.registers_claim_reduction.eval.Rs2Value", source: "stage3.sumcheck", name: "stage3.registers_claim_reduction.eval.Rs2Value", index: 15, oracle: "Rs2Value" },
+    Stage3SumcheckEvalPlan { symbol: "stage3.field_reg_claim_reduction.eval.FieldRdWriteValue", source: "stage3.sumcheck", name: "stage3.field_reg_claim_reduction.eval.FieldRdWriteValue", index: 16, oracle: "FieldRdWriteValue" },
+    Stage3SumcheckEvalPlan { symbol: "stage3.field_reg_claim_reduction.eval.FieldRs1Value", source: "stage3.sumcheck", name: "stage3.field_reg_claim_reduction.eval.FieldRs1Value", index: 17, oracle: "FieldRs1Value" },
+    Stage3SumcheckEvalPlan { symbol: "stage3.field_reg_claim_reduction.eval.FieldRs2Value", source: "stage3.sumcheck", name: "stage3.field_reg_claim_reduction.eval.FieldRs2Value", index: 18, oracle: "FieldRs2Value" },
 ];
 
 pub const STAGE3_POINT_SLICES: &[Stage3PointSlicePlan] = &[
@@ -259,6 +305,9 @@ pub const STAGE3_OPENING_CLAIMS: &[Stage3OpeningClaimPlan] = &[
     Stage3OpeningClaimPlan { symbol: "stage3.registers_claim_reduction.opening.RdWriteValue", oracle: "RdWriteValue", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage3.registers_claim_reduction.instance", eval_source: "stage3.registers_claim_reduction.eval.RdWriteValue" },
     Stage3OpeningClaimPlan { symbol: "stage3.registers_claim_reduction.opening.Rs1Value", oracle: "Rs1Value", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage3.registers_claim_reduction.instance", eval_source: "stage3.registers_claim_reduction.eval.Rs1Value" },
     Stage3OpeningClaimPlan { symbol: "stage3.registers_claim_reduction.opening.Rs2Value", oracle: "Rs2Value", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage3.registers_claim_reduction.instance", eval_source: "stage3.registers_claim_reduction.eval.Rs2Value" },
+    Stage3OpeningClaimPlan { symbol: "stage3.field_reg_claim_reduction.opening.FieldRdWriteValue", oracle: "FieldRdWriteValue", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage3.field_reg_claim_reduction.instance", eval_source: "stage3.field_reg_claim_reduction.eval.FieldRdWriteValue" },
+    Stage3OpeningClaimPlan { symbol: "stage3.field_reg_claim_reduction.opening.FieldRs1Value", oracle: "FieldRs1Value", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage3.field_reg_claim_reduction.instance", eval_source: "stage3.field_reg_claim_reduction.eval.FieldRs1Value" },
+    Stage3OpeningClaimPlan { symbol: "stage3.field_reg_claim_reduction.opening.FieldRs2Value", oracle: "FieldRs2Value", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage3.field_reg_claim_reduction.instance", eval_source: "stage3.field_reg_claim_reduction.eval.FieldRs2Value" },
 ];
 
 pub const STAGE3_OPENING_EQUALITIES: &[Stage3OpeningClaimEqualityPlan] = &[
@@ -283,6 +332,9 @@ pub const STAGE3_OPENING_BATCH_0_ORDERED_CLAIMS: &[&str] = &[
     "stage3.registers_claim_reduction.opening.RdWriteValue",
     "stage3.registers_claim_reduction.opening.Rs1Value",
     "stage3.registers_claim_reduction.opening.Rs2Value",
+    "stage3.field_reg_claim_reduction.opening.FieldRdWriteValue",
+    "stage3.field_reg_claim_reduction.opening.FieldRs1Value",
+    "stage3.field_reg_claim_reduction.opening.FieldRs2Value",
 ];
 
 pub const STAGE3_OPENING_BATCH_0_CLAIM_OPERANDS: &[&str] = &[
@@ -302,10 +354,13 @@ pub const STAGE3_OPENING_BATCH_0_CLAIM_OPERANDS: &[&str] = &[
     "stage3.registers_claim_reduction.opening.RdWriteValue",
     "stage3.registers_claim_reduction.opening.Rs1Value",
     "stage3.registers_claim_reduction.opening.Rs2Value",
+    "stage3.field_reg_claim_reduction.opening.FieldRdWriteValue",
+    "stage3.field_reg_claim_reduction.opening.FieldRs1Value",
+    "stage3.field_reg_claim_reduction.opening.FieldRs2Value",
 ];
 
 pub const STAGE3_OPENING_BATCHES: &[Stage3OpeningBatchPlan] = &[
-    Stage3OpeningBatchPlan { symbol: "stage3.openings", stage: "stage3", proof_slot: "stage3.openings", policy: "jolt_stage3_output_order", count: 16, ordered_claims: STAGE3_OPENING_BATCH_0_ORDERED_CLAIMS, claim_operands: STAGE3_OPENING_BATCH_0_CLAIM_OPERANDS },
+    Stage3OpeningBatchPlan { symbol: "stage3.openings", stage: "stage3", proof_slot: "stage3.openings", policy: "jolt_stage3_output_order", count: 19, ordered_claims: STAGE3_OPENING_BATCH_0_ORDERED_CLAIMS, claim_operands: STAGE3_OPENING_BATCH_0_CLAIM_OPERANDS },
 ];
 pub const STAGE3_PROGRAM: Stage3CpuProgramPlan = Stage3CpuProgramPlan {
     params: STAGE3_PARAMS,

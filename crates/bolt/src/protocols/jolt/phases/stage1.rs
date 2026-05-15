@@ -1602,6 +1602,11 @@ fn kernel_spec(relation: &str) -> Result<KernelSpec, MlirError> {
             kind: "sumcheck",
             abi: "jolt_stage3_registers_claim_reduction",
         }),
+        "jolt.stage3.field_reg_claim_reduction" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage3.field_reg_claim_reduction",
+            kind: "sumcheck",
+            abi: "jolt_stage3_field_reg_claim_reduction",
+        }),
         "jolt.stage3.batched" => Ok(KernelSpec {
             symbol: "jolt.cpu.stage3.batched",
             kind: "sumcheck",

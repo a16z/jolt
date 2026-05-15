@@ -586,13 +586,14 @@ fn jolt_stage3_protocol_defines_shift_instruction_register_flow() {
     assert!(text.contains("sym_name = \"stage3.spartan_shift.input\""));
     assert!(text.contains("sym_name = \"stage3.instruction_input.input\""));
     assert!(text.contains("sym_name = \"stage3.registers_claim_reduction.input\""));
+    assert!(text.contains("sym_name = \"stage3.field_reg_claim_reduction.input\""));
     assert!(text.contains("\"piop.opening_claim_equal\"(%"));
     assert!(text.contains("\"field.add\"(%"));
     assert!(text.contains("\"field.mul\"(%"));
     assert!(text.contains("\"field.sub\"(%"));
     assert!(text.contains("policy = \"jolt_core_stage3_aligned\""));
     assert!(text.contains("point_order = \"reverse\""));
-    assert!(text.contains("ordered_claims = [@stage3.spartan_shift.input, @stage3.instruction_input.input, @stage3.registers_claim_reduction.input]"));
+    assert!(text.contains("ordered_claims = [@stage3.spartan_shift.input, @stage3.instruction_input.input, @stage3.registers_claim_reduction.input, @stage3.field_reg_claim_reduction.input]"));
     assert!(text.contains("ordered_claims = [@stage3.spartan_shift.opening.UnexpandedPC, @stage3.spartan_shift.opening.PC"));
     assert!(!text.contains("kernel = @"));
     assert!(!text.contains("\"compute."));
@@ -1193,15 +1194,15 @@ fn stage3_rust_targets_extract_and_compile() {
 
     assert_eq!(prover_program.role, Role::Prover);
     assert_eq!(verifier_program.role, Role::Verifier);
-    assert_eq!(prover_program.kernels.len(), 4);
+    assert_eq!(prover_program.kernels.len(), 5);
     assert!(verifier_program.kernels.is_empty());
-    assert_eq!(prover_program.opening_inputs.len(), 12);
-    assert_eq!(prover_program.field_exprs.len(), 19);
+    assert_eq!(prover_program.opening_inputs.len(), 15);
+    assert_eq!(prover_program.field_exprs.len(), 24);
     assert_eq!(prover_program.field_constants.len(), 1);
     assert_eq!(prover_program.opening_equalities.len(), 2);
-    assert_eq!(prover_program.claims.len(), 3);
+    assert_eq!(prover_program.claims.len(), 4);
     assert_eq!(prover_program.drivers.len(), 1);
-    assert_eq!(prover_program.opening_claims.len(), 16);
+    assert_eq!(prover_program.opening_claims.len(), 19);
     assert!(prover_program
         .drivers
         .iter()
