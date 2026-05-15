@@ -4,7 +4,7 @@ use crate::emit::rust::EmitError;
 use crate::ir::Role;
 use crate::protocols::jolt::rust_target_plan::{
     ClaimKind, FieldExprKind, JoltVerifierRelationKind, OpeningEqualityMode, PcsProofMode,
-    ProgramStepKind, RustTargetPlanError, TranscriptSqueezeKind,
+    ProgramStepKind, RustTargetPlanError, SumcheckPointOrder, TranscriptSqueezeKind,
 };
 
 pub(super) fn role_program_step_kind_expr(
@@ -160,6 +160,16 @@ pub(super) fn role_relation_kind_expr(
     relation_kind_expr(stage_type_prefix, relation)
 }
 
+pub(super) fn role_sumcheck_point_order_expr(
+    role: &Role,
+    point_order: &str,
+) -> Result<String, EmitError> {
+    if role == &Role::Prover {
+        return Ok(format!("{point_order:?}"));
+    }
+    sumcheck_point_order_expr(point_order)
+}
+
 pub(super) fn role_optional_relation_kind_expr(
     stage_type_prefix: &str,
     role: &Role,
@@ -219,6 +229,15 @@ fn field_expr_kind_expr(stage_type_prefix: &str, formula: &str) -> Result<String
         .map_err(plan_error)?
         .rust_variant_expr();
     Ok(format!("{stage_type_prefix}FieldExprKind::{variant}"))
+}
+
+fn sumcheck_point_order_expr(point_order: &str) -> Result<String, EmitError> {
+    let variant = SumcheckPointOrder::from_cpu_attr(point_order)
+        .map_err(plan_error)?
+        .rust_variant();
+    Ok(format!(
+        "bolt_verifier_runtime::SumcheckPointOrder::{variant}"
+    ))
 }
 
 pub(super) fn pcs_proof_mode_expr(

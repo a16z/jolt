@@ -169,12 +169,12 @@ pub const STAGE2_SUMCHECK_DRIVERS: &[Stage2SumcheckDriverPlan] = &[
     Stage2SumcheckDriverPlan { symbol: "stage2.sumcheck", stage: "stage2", proof_slot: "stage2.sumcheck", kernel: None, relation: Some(Stage2RelationKind::Stage2Batched), batch: "stage2.batch", policy: "jolt_core_stage2_aligned", round_schedule: STAGE2_SUMCHECK_DRIVER_1_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 32, degree: 3 },
 ];
 pub const STAGE2_SUMCHECK_INSTANCE_RESULTS: &[Stage2SumcheckInstanceResultPlan] = &[
-    Stage2SumcheckInstanceResultPlan { symbol: "stage2.product_virtual.uniskip.instance", source: "stage2.product_virtual.uniskip.sumcheck", claim: "stage2.product_virtual.uniskip.input", relation: Stage2RelationKind::Stage2ProductVirtualUniskip, index: 0, point_arity: 1, num_rounds: 1, round_offset: 0, point_order: "as_is", degree: 6 },
-    Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_read_write.instance", source: "stage2.sumcheck", claim: "stage2.ram_read_write.input", relation: Stage2RelationKind::Stage2RamReadWrite, index: 0, point_arity: 32, num_rounds: 32, round_offset: 0, point_order: "reverse", degree: 3 },
-    Stage2SumcheckInstanceResultPlan { symbol: "stage2.product_virtual.remainder.instance", source: "stage2.sumcheck", claim: "stage2.product_virtual.remainder.input", relation: Stage2RelationKind::Stage2ProductVirtualRemainder, index: 1, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "reverse", degree: 3 },
-    Stage2SumcheckInstanceResultPlan { symbol: "stage2.instruction_lookup.claim_reduction.instance", source: "stage2.sumcheck", claim: "stage2.instruction_lookup.claim_reduction.input", relation: Stage2RelationKind::Stage2InstructionLookupClaimReduction, index: 2, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "reverse", degree: 2 },
-    Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_raf.instance", source: "stage2.sumcheck", claim: "stage2.ram_raf.input", relation: Stage2RelationKind::Stage2RamRafEvaluation, index: 3, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "reverse", degree: 2 },
-    Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_output.instance", source: "stage2.sumcheck", claim: "stage2.ram_output.input", relation: Stage2RelationKind::Stage2RamOutputCheck, index: 4, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "reverse", degree: 3 },
+    Stage2SumcheckInstanceResultPlan { symbol: "stage2.product_virtual.uniskip.instance", source: "stage2.product_virtual.uniskip.sumcheck", claim: "stage2.product_virtual.uniskip.input", relation: Stage2RelationKind::Stage2ProductVirtualUniskip, index: 0, point_arity: 1, num_rounds: 1, round_offset: 0, point_order: bolt_verifier_runtime::SumcheckPointOrder::AsIs, degree: 6 },
+    Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_read_write.instance", source: "stage2.sumcheck", claim: "stage2.ram_read_write.input", relation: Stage2RelationKind::Stage2RamReadWrite, index: 0, point_arity: 32, num_rounds: 32, round_offset: 0, point_order: bolt_verifier_runtime::SumcheckPointOrder::Reverse, degree: 3 },
+    Stage2SumcheckInstanceResultPlan { symbol: "stage2.product_virtual.remainder.instance", source: "stage2.sumcheck", claim: "stage2.product_virtual.remainder.input", relation: Stage2RelationKind::Stage2ProductVirtualRemainder, index: 1, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: bolt_verifier_runtime::SumcheckPointOrder::Reverse, degree: 3 },
+    Stage2SumcheckInstanceResultPlan { symbol: "stage2.instruction_lookup.claim_reduction.instance", source: "stage2.sumcheck", claim: "stage2.instruction_lookup.claim_reduction.input", relation: Stage2RelationKind::Stage2InstructionLookupClaimReduction, index: 2, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: bolt_verifier_runtime::SumcheckPointOrder::Reverse, degree: 2 },
+    Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_raf.instance", source: "stage2.sumcheck", claim: "stage2.ram_raf.input", relation: Stage2RelationKind::Stage2RamRafEvaluation, index: 3, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: bolt_verifier_runtime::SumcheckPointOrder::Reverse, degree: 2 },
+    Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_output.instance", source: "stage2.sumcheck", claim: "stage2.ram_output.input", relation: Stage2RelationKind::Stage2RamOutputCheck, index: 4, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: bolt_verifier_runtime::SumcheckPointOrder::Reverse, degree: 3 },
 ];
 
 pub const STAGE2_SUMCHECK_EVALS: &[Stage2SumcheckEvalPlan] = &[
@@ -567,8 +567,8 @@ impl<F: Field> Stage2ValueStore<F> {
             output,
             |instance, mut point| {
                 match instance.point_order {
-                "as_is" => {}
-                "reverse" => point.reverse(),
+                bolt_verifier_runtime::SumcheckPointOrder::AsIs => {}
+                bolt_verifier_runtime::SumcheckPointOrder::Reverse => point.reverse(),
                 _ => {
                     return Err(VerifyStage2Error::InvalidProof {
                         driver: output.driver,

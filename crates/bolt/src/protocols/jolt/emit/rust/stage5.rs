@@ -1837,7 +1837,10 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
                     instance.point_arity,
                     instance.num_rounds,
                     instance.round_offset,
-                    rust_str(&instance.point_order),
+                    super::plan_tokens::role_sumcheck_point_order_expr(
+                        &self.role,
+                        &instance.point_order
+                    )?,
                     instance.degree
                 ))
             })
@@ -2351,9 +2354,9 @@ fn observe_stage5_sumcheck_output<F: Field>(
         output,
         |instance, mut point| {
             match instance.point_order {
-                "as_is" => {}
-                "reverse" => point.reverse(),
-                "instruction_read_raf" => {
+                bolt_verifier_runtime::SumcheckPointOrder::AsIs => {}
+                bolt_verifier_runtime::SumcheckPointOrder::Reverse => point.reverse(),
+                bolt_verifier_runtime::SumcheckPointOrder::InstructionReadRaf => {
                     point = normalize_instruction_read_raf_point(&point, "stage5.instruction_read_raf.point")?;
                 }
                 _ => {

@@ -152,9 +152,9 @@ pub const STAGE3_SUMCHECK_DRIVERS: &[Stage3SumcheckDriverPlan] = &[
     Stage3SumcheckDriverPlan { symbol: "stage3.sumcheck", stage: "stage3", proof_slot: "stage3.sumcheck", kernel: None, relation: Some(Stage3RelationKind::Stage3Batched), batch: "stage3.batch", policy: "jolt_core_stage3_aligned", round_schedule: STAGE3_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 16, degree: 3 },
 ];
 pub const STAGE3_SUMCHECK_INSTANCE_RESULTS: &[Stage3SumcheckInstanceResultPlan] = &[
-    Stage3SumcheckInstanceResultPlan { symbol: "stage3.spartan_shift.instance", source: "stage3.sumcheck", claim: "stage3.spartan_shift.input", relation: Stage3RelationKind::Stage3SpartanShift, index: 0, point_arity: 16, num_rounds: 16, round_offset: 0, point_order: "reverse", degree: 2 },
-    Stage3SumcheckInstanceResultPlan { symbol: "stage3.instruction_input.instance", source: "stage3.sumcheck", claim: "stage3.instruction_input.input", relation: Stage3RelationKind::Stage3InstructionInput, index: 1, point_arity: 16, num_rounds: 16, round_offset: 0, point_order: "reverse", degree: 3 },
-    Stage3SumcheckInstanceResultPlan { symbol: "stage3.registers_claim_reduction.instance", source: "stage3.sumcheck", claim: "stage3.registers_claim_reduction.input", relation: Stage3RelationKind::Stage3RegistersClaimReduction, index: 2, point_arity: 16, num_rounds: 16, round_offset: 0, point_order: "reverse", degree: 2 },
+    Stage3SumcheckInstanceResultPlan { symbol: "stage3.spartan_shift.instance", source: "stage3.sumcheck", claim: "stage3.spartan_shift.input", relation: Stage3RelationKind::Stage3SpartanShift, index: 0, point_arity: 16, num_rounds: 16, round_offset: 0, point_order: bolt_verifier_runtime::SumcheckPointOrder::Reverse, degree: 2 },
+    Stage3SumcheckInstanceResultPlan { symbol: "stage3.instruction_input.instance", source: "stage3.sumcheck", claim: "stage3.instruction_input.input", relation: Stage3RelationKind::Stage3InstructionInput, index: 1, point_arity: 16, num_rounds: 16, round_offset: 0, point_order: bolt_verifier_runtime::SumcheckPointOrder::Reverse, degree: 3 },
+    Stage3SumcheckInstanceResultPlan { symbol: "stage3.registers_claim_reduction.instance", source: "stage3.sumcheck", claim: "stage3.registers_claim_reduction.input", relation: Stage3RelationKind::Stage3RegistersClaimReduction, index: 2, point_arity: 16, num_rounds: 16, round_offset: 0, point_order: bolt_verifier_runtime::SumcheckPointOrder::Reverse, degree: 2 },
 ];
 
 pub const STAGE3_SUMCHECK_EVALS: &[Stage3SumcheckEvalPlan] = &[
@@ -423,8 +423,8 @@ fn observe_stage3_sumcheck_output<F: Field>(
         output,
         |instance, mut point| {
             match instance.point_order {
-                "as_is" => {}
-                "reverse" => point.reverse(),
+                bolt_verifier_runtime::SumcheckPointOrder::AsIs => {}
+                bolt_verifier_runtime::SumcheckPointOrder::Reverse => point.reverse(),
                 _ => {
                     return Err(VerifyStage3Error::InvalidProof {
                         driver: output.driver,

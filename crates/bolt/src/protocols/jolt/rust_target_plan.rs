@@ -103,6 +103,44 @@ impl ClaimKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SumcheckPointOrder {
+    AsIs,
+    Reverse,
+    Stage4RegistersReadWrite,
+    InstructionReadRaf,
+    BytecodeReadRaf,
+    Stage6Booleanity,
+}
+
+impl SumcheckPointOrder {
+    pub(crate) fn from_cpu_attr(value: &str) -> Result<Self, RustTargetPlanError> {
+        match value {
+            "as_is" => Ok(Self::AsIs),
+            "reverse" => Ok(Self::Reverse),
+            "stage4_registers_rw" => Ok(Self::Stage4RegistersReadWrite),
+            "instruction_read_raf" => Ok(Self::InstructionReadRaf),
+            "bytecode_read_raf" => Ok(Self::BytecodeReadRaf),
+            "stage6_booleanity" => Ok(Self::Stage6Booleanity),
+            _ => Err(RustTargetPlanError::unsupported(
+                "sumcheck point order",
+                value,
+            )),
+        }
+    }
+
+    pub(crate) fn rust_variant(self) -> &'static str {
+        match self {
+            Self::AsIs => "AsIs",
+            Self::Reverse => "Reverse",
+            Self::Stage4RegistersReadWrite => "Stage4RegistersReadWrite",
+            Self::InstructionReadRaf => "InstructionReadRaf",
+            Self::BytecodeReadRaf => "BytecodeReadRaf",
+            Self::Stage6Booleanity => "Stage6Booleanity",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum JoltVerifierRelationKind {
     Stage1OuterUniskip,
     Stage1OuterRemaining,

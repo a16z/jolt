@@ -131,9 +131,9 @@ pub const STAGE5_SUMCHECK_DRIVERS: &[Stage5SumcheckDriverPlan] = &[
     Stage5SumcheckDriverPlan { symbol: "stage5.sumcheck", stage: "stage5", proof_slot: "stage5.sumcheck", kernel: None, relation: Some(Stage5RelationKind::Stage5Batched), batch: "stage5.batch", policy: "jolt_core_stage5_aligned", round_schedule: STAGE5_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 144, degree: 10 },
 ];
 pub const STAGE5_SUMCHECK_INSTANCE_RESULTS: &[Stage5SumcheckInstanceResultPlan] = &[
-    Stage5SumcheckInstanceResultPlan { symbol: "stage5.instruction_read_raf.instance", source: "stage5.sumcheck", claim: "stage5.instruction_read_raf.input", relation: Stage5RelationKind::Stage5InstructionReadRaf, index: 0, point_arity: 144, num_rounds: 144, round_offset: 0, point_order: "instruction_read_raf", degree: 10 },
-    Stage5SumcheckInstanceResultPlan { symbol: "stage5.ram_ra_claim_reduction.instance", source: "stage5.sumcheck", claim: "stage5.ram_ra_claim_reduction.input", relation: Stage5RelationKind::Stage5RamRaClaimReduction, index: 1, point_arity: 16, num_rounds: 16, round_offset: 128, point_order: "reverse", degree: 2 },
-    Stage5SumcheckInstanceResultPlan { symbol: "stage5.registers_val_evaluation.instance", source: "stage5.sumcheck", claim: "stage5.registers_val_evaluation.input", relation: Stage5RelationKind::Stage5RegistersValEvaluation, index: 2, point_arity: 16, num_rounds: 16, round_offset: 128, point_order: "reverse", degree: 3 },
+    Stage5SumcheckInstanceResultPlan { symbol: "stage5.instruction_read_raf.instance", source: "stage5.sumcheck", claim: "stage5.instruction_read_raf.input", relation: Stage5RelationKind::Stage5InstructionReadRaf, index: 0, point_arity: 144, num_rounds: 144, round_offset: 0, point_order: bolt_verifier_runtime::SumcheckPointOrder::InstructionReadRaf, degree: 10 },
+    Stage5SumcheckInstanceResultPlan { symbol: "stage5.ram_ra_claim_reduction.instance", source: "stage5.sumcheck", claim: "stage5.ram_ra_claim_reduction.input", relation: Stage5RelationKind::Stage5RamRaClaimReduction, index: 1, point_arity: 16, num_rounds: 16, round_offset: 128, point_order: bolt_verifier_runtime::SumcheckPointOrder::Reverse, degree: 2 },
+    Stage5SumcheckInstanceResultPlan { symbol: "stage5.registers_val_evaluation.instance", source: "stage5.sumcheck", claim: "stage5.registers_val_evaluation.input", relation: Stage5RelationKind::Stage5RegistersValEvaluation, index: 2, point_arity: 16, num_rounds: 16, round_offset: 128, point_order: bolt_verifier_runtime::SumcheckPointOrder::Reverse, degree: 3 },
 ];
 
 pub const STAGE5_SUMCHECK_EVALS: &[Stage5SumcheckEvalPlan] = &[
@@ -524,9 +524,9 @@ fn observe_stage5_sumcheck_output<F: Field>(
         output,
         |instance, mut point| {
             match instance.point_order {
-                "as_is" => {}
-                "reverse" => point.reverse(),
-                "instruction_read_raf" => {
+                bolt_verifier_runtime::SumcheckPointOrder::AsIs => {}
+                bolt_verifier_runtime::SumcheckPointOrder::Reverse => point.reverse(),
+                bolt_verifier_runtime::SumcheckPointOrder::InstructionReadRaf => {
                     point = normalize_instruction_read_raf_point(&point, "stage5.instruction_read_raf.point")?;
                 }
                 _ => {

@@ -36,6 +36,7 @@ const POINT_CONCAT_INPUT_STRING_SITE_BASELINE_CEILING: usize = 0;
 const STAGE_LOCAL_MACRO_RULES_BASELINE_CEILING: usize = 0;
 const STAGE_HELPER_FUNCTION_BASELINE_CEILING: usize = 38;
 const RELATION_STRING_SITE_BASELINE_CEILING: usize = 0;
+const SUMCHECK_POINT_ORDER_STRING_SITE_BASELINE_CEILING: usize = 0;
 
 const ALLOWED_JOLT_PROTOCOL_SYMBOLS: &[&str] = &[
     "jolt.commitment_phase",
@@ -141,6 +142,7 @@ struct VerifierCleanupMetrics {
     stage_local_macro_rules: usize,
     stage_local_helper_functions: usize,
     relation_string_sites: usize,
+    sumcheck_point_order_string_sites: usize,
 }
 
 #[test]
@@ -166,7 +168,8 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
          point_concat_input_string_sites: {point_concat_input_string_sites} (baseline ceiling <= {point_concat_input_baseline})\n\
          stage_local_macro_rules: {stage_local_macro_rules} (baseline ceiling <= {macro_rules_baseline})\n\
          stage_local_helper_functions: {helper_functions} (baseline ceiling <= {helper_baseline})\n\
-         relation_string_sites: {relation_sites} (baseline ceiling <= {relation_baseline})",
+         relation_string_sites: {relation_sites} (baseline ceiling <= {relation_baseline})\n\
+         sumcheck_point_order_string_sites: {point_order_sites} (baseline ceiling <= {point_order_baseline})",
         generated_surface_loc = metrics.generated_surface_loc,
         bolt_runtime_loc = metrics.bolt_runtime_loc,
         bolt_runtime_baseline = BOLT_RUNTIME_BASELINE_LOC_CEILING,
@@ -199,6 +202,8 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
         helper_baseline = STAGE_HELPER_FUNCTION_BASELINE_CEILING,
         relation_sites = metrics.relation_string_sites,
         relation_baseline = RELATION_STRING_SITE_BASELINE_CEILING,
+        point_order_sites = metrics.sumcheck_point_order_string_sites,
+        point_order_baseline = SUMCHECK_POINT_ORDER_STRING_SITE_BASELINE_CEILING,
     );
 
     assert!(
@@ -281,6 +286,12 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
         metrics.relation_string_sites == RELATION_STRING_SITE_BASELINE_CEILING,
         "relation string sites grew to {}; prefer typed relation plan data or explicit allowlists",
         metrics.relation_string_sites
+    );
+    assert!(
+        metrics.sumcheck_point_order_string_sites
+            == SUMCHECK_POINT_ORDER_STRING_SITE_BASELINE_CEILING,
+        "sumcheck point-order string sites grew to {}; prefer typed point-order plan data",
+        metrics.sumcheck_point_order_string_sites
     );
 }
 
@@ -619,6 +630,8 @@ fn verifier_cleanup_metrics(verifier_src: &Path) -> VerifierCleanupMetrics {
                 count_point_concat_input_string_sites(&source);
             metrics.stage_local_helper_functions += count_stage_local_helper_functions(&source);
             metrics.relation_string_sites += count_relation_string_sites(&source);
+            metrics.sumcheck_point_order_string_sites +=
+                count_sumcheck_point_order_string_sites(&source);
         }
     }
     metrics
@@ -720,6 +733,13 @@ fn count_relation_string_sites(source: &str) -> usize {
                 || line.contains("relation: \"jolt.")
                 || line.contains("relation == \"jolt.")
         })
+        .count()
+}
+
+fn count_sumcheck_point_order_string_sites(source: &str) -> usize {
+    source
+        .lines()
+        .filter(|line| line.contains("point_order: \""))
         .count()
 }
 

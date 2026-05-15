@@ -1991,7 +1991,10 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
                     instance.point_arity,
                     instance.num_rounds,
                     instance.round_offset,
-                    rust_str(&instance.point_order),
+                    super::plan_tokens::role_sumcheck_point_order_expr(
+                        &self.role,
+                        &instance.point_order
+                    )?,
                     instance.degree
                 ))
             })
@@ -2467,10 +2470,10 @@ fn observe_stage6_sumcheck_output<F: Field>(
         output,
         |instance, mut point| {
             match instance.point_order {
-                "as_is" => {}
-                "reverse" => point.reverse(),
-                "bytecode_read_raf" => point = normalize_bytecode_read_raf_point(&point, stage6_trace_rounds(program)?, "stage6.bytecode_read_raf.point")?,
-                "stage6_booleanity" => {}
+                bolt_verifier_runtime::SumcheckPointOrder::AsIs => {}
+                bolt_verifier_runtime::SumcheckPointOrder::Reverse => point.reverse(),
+                bolt_verifier_runtime::SumcheckPointOrder::BytecodeReadRaf => point = normalize_bytecode_read_raf_point(&point, stage6_trace_rounds(program)?, "stage6.bytecode_read_raf.point")?,
+                bolt_verifier_runtime::SumcheckPointOrder::Stage6Booleanity => {}
                 _ => {
                     return Err(VerifyStage6Error::InvalidProof {
                         driver: output.driver,

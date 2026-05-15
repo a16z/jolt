@@ -761,7 +761,10 @@ impl Stage1CpuProgram {
                     instance.point_arity,
                     instance.num_rounds,
                     instance.round_offset,
-                    rust_str(&instance.point_order),
+                    super::plan_tokens::role_sumcheck_point_order_expr(
+                        &self.role,
+                        &instance.point_order
+                    )?,
                     instance.degree
                 ))
             })

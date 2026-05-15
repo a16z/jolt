@@ -65,8 +65,8 @@ pub const STAGE1_SUMCHECK_DRIVERS: &[Stage1SumcheckDriverPlan] = &[
     Stage1SumcheckDriverPlan { symbol: "stage1.outer_remaining.sumcheck", stage: "stage1", proof_slot: "stage1.sumcheck", kernel: None, relation: Some(Stage1RelationKind::Stage1OuterRemaining), batch: "stage1.outer_remaining.batch", policy: "jolt_core_front_loaded", round_schedule: STAGE1_SUMCHECK_DRIVER_1_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 17, degree: 3 },
 ];
 pub const STAGE1_SUMCHECK_INSTANCE_RESULTS: &[Stage1SumcheckInstanceResultPlan] = &[
-    Stage1SumcheckInstanceResultPlan { symbol: "stage1.uniskip.instance", source: "stage1.uniskip.sumcheck", claim: "stage1.uniskip.input", relation: Stage1RelationKind::Stage1OuterUniskip, index: 0, point_arity: 1, num_rounds: 1, round_offset: 0, point_order: "as_is", degree: 27 },
-    Stage1SumcheckInstanceResultPlan { symbol: "stage1.outer_remaining.instance", source: "stage1.outer_remaining.sumcheck", claim: "stage1.outer_remaining.input", relation: Stage1RelationKind::Stage1OuterRemaining, index: 0, point_arity: 16, num_rounds: 17, round_offset: 1, point_order: "reverse", degree: 3 },
+    Stage1SumcheckInstanceResultPlan { symbol: "stage1.uniskip.instance", source: "stage1.uniskip.sumcheck", claim: "stage1.uniskip.input", relation: Stage1RelationKind::Stage1OuterUniskip, index: 0, point_arity: 1, num_rounds: 1, round_offset: 0, point_order: bolt_verifier_runtime::SumcheckPointOrder::AsIs, degree: 27 },
+    Stage1SumcheckInstanceResultPlan { symbol: "stage1.outer_remaining.instance", source: "stage1.outer_remaining.sumcheck", claim: "stage1.outer_remaining.input", relation: Stage1RelationKind::Stage1OuterRemaining, index: 0, point_arity: 16, num_rounds: 17, round_offset: 1, point_order: bolt_verifier_runtime::SumcheckPointOrder::Reverse, degree: 3 },
 ];
 
 pub const STAGE1_SUMCHECK_EVALS: &[Stage1SumcheckEvalPlan] = &[

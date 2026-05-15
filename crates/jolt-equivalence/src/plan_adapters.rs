@@ -32,6 +32,15 @@ macro_rules! stage_optional_relation_kind {
     };
 }
 
+macro_rules! stage_sumcheck_point_order {
+    (kernel, $value:expr) => {
+        super::leak_str($value)
+    };
+    (generated, $value:expr) => {
+        super::generated_sumcheck_point_order($value)
+    };
+}
+
 macro_rules! stage_claim {
     (kernel, $module:ident, $claim:ident, $plan:ident) => {
         $module::$claim {
@@ -362,6 +371,24 @@ fn generated_structured_polynomial_point_order(
     clippy::panic,
     reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
 )]
+fn generated_sumcheck_point_order(value: &str) -> bolt_verifier_runtime::SumcheckPointOrder {
+    match value {
+        "as_is" => bolt_verifier_runtime::SumcheckPointOrder::AsIs,
+        "reverse" => bolt_verifier_runtime::SumcheckPointOrder::Reverse,
+        "stage4_registers_rw" => {
+            bolt_verifier_runtime::SumcheckPointOrder::Stage4RegistersReadWrite
+        }
+        "instruction_read_raf" => bolt_verifier_runtime::SumcheckPointOrder::InstructionReadRaf,
+        "bytecode_read_raf" => bolt_verifier_runtime::SumcheckPointOrder::BytecodeReadRaf,
+        "stage6_booleanity" => bolt_verifier_runtime::SumcheckPointOrder::Stage6Booleanity,
+        value => panic!("unsupported generated sumcheck point order `{value}`"),
+    }
+}
+
+#[expect(
+    clippy::panic,
+    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
+)]
 fn generated_output_function_kind(
     value: &str,
 ) -> bolt_verifier_runtime::SumcheckOutputFunctionKind {
@@ -573,7 +600,7 @@ macro_rules! define_stage_adapter_impl {
                             point_arity: plan.point_arity,
                             num_rounds: plan.num_rounds,
                             round_offset: plan.round_offset,
-                            point_order: super::leak_str(&plan.point_order),
+                            point_order: stage_sumcheck_point_order!($mode, &plan.point_order),
                             degree: plan.degree,
                         })
                         .collect(),
@@ -1026,7 +1053,7 @@ macro_rules! define_stage1_adapter {
                             point_arity: plan.point_arity,
                             num_rounds: plan.num_rounds,
                             round_offset: plan.round_offset,
-                            point_order: super::leak_str(&plan.point_order),
+                            point_order: stage_sumcheck_point_order!($mode, &plan.point_order),
                             degree: plan.degree,
                         })
                         .collect(),

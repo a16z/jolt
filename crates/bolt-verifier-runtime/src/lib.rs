@@ -308,8 +308,31 @@ pub struct SumcheckInstanceResultPlan<R: ProtocolRelation> {
     pub point_arity: usize,
     pub num_rounds: usize,
     pub round_offset: usize,
-    pub point_order: &'static str,
+    pub point_order: SumcheckPointOrder,
     pub degree: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SumcheckPointOrder {
+    AsIs,
+    Reverse,
+    Stage4RegistersReadWrite,
+    InstructionReadRaf,
+    BytecodeReadRaf,
+    Stage6Booleanity,
+}
+
+impl SumcheckPointOrder {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AsIs => "as_is",
+            Self::Reverse => "reverse",
+            Self::Stage4RegistersReadWrite => "stage4_registers_rw",
+            Self::InstructionReadRaf => "instruction_read_raf",
+            Self::BytecodeReadRaf => "bytecode_read_raf",
+            Self::Stage6Booleanity => "stage6_booleanity",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

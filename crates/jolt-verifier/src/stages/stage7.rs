@@ -292,7 +292,7 @@ pub const STAGE7_SUMCHECK_OUTPUT_CLAIMS: &[Stage7SumcheckOutputClaimPlan] = &[
 ];
 
 pub const STAGE7_SUMCHECK_INSTANCE_RESULTS: &[Stage7SumcheckInstanceResultPlan] = &[
-    Stage7SumcheckInstanceResultPlan { symbol: "stage7.hamming_weight_claim_reduction.instance", source: "stage7.sumcheck", claim: "stage7.hamming_weight_claim_reduction.input", relation: Stage7RelationKind::Stage7HammingWeightClaimReduction, index: 0, point_arity: 4, num_rounds: 4, round_offset: 0, point_order: "reverse", degree: 2 },
+    Stage7SumcheckInstanceResultPlan { symbol: "stage7.hamming_weight_claim_reduction.instance", source: "stage7.sumcheck", claim: "stage7.hamming_weight_claim_reduction.input", relation: Stage7RelationKind::Stage7HammingWeightClaimReduction, index: 0, point_arity: 4, num_rounds: 4, round_offset: 0, point_order: bolt_verifier_runtime::SumcheckPointOrder::Reverse, degree: 2 },
 ];
 
 const fn stage7_sumcheck_eval(symbol: &'static str, source: &'static str, name: &'static str, index: usize, oracle: &'static str) -> Stage7SumcheckEvalPlan {
@@ -592,8 +592,8 @@ fn observe_stage7_sumcheck_output<F: Field>(
         output,
         |instance, mut point| {
             match instance.point_order {
-                "as_is" => {}
-                "reverse" => point.reverse(),
+                bolt_verifier_runtime::SumcheckPointOrder::AsIs => {}
+                bolt_verifier_runtime::SumcheckPointOrder::Reverse => point.reverse(),
                 _ => {
                     return Err(VerifyStage7Error::InvalidProof {
                         driver: output.driver,
