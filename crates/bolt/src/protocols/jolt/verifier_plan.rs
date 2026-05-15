@@ -46,6 +46,23 @@ impl VerifierTranscriptSqueezePlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VerifierTranscriptAbsorbBytesPlan {
+    pub(crate) symbol: String,
+    pub(crate) label: String,
+    pub(crate) payload: String,
+}
+
+impl VerifierTranscriptAbsorbBytesPlan {
+    pub(crate) fn from_cpu(symbol: &str, label: &str, payload: &str) -> Self {
+        Self {
+            symbol: symbol.to_owned(),
+            label: label.to_owned(),
+            payload: payload.to_owned(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VerifierOpeningInputPlan {
     pub(crate) symbol: String,
     pub(crate) source_stage: String,
@@ -163,6 +180,7 @@ pub(crate) struct VerifierOpeningClaimEqualityPlan {
 pub(crate) struct VerifierStagePlan {
     pub(crate) steps: Vec<VerifierProgramStepPlan>,
     pub(crate) transcript_squeezes: Vec<VerifierTranscriptSqueezePlan>,
+    pub(crate) transcript_absorb_bytes: Vec<VerifierTranscriptAbsorbBytesPlan>,
     pub(crate) opening_inputs: Vec<VerifierOpeningInputPlan>,
     pub(crate) field_exprs: Vec<VerifierFieldExprPlan>,
     pub(crate) claims: Vec<VerifierSumcheckClaimPlan>,
@@ -296,6 +314,28 @@ pub(crate) fn emit_transcript_squeeze_constants(
         .join("\n");
     format!(
         "pub const {const_prefix}_TRANSCRIPT_SQUEEZES: &[{stage_type_prefix}TranscriptSqueezePlan] = &[\n{squeezes}\n];\n\n"
+    )
+}
+
+pub(crate) fn emit_transcript_absorb_bytes_constants(
+    stage_type_prefix: &str,
+    const_prefix: &str,
+    absorbs: &[VerifierTranscriptAbsorbBytesPlan],
+) -> String {
+    let absorbs = absorbs
+        .iter()
+        .map(|absorb| {
+            format!(
+                "    {stage_type_prefix}TranscriptAbsorbBytesPlan {{ symbol: {}, label: {}, payload: {} }},",
+                rust_str(&absorb.symbol),
+                rust_str(&absorb.label),
+                rust_str(&absorb.payload),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "pub const {const_prefix}_TRANSCRIPT_ABSORB_BYTES: &[{stage_type_prefix}TranscriptAbsorbBytesPlan] = &[\n{absorbs}\n];\n\n"
     )
 }
 

@@ -621,6 +621,7 @@ impl Stage3CpuProgram {
                     )
                 })
                 .collect::<Result<Vec<_>, EmitError>>()?,
+            transcript_absorb_bytes: Vec::new(),
             opening_inputs: self
                 .opening_inputs
                 .iter()
