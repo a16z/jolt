@@ -13,11 +13,15 @@ use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
 use crate::protocols::jolt::stage5_instruction_read_raf_plan::Stage5InstructionReadRafEmitPlan;
 use crate::protocols::jolt::verifier_output_claims::{
-    self, FieldExprDependencies,
+    self, parse_output_eval_family_plan, parse_output_function_family_plan,
+    parse_output_product_family_plan, FieldExprDependencies,
     StructuredPolynomialEvalPlan as Stage5StructuredPolynomialEvalPlan,
     StructuredPolynomialPointPlan as Stage5StructuredPolynomialPointPlan,
     SumcheckOutputClaimAst as Stage5SumcheckOutputClaimAst,
     SumcheckOutputClaimPlan as Stage5SumcheckOutputClaimPlan,
+    SumcheckOutputEvalFamilyPlan as Stage5SumcheckOutputEvalFamilyPlan,
+    SumcheckOutputFunctionFamilyPlan as Stage5SumcheckOutputFunctionFamilyPlan,
+    SumcheckOutputProductFamilyPlan as Stage5SumcheckOutputProductFamilyPlan,
 };
 use crate::schema::verify_cpu_schema;
 
@@ -39,6 +43,9 @@ pub struct Stage5CpuProgram {
     pub instance_results: Vec<Stage5SumcheckInstanceResultPlan>,
     pub evals: Vec<Stage5SumcheckEvalPlan>,
     pub output_values: Vec<Stage5StructuredPolynomialEvalPlan>,
+    pub output_families: Vec<Stage5SumcheckOutputEvalFamilyPlan>,
+    pub output_product_families: Vec<Stage5SumcheckOutputProductFamilyPlan>,
+    pub output_function_families: Vec<Stage5SumcheckOutputFunctionFamilyPlan>,
     pub output_claims: Vec<Stage5SumcheckOutputClaimPlan>,
     pub point_slices: Vec<Stage5PointSlicePlan>,
     pub point_concats: Vec<Stage5PointConcatPlan>,
@@ -267,6 +274,9 @@ impl Stage5CpuProgram {
         let mut instance_results = Vec::new();
         let mut evals = Vec::new();
         let mut output_values = Vec::new();
+        let mut output_families = Vec::new();
+        let mut output_product_families = Vec::new();
+        let mut output_function_families = Vec::new();
         let mut output_claim_asts = Vec::new();
         let mut point_slices = Vec::new();
         let mut point_concats = Vec::new();
@@ -500,6 +510,15 @@ impl Stage5CpuProgram {
                         y_point,
                     )?);
                 }
+                "cpu.sumcheck_output_eval_family" => {
+                    output_families.push(parse_output_eval_family_plan("stage5", op)?);
+                }
+                "cpu.sumcheck_output_product_family" => {
+                    output_product_families.push(parse_output_product_family_plan("stage5", op)?);
+                }
+                "cpu.sumcheck_output_function_family" => {
+                    output_function_families.push(parse_output_function_family_plan("stage5", op)?);
+                }
                 "cpu.sumcheck_output_claim" => {
                     output_claim_asts.push(Stage5SumcheckOutputClaimAst {
                         relation: symbol_attr(op, "relation")?,
@@ -575,9 +594,9 @@ impl Stage5CpuProgram {
             verifier_output_claims::resolve_output_claims(
                 "stage5",
                 &output_values,
-                &[],
-                &[],
-                &[],
+                &output_families,
+                &output_product_families,
+                &output_function_families,
                 &field_exprs,
                 output_claim_asts,
             )?
@@ -611,6 +630,9 @@ impl Stage5CpuProgram {
             instance_results,
             evals,
             output_values,
+            output_families,
+            output_product_families,
+            output_function_families,
             output_claims,
             point_slices,
             point_concats,
@@ -721,6 +743,22 @@ impl Stage5CpuProgram {
         values.extend(
             self.output_values.iter().map(|value| &value.symbol),
             verifier_output_claims::VerifierScalarSourceKind::StructuredPolynomialEval,
+        );
+        values.extend(
+            self.output_families.iter().map(|family| &family.symbol),
+            verifier_output_claims::VerifierScalarSourceKind::OutputEvalFamily,
+        );
+        values.extend(
+            self.output_product_families
+                .iter()
+                .map(|family| &family.symbol),
+            verifier_output_claims::VerifierScalarSourceKind::OutputProductFamily,
+        );
+        values.extend(
+            self.output_function_families
+                .iter()
+                .map(|family| &family.symbol),
+            verifier_output_claims::VerifierScalarSourceKind::OutputFunctionFamily,
         );
         values.extend(
             self.field_exprs.iter().map(|expr| &expr.symbol),
@@ -941,9 +979,9 @@ impl Stage5CpuProgram {
             "stage5",
             verifier_output_claims::OutputClaimVerification {
                 output_values: &self.output_values,
-                output_families: &[],
-                output_product_families: &[],
-                output_function_families: &[],
+                output_families: &self.output_families,
+                output_product_families: &self.output_product_families,
+                output_function_families: &self.output_function_families,
                 output_claims: &self.output_claims,
                 relations: &relations,
                 field_values: &field_values,
