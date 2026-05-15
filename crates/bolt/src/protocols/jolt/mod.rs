@@ -4,6 +4,7 @@ pub mod oracles;
 pub mod params;
 pub mod phases;
 pub(crate) mod rust_target_plan;
+pub(crate) mod stage5_instruction_read_raf_plan;
 pub(crate) mod stage6_bytecode_read_raf_plan;
 pub mod validate;
 pub(crate) mod verifier_output_claims;
