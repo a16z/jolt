@@ -1,3 +1,5 @@
+use crate::emit::rust::push_format;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BytecodeReadRafPlan {
     pub(crate) const_name: &'static str,
@@ -275,7 +277,7 @@ const STAGE6_BYTECODE_STAGES: &[BytecodeReadRafStagePlan] = &[
     },
 ];
 
-pub(crate) const STAGE6_BYTECODE_READ_RAF_PLAN: BytecodeReadRafPlan = BytecodeReadRafPlan {
+const STAGE6_BYTECODE_READ_RAF_PLAN: BytecodeReadRafPlan = BytecodeReadRafPlan {
     const_name: "STAGE6_BYTECODE_PLAN",
     point: "stage6.bytecode_read_raf.point",
     gamma: "stage6.bytecode_read_raf.gamma",
@@ -293,19 +295,178 @@ pub(crate) const STAGE6_BYTECODE_READ_RAF_PLAN: BytecodeReadRafPlan = BytecodeRe
     entry_lookup_table: "stage6.bytecode.entry.lookup_table",
 };
 
-pub(crate) fn stage6_bytecode_read_raf_plan() -> &'static BytecodeReadRafPlan {
-    &STAGE6_BYTECODE_READ_RAF_PLAN
+pub(crate) fn emit_stage6_bytecode_read_raf_plan_constants() -> String {
+    emit_bytecode_read_raf_plan(&STAGE6_BYTECODE_READ_RAF_PLAN)
+}
+
+fn emit_bytecode_read_raf_plan(plan: &BytecodeReadRafPlan) -> String {
+    let mut source = "\n".to_owned();
+
+    for stage in plan.stages {
+        push_format(
+            &mut source,
+            format_args!(
+                "const {}: &[Stage67BytecodeTermPlan] = &[\n",
+                stage.terms_const
+            ),
+        );
+        for term in stage.terms {
+            push_format(
+                &mut source,
+                format_args!("    {},\n", emit_bytecode_read_raf_term_plan(term)),
+            );
+        }
+        source.push_str("];\n");
+    }
+
+    push_format(
+        &mut source,
+        format_args!(
+            "const {}: &[Stage67BytecodeStagePlan] = &[\n",
+            plan.stages_const
+        ),
+    );
+    for stage in plan.stages {
+        push_format(
+            &mut source,
+            format_args!(
+                "    Stage67BytecodeStagePlan {{ gamma: {}, cycle_point: {}, register_point: {}, output_gamma_power: {}, identity_gamma_power: {}, terms: {} }},\n",
+                rust_str(stage.gamma),
+                rust_str(stage.cycle_point),
+                rust_option_str(stage.register_point),
+                stage.output_gamma_power,
+                emit_option_usize(stage.identity_gamma_power),
+                stage.terms_const,
+            ),
+        );
+    }
+    source.push_str("];\n\n");
+
+    push_format(
+        &mut source,
+        format_args!(
+            "const {}: Stage67BytecodeReadRafPlan = Stage67BytecodeReadRafPlan {{\n",
+            plan.const_name
+        ),
+    );
+    push_format(
+        &mut source,
+        format_args!(
+            "    point: {},\n    gamma: {},\n    bytecode_ra_eval_prefix: {},\n    entries: {},\n    entry_bytecode_index: {},\n    stages: {},\n",
+            rust_str(plan.point),
+            rust_str(plan.gamma),
+            rust_str(plan.bytecode_ra_eval_prefix),
+            rust_str(plan.entries),
+            rust_str(plan.entry_bytecode_index),
+            plan.stages_const,
+        ),
+    );
+    push_format(
+        &mut source,
+        format_args!(
+            "    entry_contribution: Stage67BytecodeEntryContributionPlan {{ gamma_power: {} }},\n",
+            plan.entry_contribution.gamma_power
+        ),
+    );
+    source.push_str("    registers: Stage67BytecodeRegisterSymbols {\n");
+    push_format(
+        &mut source,
+        format_args!(
+            "        rd: {},\n        rs1: {},\n        rs2: {},\n",
+            rust_str(plan.registers.rd),
+            rust_str(plan.registers.rs1),
+            rust_str(plan.registers.rs2),
+        ),
+    );
+    source.push_str("    },\n");
+    push_format(
+        &mut source,
+        format_args!(
+            "    entry_lookup_table: {},\n",
+            rust_str(plan.entry_lookup_table)
+        ),
+    );
+    source.push_str("};\n");
+    source
+}
+
+fn emit_bytecode_read_raf_term_plan(term: &BytecodeReadRafTermPlan) -> String {
+    match term {
+        BytecodeReadRafTermPlan::Address { gamma_power } => {
+            format!("Stage67BytecodeTermPlan::Address {{ gamma_power: {gamma_power} }}")
+        }
+        BytecodeReadRafTermPlan::Imm { gamma_power } => {
+            format!("Stage67BytecodeTermPlan::Imm {{ gamma_power: {gamma_power} }}")
+        }
+        BytecodeReadRafTermPlan::CircuitFlag { index, gamma_power } => format!(
+            "Stage67BytecodeTermPlan::CircuitFlag {{ index: {index}, gamma_power: {gamma_power} }}"
+        ),
+        BytecodeReadRafTermPlan::EntryFlag {
+            flag,
+            expected,
+            gamma_power,
+        } => format!(
+            "Stage67BytecodeTermPlan::EntryFlag {{ flag: {}, expected: {expected}, gamma_power: {gamma_power} }}",
+            emit_bytecode_flag(*flag)
+        ),
+        BytecodeReadRafTermPlan::RegisterEq {
+            register,
+            gamma_power,
+        } => format!(
+            "Stage67BytecodeTermPlan::RegisterEq {{ register: {}, gamma_power: {gamma_power} }}",
+            emit_bytecode_register(*register)
+        ),
+        BytecodeReadRafTermPlan::LookupTable { gamma_base } => {
+            format!("Stage67BytecodeTermPlan::LookupTable {{ gamma_base: {gamma_base} }}")
+        }
+    }
+}
+
+fn emit_bytecode_flag(flag: BytecodeFlag) -> &'static str {
+    match flag {
+        BytecodeFlag::IsInterleaved => "Stage67BytecodeFlag::IsInterleaved",
+        BytecodeFlag::IsBranch => "Stage67BytecodeFlag::IsBranch",
+        BytecodeFlag::LeftIsRs1 => "Stage67BytecodeFlag::LeftIsRs1",
+        BytecodeFlag::LeftIsPc => "Stage67BytecodeFlag::LeftIsPc",
+        BytecodeFlag::RightIsRs2 => "Stage67BytecodeFlag::RightIsRs2",
+        BytecodeFlag::RightIsImm => "Stage67BytecodeFlag::RightIsImm",
+        BytecodeFlag::IsNoop => "Stage67BytecodeFlag::IsNoop",
+    }
+}
+
+fn emit_bytecode_register(register: BytecodeRegister) -> &'static str {
+    match register {
+        BytecodeRegister::Rd => "Stage67BytecodeRegister::Rd",
+        BytecodeRegister::Rs1 => "Stage67BytecodeRegister::Rs1",
+        BytecodeRegister::Rs2 => "Stage67BytecodeRegister::Rs2",
+    }
+}
+
+fn emit_option_usize(value: Option<usize>) -> String {
+    value.map_or_else(|| "None".to_owned(), |value| format!("Some({value})"))
+}
+
+fn rust_str(value: &str) -> String {
+    format!("{value:?}")
+}
+
+fn rust_option_str(value: Option<&str>) -> String {
+    value.map_or_else(
+        || "None".to_owned(),
+        |value| format!("Some({})", rust_str(value)),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        stage6_bytecode_read_raf_plan, BytecodeFlag, BytecodeReadRafTermPlan, BytecodeRegister,
+        emit_stage6_bytecode_read_raf_plan_constants, BytecodeFlag, BytecodeReadRafTermPlan,
+        BytecodeRegister, STAGE6_BYTECODE_READ_RAF_PLAN,
     };
 
     #[test]
     fn stage6_bytecode_plan_rows_encode_the_read_raf_reduction() {
-        let plan = stage6_bytecode_read_raf_plan();
+        let plan = &STAGE6_BYTECODE_READ_RAF_PLAN;
 
         assert_eq!(plan.stages.len(), 5);
         assert_eq!(plan.entry_contribution.gamma_power, 7);
@@ -377,5 +538,16 @@ mod tests {
                 BytecodeReadRafTermPlan::LookupTable { gamma_base: 2 },
             ]
         );
+    }
+
+    #[test]
+    fn stage6_bytecode_plan_renderer_emits_stage67_constants() {
+        let source = emit_stage6_bytecode_read_raf_plan_constants();
+
+        assert!(source.contains("const STAGE6_BYTECODE_STAGE1_TERMS"));
+        assert!(source.contains("Stage67BytecodeTermPlan::LookupTable { gamma_base: 2 }"));
+        assert!(source.contains("Stage67BytecodeFlag::IsInterleaved"));
+        assert!(source.contains("Stage67BytecodeRegister::Rs2"));
+        assert!(source.contains("const STAGE6_BYTECODE_PLAN: Stage67BytecodeReadRafPlan"));
     }
 }
