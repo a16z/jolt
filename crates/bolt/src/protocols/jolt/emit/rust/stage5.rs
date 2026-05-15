@@ -1155,7 +1155,7 @@ impl Stage5CpuProgram {
 
     fn emit_verifier_imports() -> &'static str {
         "use bolt_verifier_runtime::{batch_claims, find_batch, find_plan, NamedEvalFamilyPlan};\n\
-         use super::jolt_relations::{evaluate_stage5_instruction_read_raf, normalize_instruction_read_raf_point, Stage5InstructionReadRafPlan};\n\
+         use super::jolt_relations::{evaluate_stage5_instruction_read_raf, normalize_instruction_read_raf_point, Stage5InstructionReadRafPlan, Stage5InstructionReadRafPointValueKind, Stage5InstructionReadRafPointValuePlan};\n\
          use jolt_field::{Field, Fr};\n\
          use jolt_sumcheck::SumcheckError;\n\
          use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};"

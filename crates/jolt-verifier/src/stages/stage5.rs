@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use bolt_verifier_runtime::{batch_claims, find_batch, find_plan, NamedEvalFamilyPlan};
-use super::jolt_relations::{evaluate_stage5_instruction_read_raf, normalize_instruction_read_raf_point, Stage5InstructionReadRafPlan};
+use super::jolt_relations::{evaluate_stage5_instruction_read_raf, normalize_instruction_read_raf_point, Stage5InstructionReadRafPlan, Stage5InstructionReadRafPointValueKind, Stage5InstructionReadRafPointValuePlan};
 use jolt_field::{Field, Fr};
 use jolt_sumcheck::SumcheckError;
 use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};
@@ -200,6 +200,53 @@ pub const STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVALS: NamedEvalFamilyPlan = Na
 pub const STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVAL_NAMES: &[&str] = &["stage5.instruction_read_raf.eval.InstructionRa_0", "stage5.instruction_read_raf.eval.InstructionRa_1", "stage5.instruction_read_raf.eval.InstructionRa_2", "stage5.instruction_read_raf.eval.InstructionRa_3", "stage5.instruction_read_raf.eval.InstructionRa_4", "stage5.instruction_read_raf.eval.InstructionRa_5", "stage5.instruction_read_raf.eval.InstructionRa_6", "stage5.instruction_read_raf.eval.InstructionRa_7"];
 pub const STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVALS: NamedEvalFamilyPlan = NamedEvalFamilyPlan { symbol: "stage5.instruction_read_raf.eval.InstructionRa", evals: STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVAL_NAMES };
 
+pub const STAGE5_INSTRUCTION_READ_RAF_POINT_VALUES: &[Stage5InstructionReadRafPointValuePlan] = &[
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_0", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 0 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_1", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 1 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_2", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 2 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_3", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 3 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_4", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 4 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_5", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 5 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_6", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 6 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_7", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 7 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_8", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 8 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_9", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 9 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_10", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 10 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_11", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 11 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_12", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 12 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_13", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 13 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_14", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 14 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_15", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 15 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_16", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 16 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_17", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 17 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_18", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 18 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_19", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 19 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_20", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 20 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_21", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 21 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_22", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 22 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_23", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 23 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_24", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 24 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_25", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 25 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_26", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 26 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_27", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 27 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_28", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 28 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_29", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 29 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_30", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 30 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_31", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 31 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_32", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 32 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_33", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 33 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_34", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 34 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_35", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 35 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_36", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 36 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_37", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 37 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_38", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 38 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_39", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 39 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_40", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 40 } },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LeftLookupOperand", kind: Stage5InstructionReadRafPointValueKind::LeftOperand },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.RightLookupOperand", kind: Stage5InstructionReadRafPointValueKind::RightOperand },
+    Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.Identity", kind: Stage5InstructionReadRafPointValueKind::Identity },
+];
+
 pub const STAGE5_INSTRUCTION_READ_RAF_PLAN: Stage5InstructionReadRafPlan = Stage5InstructionReadRafPlan {
     point: "stage5.instruction_read_raf.point",
     lookup_output_point: "stage5.input.stage2.instruction.LookupOutput",
@@ -207,6 +254,7 @@ pub const STAGE5_INSTRUCTION_READ_RAF_PLAN: Stage5InstructionReadRafPlan = Stage
     instruction_ra_evals: &STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVALS,
     raf_flag_eval: "stage5.instruction_read_raf.eval.InstructionRafFlag",
     gamma: "stage5.instruction_read_raf.gamma",
+    point_values: STAGE5_INSTRUCTION_READ_RAF_POINT_VALUES,
     log_k: 128,
 };
 

@@ -95,7 +95,22 @@ pub struct Stage5InstructionReadRafPlan {
     pub instruction_ra_evals: &'static NamedEvalFamilyPlan,
     pub raf_flag_eval: &'static str,
     pub gamma: &'static str,
+    pub point_values: &'static [Stage5InstructionReadRafPointValuePlan],
     pub log_k: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stage5InstructionReadRafPointValuePlan {
+    pub symbol: &'static str,
+    pub kind: Stage5InstructionReadRafPointValueKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stage5InstructionReadRafPointValueKind {
+    LookupTable { index: usize },
+    LeftOperand,
+    RightOperand,
+    Identity,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -205,31 +220,38 @@ pub fn evaluate_stage5_instruction_read_raf(
     evals: &[StageNamedEval<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, RuntimePlanError> {
-    const XLEN: usize = 64;
-
-    if local_point.len() < plan.log_k {
-        return Err(RuntimePlanError::InvalidInputLength {
-            input: plan.point,
-            expected: plan.log_k,
-            actual: local_point.len(),
-        });
-    }
-
-    let (r_address_prime, r_cycle) = local_point.split_at(plan.log_k);
+    let mut local_store = store.clone();
+    evaluate_stage5_instruction_read_raf_point_values(plan, &mut local_store, local_point)?;
+    let (_, r_cycle) = instruction_read_raf_point_parts(plan, local_point)?;
     let r_cycle_prime = reverse_slice(r_cycle);
     let r_reduction = store_point(store, plan.lookup_output_point)?;
     let eq_eval_r_reduction = EqPolynomial::<Fr>::mle(r_reduction, &r_cycle_prime);
 
-    let left_operand_eval = operand_polynomial_eval(r_address_prime, true);
-    let right_operand_eval = operand_polynomial_eval(r_address_prime, false);
-    let identity_poly_eval = identity_polynomial_eval(r_address_prime);
+    let left_operand_eval = instruction_read_raf_point_value(
+        plan,
+        &local_store,
+        Stage5InstructionReadRafPointValueKind::LeftOperand,
+    )?;
+    let right_operand_eval = instruction_read_raf_point_value(
+        plan,
+        &local_store,
+        Stage5InstructionReadRafPointValueKind::RightOperand,
+    )?;
+    let identity_poly_eval = instruction_read_raf_point_value(
+        plan,
+        &local_store,
+        Stage5InstructionReadRafPointValueKind::Identity,
+    )?;
 
     let table_flag_claims = eval_family_values(evals, plan.table_flag_evals)?;
-    let table_values = LookupTableKind::<XLEN>::all()
-        .iter()
-        .take(table_flag_claims.len())
-        .map(|table| table.evaluate_mle::<Fr, Fr>(r_address_prime))
-        .collect::<Vec<_>>();
+    let table_values = instruction_read_raf_lookup_table_values(plan, &local_store)?;
+    if table_values.len() != table_flag_claims.len() {
+        return Err(RuntimePlanError::InvalidInputLength {
+            input: plan.table_flag_evals.symbol,
+            expected: table_flag_claims.len(),
+            actual: table_values.len(),
+        });
+    }
     let val_claim = table_values
         .into_iter()
         .zip(table_flag_claims)
@@ -246,6 +268,94 @@ pub fn evaluate_stage5_instruction_read_raf(
         * (left_operand_eval + gamma * right_operand_eval)
         + raf_flag_claim * gamma * identity_poly_eval;
     Ok(eq_eval_r_reduction * ra_claim * (val_claim + gamma * raf_claim))
+}
+
+pub fn evaluate_stage5_instruction_read_raf_point_values(
+    plan: &Stage5InstructionReadRafPlan,
+    store: &mut ValueStore<Fr>,
+    local_point: &[Fr],
+) -> Result<(), RuntimePlanError> {
+    let (r_address_prime, _) = instruction_read_raf_point_parts(plan, local_point)?;
+    for value in plan.point_values {
+        let scalar = evaluate_stage5_instruction_read_raf_point_value(value.kind, r_address_prime)?;
+        store.insert_scalar(value.symbol, scalar);
+    }
+    Ok(())
+}
+
+fn evaluate_stage5_instruction_read_raf_point_value(
+    kind: Stage5InstructionReadRafPointValueKind,
+    r_address_prime: &[Fr],
+) -> Result<Fr, RuntimePlanError> {
+    const XLEN: usize = 64;
+    Ok(match kind {
+        Stage5InstructionReadRafPointValueKind::LookupTable { index } => {
+            let tables = LookupTableKind::<XLEN>::all();
+            let table = tables
+                .get(index)
+                .ok_or(RuntimePlanError::InvalidInputLength {
+                    input: "stage5.instruction_read_raf.lookup_table",
+                    expected: tables.len(),
+                    actual: index + 1,
+                })?;
+            table.evaluate_mle::<Fr, Fr>(r_address_prime)
+        }
+        Stage5InstructionReadRafPointValueKind::LeftOperand => {
+            operand_polynomial_eval(r_address_prime, true)
+        }
+        Stage5InstructionReadRafPointValueKind::RightOperand => {
+            operand_polynomial_eval(r_address_prime, false)
+        }
+        Stage5InstructionReadRafPointValueKind::Identity => identity_polynomial_eval(r_address_prime),
+    })
+}
+
+fn instruction_read_raf_point_value(
+    plan: &Stage5InstructionReadRafPlan,
+    store: &ValueStore<Fr>,
+    kind: Stage5InstructionReadRafPointValueKind,
+) -> Result<Fr, RuntimePlanError> {
+    let value = plan
+        .point_values
+        .iter()
+        .find(|value| value.kind == kind)
+        .ok_or(RuntimePlanError::MissingValue { symbol: plan.point })?;
+    store_scalar(store, value.symbol)
+}
+
+fn instruction_read_raf_lookup_table_values(
+    plan: &Stage5InstructionReadRafPlan,
+    store: &ValueStore<Fr>,
+) -> Result<Vec<Fr>, RuntimePlanError> {
+    let mut values = plan
+        .point_values
+        .iter()
+        .filter_map(|value| match value.kind {
+            Stage5InstructionReadRafPointValueKind::LookupTable { index } => {
+                Some((index, value.symbol))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    values.sort_by_key(|(index, _)| *index);
+    values
+        .into_iter()
+        .map(|(_, symbol)| store_scalar(store, symbol))
+        .collect()
+}
+
+fn instruction_read_raf_point_parts<'a>(
+    plan: &Stage5InstructionReadRafPlan,
+    local_point: &'a [Fr],
+) -> Result<(&'a [Fr], &'a [Fr]), RuntimePlanError> {
+    if local_point.len() < plan.log_k {
+        return Err(RuntimePlanError::InvalidInputLength {
+            input: plan.point,
+            expected: plan.log_k,
+            actual: local_point.len(),
+        });
+    }
+    Ok(local_point.split_at(plan.log_k))
 }
 
 pub fn stage67_trace_rounds(

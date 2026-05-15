@@ -8,6 +8,7 @@ pub(crate) struct Stage5InstructionReadRafEmitPlan {
     pub(crate) instruction_ra_evals: Stage5NamedEvalFamilyEmitPlan,
     pub(crate) raf_flag_eval: String,
     pub(crate) gamma: String,
+    pub(crate) point_values: Vec<Stage5InstructionReadRafPointValueEmitPlan>,
     pub(crate) log_k: usize,
 }
 
@@ -16,19 +17,22 @@ impl Stage5InstructionReadRafEmitPlan {
         evals: impl IntoIterator<Item = (&'a str, &'a str)>,
     ) -> Result<Self, EmitError> {
         let evals = evals.into_iter().collect::<Vec<_>>();
+        let table_flag_evals = Stage5NamedEvalFamilyEmitPlan::from_indexed_oracles(
+            "stage5.instruction_read_raf.eval.LookupTableFlag",
+            "LookupTableFlag_",
+            evals.iter().copied(),
+        )?;
+        let instruction_ra_evals = Stage5NamedEvalFamilyEmitPlan::from_indexed_oracles(
+            "stage5.instruction_read_raf.eval.InstructionRa",
+            "InstructionRa_",
+            evals.iter().copied(),
+        )?;
         Ok(Self {
             point: "stage5.instruction_read_raf.point".to_owned(),
             lookup_output_point: "stage5.input.stage2.instruction.LookupOutput".to_owned(),
-            table_flag_evals: Stage5NamedEvalFamilyEmitPlan::from_indexed_oracles(
-                "stage5.instruction_read_raf.eval.LookupTableFlag",
-                "LookupTableFlag_",
-                evals.iter().copied(),
-            )?,
-            instruction_ra_evals: Stage5NamedEvalFamilyEmitPlan::from_indexed_oracles(
-                "stage5.instruction_read_raf.eval.InstructionRa",
-                "InstructionRa_",
-                evals.iter().copied(),
-            )?,
+            point_values: point_value_plans(table_flag_evals.evals.len()),
+            table_flag_evals,
+            instruction_ra_evals,
             raf_flag_eval: "stage5.instruction_read_raf.eval.InstructionRafFlag".to_owned(),
             gamma: "stage5.instruction_read_raf.gamma".to_owned(),
             log_k: 128,
@@ -71,6 +75,7 @@ impl Stage5InstructionReadRafEmitPlan {
                 ),
             );
         }
+        source.push_str(&emit_point_value_constants(&self.point_values));
         push_format(
             &mut source,
             format_args!(
@@ -81,6 +86,7 @@ impl Stage5InstructionReadRafEmitPlan {
                  \x20   instruction_ra_evals: &STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVALS,\n\
                  \x20   raf_flag_eval: {},\n\
                  \x20   gamma: {},\n\
+                 \x20   point_values: STAGE5_INSTRUCTION_READ_RAF_POINT_VALUES,\n\
                  \x20   log_k: {},\n\
                  }};\n\n",
                 rust_str(&self.point),
@@ -92,6 +98,20 @@ impl Stage5InstructionReadRafEmitPlan {
         );
         source
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Stage5InstructionReadRafPointValueEmitPlan {
+    pub(crate) symbol: String,
+    pub(crate) kind: Stage5InstructionReadRafPointValueKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Stage5InstructionReadRafPointValueKind {
+    LookupTable { index: usize },
+    LeftOperand,
+    RightOperand,
+    Identity,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -136,6 +156,64 @@ impl Stage5NamedEvalFamilyEmitPlan {
                 .map(|(_, name)| name)
                 .collect::<Vec<_>>(),
         })
+    }
+}
+
+fn point_value_plans(table_count: usize) -> Vec<Stage5InstructionReadRafPointValueEmitPlan> {
+    let mut values = (0..table_count)
+        .map(|index| Stage5InstructionReadRafPointValueEmitPlan {
+            symbol: format!("stage5.instruction_read_raf.point_value.LookupTable_{index}"),
+            kind: Stage5InstructionReadRafPointValueKind::LookupTable { index },
+        })
+        .collect::<Vec<_>>();
+    values.extend([
+        Stage5InstructionReadRafPointValueEmitPlan {
+            symbol: "stage5.instruction_read_raf.point_value.LeftLookupOperand".to_owned(),
+            kind: Stage5InstructionReadRafPointValueKind::LeftOperand,
+        },
+        Stage5InstructionReadRafPointValueEmitPlan {
+            symbol: "stage5.instruction_read_raf.point_value.RightLookupOperand".to_owned(),
+            kind: Stage5InstructionReadRafPointValueKind::RightOperand,
+        },
+        Stage5InstructionReadRafPointValueEmitPlan {
+            symbol: "stage5.instruction_read_raf.point_value.Identity".to_owned(),
+            kind: Stage5InstructionReadRafPointValueKind::Identity,
+        },
+    ]);
+    values
+}
+
+fn emit_point_value_constants(values: &[Stage5InstructionReadRafPointValueEmitPlan]) -> String {
+    let values = values
+        .iter()
+        .map(|value| {
+            format!(
+                "    Stage5InstructionReadRafPointValuePlan {{ symbol: {}, kind: {} }},",
+                rust_str(&value.symbol),
+                point_value_kind_expr(&value.kind),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "pub const STAGE5_INSTRUCTION_READ_RAF_POINT_VALUES: &[Stage5InstructionReadRafPointValuePlan] = &[\n{values}\n];\n\n"
+    )
+}
+
+fn point_value_kind_expr(kind: &Stage5InstructionReadRafPointValueKind) -> String {
+    match kind {
+        Stage5InstructionReadRafPointValueKind::LookupTable { index } => {
+            format!("Stage5InstructionReadRafPointValueKind::LookupTable {{ index: {index} }}")
+        }
+        Stage5InstructionReadRafPointValueKind::LeftOperand => {
+            "Stage5InstructionReadRafPointValueKind::LeftOperand".to_owned()
+        }
+        Stage5InstructionReadRafPointValueKind::RightOperand => {
+            "Stage5InstructionReadRafPointValueKind::RightOperand".to_owned()
+        }
+        Stage5InstructionReadRafPointValueKind::Identity => {
+            "Stage5InstructionReadRafPointValueKind::Identity".to_owned()
+        }
     }
 }
 
