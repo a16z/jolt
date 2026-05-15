@@ -447,7 +447,7 @@ fn jolt_stage1_outer_protocol_defines_virtual_claim_flow() {
     assert!(text.contains("\"piop.sumcheck_eval\"(%"));
     assert!(text.contains("\"piop.opening_claim\"(%"));
     assert!(text.contains("\"piop.opening_batch\"(%"));
-    assert!(text.contains("count = 35 : i64"));
+    assert!(text.contains("count = 47 : i64"));
     assert!(text.contains("ordered_claims = [@stage1.outer_remaining.opening.LeftInstructionInput"));
     assert!(text.contains("oracle = @OpFlagIsLastInSequence"));
     assert!(!text.contains("\"pcs.opening_claim\""));
@@ -2100,7 +2100,7 @@ fn jolt_stage1_outer_lowers_to_compute_and_cpu_kernel_ir() {
     assert!(cpu_text.contains("\"cpu.opening_claim\"(%"));
     assert!(cpu_text.contains("\"cpu.opening_batch\"(%"));
     assert!(cpu_text.contains("\"cpu.sumcheck_claim\"(%"));
-    assert!(cpu_text.contains("count = 35 : i64"));
+    assert!(cpu_text.contains("count = 47 : i64"));
     assert!(!cpu_text.contains("\"cpu.pcs_opening_claim\""));
     assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify_claim\""));
     assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify\""));
@@ -2121,7 +2121,7 @@ fn jolt_stage1_outer_lowers_to_compute_and_cpu_kernel_ir() {
     assert_eq!(program.claims.len(), 2);
     assert_eq!(program.batches.len(), 2);
     assert_eq!(program.drivers.len(), 2);
-    assert_eq!(program.opening_claims.len(), 36);
+    assert_eq!(program.opening_claims.len(), 48);
     assert_eq!(program.opening_batches.len(), 1);
     let uniskip = program
         .drivers
@@ -2153,9 +2153,9 @@ fn jolt_stage1_outer_lowers_to_compute_and_cpu_kernel_ir() {
             .iter()
             .filter(|eval| eval.source == "stage1.outer_remaining.sumcheck")
             .count(),
-        35
+        47
     );
-    assert_eq!(program.opening_batches[0].count, 35);
+    assert_eq!(program.opening_batches[0].count, 47);
     assert_eq!(
         program.opening_batches[0].ordered_claims,
         program.opening_batches[0].claim_operands

@@ -19,7 +19,7 @@ use super::lowering::{
     transcript_squeeze_compute_result_types,
 };
 
-const R1CS_INPUT_ORACLES: [&str; 35] = [
+const R1CS_INPUT_ORACLES: [&str; 47] = [
     "LeftInstructionInput",
     "RightInstructionInput",
     "Product",
@@ -55,6 +55,18 @@ const R1CS_INPUT_ORACLES: [&str; 35] = [
     "OpFlagIsCompressed",
     "OpFlagIsFirstInSequence",
     "OpFlagIsLastInSequence",
+    "OpFlagIsFieldMul",
+    "OpFlagIsFieldAdd",
+    "OpFlagIsFieldSub",
+    "OpFlagIsFieldInv",
+    "OpFlagIsFieldAssertEq",
+    "OpFlagIsFieldMov",
+    "OpFlagIsFieldSLL64",
+    "OpFlagIsFieldSLL128",
+    "OpFlagIsFieldSLL192",
+    "FieldRs1Value",
+    "FieldRs2Value",
+    "FieldRdWriteValue",
 ];
 const OUTER_UNISKIP_FIRST_ROUND_DEGREE_BOUND: usize = 27;
 

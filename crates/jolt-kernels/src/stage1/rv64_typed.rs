@@ -31,6 +31,15 @@ const FLAG_ADVICE: usize = 10;
 const FLAG_IS_COMPRESSED: usize = 11;
 const FLAG_IS_FIRST_IN_SEQUENCE: usize = 12;
 const FLAG_IS_LAST_IN_SEQUENCE: usize = 13;
+const FLAG_IS_FIELD_MUL: usize = 14;
+const FLAG_IS_FIELD_ADD: usize = 15;
+const FLAG_IS_FIELD_SUB: usize = 16;
+const FLAG_IS_FIELD_INV: usize = 17;
+const FLAG_IS_FIELD_ASSERT_EQ: usize = 18;
+const FLAG_IS_FIELD_MOV: usize = 19;
+const FLAG_IS_FIELD_SLL64: usize = 20;
+const FLAG_IS_FIELD_SLL128: usize = 21;
+const FLAG_IS_FIELD_SLL192: usize = 22;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Stage1Rv64Cycle {
@@ -351,6 +360,18 @@ enum Stage1Rv64Oracle {
     OpFlagIsCompressed,
     OpFlagIsFirstInSequence,
     OpFlagIsLastInSequence,
+    OpFlagIsFieldMul,
+    OpFlagIsFieldAdd,
+    OpFlagIsFieldSub,
+    OpFlagIsFieldInv,
+    OpFlagIsFieldAssertEq,
+    OpFlagIsFieldMov,
+    OpFlagIsFieldSll64,
+    OpFlagIsFieldSll128,
+    OpFlagIsFieldSll192,
+    FieldRs1Value,
+    FieldRs2Value,
+    FieldRdWriteValue,
 }
 
 impl Stage1Rv64Oracle {
@@ -391,6 +412,18 @@ impl Stage1Rv64Oracle {
             "OpFlagIsCompressed" => Some(Self::OpFlagIsCompressed),
             "OpFlagIsFirstInSequence" => Some(Self::OpFlagIsFirstInSequence),
             "OpFlagIsLastInSequence" => Some(Self::OpFlagIsLastInSequence),
+            "OpFlagIsFieldMul" => Some(Self::OpFlagIsFieldMul),
+            "OpFlagIsFieldAdd" => Some(Self::OpFlagIsFieldAdd),
+            "OpFlagIsFieldSub" => Some(Self::OpFlagIsFieldSub),
+            "OpFlagIsFieldInv" => Some(Self::OpFlagIsFieldInv),
+            "OpFlagIsFieldAssertEq" => Some(Self::OpFlagIsFieldAssertEq),
+            "OpFlagIsFieldMov" => Some(Self::OpFlagIsFieldMov),
+            "OpFlagIsFieldSLL64" => Some(Self::OpFlagIsFieldSll64),
+            "OpFlagIsFieldSLL128" => Some(Self::OpFlagIsFieldSll128),
+            "OpFlagIsFieldSLL192" => Some(Self::OpFlagIsFieldSll192),
+            "FieldRs1Value" => Some(Self::FieldRs1Value),
+            "FieldRs2Value" => Some(Self::FieldRs2Value),
+            "FieldRdWriteValue" => Some(Self::FieldRdWriteValue),
             _ => None,
         }
     }
@@ -447,6 +480,22 @@ impl Stage1Rv64Oracle {
             Self::OpFlagIsLastInSequence => {
                 Stage1Rv64Scalar::Bool(row.flags[FLAG_IS_LAST_IN_SEQUENCE])
             }
+            Self::OpFlagIsFieldMul => Stage1Rv64Scalar::Bool(row.flags[FLAG_IS_FIELD_MUL]),
+            Self::OpFlagIsFieldAdd => Stage1Rv64Scalar::Bool(row.flags[FLAG_IS_FIELD_ADD]),
+            Self::OpFlagIsFieldSub => Stage1Rv64Scalar::Bool(row.flags[FLAG_IS_FIELD_SUB]),
+            Self::OpFlagIsFieldInv => Stage1Rv64Scalar::Bool(row.flags[FLAG_IS_FIELD_INV]),
+            Self::OpFlagIsFieldAssertEq => {
+                Stage1Rv64Scalar::Bool(row.flags[FLAG_IS_FIELD_ASSERT_EQ])
+            }
+            Self::OpFlagIsFieldMov => Stage1Rv64Scalar::Bool(row.flags[FLAG_IS_FIELD_MOV]),
+            Self::OpFlagIsFieldSll64 => Stage1Rv64Scalar::Bool(row.flags[FLAG_IS_FIELD_SLL64]),
+            Self::OpFlagIsFieldSll128 => Stage1Rv64Scalar::Bool(row.flags[FLAG_IS_FIELD_SLL128]),
+            Self::OpFlagIsFieldSll192 => Stage1Rv64Scalar::Bool(row.flags[FLAG_IS_FIELD_SLL192]),
+            // Phase 4a: FR operand evaluators return 0 — populated when Phase
+            // 4 wires up the FR Twist witness path.
+            Self::FieldRs1Value => Stage1Rv64Scalar::U64(0),
+            Self::FieldRs2Value => Stage1Rv64Scalar::U64(0),
+            Self::FieldRdWriteValue => Stage1Rv64Scalar::U64(0),
         }
     }
 
@@ -1112,6 +1161,18 @@ mod tests {
         "OpFlagIsCompressed",
         "OpFlagIsFirstInSequence",
         "OpFlagIsLastInSequence",
+        "OpFlagIsFieldMul",
+        "OpFlagIsFieldAdd",
+        "OpFlagIsFieldSub",
+        "OpFlagIsFieldInv",
+        "OpFlagIsFieldAssertEq",
+        "OpFlagIsFieldMov",
+        "OpFlagIsFieldSLL64",
+        "OpFlagIsFieldSLL128",
+        "OpFlagIsFieldSLL192",
+        "FieldRs1Value",
+        "FieldRs2Value",
+        "FieldRdWriteValue",
     ];
 
     fn rv64_eval_test_cycles() -> Vec<Stage1Rv64Cycle> {
