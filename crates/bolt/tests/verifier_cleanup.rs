@@ -6,7 +6,11 @@
 
 use std::path::{Path, PathBuf};
 
-const GENERATED_VERIFIER_TARGET_LOC: usize = 6_000;
+// Bumped from 6_000 to 6_050 to accommodate the fixture shape change
+// (16, 10, 16) → (18, 14, 14). Higher log_t / log_k_bytecode produces
+// larger round-schedule arrays and more verifier descriptor entries.
+// Re-tighten when the generated surface drops below this.
+const GENERATED_VERIFIER_TARGET_LOC: usize = 6_050;
 const GENERATED_VERIFIER_STRETCH_LOC: usize = 3_000;
 const VERIFIER_RS_TARGET_LOC: usize = 500;
 const VERIFIER_RS_STRETCH_LOC: usize = 350;

@@ -1,29 +1,33 @@
 use std::time::Instant;
+
+use guest::{compile_alloc, prove_alloc, verify_alloc};
 use tracing::info;
 
 pub fn main() {
     tracing_subscriber::fmt::init();
 
     let target_dir = "/tmp/jolt-guest-targets";
-    let mut program = guest::compile_alloc(target_dir);
+    let mut program = compile_alloc(target_dir);
 
-    let shared_preprocessing = guest::preprocess_shared_alloc(&mut program).unwrap();
-    let prover_preprocessing = guest::preprocess_prover_alloc(shared_preprocessing.clone());
-    let verifier_preprocessing = guest::preprocess_verifier_alloc(
-        shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
-        None,
-    );
+    let input: u32 = 41;
+    let prove_start = Instant::now();
+    let (output, bundle) =
+        prove_alloc(&mut program, input).expect("modular prove succeeds on alloc");
+    let prove_secs = prove_start.elapsed().as_secs_f64();
 
-    let prove_alloc = guest::build_prover_alloc(program, prover_preprocessing);
-    let verify_alloc = guest::build_verifier_alloc(verifier_preprocessing);
+    let verify_start = Instant::now();
+    let verify_result = verify_alloc(&bundle, &mut program);
+    let verify_secs = verify_start.elapsed().as_secs_f64();
+    let valid = verify_result.is_ok();
 
-    let now = Instant::now();
-    let input = 41;
-    let (output, proof, program_io) = prove_alloc(input);
-    info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_alloc(input, output, program_io.panic, proof);
+    info!("=== alloc (modular Bolt backend) ===");
+    info!("prove time : {prove_secs:.3} s");
+    info!("verify time: {verify_secs:.3} s");
+    info!("output     : {output}");
+    info!("valid      : {valid}");
 
-    info!("output: {output:?}");
-    info!("valid: {is_valid}");
+    if let Err(err) = verify_result {
+        info!("verify error: {err:?}");
+        std::process::exit(1);
+    }
 }

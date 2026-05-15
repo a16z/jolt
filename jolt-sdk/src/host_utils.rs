@@ -4,7 +4,7 @@ pub use jolt_core::host;
 pub use jolt_core::zkvm::proof_serialization::serialize_and_print_size;
 #[cfg(feature = "host")]
 pub use jolt_core::zkvm::{prover::JoltProverPreprocessing, RV64IMACProver};
-#[cfg(feature = "host")]
+#[cfg(all(feature = "host", not(target_arch = "wasm32")))]
 pub use jolt_host as modular;
 #[cfg(feature = "host")]
 pub use jolt_program::execution::{
