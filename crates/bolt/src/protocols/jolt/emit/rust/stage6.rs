@@ -22,7 +22,7 @@ use super::output_claims::{
 };
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
-use crate::protocols::jolt::verifier_plan::{
+use crate::protocols::jolt::stage6_bytecode_read_raf_plan::{
     stage6_bytecode_read_raf_plan, BytecodeFlag, BytecodeReadRafPlan, BytecodeReadRafTermPlan,
     BytecodeRegister,
 };
