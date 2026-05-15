@@ -9,14 +9,15 @@ use melior::ir::block::BlockLike;
 use melior::ir::operation::{OperationLike, OperationResult};
 use melior::ir::{Attribute, OperationRef};
 
-use super::output_claims::{
-    FieldExprDependencies, StructuredPolynomialEvalPlan as Stage5StructuredPolynomialEvalPlan,
+use crate::emit::rust::{push_format, EmitError, RustSourceFile};
+use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
+use crate::protocols::jolt::verifier_output_claims::{
+    self, FieldExprDependencies,
+    StructuredPolynomialEvalPlan as Stage5StructuredPolynomialEvalPlan,
     StructuredPolynomialPointPlan as Stage5StructuredPolynomialPointPlan,
     SumcheckOutputClaimAst as Stage5SumcheckOutputClaimAst,
     SumcheckOutputClaimPlan as Stage5SumcheckOutputClaimPlan,
 };
-use crate::emit::rust::{push_format, EmitError, RustSourceFile};
-use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
 use crate::schema::verify_cpu_schema;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -557,7 +558,7 @@ impl Stage5CpuProgram {
             .role()
             .ok_or_else(|| EmitError::new("missing cpu party role"))?;
         if role == Role::Prover {
-            super::output_claims::prune_output_only_field_exprs(
+            verifier_output_claims::prune_output_only_field_exprs(
                 &mut field_exprs,
                 claims.iter().map(|claim| claim.claim_value.as_str()),
                 output_claim_asts
@@ -566,7 +567,7 @@ impl Stage5CpuProgram {
             );
         }
         let output_claims = if role == Role::Verifier {
-            super::output_claims::resolve_output_claims(
+            verifier_output_claims::resolve_output_claims(
                 "stage5",
                 &output_values,
                 &[],
@@ -901,9 +902,9 @@ impl Stage5CpuProgram {
         );
         let field_values = self.field_value_symbols();
         let point_values = self.point_value_symbols();
-        super::output_claims::verify_output_claims(
+        verifier_output_claims::verify_output_claims(
             "stage5",
-            super::output_claims::OutputClaimVerification {
+            verifier_output_claims::OutputClaimVerification {
                 output_values: &self.output_values,
                 output_families: &[],
                 output_product_families: &[],

@@ -6,6 +6,7 @@ pub mod phases;
 pub(crate) mod rust_target_plan;
 pub(crate) mod stage6_bytecode_read_raf_plan;
 pub mod validate;
+pub(crate) mod verifier_output_claims;
 pub(crate) mod verifier_plan;
 
 pub use artifacts::{

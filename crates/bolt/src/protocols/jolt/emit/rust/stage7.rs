@@ -9,8 +9,10 @@ use melior::ir::block::BlockLike;
 use melior::ir::operation::{OperationLike, OperationResult};
 use melior::ir::{Attribute, OperationRef};
 
-use super::output_claims::{
-    parse_output_eval_family_plan, parse_output_function_family_plan,
+use crate::emit::rust::{push_format, EmitError, RustSourceFile};
+use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
+use crate::protocols::jolt::verifier_output_claims::{
+    self, parse_output_eval_family_plan, parse_output_function_family_plan,
     parse_output_product_family_plan, FieldExprDependencies,
     StructuredPolynomialEvalPlan as Stage7StructuredPolynomialEvalPlan,
     StructuredPolynomialPointPlan as Stage7StructuredPolynomialPointPlan,
@@ -20,8 +22,6 @@ use super::output_claims::{
     SumcheckOutputFunctionFamilyPlan as Stage7SumcheckOutputFunctionFamilyPlan,
     SumcheckOutputProductFamilyPlan as Stage7SumcheckOutputProductFamilyPlan,
 };
-use crate::emit::rust::{push_format, EmitError, RustSourceFile};
-use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
 use crate::schema::verify_cpu_schema;
 
 use super::plan_tokens::{
@@ -606,7 +606,7 @@ impl Stage7CpuProgram {
             .role()
             .ok_or_else(|| EmitError::new("missing cpu party role"))?;
         if role == Role::Prover {
-            super::output_claims::prune_output_only_field_exprs(
+            verifier_output_claims::prune_output_only_field_exprs(
                 &mut field_exprs,
                 claims.iter().map(|claim| claim.claim_value.as_str()),
                 output_claim_asts
@@ -615,7 +615,7 @@ impl Stage7CpuProgram {
             );
         }
         let output_claims = if role == Role::Verifier {
-            super::output_claims::resolve_output_claims(
+            verifier_output_claims::resolve_output_claims(
                 "stage7",
                 &output_values,
                 &output_families,
@@ -962,9 +962,9 @@ impl Stage7CpuProgram {
         );
         let field_values = self.field_value_symbols();
         let point_values = self.point_value_symbols();
-        super::output_claims::verify_output_claims(
+        verifier_output_claims::verify_output_claims(
             "stage7",
-            super::output_claims::OutputClaimVerification {
+            verifier_output_claims::OutputClaimVerification {
                 output_values: &self.output_values,
                 output_families: &self.output_families,
                 output_product_families: &self.output_product_families,
