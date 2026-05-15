@@ -11,19 +11,19 @@ use melior::ir::{Attribute, OperationRef};
 
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
-use crate::protocols::jolt::stage5_instruction_read_raf_plan::Stage5InstructionReadRafEmitPlan;
+use crate::protocols::jolt::stage5_instruction_read_raf_plan::{
+    Stage5InstructionReadRafEmitPlan, Stage5InstructionReadRafOutputFieldExprPlan,
+};
 use crate::protocols::jolt::verifier_output_claims::{
     self, parse_output_eval_family_plan, parse_output_function_family_plan,
     parse_output_product_family_plan, FieldExprDependencies,
-    StructuredPolynomialEvalPlan as Stage5StructuredPolynomialEvalPlan, StructuredPolynomialKind,
-    StructuredPolynomialPointLength, StructuredPolynomialPointOrder,
+    StructuredPolynomialEvalPlan as Stage5StructuredPolynomialEvalPlan,
     StructuredPolynomialPointPlan as Stage5StructuredPolynomialPointPlan,
-    StructuredPolynomialPointSegment, SumcheckOutputClaimAst as Stage5SumcheckOutputClaimAst,
+    SumcheckOutputClaimAst as Stage5SumcheckOutputClaimAst,
     SumcheckOutputClaimPlan as Stage5SumcheckOutputClaimPlan,
     SumcheckOutputEvalFamilyPlan as Stage5SumcheckOutputEvalFamilyPlan,
     SumcheckOutputFunctionFamilyPlan as Stage5SumcheckOutputFunctionFamilyPlan,
     SumcheckOutputProductFamilyPlan as Stage5SumcheckOutputProductFamilyPlan,
-    SumcheckOutputProductFamilyTermPlan as Stage5SumcheckOutputProductFamilyTermPlan,
 };
 use crate::schema::verify_cpu_schema;
 
@@ -197,158 +197,13 @@ pub struct Stage5SumcheckEvalPlan {
     pub oracle: String,
 }
 
-fn append_instruction_read_raf_output_claim(
-    field_exprs: &mut Vec<Stage5FieldExprPlan>,
-    output_claims: &mut Vec<Stage5SumcheckOutputClaimPlan>,
-    plan: &Stage5InstructionReadRafEmitPlan,
-) {
-    const PREFIX: &str = "stage5.instruction_read_raf.output";
-
-    let lookup_table_terms = plan
-        .table_flag_evals
-        .evals
-        .iter()
-        .zip(
-            plan.point_values
-                .iter()
-                .filter(|value| value.is_lookup_table()),
-        )
-        .map(
-            |(flag_eval, table_value)| Stage5SumcheckOutputProductFamilyTermPlan {
-                gamma_power_offset: 0,
-                evals: vec![table_value.symbol.clone(), flag_eval.clone()],
-                factors: Vec::new(),
-            },
-        )
-        .collect::<Vec<_>>();
-    let table_value_family = Stage5SumcheckOutputProductFamilyPlan {
-        symbol: format!("{PREFIX}.product.LookupTableValues"),
-        gamma: None,
-        terms: lookup_table_terms,
-    };
-    let ra_product_family = Stage5SumcheckOutputProductFamilyPlan {
-        symbol: format!("{PREFIX}.product.InstructionRa"),
-        gamma: None,
-        terms: vec![Stage5SumcheckOutputProductFamilyTermPlan {
-            gamma_power_offset: 0,
-            evals: plan.instruction_ra_evals.evals.clone(),
-            factors: Vec::new(),
-        }],
-    };
-    let eq = Stage5StructuredPolynomialEvalPlan {
-        symbol: format!("{PREFIX}.eq.LookupOutputCycle"),
-        polynomial: StructuredPolynomialKind::Eq,
-        x_point: Stage5StructuredPolynomialPointPlan {
-            source: plan.point.clone(),
-            segment: StructuredPolynomialPointSegment::Suffix,
-            length: StructuredPolynomialPointLength::YPoint,
-            order: StructuredPolynomialPointOrder::Reverse,
-        },
-        y_point: Stage5StructuredPolynomialPointPlan {
-            source: plan.lookup_output_point.clone(),
-            segment: StructuredPolynomialPointSegment::Full,
-            length: StructuredPolynomialPointLength::Full,
-            order: StructuredPolynomialPointOrder::AsIs,
-        },
-    };
-
-    let left = "stage5.instruction_read_raf.point_value.LeftLookupOperand";
-    let right = "stage5.instruction_read_raf.point_value.RightLookupOperand";
-    let identity = "stage5.instruction_read_raf.point_value.Identity";
-    let table_values = table_value_family.symbol.clone();
-    let ra_product = ra_product_family.symbol.clone();
-    let eq_symbol = eq.symbol.clone();
-
-    field_exprs.extend([
-        stage5_output_field_expr(
-            &format!("{PREFIX}.term.GammaRightLookupOperand"),
-            "field.mul",
-            &[&plan.gamma, right],
-        ),
-        stage5_output_field_expr(
-            &format!("{PREFIX}.partial.LeftPlusGammaRight"),
-            "field.add",
-            &[left, &format!("{PREFIX}.term.GammaRightLookupOperand")],
-        ),
-        stage5_output_field_expr(
-            &format!("{PREFIX}.term.RafFlagLeftPlusGammaRight"),
-            "field.mul",
-            &[
-                &plan.raf_flag_eval,
-                &format!("{PREFIX}.partial.LeftPlusGammaRight"),
-            ],
-        ),
-        stage5_output_field_expr(
-            &format!("{PREFIX}.partial.NonRafLookupOperands"),
-            "field.sub",
-            &[
-                &format!("{PREFIX}.partial.LeftPlusGammaRight"),
-                &format!("{PREFIX}.term.RafFlagLeftPlusGammaRight"),
-            ],
-        ),
-        stage5_output_field_expr(
-            &format!("{PREFIX}.term.GammaIdentity"),
-            "field.mul",
-            &[&plan.gamma, identity],
-        ),
-        stage5_output_field_expr(
-            &format!("{PREFIX}.term.RafFlagGammaIdentity"),
-            "field.mul",
-            &[&plan.raf_flag_eval, &format!("{PREFIX}.term.GammaIdentity")],
-        ),
-        stage5_output_field_expr(
-            &format!("{PREFIX}.partial.RafClaim"),
-            "field.add",
-            &[
-                &format!("{PREFIX}.partial.NonRafLookupOperands"),
-                &format!("{PREFIX}.term.RafFlagGammaIdentity"),
-            ],
-        ),
-        stage5_output_field_expr(
-            &format!("{PREFIX}.term.GammaRafClaim"),
-            "field.mul",
-            &[&plan.gamma, &format!("{PREFIX}.partial.RafClaim")],
-        ),
-        stage5_output_field_expr(
-            &format!("{PREFIX}.partial.LookupOrRaf"),
-            "field.add",
-            &[&table_values, &format!("{PREFIX}.term.GammaRafClaim")],
-        ),
-        stage5_output_field_expr(
-            &format!("{PREFIX}.partial.EqRa"),
-            "field.mul",
-            &[&eq_symbol, &ra_product],
-        ),
-        stage5_output_field_expr(
-            &format!("{PREFIX}.claim_expr"),
-            "field.mul",
-            &[
-                &format!("{PREFIX}.partial.EqRa"),
-                &format!("{PREFIX}.partial.LookupOrRaf"),
-            ],
-        ),
-    ]);
-    output_claims.push(Stage5SumcheckOutputClaimPlan {
-        relation: "jolt.stage5.instruction_read_raf".to_owned(),
-        polynomial_evals: vec![eq],
-        eval_families: Vec::new(),
-        product_families: vec![table_value_family, ra_product_family],
-        function_families: Vec::new(),
-        claim_value: format!("{PREFIX}.claim_expr"),
-    });
-}
-
-fn stage5_output_field_expr(symbol: &str, formula: &str, operands: &[&str]) -> Stage5FieldExprPlan {
-    let operands = operands
-        .iter()
-        .map(|operand| (*operand).to_owned())
-        .collect::<Vec<_>>();
+fn stage5_field_expr(expr: Stage5InstructionReadRafOutputFieldExprPlan) -> Stage5FieldExprPlan {
     Stage5FieldExprPlan {
-        symbol: symbol.to_owned(),
+        symbol: expr.symbol,
         kind: "op".to_owned(),
-        formula: formula.to_owned(),
-        operand_names: operands.clone(),
-        operands,
+        formula: expr.formula,
+        operand_names: expr.operands.clone(),
+        operands: expr.operands,
     }
 }
 
@@ -770,7 +625,9 @@ impl Stage5CpuProgram {
             Vec::new()
         };
         if let Some(plan) = &instruction_read_raf_plan {
-            append_instruction_read_raf_output_claim(&mut field_exprs, &mut output_claims, plan);
+            let output_plan = plan.output_claim_plan();
+            field_exprs.extend(output_plan.field_exprs.into_iter().map(stage5_field_expr));
+            output_claims.push(output_plan.claim);
         }
 
         Ok(Self {
