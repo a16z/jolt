@@ -295,12 +295,17 @@ pub fn evaluate_stage67_bytecode_read_raf<E: Stage67BytecodeEntry>(
             * gamma_powers[stage.output_gamma_power];
     }
 
-    let entry_bits = (0..log_k)
-        .map(|index| Fr::from_u64(((entry_bytecode_index >> (log_k - 1 - index)) & 1) as u64))
-        .collect::<Vec<_>>();
+    let entry_address_eq =
+        EqPolynomial::<Fr>::try_mle_at_boolean_index(entry_bytecode_index, r_address_prime).ok_or(
+            RuntimePlanError::InvalidInputLength {
+                input: plan.entry_bytecode_index,
+                expected: 1usize.checked_shl(log_k as u32).unwrap_or(usize::MAX),
+                actual: entry_bytecode_index.saturating_add(1),
+            },
+        )?;
     let zero_cycle = vec![Fr::from_u64(0); r_cycle_prime.len()];
     let entry_contrib = gamma_powers[plan.entry_contribution.gamma_power]
-        * EqPolynomial::<Fr>::mle(&entry_bits, r_address_prime)
+        * entry_address_eq
         * EqPolynomial::<Fr>::mle(&zero_cycle, r_cycle_prime);
     let bytecode_ra = eval_family_values(evals, plan.bytecode_ra_evals)?
         .into_iter()
