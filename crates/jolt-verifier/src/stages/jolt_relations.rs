@@ -15,8 +15,7 @@
 //! - typed bytecode read-RAF plan data and its small Jolt-specific evaluator
 //! - the small Jolt-specific field-math helpers
 //!   (`operand_polynomial_eval`, `identity_polynomial_eval`,
-//!   `lt_polynomial_eval`, `bytecode_gamma_powers`) used only by Jolt
-//!   verification
+//!   `bytecode_gamma_powers`) used only by Jolt verification
 //!
 //! Treat changes here as Jolt protocol changes, not as compiler-output
 //! cleanups. Generic Bolt verifier scaffolding (typed plan structs,
@@ -652,14 +651,4 @@ pub fn identity_polynomial_eval(point: &[Fr]) -> Fr {
         .enumerate()
         .map(|(index, value)| value.mul_pow_2(point.len() - 1 - index))
         .sum()
-}
-
-pub fn lt_polynomial_eval(x: &[Fr], y: &[Fr]) -> Fr {
-    let mut lt_eval = Fr::from_u64(0);
-    let mut eq_term = Fr::from_u64(1);
-    for (x_i, y_i) in x.iter().zip(y.iter()) {
-        lt_eval += (Fr::from_u64(1) - *x_i) * *y_i * eq_term;
-        eq_term *= Fr::from_u64(1) - *x_i - *y_i + *x_i * *y_i + *x_i * *y_i;
-    }
-    lt_eval
 }

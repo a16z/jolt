@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use bolt_verifier_runtime::{batch_claims, find_batch, find_plan};
-use super::jolt_relations::{evaluate_stage67_bytecode_read_raf, normalize_bytecode_read_raf_point, normalize_instruction_read_raf_point, stage67_trace_rounds, Stage67BytecodeEntry, Stage67BytecodeFlag, Stage67BytecodeOutputTermPlan, Stage67BytecodeReadRafPlan, Stage67BytecodeRegister, Stage67BytecodeRegisterSymbols, Stage67BytecodeStagePlan, Stage67BytecodeTermPlan, Stage67RelationSymbols};
+use super::jolt_relations::{evaluate_stage67_bytecode_read_raf, normalize_bytecode_read_raf_point, stage67_trace_rounds, Stage67BytecodeEntry, Stage67BytecodeFlag, Stage67BytecodeOutputTermPlan, Stage67BytecodeReadRafPlan, Stage67BytecodeRegister, Stage67BytecodeRegisterSymbols, Stage67BytecodeStagePlan, Stage67BytecodeTermPlan, Stage67RelationSymbols};
 use jolt_field::{Field, Fr};
 use jolt_sumcheck::SumcheckError;
 use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};
@@ -1047,7 +1047,6 @@ fn observe_stage6_sumcheck_output<F: Field>(
                 "reverse" => point.reverse(),
                 "bytecode_read_raf" => point = normalize_bytecode_read_raf_point(&point, stage6_trace_rounds(program)?, "stage6.bytecode_read_raf.point")?,
                 "stage6_booleanity" => {}
-                "instruction_read_raf" => point = normalize_instruction_read_raf_point(&point, "stage6.instruction_read_raf.point")?,
                 _ => {
                     return Err(VerifyStage6Error::InvalidProof {
                         driver: output.driver,

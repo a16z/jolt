@@ -594,7 +594,6 @@ fn observe_stage7_sumcheck_output<F: Field>(
             match instance.point_order {
                 "as_is" => {}
                 "reverse" => point.reverse(),
-                "stage7_booleanity" => {}
                 _ => {
                     return Err(VerifyStage7Error::InvalidProof {
                         driver: output.driver,
