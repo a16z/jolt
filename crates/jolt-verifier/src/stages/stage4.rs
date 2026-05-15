@@ -358,6 +358,15 @@ fn verify_batched_stage4<T>(
 where
     T: Transcript<Challenge = Fr>,
 {
+    store.evaluate_available_points(
+        program.point_slices,
+        program.point_concats,
+        |input, expected, actual| VerifyStage4Error::InvalidInputLength {
+            input,
+            expected,
+            actual,
+        },
+    )?;
     bolt_verifier_runtime::verify_batched_sumcheck(
         driver,
         proof,
