@@ -11,7 +11,6 @@ pub(crate) struct BytecodeReadRafPlan {
     pub(crate) bytecode_ra_eval_names_const: &'static str,
     pub(crate) bytecode_ra_eval_family_const: &'static str,
     pub(crate) bytecode_ra_eval_family_symbol: &'static str,
-    pub(crate) bytecode_ra_evals: &'static [&'static str],
     pub(crate) entries: &'static str,
     pub(crate) entry_bytecode_index: &'static str,
     pub(crate) stages_const: &'static str,
@@ -316,11 +315,6 @@ const STAGE6_BYTECODE_READ_RAF_PLAN: BytecodeReadRafPlan = BytecodeReadRafPlan {
     bytecode_ra_eval_names_const: "STAGE6_BYTECODE_RA_EVAL_NAMES",
     bytecode_ra_eval_family_const: "STAGE6_BYTECODE_RA_EVALS",
     bytecode_ra_eval_family_symbol: "stage6.bytecode_read_raf.eval.BytecodeRa",
-    bytecode_ra_evals: &[
-        "stage6.bytecode_read_raf.eval.BytecodeRa_0",
-        "stage6.bytecode_read_raf.eval.BytecodeRa_1",
-        "stage6.bytecode_read_raf.eval.BytecodeRa_2",
-    ],
     entries: "stage6.bytecode_read_raf.entries",
     entry_bytecode_index: "stage6.bytecode_read_raf.entry_bytecode_index",
     stages_const: "STAGE6_BYTECODE_STAGES",
@@ -336,8 +330,8 @@ const STAGE6_BYTECODE_READ_RAF_PLAN: BytecodeReadRafPlan = BytecodeReadRafPlan {
     entry_lookup_table: "stage6.bytecode.entry.lookup_table",
 };
 
-pub(crate) fn emit_stage6_bytecode_read_raf_plan_constants() -> String {
-    emit_bytecode_read_raf_plan(&STAGE6_BYTECODE_READ_RAF_PLAN)
+pub(crate) fn emit_stage6_bytecode_read_raf_plan_constants(bytecode_ra_evals: &[String]) -> String {
+    emit_bytecode_read_raf_plan(&STAGE6_BYTECODE_READ_RAF_PLAN, bytecode_ra_evals)
 }
 
 #[cfg(test)]
@@ -345,19 +339,21 @@ pub(crate) fn stage6_bytecode_read_raf_output_contribution_symbol() -> &'static 
     STAGE6_BYTECODE_READ_RAF_PLAN.output_contribution
 }
 
-pub(crate) fn stage6_bytecode_read_raf_output_claim_plan() -> SumcheckOutputClaimPlan {
-    STAGE6_BYTECODE_READ_RAF_PLAN.output_claim_plan()
+pub(crate) fn stage6_bytecode_read_raf_output_claim_plan(
+    bytecode_ra_evals: &[String],
+) -> SumcheckOutputClaimPlan {
+    STAGE6_BYTECODE_READ_RAF_PLAN.output_claim_plan(bytecode_ra_evals)
 }
 
 impl BytecodeReadRafPlan {
-    fn output_claim_plan(&self) -> SumcheckOutputClaimPlan {
+    fn output_claim_plan(&self, bytecode_ra_evals: &[String]) -> SumcheckOutputClaimPlan {
         let product_family = SumcheckOutputProductFamilyPlan {
             symbol: "stage6.bytecode_read_raf.output.product.BytecodeReadRaf".to_owned(),
             gamma: None,
             terms: vec![SumcheckOutputProductFamilyTermPlan {
                 gamma_power_offset: 0,
                 evals: std::iter::once(self.output_contribution.to_owned())
-                    .chain(self.bytecode_ra_evals.iter().map(|eval| (*eval).to_owned()))
+                    .chain(bytecode_ra_evals.iter().cloned())
                     .collect(),
                 factors: Vec::new(),
             }],
@@ -374,7 +370,7 @@ impl BytecodeReadRafPlan {
     }
 }
 
-fn emit_bytecode_read_raf_plan(plan: &BytecodeReadRafPlan) -> String {
+fn emit_bytecode_read_raf_plan(plan: &BytecodeReadRafPlan, bytecode_ra_evals: &[String]) -> String {
     let mut source = "\n".to_owned();
 
     push_format(
@@ -382,7 +378,7 @@ fn emit_bytecode_read_raf_plan(plan: &BytecodeReadRafPlan) -> String {
         format_args!(
             "#[rustfmt::skip]\nconst {}: &[&str] = &[{}];\n",
             plan.bytecode_ra_eval_names_const,
-            plan.bytecode_ra_evals
+            bytecode_ra_evals
                 .iter()
                 .map(|eval| rust_str(eval))
                 .collect::<Vec<_>>()
@@ -586,6 +582,12 @@ mod tests {
         BytecodeReadRafTermPlan, BytecodeRegister, STAGE6_BYTECODE_READ_RAF_PLAN,
     };
 
+    fn bytecode_ra_evals() -> Vec<String> {
+        (0..4)
+            .map(|index| format!("stage6.bytecode_read_raf.eval.BytecodeRa_{index}"))
+            .collect()
+    }
+
     #[test]
     fn stage6_bytecode_plan_rows_encode_the_read_raf_reduction() {
         let plan = &STAGE6_BYTECODE_READ_RAF_PLAN;
@@ -678,7 +680,8 @@ mod tests {
 
     #[test]
     fn stage6_bytecode_output_claim_plan_uses_point_derived_contribution() {
-        let claim = stage6_bytecode_read_raf_output_claim_plan();
+        let bytecode_ra_evals = bytecode_ra_evals();
+        let claim = stage6_bytecode_read_raf_output_claim_plan(&bytecode_ra_evals);
 
         assert_eq!(claim.relation, "jolt.stage6.bytecode_read_raf");
         assert_eq!(
@@ -700,19 +703,22 @@ mod tests {
                 "stage6.bytecode_read_raf.eval.BytecodeRa_0".to_owned(),
                 "stage6.bytecode_read_raf.eval.BytecodeRa_1".to_owned(),
                 "stage6.bytecode_read_raf.eval.BytecodeRa_2".to_owned(),
+                "stage6.bytecode_read_raf.eval.BytecodeRa_3".to_owned(),
             ]
         );
     }
 
     #[test]
     fn stage6_bytecode_plan_renderer_emits_stage67_constants() {
-        let source = emit_stage6_bytecode_read_raf_plan_constants();
+        let bytecode_ra_evals = bytecode_ra_evals();
+        let source = emit_stage6_bytecode_read_raf_plan_constants(&bytecode_ra_evals);
 
         assert!(source.contains("const STAGE6_BYTECODE_STAGE1_TERMS"));
         assert!(source.contains("Stage67BytecodeTermPlan::LookupTable { gamma_base: 2 }"));
         assert!(source.contains("Stage67BytecodeFlag::IsInterleaved"));
         assert!(source.contains("Stage67BytecodeRegister::Rs2"));
         assert!(source.contains("const STAGE6_BYTECODE_RA_EVAL_NAMES"));
+        assert!(source.contains("\"stage6.bytecode_read_raf.eval.BytecodeRa_3\""));
         assert!(source.contains(
             "const STAGE6_BYTECODE_RA_EVALS: bolt_verifier_runtime::NamedEvalFamilyPlan"
         ));

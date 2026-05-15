@@ -727,6 +727,7 @@ fn expected_batched_output_claim(
                     instance,
                     evals,
                     &local_scalars,
+                    &[bolt_verifier_runtime::NamedPoint { symbol: STAGE5_INSTRUCTION_READ_RAF_PLAN.point, point: local_point }],
                     local_point,
                 )?
             }
@@ -737,9 +738,7 @@ fn expected_batched_output_claim(
                     program.field_exprs,
                     store,
                     instance,
-                    evals,
-                    &[],
-                    local_point,
+                    evals, &[], &[], local_point,
                 )?
             }
             relation => return Err(VerifyStage5Error::UnsupportedRelation { relation }),

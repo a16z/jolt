@@ -630,6 +630,12 @@ pub struct NamedScalar<F: Field> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NamedPoint<'a, F: Field> {
+    pub symbol: &'static str,
+    pub point: &'a [F],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NamedEvalFamilyPlan {
     pub symbol: &'static str,
     pub evals: &'static [&'static str],
@@ -1247,6 +1253,7 @@ pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
     instance_symbol: &'static str,
     evals: &[StageNamedEval<Fr>],
     local_scalars: &[NamedScalar<Fr>],
+    local_points: &[NamedPoint<'_, Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, RuntimePlanError> {
     let mut scratch = ScratchScalars::default();
@@ -1262,25 +1269,26 @@ pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
         scratch.insert(eval.name, eval.value);
     }
     for polynomial_eval in plan.polynomial_evals {
-        if polynomial_eval.x_point.source != instance_symbol {
-            return Err(RuntimePlanError::InvalidProof {
-                driver: instance_symbol,
-                reason: "structured polynomial x-point source mismatch",
-            });
-        }
+        let x_raw_point = output_claim_x_point_source(
+            polynomial_eval.x_point.source,
+            instance_symbol,
+            local_points,
+            local_point,
+            store,
+        )?;
         let y_raw_point = store.point_or(polynomial_eval.y_point.source, |symbol| {
             RuntimePlanError::MissingValue { symbol }
         })?;
         let x_point = evaluate_structured_polynomial_point(
             polynomial_eval.x_point,
-            local_point,
-            local_point,
+            x_raw_point,
+            x_raw_point,
             y_raw_point,
         )?;
         let y_point = evaluate_structured_polynomial_point(
             polynomial_eval.y_point,
             y_raw_point,
-            local_point,
+            x_raw_point,
             y_raw_point,
         )?;
         let value = evaluate_structured_polynomial(polynomial_eval.polynomial, &x_point, y_point)?;
@@ -1313,6 +1321,7 @@ pub fn evaluate_sumcheck_instance_output_claim<R: ProtocolRelation>(
     instance: &SumcheckInstanceResultPlan<R>,
     evals: &[StageNamedEval<Fr>],
     local_scalars: &[NamedScalar<Fr>],
+    local_points: &[NamedPoint<'_, Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, RuntimePlanError> {
     let output_claim = output_claims
@@ -1329,8 +1338,25 @@ pub fn evaluate_sumcheck_instance_output_claim<R: ProtocolRelation>(
         instance.symbol,
         evals,
         local_scalars,
+        local_points,
         local_point,
     )
+}
+
+fn output_claim_x_point_source<'a>(
+    source: &'static str,
+    instance_symbol: &'static str,
+    local_points: &'a [NamedPoint<'a, Fr>],
+    local_point: &'a [Fr],
+    store: &'a ValueStore<Fr>,
+) -> Result<&'a [Fr], RuntimePlanError> {
+    local_points
+        .iter()
+        .find(|point| point.symbol == source)
+        .map(|point| point.point)
+        .or_else(|| (source == instance_symbol).then_some(local_point))
+        .or_else(|| store.try_point(source))
+        .ok_or(RuntimePlanError::MissingValue { symbol: source })
 }
 
 fn evaluate_sumcheck_output_eval_family(

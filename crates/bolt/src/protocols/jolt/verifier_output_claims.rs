@@ -15,6 +15,14 @@ pub enum StructuredPolynomialKind {
 }
 
 impl StructuredPolynomialKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Eq => "eq",
+            Self::EqPlusOne => "eq_plus_one",
+            Self::Lt => "lt",
+        }
+    }
+
     pub fn from_cpu_attr(value: &str) -> Result<Self, EmitError> {
         match value {
             "eq" => Ok(Self::Eq),
@@ -35,6 +43,14 @@ pub enum StructuredPolynomialPointSegment {
 }
 
 impl StructuredPolynomialPointSegment {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Prefix => "prefix",
+            Self::Suffix => "suffix",
+        }
+    }
+
     pub fn from_cpu_attr(value: &str) -> Result<Self, EmitError> {
         match value {
             "full" => Ok(Self::Full),
@@ -55,6 +71,14 @@ pub enum StructuredPolynomialPointLength {
 }
 
 impl StructuredPolynomialPointLength {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::XPoint => "x_point",
+            Self::YPoint => "y_point",
+        }
+    }
+
     pub fn from_cpu_attr(value: &str) -> Result<Self, EmitError> {
         match value {
             "full" => Ok(Self::Full),
@@ -74,6 +98,13 @@ pub enum StructuredPolynomialPointOrder {
 }
 
 impl StructuredPolynomialPointOrder {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AsIs => "as_is",
+            Self::Reverse => "reverse",
+        }
+    }
+
     pub fn from_cpu_attr(value: &str) -> Result<Self, EmitError> {
         match value {
             "as_is" => Ok(Self::AsIs),
@@ -91,6 +122,12 @@ pub enum SumcheckOutputFunctionKind {
 }
 
 impl SumcheckOutputFunctionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::BooleanZero => "boolean_zero",
+        }
+    }
+
     pub fn from_cpu_attr(value: &str) -> Result<Self, EmitError> {
         match value {
             "boolean_zero" => Ok(Self::BooleanZero),

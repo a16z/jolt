@@ -666,9 +666,7 @@ fn expected_batched_output_claim(
                     program.field_exprs,
                     store,
                     instance,
-                    evals,
-                    &[],
-                    local_point,
+                    evals, &[], &[], local_point,
                 )?
             }
             relation => return Err(VerifyStage7Error::UnsupportedRelation { relation }),

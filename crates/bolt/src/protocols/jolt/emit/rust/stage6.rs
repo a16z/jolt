@@ -651,7 +651,10 @@ impl Stage6CpuProgram {
             Vec::new()
         };
         if role == Role::Verifier {
-            output_claims.push(stage6_bytecode_read_raf_output_claim_plan());
+            let bytecode_ra_evals = stage6_bytecode_read_raf_eval_names(&evals)?;
+            output_claims.push(stage6_bytecode_read_raf_output_claim_plan(
+                &bytecode_ra_evals,
+            ));
         }
 
         let mut program = Self {
@@ -1768,7 +1771,6 @@ const STAGE6_RELATION_SYMBOLS: Stage67RelationSymbols = Stage67RelationSymbols {
 };
 "#,
         );
-        source.push_str(&emit_stage6_bytecode_read_raf_plan_constants());
         source.push_str(
             r#"
 #[derive(Debug)]
@@ -1798,6 +1800,10 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
         source.push_str(&self.emit_sumcheck_driver_constants()?);
         source.push_str(&self.emit_tail_constants()?);
         if self.role == Role::Verifier {
+            let bytecode_ra_evals = stage6_bytecode_read_raf_eval_names(&self.evals)?;
+            source.push_str(&emit_stage6_bytecode_read_raf_plan_constants(
+                &bytecode_ra_evals,
+            ));
             source.push_str(&self.emit_verifier_output_claim_constants()?);
         }
         let output_claims_field = if self.role == Role::Verifier {
@@ -2873,7 +2879,7 @@ fn expected_plan_output_claim(
         instance,
         evals,
         local_scalars,
-        local_point,
+        &[], local_point,
     )?)
 }
 
@@ -2906,6 +2912,46 @@ fn stage6_kernel_abi(relation: &str) -> Option<&'static str> {
     STAGE6_KERNEL_ABIS
         .iter()
         .find_map(|(candidate, abi)| (*candidate == relation).then_some(*abi))
+}
+
+fn stage6_bytecode_read_raf_eval_names(
+    evals: &[Stage6SumcheckEvalPlan],
+) -> Result<Vec<String>, EmitError> {
+    const PREFIX: &str = "stage6.bytecode_read_raf.eval.BytecodeRa_";
+
+    let mut indexed_evals = BTreeMap::new();
+    for eval in evals {
+        let Some(suffix) = eval.name.strip_prefix(PREFIX) else {
+            continue;
+        };
+        let index = suffix.parse::<usize>().map_err(|_| {
+            EmitError::new(format!(
+                "stage6 bytecode read-RAF eval `{}` has non-numeric BytecodeRa suffix",
+                eval.name
+            ))
+        })?;
+        if indexed_evals.insert(index, eval.name.clone()).is_some() {
+            return Err(EmitError::new(format!(
+                "stage6 bytecode read-RAF eval family has duplicate BytecodeRa_{index}"
+            )));
+        }
+    }
+    if indexed_evals.is_empty() {
+        return Err(EmitError::new(
+            "stage6 bytecode read-RAF eval family is missing BytecodeRa evals",
+        ));
+    }
+
+    let mut eval_names = Vec::with_capacity(indexed_evals.len());
+    for (expected, (index, eval)) in indexed_evals.into_iter().enumerate() {
+        if index != expected {
+            return Err(EmitError::new(format!(
+                "stage6 bytecode read-RAF eval family is not contiguous: expected BytecodeRa_{expected}, got BytecodeRa_{index}"
+            )));
+        }
+        eval_names.push(eval);
+    }
+    Ok(eval_names)
 }
 
 fn string_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<String, EmitError> {
@@ -3027,7 +3073,10 @@ fn operation_name<'c: 'a, 'a>(operation: impl OperationLike<'c, 'a>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{stage6_kernel_abi, STAGE6_KERNEL_ABIS};
+    use super::{
+        stage6_bytecode_read_raf_eval_names, stage6_kernel_abi, Stage6SumcheckEvalPlan,
+        STAGE6_KERNEL_ABIS,
+    };
 
     #[test]
     fn stage6_kernel_abi_contracts_cover_supported_relations() {
@@ -3041,5 +3090,48 @@ mod tests {
             Some("jolt_stage6_batched")
         );
         assert_eq!(stage6_kernel_abi("jolt.stage7.batched"), None);
+    }
+
+    #[test]
+    fn stage6_bytecode_read_raf_eval_family_is_sorted_by_suffix() {
+        let evals = vec![
+            eval("stage6.bytecode_read_raf.eval.BytecodeRa_2"),
+            eval("stage6.booleanity.eval.BytecodeRa_0"),
+            eval("stage6.bytecode_read_raf.eval.BytecodeRa_0"),
+            eval("stage6.bytecode_read_raf.eval.BytecodeRa_1"),
+        ];
+
+        assert_eq!(
+            stage6_bytecode_read_raf_eval_names(&evals).unwrap(),
+            vec![
+                "stage6.bytecode_read_raf.eval.BytecodeRa_0".to_owned(),
+                "stage6.bytecode_read_raf.eval.BytecodeRa_1".to_owned(),
+                "stage6.bytecode_read_raf.eval.BytecodeRa_2".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn stage6_bytecode_read_raf_eval_family_rejects_gaps() {
+        let evals = vec![
+            eval("stage6.bytecode_read_raf.eval.BytecodeRa_0"),
+            eval("stage6.bytecode_read_raf.eval.BytecodeRa_2"),
+        ];
+
+        let error = stage6_bytecode_read_raf_eval_names(&evals)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("not contiguous"));
+    }
+
+    fn eval(name: &'static str) -> Stage6SumcheckEvalPlan {
+        Stage6SumcheckEvalPlan {
+            symbol: name.to_owned(),
+            source: "stage6.sumcheck".to_owned(),
+            name: name.to_owned(),
+            index: 0,
+            oracle: "BytecodeRa_0".to_owned(),
+        }
     }
 }

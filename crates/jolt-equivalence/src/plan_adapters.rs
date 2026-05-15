@@ -630,18 +630,18 @@ macro_rules! define_stage_adapter_impl {
                                     .iter()
                                     .map(|value| $module::$output_value {
                                         symbol: super::leak_str(&value.symbol),
-                                        polynomial: super::generated_structured_polynomial_kind(&value.polynomial),
+                                        polynomial: super::generated_structured_polynomial_kind(value.polynomial.as_str()),
                                         x_point: bolt_verifier_runtime::StructuredPolynomialPointPlan {
                                             source: super::leak_str(&value.x_point.source),
-                                            segment: super::generated_structured_polynomial_point_segment(&value.x_point.segment),
-                                            length: super::generated_structured_polynomial_point_length(&value.x_point.length),
-                                            order: super::generated_structured_polynomial_point_order(&value.x_point.order),
+                                            segment: super::generated_structured_polynomial_point_segment(value.x_point.segment.as_str()),
+                                            length: super::generated_structured_polynomial_point_length(value.x_point.length.as_str()),
+                                            order: super::generated_structured_polynomial_point_order(value.x_point.order.as_str()),
                                         },
                                         y_point: bolt_verifier_runtime::StructuredPolynomialPointPlan {
                                             source: super::leak_str(&value.y_point.source),
-                                            segment: super::generated_structured_polynomial_point_segment(&value.y_point.segment),
-                                            length: super::generated_structured_polynomial_point_length(&value.y_point.length),
-                                            order: super::generated_structured_polynomial_point_order(&value.y_point.order),
+                                            segment: super::generated_structured_polynomial_point_segment(value.y_point.segment.as_str()),
+                                            length: super::generated_structured_polynomial_point_length(value.y_point.length.as_str()),
+                                            order: super::generated_structured_polynomial_point_order(value.y_point.order.as_str()),
                                         },
                                     })
                                     .collect(),
@@ -736,7 +736,7 @@ macro_rules! define_stage_adapter_impl {
                                                 .iter()
                                                 .map(|term| bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan {
                                                     gamma_power_offset: term.gamma_power_offset,
-                                                    function: super::generated_output_function_kind(&term.function),
+                                                    function: super::generated_output_function_kind(term.function.as_str()),
                                                     eval: super::leak_str(&term.eval),
                                                     factors: super::leak_slice(
                                                         term
@@ -751,6 +751,7 @@ macro_rules! define_stage_adapter_impl {
                                     })
                                     .collect(),
                             ),
+                            local_scalars: super::leak_str_slice(&plan.local_scalars),
                             claim_value: super::leak_str(&plan.claim_value),
                         })
                         .collect(),
