@@ -2999,6 +2999,7 @@ dependencies = [
  "jolt-verifier",
  "jolt-witness",
  "postcard",
+ "strum 0.28.0",
  "tracer",
  "tracing",
 ]

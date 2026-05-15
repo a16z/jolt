@@ -27,5 +27,6 @@ jolt-riscv.workspace = true
 jolt-transcript.workspace = true
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
+strum.workspace = true
 tracer = { workspace = true, features = ["std"] }
 tracing.workspace = true
