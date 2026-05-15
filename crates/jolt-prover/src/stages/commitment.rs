@@ -448,7 +448,11 @@ impl<'a> SparseCommitmentInputs<'a> {
                 .materialize_oracle(oracle, oracle_num_vars)
                 .flatten()
                 .ok_or(CommitmentPhaseError::MissingOracle { oracle })?;
-            let data = into_padded_oracle(oracle, oracle_num_vars, Cow::Owned(data))?;
+            // Pad to layout_num_vars (not oracle_num_vars) so the row-chunked
+            // commitment has uniform row-count across all oracles in the batch.
+            // Required for `joint_opening_hint`'s `combine_hints` to produce a
+            // valid aggregate commitment.
+            let data = into_padded_oracle(oracle, layout_num_vars, Cow::Owned(data))?;
             commit_with_layout(&data, layout_num_vars, prover_setup)
         }
     }
@@ -932,7 +936,7 @@ where
             .materialize_with_num_vars(oracle, oracle_num_vars(program, oracle, plan.num_vars))
             .ok_or(CommitmentPhaseError::MissingOracle { oracle })?;
         let oracle_num_vars = oracle_num_vars(program, oracle, plan.num_vars);
-        let data = into_padded_oracle(oracle, oracle_num_vars, data)?;
+        let data = into_padded_oracle(oracle, plan.num_vars, data)?;
         let (commitment, hint) = commit_with_layout(&data, plan.num_vars, prover_setup)?;
         artifacts.records.push(CommitmentRecord {
             artifact: plan.artifact,
