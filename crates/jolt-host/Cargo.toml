@@ -9,9 +9,6 @@ repository = "https://github.com/a16z/jolt"
 [lints]
 workspace = true
 
-[dev-dependencies]
-postcard = { workspace = true, features = ["alloc"] }
-
 [dependencies]
 ark-bn254 = { workspace = true, default-features = false }
 common.workspace = true
