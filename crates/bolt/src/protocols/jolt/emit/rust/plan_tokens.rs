@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use crate::emit::rust::EmitError;
 use crate::ir::Role;
 
@@ -55,6 +57,92 @@ pub(super) fn rust_str_slice_expr(values: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("&[{values}]")
+}
+
+pub(super) fn rust_str(value: &str) -> String {
+    format!("{value:?}")
+}
+
+pub(super) fn rust_option_str(value: Option<&str>) -> String {
+    value.map_or_else(
+        || "None".to_owned(),
+        |value| format!("Some({})", rust_str(value)),
+    )
+}
+
+pub(super) fn emit_str_array(name: &str, values: &[String]) -> String {
+    if values.is_empty() {
+        return format!("pub const {name}: &[&str] = &[];\n\n");
+    }
+    if let [value] = values {
+        return format!("pub const {name}: &[&str] = &[{}];\n\n", rust_str(value));
+    }
+    let entries = values
+        .iter()
+        .map(|value| format!("    {},", rust_str(value)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("pub const {name}: &[&str] = &[\n{entries}\n];\n\n")
+}
+
+pub(super) fn emit_usize_array(name: &str, values: &[usize]) -> String {
+    let entries = values
+        .iter()
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("pub const {name}: &[usize] = &[{entries}];\n\n")
+}
+
+pub(super) fn intern_str_array(
+    source: &mut String,
+    arrays: &mut Vec<(Vec<String>, String)>,
+    name_prefix: &str,
+    values: &[String],
+) -> String {
+    if let Some((_, name)) = arrays
+        .iter()
+        .find(|(existing, _)| existing.as_slice() == values)
+    {
+        return name.clone();
+    }
+    let name = format!("{name_prefix}_{}", arrays.len());
+    source.push_str(&emit_str_array(&name, values));
+    arrays.push((values.to_vec(), name.clone()));
+    name
+}
+
+pub(super) fn require_supported_symbol(
+    kind: &str,
+    actual: &str,
+    expected: &str,
+) -> Result<(), EmitError> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(EmitError::new(format!(
+            "unsupported {kind} @{actual}; expected @{expected}"
+        )))
+    }
+}
+
+pub(super) fn verify_count(
+    kind: &str,
+    symbol: &str,
+    expected: usize,
+    actual: usize,
+) -> Result<(), EmitError> {
+    if expected == actual {
+        Ok(())
+    } else {
+        Err(EmitError::new(format!(
+            "{kind} @{symbol} count mismatch: expected {expected}, got {actual}"
+        )))
+    }
+}
+
+pub(super) fn symbols<'a>(values: impl Iterator<Item = &'a String>) -> BTreeSet<String> {
+    values.cloned().collect()
 }
 
 pub(super) fn role_relation_kind_expr(
