@@ -13,7 +13,8 @@ pub(crate) struct BytecodeReadRafPlan {
     pub(crate) entry_bytecode_index: &'static str,
     pub(crate) stages_const: &'static str,
     pub(crate) stages: &'static [BytecodeReadRafStagePlan],
-    pub(crate) entry_contribution: BytecodeEntryContributionPlan,
+    pub(crate) output_terms_const: &'static str,
+    pub(crate) output_terms: &'static [BytecodeOutputTermPlan],
     pub(crate) registers: BytecodeRegisterSymbols,
     pub(crate) entry_lookup_table: &'static str,
 }
@@ -24,14 +25,19 @@ pub(crate) struct BytecodeReadRafStagePlan {
     pub(crate) gamma: &'static str,
     pub(crate) cycle_point: &'static str,
     pub(crate) register_point: Option<&'static str>,
-    pub(crate) output_gamma_power: usize,
-    pub(crate) identity_gamma_power: Option<usize>,
     pub(crate) terms: &'static [BytecodeReadRafTermPlan],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct BytecodeEntryContributionPlan {
-    pub(crate) gamma_power: usize,
+pub(crate) enum BytecodeOutputTermPlan {
+    StageValue {
+        stage_index: usize,
+        gamma_power: usize,
+        identity_gamma_power: Option<usize>,
+    },
+    Entry {
+        gamma_power: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -238,8 +244,6 @@ const STAGE6_BYTECODE_STAGES: &[BytecodeReadRafStagePlan] = &[
         gamma: "stage6.bytecode_read_raf.stage1_gamma",
         cycle_point: "stage6.input.stage1.Imm",
         register_point: None,
-        output_gamma_power: 0,
-        identity_gamma_power: Some(5),
         terms: STAGE6_BYTECODE_STAGE1_TERMS,
     },
     BytecodeReadRafStagePlan {
@@ -247,8 +251,6 @@ const STAGE6_BYTECODE_STAGES: &[BytecodeReadRafStagePlan] = &[
         gamma: "stage6.bytecode_read_raf.stage2_gamma",
         cycle_point: "stage6.input.stage2.OpFlagJump",
         register_point: None,
-        output_gamma_power: 1,
-        identity_gamma_power: None,
         terms: STAGE6_BYTECODE_STAGE2_TERMS,
     },
     BytecodeReadRafStagePlan {
@@ -256,8 +258,6 @@ const STAGE6_BYTECODE_STAGES: &[BytecodeReadRafStagePlan] = &[
         gamma: "stage6.bytecode_read_raf.stage3_gamma",
         cycle_point: "stage6.input.stage3.spartan_shift.UnexpandedPC",
         register_point: None,
-        output_gamma_power: 2,
-        identity_gamma_power: Some(4),
         terms: STAGE6_BYTECODE_STAGE3_TERMS,
     },
     BytecodeReadRafStagePlan {
@@ -265,8 +265,6 @@ const STAGE6_BYTECODE_STAGES: &[BytecodeReadRafStagePlan] = &[
         gamma: "stage6.bytecode_read_raf.stage4_gamma",
         cycle_point: "stage6.input.stage4.Rs1Ra",
         register_point: Some("stage6.input.stage4.Rs1Ra"),
-        output_gamma_power: 3,
-        identity_gamma_power: None,
         terms: STAGE6_BYTECODE_STAGE4_TERMS,
     },
     BytecodeReadRafStagePlan {
@@ -274,10 +272,37 @@ const STAGE6_BYTECODE_STAGES: &[BytecodeReadRafStagePlan] = &[
         gamma: "stage6.bytecode_read_raf.stage5_gamma",
         cycle_point: "stage6.input.stage5.registers_val_evaluation.RdWa",
         register_point: Some("stage6.input.stage5.registers_val_evaluation.RdWa"),
-        output_gamma_power: 4,
-        identity_gamma_power: None,
         terms: STAGE6_BYTECODE_STAGE5_TERMS,
     },
+];
+
+const STAGE6_BYTECODE_OUTPUT_TERMS: &[BytecodeOutputTermPlan] = &[
+    BytecodeOutputTermPlan::StageValue {
+        stage_index: 0,
+        gamma_power: 0,
+        identity_gamma_power: Some(5),
+    },
+    BytecodeOutputTermPlan::StageValue {
+        stage_index: 1,
+        gamma_power: 1,
+        identity_gamma_power: None,
+    },
+    BytecodeOutputTermPlan::StageValue {
+        stage_index: 2,
+        gamma_power: 2,
+        identity_gamma_power: Some(4),
+    },
+    BytecodeOutputTermPlan::StageValue {
+        stage_index: 3,
+        gamma_power: 3,
+        identity_gamma_power: None,
+    },
+    BytecodeOutputTermPlan::StageValue {
+        stage_index: 4,
+        gamma_power: 4,
+        identity_gamma_power: None,
+    },
+    BytecodeOutputTermPlan::Entry { gamma_power: 7 },
 ];
 
 const STAGE6_BYTECODE_READ_RAF_PLAN: BytecodeReadRafPlan = BytecodeReadRafPlan {
@@ -296,7 +321,8 @@ const STAGE6_BYTECODE_READ_RAF_PLAN: BytecodeReadRafPlan = BytecodeReadRafPlan {
     entry_bytecode_index: "stage6.bytecode_read_raf.entry_bytecode_index",
     stages_const: "STAGE6_BYTECODE_STAGES",
     stages: STAGE6_BYTECODE_STAGES,
-    entry_contribution: BytecodeEntryContributionPlan { gamma_power: 7 },
+    output_terms_const: "STAGE6_BYTECODE_OUTPUT_TERMS",
+    output_terms: STAGE6_BYTECODE_OUTPUT_TERMS,
     registers: BytecodeRegisterSymbols {
         rd: "stage6.bytecode.entry.rd",
         rs1: "stage6.bytecode.entry.rs1",
@@ -362,14 +388,27 @@ fn emit_bytecode_read_raf_plan(plan: &BytecodeReadRafPlan) -> String {
         push_format(
             &mut source,
             format_args!(
-                "    Stage67BytecodeStagePlan {{ gamma: {}, cycle_point: {}, register_point: {}, output_gamma_power: {}, identity_gamma_power: {}, terms: {} }},\n",
+                "    Stage67BytecodeStagePlan {{ gamma: {}, cycle_point: {}, register_point: {}, terms: {} }},\n",
                 rust_str(stage.gamma),
                 rust_str(stage.cycle_point),
                 rust_option_str(stage.register_point),
-                stage.output_gamma_power,
-                emit_option_usize(stage.identity_gamma_power),
                 stage.terms_const,
             ),
+        );
+    }
+    source.push_str("];\n\n");
+
+    push_format(
+        &mut source,
+        format_args!(
+            "const {}: &[Stage67BytecodeOutputTermPlan] = &[\n",
+            plan.output_terms_const
+        ),
+    );
+    for term in plan.output_terms {
+        push_format(
+            &mut source,
+            format_args!("    {},\n", emit_bytecode_output_term_plan(term)),
         );
     }
     source.push_str("];\n\n");
@@ -384,20 +423,14 @@ fn emit_bytecode_read_raf_plan(plan: &BytecodeReadRafPlan) -> String {
     push_format(
         &mut source,
         format_args!(
-            "    point: {},\n    gamma: {},\n    bytecode_ra_evals: &{},\n    entries: {},\n    entry_bytecode_index: {},\n    stages: {},\n",
+            "    point: {},\n    gamma: {},\n    bytecode_ra_evals: &{},\n    entries: {},\n    entry_bytecode_index: {},\n    stages: {},\n    output_terms: {},\n",
             rust_str(plan.point),
             rust_str(plan.gamma),
             plan.bytecode_ra_eval_family_const,
             rust_str(plan.entries),
             rust_str(plan.entry_bytecode_index),
             plan.stages_const,
-        ),
-    );
-    push_format(
-        &mut source,
-        format_args!(
-            "    entry_contribution: Stage67BytecodeEntryContributionPlan {{ gamma_power: {} }},\n",
-            plan.entry_contribution.gamma_power
+            plan.output_terms_const,
         ),
     );
     source.push_str("    registers: Stage67BytecodeRegisterSymbols {\n");
@@ -454,6 +487,22 @@ fn emit_bytecode_read_raf_term_plan(term: &BytecodeReadRafTermPlan) -> String {
     }
 }
 
+fn emit_bytecode_output_term_plan(term: &BytecodeOutputTermPlan) -> String {
+    match *term {
+        BytecodeOutputTermPlan::StageValue {
+            stage_index,
+            gamma_power,
+            identity_gamma_power,
+        } => format!(
+            "Stage67BytecodeOutputTermPlan::StageValue {{ stage_index: {stage_index}, gamma_power: {gamma_power}, identity_gamma_power: {} }}",
+            emit_option_usize(identity_gamma_power),
+        ),
+        BytecodeOutputTermPlan::Entry { gamma_power } => {
+            format!("Stage67BytecodeOutputTermPlan::Entry {{ gamma_power: {gamma_power} }}")
+        }
+    }
+}
+
 fn emit_bytecode_flag(flag: BytecodeFlag) -> &'static str {
     match flag {
         BytecodeFlag::IsInterleaved => "Stage67BytecodeFlag::IsInterleaved",
@@ -492,8 +541,8 @@ fn rust_option_str(value: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        emit_stage6_bytecode_read_raf_plan_constants, BytecodeFlag, BytecodeReadRafTermPlan,
-        BytecodeRegister, STAGE6_BYTECODE_READ_RAF_PLAN,
+        emit_stage6_bytecode_read_raf_plan_constants, BytecodeFlag, BytecodeOutputTermPlan,
+        BytecodeReadRafTermPlan, BytecodeRegister, STAGE6_BYTECODE_READ_RAF_PLAN,
     };
 
     #[test]
@@ -501,7 +550,7 @@ mod tests {
         let plan = &STAGE6_BYTECODE_READ_RAF_PLAN;
 
         assert_eq!(plan.stages.len(), 5);
-        assert_eq!(plan.entry_contribution.gamma_power, 7);
+        assert_eq!(plan.output_terms.len(), 6);
         assert_eq!(plan.registers.rd, "stage6.bytecode.entry.rd");
         assert_eq!(
             plan.entry_lookup_table,
@@ -509,9 +558,19 @@ mod tests {
         );
 
         let stage1 = &plan.stages[0];
-        assert_eq!(stage1.output_gamma_power, 0);
-        assert_eq!(stage1.identity_gamma_power, Some(5));
         assert_eq!(stage1.terms.len(), 16);
+        assert_eq!(
+            plan.output_terms[0],
+            BytecodeOutputTermPlan::StageValue {
+                stage_index: 0,
+                gamma_power: 0,
+                identity_gamma_power: Some(5),
+            }
+        );
+        assert_eq!(
+            plan.output_terms[5],
+            BytecodeOutputTermPlan::Entry { gamma_power: 7 }
+        );
         assert_eq!(
             stage1.terms[0],
             BytecodeReadRafTermPlan::Address { gamma_power: 0 }
@@ -584,6 +643,8 @@ mod tests {
         assert!(source.contains(
             "const STAGE6_BYTECODE_RA_EVALS: bolt_verifier_runtime::NamedEvalFamilyPlan"
         ));
+        assert!(source.contains("const STAGE6_BYTECODE_OUTPUT_TERMS"));
+        assert!(source.contains("Stage67BytecodeOutputTermPlan::Entry { gamma_power: 7 }"));
         assert!(source.contains("const STAGE6_BYTECODE_PLAN: Stage67BytecodeReadRafPlan"));
     }
 }

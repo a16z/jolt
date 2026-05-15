@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use bolt_verifier_runtime::{batch_claims, find_batch, find_plan};
-use super::jolt_relations::{evaluate_stage67_bytecode_read_raf, normalize_bytecode_read_raf_point, normalize_instruction_read_raf_point, stage67_trace_rounds, Stage67BytecodeEntry, Stage67BytecodeEntryContributionPlan, Stage67BytecodeFlag, Stage67BytecodeReadRafPlan, Stage67BytecodeRegister, Stage67BytecodeRegisterSymbols, Stage67BytecodeStagePlan, Stage67BytecodeTermPlan, Stage67RelationSymbols};
+use super::jolt_relations::{evaluate_stage67_bytecode_read_raf, normalize_bytecode_read_raf_point, normalize_instruction_read_raf_point, stage67_trace_rounds, Stage67BytecodeEntry, Stage67BytecodeFlag, Stage67BytecodeOutputTermPlan, Stage67BytecodeReadRafPlan, Stage67BytecodeRegister, Stage67BytecodeRegisterSymbols, Stage67BytecodeStagePlan, Stage67BytecodeTermPlan, Stage67RelationSymbols};
 use jolt_field::{Field, Fr};
 use jolt_sumcheck::SumcheckError;
 use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};
@@ -149,11 +149,20 @@ const STAGE6_BYTECODE_STAGE5_TERMS: &[Stage67BytecodeTermPlan] = &[
     Stage67BytecodeTermPlan::LookupTable { gamma_base: 2 },
 ];
 const STAGE6_BYTECODE_STAGES: &[Stage67BytecodeStagePlan] = &[
-    Stage67BytecodeStagePlan { gamma: "stage6.bytecode_read_raf.stage1_gamma", cycle_point: "stage6.input.stage1.Imm", register_point: None, output_gamma_power: 0, identity_gamma_power: Some(5), terms: STAGE6_BYTECODE_STAGE1_TERMS },
-    Stage67BytecodeStagePlan { gamma: "stage6.bytecode_read_raf.stage2_gamma", cycle_point: "stage6.input.stage2.OpFlagJump", register_point: None, output_gamma_power: 1, identity_gamma_power: None, terms: STAGE6_BYTECODE_STAGE2_TERMS },
-    Stage67BytecodeStagePlan { gamma: "stage6.bytecode_read_raf.stage3_gamma", cycle_point: "stage6.input.stage3.spartan_shift.UnexpandedPC", register_point: None, output_gamma_power: 2, identity_gamma_power: Some(4), terms: STAGE6_BYTECODE_STAGE3_TERMS },
-    Stage67BytecodeStagePlan { gamma: "stage6.bytecode_read_raf.stage4_gamma", cycle_point: "stage6.input.stage4.Rs1Ra", register_point: Some("stage6.input.stage4.Rs1Ra"), output_gamma_power: 3, identity_gamma_power: None, terms: STAGE6_BYTECODE_STAGE4_TERMS },
-    Stage67BytecodeStagePlan { gamma: "stage6.bytecode_read_raf.stage5_gamma", cycle_point: "stage6.input.stage5.registers_val_evaluation.RdWa", register_point: Some("stage6.input.stage5.registers_val_evaluation.RdWa"), output_gamma_power: 4, identity_gamma_power: None, terms: STAGE6_BYTECODE_STAGE5_TERMS },
+    Stage67BytecodeStagePlan { gamma: "stage6.bytecode_read_raf.stage1_gamma", cycle_point: "stage6.input.stage1.Imm", register_point: None, terms: STAGE6_BYTECODE_STAGE1_TERMS },
+    Stage67BytecodeStagePlan { gamma: "stage6.bytecode_read_raf.stage2_gamma", cycle_point: "stage6.input.stage2.OpFlagJump", register_point: None, terms: STAGE6_BYTECODE_STAGE2_TERMS },
+    Stage67BytecodeStagePlan { gamma: "stage6.bytecode_read_raf.stage3_gamma", cycle_point: "stage6.input.stage3.spartan_shift.UnexpandedPC", register_point: None, terms: STAGE6_BYTECODE_STAGE3_TERMS },
+    Stage67BytecodeStagePlan { gamma: "stage6.bytecode_read_raf.stage4_gamma", cycle_point: "stage6.input.stage4.Rs1Ra", register_point: Some("stage6.input.stage4.Rs1Ra"), terms: STAGE6_BYTECODE_STAGE4_TERMS },
+    Stage67BytecodeStagePlan { gamma: "stage6.bytecode_read_raf.stage5_gamma", cycle_point: "stage6.input.stage5.registers_val_evaluation.RdWa", register_point: Some("stage6.input.stage5.registers_val_evaluation.RdWa"), terms: STAGE6_BYTECODE_STAGE5_TERMS },
+];
+
+const STAGE6_BYTECODE_OUTPUT_TERMS: &[Stage67BytecodeOutputTermPlan] = &[
+    Stage67BytecodeOutputTermPlan::StageValue { stage_index: 0, gamma_power: 0, identity_gamma_power: Some(5) },
+    Stage67BytecodeOutputTermPlan::StageValue { stage_index: 1, gamma_power: 1, identity_gamma_power: None },
+    Stage67BytecodeOutputTermPlan::StageValue { stage_index: 2, gamma_power: 2, identity_gamma_power: Some(4) },
+    Stage67BytecodeOutputTermPlan::StageValue { stage_index: 3, gamma_power: 3, identity_gamma_power: None },
+    Stage67BytecodeOutputTermPlan::StageValue { stage_index: 4, gamma_power: 4, identity_gamma_power: None },
+    Stage67BytecodeOutputTermPlan::Entry { gamma_power: 7 },
 ];
 
 const STAGE6_BYTECODE_PLAN: Stage67BytecodeReadRafPlan = Stage67BytecodeReadRafPlan {
@@ -163,7 +172,7 @@ const STAGE6_BYTECODE_PLAN: Stage67BytecodeReadRafPlan = Stage67BytecodeReadRafP
     entries: "stage6.bytecode_read_raf.entries",
     entry_bytecode_index: "stage6.bytecode_read_raf.entry_bytecode_index",
     stages: STAGE6_BYTECODE_STAGES,
-    entry_contribution: Stage67BytecodeEntryContributionPlan { gamma_power: 7 },
+    output_terms: STAGE6_BYTECODE_OUTPUT_TERMS,
     registers: Stage67BytecodeRegisterSymbols {
         rd: "stage6.bytecode.entry.rd",
         rs1: "stage6.bytecode.entry.rs1",

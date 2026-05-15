@@ -107,7 +107,7 @@ pub struct Stage67BytecodeReadRafPlan {
     pub entries: &'static str,
     pub entry_bytecode_index: &'static str,
     pub stages: &'static [Stage67BytecodeStagePlan],
-    pub entry_contribution: Stage67BytecodeEntryContributionPlan,
+    pub output_terms: &'static [Stage67BytecodeOutputTermPlan],
     pub registers: Stage67BytecodeRegisterSymbols,
     pub entry_lookup_table: &'static str,
 }
@@ -117,14 +117,19 @@ pub struct Stage67BytecodeStagePlan {
     pub gamma: &'static str,
     pub cycle_point: &'static str,
     pub register_point: Option<&'static str>,
-    pub output_gamma_power: usize,
-    pub identity_gamma_power: Option<usize>,
     pub terms: &'static [Stage67BytecodeTermPlan],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage67BytecodeEntryContributionPlan {
-    pub gamma_power: usize,
+pub enum Stage67BytecodeOutputTermPlan {
+    StageValue {
+        stage_index: usize,
+        gamma_power: usize,
+        identity_gamma_power: Option<usize>,
+    },
+    Entry {
+        gamma_power: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -273,7 +278,6 @@ pub fn evaluate_stage67_bytecode_read_raf<E: Stage67BytecodeEntry>(
 
     let gamma = store_scalar(store, plan.gamma)?;
     let gamma_powers = bytecode_gamma_powers(gamma);
-    let int_eval = identity_polynomial_eval(r_address_prime);
     let stage_value_evals = stage67_bytecode_stage_value_evals(
         plan,
         entries,
@@ -283,18 +287,34 @@ pub fn evaluate_stage67_bytecode_read_raf<E: Stage67BytecodeEntry>(
         r_address_prime,
         r_cycle_prime.len(),
     )?;
+    let output_contrib = stage67_bytecode_output_contribution(
+        plan,
+        store,
+        &stage_value_evals,
+        &gamma_powers,
+        entry_bytecode_index,
+        r_address_prime,
+        r_cycle_prime,
+        log_k,
+    )?;
+    let bytecode_ra = eval_family_values(evals, plan.bytecode_ra_evals)?
+        .into_iter()
+        .product::<Fr>();
+    Ok(output_contrib * bytecode_ra)
+}
 
-    let mut val = Fr::from_u64(0);
-    for (index, stage) in plan.stages.iter().enumerate() {
-        let cycle_point = stage67_bytecode_stage_cycle_point(store, stage, r_cycle_prime.len())?;
-        let int_contrib = stage
-            .identity_gamma_power
-            .map_or(Fr::from_u64(0), |power| gamma_powers[power] * int_eval);
-        val += (stage_value_evals[index] + int_contrib)
-            * EqPolynomial::<Fr>::mle(&cycle_point, r_cycle_prime)
-            * gamma_powers[stage.output_gamma_power];
-    }
-
+fn stage67_bytecode_output_contribution(
+    plan: &Stage67BytecodeReadRafPlan,
+    store: &ValueStore<Fr>,
+    stage_value_evals: &[Fr],
+    gamma_powers: &[Fr],
+    entry_bytecode_index: usize,
+    r_address_prime: &[Fr],
+    r_cycle_prime: &[Fr],
+    log_k: usize,
+) -> Result<Fr, RuntimePlanError> {
+    let int_eval = identity_polynomial_eval(r_address_prime);
+    let zero_cycle = vec![Fr::from_u64(0); r_cycle_prime.len()];
     let entry_address_eq =
         EqPolynomial::<Fr>::try_mle_at_boolean_index(entry_bytecode_index, r_address_prime).ok_or(
             RuntimePlanError::InvalidInputLength {
@@ -303,14 +323,46 @@ pub fn evaluate_stage67_bytecode_read_raf<E: Stage67BytecodeEntry>(
                 actual: entry_bytecode_index.saturating_add(1),
             },
         )?;
-    let zero_cycle = vec![Fr::from_u64(0); r_cycle_prime.len()];
-    let entry_contrib = gamma_powers[plan.entry_contribution.gamma_power]
-        * entry_address_eq
-        * EqPolynomial::<Fr>::mle(&zero_cycle, r_cycle_prime);
-    let bytecode_ra = eval_family_values(evals, plan.bytecode_ra_evals)?
-        .into_iter()
-        .product::<Fr>();
-    Ok((val + entry_contrib) * bytecode_ra)
+
+    let mut output = Fr::from_u64(0);
+    for term in plan.output_terms {
+        output += match *term {
+            Stage67BytecodeOutputTermPlan::StageValue {
+                stage_index,
+                gamma_power,
+                identity_gamma_power,
+            } => {
+                let stage =
+                    plan.stages
+                        .get(stage_index)
+                        .ok_or(RuntimePlanError::InvalidInputLength {
+                            input: plan.entries,
+                            expected: stage_index + 1,
+                            actual: plan.stages.len(),
+                        })?;
+                let value = stage_value_evals.get(stage_index).copied().ok_or(
+                    RuntimePlanError::InvalidInputLength {
+                        input: plan.entries,
+                        expected: stage_index + 1,
+                        actual: stage_value_evals.len(),
+                    },
+                )?;
+                let cycle_point =
+                    stage67_bytecode_stage_cycle_point(store, stage, r_cycle_prime.len())?;
+                let identity_contrib = identity_gamma_power
+                    .map_or(Fr::from_u64(0), |power| gamma_powers[power] * int_eval);
+                (value + identity_contrib)
+                    * EqPolynomial::<Fr>::mle(&cycle_point, r_cycle_prime)
+                    * gamma_powers[gamma_power]
+            }
+            Stage67BytecodeOutputTermPlan::Entry { gamma_power } => {
+                gamma_powers[gamma_power]
+                    * entry_address_eq
+                    * EqPolynomial::<Fr>::mle(&zero_cycle, r_cycle_prime)
+            }
+        };
+    }
+    Ok(output)
 }
 
 fn stage67_bytecode_stage_cycle_point(
