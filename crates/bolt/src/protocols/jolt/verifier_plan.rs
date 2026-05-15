@@ -243,6 +243,600 @@ pub(crate) struct VerifierStagePlan {
     pub(crate) opening_batches: Vec<VerifierOpeningBatchPlan>,
 }
 
+pub(crate) trait VerifierProgramStepSource {
+    fn kind(&self) -> &str;
+    fn symbol(&self) -> &str;
+}
+
+pub(crate) trait VerifierTranscriptSqueezeSource {
+    fn symbol(&self) -> &str;
+    fn label(&self) -> &str;
+    fn kind(&self) -> &str;
+    fn count(&self) -> usize;
+}
+
+pub(crate) trait VerifierTranscriptAbsorbBytesSource {
+    fn symbol(&self) -> &str;
+    fn label(&self) -> &str;
+    fn payload(&self) -> &str;
+}
+
+pub(crate) trait VerifierOpeningInputSource {
+    fn symbol(&self) -> &str;
+    fn source_stage(&self) -> &str;
+    fn source_claim(&self) -> &str;
+    fn oracle(&self) -> &str;
+    fn domain(&self) -> &str;
+    fn point_arity(&self) -> usize;
+    fn claim_kind(&self) -> &str;
+}
+
+pub(crate) trait VerifierFieldExprSource {
+    fn symbol(&self) -> &str;
+    fn formula(&self) -> &str;
+    fn operands(&self) -> &[String];
+}
+
+pub(crate) trait VerifierSumcheckClaimSource {
+    fn symbol(&self) -> &str;
+    fn stage(&self) -> &str;
+    fn domain(&self) -> &str;
+    fn num_rounds(&self) -> usize;
+    fn degree(&self) -> usize;
+    fn claim(&self) -> &str;
+    fn relation(&self) -> Option<&str>;
+    fn claim_value(&self) -> &str;
+}
+
+pub(crate) trait VerifierSumcheckBatchSource {
+    fn symbol(&self) -> &str;
+    fn stage(&self) -> &str;
+    fn proof_slot(&self) -> &str;
+    fn policy(&self) -> &str;
+    fn count(&self) -> usize;
+    fn claim_operands(&self) -> &[String];
+    fn claim_label(&self) -> &str;
+    fn round_label(&self) -> &str;
+    fn round_schedule(&self) -> &[usize];
+}
+
+pub(crate) trait VerifierSumcheckDriverSource {
+    fn symbol(&self) -> &str;
+    fn stage(&self) -> &str;
+    fn proof_slot(&self) -> &str;
+    fn relation(&self) -> Option<&str>;
+    fn batch(&self) -> &str;
+    fn policy(&self) -> &str;
+    fn round_schedule(&self) -> &[usize];
+    fn claim_label(&self) -> &str;
+    fn round_label(&self) -> &str;
+    fn num_rounds(&self) -> usize;
+    fn degree(&self) -> usize;
+}
+
+pub(crate) trait VerifierSumcheckInstanceResultSource {
+    fn symbol(&self) -> &str;
+    fn source(&self) -> &str;
+    fn claim(&self) -> &str;
+    fn relation(&self) -> &str;
+    fn index(&self) -> usize;
+    fn point_arity(&self) -> usize;
+    fn num_rounds(&self) -> usize;
+    fn round_offset(&self) -> usize;
+    fn point_order(&self) -> &str;
+    fn degree(&self) -> usize;
+}
+
+pub(crate) trait VerifierPointZeroSource {
+    fn symbol(&self) -> &str;
+    fn field(&self) -> &str;
+    fn arity(&self) -> usize;
+}
+
+pub(crate) trait VerifierPointSliceSource {
+    fn symbol(&self) -> &str;
+    fn source(&self) -> &str;
+    fn offset(&self) -> usize;
+    fn length(&self) -> usize;
+    fn input(&self) -> &str;
+}
+
+pub(crate) trait VerifierPointConcatSource {
+    fn symbol(&self) -> &str;
+    fn layout(&self) -> &str;
+    fn arity(&self) -> usize;
+    fn inputs(&self) -> &[String];
+}
+
+pub(crate) trait VerifierOpeningClaimSource {
+    fn symbol(&self) -> &str;
+    fn oracle(&self) -> &str;
+    fn domain(&self) -> &str;
+    fn point_arity(&self) -> usize;
+    fn claim_kind(&self) -> &str;
+    fn point_source(&self) -> &str;
+    fn eval_source(&self) -> &str;
+}
+
+pub(crate) trait VerifierOpeningClaimEqualitySource {
+    fn symbol(&self) -> &str;
+    fn mode(&self) -> &str;
+    fn lhs(&self) -> &str;
+    fn rhs(&self) -> &str;
+}
+
+pub(crate) trait VerifierOpeningBatchSource {
+    fn symbol(&self) -> &str;
+    fn stage(&self) -> &str;
+    fn proof_slot(&self) -> &str;
+    fn policy(&self) -> &str;
+    fn count(&self) -> usize;
+    fn ordered_claims(&self) -> &[String];
+    fn claim_operands(&self) -> &[String];
+}
+
+pub(crate) trait VerifierStagePlanSource {
+    type Step: VerifierProgramStepSource;
+    type Squeeze: VerifierTranscriptSqueezeSource;
+    type OpeningInput: VerifierOpeningInputSource;
+    type FieldExpr: VerifierFieldExprSource;
+    type Claim: VerifierSumcheckClaimSource;
+    type Batch: VerifierSumcheckBatchSource;
+    type Driver: VerifierSumcheckDriverSource;
+    type Instance: VerifierSumcheckInstanceResultSource;
+    type PointSlice: VerifierPointSliceSource;
+    type PointConcat: VerifierPointConcatSource;
+    type OpeningClaim: VerifierOpeningClaimSource;
+    type OpeningEquality: VerifierOpeningClaimEqualitySource;
+    type OpeningBatch: VerifierOpeningBatchSource;
+
+    fn steps(&self) -> &[Self::Step];
+    fn transcript_squeezes(&self) -> &[Self::Squeeze];
+    fn transcript_absorb_bytes(&self) -> Vec<VerifierTranscriptAbsorbBytesPlan>;
+    fn opening_inputs(&self) -> &[Self::OpeningInput];
+    fn field_exprs(&self) -> &[Self::FieldExpr];
+    fn claims(&self) -> &[Self::Claim];
+    fn batches(&self) -> &[Self::Batch];
+    fn drivers(&self) -> &[Self::Driver];
+    fn instance_results(&self) -> &[Self::Instance];
+    fn point_zeros(&self) -> Vec<VerifierPointZeroPlan>;
+    fn point_slices(&self) -> &[Self::PointSlice];
+    fn point_concats(&self) -> &[Self::PointConcat];
+    fn opening_claims(&self) -> &[Self::OpeningClaim];
+    fn opening_equalities(&self) -> &[Self::OpeningEquality];
+    fn opening_batches(&self) -> &[Self::OpeningBatch];
+}
+
+pub(crate) fn stage_plan_from_cpu_sources<Source>(
+    source: &Source,
+) -> Result<VerifierStagePlan, EmitError>
+where
+    Source: VerifierStagePlanSource + ?Sized,
+{
+    Ok(VerifierStagePlan {
+        steps: source
+            .steps()
+            .iter()
+            .map(|step| VerifierProgramStepPlan::from_cpu(step.kind(), step.symbol()))
+            .collect::<Result<Vec<_>, EmitError>>()?,
+        transcript_squeezes: source
+            .transcript_squeezes()
+            .iter()
+            .map(|squeeze| {
+                VerifierTranscriptSqueezePlan::from_cpu(
+                    squeeze.symbol(),
+                    squeeze.label(),
+                    squeeze.kind(),
+                    squeeze.count(),
+                )
+            })
+            .collect::<Result<Vec<_>, EmitError>>()?,
+        transcript_absorb_bytes: source.transcript_absorb_bytes(),
+        opening_inputs: source
+            .opening_inputs()
+            .iter()
+            .map(|opening_input| {
+                VerifierOpeningInputPlan::from_cpu(
+                    opening_input.symbol(),
+                    opening_input.source_stage(),
+                    opening_input.source_claim(),
+                    opening_input.oracle(),
+                    opening_input.domain(),
+                    opening_input.point_arity(),
+                    opening_input.claim_kind(),
+                )
+            })
+            .collect::<Result<Vec<_>, EmitError>>()?,
+        field_exprs: source
+            .field_exprs()
+            .iter()
+            .map(|expr| {
+                VerifierFieldExprPlan::from_cpu(expr.symbol(), expr.formula(), expr.operands())
+            })
+            .collect::<Result<Vec<_>, EmitError>>()?,
+        claims: source
+            .claims()
+            .iter()
+            .map(|claim| {
+                Ok(VerifierSumcheckClaimPlan {
+                    symbol: claim.symbol().to_owned(),
+                    stage: claim.stage().to_owned(),
+                    domain: claim.domain().to_owned(),
+                    num_rounds: claim.num_rounds(),
+                    degree: claim.degree(),
+                    claim: claim.claim().to_owned(),
+                    relation: required_relation_from_cpu(
+                        claim.relation(),
+                        "claim",
+                        claim.symbol(),
+                    )?,
+                    claim_value: claim.claim_value().to_owned(),
+                })
+            })
+            .collect::<Result<Vec<_>, EmitError>>()?,
+        batches: source
+            .batches()
+            .iter()
+            .map(|batch| VerifierSumcheckBatchPlan {
+                symbol: batch.symbol().to_owned(),
+                stage: batch.stage().to_owned(),
+                proof_slot: batch.proof_slot().to_owned(),
+                policy: batch.policy().to_owned(),
+                count: batch.count(),
+                claim_operands: batch.claim_operands().to_vec(),
+                claim_label: batch.claim_label().to_owned(),
+                round_label: batch.round_label().to_owned(),
+                round_schedule: batch.round_schedule().to_vec(),
+            })
+            .collect(),
+        drivers: source
+            .drivers()
+            .iter()
+            .map(|driver| {
+                Ok(VerifierSumcheckDriverPlan {
+                    symbol: driver.symbol().to_owned(),
+                    stage: driver.stage().to_owned(),
+                    proof_slot: driver.proof_slot().to_owned(),
+                    relation: required_relation_from_cpu(
+                        driver.relation(),
+                        "driver",
+                        driver.symbol(),
+                    )?,
+                    batch: driver.batch().to_owned(),
+                    policy: driver.policy().to_owned(),
+                    round_schedule: driver.round_schedule().to_vec(),
+                    claim_label: driver.claim_label().to_owned(),
+                    round_label: driver.round_label().to_owned(),
+                    num_rounds: driver.num_rounds(),
+                    degree: driver.degree(),
+                })
+            })
+            .collect::<Result<Vec<_>, EmitError>>()?,
+        instance_results: source
+            .instance_results()
+            .iter()
+            .map(|instance| {
+                Ok(VerifierSumcheckInstanceResultPlan {
+                    symbol: instance.symbol().to_owned(),
+                    source: instance.source().to_owned(),
+                    claim: instance.claim().to_owned(),
+                    relation: relation_from_cpu(instance.relation())?,
+                    index: instance.index(),
+                    point_arity: instance.point_arity(),
+                    num_rounds: instance.num_rounds(),
+                    round_offset: instance.round_offset(),
+                    point_order: sumcheck_point_order_from_cpu(instance.point_order())?,
+                    degree: instance.degree(),
+                })
+            })
+            .collect::<Result<Vec<_>, EmitError>>()?,
+        point_zeros: source.point_zeros(),
+        point_slices: source
+            .point_slices()
+            .iter()
+            .map(|slice| VerifierPointSlicePlan {
+                symbol: slice.symbol().to_owned(),
+                source: slice.source().to_owned(),
+                offset: slice.offset(),
+                length: slice.length(),
+                input: slice.input().to_owned(),
+            })
+            .collect(),
+        point_concats: source
+            .point_concats()
+            .iter()
+            .map(|concat| VerifierPointConcatPlan {
+                symbol: concat.symbol().to_owned(),
+                layout: concat.layout().to_owned(),
+                arity: concat.arity(),
+                inputs: concat.inputs().to_vec(),
+            })
+            .collect(),
+        opening_claims: source
+            .opening_claims()
+            .iter()
+            .map(|claim| {
+                Ok(VerifierOpeningClaimPlan {
+                    symbol: claim.symbol().to_owned(),
+                    oracle: claim.oracle().to_owned(),
+                    domain: claim.domain().to_owned(),
+                    point_arity: claim.point_arity(),
+                    claim_kind: claim_kind_from_cpu(claim.claim_kind())?,
+                    point_source: claim.point_source().to_owned(),
+                    eval_source: claim.eval_source().to_owned(),
+                })
+            })
+            .collect::<Result<Vec<_>, EmitError>>()?,
+        opening_equalities: source
+            .opening_equalities()
+            .iter()
+            .map(|equality| {
+                Ok(VerifierOpeningClaimEqualityPlan {
+                    symbol: equality.symbol().to_owned(),
+                    mode: opening_equality_mode_from_cpu(equality.mode())?,
+                    lhs: equality.lhs().to_owned(),
+                    rhs: equality.rhs().to_owned(),
+                })
+            })
+            .collect::<Result<Vec<_>, EmitError>>()?,
+        opening_batches: source
+            .opening_batches()
+            .iter()
+            .map(|batch| VerifierOpeningBatchPlan {
+                symbol: batch.symbol().to_owned(),
+                stage: batch.stage().to_owned(),
+                proof_slot: batch.proof_slot().to_owned(),
+                policy: batch.policy().to_owned(),
+                count: batch.count(),
+                ordered_claims: batch.ordered_claims().to_vec(),
+                claim_operands: batch.claim_operands().to_vec(),
+            })
+            .collect(),
+    })
+}
+
+pub(crate) fn transcript_absorb_bytes_from_cpu<T: VerifierTranscriptAbsorbBytesSource>(
+    absorbs: &[T],
+) -> Vec<VerifierTranscriptAbsorbBytesPlan> {
+    absorbs
+        .iter()
+        .map(|absorb| {
+            VerifierTranscriptAbsorbBytesPlan::from_cpu(
+                absorb.symbol(),
+                absorb.label(),
+                absorb.payload(),
+            )
+        })
+        .collect()
+}
+
+pub(crate) fn point_zeros_from_cpu<T: VerifierPointZeroSource>(
+    zeros: &[T],
+) -> Vec<VerifierPointZeroPlan> {
+    zeros
+        .iter()
+        .map(|zero| VerifierPointZeroPlan {
+            symbol: zero.symbol().to_owned(),
+            field: zero.field().to_owned(),
+            arity: zero.arity(),
+        })
+        .collect()
+}
+
+macro_rules! impl_verifier_plan_source_traits {
+    (
+        program = $program:ty,
+        step = $step:ty,
+        squeeze = $squeeze:ty,
+        opening_input = $opening_input:ty,
+        field_expr = $field_expr:ty,
+        claim = $claim:ty,
+        batch = $batch:ty,
+        driver = $driver:ty,
+        instance = $instance:ty,
+        point_slice = $point_slice:ty,
+        point_concat = $point_concat:ty,
+        opening_claim = $opening_claim:ty,
+        opening_equality = $opening_equality:ty,
+        opening_batch = $opening_batch:ty
+        $(, absorb = $absorb:ty)?
+        $(, point_zero = $point_zero:ty)?
+        $(,)?
+    ) => {
+        impl $crate::protocols::jolt::verifier_plan::VerifierStagePlanSource for $program {
+            type Step = $step;
+            type Squeeze = $squeeze;
+            type OpeningInput = $opening_input;
+            type FieldExpr = $field_expr;
+            type Claim = $claim;
+            type Batch = $batch;
+            type Driver = $driver;
+            type Instance = $instance;
+            type PointSlice = $point_slice;
+            type PointConcat = $point_concat;
+            type OpeningClaim = $opening_claim;
+            type OpeningEquality = $opening_equality;
+            type OpeningBatch = $opening_batch;
+
+            fn steps(&self) -> &[Self::Step] { &self.steps }
+            fn transcript_squeezes(&self) -> &[Self::Squeeze] { &self.transcript_squeezes }
+            fn transcript_absorb_bytes(&self) -> Vec<$crate::protocols::jolt::verifier_plan::VerifierTranscriptAbsorbBytesPlan> {
+                $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
+                    @transcript_absorb_bytes self $(, $absorb)?
+                )
+            }
+            fn opening_inputs(&self) -> &[Self::OpeningInput] { &self.opening_inputs }
+            fn field_exprs(&self) -> &[Self::FieldExpr] { &self.field_exprs }
+            fn claims(&self) -> &[Self::Claim] { &self.claims }
+            fn batches(&self) -> &[Self::Batch] { &self.batches }
+            fn drivers(&self) -> &[Self::Driver] { &self.drivers }
+            fn instance_results(&self) -> &[Self::Instance] { &self.instance_results }
+            fn point_zeros(&self) -> Vec<$crate::protocols::jolt::verifier_plan::VerifierPointZeroPlan> {
+                $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
+                    @point_zeros self $(, $point_zero)?
+                )
+            }
+            fn point_slices(&self) -> &[Self::PointSlice] { &self.point_slices }
+            fn point_concats(&self) -> &[Self::PointConcat] { &self.point_concats }
+            fn opening_claims(&self) -> &[Self::OpeningClaim] { &self.opening_claims }
+            fn opening_equalities(&self) -> &[Self::OpeningEquality] { &self.opening_equalities }
+            fn opening_batches(&self) -> &[Self::OpeningBatch] { &self.opening_batches }
+        }
+
+        impl $crate::protocols::jolt::verifier_plan::VerifierProgramStepSource for $step {
+            fn kind(&self) -> &str { &self.kind }
+            fn symbol(&self) -> &str { &self.symbol }
+        }
+
+        impl $crate::protocols::jolt::verifier_plan::VerifierTranscriptSqueezeSource for $squeeze {
+            fn symbol(&self) -> &str { &self.symbol }
+            fn label(&self) -> &str { &self.label }
+            fn kind(&self) -> &str { &self.kind }
+            fn count(&self) -> usize { self.count }
+        }
+
+        $(
+        impl $crate::protocols::jolt::verifier_plan::VerifierTranscriptAbsorbBytesSource for $absorb {
+            fn symbol(&self) -> &str { &self.symbol }
+            fn label(&self) -> &str { &self.label }
+            fn payload(&self) -> &str { &self.payload }
+        }
+        )?
+
+        impl $crate::protocols::jolt::verifier_plan::VerifierOpeningInputSource for $opening_input {
+            fn symbol(&self) -> &str { &self.symbol }
+            fn source_stage(&self) -> &str { &self.source_stage }
+            fn source_claim(&self) -> &str { &self.source_claim }
+            fn oracle(&self) -> &str { &self.oracle }
+            fn domain(&self) -> &str { &self.domain }
+            fn point_arity(&self) -> usize { self.point_arity }
+            fn claim_kind(&self) -> &str { &self.claim_kind }
+        }
+
+        impl $crate::protocols::jolt::verifier_plan::VerifierFieldExprSource for $field_expr {
+            fn symbol(&self) -> &str { &self.symbol }
+            fn formula(&self) -> &str { &self.formula }
+            fn operands(&self) -> &[String] { &self.operands }
+        }
+
+        impl $crate::protocols::jolt::verifier_plan::VerifierSumcheckClaimSource for $claim {
+            fn symbol(&self) -> &str { &self.symbol }
+            fn stage(&self) -> &str { &self.stage }
+            fn domain(&self) -> &str { &self.domain }
+            fn num_rounds(&self) -> usize { self.num_rounds }
+            fn degree(&self) -> usize { self.degree }
+            fn claim(&self) -> &str { &self.claim }
+            fn relation(&self) -> Option<&str> { self.relation.as_deref() }
+            fn claim_value(&self) -> &str { &self.claim_value }
+        }
+
+        impl $crate::protocols::jolt::verifier_plan::VerifierSumcheckBatchSource for $batch {
+            fn symbol(&self) -> &str { &self.symbol }
+            fn stage(&self) -> &str { &self.stage }
+            fn proof_slot(&self) -> &str { &self.proof_slot }
+            fn policy(&self) -> &str { &self.policy }
+            fn count(&self) -> usize { self.count }
+            fn claim_operands(&self) -> &[String] { &self.claim_operands }
+            fn claim_label(&self) -> &str { &self.claim_label }
+            fn round_label(&self) -> &str { &self.round_label }
+            fn round_schedule(&self) -> &[usize] { &self.round_schedule }
+        }
+
+        impl $crate::protocols::jolt::verifier_plan::VerifierSumcheckDriverSource for $driver {
+            fn symbol(&self) -> &str { &self.symbol }
+            fn stage(&self) -> &str { &self.stage }
+            fn proof_slot(&self) -> &str { &self.proof_slot }
+            fn relation(&self) -> Option<&str> { self.relation.as_deref() }
+            fn batch(&self) -> &str { &self.batch }
+            fn policy(&self) -> &str { &self.policy }
+            fn round_schedule(&self) -> &[usize] { &self.round_schedule }
+            fn claim_label(&self) -> &str { &self.claim_label }
+            fn round_label(&self) -> &str { &self.round_label }
+            fn num_rounds(&self) -> usize { self.num_rounds }
+            fn degree(&self) -> usize { self.degree }
+        }
+
+        impl $crate::protocols::jolt::verifier_plan::VerifierSumcheckInstanceResultSource for $instance {
+            fn symbol(&self) -> &str { &self.symbol }
+            fn source(&self) -> &str { &self.source }
+            fn claim(&self) -> &str { &self.claim }
+            fn relation(&self) -> &str { &self.relation }
+            fn index(&self) -> usize { self.index }
+            fn point_arity(&self) -> usize { self.point_arity }
+            fn num_rounds(&self) -> usize { self.num_rounds }
+            fn round_offset(&self) -> usize { self.round_offset }
+            fn point_order(&self) -> &str { &self.point_order }
+            fn degree(&self) -> usize { self.degree }
+        }
+
+        $(
+        impl $crate::protocols::jolt::verifier_plan::VerifierPointZeroSource for $point_zero {
+            fn symbol(&self) -> &str { &self.symbol }
+            fn field(&self) -> &str { &self.field }
+            fn arity(&self) -> usize { self.arity }
+        }
+        )?
+
+        impl $crate::protocols::jolt::verifier_plan::VerifierPointSliceSource for $point_slice {
+            fn symbol(&self) -> &str { &self.symbol }
+            fn source(&self) -> &str { &self.source }
+            fn offset(&self) -> usize { self.offset }
+            fn length(&self) -> usize { self.length }
+            fn input(&self) -> &str { &self.input }
+        }
+
+        impl $crate::protocols::jolt::verifier_plan::VerifierPointConcatSource for $point_concat {
+            fn symbol(&self) -> &str { &self.symbol }
+            fn layout(&self) -> &str { &self.layout }
+            fn arity(&self) -> usize { self.arity }
+            fn inputs(&self) -> &[String] { &self.inputs }
+        }
+
+        impl $crate::protocols::jolt::verifier_plan::VerifierOpeningClaimSource for $opening_claim {
+            fn symbol(&self) -> &str { &self.symbol }
+            fn oracle(&self) -> &str { &self.oracle }
+            fn domain(&self) -> &str { &self.domain }
+            fn point_arity(&self) -> usize { self.point_arity }
+            fn claim_kind(&self) -> &str { &self.claim_kind }
+            fn point_source(&self) -> &str { &self.point_source }
+            fn eval_source(&self) -> &str { &self.eval_source }
+        }
+
+        impl $crate::protocols::jolt::verifier_plan::VerifierOpeningClaimEqualitySource for $opening_equality {
+            fn symbol(&self) -> &str { &self.symbol }
+            fn mode(&self) -> &str { &self.mode }
+            fn lhs(&self) -> &str { &self.lhs }
+            fn rhs(&self) -> &str { &self.rhs }
+        }
+
+        impl $crate::protocols::jolt::verifier_plan::VerifierOpeningBatchSource for $opening_batch {
+            fn symbol(&self) -> &str { &self.symbol }
+            fn stage(&self) -> &str { &self.stage }
+            fn proof_slot(&self) -> &str { &self.proof_slot }
+            fn policy(&self) -> &str { &self.policy }
+            fn count(&self) -> usize { self.count }
+            fn ordered_claims(&self) -> &[String] { &self.ordered_claims }
+            fn claim_operands(&self) -> &[String] { &self.claim_operands }
+        }
+    };
+    (@transcript_absorb_bytes $self:ident, $absorb:ty) => {
+        $crate::protocols::jolt::verifier_plan::transcript_absorb_bytes_from_cpu(
+            &$self.transcript_absorb_bytes,
+        )
+    };
+    (@transcript_absorb_bytes $self:ident) => {
+        Vec::new()
+    };
+    (@point_zeros $self:ident, $point_zero:ty) => {
+        $crate::protocols::jolt::verifier_plan::point_zeros_from_cpu(&$self.point_zeros)
+    };
+    (@point_zeros $self:ident) => {
+        Vec::new()
+    };
+}
+
+pub(crate) use impl_verifier_plan_source_traits;
+
 pub(crate) fn relation_from_cpu(value: &str) -> Result<JoltVerifierRelationKind, EmitError> {
     JoltVerifierRelationKind::from_cpu_attr(value).map_err(plan_error)
 }

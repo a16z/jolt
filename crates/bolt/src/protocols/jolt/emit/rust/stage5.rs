@@ -256,6 +256,24 @@ pub struct Stage5OpeningBatchPlan {
     pub claim_operands: Vec<String>,
 }
 
+verifier_plan::impl_verifier_plan_source_traits!(
+    program = Stage5CpuProgram,
+    step = Stage5ProgramStepPlan,
+    squeeze = Stage5TranscriptSqueezePlan,
+    opening_input = Stage5OpeningInputPlan,
+    field_expr = Stage5FieldExprPlan,
+    claim = Stage5SumcheckClaimPlan,
+    batch = Stage5SumcheckBatchPlan,
+    driver = Stage5SumcheckDriverPlan,
+    instance = Stage5SumcheckInstanceResultPlan,
+    point_slice = Stage5PointSlicePlan,
+    point_concat = Stage5PointConcatPlan,
+    opening_claim = Stage5OpeningClaimPlan,
+    opening_equality = Stage5OpeningClaimEqualityPlan,
+    opening_batch = Stage5OpeningBatchPlan,
+    absorb = Stage5TranscriptAbsorbBytesPlan,
+);
+
 pub fn stage5_cpu_program(module: &BoltModule<'_, Cpu>) -> Result<Stage5CpuProgram, EmitError> {
     verify_cpu_schema(module)?;
     let program = Stage5CpuProgram::from_module(module)?;
@@ -668,204 +686,7 @@ impl Stage5CpuProgram {
     }
 
     fn plan_verifier(&self) -> Result<VerifierStagePlan, EmitError> {
-        Ok(VerifierStagePlan {
-            steps: self
-                .steps
-                .iter()
-                .map(|step| {
-                    verifier_plan::VerifierProgramStepPlan::from_cpu(&step.kind, &step.symbol)
-                })
-                .collect::<Result<Vec<_>, EmitError>>()?,
-            transcript_squeezes: self
-                .transcript_squeezes
-                .iter()
-                .map(|squeeze| {
-                    verifier_plan::VerifierTranscriptSqueezePlan::from_cpu(
-                        &squeeze.symbol,
-                        &squeeze.label,
-                        &squeeze.kind,
-                        squeeze.count,
-                    )
-                })
-                .collect::<Result<Vec<_>, EmitError>>()?,
-            transcript_absorb_bytes: self
-                .transcript_absorb_bytes
-                .iter()
-                .map(|absorb| {
-                    verifier_plan::VerifierTranscriptAbsorbBytesPlan::from_cpu(
-                        &absorb.symbol,
-                        &absorb.label,
-                        &absorb.payload,
-                    )
-                })
-                .collect(),
-            opening_inputs: self
-                .opening_inputs
-                .iter()
-                .map(|input| {
-                    verifier_plan::VerifierOpeningInputPlan::from_cpu(
-                        &input.symbol,
-                        &input.source_stage,
-                        &input.source_claim,
-                        &input.oracle,
-                        &input.domain,
-                        input.point_arity,
-                        &input.claim_kind,
-                    )
-                })
-                .collect::<Result<Vec<_>, EmitError>>()?,
-            field_exprs: self
-                .field_exprs
-                .iter()
-                .map(|expr| {
-                    verifier_plan::VerifierFieldExprPlan::from_cpu(
-                        &expr.symbol,
-                        &expr.formula,
-                        &expr.operands,
-                    )
-                })
-                .collect::<Result<Vec<_>, EmitError>>()?,
-            claims: self
-                .claims
-                .iter()
-                .map(|claim| {
-                    Ok(verifier_plan::VerifierSumcheckClaimPlan {
-                        symbol: claim.symbol.clone(),
-                        stage: claim.stage.clone(),
-                        domain: claim.domain.clone(),
-                        num_rounds: claim.num_rounds,
-                        degree: claim.degree,
-                        claim: claim.claim.clone(),
-                        relation: verifier_plan::required_relation_from_cpu(
-                            claim.relation.as_deref(),
-                            "claim",
-                            &claim.symbol,
-                        )?,
-                        claim_value: claim.claim_value.clone(),
-                    })
-                })
-                .collect::<Result<Vec<_>, EmitError>>()?,
-            batches: self
-                .batches
-                .iter()
-                .map(|batch| verifier_plan::VerifierSumcheckBatchPlan {
-                    symbol: batch.symbol.clone(),
-                    stage: batch.stage.clone(),
-                    proof_slot: batch.proof_slot.clone(),
-                    policy: batch.policy.clone(),
-                    count: batch.count,
-                    claim_operands: batch.claim_operands.clone(),
-                    claim_label: batch.claim_label.clone(),
-                    round_label: batch.round_label.clone(),
-                    round_schedule: batch.round_schedule.clone(),
-                })
-                .collect(),
-            drivers: self
-                .drivers
-                .iter()
-                .map(|driver| {
-                    Ok(verifier_plan::VerifierSumcheckDriverPlan {
-                        symbol: driver.symbol.clone(),
-                        stage: driver.stage.clone(),
-                        proof_slot: driver.proof_slot.clone(),
-                        relation: verifier_plan::required_relation_from_cpu(
-                            driver.relation.as_deref(),
-                            "driver",
-                            &driver.symbol,
-                        )?,
-                        batch: driver.batch.clone(),
-                        policy: driver.policy.clone(),
-                        round_schedule: driver.round_schedule.clone(),
-                        claim_label: driver.claim_label.clone(),
-                        round_label: driver.round_label.clone(),
-                        num_rounds: driver.num_rounds,
-                        degree: driver.degree,
-                    })
-                })
-                .collect::<Result<Vec<_>, EmitError>>()?,
-            instance_results: self
-                .instance_results
-                .iter()
-                .map(|instance| {
-                    Ok(verifier_plan::VerifierSumcheckInstanceResultPlan {
-                        symbol: instance.symbol.clone(),
-                        source: instance.source.clone(),
-                        claim: instance.claim.clone(),
-                        relation: verifier_plan::relation_from_cpu(&instance.relation)?,
-                        index: instance.index,
-                        point_arity: instance.point_arity,
-                        num_rounds: instance.num_rounds,
-                        round_offset: instance.round_offset,
-                        point_order: verifier_plan::sumcheck_point_order_from_cpu(
-                            &instance.point_order,
-                        )?,
-                        degree: instance.degree,
-                    })
-                })
-                .collect::<Result<Vec<_>, EmitError>>()?,
-            point_zeros: Vec::new(),
-            point_slices: self
-                .point_slices
-                .iter()
-                .map(|slice| verifier_plan::VerifierPointSlicePlan {
-                    symbol: slice.symbol.clone(),
-                    source: slice.source.clone(),
-                    offset: slice.offset,
-                    length: slice.length,
-                    input: slice.input.clone(),
-                })
-                .collect(),
-            point_concats: self
-                .point_concats
-                .iter()
-                .map(|concat| verifier_plan::VerifierPointConcatPlan {
-                    symbol: concat.symbol.clone(),
-                    layout: concat.layout.clone(),
-                    arity: concat.arity,
-                    inputs: concat.inputs.clone(),
-                })
-                .collect(),
-            opening_claims: self
-                .opening_claims
-                .iter()
-                .map(|claim| {
-                    Ok(verifier_plan::VerifierOpeningClaimPlan {
-                        symbol: claim.symbol.clone(),
-                        oracle: claim.oracle.clone(),
-                        domain: claim.domain.clone(),
-                        point_arity: claim.point_arity,
-                        claim_kind: verifier_plan::claim_kind_from_cpu(&claim.claim_kind)?,
-                        point_source: claim.point_source.clone(),
-                        eval_source: claim.eval_source.clone(),
-                    })
-                })
-                .collect::<Result<Vec<_>, EmitError>>()?,
-            opening_equalities: self
-                .opening_equalities
-                .iter()
-                .map(|equality| {
-                    Ok(verifier_plan::VerifierOpeningClaimEqualityPlan {
-                        symbol: equality.symbol.clone(),
-                        mode: verifier_plan::opening_equality_mode_from_cpu(&equality.mode)?,
-                        lhs: equality.lhs.clone(),
-                        rhs: equality.rhs.clone(),
-                    })
-                })
-                .collect::<Result<Vec<_>, EmitError>>()?,
-            opening_batches: self
-                .opening_batches
-                .iter()
-                .map(|batch| verifier_plan::VerifierOpeningBatchPlan {
-                    symbol: batch.symbol.clone(),
-                    stage: batch.stage.clone(),
-                    proof_slot: batch.proof_slot.clone(),
-                    policy: batch.policy.clone(),
-                    count: batch.count,
-                    ordered_claims: batch.ordered_claims.clone(),
-                    claim_operands: batch.claim_operands.clone(),
-                })
-                .collect(),
-        })
+        verifier_plan::stage_plan_from_cpu_sources(self)
     }
 
     fn verifier_plan(&self) -> Result<&VerifierStagePlan, EmitError> {
