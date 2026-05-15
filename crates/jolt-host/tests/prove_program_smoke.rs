@@ -17,7 +17,6 @@ use jolt_host::{prove_program, verify_proof, ProveProgramError};
 use jolt_trace::Program;
 
 #[test]
-#[ignore = "exercises full modular prove pipeline; requires jolt CLI"]
 fn muldiv_modular_prove_smoke() {
     let mut program = Program::new("muldiv-guest");
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("postcard encode muldiv inputs");
