@@ -1,7 +1,13 @@
 use super::*;
 
+/// Lowers variable `SRLW` by embedding the 32-bit logical shift in RV64 space.
+///
+/// The low word is first moved into the high half. Setting bit 5 of the shift
+/// operand makes `VirtualShiftRightBitmask` encode `32 + (rs2 & 0x1f)`, so the
+/// logical shift extracts exactly the zero-filled 32-bit result before final
+/// word sign extension.
 pub(in crate::expand) fn expand_srlw(
-    instruction: &NormalizedInstruction,
+    instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
     let v_bitmask = asm.allocate()?;
@@ -20,7 +26,9 @@ pub(in crate::expand) fn expand_srlw(
         32,
     );
     asm.emit_i(
-        JoltInstructionKind::VirtualShiftRightBitmask,
+        JoltInstructionKind::VirtualShiftRightBitmask(
+            jolt_riscv::instructions::VirtualShiftRightBitmask(()),
+        ),
         v_bitmask.operand(),
         v_bitmask.operand(),
         0,
@@ -32,7 +40,9 @@ pub(in crate::expand) fn expand_srlw(
         v_bitmask.operand(),
     );
     asm.emit_i(
-        JoltInstructionKind::VirtualSignExtendWord,
+        JoltInstructionKind::VirtualSignExtendWord(
+            jolt_riscv::instructions::VirtualSignExtendWord(()),
+        ),
         reg(rd(instruction)?),
         reg(rd(instruction)?),
         0,

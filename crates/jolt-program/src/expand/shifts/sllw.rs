@@ -1,7 +1,12 @@
 use super::*;
 
+/// Lowers variable `SLLW` through the word-sized power-of-two helper.
+///
+/// `VirtualPow2W` uses `rs2 & 0x1f`, matching the RV64 word shift rule. The
+/// product is then sign-extended from 32 bits so the final row sequence has the
+/// same result as the source `SLLW`.
 pub(in crate::expand) fn expand_sllw(
-    instruction: &NormalizedInstruction,
+    instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
     let v_pow2 = asm.allocate()?;
@@ -19,7 +24,9 @@ pub(in crate::expand) fn expand_sllw(
         v_pow2.operand(),
     );
     asm.emit_i(
-        JoltInstructionKind::VirtualSignExtendWord,
+        JoltInstructionKind::VirtualSignExtendWord(
+            jolt_riscv::instructions::VirtualSignExtendWord(()),
+        ),
         reg(rd(instruction)?),
         reg(rd(instruction)?),
         0,

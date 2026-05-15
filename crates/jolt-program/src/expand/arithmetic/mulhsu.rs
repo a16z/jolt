@@ -1,7 +1,14 @@
 use super::*;
 
+/// Lowers signed-by-unsigned `MULHSU` by normalizing the signed operand before
+/// reapplying the sign to the high half.
+///
+/// The sequence computes the absolute value of `rs1`, multiplies it as an
+/// unsigned value by `rs2`, and then applies the two's-complement correction
+/// needed when `rs1` was negative. The final `SLTU` detects the carry produced
+/// while negating the low half, which must be added into the high half.
 pub(in crate::expand) fn expand_mulhsu(
-    instruction: &NormalizedInstruction,
+    instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
     let v0 = asm.allocate()?;

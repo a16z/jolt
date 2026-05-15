@@ -24,8 +24,10 @@ pub enum ExpansionError {
     LeakedTemporaryRegister { index: usize },
     #[error("expansion allocated too many temporary registers: {actual}")]
     TooManyTemporaryRegisters { actual: usize },
-    #[error("malformed normalized instruction: {0}")]
+    #[error("malformed Jolt row: {0}")]
     MalformedInstruction(&'static str),
+    #[error("source instruction {0:?} has no direct final Jolt row")]
+    IllegalSourceInstruction(jolt_riscv::SourceInstructionKind),
     #[error("instruction {0:?} is not legal in finalized provider-free bytecode")]
     IllegalTargetInstruction(jolt_riscv::JoltInstructionKind),
     #[error("unsupported CSR 0x{0:03x}")]

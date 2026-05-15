@@ -14,7 +14,7 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Lui<C> {
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
         (
             0,
-            Into::<jolt_riscv::NormalizedInstruction>::into(self.0.instruction())
+            Into::<jolt_riscv::JoltInstructionRow>::into(self.0.instruction())
                 .operands
                 .imm
                 & mask as i128,
@@ -23,7 +23,7 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Lui<C> {
 
     fn to_lookup_output(&self) -> u64 {
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
-        Into::<jolt_riscv::NormalizedInstruction>::into(self.0.instruction())
+        Into::<jolt_riscv::JoltInstructionRow>::into(self.0.instruction())
             .operands
             .imm as u64
             & mask

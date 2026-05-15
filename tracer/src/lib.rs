@@ -14,6 +14,7 @@ use alloc::{boxed::Box, vec::Vec};
 use common::{self, jolt_device::MemoryConfig};
 use emulator::{cpu, default_terminal::DefaultTerminal};
 use instruction::{Cycle, Instruction};
+use jolt_riscv::RV64IMAC_JOLT;
 
 pub mod emulator;
 pub mod execution_backend;
@@ -27,6 +28,7 @@ pub use execution_backend::TracerBackend;
 pub use instruction::inline::{
     list_registered_inlines, InlineRegistration, TracerInlineExpansionProvider,
 };
+pub use jolt_riscv::InlineExtension;
 
 use crate::emulator::{
     memory::{Memory, MemoryData},
@@ -653,12 +655,13 @@ pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
         panic!("tracer only supports RV64 ELF inputs");
     }
 
-    let image = jolt_program::image::decode_elf(elf).expect("jolt-program ELF64 decoding failed");
+    let image = jolt_program::image::decode_elf(elf, RV64IMAC_JOLT)
+        .expect("jolt-program ELF64 decoding failed");
     let instructions = image
         .instructions
         .into_iter()
         .map(|instruction| {
-            Instruction::try_from_normalized(instruction)
+            Instruction::try_from_source_instruction(instruction)
                 .expect("jolt-program image decoder produced an unknown tracer row")
         })
         .collect();

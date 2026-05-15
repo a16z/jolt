@@ -16,7 +16,7 @@
 use crate::poly::opening_proof::{OpeningId, SumcheckId};
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::instruction::{
-    CircuitFlags, Flags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS,
+    CircuitFlags, Flags, InstructionFlags, JoltTraceCycle, LookupQuery, NUM_CIRCUIT_FLAGS,
 };
 use crate::zkvm::witness::VirtualPolynomial;
 
@@ -264,21 +264,23 @@ impl R1CSCycleInputs {
         F: JoltField,
     {
         let len = trace.len();
-        let cycle = &trace[t];
-        let instr = cycle.instruction();
-        let flags_view = instr.circuit_flags();
-        let instruction_flags = instr.instruction_flags();
-        let norm = instr.normalize();
+        let cycle = JoltTraceCycle::try_new(&trace[t])
+            .expect("trace cycle must be backed by a final Jolt instruction row");
+        let flags_view = cycle.circuit_flags();
+        let instruction_flags = cycle.instruction_flags();
+        let norm = cycle.instruction();
 
-        // Next-cycle context
         let next_cycle = if t + 1 < len {
-            Some(&trace[t + 1])
+            Some(
+                JoltTraceCycle::try_new(&trace[t + 1])
+                    .expect("trace cycle must be backed by a final Jolt instruction row"),
+            )
         } else {
             None
         };
 
         // Instruction inputs and product
-        let (left_input, right_i128) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
+        let (left_input, right_i128) = LookupQuery::<XLEN>::to_instruction_inputs(&cycle);
         let left_s64: S64 = S64::from_u64(left_input);
         let right_mag = right_i128.unsigned_abs();
         debug_assert!(
@@ -290,35 +292,33 @@ impl R1CSCycleInputs {
         let product: S128 = left_s64.mul_trunc::<2, 2>(&right_s128);
 
         // Lookup operands and output
-        let (left_lookup, right_lookup) = LookupQuery::<XLEN>::to_lookup_operands(cycle);
-        let lookup_output = LookupQuery::<XLEN>::to_lookup_output(cycle);
+        let (left_lookup, right_lookup) = LookupQuery::<XLEN>::to_lookup_operands(&cycle);
+        let lookup_output = LookupQuery::<XLEN>::to_lookup_output(&cycle);
 
         // Registers
-        let rs1_read_value = cycle.rs1_read().unwrap_or_default().1;
-        let rs2_read_value = cycle.rs2_read().unwrap_or_default().1;
-        let rd_write_value = cycle.rd_write().unwrap_or_default().2;
+        let rs1_read_value = cycle.cycle().rs1_read().unwrap_or_default().1;
+        let rs2_read_value = cycle.cycle().rs2_read().unwrap_or_default().1;
+        let rd_write_value = cycle.cycle().rd_write().unwrap_or_default().2;
 
         // RAM
-        let ram_addr = cycle.ram_access().address() as u64;
-        let (ram_read_value, ram_write_value) = match cycle.ram_access() {
+        let ram_addr = cycle.cycle().ram_access().address() as u64;
+        let (ram_read_value, ram_write_value) = match cycle.cycle().ram_access() {
             tracer::instruction::RAMAccess::Read(r) => (r.value, r.value),
             tracer::instruction::RAMAccess::Write(w) => (w.pre_value, w.post_value),
             tracer::instruction::RAMAccess::NoOp => (0u64, 0u64),
         };
 
         // PCs
-        let pc = crate::zkvm::bytecode::get_pc_for_cycle(bytecode_preprocessing, cycle) as u64;
-        let next_pc = if let Some(nc) = next_cycle {
-            crate::zkvm::bytecode::get_pc_for_cycle(bytecode_preprocessing, nc) as u64
-        } else {
-            0u64
-        };
+        let pc =
+            crate::zkvm::bytecode::get_pc_for_cycle(bytecode_preprocessing, cycle.cycle()) as u64;
+        let next_pc = next_cycle.as_ref().map_or(0, |next_cycle| {
+            crate::zkvm::bytecode::get_pc_for_cycle(bytecode_preprocessing, next_cycle.cycle())
+                as u64
+        });
         let unexpanded_pc = norm.address as u64;
-        let next_unexpanded_pc = if let Some(nc) = next_cycle {
-            nc.instruction().normalize().address as u64
-        } else {
-            0u64
-        };
+        let next_unexpanded_pc = next_cycle
+            .as_ref()
+            .map_or(0, |next_cycle| next_cycle.instruction().address as u64);
 
         // Immediate
         let imm_i128 = norm.operands.imm;
@@ -334,23 +334,22 @@ impl R1CSCycleInputs {
         for flag in CircuitFlags::iter() {
             flags[flag] = flags_view[flag];
         }
-        let next_is_noop = if let Some(nc) = next_cycle {
-            nc.instruction().instruction_flags()[InstructionFlags::IsNoop]
-        } else {
-            false // There is no next cycle, so cannot be a noop
-        };
+        let next_is_noop = next_cycle
+            .as_ref()
+            .is_some_and(|next_cycle| next_cycle.instruction_flags()[InstructionFlags::IsNoop]);
         let should_jump = flags_view[CircuitFlags::Jump] && !next_is_noop;
         let should_branch = instruction_flags[InstructionFlags::Branch] && (lookup_output == 1);
 
-        let (next_is_virtual, next_is_first_in_sequence) = if let Some(nc) = next_cycle {
-            let flags = nc.instruction().circuit_flags();
-            (
-                flags[CircuitFlags::VirtualInstruction],
-                flags[CircuitFlags::IsFirstInSequence],
-            )
-        } else {
-            (false, false)
-        };
+        let (next_is_virtual, next_is_first_in_sequence) =
+            if let Some(next_cycle) = next_cycle.as_ref() {
+                let flags = next_cycle.circuit_flags();
+                (
+                    flags[CircuitFlags::VirtualInstruction],
+                    flags[CircuitFlags::IsFirstInSequence],
+                )
+            } else {
+                (false, false)
+            };
 
         Self {
             left_input,
@@ -465,16 +464,16 @@ impl ProductCycleInputs {
         F: JoltField,
     {
         let len = trace.len();
-        let cycle = &trace[t];
-        let instr = cycle.instruction();
-        let flags_view = instr.circuit_flags();
-        let instruction_flags = instr.instruction_flags();
+        let cycle = JoltTraceCycle::try_new(&trace[t])
+            .expect("trace cycle must be backed by a final Jolt instruction row");
+        let flags_view = cycle.circuit_flags();
+        let instruction_flags = cycle.instruction_flags();
 
         // Instruction inputs
-        let (left_input, right_input) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
+        let (left_input, right_input) = LookupQuery::<XLEN>::to_instruction_inputs(&cycle);
 
         // Lookup output
-        let lookup_output = LookupQuery::<XLEN>::to_lookup_output(cycle);
+        let lookup_output = LookupQuery::<XLEN>::to_lookup_output(&cycle);
 
         // Jump and Branch flags
         let jump_flag = flags_view[CircuitFlags::Jump];
@@ -483,7 +482,9 @@ impl ProductCycleInputs {
         // Next-is-noop and its complement (1 - NextIsNoop)
         let not_next_noop = {
             if t + 1 < len {
-                !trace[t + 1].instruction().instruction_flags()[InstructionFlags::IsNoop]
+                let next_cycle = JoltTraceCycle::try_new(&trace[t + 1])
+                    .expect("trace cycle must be backed by a final Jolt instruction row");
+                !next_cycle.instruction_flags()[InstructionFlags::IsNoop]
             } else {
                 // Needs final not_next_noop to be false for the shift sumcheck
                 // (since EqPlusOne does not do overflow)
@@ -520,14 +521,15 @@ pub struct ShiftSumcheckCycleState {
 
 impl ShiftSumcheckCycleState {
     pub fn new(cycle: &Cycle, bytecode_preprocessing: &BytecodePreprocessing) -> Self {
-        let instruction = cycle.instruction();
-        let circuit_flags = instruction.circuit_flags();
+        let jolt_cycle = JoltTraceCycle::try_new(cycle)
+            .expect("trace cycle must be backed by a final Jolt instruction row");
+        let circuit_flags = jolt_cycle.circuit_flags();
         Self {
-            unexpanded_pc: instruction.normalize().address as u64,
+            unexpanded_pc: jolt_cycle.instruction().address as u64,
             pc: crate::zkvm::bytecode::get_pc_for_cycle(bytecode_preprocessing, cycle) as u64,
             is_virtual: circuit_flags[CircuitFlags::VirtualInstruction],
             is_first_in_sequence: circuit_flags[CircuitFlags::IsFirstInSequence],
-            is_noop: instruction.instruction_flags()[InstructionFlags::IsNoop],
+            is_noop: jolt_cycle.instruction_flags()[InstructionFlags::IsNoop],
         }
     }
 }

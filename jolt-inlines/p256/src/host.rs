@@ -4,6 +4,7 @@ use crate::sequence_builder::{
 
 jolt_inlines_sdk::register_inlines! {
     trace_file: "p256_trace.joltinline",
+    extension: jolt_inlines_sdk::host::InlineExtension::P256,
     ops: [
         P256MulQ,
         P256SquareQ,

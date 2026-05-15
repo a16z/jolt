@@ -10,7 +10,7 @@ use common::constants::{
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_program::execution::{ExecutionBackend, TraceError, TraceInputs, TraceOutput};
 use jolt_program::{JoltProgram, ProgramError};
-use jolt_riscv::NormalizedInstruction;
+use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT, RV64IMAC_JOLT_ALL_INLINES};
 use std::fs::File;
 use std::io;
 use std::io::{Read, Write};
@@ -269,10 +269,14 @@ impl Program {
             .get_elf_contents()
             .expect("ELF contents should be available after building the guest");
         let mut inline_provider = tracer::TracerInlineExpansionProvider::new();
-        jolt_program::build_jolt_program_with_inline_provider(&elf_contents, &mut inline_provider)
+        jolt_program::build_jolt_program_with_inline_provider(
+            &elf_contents,
+            &mut inline_provider,
+            RV64IMAC_JOLT_ALL_INLINES,
+        )
     }
 
-    pub fn decode(&mut self) -> (Vec<NormalizedInstruction>, Vec<(u64, u8)>, u64, u64) {
+    pub fn decode(&mut self) -> (Vec<JoltInstructionRow>, Vec<(u64, u8)>, u64, u64) {
         let program = self.jolt_program().expect("failed to build Jolt program");
         (
             program.expanded_bytecode,
@@ -317,8 +321,8 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let image =
-            jolt_program::image::decode_elf(&elf_contents).expect("program ELF decoding failed");
+        let image = jolt_program::image::decode_elf(&elf_contents, RV64IMAC_JOLT)
+            .expect("program ELF decoding failed");
         let memory_config =
             self.memory_config_with_program_size(image.program_end - RAM_START_ADDRESS);
 
@@ -348,8 +352,8 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let image =
-            jolt_program::image::decode_elf(&elf_contents).expect("program ELF decoding failed");
+        let image = jolt_program::image::decode_elf(&elf_contents, RV64IMAC_JOLT)
+            .expect("program ELF decoding failed");
         let memory_config =
             self.memory_config_with_program_size(image.program_end - RAM_START_ADDRESS);
 
