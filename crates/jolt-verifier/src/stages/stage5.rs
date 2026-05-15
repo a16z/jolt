@@ -1,10 +1,8 @@
 #![allow(dead_code)]
 
-use bolt_verifier_runtime::{batch_claims, eval_by_name, eval_family_values, find_batch, find_plan, reverse_slice, NamedEvalFamilyPlan};
-use super::jolt_relations::{identity_polynomial_eval, normalize_instruction_read_raf_point, operand_polynomial_eval};
+use bolt_verifier_runtime::{batch_claims, find_batch, find_plan, NamedEvalFamilyPlan};
+use super::jolt_relations::{evaluate_stage5_instruction_read_raf, normalize_instruction_read_raf_point, Stage5InstructionReadRafPlan};
 use jolt_field::{Field, Fr};
-use jolt_lookup_tables::LookupTableKind;
-use jolt_poly::EqPolynomial;
 use jolt_sumcheck::SumcheckError;
 use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};
 
@@ -201,6 +199,16 @@ pub const STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVALS: NamedEvalFamilyPlan = Na
 #[rustfmt::skip]
 pub const STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVAL_NAMES: &[&str] = &["stage5.instruction_read_raf.eval.InstructionRa_0", "stage5.instruction_read_raf.eval.InstructionRa_1", "stage5.instruction_read_raf.eval.InstructionRa_2", "stage5.instruction_read_raf.eval.InstructionRa_3", "stage5.instruction_read_raf.eval.InstructionRa_4", "stage5.instruction_read_raf.eval.InstructionRa_5", "stage5.instruction_read_raf.eval.InstructionRa_6", "stage5.instruction_read_raf.eval.InstructionRa_7"];
 pub const STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVALS: NamedEvalFamilyPlan = NamedEvalFamilyPlan { symbol: "stage5.instruction_read_raf.eval.InstructionRa", evals: STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVAL_NAMES };
+
+pub const STAGE5_INSTRUCTION_READ_RAF_PLAN: Stage5InstructionReadRafPlan = Stage5InstructionReadRafPlan {
+    point: "stage5.instruction_read_raf.point",
+    lookup_output_point: "stage5.input.stage2.instruction.LookupOutput",
+    table_flag_evals: &STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVALS,
+    instruction_ra_evals: &STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVALS,
+    raf_flag_eval: "stage5.instruction_read_raf.eval.InstructionRafFlag",
+    gamma: "stage5.instruction_read_raf.gamma",
+    log_k: 128,
+};
 
 pub const STAGE5_POINT_SLICES: &[Stage5PointSlicePlan] = &[
     Stage5PointSlicePlan { symbol: "stage5.instruction_read_raf.point.Cycle", source: "stage5.instruction_read_raf.instance", offset: 128, length: 16, input: "stage5.instruction_read_raf.instance" },
@@ -591,7 +599,12 @@ fn expected_batched_output_claim(
         };
         let value = match relation {
             Stage5RelationKind::Stage5InstructionReadRaf => {
-                expected_instruction_read_raf(store, evals, local_point)?
+                evaluate_stage5_instruction_read_raf(
+                    &STAGE5_INSTRUCTION_READ_RAF_PLAN,
+                    store,
+                    evals,
+                    local_point,
+                )?
             }
             Stage5RelationKind::Stage5RamRaClaimReduction => {
                 let output_claim = program
@@ -632,60 +645,4 @@ fn expected_batched_output_claim(
         expected += *coefficient * value;
     }
     Ok(expected)
-}
-
-fn expected_instruction_read_raf(
-    store: &bolt_verifier_runtime::ValueStore<Fr>,
-    evals: &[Stage5NamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage5Error> {
-    const LOG_K: usize = 128;
-    const XLEN: usize = 64;
-
-    if local_point.len() < LOG_K {
-        return Err(VerifyStage5Error::InvalidInputLength {
-            input: "stage5.instruction_read_raf.point",
-            expected: LOG_K,
-            actual: local_point.len(),
-        });
-    }
-
-    let (r_address_prime, r_cycle) = local_point.split_at(LOG_K);
-    let r_cycle_prime = reverse_slice(r_cycle);
-    let r_reduction = bolt_verifier_runtime::store_point(store, "stage5.input.stage2.instruction.LookupOutput")?;
-    let eq_eval_r_reduction = EqPolynomial::<Fr>::mle(r_reduction, &r_cycle_prime);
-
-    let left_operand_eval = operand_polynomial_eval(r_address_prime, true);
-    let right_operand_eval = operand_polynomial_eval(r_address_prime, false);
-    let identity_poly_eval = identity_polynomial_eval(r_address_prime);
-
-    let table_flag_claims =
-        eval_family_values(evals, &STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVALS)?;
-    let table_values = LookupTableKind::<XLEN>::all()
-        .iter()
-        .take(table_flag_claims.len())
-        .map(|table| table.evaluate_mle::<Fr, Fr>(r_address_prime))
-        .collect::<Vec<_>>();
-    let val_claim = table_values
-        .into_iter()
-        .zip(table_flag_claims)
-        .map(|(table_value, flag_claim)| table_value * flag_claim)
-        .sum::<Fr>();
-
-    let ra_claim = eval_family_values(
-        evals,
-        &STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVALS,
-    )?
-    .into_iter()
-    .product::<Fr>();
-    let raf_flag_claim = eval_by_name(
-        evals,
-        "stage5.instruction_read_raf.eval.InstructionRafFlag",
-    )?;
-    let gamma = bolt_verifier_runtime::store_scalar(store, "stage5.instruction_read_raf.gamma")?;
-
-    let raf_claim = (Fr::from_u64(1) - raf_flag_claim)
-        * (left_operand_eval + gamma * right_operand_eval)
-        + raf_flag_claim * gamma * identity_poly_eval;
-    Ok(eq_eval_r_reduction * ra_claim * (val_claim + gamma * raf_claim))
 }

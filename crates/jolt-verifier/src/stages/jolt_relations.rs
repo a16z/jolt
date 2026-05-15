@@ -26,11 +26,13 @@
 //! See `crates/bolt/GOAL.md` "Audit Tiers" for the full tier definition.
 
 use jolt_field::{Field, Fr, MulPow2};
+use jolt_lookup_tables::LookupTableKind;
 use jolt_poly::EqPolynomial;
 
 use bolt_verifier_runtime::{
-    eval_family_values, field_powers, prefix_point, store_point, store_scalar, suffix_point,
-    NamedEvalFamilyPlan, RuntimePlanError, StageNamedEval, SumcheckInstanceResultPlan, ValueStore,
+    eval_by_name, eval_family_values, field_powers, prefix_point, reverse_slice, store_point,
+    store_scalar, suffix_point, NamedEvalFamilyPlan, RuntimePlanError, StageNamedEval,
+    SumcheckInstanceResultPlan, ValueStore,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,6 +86,17 @@ pub fn normalize_instruction_read_raf_point<F: Field>(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stage67RelationSymbols {
     pub hamming_booleanity_instance: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stage5InstructionReadRafPlan {
+    pub point: &'static str,
+    pub lookup_output_point: &'static str,
+    pub table_flag_evals: &'static NamedEvalFamilyPlan,
+    pub instruction_ra_evals: &'static NamedEvalFamilyPlan,
+    pub raf_flag_eval: &'static str,
+    pub gamma: &'static str,
+    pub log_k: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -180,6 +193,55 @@ pub trait Stage67BytecodeEntry {
     fn right_is_rs2(&self) -> bool;
     fn right_is_imm(&self) -> bool;
     fn is_noop(&self) -> bool;
+}
+
+pub fn evaluate_stage5_instruction_read_raf(
+    plan: &Stage5InstructionReadRafPlan,
+    store: &ValueStore<Fr>,
+    evals: &[StageNamedEval<Fr>],
+    local_point: &[Fr],
+) -> Result<Fr, RuntimePlanError> {
+    const XLEN: usize = 64;
+
+    if local_point.len() < plan.log_k {
+        return Err(RuntimePlanError::InvalidInputLength {
+            input: plan.point,
+            expected: plan.log_k,
+            actual: local_point.len(),
+        });
+    }
+
+    let (r_address_prime, r_cycle) = local_point.split_at(plan.log_k);
+    let r_cycle_prime = reverse_slice(r_cycle);
+    let r_reduction = store_point(store, plan.lookup_output_point)?;
+    let eq_eval_r_reduction = EqPolynomial::<Fr>::mle(r_reduction, &r_cycle_prime);
+
+    let left_operand_eval = operand_polynomial_eval(r_address_prime, true);
+    let right_operand_eval = operand_polynomial_eval(r_address_prime, false);
+    let identity_poly_eval = identity_polynomial_eval(r_address_prime);
+
+    let table_flag_claims = eval_family_values(evals, plan.table_flag_evals)?;
+    let table_values = LookupTableKind::<XLEN>::all()
+        .iter()
+        .take(table_flag_claims.len())
+        .map(|table| table.evaluate_mle::<Fr, Fr>(r_address_prime))
+        .collect::<Vec<_>>();
+    let val_claim = table_values
+        .into_iter()
+        .zip(table_flag_claims)
+        .map(|(table_value, flag_claim)| table_value * flag_claim)
+        .sum::<Fr>();
+
+    let ra_claim = eval_family_values(evals, plan.instruction_ra_evals)?
+        .into_iter()
+        .product::<Fr>();
+    let raf_flag_claim = eval_by_name(evals, plan.raf_flag_eval)?;
+    let gamma = store_scalar(store, plan.gamma)?;
+
+    let raf_claim = (Fr::from_u64(1) - raf_flag_claim)
+        * (left_operand_eval + gamma * right_operand_eval)
+        + raf_flag_claim * gamma * identity_poly_eval;
+    Ok(eq_eval_r_reduction * ra_claim * (val_claim + gamma * raf_claim))
 }
 
 pub fn stage67_trace_rounds(
