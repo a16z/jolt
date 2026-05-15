@@ -66,8 +66,8 @@ fn commitment_protocol_uses_bolt_semantic_dialects() {
 
     assert!(text.contains("\"protocol.params\"()"));
     assert!(text.contains("sym_name = \"jolt.params\""));
-    assert!(text.contains("trace_length = 65536"));
-    assert!(text.contains("num_committed = 41"));
+    assert!(text.contains("trace_length = 262144"));
+    assert!(text.contains("num_committed = 42"));
     assert!(text.contains("\"field.define\"()"));
     assert!(text.contains("sym_name = \"bn254_fr\""));
     assert!(text.contains("\"poly.domain\"()"));
@@ -283,7 +283,7 @@ fn protocol_schema_rejects_bad_derived_params() {
         .expect("append family");
 
     let error = verify_jolt_protocol_schema(&bad).expect_err("bad derived param rejected");
-    assert!(error.to_string().contains("num_committed must be 41"));
+    assert!(error.to_string().contains("num_committed must be 42"));
 }
 
 #[test]
@@ -474,7 +474,7 @@ fn jolt_stage2_protocol_defines_product_ram_claim_flow() {
     assert!(text.contains("\"poly.lagrange_basis_eval\"(%"));
     assert!(text.contains("sym_name = \"stage2.ram_read_write.claim_expr\""));
     assert!(text.contains("\"piop.sumcheck_instance_result\"(%"));
-    assert!(text.contains("round_offset = 16 : i64"));
+    assert!(text.contains("round_offset = 18 : i64"));
     assert!(text.contains("\"poly.point_slice\"(%"));
     assert!(text.contains("\"poly.point_concat\"(%"));
     assert!(text.contains(
@@ -808,7 +808,7 @@ fn jolt_stage5_protocol_defines_value_lookup_reduction_flow() {
     assert!(text.contains("sym_name = \"stage5.instruction_read_raf.gamma\""));
     assert!(text.contains("sym_name = \"stage5.ram_ra_claim_reduction.gamma\""));
     assert!(text.contains("sym_name = \"stage5.instruction.lookup_output_claim_consistency\""));
-    assert!(text.contains("round_schedule = [128, 16]"));
+    assert!(text.contains("round_schedule = [128, 18]"));
     assert!(text.contains("ordered_claims = [@stage5.instruction_read_raf.input, @stage5.ram_ra_claim_reduction.input, @stage5.registers_val_evaluation.input]"));
     assert!(text.contains("@stage5.instruction_read_raf.opening.LookupTableFlag_0"));
     assert!(text.contains("@stage5.instruction_read_raf.opening.InstructionRa_0"));
@@ -899,7 +899,7 @@ fn jolt_stage6_protocol_defines_bytecode_booleanity_and_virtualization_flow() {
     assert!(text.contains("source_claim = @stage2.ram_read_write.opening.RamInc"));
     assert!(text.contains("source_claim = @stage4.registers_read_write.opening.RdInc"));
     assert!(text.contains("source_claim = @stage5.registers_val_evaluation.opening.RdInc"));
-    assert!(text.contains("round_schedule = [10, 16]"));
+    assert!(text.contains("round_schedule = [14, 18]"));
     assert!(text.contains("ordered_claims = [@stage6.bytecode_read_raf.input, @stage6.booleanity.input, @stage6.hamming_booleanity.input, @stage6.ram_ra_virtual.input, @stage6.instruction_ra_virtual.input, @stage6.inc_claim_reduction.input]"));
     assert!(text.contains("@stage6.bytecode_read_raf.opening.BytecodeRa_0"));
     assert!(text.contains("@stage6.booleanity.opening.InstructionRa_0"));
@@ -1473,14 +1473,14 @@ fn stage6_rust_targets_extract_and_compile() {
             + params.instruction_d
             + 2
     );
-    assert_eq!(prover_program.point_zeros.len(), 1);
+    assert_eq!(prover_program.point_zeros.len(), 2);
     assert_eq!(
         prover_program.point_slices.len(),
         params.bytecode_d + 1 + params.ram_d + params.instruction_d
     );
     assert_eq!(
         prover_program.point_concats.len(),
-        params.bytecode_d + 1 + params.ram_d + params.instruction_d
+        params.bytecode_d + 1 + params.ram_d + params.instruction_d + 1
     );
     assert_eq!(
         prover_program.opening_claims.len(),
