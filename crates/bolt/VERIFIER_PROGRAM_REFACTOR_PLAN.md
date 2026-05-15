@@ -587,8 +587,11 @@ and verifier opening-flow validation to consume plan-derived value sources
 instead of rebuilding point sources in each stage. Verifier field-flow
 validation also consumes plan-derived scalar sources; the remaining CPU scalar
 source builders are explicitly scoped to prover/role-neutral validation.
-Field-vector values, eval-family values, and relation-output execution are not
-yet lowered through a single typed graph.
+Stage 5/6 verifier programs now also emit explicit indexed eval-family rows as
+runtime `NamedEvalFamilyPlan` slices and seed them into `ValueStore` as
+field-vector values after sumcheck output observation. Relation-output execution
+is not yet lowered through a single typed graph, and output eval families are
+still scalar-output claim machinery rather than first-class value rows.
 
 ### Dialect changes
 

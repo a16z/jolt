@@ -15,7 +15,7 @@ use crate::protocols::jolt::stage6_bytecode_read_raf_plan::{
     emit_stage6_bytecode_read_raf_plan_constants, stage6_bytecode_read_raf_output_claim_plan,
     STAGE6_BYTECODE_RA_EVAL_FAMILY,
 };
-use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
+use crate::protocols::jolt::verifier_eval_families::{self, IndexedEvalFamilyPlan};
 use crate::protocols::jolt::verifier_output_claims::{
     self, parse_output_eval_family_plan, parse_output_function_family_plan,
     parse_output_product_family_plan, FieldExprDependencies,
@@ -1618,6 +1618,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
         if self.role == Role::Verifier {
             let bytecode_ra_evals =
                 stage6_bytecode_read_raf_eval_family(&self.verifier_plan()?.indexed_eval_families)?;
+            source.push_str(&self.emit_indexed_eval_family_constants()?);
             source.push_str(&emit_stage6_bytecode_read_raf_plan_constants(
                 bytecode_ra_evals,
             ));
@@ -2122,6 +2123,16 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
         )
     }
 
+    fn emit_indexed_eval_family_constants(&self) -> Result<String, EmitError> {
+        Ok(verifier_eval_families::emit_runtime_slice_constant(
+            &self.verifier_plan()?.indexed_eval_families,
+            "pub ",
+            "STAGE6_INDEXED_EVAL_FAMILY",
+            "STAGE6_INDEXED_EVAL_FAMILIES",
+            "bolt_verifier_runtime::NamedEvalFamilyPlan",
+        ))
+    }
+
     fn emit_verifier_output_claim_constants(&self) -> Result<String, EmitError> {
         super::output_claims::emit_verifier_output_claim_constants(
             "Stage6",
@@ -2590,6 +2601,7 @@ fn observe_stage6_sumcheck_output<F: Field>(
         },
         |symbol| VerifyStage6Error::MissingValue { symbol },
     )?;
+    store.evaluate_named_eval_families(STAGE6_INDEXED_EVAL_FAMILIES)?;
     store.evaluate_available_points(
         program.point_slices,
         program.point_concats,

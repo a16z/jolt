@@ -825,6 +825,7 @@ impl<R: ProtocolRelation> SumcheckDriverInfo for SumcheckDriverPlan<R> {
 pub struct ValueStore<F: Field> {
     scalars: Vec<(&'static str, F)>,
     points: Vec<(&'static str, Vec<F>)>,
+    field_vectors: Vec<(&'static str, Vec<F>)>,
 }
 
 impl<F: Field> ValueStore<F> {
@@ -1002,6 +1003,27 @@ impl<F: Field> ValueStore<F> {
         }
     }
 
+    pub fn evaluate_named_eval_families(
+        &mut self,
+        families: &[NamedEvalFamilyPlan],
+    ) -> Result<(), RuntimePlanError> {
+        for family in families {
+            if self.try_field_vector(family.symbol).is_some() {
+                continue;
+            }
+            let values = family
+                .evals
+                .iter()
+                .map(|eval| {
+                    self.try_scalar(eval)
+                        .ok_or(RuntimePlanError::MissingValue { symbol: eval })
+                })
+                .collect::<Result<Vec<_>, RuntimePlanError>>()?;
+            self.insert_field_vector(family.symbol, values);
+        }
+        Ok(())
+    }
+
     pub fn verify_opening_equalities<E>(
         &self,
         opening_equalities: &[OpeningClaimEqualityPlan],
@@ -1043,6 +1065,18 @@ impl<F: Field> ValueStore<F> {
         }
     }
 
+    pub fn insert_field_vector(&mut self, symbol: &'static str, values: Vec<F>) {
+        if let Some((_, existing)) = self
+            .field_vectors
+            .iter_mut()
+            .find(|(name, _)| *name == symbol)
+        {
+            *existing = values;
+        } else {
+            self.field_vectors.push((symbol, values));
+        }
+    }
+
     pub fn scalar_or<E>(
         &self,
         symbol: &'static str,
@@ -1071,6 +1105,22 @@ impl<F: Field> ValueStore<F> {
             .iter()
             .find(|(name, _)| *name == symbol)
             .map(|(_, point)| point.as_slice())
+    }
+
+    pub fn field_vector_or<E>(
+        &self,
+        symbol: &'static str,
+        missing_value: impl FnOnce(&'static str) -> E,
+    ) -> Result<&[F], E> {
+        self.try_field_vector(symbol)
+            .ok_or_else(|| missing_value(symbol))
+    }
+
+    pub fn try_field_vector(&self, symbol: &str) -> Option<&[F]> {
+        self.field_vectors
+            .iter()
+            .find(|(name, _)| *name == symbol)
+            .map(|(_, values)| values.as_slice())
     }
 
     fn try_expr_operands(&self, expr: &FieldExprPlan) -> Option<Vec<F>> {
@@ -1791,4 +1841,50 @@ pub fn pow_field<F: Field>(base: F, mut exponent: usize) -> F {
 
 pub fn reverse_slice(values: &[Fr]) -> Vec<Fr> {
     values.iter().rev().copied().collect()
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "tests assert the success and error paths directly"
+)]
+mod tests {
+    use super::{Fr, NamedEvalFamilyPlan, RuntimePlanError, ValueStore};
+
+    #[test]
+    fn value_store_evaluates_named_eval_families_as_field_vectors() {
+        let mut store = ValueStore::default();
+        store.insert_scalar("eval.a", Fr::from_u64(2));
+        store.insert_scalar("eval.b", Fr::from_u64(3));
+
+        store
+            .evaluate_named_eval_families(&[NamedEvalFamilyPlan {
+                symbol: "family.ab",
+                evals: &["eval.a", "eval.b"],
+            }])
+            .unwrap();
+
+        assert_eq!(
+            store.try_field_vector("family.ab"),
+            Some([Fr::from_u64(2), Fr::from_u64(3)].as_slice())
+        );
+    }
+
+    #[test]
+    fn value_store_rejects_named_eval_family_missing_eval() {
+        let mut store = ValueStore::<Fr>::default();
+        let error = store
+            .evaluate_named_eval_families(&[NamedEvalFamilyPlan {
+                symbol: "family.ab",
+                evals: &["eval.missing"],
+            }])
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            RuntimePlanError::MissingValue {
+                symbol: "eval.missing"
+            }
+        );
+    }
 }

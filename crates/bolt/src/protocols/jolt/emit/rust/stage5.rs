@@ -14,7 +14,7 @@ use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu,
 use crate::protocols::jolt::stage5_instruction_read_raf_plan::{
     Stage5InstructionReadRafEmitPlan, Stage5InstructionReadRafOutputFieldExprPlan,
 };
-use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
+use crate::protocols::jolt::verifier_eval_families::{self, IndexedEvalFamilyPlan};
 use crate::protocols::jolt::verifier_output_claims::{
     self, parse_output_eval_family_plan, parse_output_function_family_plan,
     parse_output_product_family_plan, FieldExprDependencies,
@@ -1519,6 +1519,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
         source.push_str(&self.emit_sumcheck_driver_constants()?);
         source.push_str(&self.emit_tail_constants()?);
         if self.role == Role::Verifier {
+            source.push_str(&self.emit_indexed_eval_family_constants()?);
             source.push_str(&self.emit_verifier_output_claim_constants()?);
         }
         let output_claims_field = if self.role == Role::Verifier {
@@ -2010,6 +2011,16 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
         format!("pub const STAGE5_SUMCHECK_EVALS: &[Stage5SumcheckEvalPlan] = &[\n{evals}\n];\n\n")
     }
 
+    fn emit_indexed_eval_family_constants(&self) -> Result<String, EmitError> {
+        Ok(verifier_eval_families::emit_runtime_slice_constant(
+            &self.verifier_plan()?.indexed_eval_families,
+            "pub ",
+            "STAGE5_INDEXED_EVAL_FAMILY",
+            "STAGE5_INDEXED_EVAL_FAMILIES",
+            "bolt_verifier_runtime::NamedEvalFamilyPlan",
+        ))
+    }
+
     fn emit_named_eval_family_constants(&self) -> Result<String, EmitError> {
         let plan = Stage5InstructionReadRafEmitPlan::from_eval_families(
             &self.verifier_plan()?.indexed_eval_families,
@@ -2434,6 +2445,7 @@ fn observe_stage5_sumcheck_output<F: Field>(
         },
         |symbol| VerifyStage5Error::MissingValue { symbol },
     )?;
+    store.evaluate_named_eval_families(STAGE5_INDEXED_EVAL_FAMILIES)?;
     store.evaluate_available_points(
         program.point_slices,
         program.point_concats,
