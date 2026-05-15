@@ -288,7 +288,7 @@ pub const STAGE7_SUMCHECK_OUTPUT_CLAIM_0_FAMILIES: &[bolt_verifier_runtime::Sumc
 ];
 
 pub const STAGE7_SUMCHECK_OUTPUT_CLAIMS: &[Stage7SumcheckOutputClaimPlan] = &[
-    Stage7SumcheckOutputClaimPlan { relation: Stage7RelationKind::Stage7HammingWeightClaimReduction, polynomial_evals: STAGE7_SUMCHECK_OUTPUT_CLAIM_0_VALUES, eval_families: STAGE7_SUMCHECK_OUTPUT_CLAIM_0_FAMILIES, product_families: &[], function_families: &[], claim_value: "stage7.hamming_weight_claim_reduction.output.family" },
+    Stage7SumcheckOutputClaimPlan { relation: Stage7RelationKind::Stage7HammingWeightClaimReduction, polynomial_evals: STAGE7_SUMCHECK_OUTPUT_CLAIM_0_VALUES, eval_families: STAGE7_SUMCHECK_OUTPUT_CLAIM_0_FAMILIES, product_families: &[], function_families: &[], local_scalars: &[], claim_value: "stage7.hamming_weight_claim_reduction.output.family" },
 ];
 
 pub const STAGE7_SUMCHECK_INSTANCE_RESULTS: &[Stage7SumcheckInstanceResultPlan] = &[

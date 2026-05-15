@@ -442,6 +442,7 @@ pub struct SumcheckOutputClaimPlan<R: ProtocolRelation> {
     pub eval_families: &'static [SumcheckOutputEvalFamilyPlan],
     pub product_families: &'static [SumcheckOutputProductFamilyPlan],
     pub function_families: &'static [SumcheckOutputFunctionFamilyPlan],
+    pub local_scalars: &'static [&'static str],
     pub claim_value: &'static str,
 }
 
@@ -1251,6 +1252,11 @@ pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
     let mut scratch = ScratchScalars::default();
     for scalar in local_scalars {
         scratch.insert(scalar.symbol, scalar.value);
+    }
+    for symbol in plan.local_scalars {
+        if !local_scalars.iter().any(|scalar| scalar.symbol == *symbol) {
+            return Err(RuntimePlanError::MissingValue { symbol });
+        }
     }
     for eval in evals {
         scratch.insert(eval.name, eval.value);

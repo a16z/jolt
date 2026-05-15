@@ -214,6 +214,7 @@ pub struct SumcheckOutputClaimPlan {
     pub eval_families: Vec<SumcheckOutputEvalFamilyPlan>,
     pub product_families: Vec<SumcheckOutputProductFamilyPlan>,
     pub function_families: Vec<SumcheckOutputFunctionFamilyPlan>,
+    pub local_scalars: Vec<String>,
     pub claim_value: String,
 }
 
@@ -703,6 +704,7 @@ where
                 eval_families,
                 product_families,
                 function_families,
+                local_scalars: Vec::new(),
                 claim_value: claim.claim_value,
             })
         })

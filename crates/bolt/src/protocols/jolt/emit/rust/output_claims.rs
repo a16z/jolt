@@ -42,8 +42,9 @@ pub fn emit_verifier_output_claim_constants(
         let product_families = emit_product_family_constants(&mut source, stage_type, index, claim);
         let function_families =
             emit_function_family_constants(&mut source, stage_type, index, claim)?;
+        let local_scalars = emit_local_scalar_constants(&mut source, stage_type, index, claim);
         claims.push(format!(
-            "    {stage_type}SumcheckOutputClaimPlan {{ relation: {}, polynomial_evals: {values_name}, eval_families: {eval_families}, product_families: {product_families}, function_families: {function_families}, claim_value: {} }},",
+            "    {stage_type}SumcheckOutputClaimPlan {{ relation: {}, polynomial_evals: {values_name}, eval_families: {eval_families}, product_families: {product_families}, function_families: {function_families}, local_scalars: {local_scalars}, claim_value: {} }},",
             super::plan_tokens::role_relation_kind_expr(stage_type, role, &claim.relation)?,
             rust_str(&claim.claim_value)
         ));
@@ -57,6 +58,27 @@ pub fn emit_verifier_output_claim_constants(
         ),
     );
     Ok(source)
+}
+
+fn emit_local_scalar_constants(
+    source: &mut String,
+    stage_type: &str,
+    claim_index: usize,
+    claim: &SumcheckOutputClaimPlan,
+) -> String {
+    if claim.local_scalars.is_empty() {
+        return "&[]".to_owned();
+    }
+    let name = format!(
+        "{}_SUMCHECK_OUTPUT_CLAIM_{claim_index}_LOCAL_SCALARS",
+        stage_type.to_ascii_uppercase()
+    );
+    let scalars = rust_str_array(&claim.local_scalars);
+    push_format(
+        source,
+        format_args!("pub const {name}: &[&str] = &[{scalars}];\n"),
+    );
+    name
 }
 
 fn emit_eval_family_constants(

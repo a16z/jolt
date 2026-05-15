@@ -340,6 +340,7 @@ pub(crate) fn emit_stage6_bytecode_read_raf_plan_constants() -> String {
     emit_bytecode_read_raf_plan(&STAGE6_BYTECODE_READ_RAF_PLAN)
 }
 
+#[cfg(test)]
 pub(crate) fn stage6_bytecode_read_raf_output_contribution_symbol() -> &'static str {
     STAGE6_BYTECODE_READ_RAF_PLAN.output_contribution
 }
@@ -367,6 +368,7 @@ impl BytecodeReadRafPlan {
             eval_families: Vec::new(),
             product_families: vec![product_family.clone()],
             function_families: Vec::new(),
+            local_scalars: vec![self.output_contribution.to_owned()],
             claim_value: product_family.symbol,
         }
     }
@@ -687,6 +689,10 @@ mod tests {
         assert!(claim.eval_families.is_empty());
         assert_eq!(claim.product_families.len(), 1);
         assert_eq!(claim.product_families[0].terms.len(), 1);
+        assert_eq!(
+            claim.local_scalars,
+            vec![stage6_bytecode_read_raf_output_contribution_symbol().to_owned()]
+        );
         assert_eq!(
             claim.product_families[0].terms[0].evals,
             vec![

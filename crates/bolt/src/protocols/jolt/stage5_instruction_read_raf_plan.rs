@@ -232,6 +232,11 @@ impl Stage5InstructionReadRafEmitPlan {
                 eval_families: Vec::new(),
                 product_families: vec![table_value_family, ra_product_family],
                 function_families: Vec::new(),
+                local_scalars: self
+                    .point_values
+                    .iter()
+                    .map(|value| value.symbol.clone())
+                    .collect(),
                 claim_value: claim_expr,
             },
         }
@@ -480,6 +485,16 @@ mod tests {
         assert_eq!(
             output_plan.claim.product_families[1].terms[0].evals,
             vec!["stage5.instruction_read_raf.eval.InstructionRa_0".to_owned()]
+        );
+        assert_eq!(
+            output_plan.claim.local_scalars,
+            vec![
+                "stage5.instruction_read_raf.point_value.LookupTable_0".to_owned(),
+                "stage5.instruction_read_raf.point_value.LookupTable_1".to_owned(),
+                "stage5.instruction_read_raf.point_value.LeftLookupOperand".to_owned(),
+                "stage5.instruction_read_raf.point_value.RightLookupOperand".to_owned(),
+                "stage5.instruction_read_raf.point_value.Identity".to_owned(),
+            ]
         );
         assert!(output_plan.field_exprs.iter().any(|expr| {
             expr.symbol == "stage5.instruction_read_raf.output.claim_expr"

@@ -805,12 +805,12 @@ impl Stage5CpuProgram {
             self.field_exprs.iter().map(|expr| &expr.symbol),
             verifier_output_claims::VerifierScalarSourceKind::FieldExpr,
         );
-        if let Some(plan) = &self.instruction_read_raf_plan {
-            values.extend(
-                plan.point_values.iter().map(|value| &value.symbol),
-                verifier_output_claims::VerifierScalarSourceKind::PointDerived,
-            );
-        }
+        values.extend(
+            self.output_claims
+                .iter()
+                .flat_map(|claim| claim.local_scalars.iter()),
+            verifier_output_claims::VerifierScalarSourceKind::PointDerived,
+        );
         values.extend(
             self.evals.iter().map(|eval| &eval.symbol),
             verifier_output_claims::VerifierScalarSourceKind::SumcheckEval,

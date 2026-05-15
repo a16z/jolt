@@ -13,7 +13,6 @@ use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
 use crate::protocols::jolt::stage6_bytecode_read_raf_plan::{
     emit_stage6_bytecode_read_raf_plan_constants, stage6_bytecode_read_raf_output_claim_plan,
-    stage6_bytecode_read_raf_output_contribution_symbol,
 };
 use crate::protocols::jolt::verifier_output_claims::{
     self, parse_output_eval_family_plan, parse_output_function_family_plan,
@@ -827,8 +826,10 @@ impl Stage6CpuProgram {
             self.field_exprs.iter().map(|expr| &expr.symbol),
             verifier_output_claims::VerifierScalarSourceKind::FieldExpr,
         );
-        values.insert(
-            stage6_bytecode_read_raf_output_contribution_symbol(),
+        values.extend(
+            self.output_claims
+                .iter()
+                .flat_map(|claim| claim.local_scalars.iter()),
             verifier_output_claims::VerifierScalarSourceKind::PointDerived,
         );
         values.extend(
