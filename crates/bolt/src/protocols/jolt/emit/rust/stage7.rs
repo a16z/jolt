@@ -29,6 +29,14 @@ use super::plan_tokens::{
     rust_str, symbols, verify_count,
 };
 
+const STAGE7_KERNEL_ABIS: &[(&str, &str)] = &[
+    (
+        "jolt.stage7.hamming_weight_claim_reduction",
+        "jolt_stage7_hamming_weight_claim_reduction",
+    ),
+    ("jolt.stage7.batched", "jolt_stage7_batched"),
+];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage7CpuProgram {
     pub role: Role,
@@ -793,18 +801,12 @@ impl Stage7CpuProgram {
                     kernel.symbol, kernel.kind
                 )));
             }
-            let expected_abi = match kernel.relation.as_str() {
-                "jolt.stage7.hamming_weight_claim_reduction" => {
-                    "jolt_stage7_hamming_weight_claim_reduction"
-                }
-                "jolt.stage7.batched" => "jolt_stage7_batched",
-                _ => {
-                    return Err(EmitError::new(format!(
-                        "unsupported stage7 kernel relation @{}",
-                        kernel.relation
-                    )));
-                }
-            };
+            let expected_abi = stage7_kernel_abi(&kernel.relation).ok_or_else(|| {
+                EmitError::new(format!(
+                    "unsupported stage7 kernel relation @{}",
+                    kernel.relation
+                ))
+            })?;
             if kernel.abi != expected_abi {
                 return Err(EmitError::new(format!(
                     "stage7 kernel @{} ABI `{}` does not match relation @{}",
@@ -2482,6 +2484,12 @@ fn expected_batched_output_claim(
     }
 }
 
+fn stage7_kernel_abi(relation: &str) -> Option<&'static str> {
+    STAGE7_KERNEL_ABIS
+        .iter()
+        .find_map(|(candidate, abi)| (*candidate == relation).then_some(*abi))
+}
+
 fn string_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<String, EmitError> {
     operation
         .attribute(attr)
@@ -2597,4 +2605,23 @@ fn operation_name<'c: 'a, 'a>(operation: impl OperationLike<'c, 'a>) -> String {
         .as_str()
         .unwrap_or("<invalid-operation-name>")
         .to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{stage7_kernel_abi, STAGE7_KERNEL_ABIS};
+
+    #[test]
+    fn stage7_kernel_abi_contracts_cover_supported_relations() {
+        assert_eq!(STAGE7_KERNEL_ABIS.len(), 2);
+        assert_eq!(
+            stage7_kernel_abi("jolt.stage7.hamming_weight_claim_reduction"),
+            Some("jolt_stage7_hamming_weight_claim_reduction")
+        );
+        assert_eq!(
+            stage7_kernel_abi("jolt.stage7.batched"),
+            Some("jolt_stage7_batched")
+        );
+        assert_eq!(stage7_kernel_abi("jolt.stage6.batched"), None);
+    }
 }

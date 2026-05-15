@@ -30,6 +30,28 @@ use super::plan_tokens::{
     rust_str, symbols, verify_count,
 };
 
+const STAGE6_KERNEL_ABIS: &[(&str, &str)] = &[
+    (
+        "jolt.stage6.bytecode_read_raf",
+        "jolt_stage6_bytecode_read_raf",
+    ),
+    ("jolt.stage6.booleanity", "jolt_stage6_booleanity"),
+    (
+        "jolt.stage6.hamming_booleanity",
+        "jolt_stage6_hamming_booleanity",
+    ),
+    ("jolt.stage6.ram_ra_virtual", "jolt_stage6_ram_ra_virtual"),
+    (
+        "jolt.stage6.instruction_ra_virtual",
+        "jolt_stage6_instruction_ra_virtual",
+    ),
+    (
+        "jolt.stage6.inc_claim_reduction",
+        "jolt_stage6_inc_claim_reduction",
+    ),
+    ("jolt.stage6.batched", "jolt_stage6_batched"),
+];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6CpuProgram {
     pub role: Role,
@@ -794,21 +816,12 @@ impl Stage6CpuProgram {
                     kernel.symbol, kernel.kind
                 )));
             }
-            let expected_abi = match kernel.relation.as_str() {
-                "jolt.stage6.bytecode_read_raf" => "jolt_stage6_bytecode_read_raf",
-                "jolt.stage6.booleanity" => "jolt_stage6_booleanity",
-                "jolt.stage6.hamming_booleanity" => "jolt_stage6_hamming_booleanity",
-                "jolt.stage6.ram_ra_virtual" => "jolt_stage6_ram_ra_virtual",
-                "jolt.stage6.instruction_ra_virtual" => "jolt_stage6_instruction_ra_virtual",
-                "jolt.stage6.inc_claim_reduction" => "jolt_stage6_inc_claim_reduction",
-                "jolt.stage6.batched" => "jolt_stage6_batched",
-                _ => {
-                    return Err(EmitError::new(format!(
-                        "unsupported stage6 kernel relation @{}",
-                        kernel.relation
-                    )));
-                }
-            };
+            let expected_abi = stage6_kernel_abi(&kernel.relation).ok_or_else(|| {
+                EmitError::new(format!(
+                    "unsupported stage6 kernel relation @{}",
+                    kernel.relation
+                ))
+            })?;
             if kernel.abi != expected_abi {
                 return Err(EmitError::new(format!(
                     "stage6 kernel @{} ABI `{}` does not match relation @{}",
@@ -2615,6 +2628,12 @@ fn stage6_trace_rounds(
     }
 }
 
+fn stage6_kernel_abi(relation: &str) -> Option<&'static str> {
+    STAGE6_KERNEL_ABIS
+        .iter()
+        .find_map(|(candidate, abi)| (*candidate == relation).then_some(*abi))
+}
+
 fn string_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<String, EmitError> {
     operation
         .attribute(attr)
@@ -2730,4 +2749,23 @@ fn operation_name<'c: 'a, 'a>(operation: impl OperationLike<'c, 'a>) -> String {
         .as_str()
         .unwrap_or("<invalid-operation-name>")
         .to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{stage6_kernel_abi, STAGE6_KERNEL_ABIS};
+
+    #[test]
+    fn stage6_kernel_abi_contracts_cover_supported_relations() {
+        assert_eq!(STAGE6_KERNEL_ABIS.len(), 7);
+        assert_eq!(
+            stage6_kernel_abi("jolt.stage6.bytecode_read_raf"),
+            Some("jolt_stage6_bytecode_read_raf")
+        );
+        assert_eq!(
+            stage6_kernel_abi("jolt.stage6.batched"),
+            Some("jolt_stage6_batched")
+        );
+        assert_eq!(stage6_kernel_abi("jolt.stage7.batched"), None);
+    }
 }
