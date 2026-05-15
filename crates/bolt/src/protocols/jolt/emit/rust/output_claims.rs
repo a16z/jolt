@@ -102,11 +102,8 @@ fn emit_eval_family_constants(
             format_args!("pub const {evals_name}: &[&str] = &[{evals}];\n"),
         );
         let value_offsets_name = format!("{prefix}_VALUE_TERM_OFFSETS");
-        let value_offsets = usize_array(&family.value_term_offsets);
-        push_format(
-            source,
-            format_args!("pub const {value_offsets_name}: &[usize] = &[{value_offsets}];\n"),
-        );
+        let value_offsets =
+            emit_usize_slice_or_inline(source, &value_offsets_name, &family.value_term_offsets);
         let shared_terms_name = format!("{prefix}_SHARED_TERMS");
         let shared_terms = family
             .shared_terms
@@ -130,13 +127,9 @@ fn emit_eval_family_constants(
         let mut item_rows = Vec::new();
         for (term_index, term) in family.item_terms.iter().enumerate() {
             let factors_name = format!("{prefix}_ITEM_TERM_{term_index}_FACTORS");
-            let factors = rust_str_array(&term.factors);
-            push_format(
-                source,
-                format_args!("pub const {factors_name}: &[&str] = &[{factors}];\n"),
-            );
+            let factors = emit_str_slice_or_inline(source, &factors_name, &term.factors);
             item_rows.push(format!(
-                "    bolt_verifier_runtime::SumcheckOutputEvalFamilyItemTermPlan {{ gamma_power_offset: {}, factors: {factors_name} }},",
+                "    bolt_verifier_runtime::SumcheckOutputEvalFamilyItemTermPlan {{ gamma_power_offset: {}, factors: {factors} }},",
                 term.gamma_power_offset
             ));
         }
@@ -149,7 +142,7 @@ fn emit_eval_family_constants(
             ),
         );
         family_rows.push(format!(
-            "    bolt_verifier_runtime::SumcheckOutputEvalFamilyPlan {{ symbol: {}, gamma: {}, evals: {evals_name}, power_stride: {}, value_term_offsets: {value_offsets_name}, shared_terms: {shared_terms_name}, item_terms: {item_terms_name} }},",
+            "    bolt_verifier_runtime::SumcheckOutputEvalFamilyPlan {{ symbol: {}, gamma: {}, evals: {evals_name}, power_stride: {}, value_term_offsets: {value_offsets}, shared_terms: {shared_terms_name}, item_terms: {item_terms_name} }},",
             rust_str(&family.symbol),
             rust_str(&family.gamma),
             family.power_stride
@@ -184,19 +177,11 @@ fn emit_product_family_constants(
         let mut term_rows = Vec::new();
         for (term_index, term) in family.terms.iter().enumerate() {
             let evals_name = format!("{prefix}_TERM_{term_index}_EVALS");
-            let evals = rust_str_array(&term.evals);
-            push_format(
-                source,
-                format_args!("pub const {evals_name}: &[&str] = &[{evals}];\n"),
-            );
+            let evals = emit_str_slice_or_inline(source, &evals_name, &term.evals);
             let factors_name = format!("{prefix}_TERM_{term_index}_FACTORS");
-            let factors = rust_str_array(&term.factors);
-            push_format(
-                source,
-                format_args!("pub const {factors_name}: &[&str] = &[{factors}];\n"),
-            );
+            let factors = emit_str_slice_or_inline(source, &factors_name, &term.factors);
             term_rows.push(format!(
-                "    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan {{ gamma_power_offset: {}, evals: {evals_name}, factors: {factors_name} }},",
+                "    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan {{ gamma_power_offset: {}, evals: {evals}, factors: {factors} }},",
                 term.gamma_power_offset
             ));
         }
@@ -244,13 +229,9 @@ fn emit_function_family_constants(
         let mut term_rows = Vec::new();
         for (term_index, term) in family.terms.iter().enumerate() {
             let factors_name = format!("{prefix}_TERM_{term_index}_FACTORS");
-            let factors = rust_str_array(&term.factors);
-            push_format(
-                source,
-                format_args!("pub const {factors_name}: &[&str] = &[{factors}];\n"),
-            );
+            let factors = emit_str_slice_or_inline(source, &factors_name, &term.factors);
             term_rows.push(format!(
-                "    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan {{ gamma_power_offset: {}, function: {}, eval: {}, factors: {factors_name} }},",
+                "    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan {{ gamma_power_offset: {}, function: {}, eval: {}, factors: {factors} }},",
                 term.gamma_power_offset,
                 output_function_kind_expr(term.function),
                 rust_str(&term.eval)
@@ -288,6 +269,30 @@ fn output_function_kind_expr(function: SumcheckOutputFunctionKind) -> &'static s
             "bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero"
         }
     }
+}
+
+fn emit_str_slice_or_inline(source: &mut String, name: &str, values: &[String]) -> String {
+    if values.len() <= 4 {
+        return format!("&[{}]", rust_str_array(values));
+    }
+    let values = rust_str_array(values);
+    push_format(
+        source,
+        format_args!("pub const {name}: &[&str] = &[{values}];\n"),
+    );
+    name.to_owned()
+}
+
+fn emit_usize_slice_or_inline(source: &mut String, name: &str, values: &[usize]) -> String {
+    if values.len() <= 4 {
+        return format!("&[{}]", usize_array(values));
+    }
+    let values = usize_array(values);
+    push_format(
+        source,
+        format_args!("pub const {name}: &[usize] = &[{values}];\n"),
+    );
+    name.to_owned()
 }
 
 fn structured_polynomial_kind_expr(
