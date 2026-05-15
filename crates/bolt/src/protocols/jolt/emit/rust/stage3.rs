@@ -672,6 +672,21 @@ impl Stage3CpuProgram {
                     })
                 })
                 .collect::<Result<Vec<_>, EmitError>>()?,
+            batches: self
+                .batches
+                .iter()
+                .map(|batch| verifier_plan::VerifierSumcheckBatchPlan {
+                    symbol: batch.symbol.clone(),
+                    stage: batch.stage.clone(),
+                    proof_slot: batch.proof_slot.clone(),
+                    policy: batch.policy.clone(),
+                    count: batch.count,
+                    claim_operands: batch.claim_operands.clone(),
+                    claim_label: batch.claim_label.clone(),
+                    round_label: batch.round_label.clone(),
+                    round_schedule: batch.round_schedule.clone(),
+                })
+                .collect(),
             drivers: self
                 .drivers
                 .iter()
@@ -715,6 +730,27 @@ impl Stage3CpuProgram {
                     })
                 })
                 .collect::<Result<Vec<_>, EmitError>>()?,
+            point_slices: self
+                .point_slices
+                .iter()
+                .map(|slice| verifier_plan::VerifierPointSlicePlan {
+                    symbol: slice.symbol.clone(),
+                    source: slice.source.clone(),
+                    offset: slice.offset,
+                    length: slice.length,
+                    input: slice.input.clone(),
+                })
+                .collect(),
+            point_concats: self
+                .point_concats
+                .iter()
+                .map(|concat| verifier_plan::VerifierPointConcatPlan {
+                    symbol: concat.symbol.clone(),
+                    layout: concat.layout.clone(),
+                    arity: concat.arity,
+                    inputs: concat.inputs.clone(),
+                })
+                .collect(),
             opening_claims: self
                 .opening_claims
                 .iter()
@@ -742,6 +778,19 @@ impl Stage3CpuProgram {
                     })
                 })
                 .collect::<Result<Vec<_>, EmitError>>()?,
+            opening_batches: self
+                .opening_batches
+                .iter()
+                .map(|batch| verifier_plan::VerifierOpeningBatchPlan {
+                    symbol: batch.symbol.clone(),
+                    stage: batch.stage.clone(),
+                    proof_slot: batch.proof_slot.clone(),
+                    policy: batch.policy.clone(),
+                    count: batch.count,
+                    ordered_claims: batch.ordered_claims.clone(),
+                    claim_operands: batch.claim_operands.clone(),
+                })
+                .collect(),
         })
     }
 

@@ -129,6 +129,19 @@ pub(crate) struct VerifierSumcheckClaimPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VerifierSumcheckBatchPlan {
+    pub(crate) symbol: String,
+    pub(crate) stage: String,
+    pub(crate) proof_slot: String,
+    pub(crate) policy: String,
+    pub(crate) count: usize,
+    pub(crate) claim_operands: Vec<String>,
+    pub(crate) claim_label: String,
+    pub(crate) round_label: String,
+    pub(crate) round_schedule: Vec<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VerifierSumcheckDriverPlan {
     pub(crate) symbol: String,
     pub(crate) stage: String,
@@ -158,6 +171,23 @@ pub(crate) struct VerifierSumcheckInstanceResultPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VerifierPointSlicePlan {
+    pub(crate) symbol: String,
+    pub(crate) source: String,
+    pub(crate) offset: usize,
+    pub(crate) length: usize,
+    pub(crate) input: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VerifierPointConcatPlan {
+    pub(crate) symbol: String,
+    pub(crate) layout: String,
+    pub(crate) arity: usize,
+    pub(crate) inputs: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VerifierOpeningClaimPlan {
     pub(crate) symbol: String,
     pub(crate) oracle: String,
@@ -177,6 +207,17 @@ pub(crate) struct VerifierOpeningClaimEqualityPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VerifierOpeningBatchPlan {
+    pub(crate) symbol: String,
+    pub(crate) stage: String,
+    pub(crate) proof_slot: String,
+    pub(crate) policy: String,
+    pub(crate) count: usize,
+    pub(crate) ordered_claims: Vec<String>,
+    pub(crate) claim_operands: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VerifierStagePlan {
     pub(crate) steps: Vec<VerifierProgramStepPlan>,
     pub(crate) transcript_squeezes: Vec<VerifierTranscriptSqueezePlan>,
@@ -184,10 +225,14 @@ pub(crate) struct VerifierStagePlan {
     pub(crate) opening_inputs: Vec<VerifierOpeningInputPlan>,
     pub(crate) field_exprs: Vec<VerifierFieldExprPlan>,
     pub(crate) claims: Vec<VerifierSumcheckClaimPlan>,
+    pub(crate) batches: Vec<VerifierSumcheckBatchPlan>,
     pub(crate) drivers: Vec<VerifierSumcheckDriverPlan>,
     pub(crate) instance_results: Vec<VerifierSumcheckInstanceResultPlan>,
+    pub(crate) point_slices: Vec<VerifierPointSlicePlan>,
+    pub(crate) point_concats: Vec<VerifierPointConcatPlan>,
     pub(crate) opening_claims: Vec<VerifierOpeningClaimPlan>,
     pub(crate) opening_equalities: Vec<VerifierOpeningClaimEqualityPlan>,
+    pub(crate) opening_batches: Vec<VerifierOpeningBatchPlan>,
 }
 
 pub(crate) fn relation_from_cpu(value: &str) -> Result<JoltVerifierRelationKind, EmitError> {
@@ -414,6 +459,43 @@ pub(crate) fn emit_sumcheck_claim_constants(
     )
 }
 
+pub(crate) fn emit_sumcheck_batch_constants(
+    stage_type_prefix: &str,
+    const_prefix: &str,
+    batches: &[VerifierSumcheckBatchPlan],
+) -> String {
+    let mut source = String::new();
+    for (index, batch) in batches.iter().enumerate() {
+        source.push_str(&emit_usize_array(
+            &format!("{const_prefix}_SUMCHECK_BATCH_{index}_ROUND_SCHEDULE"),
+            &batch.round_schedule,
+        ));
+    }
+    let batches = batches
+        .iter()
+        .enumerate()
+        .map(|(index, batch)| {
+            format!(
+                "    {stage_type_prefix}SumcheckBatchPlan {{ symbol: {}, stage: {}, proof_slot: {}, policy: {}, count: {}, claim_operands: {}, claim_label: {}, round_label: {}, round_schedule: {const_prefix}_SUMCHECK_BATCH_{index}_ROUND_SCHEDULE }},",
+                rust_str(&batch.symbol),
+                rust_str(&batch.stage),
+                rust_str(&batch.proof_slot),
+                rust_str(&batch.policy),
+                batch.count,
+                rust_str_slice_expr(&batch.claim_operands),
+                rust_str(&batch.claim_label),
+                rust_str(&batch.round_label)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _ = write!(
+        source,
+        "pub const {const_prefix}_SUMCHECK_BATCHES: &[{stage_type_prefix}SumcheckBatchPlan] = &[\n{batches}\n];\n"
+    );
+    source
+}
+
 pub(crate) fn emit_sumcheck_driver_constants(
     stage_type_prefix: &str,
     const_prefix: &str,
@@ -482,6 +564,53 @@ pub(crate) fn emit_sumcheck_instance_result_constants(
     )
 }
 
+pub(crate) fn emit_point_slice_constants(
+    stage_type_prefix: &str,
+    const_prefix: &str,
+    slices: &[VerifierPointSlicePlan],
+) -> String {
+    let slices = slices
+        .iter()
+        .map(|slice| {
+            format!(
+                "    {stage_type_prefix}PointSlicePlan {{ symbol: {}, source: {}, offset: {}, length: {}, input: {} }},",
+                rust_str(&slice.symbol),
+                rust_str(&slice.source),
+                slice.offset,
+                slice.length,
+                rust_str(&slice.input)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "pub const {const_prefix}_POINT_SLICES: &[{stage_type_prefix}PointSlicePlan] = &[\n{slices}\n];\n\n"
+    )
+}
+
+pub(crate) fn emit_point_concat_constants(
+    stage_type_prefix: &str,
+    const_prefix: &str,
+    concats: &[VerifierPointConcatPlan],
+) -> String {
+    let concats = concats
+        .iter()
+        .map(|concat| {
+            format!(
+                "    {stage_type_prefix}PointConcatPlan {{ symbol: {}, layout: {}, arity: {}, inputs: {} }},",
+                rust_str(&concat.symbol),
+                rust_str(&concat.layout),
+                concat.arity,
+                rust_str_slice_expr(&concat.inputs)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "pub const {const_prefix}_POINT_CONCATS: &[{stage_type_prefix}PointConcatPlan] = &[\n{concats}\n];\n"
+    )
+}
+
 pub(crate) fn emit_opening_claim_constants(
     stage_type_prefix: &str,
     const_prefix: &str,
@@ -528,6 +657,32 @@ pub(crate) fn emit_opening_claim_equality_constants(
         .join("\n");
     format!(
         "pub const {const_prefix}_OPENING_EQUALITIES: &[{stage_type_prefix}OpeningClaimEqualityPlan] = &[\n{equalities}\n];\n\n"
+    )
+}
+
+pub(crate) fn emit_opening_batch_constants(
+    stage_type_prefix: &str,
+    const_prefix: &str,
+    batches: &[VerifierOpeningBatchPlan],
+) -> String {
+    let batches = batches
+        .iter()
+        .map(|batch| {
+            format!(
+                "    {stage_type_prefix}OpeningBatchPlan {{ symbol: {}, stage: {}, proof_slot: {}, policy: {}, count: {}, ordered_claims: {}, claim_operands: {} }},",
+                rust_str(&batch.symbol),
+                rust_str(&batch.stage),
+                rust_str(&batch.proof_slot),
+                rust_str(&batch.policy),
+                batch.count,
+                rust_str_slice_expr(&batch.ordered_claims),
+                rust_str_slice_expr(&batch.claim_operands)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "pub const {const_prefix}_OPENING_BATCHES: &[{stage_type_prefix}OpeningBatchPlan] = &[\n{batches}\n];\n"
     )
 }
 

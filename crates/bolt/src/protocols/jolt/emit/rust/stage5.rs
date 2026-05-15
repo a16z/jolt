@@ -745,6 +745,21 @@ impl Stage5CpuProgram {
                     })
                 })
                 .collect::<Result<Vec<_>, EmitError>>()?,
+            batches: self
+                .batches
+                .iter()
+                .map(|batch| verifier_plan::VerifierSumcheckBatchPlan {
+                    symbol: batch.symbol.clone(),
+                    stage: batch.stage.clone(),
+                    proof_slot: batch.proof_slot.clone(),
+                    policy: batch.policy.clone(),
+                    count: batch.count,
+                    claim_operands: batch.claim_operands.clone(),
+                    claim_label: batch.claim_label.clone(),
+                    round_label: batch.round_label.clone(),
+                    round_schedule: batch.round_schedule.clone(),
+                })
+                .collect(),
             drivers: self
                 .drivers
                 .iter()
@@ -788,6 +803,27 @@ impl Stage5CpuProgram {
                     })
                 })
                 .collect::<Result<Vec<_>, EmitError>>()?,
+            point_slices: self
+                .point_slices
+                .iter()
+                .map(|slice| verifier_plan::VerifierPointSlicePlan {
+                    symbol: slice.symbol.clone(),
+                    source: slice.source.clone(),
+                    offset: slice.offset,
+                    length: slice.length,
+                    input: slice.input.clone(),
+                })
+                .collect(),
+            point_concats: self
+                .point_concats
+                .iter()
+                .map(|concat| verifier_plan::VerifierPointConcatPlan {
+                    symbol: concat.symbol.clone(),
+                    layout: concat.layout.clone(),
+                    arity: concat.arity,
+                    inputs: concat.inputs.clone(),
+                })
+                .collect(),
             opening_claims: self
                 .opening_claims
                 .iter()
@@ -815,6 +851,19 @@ impl Stage5CpuProgram {
                     })
                 })
                 .collect::<Result<Vec<_>, EmitError>>()?,
+            opening_batches: self
+                .opening_batches
+                .iter()
+                .map(|batch| verifier_plan::VerifierOpeningBatchPlan {
+                    symbol: batch.symbol.clone(),
+                    stage: batch.stage.clone(),
+                    proof_slot: batch.proof_slot.clone(),
+                    policy: batch.policy.clone(),
+                    count: batch.count,
+                    ordered_claims: batch.ordered_claims.clone(),
+                    claim_operands: batch.claim_operands.clone(),
+                })
+                .collect(),
         })
     }
 
@@ -1648,7 +1697,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
         let mut source = self.emit_shared_constants()?;
         source.push_str(&self.emit_kernel_constants());
         source.push_str(&self.emit_sumcheck_claim_constants()?);
-        source.push_str(&self.emit_sumcheck_batch_constants());
+        source.push_str(&self.emit_sumcheck_batch_constants()?);
         source.push_str(&self.emit_sumcheck_driver_constants()?);
         source.push_str(&self.emit_tail_constants()?);
         if self.role == Role::Verifier {
@@ -1965,41 +2014,14 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
         Ok(source)
     }
 
-    fn emit_sumcheck_batch_constants(&self) -> String {
+    fn emit_sumcheck_batch_constants(&self) -> Result<String, EmitError> {
         if self.role == Role::Verifier {
-            let mut source = String::new();
-            for (index, batch) in self.batches.iter().enumerate() {
-                source.push_str(&emit_usize_array(
-                    &format!("STAGE5_SUMCHECK_BATCH_{index}_ROUND_SCHEDULE"),
-                    &batch.round_schedule,
-                ));
-            }
-            let batches = self
-                .batches
-                .iter()
-                .enumerate()
-                .map(|(index, batch)| {
-                    format!(
-                        "    Stage5SumcheckBatchPlan {{ symbol: {}, stage: {}, proof_slot: {}, policy: {}, count: {}, claim_operands: {}, claim_label: {}, round_label: {}, round_schedule: STAGE5_SUMCHECK_BATCH_{index}_ROUND_SCHEDULE }},",
-                        rust_str(&batch.symbol),
-                        rust_str(&batch.stage),
-                        rust_str(&batch.proof_slot),
-                        rust_str(&batch.policy),
-                        batch.count,
-                        super::plan_tokens::rust_str_slice_expr(&batch.claim_operands),
-                        rust_str(&batch.claim_label),
-                        rust_str(&batch.round_label)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            push_format(
-                &mut source,
-                format_args!(
-                    "pub const STAGE5_SUMCHECK_BATCHES: &[Stage5SumcheckBatchPlan] = &[\n{batches}\n];\n"
-                ),
-            );
-            return source;
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_sumcheck_batch_constants(
+                "Stage5",
+                "STAGE5",
+                &plan.batches,
+            ));
         }
 
         let mut source = String::new();
@@ -2041,7 +2063,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
                 "pub const STAGE5_SUMCHECK_BATCHES: &[Stage5SumcheckBatchPlan] = &[\n{batches}\n];\n"
             ),
         );
-        source
+        Ok(source)
     }
 
     fn emit_sumcheck_driver_constants(&self) -> Result<String, EmitError> {
@@ -2102,11 +2124,11 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
         if self.role == Role::Verifier {
             source.push_str(&self.emit_named_eval_family_constants()?);
         }
-        source.push_str(&self.emit_point_slice_constants());
-        source.push_str(&self.emit_point_concat_constants());
+        source.push_str(&self.emit_point_slice_constants()?);
+        source.push_str(&self.emit_point_concat_constants()?);
         source.push_str(&self.emit_opening_claim_constants()?);
         source.push_str(&self.emit_opening_claim_equality_constants()?);
-        source.push_str(&self.emit_opening_batch_constants());
+        source.push_str(&self.emit_opening_batch_constants()?);
         Ok(source)
     }
 
@@ -2186,7 +2208,15 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
         )
     }
 
-    fn emit_point_slice_constants(&self) -> String {
+    fn emit_point_slice_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_point_slice_constants(
+                "Stage5",
+                "STAGE5",
+                &plan.point_slices,
+            ));
+        }
         let slices = self
             .point_slices
             .iter()
@@ -2202,28 +2232,19 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
             })
             .collect::<Vec<_>>()
             .join("\n");
-        format!("pub const STAGE5_POINT_SLICES: &[Stage5PointSlicePlan] = &[\n{slices}\n];\n\n")
+        Ok(format!(
+            "pub const STAGE5_POINT_SLICES: &[Stage5PointSlicePlan] = &[\n{slices}\n];\n\n"
+        ))
     }
 
-    fn emit_point_concat_constants(&self) -> String {
+    fn emit_point_concat_constants(&self) -> Result<String, EmitError> {
         if self.role == Role::Verifier {
-            let concats = self
-                .point_concats
-                .iter()
-                .map(|concat| {
-                    format!(
-                        "    Stage5PointConcatPlan {{ symbol: {}, layout: {}, arity: {}, inputs: {} }},",
-                        rust_str(&concat.symbol),
-                        rust_str(&concat.layout),
-                        concat.arity,
-                        super::plan_tokens::rust_str_slice_expr(&concat.inputs)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            return format!(
-                "pub const STAGE5_POINT_CONCATS: &[Stage5PointConcatPlan] = &[\n{concats}\n];\n"
-            );
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_point_concat_constants(
+                "Stage5",
+                "STAGE5",
+                &plan.point_concats,
+            ));
         }
 
         let mut source = String::new();
@@ -2253,7 +2274,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
                 "pub const STAGE5_POINT_CONCATS: &[Stage5PointConcatPlan] = &[\n{concats}\n];\n"
             ),
         );
-        source
+        Ok(source)
     }
 
     fn emit_opening_claim_constants(&self) -> Result<String, EmitError> {
@@ -2315,28 +2336,14 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
         ))
     }
 
-    fn emit_opening_batch_constants(&self) -> String {
+    fn emit_opening_batch_constants(&self) -> Result<String, EmitError> {
         if self.role == Role::Verifier {
-            let batches = self
-                .opening_batches
-                .iter()
-                .map(|batch| {
-                    format!(
-                        "    Stage5OpeningBatchPlan {{ symbol: {}, stage: {}, proof_slot: {}, policy: {}, count: {}, ordered_claims: {}, claim_operands: {} }},",
-                        rust_str(&batch.symbol),
-                        rust_str(&batch.stage),
-                        rust_str(&batch.proof_slot),
-                        rust_str(&batch.policy),
-                        batch.count,
-                        super::plan_tokens::rust_str_slice_expr(&batch.ordered_claims),
-                        super::plan_tokens::rust_str_slice_expr(&batch.claim_operands)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            return format!(
-                "pub const STAGE5_OPENING_BATCHES: &[Stage5OpeningBatchPlan] = &[\n{batches}\n];\n"
-            );
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_opening_batch_constants(
+                "Stage5",
+                "STAGE5",
+                &plan.opening_batches,
+            ));
         }
 
         let mut source = String::new();
@@ -2372,7 +2379,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
                 "pub const STAGE5_OPENING_BATCHES: &[Stage5OpeningBatchPlan] = &[\n{batches}\n];\n"
             ),
         );
-        source
+        Ok(source)
     }
 
     fn emit_entrypoint(&self) -> &'static str {
