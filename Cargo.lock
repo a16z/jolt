@@ -2915,7 +2915,6 @@ dependencies = [
  "jolt-program",
  "jolt-prover",
  "jolt-r1cs",
- "jolt-riscv",
  "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
@@ -2978,6 +2977,29 @@ dependencies = [
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "serde",
+]
+
+[[package]]
+name = "jolt-host"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "common",
+ "jolt-core",
+ "jolt-dory",
+ "jolt-field",
+ "jolt-kernels",
+ "jolt-lookup-tables",
+ "jolt-openings",
+ "jolt-program",
+ "jolt-prover",
+ "jolt-r1cs",
+ "jolt-riscv",
+ "jolt-transcript",
+ "jolt-verifier",
+ "jolt-witness",
+ "strum 0.28.0",
+ "tracer",
 ]
 
 [[package]]
@@ -3105,6 +3127,7 @@ dependencies = [
 name = "jolt-kernels"
 version = "0.1.0"
 dependencies = [
+ "common",
  "jolt-field",
  "jolt-lookup-tables",
  "jolt-poly",
@@ -3268,6 +3291,7 @@ dependencies = [
  "cfg-if",
  "common",
  "jolt-core",
+ "jolt-host",
  "jolt-platform",
  "jolt-program",
  "jolt-sdk-macros",

@@ -1,0 +1,29 @@
+[package]
+name = "jolt-host"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Host-side modular prove entry point — bridges Program + tracer + jolt-prover stages"
+repository = "https://github.com/a16z/jolt"
+
+[lints]
+workspace = true
+
+[dependencies]
+ark-bn254 = { workspace = true, default-features = false }
+common.workspace = true
+jolt-core = { workspace = true, features = ["host"] }
+jolt-dory.workspace = true
+jolt-field.workspace = true
+jolt-kernels.workspace = true
+jolt-lookup-tables.workspace = true
+jolt-openings.workspace = true
+jolt-program.workspace = true
+jolt-prover.workspace = true
+jolt-r1cs.workspace = true
+jolt-riscv.workspace = true
+jolt-transcript.workspace = true
+jolt-verifier.workspace = true
+jolt-witness.workspace = true
+strum.workspace = true
+tracer = { workspace = true, features = ["std"] }

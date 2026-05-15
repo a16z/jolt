@@ -13,6 +13,7 @@ categories = ["cryptography"]
 workspace = true
 
 [dependencies]
+common = { path = "../../common" }
 jolt-field = { path = "../jolt-field" }
 jolt-lookup-tables = { path = "../jolt-lookup-tables" }
 jolt-poly = { path = "../jolt-poly" }

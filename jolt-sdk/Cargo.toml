@@ -23,6 +23,7 @@ host = [
   "jolt-core/default",
   "jolt-platform/std",
   "dep:common",
+  "dep:jolt-host",
   "dep:jolt-program",
   "dep:tracer",
   "postcard/use-std",
@@ -88,6 +89,13 @@ tracer = { workspace = true, default-features = false, features = [
 ], optional = true }
 zeroos = { workspace = true, optional = true }
 cfg-if = { workspace = true }
+
+# jolt-host is the modular prover driver — never used in wasm verifier
+# builds. Gating it to non-wasm avoids pulling in jolt-dory's wasm-incompat
+# code path (scheme.rs uses `ArkworksProverSetup::new_from_urs`, which the
+# `dory-pcs` crate only compiles under `cfg(not(target_arch = "wasm32"))`).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+jolt-host = { workspace = true, optional = true }
 
 [target.'cfg(all(target_arch = "riscv64"))'.dependencies]
 riscv = { workspace = true }

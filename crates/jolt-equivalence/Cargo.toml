@@ -30,7 +30,6 @@ bolt = { path = "../bolt" }
 jolt-prover = { path = "../jolt-prover" }
 jolt-verifier = { path = "../jolt-verifier" }
 jolt-program = { path = "../jolt-program" }
-jolt-riscv = { path = "../jolt-riscv", default-features = false }
 jolt-dory = { path = "../jolt-dory" }
 jolt-inlines-sha2.workspace = true
 jolt-kernels = { path = "../jolt-kernels" }

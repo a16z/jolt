@@ -3,7 +3,7 @@
 extern crate alloc;
 use alloc::vec::Vec;
 
-#[jolt::provable(heap_size = 32768, max_trace_length = 65536)]
+#[jolt::provable(backend = "modular", heap_size = 32768, max_trace_length = 65536)]
 fn alloc(n: u32) -> u32 {
     let mut v = Vec::<u32>::new();
     for i in 0..100 {

@@ -6,6 +6,12 @@ use crate::constants::{
     DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_STACK_SIZE,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Backend {
+    Legacy,
+    Modular,
+}
+
 pub struct Attributes {
     pub wasm: bool,
     pub nightly: bool,
@@ -20,6 +26,7 @@ pub struct Attributes {
     pub max_untrusted_advice_size: u64,
     pub max_trace_length: u64,
     pub backtrace: Option<String>,
+    pub backend: Backend,
 }
 
 pub fn parse_attributes(attr: &Punctuated<Meta, Comma>) -> Attributes {
@@ -29,6 +36,7 @@ pub fn parse_attributes(attr: &Punctuated<Meta, Comma>) -> Attributes {
     let mut nightly = false;
     let mut profile: Option<String> = None;
     let mut backtrace: Option<String> = None;
+    let mut backend = Backend::Legacy;
 
     for meta in attr {
         match meta {
@@ -52,6 +60,19 @@ pub fn parse_attributes(attr: &Punctuated<Meta, Comma>) -> Attributes {
                             _ => panic!("profile attribute expects a string literal"),
                         };
                         profile = Some(value);
+                    }
+                    "backend" => {
+                        let value = match lit {
+                            Lit::Str(lit) => lit.value(),
+                            _ => panic!("backend attribute expects a string literal"),
+                        };
+                        backend = match value.as_str() {
+                            "legacy" => Backend::Legacy,
+                            "modular" => Backend::Modular,
+                            other => panic!(
+                                "backend attribute must be \"legacy\" or \"modular\", got {other:?}"
+                            ),
+                        };
                     }
                     _ => {
                         let value: u64 = match lit {
@@ -122,5 +143,6 @@ pub fn parse_attributes(attr: &Punctuated<Meta, Comma>) -> Attributes {
         max_untrusted_advice_size,
         max_trace_length,
         backtrace,
+        backend,
     }
 }

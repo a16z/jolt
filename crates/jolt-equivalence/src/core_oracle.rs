@@ -15,7 +15,7 @@ use std::time::Instant;
 use ark_serialize::{CanonicalSerialize, Compress};
 use bolt::protocols::jolt::JoltProtocolParams;
 use common::constants::{RAM_START_ADDRESS, XLEN};
-use common::jolt_device::{JoltDevice, MemoryLayout};
+use common::jolt_device::JoltDevice;
 use jolt_core::curve::Bn254Curve;
 use jolt_core::host;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme as CoreCommitmentScheme;
@@ -28,7 +28,7 @@ use jolt_core::zkvm::prover::{JoltCpuProver, JoltProverPreprocessing};
 use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifier, JoltVerifierPreprocessing};
 use jolt_dory::DoryProverSetup;
-use jolt_field::{Field, Fr};
+use jolt_field::Fr;
 use jolt_kernels::stage1::{
     Stage1ExecutionArtifacts, Stage1OuterR1csData, Stage1OuterRv64Data, Stage1Rv64Cycle,
 };
@@ -40,17 +40,13 @@ use jolt_kernels::stage3::{Stage3Cycle, Stage3ExecutionArtifacts};
 use jolt_kernels::stage4::{Stage4ExecutionArtifacts, Stage4RegisterAccess};
 use jolt_kernels::stage6::Stage6WitnessParams;
 use jolt_kernels::trace::{
-    stage1_rv64_cycles, stage2_instruction_lookup_cycles, stage2_product_virtual_cycles,
-    stage2_ram_accesses, stage3_cycles, stage4_register_accesses, stage5_lookup_trace,
-    stage6_bytecode_entries, CycleRow,
+    extract_trace_rows, stage1_rv64_cycles, stage2_instruction_lookup_cycles,
+    stage2_product_virtual_cycles, stage2_ram_accesses, stage3_cycles, stage4_register_accesses,
+    stage5_lookup_trace, stage6_bytecode_entries, CycleRow,
 };
 use jolt_lookup_tables::LookupTableKind;
 use jolt_program::{execution::TraceRow, preprocess::BytecodePreprocessing};
-use jolt_r1cs::{
-    constraints::rv64::{self, *},
-    R1csKey,
-};
-use jolt_riscv::{CircuitFlagSet, CircuitFlags, InstructionFlags};
+use jolt_r1cs::{constraints::rv64, R1csKey};
 use jolt_verifier::JoltStageProof;
 use jolt_witness::{CycleInput, Stage6BytecodeEntry};
 use strum::EnumCount;
@@ -500,202 +496,6 @@ fn core_guest_commitment_fixture(
         ram_start_address,
         ram_output_layout,
         commitments,
-    }
-}
-
-fn extract_trace_rows<F: Field>(
-    trace: &[TraceRow],
-    size: usize,
-    bytecode: &BytecodePreprocessing,
-    memory_layout: &MemoryLayout,
-    num_vars_padded: usize,
-) -> (Vec<CycleInput>, Vec<F>) {
-    let mut inputs = Vec::with_capacity(size);
-    let mut r1cs = vec![F::zero(); size * num_vars_padded];
-
-    for t in 0..size {
-        let offset = t * num_vars_padded;
-
-        if let Some(cycle) = trace.get(t) {
-            if cycle.is_noop() {
-                inputs.push(CycleInput::PADDING);
-            } else {
-                inputs.push(cycle_input(cycle, bytecode, memory_layout));
-            }
-
-            let row = r1cs_cycle_witness::<F>(trace, t, bytecode);
-            r1cs[offset..offset + NUM_VARS_PER_CYCLE].copy_from_slice(&row);
-        } else {
-            inputs.push(CycleInput::PADDING);
-            r1cs[offset + V_CONST] = F::one();
-            r1cs[offset + V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = F::one();
-            r1cs[offset + V_NEXT_IS_NOOP] = F::one();
-        }
-    }
-
-    (inputs, r1cs)
-}
-
-fn cycle_input(
-    cycle: &TraceRow,
-    bytecode: &BytecodePreprocessing,
-    memory_layout: &MemoryLayout,
-) -> CycleInput {
-    let rd_inc = match cycle.rd_write() {
-        Some((_, pre, post)) => post as i128 - pre as i128,
-        None => 0,
-    };
-    let ram_inc = match (cycle.ram_read_value(), cycle.ram_write_value()) {
-        (Some(pre), Some(post)) => post as i128 - pre as i128,
-        _ => 0,
-    };
-    let lowest = memory_layout.get_lowest_address();
-    let ram_address = cycle.ram_access_address().map(|addr| {
-        debug_assert!(
-            addr >= lowest,
-            "RAM address {addr:#x} below lowest {lowest:#x}"
-        );
-        ((addr - lowest) / 8) as u128
-    });
-
-    CycleInput {
-        dense: [rd_inc, ram_inc],
-        one_hot: [
-            Some(cycle.lookup_index()),
-            Some(bytecode_pc(bytecode, cycle) as u128),
-            ram_address,
-        ],
-    }
-}
-
-fn r1cs_cycle_witness<F: Field>(
-    trace: &[TraceRow],
-    t: usize,
-    bytecode: &BytecodePreprocessing,
-) -> [F; NUM_VARS_PER_CYCLE] {
-    let cycle = &trace[t];
-    let next = trace.get(t + 1);
-
-    let mut w = [F::zero(); NUM_VARS_PER_CYCLE];
-    w[V_CONST] = F::one();
-
-    if cycle.is_noop() {
-        w[V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = F::one();
-        w[V_NEXT_IS_NOOP] = F::from_u64(next.is_some_and(CycleRow::is_noop) as u64);
-        fill_next_fields(&mut w, next, bytecode);
-        return w;
-    }
-
-    let cflags = cycle.circuit_flags();
-    let iflags = cycle.instruction_flags();
-
-    let left_input = if iflags[InstructionFlags::LeftOperandIsPC] {
-        cycle.unexpanded_pc()
-    } else if iflags[InstructionFlags::LeftOperandIsRs1Value] {
-        cycle.rs1_read().map_or(0, |(_, value)| value)
-    } else {
-        0
-    };
-
-    let right_input = if iflags[InstructionFlags::RightOperandIsImm] {
-        cycle.imm()
-    } else if iflags[InstructionFlags::RightOperandIsRs2Value] {
-        cycle.rs2_read().map_or(0, |(_, value)| value as i128)
-    } else {
-        0
-    };
-
-    w[V_LEFT_INSTRUCTION_INPUT] = F::from_u64(left_input);
-    w[V_RIGHT_INSTRUCTION_INPUT] = F::from_i128(right_input);
-    w[V_PRODUCT] = w[V_LEFT_INSTRUCTION_INPUT] * w[V_RIGHT_INSTRUCTION_INPUT];
-
-    let lookup_output = cycle.lookup_output();
-    w[V_LOOKUP_OUTPUT] = F::from_u64(lookup_output);
-
-    let (left_lookup, right_lookup) =
-        lookup_operands(left_input, right_input, w[V_PRODUCT], cflags, lookup_output);
-    w[V_LEFT_LOOKUP_OPERAND] = left_lookup;
-    w[V_RIGHT_LOOKUP_OPERAND] = right_lookup;
-
-    w[V_RS1_VALUE] = F::from_u64(cycle.rs1_read().map_or(0, |(_, value)| value));
-    w[V_RS2_VALUE] = F::from_u64(cycle.rs2_read().map_or(0, |(_, value)| value));
-    w[V_RD_WRITE_VALUE] = F::from_u64(cycle.rd_write().map_or(0, |(_, _, post)| post));
-
-    w[V_RAM_ADDRESS] = F::from_u64(cycle.ram_access_address().unwrap_or(0));
-    w[V_RAM_READ_VALUE] = F::from_u64(cycle.ram_read_value().unwrap_or(0));
-    w[V_RAM_WRITE_VALUE] = F::from_u64(cycle.ram_write_value().unwrap_or(0));
-
-    w[V_PC] = F::from_u64(bytecode_pc(bytecode, cycle) as u64);
-    w[V_UNEXPANDED_PC] = F::from_u64(cycle.unexpanded_pc());
-    w[V_IMM] = F::from_i128(cycle.imm());
-
-    w[V_FLAG_ADD_OPERANDS] = F::from_u64(cflags[CircuitFlags::AddOperands] as u64);
-    w[V_FLAG_SUBTRACT_OPERANDS] = F::from_u64(cflags[CircuitFlags::SubtractOperands] as u64);
-    w[V_FLAG_MULTIPLY_OPERANDS] = F::from_u64(cflags[CircuitFlags::MultiplyOperands] as u64);
-    w[V_FLAG_LOAD] = F::from_u64(cflags[CircuitFlags::Load] as u64);
-    w[V_FLAG_STORE] = F::from_u64(cflags[CircuitFlags::Store] as u64);
-    w[V_FLAG_JUMP] = F::from_u64(cflags[CircuitFlags::Jump] as u64);
-    w[V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD] =
-        F::from_u64(cflags[CircuitFlags::WriteLookupOutputToRD] as u64);
-    w[V_FLAG_VIRTUAL_INSTRUCTION] = F::from_u64(cflags[CircuitFlags::VirtualInstruction] as u64);
-    w[V_FLAG_ASSERT] = F::from_u64(cflags[CircuitFlags::Assert] as u64);
-    w[V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] =
-        F::from_u64(cflags[CircuitFlags::DoNotUpdateUnexpandedPC] as u64);
-    w[V_FLAG_ADVICE] = F::from_u64(cflags[CircuitFlags::Advice] as u64);
-    w[V_FLAG_IS_COMPRESSED] = F::from_u64(cflags[CircuitFlags::IsCompressed] as u64);
-    w[V_FLAG_IS_FIRST_IN_SEQUENCE] = F::from_u64(cflags[CircuitFlags::IsFirstInSequence] as u64);
-    w[V_FLAG_IS_LAST_IN_SEQUENCE] = F::from_u64(cflags[CircuitFlags::IsLastInSequence] as u64);
-
-    w[V_BRANCH] = F::from_u64(iflags[InstructionFlags::Branch] as u64);
-    w[V_SHOULD_BRANCH] = w[V_LOOKUP_OUTPUT] * w[V_BRANCH];
-
-    fill_next_fields(&mut w, next, bytecode);
-    let next_is_noop = next.is_some_and(CycleRow::is_noop);
-    w[V_NEXT_IS_NOOP] = F::from_u64(next_is_noop as u64);
-    w[V_SHOULD_JUMP] = w[V_FLAG_JUMP] * (F::one() - w[V_NEXT_IS_NOOP]);
-
-    w
-}
-
-fn fill_next_fields<F: Field>(
-    w: &mut [F; NUM_VARS_PER_CYCLE],
-    next: Option<&TraceRow>,
-    bytecode: &BytecodePreprocessing,
-) {
-    if let Some(next_cycle) = next {
-        w[V_NEXT_PC] = F::from_u64(bytecode_pc(bytecode, next_cycle) as u64);
-        w[V_NEXT_UNEXPANDED_PC] = F::from_u64(next_cycle.unexpanded_pc());
-        let next_flags = next_cycle.circuit_flags();
-        w[V_NEXT_IS_VIRTUAL] = F::from_u64(next_flags[CircuitFlags::VirtualInstruction] as u64);
-        w[V_NEXT_IS_FIRST_IN_SEQUENCE] =
-            F::from_u64(next_flags[CircuitFlags::IsFirstInSequence] as u64);
-    }
-}
-
-fn bytecode_pc(bytecode: &BytecodePreprocessing, cycle: &TraceRow) -> usize {
-    bytecode.get_pc(&cycle.instruction()).unwrap_or(0)
-}
-
-fn lookup_operands<F: Field>(
-    left: u64,
-    right: i128,
-    product: F,
-    cflags: CircuitFlagSet,
-    lookup_output: u64,
-) -> (F, F) {
-    if cflags[CircuitFlags::AddOperands] {
-        (F::zero(), F::from_i128(left as i128 + right))
-    } else if cflags[CircuitFlags::SubtractOperands] {
-        (
-            F::zero(),
-            F::from_i128(left as i128 - right + (1i128 << 64)),
-        )
-    } else if cflags[CircuitFlags::MultiplyOperands] {
-        (F::zero(), product)
-    } else if cflags[CircuitFlags::Advice] {
-        (F::zero(), F::from_u64(lookup_output))
-    } else {
-        (F::from_u64(left), F::from_i128(right))
     }
 }
 

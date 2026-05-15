@@ -25,13 +25,25 @@ pub struct BytecodePreprocessing {
 
 impl BytecodePreprocessing {
     pub fn preprocess(
+        bytecode: Vec<NormalizedInstruction>,
+        entry_address: u64,
+    ) -> Result<Self, PreprocessingError> {
+        Self::preprocess_with_min_size(bytecode, entry_address, 0)
+    }
+
+    /// Like `preprocess`, but pads the bytecode up to at least
+    /// `min_code_size` rows. Used by SDK consumers that prove against a
+    /// universal fixture (where every guest's bytecode must fit in
+    /// `2^log_k_bytecode` rows regardless of natural code size).
+    pub fn preprocess_with_min_size(
         mut bytecode: Vec<NormalizedInstruction>,
         entry_address: u64,
+        min_code_size: usize,
     ) -> Result<Self, PreprocessingError> {
         bytecode.insert(0, noop_instruction());
         let pc_map = BytecodePCMapper::try_new(&bytecode)?;
 
-        let code_size = bytecode.len().next_power_of_two().max(2);
+        let code_size = bytecode.len().next_power_of_two().max(min_code_size).max(2);
         bytecode.resize(code_size, noop_instruction());
 
         Ok(Self {
