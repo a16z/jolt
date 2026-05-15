@@ -29,9 +29,8 @@ use jolt_field::{Field, Fr, MulPow2};
 use jolt_poly::EqPolynomial;
 
 use bolt_verifier_runtime::{
-    field_powers, indexed_boolean_eq, indexed_evals_by_prefix_any, prefix_point, store_point,
-    store_scalar, suffix_point, RuntimePlanError, StageNamedEval, SumcheckInstanceResultPlan,
-    ValueStore,
+    field_powers, indexed_evals_by_prefix_any, prefix_point, store_point, store_scalar,
+    suffix_point, RuntimePlanError, StageNamedEval, SumcheckInstanceResultPlan, ValueStore,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -312,7 +311,13 @@ fn stage67_bytecode_stage_value_evals<E: Stage67BytecodeEntry>(
 
     let mut evals = vec![Fr::from_u64(0); plan.stages.len()];
     for (index, entry) in entries.iter().enumerate() {
-        let eq = indexed_boolean_eq(index, r_address);
+        let eq = EqPolynomial::<Fr>::try_mle_at_boolean_index(index, r_address).ok_or(
+            RuntimePlanError::InvalidInputLength {
+                input: plan.entries,
+                expected: expected_len,
+                actual: index + 1,
+            },
+        )?;
         let values = stage67_bytecode_entry_stage_values(plan, entry, &stage_contexts)?;
         for stage in 0..evals.len() {
             evals[stage] += eq * values[stage];
@@ -487,7 +492,13 @@ fn stage67_register_eq(
             actual: index + 1,
         });
     }
-    Ok(indexed_boolean_eq(index, point))
+    EqPolynomial::<Fr>::try_mle_at_boolean_index(index, point).ok_or(
+        RuntimePlanError::InvalidInputLength {
+            input,
+            expected: register_count,
+            actual: index + 1,
+        },
+    )
 }
 
 fn stage67_register_prefix_point<'a>(

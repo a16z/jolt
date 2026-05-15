@@ -139,6 +139,35 @@ impl<F: Field> EqPolynomial<F> {
             .fold(F::one(), |acc, v| acc * v)
     }
 
+    /// Evaluates `eq(point, index_bits)` where `index_bits` is the big-endian
+    /// Boolean vector encoded by `index`.
+    ///
+    /// Returns `None` if `point` is too large to address with `usize`, or if
+    /// `index` is outside the Boolean hypercube for `point.len()` variables.
+    pub fn try_mle_at_boolean_index<C>(index: usize, point: &[C]) -> Option<F>
+    where
+        C: Copy + Into<F>,
+    {
+        let count = 1usize.checked_shl(point.len() as u32)?;
+        if index >= count {
+            return None;
+        }
+        Some(
+            point
+                .iter()
+                .enumerate()
+                .map(|(bit, value)| {
+                    let value = (*value).into();
+                    if (index >> (point.len() - 1 - bit)) & 1 == 1 {
+                        value
+                    } else {
+                        F::one() - value
+                    }
+                })
+                .product(),
+        )
+    }
+
     /// Computes `eq(r, 0) = Π_i (1 - r_i)`, selecting the all-zeros vertex.
     pub fn zero_selector<C>(r: &[C]) -> F
     where
@@ -389,6 +418,25 @@ mod tests {
             let direct = eq.evaluate(&bits);
             assert_eq!(direct, entry, "mismatch at index {idx}");
         }
+    }
+
+    #[test]
+    fn try_mle_at_boolean_index_selects_entry() {
+        let mut rng = ChaCha20Rng::seed_from_u64(101);
+        let n = 4;
+        let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+        let table = EqPolynomial::new(point.clone()).evaluations();
+
+        for (index, &entry) in table.iter().enumerate() {
+            assert_eq!(
+                EqPolynomial::<Fr>::try_mle_at_boolean_index(index, &point),
+                Some(entry)
+            );
+        }
+        assert_eq!(
+            EqPolynomial::<Fr>::try_mle_at_boolean_index(table.len(), &point),
+            None
+        );
     }
 
     #[test]

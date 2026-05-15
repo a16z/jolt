@@ -1632,20 +1632,6 @@ pub fn evaluate_field_expr<F: Field>(
     }
 }
 
-pub fn indexed_boolean_eq(index: usize, point: &[Fr]) -> Fr {
-    point
-        .iter()
-        .enumerate()
-        .map(|(bit, value)| {
-            if (index >> (point.len() - 1 - bit)) & 1 == 1 {
-                *value
-            } else {
-                Fr::from_u64(1) - *value
-            }
-        })
-        .product()
-}
-
 pub fn field_powers(base: Fr, count: usize) -> Vec<Fr> {
     let mut powers = Vec::with_capacity(count);
     let mut power = Fr::from_u64(1);
