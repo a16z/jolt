@@ -3054,6 +3054,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-inlines-bn254-fr"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff 0.5.0",
+ "tracer",
+]
+
+[[package]]
 name = "jolt-inlines-grumpkin"
 version = "0.1.0"
 dependencies = [
