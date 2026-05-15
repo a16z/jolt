@@ -219,12 +219,10 @@ pub const STAGE7_KERNELS: &[Stage7KernelPlan] = &[
 pub const STAGE7_SUMCHECK_CLAIMS: &[Stage7SumcheckClaimPlan] = &[
     Stage7SumcheckClaimPlan { symbol: "stage7.hamming_weight_claim_reduction.input", stage: "stage7", domain: "jolt.stage7_hamming_weight_claim_reduction_domain", num_rounds: 4, degree: 2, claim: "stage7.hamming_weight_claim_reduction.weighted_stage6_claims", kernel: None, relation: Some(Stage7RelationKind::Stage7HammingWeightClaimReduction), claim_value: "stage7.hamming_weight_claim_reduction.claim_expr.partial115" },
 ];
-pub const STAGE7_SUMCHECK_BATCH_0_CLAIM_OPERANDS: &[&str] = &["stage7.hamming_weight_claim_reduction.input"];
-
 pub const STAGE7_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[4];
 
 pub const STAGE7_SUMCHECK_BATCHES: &[Stage7SumcheckBatchPlan] = &[
-    Stage7SumcheckBatchPlan { symbol: "stage7.batch", stage: "stage7", proof_slot: "stage7.sumcheck", policy: "jolt_core_stage7_aligned", count: 1, claim_operands: STAGE7_SUMCHECK_BATCH_0_CLAIM_OPERANDS, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE7_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
+    Stage7SumcheckBatchPlan { symbol: "stage7.batch", stage: "stage7", proof_slot: "stage7.sumcheck", policy: "jolt_core_stage7_aligned", count: 1, claim_operands: &["stage7.hamming_weight_claim_reduction.input"], claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE7_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
 ];
 pub const STAGE7_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[4];
 

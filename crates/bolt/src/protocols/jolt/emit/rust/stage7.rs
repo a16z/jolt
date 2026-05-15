@@ -22,6 +22,7 @@ use crate::protocols::jolt::verifier_output_claims::{
     SumcheckOutputFunctionFamilyPlan as Stage7SumcheckOutputFunctionFamilyPlan,
     SumcheckOutputProductFamilyPlan as Stage7SumcheckOutputProductFamilyPlan,
 };
+use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
 use crate::schema::verify_cpu_schema;
 
 use super::plan_tokens::{
@@ -40,6 +41,7 @@ const STAGE7_KERNEL_ABIS: &[(&str, &str)] = &[
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage7CpuProgram {
     pub role: Role,
+    pub(crate) verifier_plan: Option<VerifierStagePlan>,
     pub params: Stage7Params,
     pub steps: Vec<Stage7ProgramStepPlan>,
     pub transcript_squeezes: Vec<Stage7TranscriptSqueezePlan>,
@@ -608,6 +610,7 @@ impl Stage7CpuProgram {
         let role = module
             .role()
             .ok_or_else(|| EmitError::new("missing cpu party role"))?;
+        let is_verifier = role == Role::Verifier;
         if role == Role::Prover {
             verifier_output_claims::prune_output_only_field_exprs(
                 &mut field_exprs,
@@ -631,9 +634,10 @@ impl Stage7CpuProgram {
             Vec::new()
         };
 
-        Ok(Self {
+        let mut program = Self {
             params: params.ok_or_else(|| EmitError::new("missing cpu.params"))?,
             role,
+            verifier_plan: None,
             steps,
             transcript_squeezes,
             transcript_absorb_bytes,
@@ -657,7 +661,226 @@ impl Stage7CpuProgram {
             opening_claims,
             opening_equalities,
             opening_batches,
+        };
+        if is_verifier {
+            program.verifier_plan = Some(program.plan_verifier()?);
+        }
+        Ok(program)
+    }
+
+    fn plan_verifier(&self) -> Result<VerifierStagePlan, EmitError> {
+        Ok(VerifierStagePlan {
+            steps: self
+                .steps
+                .iter()
+                .map(|step| {
+                    verifier_plan::VerifierProgramStepPlan::from_cpu(&step.kind, &step.symbol)
+                })
+                .collect::<Result<Vec<_>, EmitError>>()?,
+            transcript_squeezes: self
+                .transcript_squeezes
+                .iter()
+                .map(|squeeze| {
+                    verifier_plan::VerifierTranscriptSqueezePlan::from_cpu(
+                        &squeeze.symbol,
+                        &squeeze.label,
+                        &squeeze.kind,
+                        squeeze.count,
+                    )
+                })
+                .collect::<Result<Vec<_>, EmitError>>()?,
+            transcript_absorb_bytes: self
+                .transcript_absorb_bytes
+                .iter()
+                .map(|absorb| {
+                    verifier_plan::VerifierTranscriptAbsorbBytesPlan::from_cpu(
+                        &absorb.symbol,
+                        &absorb.label,
+                        &absorb.payload,
+                    )
+                })
+                .collect(),
+            opening_inputs: self
+                .opening_inputs
+                .iter()
+                .map(|input| {
+                    verifier_plan::VerifierOpeningInputPlan::from_cpu(
+                        &input.symbol,
+                        &input.source_stage,
+                        &input.source_claim,
+                        &input.oracle,
+                        &input.domain,
+                        input.point_arity,
+                        &input.claim_kind,
+                    )
+                })
+                .collect::<Result<Vec<_>, EmitError>>()?,
+            field_exprs: self
+                .field_exprs
+                .iter()
+                .map(|expr| {
+                    verifier_plan::VerifierFieldExprPlan::from_cpu(
+                        &expr.symbol,
+                        &expr.formula,
+                        &expr.operands,
+                    )
+                })
+                .collect::<Result<Vec<_>, EmitError>>()?,
+            claims: self
+                .claims
+                .iter()
+                .map(|claim| {
+                    Ok(verifier_plan::VerifierSumcheckClaimPlan {
+                        symbol: claim.symbol.clone(),
+                        stage: claim.stage.clone(),
+                        domain: claim.domain.clone(),
+                        num_rounds: claim.num_rounds,
+                        degree: claim.degree,
+                        claim: claim.claim.clone(),
+                        relation: verifier_plan::required_relation_from_cpu(
+                            claim.relation.as_deref(),
+                            "claim",
+                            &claim.symbol,
+                        )?,
+                        claim_value: claim.claim_value.clone(),
+                    })
+                })
+                .collect::<Result<Vec<_>, EmitError>>()?,
+            batches: self
+                .batches
+                .iter()
+                .map(|batch| verifier_plan::VerifierSumcheckBatchPlan {
+                    symbol: batch.symbol.clone(),
+                    stage: batch.stage.clone(),
+                    proof_slot: batch.proof_slot.clone(),
+                    policy: batch.policy.clone(),
+                    count: batch.count,
+                    claim_operands: batch.claim_operands.clone(),
+                    claim_label: batch.claim_label.clone(),
+                    round_label: batch.round_label.clone(),
+                    round_schedule: batch.round_schedule.clone(),
+                })
+                .collect(),
+            drivers: self
+                .drivers
+                .iter()
+                .map(|driver| {
+                    Ok(verifier_plan::VerifierSumcheckDriverPlan {
+                        symbol: driver.symbol.clone(),
+                        stage: driver.stage.clone(),
+                        proof_slot: driver.proof_slot.clone(),
+                        relation: verifier_plan::required_relation_from_cpu(
+                            driver.relation.as_deref(),
+                            "driver",
+                            &driver.symbol,
+                        )?,
+                        batch: driver.batch.clone(),
+                        policy: driver.policy.clone(),
+                        round_schedule: driver.round_schedule.clone(),
+                        claim_label: driver.claim_label.clone(),
+                        round_label: driver.round_label.clone(),
+                        num_rounds: driver.num_rounds,
+                        degree: driver.degree,
+                    })
+                })
+                .collect::<Result<Vec<_>, EmitError>>()?,
+            instance_results: self
+                .instance_results
+                .iter()
+                .map(|instance| {
+                    Ok(verifier_plan::VerifierSumcheckInstanceResultPlan {
+                        symbol: instance.symbol.clone(),
+                        source: instance.source.clone(),
+                        claim: instance.claim.clone(),
+                        relation: verifier_plan::relation_from_cpu(&instance.relation)?,
+                        index: instance.index,
+                        point_arity: instance.point_arity,
+                        num_rounds: instance.num_rounds,
+                        round_offset: instance.round_offset,
+                        point_order: verifier_plan::sumcheck_point_order_from_cpu(
+                            &instance.point_order,
+                        )?,
+                        degree: instance.degree,
+                    })
+                })
+                .collect::<Result<Vec<_>, EmitError>>()?,
+            point_zeros: self
+                .point_zeros
+                .iter()
+                .map(|zero| verifier_plan::VerifierPointZeroPlan {
+                    symbol: zero.symbol.clone(),
+                    field: zero.field.clone(),
+                    arity: zero.arity,
+                })
+                .collect(),
+            point_slices: self
+                .point_slices
+                .iter()
+                .map(|slice| verifier_plan::VerifierPointSlicePlan {
+                    symbol: slice.symbol.clone(),
+                    source: slice.source.clone(),
+                    offset: slice.offset,
+                    length: slice.length,
+                    input: slice.input.clone(),
+                })
+                .collect(),
+            point_concats: self
+                .point_concats
+                .iter()
+                .map(|concat| verifier_plan::VerifierPointConcatPlan {
+                    symbol: concat.symbol.clone(),
+                    layout: concat.layout.clone(),
+                    arity: concat.arity,
+                    inputs: concat.inputs.clone(),
+                })
+                .collect(),
+            opening_claims: self
+                .opening_claims
+                .iter()
+                .map(|claim| {
+                    Ok(verifier_plan::VerifierOpeningClaimPlan {
+                        symbol: claim.symbol.clone(),
+                        oracle: claim.oracle.clone(),
+                        domain: claim.domain.clone(),
+                        point_arity: claim.point_arity,
+                        claim_kind: verifier_plan::claim_kind_from_cpu(&claim.claim_kind)?,
+                        point_source: claim.point_source.clone(),
+                        eval_source: claim.eval_source.clone(),
+                    })
+                })
+                .collect::<Result<Vec<_>, EmitError>>()?,
+            opening_equalities: self
+                .opening_equalities
+                .iter()
+                .map(|equality| {
+                    Ok(verifier_plan::VerifierOpeningClaimEqualityPlan {
+                        symbol: equality.symbol.clone(),
+                        mode: verifier_plan::opening_equality_mode_from_cpu(&equality.mode)?,
+                        lhs: equality.lhs.clone(),
+                        rhs: equality.rhs.clone(),
+                    })
+                })
+                .collect::<Result<Vec<_>, EmitError>>()?,
+            opening_batches: self
+                .opening_batches
+                .iter()
+                .map(|batch| verifier_plan::VerifierOpeningBatchPlan {
+                    symbol: batch.symbol.clone(),
+                    stage: batch.stage.clone(),
+                    proof_slot: batch.proof_slot.clone(),
+                    policy: batch.policy.clone(),
+                    count: batch.count,
+                    ordered_claims: batch.ordered_claims.clone(),
+                    claim_operands: batch.claim_operands.clone(),
+                })
+                .collect(),
         })
+    }
+
+    fn verifier_plan(&self) -> Result<&VerifierStagePlan, EmitError> {
+        self.verifier_plan
+            .as_ref()
+            .ok_or_else(|| EmitError::new("missing stage7 verifier plan"))
     }
 
     fn verify_supported_target(&self) -> Result<(), EmitError> {
@@ -1464,7 +1687,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
         let mut source = self.emit_shared_constants()?;
         source.push_str(&self.emit_kernel_constants());
         source.push_str(&self.emit_sumcheck_claim_constants()?);
-        source.push_str(&self.emit_sumcheck_batch_constants());
+        source.push_str(&self.emit_sumcheck_batch_constants()?);
         source.push_str(&self.emit_sumcheck_driver_constants()?);
         if self.role == Role::Verifier {
             source.push_str(&self.emit_verifier_output_claim_constants()?);
@@ -1521,7 +1744,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
         );
         source.push_str(&self.emit_program_step_constants()?);
         source.push_str(&self.emit_transcript_squeeze_constants()?);
-        source.push_str(&self.emit_transcript_absorb_bytes_constants());
+        source.push_str(&self.emit_transcript_absorb_bytes_constants()?);
         source.push_str(&self.emit_opening_input_constants()?);
         source.push_str(&self.emit_field_constant_constants());
         source.push_str(&self.emit_field_expr_constants()?);
@@ -1529,6 +1752,14 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
     }
 
     fn emit_program_step_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_program_step_constants(
+                "Stage7",
+                "STAGE7",
+                &plan.steps,
+            ));
+        }
         let steps = self
             .steps
             .iter()
@@ -1549,6 +1780,14 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
     }
 
     fn emit_transcript_squeeze_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_transcript_squeeze_constants(
+                "Stage7",
+                "STAGE7",
+                &plan.transcript_squeezes,
+            ));
+        }
         let squeezes = self
             .transcript_squeezes
             .iter()
@@ -1568,7 +1807,15 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
         ))
     }
 
-    fn emit_transcript_absorb_bytes_constants(&self) -> String {
+    fn emit_transcript_absorb_bytes_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_transcript_absorb_bytes_constants(
+                "Stage7",
+                "STAGE7",
+                &plan.transcript_absorb_bytes,
+            ));
+        }
         let absorbs = self
             .transcript_absorb_bytes
             .iter()
@@ -1582,12 +1829,20 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
             })
             .collect::<Vec<_>>()
             .join("\n");
-        format!(
+        Ok(format!(
             "pub const STAGE7_TRANSCRIPT_ABSORB_BYTES: &[Stage7TranscriptAbsorbBytesPlan] = &[\n{absorbs}\n];\n\n"
-        )
+        ))
     }
 
     fn emit_opening_input_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_opening_input_constants(
+                "Stage7",
+                "STAGE7",
+                &plan.opening_inputs,
+            ));
+        }
         let inputs = self
             .opening_inputs
             .iter()
@@ -1631,32 +1886,13 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
 
     fn emit_field_expr_constants(&self) -> Result<String, EmitError> {
         if self.role == Role::Verifier {
-            let rows = self
-                .field_exprs
-                .chunks(8)
-                .map(|chunk| {
-                    let exprs = chunk
-                        .iter()
-                        .map(|expr| {
-                            Ok(format!(
-                                "stage7_field_expr({}, {}, {})",
-                                rust_str(&expr.symbol),
-                                super::plan_tokens::role_field_expr_kind_expr(
-                                    "Stage7",
-                                    &self.role,
-                                    &expr.formula
-                                )?,
-                                super::plan_tokens::rust_str_slice_expr(&expr.operands)
-                            ))
-                        })
-                        .collect::<Result<Vec<_>, EmitError>>()?
-                        .join(", ");
-                    Ok(format!("    {exprs},"))
-                })
-                .collect::<Result<Vec<_>, EmitError>>()?
-                .join("\n");
-            return Ok(format!(
-                "const fn stage7_field_expr(symbol: &'static str, kind: Stage7FieldExprKind, operands: &'static [&'static str]) -> Stage7FieldExprPlan {{\n    Stage7FieldExprPlan {{ symbol, kind, operands }}\n}}\n\n#[rustfmt::skip]\npub const STAGE7_FIELD_EXPRS: &[Stage7FieldExprPlan] = &[\n{rows}\n];\n"
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_field_expr_constants_chunked(
+                "Stage7",
+                "STAGE7",
+                "stage7_field_expr",
+                &plan.field_exprs,
+                8,
             ));
         }
 
@@ -1723,31 +1959,11 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
 
     fn emit_sumcheck_claim_constants(&self) -> Result<String, EmitError> {
         if self.role == Role::Verifier {
-            let claims = self
-                .claims
-                .iter()
-                .map(|claim| {
-                    Ok(format!(
-                        "    Stage7SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: {}, relation: {}, claim_value: {} }},",
-                        rust_str(&claim.symbol),
-                        rust_str(&claim.stage),
-                        rust_str(&claim.domain),
-                        claim.num_rounds,
-                        claim.degree,
-                        rust_str(&claim.claim),
-                        rust_option_str(claim.kernel.as_deref()),
-                        super::plan_tokens::role_optional_relation_kind_expr(
-                            "Stage7",
-                            &self.role,
-                            claim.relation.as_deref()
-                        )?,
-                        rust_str(&claim.claim_value)
-                    ))
-                })
-                .collect::<Result<Vec<_>, EmitError>>()?
-                .join("\n");
-            return Ok(format!(
-                "pub const STAGE7_SUMCHECK_CLAIMS: &[Stage7SumcheckClaimPlan] = &[\n{claims}\n];\n"
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_sumcheck_claim_constants(
+                "Stage7",
+                "STAGE7",
+                &plan.claims,
             ));
         }
 
@@ -1791,44 +2007,14 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
         Ok(source)
     }
 
-    fn emit_sumcheck_batch_constants(&self) -> String {
+    fn emit_sumcheck_batch_constants(&self) -> Result<String, EmitError> {
         if self.role == Role::Verifier {
-            let mut source = String::new();
-            for (index, batch) in self.batches.iter().enumerate() {
-                source.push_str(&emit_str_array(
-                    &format!("STAGE7_SUMCHECK_BATCH_{index}_CLAIM_OPERANDS"),
-                    &batch.claim_operands,
-                ));
-                source.push_str(&emit_usize_array(
-                    &format!("STAGE7_SUMCHECK_BATCH_{index}_ROUND_SCHEDULE"),
-                    &batch.round_schedule,
-                ));
-            }
-            let batches = self
-                .batches
-                .iter()
-                .enumerate()
-                .map(|(index, batch)| {
-                    format!(
-                        "    Stage7SumcheckBatchPlan {{ symbol: {}, stage: {}, proof_slot: {}, policy: {}, count: {}, claim_operands: STAGE7_SUMCHECK_BATCH_{index}_CLAIM_OPERANDS, claim_label: {}, round_label: {}, round_schedule: STAGE7_SUMCHECK_BATCH_{index}_ROUND_SCHEDULE }},",
-                        rust_str(&batch.symbol),
-                        rust_str(&batch.stage),
-                        rust_str(&batch.proof_slot),
-                        rust_str(&batch.policy),
-                        batch.count,
-                        rust_str(&batch.claim_label),
-                        rust_str(&batch.round_label)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            push_format(
-                &mut source,
-                format_args!(
-                    "pub const STAGE7_SUMCHECK_BATCHES: &[Stage7SumcheckBatchPlan] = &[\n{batches}\n];\n"
-                ),
-            );
-            return source;
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_sumcheck_batch_constants(
+                "Stage7",
+                "STAGE7",
+                &plan.batches,
+            ));
         }
 
         let mut source = String::new();
@@ -1870,10 +2056,18 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
                 "pub const STAGE7_SUMCHECK_BATCHES: &[Stage7SumcheckBatchPlan] = &[\n{batches}\n];\n"
             ),
         );
-        source
+        Ok(source)
     }
 
     fn emit_sumcheck_driver_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_sumcheck_driver_constants(
+                "Stage7",
+                "STAGE7",
+                &plan.drivers,
+            ));
+        }
         let mut source = String::new();
         for (index, driver) in self.drivers.iter().enumerate() {
             source.push_str(&emit_usize_array(
@@ -1920,16 +2114,24 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
         let mut source = String::new();
         source.push_str(&self.emit_sumcheck_instance_result_constants()?);
         source.push_str(&self.emit_sumcheck_eval_constants());
-        source.push_str(&self.emit_point_zero_constants());
-        source.push_str(&self.emit_point_slice_constants());
-        source.push_str(&self.emit_point_concat_constants());
+        source.push_str(&self.emit_point_zero_constants()?);
+        source.push_str(&self.emit_point_slice_constants()?);
+        source.push_str(&self.emit_point_concat_constants()?);
         source.push_str(&self.emit_opening_claim_constants()?);
         source.push_str(&self.emit_opening_claim_equality_constants()?);
-        source.push_str(&self.emit_opening_batch_constants());
+        source.push_str(&self.emit_opening_batch_constants()?);
         Ok(source)
     }
 
     fn emit_sumcheck_instance_result_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_sumcheck_instance_result_constants(
+                "Stage7",
+                "STAGE7",
+                &plan.instance_results,
+            ));
+        }
         let instances = self
             .instance_results
             .iter()
@@ -1998,7 +2200,15 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
         )
     }
 
-    fn emit_point_zero_constants(&self) -> String {
+    fn emit_point_zero_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_point_zero_constants(
+                "Stage7",
+                "STAGE7",
+                &plan.point_zeros,
+            ));
+        }
         let zeros = self
             .point_zeros
             .iter()
@@ -2012,10 +2222,20 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
             })
             .collect::<Vec<_>>()
             .join("\n");
-        format!("pub const STAGE7_POINT_ZEROS: &[Stage7PointZeroPlan] = &[\n{zeros}\n];\n\n")
+        Ok(format!(
+            "pub const STAGE7_POINT_ZEROS: &[Stage7PointZeroPlan] = &[\n{zeros}\n];\n\n"
+        ))
     }
 
-    fn emit_point_slice_constants(&self) -> String {
+    fn emit_point_slice_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_point_slice_constants(
+                "Stage7",
+                "STAGE7",
+                &plan.point_slices,
+            ));
+        }
         let slices = self
             .point_slices
             .iter()
@@ -2031,28 +2251,19 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
             })
             .collect::<Vec<_>>()
             .join("\n");
-        format!("pub const STAGE7_POINT_SLICES: &[Stage7PointSlicePlan] = &[\n{slices}\n];\n\n")
+        Ok(format!(
+            "pub const STAGE7_POINT_SLICES: &[Stage7PointSlicePlan] = &[\n{slices}\n];\n\n"
+        ))
     }
 
-    fn emit_point_concat_constants(&self) -> String {
+    fn emit_point_concat_constants(&self) -> Result<String, EmitError> {
         if self.role == Role::Verifier {
-            let concats = self
-                .point_concats
-                .iter()
-                .map(|concat| {
-                    format!(
-                        "    Stage7PointConcatPlan {{ symbol: {}, layout: {}, arity: {}, inputs: {} }},",
-                        rust_str(&concat.symbol),
-                        rust_str(&concat.layout),
-                        concat.arity,
-                        super::plan_tokens::rust_str_slice_expr(&concat.inputs)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            return format!(
-                "pub const STAGE7_POINT_CONCATS: &[Stage7PointConcatPlan] = &[\n{concats}\n];\n"
-            );
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_point_concat_constants(
+                "Stage7",
+                "STAGE7",
+                &plan.point_concats,
+            ));
         }
 
         let mut source = String::new();
@@ -2082,10 +2293,18 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
                 "pub const STAGE7_POINT_CONCATS: &[Stage7PointConcatPlan] = &[\n{concats}\n];\n"
             ),
         );
-        source
+        Ok(source)
     }
 
     fn emit_opening_claim_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_opening_claim_constants(
+                "Stage7",
+                "STAGE7",
+                &plan.opening_claims,
+            ));
+        }
         let claims = self
             .opening_claims
             .iter()
@@ -2109,6 +2328,14 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
     }
 
     fn emit_opening_claim_equality_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_opening_claim_equality_constants(
+                "Stage7",
+                "STAGE7",
+                &plan.opening_equalities,
+            ));
+        }
         let equalities = self
             .opening_equalities
             .iter()
@@ -2128,28 +2355,14 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
         ))
     }
 
-    fn emit_opening_batch_constants(&self) -> String {
+    fn emit_opening_batch_constants(&self) -> Result<String, EmitError> {
         if self.role == Role::Verifier {
-            let batches = self
-                .opening_batches
-                .iter()
-                .map(|batch| {
-                    format!(
-                        "    Stage7OpeningBatchPlan {{ symbol: {}, stage: {}, proof_slot: {}, policy: {}, count: {}, ordered_claims: {}, claim_operands: {} }},",
-                        rust_str(&batch.symbol),
-                        rust_str(&batch.stage),
-                        rust_str(&batch.proof_slot),
-                        rust_str(&batch.policy),
-                        batch.count,
-                        super::plan_tokens::rust_str_slice_expr(&batch.ordered_claims),
-                        super::plan_tokens::rust_str_slice_expr(&batch.claim_operands)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            return format!(
-                "pub const STAGE7_OPENING_BATCHES: &[Stage7OpeningBatchPlan] = &[\n{batches}\n];\n"
-            );
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_opening_batch_constants(
+                "Stage7",
+                "STAGE7",
+                &plan.opening_batches,
+            ));
         }
 
         let mut source = String::new();
@@ -2185,7 +2398,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
                 "pub const STAGE7_OPENING_BATCHES: &[Stage7OpeningBatchPlan] = &[\n{batches}\n];\n"
             ),
         );
-        source
+        Ok(source)
     }
 
     fn emit_entrypoint(&self) -> &'static str {
