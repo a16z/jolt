@@ -124,6 +124,20 @@ impl<F: Field> LtPolynomial<F> {
     /// Both `x` and `r` are big-endian. Time: O(n). Space: O(1).
     pub fn evaluate(x: &[F], r: &[F]) -> F {
         assert_eq!(x.len(), r.len(), "LT point dimension mismatch");
+        Self::evaluate_equal_length(x, r)
+    }
+
+    /// Fallible version of [`evaluate`](Self::evaluate) for verifier-side callers.
+    ///
+    /// Returns `None` when the two points have different dimensions.
+    pub fn try_evaluate(x: &[F], r: &[F]) -> Option<F> {
+        if x.len() != r.len() {
+            return None;
+        }
+        Some(Self::evaluate_equal_length(x, r))
+    }
+
+    fn evaluate_equal_length(x: &[F], r: &[F]) -> F {
         let mut lt = F::zero();
         let mut eq_prefix = F::one();
         for (&xi, &ri) in x.iter().zip(r.iter()) {
@@ -218,6 +232,18 @@ mod tests {
                 assert_eq!(entry, inline, "mismatch at idx={idx}, n={n}");
             }
         }
+    }
+
+    #[test]
+    fn try_evaluate_checks_dimension() {
+        let x = vec![Fr::zero(), Fr::one()];
+        let r = vec![Fr::one(), Fr::zero()];
+
+        assert_eq!(
+            LtPolynomial::try_evaluate(&x, &r),
+            Some(LtPolynomial::evaluate(&x, &r))
+        );
+        assert_eq!(LtPolynomial::try_evaluate(&x, &r[..1]), None);
     }
 
     #[test]

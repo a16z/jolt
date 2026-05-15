@@ -8,7 +8,7 @@ use std::fmt;
 use std::marker::PhantomData;
 
 use jolt_field::{Field, Fr, MulPow2};
-use jolt_poly::{lagrange::lagrange_evals, EqPlusOnePolynomial, EqPolynomial};
+use jolt_poly::{lagrange::lagrange_evals, EqPlusOnePolynomial, EqPolynomial, LtPolynomial};
 use jolt_sumcheck::{
     CompressedLabeledRoundPoly, SumcheckClaim, SumcheckError, SumcheckProof, SumcheckVerifier,
 };
@@ -1443,20 +1443,11 @@ fn evaluate_structured_polynomial(
 }
 
 fn evaluate_lt_polynomial_mle(x: &[Fr], y: &[Fr]) -> Result<Fr, RuntimePlanError> {
-    if x.len() != y.len() {
-        return Err(RuntimePlanError::InvalidInputLength {
-            input: "sumcheck_output.lt",
-            expected: x.len(),
-            actual: y.len(),
-        });
-    }
-    let mut lt_eval = Fr::from_u64(0);
-    let mut eq_term = Fr::from_u64(1);
-    for (x_i, y_i) in x.iter().zip(y) {
-        lt_eval += (Fr::from_u64(1) - *x_i) * *y_i * eq_term;
-        eq_term *= Fr::from_u64(1) - *x_i - *y_i + *x_i * *y_i + *x_i * *y_i;
-    }
-    Ok(lt_eval)
+    LtPolynomial::try_evaluate(x, y).ok_or(RuntimePlanError::InvalidInputLength {
+        input: "sumcheck_output.lt",
+        expected: x.len(),
+        actual: y.len(),
+    })
 }
 
 #[derive(Default)]
