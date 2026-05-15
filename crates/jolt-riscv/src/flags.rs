@@ -94,21 +94,21 @@ pub const NUM_INSTRUCTION_FLAGS: usize = InstructionFlags::COUNT;
 
 /// Packed bitfield of [`CircuitFlags`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct CircuitFlagSet(u16);
+pub struct CircuitFlagSet(u32);
 
 impl CircuitFlagSet {
     #[inline]
     pub fn set(self, flag: CircuitFlags) -> Self {
-        Self(self.0 | (1 << flag as u16))
+        Self(self.0 | (1 << flag as u32))
     }
 
     #[inline]
     pub fn get(self, flag: CircuitFlags) -> bool {
-        self.0 & (1 << flag as u16) != 0
+        self.0 & (1 << flag as u32) != 0
     }
 
     #[inline]
-    pub fn bits(self) -> u16 {
+    pub fn bits(self) -> u32 {
         self.0
     }
 }
