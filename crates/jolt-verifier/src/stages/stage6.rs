@@ -99,6 +99,10 @@ const STAGE6_RELATION_SYMBOLS: Stage67RelationSymbols = Stage67RelationSymbols {
     hamming_booleanity_instance: "stage6.hamming_booleanity.instance",
 };
 
+#[rustfmt::skip]
+const STAGE6_BYTECODE_RA_EVAL_NAMES: &[&str] = &["stage6.bytecode_read_raf.eval.BytecodeRa_0", "stage6.bytecode_read_raf.eval.BytecodeRa_1", "stage6.bytecode_read_raf.eval.BytecodeRa_2"];
+const STAGE6_BYTECODE_RA_EVALS: bolt_verifier_runtime::NamedEvalFamilyPlan = bolt_verifier_runtime::NamedEvalFamilyPlan { symbol: "stage6.bytecode_read_raf.eval.BytecodeRa", evals: STAGE6_BYTECODE_RA_EVAL_NAMES };
+
 const STAGE6_BYTECODE_STAGE1_TERMS: &[Stage67BytecodeTermPlan] = &[
     Stage67BytecodeTermPlan::Address { gamma_power: 0 },
     Stage67BytecodeTermPlan::Imm { gamma_power: 1 },
@@ -155,7 +159,7 @@ const STAGE6_BYTECODE_STAGES: &[Stage67BytecodeStagePlan] = &[
 const STAGE6_BYTECODE_PLAN: Stage67BytecodeReadRafPlan = Stage67BytecodeReadRafPlan {
     point: "stage6.bytecode_read_raf.point",
     gamma: "stage6.bytecode_read_raf.gamma",
-    bytecode_ra_eval_prefix: "stage6.bytecode_read_raf.eval.BytecodeRa_",
+    bytecode_ra_evals: &STAGE6_BYTECODE_RA_EVALS,
     entries: "stage6.bytecode_read_raf.entries",
     entry_bytecode_index: "stage6.bytecode_read_raf.entry_bytecode_index",
     stages: STAGE6_BYTECODE_STAGES,

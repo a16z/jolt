@@ -599,6 +599,12 @@ pub struct StageNamedEval<F: Field> {
     pub value: F,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NamedEvalFamilyPlan {
+    pub symbol: &'static str,
+    pub evals: &'static [&'static str],
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct StageSumcheckOutput<F: Field> {
     pub driver: &'static str,
@@ -1193,6 +1199,17 @@ pub fn eval_by_name<F: Field>(
         .ok_or(RuntimePlanError::MissingValue { symbol: name })
 }
 
+pub fn eval_family_values<F: Field>(
+    evals: &[StageNamedEval<F>],
+    family: &NamedEvalFamilyPlan,
+) -> Result<Vec<F>, RuntimePlanError> {
+    family
+        .evals
+        .iter()
+        .map(|&name| eval_by_name(evals, name))
+        .collect()
+}
+
 pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
     plan: &SumcheckOutputClaimPlan<R>,
     field_exprs: &[FieldExprPlan],
@@ -1494,77 +1511,6 @@ fn evaluate_available_field_exprs_with_scratch(
             return Ok(());
         }
     }
-}
-
-pub fn indexed_evals_by_prefix<F: Field>(
-    evals: &[StageNamedEval<F>],
-    prefix: &'static str,
-    count: usize,
-) -> Result<Vec<F>, RuntimePlanError> {
-    let mut values = vec![None; count];
-    for eval in evals {
-        let Some(suffix) = eval.name.strip_prefix(prefix) else {
-            continue;
-        };
-        let index = suffix
-            .parse::<usize>()
-            .map_err(|_| RuntimePlanError::InvalidProof {
-                driver: prefix,
-                reason: "invalid indexed eval suffix",
-            })?;
-        if index >= count || values[index].is_some() {
-            return Err(RuntimePlanError::InvalidProof {
-                driver: prefix,
-                reason: "invalid indexed eval",
-            });
-        }
-        values[index] = Some(eval.value);
-    }
-    values
-        .into_iter()
-        .map(|value| value.ok_or(RuntimePlanError::MissingValue { symbol: prefix }))
-        .collect()
-}
-
-pub fn indexed_evals_by_prefix_any<F: Field>(
-    evals: &[StageNamedEval<F>],
-    prefix: &'static str,
-) -> Result<Vec<F>, RuntimePlanError> {
-    let mut indexed_values = Vec::new();
-    for eval in evals {
-        let Some(suffix) = eval.name.strip_prefix(prefix) else {
-            continue;
-        };
-        let index = suffix
-            .parse::<usize>()
-            .map_err(|_| RuntimePlanError::InvalidProof {
-                driver: prefix,
-                reason: "invalid indexed eval suffix",
-            })?;
-        if indexed_values
-            .iter()
-            .any(|(existing_index, _)| *existing_index == index)
-        {
-            return Err(RuntimePlanError::InvalidProof {
-                driver: prefix,
-                reason: "duplicate indexed eval",
-            });
-        }
-        indexed_values.push((index, eval.value));
-    }
-    if indexed_values.is_empty() {
-        return Err(RuntimePlanError::MissingValue { symbol: prefix });
-    }
-    indexed_values.sort_by_key(|(index, _)| *index);
-    for (expected, (actual, _)) in indexed_values.iter().enumerate() {
-        if *actual != expected {
-            return Err(RuntimePlanError::InvalidProof {
-                driver: prefix,
-                reason: "non-contiguous indexed eval",
-            });
-        }
-    }
-    Ok(indexed_values.into_iter().map(|(_, value)| value).collect())
 }
 
 pub fn single_operand<F: Field>(

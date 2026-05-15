@@ -29,8 +29,8 @@ use jolt_field::{Field, Fr, MulPow2};
 use jolt_poly::EqPolynomial;
 
 use bolt_verifier_runtime::{
-    field_powers, indexed_evals_by_prefix_any, prefix_point, store_point, store_scalar,
-    suffix_point, RuntimePlanError, StageNamedEval, SumcheckInstanceResultPlan, ValueStore,
+    eval_family_values, field_powers, prefix_point, store_point, store_scalar, suffix_point,
+    NamedEvalFamilyPlan, RuntimePlanError, StageNamedEval, SumcheckInstanceResultPlan, ValueStore,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,7 +90,7 @@ pub struct Stage67RelationSymbols {
 pub struct Stage67BytecodeReadRafPlan {
     pub point: &'static str,
     pub gamma: &'static str,
-    pub bytecode_ra_eval_prefix: &'static str,
+    pub bytecode_ra_evals: &'static NamedEvalFamilyPlan,
     pub entries: &'static str,
     pub entry_bytecode_index: &'static str,
     pub stages: &'static [Stage67BytecodeStagePlan],
@@ -240,7 +240,7 @@ pub fn evaluate_stage67_bytecode_read_raf<E: Stage67BytecodeEntry>(
     let entry_contrib = gamma_powers[plan.entry_contribution.gamma_power]
         * EqPolynomial::<Fr>::mle(&entry_bits, r_address_prime)
         * EqPolynomial::<Fr>::mle(&zero_cycle, r_cycle_prime);
-    let bytecode_ra = indexed_evals_by_prefix_any(evals, plan.bytecode_ra_eval_prefix)?
+    let bytecode_ra = eval_family_values(evals, plan.bytecode_ra_evals)?
         .into_iter()
         .product::<Fr>();
     Ok((val + entry_contrib) * bytecode_ra)

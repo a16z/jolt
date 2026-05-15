@@ -1080,7 +1080,7 @@ impl Stage5CpuProgram {
     }
 
     fn emit_verifier_imports() -> &'static str {
-        "use bolt_verifier_runtime::{batch_claims, eval_by_name, find_batch, find_plan, indexed_evals_by_prefix_any, reverse_slice};\n\
+        "use bolt_verifier_runtime::{batch_claims, eval_by_name, eval_family_values, find_batch, find_plan, reverse_slice, NamedEvalFamilyPlan};\n\
          use super::jolt_relations::{identity_polynomial_eval, normalize_instruction_read_raf_point, operand_polynomial_eval};\n\
          use jolt_field::{Field, Fr};\n\
          use jolt_lookup_tables::LookupTableKind;\n\
@@ -1809,6 +1809,9 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
         let mut source = String::new();
         source.push_str(&self.emit_sumcheck_instance_result_constants()?);
         source.push_str(&self.emit_sumcheck_eval_constants());
+        if self.role == Role::Verifier {
+            source.push_str(&self.emit_named_eval_family_constants()?);
+        }
         source.push_str(&self.emit_point_slice_constants());
         source.push_str(&self.emit_point_concat_constants());
         source.push_str(&self.emit_opening_claim_constants()?);
@@ -1864,6 +1867,84 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
             .collect::<Vec<_>>()
             .join("\n");
         format!("pub const STAGE5_SUMCHECK_EVALS: &[Stage5SumcheckEvalPlan] = &[\n{evals}\n];\n\n")
+    }
+
+    fn emit_named_eval_family_constants(&self) -> Result<String, EmitError> {
+        const FAMILIES: &[(&str, &str, &str, &str)] = &[
+            (
+                "STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVAL_NAMES",
+                "STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVALS",
+                "stage5.instruction_read_raf.eval.LookupTableFlag",
+                "LookupTableFlag_",
+            ),
+            (
+                "STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVAL_NAMES",
+                "STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVALS",
+                "stage5.instruction_read_raf.eval.InstructionRa",
+                "InstructionRa_",
+            ),
+        ];
+
+        let mut source = String::new();
+        for (names_const, family_const, family_symbol, oracle_prefix) in FAMILIES {
+            let names = self.indexed_eval_family_names(family_symbol, oracle_prefix)?;
+            let names_source = names
+                .iter()
+                .map(|name| rust_str(name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            push_format(
+                &mut source,
+                format_args!(
+                    "#[rustfmt::skip]\npub const {names_const}: &[&str] = &[{names_source}];\n"
+                ),
+            );
+            push_format(
+                &mut source,
+                format_args!(
+                    "pub const {family_const}: NamedEvalFamilyPlan = NamedEvalFamilyPlan {{ symbol: {}, evals: {names_const} }};\n\n",
+                    rust_str(family_symbol),
+                ),
+            );
+        }
+        Ok(source)
+    }
+
+    fn indexed_eval_family_names(
+        &self,
+        family_symbol: &str,
+        oracle_prefix: &str,
+    ) -> Result<Vec<&str>, EmitError> {
+        let mut indexed_names = Vec::new();
+        for eval in &self.evals {
+            let Some(suffix) = eval.oracle.strip_prefix(oracle_prefix) else {
+                continue;
+            };
+            let index = suffix.parse::<usize>().map_err(|_| {
+                EmitError::new(format!(
+                    "invalid indexed eval oracle `{}` for family `{family_symbol}`",
+                    eval.oracle
+                ))
+            })?;
+            indexed_names.push((index, eval.name.as_str()));
+        }
+        if indexed_names.is_empty() {
+            return Err(EmitError::new(format!(
+                "missing eval family `{family_symbol}`"
+            )));
+        }
+        indexed_names.sort_by_key(|(index, _)| *index);
+        for (expected, (actual, _)) in indexed_names.iter().enumerate() {
+            if expected != *actual {
+                return Err(EmitError::new(format!(
+                    "non-contiguous eval family `{family_symbol}` at index {actual}"
+                )));
+            }
+        }
+        Ok(indexed_names
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect::<Vec<_>>())
     }
 
     fn emit_verifier_output_claim_constants(&self) -> Result<String, EmitError> {
@@ -2404,10 +2485,8 @@ fn expected_instruction_read_raf(
     let right_operand_eval = operand_polynomial_eval(r_address_prime, false);
     let identity_poly_eval = identity_polynomial_eval(r_address_prime);
 
-    let table_flag_claims = indexed_evals_by_prefix_any(
-        evals,
-        "stage5.instruction_read_raf.eval.LookupTableFlag_",
-    )?;
+    let table_flag_claims =
+        eval_family_values(evals, &STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVALS)?;
     let table_values = LookupTableKind::<XLEN>::all()
         .iter()
         .take(table_flag_claims.len())
@@ -2419,9 +2498,9 @@ fn expected_instruction_read_raf(
         .map(|(table_value, flag_claim)| table_value * flag_claim)
         .sum::<Fr>();
 
-    let ra_claim = indexed_evals_by_prefix_any(
+    let ra_claim = eval_family_values(
         evals,
-        "stage5.instruction_read_raf.eval.InstructionRa_",
+        &STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVALS,
     )?
     .into_iter()
     .product::<Fr>();
