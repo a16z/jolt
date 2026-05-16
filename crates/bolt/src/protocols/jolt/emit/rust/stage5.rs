@@ -912,18 +912,6 @@ impl Stage5CpuProgram {
             verifier_values::VerifierScalarSourceKind::OutputFunctionFamily,
         );
         values.extend(
-            self.relation_outputs
-                .iter()
-                .flat_map(|claim| claim.eval_families.iter().map(|family| &family.symbol)),
-            verifier_values::VerifierScalarSourceKind::OutputEvalFamily,
-        );
-        values.extend(
-            self.relation_outputs
-                .iter()
-                .flat_map(|claim| claim.product_families.iter().map(|family| &family.symbol)),
-            verifier_values::VerifierScalarSourceKind::OutputProductFamily,
-        );
-        values.extend(
             self.field_exprs.iter().map(|expr| &expr.symbol),
             verifier_values::VerifierScalarSourceKind::FieldExpr,
         );

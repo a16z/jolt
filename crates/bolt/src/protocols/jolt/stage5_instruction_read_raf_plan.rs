@@ -203,8 +203,6 @@ impl Stage5InstructionReadRafEmitPlan {
             field_exprs,
             claim: RelationOutputPlan {
                 relation: "jolt.stage5.instruction_read_raf".to_owned(),
-                eval_families: Vec::new(),
-                product_families: Vec::new(),
                 local_scalars: self
                     .point_values
                     .iter()
@@ -439,7 +437,6 @@ mod tests {
             output_plan.relation_output_values[0].symbol,
             "stage5.instruction_read_raf.output.eq.LookupOutputCycle"
         );
-        assert!(output_plan.claim.product_families.is_empty());
         assert_eq!(
             output_plan.claim.local_scalars,
             vec![

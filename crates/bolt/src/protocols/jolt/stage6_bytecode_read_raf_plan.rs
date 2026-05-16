@@ -370,8 +370,6 @@ impl BytecodeReadRafPlan {
             ],
             claim: RelationOutputPlan {
                 relation: "jolt.stage6.bytecode_read_raf".to_owned(),
-                eval_families: Vec::new(),
-                product_families: Vec::new(),
                 local_scalars: vec![self.output_contribution.to_owned()],
                 expected_output: claim_expr,
             },
@@ -693,8 +691,6 @@ mod tests {
             claim.expected_output,
             "stage6.bytecode_read_raf.output.claim_expr"
         );
-        assert!(claim.eval_families.is_empty());
-        assert!(claim.product_families.is_empty());
         assert_eq!(
             claim.local_scalars,
             vec![stage6_bytecode_read_raf_output_contribution_symbol().to_owned()]

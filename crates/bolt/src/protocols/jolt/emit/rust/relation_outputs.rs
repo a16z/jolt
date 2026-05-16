@@ -10,18 +10,6 @@ pub fn emit_verifier_relation_output_constants(
     let mut source = String::new();
     let mut claims = Vec::new();
     for (index, claim) in relation_outputs.iter().enumerate() {
-        if let Some(family) = claim.eval_families.first() {
-            return Err(EmitError::new(format!(
-                "{stage_type} relation output eval family @{} must be lowered before Rust verifier emission",
-                family.symbol
-            )));
-        }
-        if let Some(family) = claim.product_families.first() {
-            return Err(EmitError::new(format!(
-                "{stage_type} relation output product family @{} must be lowered before Rust verifier emission",
-                family.symbol
-            )));
-        }
         let local_scalars = emit_local_scalar_constants(&mut source, stage_type, index, claim);
         claims.push(format!(
             "    {stage_type}RelationOutputPlan {{ relation: {}, local_scalars: {local_scalars}, expected_output: {} }},",

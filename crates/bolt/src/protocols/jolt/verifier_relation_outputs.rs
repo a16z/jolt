@@ -252,8 +252,6 @@ pub struct RelationOutputFunctionFamilyPlan {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationOutputPlan {
     pub relation: String,
-    pub eval_families: Vec<RelationOutputEvalFamilyPlan>,
-    pub product_families: Vec<RelationOutputProductFamilyPlan>,
     pub local_scalars: Vec<String>,
     pub expected_output: String,
 }
@@ -1033,20 +1031,20 @@ where
                 &field_exprs_by_symbol,
                 std::iter::once(claim.expected_output.as_str()),
             );
-            let eval_families = relation_output_eval_families
-                .iter()
-                .filter(|family| dependencies.contains_eval_family(&family.symbol))
-                .cloned()
-                .collect();
-            let product_families = relation_output_product_families
-                .iter()
-                .filter(|family| dependencies.contains_product_family(&family.symbol))
-                .cloned()
-                .collect();
+            if let Some(family) = dependencies.first_eval_family() {
+                return Err(EmitError::new(format!(
+                    "{stage} relation output for @{} depends on unlowered eval family @{family}",
+                    claim.relation
+                )));
+            }
+            if let Some(family) = dependencies.first_product_family() {
+                return Err(EmitError::new(format!(
+                    "{stage} relation output for @{} depends on unlowered product family @{family}",
+                    claim.relation
+                )));
+            }
             Ok(RelationOutputPlan {
                 relation: claim.relation,
-                eval_families,
-                product_families,
                 local_scalars: Vec::new(),
                 expected_output: claim.expected_output,
             })
@@ -1074,16 +1072,18 @@ struct OutputDependencyClosure {
 }
 
 impl OutputDependencyClosure {
-    fn contains_eval_family(&self, symbol: &str) -> bool {
-        self.families
-            .iter()
-            .any(|family| matches!(family, OutputFamilyDependency::Eval(value) if value == symbol))
+    fn first_eval_family(&self) -> Option<&str> {
+        self.families.iter().find_map(|family| match family {
+            OutputFamilyDependency::Eval(value) => Some(value.as_str()),
+            OutputFamilyDependency::Product(_) => None,
+        })
     }
 
-    fn contains_product_family(&self, symbol: &str) -> bool {
-        self.families.iter().any(
-            |family| matches!(family, OutputFamilyDependency::Product(value) if value == symbol),
-        )
+    fn first_product_family(&self) -> Option<&str> {
+        self.families.iter().find_map(|family| match family {
+            OutputFamilyDependency::Eval(_) => None,
+            OutputFamilyDependency::Product(value) => Some(value.as_str()),
+        })
     }
 }
 
@@ -1500,7 +1500,7 @@ mod tests {
     }
 
     #[test]
-    fn resolves_relation_output_eval_families_reachable_through_field_expressions(
+    fn resolve_rejects_unlowered_eval_families_reachable_through_field_expressions(
     ) -> Result<(), EmitError> {
         let inner_family = RelationOutputEvalFamilyPlan {
             symbol: "inner.family".to_owned(),
@@ -1543,7 +1543,7 @@ mod tests {
             expected_output: "claim.expr".to_owned(),
         }];
 
-        let claims = resolve_relation_outputs(
+        let error = match resolve_relation_outputs(
             "test",
             &[],
             &[inner_family, outer_family],
@@ -1551,22 +1551,23 @@ mod tests {
             &[],
             &field_exprs,
             claim_asts,
-        )?;
-        let claim = claims
-            .first()
-            .ok_or_else(|| EmitError::new("missing resolved relation output"))?;
-        let family_symbols = claim
-            .eval_families
-            .iter()
-            .map(|family| family.symbol.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(family_symbols, vec!["inner.family", "outer.family"]);
-        assert!(claim.product_families.is_empty());
+        ) {
+            Ok(_) => {
+                return Err(EmitError::new(
+                    "unlowered eval family should fail relation output resolution",
+                ));
+            }
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains(
+            "test relation output for @relation depends on unlowered eval family @inner.family"
+        ));
         Ok(())
     }
 
     #[test]
-    fn resolves_product_families_reachable_through_field_expressions() -> Result<(), EmitError> {
+    fn resolve_rejects_unlowered_product_families_reachable_through_field_expressions(
+    ) -> Result<(), EmitError> {
         let product_family = RelationOutputProductFamilyPlan {
             symbol: "product.family".to_owned(),
             gamma: Some("product.gamma".to_owned()),
@@ -1594,7 +1595,7 @@ mod tests {
             expected_output: "claim.expr".to_owned(),
         }];
 
-        let claims = resolve_relation_outputs(
+        let error = match resolve_relation_outputs(
             "test",
             &[],
             &[],
@@ -1602,17 +1603,17 @@ mod tests {
             &[],
             &field_exprs,
             claim_asts,
-        )?;
-        let claim = claims
-            .first()
-            .ok_or_else(|| EmitError::new("missing resolved relation output"))?;
-        assert!(claim.eval_families.is_empty());
-        let family_symbols = claim
-            .product_families
-            .iter()
-            .map(|family| family.symbol.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(family_symbols, vec!["product.family"]);
+        ) {
+            Ok(_) => {
+                return Err(EmitError::new(
+                    "unlowered product family should fail relation output resolution",
+                ));
+            }
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains(
+            "test relation output for @relation depends on unlowered product family @product.family"
+        ));
         Ok(())
     }
 
