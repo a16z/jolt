@@ -9,6 +9,7 @@ pub(crate) mod stage5_instruction_read_raf_plan;
 pub(crate) mod stage6_bytecode_read_raf_plan;
 pub mod validate;
 pub(crate) mod verifier_eval_families;
+pub(crate) mod verifier_opening_rows;
 pub(crate) mod verifier_plan;
 pub(crate) mod verifier_relation_outputs;
 pub(crate) mod verifier_values;

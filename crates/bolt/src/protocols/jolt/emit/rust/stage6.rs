@@ -17,6 +17,7 @@ use crate::protocols::jolt::stage6_bytecode_read_raf_plan::{
     stage6_bytecode_read_raf_relation_output_plan, STAGE6_BYTECODE_RA_EVAL_FAMILY,
 };
 use crate::protocols::jolt::verifier_eval_families::{self, IndexedEvalFamilyPlan};
+use crate::protocols::jolt::verifier_opening_rows;
 use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
 use crate::protocols::jolt::verifier_relation_outputs::{
     self, parse_output_eval_family_plan, parse_output_function_family_plan,
@@ -86,9 +87,9 @@ pub struct Stage6CpuProgram {
     pub point_zeros: Vec<Stage6PointZeroPlan>,
     pub point_slices: Vec<Stage6PointSlicePlan>,
     pub point_concats: Vec<Stage6PointConcatPlan>,
-    pub opening_claims: Vec<verifier_plan::CpuOpeningClaimPlan>,
-    pub opening_equalities: Vec<verifier_plan::CpuOpeningClaimEqualityPlan>,
-    pub opening_batches: Vec<verifier_plan::CpuOpeningBatchPlan>,
+    pub opening_claims: Vec<verifier_opening_rows::CpuOpeningClaimPlan>,
+    pub opening_equalities: Vec<verifier_opening_rows::CpuOpeningClaimEqualityPlan>,
+    pub opening_batches: Vec<verifier_opening_rows::CpuOpeningBatchPlan>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -592,34 +593,14 @@ impl Stage6CpuProgram {
                     });
                 }
                 "cpu.opening_claim" => {
-                    opening_claims.push(verifier_plan::CpuOpeningClaimPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        oracle: symbol_attr(op, "oracle")?,
-                        domain: symbol_attr(op, "domain")?,
-                        point_arity: int_attr(op, "point_arity")?,
-                        claim_kind: string_attr(op, "claim_kind")?,
-                        point_source: operand_symbol(op, 0)?,
-                        eval_source: operand_symbol(op, 1)?,
-                    });
+                    opening_claims.push(verifier_opening_rows::CpuOpeningClaimPlan::from_cpu(op)?);
                 }
                 "cpu.opening_claim_equal" => {
-                    opening_equalities.push(verifier_plan::CpuOpeningClaimEqualityPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        mode: string_attr(op, "mode")?,
-                        lhs: operand_symbol(op, 0)?,
-                        rhs: operand_symbol(op, 1)?,
-                    });
+                    opening_equalities
+                        .push(verifier_opening_rows::CpuOpeningClaimEqualityPlan::from_cpu(op)?);
                 }
                 "cpu.opening_batch" => {
-                    opening_batches.push(verifier_plan::CpuOpeningBatchPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        stage: symbol_attr(op, "stage")?,
-                        proof_slot: symbol_attr(op, "proof_slot")?,
-                        policy: string_attr(op, "policy")?,
-                        count: int_attr(op, "count")?,
-                        ordered_claims: symbol_array_attr(op, "ordered_claims")?,
-                        claim_operands: operand_symbols(op, 0)?,
-                    });
+                    opening_batches.push(verifier_opening_rows::CpuOpeningBatchPlan::from_cpu(op)?);
                 }
                 _ => {}
             }

@@ -7,6 +7,9 @@ use crate::protocols::jolt::rust_target_plan::{
     RustTargetPlanError, ScalarExprKind, SumcheckPointOrder, TranscriptSqueezeKind,
 };
 use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
+use crate::protocols::jolt::verifier_opening_rows::{
+    CpuOpeningBatchPlan, CpuOpeningClaimEqualityPlan, CpuOpeningClaimPlan,
+};
 use crate::protocols::jolt::verifier_relation_outputs::{
     RelationOutputEvalFamilyPlan, RelationOutputFunctionFamilyPlan, RelationOutputPlan,
     RelationOutputProductFamilyPlan, StructuredPolynomialEvalPlan,
@@ -259,36 +262,6 @@ pub(crate) struct VerifierOpeningBatchPlan {
     pub(crate) count: usize,
     pub(crate) ordered_claims: Vec<String>,
     pub(crate) claim_operands: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CpuOpeningClaimPlan {
-    pub symbol: String,
-    pub oracle: String,
-    pub domain: String,
-    pub point_arity: usize,
-    pub claim_kind: String,
-    pub point_source: String,
-    pub eval_source: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CpuOpeningClaimEqualityPlan {
-    pub symbol: String,
-    pub mode: String,
-    pub lhs: String,
-    pub rhs: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CpuOpeningBatchPlan {
-    pub symbol: String,
-    pub stage: String,
-    pub proof_slot: String,
-    pub policy: String,
-    pub count: usize,
-    pub ordered_claims: Vec<String>,
-    pub claim_operands: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1071,9 +1044,9 @@ macro_rules! impl_verifier_plan_source_traits {
                     @point_exprs self $(, $point_zero)?
                 )
             }
-            fn opening_claims(&self) -> &[$crate::protocols::jolt::verifier_plan::CpuOpeningClaimPlan] { &self.opening_claims }
-            fn opening_equalities(&self) -> &[$crate::protocols::jolt::verifier_plan::CpuOpeningClaimEqualityPlan] { &self.opening_equalities }
-            fn opening_batches(&self) -> &[$crate::protocols::jolt::verifier_plan::CpuOpeningBatchPlan] { &self.opening_batches }
+            fn opening_claims(&self) -> &[$crate::protocols::jolt::verifier_opening_rows::CpuOpeningClaimPlan] { &self.opening_claims }
+            fn opening_equalities(&self) -> &[$crate::protocols::jolt::verifier_opening_rows::CpuOpeningClaimEqualityPlan] { &self.opening_equalities }
+            fn opening_batches(&self) -> &[$crate::protocols::jolt::verifier_opening_rows::CpuOpeningBatchPlan] { &self.opening_batches }
         }
 
         impl $crate::protocols::jolt::verifier_plan::VerifierProgramStepSource for $step {

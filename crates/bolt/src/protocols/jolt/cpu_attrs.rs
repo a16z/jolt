@@ -1,8 +1,8 @@
-use melior::ir::operation::OperationLike;
+use melior::ir::operation::{OperationLike, OperationResult};
 use melior::ir::{Attribute, OperationRef};
 
 use crate::emit::rust::EmitError;
-use crate::ir::string_attribute_value;
+use crate::ir::{string_attribute_value, symbol_attribute_value};
 
 pub(crate) fn string_attr(
     operation: OperationRef<'_, '_>,
@@ -13,6 +13,17 @@ pub(crate) fn string_attr(
         .ok()
         .and_then(string_attribute_value)
         .ok_or_else(|| attr_error(operation, attr, "string"))
+}
+
+pub(crate) fn symbol_attr(
+    operation: OperationRef<'_, '_>,
+    attr: &str,
+) -> Result<String, EmitError> {
+    operation
+        .attribute(attr)
+        .ok()
+        .and_then(symbol_attribute_value)
+        .ok_or_else(|| attr_error(operation, attr, "symbol"))
 }
 
 pub(crate) fn symbol_array_attr(
@@ -90,6 +101,34 @@ pub(crate) fn operation_name<'c: 'a, 'a>(operation: impl OperationLike<'c, 'a>) 
         .as_str()
         .unwrap_or("<invalid-operation-name>")
         .to_owned()
+}
+
+pub(crate) fn operand_symbols(
+    operation: OperationRef<'_, '_>,
+    start_index: usize,
+) -> Result<Vec<String>, EmitError> {
+    (start_index..operation.operand_count())
+        .map(|index| operand_symbol(operation, index))
+        .collect()
+}
+
+pub(crate) fn operand_symbol(
+    operation: OperationRef<'_, '_>,
+    index: usize,
+) -> Result<String, EmitError> {
+    let operand = operation.operand(index).map_err(|_| {
+        EmitError::new(format!(
+            "{} requires operand {index}",
+            operation_name(operation)
+        ))
+    })?;
+    let owner = OperationResult::try_from(operand).map_err(|_| {
+        EmitError::new(format!(
+            "{} operand {index} must be an op result",
+            operation_name(operation)
+        ))
+    })?;
+    string_attr(owner.owner(), "sym_name")
 }
 
 fn parse_symbol_array(attribute: &str) -> Option<Vec<String>> {
