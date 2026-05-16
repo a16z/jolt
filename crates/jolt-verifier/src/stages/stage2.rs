@@ -15,17 +15,19 @@ pub type Stage2ChallengeVector<F> = bolt_verifier_runtime::StageChallengeVector<
 pub type Stage2ExecutionArtifacts<F> = bolt_verifier_runtime::StageExecutionArtifacts<F>;
 pub type Stage2Proof<F> = bolt_verifier_runtime::StageProof<F>;
 pub type Stage2OpeningInputValue<F> = bolt_verifier_runtime::StageOpeningInputValue<F>;
-pub type Stage2VerifierProgramPlan = bolt_verifier_runtime::StageVerifierProgramPlanNoEqualities<Stage2RelationKind>;
+pub type Stage2VerifierProgramPlan = bolt_verifier_runtime::StageVerifierProgramPlan<Stage2RelationKind>;
 pub type Stage2SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stage2RelationKind>;
 pub type Stage2SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage2RelationKind>;
 pub type Stage2SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage2RelationKind>;
+pub type Stage2RelationOutputPlan = bolt_verifier_runtime::RelationOutputPlan<Stage2RelationKind>;
 
 pub use super::jolt_relations::JoltRelationKind as Stage2RelationKind;
 pub use bolt_verifier_runtime::{
     ClaimKind as Stage2ClaimKind, FieldConstantPlan as Stage2FieldConstantPlan,
     FieldExprKind as Stage2FieldExprKind,
     FieldExprPlan as Stage2FieldExprPlan,
-    ScalarExprPlan as Stage2ScalarExprPlan,
+    OpeningClaimEqualityPlan as Stage2OpeningClaimEqualityPlan,
+    ScalarExprKind as Stage2ScalarExprKind, ScalarExprPlan as Stage2ScalarExprPlan,
     OpeningBatchPlan as Stage2OpeningBatchPlan, OpeningClaimPlan as Stage2OpeningClaimPlan,
     OpeningInputPlan as Stage2OpeningInputPlan, PointExprKind as Stage2PointExprKind,
     PointExprPlan as Stage2PointExprPlan, ProgramStepKind as Stage2ProgramStepKind,
@@ -57,15 +59,6 @@ pub struct Stage2RamData<'a> {
     pub final_ram: &'a [u64],
     pub accesses: &'a [Stage2RamAccess],
     pub output_layout: Option<Stage2RamOutputLayout>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Stage2RamReadWriteOutputPlan {
-    pub cycle_point: &'static str,
-    pub gamma: &'static str,
-    pub val_eval: &'static str,
-    pub ra_eval: &'static str,
-    pub inc_eval: &'static str,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -144,8 +137,14 @@ pub const STAGE2_FIELD_EXPRS: &[Stage2FieldExprPlan] = &[
     Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.RightOperand", kind: Stage2FieldExprKind::Add, operands: &["stage2.instruction_lookup.partial.LookupOutputLeftOperand", "stage2.instruction_lookup.term.RightLookupOperand"] },
     Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.LeftInstructionInput", kind: Stage2FieldExprKind::Add, operands: &["stage2.instruction_lookup.partial.RightOperand", "stage2.instruction_lookup.term.LeftInstructionInput"] },
     Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.claim_reduction.claim_expr", kind: Stage2FieldExprKind::Add, operands: &["stage2.instruction_lookup.partial.LeftInstructionInput", "stage2.instruction_lookup.term.RightInstructionInput"] },
+    Stage2FieldExprPlan { symbol: "stage2.ram_read_write.output.partial.ValPlusInc", kind: Stage2FieldExprKind::Add, operands: &["stage2.ram_read_write.eval.RamVal", "stage2.ram_read_write.eval.RamInc"] },
+    Stage2FieldExprPlan { symbol: "stage2.ram_read_write.output.term.GammaValPlusInc", kind: Stage2FieldExprKind::Mul, operands: &["stage2.ram_read_write.gamma", "stage2.ram_read_write.output.partial.ValPlusInc"] },
+    Stage2FieldExprPlan { symbol: "stage2.ram_read_write.output.partial.WeightedVal", kind: Stage2FieldExprKind::Add, operands: &["stage2.ram_read_write.eval.RamVal", "stage2.ram_read_write.output.term.GammaValPlusInc"] },
+    Stage2FieldExprPlan { symbol: "stage2.ram_read_write.output.claim_expr", kind: Stage2FieldExprKind::Product, operands: &["stage2.ram_read_write.output.eq.Cycle", "stage2.ram_read_write.eval.RamRa", "stage2.ram_read_write.output.partial.WeightedVal"] },
 ];
-pub const STAGE2_SCALAR_EXPRS: &[Stage2ScalarExprPlan] = &[];
+pub const STAGE2_SCALAR_EXPRS: &[Stage2ScalarExprPlan] = &[
+    Stage2ScalarExprPlan { symbol: "stage2.ram_read_write.output.eq.Cycle", kind: Stage2ScalarExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Eq, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Prefix, length: bolt_verifier_runtime::StructuredPolynomialPointLength::YPoint, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage2.ram_read_write.instance", "stage2.input.stage1.RamReadValue"] },
+];
 pub const STAGE2_SUMCHECK_CLAIMS: &[Stage2SumcheckClaimPlan] = &[
     Stage2SumcheckClaimPlan { symbol: "stage2.product_virtual.uniskip.input", stage: "stage2", domain: "jolt.stage2_uniskip_domain", num_rounds: 1, degree: 6, claim: "stage2.product_virtual.weighted_stage1_outputs", kernel: None, relation: Some(Stage2RelationKind::Stage2ProductVirtualUniskip), claim_value: "stage2.product_virtual.uniskip.claim_expr" },
     Stage2SumcheckClaimPlan { symbol: "stage2.ram_read_write.input", stage: "stage2", domain: "jolt.stage2_ram_rw_domain", num_rounds: 32, degree: 3, claim: "stage2.ram_read_write.weighted_values", kernel: None, relation: Some(Stage2RelationKind::Stage2RamReadWrite), claim_value: "stage2.ram_read_write.claim_expr" },
@@ -231,13 +230,10 @@ pub const STAGE2_OPENING_CLAIMS: &[Stage2OpeningClaimPlan] = &[
 pub const STAGE2_OPENING_BATCHES: &[Stage2OpeningBatchPlan] = &[
     Stage2OpeningBatchPlan { symbol: "stage2.openings", stage: "stage2", proof_slot: "stage2.openings", policy: "jolt_stage2_output_order", count: 18, ordered_claims: &["stage2.ram_read_write.opening.RamVal", "stage2.ram_read_write.opening.RamRa", "stage2.ram_read_write.opening.RamInc", "stage2.product_virtual.remainder.opening.LeftInstructionInput", "stage2.product_virtual.remainder.opening.RightInstructionInput", "stage2.product_virtual.remainder.opening.OpFlagJump", "stage2.product_virtual.remainder.opening.OpFlagWriteLookupOutputToRD", "stage2.product_virtual.remainder.opening.LookupOutput", "stage2.product_virtual.remainder.opening.InstructionFlagBranch", "stage2.product_virtual.remainder.opening.NextIsNoop", "stage2.product_virtual.remainder.opening.OpFlagVirtualInstruction", "stage2.instruction_lookup.claim_reduction.opening.LookupOutput", "stage2.instruction_lookup.claim_reduction.opening.LeftLookupOperand", "stage2.instruction_lookup.claim_reduction.opening.RightLookupOperand", "stage2.instruction_lookup.claim_reduction.opening.LeftInstructionInput", "stage2.instruction_lookup.claim_reduction.opening.RightInstructionInput", "stage2.ram_raf.opening.RamRa", "stage2.ram_output.opening.RamValFinal"], claim_operands: &["stage2.ram_read_write.opening.RamVal", "stage2.ram_read_write.opening.RamRa", "stage2.ram_read_write.opening.RamInc", "stage2.product_virtual.remainder.opening.LeftInstructionInput", "stage2.product_virtual.remainder.opening.RightInstructionInput", "stage2.product_virtual.remainder.opening.OpFlagJump", "stage2.product_virtual.remainder.opening.OpFlagWriteLookupOutputToRD", "stage2.product_virtual.remainder.opening.LookupOutput", "stage2.product_virtual.remainder.opening.InstructionFlagBranch", "stage2.product_virtual.remainder.opening.NextIsNoop", "stage2.product_virtual.remainder.opening.OpFlagVirtualInstruction", "stage2.instruction_lookup.claim_reduction.opening.LookupOutput", "stage2.instruction_lookup.claim_reduction.opening.LeftLookupOperand", "stage2.instruction_lookup.claim_reduction.opening.RightLookupOperand", "stage2.instruction_lookup.claim_reduction.opening.LeftInstructionInput", "stage2.instruction_lookup.claim_reduction.opening.RightInstructionInput", "stage2.ram_raf.opening.RamRa", "stage2.ram_output.opening.RamValFinal"] },
 ];
-pub const STAGE2_RAM_READ_WRITE_OUTPUT: Stage2RamReadWriteOutputPlan = Stage2RamReadWriteOutputPlan {
-    cycle_point: "stage2.input.stage1.RamReadValue",
-    gamma: "stage2.ram_read_write.gamma",
-    val_eval: "stage2.ram_read_write.eval.RamVal",
-    ra_eval: "stage2.ram_read_write.eval.RamRa",
-    inc_eval: "stage2.ram_read_write.eval.RamInc",
-};
+pub const STAGE2_OPENING_EQUALITIES: &[Stage2OpeningClaimEqualityPlan] = &[];
+pub const STAGE2_RELATION_OUTPUTS: &[Stage2RelationOutputPlan] = &[
+    Stage2RelationOutputPlan { relation: Stage2RelationKind::Stage2RamReadWrite, local_scalars: &[], expected_output: "stage2.ram_read_write.output.claim_expr" },
+];
 
 pub const STAGE2_PROGRAM: Stage2VerifierProgramPlan = Stage2VerifierProgramPlan {
     params: STAGE2_PARAMS,
@@ -252,8 +248,10 @@ pub const STAGE2_PROGRAM: Stage2VerifierProgramPlan = Stage2VerifierProgramPlan 
     drivers: STAGE2_SUMCHECK_DRIVERS,
     instance_results: STAGE2_SUMCHECK_INSTANCE_RESULTS,
     evals: STAGE2_SUMCHECK_EVALS,
+    relation_outputs: STAGE2_RELATION_OUTPUTS,
     point_exprs: STAGE2_POINT_EXPRS,
     opening_claims: STAGE2_OPENING_CLAIMS,
+    opening_equalities: STAGE2_OPENING_EQUALITIES,
     opening_batches: STAGE2_OPENING_BATCHES,
 };
 
@@ -686,10 +684,15 @@ fn expected_batched_output_claim(
             })?;
         let value = match instance.relation {
             Stage2RelationKind::Stage2RamReadWrite => {
-                expected_ram_read_write(
-                    &STAGE2_RAM_READ_WRITE_OUTPUT,
-                    store,
+                bolt_verifier_runtime::evaluate_relation_output_for_instance(
+                    program.relation_outputs,
+                    program.field_exprs,
+                    program.scalar_exprs,
+                    &store.0,
+                    instance,
                     evals,
+                    &[],
+                    &[],
                     local_point,
                 )?
             }
@@ -708,23 +711,6 @@ fn expected_batched_output_claim(
         expected += *coefficient * value;
     }
     Ok(expected)
-}
-
-fn expected_ram_read_write(
-    plan: &'static Stage2RamReadWriteOutputPlan,
-    store: &Stage2ValueStore<Fr>,
-    evals: &[Stage2NamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage2Error> {
-    let r_cycle_stage1 = store.point(plan.cycle_point)?;
-    let log_t = r_cycle_stage1.len();
-    let r_cycle = reverse_slice(&local_point[..log_t]);
-    let eq_eval = EqPolynomial::<Fr>::mle(r_cycle_stage1, &r_cycle);
-    let gamma = store.scalar(plan.gamma)?;
-    let val = eval_by_name(evals, plan.val_eval)?;
-    let ra = eval_by_name(evals, plan.ra_eval)?;
-    let inc = eval_by_name(evals, plan.inc_eval)?;
-    Ok(eq_eval * ra * (val + gamma * (val + inc)))
 }
 
 fn expected_product_remainder(

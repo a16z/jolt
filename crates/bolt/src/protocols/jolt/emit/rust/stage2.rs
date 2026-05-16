@@ -7,11 +7,13 @@ use melior::ir::{Attribute, OperationRef};
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
 use crate::protocols::jolt::rust_target_plan::{
-    ClaimKind, FieldExprKind, JoltVerifierRelationKind, ProgramStepKind, RustTargetPlanError,
-    TranscriptSqueezeKind,
+    structured_polynomial_scalar_formula, ClaimKind, FieldExprKind, JoltVerifierRelationKind,
+    ProgramStepKind, RustTargetPlanError, ScalarExprKind, TranscriptSqueezeKind,
 };
-use crate::protocols::jolt::verifier_plan;
+use crate::protocols::jolt::{verifier_plan, verifier_relation_outputs, verifier_values};
 use crate::schema::verify_cpu_schema;
+
+type Stage2RelationOutputPlan = verifier_relation_outputs::RelationOutputPlan;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage2CpuProgram {
@@ -22,12 +24,14 @@ pub struct Stage2CpuProgram {
     pub opening_inputs: Vec<Stage2OpeningInputPlan>,
     pub field_constants: Vec<Stage2FieldConstantPlan>,
     pub field_exprs: Vec<Stage2FieldExprPlan>,
+    pub scalar_exprs: Vec<Stage2ScalarExprPlan>,
     pub kernels: Vec<Stage2KernelPlan>,
     pub claims: Vec<Stage2SumcheckClaimPlan>,
     pub batches: Vec<Stage2SumcheckBatchPlan>,
     pub drivers: Vec<Stage2SumcheckDriverPlan>,
     pub instance_results: Vec<Stage2SumcheckInstanceResultPlan>,
     pub evals: Vec<Stage2SumcheckEvalPlan>,
+    pub relation_outputs: Vec<Stage2RelationOutputPlan>,
     pub point_slices: Vec<Stage2PointSlicePlan>,
     pub point_concats: Vec<Stage2PointConcatPlan>,
     pub opening_claims: Vec<Stage2OpeningClaimPlan>,
@@ -89,6 +93,107 @@ pub struct Stage2FieldExprPlan {
     pub formula: String,
     pub operand_names: Vec<String>,
     pub operands: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage2ScalarExprPlan {
+    pub symbol: String,
+    pub kind: String,
+    pub formula: String,
+    pub operand_names: Vec<String>,
+    pub operands: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Stage2RelationOutputRows {
+    field_exprs: Vec<Stage2FieldExprPlan>,
+    scalar_exprs: Vec<Stage2ScalarExprPlan>,
+    relation_outputs: Vec<Stage2RelationOutputPlan>,
+}
+
+fn stage2_field_expr(
+    symbol: &str,
+    formula: &str,
+    operands: impl IntoIterator<Item = &'static str>,
+) -> Stage2FieldExprPlan {
+    let operands = operands.into_iter().map(str::to_owned).collect::<Vec<_>>();
+    Stage2FieldExprPlan {
+        symbol: symbol.to_owned(),
+        kind: "op".to_owned(),
+        formula: formula.to_owned(),
+        operand_names: operands.clone(),
+        operands,
+    }
+}
+
+fn stage2_scalar_expr(
+    symbol: &str,
+    formula: String,
+    operands: impl IntoIterator<Item = &'static str>,
+) -> Stage2ScalarExprPlan {
+    let operands = operands.into_iter().map(str::to_owned).collect::<Vec<_>>();
+    Stage2ScalarExprPlan {
+        symbol: symbol.to_owned(),
+        kind: "op".to_owned(),
+        formula,
+        operand_names: operands.clone(),
+        operands,
+    }
+}
+
+fn stage2_ram_read_write_relation_output_plans() -> Stage2RelationOutputRows {
+    Stage2RelationOutputRows {
+        scalar_exprs: vec![stage2_scalar_expr(
+            "stage2.ram_read_write.output.eq.Cycle",
+            structured_polynomial_scalar_formula(
+                "eq", "prefix", "y_point", "reverse", "full", "full", "as_is",
+            ),
+            [
+                "stage2.ram_read_write.instance",
+                "stage2.input.stage1.RamReadValue",
+            ],
+        )],
+        field_exprs: vec![
+            stage2_field_expr(
+                "stage2.ram_read_write.output.partial.ValPlusInc",
+                "field.add",
+                [
+                    "stage2.ram_read_write.eval.RamVal",
+                    "stage2.ram_read_write.eval.RamInc",
+                ],
+            ),
+            stage2_field_expr(
+                "stage2.ram_read_write.output.term.GammaValPlusInc",
+                "field.mul",
+                [
+                    "stage2.ram_read_write.gamma",
+                    "stage2.ram_read_write.output.partial.ValPlusInc",
+                ],
+            ),
+            stage2_field_expr(
+                "stage2.ram_read_write.output.partial.WeightedVal",
+                "field.add",
+                [
+                    "stage2.ram_read_write.eval.RamVal",
+                    "stage2.ram_read_write.output.term.GammaValPlusInc",
+                ],
+            ),
+            stage2_field_expr(
+                "stage2.ram_read_write.output.claim_expr",
+                "field.product",
+                [
+                    "stage2.ram_read_write.output.eq.Cycle",
+                    "stage2.ram_read_write.eval.RamRa",
+                    "stage2.ram_read_write.output.partial.WeightedVal",
+                ],
+            ),
+        ],
+        relation_outputs: vec![Stage2RelationOutputPlan {
+            relation: "jolt.stage2.ram.read_write".to_owned(),
+            local_scalars: Vec::new(),
+            expected_output: "stage2.ram_read_write.output.claim_expr".to_owned(),
+        }],
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -257,12 +362,14 @@ impl Stage2CpuProgram {
         let mut opening_inputs = Vec::new();
         let mut field_constants = Vec::new();
         let mut field_exprs = Vec::new();
+        let mut scalar_exprs = Vec::new();
         let mut kernels = Vec::new();
         let mut claims = Vec::new();
         let mut batches = Vec::new();
         let mut drivers = Vec::new();
         let mut instance_results = Vec::new();
         let mut evals = Vec::new();
+        let mut relation_outputs = Vec::new();
         let mut point_slices = Vec::new();
         let mut point_concats = Vec::new();
         let mut opening_claims = Vec::new();
@@ -519,22 +626,32 @@ impl Stage2CpuProgram {
             }
         }
 
+        let role = module
+            .role()
+            .ok_or_else(|| EmitError::new("missing cpu party role"))?;
+        if role == Role::Verifier {
+            let ram_read_write_output = stage2_ram_read_write_relation_output_plans();
+            field_exprs.extend(ram_read_write_output.field_exprs);
+            scalar_exprs.extend(ram_read_write_output.scalar_exprs);
+            relation_outputs.extend(ram_read_write_output.relation_outputs);
+        }
+
         Ok(Self {
             params: params.ok_or_else(|| EmitError::new("missing cpu.params"))?,
-            role: module
-                .role()
-                .ok_or_else(|| EmitError::new("missing cpu party role"))?,
+            role,
             steps,
             transcript_squeezes,
             opening_inputs,
             field_constants,
             field_exprs,
+            scalar_exprs,
             kernels,
             claims,
             batches,
             drivers,
             instance_results,
             evals,
+            relation_outputs,
             point_slices,
             point_concats,
             opening_claims,
@@ -604,6 +721,26 @@ impl Stage2CpuProgram {
                 }
             }
         }
+        if self.role == Role::Verifier {
+            let field_values = self.verifier_scalar_sources();
+            let point_values = self.verifier_point_sources();
+            field_values.verify_no_conflicts("stage2")?;
+            point_values.verify_no_conflicts("stage2")?;
+            for expr in &self.scalar_exprs {
+                super::plan_tokens::verify_scalar_expr_operands(
+                    super::plan_tokens::ScalarExprVerification {
+                        stage: "stage2",
+                        symbol: &expr.symbol,
+                        formula: &expr.formula,
+                        operand_names: &expr.operand_names,
+                        operands: &expr.operands,
+                        field_values: &field_values,
+                        field_vector_values: None,
+                        point_values: Some(&point_values),
+                    },
+                )?;
+            }
+        }
         for claim in &self.claims {
             if !field_values.contains(&claim.claim_value) {
                 return Err(EmitError::new(format!(
@@ -627,7 +764,63 @@ impl Stage2CpuProgram {
                 .map(|squeeze| &squeeze.symbol),
         ));
         values.extend(symbols(self.field_exprs.iter().map(|expr| &expr.symbol)));
+        values.extend(symbols(self.scalar_exprs.iter().map(|expr| &expr.symbol)));
         values.extend(symbols(self.evals.iter().map(|eval| &eval.symbol)));
+        values
+    }
+
+    fn verifier_scalar_sources(&self) -> verifier_values::VerifierScalarSourceSet {
+        let mut values = verifier_values::VerifierScalarSourceSet::default();
+        values.extend(
+            self.opening_inputs.iter().map(|input| &input.symbol),
+            verifier_values::VerifierScalarSourceKind::OpeningInput,
+        );
+        values.extend(
+            self.field_constants.iter().map(|constant| &constant.symbol),
+            verifier_values::VerifierScalarSourceKind::FieldConstant,
+        );
+        values.extend(
+            self.transcript_squeezes
+                .iter()
+                .filter(|squeeze| matches!(squeeze.kind.as_str(), "challenge_scalar" | "scalar"))
+                .map(|squeeze| &squeeze.symbol),
+            verifier_values::VerifierScalarSourceKind::TranscriptScalar,
+        );
+        values.extend(
+            self.field_exprs.iter().map(|expr| &expr.symbol),
+            verifier_values::VerifierScalarSourceKind::FieldExpr,
+        );
+        values.extend(
+            self.scalar_exprs.iter().map(|expr| &expr.symbol),
+            verifier_values::VerifierScalarSourceKind::ScalarExpr,
+        );
+        values.extend(
+            self.evals.iter().map(|eval| &eval.symbol),
+            verifier_values::VerifierScalarSourceKind::SumcheckEval,
+        );
+        values
+    }
+
+    fn verifier_point_sources(&self) -> verifier_values::VerifierPointSourceSet {
+        let mut values = verifier_values::VerifierPointSourceSet::default();
+        values.extend(
+            self.opening_inputs.iter().map(|input| &input.symbol),
+            verifier_values::VerifierPointSourceKind::OpeningInput,
+        );
+        values.extend(
+            self.instance_results
+                .iter()
+                .map(|instance| &instance.symbol),
+            verifier_values::VerifierPointSourceKind::SumcheckInstance,
+        );
+        values.extend(
+            self.point_slices.iter().map(|slice| &slice.symbol),
+            verifier_values::VerifierPointSourceKind::PointExpr,
+        );
+        values.extend(
+            self.point_concats.iter().map(|concat| &concat.symbol),
+            verifier_values::VerifierPointSourceKind::PointExpr,
+        );
         values
     }
 
@@ -823,6 +1016,9 @@ impl Stage2CpuProgram {
         for expr in &self.field_exprs {
             let _ = FieldExprKind::from_cpu_attr(&expr.formula).map_err(rust_target_plan_error)?;
         }
+        for expr in &self.scalar_exprs {
+            let _ = ScalarExprKind::from_cpu_attr(&expr.formula).map_err(rust_target_plan_error)?;
+        }
         for claim in &self.claims {
             let relation = claim
                 .relation
@@ -841,6 +1037,10 @@ impl Stage2CpuProgram {
         }
         for instance in &self.instance_results {
             let _ = JoltVerifierRelationKind::from_cpu_attr(&instance.relation)
+                .map_err(rust_target_plan_error)?;
+        }
+        for output in &self.relation_outputs {
+            let _ = JoltVerifierRelationKind::from_cpu_attr(&output.relation)
                 .map_err(rust_target_plan_error)?;
         }
         for claim in &self.opening_claims {
@@ -1027,17 +1227,20 @@ pub type Stage2ChallengeVector<F> = bolt_verifier_runtime::StageChallengeVector<
 pub type Stage2ExecutionArtifacts<F> = bolt_verifier_runtime::StageExecutionArtifacts<F>;
 pub type Stage2Proof<F> = bolt_verifier_runtime::StageProof<F>;
 pub type Stage2OpeningInputValue<F> = bolt_verifier_runtime::StageOpeningInputValue<F>;
-pub type Stage2VerifierProgramPlan = bolt_verifier_runtime::StageVerifierProgramPlanNoEqualities<Stage2RelationKind>;
+pub type Stage2VerifierProgramPlan = bolt_verifier_runtime::StageVerifierProgramPlan<Stage2RelationKind>;
 pub type Stage2SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stage2RelationKind>;
 pub type Stage2SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage2RelationKind>;
 pub type Stage2SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage2RelationKind>;
+pub type Stage2RelationOutputPlan = bolt_verifier_runtime::RelationOutputPlan<Stage2RelationKind>;
 
 pub use super::jolt_relations::JoltRelationKind as Stage2RelationKind;
 pub use bolt_verifier_runtime::{
     ClaimKind as Stage2ClaimKind, FieldConstantPlan as Stage2FieldConstantPlan,
     FieldExprKind as Stage2FieldExprKind,
     FieldExprPlan as Stage2FieldExprPlan,
+    OpeningClaimEqualityPlan as Stage2OpeningClaimEqualityPlan,
     ScalarExprPlan as Stage2ScalarExprPlan,
+    ScalarExprKind as Stage2ScalarExprKind,
     OpeningBatchPlan as Stage2OpeningBatchPlan, OpeningClaimPlan as Stage2OpeningClaimPlan,
     OpeningInputPlan as Stage2OpeningInputPlan, PointExprKind as Stage2PointExprKind,
     PointExprPlan as Stage2PointExprPlan, ProgramStepKind as Stage2ProgramStepKind,
@@ -1069,15 +1272,6 @@ pub struct Stage2RamData<'a> {
     pub final_ram: &'a [u64],
     pub accesses: &'a [Stage2RamAccess],
     pub output_layout: Option<Stage2RamOutputLayout>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Stage2RamReadWriteOutputPlan {
-    pub cycle_point: &'static str,
-    pub gamma: &'static str,
-    pub val_eval: &'static str,
-    pub ra_eval: &'static str,
-    pub inc_eval: &'static str,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1137,7 +1331,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage2Error);
         source.push_str(&self.emit_sumcheck_batch_constants());
         source.push_str(&self.emit_verifier_sumcheck_driver_constants()?);
         source.push_str(&self.emit_tail_constants()?);
-        source.push_str(Self::emit_verifier_relation_output_constants());
+        source.push_str(&self.emit_verifier_relation_output_constants()?);
         source.push_str(
             "pub const STAGE2_PROGRAM: Stage2VerifierProgramPlan = Stage2VerifierProgramPlan {\n\
              \x20   params: STAGE2_PARAMS,\n\
@@ -1152,22 +1346,22 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage2Error);
              \x20   drivers: STAGE2_SUMCHECK_DRIVERS,\n\
              \x20   instance_results: STAGE2_SUMCHECK_INSTANCE_RESULTS,\n\
              \x20   evals: STAGE2_SUMCHECK_EVALS,\n\
+             \x20   relation_outputs: STAGE2_RELATION_OUTPUTS,\n\
              \x20   point_exprs: STAGE2_POINT_EXPRS,\n\
              \x20   opening_claims: STAGE2_OPENING_CLAIMS,\n\
+             \x20   opening_equalities: STAGE2_OPENING_EQUALITIES,\n\
              \x20   opening_batches: STAGE2_OPENING_BATCHES,\n\
              };\n",
         );
         Ok(source)
     }
 
-    fn emit_verifier_relation_output_constants() -> &'static str {
-        "pub const STAGE2_RAM_READ_WRITE_OUTPUT: Stage2RamReadWriteOutputPlan = Stage2RamReadWriteOutputPlan {\n\
-         \x20   cycle_point: \"stage2.input.stage1.RamReadValue\",\n\
-         \x20   gamma: \"stage2.ram_read_write.gamma\",\n\
-         \x20   val_eval: \"stage2.ram_read_write.eval.RamVal\",\n\
-         \x20   ra_eval: \"stage2.ram_read_write.eval.RamRa\",\n\
-         \x20   inc_eval: \"stage2.ram_read_write.eval.RamInc\",\n\
-         };\n\n"
+    fn emit_verifier_relation_output_constants(&self) -> Result<String, EmitError> {
+        super::relation_outputs::emit_verifier_relation_output_constants(
+            "Stage2",
+            &self.role,
+            &self.relation_outputs,
+        )
     }
 
     fn emit_shared_constants(&self) -> Result<String, EmitError> {
@@ -1187,7 +1381,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage2Error);
         source.push_str(&self.emit_field_constant_constants());
         source.push_str(&self.emit_field_expr_constants()?);
         if self.role == Role::Verifier {
-            source.push_str("pub const STAGE2_SCALAR_EXPRS: &[Stage2ScalarExprPlan] = &[];\n");
+            source.push_str(&self.emit_scalar_expr_constants()?);
         }
         Ok(source)
     }
@@ -1342,6 +1536,27 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage2Error);
             ),
         );
         Ok(source)
+    }
+
+    fn emit_scalar_expr_constants(&self) -> Result<String, EmitError> {
+        let exprs = self
+            .scalar_exprs
+            .iter()
+            .map(|expr| {
+                let kind = ScalarExprKind::from_cpu_attr(&expr.formula)
+                    .map_err(rust_target_plan_error)?
+                    .rust_variant_expr();
+                Ok(format!(
+                    "    Stage2ScalarExprPlan {{ symbol: {}, kind: Stage2ScalarExprKind::{kind}, operands: {} }},",
+                    rust_str(&expr.symbol),
+                    super::plan_tokens::rust_str_slice_expr(&expr.operands)
+                ))
+            })
+            .collect::<Result<Vec<_>, EmitError>>()?
+            .join("\n");
+        Ok(format!(
+            "pub const STAGE2_SCALAR_EXPRS: &[Stage2ScalarExprPlan] = &[\n{exprs}\n];\n"
+        ))
     }
 
     fn emit_kernel_constants(&self) -> String {
@@ -1584,6 +1799,11 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage2Error);
         source.push_str(&self.emit_sumcheck_eval_constants());
         source.push_str(&self.emit_point_expr_constants()?);
         source.push_str(&self.emit_opening_claim_constants()?);
+        if self.role == Role::Verifier {
+            source.push_str(
+                "pub const STAGE2_OPENING_EQUALITIES: &[Stage2OpeningClaimEqualityPlan] = &[];\n",
+            );
+        }
         source.push_str(&self.emit_opening_batch_constants());
         Ok(source)
     }
@@ -2240,10 +2460,15 @@ fn expected_batched_output_claim(
             })?;
         let value = match instance.relation {
             Stage2RelationKind::Stage2RamReadWrite => {
-                expected_ram_read_write(
-                    &STAGE2_RAM_READ_WRITE_OUTPUT,
-                    store,
+                bolt_verifier_runtime::evaluate_relation_output_for_instance(
+                    program.relation_outputs,
+                    program.field_exprs,
+                    program.scalar_exprs,
+                    &store.0,
+                    instance,
                     evals,
+                    &[],
+                    &[],
                     local_point,
                 )?
             }
@@ -2262,23 +2487,6 @@ fn expected_batched_output_claim(
         expected += *coefficient * value;
     }
     Ok(expected)
-}
-
-fn expected_ram_read_write(
-    plan: &'static Stage2RamReadWriteOutputPlan,
-    store: &Stage2ValueStore<Fr>,
-    evals: &[Stage2NamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage2Error> {
-    let r_cycle_stage1 = store.point(plan.cycle_point)?;
-    let log_t = r_cycle_stage1.len();
-    let r_cycle = reverse_slice(&local_point[..log_t]);
-    let eq_eval = EqPolynomial::<Fr>::mle(r_cycle_stage1, &r_cycle);
-    let gamma = store.scalar(plan.gamma)?;
-    let val = eval_by_name(evals, plan.val_eval)?;
-    let ra = eval_by_name(evals, plan.ra_eval)?;
-    let inc = eval_by_name(evals, plan.inc_eval)?;
-    Ok(eq_eval * ra * (val + gamma * (val + inc)))
 }
 
 fn expected_product_remainder(

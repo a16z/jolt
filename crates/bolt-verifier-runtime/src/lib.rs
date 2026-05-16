@@ -515,25 +515,6 @@ pub struct StageVerifierProgramPlan<R: ProtocolRelation> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StageVerifierProgramPlanNoEqualities<R: ProtocolRelation> {
-    pub params: StageParams,
-    pub steps: &'static [ProgramStepPlan],
-    pub transcript_squeezes: &'static [TranscriptSqueezePlan],
-    pub opening_inputs: &'static [OpeningInputPlan],
-    pub field_constants: &'static [FieldConstantPlan],
-    pub field_exprs: &'static [FieldExprPlan],
-    pub scalar_exprs: &'static [ScalarExprPlan],
-    pub claims: &'static [SumcheckClaimPlan<R>],
-    pub batches: &'static [SumcheckBatchPlan],
-    pub drivers: &'static [SumcheckDriverPlan<R>],
-    pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
-    pub evals: &'static [SumcheckEvalPlan],
-    pub point_exprs: &'static [PointExprPlan],
-    pub opening_claims: &'static [OpeningClaimPlan],
-    pub opening_batches: &'static [OpeningBatchPlan],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VerifierProgramPlanMinimal<R: ProtocolRelation> {
     pub params: StageParams,
     pub transcript_squeezes: &'static [TranscriptSqueezePlan],
