@@ -8,7 +8,8 @@ use crate::protocols::jolt::rust_target_plan::{
     TranscriptSqueezeKind,
 };
 use crate::protocols::jolt::verifier_values::{
-    VerifierFieldVectorSourceSet, VerifierPointSourceSet, VerifierScalarSourceSet,
+    VerifierFieldVectorValueRef, VerifierFieldVectorValueSet, VerifierPointSourceSet,
+    VerifierScalarSourceSet,
 };
 
 pub(super) fn role_program_step_kind_expr(
@@ -160,7 +161,7 @@ pub(super) struct ScalarExprVerification<'a> {
     pub operand_names: &'a [String],
     pub operands: &'a [String],
     pub field_values: &'a VerifierScalarSourceSet,
-    pub field_vector_values: Option<&'a VerifierFieldVectorSourceSet>,
+    pub field_vector_values: Option<&'a VerifierFieldVectorValueSet>,
     pub point_values: Option<&'a VerifierPointSourceSet>,
 }
 
@@ -194,7 +195,9 @@ pub(super) fn verify_scalar_expr_operands(
             };
             verify_count("field vector expr operands", symbol, 1, operands.len())?;
             let operand = &operands[0];
-            if !field_vector_values.contains(operand) {
+            if !field_vector_values
+                .contains_ref(&VerifierFieldVectorValueRef::new(operand.as_str()))
+            {
                 return Err(EmitError::new(format!(
                     "field vector expr @{symbol} references missing field vector @{operand}"
                 )));

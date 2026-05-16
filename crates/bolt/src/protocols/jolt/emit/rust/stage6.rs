@@ -477,7 +477,7 @@ impl Stage6CpuProgram {
             self.cpu_field_value_sources()
         };
         let field_vector_values = if self.role == Role::Verifier {
-            Some(self.verifier_plan()?.field_vector_value_sources())
+            Some(self.verifier_plan()?.field_vector_values())
         } else {
             None
         };

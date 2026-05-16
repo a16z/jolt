@@ -30,9 +30,9 @@ use crate::protocols::jolt::verifier_value_rows::{
     CpuFieldConstantPlan, CpuFieldExprPlan, CpuScalarExprPlan,
 };
 use crate::protocols::jolt::verifier_values::{
-    VerifierFieldVectorSourceSet, VerifierFieldVectorValueKind, VerifierFieldVectorValueSet,
-    VerifierPointSourceKind, VerifierPointSourceSet, VerifierScalarSourceSet,
-    VerifierScalarValueKind, VerifierScalarValuePlan, VerifierScalarValueSet,
+    VerifierFieldVectorValueKind, VerifierFieldVectorValueSet, VerifierPointSourceKind,
+    VerifierPointSourceSet, VerifierScalarSourceSet, VerifierScalarValueKind,
+    VerifierScalarValuePlan, VerifierScalarValueSet,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -522,10 +522,6 @@ impl VerifierStagePlan {
             );
         }
         values
-    }
-
-    pub(crate) fn field_vector_value_sources(&self) -> VerifierFieldVectorSourceSet {
-        self.field_vector_values().source_set()
     }
 
     pub(crate) fn point_value_sources(&self) -> VerifierPointSourceSet {
@@ -2189,7 +2185,7 @@ mod tests {
         StructuredPolynomialPointSegment,
     };
     use crate::protocols::jolt::verifier_values::{
-        VerifierScalarValueKind, VerifierScalarValuePlan,
+        VerifierFieldVectorValueRef, VerifierScalarValueKind, VerifierScalarValuePlan,
     };
 
     use super::{VerifierScalarExprPlan, VerifierStagePlan};
@@ -2238,6 +2234,20 @@ mod tests {
             VerifierScalarValueKind::RelationOutputLocal
         )));
         Ok(())
+    }
+
+    #[test]
+    fn field_vector_values_classify_indexed_eval_families() {
+        let mut plan = VerifierStagePlan::default();
+        plan.indexed_eval_families.push(IndexedEvalFamilyPlan {
+            symbol: "stage5.indexed.evals".to_owned(),
+            evals: vec!["stage5.eval.0".to_owned()],
+        });
+
+        let values = plan.field_vector_values();
+
+        assert!(values.contains_ref(&VerifierFieldVectorValueRef::new("stage5.indexed.evals")));
+        assert!(!values.contains_ref(&VerifierFieldVectorValueRef::new("missing.family")));
     }
 
     fn structured_polynomial_eval(symbol: &str) -> StructuredPolynomialEvalPlan {
