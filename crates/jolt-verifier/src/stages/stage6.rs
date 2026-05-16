@@ -40,7 +40,20 @@ pub use bolt_verifier_runtime::{
 };
 
 pub type DefaultStage6Transcript = Blake2bTranscript<Fr>;
-pub type Stage6VerifierProgramPlan = Stage6CpuProgramPlan;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stage6VerifierProgramPlan {
+    pub base: Stage6CpuProgramPlan,
+    pub bytecode_plan: Stage67BytecodeReadRafPlan,
+}
+
+impl core::ops::Deref for Stage6VerifierProgramPlan {
+    type Target = Stage6CpuProgramPlan;
+
+    fn deref(&self) -> &Self::Target {
+        &self.base
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Stage6BytecodeEntry {
@@ -638,7 +651,7 @@ const STAGE6_BYTECODE_OUTPUT_TERMS: &[Stage67BytecodeOutputTermPlan] = &[
     Stage67BytecodeOutputTermPlan::Entry { symbol: "stage6.bytecode_read_raf.output.term.Entry", gamma_power: 7 },
 ];
 
-const STAGE6_BYTECODE_PLAN: Stage67BytecodeReadRafPlan = Stage67BytecodeReadRafPlan {
+pub const STAGE6_BYTECODE_PLAN: Stage67BytecodeReadRafPlan = Stage67BytecodeReadRafPlan {
     point: "stage6.bytecode_read_raf.point",
     gamma: "stage6.bytecode_read_raf.gamma",
     bytecode_ra_evals: &STAGE6_INDEXED_EVAL_FAMILIES[0],
@@ -664,28 +677,31 @@ pub const STAGE6_RELATION_OUTPUTS: &[Stage6RelationOutputPlan] = &[
     Stage6RelationOutputPlan { relation: Stage6RelationKind::Stage6BytecodeReadRaf, local_scalars: STAGE6_RELATION_OUTPUT_5_LOCAL_SCALARS, expected_output: "stage6.bytecode_read_raf.output.claim_expr" },
 ];
 
-pub const STAGE6_PROGRAM: Stage6VerifierProgramPlan = Stage6CpuProgramPlan {
-    role: "verifier",
-    params: STAGE6_PARAMS,
-    steps: STAGE6_PROGRAM_STEPS,
-    transcript_squeezes: STAGE6_TRANSCRIPT_SQUEEZES,
-    transcript_absorb_bytes: STAGE6_TRANSCRIPT_ABSORB_BYTES,
-    opening_inputs: STAGE6_OPENING_INPUTS,
-    field_constants: STAGE6_FIELD_CONSTANTS,
-    field_exprs: STAGE6_FIELD_EXPRS,
-    scalar_exprs: STAGE6_SCALAR_EXPRS,
-    kernels: STAGE6_KERNELS,
-    claims: STAGE6_SUMCHECK_CLAIMS,
-    batches: STAGE6_SUMCHECK_BATCHES,
-    drivers: STAGE6_SUMCHECK_DRIVERS,
-    instance_results: STAGE6_SUMCHECK_INSTANCE_RESULTS,
-    evals: STAGE6_SUMCHECK_EVALS,
-    indexed_eval_families: STAGE6_INDEXED_EVAL_FAMILIES,
-    relation_outputs: STAGE6_RELATION_OUTPUTS,
-    point_exprs: STAGE6_POINT_EXPRS,
-    opening_claims: STAGE6_OPENING_CLAIMS,
-    opening_equalities: STAGE6_OPENING_EQUALITIES,
-    opening_batches: STAGE6_OPENING_BATCHES,
+pub const STAGE6_PROGRAM: Stage6VerifierProgramPlan = Stage6VerifierProgramPlan {
+    base: Stage6CpuProgramPlan {
+        role: "verifier",
+        params: STAGE6_PARAMS,
+        steps: STAGE6_PROGRAM_STEPS,
+        transcript_squeezes: STAGE6_TRANSCRIPT_SQUEEZES,
+        transcript_absorb_bytes: STAGE6_TRANSCRIPT_ABSORB_BYTES,
+        opening_inputs: STAGE6_OPENING_INPUTS,
+        field_constants: STAGE6_FIELD_CONSTANTS,
+        field_exprs: STAGE6_FIELD_EXPRS,
+        scalar_exprs: STAGE6_SCALAR_EXPRS,
+        kernels: STAGE6_KERNELS,
+        claims: STAGE6_SUMCHECK_CLAIMS,
+        batches: STAGE6_SUMCHECK_BATCHES,
+        drivers: STAGE6_SUMCHECK_DRIVERS,
+        instance_results: STAGE6_SUMCHECK_INSTANCE_RESULTS,
+        evals: STAGE6_SUMCHECK_EVALS,
+        indexed_eval_families: STAGE6_INDEXED_EVAL_FAMILIES,
+        relation_outputs: STAGE6_RELATION_OUTPUTS,
+        point_exprs: STAGE6_POINT_EXPRS,
+        opening_claims: STAGE6_OPENING_CLAIMS,
+        opening_equalities: STAGE6_OPENING_EQUALITIES,
+        opening_batches: STAGE6_OPENING_BATCHES,
+    },
+    bytecode_plan: STAGE6_BYTECODE_PLAN,
 };
 
 pub fn verify_stage6<T>(
@@ -967,7 +983,7 @@ fn stage6_relation_output_inputs<'a>(
         scalars: bolt_verifier_runtime::select_named_scalars(
             relation_output.local_scalars,
             evaluate_stage67_bytecode_read_raf_output_scalars(
-                &STAGE6_BYTECODE_PLAN,
+                &program.bytecode_plan,
                 &data.entries,
                 data.entry_bytecode_index,
                 data.num_lookup_tables,

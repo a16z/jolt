@@ -1216,7 +1216,20 @@ pub use bolt_verifier_runtime::{
         source.push_str(
             r#"
 pub type DefaultStage6Transcript = Blake2bTranscript<Fr>;
-pub type Stage6VerifierProgramPlan = Stage6CpuProgramPlan;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stage6VerifierProgramPlan {
+    pub base: Stage6CpuProgramPlan,
+    pub bytecode_plan: Stage67BytecodeReadRafPlan,
+}
+
+impl core::ops::Deref for Stage6VerifierProgramPlan {
+    type Target = Stage6CpuProgramPlan;
+
+    fn deref(&self) -> &Self::Target {
+        &self.base
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Stage6BytecodeEntry {
@@ -1310,51 +1323,67 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
             ));
             source.push_str(&self.emit_verifier_relation_output_constants()?);
         }
-        let relation_outputs_field = if self.role == Role::Verifier {
-            "    relation_outputs: STAGE6_RELATION_OUTPUTS,\n"
+        let program_field_indent = if self.role == Role::Verifier {
+            "        "
         } else {
-            ""
+            "    "
+        };
+        let relation_outputs_field = if self.role == Role::Verifier {
+            format!("{program_field_indent}relation_outputs: STAGE6_RELATION_OUTPUTS,\n")
+        } else {
+            String::new()
         };
         let indexed_eval_families_field = if self.role == Role::Verifier {
-            "    indexed_eval_families: STAGE6_INDEXED_EVAL_FAMILIES,\n"
+            format!("{program_field_indent}indexed_eval_families: STAGE6_INDEXED_EVAL_FAMILIES,\n")
         } else {
-            ""
+            String::new()
         };
         let scalar_exprs_field = if self.role == Role::Verifier {
-            "    scalar_exprs: STAGE6_SCALAR_EXPRS,\n"
+            format!("{program_field_indent}scalar_exprs: STAGE6_SCALAR_EXPRS,\n")
         } else {
-            ""
+            String::new()
         };
         let point_exprs_field = if self.role == Role::Verifier {
-            "    point_exprs: STAGE6_POINT_EXPRS,\n"
+            format!("{program_field_indent}point_exprs: STAGE6_POINT_EXPRS,\n")
         } else {
-            "    point_zeros: STAGE6_POINT_ZEROS,\n    point_slices: STAGE6_POINT_SLICES,\n    point_concats: STAGE6_POINT_CONCATS,\n"
+            format!("{program_field_indent}point_zeros: STAGE6_POINT_ZEROS,\n{program_field_indent}point_slices: STAGE6_POINT_SLICES,\n{program_field_indent}point_concats: STAGE6_POINT_CONCATS,\n")
+        };
+        let program_constructor = if self.role == Role::Verifier {
+            "Stage6VerifierProgramPlan {\n    base: Stage6CpuProgramPlan {"
+        } else {
+            "Stage6CpuProgramPlan {"
+        };
+        let verifier_program_fields = if self.role == Role::Verifier {
+            "    },\n    bytecode_plan: STAGE6_BYTECODE_PLAN,\n"
+        } else {
+            ""
         };
         push_format(
             &mut source,
             format_args!(
-                "pub const STAGE6_PROGRAM: {} = Stage6CpuProgramPlan {{\n\
-                 \x20   role: {},\n\
-                 \x20   params: STAGE6_PARAMS,\n\
-                 \x20   steps: STAGE6_PROGRAM_STEPS,\n\
-                 \x20   transcript_squeezes: STAGE6_TRANSCRIPT_SQUEEZES,\n\
-                 \x20   transcript_absorb_bytes: STAGE6_TRANSCRIPT_ABSORB_BYTES,\n\
-                 \x20   opening_inputs: STAGE6_OPENING_INPUTS,\n\
-                 \x20   field_constants: STAGE6_FIELD_CONSTANTS,\n\
-                 \x20   field_exprs: STAGE6_FIELD_EXPRS,\n\
+                "pub const STAGE6_PROGRAM: {} = {program_constructor}\n\
+                 {program_field_indent}role: {},\n\
+                 {program_field_indent}params: STAGE6_PARAMS,\n\
+                 {program_field_indent}steps: STAGE6_PROGRAM_STEPS,\n\
+                 {program_field_indent}transcript_squeezes: STAGE6_TRANSCRIPT_SQUEEZES,\n\
+                 {program_field_indent}transcript_absorb_bytes: STAGE6_TRANSCRIPT_ABSORB_BYTES,\n\
+                 {program_field_indent}opening_inputs: STAGE6_OPENING_INPUTS,\n\
+                 {program_field_indent}field_constants: STAGE6_FIELD_CONSTANTS,\n\
+                 {program_field_indent}field_exprs: STAGE6_FIELD_EXPRS,\n\
                  {scalar_exprs_field}\
-                 \x20   kernels: STAGE6_KERNELS,\n\
-                 \x20   claims: STAGE6_SUMCHECK_CLAIMS,\n\
-                 \x20   batches: STAGE6_SUMCHECK_BATCHES,\n\
-                 \x20   drivers: STAGE6_SUMCHECK_DRIVERS,\n\
-                 \x20   instance_results: STAGE6_SUMCHECK_INSTANCE_RESULTS,\n\
-                 \x20   evals: STAGE6_SUMCHECK_EVALS,\n\
+                 {program_field_indent}kernels: STAGE6_KERNELS,\n\
+                 {program_field_indent}claims: STAGE6_SUMCHECK_CLAIMS,\n\
+                 {program_field_indent}batches: STAGE6_SUMCHECK_BATCHES,\n\
+                 {program_field_indent}drivers: STAGE6_SUMCHECK_DRIVERS,\n\
+                 {program_field_indent}instance_results: STAGE6_SUMCHECK_INSTANCE_RESULTS,\n\
+                 {program_field_indent}evals: STAGE6_SUMCHECK_EVALS,\n\
                  {indexed_eval_families_field}\
                  {relation_outputs_field}\
                  {point_exprs_field}\
-                 \x20   opening_claims: STAGE6_OPENING_CLAIMS,\n\
-                 \x20   opening_equalities: STAGE6_OPENING_EQUALITIES,\n\
-                 \x20   opening_batches: STAGE6_OPENING_BATCHES,\n\
+                 {program_field_indent}opening_claims: STAGE6_OPENING_CLAIMS,\n\
+                 {program_field_indent}opening_equalities: STAGE6_OPENING_EQUALITIES,\n\
+                 {program_field_indent}opening_batches: STAGE6_OPENING_BATCHES,\n\
+                 {verifier_program_fields}\
                  }};\n",
                 self.program_plan_type(),
                 rust_str(self.role_label())
@@ -2344,7 +2373,7 @@ fn stage6_relation_output_inputs<'a>(
         scalars: bolt_verifier_runtime::select_named_scalars(
             relation_output.local_scalars,
             evaluate_stage67_bytecode_read_raf_output_scalars(
-                &STAGE6_BYTECODE_PLAN,
+                &program.bytecode_plan,
                 &data.entries,
                 data.entry_bytecode_index,
                 data.num_lookup_tables,

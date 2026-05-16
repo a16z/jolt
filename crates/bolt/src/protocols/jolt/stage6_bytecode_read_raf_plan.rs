@@ -466,7 +466,7 @@ fn emit_bytecode_read_raf_plan(plan: &BytecodeReadRafPlan, bytecode_ra_evals_ref
     push_format(
         &mut source,
         format_args!(
-            "const {}: Stage67BytecodeReadRafPlan = Stage67BytecodeReadRafPlan {{\n",
+            "pub const {}: Stage67BytecodeReadRafPlan = Stage67BytecodeReadRafPlan {{\n",
             plan.const_name
         ),
     );
@@ -789,7 +789,7 @@ mod tests {
         assert!(source
             .contains("output_contribution: \"stage6.bytecode_read_raf.output.contribution\""));
         assert!(source.contains("bytecode_ra_evals: &STAGE6_INDEXED_EVAL_FAMILIES[0]"));
-        assert!(source.contains("const STAGE6_BYTECODE_PLAN: Stage67BytecodeReadRafPlan"));
+        assert!(source.contains("pub const STAGE6_BYTECODE_PLAN: Stage67BytecodeReadRafPlan"));
     }
 
     #[test]

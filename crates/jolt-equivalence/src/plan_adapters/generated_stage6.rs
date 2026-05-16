@@ -3,10 +3,10 @@ use jolt_verifier::stages::stage6 as generated_stage6;
 
 define_stage_adapter!(
     generated,
-    leak_generated_stage6_verifier_program,
+    leak_generated_stage6_base_verifier_program,
     CompilerStage6CpuProgram,
     generated_stage6,
-    Stage6VerifierProgramPlan,
+    Stage6CpuProgramPlan,
     Stage6Params,
     Stage6ProgramStepPlan,
     Stage6TranscriptSqueezePlan,
@@ -30,3 +30,12 @@ define_stage_adapter!(
     indexed_eval_families = indexed_eval_family_rows,
     relation_outputs = Stage6RelationOutputPlan
 );
+
+pub fn leak_generated_stage6_verifier_program(
+    program: &CompilerStage6CpuProgram,
+) -> &'static generated_stage6::Stage6VerifierProgramPlan {
+    Box::leak(Box::new(generated_stage6::Stage6VerifierProgramPlan {
+        base: *leak_generated_stage6_base_verifier_program(program),
+        bytecode_plan: generated_stage6::STAGE6_BYTECODE_PLAN,
+    }))
+}

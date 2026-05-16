@@ -1184,7 +1184,20 @@ pub use bolt_verifier_runtime::{
         source.push_str(
             r#"
 pub type DefaultStage5Transcript = Blake2bTranscript<Fr>;
-pub type Stage5VerifierProgramPlan = Stage5CpuProgramPlan;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stage5VerifierProgramPlan {
+    pub base: Stage5CpuProgramPlan,
+    pub instruction_read_raf_plan: Stage5InstructionReadRafPlan,
+}
+
+impl core::ops::Deref for Stage5VerifierProgramPlan {
+    type Target = Stage5CpuProgramPlan;
+
+    fn deref(&self) -> &Self::Target {
+        &self.base
+    }
+}
 
 #[derive(Debug)]
 pub enum VerifyStage5Error {
@@ -1216,51 +1229,67 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
             source.push_str(&self.emit_indexed_eval_family_constants()?);
             source.push_str(&self.emit_verifier_relation_output_constants()?);
         }
-        let relation_outputs_field = if self.role == Role::Verifier {
-            "    relation_outputs: STAGE5_RELATION_OUTPUTS,\n"
+        let program_field_indent = if self.role == Role::Verifier {
+            "        "
         } else {
-            ""
+            "    "
+        };
+        let relation_outputs_field = if self.role == Role::Verifier {
+            format!("{program_field_indent}relation_outputs: STAGE5_RELATION_OUTPUTS,\n")
+        } else {
+            String::new()
         };
         let indexed_eval_families_field = if self.role == Role::Verifier {
-            "    indexed_eval_families: STAGE5_INDEXED_EVAL_FAMILIES,\n"
+            format!("{program_field_indent}indexed_eval_families: STAGE5_INDEXED_EVAL_FAMILIES,\n")
         } else {
-            ""
+            String::new()
         };
         let scalar_exprs_field = if self.role == Role::Verifier {
-            "    scalar_exprs: STAGE5_SCALAR_EXPRS,\n"
+            format!("{program_field_indent}scalar_exprs: STAGE5_SCALAR_EXPRS,\n")
         } else {
-            ""
+            String::new()
         };
         let point_exprs_field = if self.role == Role::Verifier {
-            "    point_exprs: STAGE5_POINT_EXPRS,\n"
+            format!("{program_field_indent}point_exprs: STAGE5_POINT_EXPRS,\n")
         } else {
-            "    point_slices: STAGE5_POINT_SLICES,\n    point_concats: STAGE5_POINT_CONCATS,\n"
+            format!("{program_field_indent}point_slices: STAGE5_POINT_SLICES,\n{program_field_indent}point_concats: STAGE5_POINT_CONCATS,\n")
+        };
+        let program_constructor = if self.role == Role::Verifier {
+            "Stage5VerifierProgramPlan {\n    base: Stage5CpuProgramPlan {"
+        } else {
+            "Stage5CpuProgramPlan {"
+        };
+        let verifier_program_fields = if self.role == Role::Verifier {
+            "    },\n    instruction_read_raf_plan: STAGE5_INSTRUCTION_READ_RAF_PLAN,\n"
+        } else {
+            ""
         };
         push_format(
             &mut source,
             format_args!(
-                "pub const STAGE5_PROGRAM: {} = Stage5CpuProgramPlan {{\n\
-                 \x20   role: {},\n\
-                 \x20   params: STAGE5_PARAMS,\n\
-                 \x20   steps: STAGE5_PROGRAM_STEPS,\n\
-                 \x20   transcript_squeezes: STAGE5_TRANSCRIPT_SQUEEZES,\n\
-                 \x20   transcript_absorb_bytes: STAGE5_TRANSCRIPT_ABSORB_BYTES,\n\
-                 \x20   opening_inputs: STAGE5_OPENING_INPUTS,\n\
-                 \x20   field_constants: STAGE5_FIELD_CONSTANTS,\n\
-                 \x20   field_exprs: STAGE5_FIELD_EXPRS,\n\
+                "pub const STAGE5_PROGRAM: {} = {program_constructor}\n\
+                 {program_field_indent}role: {},\n\
+                 {program_field_indent}params: STAGE5_PARAMS,\n\
+                 {program_field_indent}steps: STAGE5_PROGRAM_STEPS,\n\
+                 {program_field_indent}transcript_squeezes: STAGE5_TRANSCRIPT_SQUEEZES,\n\
+                 {program_field_indent}transcript_absorb_bytes: STAGE5_TRANSCRIPT_ABSORB_BYTES,\n\
+                 {program_field_indent}opening_inputs: STAGE5_OPENING_INPUTS,\n\
+                 {program_field_indent}field_constants: STAGE5_FIELD_CONSTANTS,\n\
+                 {program_field_indent}field_exprs: STAGE5_FIELD_EXPRS,\n\
                  {scalar_exprs_field}\
-                 \x20   kernels: STAGE5_KERNELS,\n\
-                 \x20   claims: STAGE5_SUMCHECK_CLAIMS,\n\
-                 \x20   batches: STAGE5_SUMCHECK_BATCHES,\n\
-                 \x20   drivers: STAGE5_SUMCHECK_DRIVERS,\n\
-                 \x20   instance_results: STAGE5_SUMCHECK_INSTANCE_RESULTS,\n\
-                 \x20   evals: STAGE5_SUMCHECK_EVALS,\n\
+                 {program_field_indent}kernels: STAGE5_KERNELS,\n\
+                 {program_field_indent}claims: STAGE5_SUMCHECK_CLAIMS,\n\
+                 {program_field_indent}batches: STAGE5_SUMCHECK_BATCHES,\n\
+                 {program_field_indent}drivers: STAGE5_SUMCHECK_DRIVERS,\n\
+                 {program_field_indent}instance_results: STAGE5_SUMCHECK_INSTANCE_RESULTS,\n\
+                 {program_field_indent}evals: STAGE5_SUMCHECK_EVALS,\n\
                  {indexed_eval_families_field}\
                  {relation_outputs_field}\
                  {point_exprs_field}\
-                 \x20   opening_claims: STAGE5_OPENING_CLAIMS,\n\
-                 \x20   opening_equalities: STAGE5_OPENING_EQUALITIES,\n\
-                 \x20   opening_batches: STAGE5_OPENING_BATCHES,\n\
+                 {program_field_indent}opening_claims: STAGE5_OPENING_CLAIMS,\n\
+                 {program_field_indent}opening_equalities: STAGE5_OPENING_EQUALITIES,\n\
+                 {program_field_indent}opening_batches: STAGE5_OPENING_BATCHES,\n\
+                 {verifier_program_fields}\
                  }};\n",
                 self.program_plan_type(),
                 rust_str(self.role_label())
@@ -2131,7 +2160,9 @@ where
                 evals,
                 point,
                 batching_coeffs,
-                stage5_relation_output_inputs,
+                |instance, relation_output, local_point| {
+                    stage5_relation_output_inputs(program, instance, relation_output, local_point)
+                },
             )
         },
         |store, verified| observe_stage5_sumcheck_output(program, store, verified),
@@ -2191,6 +2222,7 @@ fn observe_stage5_sumcheck_output<F: Field>(
 }
 
 fn stage5_relation_output_inputs<'a>(
+    program: &'static Stage5VerifierProgramPlan,
     instance: &Stage5SumcheckInstanceResultPlan,
     relation_output: &Stage5RelationOutputPlan,
     local_point: &'a [Fr],
@@ -2203,7 +2235,7 @@ fn stage5_relation_output_inputs<'a>(
         scalars: bolt_verifier_runtime::select_named_scalars(
             relation_output.local_scalars,
             evaluate_stage5_instruction_read_raf_point_scalars(
-                &STAGE5_INSTRUCTION_READ_RAF_PLAN,
+                &program.instruction_read_raf_plan,
                 local_point,
             )?,
         )?,

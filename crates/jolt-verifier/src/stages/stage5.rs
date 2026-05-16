@@ -40,7 +40,20 @@ pub use bolt_verifier_runtime::{
 };
 
 pub type DefaultStage5Transcript = Blake2bTranscript<Fr>;
-pub type Stage5VerifierProgramPlan = Stage5CpuProgramPlan;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stage5VerifierProgramPlan {
+    pub base: Stage5CpuProgramPlan,
+    pub instruction_read_raf_plan: Stage5InstructionReadRafPlan,
+}
+
+impl core::ops::Deref for Stage5VerifierProgramPlan {
+    type Target = Stage5CpuProgramPlan;
+
+    fn deref(&self) -> &Self::Target {
+        &self.base
+    }
+}
 
 #[derive(Debug)]
 pub enum VerifyStage5Error {
@@ -410,28 +423,31 @@ pub const STAGE5_RELATION_OUTPUTS: &[Stage5RelationOutputPlan] = &[
     Stage5RelationOutputPlan { relation: Stage5RelationKind::Stage5InstructionReadRaf, local_scalars: STAGE5_RELATION_OUTPUT_2_LOCAL_SCALARS, expected_output: "stage5.instruction_read_raf.output.claim_expr" },
 ];
 
-pub const STAGE5_PROGRAM: Stage5VerifierProgramPlan = Stage5CpuProgramPlan {
-    role: "verifier",
-    params: STAGE5_PARAMS,
-    steps: STAGE5_PROGRAM_STEPS,
-    transcript_squeezes: STAGE5_TRANSCRIPT_SQUEEZES,
-    transcript_absorb_bytes: STAGE5_TRANSCRIPT_ABSORB_BYTES,
-    opening_inputs: STAGE5_OPENING_INPUTS,
-    field_constants: STAGE5_FIELD_CONSTANTS,
-    field_exprs: STAGE5_FIELD_EXPRS,
-    scalar_exprs: STAGE5_SCALAR_EXPRS,
-    kernels: STAGE5_KERNELS,
-    claims: STAGE5_SUMCHECK_CLAIMS,
-    batches: STAGE5_SUMCHECK_BATCHES,
-    drivers: STAGE5_SUMCHECK_DRIVERS,
-    instance_results: STAGE5_SUMCHECK_INSTANCE_RESULTS,
-    evals: STAGE5_SUMCHECK_EVALS,
-    indexed_eval_families: STAGE5_INDEXED_EVAL_FAMILIES,
-    relation_outputs: STAGE5_RELATION_OUTPUTS,
-    point_exprs: STAGE5_POINT_EXPRS,
-    opening_claims: STAGE5_OPENING_CLAIMS,
-    opening_equalities: STAGE5_OPENING_EQUALITIES,
-    opening_batches: STAGE5_OPENING_BATCHES,
+pub const STAGE5_PROGRAM: Stage5VerifierProgramPlan = Stage5VerifierProgramPlan {
+    base: Stage5CpuProgramPlan {
+        role: "verifier",
+        params: STAGE5_PARAMS,
+        steps: STAGE5_PROGRAM_STEPS,
+        transcript_squeezes: STAGE5_TRANSCRIPT_SQUEEZES,
+        transcript_absorb_bytes: STAGE5_TRANSCRIPT_ABSORB_BYTES,
+        opening_inputs: STAGE5_OPENING_INPUTS,
+        field_constants: STAGE5_FIELD_CONSTANTS,
+        field_exprs: STAGE5_FIELD_EXPRS,
+        scalar_exprs: STAGE5_SCALAR_EXPRS,
+        kernels: STAGE5_KERNELS,
+        claims: STAGE5_SUMCHECK_CLAIMS,
+        batches: STAGE5_SUMCHECK_BATCHES,
+        drivers: STAGE5_SUMCHECK_DRIVERS,
+        instance_results: STAGE5_SUMCHECK_INSTANCE_RESULTS,
+        evals: STAGE5_SUMCHECK_EVALS,
+        indexed_eval_families: STAGE5_INDEXED_EVAL_FAMILIES,
+        relation_outputs: STAGE5_RELATION_OUTPUTS,
+        point_exprs: STAGE5_POINT_EXPRS,
+        opening_claims: STAGE5_OPENING_CLAIMS,
+        opening_equalities: STAGE5_OPENING_EQUALITIES,
+        opening_batches: STAGE5_OPENING_BATCHES,
+    },
+    instruction_read_raf_plan: STAGE5_INSTRUCTION_READ_RAF_PLAN,
 };
 
 pub fn verify_stage5<T>(
@@ -616,7 +632,9 @@ where
                 evals,
                 point,
                 batching_coeffs,
-                stage5_relation_output_inputs,
+                |instance, relation_output, local_point| {
+                    stage5_relation_output_inputs(program, instance, relation_output, local_point)
+                },
             )
         },
         |store, verified| observe_stage5_sumcheck_output(program, store, verified),
@@ -676,6 +694,7 @@ fn observe_stage5_sumcheck_output<F: Field>(
 }
 
 fn stage5_relation_output_inputs<'a>(
+    program: &'static Stage5VerifierProgramPlan,
     instance: &Stage5SumcheckInstanceResultPlan,
     relation_output: &Stage5RelationOutputPlan,
     local_point: &'a [Fr],
@@ -688,7 +707,7 @@ fn stage5_relation_output_inputs<'a>(
         scalars: bolt_verifier_runtime::select_named_scalars(
             relation_output.local_scalars,
             evaluate_stage5_instruction_read_raf_point_scalars(
-                &STAGE5_INSTRUCTION_READ_RAF_PLAN,
+                &program.instruction_read_raf_plan,
                 local_point,
             )?,
         )?,
