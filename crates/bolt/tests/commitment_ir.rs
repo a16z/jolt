@@ -2073,6 +2073,25 @@ fn stage7_rust_targets_extract_and_compile() {
         verifier_program.relation_outputs[0].expected_output,
         "stage7.hamming_weight_claim_reduction.output.claim_expr"
     );
+    let input_claim = verifier_program
+        .claims
+        .iter()
+        .find(|claim| claim.symbol == "stage7.hamming_weight_claim_reduction.input")
+        .expect("stage7 hamming input claim exists");
+    assert_eq!(
+        input_claim.claim_value,
+        "stage7.hamming_weight_claim_reduction.input.claim_expr"
+    );
+    let input_expr = verifier_program
+        .field_exprs
+        .iter()
+        .find(|expr| expr.symbol == "stage7.hamming_weight_claim_reduction.input.claim_expr")
+        .expect("stage7 hamming input claim is lowered to a field expression");
+    assert_eq!(
+        input_expr.formula,
+        format!("field.power_strided_weighted_sum:{total_ra}:3:_:_:0,1,2")
+    );
+    assert_eq!(input_expr.operands.len(), 1 + total_ra + 3 * total_ra);
     let output_expr = verifier_program
         .field_exprs
         .iter()
@@ -2080,7 +2099,7 @@ fn stage7_rust_targets_extract_and_compile() {
         .expect("stage7 hamming output is lowered to a field expression");
     assert_eq!(
         output_expr.formula,
-        format!("eval_family.weighted_sum:{total_ra}:3:0:1:2")
+        format!("field.power_strided_weighted_sum:{total_ra}:3:0:1:2")
     );
     assert_eq!(output_expr.operands.len(), 2 * total_ra + 2);
     assert_eq!(
@@ -2148,7 +2167,10 @@ fn stage7_rust_targets_extract_and_compile() {
         .contains("STAGE7_RELATION_OUTPUT_0_FAMILY_0_EVALS"));
     assert!(verifier_source
         .source
-        .contains("Stage7FieldExprKind::EvalFamilyWeightedSum"));
+        .contains("Stage7FieldExprKind::PowerStridedWeightedSum"));
+    assert!(!verifier_source
+        .source
+        .contains("stage7.hamming_weight_claim_reduction.claim_expr.partial"));
     assert!(verifier_source
         .source
         .contains("stage7.hamming_weight_claim_reduction.output.eq.Booleanity"));

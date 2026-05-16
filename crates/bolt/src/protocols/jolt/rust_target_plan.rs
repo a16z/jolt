@@ -265,12 +265,12 @@ pub(crate) enum FieldExprKind {
         domain_size: usize,
         index: usize,
     },
-    EvalFamilyWeightedSum {
-        eval_count: usize,
+    PowerStridedWeightedSum {
+        row_count: usize,
         power_stride: usize,
         value_term_offsets: Vec<usize>,
         shared_term_offsets: Vec<usize>,
-        item_term_offsets: Vec<usize>,
+        row_term_offsets: Vec<usize>,
     },
 }
 
@@ -288,8 +288,8 @@ impl FieldExprKind {
             "field.neg" => Ok(Self::Neg),
             value if value.starts_with("field.pow:") => parse_pow(value),
             value if value.starts_with("poly.lagrange_basis_eval:") => parse_lagrange(value),
-            value if value.starts_with("eval_family.weighted_sum:") => {
-                parse_eval_family_weighted_sum(value)
+            value if value.starts_with("field.power_strided_weighted_sum:") => {
+                parse_power_strided_weighted_sum(value)
             }
             _ => Err(RustTargetPlanError::unsupported(
                 "field expression formula",
@@ -315,17 +315,17 @@ impl FieldExprKind {
                 domain_size,
                 index,
             } => format!("LagrangeBasisEval({domain_start}, {domain_size}, {index})"),
-            Self::EvalFamilyWeightedSum {
-                eval_count,
+            Self::PowerStridedWeightedSum {
+                row_count,
                 power_stride,
                 value_term_offsets,
                 shared_term_offsets,
-                item_term_offsets,
+                row_term_offsets,
             } => format!(
-                "EvalFamilyWeightedSum {{ eval_count: {eval_count}, power_stride: {power_stride}, value_term_offsets: {}, shared_term_offsets: {}, item_term_offsets: {} }}",
+                "PowerStridedWeightedSum {{ row_count: {row_count}, power_stride: {power_stride}, value_term_offsets: {}, shared_term_offsets: {}, row_term_offsets: {} }}",
                 usize_slice_expr(value_term_offsets),
                 usize_slice_expr(shared_term_offsets),
-                usize_slice_expr(item_term_offsets),
+                usize_slice_expr(row_term_offsets),
             ),
         }
     }
@@ -412,45 +412,45 @@ fn parse_lagrange(value: &str) -> Result<FieldExprKind, RustTargetPlanError> {
     })
 }
 
-fn parse_eval_family_weighted_sum(value: &str) -> Result<FieldExprKind, RustTargetPlanError> {
+fn parse_power_strided_weighted_sum(value: &str) -> Result<FieldExprKind, RustTargetPlanError> {
     let spec = value
-        .strip_prefix("eval_family.weighted_sum:")
+        .strip_prefix("field.power_strided_weighted_sum:")
         .ok_or_else(|| RustTargetPlanError::unsupported("field expression formula", value))?;
     let parts = spec.split(':').collect::<Vec<_>>();
-    let [eval_count, power_stride, value_offsets, shared_offsets, item_offsets] = parts.as_slice()
+    let [row_count, power_stride, value_offsets, shared_offsets, row_offsets] = parts.as_slice()
     else {
         return Err(RustTargetPlanError::unsupported(
             "field expression formula",
             value,
         ));
     };
-    let eval_count = eval_count
+    let row_count = row_count
         .parse::<usize>()
         .map_err(|_| RustTargetPlanError::unsupported("field expression formula", value))?;
     let power_stride = power_stride
         .parse::<usize>()
         .map_err(|_| RustTargetPlanError::unsupported("field expression formula", value))?;
-    Ok(FieldExprKind::EvalFamilyWeightedSum {
-        eval_count,
+    Ok(FieldExprKind::PowerStridedWeightedSum {
+        row_count,
         power_stride,
         value_term_offsets: parse_usize_list(value_offsets, value)?,
         shared_term_offsets: parse_usize_list(shared_offsets, value)?,
-        item_term_offsets: parse_usize_list(item_offsets, value)?,
+        row_term_offsets: parse_usize_list(row_offsets, value)?,
     })
 }
 
-pub(crate) fn eval_family_weighted_sum_formula(
-    eval_count: usize,
+pub(crate) fn power_strided_weighted_sum_formula(
+    row_count: usize,
     power_stride: usize,
     value_term_offsets: &[usize],
     shared_term_offsets: &[usize],
-    item_term_offsets: &[usize],
+    row_term_offsets: &[usize],
 ) -> String {
     format!(
-        "eval_family.weighted_sum:{eval_count}:{power_stride}:{}:{}:{}",
+        "field.power_strided_weighted_sum:{row_count}:{power_stride}:{}:{}:{}",
         join_usize_list(value_term_offsets),
         join_usize_list(shared_term_offsets),
-        join_usize_list(item_term_offsets),
+        join_usize_list(row_term_offsets),
     )
 }
 
@@ -557,18 +557,18 @@ mod tests {
             })
         );
         assert_eq!(
-            FieldExprKind::from_cpu_attr("eval_family.weighted_sum:39:3:0:1:2").ok(),
-            Some(FieldExprKind::EvalFamilyWeightedSum {
-                eval_count: 39,
+            FieldExprKind::from_cpu_attr("field.power_strided_weighted_sum:39:3:0:1:2").ok(),
+            Some(FieldExprKind::PowerStridedWeightedSum {
+                row_count: 39,
                 power_stride: 3,
                 value_term_offsets: vec![0],
                 shared_term_offsets: vec![1],
-                item_term_offsets: vec![2],
+                row_term_offsets: vec![2],
             })
         );
         assert!(FieldExprKind::from_cpu_attr("field.pow:nope").is_err());
         assert!(FieldExprKind::from_cpu_attr("poly.lagrange_basis_eval:1:2").is_err());
-        assert!(FieldExprKind::from_cpu_attr("eval_family.weighted_sum:1:2:0").is_err());
+        assert!(FieldExprKind::from_cpu_attr("field.power_strided_weighted_sum:1:2:0").is_err());
     }
 
     #[test]
@@ -587,15 +587,15 @@ mod tests {
             "LagrangeBasisEval(-1, 3, 0)"
         );
         assert_eq!(
-            FieldExprKind::EvalFamilyWeightedSum {
-                eval_count: 39,
+            FieldExprKind::PowerStridedWeightedSum {
+                row_count: 39,
                 power_stride: 3,
                 value_term_offsets: vec![0],
                 shared_term_offsets: vec![1],
-                item_term_offsets: vec![2],
+                row_term_offsets: vec![2],
             }
             .rust_variant_expr(),
-            "EvalFamilyWeightedSum { eval_count: 39, power_stride: 3, value_term_offsets: &[0], shared_term_offsets: &[1], item_term_offsets: &[2] }"
+            "PowerStridedWeightedSum { row_count: 39, power_stride: 3, value_term_offsets: &[0], shared_term_offsets: &[1], row_term_offsets: &[2] }"
         );
     }
 }

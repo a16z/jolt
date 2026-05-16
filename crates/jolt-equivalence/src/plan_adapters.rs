@@ -297,25 +297,25 @@ fn generated_field_expr_kind(value: &str) -> bolt_verifier_runtime::FieldExprKin
                 parts[2].parse::<usize>().expect("lagrange index is usize"),
             )
         }
-        value if value.starts_with("eval_family.weighted_sum:") => {
+        value if value.starts_with("field.power_strided_weighted_sum:") => {
             let spec = value
-                .strip_prefix("eval_family.weighted_sum:")
-                .expect("weighted eval-family expression has prefix");
+                .strip_prefix("field.power_strided_weighted_sum:")
+                .expect("power-strided weighted expression has prefix");
             let parts = spec.split(':').collect::<Vec<_>>();
             assert!(
                 parts.len() == 5,
-                "weighted eval-family expression has five fields"
+                "power-strided weighted expression has five fields"
             );
-            bolt_verifier_runtime::FieldExprKind::EvalFamilyWeightedSum {
-                eval_count: parts[0]
+            bolt_verifier_runtime::FieldExprKind::PowerStridedWeightedSum {
+                row_count: parts[0]
                     .parse::<usize>()
-                    .expect("weighted eval-family eval count is usize"),
+                    .expect("power-strided weighted row count is usize"),
                 power_stride: parts[1]
                     .parse::<usize>()
-                    .expect("weighted eval-family power stride is usize"),
+                    .expect("power-strided weighted power stride is usize"),
                 value_term_offsets: leak_slice(parse_usize_list(parts[2])),
                 shared_term_offsets: leak_slice(parse_usize_list(parts[3])),
-                item_term_offsets: leak_slice(parse_usize_list(parts[4])),
+                row_term_offsets: leak_slice(parse_usize_list(parts[4])),
             }
         }
         value => panic!("unsupported generated field expression kind `{value}`"),
@@ -324,7 +324,7 @@ fn generated_field_expr_kind(value: &str) -> bolt_verifier_runtime::FieldExprKin
 
 #[expect(
     clippy::expect_used,
-    reason = "equivalence adapters fail fast when a compiler weighted-sum field expression is malformed"
+    reason = "equivalence adapters fail fast when a compiler power-strided field expression is malformed"
 )]
 fn parse_usize_list(value: &str) -> Vec<usize> {
     if value == "_" {

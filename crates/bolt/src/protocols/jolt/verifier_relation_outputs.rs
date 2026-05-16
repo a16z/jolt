@@ -5,7 +5,7 @@ use melior::ir::{Attribute, OperationRef};
 
 use crate::emit::rust::EmitError;
 use crate::ir::string_attribute_value;
-use crate::protocols::jolt::rust_target_plan::eval_family_weighted_sum_formula;
+use crate::protocols::jolt::rust_target_plan::power_strided_weighted_sum_formula;
 use crate::protocols::jolt::verifier_values::{VerifierPointSourceSet, VerifierScalarSourceSet};
 use crate::schema::operation_name;
 
@@ -797,7 +797,7 @@ pub fn lower_eval_family_output_to_weighted_sum(
             .iter()
             .flat_map(|term| term.factors.iter().cloned()),
     );
-    let formula = eval_family_weighted_sum_formula(
+    let formula = power_strided_weighted_sum_formula(
         family.evals.len(),
         family.power_stride,
         &family.value_term_offsets,

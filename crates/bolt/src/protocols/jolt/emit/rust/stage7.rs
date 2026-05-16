@@ -11,6 +11,7 @@ use melior::ir::{Attribute, OperationRef};
 
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
+use crate::protocols::jolt::rust_target_plan::power_strided_weighted_sum_formula;
 use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
 use crate::protocols::jolt::verifier_relation_outputs::{
     self, parse_output_eval_family_plan, parse_output_function_family_plan,
@@ -152,6 +153,133 @@ fn stage7_relation_output_expr(expr: Stage7RelationOutputFieldExprPlan) -> Stage
         operand_names: expr.operands.clone(),
         operands: expr.operands,
     }
+}
+
+struct HammingWeightClaimRow {
+    hamming_factor: String,
+    booleanity: String,
+    virtualization: String,
+}
+
+fn compact_hamming_weight_input_claim(
+    field_exprs: &mut Vec<Stage7FieldExprPlan>,
+    claims: &mut [Stage7SumcheckClaimPlan],
+    opening_inputs: &[Stage7OpeningInputPlan],
+) -> Result<(), EmitError> {
+    let Some(claim) = claims
+        .iter_mut()
+        .find(|claim| claim.symbol == "stage7.hamming_weight_claim_reduction.input")
+    else {
+        return Ok(());
+    };
+    let compact_symbol = "stage7.hamming_weight_claim_reduction.input.claim_expr";
+    if claim.claim_value == compact_symbol {
+        return Ok(());
+    }
+    if !claim
+        .claim_value
+        .starts_with("stage7.hamming_weight_claim_reduction.claim_expr")
+    {
+        return Err(EmitError::new(format!(
+            "stage7 hamming-weight input claim has unsupported claim value @{}",
+            claim.claim_value
+        )));
+    }
+
+    let rows = hamming_weight_claim_rows(opening_inputs)?;
+    let row_count = rows.len();
+    let mut operands = Vec::with_capacity(1 + row_count + 3 * row_count);
+    operands.push("stage7.hamming_weight_claim_reduction.gamma".to_owned());
+    operands.extend((0..row_count).map(|_| "stage7.field.one".to_owned()));
+    operands.extend(rows.iter().map(|row| row.hamming_factor.clone()));
+    operands.extend(rows.iter().map(|row| row.booleanity.clone()));
+    operands.extend(rows.iter().map(|row| row.virtualization.clone()));
+
+    field_exprs.retain(|expr| !is_hamming_weight_input_claim_expr(&expr.symbol));
+    field_exprs.push(Stage7FieldExprPlan {
+        symbol: compact_symbol.to_owned(),
+        kind: "op".to_owned(),
+        formula: power_strided_weighted_sum_formula(row_count, 3, &[], &[], &[0, 1, 2]),
+        operand_names: operands.clone(),
+        operands,
+    });
+    compact_symbol.clone_into(&mut claim.claim_value);
+    Ok(())
+}
+
+fn hamming_weight_claim_rows(
+    opening_inputs: &[Stage7OpeningInputPlan],
+) -> Result<Vec<HammingWeightClaimRow>, EmitError> {
+    const HAMMING_INPUT: &str = "stage7.input.stage6.hamming_booleanity.HammingWeight";
+    const BOOLEANITY_PREFIX: &str = "stage7.input.stage6.booleanity.";
+    let hamming_factor = opening_inputs
+        .iter()
+        .find(|input| input.symbol == HAMMING_INPUT)
+        .map(|input| input.symbol.clone())
+        .ok_or_else(|| EmitError::new("stage7 hamming-weight input is missing"))?;
+    let mut rows = Vec::new();
+    let mut inputs = opening_inputs
+        .iter()
+        .filter(|input| input.symbol != HAMMING_INPUT);
+    while let Some(booleanity) = inputs.next() {
+        let oracle = booleanity
+            .symbol
+            .strip_prefix(BOOLEANITY_PREFIX)
+            .ok_or_else(|| {
+                EmitError::new(format!(
+                    "stage7 hamming-weight claim expected booleanity input, found @{}",
+                    booleanity.symbol
+                ))
+            })?;
+        let virtualization = inputs.next().ok_or_else(|| {
+            EmitError::new(format!(
+                "stage7 hamming-weight claim missing virtualization input for @{oracle}"
+            ))
+        })?;
+        let (virtual_prefix, row_hamming_factor) = if oracle.starts_with("InstructionRa_") {
+            (
+                "stage7.input.stage6.instruction_ra_virtual.",
+                "stage7.field.one".to_owned(),
+            )
+        } else if oracle.starts_with("BytecodeRa_") {
+            (
+                "stage7.input.stage6.bytecode_read_raf.",
+                "stage7.field.one".to_owned(),
+            )
+        } else if oracle.starts_with("RamRa_") {
+            (
+                "stage7.input.stage6.ram_ra_virtual.",
+                hamming_factor.clone(),
+            )
+        } else {
+            return Err(EmitError::new(format!(
+                "stage7 hamming-weight claim has unsupported RA oracle @{oracle}"
+            )));
+        };
+        let expected_virtualization = format!("{virtual_prefix}{oracle}");
+        if virtualization.symbol != expected_virtualization {
+            return Err(EmitError::new(format!(
+                "stage7 hamming-weight claim expected virtualization input @{expected_virtualization}, found @{}",
+                virtualization.symbol
+            )));
+        }
+        rows.push(HammingWeightClaimRow {
+            hamming_factor: row_hamming_factor,
+            booleanity: booleanity.symbol.clone(),
+            virtualization: virtualization.symbol.clone(),
+        });
+    }
+    if rows.is_empty() {
+        return Err(EmitError::new(
+            "stage7 hamming-weight claim has no RA input rows",
+        ));
+    }
+    Ok(rows)
+}
+
+fn is_hamming_weight_input_claim_expr(symbol: &str) -> bool {
+    symbol.starts_with("stage7.hamming_weight_claim_reduction.claim.")
+        || symbol.starts_with("stage7.hamming_weight_claim_reduction.claim_expr")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -651,6 +779,7 @@ impl Stage7CpuProgram {
             .ok_or_else(|| EmitError::new("missing cpu party role"))?;
         let is_verifier = role == Role::Verifier;
         if is_verifier {
+            compact_hamming_weight_input_claim(&mut field_exprs, &mut claims, &opening_inputs)?;
             field_exprs.extend(
                 verifier_relation_outputs::lower_eval_family_output_to_weighted_sum(
                     "stage7",

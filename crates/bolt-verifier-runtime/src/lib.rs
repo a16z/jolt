@@ -251,12 +251,12 @@ pub enum FieldExprKind {
     Neg,
     Pow(usize),
     LagrangeBasisEval(i64, usize, usize),
-    EvalFamilyWeightedSum {
-        eval_count: usize,
+    PowerStridedWeightedSum {
+        row_count: usize,
         power_stride: usize,
         value_term_offsets: &'static [usize],
         shared_term_offsets: &'static [usize],
-        item_term_offsets: &'static [usize],
+        row_term_offsets: &'static [usize],
     },
 }
 
@@ -1613,35 +1613,35 @@ pub fn evaluate_field_expr<F: Field>(
                     actual: weights.len(),
                 })
         }
-        FieldExprKind::EvalFamilyWeightedSum {
-            eval_count,
+        FieldExprKind::PowerStridedWeightedSum {
+            row_count,
             power_stride,
             value_term_offsets,
             shared_term_offsets,
-            item_term_offsets,
-        } => evaluate_eval_family_weighted_sum(
+            row_term_offsets,
+        } => evaluate_power_strided_weighted_sum(
             expr.symbol,
             operands,
-            eval_count,
+            row_count,
             power_stride,
             value_term_offsets,
             shared_term_offsets,
-            item_term_offsets,
+            row_term_offsets,
         ),
     }
 }
 
-fn evaluate_eval_family_weighted_sum<F: Field>(
+fn evaluate_power_strided_weighted_sum<F: Field>(
     symbol: &'static str,
     operands: &[F],
-    eval_count: usize,
+    row_count: usize,
     power_stride: usize,
     value_term_offsets: &[usize],
     shared_term_offsets: &[usize],
-    item_term_offsets: &[usize],
+    row_term_offsets: &[usize],
 ) -> Result<F, RuntimePlanError> {
-    let term_count = value_term_offsets.len() + shared_term_offsets.len() + item_term_offsets.len();
-    if eval_count == 0 || term_count == 0 {
+    let term_count = value_term_offsets.len() + shared_term_offsets.len() + row_term_offsets.len();
+    if row_count == 0 || term_count == 0 {
         return Err(RuntimePlanError::InvalidInputLength {
             input: symbol,
             expected: 1,
@@ -1649,16 +1649,16 @@ fn evaluate_eval_family_weighted_sum<F: Field>(
         });
     }
     let expected_operands =
-        1 + eval_count + shared_term_offsets.len() + eval_count * item_term_offsets.len();
+        1 + row_count + shared_term_offsets.len() + row_count * row_term_offsets.len();
     require_operand_count(symbol, expected_operands, operands.len())?;
 
     let gamma = operands[0];
     let evals_start = 1;
-    let shared_start = evals_start + eval_count;
+    let shared_start = evals_start + row_count;
     let item_start = shared_start + shared_term_offsets.len();
     let evals = &operands[evals_start..shared_start];
     let shared_factors = &operands[shared_start..item_start];
-    let item_factors = &operands[item_start..];
+    let row_factors = &operands[item_start..];
 
     let value_offset_powers = value_term_offsets
         .iter()
@@ -1669,7 +1669,7 @@ fn evaluate_eval_family_weighted_sum<F: Field>(
         .zip(shared_factors.iter())
         .map(|(&offset, &factor)| (pow_field(gamma, offset), factor))
         .collect::<Vec<_>>();
-    let item_offset_powers = item_term_offsets
+    let row_offset_powers = row_term_offsets
         .iter()
         .map(|&offset| pow_field(gamma, offset))
         .collect::<Vec<_>>();
@@ -1685,8 +1685,8 @@ fn evaluate_eval_family_weighted_sum<F: Field>(
         for (offset_power, factor) in &shared_terms {
             result += weighted_eval * *factor * *offset_power;
         }
-        for (term_index, offset_power) in item_offset_powers.iter().enumerate() {
-            let factor = item_factors[term_index * eval_count + eval_index];
+        for (term_index, offset_power) in row_offset_powers.iter().enumerate() {
+            let factor = row_factors[term_index * row_count + eval_index];
             result += weighted_eval * factor * *offset_power;
         }
         gamma_base *= gamma_stride;
@@ -1893,16 +1893,16 @@ mod tests {
     }
 
     #[test]
-    fn field_expr_evaluates_eval_family_weighted_sum() {
+    fn field_expr_evaluates_power_strided_weighted_sum() {
         let value = evaluate_field_expr(
             &FieldExprPlan {
                 symbol: "family.weighted",
-                kind: FieldExprKind::EvalFamilyWeightedSum {
-                    eval_count: 2,
+                kind: FieldExprKind::PowerStridedWeightedSum {
+                    row_count: 2,
                     power_stride: 3,
                     value_term_offsets: &[0],
                     shared_term_offsets: &[1],
-                    item_term_offsets: &[2],
+                    row_term_offsets: &[2],
                 },
                 operands: &["gamma", "eval.a", "eval.b", "shared.eq", "item.a", "item.b"],
             },
