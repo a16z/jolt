@@ -1229,19 +1229,98 @@ impl VerifierSumcheckEvalSource for CpuSumcheckEvalPlan {
     }
 }
 
-pub(crate) fn stage_plan_from_cpu_sources<Source>(
+struct VerifierTranscriptPlanningOutput {
+    squeezes: Vec<VerifierTranscriptSqueezePlan>,
+    absorb_bytes: Vec<VerifierTranscriptAbsorbBytesPlan>,
+}
+
+struct VerifierSumcheckPlanningOutput {
+    claims: Vec<VerifierSumcheckClaimPlan>,
+    batches: Vec<VerifierSumcheckBatchPlan>,
+    drivers: Vec<VerifierSumcheckDriverPlan>,
+    instance_results: Vec<VerifierSumcheckInstanceResultPlan>,
+    evals: Vec<VerifierSumcheckEvalPlan>,
+}
+
+struct VerifierValueGraphPlanningOutput {
+    field_constants: Vec<VerifierFieldConstantPlan>,
+    field_exprs: Vec<VerifierFieldExprPlan>,
+    scalar_exprs: Vec<VerifierScalarExprPlan>,
+    indexed_eval_families: Vec<IndexedEvalFamilyPlan>,
+    relation_output_values: Vec<StructuredPolynomialEvalPlan>,
+    relation_output_eval_families: Vec<RelationOutputEvalFamilyPlan>,
+    relation_output_product_families: Vec<RelationOutputProductFamilyPlan>,
+    relation_output_function_families: Vec<RelationOutputFunctionFamilyPlan>,
+    relation_outputs: Vec<RelationOutputPlan>,
+    point_exprs: Vec<VerifierPointExprPlan>,
+}
+
+struct VerifierOpeningFlowPlanningOutput {
+    inputs: Vec<VerifierOpeningInputPlan>,
+    claims: Vec<VerifierOpeningClaimPlan>,
+    equalities: Vec<VerifierOpeningClaimEqualityPlan>,
+    batches: Vec<VerifierOpeningBatchPlan>,
+}
+
+pub(crate) fn plan_verifier_stage_from_cpu_sources<Source>(
     source: &Source,
 ) -> Result<VerifierStagePlan, EmitError>
 where
     Source: VerifierStagePlanSource + ?Sized,
 {
+    let transcript = plan_transcript_flow(source)?;
+    let sumchecks = plan_verifier_sumchecks(source)?;
+    let value_graph = plan_field_and_relation_outputs(source)?;
+    let opening_flow = plan_opening_flow(source)?;
+
     Ok(VerifierStagePlan {
-        steps: source
-            .steps()
-            .iter()
-            .map(|step| VerifierProgramStepPlan::from_cpu(step.kind(), step.symbol()))
-            .collect::<Result<Vec<_>, EmitError>>()?,
-        transcript_squeezes: source
+        steps: resolve_cpu_program_steps(source)?,
+        transcript_squeezes: transcript.squeezes,
+        transcript_absorb_bytes: transcript.absorb_bytes,
+        opening_inputs: opening_flow.inputs,
+        field_constants: value_graph.field_constants,
+        field_exprs: value_graph.field_exprs,
+        scalar_exprs: value_graph.scalar_exprs,
+        claims: sumchecks.claims,
+        batches: sumchecks.batches,
+        drivers: sumchecks.drivers,
+        instance_results: sumchecks.instance_results,
+        sumcheck_evals: sumchecks.evals,
+        indexed_eval_families: value_graph.indexed_eval_families,
+        relation_output_values: value_graph.relation_output_values,
+        relation_output_eval_families: value_graph.relation_output_eval_families,
+        relation_output_product_families: value_graph.relation_output_product_families,
+        relation_output_function_families: value_graph.relation_output_function_families,
+        relation_outputs: value_graph.relation_outputs,
+        relation_local_inputs: VerifierRelationLocalInputPlans::default(),
+        point_exprs: value_graph.point_exprs,
+        opening_claims: opening_flow.claims,
+        opening_equalities: opening_flow.equalities,
+        opening_batches: opening_flow.batches,
+    })
+}
+
+fn resolve_cpu_program_steps<Source>(
+    source: &Source,
+) -> Result<Vec<VerifierProgramStepPlan>, EmitError>
+where
+    Source: VerifierStagePlanSource + ?Sized,
+{
+    source
+        .steps()
+        .iter()
+        .map(|step| VerifierProgramStepPlan::from_cpu(step.kind(), step.symbol()))
+        .collect()
+}
+
+fn plan_transcript_flow<Source>(
+    source: &Source,
+) -> Result<VerifierTranscriptPlanningOutput, EmitError>
+where
+    Source: VerifierStagePlanSource + ?Sized,
+{
+    Ok(VerifierTranscriptPlanningOutput {
+        squeezes: source
             .transcript_squeezes()
             .iter()
             .map(|squeeze| {
@@ -1253,45 +1332,17 @@ where
                 )
             })
             .collect::<Result<Vec<_>, EmitError>>()?,
-        transcript_absorb_bytes: source.transcript_absorb_bytes(),
-        opening_inputs: source
-            .opening_inputs()
-            .iter()
-            .map(|opening_input| {
-                VerifierOpeningInputPlan::from_cpu(
-                    opening_input.symbol(),
-                    opening_input.source_stage(),
-                    opening_input.source_claim(),
-                    opening_input.oracle(),
-                    opening_input.domain(),
-                    opening_input.point_arity(),
-                    opening_input.claim_kind(),
-                )
-            })
-            .collect::<Result<Vec<_>, EmitError>>()?,
-        field_constants: source
-            .field_constants()
-            .iter()
-            .map(|constant| VerifierFieldConstantPlan {
-                symbol: constant.symbol().to_owned(),
-                field: constant.field().to_owned(),
-                value: constant.value(),
-            })
-            .collect(),
-        field_exprs: source
-            .field_exprs()
-            .iter()
-            .map(|expr| {
-                VerifierFieldExprPlan::from_cpu(expr.symbol(), expr.formula(), expr.operands())
-            })
-            .collect::<Result<Vec<_>, EmitError>>()?,
-        scalar_exprs: source
-            .scalar_exprs()
-            .iter()
-            .map(|expr| {
-                VerifierScalarExprPlan::from_cpu(expr.symbol(), expr.formula(), expr.operands())
-            })
-            .collect::<Result<Vec<_>, EmitError>>()?,
+        absorb_bytes: source.transcript_absorb_bytes(),
+    })
+}
+
+fn plan_verifier_sumchecks<Source>(
+    source: &Source,
+) -> Result<VerifierSumcheckPlanningOutput, EmitError>
+where
+    Source: VerifierStagePlanSource + ?Sized,
+{
+    Ok(VerifierSumcheckPlanningOutput {
         claims: source
             .claims()
             .iter()
@@ -1368,7 +1419,7 @@ where
                 })
             })
             .collect::<Result<Vec<_>, EmitError>>()?,
-        sumcheck_evals: source
+        evals: source
             .sumcheck_evals()
             .iter()
             .map(|eval| VerifierSumcheckEvalPlan {
@@ -1379,15 +1430,72 @@ where
                 oracle: eval.oracle().to_owned(),
             })
             .collect(),
+    })
+}
+
+fn plan_field_and_relation_outputs<Source>(
+    source: &Source,
+) -> Result<VerifierValueGraphPlanningOutput, EmitError>
+where
+    Source: VerifierStagePlanSource + ?Sized,
+{
+    Ok(VerifierValueGraphPlanningOutput {
+        field_constants: source
+            .field_constants()
+            .iter()
+            .map(|constant| VerifierFieldConstantPlan {
+                symbol: constant.symbol().to_owned(),
+                field: constant.field().to_owned(),
+                value: constant.value(),
+            })
+            .collect(),
+        field_exprs: source
+            .field_exprs()
+            .iter()
+            .map(|expr| {
+                VerifierFieldExprPlan::from_cpu(expr.symbol(), expr.formula(), expr.operands())
+            })
+            .collect::<Result<Vec<_>, EmitError>>()?,
+        scalar_exprs: source
+            .scalar_exprs()
+            .iter()
+            .map(|expr| {
+                VerifierScalarExprPlan::from_cpu(expr.symbol(), expr.formula(), expr.operands())
+            })
+            .collect::<Result<Vec<_>, EmitError>>()?,
         indexed_eval_families: source.indexed_eval_families().to_vec(),
         relation_output_values: source.relation_output_values().to_vec(),
         relation_output_eval_families: source.relation_output_eval_families().to_vec(),
         relation_output_product_families: source.relation_output_product_families().to_vec(),
         relation_output_function_families: source.relation_output_function_families().to_vec(),
         relation_outputs: source.relation_outputs().to_vec(),
-        relation_local_inputs: VerifierRelationLocalInputPlans::default(),
         point_exprs: source.point_exprs(),
-        opening_claims: source
+    })
+}
+
+fn plan_opening_flow<Source>(
+    source: &Source,
+) -> Result<VerifierOpeningFlowPlanningOutput, EmitError>
+where
+    Source: VerifierStagePlanSource + ?Sized,
+{
+    Ok(VerifierOpeningFlowPlanningOutput {
+        inputs: source
+            .opening_inputs()
+            .iter()
+            .map(|opening_input| {
+                VerifierOpeningInputPlan::from_cpu(
+                    opening_input.symbol(),
+                    opening_input.source_stage(),
+                    opening_input.source_claim(),
+                    opening_input.oracle(),
+                    opening_input.domain(),
+                    opening_input.point_arity(),
+                    opening_input.claim_kind(),
+                )
+            })
+            .collect::<Result<Vec<_>, EmitError>>()?,
+        claims: source
             .opening_claims()
             .iter()
             .map(|claim| {
@@ -1402,7 +1510,7 @@ where
                 })
             })
             .collect::<Result<Vec<_>, EmitError>>()?,
-        opening_equalities: source
+        equalities: source
             .opening_equalities()
             .iter()
             .map(|equality| {
@@ -1414,7 +1522,7 @@ where
                 })
             })
             .collect::<Result<Vec<_>, EmitError>>()?,
-        opening_batches: source
+        batches: source
             .opening_batches()
             .iter()
             .map(|batch| VerifierOpeningBatchPlan {

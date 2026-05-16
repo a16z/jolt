@@ -405,7 +405,7 @@ impl Stage6CpuProgram {
     }
 
     fn plan_verifier(&self) -> Result<VerifierStagePlan, EmitError> {
-        let mut plan = verifier_plan::stage_plan_from_cpu_sources(self)?;
+        let mut plan = verifier_plan::plan_verifier_stage_from_cpu_sources(self)?;
         plan.relation_local_inputs.add_stage6_bytecode_read_raf(
             Stage6BytecodeReadRafEmitPlan::from_eval_families(&plan.indexed_eval_families)?,
         )?;

@@ -568,9 +568,17 @@ The current stack has most of the typed planning data this section calls for:
 `VerifierStagePlan` owns stage-local scalar, point, vector, eval-family, and
 relation-output plan rows; generated Stage 2-7 code emits typed
 `RelationOutputPlan` data; and the Rust emitters increasingly consume typed
-refs rather than rebuilding meaning from raw strings. The remaining S2.75 work
-is to make these boundaries explicit as named planning-pass artifacts and to
-keep new verifier semantics from landing directly in Rust emitters.
+refs rather than rebuilding meaning from raw strings. The shared
+`plan_verifier_stage_from_cpu_sources` entrypoint now makes the main S2.75
+boundaries explicit as named planning functions:
+`resolve_cpu_program_steps`, `plan_transcript_flow`,
+`plan_verifier_sumchecks`, `plan_field_and_relation_outputs`, and
+`plan_opening_flow`.
+
+The remaining S2.75 work is narrower: keep stage-specific verifier additions
+such as Stage 5/6 relation-local input plans out of Rust template logic where
+possible, and continue moving target validation toward typed planning outputs
+instead of stage-local emitter checks.
 
 ---
 

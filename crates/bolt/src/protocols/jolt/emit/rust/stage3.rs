@@ -297,7 +297,7 @@ impl Stage3CpuProgram {
     }
 
     fn plan_verifier(&self) -> Result<VerifierStagePlan, EmitError> {
-        verifier_plan::stage_plan_from_cpu_sources(self)
+        verifier_plan::plan_verifier_stage_from_cpu_sources(self)
     }
 
     fn verifier_plan(&self) -> Result<&VerifierStagePlan, EmitError> {
