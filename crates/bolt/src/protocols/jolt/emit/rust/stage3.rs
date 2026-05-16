@@ -6,8 +6,8 @@ use melior::ir::operation::OperationLike;
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{BoltModule, Cpu, Role};
 use crate::protocols::jolt::cpu_attrs::{
-    int_array_attr, int_attr, operand_symbol, operand_symbols, operation_name, signed_int_attr,
-    string_attr, symbol_array_attr, symbol_attr,
+    int_attr, operand_symbol, operand_symbols, operation_name, signed_int_attr, string_attr,
+    symbol_array_attr, symbol_attr,
 };
 use crate::protocols::jolt::verifier_opening_rows;
 use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
@@ -17,6 +17,7 @@ use crate::protocols::jolt::verifier_relation_outputs::{
     RelationOutputPlan as Stage3RelationOutputPlan,
     StructuredPolynomialEvalPlan as Stage3StructuredPolynomialEvalPlan,
 };
+use crate::protocols::jolt::verifier_sumcheck_rows;
 use crate::protocols::jolt::verifier_values;
 use crate::schema::verify_cpu_schema;
 
@@ -32,11 +33,11 @@ pub struct Stage3CpuProgram {
     pub field_exprs: Vec<Stage3FieldExprPlan>,
     pub scalar_exprs: Vec<Stage3ScalarExprPlan>,
     pub kernels: Vec<Stage3KernelPlan>,
-    pub claims: Vec<Stage3SumcheckClaimPlan>,
-    pub batches: Vec<Stage3SumcheckBatchPlan>,
-    pub drivers: Vec<Stage3SumcheckDriverPlan>,
-    pub instance_results: Vec<Stage3SumcheckInstanceResultPlan>,
-    pub evals: Vec<Stage3SumcheckEvalPlan>,
+    pub claims: Vec<verifier_sumcheck_rows::CpuSumcheckClaimPlan>,
+    pub batches: Vec<verifier_sumcheck_rows::CpuSumcheckBatchPlan>,
+    pub drivers: Vec<verifier_sumcheck_rows::CpuSumcheckDriverPlan>,
+    pub instance_results: Vec<verifier_sumcheck_rows::CpuSumcheckInstanceResultPlan>,
+    pub evals: Vec<verifier_sumcheck_rows::CpuSumcheckEvalPlan>,
     pub relation_output_values: Vec<Stage3StructuredPolynomialEvalPlan>,
     pub relation_outputs: Vec<Stage3RelationOutputPlan>,
     pub point_slices: Vec<Stage3PointSlicePlan>,
@@ -133,73 +134,6 @@ fn stage3_scalar_expr(expr: Stage3RelationOutputFieldExprPlan) -> Stage3ScalarEx
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3SumcheckClaimPlan {
-    pub symbol: String,
-    pub stage: String,
-    pub domain: String,
-    pub num_rounds: usize,
-    pub degree: usize,
-    pub claim: String,
-    pub kernel: Option<String>,
-    pub relation: Option<String>,
-    pub claim_value: String,
-    pub input_openings: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3SumcheckBatchPlan {
-    pub symbol: String,
-    pub stage: String,
-    pub proof_slot: String,
-    pub policy: String,
-    pub count: usize,
-    pub ordered_claims: Vec<String>,
-    pub claim_operands: Vec<String>,
-    pub claim_label: String,
-    pub round_label: String,
-    pub round_schedule: Vec<usize>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3SumcheckDriverPlan {
-    pub symbol: String,
-    pub stage: String,
-    pub proof_slot: String,
-    pub kernel: Option<String>,
-    pub relation: Option<String>,
-    pub batch: String,
-    pub policy: String,
-    pub round_schedule: Vec<usize>,
-    pub claim_label: String,
-    pub round_label: String,
-    pub num_rounds: usize,
-    pub degree: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3SumcheckInstanceResultPlan {
-    pub symbol: String,
-    pub source: String,
-    pub claim: String,
-    pub relation: String,
-    pub index: usize,
-    pub point_arity: usize,
-    pub num_rounds: usize,
-    pub round_offset: usize,
-    pub point_order: String,
-    pub degree: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3SumcheckEvalPlan {
-    pub symbol: String,
-    pub source: String,
-    pub name: String,
-    pub index: usize,
-    pub oracle: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage3PointSlicePlan {
     pub symbol: String,
     pub source: String,
@@ -224,11 +158,6 @@ verifier_plan::impl_verifier_plan_source_traits!(
     field_constant = Stage3FieldConstantPlan,
     field_expr = Stage3FieldExprPlan,
     scalar_expr = Stage3ScalarExprPlan,
-    claim = Stage3SumcheckClaimPlan,
-    batch = Stage3SumcheckBatchPlan,
-    driver = Stage3SumcheckDriverPlan,
-    instance = Stage3SumcheckInstanceResultPlan,
-    eval = Stage3SumcheckEvalPlan,
     point_slice = Stage3PointSlicePlan,
     point_concat = Stage3PointConcatPlan,
 );
@@ -374,111 +303,39 @@ impl Stage3CpuProgram {
                     });
                 }
                 "cpu.sumcheck_claim" => {
-                    claims.push(Stage3SumcheckClaimPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        stage: symbol_attr(op, "stage")?,
-                        domain: symbol_attr(op, "domain")?,
-                        num_rounds: int_attr(op, "num_rounds")?,
-                        degree: int_attr(op, "degree")?,
-                        claim: symbol_attr(op, "claim")?,
-                        kernel: Some(symbol_attr(op, "kernel")?),
-                        relation: None,
-                        claim_value: operand_symbol(op, 0)?,
-                        input_openings: operand_symbols(op, 1)?,
-                    });
+                    claims.push(verifier_sumcheck_rows::CpuSumcheckClaimPlan::from_claim(
+                        op,
+                    )?);
                 }
                 "cpu.sumcheck_verify_claim" => {
-                    claims.push(Stage3SumcheckClaimPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        stage: symbol_attr(op, "stage")?,
-                        domain: symbol_attr(op, "domain")?,
-                        num_rounds: int_attr(op, "num_rounds")?,
-                        degree: int_attr(op, "degree")?,
-                        claim: symbol_attr(op, "claim")?,
-                        kernel: None,
-                        relation: Some(symbol_attr(op, "relation")?),
-                        claim_value: operand_symbol(op, 0)?,
-                        input_openings: operand_symbols(op, 1)?,
-                    });
+                    claims
+                        .push(verifier_sumcheck_rows::CpuSumcheckClaimPlan::from_verify_claim(op)?);
                 }
                 "cpu.sumcheck_batch" => {
-                    batches.push(Stage3SumcheckBatchPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        stage: symbol_attr(op, "stage")?,
-                        proof_slot: symbol_attr(op, "proof_slot")?,
-                        policy: string_attr(op, "policy")?,
-                        count: int_attr(op, "count")?,
-                        ordered_claims: symbol_array_attr(op, "ordered_claims")?,
-                        claim_operands: operand_symbols(op, 0)?,
-                        claim_label: string_attr(op, "claim_label")?,
-                        round_label: string_attr(op, "round_label")?,
-                        round_schedule: int_array_attr(op, "round_schedule")?,
-                    });
+                    batches.push(verifier_sumcheck_rows::CpuSumcheckBatchPlan::from_cpu(op)?);
                 }
                 "cpu.sumcheck_driver" => {
-                    let symbol = string_attr(op, "sym_name")?;
+                    let driver = verifier_sumcheck_rows::CpuSumcheckDriverPlan::from_driver(op)?;
                     steps.push(Stage3ProgramStepPlan {
                         kind: "sumcheck_driver".to_owned(),
-                        symbol: symbol.clone(),
+                        symbol: driver.symbol.clone(),
                     });
-                    drivers.push(Stage3SumcheckDriverPlan {
-                        symbol,
-                        stage: symbol_attr(op, "stage")?,
-                        proof_slot: symbol_attr(op, "proof_slot")?,
-                        kernel: Some(symbol_attr(op, "kernel")?),
-                        relation: None,
-                        batch: operand_symbol(op, 1)?,
-                        policy: string_attr(op, "policy")?,
-                        round_schedule: int_array_attr(op, "round_schedule")?,
-                        claim_label: string_attr(op, "claim_label")?,
-                        round_label: string_attr(op, "round_label")?,
-                        num_rounds: int_attr(op, "num_rounds")?,
-                        degree: int_attr(op, "degree")?,
-                    });
+                    drivers.push(driver);
                 }
                 "cpu.sumcheck_verify" => {
-                    let symbol = string_attr(op, "sym_name")?;
+                    let driver = verifier_sumcheck_rows::CpuSumcheckDriverPlan::from_verify(op)?;
                     steps.push(Stage3ProgramStepPlan {
                         kind: "sumcheck_driver".to_owned(),
-                        symbol: symbol.clone(),
+                        symbol: driver.symbol.clone(),
                     });
-                    drivers.push(Stage3SumcheckDriverPlan {
-                        symbol,
-                        stage: symbol_attr(op, "stage")?,
-                        proof_slot: symbol_attr(op, "proof_slot")?,
-                        kernel: None,
-                        relation: Some(symbol_attr(op, "relation")?),
-                        batch: operand_symbol(op, 1)?,
-                        policy: string_attr(op, "policy")?,
-                        round_schedule: int_array_attr(op, "round_schedule")?,
-                        claim_label: string_attr(op, "claim_label")?,
-                        round_label: string_attr(op, "round_label")?,
-                        num_rounds: int_attr(op, "num_rounds")?,
-                        degree: int_attr(op, "degree")?,
-                    });
+                    drivers.push(driver);
                 }
                 "cpu.sumcheck_instance_result" => {
-                    instance_results.push(Stage3SumcheckInstanceResultPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        source: symbol_attr(op, "source")?,
-                        claim: symbol_attr(op, "claim")?,
-                        relation: symbol_attr(op, "relation")?,
-                        index: int_attr(op, "index")?,
-                        point_arity: int_attr(op, "point_arity")?,
-                        num_rounds: int_attr(op, "num_rounds")?,
-                        round_offset: int_attr(op, "round_offset")?,
-                        point_order: string_attr(op, "point_order")?,
-                        degree: int_attr(op, "degree")?,
-                    });
+                    instance_results
+                        .push(verifier_sumcheck_rows::CpuSumcheckInstanceResultPlan::from_cpu(op)?);
                 }
                 "cpu.sumcheck_eval" => {
-                    evals.push(Stage3SumcheckEvalPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        source: symbol_attr(op, "source")?,
-                        name: symbol_attr(op, "name")?,
-                        index: int_attr(op, "index")?,
-                        oracle: symbol_attr(op, "oracle")?,
-                    });
+                    evals.push(verifier_sumcheck_rows::CpuSumcheckEvalPlan::from_cpu(op)?);
                 }
                 "cpu.structured_polynomial_eval" => {
                     relation_output_values.push(

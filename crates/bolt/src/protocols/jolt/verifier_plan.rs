@@ -14,6 +14,10 @@ use crate::protocols::jolt::verifier_relation_outputs::{
     RelationOutputEvalFamilyPlan, RelationOutputFunctionFamilyPlan, RelationOutputPlan,
     RelationOutputProductFamilyPlan, StructuredPolynomialEvalPlan,
 };
+use crate::protocols::jolt::verifier_sumcheck_rows::{
+    CpuSumcheckBatchPlan, CpuSumcheckClaimPlan, CpuSumcheckDriverPlan, CpuSumcheckEvalPlan,
+    CpuSumcheckInstanceResultPlan,
+};
 use crate::protocols::jolt::verifier_values::{
     VerifierFieldVectorSourceKind, VerifierFieldVectorSourceSet, VerifierPointSourceKind,
     VerifierPointSourceSet, VerifierScalarSourceKind, VerifierScalarSourceSet,
@@ -554,11 +558,6 @@ pub(crate) trait VerifierStagePlanSource {
     type FieldConstant: VerifierFieldConstantSource;
     type FieldExpr: VerifierFieldExprSource;
     type ScalarExpr: VerifierScalarExprSource;
-    type Claim: VerifierSumcheckClaimSource;
-    type Batch: VerifierSumcheckBatchSource;
-    type Driver: VerifierSumcheckDriverSource;
-    type Instance: VerifierSumcheckInstanceResultSource;
-    type Eval: VerifierSumcheckEvalSource;
     type PointSlice: VerifierPointSliceSource;
     type PointConcat: VerifierPointConcatSource;
 
@@ -569,11 +568,11 @@ pub(crate) trait VerifierStagePlanSource {
     fn field_constants(&self) -> &[Self::FieldConstant];
     fn field_exprs(&self) -> &[Self::FieldExpr];
     fn scalar_exprs(&self) -> &[Self::ScalarExpr];
-    fn claims(&self) -> &[Self::Claim];
-    fn batches(&self) -> &[Self::Batch];
-    fn drivers(&self) -> &[Self::Driver];
-    fn instance_results(&self) -> &[Self::Instance];
-    fn sumcheck_evals(&self) -> &[Self::Eval];
+    fn claims(&self) -> &[CpuSumcheckClaimPlan];
+    fn batches(&self) -> &[CpuSumcheckBatchPlan];
+    fn drivers(&self) -> &[CpuSumcheckDriverPlan];
+    fn instance_results(&self) -> &[CpuSumcheckInstanceResultPlan];
+    fn sumcheck_evals(&self) -> &[CpuSumcheckEvalPlan];
     fn indexed_eval_families(&self) -> &[IndexedEvalFamilyPlan];
     fn relation_output_values(&self) -> &[StructuredPolynomialEvalPlan];
     fn relation_output_eval_families(&self) -> &[RelationOutputEvalFamilyPlan] {
@@ -667,6 +666,188 @@ impl VerifierOpeningBatchSource for CpuOpeningBatchPlan {
 
     fn claim_operands(&self) -> &[String] {
         &self.claim_operands
+    }
+}
+
+impl VerifierSumcheckClaimSource for CpuSumcheckClaimPlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn stage(&self) -> &str {
+        &self.stage
+    }
+
+    fn domain(&self) -> &str {
+        &self.domain
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.num_rounds
+    }
+
+    fn degree(&self) -> usize {
+        self.degree
+    }
+
+    fn claim(&self) -> &str {
+        &self.claim
+    }
+
+    fn relation(&self) -> Option<&str> {
+        self.relation.as_deref()
+    }
+
+    fn claim_value(&self) -> &str {
+        &self.claim_value
+    }
+}
+
+impl VerifierSumcheckBatchSource for CpuSumcheckBatchPlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn stage(&self) -> &str {
+        &self.stage
+    }
+
+    fn proof_slot(&self) -> &str {
+        &self.proof_slot
+    }
+
+    fn policy(&self) -> &str {
+        &self.policy
+    }
+
+    fn count(&self) -> usize {
+        self.count
+    }
+
+    fn claim_operands(&self) -> &[String] {
+        &self.claim_operands
+    }
+
+    fn claim_label(&self) -> &str {
+        &self.claim_label
+    }
+
+    fn round_label(&self) -> &str {
+        &self.round_label
+    }
+
+    fn round_schedule(&self) -> &[usize] {
+        &self.round_schedule
+    }
+}
+
+impl VerifierSumcheckDriverSource for CpuSumcheckDriverPlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn stage(&self) -> &str {
+        &self.stage
+    }
+
+    fn proof_slot(&self) -> &str {
+        &self.proof_slot
+    }
+
+    fn relation(&self) -> Option<&str> {
+        self.relation.as_deref()
+    }
+
+    fn batch(&self) -> &str {
+        &self.batch
+    }
+
+    fn policy(&self) -> &str {
+        &self.policy
+    }
+
+    fn round_schedule(&self) -> &[usize] {
+        &self.round_schedule
+    }
+
+    fn claim_label(&self) -> &str {
+        &self.claim_label
+    }
+
+    fn round_label(&self) -> &str {
+        &self.round_label
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.num_rounds
+    }
+
+    fn degree(&self) -> usize {
+        self.degree
+    }
+}
+
+impl VerifierSumcheckInstanceResultSource for CpuSumcheckInstanceResultPlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn source(&self) -> &str {
+        &self.source
+    }
+
+    fn claim(&self) -> &str {
+        &self.claim
+    }
+
+    fn relation(&self) -> &str {
+        &self.relation
+    }
+
+    fn index(&self) -> usize {
+        self.index
+    }
+
+    fn point_arity(&self) -> usize {
+        self.point_arity
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.num_rounds
+    }
+
+    fn round_offset(&self) -> usize {
+        self.round_offset
+    }
+
+    fn point_order(&self) -> &str {
+        &self.point_order
+    }
+
+    fn degree(&self) -> usize {
+        self.degree
+    }
+}
+
+impl VerifierSumcheckEvalSource for CpuSumcheckEvalPlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn source(&self) -> &str {
+        &self.source
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn index(&self) -> usize {
+        self.index
+    }
+
+    fn oracle(&self) -> &str {
+        &self.oracle
     }
 }
 
@@ -967,11 +1148,6 @@ macro_rules! impl_verifier_plan_source_traits {
         field_constant = $field_constant:ty,
         field_expr = $field_expr:ty,
         scalar_expr = $scalar_expr:ty,
-        claim = $claim:ty,
-        batch = $batch:ty,
-        driver = $driver:ty,
-        instance = $instance:ty,
-        eval = $eval:ty,
         point_slice = $point_slice:ty,
         point_concat = $point_concat:ty
         $(, absorb = $absorb:ty)?
@@ -989,11 +1165,6 @@ macro_rules! impl_verifier_plan_source_traits {
             type FieldConstant = $field_constant;
             type FieldExpr = $field_expr;
             type ScalarExpr = $scalar_expr;
-            type Claim = $claim;
-            type Batch = $batch;
-            type Driver = $driver;
-            type Instance = $instance;
-            type Eval = $eval;
             type PointSlice = $point_slice;
             type PointConcat = $point_concat;
 
@@ -1008,11 +1179,11 @@ macro_rules! impl_verifier_plan_source_traits {
             fn field_constants(&self) -> &[Self::FieldConstant] { &self.field_constants }
             fn field_exprs(&self) -> &[Self::FieldExpr] { &self.field_exprs }
             fn scalar_exprs(&self) -> &[Self::ScalarExpr] { &self.scalar_exprs }
-            fn claims(&self) -> &[Self::Claim] { &self.claims }
-            fn batches(&self) -> &[Self::Batch] { &self.batches }
-            fn drivers(&self) -> &[Self::Driver] { &self.drivers }
-            fn instance_results(&self) -> &[Self::Instance] { &self.instance_results }
-            fn sumcheck_evals(&self) -> &[Self::Eval] { &self.evals }
+            fn claims(&self) -> &[$crate::protocols::jolt::verifier_sumcheck_rows::CpuSumcheckClaimPlan] { &self.claims }
+            fn batches(&self) -> &[$crate::protocols::jolt::verifier_sumcheck_rows::CpuSumcheckBatchPlan] { &self.batches }
+            fn drivers(&self) -> &[$crate::protocols::jolt::verifier_sumcheck_rows::CpuSumcheckDriverPlan] { &self.drivers }
+            fn instance_results(&self) -> &[$crate::protocols::jolt::verifier_sumcheck_rows::CpuSumcheckInstanceResultPlan] { &self.instance_results }
+            fn sumcheck_evals(&self) -> &[$crate::protocols::jolt::verifier_sumcheck_rows::CpuSumcheckEvalPlan] { &self.evals }
             fn indexed_eval_families(&self) -> &[$crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan] {
                 $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
                     @indexed_eval_families self $(, $indexed_eval_families)?
@@ -1095,64 +1266,6 @@ macro_rules! impl_verifier_plan_source_traits {
             fn symbol(&self) -> &str { &self.symbol }
             fn formula(&self) -> &str { &self.formula }
             fn operands(&self) -> &[String] { &self.operands }
-        }
-
-        impl $crate::protocols::jolt::verifier_plan::VerifierSumcheckEvalSource for $eval {
-            fn symbol(&self) -> &str { &self.symbol }
-            fn source(&self) -> &str { &self.source }
-            fn name(&self) -> &str { &self.name }
-            fn index(&self) -> usize { self.index }
-            fn oracle(&self) -> &str { &self.oracle }
-        }
-
-        impl $crate::protocols::jolt::verifier_plan::VerifierSumcheckClaimSource for $claim {
-            fn symbol(&self) -> &str { &self.symbol }
-            fn stage(&self) -> &str { &self.stage }
-            fn domain(&self) -> &str { &self.domain }
-            fn num_rounds(&self) -> usize { self.num_rounds }
-            fn degree(&self) -> usize { self.degree }
-            fn claim(&self) -> &str { &self.claim }
-            fn relation(&self) -> Option<&str> { self.relation.as_deref() }
-            fn claim_value(&self) -> &str { &self.claim_value }
-        }
-
-        impl $crate::protocols::jolt::verifier_plan::VerifierSumcheckBatchSource for $batch {
-            fn symbol(&self) -> &str { &self.symbol }
-            fn stage(&self) -> &str { &self.stage }
-            fn proof_slot(&self) -> &str { &self.proof_slot }
-            fn policy(&self) -> &str { &self.policy }
-            fn count(&self) -> usize { self.count }
-            fn claim_operands(&self) -> &[String] { &self.claim_operands }
-            fn claim_label(&self) -> &str { &self.claim_label }
-            fn round_label(&self) -> &str { &self.round_label }
-            fn round_schedule(&self) -> &[usize] { &self.round_schedule }
-        }
-
-        impl $crate::protocols::jolt::verifier_plan::VerifierSumcheckDriverSource for $driver {
-            fn symbol(&self) -> &str { &self.symbol }
-            fn stage(&self) -> &str { &self.stage }
-            fn proof_slot(&self) -> &str { &self.proof_slot }
-            fn relation(&self) -> Option<&str> { self.relation.as_deref() }
-            fn batch(&self) -> &str { &self.batch }
-            fn policy(&self) -> &str { &self.policy }
-            fn round_schedule(&self) -> &[usize] { &self.round_schedule }
-            fn claim_label(&self) -> &str { &self.claim_label }
-            fn round_label(&self) -> &str { &self.round_label }
-            fn num_rounds(&self) -> usize { self.num_rounds }
-            fn degree(&self) -> usize { self.degree }
-        }
-
-        impl $crate::protocols::jolt::verifier_plan::VerifierSumcheckInstanceResultSource for $instance {
-            fn symbol(&self) -> &str { &self.symbol }
-            fn source(&self) -> &str { &self.source }
-            fn claim(&self) -> &str { &self.claim }
-            fn relation(&self) -> &str { &self.relation }
-            fn index(&self) -> usize { self.index }
-            fn point_arity(&self) -> usize { self.point_arity }
-            fn num_rounds(&self) -> usize { self.num_rounds }
-            fn round_offset(&self) -> usize { self.round_offset }
-            fn point_order(&self) -> &str { &self.point_order }
-            fn degree(&self) -> usize { self.degree }
         }
 
         $(
