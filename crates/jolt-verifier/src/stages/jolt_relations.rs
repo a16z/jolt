@@ -14,8 +14,8 @@
 //! - the `Stage67BytecodeEntry` contract a Jolt bytecode row must implement
 //! - typed bytecode read-RAF plan data and its small Jolt-specific evaluator
 //! - the small Jolt-specific field-math helpers
-//!   (`operand_polynomial_eval`, `identity_polynomial_eval`,
-//!   `bytecode_gamma_powers`) used only by Jolt verification
+//!   (`operand_polynomial_eval`, `bytecode_gamma_powers`) used only by Jolt
+//!   verification
 //!
 //! Treat changes here as Jolt protocol changes, not as compiler-output
 //! cleanups. Generic Bolt verifier scaffolding (typed plan structs,
@@ -24,9 +24,9 @@
 //!
 //! See `crates/bolt/GOAL.md` "Audit Tiers" for the full tier definition.
 
-use jolt_field::{Field, Fr, MulPow2};
+use jolt_field::{Field, Fr};
 use jolt_lookup_tables::LookupTableKind;
-use jolt_poly::EqPolynomial;
+use jolt_poly::{EqPolynomial, IdentityPolynomial};
 
 use bolt_verifier_runtime::{
     field_powers, prefix_point, store_point, store_scalar, suffix_point, NamedEvalFamilyPlan,
@@ -248,13 +248,13 @@ fn evaluate_stage5_instruction_read_raf_point_value(
             table.evaluate_mle::<Fr, Fr>(r_address_prime)
         }
         Stage5InstructionReadRafPointValueKind::LeftOperand => {
-            operand_polynomial_eval(r_address_prime, true)
+            operand_polynomial_eval(r_address_prime, true)?
         }
         Stage5InstructionReadRafPointValueKind::RightOperand => {
-            operand_polynomial_eval(r_address_prime, false)
+            operand_polynomial_eval(r_address_prime, false)?
         }
         Stage5InstructionReadRafPointValueKind::Identity => {
-            identity_polynomial_eval(r_address_prime)
+            IdentityPolynomial::new(r_address_prime.len()).evaluate(r_address_prime)
         }
     })
 }
@@ -357,7 +357,7 @@ fn stage67_bytecode_output_contribution(
     r_cycle_prime: &[Fr],
     log_k: usize,
 ) -> Result<Fr, RuntimePlanError> {
-    let int_eval = identity_polynomial_eval(r_address_prime);
+    let int_eval = IdentityPolynomial::new(r_address_prime.len()).evaluate(r_address_prime);
     let zero_cycle = vec![Fr::from_u64(0); r_cycle_prime.len()];
     let entry_address_eq =
         EqPolynomial::<Fr>::try_mle_at_boolean_index(entry_bytecode_index, r_address_prime).ok_or(
@@ -682,18 +682,21 @@ fn stage67_register_prefix_point<'a>(
     prefix_point(point, register_len, symbol)
 }
 
-pub fn operand_polynomial_eval(point: &[Fr], left: bool) -> Fr {
+pub fn operand_polynomial_eval(point: &[Fr], left: bool) -> Result<Fr, RuntimePlanError> {
     let stride_offset = usize::from(!left);
     let operand_bits = point.len() / 2;
-    (0..operand_bits)
-        .map(|index| point[2 * index + stride_offset].mul_pow_2(operand_bits - 1 - index))
-        .sum()
-}
-
-pub fn identity_polynomial_eval(point: &[Fr]) -> Fr {
-    point
-        .iter()
-        .enumerate()
-        .map(|(index, value)| value.mul_pow_2(point.len() - 1 - index))
-        .sum()
+    if point.len() != operand_bits * 2 {
+        return Err(RuntimePlanError::InvalidInputLength {
+            input: "stage5.instruction_read_raf.operand_point",
+            expected: operand_bits * 2,
+            actual: point.len(),
+        });
+    }
+    IdentityPolynomial::new(operand_bits)
+        .try_evaluate_projected(point, stride_offset, 2)
+        .ok_or(RuntimePlanError::InvalidInputLength {
+            input: "stage5.instruction_read_raf.operand_point",
+            expected: operand_bits * 2,
+            actual: point.len(),
+        })
 }
