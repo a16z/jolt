@@ -385,7 +385,11 @@ impl Stage5CpuProgram {
     }
 
     fn plan_verifier(&self) -> Result<VerifierStagePlan, EmitError> {
-        verifier_plan::stage_plan_from_cpu_sources(self)
+        let mut plan = verifier_plan::stage_plan_from_cpu_sources(self)?;
+        plan.relation_local_inputs.set_stage5_instruction_read_raf(
+            Stage5InstructionReadRafEmitPlan::from_eval_families(&plan.indexed_eval_families)?,
+        );
+        Ok(plan)
     }
 
     fn verifier_plan(&self) -> Result<&VerifierStagePlan, EmitError> {
@@ -1771,10 +1775,11 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
     }
 
     fn emit_named_eval_family_constants(&self) -> Result<String, EmitError> {
-        let plan = Stage5InstructionReadRafEmitPlan::from_eval_families(
-            &self.verifier_plan()?.indexed_eval_families,
-        )?;
-        Ok(plan.emit_runtime_constants())
+        Ok(self
+            .verifier_plan()?
+            .relation_local_inputs
+            .stage5_instruction_read_raf()?
+            .emit_runtime_constants())
     }
 
     fn emit_verifier_relation_output_constants(&self) -> Result<String, EmitError> {

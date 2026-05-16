@@ -6,6 +6,8 @@ use crate::protocols::jolt::rust_target_plan::{
     ClaimKind, FieldExprKind, JoltVerifierRelationKind, OpeningEqualityMode, ProgramStepKind,
     RustTargetPlanError, ScalarExprKind, SumcheckPointOrder, TranscriptSqueezeKind,
 };
+use crate::protocols::jolt::stage5_instruction_read_raf_plan::Stage5InstructionReadRafEmitPlan;
+use crate::protocols::jolt::stage6_bytecode_read_raf_plan::Stage6BytecodeReadRafEmitPlan;
 use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 use crate::protocols::jolt::verifier_opening_rows::{
     CpuOpeningBatchPlan, CpuOpeningClaimEqualityPlan, CpuOpeningClaimPlan,
@@ -277,6 +279,41 @@ pub(crate) struct VerifierOpeningBatchPlan {
     pub(crate) claim_operands: Vec<String>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct VerifierRelationLocalInputPlans {
+    stage5_instruction_read_raf: Option<Stage5InstructionReadRafEmitPlan>,
+    stage6_bytecode_read_raf: Option<Stage6BytecodeReadRafEmitPlan>,
+}
+
+impl VerifierRelationLocalInputPlans {
+    pub(crate) fn set_stage5_instruction_read_raf(
+        &mut self,
+        plan: Stage5InstructionReadRafEmitPlan,
+    ) {
+        self.stage5_instruction_read_raf = Some(plan);
+    }
+
+    pub(crate) fn stage5_instruction_read_raf(
+        &self,
+    ) -> Result<&Stage5InstructionReadRafEmitPlan, EmitError> {
+        self.stage5_instruction_read_raf
+            .as_ref()
+            .ok_or_else(|| EmitError::new("missing Stage 5 instruction read-RAF local-input plan"))
+    }
+
+    pub(crate) fn set_stage6_bytecode_read_raf(&mut self, plan: Stage6BytecodeReadRafEmitPlan) {
+        self.stage6_bytecode_read_raf = Some(plan);
+    }
+
+    pub(crate) fn stage6_bytecode_read_raf(
+        &self,
+    ) -> Result<&Stage6BytecodeReadRafEmitPlan, EmitError> {
+        self.stage6_bytecode_read_raf
+            .as_ref()
+            .ok_or_else(|| EmitError::new("missing Stage 6 bytecode read-RAF local-input plan"))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VerifierStagePlan {
     pub(crate) steps: Vec<VerifierProgramStepPlan>,
@@ -297,6 +334,7 @@ pub(crate) struct VerifierStagePlan {
     pub(crate) relation_output_product_families: Vec<RelationOutputProductFamilyPlan>,
     pub(crate) relation_output_function_families: Vec<RelationOutputFunctionFamilyPlan>,
     pub(crate) relation_outputs: Vec<RelationOutputPlan>,
+    pub(crate) relation_local_inputs: VerifierRelationLocalInputPlans,
     pub(crate) point_exprs: Vec<VerifierPointExprPlan>,
     pub(crate) opening_claims: Vec<VerifierOpeningClaimPlan>,
     pub(crate) opening_equalities: Vec<VerifierOpeningClaimEqualityPlan>,
@@ -1171,6 +1209,7 @@ where
         relation_output_product_families: source.relation_output_product_families().to_vec(),
         relation_output_function_families: source.relation_output_function_families().to_vec(),
         relation_outputs: source.relation_outputs().to_vec(),
+        relation_local_inputs: VerifierRelationLocalInputPlans::default(),
         point_exprs: source.point_exprs(),
         opening_claims: source
             .opening_claims()

@@ -24,13 +24,6 @@ impl IndexedEvalFamilyPlan {
         Ok(Self { symbol, evals })
     }
 
-    pub(crate) fn find<'a>(
-        families: &'a [Self],
-        symbol: &str,
-    ) -> Result<&'a IndexedEvalFamilyPlan, EmitError> {
-        Self::find_with_index(families, symbol).map(|(_, family)| family)
-    }
-
     pub(crate) fn find_with_index<'a>(
         families: &'a [Self],
         symbol: &str,
@@ -119,8 +112,8 @@ mod tests {
     };
 
     #[test]
-    fn find_rejects_missing_families() {
-        let error = IndexedEvalFamilyPlan::find(&[], "stage.eval.LookupTableFlag")
+    fn find_with_index_rejects_missing_families() {
+        let error = IndexedEvalFamilyPlan::find_with_index(&[], "stage.eval.LookupTableFlag")
             .err()
             .map(|error| error.to_string())
             .unwrap_or_default();
@@ -145,7 +138,7 @@ mod tests {
     }
 
     #[test]
-    fn find_rejects_duplicate_families() {
+    fn find_with_index_rejects_duplicate_families() {
         let families = [
             IndexedEvalFamilyPlan {
                 symbol: "stage.eval.BytecodeRa".to_owned(),
@@ -157,7 +150,7 @@ mod tests {
             },
         ];
 
-        let error = IndexedEvalFamilyPlan::find(&families, "stage.eval.BytecodeRa")
+        let error = IndexedEvalFamilyPlan::find_with_index(&families, "stage.eval.BytecodeRa")
             .err()
             .map(|error| error.to_string())
             .unwrap_or_default();

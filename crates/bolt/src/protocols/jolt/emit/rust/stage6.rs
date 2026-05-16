@@ -14,10 +14,7 @@ use crate::protocols::jolt::cpu_attrs::{
     operand_symbol, operand_symbols, operation_name, string_attr, symbol_array_attr, symbol_attr,
 };
 use crate::protocols::jolt::rust_target_plan::{FieldExprKind, ScalarExprKind};
-use crate::protocols::jolt::stage6_bytecode_read_raf_plan::{
-    emit_stage6_bytecode_read_raf_plan_constants, stage6_bytecode_read_raf_eval_family_ref,
-    stage6_bytecode_read_raf_relation_output_plan, STAGE6_BYTECODE_RA_EVAL_FAMILY,
-};
+use crate::protocols::jolt::stage6_bytecode_read_raf_plan::Stage6BytecodeReadRafEmitPlan;
 use crate::protocols::jolt::verifier_eval_families::{self, IndexedEvalFamilyPlan};
 use crate::protocols::jolt::verifier_opening_rows;
 use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
@@ -352,12 +349,9 @@ impl Stage6CpuProgram {
             Vec::new()
         };
         if role == Role::Verifier {
-            let bytecode_ra_evals = IndexedEvalFamilyPlan::find(
-                &indexed_eval_families,
-                STAGE6_BYTECODE_RA_EVAL_FAMILY,
-            )?;
             let bytecode_output_plan =
-                stage6_bytecode_read_raf_relation_output_plan(bytecode_ra_evals);
+                Stage6BytecodeReadRafEmitPlan::from_eval_families(&indexed_eval_families)?
+                    .relation_output_plan();
             for expr in bytecode_output_plan.field_exprs {
                 if ScalarExprKind::from_cpu_attr(&expr.formula).is_ok() {
                     scalar_exprs.push(stage6_scalar_expr(expr));
@@ -411,7 +405,11 @@ impl Stage6CpuProgram {
     }
 
     fn plan_verifier(&self) -> Result<VerifierStagePlan, EmitError> {
-        verifier_plan::stage_plan_from_cpu_sources(self)
+        let mut plan = verifier_plan::stage_plan_from_cpu_sources(self)?;
+        plan.relation_local_inputs.set_stage6_bytecode_read_raf(
+            Stage6BytecodeReadRafEmitPlan::from_eval_families(&plan.indexed_eval_families)?,
+        );
+        Ok(plan)
     }
 
     fn verifier_plan(&self) -> Result<&VerifierStagePlan, EmitError> {
@@ -1313,14 +1311,14 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
         source.push_str(&self.emit_sumcheck_driver_constants()?);
         source.push_str(&self.emit_tail_constants()?);
         if self.role == Role::Verifier {
-            let (bytecode_ra_evals_ref, _) = stage6_bytecode_read_raf_eval_family_ref(
-                &self.verifier_plan()?.indexed_eval_families,
-                "STAGE6_INDEXED_EVAL_FAMILIES",
-            )?;
+            let plan = self.verifier_plan()?;
             source.push_str(&self.emit_indexed_eval_family_constants()?);
-            source.push_str(&emit_stage6_bytecode_read_raf_plan_constants(
-                &bytecode_ra_evals_ref,
-            ));
+            source.push_str(
+                &plan
+                    .relation_local_inputs
+                    .stage6_bytecode_read_raf()?
+                    .emit_runtime_constants(),
+            );
             source.push_str(&self.emit_verifier_relation_output_constants()?);
         }
         let program_field_indent = if self.role == Role::Verifier {
@@ -2492,12 +2490,12 @@ fn stage6_kernel_abi(relation: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use crate::emit::rust::EmitError;
+    use crate::protocols::jolt::stage6_bytecode_read_raf_plan::{
+        Stage6BytecodeReadRafEmitPlan, STAGE6_BYTECODE_RA_EVAL_FAMILY,
+    };
     use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 
-    use super::{
-        stage6_bytecode_read_raf_eval_family_ref, stage6_kernel_abi,
-        STAGE6_BYTECODE_RA_EVAL_FAMILY, STAGE6_KERNEL_ABIS,
-    };
+    use super::{stage6_kernel_abi, STAGE6_KERNEL_ABIS};
 
     #[test]
     fn stage6_kernel_abi_contracts_cover_supported_relations() {
@@ -2523,11 +2521,13 @@ mod tests {
                 "stage6.bytecode_read_raf.eval.BytecodeRa_1".to_owned(),
             ],
         }];
-        let (family_ref, family) =
-            stage6_bytecode_read_raf_eval_family_ref(&families, "STAGE6_INDEXED_EVAL_FAMILIES")?;
-        assert_eq!(family_ref, "STAGE6_INDEXED_EVAL_FAMILIES[0]");
+        let plan = Stage6BytecodeReadRafEmitPlan::from_eval_families(&families)?;
         assert_eq!(
-            family.evals,
+            plan.bytecode_ra_evals_ref,
+            "STAGE6_INDEXED_EVAL_FAMILIES[0]"
+        );
+        assert_eq!(
+            plan.bytecode_ra_evals.evals,
             vec![
                 "stage6.bytecode_read_raf.eval.BytecodeRa_2".to_owned(),
                 "stage6.bytecode_read_raf.eval.BytecodeRa_0".to_owned(),
@@ -2544,11 +2544,10 @@ mod tests {
             evals: vec!["stage6.other.eval.BytecodeRa_0".to_owned()],
         }];
 
-        let error =
-            stage6_bytecode_read_raf_eval_family_ref(&families, "STAGE6_INDEXED_EVAL_FAMILIES")
-                .err()
-                .map(|error| error.to_string())
-                .unwrap_or_default();
+        let error = Stage6BytecodeReadRafEmitPlan::from_eval_families(&families)
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
 
         assert!(error.contains(&format!(
             "missing eval family `{STAGE6_BYTECODE_RA_EVAL_FAMILY}`"

@@ -345,19 +345,38 @@ const STAGE6_BYTECODE_READ_RAF_PLAN: BytecodeReadRafPlan = BytecodeReadRafPlan {
     entry_lookup_table: "stage6.bytecode.entry.lookup_table",
 };
 
-pub(crate) fn emit_stage6_bytecode_read_raf_plan_constants(bytecode_ra_evals_ref: &str) -> String {
-    emit_bytecode_read_raf_plan(&STAGE6_BYTECODE_READ_RAF_PLAN, bytecode_ra_evals_ref)
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Stage6BytecodeReadRafEmitPlan {
+    pub(crate) bytecode_ra_evals: IndexedEvalFamilyPlan,
+    pub(crate) bytecode_ra_evals_ref: String,
+}
+
+impl Stage6BytecodeReadRafEmitPlan {
+    pub(crate) fn from_eval_families(
+        eval_families: &[IndexedEvalFamilyPlan],
+    ) -> Result<Self, EmitError> {
+        let (bytecode_ra_evals_ref, bytecode_ra_evals) = stage6_bytecode_read_raf_eval_family_ref(
+            eval_families,
+            "STAGE6_INDEXED_EVAL_FAMILIES",
+        )?;
+        Ok(Self {
+            bytecode_ra_evals: bytecode_ra_evals.clone(),
+            bytecode_ra_evals_ref,
+        })
+    }
+
+    pub(crate) fn emit_runtime_constants(&self) -> String {
+        emit_bytecode_read_raf_plan(&STAGE6_BYTECODE_READ_RAF_PLAN, &self.bytecode_ra_evals_ref)
+    }
+
+    pub(crate) fn relation_output_plan(&self) -> Stage6BytecodeReadRafRelationOutputPlan {
+        STAGE6_BYTECODE_READ_RAF_PLAN.relation_output_plan(&self.bytecode_ra_evals)
+    }
 }
 
 #[cfg(test)]
 pub(crate) fn stage6_bytecode_read_raf_output_contribution_symbol() -> &'static str {
     STAGE6_BYTECODE_READ_RAF_PLAN.output_contribution
-}
-
-pub(crate) fn stage6_bytecode_read_raf_relation_output_plan(
-    bytecode_ra_evals: &IndexedEvalFamilyPlan,
-) -> Stage6BytecodeReadRafRelationOutputPlan {
-    STAGE6_BYTECODE_READ_RAF_PLAN.relation_output_plan(bytecode_ra_evals)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -506,7 +525,7 @@ fn emit_bytecode_read_raf_plan(plan: &BytecodeReadRafPlan, bytecode_ra_evals_ref
     source
 }
 
-pub(crate) fn stage6_bytecode_read_raf_eval_family_ref<'a>(
+fn stage6_bytecode_read_raf_eval_family_ref<'a>(
     eval_families: &'a [IndexedEvalFamilyPlan],
     families_const: &str,
 ) -> Result<(String, &'a IndexedEvalFamilyPlan), EmitError> {
@@ -612,11 +631,9 @@ mod tests {
     use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 
     use super::{
-        emit_stage6_bytecode_read_raf_plan_constants, stage6_bytecode_read_raf_eval_family_ref,
-        stage6_bytecode_read_raf_output_contribution_symbol,
-        stage6_bytecode_read_raf_relation_output_plan, BytecodeFlag, BytecodeOutputTermPlan,
-        BytecodeReadRafTermPlan, BytecodeRegister, STAGE6_BYTECODE_RA_EVAL_FAMILY,
-        STAGE6_BYTECODE_READ_RAF_PLAN,
+        stage6_bytecode_read_raf_output_contribution_symbol, BytecodeFlag, BytecodeOutputTermPlan,
+        BytecodeReadRafTermPlan, BytecodeRegister, Stage6BytecodeReadRafEmitPlan,
+        STAGE6_BYTECODE_RA_EVAL_FAMILY, STAGE6_BYTECODE_READ_RAF_PLAN,
     };
 
     fn bytecode_ra_evals() -> IndexedEvalFamilyPlan {
@@ -723,9 +740,11 @@ mod tests {
     }
 
     #[test]
-    fn stage6_bytecode_relation_output_plan_uses_point_derived_contribution() {
-        let bytecode_ra_evals = bytecode_ra_evals();
-        let output_plan = stage6_bytecode_read_raf_relation_output_plan(&bytecode_ra_evals);
+    fn stage6_bytecode_relation_output_plan_uses_point_derived_contribution(
+    ) -> Result<(), EmitError> {
+        let output_plan =
+            Stage6BytecodeReadRafEmitPlan::from_eval_families(&[bytecode_ra_evals()])?
+                .relation_output_plan();
         let claim = output_plan.claim;
 
         assert_eq!(claim.relation, "jolt.stage6.bytecode_read_raf");
@@ -769,12 +788,13 @@ mod tests {
                 "stage6.bytecode_read_raf.output.product.BytecodeRa".to_owned()
             ]
         );
+        Ok(())
     }
 
     #[test]
-    fn stage6_bytecode_plan_renderer_emits_stage67_constants() {
-        let source =
-            emit_stage6_bytecode_read_raf_plan_constants("STAGE6_INDEXED_EVAL_FAMILIES[0]");
+    fn stage6_bytecode_plan_renderer_emits_stage67_constants() -> Result<(), EmitError> {
+        let source = Stage6BytecodeReadRafEmitPlan::from_eval_families(&[bytecode_ra_evals()])?
+            .emit_runtime_constants();
 
         assert!(source.contains("const STAGE6_BYTECODE_STAGE1_TERMS"));
         assert!(source.contains("Stage67BytecodeTermPlan::LookupTable { gamma_base: 2 }"));
@@ -790,16 +810,22 @@ mod tests {
             .contains("output_contribution: \"stage6.bytecode_read_raf.output.contribution\""));
         assert!(source.contains("bytecode_ra_evals: &STAGE6_INDEXED_EVAL_FAMILIES[0]"));
         assert!(source.contains("pub const STAGE6_BYTECODE_PLAN: Stage67BytecodeReadRafPlan"));
+        Ok(())
     }
 
     #[test]
     fn stage6_bytecode_plan_references_indexed_eval_family_row() -> Result<(), EmitError> {
         let families = [bytecode_ra_evals()];
-        let (family_ref, family) =
-            stage6_bytecode_read_raf_eval_family_ref(&families, "STAGE6_INDEXED_EVAL_FAMILIES")?;
+        let plan = Stage6BytecodeReadRafEmitPlan::from_eval_families(&families)?;
 
-        assert_eq!(family_ref, "STAGE6_INDEXED_EVAL_FAMILIES[0]");
-        assert_eq!(family.symbol, STAGE6_BYTECODE_RA_EVAL_FAMILY);
+        assert_eq!(
+            plan.bytecode_ra_evals_ref,
+            "STAGE6_INDEXED_EVAL_FAMILIES[0]"
+        );
+        assert_eq!(
+            plan.bytecode_ra_evals.symbol,
+            STAGE6_BYTECODE_RA_EVAL_FAMILY
+        );
         Ok(())
     }
 }
