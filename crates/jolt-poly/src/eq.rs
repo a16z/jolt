@@ -139,6 +139,20 @@ impl<F: Field> EqPolynomial<F> {
             .fold(F::one(), |acc, v| acc * v)
     }
 
+    /// Checked version of [`Self::mle`].
+    ///
+    /// Returns `None` when the two points do not have the same arity.
+    pub fn try_mle<C>(x: &[C], y: &[C]) -> Option<F>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: Mul<C, Output = F> + SubAssign<F>,
+    {
+        if x.len() != y.len() {
+            return None;
+        }
+        Some(Self::mle(x, y))
+    }
+
     /// Evaluates `eq(point, index_bits)` where `index_bits` is the big-endian
     /// Boolean vector encoded by `index`.
     ///
@@ -626,6 +640,15 @@ mod tests {
         let via_instance = EqPolynomial::new(x.clone()).evaluate(&y);
         let via_static = EqPolynomial::<Fr>::mle(&x, &y);
         assert_eq!(via_instance, via_static);
+    }
+
+    #[test]
+    fn try_mle_rejects_dimension_mismatch() {
+        let x = [Fr::one(), Fr::zero()];
+        let y = [Fr::one()];
+
+        assert_eq!(EqPolynomial::<Fr>::try_mle(&x, &x), Some(Fr::one()));
+        assert_eq!(EqPolynomial::<Fr>::try_mle(&x, &y), None);
     }
 
     #[test]

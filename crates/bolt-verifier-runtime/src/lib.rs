@@ -1418,10 +1418,29 @@ fn evaluate_structured_polynomial(
     y: Vec<Fr>,
 ) -> Result<Fr, RuntimePlanError> {
     Ok(match polynomial {
-        StructuredPolynomialKind::Eq => EqPolynomial::<Fr>::mle(x, &y),
-        StructuredPolynomialKind::EqPlusOne => EqPlusOnePolynomial::<Fr>::new(y).evaluate(x),
+        StructuredPolynomialKind::Eq => evaluate_eq_polynomial_mle(x, &y)?,
+        StructuredPolynomialKind::EqPlusOne => evaluate_eq_plus_one_polynomial_mle(x, y)?,
         StructuredPolynomialKind::Lt => evaluate_lt_polynomial_mle(x, &y)?,
     })
+}
+
+fn evaluate_eq_polynomial_mle(x: &[Fr], y: &[Fr]) -> Result<Fr, RuntimePlanError> {
+    EqPolynomial::<Fr>::try_mle(x, y).ok_or(RuntimePlanError::InvalidInputLength {
+        input: "sumcheck_output.eq",
+        expected: x.len(),
+        actual: y.len(),
+    })
+}
+
+fn evaluate_eq_plus_one_polynomial_mle(x: &[Fr], y: Vec<Fr>) -> Result<Fr, RuntimePlanError> {
+    let y_len = y.len();
+    EqPlusOnePolynomial::<Fr>::new(y)
+        .try_evaluate(x)
+        .ok_or(RuntimePlanError::InvalidInputLength {
+            input: "sumcheck_output.eq_plus_one",
+            expected: x.len(),
+            actual: y_len,
+        })
 }
 
 fn evaluate_lt_polynomial_mle(x: &[Fr], y: &[Fr]) -> Result<Fr, RuntimePlanError> {
@@ -2063,5 +2082,66 @@ mod tests {
         .unwrap();
 
         assert_eq!(value, Fr::from_u64(1));
+    }
+
+    #[test]
+    fn relation_output_rejects_structured_polynomial_dimension_mismatch() {
+        let x = [Fr::from_u64(1)];
+        let y = [Fr::from_u64(1), Fr::from_u64(0)];
+        let mut store = ValueStore::default();
+        store.insert_point("point.y", y.to_vec());
+
+        let error = evaluate_relation_output_for_instance(
+            &[RelationOutputPlan {
+                relation: TestRelation::Output,
+                local_scalars: &[],
+                expected_output: "eq.xy",
+            }],
+            &[],
+            &[ScalarExprPlan {
+                symbol: "eq.xy",
+                kind: ScalarExprKind::StructuredPolynomial {
+                    polynomial: StructuredPolynomialKind::Eq,
+                    x_point: StructuredPolynomialPointTransform {
+                        segment: StructuredPolynomialPointSegment::Full,
+                        length: StructuredPolynomialPointLength::Full,
+                        order: StructuredPolynomialPointOrder::AsIs,
+                    },
+                    y_point: StructuredPolynomialPointTransform {
+                        segment: StructuredPolynomialPointSegment::Full,
+                        length: StructuredPolynomialPointLength::Full,
+                        order: StructuredPolynomialPointOrder::AsIs,
+                    },
+                },
+                operands: &["instance", "point.y"],
+            }],
+            &store,
+            &SumcheckInstanceResultPlan {
+                symbol: "instance",
+                source: "driver",
+                claim: "claim",
+                relation: TestRelation::Output,
+                index: 0,
+                point_arity: 1,
+                num_rounds: 1,
+                round_offset: 0,
+                point_order: SumcheckPointOrder::AsIs,
+                degree: 2,
+            },
+            &[],
+            &[],
+            &[],
+            &x,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            RuntimePlanError::InvalidInputLength {
+                input: "sumcheck_output.eq",
+                expected: 1,
+                actual: 2
+            }
+        );
     }
 }
