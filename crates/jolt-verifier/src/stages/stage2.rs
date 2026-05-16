@@ -26,7 +26,8 @@ pub use bolt_verifier_runtime::{
     FieldExprKind as Stage2FieldExprKind,
     FieldExprPlan as Stage2FieldExprPlan,
     OpeningClaimEqualityPlan as Stage2OpeningClaimEqualityPlan,
-    ScalarExprKind as Stage2ScalarExprKind, ScalarExprPlan as Stage2ScalarExprPlan,
+    ScalarExprPlan as Stage2ScalarExprPlan,
+    ScalarExprKind as Stage2ScalarExprKind,
     OpeningBatchPlan as Stage2OpeningBatchPlan, OpeningClaimPlan as Stage2OpeningClaimPlan,
     OpeningInputPlan as Stage2OpeningInputPlan, PointExprKind as Stage2PointExprKind,
     PointExprPlan as Stage2PointExprPlan, ProgramStepKind as Stage2ProgramStepKind,
@@ -256,10 +257,10 @@ pub const STAGE2_OPENING_CLAIMS: &[Stage2OpeningClaimPlan] = &[
     Stage2OpeningClaimPlan { symbol: "stage2.ram_output.opening.RamValFinal", oracle: "RamValFinal", domain: "jolt.ram_address_domain", point_arity: 16, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.ram_output.instance", eval_source: "stage2.ram_output.eval.RamValFinal" },
 ];
 
+pub const STAGE2_OPENING_EQUALITIES: &[Stage2OpeningClaimEqualityPlan] = &[];
 pub const STAGE2_OPENING_BATCHES: &[Stage2OpeningBatchPlan] = &[
     Stage2OpeningBatchPlan { symbol: "stage2.openings", stage: "stage2", proof_slot: "stage2.openings", policy: "jolt_stage2_output_order", count: 18, ordered_claims: &["stage2.ram_read_write.opening.RamVal", "stage2.ram_read_write.opening.RamRa", "stage2.ram_read_write.opening.RamInc", "stage2.product_virtual.remainder.opening.LeftInstructionInput", "stage2.product_virtual.remainder.opening.RightInstructionInput", "stage2.product_virtual.remainder.opening.OpFlagJump", "stage2.product_virtual.remainder.opening.OpFlagWriteLookupOutputToRD", "stage2.product_virtual.remainder.opening.LookupOutput", "stage2.product_virtual.remainder.opening.InstructionFlagBranch", "stage2.product_virtual.remainder.opening.NextIsNoop", "stage2.product_virtual.remainder.opening.OpFlagVirtualInstruction", "stage2.instruction_lookup.claim_reduction.opening.LookupOutput", "stage2.instruction_lookup.claim_reduction.opening.LeftLookupOperand", "stage2.instruction_lookup.claim_reduction.opening.RightLookupOperand", "stage2.instruction_lookup.claim_reduction.opening.LeftInstructionInput", "stage2.instruction_lookup.claim_reduction.opening.RightInstructionInput", "stage2.ram_raf.opening.RamRa", "stage2.ram_output.opening.RamValFinal"], claim_operands: &["stage2.ram_read_write.opening.RamVal", "stage2.ram_read_write.opening.RamRa", "stage2.ram_read_write.opening.RamInc", "stage2.product_virtual.remainder.opening.LeftInstructionInput", "stage2.product_virtual.remainder.opening.RightInstructionInput", "stage2.product_virtual.remainder.opening.OpFlagJump", "stage2.product_virtual.remainder.opening.OpFlagWriteLookupOutputToRD", "stage2.product_virtual.remainder.opening.LookupOutput", "stage2.product_virtual.remainder.opening.InstructionFlagBranch", "stage2.product_virtual.remainder.opening.NextIsNoop", "stage2.product_virtual.remainder.opening.OpFlagVirtualInstruction", "stage2.instruction_lookup.claim_reduction.opening.LookupOutput", "stage2.instruction_lookup.claim_reduction.opening.LeftLookupOperand", "stage2.instruction_lookup.claim_reduction.opening.RightLookupOperand", "stage2.instruction_lookup.claim_reduction.opening.LeftInstructionInput", "stage2.instruction_lookup.claim_reduction.opening.RightInstructionInput", "stage2.ram_raf.opening.RamRa", "stage2.ram_output.opening.RamValFinal"] },
 ];
-pub const STAGE2_OPENING_EQUALITIES: &[Stage2OpeningClaimEqualityPlan] = &[];
 pub const STAGE2_RELATION_OUTPUT_3_LOCAL_SCALARS: &[&str] = &["stage2.ram_raf.output.unmap"];
 pub const STAGE2_RELATION_OUTPUT_4_LOCAL_SCALARS: &[&str] = &["stage2.ram_output.output.eq", "stage2.ram_output.output.io_mask", "stage2.ram_output.output.val_io"];
 pub const STAGE2_RELATION_OUTPUTS: &[Stage2RelationOutputPlan] = &[

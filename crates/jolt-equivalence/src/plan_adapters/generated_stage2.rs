@@ -22,5 +22,7 @@ define_stage_adapter_no_absorb!(
     Stage2PointExprPlan,
     Stage2OpeningClaimPlan,
     Stage2OpeningBatchPlan,
-    empty_scalar_exprs = Stage2ScalarExprPlan
+    scalar_expr = Stage2ScalarExprPlan,
+    relation_outputs = Stage2RelationOutputPlan,
+    empty_opening_equalities = Stage2OpeningClaimEqualityPlan
 );

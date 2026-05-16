@@ -2179,7 +2179,7 @@ fn stage7_rust_targets_extract_and_compile() {
         .contains("stage7.hamming_weight_claim_reduction.output.term"));
     assert!(verifier_source
         .source
-        .contains("bolt_verifier_runtime::expected_relation_output_batch"));
+        .contains("bolt_verifier_runtime::evaluate_relation_output_batch"));
     assert!(verifier_source
         .source
         .contains("stage7.input.stage6.booleanity.InstructionRa_0"));

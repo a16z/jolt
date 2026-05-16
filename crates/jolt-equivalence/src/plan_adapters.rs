@@ -345,6 +345,24 @@ fn generated_field_expr_kind(value: &str) -> bolt_verifier_runtime::FieldExprKin
                 parts[2].parse::<usize>().expect("lagrange index is usize"),
             )
         }
+        value if value.starts_with("poly.lagrange_kernel_eval:") => {
+            let spec = value
+                .strip_prefix("poly.lagrange_kernel_eval:")
+                .expect("lagrange kernel expression has prefix");
+            let parts = spec.split(':').collect::<Vec<_>>();
+            assert!(
+                parts.len() == 2,
+                "lagrange kernel expression has two fields"
+            );
+            bolt_verifier_runtime::FieldExprKind::LagrangeKernelEval(
+                parts[0]
+                    .parse::<i64>()
+                    .expect("lagrange kernel domain start is i64"),
+                parts[1]
+                    .parse::<usize>()
+                    .expect("lagrange kernel domain size is usize"),
+            )
+        }
         value => panic!("unsupported generated field expression kind `{value}`"),
     }
 }
@@ -358,6 +376,14 @@ fn generated_scalar_expr_kind(value: &str) -> bolt_verifier_runtime::ScalarExprK
     match value {
         "field_vector.sum" => bolt_verifier_runtime::ScalarExprKind::FieldVectorSum,
         "field_vector.product" => bolt_verifier_runtime::ScalarExprKind::FieldVectorProduct,
+        value if value.starts_with("point.element:") => {
+            let index = value
+                .strip_prefix("point.element:")
+                .expect("point element expression has prefix")
+                .parse::<usize>()
+                .expect("point element index is usize");
+            bolt_verifier_runtime::ScalarExprKind::PointElement { index }
+        }
         value if value.starts_with("field.power_strided_weighted_sum:") => {
             let spec = value
                 .strip_prefix("field.power_strided_weighted_sum:")
@@ -588,6 +614,7 @@ macro_rules! define_stage_adapter_impl {
         $(, relation_outputs = $relation_output:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
         $(, opening_equalities = $opening_equality:ident)?
+        $(, empty_opening_equalities = $empty_opening_equalities:ident)?
     ) => {
         pub fn $function(program: &$compiler) -> &'static $module::$program {
             Box::leak(Box::new($module::$program {
@@ -876,6 +903,12 @@ macro_rules! define_stage_adapter_impl {
                         })
                         .collect(),
                 ),
+                )?
+                $(
+                opening_equalities: {
+                    let _ = stringify!($empty_opening_equalities);
+                    &[]
+                },
                 )?
                 opening_batches: super::leak_slice(
                     program
@@ -1174,6 +1207,7 @@ macro_rules! define_stage_adapter_no_absorb {
         $(, relation_outputs = $relation_output:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
         $(, opening_equalities = $opening_equality:ident)?
+        $(, empty_opening_equalities = $empty_opening_equalities:ident)?
     ) => {
         define_stage_adapter_impl!(
             generated,
@@ -1202,6 +1236,7 @@ macro_rules! define_stage_adapter_no_absorb {
             $(, relation_outputs = $relation_output)?
             $(, empty_relation_outputs = $empty_relation_outputs)?
             $(, opening_equalities = $opening_equality)?
+            $(, empty_opening_equalities = $empty_opening_equalities)?
         );
     };
     (
@@ -1231,6 +1266,7 @@ macro_rules! define_stage_adapter_no_absorb {
         $(, relation_outputs = $relation_output:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
         $(, opening_equalities = $opening_equality:ident)?
+        $(, empty_opening_equalities = $empty_opening_equalities:ident)?
     ) => {
         define_stage_adapter_impl!(
             kernel,
@@ -1259,6 +1295,7 @@ macro_rules! define_stage_adapter_no_absorb {
             $(, relation_outputs = $relation_output)?
             $(, empty_relation_outputs = $empty_relation_outputs)?
             $(, opening_equalities = $opening_equality)?
+            $(, empty_opening_equalities = $empty_opening_equalities)?
         );
     };
 }
