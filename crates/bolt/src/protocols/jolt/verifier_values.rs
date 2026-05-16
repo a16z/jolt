@@ -149,26 +149,11 @@ impl VerifierScalarValueSet {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct VerifierScalarSourceSet {
     symbols: BTreeMap<String, VerifierScalarSourceKind>,
-    conflicts: Vec<VerifierSourceConflict<VerifierScalarSourceKind>>,
 }
 
 impl VerifierScalarSourceSet {
     pub fn insert(&mut self, symbol: &str, kind: VerifierScalarSourceKind) {
-        match self.symbols.entry(symbol.to_owned()) {
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                let _entry = entry.insert(kind);
-            }
-            std::collections::btree_map::Entry::Occupied(entry) => {
-                let existing = *entry.get();
-                if existing != kind {
-                    self.conflicts.push(VerifierSourceConflict {
-                        symbol: symbol.to_owned(),
-                        existing,
-                        incoming: kind,
-                    });
-                }
-            }
-        }
+        let _entry = self.symbols.entry(symbol.to_owned()).or_insert(kind);
     }
 
     pub fn extend<'a>(
@@ -183,13 +168,6 @@ impl VerifierScalarSourceSet {
 
     pub fn contains(&self, symbol: &str) -> bool {
         self.symbols.contains_key(symbol)
-    }
-
-    pub(crate) fn verify_no_conflicts(&self, stage: &str) -> Result<(), EmitError> {
-        let Some(conflict) = self.conflicts.first() else {
-            return Ok(());
-        };
-        Err(conflicting_source_error(stage, "scalar", conflict))
     }
 }
 

@@ -980,22 +980,23 @@ impl Stage2CpuProgram {
             }
         }
         if self.role == Role::Verifier {
-            let field_values = self.verifier_scalar_sources();
+            let field_values = self.verifier_scalar_values();
             let verifier_point_values = self.verifier_point_values();
-            let point_values = verifier_point_values.source_set();
             field_values.verify_no_conflicts("stage2")?;
             verifier_point_values.verify_no_conflicts("stage2")?;
             for expr in &self.scalar_exprs {
-                super::plan_tokens::verify_scalar_expr_operands(
-                    super::plan_tokens::ScalarExprVerification {
+                let expr = verifier_plan::VerifierScalarExprPlan::from_cpu(
+                    &expr.symbol,
+                    &expr.formula,
+                    &expr.operands,
+                )?;
+                super::plan_tokens::verify_verifier_scalar_expr_operands(
+                    super::plan_tokens::VerifierScalarExprVerification {
                         stage: "stage2",
-                        symbol: &expr.symbol,
-                        formula: &expr.formula,
-                        operand_names: &expr.operand_names,
-                        operands: &expr.operands,
+                        expr: &expr,
                         field_values: &field_values,
                         field_vector_values: None,
-                        point_values: Some(&point_values),
+                        point_values: Some(&verifier_point_values),
                     },
                 )?;
             }
@@ -1033,41 +1034,58 @@ impl Stage2CpuProgram {
         values
     }
 
-    fn verifier_scalar_sources(&self) -> verifier_values::VerifierScalarSourceSet {
-        let mut values = verifier_values::VerifierScalarSourceSet::default();
-        values.extend(
-            self.opening_inputs.iter().map(|input| &input.symbol),
-            verifier_values::VerifierScalarSourceKind::OpeningInput,
-        );
-        values.extend(
-            self.field_constants.iter().map(|constant| &constant.symbol),
-            verifier_values::VerifierScalarSourceKind::FieldConstant,
-        );
-        values.extend(
-            self.transcript_squeezes
-                .iter()
-                .filter(|squeeze| matches!(squeeze.kind.as_str(), "challenge_scalar" | "scalar"))
-                .map(|squeeze| &squeeze.symbol),
-            verifier_values::VerifierScalarSourceKind::TranscriptScalar,
-        );
-        values.extend(
-            self.field_exprs.iter().map(|expr| &expr.symbol),
-            verifier_values::VerifierScalarSourceKind::FieldExpr,
-        );
-        values.extend(
-            self.scalar_exprs.iter().map(|expr| &expr.symbol),
-            verifier_values::VerifierScalarSourceKind::ScalarExpr,
-        );
-        values.extend(
-            self.relation_outputs
-                .iter()
-                .flat_map(|output| output.local_scalar_symbols()),
-            verifier_values::VerifierScalarSourceKind::RelationOutputLocal,
-        );
-        values.extend(
-            self.evals.iter().map(|eval| &eval.symbol),
-            verifier_values::VerifierScalarSourceKind::SumcheckEval,
-        );
+    fn verifier_scalar_values(&self) -> verifier_values::VerifierScalarValueSet {
+        let mut values = verifier_values::VerifierScalarValueSet::default();
+        for input in &self.opening_inputs {
+            values.insert(
+                &input.symbol,
+                verifier_values::VerifierScalarValueKind::OpeningInput,
+            );
+        }
+        for constant in &self.field_constants {
+            values.insert(
+                &constant.symbol,
+                verifier_values::VerifierScalarValueKind::FieldConstant,
+            );
+        }
+        for squeeze in self
+            .transcript_squeezes
+            .iter()
+            .filter(|squeeze| matches!(squeeze.kind.as_str(), "challenge_scalar" | "scalar"))
+        {
+            values.insert(
+                &squeeze.symbol,
+                verifier_values::VerifierScalarValueKind::TranscriptScalar,
+            );
+        }
+        for expr in &self.field_exprs {
+            values.insert(
+                &expr.symbol,
+                verifier_values::VerifierScalarValueKind::FieldExpr,
+            );
+        }
+        for expr in &self.scalar_exprs {
+            values.insert(
+                &expr.symbol,
+                verifier_values::VerifierScalarValueKind::ScalarExpr,
+            );
+        }
+        for local_scalar in self
+            .relation_outputs
+            .iter()
+            .flat_map(|output| output.local_scalar_symbols())
+        {
+            values.insert(
+                local_scalar,
+                verifier_values::VerifierScalarValueKind::RelationOutputLocal,
+            );
+        }
+        for eval in &self.evals {
+            values.insert(
+                &eval.symbol,
+                verifier_values::VerifierScalarValueKind::SumcheckEval,
+            );
+        }
         values
     }
 
