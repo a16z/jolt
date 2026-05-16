@@ -66,18 +66,18 @@ impl VerifierScalarValuePlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct VerifierScalarValueRef {
+pub struct VerifierScalarValueRef {
     symbol: String,
 }
 
 impl VerifierScalarValueRef {
-    pub(crate) fn new(symbol: impl Into<String>) -> Self {
+    pub fn new(symbol: impl Into<String>) -> Self {
         Self {
             symbol: symbol.into(),
         }
     }
 
-    pub(crate) fn symbol(&self) -> &str {
+    pub fn symbol(&self) -> &str {
         &self.symbol
     }
 }
@@ -128,10 +128,6 @@ impl VerifierScalarValueSet {
         self.symbols
             .get(&plan.symbol)
             .is_some_and(|kind| *kind == plan.kind)
-    }
-
-    pub(crate) fn contains_symbol(&self, symbol: &str) -> bool {
-        self.symbols.contains_key(symbol)
     }
 
     pub(crate) fn source_set(&self) -> VerifierScalarSourceSet {

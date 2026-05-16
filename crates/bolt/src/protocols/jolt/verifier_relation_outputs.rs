@@ -245,20 +245,20 @@ pub fn structured_polynomial_scalar_expr_plan(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationOutputEvalFamilySharedTermPlan {
     pub gamma_power_offset: usize,
-    pub factor: String,
+    pub factor: VerifierScalarValueRef,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationOutputEvalFamilyItemTermPlan {
     pub gamma_power_offset: usize,
-    pub factors: Vec<String>,
+    pub factors: Vec<VerifierScalarValueRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationOutputEvalFamilyPlan {
     pub symbol: String,
-    pub gamma: String,
-    pub evals: Vec<String>,
+    pub gamma: VerifierScalarValueRef,
+    pub evals: Vec<VerifierScalarValueRef>,
     pub power_stride: usize,
     pub value_term_offsets: Vec<usize>,
     pub shared_terms: Vec<RelationOutputEvalFamilySharedTermPlan>,
@@ -268,15 +268,15 @@ pub struct RelationOutputEvalFamilyPlan {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationOutputProductFamilyTermPlan {
     pub gamma_power_offset: usize,
-    pub evals: Vec<String>,
+    pub evals: Vec<VerifierScalarValueRef>,
     pub eval_families: Vec<String>,
-    pub factors: Vec<String>,
+    pub factors: Vec<VerifierScalarValueRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationOutputProductFamilyPlan {
     pub symbol: String,
-    pub gamma: Option<String>,
+    pub gamma: Option<VerifierScalarValueRef>,
     pub terms: Vec<RelationOutputProductFamilyTermPlan>,
 }
 
@@ -284,14 +284,14 @@ pub struct RelationOutputProductFamilyPlan {
 pub struct RelationOutputFunctionFamilyTermPlan {
     pub gamma_power_offset: usize,
     pub function: RelationOutputFunctionKind,
-    pub eval: String,
-    pub factors: Vec<String>,
+    pub eval: VerifierScalarValueRef,
+    pub factors: Vec<VerifierScalarValueRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationOutputFunctionFamilyPlan {
     pub symbol: String,
-    pub gamma: Option<String>,
+    pub gamma: Option<VerifierScalarValueRef>,
     pub terms: Vec<RelationOutputFunctionFamilyTermPlan>,
 }
 
@@ -369,6 +369,22 @@ impl FieldExprDependencies for RelationOutputFieldExprPlan {
     }
 }
 
+fn scalar_ref(symbol: impl Into<String>) -> VerifierScalarValueRef {
+    VerifierScalarValueRef::new(symbol)
+}
+
+fn scalar_refs(symbols: impl IntoIterator<Item = String>) -> Vec<VerifierScalarValueRef> {
+    symbols.into_iter().map(scalar_ref).collect()
+}
+
+fn scalar_ref_symbols<'a>(
+    refs: impl IntoIterator<Item = &'a VerifierScalarValueRef>,
+) -> Vec<String> {
+    refs.into_iter()
+        .map(|value_ref| value_ref.symbol().to_owned())
+        .collect()
+}
+
 pub fn parse_output_eval_family_plan(
     stage: &str,
     operation: OperationRef<'_, '_>,
@@ -419,7 +435,7 @@ pub fn parse_output_eval_family_plan(
         .map(
             |(gamma_power_offset, factor)| RelationOutputEvalFamilySharedTermPlan {
                 gamma_power_offset,
-                factor,
+                factor: scalar_ref(factor),
             },
         )
         .collect();
@@ -429,13 +445,13 @@ pub fn parse_output_eval_family_plan(
         let end = start + evals.len();
         item_terms.push(RelationOutputEvalFamilyItemTermPlan {
             gamma_power_offset,
-            factors: item_factors[start..end].to_vec(),
+            factors: scalar_refs(item_factors[start..end].to_vec()),
         });
     }
     Ok(RelationOutputEvalFamilyPlan {
         symbol,
-        gamma,
-        evals,
+        gamma: scalar_ref(gamma),
+        evals: scalar_refs(evals),
         power_stride: int_attr(operation, "power_stride")?,
         value_term_offsets,
         shared_terms,
@@ -517,16 +533,16 @@ pub fn parse_output_product_family_plan(
         let factor_end = factor_offset + factor_count;
         terms.push(RelationOutputProductFamilyTermPlan {
             gamma_power_offset,
-            evals: evals[eval_offset..eval_end].to_vec(),
+            evals: scalar_refs(evals[eval_offset..eval_end].to_vec()),
             eval_families: Vec::new(),
-            factors: factors[factor_offset..factor_end].to_vec(),
+            factors: scalar_refs(factors[factor_offset..factor_end].to_vec()),
         });
         eval_offset = eval_end;
         factor_offset = factor_end;
     }
     Ok(RelationOutputProductFamilyPlan {
         symbol,
-        gamma: gamma.into_iter().next(),
+        gamma: gamma.into_iter().next().map(scalar_ref),
         terms,
     })
 }
@@ -604,14 +620,14 @@ pub fn parse_output_function_family_plan(
                     "{stage} relation output function family @{symbol}: {error}"
                 ))
             })?,
-            eval,
-            factors: factors[factor_offset..factor_end].to_vec(),
+            eval: scalar_ref(eval),
+            factors: scalar_refs(factors[factor_offset..factor_end].to_vec()),
         });
         factor_offset = factor_end;
     }
     Ok(RelationOutputFunctionFamilyPlan {
         symbol,
-        gamma: gamma.into_iter().next(),
+        gamma: gamma.into_iter().next().map(scalar_ref),
         terms,
     })
 }
@@ -659,12 +675,12 @@ pub fn lower_boolean_zero_function_family_output(
         rows.push(relation_output_field_expr(
             square.clone(),
             "field.product",
-            vec![term.eval.clone(), term.eval.clone()],
+            vec![term.eval.symbol().to_owned(), term.eval.symbol().to_owned()],
         ));
         rows.push(relation_output_field_expr(
             boolean_zero.clone(),
             "field.sub",
-            vec![square, term.eval.clone()],
+            vec![square, term.eval.symbol().to_owned()],
         ));
         let mut operands = Vec::new();
         if let Some(gamma) = &family.gamma {
@@ -683,7 +699,7 @@ pub fn lower_boolean_zero_function_family_output(
             )));
         }
         operands.push(boolean_zero);
-        operands.extend(term.factors.iter().cloned());
+        operands.extend(scalar_ref_symbols(&term.factors));
         push_relation_output_product_term(
             prefix,
             term_index,
@@ -869,14 +885,19 @@ pub fn lower_eval_family_output_to_weighted_sum(
             + family.shared_terms.len()
             + family.evals.len() * family.item_terms.len(),
     );
-    operands.push(family.gamma.clone());
-    operands.extend(family.evals.iter().cloned());
-    operands.extend(family.shared_terms.iter().map(|term| term.factor.clone()));
+    operands.push(family.gamma.symbol().to_owned());
+    operands.extend(scalar_ref_symbols(&family.evals));
+    operands.extend(
+        family
+            .shared_terms
+            .iter()
+            .map(|term| term.factor.symbol().to_owned()),
+    );
     operands.extend(
         family
             .item_terms
             .iter()
-            .flat_map(|term| term.factors.iter().cloned()),
+            .flat_map(|term| term.factors.iter().map(|factor| factor.symbol().to_owned())),
     );
     let formula = power_strided_weighted_sum_formula(
         family.evals.len(),
@@ -945,8 +966,8 @@ pub fn lower_product_family_output(
                 ));
             }
         }
-        operands.extend(term.evals.iter().cloned());
-        operands.extend(term.factors.iter().cloned());
+        operands.extend(scalar_ref_symbols(&term.evals));
+        operands.extend(scalar_ref_symbols(&term.factors));
         if operands.is_empty() {
             return Err(EmitError::new(format!(
                 "{stage} relation output product family @{family_symbol} has an empty scalar term"
@@ -973,15 +994,15 @@ pub fn lower_product_family_output(
 }
 
 fn eval_family_term_operands(
-    eval_symbol: &str,
+    eval_symbol: &VerifierScalarValueRef,
     gamma_power_offset: usize,
-    factor: Option<&String>,
-    gamma: &str,
+    factor: Option<&VerifierScalarValueRef>,
+    gamma: &VerifierScalarValueRef,
     prefix: &str,
     gamma_powers: &mut BTreeMap<usize, String>,
     rows: &mut Vec<RelationOutputFieldExprPlan>,
 ) -> Vec<String> {
-    let mut operands = vec![eval_symbol.to_owned()];
+    let mut operands = vec![eval_symbol.symbol().to_owned()];
     if gamma_power_offset > 0 {
         operands.push(eval_family_gamma_power(
             gamma_power_offset,
@@ -992,14 +1013,14 @@ fn eval_family_term_operands(
         ));
     }
     if let Some(factor) = factor {
-        operands.push(factor.clone());
+        operands.push(factor.symbol().to_owned());
     }
     operands
 }
 
 fn eval_family_gamma_power(
     exponent: usize,
-    gamma: &str,
+    gamma: &VerifierScalarValueRef,
     prefix: &str,
     gamma_powers: &mut BTreeMap<usize, String>,
     rows: &mut Vec<RelationOutputFieldExprPlan>,
@@ -1011,7 +1032,7 @@ fn eval_family_gamma_power(
     rows.push(relation_output_field_expr(
         symbol.clone(),
         format!("field.pow:{exponent}"),
-        vec![gamma.to_owned()],
+        vec![gamma.symbol().to_owned()],
     ));
     let _old = gamma_powers.insert(exponent, symbol.clone());
     symbol
@@ -1226,14 +1247,14 @@ where
                     relation_output_eval_families_by_symbol,
                     relation_output_product_families_by_symbol,
                     field_exprs_by_symbol,
-                    &family.gamma,
+                    family.gamma.symbol(),
                 ));
                 stack.extend(family.evals.iter().map(|eval| {
                     output_dependency_node(
                         relation_output_eval_families_by_symbol,
                         relation_output_product_families_by_symbol,
                         field_exprs_by_symbol,
-                        eval,
+                        eval.symbol(),
                     )
                 }));
                 stack.extend(family.shared_terms.iter().map(|term| {
@@ -1241,7 +1262,7 @@ where
                         relation_output_eval_families_by_symbol,
                         relation_output_product_families_by_symbol,
                         field_exprs_by_symbol,
-                        &term.factor,
+                        term.factor.symbol(),
                     )
                 }));
                 stack.extend(family.item_terms.iter().flat_map(|term| {
@@ -1250,7 +1271,7 @@ where
                             relation_output_eval_families_by_symbol,
                             relation_output_product_families_by_symbol,
                             field_exprs_by_symbol,
-                            factor,
+                            factor.symbol(),
                         )
                     })
                 }));
@@ -1268,7 +1289,7 @@ where
                         relation_output_eval_families_by_symbol,
                         relation_output_product_families_by_symbol,
                         field_exprs_by_symbol,
-                        gamma,
+                        gamma.symbol(),
                     )
                 }));
                 for term in &family.terms {
@@ -1277,7 +1298,7 @@ where
                             relation_output_eval_families_by_symbol,
                             relation_output_product_families_by_symbol,
                             field_exprs_by_symbol,
-                            eval,
+                            eval.symbol(),
                         )
                     }));
                     stack.extend(term.factors.iter().map(|factor| {
@@ -1285,7 +1306,7 @@ where
                             relation_output_eval_families_by_symbol,
                             relation_output_product_families_by_symbol,
                             field_exprs_by_symbol,
-                            factor,
+                            factor.symbol(),
                         )
                     }));
                 }
@@ -1375,25 +1396,28 @@ pub fn verify_relation_outputs(
         }
     }
     for family in relation_output_eval_families {
-        if !field_values.contains_symbol(&family.gamma) {
+        if !field_values.contains_ref(&family.gamma) {
             return Err(EmitError::new(format!(
                 "{stage} relation output eval family @{} references missing gamma @{}",
-                family.symbol, family.gamma
+                family.symbol,
+                family.gamma.symbol()
             )));
         }
         for eval in &family.evals {
-            if !field_values.contains_symbol(eval) {
+            if !field_values.contains_ref(eval) {
                 return Err(EmitError::new(format!(
                     "{stage} relation output eval family @{} references missing eval @{}",
-                    family.symbol, eval
+                    family.symbol,
+                    eval.symbol()
                 )));
             }
         }
         for term in &family.shared_terms {
-            if !field_values.contains_symbol(&term.factor) {
+            if !field_values.contains_ref(&term.factor) {
                 return Err(EmitError::new(format!(
                     "{stage} relation output eval family @{} references missing shared factor @{}",
-                    family.symbol, term.factor
+                    family.symbol,
+                    term.factor.symbol()
                 )));
             }
         }
@@ -1405,10 +1429,11 @@ pub fn verify_relation_outputs(
                 term.factors.len(),
             )?;
             for factor in &term.factors {
-                if !field_values.contains_symbol(factor) {
+                if !field_values.contains_ref(factor) {
                     return Err(EmitError::new(format!(
                         "{stage} relation output eval family @{} references missing item factor @{}",
-                        family.symbol, factor
+                        family.symbol,
+                        factor.symbol()
                     )));
                 }
             }
@@ -1416,10 +1441,11 @@ pub fn verify_relation_outputs(
     }
     for family in relation_output_product_families {
         if let Some(gamma) = &family.gamma {
-            if !field_values.contains_symbol(gamma) {
+            if !field_values.contains_ref(gamma) {
                 return Err(EmitError::new(format!(
                     "{stage} relation output product family @{} references missing gamma @{}",
-                    family.symbol, gamma
+                    family.symbol,
+                    gamma.symbol()
                 )));
             }
         }
@@ -1431,18 +1457,20 @@ pub fn verify_relation_outputs(
                 )));
             }
             for eval in &term.evals {
-                if !field_values.contains_symbol(eval) {
+                if !field_values.contains_ref(eval) {
                     return Err(EmitError::new(format!(
                         "{stage} relation output product family @{} references missing eval @{}",
-                        family.symbol, eval
+                        family.symbol,
+                        eval.symbol()
                     )));
                 }
             }
             for factor in &term.factors {
-                if !field_values.contains_symbol(factor) {
+                if !field_values.contains_ref(factor) {
                     return Err(EmitError::new(format!(
                         "{stage} relation output product family @{} references missing factor @{}",
-                        family.symbol, factor
+                        family.symbol,
+                        factor.symbol()
                     )));
                 }
             }
@@ -1450,25 +1478,28 @@ pub fn verify_relation_outputs(
     }
     for family in relation_output_function_families {
         if let Some(gamma) = &family.gamma {
-            if !field_values.contains_symbol(gamma) {
+            if !field_values.contains_ref(gamma) {
                 return Err(EmitError::new(format!(
                     "{stage} relation output function family @{} references missing gamma @{}",
-                    family.symbol, gamma
+                    family.symbol,
+                    gamma.symbol()
                 )));
             }
         }
         for term in &family.terms {
-            if !field_values.contains_symbol(&term.eval) {
+            if !field_values.contains_ref(&term.eval) {
                 return Err(EmitError::new(format!(
                     "{stage} relation output function family @{} references missing eval @{}",
-                    family.symbol, term.eval
+                    family.symbol,
+                    term.eval.symbol()
                 )));
             }
             for factor in &term.factors {
-                if !field_values.contains_symbol(factor) {
+                if !field_values.contains_ref(factor) {
                     return Err(EmitError::new(format!(
                         "{stage} relation output function family @{} references missing factor @{}",
-                        family.symbol, factor
+                        family.symbol,
+                        factor.symbol()
                     )));
                 }
             }
@@ -1572,14 +1603,15 @@ mod tests {
     };
 
     use super::{
-        resolve_relation_outputs, verify_relation_outputs, FieldExprDependencies,
-        RelationOutputAst, RelationOutputEvalFamilyItemTermPlan, RelationOutputEvalFamilyPlan,
-        RelationOutputEvalFamilySharedTermPlan, RelationOutputFunctionFamilyPlan,
-        RelationOutputFunctionFamilyTermPlan, RelationOutputFunctionKind, RelationOutputPlan,
-        RelationOutputProductFamilyPlan, RelationOutputProductFamilyTermPlan,
-        RelationOutputVerification, StructuredPolynomialEvalPlan, StructuredPolynomialKind,
-        StructuredPolynomialPointLength, StructuredPolynomialPointOrder,
-        StructuredPolynomialPointPlan, StructuredPolynomialPointSegment,
+        resolve_relation_outputs, scalar_ref, scalar_refs, verify_relation_outputs,
+        FieldExprDependencies, RelationOutputAst, RelationOutputEvalFamilyItemTermPlan,
+        RelationOutputEvalFamilyPlan, RelationOutputEvalFamilySharedTermPlan,
+        RelationOutputFunctionFamilyPlan, RelationOutputFunctionFamilyTermPlan,
+        RelationOutputFunctionKind, RelationOutputPlan, RelationOutputProductFamilyPlan,
+        RelationOutputProductFamilyTermPlan, RelationOutputVerification,
+        StructuredPolynomialEvalPlan, StructuredPolynomialKind, StructuredPolynomialPointLength,
+        StructuredPolynomialPointOrder, StructuredPolynomialPointPlan,
+        StructuredPolynomialPointSegment,
     };
 
     struct TestFieldExpr {
@@ -1634,8 +1666,8 @@ mod tests {
     ) -> Result<(), EmitError> {
         let inner_family = RelationOutputEvalFamilyPlan {
             symbol: "inner.family".to_owned(),
-            gamma: "inner.gamma".to_owned(),
-            evals: vec!["inner.eval".to_owned()],
+            gamma: scalar_ref("inner.gamma"),
+            evals: scalar_refs(["inner.eval".to_owned()]),
             power_stride: 1,
             value_term_offsets: vec![0],
             shared_terms: Vec::new(),
@@ -1643,17 +1675,17 @@ mod tests {
         };
         let outer_family = RelationOutputEvalFamilyPlan {
             symbol: "outer.family".to_owned(),
-            gamma: "outer.gamma".to_owned(),
-            evals: vec!["outer.eval".to_owned()],
+            gamma: scalar_ref("outer.gamma"),
+            evals: scalar_refs(["outer.eval".to_owned()]),
             power_stride: 1,
             value_term_offsets: Vec::new(),
             shared_terms: vec![RelationOutputEvalFamilySharedTermPlan {
                 gamma_power_offset: 0,
-                factor: "outer.shared.factor".to_owned(),
+                factor: scalar_ref("outer.shared.factor"),
             }],
             item_terms: vec![RelationOutputEvalFamilyItemTermPlan {
                 gamma_power_offset: 1,
-                factors: vec!["factor.expr".to_owned()],
+                factors: scalar_refs(["factor.expr".to_owned()]),
             }],
         };
         let field_exprs = vec![
@@ -1700,12 +1732,12 @@ mod tests {
     ) -> Result<(), EmitError> {
         let product_family = RelationOutputProductFamilyPlan {
             symbol: "product.family".to_owned(),
-            gamma: Some("product.gamma".to_owned()),
+            gamma: Some(scalar_ref("product.gamma")),
             terms: vec![RelationOutputProductFamilyTermPlan {
                 gamma_power_offset: 2,
-                evals: vec!["product.eval".to_owned()],
+                evals: scalar_refs(["product.eval".to_owned()]),
                 eval_families: Vec::new(),
-                factors: vec!["product.factor.expr".to_owned()],
+                factors: scalar_refs(["product.factor.expr".to_owned()]),
             }],
         };
         let field_exprs = vec![
@@ -1751,12 +1783,12 @@ mod tests {
     fn resolve_rejects_unlowered_function_families() -> Result<(), EmitError> {
         let function_family = RelationOutputFunctionFamilyPlan {
             symbol: "function.family".to_owned(),
-            gamma: Some("function.gamma".to_owned()),
+            gamma: Some(scalar_ref("function.gamma")),
             terms: vec![RelationOutputFunctionFamilyTermPlan {
                 gamma_power_offset: 0,
                 function: RelationOutputFunctionKind::BooleanZero,
-                eval: "function.eval".to_owned(),
-                factors: vec!["function.factor.expr".to_owned()],
+                eval: scalar_ref("function.eval"),
+                factors: scalar_refs(["function.factor.expr".to_owned()]),
             }],
         };
         let claim_asts = vec![RelationOutputAst {
@@ -1893,6 +1925,53 @@ mod tests {
 
         assert!(error.to_string().contains(
             "stage relation output for @relation references missing local scalar @local.scalar"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn relation_output_verification_requires_planned_family_scalar_refs() -> Result<(), EmitError> {
+        let mut field_values = VerifierScalarValueSet::default();
+        field_values.insert("family.gamma", VerifierScalarValueKind::TranscriptScalar);
+        field_values.insert("family.eval", VerifierScalarValueKind::SumcheckEval);
+        let point_values = VerifierPointSourceSet::default();
+        let relations = BTreeSet::new();
+        let family = RelationOutputEvalFamilyPlan {
+            symbol: "family".to_owned(),
+            gamma: scalar_ref("family.gamma"),
+            evals: scalar_refs(["family.eval".to_owned()]),
+            power_stride: 1,
+            value_term_offsets: Vec::new(),
+            shared_terms: vec![RelationOutputEvalFamilySharedTermPlan {
+                gamma_power_offset: 0,
+                factor: scalar_ref("missing.factor"),
+            }],
+            item_terms: Vec::new(),
+        };
+
+        let error = match verify_relation_outputs(
+            "stage",
+            RelationOutputVerification {
+                relation_output_values: &[],
+                relation_output_eval_families: &[family],
+                relation_output_product_families: &[],
+                relation_output_function_families: &[],
+                relation_outputs: &[],
+                relations: &relations,
+                field_values: &field_values,
+                point_values: &point_values,
+            },
+        ) {
+            Ok(()) => {
+                return Err(EmitError::new(
+                    "missing family scalar ref should fail relation output verification",
+                ));
+            }
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains(
+            "stage relation output eval family @family references missing shared factor @missing.factor"
         ));
         Ok(())
     }
