@@ -10,6 +10,9 @@ use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 use crate::protocols::jolt::verifier_opening_rows::{
     CpuOpeningBatchPlan, CpuOpeningClaimEqualityPlan, CpuOpeningClaimPlan,
 };
+use crate::protocols::jolt::verifier_point_rows::{
+    CpuPointConcatPlan, CpuPointSlicePlan, CpuPointZeroPlan,
+};
 use crate::protocols::jolt::verifier_relation_outputs::{
     RelationOutputEvalFamilyPlan, RelationOutputFunctionFamilyPlan, RelationOutputPlan,
     RelationOutputProductFamilyPlan, StructuredPolynomialEvalPlan,
@@ -558,8 +561,6 @@ pub(crate) trait VerifierStagePlanSource {
     type Step: VerifierProgramStepSource;
     type Squeeze: VerifierTranscriptSqueezeSource;
     type OpeningInput: VerifierOpeningInputSource;
-    type PointSlice: VerifierPointSliceSource;
-    type PointConcat: VerifierPointConcatSource;
 
     fn steps(&self) -> &[Self::Step];
     fn transcript_squeezes(&self) -> &[Self::Squeeze];
@@ -708,6 +709,56 @@ impl VerifierScalarExprSource for CpuScalarExprPlan {
 
     fn operands(&self) -> &[String] {
         &self.operands
+    }
+}
+
+impl VerifierPointZeroSource for CpuPointZeroPlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn field(&self) -> &str {
+        &self.field
+    }
+
+    fn arity(&self) -> usize {
+        self.arity
+    }
+}
+
+impl VerifierPointSliceSource for CpuPointSlicePlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn offset(&self) -> usize {
+        self.offset
+    }
+
+    fn length(&self) -> usize {
+        self.length
+    }
+
+    fn input(&self) -> &str {
+        &self.input
+    }
+}
+
+impl VerifierPointConcatSource for CpuPointConcatPlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn layout(&self) -> &str {
+        &self.layout
+    }
+
+    fn arity(&self) -> usize {
+        self.arity
+    }
+
+    fn inputs(&self) -> &[String] {
+        &self.inputs
     }
 }
 
@@ -1187,22 +1238,18 @@ macro_rules! impl_verifier_plan_source_traits {
         step = $step:ty,
         squeeze = $squeeze:ty,
         opening_input = $opening_input:ty,
-        point_slice = $point_slice:ty,
-        point_concat = $point_concat:ty
-        $(, absorb = $absorb:ty)?
-        $(, point_zero = $point_zero:ty)?
-        $(, indexed_eval_families = $indexed_eval_families:ident)?
-        $(, relation_output_eval_families = $relation_output_eval_families:ident)?
-        $(, relation_output_product_families = $relation_output_product_families:ident)?
-        $(, relation_output_function_families = $relation_output_function_families:ident)?
+        $(absorb = $absorb:ty,)?
+        $(point_zero = $point_zero:ty,)?
+        $(indexed_eval_families = $indexed_eval_families:ident,)?
+        $(relation_output_eval_families = $relation_output_eval_families:ident,)?
+        $(relation_output_product_families = $relation_output_product_families:ident,)?
+        $(relation_output_function_families = $relation_output_function_families:ident,)?
         $(,)?
     ) => {
         impl $crate::protocols::jolt::verifier_plan::VerifierStagePlanSource for $program {
             type Step = $step;
             type Squeeze = $squeeze;
             type OpeningInput = $opening_input;
-            type PointSlice = $point_slice;
-            type PointConcat = $point_concat;
 
             fn steps(&self) -> &[Self::Step] { &self.steps }
             fn transcript_squeezes(&self) -> &[Self::Squeeze] { &self.transcript_squeezes }
@@ -1284,28 +1331,6 @@ macro_rules! impl_verifier_plan_source_traits {
             fn domain(&self) -> &str { &self.domain }
             fn point_arity(&self) -> usize { self.point_arity }
             fn claim_kind(&self) -> &str { &self.claim_kind }
-        }
-
-        $(
-        impl $crate::protocols::jolt::verifier_plan::VerifierPointZeroSource for $point_zero {
-            fn symbol(&self) -> &str { &self.symbol }
-            fn field(&self) -> &str { &self.field }
-            fn arity(&self) -> usize { self.arity }
-        }
-        )?
-
-        impl $crate::protocols::jolt::verifier_plan::VerifierPointSliceSource for $point_slice {
-            fn symbol(&self) -> &str { &self.symbol }
-            fn offset(&self) -> usize { self.offset }
-            fn length(&self) -> usize { self.length }
-            fn input(&self) -> &str { &self.input }
-        }
-
-        impl $crate::protocols::jolt::verifier_plan::VerifierPointConcatSource for $point_concat {
-            fn symbol(&self) -> &str { &self.symbol }
-            fn layout(&self) -> &str { &self.layout }
-            fn arity(&self) -> usize { self.arity }
-            fn inputs(&self) -> &[String] { &self.inputs }
         }
 
     };

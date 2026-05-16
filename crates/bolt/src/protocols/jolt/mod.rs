@@ -11,6 +11,7 @@ pub mod validate;
 pub(crate) mod verifier_eval_families;
 pub(crate) mod verifier_opening_rows;
 pub(crate) mod verifier_plan;
+pub(crate) mod verifier_point_rows;
 pub(crate) mod verifier_relation_outputs;
 pub(crate) mod verifier_sumcheck_rows;
 pub(crate) mod verifier_value_rows;

@@ -19,6 +19,7 @@ use crate::protocols::jolt::rust_target_plan::{
 };
 use crate::protocols::jolt::verifier_opening_rows;
 use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
+use crate::protocols::jolt::verifier_point_rows;
 use crate::protocols::jolt::verifier_relation_outputs::{
     self, parse_output_eval_family_plan, parse_output_function_family_plan,
     parse_output_product_family_plan, RelationOutputAst as Stage7RelationOutputAst,
@@ -70,9 +71,9 @@ pub struct Stage7CpuProgram {
     pub relation_output_product_families: Vec<Stage7RelationOutputProductFamilyPlan>,
     pub relation_output_function_families: Vec<Stage7RelationOutputFunctionFamilyPlan>,
     pub relation_outputs: Vec<Stage7RelationOutputPlan>,
-    pub point_zeros: Vec<Stage7PointZeroPlan>,
-    pub point_slices: Vec<Stage7PointSlicePlan>,
-    pub point_concats: Vec<Stage7PointConcatPlan>,
+    pub point_zeros: Vec<verifier_point_rows::CpuPointZeroPlan>,
+    pub point_slices: Vec<verifier_point_rows::CpuPointSlicePlan>,
+    pub point_concats: Vec<verifier_point_rows::CpuPointConcatPlan>,
     pub opening_claims: Vec<verifier_opening_rows::CpuOpeningClaimPlan>,
     pub opening_equalities: Vec<verifier_opening_rows::CpuOpeningClaimEqualityPlan>,
     pub opening_batches: Vec<verifier_opening_rows::CpuOpeningBatchPlan>,
@@ -264,39 +265,13 @@ fn is_hamming_weight_input_claim_expr(symbol: &str) -> bool {
         || symbol.starts_with("stage7.hamming_weight_claim_reduction.claim_expr")
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7PointZeroPlan {
-    pub symbol: String,
-    pub field: String,
-    pub arity: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7PointSlicePlan {
-    pub symbol: String,
-    pub source: String,
-    pub offset: usize,
-    pub length: usize,
-    pub input: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7PointConcatPlan {
-    pub symbol: String,
-    pub layout: String,
-    pub arity: usize,
-    pub inputs: Vec<String>,
-}
-
 verifier_plan::impl_verifier_plan_source_traits!(
     program = Stage7CpuProgram,
     step = Stage7ProgramStepPlan,
     squeeze = Stage7TranscriptSqueezePlan,
     opening_input = Stage7OpeningInputPlan,
-    point_slice = Stage7PointSlicePlan,
-    point_concat = Stage7PointConcatPlan,
     absorb = Stage7TranscriptAbsorbBytesPlan,
-    point_zero = Stage7PointZeroPlan,
+    point_zero = verifier_point_rows::CpuPointZeroPlan,
     relation_output_eval_families = relation_output_eval_families,
     relation_output_product_families = relation_output_product_families,
     relation_output_function_families = relation_output_function_families,
@@ -479,28 +454,13 @@ impl Stage7CpuProgram {
                     });
                 }
                 "cpu.point_zero" => {
-                    point_zeros.push(Stage7PointZeroPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        field: symbol_attr(op, "field")?,
-                        arity: int_attr(op, "arity")?,
-                    });
+                    point_zeros.push(verifier_point_rows::CpuPointZeroPlan::from_cpu(op)?);
                 }
                 "cpu.point_slice" => {
-                    point_slices.push(Stage7PointSlicePlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        source: symbol_attr(op, "source")?,
-                        offset: int_attr(op, "offset")?,
-                        length: int_attr(op, "length")?,
-                        input: operand_symbol(op, 0)?,
-                    });
+                    point_slices.push(verifier_point_rows::CpuPointSlicePlan::from_cpu(op)?);
                 }
                 "cpu.point_concat" => {
-                    point_concats.push(Stage7PointConcatPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        layout: string_attr(op, "layout")?,
-                        arity: int_attr(op, "arity")?,
-                        inputs: operand_symbols(op, 0)?,
-                    });
+                    point_concats.push(verifier_point_rows::CpuPointConcatPlan::from_cpu(op)?);
                 }
                 "cpu.opening_claim" => {
                     opening_claims.push(verifier_opening_rows::CpuOpeningClaimPlan::from_cpu(op)?);

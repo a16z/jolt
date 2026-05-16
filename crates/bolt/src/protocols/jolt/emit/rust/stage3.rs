@@ -11,6 +11,7 @@ use crate::protocols::jolt::cpu_attrs::{
 };
 use crate::protocols::jolt::verifier_opening_rows;
 use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
+use crate::protocols::jolt::verifier_point_rows;
 use crate::protocols::jolt::verifier_relation_outputs::{
     self, RelationOutputAst as Stage3RelationOutputAst,
     RelationOutputFieldExprPlan as Stage3RelationOutputFieldExprPlan,
@@ -41,8 +42,8 @@ pub struct Stage3CpuProgram {
     pub evals: Vec<verifier_sumcheck_rows::CpuSumcheckEvalPlan>,
     pub relation_output_values: Vec<Stage3StructuredPolynomialEvalPlan>,
     pub relation_outputs: Vec<Stage3RelationOutputPlan>,
-    pub point_slices: Vec<Stage3PointSlicePlan>,
-    pub point_concats: Vec<Stage3PointConcatPlan>,
+    pub point_slices: Vec<verifier_point_rows::CpuPointSlicePlan>,
+    pub point_concats: Vec<verifier_point_rows::CpuPointConcatPlan>,
     pub opening_claims: Vec<verifier_opening_rows::CpuOpeningClaimPlan>,
     pub opening_equalities: Vec<verifier_opening_rows::CpuOpeningClaimEqualityPlan>,
     pub opening_batches: Vec<verifier_opening_rows::CpuOpeningBatchPlan>,
@@ -95,30 +96,11 @@ fn stage3_scalar_expr(
     verifier_value_rows::CpuScalarExprPlan::op(expr.symbol, expr.formula, expr.operands)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3PointSlicePlan {
-    pub symbol: String,
-    pub source: String,
-    pub offset: usize,
-    pub length: usize,
-    pub input: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3PointConcatPlan {
-    pub symbol: String,
-    pub layout: String,
-    pub arity: usize,
-    pub inputs: Vec<String>,
-}
-
 verifier_plan::impl_verifier_plan_source_traits!(
     program = Stage3CpuProgram,
     step = Stage3ProgramStepPlan,
     squeeze = Stage3TranscriptSqueezePlan,
     opening_input = Stage3OpeningInputPlan,
-    point_slice = Stage3PointSlicePlan,
-    point_concat = Stage3PointConcatPlan,
 );
 
 pub fn stage3_cpu_program(module: &BoltModule<'_, Cpu>) -> Result<Stage3CpuProgram, EmitError> {
@@ -273,21 +255,10 @@ impl Stage3CpuProgram {
                     });
                 }
                 "cpu.point_slice" => {
-                    point_slices.push(Stage3PointSlicePlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        source: symbol_attr(op, "source")?,
-                        offset: int_attr(op, "offset")?,
-                        length: int_attr(op, "length")?,
-                        input: operand_symbol(op, 0)?,
-                    });
+                    point_slices.push(verifier_point_rows::CpuPointSlicePlan::from_cpu(op)?);
                 }
                 "cpu.point_concat" => {
-                    point_concats.push(Stage3PointConcatPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        layout: string_attr(op, "layout")?,
-                        arity: int_attr(op, "arity")?,
-                        inputs: operand_symbols(op, 0)?,
-                    });
+                    point_concats.push(verifier_point_rows::CpuPointConcatPlan::from_cpu(op)?);
                 }
                 "cpu.opening_claim" => {
                     opening_claims.push(verifier_opening_rows::CpuOpeningClaimPlan::from_cpu(op)?);
