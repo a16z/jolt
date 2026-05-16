@@ -7,9 +7,11 @@ use crate::protocols::jolt::rust_target_plan::{
     ProgramStepKind, RustTargetPlanError, ScalarExprKind, SumcheckPointOrder,
     TranscriptSqueezeKind,
 };
+use crate::protocols::jolt::verifier_plan::{VerifierScalarExprOperand, VerifierScalarExprPlan};
+use crate::protocols::jolt::verifier_value_rows::CpuScalarExprPlan;
 use crate::protocols::jolt::verifier_values::{
     VerifierFieldVectorValueRef, VerifierFieldVectorValueSet, VerifierPointSourceSet,
-    VerifierScalarSourceSet,
+    VerifierScalarSourceSet, VerifierScalarValueSet,
 };
 
 pub(super) fn role_program_step_kind_expr(
@@ -245,6 +247,180 @@ pub(super) fn verify_scalar_expr_operands(
                     "point element scalar expr @{symbol} references missing point @{operand}"
                 )));
             }
+        }
+    }
+    Ok(())
+}
+
+pub(super) struct VerifierScalarExprVerification<'a> {
+    pub stage: &'static str,
+    pub expr: &'a VerifierScalarExprPlan,
+    pub field_values: &'a VerifierScalarValueSet,
+    pub field_vector_values: Option<&'a VerifierFieldVectorValueSet>,
+    pub point_values: Option<&'a VerifierPointSourceSet>,
+}
+
+pub(super) fn verify_verifier_scalar_expr_operands(
+    verification: VerifierScalarExprVerification<'_>,
+) -> Result<(), EmitError> {
+    let VerifierScalarExprVerification {
+        stage,
+        expr,
+        field_values,
+        field_vector_values,
+        point_values,
+    } = verification;
+    match expr.kind {
+        ScalarExprKind::FieldVectorSum | ScalarExprKind::FieldVectorProduct => {
+            let Some(field_vector_values) = field_vector_values else {
+                return Err(EmitError::new(format!(
+                    "{stage} scalar expr @{} uses field-vector formula without field-vector values",
+                    expr.symbol
+                )));
+            };
+            verify_count(
+                "field vector expr operands",
+                &expr.symbol,
+                1,
+                expr.operands.len(),
+            )?;
+            for operand in &expr.operands {
+                let VerifierScalarExprOperand::FieldVector(value_ref) = operand else {
+                    return Err(EmitError::new(format!(
+                        "{stage} scalar expr @{} expected field-vector operand @{}",
+                        expr.symbol,
+                        operand.symbol()
+                    )));
+                };
+                if !field_vector_values.contains_ref(value_ref) {
+                    return Err(EmitError::new(format!(
+                        "field vector expr @{} references missing field vector @{}",
+                        expr.symbol,
+                        value_ref.symbol()
+                    )));
+                }
+            }
+        }
+        ScalarExprKind::PowerStridedWeightedSum { .. } => {
+            for operand in &expr.operands {
+                let VerifierScalarExprOperand::Field(value_ref) = operand else {
+                    return Err(EmitError::new(format!(
+                        "{stage} scalar expr @{} expected field operand @{}",
+                        expr.symbol,
+                        operand.symbol()
+                    )));
+                };
+                if !field_values.contains_ref(value_ref) {
+                    return Err(EmitError::new(format!(
+                        "scalar expr @{} references missing field value @{}",
+                        expr.symbol,
+                        value_ref.symbol()
+                    )));
+                }
+            }
+        }
+        ScalarExprKind::StructuredPolynomial { .. } => {
+            verify_count(
+                "structured polynomial scalar expr operands",
+                &expr.symbol,
+                2,
+                expr.operands.len(),
+            )?;
+            for operand in &expr.operands {
+                let VerifierScalarExprOperand::Point(value_ref) = operand else {
+                    return Err(EmitError::new(format!(
+                        "{stage} scalar expr @{} expected point operand @{}",
+                        expr.symbol,
+                        operand.symbol()
+                    )));
+                };
+                if !point_values.is_some_and(|values| values.contains_ref(value_ref)) {
+                    return Err(EmitError::new(format!(
+                        "structured polynomial scalar expr @{} references missing point value @{}",
+                        expr.symbol,
+                        value_ref.symbol()
+                    )));
+                }
+            }
+        }
+        ScalarExprKind::PointElement { .. } => {
+            verify_count(
+                "point element scalar expr operands",
+                &expr.symbol,
+                1,
+                expr.operands.len(),
+            )?;
+            let Some(point_values) = point_values else {
+                return Err(EmitError::new(format!(
+                    "{stage} scalar expr @{} uses point element formula without point sources",
+                    expr.symbol
+                )));
+            };
+            for operand in &expr.operands {
+                let VerifierScalarExprOperand::Point(value_ref) = operand else {
+                    return Err(EmitError::new(format!(
+                        "{stage} scalar expr @{} expected point operand @{}",
+                        expr.symbol,
+                        operand.symbol()
+                    )));
+                };
+                if !point_values.contains_ref(value_ref) {
+                    return Err(EmitError::new(format!(
+                        "point element scalar expr @{} references missing point @{}",
+                        expr.symbol,
+                        value_ref.symbol()
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(super) struct ScalarExprFlowVerification<'a> {
+    pub stage: &'static str,
+    pub cpu_exprs: &'a [CpuScalarExprPlan],
+    pub verifier_exprs: Option<&'a [VerifierScalarExprPlan]>,
+    pub field_values: &'a VerifierScalarSourceSet,
+    pub verifier_field_values: Option<&'a VerifierScalarValueSet>,
+    pub field_vector_values: Option<&'a VerifierFieldVectorValueSet>,
+    pub point_values: Option<&'a VerifierPointSourceSet>,
+}
+
+pub(super) fn verify_scalar_expr_flow(
+    verification: ScalarExprFlowVerification<'_>,
+) -> Result<(), EmitError> {
+    let ScalarExprFlowVerification {
+        stage,
+        cpu_exprs,
+        verifier_exprs,
+        field_values,
+        verifier_field_values,
+        field_vector_values,
+        point_values,
+    } = verification;
+    if let (Some(exprs), Some(field_values)) = (verifier_exprs, verifier_field_values) {
+        for expr in exprs {
+            verify_verifier_scalar_expr_operands(VerifierScalarExprVerification {
+                stage,
+                expr,
+                field_values,
+                field_vector_values,
+                point_values,
+            })?;
+        }
+    } else {
+        for expr in cpu_exprs {
+            verify_scalar_expr_operands(ScalarExprVerification {
+                stage,
+                symbol: &expr.symbol,
+                formula: &expr.formula,
+                operand_names: &expr.operand_names,
+                operands: &expr.operands,
+                field_values,
+                field_vector_values,
+                point_values,
+            })?;
         }
     }
     Ok(())

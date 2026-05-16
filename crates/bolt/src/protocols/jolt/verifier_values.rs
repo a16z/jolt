@@ -237,6 +237,23 @@ pub enum VerifierPointSourceKind {
     PointExpr,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifierPointValueRef {
+    symbol: String,
+}
+
+impl VerifierPointValueRef {
+    pub fn new(symbol: impl Into<String>) -> Self {
+        Self {
+            symbol: symbol.into(),
+        }
+    }
+
+    pub fn symbol(&self) -> &str {
+        &self.symbol
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct VerifierPointSourceSet {
     symbols: BTreeMap<String, VerifierPointSourceKind>,
@@ -274,6 +291,10 @@ impl VerifierPointSourceSet {
 
     pub fn contains(&self, symbol: &str) -> bool {
         self.symbols.contains_key(symbol)
+    }
+
+    pub(crate) fn contains_ref(&self, value_ref: &VerifierPointValueRef) -> bool {
+        self.symbols.contains_key(value_ref.symbol())
     }
 
     pub(crate) fn verify_no_conflicts(&self, stage: &str) -> Result<(), EmitError> {

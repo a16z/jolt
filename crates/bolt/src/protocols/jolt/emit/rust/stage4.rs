@@ -374,16 +374,18 @@ impl Stage4CpuProgram {
         for constant in &self.field_constants {
             require_supported_symbol("field constant field", &constant.field, "bn254_fr")?;
         }
-        let field_values = if self.role == Role::Verifier {
-            self.verifier_plan()?.scalar_value_sources()
-        } else {
-            self.cpu_field_value_sources()
-        };
-        let point_values = if self.role == Role::Verifier {
-            Some(self.verifier_plan()?.point_value_sources())
+        let verifier_plan = if self.role == Role::Verifier {
+            Some(self.verifier_plan()?)
         } else {
             None
         };
+        let verifier_scalar_values = verifier_plan.map(|plan| plan.scalar_values());
+        let field_values = verifier_scalar_values.as_ref().map_or_else(
+            || self.cpu_field_value_sources(),
+            |values| values.source_set(),
+        );
+        let field_vector_values = verifier_plan.map(|plan| plan.field_vector_values());
+        let point_values = verifier_plan.map(|plan| plan.point_value_sources());
         for expr in &self.field_exprs {
             verify_count(
                 "field expr operands",
@@ -400,20 +402,17 @@ impl Stage4CpuProgram {
                 }
             }
         }
-        for expr in &self.scalar_exprs {
-            super::plan_tokens::verify_scalar_expr_operands(
-                super::plan_tokens::ScalarExprVerification {
-                    stage: "stage4",
-                    symbol: &expr.symbol,
-                    formula: &expr.formula,
-                    operand_names: &expr.operand_names,
-                    operands: &expr.operands,
-                    field_values: &field_values,
-                    field_vector_values: None,
-                    point_values: point_values.as_ref(),
-                },
-            )?;
-        }
+        super::plan_tokens::verify_scalar_expr_flow(
+            super::plan_tokens::ScalarExprFlowVerification {
+                stage: "stage4",
+                cpu_exprs: &self.scalar_exprs,
+                verifier_exprs: verifier_plan.map(|plan| plan.scalar_exprs.as_slice()),
+                field_values: &field_values,
+                verifier_field_values: verifier_scalar_values.as_ref(),
+                field_vector_values: field_vector_values.as_ref(),
+                point_values: point_values.as_ref(),
+            },
+        )?;
         for claim in &self.claims {
             if !field_values.contains(&claim.claim_value) {
                 return Err(EmitError::new(format!(

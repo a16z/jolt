@@ -30,9 +30,10 @@ use crate::protocols::jolt::verifier_value_rows::{
     CpuFieldConstantPlan, CpuFieldExprPlan, CpuScalarExprPlan,
 };
 use crate::protocols::jolt::verifier_values::{
-    VerifierFieldVectorValueKind, VerifierFieldVectorValueSet, VerifierPointSourceKind,
-    VerifierPointSourceSet, VerifierScalarSourceSet, VerifierScalarValueKind,
-    VerifierScalarValuePlan, VerifierScalarValueSet,
+    VerifierFieldVectorValueKind, VerifierFieldVectorValueRef, VerifierFieldVectorValueSet,
+    VerifierPointSourceKind, VerifierPointSourceSet, VerifierPointValueRef,
+    VerifierScalarSourceSet, VerifierScalarValueKind, VerifierScalarValuePlan,
+    VerifierScalarValueRef, VerifierScalarValueSet,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -156,7 +157,24 @@ impl VerifierFieldExprPlan {
 pub(crate) struct VerifierScalarExprPlan {
     pub(crate) symbol: String,
     pub(crate) kind: ScalarExprKind,
-    pub(crate) operands: Vec<String>,
+    pub(crate) operands: Vec<VerifierScalarExprOperand>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum VerifierScalarExprOperand {
+    Field(VerifierScalarValueRef),
+    FieldVector(VerifierFieldVectorValueRef),
+    Point(VerifierPointValueRef),
+}
+
+impl VerifierScalarExprOperand {
+    pub(crate) fn symbol(&self) -> &str {
+        match self {
+            Self::Field(value_ref) => value_ref.symbol(),
+            Self::FieldVector(value_ref) => value_ref.symbol(),
+            Self::Point(value_ref) => value_ref.symbol(),
+        }
+    }
 }
 
 impl VerifierScalarExprPlan {
@@ -165,11 +183,61 @@ impl VerifierScalarExprPlan {
         formula: &str,
         operands: &[String],
     ) -> Result<Self, EmitError> {
+        let kind = ScalarExprKind::from_cpu_attr(formula).map_err(plan_error)?;
         Ok(Self {
             symbol: symbol.to_owned(),
-            kind: ScalarExprKind::from_cpu_attr(formula).map_err(plan_error)?,
-            operands: operands.to_vec(),
+            operands: scalar_expr_operands(symbol, &kind, operands)?,
+            kind,
         })
+    }
+}
+
+fn scalar_expr_operands(
+    symbol: &str,
+    kind: &ScalarExprKind,
+    operands: &[String],
+) -> Result<Vec<VerifierScalarExprOperand>, EmitError> {
+    match kind {
+        ScalarExprKind::FieldVectorSum | ScalarExprKind::FieldVectorProduct => {
+            verify_plan_operand_count("field-vector scalar expr", symbol, 1, operands.len())?;
+            Ok(operands
+                .iter()
+                .map(|operand| {
+                    VerifierScalarExprOperand::FieldVector(VerifierFieldVectorValueRef::new(
+                        operand.as_str(),
+                    ))
+                })
+                .collect())
+        }
+        ScalarExprKind::PowerStridedWeightedSum { .. } => Ok(operands
+            .iter()
+            .map(|operand| {
+                VerifierScalarExprOperand::Field(VerifierScalarValueRef::new(operand.as_str()))
+            })
+            .collect()),
+        ScalarExprKind::StructuredPolynomial { .. } => {
+            verify_plan_operand_count(
+                "structured polynomial scalar expr",
+                symbol,
+                2,
+                operands.len(),
+            )?;
+            Ok(operands
+                .iter()
+                .map(|operand| {
+                    VerifierScalarExprOperand::Point(VerifierPointValueRef::new(operand.as_str()))
+                })
+                .collect())
+        }
+        ScalarExprKind::PointElement { .. } => {
+            verify_plan_operand_count("point element scalar expr", symbol, 1, operands.len())?;
+            Ok(operands
+                .iter()
+                .map(|operand| {
+                    VerifierScalarExprOperand::Point(VerifierPointValueRef::new(operand.as_str()))
+                })
+                .collect())
+        }
     }
 }
 
@@ -1782,7 +1850,7 @@ pub(crate) fn emit_scalar_expr_constants(
                 "    {stage_type_prefix}ScalarExprPlan {{ symbol: {}, kind: {}, operands: {} }},",
                 rust_str(&expr.symbol),
                 scalar_expr_kind_expr(stage_type_prefix, &expr.kind),
-                rust_str_slice_expr(&expr.operands),
+                scalar_expr_operand_slice_expr(&expr.operands),
             )
         })
         .collect::<Vec<_>>()
@@ -1840,7 +1908,7 @@ pub(crate) fn emit_scalar_expr_constants_chunked(
                         "{helper_name}({}, {}, {})",
                         rust_str(&expr.symbol),
                         scalar_expr_kind_expr(stage_type_prefix, &expr.kind),
-                        rust_str_slice_expr(&expr.operands)
+                        scalar_expr_operand_slice_expr(&expr.operands)
                     )
                 })
                 .collect::<Vec<_>>()
@@ -1852,6 +1920,18 @@ pub(crate) fn emit_scalar_expr_constants_chunked(
     format!(
         "const fn {helper_name}(symbol: &'static str, kind: {stage_type_prefix}ScalarExprKind, operands: &'static [&'static str]) -> {stage_type_prefix}ScalarExprPlan {{\n    {stage_type_prefix}ScalarExprPlan {{ symbol, kind, operands }}\n}}\n\n#[rustfmt::skip]\npub const {const_prefix}_SCALAR_EXPRS: &[{stage_type_prefix}ScalarExprPlan] = &[\n{rows}\n];\n"
     )
+}
+
+fn scalar_expr_operand_slice_expr(operands: &[VerifierScalarExprOperand]) -> String {
+    if operands.is_empty() {
+        return "&[]".to_owned();
+    }
+    let values = operands
+        .iter()
+        .map(|operand| rust_str(operand.symbol()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("&[{values}]")
 }
 
 pub(crate) fn emit_sumcheck_claim_constants(
@@ -2167,13 +2247,27 @@ fn rust_str(value: &str) -> String {
     format!("{value:?}")
 }
 
+fn verify_plan_operand_count(
+    kind: &str,
+    symbol: &str,
+    expected: usize,
+    actual: usize,
+) -> Result<(), EmitError> {
+    if expected == actual {
+        Ok(())
+    } else {
+        Err(EmitError::new(format!(
+            "{kind} @{symbol} operand count mismatch: expected {expected}, got {actual}"
+        )))
+    }
+}
+
 fn plan_error(error: RustTargetPlanError) -> EmitError {
     EmitError::new(error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::protocols::jolt::rust_target_plan::ScalarExprKind;
     use crate::protocols::jolt::stage5_instruction_read_raf_plan::Stage5InstructionReadRafEmitPlan;
     use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
     use crate::protocols::jolt::verifier_local_scalars::{
@@ -2188,26 +2282,29 @@ mod tests {
         VerifierFieldVectorValueRef, VerifierScalarValueKind, VerifierScalarValuePlan,
     };
 
-    use super::{VerifierScalarExprPlan, VerifierStagePlan};
+    use super::{VerifierScalarExprOperand, VerifierScalarExprPlan, VerifierStagePlan};
 
     #[test]
     fn scalar_value_plans_classify_structured_evals_and_local_scalars() -> Result<(), String> {
         let mut plan = VerifierStagePlan::default();
         plan.relation_output_values
             .push(structured_polynomial_eval("stage5.output.eq"));
-        plan.scalar_exprs.push(VerifierScalarExprPlan {
-            symbol: "stage5.output.eq".to_owned(),
-            kind: ScalarExprKind::from_cpu_attr(
+        plan.scalar_exprs.push(
+            VerifierScalarExprPlan::from_cpu(
+                "stage5.output.eq",
                 "poly.structured_eval:eq:full:full:as_is:full:full:as_is",
+                &["point.x".to_owned(), "point.y".to_owned()],
             )
             .map_err(|error| error.to_string())?,
-            operands: vec!["point.x".to_owned(), "point.y".to_owned()],
-        });
-        plan.scalar_exprs.push(VerifierScalarExprPlan {
-            symbol: "stage5.output.sum".to_owned(),
-            kind: ScalarExprKind::FieldVectorSum,
-            operands: vec!["field.vector".to_owned()],
-        });
+        );
+        plan.scalar_exprs.push(
+            VerifierScalarExprPlan::from_cpu(
+                "stage5.output.sum",
+                "field_vector.sum",
+                &["field.vector".to_owned()],
+            )
+            .map_err(|error| error.to_string())?,
+        );
         plan.relation_local_inputs
             .add_stage5_instruction_read_raf(stage5_local_input_plan())
             .map_err(|error| error.to_string())?;
@@ -2233,6 +2330,44 @@ mod tests {
             "stage5.local.lookup",
             VerifierScalarValueKind::RelationOutputLocal
         )));
+        Ok(())
+    }
+
+    #[test]
+    fn scalar_expr_plan_types_operands_by_formula() -> Result<(), String> {
+        let field_expr = VerifierScalarExprPlan::from_cpu(
+            "field.expr",
+            "field.power_strided_weighted_sum:2:1:0:1:2",
+            &["field.value".to_owned()],
+        )
+        .map_err(|error| error.to_string())?;
+        assert!(matches!(
+            &field_expr.operands[..],
+            [VerifierScalarExprOperand::Field(value_ref)] if value_ref.symbol() == "field.value"
+        ));
+
+        let vector_expr = VerifierScalarExprPlan::from_cpu(
+            "vector.expr",
+            "field_vector.product",
+            &["vector.value".to_owned()],
+        )
+        .map_err(|error| error.to_string())?;
+        assert!(matches!(
+            &vector_expr.operands[..],
+            [VerifierScalarExprOperand::FieldVector(value_ref)] if value_ref.symbol() == "vector.value"
+        ));
+
+        let point_expr = VerifierScalarExprPlan::from_cpu(
+            "point.expr",
+            "point.element:0",
+            &["point.value".to_owned()],
+        )
+        .map_err(|error| error.to_string())?;
+        assert!(matches!(
+            &point_expr.operands[..],
+            [VerifierScalarExprOperand::Point(value_ref)] if value_ref.symbol() == "point.value"
+        ));
+
         Ok(())
     }
 
