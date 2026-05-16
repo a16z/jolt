@@ -56,6 +56,19 @@ The goal is to reduce the human-facing generated verifier surface by roughly an
 order of magnitude. Shared runtime code may exist, but it must be modular,
 boring to audit, and driven by explicit MLIR-derived plan data.
 
+Current S2.75-S5 implementation status:
+
+- S3/S4/S5 have largely landed in the generated verifier shape: Stage 2-7 emit
+  typed scalar/point/vector/eval-family refs and `RelationOutputPlan` rows, old
+  eval-prefix reconstruction sites are gated at zero, and handwritten
+  `expected_stage67_*` output helpers are gone from generated/runtime code.
+- S2.75 remains the main incomplete architecture item. The stack has typed
+  planning data (`VerifierStagePlan` and typed value sets), but the CPU-to-Rust
+  planning boundaries still need to become explicit named pass artifacts.
+- Performance evidence remains a live completion gate. The SHA2-chain perf
+  oracles must be rerun for the interpreter-heavy slices before this goal is
+  closed.
+
 ## Audit Tiers
 
 The verifier code is partitioned into three explicit audit tiers. The `Concrete

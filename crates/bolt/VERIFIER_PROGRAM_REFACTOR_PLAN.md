@@ -562,6 +562,16 @@ consume a typed Rust-plan / verifier-plan representation produced by passes.
 - The Rust emitter's responsibility is mostly formatting typed const data and
   importing the right runtime/Jolt-boundary APIs.
 
+### Current status
+
+The current stack has most of the typed planning data this section calls for:
+`VerifierStagePlan` owns stage-local scalar, point, vector, eval-family, and
+relation-output plan rows; generated Stage 2-7 code emits typed
+`RelationOutputPlan` data; and the Rust emitters increasingly consume typed
+refs rather than rebuilding meaning from raw strings. The remaining S2.75 work
+is to make these boundaries explicit as named planning-pass artifacts and to
+keep new verifier semantics from landing directly in Rust emitters.
+
 ---
 
 ## S3: Typed verifier value graph + polynomial primitives
@@ -909,21 +919,36 @@ that second interpreter is worth the extra audit surface.
 
 ### Dialect changes
 
-Add a top-level `compute::relation` op that ties a relation kind to a typed
-expected-output scalar:
+The accepted S5 carrier is `compute.sumcheck_output_claim`, not an
+expected-output-bearing `compute.relation` declaration. `compute.relation`
+remains relation metadata: symbol, kind, domain, rounds, degree, and output
+count. The expected-output scalar is a typed value-graph operand of
+`compute.sumcheck_output_claim`, along with the relation symbol/kind and the
+polynomial eval operands that make the output claim auditable:
 
 ```mlir
-compute.relation {
-  sym_name = "stage6.booleanity"
-  kind = "Stage6Booleanity"
-  query_point = @stage6_booleanity_point
-  expected_output = @stage6_booleanity_expected
+%expected = compute.field_expr ... : !compute.field
+compute.sumcheck_output_claim %expected, %eval0, %eval1 {
+  sym_name = "stage6.booleanity.output",
+  stage = "stage6",
+  relation = @stage6.booleanity,
+  count = 2 : i64,
+  polynomial_evals = ["stage6.booleanity.eval0", "stage6.booleanity.eval1"]
 }
 ```
 
-Stage emitters lower this to a `RelationPlan` in the generated stage files.
-The expression feeding `expected_output` should be ordinary typed value-graph
+The CPU lowering preserves that shape as `cpu.sumcheck_output_claim`. Stage
+emitters lower those rows into generated `RelationOutputPlan` data whose
+`expected_output` field points at the typed scalar produced by the value graph.
+The expression feeding `expected_output` must remain ordinary typed value-graph
 data, not hidden inside the emitter.
+
+This keeps relation declarations and relation-output claims separate:
+
+- `compute.relation` declares the relation and its static verifier metadata.
+- `compute.sumcheck_output_claim` binds a concrete output-claim scalar to that
+  relation for a verifier stage.
+- Generated `RelationOutputPlan` rows are the Rust target-plan projection.
 
 ### Tier C impact (acknowledged growth)
 
@@ -964,17 +989,19 @@ declarative.
 ### Acceptance criteria
 
 Same correctness gates plus: `expected_stage67_*` functions in Tier B
-are deleted. New `compute::relation` ops and any value-graph ops they depend on
-have validator coverage. `muldiv` passes in both modes.
+are deleted. `compute.sumcheck_output_claim` and any value-graph ops it depends
+on have validator coverage. Generated stages contain typed `RelationOutputPlan`
+rows, and the cleanup gate reports `handwritten_expected_output_functions: 0`.
+`muldiv` passes in both modes, and verifier-time perf evidence is recorded.
 
 ### Rollback
 
 This is the most invasive slice. If the relation interpreter design is
 wrong, S5 should be revertible by restoring the deleted
-`expected_stage67_*` functions and removing the relation-plan emitter
-output. Recommend keeping the per-relation hand-written code in a
-preserved-for-comparison file in the worklog while S5 is being shaken
-down.
+`expected_stage67_*` functions and removing the `RelationOutputPlan` emitter
+output. Do not keep the old helpers as a fallback in generated verifier code;
+that would violate the full-cutover rule. If comparison material is needed,
+keep it only in the local never-commit worklog while S5 is being shaken down.
 
 ### Estimated wall-clock
 
@@ -1106,11 +1133,12 @@ typed verifier value graph (`Scalar`, `Point`, `FieldVector`, eval families)
 rather than a larger bag of scalar-only field-expression variants or runtime
 string dispatch.
 
-S5 introduces `compute::relation` as generic relation metadata over the value
-graph, not a Jolt-specific relation language. Closed relation enums live at the
-protocol/stage boundary; the generic runtime is parameterized over the protocol
-relation enum when it needs equality or dispatch. Opaque typed symbols are for
-generic storage paths that do not branch on relation kind.
+S5 keeps `compute.relation` as generic relation metadata and uses
+`compute.sumcheck_output_claim` to bind a typed expected-output scalar to that
+relation. This is not a Jolt-specific relation language. Closed relation enums
+live at the protocol/stage boundary; the generic runtime is parameterized over
+the protocol relation enum when it needs equality or dispatch. Opaque typed
+symbols are for generic storage paths that do not branch on relation kind.
 
 S6 is explicitly Jolt-specific. If pursued, it goes under
 `crates/bolt/src/protocols/jolt/`, not in `bolt-verifier-runtime`.
@@ -1150,11 +1178,12 @@ us real-data core-vs-Bolt setup/prove/verify/proof-size/RSS measurements, but
 their current thresholds are broad smoke limits. Treat them as necessary but
 not sufficient for interpreter-heavy slices.
 
-Before S2.75, S3, or S5 lands, record a local verifier-time baseline from the
-SHA2-chain perf oracle and rerun it after the slice. If a verifier-time change
-is noisy, rerun before calling it real. If a repeatable regression remains,
-either fix it or explicitly document why the readability/security gain is worth
-the cost. Do not loosen perf thresholds to make a refactor pass. The existing
+Before closing S2.75/S3/S5 completion, record verifier-time evidence from the
+SHA2-chain perf oracle. For future interpreter-heavy slices, capture a local
+baseline before the slice and rerun after it. If a verifier-time change is
+noisy, rerun before calling it real. If a repeatable regression remains, either
+fix it or explicitly document why the readability/security gain is worth the
+cost. Do not loosen perf thresholds to make a refactor pass. The existing
 S2/S2.5 progress should keep its captured baselines as reference data.
 
 The expected trend is "no measurable verifier change," because the interpreter
@@ -1230,19 +1259,16 @@ Add S2.75 planning seams next.                    [unconditional]
   Make CPU-to-Rust verifier planning explicit.
   Prevent new semantics from landing in emitters or runtime string dispatch.
 
-Land S3 after planning seams.                     [unconditional]
-  Establish scalar/point/field-vector/eval-family value graph.
-  Convert Stage 3 then Stage 4 relation-output checks first.
-  Defer bytecode, RAM sparse, lookup-table, and univariate-skip special cases.
+Audit S3/S4/S5 completion.                        [unconditional]
+  Confirm scalar/point/field-vector/eval-family value graph coverage.
+  Keep `compute.sumcheck_output_claim` as the expected-output carrier and
+  `compute.relation` as static relation metadata.
+  Verify old eval-prefix reconstruction and `expected_stage67_*` helpers stay
+  deleted.
 
-Decide on S4 vs Markos' next slice.              [coordinate]
-  S4 is independent of Markos' work; either order is fine.
-
-Pause before S5.                                 [explicit human review]
-  Decide whether the relation-as-data shape is right for Jolt's
-  current and likely-future relations. If yes, land S5. If not,
-  stop here; the verifier is in a defensible state with Tier B at
-  ~350 LOC of typed Rust.
+Capture verifier perf evidence.                  [unconditional]
+  Run the SHA2-chain core-vs-Bolt perf oracle and record verifier-time results
+  before closing the goal.
 
 S6 only on demand.                               [optional]
   Defer until there is a concrete second user or audit pressure.
