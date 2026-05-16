@@ -2556,6 +2556,7 @@ where
         program.relation_outputs,
         program.field_exprs,
         program.scalar_exprs,
+        &[],
         &store.0,
         &proof.evals,
         &output.point,

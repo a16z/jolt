@@ -1342,6 +1342,11 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
         } else {
             ""
         };
+        let indexed_eval_families_field = if self.role == Role::Verifier {
+            "    indexed_eval_families: &[],\n"
+        } else {
+            ""
+        };
         let scalar_exprs_field = if self.role == Role::Verifier {
             "    scalar_exprs: STAGE7_SCALAR_EXPRS,\n"
         } else {
@@ -1371,6 +1376,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
                  \x20   drivers: STAGE7_SUMCHECK_DRIVERS,\n\
                  \x20   instance_results: STAGE7_SUMCHECK_INSTANCE_RESULTS,\n\
                  \x20   evals: STAGE7_SUMCHECK_EVALS,\n\
+                 {indexed_eval_families_field}\
                  {relation_outputs_field}\
                  {point_exprs_field}\
                  \x20   opening_claims: STAGE7_OPENING_CLAIMS,\n\
@@ -2261,6 +2267,7 @@ where
                 program.relation_outputs,
                 program.field_exprs,
                 program.scalar_exprs,
+                &[],
                 store,
                 evals,
                 point,

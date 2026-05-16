@@ -26,5 +26,6 @@ define_stage_adapter!(
     Stage5OpeningClaimEqualityPlan,
     Stage5OpeningBatchPlan,
     scalar_expr = Stage5ScalarExprPlan,
+    indexed_eval_families = indexed_eval_family_rows,
     relation_outputs = Stage5RelationOutputPlan
 );

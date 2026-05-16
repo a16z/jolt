@@ -611,6 +611,8 @@ macro_rules! define_stage_adapter_impl {
         $(, generated_points_with_zeros = $generated_point_with_zeros:ident, $generated_point_zero:ident)?
         $(, kernel_points = $kernel_point_slice:ident, $kernel_point_concat:ident)?
         $(, kernel_points_with_zeros = $kernel_point_slice_with_zeros:ident, $kernel_point_concat_with_zeros:ident, $kernel_point_zero:ident)?
+        $(, indexed_eval_families = $indexed_eval_families:ident)?
+        $(, empty_indexed_eval_families = $empty_indexed_eval_families:ident)?
         $(, relation_outputs = $relation_output:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
         $(, opening_equalities = $opening_equality:ident)?
@@ -776,6 +778,17 @@ macro_rules! define_stage_adapter_impl {
                         })
                         .collect(),
                 ),
+                $(
+                indexed_eval_families: super::leak_named_eval_family_rows(
+                    program.$indexed_eval_families()
+                ),
+                )?
+                $(
+                indexed_eval_families: {
+                    let _ = stringify!($empty_indexed_eval_families);
+                    &[]
+                },
+                )?
                 $(
                 relation_outputs: super::leak_slice(
                     program
@@ -958,6 +971,8 @@ macro_rules! define_stage_adapter {
         point_zero = $point_zero:ident
         $(, scalar_expr = $scalar_expr:ident)?
         $(, empty_scalar_exprs = $empty_scalar_exprs:ident)?
+        $(, indexed_eval_families = $indexed_eval_families:ident)?
+        $(, empty_indexed_eval_families = $empty_indexed_eval_families:ident)?
         $(, relation_outputs = $relation_output:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
     ) => {
@@ -987,6 +1002,8 @@ macro_rules! define_stage_adapter {
             $(, empty_scalar_exprs = $empty_scalar_exprs)?
             ,
             generated_points_with_zeros = $point_expr, $point_zero
+            $(, indexed_eval_families = $indexed_eval_families)?
+            $(, empty_indexed_eval_families = $empty_indexed_eval_families)?
             $(, relation_outputs = $relation_output)?
             $(, empty_relation_outputs = $empty_relation_outputs)?
             ,
@@ -1019,6 +1036,8 @@ macro_rules! define_stage_adapter {
         $opening_batch:ident
         $(, scalar_expr = $scalar_expr:ident)?
         $(, empty_scalar_exprs = $empty_scalar_exprs:ident)?
+        $(, indexed_eval_families = $indexed_eval_families:ident)?
+        $(, empty_indexed_eval_families = $empty_indexed_eval_families:ident)?
         $(, relation_outputs = $relation_output:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
     ) => {
@@ -1048,6 +1067,8 @@ macro_rules! define_stage_adapter {
             $(, empty_scalar_exprs = $empty_scalar_exprs)?
             ,
             generated_points = $point_expr
+            $(, indexed_eval_families = $indexed_eval_families)?
+            $(, empty_indexed_eval_families = $empty_indexed_eval_families)?
             $(, relation_outputs = $relation_output)?
             $(, empty_relation_outputs = $empty_relation_outputs)?
             ,
@@ -1810,6 +1831,21 @@ fn leak_str_slice(values: &[String]) -> &'static [&'static str] {
         .map(|value| leak_str(value))
         .collect::<Vec<_>>();
     Box::leak(leaked.into_boxed_slice())
+}
+
+fn leak_named_eval_family_rows<'a>(
+    rows: impl IntoIterator<Item = (&'a str, &'a [String])>,
+) -> &'static [bolt_verifier_runtime::NamedEvalFamilyPlan] {
+    leak_slice(
+        rows.into_iter()
+            .map(
+                |(symbol, evals)| bolt_verifier_runtime::NamedEvalFamilyPlan {
+                    symbol: leak_str(symbol),
+                    evals: leak_str_slice(evals),
+                },
+            )
+            .collect(),
+    )
 }
 
 fn leak_usize_slice(values: &[usize]) -> &'static [usize] {

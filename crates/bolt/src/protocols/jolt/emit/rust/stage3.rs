@@ -1784,6 +1784,7 @@ where
                 program.relation_outputs,
                 program.field_exprs,
                 program.scalar_exprs,
+                &[],
                 store,
                 evals,
                 point,

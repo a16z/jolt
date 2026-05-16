@@ -128,6 +128,12 @@ pub fn emit_stage5_rust(module: &BoltModule<'_, Cpu>) -> Result<RustSourceFile, 
 }
 
 impl Stage5CpuProgram {
+    pub fn indexed_eval_family_rows(&self) -> impl Iterator<Item = (&str, &[String])> {
+        self.indexed_eval_families
+            .iter()
+            .map(|family| (family.symbol.as_str(), family.evals.as_slice()))
+    }
+
     fn from_module(module: &BoltModule<'_, Cpu>) -> Result<Self, EmitError> {
         let mut params = None;
         let mut steps = Vec::new();
@@ -1215,6 +1221,11 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
         } else {
             ""
         };
+        let indexed_eval_families_field = if self.role == Role::Verifier {
+            "    indexed_eval_families: STAGE5_INDEXED_EVAL_FAMILIES,\n"
+        } else {
+            ""
+        };
         let scalar_exprs_field = if self.role == Role::Verifier {
             "    scalar_exprs: STAGE5_SCALAR_EXPRS,\n"
         } else {
@@ -1244,6 +1255,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
                  \x20   drivers: STAGE5_SUMCHECK_DRIVERS,\n\
                  \x20   instance_results: STAGE5_SUMCHECK_INSTANCE_RESULTS,\n\
                  \x20   evals: STAGE5_SUMCHECK_EVALS,\n\
+                 {indexed_eval_families_field}\
                  {relation_outputs_field}\
                  {point_exprs_field}\
                  \x20   opening_claims: STAGE5_OPENING_CLAIMS,\n\
@@ -2114,6 +2126,7 @@ where
                 program.relation_outputs,
                 program.field_exprs,
                 program.scalar_exprs,
+                program.indexed_eval_families,
                 store,
                 evals,
                 point,
@@ -2158,7 +2171,7 @@ fn observe_stage5_sumcheck_output<F: Field>(
         },
         |symbol| VerifyStage5Error::MissingValue { symbol },
     )?;
-    store.evaluate_named_eval_families(STAGE5_INDEXED_EVAL_FAMILIES)?;
+    store.evaluate_named_eval_families(program.indexed_eval_families)?;
     store.evaluate_available_points(
         program.point_exprs,
         |input, expected, actual| VerifyStage5Error::InvalidInputLength {

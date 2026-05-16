@@ -27,5 +27,6 @@ define_stage_adapter!(
     Stage7OpeningBatchPlan,
     point_zero = Stage7PointExprPlan,
     scalar_expr = Stage7ScalarExprPlan,
+    empty_indexed_eval_families = empty_indexed_eval_families,
     relation_outputs = Stage7RelationOutputPlan
 );

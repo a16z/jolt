@@ -680,6 +680,7 @@ pub const STAGE6_PROGRAM: Stage6VerifierProgramPlan = Stage6CpuProgramPlan {
     drivers: STAGE6_SUMCHECK_DRIVERS,
     instance_results: STAGE6_SUMCHECK_INSTANCE_RESULTS,
     evals: STAGE6_SUMCHECK_EVALS,
+    indexed_eval_families: STAGE6_INDEXED_EVAL_FAMILIES,
     relation_outputs: STAGE6_RELATION_OUTPUTS,
     point_exprs: STAGE6_POINT_EXPRS,
     opening_claims: STAGE6_OPENING_CLAIMS,
@@ -880,6 +881,7 @@ where
                 program.relation_outputs,
                 program.field_exprs,
                 program.scalar_exprs,
+                program.indexed_eval_families,
                 store,
                 evals,
                 point,
@@ -925,7 +927,7 @@ fn observe_stage6_sumcheck_output<F: Field>(
         },
         |symbol| VerifyStage6Error::MissingValue { symbol },
     )?;
-    store.evaluate_named_eval_families(STAGE6_INDEXED_EVAL_FAMILIES)?;
+    store.evaluate_named_eval_families(program.indexed_eval_families)?;
     store.evaluate_available_points(
         program.point_exprs,
         |input, expected, actual| VerifyStage6Error::InvalidInputLength {

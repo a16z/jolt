@@ -493,6 +493,7 @@ pub struct StageProgramPlan<R: ProtocolRelation> {
     pub drivers: &'static [SumcheckDriverPlan<R>],
     pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
     pub evals: &'static [SumcheckEvalPlan],
+    pub indexed_eval_families: &'static [NamedEvalFamilyPlan],
     pub relation_outputs: &'static [RelationOutputPlan<R>],
     pub point_exprs: &'static [PointExprPlan],
     pub opening_claims: &'static [OpeningClaimPlan],
@@ -551,6 +552,12 @@ pub struct NamedScalar<F: Field> {
 pub struct NamedPoint<'a, F: Field> {
     pub symbol: &'static str,
     pub point: &'a [F],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NamedFieldVector<F: Field> {
+    symbol: &'static str,
+    values: Vec<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1294,10 +1301,27 @@ pub fn eval_family_values<F: Field>(
         .collect()
 }
 
+pub fn try_eval_family_values<F: Field>(
+    evals: &[StageNamedEval<F>],
+    family: &NamedEvalFamilyPlan,
+) -> Option<Vec<F>> {
+    family
+        .evals
+        .iter()
+        .map(|&name| {
+            evals
+                .iter()
+                .find(|eval| eval.name == name)
+                .map(|eval| eval.value)
+        })
+        .collect()
+}
+
 pub fn evaluate_relation_output<R: ProtocolRelation>(
     plan: &RelationOutputPlan<R>,
     field_exprs: &[FieldExprPlan],
     scalar_exprs: &[ScalarExprPlan],
+    eval_families: &[NamedEvalFamilyPlan],
     store: &ValueStore<Fr>,
     instance_symbol: &'static str,
     evals: &[StageNamedEval<Fr>],
@@ -1317,10 +1341,20 @@ pub fn evaluate_relation_output<R: ProtocolRelation>(
     for eval in evals {
         scratch.insert(eval.name, eval.value);
     }
+    let local_field_vectors = eval_families
+        .iter()
+        .filter_map(|family| {
+            try_eval_family_values(evals, family).map(|values| NamedFieldVector {
+                symbol: family.symbol,
+                values,
+            })
+        })
+        .collect::<Vec<_>>();
     let context = RelationOutputContext {
         instance_symbol,
         local_points,
         local_point,
+        local_field_vectors: &local_field_vectors,
     };
     evaluate_available_exprs_with_scratch(field_exprs, scalar_exprs, store, &mut scratch, context)?;
     scratch
@@ -1334,6 +1368,7 @@ pub fn evaluate_relation_output_for_instance<R: ProtocolRelation>(
     relation_outputs: &[RelationOutputPlan<R>],
     field_exprs: &[FieldExprPlan],
     scalar_exprs: &[ScalarExprPlan],
+    eval_families: &[NamedEvalFamilyPlan],
     store: &ValueStore<Fr>,
     instance: &SumcheckInstanceResultPlan<R>,
     evals: &[StageNamedEval<Fr>],
@@ -1352,6 +1387,7 @@ pub fn evaluate_relation_output_for_instance<R: ProtocolRelation>(
         relation_output,
         field_exprs,
         scalar_exprs,
+        eval_families,
         store,
         instance.symbol,
         evals,
@@ -1369,6 +1405,7 @@ pub fn evaluate_relation_output_batch<R, E, LocalInputs>(
     relation_outputs: &[RelationOutputPlan<R>],
     field_exprs: &[FieldExprPlan],
     scalar_exprs: &[ScalarExprPlan],
+    eval_families: &[NamedEvalFamilyPlan],
     store: &ValueStore<Fr>,
     evals: &[StageNamedEval<Fr>],
     point: &[Fr],
@@ -1406,6 +1443,7 @@ where
             relation_outputs,
             field_exprs,
             scalar_exprs,
+            eval_families,
             store,
             instance,
             evals,
@@ -1418,20 +1456,19 @@ where
     Ok(expected)
 }
 
-fn relation_output_x_point_source<'a>(
+fn try_relation_output_x_point_source<'a>(
     source: &'static str,
     instance_symbol: &'static str,
     local_points: &'a [NamedPoint<'a, Fr>],
     local_point: &'a [Fr],
     store: &'a ValueStore<Fr>,
-) -> Result<&'a [Fr], RuntimePlanError> {
+) -> Option<&'a [Fr]> {
     local_points
         .iter()
         .find(|point| point.symbol == source)
         .map(|point| point.point)
         .or_else(|| (source == instance_symbol).then_some(local_point))
         .or_else(|| store.try_point(source))
-        .ok_or(RuntimePlanError::MissingValue { symbol: source })
 }
 
 #[derive(Clone, Copy)]
@@ -1439,6 +1476,7 @@ struct RelationOutputContext<'a> {
     instance_symbol: &'static str,
     local_points: &'a [NamedPoint<'a, Fr>],
     local_point: &'a [Fr],
+    local_field_vectors: &'a [NamedFieldVector<Fr>],
 }
 
 fn evaluate_structured_polynomial_point(
@@ -1600,7 +1638,13 @@ fn evaluate_relation_output_scalar_expr(
             let [symbol] = expr.operands else {
                 return evaluate_scalar_expr(expr, &[]).map(Some);
             };
-            let Some(values) = store.try_field_vector(symbol) else {
+            let Some(values) = context
+                .local_field_vectors
+                .iter()
+                .find(|field_vector| field_vector.symbol == *symbol)
+                .map(|field_vector| field_vector.values.as_slice())
+                .or_else(|| store.try_field_vector(symbol))
+            else {
                 return Ok(None);
             };
             evaluate_scalar_expr(expr, values).map(Some)
@@ -1617,8 +1661,7 @@ fn evaluate_relation_output_scalar_expr(
             y_point,
             store,
             context,
-        )
-        .map(Some),
+        ),
         ScalarExprKind::PowerStridedWeightedSum { .. } => expr
             .operands
             .iter()
@@ -1631,13 +1674,15 @@ fn evaluate_relation_output_scalar_expr(
             let [source] = expr.operands else {
                 return evaluate_scalar_expr(expr, &[]).map(Some);
             };
-            let point = relation_output_x_point_source(
+            let Some(point) = try_relation_output_x_point_source(
                 source,
                 context.instance_symbol,
                 context.local_points,
                 context.local_point,
                 store,
-            )?;
+            ) else {
+                return Ok(None);
+            };
             let value = point
                 .get(index)
                 .copied()
@@ -1659,19 +1704,22 @@ fn evaluate_structured_polynomial_scalar(
     y_transform: StructuredPolynomialPointTransform,
     store: &ValueStore<Fr>,
     context: RelationOutputContext<'_>,
-) -> Result<Fr, RuntimePlanError> {
+) -> Result<Option<Fr>, RuntimePlanError> {
     require_operand_count(symbol, 2, operands.len())?;
     let x_source = operands[0];
     let y_source = operands[1];
-    let x_raw_point = relation_output_x_point_source(
+    let Some(x_raw_point) = try_relation_output_x_point_source(
         x_source,
         context.instance_symbol,
         context.local_points,
         context.local_point,
         store,
-    )?;
-    let y_raw_point =
-        store.point_or(y_source, |symbol| RuntimePlanError::MissingValue { symbol })?;
+    ) else {
+        return Ok(None);
+    };
+    let Some(y_raw_point) = store.try_point(y_source) else {
+        return Ok(None);
+    };
     let x_plan = StructuredPolynomialPointPlan {
         source: x_source,
         segment: x_transform.segment,
@@ -1688,7 +1736,7 @@ fn evaluate_structured_polynomial_scalar(
         evaluate_structured_polynomial_point(x_plan, x_raw_point, x_raw_point, y_raw_point)?;
     let y_point =
         evaluate_structured_polynomial_point(y_plan, y_raw_point, x_raw_point, y_raw_point)?;
-    evaluate_structured_polynomial(polynomial, &x_point, y_point)
+    evaluate_structured_polynomial(polynomial, &x_point, y_point).map(Some)
 }
 
 pub fn single_operand<F: Field>(
@@ -2036,7 +2084,7 @@ mod tests {
     use super::{
         evaluate_relation_output_for_instance, evaluate_scalar_expr, FieldExprKind, FieldExprPlan,
         Fr, NamedEvalFamilyPlan, RelationOutputPlan, RuntimePlanError, ScalarExprKind,
-        ScalarExprPlan, StructuredPolynomialKind, StructuredPolynomialPointLength,
+        ScalarExprPlan, StageNamedEval, StructuredPolynomialKind, StructuredPolynomialPointLength,
         StructuredPolynomialPointOrder, StructuredPolynomialPointSegment,
         StructuredPolynomialPointTransform, SumcheckInstanceResultPlan, SumcheckPointOrder,
         ValueStore,
@@ -2045,6 +2093,7 @@ mod tests {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum TestRelation {
         Output,
+        Sibling,
     }
 
     #[test]
@@ -2202,6 +2251,7 @@ mod tests {
                 },
                 operands: &["instance", "point.y"],
             }],
+            &[],
             &store,
             &SumcheckInstanceResultPlan {
                 symbol: "instance",
@@ -2223,6 +2273,127 @@ mod tests {
         .unwrap();
 
         assert_eq!(value, Fr::from_u64(1));
+    }
+
+    #[test]
+    fn relation_output_skips_unavailable_sibling_instance_exprs() {
+        let x = [Fr::from_u64(1), Fr::from_u64(0)];
+        let mut store = ValueStore::default();
+        store.insert_point("point.y", x.to_vec());
+
+        let structured_eq = ScalarExprKind::StructuredPolynomial {
+            polynomial: StructuredPolynomialKind::Eq,
+            x_point: StructuredPolynomialPointTransform {
+                segment: StructuredPolynomialPointSegment::Full,
+                length: StructuredPolynomialPointLength::Full,
+                order: StructuredPolynomialPointOrder::AsIs,
+            },
+            y_point: StructuredPolynomialPointTransform {
+                segment: StructuredPolynomialPointSegment::Full,
+                length: StructuredPolynomialPointLength::Full,
+                order: StructuredPolynomialPointOrder::AsIs,
+            },
+        };
+        let value = evaluate_relation_output_for_instance(
+            &[
+                RelationOutputPlan {
+                    relation: TestRelation::Output,
+                    local_scalars: &[],
+                    expected_output: "eq.current",
+                },
+                RelationOutputPlan {
+                    relation: TestRelation::Sibling,
+                    local_scalars: &[],
+                    expected_output: "eq.sibling",
+                },
+            ],
+            &[],
+            &[
+                ScalarExprPlan {
+                    symbol: "eq.sibling",
+                    kind: structured_eq,
+                    operands: &["sibling.instance", "point.y"],
+                },
+                ScalarExprPlan {
+                    symbol: "eq.current",
+                    kind: structured_eq,
+                    operands: &["instance", "point.y"],
+                },
+            ],
+            &[],
+            &store,
+            &SumcheckInstanceResultPlan {
+                symbol: "instance",
+                source: "driver",
+                claim: "claim",
+                relation: TestRelation::Output,
+                index: 0,
+                point_arity: 2,
+                num_rounds: 2,
+                round_offset: 0,
+                point_order: SumcheckPointOrder::AsIs,
+                degree: 2,
+            },
+            &[],
+            &[],
+            &[],
+            &x,
+        )
+        .unwrap();
+
+        assert_eq!(value, Fr::from_u64(1));
+    }
+
+    #[test]
+    fn relation_output_evaluates_eval_family_vectors_from_proof_evals() {
+        let value = evaluate_relation_output_for_instance(
+            &[RelationOutputPlan {
+                relation: TestRelation::Output,
+                local_scalars: &[],
+                expected_output: "family.product",
+            }],
+            &[],
+            &[ScalarExprPlan {
+                symbol: "family.product",
+                kind: ScalarExprKind::FieldVectorProduct,
+                operands: &["family.ab"],
+            }],
+            &[NamedEvalFamilyPlan {
+                symbol: "family.ab",
+                evals: &["eval.a", "eval.b"],
+            }],
+            &ValueStore::default(),
+            &SumcheckInstanceResultPlan {
+                symbol: "instance",
+                source: "driver",
+                claim: "claim",
+                relation: TestRelation::Output,
+                index: 0,
+                point_arity: 0,
+                num_rounds: 0,
+                round_offset: 0,
+                point_order: SumcheckPointOrder::AsIs,
+                degree: 2,
+            },
+            &[
+                StageNamedEval {
+                    name: "eval.a",
+                    oracle: "A",
+                    value: Fr::from_u64(2),
+                },
+                StageNamedEval {
+                    name: "eval.b",
+                    oracle: "B",
+                    value: Fr::from_u64(3),
+                },
+            ],
+            &[],
+            &[],
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(value, Fr::from_u64(6));
     }
 
     #[test]
@@ -2256,6 +2427,7 @@ mod tests {
                 },
                 operands: &["instance", "point.y"],
             }],
+            &[],
             &store,
             &SumcheckInstanceResultPlan {
                 symbol: "instance",
