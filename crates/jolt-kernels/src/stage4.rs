@@ -33,6 +33,7 @@ pub enum Stage4ExecutionMode {
 pub enum Stage4Relation {
     RegistersReadWrite,
     RamValCheck,
+    FieldRegRW,
     Batched,
 }
 
@@ -41,6 +42,7 @@ impl Stage4Relation {
         match symbol {
             "jolt.stage4.registers_read_write" => Some(Self::RegistersReadWrite),
             "jolt.stage4.ram_val_check" => Some(Self::RamValCheck),
+            "jolt.stage4.field_reg_rw" => Some(Self::FieldRegRW),
             "jolt.stage4.batched" => Some(Self::Batched),
             _ => None,
         }
@@ -50,6 +52,7 @@ impl Stage4Relation {
         match self {
             Self::RegistersReadWrite => "jolt.stage4.registers_read_write",
             Self::RamValCheck => "jolt.stage4.ram_val_check",
+            Self::FieldRegRW => "jolt.stage4.field_reg_rw",
             Self::Batched => "jolt.stage4.batched",
         }
     }
@@ -59,6 +62,7 @@ impl Stage4Relation {
 pub enum Stage4KernelAbi {
     RegistersReadWrite,
     RamValCheck,
+    FieldRegRW,
     Batched,
 }
 
@@ -67,6 +71,7 @@ impl Stage4KernelAbi {
         match name {
             "jolt_stage4_registers_read_write" => Some(Self::RegistersReadWrite),
             "jolt_stage4_ram_val_check" => Some(Self::RamValCheck),
+            "jolt_stage4_field_reg_rw" => Some(Self::FieldRegRW),
             "jolt_stage4_batched" => Some(Self::Batched),
             _ => None,
         }
@@ -76,6 +81,7 @@ impl Stage4KernelAbi {
         match self {
             Self::RegistersReadWrite => "jolt_stage4_registers_read_write",
             Self::RamValCheck => "jolt_stage4_ram_val_check",
+            Self::FieldRegRW => "jolt_stage4_field_reg_rw",
             Self::Batched => "jolt_stage4_batched",
         }
     }
@@ -450,10 +456,22 @@ pub struct Stage4RamWitness<'a, F: Field> {
 }
 
 #[derive(Clone, Copy)]
+pub struct Stage4FieldRegWitness<'a, F: Field> {
+    pub field_reg_count: usize,
+    pub trace_len: usize,
+    pub field_reg_val: &'a [F],
+    pub frs1_ra: &'a [F],
+    pub frs2_ra: &'a [F],
+    pub frd_wa: &'a [F],
+    pub frd_inc: &'a [F],
+}
+
+#[derive(Clone, Copy)]
 pub struct Stage4ProverInputs<'a, F: Field> {
     pub opening_inputs: &'a [Stage4OpeningInputValue<F>],
     pub registers: Option<Stage4RegistersWitness<'a, F>>,
     pub ram: Option<Stage4RamWitness<'a, F>>,
+    pub field_reg: Option<Stage4FieldRegWitness<'a, F>>,
 }
 
 impl<'a, F: Field> Stage4ProverInputs<'a, F> {
@@ -462,6 +480,7 @@ impl<'a, F: Field> Stage4ProverInputs<'a, F> {
             opening_inputs,
             registers: None,
             ram: None,
+            field_reg: None,
         }
     }
 
@@ -470,6 +489,7 @@ impl<'a, F: Field> Stage4ProverInputs<'a, F> {
             opening_inputs: &[],
             registers: None,
             ram: None,
+            field_reg: None,
         }
     }
 
@@ -480,6 +500,11 @@ impl<'a, F: Field> Stage4ProverInputs<'a, F> {
 
     pub fn with_ram(mut self, ram: Stage4RamWitness<'a, F>) -> Self {
         self.ram = Some(ram);
+        self
+    }
+
+    pub fn with_field_reg(mut self, field_reg: Stage4FieldRegWitness<'a, F>) -> Self {
+        self.field_reg = Some(field_reg);
         self
     }
 
@@ -1594,6 +1619,9 @@ impl<F: Field> Stage4ProverInstanceState<F> {
             Stage4Relation::RamValCheck => {
                 ram_val_check_state(claim, inputs, store, active_scale).map(Self::Dense)
             }
+            Stage4Relation::FieldRegRW => {
+                field_reg_rw_state(claim, inputs, store, active_scale).map(Self::Dense)
+            }
             relation @ Stage4Relation::Batched => Err(Stage4KernelError::KernelNotImplemented {
                 abi: relation.symbol(),
             }),
@@ -2138,6 +2166,132 @@ fn registers_dense_state<F: Field>(
             FactorOutput {
                 name: "stage4.registers_read_write.eval.RdInc",
                 oracle: "RdInc",
+                factor: 5,
+            },
+        ],
+        active_scale,
+    )
+}
+
+fn field_reg_rw_state<F: Field>(
+    claim: &Stage4SumcheckClaimPlan,
+    inputs: &Stage4ProverInputs<'_, F>,
+    store: &Stage4ValueStore<F>,
+    active_scale: F,
+) -> Result<DenseStage4State<F>, Stage4KernelError> {
+    let witness = inputs.field_reg.ok_or(Stage4KernelError::MissingKernelInput {
+        kernel: "jolt_stage4_batched",
+        input: "field_reg",
+    })?;
+    let expected_len = witness
+        .field_reg_count
+        .checked_mul(witness.trace_len)
+        .ok_or(Stage4KernelError::InvalidInputLength {
+            input: "stage4.field_reg",
+            expected: usize::MAX,
+            actual: witness.field_reg_count,
+        })?;
+    let trace_point = store.point("stage4.input.stage3.field_reg.FieldRdWriteValue")?;
+    let address_rounds = log2_exact(witness.field_reg_count, "stage4.field_reg_count")?;
+    let trace_rounds = log2_exact(witness.trace_len, "stage4.trace_len")?;
+    require_operand_count(
+        "stage4.field_reg.trace_point",
+        trace_rounds,
+        trace_point.len(),
+    )?;
+    require_operand_count(claim.symbol, address_rounds + trace_rounds, claim.num_rounds)?;
+    require_operand_count(
+        "stage4.field_reg.FieldRegVal",
+        expected_len,
+        witness.field_reg_val.len(),
+    )?;
+    require_operand_count("stage4.field_reg.FrRs1Ra", expected_len, witness.frs1_ra.len())?;
+    require_operand_count("stage4.field_reg.FrRs2Ra", expected_len, witness.frs2_ra.len())?;
+    require_operand_count("stage4.field_reg.FrdWa", expected_len, witness.frd_wa.len())?;
+    require_operand_count(
+        "stage4.field_reg.FrdInc",
+        witness.trace_len,
+        witness.frd_inc.len(),
+    )?;
+    let gamma = store.scalar("stage4.field_reg_rw.gamma")?;
+    let gamma2 = store
+        .try_scalar("stage4.field_reg_rw.gamma2")
+        .unwrap_or_else(|| gamma * gamma);
+    let eq_cycle = EqPolynomial::<F>::evals(trace_point, None);
+    let mut eq_cycle_expanded = Vec::with_capacity(expected_len);
+    let mut frd_inc_expanded = Vec::with_capacity(expected_len);
+    for _address in 0..witness.field_reg_count {
+        eq_cycle_expanded.extend_from_slice(&eq_cycle);
+        frd_inc_expanded.extend_from_slice(witness.frd_inc);
+    }
+    Ok(field_reg_dense_state(
+        eq_cycle_expanded,
+        witness.field_reg_val.to_vec(),
+        witness.frs1_ra.to_vec(),
+        witness.frs2_ra.to_vec(),
+        witness.frd_wa.to_vec(),
+        frd_inc_expanded,
+        gamma,
+        gamma2,
+        active_scale,
+    ))
+}
+
+fn field_reg_dense_state<F: Field>(
+    eq_cycle: Vec<F>,
+    field_reg_val: Vec<F>,
+    frs1_ra: Vec<F>,
+    frs2_ra: Vec<F>,
+    frd_wa: Vec<F>,
+    frd_inc: Vec<F>,
+    gamma: F,
+    gamma2: F,
+    active_scale: F,
+) -> DenseStage4State<F> {
+    DenseStage4State::new(
+        vec![eq_cycle, field_reg_val, frs1_ra, frs2_ra, frd_wa, frd_inc],
+        vec![
+            DenseTerm {
+                coefficient: F::one(),
+                factors: vec![0, 4, 1],
+            },
+            DenseTerm {
+                coefficient: F::one(),
+                factors: vec![0, 4, 5],
+            },
+            DenseTerm {
+                coefficient: gamma,
+                factors: vec![0, 2, 1],
+            },
+            DenseTerm {
+                coefficient: gamma2,
+                factors: vec![0, 3, 1],
+            },
+        ],
+        vec![
+            FactorOutput {
+                name: "stage4.field_reg_rw.eval.FieldRegVal",
+                oracle: "FieldRegVal",
+                factor: 1,
+            },
+            FactorOutput {
+                name: "stage4.field_reg_rw.eval.FrRs1Ra",
+                oracle: "FrRs1Ra",
+                factor: 2,
+            },
+            FactorOutput {
+                name: "stage4.field_reg_rw.eval.FrRs2Ra",
+                oracle: "FrRs2Ra",
+                factor: 3,
+            },
+            FactorOutput {
+                name: "stage4.field_reg_rw.eval.FrdWa",
+                oracle: "FrdWa",
+                factor: 4,
+            },
+            FactorOutput {
+                name: "stage4.field_reg_rw.eval.FrdInc",
+                oracle: "FrdInc",
                 factor: 5,
             },
         ],
@@ -3165,6 +3319,7 @@ fn expected_batched_output_claim<F: Field>(
                 expected_registers_read_write(store, evals, local_point)?
             }
             Stage4Relation::RamValCheck => expected_ram_val_check(store, evals, local_point)?,
+            Stage4Relation::FieldRegRW => expected_field_reg_rw(store, evals, local_point)?,
             relation @ Stage4Relation::Batched => {
                 return Err(Stage4KernelError::KernelNotImplemented {
                     abi: relation.symbol(),
@@ -3197,6 +3352,29 @@ fn expected_registers_read_write<F: Field>(
     Ok(eq_eval
         * (rd_wa * (registers_val + rd_inc)
             + gamma * (rs1_ra * registers_val + gamma * rs2_ra * registers_val)))
+}
+
+fn expected_field_reg_rw<F: Field>(
+    store: &Stage4ValueStore<F>,
+    evals: &[Stage4NamedEval<F>],
+    local_point: &[F],
+) -> Result<F, Stage4KernelError> {
+    let trace_point = store.point("stage4.input.stage3.field_reg.FieldRdWriteValue")?;
+    let r_cycle = normalize_stage4_registers_rw_cycle_point(
+        local_point,
+        trace_point.len(),
+        "stage4.field_reg_rw.instance",
+    )?;
+    let eq_eval = EqPolynomial::<F>::mle(&r_cycle, trace_point);
+    let field_reg_val = eval_by_name(evals, "stage4.field_reg_rw.eval.FieldRegVal")?;
+    let frs1_ra = eval_by_name(evals, "stage4.field_reg_rw.eval.FrRs1Ra")?;
+    let frs2_ra = eval_by_name(evals, "stage4.field_reg_rw.eval.FrRs2Ra")?;
+    let frd_wa = eval_by_name(evals, "stage4.field_reg_rw.eval.FrdWa")?;
+    let frd_inc = eval_by_name(evals, "stage4.field_reg_rw.eval.FrdInc")?;
+    let gamma = store.scalar("stage4.field_reg_rw.gamma")?;
+    Ok(eq_eval
+        * (frd_wa * (field_reg_val + frd_inc)
+            + gamma * (frs1_ra * field_reg_val + gamma * frs2_ra * field_reg_val)))
 }
 
 fn expected_ram_val_check<F: Field>(

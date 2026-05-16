@@ -10,11 +10,16 @@ use super::super::params::JoltProtocolParams;
 use super::lowering::{lower_party_to_compute, transcript_squeeze_protocol_result_type};
 
 const REGISTERS_RW_DEGREE: usize = 3;
+const FIELD_REG_RW_DEGREE: usize = 3;
 const RAM_VAL_CHECK_DEGREE: usize = 3;
 const STAGE4_BATCHED_DEGREE: usize = 3;
 
 const STAGE4_REGISTER_INPUTS: [&str; 3] = ["RdWriteValue", "Rs1Value", "Rs2Value"];
 const STAGE4_REGISTER_OUTPUTS: [&str; 5] = ["RegistersVal", "Rs1Ra", "Rs2Ra", "RdWa", "RdInc"];
+const STAGE4_FIELD_REG_INPUTS: [&str; 3] =
+    ["FieldRdWriteValue", "FieldRs1Value", "FieldRs2Value"];
+const STAGE4_FIELD_REG_OUTPUTS: [&str; 5] =
+    ["FieldRegVal", "FrRs1Ra", "FrRs2Ra", "FrdWa", "FrdInc"];
 const STAGE4_RAM_VAL_OUTPUTS: [&str; 2] = ["RamRa", "RamInc"];
 
 pub fn build_stage4_protocol<'c>(
@@ -131,6 +136,15 @@ fn append_stage4_domains<'c>(
     context.append_op(
         module,
         "poly.domain",
+        Some("jolt.stage4_field_reg_rw_domain"),
+        &[
+            ("field", "@bn254_fr"),
+            ("log_size", &int_attr(stage4_field_reg_rw_rounds(params))),
+        ],
+    )?;
+    context.append_op(
+        module,
+        "poly.domain",
         Some("jolt.stage2_ram_rw_domain"),
         &[
             ("field", "@bn254_fr"),
@@ -155,6 +169,9 @@ fn append_stage4_oracles<'c>(
     for oracle in STAGE4_REGISTER_INPUTS {
         append_virtual_oracle(context, module, oracle, "jolt.trace_domain")?;
     }
+    for oracle in STAGE4_FIELD_REG_INPUTS {
+        append_virtual_oracle(context, module, oracle, "jolt.trace_domain")?;
+    }
     append_virtual_oracle(
         context,
         module,
@@ -164,11 +181,31 @@ fn append_stage4_oracles<'c>(
     append_virtual_oracle(context, module, "Rs1Ra", "jolt.stage4_registers_rw_domain")?;
     append_virtual_oracle(context, module, "Rs2Ra", "jolt.stage4_registers_rw_domain")?;
     append_virtual_oracle(context, module, "RdWa", "jolt.stage4_registers_rw_domain")?;
+    append_virtual_oracle(
+        context,
+        module,
+        "FieldRegVal",
+        "jolt.stage4_field_reg_rw_domain",
+    )?;
+    append_virtual_oracle(
+        context,
+        module,
+        "FrRs1Ra",
+        "jolt.stage4_field_reg_rw_domain",
+    )?;
+    append_virtual_oracle(
+        context,
+        module,
+        "FrRs2Ra",
+        "jolt.stage4_field_reg_rw_domain",
+    )?;
+    append_virtual_oracle(context, module, "FrdWa", "jolt.stage4_field_reg_rw_domain")?;
     append_virtual_oracle(context, module, "RamVal", "jolt.stage2_ram_rw_domain")?;
     append_virtual_oracle(context, module, "RamRa", "jolt.stage2_ram_rw_domain")?;
     append_virtual_oracle(context, module, "RamValFinal", "jolt.ram_address_domain")?;
     append_virtual_oracle(context, module, "RamValInit", "jolt.ram_address_domain")?;
     append_committed_trace_oracle(context, module, "RdInc")?;
+    append_committed_trace_oracle(context, module, "FrdInc")?;
     append_committed_trace_oracle(context, module, "RamInc")
 }
 
@@ -226,6 +263,18 @@ fn append_stage4_relations<'c>(
             num_rounds: stage4_registers_rw_rounds(params),
             degree: REGISTERS_RW_DEGREE,
             output_count: STAGE4_REGISTER_OUTPUTS.len(),
+        },
+    )?;
+    append_relation(
+        context,
+        module,
+        RelationSpec {
+            symbol: "jolt.stage4.field_reg_rw",
+            kind: "sumcheck",
+            domain: "jolt.stage4_field_reg_rw_domain",
+            num_rounds: stage4_field_reg_rw_rounds(params),
+            degree: FIELD_REG_RW_DEGREE,
+            output_count: STAGE4_FIELD_REG_OUTPUTS.len(),
         },
     )?;
     append_relation(
@@ -311,6 +360,42 @@ fn append_stage4_opening_inputs<'c, 'a>(
                 source_stage: "stage3",
                 source_claim: "stage3.registers_claim_reduction.opening.Rs2Value",
                 oracle: "Rs2Value",
+                domain: "jolt.trace_domain",
+                point_arity: params.log_t,
+            },
+        )?,
+        field_rd_write_value: append_stage_input(
+            context,
+            module,
+            StageOpeningInputSpec {
+                symbol: "stage4.input.stage3.field_reg.FieldRdWriteValue",
+                source_stage: "stage3",
+                source_claim: "stage3.field_reg_claim_reduction.opening.FieldRdWriteValue",
+                oracle: "FieldRdWriteValue",
+                domain: "jolt.trace_domain",
+                point_arity: params.log_t,
+            },
+        )?,
+        field_rs1_value: append_stage_input(
+            context,
+            module,
+            StageOpeningInputSpec {
+                symbol: "stage4.input.stage3.field_reg.FieldRs1Value",
+                source_stage: "stage3",
+                source_claim: "stage3.field_reg_claim_reduction.opening.FieldRs1Value",
+                oracle: "FieldRs1Value",
+                domain: "jolt.trace_domain",
+                point_arity: params.log_t,
+            },
+        )?,
+        field_rs2_value: append_stage_input(
+            context,
+            module,
+            StageOpeningInputSpec {
+                symbol: "stage4.input.stage3.field_reg.FieldRs2Value",
+                source_stage: "stage3",
+                source_claim: "stage3.field_reg_claim_reduction.opening.FieldRs2Value",
+                oracle: "FieldRs2Value",
                 domain: "jolt.trace_domain",
                 point_arity: params.log_t,
             },
@@ -1153,6 +1238,12 @@ struct Stage4OpeningInputs<'c, 'a> {
     rd_write_value: Stage4OpeningInput<'c, 'a>,
     rs1_registers: Stage4OpeningInput<'c, 'a>,
     rs2_registers: Stage4OpeningInput<'c, 'a>,
+    #[expect(dead_code, reason = "consumed by Phase 4c FR Twist wiring")]
+    field_rd_write_value: Stage4OpeningInput<'c, 'a>,
+    #[expect(dead_code, reason = "consumed by Phase 4c FR Twist wiring")]
+    field_rs1_value: Stage4OpeningInput<'c, 'a>,
+    #[expect(dead_code, reason = "consumed by Phase 4c FR Twist wiring")]
+    field_rs2_value: Stage4OpeningInput<'c, 'a>,
     rs1_instruction: Stage4OpeningInput<'c, 'a>,
     rs2_instruction: Stage4OpeningInput<'c, 'a>,
     ram_val: Stage4OpeningInput<'c, 'a>,
@@ -1242,8 +1333,12 @@ fn stage4_registers_rw_rounds(params: &JoltProtocolParams) -> usize {
     params.log_t + params.register_log_k
 }
 
+fn stage4_field_reg_rw_rounds(params: &JoltProtocolParams) -> usize {
+    params.log_t + params.field_reg_log_k
+}
+
 fn stage4_output_count() -> usize {
-    STAGE4_REGISTER_OUTPUTS.len() + STAGE4_RAM_VAL_OUTPUTS.len()
+    STAGE4_REGISTER_OUTPUTS.len() + STAGE4_RAM_VAL_OUTPUTS.len() + STAGE4_FIELD_REG_OUTPUTS.len()
 }
 
 fn int_attr(value: usize) -> String {
