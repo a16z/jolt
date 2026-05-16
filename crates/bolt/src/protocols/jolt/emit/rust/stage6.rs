@@ -421,13 +421,16 @@ impl Stage6CpuProgram {
         require_supported_symbol("transcript", &self.params.transcript, "blake2b_transcript")?;
         self.verify_transcript_steps()?;
         self.verify_field_flow()?;
-        self.verify_claim_batches()?;
         match self.role {
             Role::Prover => {
+                self.verify_claim_batches()?;
                 self.verify_kernel_definitions()?;
                 self.verify_prover_driver_bindings()?;
             }
-            Role::Verifier => self.verify_verifier_driver_bindings()?,
+            Role::Verifier => {
+                self.verifier_plan()?.verify_sumcheck_flow("stage6")?;
+                self.verify_verifier_driver_bindings()?;
+            }
         }
         if self.role == Role::Verifier {
             self.verify_relation_outputs()?;
@@ -695,11 +698,6 @@ impl Stage6CpuProgram {
                 "verifier stage6 program must not contain kernels",
             ));
         }
-        let batches: BTreeMap<_, _> = self
-            .batches
-            .iter()
-            .map(|batch| (batch.symbol.as_str(), batch))
-            .collect();
         for claim in &self.claims {
             if claim.kernel.is_some() || claim.relation.is_none() {
                 return Err(EmitError::new(format!(
@@ -713,24 +711,6 @@ impl Stage6CpuProgram {
                 return Err(EmitError::new(format!(
                     "verifier sumcheck driver @{} must carry relation and no kernel",
                     driver.symbol
-                )));
-            }
-            let batch = batches.get(driver.batch.as_str()).ok_or_else(|| {
-                EmitError::new(format!(
-                    "sumcheck driver @{} references missing batch @{}",
-                    driver.symbol, driver.batch
-                ))
-            })?;
-            verify_count(
-                "sumcheck driver round_schedule",
-                &driver.symbol,
-                driver.num_rounds,
-                driver.round_schedule.iter().sum(),
-            )?;
-            if driver.round_schedule != batch.round_schedule {
-                return Err(EmitError::new(format!(
-                    "sumcheck driver @{} round_schedule differs from batch @{}",
-                    driver.symbol, batch.symbol
                 )));
             }
         }

@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use crate::emit::rust::EmitError;
@@ -607,6 +607,64 @@ impl VerifierStagePlan {
             values.insert(&expr.symbol, VerifierPointValueKind::PointExpr);
         }
         values
+    }
+
+    pub(crate) fn verify_sumcheck_flow(&self, stage: &str) -> Result<(), EmitError> {
+        let claims = self
+            .claims
+            .iter()
+            .map(|claim| claim.symbol.as_str())
+            .collect::<BTreeSet<_>>();
+        for batch in &self.batches {
+            verify_plan_count(
+                "sumcheck batch",
+                &batch.symbol,
+                batch.count,
+                batch.claim_operands.len(),
+            )?;
+            for claim in &batch.claim_operands {
+                if !claims.contains(claim.as_str()) {
+                    return Err(EmitError::new(format!(
+                        "{stage} sumcheck batch @{} references missing claim @{claim}",
+                        batch.symbol
+                    )));
+                }
+            }
+        }
+        let batches: BTreeMap<_, _> = self
+            .batches
+            .iter()
+            .map(|batch| (batch.symbol.as_str(), batch))
+            .collect();
+        for driver in &self.drivers {
+            let batch = batches.get(driver.batch.as_str()).ok_or_else(|| {
+                EmitError::new(format!(
+                    "{stage} sumcheck driver @{} references missing batch @{}",
+                    driver.symbol, driver.batch
+                ))
+            })?;
+            verify_plan_count(
+                "sumcheck driver round_schedule",
+                &driver.symbol,
+                driver.num_rounds,
+                driver.round_schedule.iter().sum(),
+            )?;
+            if driver.round_schedule != batch.round_schedule {
+                return Err(EmitError::new(format!(
+                    "{stage} sumcheck driver @{} round_schedule differs from batch @{}",
+                    driver.symbol, batch.symbol
+                )));
+            }
+        }
+        for instance in &self.instance_results {
+            if !claims.contains(instance.claim.as_str()) {
+                return Err(EmitError::new(format!(
+                    "{stage} sumcheck instance result @{} references missing claim @{}",
+                    instance.symbol, instance.claim
+                )));
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn verify_relation_outputs(&self, stage: &str) -> Result<(), EmitError> {
@@ -2440,11 +2498,24 @@ fn verify_plan_operand_count(
     expected: usize,
     actual: usize,
 ) -> Result<(), EmitError> {
+    verify_plan_count(kind, symbol, expected, actual).map_err(|_| {
+        EmitError::new(format!(
+            "{kind} @{symbol} operand count mismatch: expected {expected}, got {actual}"
+        ))
+    })
+}
+
+fn verify_plan_count(
+    kind: &str,
+    symbol: &str,
+    expected: usize,
+    actual: usize,
+) -> Result<(), EmitError> {
     if expected == actual {
         Ok(())
     } else {
         Err(EmitError::new(format!(
-            "{kind} @{symbol} operand count mismatch: expected {expected}, got {actual}"
+            "{kind} @{symbol} count mismatch: expected {expected}, got {actual}"
         )))
     }
 }
