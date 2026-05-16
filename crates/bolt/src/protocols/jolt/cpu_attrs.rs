@@ -75,6 +75,18 @@ pub(crate) fn int_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<us
         .ok_or_else(|| attr_error(operation, attr, "integer"))
 }
 
+pub(crate) fn signed_int_attr(
+    operation: OperationRef<'_, '_>,
+    attr: &str,
+) -> Result<isize, EmitError> {
+    operation
+        .attribute(attr)
+        .map(parse_signed_integer_attr)
+        .ok()
+        .flatten()
+        .ok_or_else(|| attr_error(operation, attr, "signed integer"))
+}
+
 pub(crate) fn int_array_attr(
     operation: OperationRef<'_, '_>,
     attr: &str,
@@ -159,6 +171,14 @@ fn parse_string_array(attribute: &str) -> Option<Vec<String>> {
 }
 
 fn parse_integer_attr(attribute: Attribute<'_>) -> Option<usize> {
+    attribute
+        .to_string()
+        .split_whitespace()
+        .next()
+        .and_then(|value| value.parse().ok())
+}
+
+fn parse_signed_integer_attr(attribute: Attribute<'_>) -> Option<isize> {
     attribute
         .to_string()
         .split_whitespace()

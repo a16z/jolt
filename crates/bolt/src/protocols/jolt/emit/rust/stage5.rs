@@ -6,11 +6,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use melior::ir::block::BlockLike;
-use melior::ir::operation::{OperationLike, OperationResult};
-use melior::ir::{Attribute, OperationRef};
+use melior::ir::operation::OperationLike;
 
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
-use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
+use crate::ir::{BoltModule, Cpu, Role};
+use crate::protocols::jolt::cpu_attrs::{
+    int_array_attr, int_attr, operand_symbol, operand_symbols, operation_name, string_attr,
+    symbol_array_attr, symbol_attr,
+};
 use crate::protocols::jolt::rust_target_plan::{FieldExprKind, ScalarExprKind};
 use crate::protocols::jolt::stage5_instruction_read_raf_plan::{
     Stage5InstructionReadRafEmitPlan, Stage5InstructionReadRafOutputFieldExprPlan,
@@ -2627,121 +2630,4 @@ fn verify_count(kind: &str, symbol: &str, expected: usize, actual: usize) -> Res
 
 fn symbols<'a>(values: impl Iterator<Item = &'a String>) -> BTreeSet<String> {
     values.cloned().collect()
-}
-
-fn string_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<String, EmitError> {
-    operation
-        .attribute(attr)
-        .ok()
-        .and_then(string_attribute_value)
-        .ok_or_else(|| attr_error(operation, attr, "string"))
-}
-
-fn symbol_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<String, EmitError> {
-    operation
-        .attribute(attr)
-        .ok()
-        .and_then(symbol_attribute_value)
-        .ok_or_else(|| attr_error(operation, attr, "symbol"))
-}
-
-fn symbol_array_attr(
-    operation: OperationRef<'_, '_>,
-    attr: &str,
-) -> Result<Vec<String>, EmitError> {
-    let attribute = operation
-        .attribute(attr)
-        .map(|attribute| attribute.to_string())
-        .ok()
-        .ok_or_else(|| attr_error(operation, attr, "symbol array"))?;
-    parse_symbol_array(&attribute).ok_or_else(|| attr_error(operation, attr, "symbol array"))
-}
-
-fn parse_symbol_array(attribute: &str) -> Option<Vec<String>> {
-    let inner = attribute.strip_prefix('[')?.strip_suffix(']')?.trim();
-    if inner.is_empty() {
-        return Some(Vec::new());
-    }
-    inner
-        .split(',')
-        .map(|item| item.trim().strip_prefix('@').map(ToOwned::to_owned))
-        .collect()
-}
-
-fn int_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<usize, EmitError> {
-    operation
-        .attribute(attr)
-        .map(parse_integer_attr)
-        .ok()
-        .flatten()
-        .ok_or_else(|| attr_error(operation, attr, "integer"))
-}
-
-fn parse_integer_attr(attribute: Attribute<'_>) -> Option<usize> {
-    attribute
-        .to_string()
-        .split_whitespace()
-        .next()
-        .and_then(|value| value.parse().ok())
-}
-
-fn int_array_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<Vec<usize>, EmitError> {
-    let attribute = operation
-        .attribute(attr)
-        .map(|attribute| attribute.to_string())
-        .ok()
-        .ok_or_else(|| attr_error(operation, attr, "integer array"))?;
-    parse_int_array(&attribute).ok_or_else(|| attr_error(operation, attr, "integer array"))
-}
-
-fn parse_int_array(attribute: &str) -> Option<Vec<usize>> {
-    let inner = attribute.strip_prefix('[')?.strip_suffix(']')?.trim();
-    if inner.is_empty() {
-        return Some(Vec::new());
-    }
-    inner
-        .split(',')
-        .map(|item| item.trim().parse().ok())
-        .collect()
-}
-
-fn operand_symbols(
-    operation: OperationRef<'_, '_>,
-    start_index: usize,
-) -> Result<Vec<String>, EmitError> {
-    (start_index..operation.operand_count())
-        .map(|index| operand_symbol(operation, index))
-        .collect()
-}
-
-fn operand_symbol(operation: OperationRef<'_, '_>, index: usize) -> Result<String, EmitError> {
-    let operand = operation.operand(index).map_err(|_| {
-        EmitError::new(format!(
-            "{} requires operand {index}",
-            operation_name(operation)
-        ))
-    })?;
-    let owner = OperationResult::try_from(operand).map_err(|_| {
-        EmitError::new(format!(
-            "{} operand {index} must be an op result",
-            operation_name(operation)
-        ))
-    })?;
-    string_attr(owner.owner(), "sym_name")
-}
-
-fn attr_error(operation: OperationRef<'_, '_>, attr: &str, expected: &str) -> EmitError {
-    EmitError::new(format!(
-        "{} attr `{attr}` is not a {expected}",
-        operation_name(operation)
-    ))
-}
-
-fn operation_name<'c: 'a, 'a>(operation: impl OperationLike<'c, 'a>) -> String {
-    operation
-        .name()
-        .as_string_ref()
-        .as_str()
-        .unwrap_or("<invalid-operation-name>")
-        .to_owned()
 }
