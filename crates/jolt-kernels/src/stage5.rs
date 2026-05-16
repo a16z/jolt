@@ -57,6 +57,7 @@ pub enum Stage5Relation {
     InstructionReadRaf,
     RamRaClaimReduction,
     RegistersValEvaluation,
+    FieldRegValEvaluation,
     Batched,
 }
 
@@ -66,6 +67,7 @@ impl Stage5Relation {
             "jolt.stage5.instruction_read_raf" => Some(Self::InstructionReadRaf),
             "jolt.stage5.ram_ra_claim_reduction" => Some(Self::RamRaClaimReduction),
             "jolt.stage5.registers_val_evaluation" => Some(Self::RegistersValEvaluation),
+            "jolt.stage5.field_reg_val_evaluation" => Some(Self::FieldRegValEvaluation),
             "jolt.stage5.batched" => Some(Self::Batched),
             _ => None,
         }
@@ -76,6 +78,7 @@ impl Stage5Relation {
             Self::InstructionReadRaf => "jolt.stage5.instruction_read_raf",
             Self::RamRaClaimReduction => "jolt.stage5.ram_ra_claim_reduction",
             Self::RegistersValEvaluation => "jolt.stage5.registers_val_evaluation",
+            Self::FieldRegValEvaluation => "jolt.stage5.field_reg_val_evaluation",
             Self::Batched => "jolt.stage5.batched",
         }
     }
@@ -86,6 +89,7 @@ pub enum Stage5KernelAbi {
     InstructionReadRaf,
     RamRaClaimReduction,
     RegistersValEvaluation,
+    FieldRegValEvaluation,
     Batched,
 }
 
@@ -95,6 +99,7 @@ impl Stage5KernelAbi {
             "jolt_stage5_instruction_read_raf" => Some(Self::InstructionReadRaf),
             "jolt_stage5_ram_ra_claim_reduction" => Some(Self::RamRaClaimReduction),
             "jolt_stage5_registers_val_evaluation" => Some(Self::RegistersValEvaluation),
+            "jolt_stage5_field_reg_val_evaluation" => Some(Self::FieldRegValEvaluation),
             "jolt_stage5_batched" => Some(Self::Batched),
             _ => None,
         }
@@ -105,6 +110,7 @@ impl Stage5KernelAbi {
             Self::InstructionReadRaf => "jolt_stage5_instruction_read_raf",
             Self::RamRaClaimReduction => "jolt_stage5_ram_ra_claim_reduction",
             Self::RegistersValEvaluation => "jolt_stage5_registers_val_evaluation",
+            Self::FieldRegValEvaluation => "jolt_stage5_field_reg_val_evaluation",
             Self::Batched => "jolt_stage5_batched",
         }
     }
@@ -284,6 +290,14 @@ pub struct Stage5RegistersValWitness<'a, F: Field> {
 }
 
 #[derive(Clone, Copy)]
+pub struct Stage5FieldRegValWitness<'a, F: Field> {
+    pub field_reg_count: usize,
+    pub trace_len: usize,
+    pub frd_inc: &'a [F],
+    pub frd_wa: &'a [F],
+}
+
+#[derive(Clone, Copy)]
 pub struct Stage5RamRaWitness<'a, F: Field> {
     pub ram_k: usize,
     pub trace_len: usize,
@@ -313,6 +327,7 @@ pub struct Stage5ProverInputs<'a, F: Field> {
     pub instruction_read_raf: Option<Stage5InstructionReadRafWitness<'a>>,
     pub ram_ra: Option<Stage5RamRaWitness<'a, F>>,
     pub registers_val: Option<Stage5RegistersValWitness<'a, F>>,
+    pub field_reg_val: Option<Stage5FieldRegValWitness<'a, F>>,
 }
 
 impl<'a, F: Field> Stage5ProverInputs<'a, F> {
@@ -322,6 +337,7 @@ impl<'a, F: Field> Stage5ProverInputs<'a, F> {
             instruction_read_raf: None,
             ram_ra: None,
             registers_val: None,
+            field_reg_val: None,
         }
     }
 
@@ -331,6 +347,7 @@ impl<'a, F: Field> Stage5ProverInputs<'a, F> {
             instruction_read_raf: None,
             ram_ra: None,
             registers_val: None,
+            field_reg_val: None,
         }
     }
 
@@ -349,6 +366,14 @@ impl<'a, F: Field> Stage5ProverInputs<'a, F> {
 
     pub fn with_registers_val(mut self, registers_val: Stage5RegistersValWitness<'a, F>) -> Self {
         self.registers_val = Some(registers_val);
+        self
+    }
+
+    pub fn with_field_reg_val(
+        mut self,
+        field_reg_val: Stage5FieldRegValWitness<'a, F>,
+    ) -> Self {
+        self.field_reg_val = Some(field_reg_val);
         self
     }
 
@@ -410,6 +435,12 @@ impl<'a, F: Field> Stage5ProverInputs<'a, F> {
             &witness.rd_inc,
             &witness.rd_write_addresses,
         )
+        .with_field_reg_val(Stage5FieldRegValWitness {
+            field_reg_count: jolt_witness::field_reg::FIELD_REG_COUNT,
+            trace_len,
+            frd_inc: &witness.fr_zeros_t,
+            frd_wa: &witness.fr_zeros_k_t,
+        })
     }
 }
 
@@ -1327,6 +1358,9 @@ impl<F: Field> Stage5ProverInstanceState<F> {
             }
             Stage5Relation::RegistersValEvaluation => {
                 registers_val_evaluation_state(claim, inputs, store, active_scale).map(Self::Dense)
+            }
+            Stage5Relation::FieldRegValEvaluation => {
+                field_reg_val_evaluation_state(claim, inputs, store, active_scale).map(Self::Dense)
             }
             Stage5Relation::RamRaClaimReduction => {
                 ram_ra_claim_reduction_state(claim, inputs, store, active_scale).map(Self::Dense)
@@ -2880,6 +2914,96 @@ fn registers_val_evaluation_state<F: Field>(
     ))
 }
 
+fn field_reg_val_evaluation_state<F: Field>(
+    claim: &Stage5SumcheckClaimPlan,
+    inputs: &Stage5ProverInputs<'_, F>,
+    store: &Stage5ValueStore<F>,
+    active_scale: F,
+) -> Result<DenseStage5State<F>, Stage5KernelError> {
+    let witness = inputs
+        .field_reg_val
+        .ok_or(Stage5KernelError::MissingKernelInput {
+            kernel: "jolt_stage5_batched",
+            input: "field_reg_val",
+        })?;
+    require_operand_count(
+        "stage5.field_reg_val_evaluation.FrdInc",
+        witness.trace_len,
+        witness.frd_inc.len(),
+    )?;
+    require_operand_count(
+        "stage5.field_reg_val_evaluation.input",
+        log2_exact(witness.trace_len, "stage5.trace_len")?,
+        claim.num_rounds,
+    )?;
+
+    let field_reg_val_point = store.point("stage5.input.stage4.field_reg.FieldRegVal")?;
+    let address_rounds = log2_exact(witness.field_reg_count, "stage5.field_reg_count")?;
+    let trace_rounds = log2_exact(witness.trace_len, "stage5.trace_len")?;
+    require_operand_count(
+        "stage5.input.stage4.field_reg.FieldRegVal",
+        address_rounds + trace_rounds,
+        field_reg_val_point.len(),
+    )?;
+    let (address_point, cycle_point) = field_reg_val_point.split_at(address_rounds);
+    let address_eq = EqPolynomial::<F>::evals(address_point, None);
+    let frd_wa_at_address = frd_wa_at_field_reg_address(witness, &address_eq)?;
+    let lt = lt_evals_big_endian(cycle_point);
+    require_operand_count(
+        "stage5.field_reg_val_evaluation.lt",
+        witness.trace_len,
+        lt.len(),
+    )?;
+
+    Ok(DenseStage5State::new(
+        vec![witness.frd_inc.to_vec(), frd_wa_at_address, lt],
+        vec![DenseTerm {
+            coefficient: F::one(),
+            factors: vec![0, 1, 2],
+        }],
+        vec![
+            FactorOutput {
+                name: "stage5.field_reg_val_evaluation.eval.FrdInc",
+                oracle: "FrdInc",
+                factor: 0,
+            },
+            FactorOutput {
+                name: "stage5.field_reg_val_evaluation.eval.FrdWa",
+                oracle: "FrdWa",
+                factor: 1,
+            },
+        ],
+        active_scale,
+    ))
+}
+
+fn frd_wa_at_field_reg_address<F: Field>(
+    witness: Stage5FieldRegValWitness<'_, F>,
+    address_eq: &[F],
+) -> Result<Vec<F>, Stage5KernelError> {
+    let expected_len = witness
+        .field_reg_count
+        .checked_mul(witness.trace_len)
+        .ok_or(Stage5KernelError::InvalidInputLength {
+            input: "stage5.field_reg_val_evaluation.FrdWa",
+            expected: usize::MAX,
+            actual: witness.field_reg_count,
+        })?;
+    require_operand_count(
+        "stage5.field_reg_val_evaluation.FrdWa",
+        expected_len,
+        witness.frd_wa.len(),
+    )?;
+    let mut output = vec![F::zero(); witness.trace_len];
+    for (address, &weight) in address_eq.iter().enumerate() {
+        let base = address * witness.trace_len;
+        for (cycle, output) in output.iter_mut().enumerate() {
+            *output += weight * witness.frd_wa[base + cycle];
+        }
+    }
+    Ok(output)
+}
+
 fn rd_wa_at_register_address<F: Field>(
     witness: Stage5RegistersValWitness<'_, F>,
     address_eq: &[F],
@@ -2976,6 +3100,9 @@ fn expected_batched_output_claim<F: Field>(
             }
             Stage5Relation::RegistersValEvaluation => {
                 expected_registers_val_evaluation(store, evals, local_point)?
+            }
+            Stage5Relation::FieldRegValEvaluation => {
+                expected_field_reg_val_evaluation(store, evals, local_point)?
             }
             relation @ Stage5Relation::Batched => {
                 return Err(Stage5KernelError::KernelNotImplemented {
@@ -3203,6 +3330,24 @@ fn expected_registers_val_evaluation<F: Field>(
     let rd_inc = eval_by_name(evals, "stage5.registers_val_evaluation.eval.RdInc")?;
     let rd_wa = eval_by_name(evals, "stage5.registers_val_evaluation.eval.RdWa")?;
     Ok(rd_inc * rd_wa * lt_eval)
+}
+
+fn expected_field_reg_val_evaluation<F: Field>(
+    store: &Stage5ValueStore<F>,
+    evals: &[Stage5NamedEval<F>],
+    local_point: &[F],
+) -> Result<F, Stage5KernelError> {
+    let field_reg_val_point = store.point("stage5.input.stage4.field_reg.FieldRegVal")?;
+    let r_cycle = suffix_point(
+        field_reg_val_point,
+        local_point.len(),
+        "stage5.input.stage4.field_reg.FieldRegVal",
+    )?;
+    let r_reduced = reverse_slice(local_point);
+    let lt_eval = lt_polynomial_eval(&r_reduced, r_cycle);
+    let frd_inc = eval_by_name(evals, "stage5.field_reg_val_evaluation.eval.FrdInc")?;
+    let frd_wa = eval_by_name(evals, "stage5.field_reg_val_evaluation.eval.FrdWa")?;
+    Ok(frd_inc * frd_wa * lt_eval)
 }
 
 fn eval_by_name<F: Field>(

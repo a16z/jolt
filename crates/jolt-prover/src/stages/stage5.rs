@@ -35,6 +35,7 @@ pub const STAGE5_OPENING_INPUTS: &[Stage5OpeningInputPlan] = &[
     Stage5OpeningInputPlan { symbol: "stage5.input.stage2.ram_read_write.RamRa", source_stage: "stage2", source_claim: "stage2.ram_read_write.opening.RamRa", oracle: "RamRa", domain: "jolt.stage2_ram_rw_domain", point_arity: 32, claim_kind: "virtual" },
     Stage5OpeningInputPlan { symbol: "stage5.input.stage4.ram_val_check.RamRa", source_stage: "stage4", source_claim: "stage4.ram_val_check.opening.RamRa", oracle: "RamRa", domain: "jolt.stage2_ram_rw_domain", point_arity: 32, claim_kind: "virtual" },
     Stage5OpeningInputPlan { symbol: "stage5.input.stage4.registers.RegistersVal", source_stage: "stage4", source_claim: "stage4.registers_read_write.opening.RegistersVal", oracle: "RegistersVal", domain: "jolt.stage4_registers_rw_domain", point_arity: 25, claim_kind: "virtual" },
+    Stage5OpeningInputPlan { symbol: "stage5.input.stage4.field_reg.FieldRegVal", source_stage: "stage4", source_claim: "stage4.field_reg_rw.opening.FieldRegVal", oracle: "FieldRegVal", domain: "jolt.stage4_field_reg_rw_domain", point_arity: 22, claim_kind: "virtual" },
 ];
 
 pub const STAGE5_FIELD_CONSTANTS: &[Stage5FieldConstantPlan] = &[
@@ -101,6 +102,7 @@ pub const STAGE5_KERNELS: &[Stage5KernelPlan] = &[
     Stage5KernelPlan { symbol: "jolt.cpu.stage5.instruction_read_raf", relation: "jolt.stage5.instruction_read_raf", kind: "sumcheck", backend: "cpu", abi: "jolt_stage5_instruction_read_raf" },
     Stage5KernelPlan { symbol: "jolt.cpu.stage5.ram_ra_claim_reduction", relation: "jolt.stage5.ram_ra_claim_reduction", kind: "sumcheck", backend: "cpu", abi: "jolt_stage5_ram_ra_claim_reduction" },
     Stage5KernelPlan { symbol: "jolt.cpu.stage5.registers_val_evaluation", relation: "jolt.stage5.registers_val_evaluation", kind: "sumcheck", backend: "cpu", abi: "jolt_stage5_registers_val_evaluation" },
+    Stage5KernelPlan { symbol: "jolt.cpu.stage5.field_reg_val_evaluation", relation: "jolt.stage5.field_reg_val_evaluation", kind: "sumcheck", backend: "cpu", abi: "jolt_stage5_field_reg_val_evaluation" },
     Stage5KernelPlan { symbol: "jolt.cpu.stage5.batched", relation: "jolt.stage5.batched", kind: "sumcheck", backend: "cpu", abi: "jolt_stage5_batched" },
 ];
 
@@ -118,21 +120,26 @@ pub const STAGE5_SUMCHECK_CLAIM_1_INPUT_OPENINGS: &[&str] = &[
 
 pub const STAGE5_SUMCHECK_CLAIM_2_INPUT_OPENINGS: &[&str] = &["stage5.input.stage4.registers.RegistersVal"];
 
+pub const STAGE5_SUMCHECK_CLAIM_3_INPUT_OPENINGS: &[&str] = &["stage5.input.stage4.field_reg.FieldRegVal"];
+
 pub const STAGE5_SUMCHECK_CLAIMS: &[Stage5SumcheckClaimPlan] = &[
     Stage5SumcheckClaimPlan { symbol: "stage5.instruction_read_raf.input", stage: "stage5", domain: "jolt.stage5_instruction_read_raf_domain", num_rounds: 146, degree: 10, claim: "stage5.instruction_read_raf.weighted_lookup_values", kernel: Some("jolt.cpu.stage5.instruction_read_raf"), relation: None, claim_value: "stage5.instruction_read_raf.claim_expr", input_openings: STAGE5_SUMCHECK_CLAIM_0_INPUT_OPENINGS },
     Stage5SumcheckClaimPlan { symbol: "stage5.ram_ra_claim_reduction.input", stage: "stage5", domain: "jolt.trace_domain", num_rounds: 18, degree: 2, claim: "stage5.ram_ra_claim_reduction.weighted_ram_ra", kernel: Some("jolt.cpu.stage5.ram_ra_claim_reduction"), relation: None, claim_value: "stage5.ram_ra_claim_reduction.claim_expr", input_openings: STAGE5_SUMCHECK_CLAIM_1_INPUT_OPENINGS },
     Stage5SumcheckClaimPlan { symbol: "stage5.registers_val_evaluation.input", stage: "stage5", domain: "jolt.trace_domain", num_rounds: 18, degree: 3, claim: "stage5.registers_val_evaluation.registers_val", kernel: Some("jolt.cpu.stage5.registers_val_evaluation"), relation: None, claim_value: "stage5.input.stage4.registers.RegistersVal", input_openings: STAGE5_SUMCHECK_CLAIM_2_INPUT_OPENINGS },
+    Stage5SumcheckClaimPlan { symbol: "stage5.field_reg_val_evaluation.input", stage: "stage5", domain: "jolt.trace_domain", num_rounds: 18, degree: 3, claim: "stage5.field_reg_val_evaluation.field_reg_val", kernel: Some("jolt.cpu.stage5.field_reg_val_evaluation"), relation: None, claim_value: "stage5.input.stage4.field_reg.FieldRegVal", input_openings: STAGE5_SUMCHECK_CLAIM_3_INPUT_OPENINGS },
 ];
 pub const STAGE5_SUMCHECK_BATCH_0_ORDERED_CLAIMS: &[&str] = &[
     "stage5.instruction_read_raf.input",
     "stage5.ram_ra_claim_reduction.input",
     "stage5.registers_val_evaluation.input",
+    "stage5.field_reg_val_evaluation.input",
 ];
 
 pub const STAGE5_SUMCHECK_BATCH_0_CLAIM_OPERANDS: &[&str] = &[
     "stage5.instruction_read_raf.input",
     "stage5.ram_ra_claim_reduction.input",
     "stage5.registers_val_evaluation.input",
+    "stage5.field_reg_val_evaluation.input",
 ];
 
 pub const STAGE5_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[
@@ -141,7 +148,7 @@ pub const STAGE5_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[
 ];
 
 pub const STAGE5_SUMCHECK_BATCHES: &[Stage5SumcheckBatchPlan] = &[
-    Stage5SumcheckBatchPlan { symbol: "stage5.batch", stage: "stage5", proof_slot: "stage5.sumcheck", policy: "jolt_core_stage5_aligned", count: 3, ordered_claims: STAGE5_SUMCHECK_BATCH_0_ORDERED_CLAIMS, claim_operands: STAGE5_SUMCHECK_BATCH_0_CLAIM_OPERANDS, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE5_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
+    Stage5SumcheckBatchPlan { symbol: "stage5.batch", stage: "stage5", proof_slot: "stage5.sumcheck", policy: "jolt_core_stage5_aligned", count: 4, ordered_claims: STAGE5_SUMCHECK_BATCH_0_ORDERED_CLAIMS, claim_operands: STAGE5_SUMCHECK_BATCH_0_CLAIM_OPERANDS, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE5_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
 ];
 pub const STAGE5_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[
     128,
@@ -155,6 +162,7 @@ pub const STAGE5_SUMCHECK_INSTANCE_RESULTS: &[Stage5SumcheckInstanceResultPlan] 
     Stage5SumcheckInstanceResultPlan { symbol: "stage5.instruction_read_raf.instance", source: "stage5.sumcheck", claim: "stage5.instruction_read_raf.input", relation: "jolt.stage5.instruction_read_raf", index: 0, point_arity: 146, num_rounds: 146, round_offset: 0, point_order: "instruction_read_raf", degree: 10 },
     Stage5SumcheckInstanceResultPlan { symbol: "stage5.ram_ra_claim_reduction.instance", source: "stage5.sumcheck", claim: "stage5.ram_ra_claim_reduction.input", relation: "jolt.stage5.ram_ra_claim_reduction", index: 1, point_arity: 18, num_rounds: 18, round_offset: 128, point_order: "reverse", degree: 2 },
     Stage5SumcheckInstanceResultPlan { symbol: "stage5.registers_val_evaluation.instance", source: "stage5.sumcheck", claim: "stage5.registers_val_evaluation.input", relation: "jolt.stage5.registers_val_evaluation", index: 2, point_arity: 18, num_rounds: 18, round_offset: 128, point_order: "reverse", degree: 3 },
+    Stage5SumcheckInstanceResultPlan { symbol: "stage5.field_reg_val_evaluation.instance", source: "stage5.sumcheck", claim: "stage5.field_reg_val_evaluation.input", relation: "jolt.stage5.field_reg_val_evaluation", index: 3, point_arity: 18, num_rounds: 18, round_offset: 128, point_order: "reverse", degree: 3 },
 ];
 
 pub const STAGE5_SUMCHECK_EVALS: &[Stage5SumcheckEvalPlan] = &[
@@ -211,6 +219,8 @@ pub const STAGE5_SUMCHECK_EVALS: &[Stage5SumcheckEvalPlan] = &[
     Stage5SumcheckEvalPlan { symbol: "stage5.ram_ra_claim_reduction.eval.RamRa", source: "stage5.sumcheck", name: "stage5.ram_ra_claim_reduction.eval.RamRa", index: 0, oracle: "RamRa" },
     Stage5SumcheckEvalPlan { symbol: "stage5.registers_val_evaluation.eval.RdInc", source: "stage5.sumcheck", name: "stage5.registers_val_evaluation.eval.RdInc", index: 0, oracle: "RdInc" },
     Stage5SumcheckEvalPlan { symbol: "stage5.registers_val_evaluation.eval.RdWa", source: "stage5.sumcheck", name: "stage5.registers_val_evaluation.eval.RdWa", index: 1, oracle: "RdWa" },
+    Stage5SumcheckEvalPlan { symbol: "stage5.field_reg_val_evaluation.eval.FrdInc", source: "stage5.sumcheck", name: "stage5.field_reg_val_evaluation.eval.FrdInc", index: 0, oracle: "FrdInc" },
+    Stage5SumcheckEvalPlan { symbol: "stage5.field_reg_val_evaluation.eval.FrdWa", source: "stage5.sumcheck", name: "stage5.field_reg_val_evaluation.eval.FrdWa", index: 1, oracle: "FrdWa" },
 ];
 
 pub const STAGE5_POINT_SLICES: &[Stage5PointSlicePlan] = &[
@@ -225,6 +235,7 @@ pub const STAGE5_POINT_SLICES: &[Stage5PointSlicePlan] = &[
     Stage5PointSlicePlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_7.address", source: "stage5.instruction_read_raf.instance", offset: 112, length: 16, input: "stage5.instruction_read_raf.instance" },
     Stage5PointSlicePlan { symbol: "stage5.ram_ra_claim_reduction.point.RamAddress", source: "stage5.input.stage2.ram_raf.RamRa", offset: 0, length: 14, input: "stage5.input.stage2.ram_raf.RamRa" },
     Stage5PointSlicePlan { symbol: "stage5.registers_val_evaluation.point.RegisterAddress", source: "stage5.input.stage4.registers.RegistersVal", offset: 0, length: 7, input: "stage5.input.stage4.registers.RegistersVal" },
+    Stage5PointSlicePlan { symbol: "stage5.field_reg_val_evaluation.point.FieldRegAddress", source: "stage5.input.stage4.field_reg.FieldRegVal", offset: 0, length: 4, input: "stage5.input.stage4.field_reg.FieldRegVal" },
 ];
 
 pub const STAGE5_POINT_CONCAT_0_INPUTS: &[&str] = &[
@@ -277,6 +288,11 @@ pub const STAGE5_POINT_CONCAT_9_INPUTS: &[&str] = &[
     "stage5.registers_val_evaluation.instance",
 ];
 
+pub const STAGE5_POINT_CONCAT_10_INPUTS: &[&str] = &[
+    "stage5.field_reg_val_evaluation.point.FieldRegAddress",
+    "stage5.field_reg_val_evaluation.instance",
+];
+
 pub const STAGE5_POINT_CONCATS: &[Stage5PointConcatPlan] = &[
     Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_0", layout: "address_chunk_then_cycle", arity: 34, inputs: STAGE5_POINT_CONCAT_0_INPUTS },
     Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_1", layout: "address_chunk_then_cycle", arity: 34, inputs: STAGE5_POINT_CONCAT_1_INPUTS },
@@ -288,6 +304,7 @@ pub const STAGE5_POINT_CONCATS: &[Stage5PointConcatPlan] = &[
     Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_7", layout: "address_chunk_then_cycle", arity: 34, inputs: STAGE5_POINT_CONCAT_7_INPUTS },
     Stage5PointConcatPlan { symbol: "stage5.ram_ra_claim_reduction.point.RamRa", layout: "address_then_cycle", arity: 32, inputs: STAGE5_POINT_CONCAT_8_INPUTS },
     Stage5PointConcatPlan { symbol: "stage5.registers_val_evaluation.point.RdWa", layout: "register_address_then_cycle", arity: 25, inputs: STAGE5_POINT_CONCAT_9_INPUTS },
+    Stage5PointConcatPlan { symbol: "stage5.field_reg_val_evaluation.point.FrdWa", layout: "field_reg_address_then_cycle", arity: 22, inputs: STAGE5_POINT_CONCAT_10_INPUTS },
 ];
 pub const STAGE5_OPENING_CLAIMS: &[Stage5OpeningClaimPlan] = &[
     Stage5OpeningClaimPlan { symbol: "stage5.instruction_read_raf.opening.LookupTableFlag_0", oracle: "LookupTableFlag_0", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "virtual", point_source: "stage5.instruction_read_raf.point.Cycle", eval_source: "stage5.instruction_read_raf.eval.LookupTableFlag_0" },
@@ -343,6 +360,8 @@ pub const STAGE5_OPENING_CLAIMS: &[Stage5OpeningClaimPlan] = &[
     Stage5OpeningClaimPlan { symbol: "stage5.ram_ra_claim_reduction.opening.RamRa", oracle: "RamRa", domain: "jolt.stage2_ram_rw_domain", point_arity: 32, claim_kind: "virtual", point_source: "stage5.ram_ra_claim_reduction.point.RamRa", eval_source: "stage5.ram_ra_claim_reduction.eval.RamRa" },
     Stage5OpeningClaimPlan { symbol: "stage5.registers_val_evaluation.opening.RdInc", oracle: "RdInc", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "committed", point_source: "stage5.registers_val_evaluation.instance", eval_source: "stage5.registers_val_evaluation.eval.RdInc" },
     Stage5OpeningClaimPlan { symbol: "stage5.registers_val_evaluation.opening.RdWa", oracle: "RdWa", domain: "jolt.stage4_registers_rw_domain", point_arity: 25, claim_kind: "virtual", point_source: "stage5.registers_val_evaluation.point.RdWa", eval_source: "stage5.registers_val_evaluation.eval.RdWa" },
+    Stage5OpeningClaimPlan { symbol: "stage5.field_reg_val_evaluation.opening.FrdInc", oracle: "FrdInc", domain: "jolt.trace_domain", point_arity: 18, claim_kind: "committed", point_source: "stage5.field_reg_val_evaluation.instance", eval_source: "stage5.field_reg_val_evaluation.eval.FrdInc" },
+    Stage5OpeningClaimPlan { symbol: "stage5.field_reg_val_evaluation.opening.FrdWa", oracle: "FrdWa", domain: "jolt.stage4_field_reg_rw_domain", point_arity: 22, claim_kind: "virtual", point_source: "stage5.field_reg_val_evaluation.point.FrdWa", eval_source: "stage5.field_reg_val_evaluation.eval.FrdWa" },
 ];
 
 pub const STAGE5_OPENING_EQUALITIES: &[Stage5OpeningClaimEqualityPlan] = &[
@@ -403,6 +422,8 @@ pub const STAGE5_OPENING_BATCH_0_ORDERED_CLAIMS: &[&str] = &[
     "stage5.ram_ra_claim_reduction.opening.RamRa",
     "stage5.registers_val_evaluation.opening.RdInc",
     "stage5.registers_val_evaluation.opening.RdWa",
+    "stage5.field_reg_val_evaluation.opening.FrdInc",
+    "stage5.field_reg_val_evaluation.opening.FrdWa",
 ];
 
 pub const STAGE5_OPENING_BATCH_0_CLAIM_OPERANDS: &[&str] = &[
@@ -459,10 +480,12 @@ pub const STAGE5_OPENING_BATCH_0_CLAIM_OPERANDS: &[&str] = &[
     "stage5.ram_ra_claim_reduction.opening.RamRa",
     "stage5.registers_val_evaluation.opening.RdInc",
     "stage5.registers_val_evaluation.opening.RdWa",
+    "stage5.field_reg_val_evaluation.opening.FrdInc",
+    "stage5.field_reg_val_evaluation.opening.FrdWa",
 ];
 
 pub const STAGE5_OPENING_BATCHES: &[Stage5OpeningBatchPlan] = &[
-    Stage5OpeningBatchPlan { symbol: "stage5.openings", stage: "stage5", proof_slot: "stage5.openings", policy: "jolt_stage5_output_order", count: 53, ordered_claims: STAGE5_OPENING_BATCH_0_ORDERED_CLAIMS, claim_operands: STAGE5_OPENING_BATCH_0_CLAIM_OPERANDS },
+    Stage5OpeningBatchPlan { symbol: "stage5.openings", stage: "stage5", proof_slot: "stage5.openings", policy: "jolt_stage5_output_order", count: 55, ordered_claims: STAGE5_OPENING_BATCH_0_ORDERED_CLAIMS, claim_operands: STAGE5_OPENING_BATCH_0_CLAIM_OPERANDS },
 ];
 pub const STAGE5_PROGRAM: Stage5CpuProgramPlan = Stage5CpuProgramPlan {
     role: "prover",

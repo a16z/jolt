@@ -810,7 +810,7 @@ fn jolt_stage5_protocol_defines_value_lookup_reduction_flow() {
     assert!(text.contains("sym_name = \"stage5.ram_ra_claim_reduction.gamma\""));
     assert!(text.contains("sym_name = \"stage5.instruction.lookup_output_claim_consistency\""));
     assert!(text.contains("round_schedule = [128, 18]"));
-    assert!(text.contains("ordered_claims = [@stage5.instruction_read_raf.input, @stage5.ram_ra_claim_reduction.input, @stage5.registers_val_evaluation.input]"));
+    assert!(text.contains("ordered_claims = [@stage5.instruction_read_raf.input, @stage5.ram_ra_claim_reduction.input, @stage5.registers_val_evaluation.input, @stage5.field_reg_val_evaluation.input]"));
     assert!(text.contains("@stage5.instruction_read_raf.opening.LookupTableFlag_0"));
     assert!(text.contains("@stage5.instruction_read_raf.opening.InstructionRa_0"));
     assert!(text.contains("@stage5.instruction_read_raf.opening.InstructionRafFlag"));
@@ -1334,33 +1334,33 @@ fn stage5_rust_targets_extract_and_compile() {
 
     assert_eq!(prover_program.role, Role::Prover);
     assert_eq!(verifier_program.role, Role::Verifier);
-    assert_eq!(prover_program.kernels.len(), 4);
+    assert_eq!(prover_program.kernels.len(), 5);
     assert!(verifier_program.kernels.is_empty());
     assert_eq!(prover_program.steps.len(), 3);
     assert_eq!(prover_program.transcript_squeezes.len(), 2);
     assert!(prover_program.transcript_absorb_bytes.is_empty());
-    assert_eq!(prover_program.opening_inputs.len(), 8);
+    assert_eq!(prover_program.opening_inputs.len(), 9);
     assert_eq!(prover_program.field_exprs.len(), 10);
     assert!(prover_program.field_constants.is_empty());
     assert_eq!(prover_program.opening_equalities.len(), 1);
-    assert_eq!(prover_program.claims.len(), 3);
+    assert_eq!(prover_program.claims.len(), 4);
     assert_eq!(prover_program.drivers.len(), 1);
-    assert_eq!(prover_program.instance_results.len(), 3);
+    assert_eq!(prover_program.instance_results.len(), 4);
     assert_eq!(
         prover_program.evals.len(),
-        params.lookup_table_count + params.instruction_ra_virtual_d + 4
+        params.lookup_table_count + params.instruction_ra_virtual_d + 6
     );
     assert_eq!(
         prover_program.point_slices.len(),
-        params.instruction_ra_virtual_d + 3
+        params.instruction_ra_virtual_d + 4
     );
     assert_eq!(
         prover_program.point_concats.len(),
-        params.instruction_ra_virtual_d + 2
+        params.instruction_ra_virtual_d + 3
     );
     assert_eq!(
         prover_program.opening_claims.len(),
-        params.lookup_table_count + params.instruction_ra_virtual_d + 4
+        params.lookup_table_count + params.instruction_ra_virtual_d + 6
     );
     assert_eq!(prover_program.opening_batches.len(), 1);
     assert!(prover_program
