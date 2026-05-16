@@ -262,6 +262,36 @@ pub(crate) struct VerifierOpeningBatchPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CpuOpeningClaimPlan {
+    pub symbol: String,
+    pub oracle: String,
+    pub domain: String,
+    pub point_arity: usize,
+    pub claim_kind: String,
+    pub point_source: String,
+    pub eval_source: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CpuOpeningClaimEqualityPlan {
+    pub symbol: String,
+    pub mode: String,
+    pub lhs: String,
+    pub rhs: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CpuOpeningBatchPlan {
+    pub symbol: String,
+    pub stage: String,
+    pub proof_slot: String,
+    pub policy: String,
+    pub count: usize,
+    pub ordered_claims: Vec<String>,
+    pub claim_operands: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VerifierStagePlan {
     pub(crate) steps: Vec<VerifierProgramStepPlan>,
     pub(crate) transcript_squeezes: Vec<VerifierTranscriptSqueezePlan>,
@@ -558,9 +588,6 @@ pub(crate) trait VerifierStagePlanSource {
     type Eval: VerifierSumcheckEvalSource;
     type PointSlice: VerifierPointSliceSource;
     type PointConcat: VerifierPointConcatSource;
-    type OpeningClaim: VerifierOpeningClaimSource;
-    type OpeningEquality: VerifierOpeningClaimEqualitySource;
-    type OpeningBatch: VerifierOpeningBatchSource;
 
     fn steps(&self) -> &[Self::Step];
     fn transcript_squeezes(&self) -> &[Self::Squeeze];
@@ -587,9 +614,87 @@ pub(crate) trait VerifierStagePlanSource {
     }
     fn relation_outputs(&self) -> &[RelationOutputPlan];
     fn point_exprs(&self) -> Vec<VerifierPointExprPlan>;
-    fn opening_claims(&self) -> &[Self::OpeningClaim];
-    fn opening_equalities(&self) -> &[Self::OpeningEquality];
-    fn opening_batches(&self) -> &[Self::OpeningBatch];
+    fn opening_claims(&self) -> &[CpuOpeningClaimPlan];
+    fn opening_equalities(&self) -> &[CpuOpeningClaimEqualityPlan];
+    fn opening_batches(&self) -> &[CpuOpeningBatchPlan];
+}
+
+impl VerifierOpeningClaimSource for CpuOpeningClaimPlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn oracle(&self) -> &str {
+        &self.oracle
+    }
+
+    fn domain(&self) -> &str {
+        &self.domain
+    }
+
+    fn point_arity(&self) -> usize {
+        self.point_arity
+    }
+
+    fn claim_kind(&self) -> &str {
+        &self.claim_kind
+    }
+
+    fn point_source(&self) -> &str {
+        &self.point_source
+    }
+
+    fn eval_source(&self) -> &str {
+        &self.eval_source
+    }
+}
+
+impl VerifierOpeningClaimEqualitySource for CpuOpeningClaimEqualityPlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn mode(&self) -> &str {
+        &self.mode
+    }
+
+    fn lhs(&self) -> &str {
+        &self.lhs
+    }
+
+    fn rhs(&self) -> &str {
+        &self.rhs
+    }
+}
+
+impl VerifierOpeningBatchSource for CpuOpeningBatchPlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn stage(&self) -> &str {
+        &self.stage
+    }
+
+    fn proof_slot(&self) -> &str {
+        &self.proof_slot
+    }
+
+    fn policy(&self) -> &str {
+        &self.policy
+    }
+
+    fn count(&self) -> usize {
+        self.count
+    }
+
+    fn ordered_claims(&self) -> &[String] {
+        &self.ordered_claims
+    }
+
+    fn claim_operands(&self) -> &[String] {
+        &self.claim_operands
+    }
 }
 
 pub(crate) fn stage_plan_from_cpu_sources<Source>(
@@ -895,10 +1000,7 @@ macro_rules! impl_verifier_plan_source_traits {
         instance = $instance:ty,
         eval = $eval:ty,
         point_slice = $point_slice:ty,
-        point_concat = $point_concat:ty,
-        opening_claim = $opening_claim:ty,
-        opening_equality = $opening_equality:ty,
-        opening_batch = $opening_batch:ty
+        point_concat = $point_concat:ty
         $(, absorb = $absorb:ty)?
         $(, point_zero = $point_zero:ty)?
         $(, indexed_eval_families = $indexed_eval_families:ident)?
@@ -921,9 +1023,6 @@ macro_rules! impl_verifier_plan_source_traits {
             type Eval = $eval;
             type PointSlice = $point_slice;
             type PointConcat = $point_concat;
-            type OpeningClaim = $opening_claim;
-            type OpeningEquality = $opening_equality;
-            type OpeningBatch = $opening_batch;
 
             fn steps(&self) -> &[Self::Step] { &self.steps }
             fn transcript_squeezes(&self) -> &[Self::Squeeze] { &self.transcript_squeezes }
@@ -972,9 +1071,9 @@ macro_rules! impl_verifier_plan_source_traits {
                     @point_exprs self $(, $point_zero)?
                 )
             }
-            fn opening_claims(&self) -> &[Self::OpeningClaim] { &self.opening_claims }
-            fn opening_equalities(&self) -> &[Self::OpeningEquality] { &self.opening_equalities }
-            fn opening_batches(&self) -> &[Self::OpeningBatch] { &self.opening_batches }
+            fn opening_claims(&self) -> &[$crate::protocols::jolt::verifier_plan::CpuOpeningClaimPlan] { &self.opening_claims }
+            fn opening_equalities(&self) -> &[$crate::protocols::jolt::verifier_plan::CpuOpeningClaimEqualityPlan] { &self.opening_equalities }
+            fn opening_batches(&self) -> &[$crate::protocols::jolt::verifier_plan::CpuOpeningBatchPlan] { &self.opening_batches }
         }
 
         impl $crate::protocols::jolt::verifier_plan::VerifierProgramStepSource for $step {
@@ -1105,32 +1204,6 @@ macro_rules! impl_verifier_plan_source_traits {
             fn inputs(&self) -> &[String] { &self.inputs }
         }
 
-        impl $crate::protocols::jolt::verifier_plan::VerifierOpeningClaimSource for $opening_claim {
-            fn symbol(&self) -> &str { &self.symbol }
-            fn oracle(&self) -> &str { &self.oracle }
-            fn domain(&self) -> &str { &self.domain }
-            fn point_arity(&self) -> usize { self.point_arity }
-            fn claim_kind(&self) -> &str { &self.claim_kind }
-            fn point_source(&self) -> &str { &self.point_source }
-            fn eval_source(&self) -> &str { &self.eval_source }
-        }
-
-        impl $crate::protocols::jolt::verifier_plan::VerifierOpeningClaimEqualitySource for $opening_equality {
-            fn symbol(&self) -> &str { &self.symbol }
-            fn mode(&self) -> &str { &self.mode }
-            fn lhs(&self) -> &str { &self.lhs }
-            fn rhs(&self) -> &str { &self.rhs }
-        }
-
-        impl $crate::protocols::jolt::verifier_plan::VerifierOpeningBatchSource for $opening_batch {
-            fn symbol(&self) -> &str { &self.symbol }
-            fn stage(&self) -> &str { &self.stage }
-            fn proof_slot(&self) -> &str { &self.proof_slot }
-            fn policy(&self) -> &str { &self.policy }
-            fn count(&self) -> usize { self.count }
-            fn ordered_claims(&self) -> &[String] { &self.ordered_claims }
-            fn claim_operands(&self) -> &[String] { &self.claim_operands }
-        }
     };
     (@transcript_absorb_bytes $self:ident, $absorb:ty) => {
         $crate::protocols::jolt::verifier_plan::transcript_absorb_bytes_from_cpu(

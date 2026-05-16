@@ -57,9 +57,9 @@ pub struct Stage5CpuProgram {
     pub relation_outputs: Vec<Stage5RelationOutputPlan>,
     pub point_slices: Vec<Stage5PointSlicePlan>,
     pub point_concats: Vec<Stage5PointConcatPlan>,
-    pub opening_claims: Vec<Stage5OpeningClaimPlan>,
-    pub opening_equalities: Vec<Stage5OpeningClaimEqualityPlan>,
-    pub opening_batches: Vec<Stage5OpeningBatchPlan>,
+    pub opening_claims: Vec<verifier_plan::CpuOpeningClaimPlan>,
+    pub opening_equalities: Vec<verifier_plan::CpuOpeningClaimEqualityPlan>,
+    pub opening_batches: Vec<verifier_plan::CpuOpeningBatchPlan>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -261,36 +261,6 @@ pub struct Stage5PointConcatPlan {
     pub inputs: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage5OpeningClaimPlan {
-    pub symbol: String,
-    pub oracle: String,
-    pub domain: String,
-    pub point_arity: usize,
-    pub claim_kind: String,
-    pub point_source: String,
-    pub eval_source: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage5OpeningClaimEqualityPlan {
-    pub symbol: String,
-    pub mode: String,
-    pub lhs: String,
-    pub rhs: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage5OpeningBatchPlan {
-    pub symbol: String,
-    pub stage: String,
-    pub proof_slot: String,
-    pub policy: String,
-    pub count: usize,
-    pub ordered_claims: Vec<String>,
-    pub claim_operands: Vec<String>,
-}
-
 verifier_plan::impl_verifier_plan_source_traits!(
     program = Stage5CpuProgram,
     step = Stage5ProgramStepPlan,
@@ -306,9 +276,6 @@ verifier_plan::impl_verifier_plan_source_traits!(
     eval = Stage5SumcheckEvalPlan,
     point_slice = Stage5PointSlicePlan,
     point_concat = Stage5PointConcatPlan,
-    opening_claim = Stage5OpeningClaimPlan,
-    opening_equality = Stage5OpeningClaimEqualityPlan,
-    opening_batch = Stage5OpeningBatchPlan,
     absorb = Stage5TranscriptAbsorbBytesPlan,
     indexed_eval_families = indexed_eval_families,
     relation_output_eval_families = relation_output_eval_families,
@@ -612,7 +579,7 @@ impl Stage5CpuProgram {
                     });
                 }
                 "cpu.opening_claim" => {
-                    opening_claims.push(Stage5OpeningClaimPlan {
+                    opening_claims.push(verifier_plan::CpuOpeningClaimPlan {
                         symbol: string_attr(op, "sym_name")?,
                         oracle: symbol_attr(op, "oracle")?,
                         domain: symbol_attr(op, "domain")?,
@@ -623,7 +590,7 @@ impl Stage5CpuProgram {
                     });
                 }
                 "cpu.opening_claim_equal" => {
-                    opening_equalities.push(Stage5OpeningClaimEqualityPlan {
+                    opening_equalities.push(verifier_plan::CpuOpeningClaimEqualityPlan {
                         symbol: string_attr(op, "sym_name")?,
                         mode: string_attr(op, "mode")?,
                         lhs: operand_symbol(op, 0)?,
@@ -631,7 +598,7 @@ impl Stage5CpuProgram {
                     });
                 }
                 "cpu.opening_batch" => {
-                    opening_batches.push(Stage5OpeningBatchPlan {
+                    opening_batches.push(verifier_plan::CpuOpeningBatchPlan {
                         symbol: string_attr(op, "sym_name")?,
                         stage: symbol_attr(op, "stage")?,
                         proof_slot: symbol_attr(op, "proof_slot")?,

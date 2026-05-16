@@ -86,9 +86,9 @@ pub struct Stage6CpuProgram {
     pub point_zeros: Vec<Stage6PointZeroPlan>,
     pub point_slices: Vec<Stage6PointSlicePlan>,
     pub point_concats: Vec<Stage6PointConcatPlan>,
-    pub opening_claims: Vec<Stage6OpeningClaimPlan>,
-    pub opening_equalities: Vec<Stage6OpeningClaimEqualityPlan>,
-    pub opening_batches: Vec<Stage6OpeningBatchPlan>,
+    pub opening_claims: Vec<verifier_plan::CpuOpeningClaimPlan>,
+    pub opening_equalities: Vec<verifier_plan::CpuOpeningClaimEqualityPlan>,
+    pub opening_batches: Vec<verifier_plan::CpuOpeningBatchPlan>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -265,36 +265,6 @@ pub struct Stage6PointConcatPlan {
     pub inputs: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage6OpeningClaimPlan {
-    pub symbol: String,
-    pub oracle: String,
-    pub domain: String,
-    pub point_arity: usize,
-    pub claim_kind: String,
-    pub point_source: String,
-    pub eval_source: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage6OpeningClaimEqualityPlan {
-    pub symbol: String,
-    pub mode: String,
-    pub lhs: String,
-    pub rhs: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage6OpeningBatchPlan {
-    pub symbol: String,
-    pub stage: String,
-    pub proof_slot: String,
-    pub policy: String,
-    pub count: usize,
-    pub ordered_claims: Vec<String>,
-    pub claim_operands: Vec<String>,
-}
-
 verifier_plan::impl_verifier_plan_source_traits!(
     program = Stage6CpuProgram,
     step = Stage6ProgramStepPlan,
@@ -310,9 +280,6 @@ verifier_plan::impl_verifier_plan_source_traits!(
     eval = Stage6SumcheckEvalPlan,
     point_slice = Stage6PointSlicePlan,
     point_concat = Stage6PointConcatPlan,
-    opening_claim = Stage6OpeningClaimPlan,
-    opening_equality = Stage6OpeningClaimEqualityPlan,
-    opening_batch = Stage6OpeningBatchPlan,
     absorb = Stage6TranscriptAbsorbBytesPlan,
     point_zero = Stage6PointZeroPlan,
     indexed_eval_families = indexed_eval_families,
@@ -625,7 +592,7 @@ impl Stage6CpuProgram {
                     });
                 }
                 "cpu.opening_claim" => {
-                    opening_claims.push(Stage6OpeningClaimPlan {
+                    opening_claims.push(verifier_plan::CpuOpeningClaimPlan {
                         symbol: string_attr(op, "sym_name")?,
                         oracle: symbol_attr(op, "oracle")?,
                         domain: symbol_attr(op, "domain")?,
@@ -636,7 +603,7 @@ impl Stage6CpuProgram {
                     });
                 }
                 "cpu.opening_claim_equal" => {
-                    opening_equalities.push(Stage6OpeningClaimEqualityPlan {
+                    opening_equalities.push(verifier_plan::CpuOpeningClaimEqualityPlan {
                         symbol: string_attr(op, "sym_name")?,
                         mode: string_attr(op, "mode")?,
                         lhs: operand_symbol(op, 0)?,
@@ -644,7 +611,7 @@ impl Stage6CpuProgram {
                     });
                 }
                 "cpu.opening_batch" => {
-                    opening_batches.push(Stage6OpeningBatchPlan {
+                    opening_batches.push(verifier_plan::CpuOpeningBatchPlan {
                         symbol: string_attr(op, "sym_name")?,
                         stage: symbol_attr(op, "stage")?,
                         proof_slot: symbol_attr(op, "proof_slot")?,

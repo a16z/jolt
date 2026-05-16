@@ -68,9 +68,9 @@ pub struct Stage7CpuProgram {
     pub point_zeros: Vec<Stage7PointZeroPlan>,
     pub point_slices: Vec<Stage7PointSlicePlan>,
     pub point_concats: Vec<Stage7PointConcatPlan>,
-    pub opening_claims: Vec<Stage7OpeningClaimPlan>,
-    pub opening_equalities: Vec<Stage7OpeningClaimEqualityPlan>,
-    pub opening_batches: Vec<Stage7OpeningBatchPlan>,
+    pub opening_claims: Vec<verifier_plan::CpuOpeningClaimPlan>,
+    pub opening_equalities: Vec<verifier_plan::CpuOpeningClaimEqualityPlan>,
+    pub opening_batches: Vec<verifier_plan::CpuOpeningBatchPlan>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -395,36 +395,6 @@ pub struct Stage7PointConcatPlan {
     pub inputs: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7OpeningClaimPlan {
-    pub symbol: String,
-    pub oracle: String,
-    pub domain: String,
-    pub point_arity: usize,
-    pub claim_kind: String,
-    pub point_source: String,
-    pub eval_source: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7OpeningClaimEqualityPlan {
-    pub symbol: String,
-    pub mode: String,
-    pub lhs: String,
-    pub rhs: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7OpeningBatchPlan {
-    pub symbol: String,
-    pub stage: String,
-    pub proof_slot: String,
-    pub policy: String,
-    pub count: usize,
-    pub ordered_claims: Vec<String>,
-    pub claim_operands: Vec<String>,
-}
-
 verifier_plan::impl_verifier_plan_source_traits!(
     program = Stage7CpuProgram,
     step = Stage7ProgramStepPlan,
@@ -440,9 +410,6 @@ verifier_plan::impl_verifier_plan_source_traits!(
     eval = Stage7SumcheckEvalPlan,
     point_slice = Stage7PointSlicePlan,
     point_concat = Stage7PointConcatPlan,
-    opening_claim = Stage7OpeningClaimPlan,
-    opening_equality = Stage7OpeningClaimEqualityPlan,
-    opening_batch = Stage7OpeningBatchPlan,
     absorb = Stage7TranscriptAbsorbBytesPlan,
     point_zero = Stage7PointZeroPlan,
     relation_output_eval_families = relation_output_eval_families,
@@ -749,7 +716,7 @@ impl Stage7CpuProgram {
                     });
                 }
                 "cpu.opening_claim" => {
-                    opening_claims.push(Stage7OpeningClaimPlan {
+                    opening_claims.push(verifier_plan::CpuOpeningClaimPlan {
                         symbol: string_attr(op, "sym_name")?,
                         oracle: symbol_attr(op, "oracle")?,
                         domain: symbol_attr(op, "domain")?,
@@ -760,7 +727,7 @@ impl Stage7CpuProgram {
                     });
                 }
                 "cpu.opening_claim_equal" => {
-                    opening_equalities.push(Stage7OpeningClaimEqualityPlan {
+                    opening_equalities.push(verifier_plan::CpuOpeningClaimEqualityPlan {
                         symbol: string_attr(op, "sym_name")?,
                         mode: string_attr(op, "mode")?,
                         lhs: operand_symbol(op, 0)?,
@@ -768,7 +735,7 @@ impl Stage7CpuProgram {
                     });
                 }
                 "cpu.opening_batch" => {
-                    opening_batches.push(Stage7OpeningBatchPlan {
+                    opening_batches.push(verifier_plan::CpuOpeningBatchPlan {
                         symbol: string_attr(op, "sym_name")?,
                         stage: symbol_attr(op, "stage")?,
                         proof_slot: symbol_attr(op, "proof_slot")?,
