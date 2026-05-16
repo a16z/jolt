@@ -305,26 +305,6 @@ pub fn evaluate_stage67_bytecode_read_raf_output_scalars<E: Stage67BytecodeEntry
     local_point: &[Fr],
     log_t: usize,
 ) -> Result<Vec<NamedScalar<Fr>>, RuntimePlanError> {
-    stage67_bytecode_read_raf_output_terms(
-        plan,
-        entries,
-        entry_bytecode_index,
-        num_lookup_tables,
-        store,
-        local_point,
-        log_t,
-    )
-}
-
-fn stage67_bytecode_read_raf_output_terms<E: Stage67BytecodeEntry>(
-    plan: &Stage67BytecodeReadRafPlan,
-    entries: &[E],
-    entry_bytecode_index: usize,
-    num_lookup_tables: usize,
-    store: &ValueStore<Fr>,
-    local_point: &[Fr],
-    log_t: usize,
-) -> Result<Vec<NamedScalar<Fr>>, RuntimePlanError> {
     let opening_point = normalize_bytecode_read_raf_point(local_point, log_t, plan.point)?;
     let log_k = opening_point.len() - log_t;
     let (r_address_prime, r_cycle_prime) = opening_point.split_at(log_k);

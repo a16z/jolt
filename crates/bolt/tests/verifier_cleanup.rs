@@ -38,6 +38,7 @@ const STAGE_HELPER_FUNCTION_BASELINE_CEILING: usize = 38;
 const RELATION_STRING_SITE_BASELINE_CEILING: usize = 0;
 const SUMCHECK_POINT_ORDER_STRING_SITE_BASELINE_CEILING: usize = 0;
 const RELATION_INDEXED_EVAL_PREFIX_SITE_BASELINE_CEILING: usize = 0;
+const HANDWRITTEN_EXPECTED_OUTPUT_FUNCTION_BASELINE_CEILING: usize = 12;
 
 const ALLOWED_JOLT_PROTOCOL_SYMBOLS: &[&str] = &[
     "jolt.commitment_phase",
@@ -145,6 +146,10 @@ struct VerifierCleanupMetrics {
     relation_string_sites: usize,
     sumcheck_point_order_string_sites: usize,
     relation_indexed_eval_prefix_sites: usize,
+    compute_poly_op_call_sites: usize,
+    compute_point_op_call_sites: usize,
+    value_graph_relation_outputs: usize,
+    handwritten_expected_output_functions: usize,
 }
 
 #[test]
@@ -172,7 +177,11 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
          stage_local_helper_functions: {helper_functions} (baseline ceiling <= {helper_baseline})\n\
          relation_string_sites: {relation_sites} (baseline ceiling <= {relation_baseline})\n\
          sumcheck_point_order_string_sites: {point_order_sites} (baseline ceiling <= {point_order_baseline})\n\
-         relation_indexed_eval_prefix_sites: {indexed_eval_prefix_sites} (baseline ceiling <= {indexed_eval_prefix_baseline})",
+         relation_indexed_eval_prefix_sites: {indexed_eval_prefix_sites} (baseline ceiling <= {indexed_eval_prefix_baseline})\n\
+         compute_poly_op_call_sites: {compute_poly_op_call_sites}\n\
+         compute_point_op_call_sites: {compute_point_op_call_sites}\n\
+         value_graph_relation_outputs: {value_graph_relation_outputs}\n\
+         handwritten_expected_output_functions: {expected_output_functions} (baseline ceiling <= {expected_output_functions_baseline})",
         generated_surface_loc = metrics.generated_surface_loc,
         bolt_runtime_loc = metrics.bolt_runtime_loc,
         bolt_runtime_baseline = BOLT_RUNTIME_BASELINE_LOC_CEILING,
@@ -209,6 +218,12 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
         point_order_baseline = SUMCHECK_POINT_ORDER_STRING_SITE_BASELINE_CEILING,
         indexed_eval_prefix_sites = metrics.relation_indexed_eval_prefix_sites,
         indexed_eval_prefix_baseline = RELATION_INDEXED_EVAL_PREFIX_SITE_BASELINE_CEILING,
+        compute_poly_op_call_sites = metrics.compute_poly_op_call_sites,
+        compute_point_op_call_sites = metrics.compute_point_op_call_sites,
+        value_graph_relation_outputs = metrics.value_graph_relation_outputs,
+        expected_output_functions = metrics.handwritten_expected_output_functions,
+        expected_output_functions_baseline =
+            HANDWRITTEN_EXPECTED_OUTPUT_FUNCTION_BASELINE_CEILING,
     );
 
     assert!(
@@ -303,6 +318,12 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
             == RELATION_INDEXED_EVAL_PREFIX_SITE_BASELINE_CEILING,
         "relation indexed-eval prefix sites grew to {}; prefer typed eval-family plan data",
         metrics.relation_indexed_eval_prefix_sites
+    );
+    assert!(
+        metrics.handwritten_expected_output_functions
+            <= HANDWRITTEN_EXPECTED_OUTPUT_FUNCTION_BASELINE_CEILING,
+        "handwritten expected-output helper count grew to {}; move output math into typed value-graph plan data",
+        metrics.handwritten_expected_output_functions
     );
 }
 
@@ -660,6 +681,11 @@ fn verifier_cleanup_metrics(verifier_src: &Path) -> VerifierCleanupMetrics {
                 count_sumcheck_point_order_string_sites(&source);
             metrics.relation_indexed_eval_prefix_sites +=
                 count_relation_indexed_eval_prefix_sites(&source);
+            metrics.compute_poly_op_call_sites += count_compute_poly_op_call_sites(&source);
+            metrics.compute_point_op_call_sites += count_compute_point_op_call_sites(&source);
+            metrics.value_graph_relation_outputs += count_value_graph_relation_outputs(&source);
+            metrics.handwritten_expected_output_functions +=
+                count_handwritten_expected_output_functions(&source);
         }
     }
     metrics
@@ -775,6 +801,33 @@ fn count_relation_indexed_eval_prefix_sites(source: &str) -> usize {
     source
         .lines()
         .filter(|line| line.contains("indexed_evals_by_prefix") || line.contains("eval_prefix"))
+        .count()
+}
+
+fn count_compute_poly_op_call_sites(source: &str) -> usize {
+    source
+        .matches("ScalarExprKind::StructuredPolynomial")
+        .count()
+}
+
+fn count_compute_point_op_call_sites(source: &str) -> usize {
+    source
+        .lines()
+        .filter(|line| line.contains("PointExprKind::") && line.contains("PointExprPlan"))
+        .count()
+}
+
+fn count_value_graph_relation_outputs(source: &str) -> usize {
+    source
+        .lines()
+        .filter(|line| line.contains("RelationOutputPlan {") && line.contains("expected_output:"))
+        .count()
+}
+
+fn count_handwritten_expected_output_functions(source: &str) -> usize {
+    source
+        .lines()
+        .filter(|line| line.trim_start().starts_with("fn expected_"))
         .count()
 }
 
