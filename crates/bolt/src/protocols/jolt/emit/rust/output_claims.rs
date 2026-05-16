@@ -44,9 +44,9 @@ pub fn emit_verifier_output_claim_constants(
             emit_function_family_constants(&mut source, stage_type, index, claim)?;
         let local_scalars = emit_local_scalar_constants(&mut source, stage_type, index, claim);
         claims.push(format!(
-            "    {stage_type}SumcheckOutputClaimPlan {{ relation: {}, polynomial_evals: {values_name}, eval_families: {eval_families}, product_families: {product_families}, function_families: {function_families}, local_scalars: {local_scalars}, claim_value: {} }},",
+            "    {stage_type}SumcheckOutputClaimPlan {{ relation: {}, polynomial_evals: {values_name}, eval_families: {eval_families}, product_families: {product_families}, function_families: {function_families}, local_scalars: {local_scalars}, expected_output: {} }},",
             super::plan_tokens::role_relation_kind_expr(stage_type, role, &claim.relation)?,
-            rust_str(&claim.claim_value)
+            rust_str(&claim.expected_output)
         ));
     }
     let claims = claims.join("\n");

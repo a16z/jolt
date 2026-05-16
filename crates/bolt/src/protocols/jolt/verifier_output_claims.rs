@@ -254,7 +254,7 @@ pub struct SumcheckOutputClaimPlan {
     pub product_families: Vec<SumcheckOutputProductFamilyPlan>,
     pub function_families: Vec<SumcheckOutputFunctionFamilyPlan>,
     pub local_scalars: Vec<String>,
-    pub claim_value: String,
+    pub expected_output: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -262,7 +262,7 @@ pub struct SumcheckOutputClaimAst {
     pub relation: String,
     pub polynomial_evals: Vec<String>,
     pub polynomial_eval_operands: Vec<String>,
-    pub claim_value: String,
+    pub expected_output: String,
 }
 
 pub fn parse_output_eval_family_plan(
@@ -583,7 +583,7 @@ where
                 &output_product_families_by_symbol,
                 &output_function_families_by_symbol,
                 &field_exprs_by_symbol,
-                std::iter::once(claim.claim_value.as_str()),
+                std::iter::once(claim.expected_output.as_str()),
             );
             let eval_families = output_families
                 .iter()
@@ -607,7 +607,7 @@ where
                 product_families,
                 function_families,
                 local_scalars: Vec::new(),
-                claim_value: claim.claim_value,
+                expected_output: claim.expected_output,
             })
         })
         .collect()
@@ -1007,10 +1007,10 @@ pub fn verify_output_claims(
                 claim.relation
             )));
         }
-        if !field_values.contains(&claim.claim_value) {
+        if !field_values.contains(&claim.expected_output) {
             return Err(EmitError::new(format!(
-                "{stage} output claim for @{} uses missing claim value @{}",
-                claim.relation, claim.claim_value
+                "{stage} output claim for @{} uses missing expected output @{}",
+                claim.relation, claim.expected_output
             )));
         }
     }
@@ -1271,7 +1271,7 @@ mod tests {
             relation: "relation".to_owned(),
             polynomial_evals: Vec::new(),
             polynomial_eval_operands: Vec::new(),
-            claim_value: "claim.expr".to_owned(),
+            expected_output: "claim.expr".to_owned(),
         }];
 
         let claims = resolve_output_claims(
@@ -1323,7 +1323,7 @@ mod tests {
             relation: "relation".to_owned(),
             polynomial_evals: Vec::new(),
             polynomial_eval_operands: Vec::new(),
-            claim_value: "claim.expr".to_owned(),
+            expected_output: "claim.expr".to_owned(),
         }];
 
         let claims = resolve_output_claims(
@@ -1375,7 +1375,7 @@ mod tests {
             relation: "relation".to_owned(),
             polynomial_evals: Vec::new(),
             polynomial_eval_operands: Vec::new(),
-            claim_value: "claim.expr".to_owned(),
+            expected_output: "claim.expr".to_owned(),
         }];
 
         let claims = resolve_output_claims(

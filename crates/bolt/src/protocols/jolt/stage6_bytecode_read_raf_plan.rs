@@ -364,7 +364,7 @@ impl BytecodeReadRafPlan {
             product_families: vec![product_family.clone()],
             function_families: Vec::new(),
             local_scalars: vec![self.output_contribution.to_owned()],
-            claim_value: product_family.symbol,
+            expected_output: product_family.symbol,
         }
     }
 }
@@ -679,7 +679,7 @@ mod tests {
 
         assert_eq!(claim.relation, "jolt.stage6.bytecode_read_raf");
         assert_eq!(
-            claim.claim_value,
+            claim.expected_output,
             "stage6.bytecode_read_raf.output.product.BytecodeReadRaf"
         );
         assert!(claim.polynomial_evals.is_empty());

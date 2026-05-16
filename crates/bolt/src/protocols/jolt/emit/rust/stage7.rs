@@ -569,7 +569,7 @@ impl Stage7CpuProgram {
                 "cpu.sumcheck_output_claim" => {
                     output_claim_asts.push(Stage7SumcheckOutputClaimAst {
                         relation: symbol_attr(op, "relation")?,
-                        claim_value: operand_symbol(op, 0)?,
+                        expected_output: operand_symbol(op, 0)?,
                         polynomial_evals: symbol_array_attr(op, "polynomial_evals")?,
                         polynomial_eval_operands: operand_symbols(op, 1)?,
                     });
@@ -642,7 +642,7 @@ impl Stage7CpuProgram {
                 claims.iter().map(|claim| claim.claim_value.as_str()),
                 output_claim_asts
                     .iter()
-                    .map(|claim| claim.claim_value.as_str()),
+                    .map(|claim| claim.expected_output.as_str()),
             );
         }
         let output_claims = if role == Role::Verifier {

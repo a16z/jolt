@@ -595,7 +595,9 @@ an eval-family vector by symbol, and Stage 5 instruction RA / Stage 6 bytecode
 RA products use that path. The Stage 5 instruction read-RAF and Stage 6
 bytecode read-RAF relation plans now reference the same plan-level
 `STAGE*_INDEXED_EVAL_FAMILIES` rows instead of emitting duplicate
-relation-local `NamedEvalFamilyPlan` constants. Output eval families are still
+relation-local `NamedEvalFamilyPlan` constants. Output relation rows now name
+their terminal scalar `expected_output`, keeping verifier expected-output data
+separate from input sumcheck `claim_value` data. Output eval families are still
 scalar-output claim machinery rather than first-class value rows.
 
 ### Dialect changes

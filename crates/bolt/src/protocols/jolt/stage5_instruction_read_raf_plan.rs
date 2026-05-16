@@ -214,7 +214,7 @@ impl Stage5InstructionReadRafEmitPlan {
                     .iter()
                     .map(|value| value.symbol.clone())
                     .collect(),
-                claim_value: claim_expr,
+                expected_output: claim_expr,
             },
         }
     }
@@ -434,7 +434,7 @@ mod tests {
             "jolt.stage5.instruction_read_raf"
         );
         assert_eq!(
-            output_plan.claim.claim_value,
+            output_plan.claim.expected_output,
             "stage5.instruction_read_raf.output.claim_expr"
         );
         assert_eq!(output_plan.claim.polynomial_evals.len(), 1);

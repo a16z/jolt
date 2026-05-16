@@ -444,7 +444,7 @@ pub struct SumcheckOutputClaimPlan<R: ProtocolRelation> {
     pub product_families: &'static [SumcheckOutputProductFamilyPlan],
     pub function_families: &'static [SumcheckOutputFunctionFamilyPlan],
     pub local_scalars: &'static [&'static str],
-    pub claim_value: &'static str,
+    pub expected_output: &'static str,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1359,9 +1359,9 @@ pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
     }
     evaluate_available_field_exprs_with_scratch(field_exprs, store, &mut scratch)?;
     scratch
-        .scalar_or(store, plan.claim_value)
+        .scalar_or(store, plan.expected_output)
         .ok_or(RuntimePlanError::MissingValue {
-            symbol: plan.claim_value,
+            symbol: plan.expected_output,
         })
 }
 

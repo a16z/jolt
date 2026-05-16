@@ -759,7 +759,7 @@ macro_rules! define_stage_adapter_impl {
                                     .collect(),
                             ),
                             local_scalars: super::leak_str_slice(&plan.local_scalars),
-                            claim_value: super::leak_str(&plan.claim_value),
+                            expected_output: super::leak_str(&plan.expected_output),
                         })
                         .collect(),
                 ),
