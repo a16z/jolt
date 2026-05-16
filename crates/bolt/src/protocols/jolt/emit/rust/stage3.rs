@@ -6,6 +6,7 @@ use melior::ir::{Attribute, OperationRef};
 
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
+use crate::protocols::jolt::rust_target_plan::structured_polynomial_value_formula;
 use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
 use crate::protocols::jolt::verifier_relation_outputs::{
     self, FieldExprDependencies, RelationOutputAst as Stage3RelationOutputAst,
@@ -115,6 +116,27 @@ impl FieldExprDependencies for Stage3FieldExprPlan {
 
     fn operands(&self) -> &[String] {
         &self.operands
+    }
+}
+
+fn stage3_structured_polynomial_value_expr(
+    value: &Stage3StructuredPolynomialEvalPlan,
+) -> Stage3ValueExprPlan {
+    let operands = vec![value.x_point.source.clone(), value.y_point.source.clone()];
+    Stage3ValueExprPlan {
+        symbol: value.symbol.clone(),
+        kind: "op".to_owned(),
+        formula: structured_polynomial_value_formula(
+            value.polynomial.as_str(),
+            value.x_point.segment.as_str(),
+            value.x_point.length.as_str(),
+            value.x_point.order.as_str(),
+            value.y_point.segment.as_str(),
+            value.y_point.length.as_str(),
+            value.y_point.order.as_str(),
+        ),
+        operand_names: operands.clone(),
+        operands,
     }
 }
 
@@ -276,7 +298,7 @@ impl Stage3CpuProgram {
         let mut opening_inputs = Vec::new();
         let mut field_constants = Vec::new();
         let mut field_exprs = Vec::new();
-        let value_exprs = Vec::new();
+        let mut value_exprs = Vec::new();
         let mut kernels = Vec::new();
         let mut claims = Vec::new();
         let mut batches = Vec::new();
@@ -583,6 +605,13 @@ impl Stage3CpuProgram {
             .role()
             .ok_or_else(|| EmitError::new("missing cpu party role"))?;
         let is_verifier = role == Role::Verifier;
+        if is_verifier {
+            value_exprs.extend(
+                relation_output_values
+                    .iter()
+                    .map(stage3_structured_polynomial_value_expr),
+            );
+        }
         if role == Role::Prover {
             verifier_relation_outputs::prune_output_only_field_exprs(
                 &mut field_exprs,
@@ -745,14 +774,12 @@ impl Stage3CpuProgram {
             verifier_values::VerifierScalarSourceKind::FieldExpr,
         );
         values.extend(
-            self.evals.iter().map(|eval| &eval.symbol),
-            verifier_values::VerifierScalarSourceKind::SumcheckEval,
+            self.value_exprs.iter().map(|expr| &expr.symbol),
+            verifier_values::VerifierScalarSourceKind::ValueExpr,
         );
         values.extend(
-            self.relation_output_values
-                .iter()
-                .map(|value| &value.symbol),
-            verifier_values::VerifierScalarSourceKind::StructuredPolynomialEval,
+            self.evals.iter().map(|eval| &eval.symbol),
+            verifier_values::VerifierScalarSourceKind::SumcheckEval,
         );
         values
     }
@@ -2203,7 +2230,6 @@ fn expected_batched_output_claim(
             })?;
         let value = bolt_verifier_runtime::evaluate_relation_output_for_instance(
             program.relation_outputs,
-        program.relation_output_values,
             program.field_exprs,
             program.value_exprs,
             store,

@@ -323,21 +323,6 @@ impl VerifierStagePlan {
             VerifierScalarSourceKind::TranscriptScalar,
         );
         values.extend(
-            self.relation_output_values
-                .iter()
-                .map(|value| &value.symbol),
-            VerifierScalarSourceKind::StructuredPolynomialEval,
-        );
-        values.extend(
-            self.relation_outputs.iter().flat_map(|claim| {
-                claim
-                    .structured_polynomial_evals
-                    .iter()
-                    .map(|value| &value.symbol)
-            }),
-            VerifierScalarSourceKind::StructuredPolynomialEval,
-        );
-        values.extend(
             self.relation_output_eval_families
                 .iter()
                 .map(|family| &family.symbol),

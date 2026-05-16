@@ -118,7 +118,8 @@ pub const STAGE4_FIELD_EXPRS: &[Stage4FieldExprPlan] = &[
     Stage4FieldExprPlan { symbol: "stage4.ram_val_check.output.claim_expr", kind: Stage4FieldExprKind::Mul, operands: &["stage4.ram_val_check.output.term.RamIncRamRa", "stage4.ram_val_check.output.lt_plus_gamma"] },
 ];
 pub const STAGE4_VALUE_EXPRS: &[Stage4ValueExprPlan] = &[
-
+    Stage4ValueExprPlan { symbol: "stage4.registers_read_write.output.eq.RdWriteValue", kind: Stage4ValueExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Eq, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Prefix, length: bolt_verifier_runtime::StructuredPolynomialPointLength::YPoint, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage4.registers_read_write.instance", "stage4.input.stage3.registers.RdWriteValue"] },
+    Stage4ValueExprPlan { symbol: "stage4.ram_val_check.output.lt.RamValCycle", kind: Stage4ValueExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Lt, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Suffix, length: bolt_verifier_runtime::StructuredPolynomialPointLength::XPoint, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage4.ram_val_check.instance", "stage4.input.stage2.RamVal"] },
 ];
 pub const STAGE4_KERNELS: &[Stage4KernelPlan] = &[
 
@@ -471,7 +472,6 @@ fn expected_batched_output_claim(
             })?;
         let value = bolt_verifier_runtime::evaluate_relation_output_for_instance(
             program.relation_outputs,
-        program.relation_output_values,
             program.field_exprs,
             program.value_exprs,
             store,

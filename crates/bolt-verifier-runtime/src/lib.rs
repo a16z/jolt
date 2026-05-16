@@ -262,6 +262,11 @@ pub struct FieldExprPlan {
 pub enum ValueExprKind {
     FieldVectorSum,
     FieldVectorProduct,
+    StructuredPolynomial {
+        polynomial: StructuredPolynomialKind,
+        x_point: StructuredPolynomialPointTransform,
+        y_point: StructuredPolynomialPointTransform,
+    },
     PowerStridedWeightedSum {
         row_count: usize,
         power_stride: usize,
@@ -380,6 +385,13 @@ pub enum StructuredPolynomialPointLength {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StructuredPolynomialPointPlan {
     pub source: &'static str,
+    pub segment: StructuredPolynomialPointSegment,
+    pub length: StructuredPolynomialPointLength,
+    pub order: StructuredPolynomialPointOrder,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StructuredPolynomialPointTransform {
     pub segment: StructuredPolynomialPointSegment,
     pub length: StructuredPolynomialPointLength,
     pub order: StructuredPolynomialPointOrder,
@@ -1146,6 +1158,7 @@ impl<F: Field> ValueStore<F> {
                 };
                 self.try_field_vector(symbol).map(|values| values.to_vec())
             }
+            ValueExprKind::StructuredPolynomial { .. } => None,
             ValueExprKind::PowerStridedWeightedSum { .. } => expr
                 .operands
                 .iter()
@@ -1324,7 +1337,6 @@ pub fn eval_family_values<F: Field>(
 
 pub fn evaluate_relation_output<R: ProtocolRelation>(
     plan: &RelationOutputPlan<R>,
-    relation_output_values: &[StructuredPolynomialEvalPlan],
     field_exprs: &[FieldExprPlan],
     value_exprs: &[ValueExprPlan],
     store: &ValueStore<Fr>,
@@ -1346,46 +1358,12 @@ pub fn evaluate_relation_output<R: ProtocolRelation>(
     for eval in evals {
         scratch.insert(eval.name, eval.value);
     }
-    for polynomial_eval_ref in plan.structured_polynomial_evals {
-        let polynomial_eval = relation_output_values
-            .get(polynomial_eval_ref.index)
-            .ok_or(RuntimePlanError::InvalidInputLength {
-                input: polynomial_eval_ref.symbol,
-                expected: polynomial_eval_ref.index + 1,
-                actual: relation_output_values.len(),
-            })?;
-        if polynomial_eval.symbol != polynomial_eval_ref.symbol {
-            return Err(RuntimePlanError::InvalidProof {
-                driver: instance_symbol,
-                reason: "relation output value reference mismatch",
-            });
-        }
-        let x_raw_point = relation_output_x_point_source(
-            polynomial_eval.x_point.source,
-            instance_symbol,
-            local_points,
-            local_point,
-            store,
-        )?;
-        let y_raw_point = store.point_or(polynomial_eval.y_point.source, |symbol| {
-            RuntimePlanError::MissingValue { symbol }
-        })?;
-        let x_point = evaluate_structured_polynomial_point(
-            polynomial_eval.x_point,
-            x_raw_point,
-            x_raw_point,
-            y_raw_point,
-        )?;
-        let y_point = evaluate_structured_polynomial_point(
-            polynomial_eval.y_point,
-            y_raw_point,
-            x_raw_point,
-            y_raw_point,
-        )?;
-        let value = evaluate_structured_polynomial(polynomial_eval.polynomial, &x_point, y_point)?;
-        scratch.insert(polynomial_eval.symbol, value);
-    }
-    evaluate_available_exprs_with_scratch(field_exprs, value_exprs, store, &mut scratch)?;
+    let context = RelationOutputContext {
+        instance_symbol,
+        local_points,
+        local_point,
+    };
+    evaluate_available_exprs_with_scratch(field_exprs, value_exprs, store, &mut scratch, context)?;
     scratch
         .scalar_or(store, plan.expected_output)
         .ok_or(RuntimePlanError::MissingValue {
@@ -1395,7 +1373,6 @@ pub fn evaluate_relation_output<R: ProtocolRelation>(
 
 pub fn evaluate_relation_output_for_instance<R: ProtocolRelation>(
     relation_outputs: &[RelationOutputPlan<R>],
-    relation_output_values: &[StructuredPolynomialEvalPlan],
     field_exprs: &[FieldExprPlan],
     value_exprs: &[ValueExprPlan],
     store: &ValueStore<Fr>,
@@ -1414,7 +1391,6 @@ pub fn evaluate_relation_output_for_instance<R: ProtocolRelation>(
         })?;
     evaluate_relation_output(
         relation_output,
-        relation_output_values,
         field_exprs,
         value_exprs,
         store,
@@ -1440,6 +1416,13 @@ fn relation_output_x_point_source<'a>(
         .or_else(|| (source == instance_symbol).then_some(local_point))
         .or_else(|| store.try_point(source))
         .ok_or(RuntimePlanError::MissingValue { symbol: source })
+}
+
+#[derive(Clone, Copy)]
+struct RelationOutputContext<'a> {
+    instance_symbol: &'static str,
+    local_points: &'a [NamedPoint<'a, Fr>],
+    local_point: &'a [Fr],
 }
 
 fn evaluate_structured_polynomial_point(
@@ -1529,6 +1512,7 @@ fn evaluate_available_exprs_with_scratch(
     value_exprs: &[ValueExprPlan],
     store: &ValueStore<Fr>,
     scratch: &mut ScratchScalars,
+    context: RelationOutputContext<'_>,
 ) -> Result<(), RuntimePlanError> {
     loop {
         let mut progress = 0usize;
@@ -1546,10 +1530,11 @@ fn evaluate_available_exprs_with_scratch(
             if scratch.scalar_or(store, expr.symbol).is_some() {
                 continue;
             }
-            let Some(operands) = relation_output_value_expr_operands(expr, store, scratch) else {
+            let Some(value) = evaluate_relation_output_value_expr(expr, store, scratch, context)?
+            else {
                 continue;
             };
-            scratch.insert(expr.symbol, evaluate_value_expr(expr, &operands)?);
+            scratch.insert(expr.symbol, value);
             progress += 1;
         }
         if progress == 0 {
@@ -1569,24 +1554,85 @@ fn relation_output_expr_operands(
         .collect()
 }
 
-fn relation_output_value_expr_operands(
+fn evaluate_relation_output_value_expr(
     expr: &ValueExprPlan,
     store: &ValueStore<Fr>,
     scratch: &ScratchScalars,
-) -> Option<Vec<Fr>> {
+    context: RelationOutputContext<'_>,
+) -> Result<Option<Fr>, RuntimePlanError> {
     match expr.kind {
         ValueExprKind::FieldVectorSum | ValueExprKind::FieldVectorProduct => {
             let [symbol] = expr.operands else {
-                return Some(Vec::new());
+                return evaluate_value_expr(expr, &[]).map(Some);
             };
-            store.try_field_vector(symbol).map(|values| values.to_vec())
+            let Some(values) = store.try_field_vector(symbol) else {
+                return Ok(None);
+            };
+            evaluate_value_expr(expr, values).map(Some)
         }
+        ValueExprKind::StructuredPolynomial {
+            polynomial,
+            x_point,
+            y_point,
+        } => evaluate_structured_polynomial_value(
+            expr.symbol,
+            expr.operands,
+            polynomial,
+            x_point,
+            y_point,
+            store,
+            context,
+        )
+        .map(Some),
         ValueExprKind::PowerStridedWeightedSum { .. } => expr
             .operands
             .iter()
             .map(|operand| scratch.scalar_or(store, operand))
-            .collect(),
+            .collect::<Option<Vec<_>>>()
+            .map(|operands| evaluate_value_expr(expr, &operands).map(Some))
+            .transpose()
+            .map(Option::flatten),
     }
+}
+
+fn evaluate_structured_polynomial_value(
+    symbol: &'static str,
+    operands: &[&'static str],
+    polynomial: StructuredPolynomialKind,
+    x_transform: StructuredPolynomialPointTransform,
+    y_transform: StructuredPolynomialPointTransform,
+    store: &ValueStore<Fr>,
+    context: RelationOutputContext<'_>,
+) -> Result<Fr, RuntimePlanError> {
+    require_operand_count(symbol, 2, operands.len())?;
+    let x_source = operands[0];
+    let y_source = operands[1];
+    let x_raw_point = relation_output_x_point_source(
+        x_source,
+        context.instance_symbol,
+        context.local_points,
+        context.local_point,
+        store,
+    )?;
+    let y_raw_point =
+        store.point_or(y_source, |symbol| RuntimePlanError::MissingValue { symbol })?;
+    let x_plan = StructuredPolynomialPointPlan {
+        source: x_source,
+        segment: x_transform.segment,
+        length: x_transform.length,
+        order: x_transform.order,
+    };
+    let y_plan = StructuredPolynomialPointPlan {
+        source: y_source,
+        segment: y_transform.segment,
+        length: y_transform.length,
+        order: y_transform.order,
+    };
+    let x_point =
+        evaluate_structured_polynomial_point(x_plan, x_raw_point, x_raw_point, y_raw_point)?;
+    let y_point =
+        evaluate_structured_polynomial_point(y_plan, y_raw_point, x_raw_point, y_raw_point)?;
+    evaluate_structured_polynomial(polynomial, &x_point, y_point)
 }
 
 pub fn single_operand<F: Field>(
@@ -1703,6 +1749,10 @@ pub fn evaluate_value_expr<F: Field>(
                 .copied()
                 .fold(F::from_u64(1), |acc, operand| acc * operand))
         }
+        ValueExprKind::StructuredPolynomial { .. } => Err(RuntimePlanError::InvalidProof {
+            driver: expr.symbol,
+            reason: "structured polynomial value expressions require relation-output point context",
+        }),
         ValueExprKind::PowerStridedWeightedSum {
             row_count,
             power_stride,
@@ -1914,9 +1964,17 @@ pub fn reverse_slice(values: &[Fr]) -> Vec<Fr> {
 )]
 mod tests {
     use super::{
-        evaluate_value_expr, Fr, NamedEvalFamilyPlan, RuntimePlanError, ValueExprKind,
-        ValueExprPlan, ValueStore,
+        evaluate_relation_output_for_instance, evaluate_value_expr, Fr, NamedEvalFamilyPlan,
+        RelationOutputPlan, RuntimePlanError, StructuredPolynomialKind,
+        StructuredPolynomialPointLength, StructuredPolynomialPointOrder,
+        StructuredPolynomialPointSegment, StructuredPolynomialPointTransform,
+        SumcheckInstanceResultPlan, SumcheckPointOrder, ValueExprKind, ValueExprPlan, ValueStore,
     };
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum TestRelation {
+        Output,
+    }
 
     #[test]
     fn value_store_evaluates_named_eval_families_as_field_vectors() {
@@ -2008,5 +2066,59 @@ mod tests {
         .unwrap();
 
         assert_eq!(value, Fr::from_u64(2857));
+    }
+
+    #[test]
+    fn relation_output_evaluates_structured_polynomial_value_exprs() {
+        let x = [Fr::from_u64(1), Fr::from_u64(0)];
+        let mut store = ValueStore::default();
+        store.insert_point("point.y", x.to_vec());
+
+        let value = evaluate_relation_output_for_instance(
+            &[RelationOutputPlan {
+                relation: TestRelation::Output,
+                structured_polynomial_evals: &[],
+                local_scalars: &[],
+                expected_output: "eq.xy",
+            }],
+            &[],
+            &[ValueExprPlan {
+                symbol: "eq.xy",
+                kind: ValueExprKind::StructuredPolynomial {
+                    polynomial: StructuredPolynomialKind::Eq,
+                    x_point: StructuredPolynomialPointTransform {
+                        segment: StructuredPolynomialPointSegment::Full,
+                        length: StructuredPolynomialPointLength::Full,
+                        order: StructuredPolynomialPointOrder::AsIs,
+                    },
+                    y_point: StructuredPolynomialPointTransform {
+                        segment: StructuredPolynomialPointSegment::Full,
+                        length: StructuredPolynomialPointLength::Full,
+                        order: StructuredPolynomialPointOrder::AsIs,
+                    },
+                },
+                operands: &["instance", "point.y"],
+            }],
+            &store,
+            &SumcheckInstanceResultPlan {
+                symbol: "instance",
+                source: "driver",
+                claim: "claim",
+                relation: TestRelation::Output,
+                index: 0,
+                point_arity: 2,
+                num_rounds: 2,
+                round_offset: 0,
+                point_order: SumcheckPointOrder::AsIs,
+                degree: 2,
+            },
+            &[],
+            &[],
+            &[],
+            &x,
+        )
+        .unwrap();
+
+        assert_eq!(value, Fr::from_u64(1));
     }
 }

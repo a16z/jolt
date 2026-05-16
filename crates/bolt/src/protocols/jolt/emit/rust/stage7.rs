@@ -11,7 +11,9 @@ use melior::ir::{Attribute, OperationRef};
 
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
-use crate::protocols::jolt::rust_target_plan::{power_strided_weighted_sum_formula, ValueExprKind};
+use crate::protocols::jolt::rust_target_plan::{
+    power_strided_weighted_sum_formula, structured_polynomial_value_formula, ValueExprKind,
+};
 use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
 use crate::protocols::jolt::verifier_relation_outputs::{
     self, parse_output_eval_family_plan, parse_output_function_family_plan,
@@ -172,6 +174,27 @@ fn stage7_value_expr(expr: Stage7RelationOutputFieldExprPlan) -> Stage7ValueExpr
         formula: expr.formula,
         operand_names: expr.operands.clone(),
         operands: expr.operands,
+    }
+}
+
+fn stage7_structured_polynomial_value_expr(
+    value: &Stage7StructuredPolynomialEvalPlan,
+) -> Stage7ValueExprPlan {
+    let operands = vec![value.x_point.source.clone(), value.y_point.source.clone()];
+    Stage7ValueExprPlan {
+        symbol: value.symbol.clone(),
+        kind: "op".to_owned(),
+        formula: structured_polynomial_value_formula(
+            value.polynomial.as_str(),
+            value.x_point.segment.as_str(),
+            value.x_point.length.as_str(),
+            value.x_point.order.as_str(),
+            value.y_point.segment.as_str(),
+            value.y_point.length.as_str(),
+            value.y_point.order.as_str(),
+        ),
+        operand_names: operands.clone(),
+        operands,
     }
 }
 
@@ -843,6 +866,13 @@ impl Stage7CpuProgram {
         } else {
             Vec::new()
         };
+        if role == Role::Verifier {
+            value_exprs.extend(
+                relation_output_values
+                    .iter()
+                    .map(stage7_structured_polynomial_value_expr),
+            );
+        }
 
         let mut program = Self {
             params: params.ok_or_else(|| EmitError::new("missing cpu.params"))?,
@@ -947,6 +977,11 @@ impl Stage7CpuProgram {
         } else {
             self.cpu_field_value_sources()
         };
+        let point_values = if self.role == Role::Verifier {
+            Some(self.verifier_plan()?.point_value_sources())
+        } else {
+            None
+        };
         for expr in &self.field_exprs {
             verify_count(
                 "field expr operands",
@@ -970,13 +1005,42 @@ impl Stage7CpuProgram {
                 expr.operand_names.len(),
                 expr.operands.len(),
             )?;
-            let _kind = ValueExprKind::from_cpu_attr(&expr.formula)
+            let kind = ValueExprKind::from_cpu_attr(&expr.formula)
                 .map_err(|error| EmitError::new(error.to_string()))?;
-            for operand in &expr.operands {
-                if !field_values.contains(operand) {
+            match kind {
+                ValueExprKind::PowerStridedWeightedSum { .. } => {
+                    for operand in &expr.operands {
+                        if !field_values.contains(operand) {
+                            return Err(EmitError::new(format!(
+                                "value expr @{} references missing field value @{operand}",
+                                expr.symbol
+                            )));
+                        }
+                    }
+                }
+                ValueExprKind::StructuredPolynomial { .. } => {
+                    verify_count(
+                        "structured polynomial value expr operands",
+                        &expr.symbol,
+                        2,
+                        expr.operands.len(),
+                    )?;
+                    for operand in &expr.operands {
+                        if !point_values
+                            .as_ref()
+                            .is_some_and(|values| values.contains(operand))
+                        {
+                            return Err(EmitError::new(format!(
+                                "structured polynomial value expr @{} references missing point value @{operand}",
+                                expr.symbol
+                            )));
+                        }
+                    }
+                }
+                ValueExprKind::FieldVectorSum | ValueExprKind::FieldVectorProduct => {
                     return Err(EmitError::new(format!(
-                        "value expr @{} references missing field value @{operand}",
-                        expr.symbol
+                        "stage7 value expr @{} uses unsupported field-vector formula `{}`",
+                        expr.symbol, expr.formula
                     )));
                 }
             }
@@ -1014,14 +1078,12 @@ impl Stage7CpuProgram {
             verifier_values::VerifierScalarSourceKind::FieldExpr,
         );
         values.extend(
-            self.evals.iter().map(|eval| &eval.symbol),
-            verifier_values::VerifierScalarSourceKind::SumcheckEval,
+            self.value_exprs.iter().map(|expr| &expr.symbol),
+            verifier_values::VerifierScalarSourceKind::ValueExpr,
         );
         values.extend(
-            self.relation_output_values
-                .iter()
-                .map(|value| &value.symbol),
-            verifier_values::VerifierScalarSourceKind::StructuredPolynomialEval,
+            self.evals.iter().map(|eval| &eval.symbol),
+            verifier_values::VerifierScalarSourceKind::SumcheckEval,
         );
         values.extend(
             self.relation_output_eval_families
@@ -2736,7 +2798,6 @@ fn expected_batched_output_claim(
             Stage7RelationKind::Stage7HammingWeightClaimReduction => {
                 bolt_verifier_runtime::evaluate_relation_output_for_instance(
                     program.relation_outputs,
-        program.relation_output_values,
                     program.field_exprs,
                     program.value_exprs,
                     store,

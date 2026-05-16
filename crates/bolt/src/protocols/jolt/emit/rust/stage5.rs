@@ -11,7 +11,9 @@ use melior::ir::{Attribute, OperationRef};
 
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
-use crate::protocols::jolt::rust_target_plan::{FieldExprKind, ValueExprKind};
+use crate::protocols::jolt::rust_target_plan::{
+    structured_polynomial_value_formula, FieldExprKind, ValueExprKind,
+};
 use crate::protocols::jolt::stage5_instruction_read_raf_plan::{
     Stage5InstructionReadRafEmitPlan, Stage5InstructionReadRafOutputFieldExprPlan,
 };
@@ -229,6 +231,27 @@ fn stage5_value_expr(expr: Stage5InstructionReadRafOutputFieldExprPlan) -> Stage
         formula: expr.formula,
         operand_names: expr.operands.clone(),
         operands: expr.operands,
+    }
+}
+
+fn stage5_structured_polynomial_value_expr(
+    value: &Stage5StructuredPolynomialEvalPlan,
+) -> Stage5ValueExprPlan {
+    let operands = vec![value.x_point.source.clone(), value.y_point.source.clone()];
+    Stage5ValueExprPlan {
+        symbol: value.symbol.clone(),
+        kind: "op".to_owned(),
+        formula: structured_polynomial_value_formula(
+            value.polynomial.as_str(),
+            value.x_point.segment.as_str(),
+            value.x_point.length.as_str(),
+            value.x_point.order.as_str(),
+            value.y_point.segment.as_str(),
+            value.y_point.length.as_str(),
+            value.y_point.order.as_str(),
+        ),
+        operand_names: operands.clone(),
+        operands,
     }
 }
 
@@ -693,6 +716,13 @@ impl Stage5CpuProgram {
             }
             relation_outputs.push(output_claim);
         }
+        if role == Role::Verifier {
+            value_exprs.extend(
+                relation_output_values
+                    .iter()
+                    .map(stage5_structured_polynomial_value_expr),
+            );
+        }
 
         let mut program = Self {
             params: params.ok_or_else(|| EmitError::new("missing cpu.params"))?,
@@ -802,6 +832,11 @@ impl Stage5CpuProgram {
         } else {
             None
         };
+        let point_values = if self.role == Role::Verifier {
+            Some(self.verifier_plan()?.point_value_sources())
+        } else {
+            None
+        };
         for expr in &self.field_exprs {
             verify_count(
                 "field expr operands",
@@ -858,6 +893,25 @@ impl Stage5CpuProgram {
                         }
                     }
                 }
+                ValueExprKind::StructuredPolynomial { .. } => {
+                    verify_count(
+                        "structured polynomial value expr operands",
+                        &expr.symbol,
+                        2,
+                        expr.operands.len(),
+                    )?;
+                    for operand in &expr.operands {
+                        if !point_values
+                            .as_ref()
+                            .is_some_and(|values| values.contains(operand))
+                        {
+                            return Err(EmitError::new(format!(
+                                "structured polynomial value expr @{} references missing point value @{operand}",
+                                expr.symbol
+                            )));
+                        }
+                    }
+                }
             }
         }
         for claim in &self.claims {
@@ -887,21 +941,6 @@ impl Stage5CpuProgram {
                 .filter(|squeeze| matches!(squeeze.kind.as_str(), "challenge_scalar" | "scalar"))
                 .map(|squeeze| &squeeze.symbol),
             verifier_values::VerifierScalarSourceKind::TranscriptScalar,
-        );
-        values.extend(
-            self.relation_output_values
-                .iter()
-                .map(|value| &value.symbol),
-            verifier_values::VerifierScalarSourceKind::StructuredPolynomialEval,
-        );
-        values.extend(
-            self.relation_outputs.iter().flat_map(|claim| {
-                claim
-                    .structured_polynomial_evals
-                    .iter()
-                    .map(|value| &value.symbol)
-            }),
-            verifier_values::VerifierScalarSourceKind::StructuredPolynomialEval,
         );
         values.extend(
             self.relation_output_eval_families
@@ -936,6 +975,10 @@ impl Stage5CpuProgram {
         values.extend(
             self.field_exprs.iter().map(|expr| &expr.symbol),
             verifier_values::VerifierScalarSourceKind::FieldExpr,
+        );
+        values.extend(
+            self.value_exprs.iter().map(|expr| &expr.symbol),
+            verifier_values::VerifierScalarSourceKind::ValueExpr,
         );
         values.extend(
             self.relation_outputs
@@ -2615,7 +2658,6 @@ fn expected_batched_output_claim(
                 )?;
                 bolt_verifier_runtime::evaluate_relation_output_for_instance(
                     program.relation_outputs,
-        program.relation_output_values,
                     program.field_exprs,
                     program.value_exprs,
                     store,
@@ -2630,7 +2672,6 @@ fn expected_batched_output_claim(
             | Stage5RelationKind::Stage5RegistersValEvaluation => {
                 bolt_verifier_runtime::evaluate_relation_output_for_instance(
                     program.relation_outputs,
-        program.relation_output_values,
                     program.field_exprs,
                     program.value_exprs,
                     store,

@@ -11,7 +11,9 @@ use melior::ir::{Attribute, OperationRef};
 
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
-use crate::protocols::jolt::rust_target_plan::{FieldExprKind, ValueExprKind};
+use crate::protocols::jolt::rust_target_plan::{
+    structured_polynomial_value_formula, FieldExprKind, ValueExprKind,
+};
 use crate::protocols::jolt::stage6_bytecode_read_raf_plan::{
     emit_stage6_bytecode_read_raf_plan_constants, stage6_bytecode_read_raf_eval_family_ref,
     stage6_bytecode_read_raf_relation_output_plan, STAGE6_BYTECODE_RA_EVAL_FAMILY,
@@ -724,6 +726,11 @@ impl Stage6CpuProgram {
                 }
             }
             relation_outputs.push(bytecode_output_plan.claim);
+            value_exprs.extend(
+                relation_output_values
+                    .iter()
+                    .map(stage6_structured_polynomial_value_expr),
+            );
         }
 
         let mut program = Self {
@@ -835,6 +842,11 @@ impl Stage6CpuProgram {
         } else {
             None
         };
+        let point_values = if self.role == Role::Verifier {
+            Some(self.verifier_plan()?.point_value_sources())
+        } else {
+            None
+        };
         for expr in &self.field_exprs {
             verify_count(
                 "field expr operands",
@@ -891,6 +903,25 @@ impl Stage6CpuProgram {
                         }
                     }
                 }
+                ValueExprKind::StructuredPolynomial { .. } => {
+                    verify_count(
+                        "structured polynomial value expr operands",
+                        &expr.symbol,
+                        2,
+                        expr.operands.len(),
+                    )?;
+                    for operand in &expr.operands {
+                        if !point_values
+                            .as_ref()
+                            .is_some_and(|values| values.contains(operand))
+                        {
+                            return Err(EmitError::new(format!(
+                                "structured polynomial value expr @{} references missing point value @{operand}",
+                                expr.symbol
+                            )));
+                        }
+                    }
+                }
             }
         }
         for claim in &self.claims {
@@ -920,21 +951,6 @@ impl Stage6CpuProgram {
                 .filter(|squeeze| matches!(squeeze.kind.as_str(), "challenge_scalar" | "scalar"))
                 .map(|squeeze| &squeeze.symbol),
             verifier_values::VerifierScalarSourceKind::TranscriptScalar,
-        );
-        values.extend(
-            self.relation_output_values
-                .iter()
-                .map(|value| &value.symbol),
-            verifier_values::VerifierScalarSourceKind::StructuredPolynomialEval,
-        );
-        values.extend(
-            self.relation_outputs.iter().flat_map(|claim| {
-                claim
-                    .structured_polynomial_evals
-                    .iter()
-                    .map(|value| &value.symbol)
-            }),
-            verifier_values::VerifierScalarSourceKind::StructuredPolynomialEval,
         );
         values.extend(
             self.relation_output_eval_families
@@ -969,6 +985,10 @@ impl Stage6CpuProgram {
         values.extend(
             self.field_exprs.iter().map(|expr| &expr.symbol),
             verifier_values::VerifierScalarSourceKind::FieldExpr,
+        );
+        values.extend(
+            self.value_exprs.iter().map(|expr| &expr.symbol),
+            verifier_values::VerifierScalarSourceKind::ValueExpr,
         );
         values.extend(
             self.relation_outputs
@@ -2814,7 +2834,6 @@ fn expected_plan_relation_output(
 ) -> Result<Fr, VerifyStage6Error> {
     Ok(bolt_verifier_runtime::evaluate_relation_output_for_instance(
         program.relation_outputs,
-        program.relation_output_values,
         program.field_exprs,
         program.value_exprs,
         store,
@@ -2927,6 +2946,27 @@ fn stage6_value_expr(expr: Stage6RelationOutputFieldExprPlan) -> Stage6ValueExpr
         symbol: expr.symbol,
         kind: "op".to_owned(),
         formula: expr.formula,
+        operand_names: operands.clone(),
+        operands,
+    }
+}
+
+fn stage6_structured_polynomial_value_expr(
+    value: &Stage6StructuredPolynomialEvalPlan,
+) -> Stage6ValueExprPlan {
+    let operands = vec![value.x_point.source.clone(), value.y_point.source.clone()];
+    Stage6ValueExprPlan {
+        symbol: value.symbol.clone(),
+        kind: "op".to_owned(),
+        formula: structured_polynomial_value_formula(
+            value.polynomial.as_str(),
+            value.x_point.segment.as_str(),
+            value.x_point.length.as_str(),
+            value.x_point.order.as_str(),
+            value.y_point.segment.as_str(),
+            value.y_point.length.as_str(),
+            value.y_point.order.as_str(),
+        ),
         operand_names: operands.clone(),
         operands,
     }

@@ -11,7 +11,6 @@ pub enum VerifierScalarSourceKind {
     ValueExpr,
     PointDerived,
     SumcheckEval,
-    StructuredPolynomialEval,
     OutputEvalFamily,
     OutputProductFamily,
     OutputFunctionFamily,

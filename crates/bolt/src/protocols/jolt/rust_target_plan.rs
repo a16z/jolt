@@ -269,6 +269,11 @@ pub(crate) enum FieldExprKind {
 pub(crate) enum ValueExprKind {
     FieldVectorSum,
     FieldVectorProduct,
+    StructuredPolynomial {
+        polynomial: StructuredPolynomialKind,
+        x_point: StructuredPolynomialPointTransform,
+        y_point: StructuredPolynomialPointTransform,
+    },
     PowerStridedWeightedSum {
         row_count: usize,
         power_stride: usize,
@@ -276,6 +281,40 @@ pub(crate) enum ValueExprKind {
         shared_term_offsets: Vec<usize>,
         row_term_offsets: Vec<usize>,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum StructuredPolynomialKind {
+    Eq,
+    EqPlusOne,
+    Lt,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum StructuredPolynomialPointSegment {
+    Full,
+    Prefix,
+    Suffix,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum StructuredPolynomialPointLength {
+    Full,
+    XPoint,
+    YPoint,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum StructuredPolynomialPointOrder {
+    AsIs,
+    Reverse,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StructuredPolynomialPointTransform {
+    segment: StructuredPolynomialPointSegment,
+    length: StructuredPolynomialPointLength,
+    order: StructuredPolynomialPointOrder,
 }
 
 impl FieldExprKind {
@@ -321,6 +360,9 @@ impl ValueExprKind {
         match value {
             "field_vector.sum" => Ok(Self::FieldVectorSum),
             "field_vector.product" => Ok(Self::FieldVectorProduct),
+            value if value.starts_with("poly.structured_eval:") => {
+                parse_structured_polynomial_value(value)
+            }
             value if value.starts_with("field.power_strided_weighted_sum:") => {
                 parse_power_strided_weighted_sum(value)
             }
@@ -335,6 +377,16 @@ impl ValueExprKind {
         match self {
             Self::FieldVectorSum => "FieldVectorSum".to_owned(),
             Self::FieldVectorProduct => "FieldVectorProduct".to_owned(),
+            Self::StructuredPolynomial {
+                polynomial,
+                x_point,
+                y_point,
+            } => format!(
+                "StructuredPolynomial {{ polynomial: {}, x_point: {}, y_point: {} }}",
+                polynomial.rust_variant_expr(),
+                x_point.rust_expr(),
+                y_point.rust_expr(),
+            ),
             Self::PowerStridedWeightedSum {
                 row_count,
                 power_stride,
@@ -348,6 +400,111 @@ impl ValueExprKind {
                 usize_slice_expr(row_term_offsets),
             ),
         }
+    }
+}
+
+impl StructuredPolynomialKind {
+    fn from_attr(value: &str) -> Result<Self, RustTargetPlanError> {
+        match value {
+            "eq" => Ok(Self::Eq),
+            "eq_plus_one" => Ok(Self::EqPlusOne),
+            "lt" => Ok(Self::Lt),
+            _ => Err(RustTargetPlanError::unsupported(
+                "structured polynomial kind",
+                value,
+            )),
+        }
+    }
+
+    fn rust_variant_expr(&self) -> &'static str {
+        match self {
+            Self::Eq => "bolt_verifier_runtime::StructuredPolynomialKind::Eq",
+            Self::EqPlusOne => "bolt_verifier_runtime::StructuredPolynomialKind::EqPlusOne",
+            Self::Lt => "bolt_verifier_runtime::StructuredPolynomialKind::Lt",
+        }
+    }
+}
+
+impl StructuredPolynomialPointSegment {
+    fn from_attr(value: &str) -> Result<Self, RustTargetPlanError> {
+        match value {
+            "full" => Ok(Self::Full),
+            "prefix" => Ok(Self::Prefix),
+            "suffix" => Ok(Self::Suffix),
+            _ => Err(RustTargetPlanError::unsupported(
+                "structured polynomial point segment",
+                value,
+            )),
+        }
+    }
+
+    fn rust_variant_expr(&self) -> &'static str {
+        match self {
+            Self::Full => "bolt_verifier_runtime::StructuredPolynomialPointSegment::Full",
+            Self::Prefix => "bolt_verifier_runtime::StructuredPolynomialPointSegment::Prefix",
+            Self::Suffix => "bolt_verifier_runtime::StructuredPolynomialPointSegment::Suffix",
+        }
+    }
+}
+
+impl StructuredPolynomialPointLength {
+    fn from_attr(value: &str) -> Result<Self, RustTargetPlanError> {
+        match value {
+            "full" => Ok(Self::Full),
+            "x_point" => Ok(Self::XPoint),
+            "y_point" => Ok(Self::YPoint),
+            _ => Err(RustTargetPlanError::unsupported(
+                "structured polynomial point length",
+                value,
+            )),
+        }
+    }
+
+    fn rust_variant_expr(&self) -> &'static str {
+        match self {
+            Self::Full => "bolt_verifier_runtime::StructuredPolynomialPointLength::Full",
+            Self::XPoint => "bolt_verifier_runtime::StructuredPolynomialPointLength::XPoint",
+            Self::YPoint => "bolt_verifier_runtime::StructuredPolynomialPointLength::YPoint",
+        }
+    }
+}
+
+impl StructuredPolynomialPointOrder {
+    fn from_attr(value: &str) -> Result<Self, RustTargetPlanError> {
+        match value {
+            "as_is" => Ok(Self::AsIs),
+            "reverse" => Ok(Self::Reverse),
+            _ => Err(RustTargetPlanError::unsupported(
+                "structured polynomial point order",
+                value,
+            )),
+        }
+    }
+
+    fn rust_variant_expr(&self) -> &'static str {
+        match self {
+            Self::AsIs => "bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs",
+            Self::Reverse => "bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse",
+        }
+    }
+}
+
+impl StructuredPolynomialPointTransform {
+    fn new(segment: &str, length: &str, order: &str) -> Result<Self, RustTargetPlanError> {
+        Ok(Self {
+            segment: StructuredPolynomialPointSegment::from_attr(segment)?,
+            length: StructuredPolynomialPointLength::from_attr(length)?,
+            order: StructuredPolynomialPointOrder::from_attr(order)?,
+        })
+    }
+
+    fn rust_expr(&self) -> String {
+        format!(
+            "bolt_verifier_runtime::StructuredPolynomialPointTransform {{ segment: {}, length: {}, order: {} }}",
+            self.segment.rust_variant_expr(),
+            self.length.rust_variant_expr(),
+            self.order.rust_variant_expr(),
+        )
     }
 }
 
@@ -459,6 +616,25 @@ fn parse_power_strided_weighted_sum(value: &str) -> Result<ValueExprKind, RustTa
     })
 }
 
+fn parse_structured_polynomial_value(value: &str) -> Result<ValueExprKind, RustTargetPlanError> {
+    let spec = value
+        .strip_prefix("poly.structured_eval:")
+        .ok_or_else(|| RustTargetPlanError::unsupported("value expression formula", value))?;
+    let [polynomial, x_segment, x_length, x_order, y_segment, y_length, y_order] =
+        spec.split(':').collect::<Vec<_>>()[..]
+    else {
+        return Err(RustTargetPlanError::unsupported(
+            "value expression formula",
+            value,
+        ));
+    };
+    Ok(ValueExprKind::StructuredPolynomial {
+        polynomial: StructuredPolynomialKind::from_attr(polynomial)?,
+        x_point: StructuredPolynomialPointTransform::new(x_segment, x_length, x_order)?,
+        y_point: StructuredPolynomialPointTransform::new(y_segment, y_length, y_order)?,
+    })
+}
+
 pub(crate) fn power_strided_weighted_sum_formula(
     row_count: usize,
     power_stride: usize,
@@ -471,6 +647,20 @@ pub(crate) fn power_strided_weighted_sum_formula(
         join_usize_list(value_term_offsets),
         join_usize_list(shared_term_offsets),
         join_usize_list(row_term_offsets),
+    )
+}
+
+pub(crate) fn structured_polynomial_value_formula(
+    polynomial: &str,
+    x_segment: &str,
+    x_length: &str,
+    x_order: &str,
+    y_segment: &str,
+    y_length: &str,
+    y_order: &str,
+) -> String {
+    format!(
+        "poly.structured_eval:{polynomial}:{x_segment}:{x_length}:{x_order}:{y_segment}:{y_length}:{y_order}"
     )
 }
 
@@ -515,7 +705,9 @@ fn usize_slice_expr(values: &[usize]) -> String {
 mod tests {
     use super::{
         ClaimKind, FieldExprKind, JoltVerifierRelationKind, OpeningEqualityMode, PcsProofMode,
-        ProgramStepKind, TranscriptSqueezeKind, ValueExprKind,
+        ProgramStepKind, StructuredPolynomialKind, StructuredPolynomialPointLength,
+        StructuredPolynomialPointOrder, StructuredPolynomialPointSegment,
+        StructuredPolynomialPointTransform, TranscriptSqueezeKind, ValueExprKind,
     };
 
     #[test]
@@ -593,7 +785,27 @@ mod tests {
                 row_term_offsets: vec![2],
             })
         );
+        assert_eq!(
+            ValueExprKind::from_cpu_attr(
+                "poly.structured_eval:lt:suffix:y_point:reverse:full:full:as_is"
+            )
+            .ok(),
+            Some(ValueExprKind::StructuredPolynomial {
+                polynomial: StructuredPolynomialKind::Lt,
+                x_point: StructuredPolynomialPointTransform {
+                    segment: StructuredPolynomialPointSegment::Suffix,
+                    length: StructuredPolynomialPointLength::YPoint,
+                    order: StructuredPolynomialPointOrder::Reverse,
+                },
+                y_point: StructuredPolynomialPointTransform {
+                    segment: StructuredPolynomialPointSegment::Full,
+                    length: StructuredPolynomialPointLength::Full,
+                    order: StructuredPolynomialPointOrder::AsIs,
+                },
+            })
+        );
         assert!(ValueExprKind::from_cpu_attr("field.power_strided_weighted_sum:1:2:0").is_err());
+        assert!(ValueExprKind::from_cpu_attr("poly.structured_eval:eq:full").is_err());
     }
 
     #[test]
@@ -621,6 +833,23 @@ mod tests {
             }
             .rust_variant_expr(),
             "PowerStridedWeightedSum { row_count: 39, power_stride: 3, value_term_offsets: &[0], shared_term_offsets: &[1], row_term_offsets: &[2] }"
+        );
+        assert_eq!(
+            ValueExprKind::StructuredPolynomial {
+                polynomial: StructuredPolynomialKind::EqPlusOne,
+                x_point: StructuredPolynomialPointTransform {
+                    segment: StructuredPolynomialPointSegment::Prefix,
+                    length: StructuredPolynomialPointLength::YPoint,
+                    order: StructuredPolynomialPointOrder::Reverse,
+                },
+                y_point: StructuredPolynomialPointTransform {
+                    segment: StructuredPolynomialPointSegment::Full,
+                    length: StructuredPolynomialPointLength::Full,
+                    order: StructuredPolynomialPointOrder::AsIs,
+                },
+            }
+            .rust_variant_expr(),
+            "StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::EqPlusOne, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Prefix, length: bolt_verifier_runtime::StructuredPolynomialPointLength::YPoint, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }"
         );
     }
 }

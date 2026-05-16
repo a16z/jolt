@@ -339,6 +339,29 @@ fn generated_value_expr_kind(value: &str) -> bolt_verifier_runtime::ValueExprKin
                 row_term_offsets: leak_slice(parse_usize_list(parts[4])),
             }
         }
+        value if value.starts_with("poly.structured_eval:") => {
+            let spec = value
+                .strip_prefix("poly.structured_eval:")
+                .expect("structured polynomial expression has prefix");
+            let parts = spec.split(':').collect::<Vec<_>>();
+            assert!(
+                parts.len() == 7,
+                "structured polynomial expression has seven fields"
+            );
+            bolt_verifier_runtime::ValueExprKind::StructuredPolynomial {
+                polynomial: generated_structured_polynomial_kind(parts[0]),
+                x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform {
+                    segment: generated_structured_polynomial_point_segment(parts[1]),
+                    length: generated_structured_polynomial_point_length(parts[2]),
+                    order: generated_structured_polynomial_point_order(parts[3]),
+                },
+                y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform {
+                    segment: generated_structured_polynomial_point_segment(parts[4]),
+                    length: generated_structured_polynomial_point_length(parts[5]),
+                    order: generated_structured_polynomial_point_order(parts[6]),
+                },
+            }
+        }
         value => panic!("unsupported generated value expression kind `{value}`"),
     }
 }
