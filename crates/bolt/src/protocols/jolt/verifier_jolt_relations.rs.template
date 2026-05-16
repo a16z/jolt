@@ -137,13 +137,23 @@ pub struct Stage67BytecodeStagePlan {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage67BytecodeOutputTermPlan {
     StageValue {
+        symbol: &'static str,
         stage_index: usize,
         gamma_power: usize,
         identity_gamma_power: Option<usize>,
     },
     Entry {
+        symbol: &'static str,
         gamma_power: usize,
     },
+}
+
+impl Stage67BytecodeOutputTermPlan {
+    fn symbol(self) -> &'static str {
+        match self {
+            Self::StageValue { symbol, .. } | Self::Entry { symbol, .. } => symbol,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -295,7 +305,7 @@ pub fn evaluate_stage67_bytecode_read_raf_output_scalars<E: Stage67BytecodeEntry
     local_point: &[Fr],
     log_t: usize,
 ) -> Result<Vec<NamedScalar<Fr>>, RuntimePlanError> {
-    let output = stage67_bytecode_read_raf_output_contribution(
+    stage67_bytecode_read_raf_output_terms(
         plan,
         entries,
         entry_bytecode_index,
@@ -303,14 +313,10 @@ pub fn evaluate_stage67_bytecode_read_raf_output_scalars<E: Stage67BytecodeEntry
         store,
         local_point,
         log_t,
-    )?;
-    Ok(vec![NamedScalar {
-        symbol: plan.output_contribution,
-        value: output,
-    }])
+    )
 }
 
-fn stage67_bytecode_read_raf_output_contribution<E: Stage67BytecodeEntry>(
+fn stage67_bytecode_read_raf_output_terms<E: Stage67BytecodeEntry>(
     plan: &Stage67BytecodeReadRafPlan,
     entries: &[E],
     entry_bytecode_index: usize,
@@ -318,7 +324,7 @@ fn stage67_bytecode_read_raf_output_contribution<E: Stage67BytecodeEntry>(
     store: &ValueStore<Fr>,
     local_point: &[Fr],
     log_t: usize,
-) -> Result<Fr, RuntimePlanError> {
+) -> Result<Vec<NamedScalar<Fr>>, RuntimePlanError> {
     let opening_point = normalize_bytecode_read_raf_point(local_point, log_t, plan.point)?;
     let log_k = opening_point.len() - log_t;
     let (r_address_prime, r_cycle_prime) = opening_point.split_at(log_k);
@@ -334,7 +340,7 @@ fn stage67_bytecode_read_raf_output_contribution<E: Stage67BytecodeEntry>(
         r_address_prime,
         r_cycle_prime.len(),
     )?;
-    let output_contrib = stage67_bytecode_output_contribution(
+    stage67_bytecode_output_terms(
         plan,
         store,
         &stage_value_evals,
@@ -343,11 +349,10 @@ fn stage67_bytecode_read_raf_output_contribution<E: Stage67BytecodeEntry>(
         r_address_prime,
         r_cycle_prime,
         log_k,
-    )?;
-    Ok(output_contrib)
+    )
 }
 
-fn stage67_bytecode_output_contribution(
+fn stage67_bytecode_output_terms(
     plan: &Stage67BytecodeReadRafPlan,
     store: &ValueStore<Fr>,
     stage_value_evals: &[Fr],
@@ -356,7 +361,7 @@ fn stage67_bytecode_output_contribution(
     r_address_prime: &[Fr],
     r_cycle_prime: &[Fr],
     log_k: usize,
-) -> Result<Fr, RuntimePlanError> {
+) -> Result<Vec<NamedScalar<Fr>>, RuntimePlanError> {
     let int_eval = IdentityPolynomial::new(r_address_prime.len()).evaluate(r_address_prime);
     let zero_cycle = vec![Fr::from_u64(0); r_cycle_prime.len()];
     let entry_address_eq =
@@ -368,10 +373,11 @@ fn stage67_bytecode_output_contribution(
             },
         )?;
 
-    let mut output = Fr::from_u64(0);
+    let mut output_terms = Vec::with_capacity(plan.output_terms.len());
     for term in plan.output_terms {
-        output += match *term {
+        let value = match *term {
             Stage67BytecodeOutputTermPlan::StageValue {
+                symbol: _,
                 stage_index,
                 gamma_power,
                 identity_gamma_power,
@@ -399,14 +405,21 @@ fn stage67_bytecode_output_contribution(
                     * EqPolynomial::<Fr>::mle(&cycle_point, r_cycle_prime)
                     * gamma_powers[gamma_power]
             }
-            Stage67BytecodeOutputTermPlan::Entry { gamma_power } => {
+            Stage67BytecodeOutputTermPlan::Entry {
+                symbol: _,
+                gamma_power,
+            } => {
                 gamma_powers[gamma_power]
                     * entry_address_eq
                     * EqPolynomial::<Fr>::mle(&zero_cycle, r_cycle_prime)
             }
         };
+        output_terms.push(NamedScalar {
+            symbol: (*term).symbol(),
+            value,
+        });
     }
-    Ok(output)
+    Ok(output_terms)
 }
 
 fn stage67_bytecode_stage_cycle_point(

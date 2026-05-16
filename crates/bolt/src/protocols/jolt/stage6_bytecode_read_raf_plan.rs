@@ -34,13 +34,23 @@ pub(crate) struct BytecodeReadRafStagePlan {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BytecodeOutputTermPlan {
     StageValue {
+        symbol: &'static str,
         stage_index: usize,
         gamma_power: usize,
         identity_gamma_power: Option<usize>,
     },
     Entry {
+        symbol: &'static str,
         gamma_power: usize,
     },
+}
+
+impl BytecodeOutputTermPlan {
+    fn symbol(self) -> &'static str {
+        match self {
+            Self::StageValue { symbol, .. } | Self::Entry { symbol, .. } => symbol,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -281,31 +291,39 @@ const STAGE6_BYTECODE_STAGES: &[BytecodeReadRafStagePlan] = &[
 
 const STAGE6_BYTECODE_OUTPUT_TERMS: &[BytecodeOutputTermPlan] = &[
     BytecodeOutputTermPlan::StageValue {
+        symbol: "stage6.bytecode_read_raf.output.term.Stage1",
         stage_index: 0,
         gamma_power: 0,
         identity_gamma_power: Some(5),
     },
     BytecodeOutputTermPlan::StageValue {
+        symbol: "stage6.bytecode_read_raf.output.term.Stage2",
         stage_index: 1,
         gamma_power: 1,
         identity_gamma_power: None,
     },
     BytecodeOutputTermPlan::StageValue {
+        symbol: "stage6.bytecode_read_raf.output.term.Stage3",
         stage_index: 2,
         gamma_power: 2,
         identity_gamma_power: Some(4),
     },
     BytecodeOutputTermPlan::StageValue {
+        symbol: "stage6.bytecode_read_raf.output.term.Stage4",
         stage_index: 3,
         gamma_power: 3,
         identity_gamma_power: None,
     },
     BytecodeOutputTermPlan::StageValue {
+        symbol: "stage6.bytecode_read_raf.output.term.Stage5",
         stage_index: 4,
         gamma_power: 4,
         identity_gamma_power: None,
     },
-    BytecodeOutputTermPlan::Entry { gamma_power: 7 },
+    BytecodeOutputTermPlan::Entry {
+        symbol: "stage6.bytecode_read_raf.output.term.Entry",
+        gamma_power: 7,
+    },
 ];
 
 const STAGE6_BYTECODE_READ_RAF_PLAN: BytecodeReadRafPlan = BytecodeReadRafPlan {
@@ -355,12 +373,24 @@ impl BytecodeReadRafPlan {
     ) -> Stage6BytecodeReadRafRelationOutputPlan {
         let bytecode_ra_product = "stage6.bytecode_read_raf.output.product.BytecodeRa".to_owned();
         let claim_expr = "stage6.bytecode_read_raf.output.claim_expr".to_owned();
+        let output_term_symbols = self
+            .output_terms
+            .iter()
+            .copied()
+            .map(BytecodeOutputTermPlan::symbol)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
         Stage6BytecodeReadRafRelationOutputPlan {
             field_exprs: vec![
                 RelationOutputFieldExprPlan {
                     symbol: bytecode_ra_product.clone(),
                     formula: "field_vector.product".to_owned(),
                     operands: vec![bytecode_ra_evals.symbol.clone()],
+                },
+                RelationOutputFieldExprPlan {
+                    symbol: self.output_contribution.to_owned(),
+                    formula: "field.sum".to_owned(),
+                    operands: output_term_symbols.clone(),
                 },
                 RelationOutputFieldExprPlan {
                     symbol: claim_expr.clone(),
@@ -370,7 +400,7 @@ impl BytecodeReadRafPlan {
             ],
             claim: RelationOutputPlan {
                 relation: "jolt.stage6.bytecode_read_raf".to_owned(),
-                local_scalars: vec![self.output_contribution.to_owned()],
+                local_scalars: output_term_symbols,
                 expected_output: claim_expr,
             },
         }
@@ -520,15 +550,23 @@ fn emit_bytecode_read_raf_term_plan(term: &BytecodeReadRafTermPlan) -> String {
 fn emit_bytecode_output_term_plan(term: &BytecodeOutputTermPlan) -> String {
     match *term {
         BytecodeOutputTermPlan::StageValue {
+            symbol,
             stage_index,
             gamma_power,
             identity_gamma_power,
         } => format!(
-            "Stage67BytecodeOutputTermPlan::StageValue {{ stage_index: {stage_index}, gamma_power: {gamma_power}, identity_gamma_power: {} }}",
+            "Stage67BytecodeOutputTermPlan::StageValue {{ symbol: {}, stage_index: {stage_index}, gamma_power: {gamma_power}, identity_gamma_power: {} }}",
+            rust_str(symbol),
             emit_option_usize(identity_gamma_power),
         ),
-        BytecodeOutputTermPlan::Entry { gamma_power } => {
-            format!("Stage67BytecodeOutputTermPlan::Entry {{ gamma_power: {gamma_power} }}")
+        BytecodeOutputTermPlan::Entry {
+            symbol,
+            gamma_power,
+        } => {
+            format!(
+                "Stage67BytecodeOutputTermPlan::Entry {{ symbol: {}, gamma_power: {gamma_power} }}",
+                rust_str(symbol)
+            )
         }
     }
 }
@@ -611,6 +649,7 @@ mod tests {
         assert_eq!(
             plan.output_terms[0],
             BytecodeOutputTermPlan::StageValue {
+                symbol: "stage6.bytecode_read_raf.output.term.Stage1",
                 stage_index: 0,
                 gamma_power: 0,
                 identity_gamma_power: Some(5),
@@ -618,7 +657,10 @@ mod tests {
         );
         assert_eq!(
             plan.output_terms[5],
-            BytecodeOutputTermPlan::Entry { gamma_power: 7 }
+            BytecodeOutputTermPlan::Entry {
+                symbol: "stage6.bytecode_read_raf.output.term.Entry",
+                gamma_power: 7
+            }
         );
         assert_eq!(
             stage1.terms[0],
@@ -693,16 +735,35 @@ mod tests {
         );
         assert_eq!(
             claim.local_scalars,
-            vec![stage6_bytecode_read_raf_output_contribution_symbol().to_owned()]
+            vec![
+                "stage6.bytecode_read_raf.output.term.Stage1".to_owned(),
+                "stage6.bytecode_read_raf.output.term.Stage2".to_owned(),
+                "stage6.bytecode_read_raf.output.term.Stage3".to_owned(),
+                "stage6.bytecode_read_raf.output.term.Stage4".to_owned(),
+                "stage6.bytecode_read_raf.output.term.Stage5".to_owned(),
+                "stage6.bytecode_read_raf.output.term.Entry".to_owned(),
+            ]
         );
         assert_eq!(output_plan.field_exprs[0].formula, "field_vector.product");
         assert_eq!(
             output_plan.field_exprs[0].operands,
             vec![STAGE6_BYTECODE_RA_EVAL_FAMILY.to_owned()]
         );
-        assert_eq!(output_plan.field_exprs[1].formula, "field.product");
+        assert_eq!(output_plan.field_exprs[1].formula, "field.sum");
         assert_eq!(
             output_plan.field_exprs[1].operands,
+            vec![
+                "stage6.bytecode_read_raf.output.term.Stage1".to_owned(),
+                "stage6.bytecode_read_raf.output.term.Stage2".to_owned(),
+                "stage6.bytecode_read_raf.output.term.Stage3".to_owned(),
+                "stage6.bytecode_read_raf.output.term.Stage4".to_owned(),
+                "stage6.bytecode_read_raf.output.term.Stage5".to_owned(),
+                "stage6.bytecode_read_raf.output.term.Entry".to_owned(),
+            ]
+        );
+        assert_eq!(output_plan.field_exprs[2].formula, "field.product");
+        assert_eq!(
+            output_plan.field_exprs[2].operands,
             vec![
                 stage6_bytecode_read_raf_output_contribution_symbol().to_owned(),
                 "stage6.bytecode_read_raf.output.product.BytecodeRa".to_owned()
@@ -722,7 +783,9 @@ mod tests {
         assert!(!source.contains("STAGE6_BYTECODE_RA_EVAL_NAMES"));
         assert!(!source.contains("STAGE6_BYTECODE_RA_EVALS"));
         assert!(source.contains("const STAGE6_BYTECODE_OUTPUT_TERMS"));
-        assert!(source.contains("Stage67BytecodeOutputTermPlan::Entry { gamma_power: 7 }"));
+        assert!(source.contains(
+            "Stage67BytecodeOutputTermPlan::Entry { symbol: \"stage6.bytecode_read_raf.output.term.Entry\", gamma_power: 7 }"
+        ));
         assert!(source
             .contains("output_contribution: \"stage6.bytecode_read_raf.output.contribution\""));
         assert!(source.contains("bytecode_ra_evals: &STAGE6_INDEXED_EVAL_FAMILIES[0]"));
