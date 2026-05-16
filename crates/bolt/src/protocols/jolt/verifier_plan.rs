@@ -279,38 +279,94 @@ pub(crate) struct VerifierOpeningBatchPlan {
     pub(crate) claim_operands: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VerifierRelationLocalInputKind {
+    Stage5InstructionReadRaf,
+    Stage6BytecodeReadRaf,
+}
+
+impl VerifierRelationLocalInputKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Stage5InstructionReadRaf => "Stage 5 instruction read-RAF",
+            Self::Stage6BytecodeReadRaf => "Stage 6 bytecode read-RAF",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum VerifierRelationLocalInputPlan {
+    Stage5InstructionReadRaf(Stage5InstructionReadRafEmitPlan),
+    Stage6BytecodeReadRaf(Stage6BytecodeReadRafEmitPlan),
+}
+
+impl VerifierRelationLocalInputPlan {
+    fn kind(&self) -> VerifierRelationLocalInputKind {
+        match self {
+            Self::Stage5InstructionReadRaf(_) => {
+                VerifierRelationLocalInputKind::Stage5InstructionReadRaf
+            }
+            Self::Stage6BytecodeReadRaf(_) => VerifierRelationLocalInputKind::Stage6BytecodeReadRaf,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct VerifierRelationLocalInputPlans {
-    stage5_instruction_read_raf: Option<Stage5InstructionReadRafEmitPlan>,
-    stage6_bytecode_read_raf: Option<Stage6BytecodeReadRafEmitPlan>,
+    rows: Vec<VerifierRelationLocalInputPlan>,
 }
 
 impl VerifierRelationLocalInputPlans {
-    pub(crate) fn set_stage5_instruction_read_raf(
+    pub(crate) fn add_stage5_instruction_read_raf(
         &mut self,
         plan: Stage5InstructionReadRafEmitPlan,
-    ) {
-        self.stage5_instruction_read_raf = Some(plan);
+    ) -> Result<(), EmitError> {
+        self.push(VerifierRelationLocalInputPlan::Stage5InstructionReadRaf(
+            plan,
+        ))
     }
 
     pub(crate) fn stage5_instruction_read_raf(
         &self,
     ) -> Result<&Stage5InstructionReadRafEmitPlan, EmitError> {
-        self.stage5_instruction_read_raf
-            .as_ref()
+        self.rows
+            .iter()
+            .find_map(|row| match row {
+                VerifierRelationLocalInputPlan::Stage5InstructionReadRaf(plan) => Some(plan),
+                VerifierRelationLocalInputPlan::Stage6BytecodeReadRaf(_) => None,
+            })
             .ok_or_else(|| EmitError::new("missing Stage 5 instruction read-RAF local-input plan"))
     }
 
-    pub(crate) fn set_stage6_bytecode_read_raf(&mut self, plan: Stage6BytecodeReadRafEmitPlan) {
-        self.stage6_bytecode_read_raf = Some(plan);
+    pub(crate) fn add_stage6_bytecode_read_raf(
+        &mut self,
+        plan: Stage6BytecodeReadRafEmitPlan,
+    ) -> Result<(), EmitError> {
+        self.push(VerifierRelationLocalInputPlan::Stage6BytecodeReadRaf(plan))
     }
 
     pub(crate) fn stage6_bytecode_read_raf(
         &self,
     ) -> Result<&Stage6BytecodeReadRafEmitPlan, EmitError> {
-        self.stage6_bytecode_read_raf
-            .as_ref()
+        self.rows
+            .iter()
+            .find_map(|row| match row {
+                VerifierRelationLocalInputPlan::Stage5InstructionReadRaf(_) => None,
+                VerifierRelationLocalInputPlan::Stage6BytecodeReadRaf(plan) => Some(plan),
+            })
             .ok_or_else(|| EmitError::new("missing Stage 6 bytecode read-RAF local-input plan"))
+    }
+
+    fn push(&mut self, row: VerifierRelationLocalInputPlan) -> Result<(), EmitError> {
+        let kind = row.kind();
+        if self.rows.iter().any(|existing| existing.kind() == kind) {
+            return Err(EmitError::new(format!(
+                "duplicate {} local-input plan",
+                kind.label()
+            )));
+        }
+        self.rows.push(row);
+        Ok(())
     }
 }
 
