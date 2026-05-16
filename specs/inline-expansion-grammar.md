@@ -61,6 +61,8 @@ registered inline expansion -------+--> ExpansionOp grammar
   builder.
 - Keep sequence metadata, recursive helper expansion, profile legality, virtual
   register allocation, inline reset rows, and target validation centralized.
+- Make registered static inline recipes visible to the same extraction-critical
+  `jolt-program::expand` surface as built-in source-only expansion.
 
 ### Non-Goals
 
@@ -68,6 +70,11 @@ registered inline expansion -------+--> ExpansionOp grammar
 - Do not change final Jolt bytecode semantics, lookup tables, or proof
   constraints.
 - Do not make runtime advice generation Lean-extractable in this PR.
+- Do not require Hax or Aeneas to produce typechecked Lean for all shipped
+  inline recipes in this PR. The implementation should remove the tracer
+  boundary that currently hides static inline recipes from extraction, but
+  extractor backend and standard-library limitations remain separate follow-up
+  work.
 - Do not move CPU, RAM, trace-cycle, or advice execution semantics into
   `jolt-program`.
 - Do not replace inventory registration if the registration surface calls a
@@ -226,6 +233,11 @@ The exact representation may differ, but the semantics must be equivalent:
 - `Allocate` and `Release` describe symbolic temps in the `vr40..vr47` pool.
 - Inline allocation describes provider-owned inline registers in the `vr48..`
   pool.
+- Source-expansion temps and registered-inline temps are separate logical
+  domains. The spec names them `TempId` and `InlineTempId`; an implementation may
+  use one internal enum or id type only if the domain is explicit and the public
+  builder APIs do not allow inline temps and materializer source temps to be used
+  interchangeably by accident.
 - The builder records intent. The materializer owns stateful allocation,
   recursive expansion, reset-row generation, validation, and metadata stamping.
 
@@ -274,19 +286,21 @@ Any other inline write target must return
 
 Inline register lifetimes must not rely on Rust `Drop`, RAII guards,
 `Arc<Mutex<_>>`, raw pointers, `unsafe`, or hidden allocator aliases. The
-implementation must choose one explicit model and document it in code:
+implementation must use a builder-owned lifetime model:
 
-1. Strict model: every `allocate_inline` must have a matching explicit
-   `release_inline` before finalization. Finalization errors if any inline
-   register remains live.
-2. Builder-owned model: `finish_inline` is the explicit lifetime boundary.
-   Individual release is allowed for reuse, but finalization centrally ends all
-   remaining builder-owned inline lifetimes.
+- `finish_inline` is the explicit lifetime boundary for one registered inline
+  recipe.
+- `release_inline` is available for providers that want to reuse an inline temp
+  before `finish_inline`.
+- Finalization centrally ends any remaining builder-owned inline lifetimes and
+  records which real inline registers need reset rows.
+- Finalization must error if a provider tries to release an unknown temp, reuse a
+  released temp, or smuggle an inline temp into a source-helper temp slot.
 
-In either model, reset rows are produced by the materializer from the static
-inline allocator state, not by tracer RAII helpers. Reset rows are appended after
-functional rows and before metadata stamping. Every provider-allocated inline
-register that may contain a value must be reset exactly once with:
+Reset rows are produced by the materializer from the static inline allocator
+state, not by tracer RAII helpers. Reset rows are appended after functional rows
+and before metadata stamping. Every provider-allocated inline register that may
+contain a value must be reset exactly once with:
 
 ```text
 ADDI rd, x0, 0
