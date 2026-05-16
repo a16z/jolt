@@ -8,7 +8,10 @@ use std::fmt;
 use std::marker::PhantomData;
 
 use jolt_field::{Field, Fr, MulPow2};
-use jolt_poly::{lagrange::lagrange_evals, EqPlusOnePolynomial, EqPolynomial, LtPolynomial};
+use jolt_poly::{
+    lagrange::{lagrange_evals, lagrange_kernel_eval},
+    EqPlusOnePolynomial, EqPolynomial, LtPolynomial,
+};
 use jolt_sumcheck::{
     CompressedLabeledRoundPoly, SumcheckClaim, SumcheckError, SumcheckProof, SumcheckVerifier,
 };
@@ -249,6 +252,7 @@ pub enum FieldExprKind {
     Neg,
     Pow(usize),
     LagrangeBasisEval(i64, usize, usize),
+    LagrangeKernelEval(i64, usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -273,6 +277,9 @@ pub enum ScalarExprKind {
         value_term_offsets: &'static [usize],
         shared_term_offsets: &'static [usize],
         row_term_offsets: &'static [usize],
+    },
+    PointElement {
+        index: usize,
     },
 }
 
@@ -1059,6 +1066,13 @@ impl<F: Field> ValueStore<F> {
                 .iter()
                 .map(|operand| self.try_scalar(operand))
                 .collect(),
+            ScalarExprKind::PointElement { index } => {
+                let [symbol] = expr.operands else {
+                    return Some(Vec::new());
+                };
+                self.try_point(symbol)
+                    .map(|point| point.get(index).copied().into_iter().collect())
+            }
         }
     }
 
@@ -1582,6 +1596,27 @@ fn evaluate_relation_output_scalar_expr(
             .map(|operands| evaluate_scalar_expr(expr, &operands).map(Some))
             .transpose()
             .map(Option::flatten),
+        ScalarExprKind::PointElement { index } => {
+            let [source] = expr.operands else {
+                return evaluate_scalar_expr(expr, &[]).map(Some);
+            };
+            let point = relation_output_x_point_source(
+                source,
+                context.instance_symbol,
+                context.local_points,
+                context.local_point,
+                store,
+            )?;
+            let value = point
+                .get(index)
+                .copied()
+                .ok_or(RuntimePlanError::InvalidInputLength {
+                    input: expr.symbol,
+                    expected: index + 1,
+                    actual: point.len(),
+                })?;
+            Ok(Some(value))
+        }
     }
 }
 
@@ -1717,6 +1752,15 @@ pub fn evaluate_field_expr<F: Field>(
                     actual: weights.len(),
                 })
         }
+        FieldExprKind::LagrangeKernelEval(domain_start, domain_size) => {
+            require_operand_count(expr.symbol, 2, operands.len())?;
+            Ok(lagrange_kernel_eval(
+                domain_start,
+                domain_size,
+                operands[0],
+                operands[1],
+            ))
+        }
     }
 }
 
@@ -1759,6 +1803,10 @@ pub fn evaluate_scalar_expr<F: Field>(
             shared_term_offsets,
             row_term_offsets,
         ),
+        ScalarExprKind::PointElement { index: _ } => {
+            require_operand_count(expr.symbol, 1, operands.len())?;
+            Ok(operands[0])
+        }
     }
 }
 
@@ -1955,11 +2003,12 @@ pub fn reverse_slice(values: &[Fr]) -> Vec<Fr> {
 )]
 mod tests {
     use super::{
-        evaluate_relation_output_for_instance, evaluate_scalar_expr, Fr, NamedEvalFamilyPlan,
-        RelationOutputPlan, RuntimePlanError, ScalarExprKind, ScalarExprPlan,
-        StructuredPolynomialKind, StructuredPolynomialPointLength, StructuredPolynomialPointOrder,
-        StructuredPolynomialPointSegment, StructuredPolynomialPointTransform,
-        SumcheckInstanceResultPlan, SumcheckPointOrder, ValueStore,
+        evaluate_relation_output_for_instance, evaluate_scalar_expr, FieldExprKind, FieldExprPlan,
+        Fr, NamedEvalFamilyPlan, RelationOutputPlan, RuntimePlanError, ScalarExprKind,
+        ScalarExprPlan, StructuredPolynomialKind, StructuredPolynomialPointLength,
+        StructuredPolynomialPointOrder, StructuredPolynomialPointSegment,
+        StructuredPolynomialPointTransform, SumcheckInstanceResultPlan, SumcheckPointOrder,
+        ValueStore,
     };
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2029,6 +2078,39 @@ mod tests {
 
         assert_eq!(store.try_scalar("family.ab.product"), Some(Fr::from_u64(6)));
         assert_eq!(store.try_scalar("family.ab.sum"), Some(Fr::from_u64(5)));
+    }
+
+    #[test]
+    fn value_store_evaluates_point_element_and_lagrange_kernel_exprs() {
+        let mut store = ValueStore::default();
+        store.insert_point("point.r", vec![Fr::from_u64(2)]);
+        store.insert_scalar("tau", Fr::from_u64(5));
+
+        store
+            .evaluate_available_exprs(
+                &[FieldExprPlan {
+                    symbol: "kernel",
+                    kind: FieldExprKind::LagrangeKernelEval(-1, 3),
+                    operands: &["tau", "r0"],
+                }],
+                &[ScalarExprPlan {
+                    symbol: "r0",
+                    kind: ScalarExprKind::PointElement { index: 0 },
+                    operands: &["point.r"],
+                }],
+            )
+            .unwrap();
+
+        assert_eq!(store.try_scalar("r0"), Some(Fr::from_u64(2)));
+        assert_eq!(
+            store.try_scalar("kernel"),
+            Some(jolt_poly::lagrange::lagrange_kernel_eval(
+                -1,
+                3,
+                Fr::from_u64(5),
+                Fr::from_u64(2),
+            ))
+        );
     }
 
     #[test]

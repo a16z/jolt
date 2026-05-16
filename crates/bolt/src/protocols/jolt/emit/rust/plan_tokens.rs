@@ -224,6 +224,25 @@ pub(super) fn verify_scalar_expr_operands(
                 }
             }
         }
+        ScalarExprKind::PointElement { .. } => {
+            verify_count(
+                "point element scalar expr operands",
+                symbol,
+                1,
+                operands.len(),
+            )?;
+            let Some(point_values) = point_values else {
+                return Err(EmitError::new(format!(
+                    "{stage} scalar expr @{symbol} uses point element formula without point sources"
+                )));
+            };
+            let operand = &operands[0];
+            if !point_values.contains(operand) {
+                return Err(EmitError::new(format!(
+                    "point element scalar expr @{symbol} references missing point @{operand}"
+                )));
+            }
+        }
     }
     Ok(())
 }

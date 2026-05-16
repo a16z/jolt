@@ -263,6 +263,10 @@ pub(crate) enum FieldExprKind {
         domain_size: usize,
         index: usize,
     },
+    LagrangeKernelEval {
+        domain_start: i64,
+        domain_size: usize,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -280,6 +284,9 @@ pub(crate) enum ScalarExprKind {
         value_term_offsets: Vec<usize>,
         shared_term_offsets: Vec<usize>,
         row_term_offsets: Vec<usize>,
+    },
+    PointElement {
+        index: usize,
     },
 }
 
@@ -329,6 +336,9 @@ impl FieldExprKind {
             "field.neg" => Ok(Self::Neg),
             value if value.starts_with("field.pow:") => parse_pow(value),
             value if value.starts_with("poly.lagrange_basis_eval:") => parse_lagrange(value),
+            value if value.starts_with("poly.lagrange_kernel_eval:") => {
+                parse_lagrange_kernel(value)
+            }
             _ => Err(RustTargetPlanError::unsupported(
                 "field expression formula",
                 value,
@@ -351,6 +361,10 @@ impl FieldExprKind {
                 domain_size,
                 index,
             } => format!("LagrangeBasisEval({domain_start}, {domain_size}, {index})"),
+            Self::LagrangeKernelEval {
+                domain_start,
+                domain_size,
+            } => format!("LagrangeKernelEval({domain_start}, {domain_size})"),
         }
     }
 }
@@ -366,6 +380,7 @@ impl ScalarExprKind {
             value if value.starts_with("field.power_strided_weighted_sum:") => {
                 parse_power_strided_weighted_sum(value)
             }
+            value if value.starts_with("point.element:") => parse_point_element(value),
             _ => Err(RustTargetPlanError::unsupported(
                 "scalar expression formula",
                 value,
@@ -399,6 +414,9 @@ impl ScalarExprKind {
                 usize_slice_expr(shared_term_offsets),
                 usize_slice_expr(row_term_offsets),
             ),
+            Self::PointElement { index } => {
+                format!("PointElement {{ index: {index} }}")
+            }
         }
     }
 }
@@ -589,6 +607,29 @@ fn parse_lagrange(value: &str) -> Result<FieldExprKind, RustTargetPlanError> {
     })
 }
 
+fn parse_lagrange_kernel(value: &str) -> Result<FieldExprKind, RustTargetPlanError> {
+    let spec = value
+        .strip_prefix("poly.lagrange_kernel_eval:")
+        .ok_or_else(|| RustTargetPlanError::unsupported("field expression formula", value))?;
+    let parts = spec.split(':').collect::<Vec<_>>();
+    let [domain_start, domain_size] = parts.as_slice() else {
+        return Err(RustTargetPlanError::unsupported(
+            "field expression formula",
+            value,
+        ));
+    };
+    let domain_start = domain_start
+        .parse::<i64>()
+        .map_err(|_| RustTargetPlanError::unsupported("field expression formula", value))?;
+    let domain_size = domain_size
+        .parse::<usize>()
+        .map_err(|_| RustTargetPlanError::unsupported("field expression formula", value))?;
+    Ok(FieldExprKind::LagrangeKernelEval {
+        domain_start,
+        domain_size,
+    })
+}
+
 fn parse_power_strided_weighted_sum(value: &str) -> Result<ScalarExprKind, RustTargetPlanError> {
     let spec = value
         .strip_prefix("field.power_strided_weighted_sum:")
@@ -614,6 +655,14 @@ fn parse_power_strided_weighted_sum(value: &str) -> Result<ScalarExprKind, RustT
         shared_term_offsets: parse_usize_list(shared_offsets, value)?,
         row_term_offsets: parse_usize_list(row_offsets, value)?,
     })
+}
+
+fn parse_point_element(value: &str) -> Result<ScalarExprKind, RustTargetPlanError> {
+    let index = value
+        .strip_prefix("point.element:")
+        .and_then(|index| index.parse::<usize>().ok())
+        .ok_or_else(|| RustTargetPlanError::unsupported("scalar expression formula", value))?;
+    Ok(ScalarExprKind::PointElement { index })
 }
 
 fn parse_structured_polynomial_scalar(value: &str) -> Result<ScalarExprKind, RustTargetPlanError> {
@@ -760,9 +809,17 @@ mod tests {
                 index: 2,
             })
         );
+        assert_eq!(
+            FieldExprKind::from_cpu_attr("poly.lagrange_kernel_eval:-1:3").ok(),
+            Some(FieldExprKind::LagrangeKernelEval {
+                domain_start: -1,
+                domain_size: 3,
+            })
+        );
         assert!(FieldExprKind::from_cpu_attr("field_vector.sum").is_err());
         assert!(FieldExprKind::from_cpu_attr("field.pow:nope").is_err());
         assert!(FieldExprKind::from_cpu_attr("poly.lagrange_basis_eval:1:2").is_err());
+        assert!(FieldExprKind::from_cpu_attr("poly.lagrange_kernel_eval:1").is_err());
     }
 
     #[test]
@@ -804,8 +861,13 @@ mod tests {
                 },
             })
         );
+        assert_eq!(
+            ScalarExprKind::from_cpu_attr("point.element:0").ok(),
+            Some(ScalarExprKind::PointElement { index: 0 })
+        );
         assert!(ScalarExprKind::from_cpu_attr("field.power_strided_weighted_sum:1:2:0").is_err());
         assert!(ScalarExprKind::from_cpu_attr("poly.structured_eval:eq:full").is_err());
+        assert!(ScalarExprKind::from_cpu_attr("point.element:nope").is_err());
     }
 
     #[test]
@@ -822,6 +884,14 @@ mod tests {
             }
             .rust_variant_expr(),
             "LagrangeBasisEval(-1, 3, 0)"
+        );
+        assert_eq!(
+            FieldExprKind::LagrangeKernelEval {
+                domain_start: -1,
+                domain_size: 3,
+            }
+            .rust_variant_expr(),
+            "LagrangeKernelEval(-1, 3)"
         );
         assert_eq!(
             ScalarExprKind::PowerStridedWeightedSum {
@@ -850,6 +920,10 @@ mod tests {
             }
             .rust_variant_expr(),
             "StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::EqPlusOne, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Prefix, length: bolt_verifier_runtime::StructuredPolynomialPointLength::YPoint, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }"
+        );
+        assert_eq!(
+            ScalarExprKind::PointElement { index: 7 }.rust_variant_expr(),
+            "PointElement { index: 7 }"
         );
     }
 }

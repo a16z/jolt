@@ -2,7 +2,6 @@
 
 use bolt_verifier_runtime::{append_labeled_scalar, batch_claims, eval_by_name, find_batch, find_plan, reverse_slice};
 use jolt_field::{Field, Fr, MulPow2, MulPrimitiveInt};
-use jolt_poly::lagrange::{lagrange_evals, lagrange_kernel_eval};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{CompressedLabeledRoundPoly, SumcheckClaim, SumcheckError, SumcheckVerifier};
 use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};
@@ -113,6 +112,7 @@ pub const STAGE2_OPENING_INPUTS: &[Stage2OpeningInputPlan] = &[
 
 pub const STAGE2_FIELD_CONSTANTS: &[Stage2FieldConstantPlan] = &[
     Stage2FieldConstantPlan { symbol: "stage2.ram_output.zero", field: "bn254_fr", value: 0 },
+    Stage2FieldConstantPlan { symbol: "stage2.product_virtual.remainder.one", field: "bn254_fr", value: 1 },
 ];
 
 pub const STAGE2_FIELD_EXPRS: &[Stage2FieldExprPlan] = &[
@@ -150,10 +150,26 @@ pub const STAGE2_FIELD_EXPRS: &[Stage2FieldExprPlan] = &[
     Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.output.partial.LeftInstructionInput", kind: Stage2FieldExprKind::Add, operands: &["stage2.instruction_lookup.output.partial.RightOperand", "stage2.instruction_lookup.output.term.LeftInstructionInput"] },
     Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.output.weighted_expr", kind: Stage2FieldExprKind::Add, operands: &["stage2.instruction_lookup.output.partial.LeftInstructionInput", "stage2.instruction_lookup.output.term.RightInstructionInput"] },
     Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.output.claim_expr", kind: Stage2FieldExprKind::Mul, operands: &["stage2.instruction_lookup.output.eq.LookupOutput", "stage2.instruction_lookup.output.weighted_expr"] },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.remainder.output.high", kind: Stage2FieldExprKind::LagrangeKernelEval(-1, 3), operands: &["stage2.product_virtual.tau_high", "stage2.product_virtual.remainder.point.UniskipR0"] },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.remainder.output.weight.Product", kind: Stage2FieldExprKind::LagrangeBasisEval(-1, 3, 0), operands: &["stage2.product_virtual.remainder.point.UniskipR0"] },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.remainder.output.weight.ShouldBranch", kind: Stage2FieldExprKind::LagrangeBasisEval(-1, 3, 1), operands: &["stage2.product_virtual.remainder.point.UniskipR0"] },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.remainder.output.weight.ShouldJump", kind: Stage2FieldExprKind::LagrangeBasisEval(-1, 3, 2), operands: &["stage2.product_virtual.remainder.point.UniskipR0"] },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.remainder.output.left.LeftInstructionInput", kind: Stage2FieldExprKind::Mul, operands: &["stage2.product_virtual.remainder.output.weight.Product", "stage2.product_virtual.remainder.eval.LeftInstructionInput"] },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.remainder.output.left.LookupOutput", kind: Stage2FieldExprKind::Mul, operands: &["stage2.product_virtual.remainder.output.weight.ShouldBranch", "stage2.product_virtual.remainder.eval.LookupOutput"] },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.remainder.output.left.OpFlagJump", kind: Stage2FieldExprKind::Mul, operands: &["stage2.product_virtual.remainder.output.weight.ShouldJump", "stage2.product_virtual.remainder.eval.OpFlagJump"] },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.remainder.output.left.weighted_expr", kind: Stage2FieldExprKind::Sum, operands: &["stage2.product_virtual.remainder.output.left.LeftInstructionInput", "stage2.product_virtual.remainder.output.left.LookupOutput", "stage2.product_virtual.remainder.output.left.OpFlagJump"] },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.remainder.output.right.RightInstructionInput", kind: Stage2FieldExprKind::Mul, operands: &["stage2.product_virtual.remainder.output.weight.Product", "stage2.product_virtual.remainder.eval.RightInstructionInput"] },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.remainder.output.right.InstructionFlagBranch", kind: Stage2FieldExprKind::Mul, operands: &["stage2.product_virtual.remainder.output.weight.ShouldBranch", "stage2.product_virtual.remainder.eval.InstructionFlagBranch"] },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.remainder.output.partial.NotNextIsNoop", kind: Stage2FieldExprKind::Sub, operands: &["stage2.product_virtual.remainder.one", "stage2.product_virtual.remainder.eval.NextIsNoop"] },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.remainder.output.right.NextIsNoop", kind: Stage2FieldExprKind::Mul, operands: &["stage2.product_virtual.remainder.output.weight.ShouldJump", "stage2.product_virtual.remainder.output.partial.NotNextIsNoop"] },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.remainder.output.right.weighted_expr", kind: Stage2FieldExprKind::Sum, operands: &["stage2.product_virtual.remainder.output.right.RightInstructionInput", "stage2.product_virtual.remainder.output.right.InstructionFlagBranch", "stage2.product_virtual.remainder.output.right.NextIsNoop"] },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.remainder.output.claim_expr", kind: Stage2FieldExprKind::Product, operands: &["stage2.product_virtual.remainder.output.high", "stage2.product_virtual.remainder.output.eq.Product", "stage2.product_virtual.remainder.output.left.weighted_expr", "stage2.product_virtual.remainder.output.right.weighted_expr"] },
 ];
 pub const STAGE2_SCALAR_EXPRS: &[Stage2ScalarExprPlan] = &[
     Stage2ScalarExprPlan { symbol: "stage2.ram_read_write.output.eq.Cycle", kind: Stage2ScalarExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Eq, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Prefix, length: bolt_verifier_runtime::StructuredPolynomialPointLength::YPoint, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage2.ram_read_write.instance", "stage2.input.stage1.RamReadValue"] },
     Stage2ScalarExprPlan { symbol: "stage2.instruction_lookup.output.eq.LookupOutput", kind: Stage2ScalarExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Eq, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage2.instruction_lookup.claim_reduction.instance", "stage2.input.stage1.LookupOutput"] },
+    Stage2ScalarExprPlan { symbol: "stage2.product_virtual.remainder.point.UniskipR0", kind: Stage2ScalarExprKind::PointElement { index: 0 }, operands: &["stage2.product_virtual.uniskip.sumcheck"] },
+    Stage2ScalarExprPlan { symbol: "stage2.product_virtual.remainder.output.eq.Product", kind: Stage2ScalarExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Eq, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage2.product_virtual.remainder.instance", "stage2.input.stage1.Product"] },
 ];
 pub const STAGE2_SUMCHECK_CLAIMS: &[Stage2SumcheckClaimPlan] = &[
     Stage2SumcheckClaimPlan { symbol: "stage2.product_virtual.uniskip.input", stage: "stage2", domain: "jolt.stage2_uniskip_domain", num_rounds: 1, degree: 6, claim: "stage2.product_virtual.weighted_stage1_outputs", kernel: None, relation: Some(Stage2RelationKind::Stage2ProductVirtualUniskip), claim_value: "stage2.product_virtual.uniskip.claim_expr" },
@@ -244,6 +260,7 @@ pub const STAGE2_OPENING_EQUALITIES: &[Stage2OpeningClaimEqualityPlan] = &[];
 pub const STAGE2_RELATION_OUTPUTS: &[Stage2RelationOutputPlan] = &[
     Stage2RelationOutputPlan { relation: Stage2RelationKind::Stage2RamReadWrite, local_scalars: &[], expected_output: "stage2.ram_read_write.output.claim_expr" },
     Stage2RelationOutputPlan { relation: Stage2RelationKind::Stage2InstructionLookupClaimReduction, local_scalars: &[], expected_output: "stage2.instruction_lookup.output.claim_expr" },
+    Stage2RelationOutputPlan { relation: Stage2RelationKind::Stage2ProductVirtualRemainder, local_scalars: &[], expected_output: "stage2.product_virtual.remainder.output.claim_expr" },
 ];
 
 pub const STAGE2_PROGRAM: Stage2VerifierProgramPlan = Stage2VerifierProgramPlan {
@@ -708,7 +725,17 @@ fn expected_batched_output_claim(
                 )?
             }
             Stage2RelationKind::Stage2ProductVirtualRemainder => {
-                expected_product_remainder(store, evals, local_point)?
+                bolt_verifier_runtime::evaluate_relation_output_for_instance(
+                    program.relation_outputs,
+                    program.field_exprs,
+                    program.scalar_exprs,
+                    &store.0,
+                    instance,
+                    evals,
+                    &[],
+                    &[],
+                    local_point,
+                )?
             }
             Stage2RelationKind::Stage2InstructionLookupClaimReduction => {
                 bolt_verifier_runtime::evaluate_relation_output_for_instance(
@@ -732,46 +759,6 @@ fn expected_batched_output_claim(
         expected += *coefficient * value;
     }
     Ok(expected)
-}
-
-fn expected_product_remainder(
-    store: &Stage2ValueStore<Fr>,
-    evals: &[Stage2NamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage2Error> {
-    let tau_low = store.point("stage2.input.stage1.Product")?;
-    let tau_high = store.scalar("stage2.product_virtual.tau_high")?;
-    let r0 = *store
-        .point("stage2.product_virtual.uniskip.sumcheck")?
-        .first()
-        .ok_or(VerifyStage2Error::MissingValue {
-            symbol: "stage2.product_virtual.uniskip.sumcheck",
-        })?;
-    let r_tail = reverse_slice(local_point);
-    let low = EqPolynomial::<Fr>::mle(tau_low, &r_tail);
-    let high = lagrange_kernel_eval(
-        PRODUCT_VIRTUAL_UNISKIP_DOMAIN_START,
-        PRODUCT_VIRTUAL_UNISKIP_DOMAIN_SIZE,
-        tau_high,
-        r0,
-    );
-    let weights = lagrange_evals(
-        PRODUCT_VIRTUAL_UNISKIP_DOMAIN_START,
-        PRODUCT_VIRTUAL_UNISKIP_DOMAIN_SIZE,
-        r0,
-    );
-    let left = weights[0]
-        * eval_by_name(evals, "stage2.product_virtual.remainder.eval.LeftInstructionInput")?
-        + weights[1] * eval_by_name(evals, "stage2.product_virtual.remainder.eval.LookupOutput")?
-        + weights[2] * eval_by_name(evals, "stage2.product_virtual.remainder.eval.OpFlagJump")?;
-    let right = weights[0]
-        * eval_by_name(evals, "stage2.product_virtual.remainder.eval.RightInstructionInput")?
-        + weights[1]
-            * eval_by_name(evals, "stage2.product_virtual.remainder.eval.InstructionFlagBranch")?
-        + weights[2]
-            * (Fr::from_u64(1)
-                - eval_by_name(evals, "stage2.product_virtual.remainder.eval.NextIsNoop")?);
-    Ok(high * low * left * right)
 }
 
 fn expected_ram_raf(
