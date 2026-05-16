@@ -237,6 +237,23 @@ pub enum VerifierPointSourceKind {
     PointExpr,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VerifierPointValueKind {
+    OpeningInput,
+    SumcheckInstance,
+    PointExpr,
+}
+
+impl VerifierPointValueKind {
+    fn source_kind(self) -> VerifierPointSourceKind {
+        match self {
+            Self::OpeningInput => VerifierPointSourceKind::OpeningInput,
+            Self::SumcheckInstance => VerifierPointSourceKind::SumcheckInstance,
+            Self::PointExpr => VerifierPointSourceKind::PointExpr,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifierPointValueRef {
     symbol: String,
@@ -251,6 +268,51 @@ impl VerifierPointValueRef {
 
     pub fn symbol(&self) -> &str {
         &self.symbol
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct VerifierPointValueSet {
+    symbols: BTreeMap<String, VerifierPointValueKind>,
+    conflicts: Vec<VerifierSourceConflict<VerifierPointValueKind>>,
+}
+
+impl VerifierPointValueSet {
+    pub(crate) fn insert(&mut self, symbol: &str, kind: VerifierPointValueKind) {
+        match self.symbols.entry(symbol.to_owned()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let _entry = entry.insert(kind);
+            }
+            std::collections::btree_map::Entry::Occupied(entry) => {
+                let existing = *entry.get();
+                if existing != kind {
+                    self.conflicts.push(VerifierSourceConflict {
+                        symbol: symbol.to_owned(),
+                        existing,
+                        incoming: kind,
+                    });
+                }
+            }
+        }
+    }
+
+    pub(crate) fn contains_ref(&self, value_ref: &VerifierPointValueRef) -> bool {
+        self.symbols.contains_key(value_ref.symbol())
+    }
+
+    pub(crate) fn source_set(&self) -> VerifierPointSourceSet {
+        let mut sources = VerifierPointSourceSet::default();
+        for (symbol, kind) in &self.symbols {
+            sources.insert(symbol, kind.source_kind());
+        }
+        sources
+    }
+
+    pub(crate) fn verify_no_conflicts(&self, stage: &str) -> Result<(), EmitError> {
+        let Some(conflict) = self.conflicts.first() else {
+            return Ok(());
+        };
+        Err(conflicting_source_error(stage, "point value", conflict))
     }
 }
 
@@ -291,10 +353,6 @@ impl VerifierPointSourceSet {
 
     pub fn contains(&self, symbol: &str) -> bool {
         self.symbols.contains_key(symbol)
-    }
-
-    pub(crate) fn contains_ref(&self, value_ref: &VerifierPointValueRef) -> bool {
-        self.symbols.contains_key(value_ref.symbol())
     }
 
     pub(crate) fn verify_no_conflicts(&self, stage: &str) -> Result<(), EmitError> {

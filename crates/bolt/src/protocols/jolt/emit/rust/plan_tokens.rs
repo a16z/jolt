@@ -13,7 +13,7 @@ use crate::protocols::jolt::verifier_plan::{
 use crate::protocols::jolt::verifier_value_rows::{CpuFieldExprPlan, CpuScalarExprPlan};
 use crate::protocols::jolt::verifier_values::{
     VerifierFieldVectorValueRef, VerifierFieldVectorValueSet, VerifierPointSourceSet,
-    VerifierScalarSourceSet, VerifierScalarValueSet,
+    VerifierPointValueSet, VerifierScalarSourceSet, VerifierScalarValueSet,
 };
 
 pub(super) fn role_program_step_kind_expr(
@@ -310,7 +310,7 @@ pub(super) struct VerifierScalarExprVerification<'a> {
     pub expr: &'a VerifierScalarExprPlan,
     pub field_values: &'a VerifierScalarValueSet,
     pub field_vector_values: Option<&'a VerifierFieldVectorValueSet>,
-    pub point_values: Option<&'a VerifierPointSourceSet>,
+    pub point_values: Option<&'a VerifierPointValueSet>,
 }
 
 pub(super) fn verify_verifier_scalar_expr_operands(
@@ -438,6 +438,7 @@ pub(super) struct ScalarExprFlowVerification<'a> {
     pub verifier_field_values: Option<&'a VerifierScalarValueSet>,
     pub field_vector_values: Option<&'a VerifierFieldVectorValueSet>,
     pub point_values: Option<&'a VerifierPointSourceSet>,
+    pub verifier_point_values: Option<&'a VerifierPointValueSet>,
 }
 
 pub(super) fn verify_scalar_expr_flow(
@@ -451,15 +452,19 @@ pub(super) fn verify_scalar_expr_flow(
         verifier_field_values,
         field_vector_values,
         point_values,
+        verifier_point_values,
     } = verification;
     if let (Some(exprs), Some(field_values)) = (verifier_exprs, verifier_field_values) {
+        if let Some(point_values) = verifier_point_values {
+            point_values.verify_no_conflicts(stage)?;
+        }
         for expr in exprs {
             verify_verifier_scalar_expr_operands(VerifierScalarExprVerification {
                 stage,
                 expr,
                 field_values,
                 field_vector_values,
-                point_values,
+                point_values: verifier_point_values,
             })?;
         }
     } else {

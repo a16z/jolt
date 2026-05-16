@@ -482,7 +482,10 @@ impl Stage6CpuProgram {
             |values| values.source_set(),
         );
         let field_vector_values = verifier_plan.map(|plan| plan.field_vector_values());
-        let point_values = verifier_plan.map(|plan| plan.point_value_sources());
+        let verifier_point_values = verifier_plan.map(|plan| plan.point_values());
+        let point_values = verifier_point_values
+            .as_ref()
+            .map(|values| values.source_set());
         super::plan_tokens::verify_field_expr_flow(
             super::plan_tokens::FieldExprFlowVerification {
                 cpu_exprs: &self.field_exprs,
@@ -500,6 +503,7 @@ impl Stage6CpuProgram {
                 verifier_field_values: verifier_scalar_values.as_ref(),
                 field_vector_values: field_vector_values.as_ref(),
                 point_values: point_values.as_ref(),
+                verifier_point_values: verifier_point_values.as_ref(),
             },
         )?;
         for claim in &self.claims {

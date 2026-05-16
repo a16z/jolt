@@ -31,7 +31,7 @@ use crate::protocols::jolt::verifier_value_rows::{
 };
 use crate::protocols::jolt::verifier_values::{
     VerifierFieldVectorValueKind, VerifierFieldVectorValueRef, VerifierFieldVectorValueSet,
-    VerifierPointSourceKind, VerifierPointSourceSet, VerifierPointValueRef,
+    VerifierPointSourceSet, VerifierPointValueKind, VerifierPointValueRef, VerifierPointValueSet,
     VerifierScalarSourceSet, VerifierScalarValueKind, VerifierScalarValuePlan,
     VerifierScalarValueRef, VerifierScalarValueSet,
 };
@@ -595,23 +595,22 @@ impl VerifierStagePlan {
         values
     }
 
-    pub(crate) fn point_value_sources(&self) -> VerifierPointSourceSet {
-        let mut values = VerifierPointSourceSet::default();
-        values.extend(
-            self.instance_results
-                .iter()
-                .map(|instance| &instance.symbol),
-            VerifierPointSourceKind::SumcheckInstance,
-        );
-        values.extend(
-            self.opening_inputs.iter().map(|input| &input.symbol),
-            VerifierPointSourceKind::OpeningInput,
-        );
-        values.extend(
-            self.point_exprs.iter().map(|expr| &expr.symbol),
-            VerifierPointSourceKind::PointExpr,
-        );
+    pub(crate) fn point_values(&self) -> VerifierPointValueSet {
+        let mut values = VerifierPointValueSet::default();
+        for instance in &self.instance_results {
+            values.insert(&instance.symbol, VerifierPointValueKind::SumcheckInstance);
+        }
+        for input in &self.opening_inputs {
+            values.insert(&input.symbol, VerifierPointValueKind::OpeningInput);
+        }
+        for expr in &self.point_exprs {
+            values.insert(&expr.symbol, VerifierPointValueKind::PointExpr);
+        }
         values
+    }
+
+    pub(crate) fn point_value_sources(&self) -> VerifierPointSourceSet {
+        self.point_values().source_set()
     }
 
     pub(crate) fn opening_point_sources(&self) -> BTreeSet<String> {
@@ -2294,11 +2293,13 @@ mod tests {
         StructuredPolynomialPointSegment,
     };
     use crate::protocols::jolt::verifier_values::{
-        VerifierFieldVectorValueRef, VerifierScalarValueKind, VerifierScalarValuePlan,
+        VerifierFieldVectorValueRef, VerifierPointValueRef, VerifierScalarValueKind,
+        VerifierScalarValuePlan,
     };
 
     use super::{
-        VerifierFieldExprPlan, VerifierScalarExprOperand, VerifierScalarExprPlan, VerifierStagePlan,
+        VerifierFieldExprPlan, VerifierPointExprKind, VerifierPointExprPlan,
+        VerifierScalarExprOperand, VerifierScalarExprPlan, VerifierStagePlan,
     };
 
     #[test]
@@ -2414,6 +2415,24 @@ mod tests {
 
         assert!(values.contains_ref(&VerifierFieldVectorValueRef::new("stage5.indexed.evals")));
         assert!(!values.contains_ref(&VerifierFieldVectorValueRef::new("missing.family")));
+    }
+
+    #[test]
+    fn point_values_classify_point_exprs() {
+        let mut plan = VerifierStagePlan::default();
+        plan.point_exprs.push(VerifierPointExprPlan {
+            symbol: "point.value".to_owned(),
+            kind: VerifierPointExprKind::Zero {
+                field: "bn254_fr".to_owned(),
+                arity: 2,
+            },
+            operands: Vec::new(),
+        });
+
+        let values = plan.point_values();
+
+        assert!(values.contains_ref(&VerifierPointValueRef::new("point.value")));
+        assert!(!values.contains_ref(&VerifierPointValueRef::new("missing.point")));
     }
 
     fn structured_polynomial_eval(symbol: &str) -> StructuredPolynomialEvalPlan {
