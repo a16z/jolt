@@ -9,7 +9,7 @@ pub enum VerifierScalarSourceKind {
     TranscriptScalar,
     FieldExpr,
     ScalarExpr,
-    PointDerived,
+    RelationOutputLocal,
     SumcheckEval,
     OutputEvalFamily,
     OutputProductFamily,

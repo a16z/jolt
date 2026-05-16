@@ -356,7 +356,7 @@ impl VerifierStagePlan {
             self.relation_outputs
                 .iter()
                 .flat_map(|claim| claim.local_scalars.iter()),
-            VerifierScalarSourceKind::PointDerived,
+            VerifierScalarSourceKind::RelationOutputLocal,
         );
         values.extend(
             self.sumcheck_evals.iter().map(|eval| &eval.symbol),

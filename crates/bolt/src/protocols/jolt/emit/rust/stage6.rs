@@ -572,7 +572,7 @@ impl Stage6CpuProgram {
             self.relation_outputs
                 .iter()
                 .flat_map(|claim| claim.local_scalars.iter()),
-            verifier_values::VerifierScalarSourceKind::PointDerived,
+            verifier_values::VerifierScalarSourceKind::RelationOutputLocal,
         );
         values.extend(
             self.evals.iter().map(|eval| &eval.symbol),

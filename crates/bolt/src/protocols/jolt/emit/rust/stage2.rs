@@ -399,6 +399,28 @@ fn stage2_relation_output_plans() -> Stage2RelationOutputRows {
                     "stage2.product_virtual.remainder.output.right.weighted_expr",
                 ],
             ),
+            stage2_field_expr(
+                "stage2.ram_raf.output.claim_expr",
+                "field.mul",
+                ["stage2.ram_raf.output.unmap", "stage2.ram_raf.eval.RamRa"],
+            ),
+            stage2_field_expr(
+                "stage2.ram_output.output.partial.ValFinalMinusIo",
+                "field.sub",
+                [
+                    "stage2.ram_output.eval.RamValFinal",
+                    "stage2.ram_output.output.val_io",
+                ],
+            ),
+            stage2_field_expr(
+                "stage2.ram_output.output.claim_expr",
+                "field.product",
+                [
+                    "stage2.ram_output.output.eq",
+                    "stage2.ram_output.output.io_mask",
+                    "stage2.ram_output.output.partial.ValFinalMinusIo",
+                ],
+            ),
         ],
         relation_outputs: vec![
             Stage2RelationOutputPlan {
@@ -415,6 +437,20 @@ fn stage2_relation_output_plans() -> Stage2RelationOutputRows {
                 relation: "jolt.stage2.product_virtual.remainder".to_owned(),
                 local_scalars: Vec::new(),
                 expected_output: "stage2.product_virtual.remainder.output.claim_expr".to_owned(),
+            },
+            Stage2RelationOutputPlan {
+                relation: "jolt.stage2.ram.raf_evaluation".to_owned(),
+                local_scalars: vec!["stage2.ram_raf.output.unmap".to_owned()],
+                expected_output: "stage2.ram_raf.output.claim_expr".to_owned(),
+            },
+            Stage2RelationOutputPlan {
+                relation: "jolt.stage2.ram.output_check".to_owned(),
+                local_scalars: vec![
+                    "stage2.ram_output.output.eq".to_owned(),
+                    "stage2.ram_output.output.io_mask".to_owned(),
+                    "stage2.ram_output.output.val_io".to_owned(),
+                ],
+                expected_output: "stage2.ram_output.output.claim_expr".to_owned(),
             },
         ],
     }
@@ -990,6 +1026,11 @@ impl Stage2CpuProgram {
         ));
         values.extend(symbols(self.field_exprs.iter().map(|expr| &expr.symbol)));
         values.extend(symbols(self.scalar_exprs.iter().map(|expr| &expr.symbol)));
+        values.extend(symbols(
+            self.relation_outputs
+                .iter()
+                .flat_map(|output| output.local_scalars.iter()),
+        ));
         values.extend(symbols(self.evals.iter().map(|eval| &eval.symbol)));
         values
     }
@@ -1018,6 +1059,12 @@ impl Stage2CpuProgram {
         values.extend(
             self.scalar_exprs.iter().map(|expr| &expr.symbol),
             verifier_values::VerifierScalarSourceKind::ScalarExpr,
+        );
+        values.extend(
+            self.relation_outputs
+                .iter()
+                .flat_map(|output| output.local_scalars.iter()),
+            verifier_values::VerifierScalarSourceKind::RelationOutputLocal,
         );
         values.extend(
             self.evals.iter().map(|eval| &eval.symbol),
@@ -1439,9 +1486,9 @@ impl Stage2CpuProgram {
     }
 
     fn emit_verifier_imports() -> &'static str {
-        "use bolt_verifier_runtime::{append_labeled_scalar, batch_claims, eval_by_name, find_batch, find_plan, reverse_slice};\n\
+        "use bolt_verifier_runtime::{append_labeled_scalar, batch_claims, find_batch, find_plan, reverse_slice};\n\
          use jolt_field::{Field, Fr, MulPow2, MulPrimitiveInt};\n\
-         use jolt_poly::{EqPolynomial, UnivariatePoly};\n\
+         use jolt_poly::UnivariatePoly;\n\
          use jolt_sumcheck::{CompressedLabeledRoundPoly, SumcheckClaim, SumcheckError, SumcheckVerifier};\n\
          use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};"
     }
@@ -2501,8 +2548,20 @@ where
             reason: "batched point mismatch",
         });
     }
-    let expected =
-        expected_batched_output_claim(program, driver, &*store, &proof.evals, &output.point, &batching_coeffs, ram)?;
+    let expected = bolt_verifier_runtime::evaluate_relation_output_batch(
+        driver,
+        program.batches,
+        program.claims,
+        program.instance_results,
+        program.relation_outputs,
+        program.field_exprs,
+        program.scalar_exprs,
+        &store.0,
+        &proof.evals,
+        &output.point,
+        &batching_coeffs,
+        |instance, local_point| stage2_relation_output_inputs(&*store, ram, instance, local_point),
+    )?;
     if output.value != expected {
         return Err(VerifyStage2Error::InvalidProof {
             driver: driver.symbol,
@@ -2658,104 +2717,42 @@ impl<F: Field> Stage2ValueStore<F> {
     }
 }
 
-fn expected_batched_output_claim(
-    program: &'static Stage2VerifierProgramPlan,
-    driver: &'static Stage2SumcheckDriverPlan,
+fn stage2_relation_output_inputs<'a>(
     store: &Stage2ValueStore<Fr>,
-    evals: &[Stage2NamedEval<Fr>],
-    point: &[Fr],
-    batching_coeffs: &[Fr],
     ram: Option<&Stage2RamData<'_>>,
-) -> Result<Fr, VerifyStage2Error> {
-    let batch = find_batch(program.batches, driver.symbol, driver.batch)?;
-    let claims = batch_claims(program.claims, batch)?;
-    let mut expected = Fr::from_u64(0);
-    for (claim, coefficient) in claims.iter().zip(batching_coeffs) {
-        let instance = program
-            .instance_results
-            .iter()
-            .find(|instance| instance.claim == claim.symbol && instance.source == driver.symbol)
-            .ok_or(VerifyStage2Error::MissingClaim {
-                batch: batch.symbol,
-                claim: claim.symbol,
-            })?;
-        let local_point = point
-            .get(instance.round_offset..instance.round_offset + instance.num_rounds)
-            .ok_or(VerifyStage2Error::InvalidInputLength {
-                input: instance.symbol,
-                expected: instance.round_offset + instance.num_rounds,
-                actual: point.len(),
-            })?;
-        let value = match instance.relation {
-            Stage2RelationKind::Stage2RamReadWrite => {
-                bolt_verifier_runtime::evaluate_relation_output_for_instance(
-                    program.relation_outputs,
-                    program.field_exprs,
-                    program.scalar_exprs,
-                    &store.0,
-                    instance,
-                    evals,
-                    &[],
-                    &[],
-                    local_point,
-                )?
-            }
-            Stage2RelationKind::Stage2ProductVirtualRemainder => {
-                bolt_verifier_runtime::evaluate_relation_output_for_instance(
-                    program.relation_outputs,
-                    program.field_exprs,
-                    program.scalar_exprs,
-                    &store.0,
-                    instance,
-                    evals,
-                    &[],
-                    &[],
-                    local_point,
-                )?
-            }
-            Stage2RelationKind::Stage2InstructionLookupClaimReduction => {
-                bolt_verifier_runtime::evaluate_relation_output_for_instance(
-                    program.relation_outputs,
-                    program.field_exprs,
-                    program.scalar_exprs,
-                    &store.0,
-                    instance,
-                    evals,
-                    &[],
-                    &[],
-                    local_point,
-                )?
-            }
-            Stage2RelationKind::Stage2RamRafEvaluation => expected_ram_raf(evals, local_point, ram)?,
-            Stage2RelationKind::Stage2RamOutputCheck => {
-                expected_ram_output(store, evals, local_point, ram)?
-            }
-            relation => return Err(VerifyStage2Error::UnsupportedRelation { relation }),
-        };
-        expected += *coefficient * value;
-    }
-    Ok(expected)
+    instance: &Stage2SumcheckInstanceResultPlan,
+    local_point: &'a [Fr],
+) -> Result<bolt_verifier_runtime::RelationOutputInputs<'a, Fr>, VerifyStage2Error> {
+    let scalars = match instance.relation {
+        Stage2RelationKind::Stage2RamRafEvaluation => stage2_ram_raf_output_scalars(local_point, ram)?,
+        Stage2RelationKind::Stage2RamOutputCheck => stage2_ram_output_scalars(store, local_point, ram)?,
+        _ => Vec::new(),
+    };
+    Ok(bolt_verifier_runtime::RelationOutputInputs {
+        scalars,
+        points: Vec::new(),
+    })
 }
 
-fn expected_ram_raf(
-    evals: &[Stage2NamedEval<Fr>],
+fn stage2_ram_raf_output_scalars(
     local_point: &[Fr],
     ram: Option<&Stage2RamData<'_>>,
-) -> Result<Fr, VerifyStage2Error> {
+) -> Result<Vec<bolt_verifier_runtime::NamedScalar<Fr>>, VerifyStage2Error> {
     let ram = ram.ok_or(VerifyStage2Error::MissingRam {
         context: "stage2.ram.raf_evaluation",
     })?;
     let address = reverse_slice(local_point);
-    let unmap = unmap_eval(ram.log_k, ram.start_address, &address);
-    Ok(unmap * eval_by_name(evals, "stage2.ram_raf.eval.RamRa")?)
+    Ok(vec![bolt_verifier_runtime::NamedScalar {
+        symbol: "stage2.ram_raf.output.unmap",
+        value: unmap_eval(ram.log_k, ram.start_address, &address),
+    }])
 }
 
-fn expected_ram_output(
+fn stage2_ram_output_scalars(
     store: &Stage2ValueStore<Fr>,
-    evals: &[Stage2NamedEval<Fr>],
     local_point: &[Fr],
     ram: Option<&Stage2RamData<'_>>,
-) -> Result<Fr, VerifyStage2Error> {
+) -> Result<Vec<bolt_verifier_runtime::NamedScalar<Fr>>, VerifyStage2Error> {
     let ram = ram.ok_or(VerifyStage2Error::MissingRam {
         context: "stage2.ram.output_check",
     })?;
@@ -2764,7 +2761,14 @@ fn expected_ram_output(
     })?;
     let r_address = store.point("stage2.ram_output.r_address")?;
     let opening_point = reverse_slice(local_point);
-    let eq_eval = EqPolynomial::<Fr>::mle(r_address, &opening_point);
+    if r_address.len() != opening_point.len() {
+        return Err(VerifyStage2Error::InvalidInputLength {
+            input: "stage2.ram_output.r_address",
+            expected: opening_point.len(),
+            actual: r_address.len(),
+        });
+    }
+    let eq_eval = eq_eval(r_address, &opening_point);
     let io_mask = range_mask_eval(layout.io_start, layout.io_end, &opening_point);
     let val_io = sparse_final_ram_eval(
         ram.final_ram,
@@ -2772,8 +2776,26 @@ fn expected_ram_output(
         layout.io_end,
         &opening_point,
     );
-    let val_final = eval_by_name(evals, "stage2.ram_output.eval.RamValFinal")?;
-    Ok(eq_eval * io_mask * (val_final - val_io))
+    Ok(vec![
+        bolt_verifier_runtime::NamedScalar {
+            symbol: "stage2.ram_output.output.eq",
+            value: eq_eval,
+        },
+        bolt_verifier_runtime::NamedScalar {
+            symbol: "stage2.ram_output.output.io_mask",
+            value: io_mask,
+        },
+        bolt_verifier_runtime::NamedScalar {
+            symbol: "stage2.ram_output.output.val_io",
+            value: val_io,
+        },
+    ])
+}
+
+fn eq_eval(lhs: &[Fr], rhs: &[Fr]) -> Fr {
+    lhs.iter().zip(rhs).fold(Fr::from_u64(1), |acc, (lhs, rhs)| {
+        acc * (*lhs * *rhs + (Fr::from_u64(1) - *lhs) * (Fr::from_u64(1) - *rhs))
+    })
 }
 
 fn driver_evals(
