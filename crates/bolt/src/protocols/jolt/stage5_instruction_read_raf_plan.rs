@@ -11,13 +11,16 @@ pub(crate) const STAGE5_TABLE_FLAG_EVAL_FAMILY: &str =
     "stage5.instruction_read_raf.eval.LookupTableFlag";
 pub(crate) const STAGE5_INSTRUCTION_RA_EVAL_FAMILY: &str =
     "stage5.instruction_read_raf.eval.InstructionRa";
+const STAGE5_INDEXED_EVAL_FAMILIES_CONST: &str = "STAGE5_INDEXED_EVAL_FAMILIES";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Stage5InstructionReadRafEmitPlan {
     pub(crate) point: String,
     pub(crate) lookup_output_point: String,
     pub(crate) table_flag_evals: IndexedEvalFamilyPlan,
+    pub(crate) table_flag_evals_ref: String,
     pub(crate) instruction_ra_evals: IndexedEvalFamilyPlan,
+    pub(crate) instruction_ra_evals_ref: String,
     pub(crate) raf_flag_eval: String,
     pub(crate) gamma: String,
     pub(crate) point_values: Vec<Stage5InstructionReadRafPointValueEmitPlan>,
@@ -28,16 +31,21 @@ impl Stage5InstructionReadRafEmitPlan {
     pub(crate) fn from_eval_families(
         eval_families: &[IndexedEvalFamilyPlan],
     ) -> Result<Self, EmitError> {
-        let table_flag_evals =
-            IndexedEvalFamilyPlan::find(eval_families, STAGE5_TABLE_FLAG_EVAL_FAMILY)?.clone();
-        let instruction_ra_evals =
-            IndexedEvalFamilyPlan::find(eval_families, STAGE5_INSTRUCTION_RA_EVAL_FAMILY)?.clone();
+        let (table_flag_evals_index, table_flag_evals) =
+            IndexedEvalFamilyPlan::find_with_index(eval_families, STAGE5_TABLE_FLAG_EVAL_FAMILY)?;
+        let (instruction_ra_evals_index, instruction_ra_evals) =
+            IndexedEvalFamilyPlan::find_with_index(
+                eval_families,
+                STAGE5_INSTRUCTION_RA_EVAL_FAMILY,
+            )?;
         Ok(Self {
             point: "stage5.instruction_read_raf.point".to_owned(),
             lookup_output_point: "stage5.input.stage2.instruction.LookupOutput".to_owned(),
             point_values: point_value_plans(table_flag_evals.evals.len()),
-            table_flag_evals,
-            instruction_ra_evals,
+            table_flag_evals: table_flag_evals.clone(),
+            table_flag_evals_ref: indexed_eval_family_ref(table_flag_evals_index),
+            instruction_ra_evals: instruction_ra_evals.clone(),
+            instruction_ra_evals_ref: indexed_eval_family_ref(instruction_ra_evals_index),
             raf_flag_eval: "stage5.instruction_read_raf.eval.InstructionRafFlag".to_owned(),
             gamma: "stage5.instruction_read_raf.gamma".to_owned(),
             log_k: 128,
@@ -45,28 +53,7 @@ impl Stage5InstructionReadRafEmitPlan {
     }
 
     pub(crate) fn emit_runtime_constants(&self) -> String {
-        let families = [
-            (
-                "STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVAL_NAMES",
-                "STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVALS",
-                &self.table_flag_evals,
-            ),
-            (
-                "STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVAL_NAMES",
-                "STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVALS",
-                &self.instruction_ra_evals,
-            ),
-        ];
-
         let mut source = String::new();
-        for (names_const, family_const, family) in families {
-            source.push_str(&family.emit_runtime_constant(
-                "pub ",
-                names_const,
-                family_const,
-                "NamedEvalFamilyPlan",
-            ));
-        }
         source.push_str(&emit_point_value_constants(&self.point_values));
         push_format(
             &mut source,
@@ -74,8 +61,8 @@ impl Stage5InstructionReadRafEmitPlan {
                 "pub const STAGE5_INSTRUCTION_READ_RAF_PLAN: Stage5InstructionReadRafPlan = Stage5InstructionReadRafPlan {{\n\
                  \x20   point: {},\n\
                  \x20   lookup_output_point: {},\n\
-                 \x20   table_flag_evals: &STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVALS,\n\
-                 \x20   instruction_ra_evals: &STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVALS,\n\
+                 \x20   table_flag_evals: {},\n\
+                 \x20   instruction_ra_evals: {},\n\
                  \x20   raf_flag_eval: {},\n\
                  \x20   gamma: {},\n\
                  \x20   point_values: STAGE5_INSTRUCTION_READ_RAF_POINT_VALUES,\n\
@@ -83,6 +70,8 @@ impl Stage5InstructionReadRafEmitPlan {
                  }};\n\n",
                 rust_str(&self.point),
                 rust_str(&self.lookup_output_point),
+                self.table_flag_evals_ref,
+                self.instruction_ra_evals_ref,
                 rust_str(&self.raf_flag_eval),
                 rust_str(&self.gamma),
                 self.log_k,
@@ -341,6 +330,10 @@ fn rust_str(value: &str) -> String {
     format!("{value:?}")
 }
 
+fn indexed_eval_family_ref(index: usize) -> String {
+    format!("&{STAGE5_INDEXED_EVAL_FAMILIES_CONST}[{index}]")
+}
+
 #[cfg(test)]
 mod tests {
     use crate::emit::rust::EmitError;
@@ -384,6 +377,36 @@ mod tests {
             plan.instruction_ra_evals.evals,
             vec!["stage5.instruction_read_raf.eval.InstructionRa_0"]
         );
+        assert_eq!(
+            plan.table_flag_evals_ref,
+            "&STAGE5_INDEXED_EVAL_FAMILIES[0]"
+        );
+        assert_eq!(
+            plan.instruction_ra_evals_ref,
+            "&STAGE5_INDEXED_EVAL_FAMILIES[1]"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn instruction_read_raf_plan_references_indexed_eval_family_rows() -> Result<(), EmitError> {
+        let families = instruction_read_raf_families([
+            (
+                "LookupTableFlag_0",
+                "stage5.instruction_read_raf.eval.LookupTableFlag_0",
+            ),
+            (
+                "InstructionRa_0",
+                "stage5.instruction_read_raf.eval.InstructionRa_0",
+            ),
+        ]);
+        let plan = Stage5InstructionReadRafEmitPlan::from_eval_families(&families)?;
+        let source = plan.emit_runtime_constants();
+
+        assert!(!source.contains("STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVALS"));
+        assert!(!source.contains("STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVALS"));
+        assert!(source.contains("table_flag_evals: &STAGE5_INDEXED_EVAL_FAMILIES[0]"));
+        assert!(source.contains("instruction_ra_evals: &STAGE5_INDEXED_EVAL_FAMILIES[1]"));
         Ok(())
     }
 

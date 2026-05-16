@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use bolt_verifier_runtime::{batch_claims, find_batch, find_plan, NamedEvalFamilyPlan};
+use bolt_verifier_runtime::{batch_claims, find_batch, find_plan};
 use super::jolt_relations::{evaluate_stage5_instruction_read_raf_point_scalars, normalize_instruction_read_raf_point, Stage5InstructionReadRafPlan, Stage5InstructionReadRafPointValueKind, Stage5InstructionReadRafPointValuePlan};
 use jolt_field::{Field, Fr};
 use jolt_sumcheck::SumcheckError;
@@ -203,14 +203,6 @@ pub const STAGE5_SUMCHECK_EVALS: &[Stage5SumcheckEvalPlan] = &[
     Stage5SumcheckEvalPlan { symbol: "stage5.registers_val_evaluation.eval.RdWa", source: "stage5.sumcheck", name: "stage5.registers_val_evaluation.eval.RdWa", index: 1, oracle: "RdWa" },
 ];
 
-#[rustfmt::skip]
-pub const STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVAL_NAMES: &[&str] = &["stage5.instruction_read_raf.eval.LookupTableFlag_0", "stage5.instruction_read_raf.eval.LookupTableFlag_1", "stage5.instruction_read_raf.eval.LookupTableFlag_2", "stage5.instruction_read_raf.eval.LookupTableFlag_3", "stage5.instruction_read_raf.eval.LookupTableFlag_4", "stage5.instruction_read_raf.eval.LookupTableFlag_5", "stage5.instruction_read_raf.eval.LookupTableFlag_6", "stage5.instruction_read_raf.eval.LookupTableFlag_7", "stage5.instruction_read_raf.eval.LookupTableFlag_8", "stage5.instruction_read_raf.eval.LookupTableFlag_9", "stage5.instruction_read_raf.eval.LookupTableFlag_10", "stage5.instruction_read_raf.eval.LookupTableFlag_11", "stage5.instruction_read_raf.eval.LookupTableFlag_12", "stage5.instruction_read_raf.eval.LookupTableFlag_13", "stage5.instruction_read_raf.eval.LookupTableFlag_14", "stage5.instruction_read_raf.eval.LookupTableFlag_15", "stage5.instruction_read_raf.eval.LookupTableFlag_16", "stage5.instruction_read_raf.eval.LookupTableFlag_17", "stage5.instruction_read_raf.eval.LookupTableFlag_18", "stage5.instruction_read_raf.eval.LookupTableFlag_19", "stage5.instruction_read_raf.eval.LookupTableFlag_20", "stage5.instruction_read_raf.eval.LookupTableFlag_21", "stage5.instruction_read_raf.eval.LookupTableFlag_22", "stage5.instruction_read_raf.eval.LookupTableFlag_23", "stage5.instruction_read_raf.eval.LookupTableFlag_24", "stage5.instruction_read_raf.eval.LookupTableFlag_25", "stage5.instruction_read_raf.eval.LookupTableFlag_26", "stage5.instruction_read_raf.eval.LookupTableFlag_27", "stage5.instruction_read_raf.eval.LookupTableFlag_28", "stage5.instruction_read_raf.eval.LookupTableFlag_29", "stage5.instruction_read_raf.eval.LookupTableFlag_30", "stage5.instruction_read_raf.eval.LookupTableFlag_31", "stage5.instruction_read_raf.eval.LookupTableFlag_32", "stage5.instruction_read_raf.eval.LookupTableFlag_33", "stage5.instruction_read_raf.eval.LookupTableFlag_34", "stage5.instruction_read_raf.eval.LookupTableFlag_35", "stage5.instruction_read_raf.eval.LookupTableFlag_36", "stage5.instruction_read_raf.eval.LookupTableFlag_37", "stage5.instruction_read_raf.eval.LookupTableFlag_38", "stage5.instruction_read_raf.eval.LookupTableFlag_39", "stage5.instruction_read_raf.eval.LookupTableFlag_40"];
-pub const STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVALS: NamedEvalFamilyPlan = NamedEvalFamilyPlan { symbol: "stage5.instruction_read_raf.eval.LookupTableFlag", evals: STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVAL_NAMES };
-
-#[rustfmt::skip]
-pub const STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVAL_NAMES: &[&str] = &["stage5.instruction_read_raf.eval.InstructionRa_0", "stage5.instruction_read_raf.eval.InstructionRa_1", "stage5.instruction_read_raf.eval.InstructionRa_2", "stage5.instruction_read_raf.eval.InstructionRa_3", "stage5.instruction_read_raf.eval.InstructionRa_4", "stage5.instruction_read_raf.eval.InstructionRa_5", "stage5.instruction_read_raf.eval.InstructionRa_6", "stage5.instruction_read_raf.eval.InstructionRa_7"];
-pub const STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVALS: NamedEvalFamilyPlan = NamedEvalFamilyPlan { symbol: "stage5.instruction_read_raf.eval.InstructionRa", evals: STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVAL_NAMES };
-
 pub const STAGE5_INSTRUCTION_READ_RAF_POINT_VALUES: &[Stage5InstructionReadRafPointValuePlan] = &[
     Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_0", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 0 } },
     Stage5InstructionReadRafPointValuePlan { symbol: "stage5.instruction_read_raf.point_value.LookupTable_1", kind: Stage5InstructionReadRafPointValueKind::LookupTable { index: 1 } },
@@ -261,8 +253,8 @@ pub const STAGE5_INSTRUCTION_READ_RAF_POINT_VALUES: &[Stage5InstructionReadRafPo
 pub const STAGE5_INSTRUCTION_READ_RAF_PLAN: Stage5InstructionReadRafPlan = Stage5InstructionReadRafPlan {
     point: "stage5.instruction_read_raf.point",
     lookup_output_point: "stage5.input.stage2.instruction.LookupOutput",
-    table_flag_evals: &STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVALS,
-    instruction_ra_evals: &STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVALS,
+    table_flag_evals: &STAGE5_INDEXED_EVAL_FAMILIES[0],
+    instruction_ra_evals: &STAGE5_INDEXED_EVAL_FAMILIES[1],
     raf_flag_eval: "stage5.instruction_read_raf.eval.InstructionRafFlag",
     gamma: "stage5.instruction_read_raf.gamma",
     point_values: STAGE5_INSTRUCTION_READ_RAF_POINT_VALUES,

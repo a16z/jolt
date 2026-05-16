@@ -11,44 +11,24 @@ impl IndexedEvalFamilyPlan {
         families: &'a [Self],
         symbol: &str,
     ) -> Result<&'a IndexedEvalFamilyPlan, EmitError> {
-        let mut matching_families = families.iter().filter(|family| family.symbol == symbol);
-        let family = matching_families
+        Self::find_with_index(families, symbol).map(|(_, family)| family)
+    }
+
+    pub(crate) fn find_with_index<'a>(
+        families: &'a [Self],
+        symbol: &str,
+    ) -> Result<(usize, &'a IndexedEvalFamilyPlan), EmitError> {
+        let mut matching_families = families
+            .iter()
+            .enumerate()
+            .filter(|(_, family)| family.symbol == symbol);
+        let (index, family) = matching_families
             .next()
             .ok_or_else(|| EmitError::new(format!("missing eval family `{symbol}`")))?;
         if matching_families.next().is_some() {
             return Err(EmitError::new(format!("duplicate eval family `{symbol}`")));
         }
-        Ok(family)
-    }
-
-    pub(crate) fn emit_runtime_constant(
-        &self,
-        visibility: &str,
-        names_const: &str,
-        family_const: &str,
-        family_type: &str,
-    ) -> String {
-        let names_source = self
-            .evals
-            .iter()
-            .map(|name| rust_str(name))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let mut source = String::new();
-        push_format(
-            &mut source,
-            format_args!(
-                "#[rustfmt::skip]\n{visibility}const {names_const}: &[&str] = &[{names_source}];\n"
-            ),
-        );
-        push_format(
-            &mut source,
-            format_args!(
-                "{visibility}const {family_const}: {family_type} = {family_type} {{ symbol: {}, evals: {names_const} }};\n\n",
-                rust_str(&self.symbol),
-            ),
-        );
-        source
+        Ok((index, family))
     }
 }
 
@@ -125,6 +105,27 @@ mod tests {
             .unwrap_or_default();
 
         assert!(error.contains("duplicate eval family `stage.eval.BytecodeRa`"));
+    }
+
+    #[test]
+    fn find_with_index_preserves_family_row_position() -> Result<(), crate::emit::rust::EmitError> {
+        let families = [
+            IndexedEvalFamilyPlan {
+                symbol: "stage.eval.LookupTableFlag".to_owned(),
+                evals: vec!["stage.eval.LookupTableFlag_0".to_owned()],
+            },
+            IndexedEvalFamilyPlan {
+                symbol: "stage.eval.BytecodeRa".to_owned(),
+                evals: vec!["stage.eval.BytecodeRa_0".to_owned()],
+            },
+        ];
+
+        let (index, family) =
+            IndexedEvalFamilyPlan::find_with_index(&families, "stage.eval.BytecodeRa")?;
+
+        assert_eq!(index, 1);
+        assert_eq!(family.symbol, "stage.eval.BytecodeRa");
+        Ok(())
     }
 
     #[test]

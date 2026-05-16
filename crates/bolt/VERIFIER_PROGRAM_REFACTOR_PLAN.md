@@ -592,8 +592,11 @@ runtime `NamedEvalFamilyPlan` slices and seed them into `ValueStore` as
 field-vector values after sumcheck output observation. Relation-output execution
 has started consuming those vectors: output product-family terms can reference
 an eval-family vector by symbol, and Stage 5 instruction RA / Stage 6 bytecode
-RA products use that path. Output eval families are still scalar-output claim
-machinery rather than first-class value rows.
+RA products use that path. The Stage 5 instruction read-RAF and Stage 6
+bytecode read-RAF relation plans now reference the same plan-level
+`STAGE*_INDEXED_EVAL_FAMILIES` rows instead of emitting duplicate
+relation-local `NamedEvalFamilyPlan` constants. Output eval families are still
+scalar-output claim machinery rather than first-class value rows.
 
 ### Dialect changes
 
@@ -805,7 +808,10 @@ The existing scalar `sumcheck_eval` ops remain the source of the serialized
 named evals. The family row is an explicit membership declaration consumed by
 the verifier-plan layer. A later S3/S5 value-graph slice can promote this shape
 to a typed field-vector value if that makes the Rust emission smaller and
-clearer.
+clearer. On the current stack, the first promotion has landed for Stage 5/6:
+the plan-level indexed eval-family rows are emitted as runtime
+`NamedEvalFamilyPlan` slices, seeded as field-vector values, and reused by the
+relation plans that need the same family contract.
 
 ### Runtime additions
 

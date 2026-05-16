@@ -12,8 +12,8 @@ use melior::ir::{Attribute, OperationRef};
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
 use crate::protocols::jolt::stage6_bytecode_read_raf_plan::{
-    emit_stage6_bytecode_read_raf_plan_constants, stage6_bytecode_read_raf_output_claim_plan,
-    STAGE6_BYTECODE_RA_EVAL_FAMILY,
+    emit_stage6_bytecode_read_raf_plan_constants, stage6_bytecode_read_raf_eval_family_ref,
+    stage6_bytecode_read_raf_output_claim_plan, STAGE6_BYTECODE_RA_EVAL_FAMILY,
 };
 use crate::protocols::jolt::verifier_eval_families::{self, IndexedEvalFamilyPlan};
 use crate::protocols::jolt::verifier_output_claims::{
@@ -684,7 +684,10 @@ impl Stage6CpuProgram {
             Vec::new()
         };
         if role == Role::Verifier {
-            let bytecode_ra_evals = stage6_bytecode_read_raf_eval_family(&indexed_eval_families)?;
+            let bytecode_ra_evals = IndexedEvalFamilyPlan::find(
+                &indexed_eval_families,
+                STAGE6_BYTECODE_RA_EVAL_FAMILY,
+            )?;
             output_claims.push(stage6_bytecode_read_raf_output_claim_plan(
                 bytecode_ra_evals,
             ));
@@ -1616,11 +1619,13 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
         source.push_str(&self.emit_sumcheck_driver_constants()?);
         source.push_str(&self.emit_tail_constants()?);
         if self.role == Role::Verifier {
-            let bytecode_ra_evals =
-                stage6_bytecode_read_raf_eval_family(&self.verifier_plan()?.indexed_eval_families)?;
+            let (bytecode_ra_evals_ref, _) = stage6_bytecode_read_raf_eval_family_ref(
+                &self.verifier_plan()?.indexed_eval_families,
+                "STAGE6_INDEXED_EVAL_FAMILIES",
+            )?;
             source.push_str(&self.emit_indexed_eval_family_constants()?);
             source.push_str(&emit_stage6_bytecode_read_raf_plan_constants(
-                bytecode_ra_evals,
+                &bytecode_ra_evals_ref,
             ));
             source.push_str(&self.emit_verifier_output_claim_constants()?);
         }
@@ -2757,12 +2762,6 @@ fn parse_indexed_eval_family(
     Ok(IndexedEvalFamilyPlan { symbol, evals })
 }
 
-fn stage6_bytecode_read_raf_eval_family(
-    eval_families: &[IndexedEvalFamilyPlan],
-) -> Result<&IndexedEvalFamilyPlan, EmitError> {
-    IndexedEvalFamilyPlan::find(eval_families, STAGE6_BYTECODE_RA_EVAL_FAMILY)
-}
-
 fn string_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<String, EmitError> {
     operation
         .attribute(attr)
@@ -2886,8 +2885,8 @@ mod tests {
     use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 
     use super::{
-        stage6_bytecode_read_raf_eval_family, stage6_kernel_abi, STAGE6_BYTECODE_RA_EVAL_FAMILY,
-        STAGE6_KERNEL_ABIS,
+        stage6_bytecode_read_raf_eval_family_ref, stage6_kernel_abi,
+        STAGE6_BYTECODE_RA_EVAL_FAMILY, STAGE6_KERNEL_ABIS,
     };
 
     #[test]
@@ -2914,7 +2913,9 @@ mod tests {
                 "stage6.bytecode_read_raf.eval.BytecodeRa_1".to_owned(),
             ],
         }];
-        let family = stage6_bytecode_read_raf_eval_family(&families)?;
+        let (family_ref, family) =
+            stage6_bytecode_read_raf_eval_family_ref(&families, "STAGE6_INDEXED_EVAL_FAMILIES")?;
+        assert_eq!(family_ref, "STAGE6_INDEXED_EVAL_FAMILIES[0]");
         assert_eq!(
             family.evals,
             vec![
@@ -2933,10 +2934,11 @@ mod tests {
             evals: vec!["stage6.other.eval.BytecodeRa_0".to_owned()],
         }];
 
-        let error = stage6_bytecode_read_raf_eval_family(&families)
-            .err()
-            .map(|error| error.to_string())
-            .unwrap_or_default();
+        let error =
+            stage6_bytecode_read_raf_eval_family_ref(&families, "STAGE6_INDEXED_EVAL_FAMILIES")
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_default();
 
         assert!(error.contains(&format!(
             "missing eval family `{STAGE6_BYTECODE_RA_EVAL_FAMILY}`"

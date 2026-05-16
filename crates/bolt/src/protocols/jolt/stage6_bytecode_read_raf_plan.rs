@@ -1,4 +1,4 @@
-use crate::emit::rust::push_format;
+use crate::emit::rust::{push_format, EmitError};
 use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 use crate::protocols::jolt::verifier_output_claims::{
     SumcheckOutputClaimPlan, SumcheckOutputProductFamilyPlan, SumcheckOutputProductFamilyTermPlan,
@@ -11,9 +11,6 @@ pub(crate) struct BytecodeReadRafPlan {
     pub(crate) const_name: &'static str,
     pub(crate) point: &'static str,
     pub(crate) gamma: &'static str,
-    pub(crate) bytecode_ra_eval_names_const: &'static str,
-    pub(crate) bytecode_ra_eval_family_const: &'static str,
-    pub(crate) bytecode_ra_eval_family_symbol: &'static str,
     pub(crate) entries: &'static str,
     pub(crate) entry_bytecode_index: &'static str,
     pub(crate) stages_const: &'static str,
@@ -315,9 +312,6 @@ const STAGE6_BYTECODE_READ_RAF_PLAN: BytecodeReadRafPlan = BytecodeReadRafPlan {
     const_name: "STAGE6_BYTECODE_PLAN",
     point: "stage6.bytecode_read_raf.point",
     gamma: "stage6.bytecode_read_raf.gamma",
-    bytecode_ra_eval_names_const: "STAGE6_BYTECODE_RA_EVAL_NAMES",
-    bytecode_ra_eval_family_const: "STAGE6_BYTECODE_RA_EVALS",
-    bytecode_ra_eval_family_symbol: STAGE6_BYTECODE_RA_EVAL_FAMILY,
     entries: "stage6.bytecode_read_raf.entries",
     entry_bytecode_index: "stage6.bytecode_read_raf.entry_bytecode_index",
     stages_const: "STAGE6_BYTECODE_STAGES",
@@ -333,10 +327,8 @@ const STAGE6_BYTECODE_READ_RAF_PLAN: BytecodeReadRafPlan = BytecodeReadRafPlan {
     entry_lookup_table: "stage6.bytecode.entry.lookup_table",
 };
 
-pub(crate) fn emit_stage6_bytecode_read_raf_plan_constants(
-    bytecode_ra_evals: &IndexedEvalFamilyPlan,
-) -> String {
-    emit_bytecode_read_raf_plan(&STAGE6_BYTECODE_READ_RAF_PLAN, bytecode_ra_evals)
+pub(crate) fn emit_stage6_bytecode_read_raf_plan_constants(bytecode_ra_evals_ref: &str) -> String {
+    emit_bytecode_read_raf_plan(&STAGE6_BYTECODE_READ_RAF_PLAN, bytecode_ra_evals_ref)
 }
 
 #[cfg(test)]
@@ -377,18 +369,8 @@ impl BytecodeReadRafPlan {
     }
 }
 
-fn emit_bytecode_read_raf_plan(
-    plan: &BytecodeReadRafPlan,
-    bytecode_ra_evals: &IndexedEvalFamilyPlan,
-) -> String {
+fn emit_bytecode_read_raf_plan(plan: &BytecodeReadRafPlan, bytecode_ra_evals_ref: &str) -> String {
     let mut source = "\n".to_owned();
-
-    source.push_str(&bytecode_ra_evals.emit_runtime_constant(
-        "",
-        plan.bytecode_ra_eval_names_const,
-        plan.bytecode_ra_eval_family_const,
-        "bolt_verifier_runtime::NamedEvalFamilyPlan",
-    ));
 
     for stage in plan.stages {
         push_format(
@@ -456,7 +438,7 @@ fn emit_bytecode_read_raf_plan(
             "    point: {},\n    gamma: {},\n    bytecode_ra_evals: &{},\n    entries: {},\n    entry_bytecode_index: {},\n    stages: {},\n    output_terms: {},\n    output_contribution: {},\n",
             rust_str(plan.point),
             rust_str(plan.gamma),
-            plan.bytecode_ra_eval_family_const,
+            bytecode_ra_evals_ref,
             rust_str(plan.entries),
             rust_str(plan.entry_bytecode_index),
             plan.stages_const,
@@ -484,6 +466,15 @@ fn emit_bytecode_read_raf_plan(
     );
     source.push_str("};\n");
     source
+}
+
+pub(crate) fn stage6_bytecode_read_raf_eval_family_ref<'a>(
+    eval_families: &'a [IndexedEvalFamilyPlan],
+    families_const: &str,
+) -> Result<(String, &'a IndexedEvalFamilyPlan), EmitError> {
+    let (index, family) =
+        IndexedEvalFamilyPlan::find_with_index(eval_families, STAGE6_BYTECODE_RA_EVAL_FAMILY)?;
+    Ok((format!("{families_const}[{index}]"), family))
 }
 
 fn emit_bytecode_read_raf_term_plan(term: &BytecodeReadRafTermPlan) -> String {
@@ -571,10 +562,12 @@ fn rust_option_str(value: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::emit::rust::EmitError;
     use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 
     use super::{
-        emit_stage6_bytecode_read_raf_plan_constants, stage6_bytecode_read_raf_output_claim_plan,
+        emit_stage6_bytecode_read_raf_plan_constants, stage6_bytecode_read_raf_eval_family_ref,
+        stage6_bytecode_read_raf_output_claim_plan,
         stage6_bytecode_read_raf_output_contribution_symbol, BytecodeFlag, BytecodeOutputTermPlan,
         BytecodeReadRafTermPlan, BytecodeRegister, STAGE6_BYTECODE_RA_EVAL_FAMILY,
         STAGE6_BYTECODE_READ_RAF_PLAN,
@@ -709,22 +702,31 @@ mod tests {
 
     #[test]
     fn stage6_bytecode_plan_renderer_emits_stage67_constants() {
-        let bytecode_ra_evals = bytecode_ra_evals();
-        let source = emit_stage6_bytecode_read_raf_plan_constants(&bytecode_ra_evals);
+        let source =
+            emit_stage6_bytecode_read_raf_plan_constants("STAGE6_INDEXED_EVAL_FAMILIES[0]");
 
         assert!(source.contains("const STAGE6_BYTECODE_STAGE1_TERMS"));
         assert!(source.contains("Stage67BytecodeTermPlan::LookupTable { gamma_base: 2 }"));
         assert!(source.contains("Stage67BytecodeFlag::IsInterleaved"));
         assert!(source.contains("Stage67BytecodeRegister::Rs2"));
-        assert!(source.contains("const STAGE6_BYTECODE_RA_EVAL_NAMES"));
-        assert!(source.contains("\"stage6.bytecode_read_raf.eval.BytecodeRa_3\""));
-        assert!(source.contains(
-            "const STAGE6_BYTECODE_RA_EVALS: bolt_verifier_runtime::NamedEvalFamilyPlan"
-        ));
+        assert!(!source.contains("STAGE6_BYTECODE_RA_EVAL_NAMES"));
+        assert!(!source.contains("STAGE6_BYTECODE_RA_EVALS"));
         assert!(source.contains("const STAGE6_BYTECODE_OUTPUT_TERMS"));
         assert!(source.contains("Stage67BytecodeOutputTermPlan::Entry { gamma_power: 7 }"));
         assert!(source
             .contains("output_contribution: \"stage6.bytecode_read_raf.output.contribution\""));
+        assert!(source.contains("bytecode_ra_evals: &STAGE6_INDEXED_EVAL_FAMILIES[0]"));
         assert!(source.contains("const STAGE6_BYTECODE_PLAN: Stage67BytecodeReadRafPlan"));
+    }
+
+    #[test]
+    fn stage6_bytecode_plan_references_indexed_eval_family_row() -> Result<(), EmitError> {
+        let families = [bytecode_ra_evals()];
+        let (family_ref, family) =
+            stage6_bytecode_read_raf_eval_family_ref(&families, "STAGE6_INDEXED_EVAL_FAMILIES")?;
+
+        assert_eq!(family_ref, "STAGE6_INDEXED_EVAL_FAMILIES[0]");
+        assert_eq!(family.symbol, STAGE6_BYTECODE_RA_EVAL_FAMILY);
+        Ok(())
     }
 }
