@@ -34,7 +34,7 @@ fn emit_local_scalar_constants(
     claim_index: usize,
     claim: &RelationOutputPlan,
 ) -> String {
-    if claim.local_scalars.is_empty() {
+    if !claim.has_local_scalars() {
         return "&[]".to_owned();
     }
     let name = format!(

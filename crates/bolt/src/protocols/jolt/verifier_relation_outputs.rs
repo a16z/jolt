@@ -296,7 +296,7 @@ pub struct RelationOutputFunctionFamilyPlan {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationOutputPlan {
     pub relation: String,
-    pub local_scalars: Vec<VerifierScalarValuePlan>,
+    local_scalars: Vec<VerifierScalarValuePlan>,
     pub expected_output: String,
 }
 
@@ -331,6 +331,10 @@ impl RelationOutputPlan {
 
     pub fn local_scalar_symbols(&self) -> impl Iterator<Item = &String> {
         self.local_scalars.iter().map(|value| &value.symbol)
+    }
+
+    pub fn has_local_scalars(&self) -> bool {
+        !self.local_scalars.is_empty()
     }
 }
 

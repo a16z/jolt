@@ -18,7 +18,7 @@ pub enum VerifierScalarSourceKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VerifierScalarValueKind {
+pub(crate) enum VerifierScalarValueKind {
     OpeningInput,
     FieldConstant,
     TranscriptScalar,
@@ -51,7 +51,7 @@ impl VerifierScalarValueKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VerifierScalarValuePlan {
+pub(crate) struct VerifierScalarValuePlan {
     pub(crate) symbol: String,
     pub(crate) kind: VerifierScalarValueKind,
 }
