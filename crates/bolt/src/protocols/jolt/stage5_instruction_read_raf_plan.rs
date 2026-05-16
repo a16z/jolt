@@ -1,10 +1,9 @@
 use crate::emit::rust::{push_format, EmitError};
 use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 use crate::protocols::jolt::verifier_relation_outputs::{
-    RelationOutputPlan, RelationOutputProductFamilyPlan, RelationOutputProductFamilyTermPlan,
-    StructuredPolynomialEvalPlan, StructuredPolynomialEvalRefPlan, StructuredPolynomialKind,
-    StructuredPolynomialPointLength, StructuredPolynomialPointOrder, StructuredPolynomialPointPlan,
-    StructuredPolynomialPointSegment,
+    RelationOutputPlan, StructuredPolynomialEvalPlan, StructuredPolynomialEvalRefPlan,
+    StructuredPolynomialKind, StructuredPolynomialPointLength, StructuredPolynomialPointOrder,
+    StructuredPolynomialPointPlan, StructuredPolynomialPointSegment,
 };
 
 pub(crate) const STAGE5_TABLE_FLAG_EVAL_FAMILY: &str =
@@ -83,38 +82,6 @@ impl Stage5InstructionReadRafEmitPlan {
     pub(crate) fn relation_output_plan(&self) -> Stage5InstructionReadRafOutputPlan {
         const PREFIX: &str = "stage5.instruction_read_raf.output";
 
-        let table_value_family = RelationOutputProductFamilyPlan {
-            symbol: format!("{PREFIX}.product.LookupTableValues"),
-            gamma: None,
-            terms: self
-                .table_flag_evals
-                .evals
-                .iter()
-                .zip(
-                    self.point_values
-                        .iter()
-                        .filter(|value| value.is_lookup_table()),
-                )
-                .map(
-                    |(flag_eval, table_value)| RelationOutputProductFamilyTermPlan {
-                        gamma_power_offset: 0,
-                        evals: vec![table_value.symbol.clone(), flag_eval.clone()],
-                        eval_families: Vec::new(),
-                        factors: Vec::new(),
-                    },
-                )
-                .collect(),
-        };
-        let ra_product_family = RelationOutputProductFamilyPlan {
-            symbol: format!("{PREFIX}.product.InstructionRa"),
-            gamma: None,
-            terms: vec![RelationOutputProductFamilyTermPlan {
-                gamma_power_offset: 0,
-                evals: Vec::new(),
-                eval_families: vec![self.instruction_ra_evals.symbol.clone()],
-                factors: Vec::new(),
-            }],
-        };
         let eq = StructuredPolynomialEvalPlan {
             symbol: format!("{PREFIX}.eq.LookupOutputCycle"),
             polynomial: StructuredPolynomialKind::Eq,
@@ -143,11 +110,41 @@ impl Stage5InstructionReadRafEmitPlan {
         let raf_flag_gamma_identity = format!("{PREFIX}.term.RafFlagGammaIdentity");
         let raf_claim = format!("{PREFIX}.partial.RafClaim");
         let gamma_raf_claim = format!("{PREFIX}.term.GammaRafClaim");
+        let table_values = format!("{PREFIX}.product.LookupTableValues");
+        let instruction_ra_product = format!("{PREFIX}.product.InstructionRa");
         let lookup_or_raf = format!("{PREFIX}.partial.LookupOrRaf");
         let eq_ra = format!("{PREFIX}.partial.EqRa");
         let claim_expr = format!("{PREFIX}.claim_expr");
 
-        let field_exprs = vec![
+        let mut field_exprs =
+            Vec::with_capacity(self.table_flag_evals.evals.len().saturating_add(12));
+        let mut table_value_terms = Vec::with_capacity(self.table_flag_evals.evals.len());
+        for (index, (flag_eval, table_value)) in self
+            .table_flag_evals
+            .evals
+            .iter()
+            .zip(
+                self.point_values
+                    .iter()
+                    .filter(|value| value.is_lookup_table()),
+            )
+            .enumerate()
+        {
+            let term = format!("{PREFIX}.term.LookupTableValue_{index}");
+            table_value_terms.push(term.clone());
+            field_exprs.push(output_field_expr(
+                term,
+                "field.mul",
+                vec![table_value.symbol.clone(), flag_eval.clone()],
+            ));
+        }
+        field_exprs.extend([
+            output_field_expr(table_values.clone(), "field.sum", table_value_terms),
+            output_field_expr(
+                instruction_ra_product.clone(),
+                "field_vector.product",
+                vec![self.instruction_ra_evals.symbol.clone()],
+            ),
             output_field_expr(
                 gamma_right.clone(),
                 "field.mul",
@@ -191,15 +188,15 @@ impl Stage5InstructionReadRafEmitPlan {
             output_field_expr(
                 lookup_or_raf.clone(),
                 "field.add",
-                vec![table_value_family.symbol.clone(), gamma_raf_claim],
+                vec![table_values, gamma_raf_claim],
             ),
             output_field_expr(
                 eq_ra.clone(),
                 "field.mul",
-                vec![eq.symbol.clone(), ra_product_family.symbol.clone()],
+                vec![eq.symbol.clone(), instruction_ra_product],
             ),
             output_field_expr(claim_expr.clone(), "field.mul", vec![eq_ra, lookup_or_raf]),
-        ];
+        ]);
 
         Stage5InstructionReadRafOutputPlan {
             relation_output_values: vec![eq.clone()],
@@ -211,7 +208,7 @@ impl Stage5InstructionReadRafEmitPlan {
                     index: 0,
                 }],
                 eval_families: Vec::new(),
-                product_families: vec![table_value_family, ra_product_family],
+                product_families: Vec::new(),
                 local_scalars: self
                     .point_values
                     .iter()
@@ -447,26 +444,7 @@ mod tests {
             "stage5.instruction_read_raf.output.eq.LookupOutputCycle"
         );
         assert_eq!(output_plan.claim.structured_polynomial_evals[0].index, 0);
-        assert_eq!(output_plan.claim.product_families.len(), 2);
-        assert_eq!(
-            output_plan.claim.product_families[0].symbol,
-            "stage5.instruction_read_raf.output.product.LookupTableValues"
-        );
-        assert_eq!(
-            output_plan.claim.product_families[0].terms[0].evals,
-            vec![
-                "stage5.instruction_read_raf.point_value.LookupTable_0".to_owned(),
-                "stage5.instruction_read_raf.eval.LookupTableFlag_0".to_owned()
-            ]
-        );
-        assert_eq!(
-            output_plan.claim.product_families[1].terms[0].evals,
-            Vec::<String>::new()
-        );
-        assert_eq!(
-            output_plan.claim.product_families[1].terms[0].eval_families,
-            vec![STAGE5_INSTRUCTION_RA_EVAL_FAMILY.to_owned()]
-        );
+        assert!(output_plan.claim.product_families.is_empty());
         assert_eq!(
             output_plan.claim.local_scalars,
             vec![
@@ -477,6 +455,29 @@ mod tests {
                 "stage5.instruction_read_raf.point_value.Identity".to_owned(),
             ]
         );
+        assert!(output_plan.field_exprs.iter().any(|expr| {
+            expr.symbol == "stage5.instruction_read_raf.output.term.LookupTableValue_0"
+                && expr.formula == "field.mul"
+                && expr.operands
+                    == vec![
+                        "stage5.instruction_read_raf.point_value.LookupTable_0".to_owned(),
+                        "stage5.instruction_read_raf.eval.LookupTableFlag_0".to_owned(),
+                    ]
+        }));
+        assert!(output_plan.field_exprs.iter().any(|expr| {
+            expr.symbol == "stage5.instruction_read_raf.output.product.LookupTableValues"
+                && expr.formula == "field.sum"
+                && expr.operands
+                    == vec![
+                        "stage5.instruction_read_raf.output.term.LookupTableValue_0".to_owned(),
+                        "stage5.instruction_read_raf.output.term.LookupTableValue_1".to_owned(),
+                    ]
+        }));
+        assert!(output_plan.field_exprs.iter().any(|expr| {
+            expr.symbol == "stage5.instruction_read_raf.output.product.InstructionRa"
+                && expr.formula == "field_vector.product"
+                && expr.operands == vec![STAGE5_INSTRUCTION_RA_EVAL_FAMILY.to_owned()]
+        }));
         assert!(output_plan.field_exprs.iter().any(|expr| {
             expr.symbol == "stage5.instruction_read_raf.output.claim_expr"
                 && expr.formula == "field.mul"

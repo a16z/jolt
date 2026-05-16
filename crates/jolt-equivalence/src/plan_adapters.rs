@@ -689,45 +689,6 @@ macro_rules! define_stage_adapter_impl {
                                     })
                                     .collect(),
                             ),
-                            product_families: super::leak_slice(
-                                plan.product_families
-                                    .iter()
-                                    .map(|family| bolt_verifier_runtime::RelationOutputProductFamilyPlan {
-                                        symbol: super::leak_str(&family.symbol),
-                                        gamma: family.gamma.as_ref().map(|gamma| super::leak_str(gamma)),
-                                        terms: super::leak_slice(
-                                            family
-                                                .terms
-                                                .iter()
-                                                .map(|term| bolt_verifier_runtime::RelationOutputProductFamilyTermPlan {
-                                                    gamma_power_offset: term.gamma_power_offset,
-                                                    evals: super::leak_slice(
-                                                        term
-                                                            .evals
-                                                            .iter()
-                                                            .map(|symbol| super::leak_str(symbol))
-                                                            .collect(),
-                                                    ),
-                                                    eval_families: super::leak_slice(
-                                                        term
-                                                            .eval_families
-                                                            .iter()
-                                                            .map(|symbol| super::leak_str(symbol))
-                                                            .collect(),
-                                                    ),
-                                                    factors: super::leak_slice(
-                                                        term
-                                                            .factors
-                                                            .iter()
-                                                            .map(|symbol| super::leak_str(symbol))
-                                                            .collect(),
-                                                    ),
-                                                })
-                                                .collect(),
-                                        ),
-                                    })
-                                    .collect(),
-                            ),
                             local_scalars: super::leak_str_slice(&plan.local_scalars),
                             expected_output: super::leak_str(&plan.expected_output),
                         })

@@ -180,8 +180,8 @@ pub const STAGE4_RELATION_OUTPUT_VALUES: &[Stage4StructuredPolynomialEvalPlan] =
 ];
 
 pub const STAGE4_RELATION_OUTPUTS: &[Stage4RelationOutputPlan] = &[
-    Stage4RelationOutputPlan { relation: Stage4RelationKind::Stage4RegistersReadWrite, structured_polynomial_evals: &[bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage4.registers_read_write.output.eq.RdWriteValue", index: 0 }], eval_families: &[], product_families: &[], local_scalars: &[], expected_output: "stage4.registers_read_write.output.claim_expr" },
-    Stage4RelationOutputPlan { relation: Stage4RelationKind::Stage4RamValCheck, structured_polynomial_evals: &[bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage4.ram_val_check.output.lt.RamValCycle", index: 1 }], eval_families: &[], product_families: &[], local_scalars: &[], expected_output: "stage4.ram_val_check.output.claim_expr" },
+    Stage4RelationOutputPlan { relation: Stage4RelationKind::Stage4RegistersReadWrite, structured_polynomial_evals: &[bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage4.registers_read_write.output.eq.RdWriteValue", index: 0 }], eval_families: &[], local_scalars: &[], expected_output: "stage4.registers_read_write.output.claim_expr" },
+    Stage4RelationOutputPlan { relation: Stage4RelationKind::Stage4RamValCheck, structured_polynomial_evals: &[bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage4.ram_val_check.output.lt.RamValCycle", index: 1 }], eval_families: &[], local_scalars: &[], expected_output: "stage4.ram_val_check.output.claim_expr" },
 ];
 
 pub const STAGE4_PROGRAM: Stage4VerifierProgramPlan = Stage4CpuProgramPlan {

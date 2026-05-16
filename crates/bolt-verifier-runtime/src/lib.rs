@@ -412,26 +412,10 @@ pub struct RelationOutputEvalFamilyPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RelationOutputProductFamilyTermPlan {
-    pub gamma_power_offset: usize,
-    pub evals: &'static [&'static str],
-    pub eval_families: &'static [&'static str],
-    pub factors: &'static [&'static str],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RelationOutputProductFamilyPlan {
-    pub symbol: &'static str,
-    pub gamma: Option<&'static str>,
-    pub terms: &'static [RelationOutputProductFamilyTermPlan],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RelationOutputPlan<R: ProtocolRelation> {
     pub relation: R,
     pub structured_polynomial_evals: &'static [StructuredPolynomialEvalRef],
     pub eval_families: &'static [RelationOutputEvalFamilyPlan],
-    pub product_families: &'static [RelationOutputProductFamilyPlan],
     pub local_scalars: &'static [&'static str],
     pub expected_output: &'static str,
 }
@@ -1364,10 +1348,6 @@ pub fn evaluate_relation_output<R: ProtocolRelation>(
         let value = evaluate_relation_output_eval_family(family, store, &scratch)?;
         scratch.insert(family.symbol, value);
     }
-    for family in plan.product_families {
-        let value = evaluate_relation_output_product_family(family, store, &scratch)?;
-        scratch.insert(family.symbol, value);
-    }
     evaluate_available_field_exprs_with_scratch(field_exprs, store, &mut scratch)?;
     scratch
         .scalar_or(store, plan.expected_output)
@@ -1487,61 +1467,6 @@ fn evaluate_relation_output_eval_family(
         gamma_base *= gamma_stride;
     }
     Ok(result)
-}
-
-fn evaluate_relation_output_product_family(
-    family: &RelationOutputProductFamilyPlan,
-    store: &ValueStore<Fr>,
-    scratch: &ScratchScalars,
-) -> Result<Fr, RuntimePlanError> {
-    let gamma = relation_output_family_gamma(family.gamma, store, scratch)?;
-    let mut result = Fr::from_u64(0);
-    for term in family.terms {
-        if term.evals.is_empty() && term.eval_families.is_empty() && term.factors.is_empty() {
-            return Err(RuntimePlanError::InvalidInputLength {
-                input: family.symbol,
-                expected: 1,
-                actual: 0,
-            });
-        }
-        let mut product = pow_field(gamma, term.gamma_power_offset);
-        for &symbol in term.evals.iter().chain(term.factors.iter()) {
-            let value = scratch
-                .scalar_or(store, symbol)
-                .ok_or(RuntimePlanError::MissingValue { symbol })?;
-            product *= value;
-        }
-        for &family_symbol in term.eval_families {
-            let values = store.field_vector_or(family_symbol, |symbol| {
-                RuntimePlanError::MissingValue { symbol }
-            })?;
-            if values.is_empty() {
-                return Err(RuntimePlanError::InvalidInputLength {
-                    input: family_symbol,
-                    expected: 1,
-                    actual: 0,
-                });
-            }
-            for value in values {
-                product *= *value;
-            }
-        }
-        result += product;
-    }
-    Ok(result)
-}
-
-fn relation_output_family_gamma(
-    gamma: Option<&'static str>,
-    store: &ValueStore<Fr>,
-    scratch: &ScratchScalars,
-) -> Result<Fr, RuntimePlanError> {
-    match gamma {
-        Some(symbol) => scratch
-            .scalar_or(store, symbol)
-            .ok_or(RuntimePlanError::MissingValue { symbol }),
-        None => Ok(Fr::from_u64(1)),
-    }
 }
 
 fn evaluate_structured_polynomial_point(
@@ -1908,9 +1833,8 @@ pub fn reverse_slice(values: &[Fr]) -> Vec<Fr> {
 )]
 mod tests {
     use super::{
-        evaluate_field_expr, evaluate_relation_output_product_family, FieldExprKind, FieldExprPlan,
-        Fr, NamedEvalFamilyPlan, RelationOutputProductFamilyPlan,
-        RelationOutputProductFamilyTermPlan, RuntimePlanError, ScratchScalars, ValueStore,
+        evaluate_field_expr, FieldExprKind, FieldExprPlan, Fr, NamedEvalFamilyPlan,
+        RuntimePlanError, ValueStore,
     };
 
     #[test]
@@ -1975,30 +1899,5 @@ mod tests {
 
         assert_eq!(store.try_scalar("family.ab.product"), Some(Fr::from_u64(6)));
         assert_eq!(store.try_scalar("family.ab.sum"), Some(Fr::from_u64(5)));
-    }
-
-    #[test]
-    fn product_family_multiplies_field_vector_terms() {
-        let mut store = ValueStore::default();
-        store.insert_scalar("scalar.factor", Fr::from_u64(5));
-        store.insert_field_vector("family.ab", vec![Fr::from_u64(2), Fr::from_u64(3)]);
-
-        let value = evaluate_relation_output_product_family(
-            &RelationOutputProductFamilyPlan {
-                symbol: "product.family",
-                gamma: None,
-                terms: &[RelationOutputProductFamilyTermPlan {
-                    gamma_power_offset: 0,
-                    evals: &["scalar.factor"],
-                    eval_families: &["family.ab"],
-                    factors: &[],
-                }],
-            },
-            &store,
-            &ScratchScalars::default(),
-        )
-        .unwrap();
-
-        assert_eq!(value, Fr::from_u64(30));
     }
 }
