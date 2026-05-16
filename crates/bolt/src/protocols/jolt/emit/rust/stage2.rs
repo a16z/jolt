@@ -981,9 +981,10 @@ impl Stage2CpuProgram {
         }
         if self.role == Role::Verifier {
             let field_values = self.verifier_scalar_sources();
-            let point_values = self.verifier_point_sources();
+            let verifier_point_values = self.verifier_point_values();
+            let point_values = verifier_point_values.source_set();
             field_values.verify_no_conflicts("stage2")?;
-            point_values.verify_no_conflicts("stage2")?;
+            verifier_point_values.verify_no_conflicts("stage2")?;
             for expr in &self.scalar_exprs {
                 super::plan_tokens::verify_scalar_expr_operands(
                     super::plan_tokens::ScalarExprVerification {
@@ -1070,30 +1071,38 @@ impl Stage2CpuProgram {
         values
     }
 
-    fn verifier_point_sources(&self) -> verifier_values::VerifierPointSourceSet {
-        let mut values = verifier_values::VerifierPointSourceSet::default();
-        values.extend(
-            self.opening_inputs.iter().map(|input| &input.symbol),
-            verifier_values::VerifierPointSourceKind::OpeningInput,
-        );
-        values.extend(
-            self.drivers.iter().map(|driver| &driver.symbol),
-            verifier_values::VerifierPointSourceKind::SumcheckInstance,
-        );
-        values.extend(
-            self.instance_results
-                .iter()
-                .map(|instance| &instance.symbol),
-            verifier_values::VerifierPointSourceKind::SumcheckInstance,
-        );
-        values.extend(
-            self.point_slices.iter().map(|slice| &slice.symbol),
-            verifier_values::VerifierPointSourceKind::PointExpr,
-        );
-        values.extend(
-            self.point_concats.iter().map(|concat| &concat.symbol),
-            verifier_values::VerifierPointSourceKind::PointExpr,
-        );
+    fn verifier_point_values(&self) -> verifier_values::VerifierPointValueSet {
+        let mut values = verifier_values::VerifierPointValueSet::default();
+        for input in &self.opening_inputs {
+            values.insert(
+                &input.symbol,
+                verifier_values::VerifierPointValueKind::OpeningInput,
+            );
+        }
+        for driver in &self.drivers {
+            values.insert(
+                &driver.symbol,
+                verifier_values::VerifierPointValueKind::SumcheckInstance,
+            );
+        }
+        for instance in &self.instance_results {
+            values.insert(
+                &instance.symbol,
+                verifier_values::VerifierPointValueKind::SumcheckInstance,
+            );
+        }
+        for slice in &self.point_slices {
+            values.insert(
+                &slice.symbol,
+                verifier_values::VerifierPointValueKind::PointExpr,
+            );
+        }
+        for concat in &self.point_concats {
+            values.insert(
+                &concat.symbol,
+                verifier_values::VerifierPointValueKind::PointExpr,
+            );
+        }
         values
     }
 
