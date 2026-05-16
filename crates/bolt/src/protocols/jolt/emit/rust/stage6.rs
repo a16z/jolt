@@ -850,9 +850,12 @@ impl Stage6CpuProgram {
             verifier_values::VerifierScalarSourceKind::StructuredPolynomialEval,
         );
         values.extend(
-            self.relation_outputs
-                .iter()
-                .flat_map(|claim| claim.structured_polynomial_evals.iter()),
+            self.relation_outputs.iter().flat_map(|claim| {
+                claim
+                    .structured_polynomial_evals
+                    .iter()
+                    .map(|value| &value.symbol)
+            }),
             verifier_values::VerifierScalarSourceKind::StructuredPolynomialEval,
         );
         values.extend(

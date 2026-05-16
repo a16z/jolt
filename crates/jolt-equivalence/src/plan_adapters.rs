@@ -647,7 +647,15 @@ macro_rules! define_stage_adapter_impl {
                         .iter()
                         .map(|plan| $module::$relation_output {
                             relation: super::generated_relation_kind(&plan.relation),
-                            structured_polynomial_evals: super::leak_str_slice(&plan.structured_polynomial_evals),
+                            structured_polynomial_evals: super::leak_slice(
+                                plan.structured_polynomial_evals
+                                    .iter()
+                                    .map(|value| bolt_verifier_runtime::StructuredPolynomialEvalRef {
+                                        symbol: super::leak_str(&value.symbol),
+                                        index: value.index,
+                                    })
+                                    .collect(),
+                            ),
                             eval_families: super::leak_slice(
                                 plan.eval_families
                                     .iter()

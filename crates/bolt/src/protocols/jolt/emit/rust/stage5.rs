@@ -655,9 +655,14 @@ impl Stage5CpuProgram {
             let output_plan =
                 Stage5InstructionReadRafEmitPlan::from_eval_families(&indexed_eval_families)?
                     .relation_output_plan();
+            let relation_output_value_base = relation_output_values.len();
+            let mut output_claim = output_plan.claim;
+            for value_ref in &mut output_claim.structured_polynomial_evals {
+                value_ref.index += relation_output_value_base;
+            }
             relation_output_values.extend(output_plan.relation_output_values);
             field_exprs.extend(output_plan.field_exprs.into_iter().map(stage5_field_expr));
-            relation_outputs.push(output_plan.claim);
+            relation_outputs.push(output_claim);
         }
 
         let mut program = Self {
@@ -813,9 +818,12 @@ impl Stage5CpuProgram {
             verifier_values::VerifierScalarSourceKind::StructuredPolynomialEval,
         );
         values.extend(
-            self.relation_outputs
-                .iter()
-                .flat_map(|claim| claim.structured_polynomial_evals.iter()),
+            self.relation_outputs.iter().flat_map(|claim| {
+                claim
+                    .structured_polynomial_evals
+                    .iter()
+                    .map(|value| &value.symbol)
+            }),
             verifier_values::VerifierScalarSourceKind::StructuredPolynomialEval,
         );
         values.extend(

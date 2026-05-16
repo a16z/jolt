@@ -1722,9 +1722,10 @@ fn stage6_rust_targets_extract_and_compile() {
         vec![booleanity_function_family.clone()]
     );
     assert_eq!(
-        booleanity_claims[0].structured_polynomial_evals[0],
+        booleanity_claims[0].structured_polynomial_evals[0].symbol,
         "stage6.booleanity.output.eq.InstructionRa0"
     );
+    assert_eq!(booleanity_claims[0].structured_polynomial_evals[0].index, 0);
     let hamming_claims = verifier_program
         .relation_outputs
         .iter()

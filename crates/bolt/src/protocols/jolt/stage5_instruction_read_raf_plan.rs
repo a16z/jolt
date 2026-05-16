@@ -2,8 +2,8 @@ use crate::emit::rust::{push_format, EmitError};
 use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 use crate::protocols::jolt::verifier_relation_outputs::{
     RelationOutputPlan, RelationOutputProductFamilyPlan, RelationOutputProductFamilyTermPlan,
-    StructuredPolynomialEvalPlan, StructuredPolynomialKind, StructuredPolynomialPointLength,
-    StructuredPolynomialPointOrder, StructuredPolynomialPointPlan,
+    StructuredPolynomialEvalPlan, StructuredPolynomialEvalRefPlan, StructuredPolynomialKind,
+    StructuredPolynomialPointLength, StructuredPolynomialPointOrder, StructuredPolynomialPointPlan,
     StructuredPolynomialPointSegment,
 };
 
@@ -206,7 +206,10 @@ impl Stage5InstructionReadRafEmitPlan {
             field_exprs,
             claim: RelationOutputPlan {
                 relation: "jolt.stage5.instruction_read_raf".to_owned(),
-                structured_polynomial_evals: vec![eq.symbol],
+                structured_polynomial_evals: vec![StructuredPolynomialEvalRefPlan {
+                    symbol: eq.symbol,
+                    index: 0,
+                }],
                 eval_families: Vec::new(),
                 product_families: vec![table_value_family, ra_product_family],
                 function_families: Vec::new(),
@@ -441,9 +444,10 @@ mod tests {
         );
         assert_eq!(output_plan.claim.structured_polynomial_evals.len(), 1);
         assert_eq!(
-            output_plan.claim.structured_polynomial_evals[0],
+            output_plan.claim.structured_polynomial_evals[0].symbol,
             "stage5.instruction_read_raf.output.eq.LookupOutputCycle"
         );
+        assert_eq!(output_plan.claim.structured_polynomial_evals[0].index, 0);
         assert_eq!(output_plan.claim.product_families.len(), 2);
         assert_eq!(
             output_plan.claim.product_families[0].symbol,

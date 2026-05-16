@@ -379,6 +379,12 @@ pub struct StructuredPolynomialEvalPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StructuredPolynomialEvalRef {
+    pub symbol: &'static str,
+    pub index: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RelationOutputEvalFamilySharedTermPlan {
     pub gamma_power_offset: usize,
     pub factor: &'static str,
@@ -439,7 +445,7 @@ pub struct RelationOutputFunctionFamilyPlan {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RelationOutputPlan<R: ProtocolRelation> {
     pub relation: R,
-    pub structured_polynomial_evals: &'static [&'static str],
+    pub structured_polynomial_evals: &'static [StructuredPolynomialEvalRef],
     pub eval_families: &'static [RelationOutputEvalFamilyPlan],
     pub product_families: &'static [RelationOutputProductFamilyPlan],
     pub function_families: &'static [RelationOutputFunctionFamilyPlan],
@@ -1323,13 +1329,20 @@ pub fn evaluate_relation_output<R: ProtocolRelation>(
     for eval in evals {
         scratch.insert(eval.name, eval.value);
     }
-    for polynomial_eval_symbol in plan.structured_polynomial_evals {
+    for polynomial_eval_ref in plan.structured_polynomial_evals {
         let polynomial_eval = relation_output_values
-            .iter()
-            .find(|value| value.symbol == *polynomial_eval_symbol)
-            .ok_or(RuntimePlanError::MissingValue {
-                symbol: polynomial_eval_symbol,
+            .get(polynomial_eval_ref.index)
+            .ok_or(RuntimePlanError::InvalidInputLength {
+                input: polynomial_eval_ref.symbol,
+                expected: polynomial_eval_ref.index + 1,
+                actual: relation_output_values.len(),
             })?;
+        if polynomial_eval.symbol != polynomial_eval_ref.symbol {
+            return Err(RuntimePlanError::InvalidProof {
+                driver: instance_symbol,
+                reason: "relation output value reference mismatch",
+            });
+        }
         let x_raw_point = relation_output_x_point_source(
             polynomial_eval.x_point.source,
             instance_symbol,

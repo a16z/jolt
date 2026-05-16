@@ -2,8 +2,9 @@ use crate::emit::rust::{push_format, EmitError};
 use crate::ir::Role;
 use crate::protocols::jolt::verifier_relation_outputs::{
     RelationOutputFunctionKind, RelationOutputPlan, StructuredPolynomialEvalPlan,
-    StructuredPolynomialKind, StructuredPolynomialPointLength, StructuredPolynomialPointOrder,
-    StructuredPolynomialPointPlan, StructuredPolynomialPointSegment,
+    StructuredPolynomialEvalRefPlan, StructuredPolynomialKind, StructuredPolynomialPointLength,
+    StructuredPolynomialPointOrder, StructuredPolynomialPointPlan,
+    StructuredPolynomialPointSegment,
 };
 
 pub fn emit_verifier_relation_output_constants(
@@ -20,7 +21,7 @@ pub fn emit_verifier_relation_output_constants(
             "{}_RELATION_OUTPUT_{index}_STRUCTURED_POLYNOMIAL_EVALS",
             stage_type.to_ascii_uppercase()
         );
-        let values = emit_str_slice_or_inline(
+        let values = emit_structured_polynomial_eval_refs_slice_or_inline(
             &mut source,
             &values_name,
             &claim.structured_polynomial_evals,
@@ -282,6 +283,40 @@ fn relation_output_function_kind_expr(function: RelationOutputFunctionKind) -> &
             "bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero"
         }
     }
+}
+
+fn emit_structured_polynomial_eval_refs_slice_or_inline(
+    source: &mut String,
+    name: &str,
+    values: &[StructuredPolynomialEvalRefPlan],
+) -> String {
+    let rows = values
+        .iter()
+        .map(structured_polynomial_eval_ref_expr)
+        .collect::<Vec<_>>();
+    if values.len() <= 4 {
+        return format!("&[{}]", rows.join(", "));
+    }
+    let rows = rows
+        .into_iter()
+        .map(|row| format!("    {row},"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    push_format(
+        source,
+        format_args!(
+            "pub const {name}: &[bolt_verifier_runtime::StructuredPolynomialEvalRef] = &[\n{rows}\n];\n"
+        ),
+    );
+    name.to_owned()
+}
+
+fn structured_polynomial_eval_ref_expr(value: &StructuredPolynomialEvalRefPlan) -> String {
+    format!(
+        "bolt_verifier_runtime::StructuredPolynomialEvalRef {{ symbol: {}, index: {} }}",
+        rust_str(&value.symbol),
+        value.index
+    )
 }
 
 fn emit_str_slice_or_inline(source: &mut String, name: &str, values: &[String]) -> String {

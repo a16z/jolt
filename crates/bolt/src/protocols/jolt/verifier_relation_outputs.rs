@@ -194,6 +194,12 @@ impl StructuredPolynomialEvalPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StructuredPolynomialEvalRefPlan {
+    pub symbol: String,
+    pub index: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationOutputEvalFamilySharedTermPlan {
     pub gamma_power_offset: usize,
     pub factor: String,
@@ -249,7 +255,7 @@ pub struct RelationOutputFunctionFamilyPlan {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationOutputPlan {
     pub relation: String,
-    pub structured_polynomial_evals: Vec<String>,
+    pub structured_polynomial_evals: Vec<StructuredPolynomialEvalRefPlan>,
     pub eval_families: Vec<RelationOutputEvalFamilyPlan>,
     pub product_families: Vec<RelationOutputProductFamilyPlan>,
     pub function_families: Vec<RelationOutputFunctionFamilyPlan>,
@@ -531,7 +537,8 @@ where
 {
     let relation_output_values_by_symbol: BTreeMap<_, _> = relation_output_values
         .iter()
-        .map(|value| (value.symbol.as_str(), value))
+        .enumerate()
+        .map(|(index, value)| (value.symbol.as_str(), index))
         .collect();
     let relation_output_eval_families_by_symbol: BTreeMap<_, _> = relation_output_eval_families
         .iter()
@@ -572,7 +579,10 @@ where
                 .map(|symbol| {
                     relation_output_values_by_symbol
                         .get(symbol.as_str())
-                        .map(|_| symbol.clone())
+                        .map(|&index| StructuredPolynomialEvalRefPlan {
+                            symbol: symbol.clone(),
+                            index,
+                        })
                         .ok_or_else(|| {
                             EmitError::new(format!(
                                 "{stage} relation output for @{} references missing output value @{symbol}",
