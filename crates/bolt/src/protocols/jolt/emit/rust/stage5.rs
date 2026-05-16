@@ -936,7 +936,7 @@ impl Stage5CpuProgram {
 
     fn emit_verifier_imports() -> &'static str {
         "use bolt_verifier_runtime::find_plan;\n\
-         use super::jolt_relations::{evaluate_stage5_instruction_read_raf_point_scalars, normalize_instruction_read_raf_point, Stage5InstructionReadRafPlan, Stage5InstructionReadRafPointValueKind, Stage5InstructionReadRafPointValuePlan};\n\
+         use super::jolt_relations::{evaluate_stage5_instruction_read_raf_local_scalars, normalize_instruction_read_raf_point, Stage5InstructionReadRafPlan, Stage5InstructionReadRafLocalScalarKind, Stage5InstructionReadRafLocalScalarPlan};\n\
          use jolt_field::{Field, Fr};\n\
          use jolt_sumcheck::SumcheckError;\n\
          use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};"
@@ -2239,7 +2239,7 @@ fn stage5_relation_output_inputs<'a>(
     Ok(bolt_verifier_runtime::RelationOutputInputs {
         scalars: bolt_verifier_runtime::select_named_scalars(
             relation_output.local_scalars,
-            evaluate_stage5_instruction_read_raf_point_scalars(
+            evaluate_stage5_instruction_read_raf_local_scalars(
                 &program.instruction_read_raf_plan,
                 local_point,
             )?,

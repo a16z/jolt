@@ -22,7 +22,7 @@ pub(crate) struct Stage5InstructionReadRafEmitPlan {
     pub(crate) instruction_ra_evals_ref: String,
     pub(crate) raf_flag_eval: String,
     pub(crate) gamma: String,
-    pub(crate) point_values: Vec<Stage5InstructionReadRafPointValueEmitPlan>,
+    pub(crate) local_scalars: Vec<Stage5InstructionReadRafLocalScalarEmitPlan>,
     pub(crate) log_k: usize,
 }
 
@@ -40,7 +40,7 @@ impl Stage5InstructionReadRafEmitPlan {
         Ok(Self {
             point: "stage5.instruction_read_raf.instance".to_owned(),
             lookup_output_point: "stage5.input.stage2.instruction.LookupOutput".to_owned(),
-            point_values: point_value_plans(table_flag_evals.evals.len()),
+            local_scalars: local_scalar_plans(table_flag_evals.evals.len()),
             table_flag_evals: table_flag_evals.clone(),
             table_flag_evals_ref: indexed_eval_family_ref(table_flag_evals_index),
             instruction_ra_evals: instruction_ra_evals.clone(),
@@ -53,7 +53,7 @@ impl Stage5InstructionReadRafEmitPlan {
 
     pub(crate) fn emit_runtime_constants(&self) -> String {
         let mut source = String::new();
-        source.push_str(&emit_point_value_constants(&self.point_values));
+        source.push_str(&emit_local_scalar_constants(&self.local_scalars));
         push_format(
             &mut source,
             format_args!(
@@ -64,7 +64,7 @@ impl Stage5InstructionReadRafEmitPlan {
                  \x20   instruction_ra_evals: {},\n\
                  \x20   raf_flag_eval: {},\n\
                  \x20   gamma: {},\n\
-                 \x20   point_values: STAGE5_INSTRUCTION_READ_RAF_POINT_VALUES,\n\
+                 \x20   local_scalars: STAGE5_INSTRUCTION_READ_RAF_LOCAL_SCALARS,\n\
                  \x20   log_k: {},\n\
                  }};\n\n",
                 rust_str(&self.point),
@@ -99,9 +99,9 @@ impl Stage5InstructionReadRafEmitPlan {
             },
         };
 
-        let left = "stage5.instruction_read_raf.point_value.LeftLookupOperand".to_owned();
-        let right = "stage5.instruction_read_raf.point_value.RightLookupOperand".to_owned();
-        let identity = "stage5.instruction_read_raf.point_value.Identity".to_owned();
+        let left = "stage5.instruction_read_raf.local_scalar.LeftLookupOperand".to_owned();
+        let right = "stage5.instruction_read_raf.local_scalar.RightLookupOperand".to_owned();
+        let identity = "stage5.instruction_read_raf.local_scalar.Identity".to_owned();
         let gamma_right = format!("{PREFIX}.term.GammaRightLookupOperand");
         let left_plus_gamma_right = format!("{PREFIX}.partial.LeftPlusGammaRight");
         let raf_flag_left_plus_gamma_right = format!("{PREFIX}.term.RafFlagLeftPlusGammaRight");
@@ -124,7 +124,7 @@ impl Stage5InstructionReadRafEmitPlan {
             .evals
             .iter()
             .zip(
-                self.point_values
+                self.local_scalars
                     .iter()
                     .filter(|value| value.is_lookup_table()),
             )
@@ -204,7 +204,7 @@ impl Stage5InstructionReadRafEmitPlan {
             claim: RelationOutputPlan {
                 relation: "jolt.stage5.instruction_read_raf".to_owned(),
                 local_scalars: self
-                    .point_values
+                    .local_scalars
                     .iter()
                     .map(|value| value.symbol.clone())
                     .collect(),
@@ -214,14 +214,14 @@ impl Stage5InstructionReadRafEmitPlan {
     }
 
     pub(crate) fn local_scalar_symbols(&self) -> impl Iterator<Item = &String> {
-        self.point_values.iter().map(|value| &value.symbol)
+        self.local_scalars.iter().map(|value| &value.symbol)
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Stage5InstructionReadRafPointValueEmitPlan {
+pub(crate) struct Stage5InstructionReadRafLocalScalarEmitPlan {
     pub(crate) symbol: String,
-    pub(crate) kind: Stage5InstructionReadRafPointValueKind,
+    pub(crate) kind: Stage5InstructionReadRafLocalScalarKind,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -238,42 +238,42 @@ pub(crate) struct Stage5InstructionReadRafOutputFieldExprPlan {
     pub(crate) operands: Vec<String>,
 }
 
-impl Stage5InstructionReadRafPointValueEmitPlan {
+impl Stage5InstructionReadRafLocalScalarEmitPlan {
     pub(crate) fn is_lookup_table(&self) -> bool {
         matches!(
             self.kind,
-            Stage5InstructionReadRafPointValueKind::LookupTable { .. }
+            Stage5InstructionReadRafLocalScalarKind::LookupTable { .. }
         )
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Stage5InstructionReadRafPointValueKind {
+pub(crate) enum Stage5InstructionReadRafLocalScalarKind {
     LookupTable { index: usize },
     LeftOperand,
     RightOperand,
     Identity,
 }
 
-fn point_value_plans(table_count: usize) -> Vec<Stage5InstructionReadRafPointValueEmitPlan> {
+fn local_scalar_plans(table_count: usize) -> Vec<Stage5InstructionReadRafLocalScalarEmitPlan> {
     let mut values = (0..table_count)
-        .map(|index| Stage5InstructionReadRafPointValueEmitPlan {
-            symbol: format!("stage5.instruction_read_raf.point_value.LookupTable_{index}"),
-            kind: Stage5InstructionReadRafPointValueKind::LookupTable { index },
+        .map(|index| Stage5InstructionReadRafLocalScalarEmitPlan {
+            symbol: format!("stage5.instruction_read_raf.local_scalar.LookupTable_{index}"),
+            kind: Stage5InstructionReadRafLocalScalarKind::LookupTable { index },
         })
         .collect::<Vec<_>>();
     values.extend([
-        Stage5InstructionReadRafPointValueEmitPlan {
-            symbol: "stage5.instruction_read_raf.point_value.LeftLookupOperand".to_owned(),
-            kind: Stage5InstructionReadRafPointValueKind::LeftOperand,
+        Stage5InstructionReadRafLocalScalarEmitPlan {
+            symbol: "stage5.instruction_read_raf.local_scalar.LeftLookupOperand".to_owned(),
+            kind: Stage5InstructionReadRafLocalScalarKind::LeftOperand,
         },
-        Stage5InstructionReadRafPointValueEmitPlan {
-            symbol: "stage5.instruction_read_raf.point_value.RightLookupOperand".to_owned(),
-            kind: Stage5InstructionReadRafPointValueKind::RightOperand,
+        Stage5InstructionReadRafLocalScalarEmitPlan {
+            symbol: "stage5.instruction_read_raf.local_scalar.RightLookupOperand".to_owned(),
+            kind: Stage5InstructionReadRafLocalScalarKind::RightOperand,
         },
-        Stage5InstructionReadRafPointValueEmitPlan {
-            symbol: "stage5.instruction_read_raf.point_value.Identity".to_owned(),
-            kind: Stage5InstructionReadRafPointValueKind::Identity,
+        Stage5InstructionReadRafLocalScalarEmitPlan {
+            symbol: "stage5.instruction_read_raf.local_scalar.Identity".to_owned(),
+            kind: Stage5InstructionReadRafLocalScalarKind::Identity,
         },
     ]);
     values
@@ -291,36 +291,36 @@ fn output_field_expr(
     }
 }
 
-fn emit_point_value_constants(values: &[Stage5InstructionReadRafPointValueEmitPlan]) -> String {
+fn emit_local_scalar_constants(values: &[Stage5InstructionReadRafLocalScalarEmitPlan]) -> String {
     let values = values
         .iter()
         .map(|value| {
             format!(
-                "    Stage5InstructionReadRafPointValuePlan {{ symbol: {}, kind: {} }},",
+                "    Stage5InstructionReadRafLocalScalarPlan {{ symbol: {}, kind: {} }},",
                 rust_str(&value.symbol),
-                point_value_kind_expr(&value.kind),
+                local_scalar_kind_expr(&value.kind),
             )
         })
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "pub const STAGE5_INSTRUCTION_READ_RAF_POINT_VALUES: &[Stage5InstructionReadRafPointValuePlan] = &[\n{values}\n];\n\n"
+        "pub const STAGE5_INSTRUCTION_READ_RAF_LOCAL_SCALARS: &[Stage5InstructionReadRafLocalScalarPlan] = &[\n{values}\n];\n\n"
     )
 }
 
-fn point_value_kind_expr(kind: &Stage5InstructionReadRafPointValueKind) -> String {
+fn local_scalar_kind_expr(kind: &Stage5InstructionReadRafLocalScalarKind) -> String {
     match kind {
-        Stage5InstructionReadRafPointValueKind::LookupTable { index } => {
-            format!("Stage5InstructionReadRafPointValueKind::LookupTable {{ index: {index} }}")
+        Stage5InstructionReadRafLocalScalarKind::LookupTable { index } => {
+            format!("Stage5InstructionReadRafLocalScalarKind::LookupTable {{ index: {index} }}")
         }
-        Stage5InstructionReadRafPointValueKind::LeftOperand => {
-            "Stage5InstructionReadRafPointValueKind::LeftOperand".to_owned()
+        Stage5InstructionReadRafLocalScalarKind::LeftOperand => {
+            "Stage5InstructionReadRafLocalScalarKind::LeftOperand".to_owned()
         }
-        Stage5InstructionReadRafPointValueKind::RightOperand => {
-            "Stage5InstructionReadRafPointValueKind::RightOperand".to_owned()
+        Stage5InstructionReadRafLocalScalarKind::RightOperand => {
+            "Stage5InstructionReadRafLocalScalarKind::RightOperand".to_owned()
         }
-        Stage5InstructionReadRafPointValueKind::Identity => {
-            "Stage5InstructionReadRafPointValueKind::Identity".to_owned()
+        Stage5InstructionReadRafLocalScalarKind::Identity => {
+            "Stage5InstructionReadRafLocalScalarKind::Identity".to_owned()
         }
     }
 }
@@ -444,11 +444,11 @@ mod tests {
         assert_eq!(
             output_plan.claim.local_scalars,
             vec![
-                "stage5.instruction_read_raf.point_value.LookupTable_0".to_owned(),
-                "stage5.instruction_read_raf.point_value.LookupTable_1".to_owned(),
-                "stage5.instruction_read_raf.point_value.LeftLookupOperand".to_owned(),
-                "stage5.instruction_read_raf.point_value.RightLookupOperand".to_owned(),
-                "stage5.instruction_read_raf.point_value.Identity".to_owned(),
+                "stage5.instruction_read_raf.local_scalar.LookupTable_0".to_owned(),
+                "stage5.instruction_read_raf.local_scalar.LookupTable_1".to_owned(),
+                "stage5.instruction_read_raf.local_scalar.LeftLookupOperand".to_owned(),
+                "stage5.instruction_read_raf.local_scalar.RightLookupOperand".to_owned(),
+                "stage5.instruction_read_raf.local_scalar.Identity".to_owned(),
             ]
         );
         assert!(output_plan.field_exprs.iter().any(|expr| {
@@ -456,7 +456,7 @@ mod tests {
                 && expr.formula == "field.mul"
                 && expr.operands
                     == vec![
-                        "stage5.instruction_read_raf.point_value.LookupTable_0".to_owned(),
+                        "stage5.instruction_read_raf.local_scalar.LookupTable_0".to_owned(),
                         "stage5.instruction_read_raf.eval.LookupTableFlag_0".to_owned(),
                     ]
         }));

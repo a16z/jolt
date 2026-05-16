@@ -94,18 +94,18 @@ pub struct Stage5InstructionReadRafPlan {
     pub instruction_ra_evals: &'static NamedEvalFamilyPlan,
     pub raf_flag_eval: &'static str,
     pub gamma: &'static str,
-    pub point_values: &'static [Stage5InstructionReadRafPointValuePlan],
+    pub local_scalars: &'static [Stage5InstructionReadRafLocalScalarPlan],
     pub log_k: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5InstructionReadRafPointValuePlan {
+pub struct Stage5InstructionReadRafLocalScalarPlan {
     pub symbol: &'static str,
-    pub kind: Stage5InstructionReadRafPointValueKind,
+    pub kind: Stage5InstructionReadRafLocalScalarKind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Stage5InstructionReadRafPointValueKind {
+pub enum Stage5InstructionReadRafLocalScalarKind {
     LookupTable { index: usize },
     LeftOperand,
     RightOperand,
@@ -224,14 +224,15 @@ pub trait Stage67BytecodeEntry {
     fn is_noop(&self) -> bool;
 }
 
-pub fn evaluate_stage5_instruction_read_raf_point_scalars(
+pub fn evaluate_stage5_instruction_read_raf_local_scalars(
     plan: &Stage5InstructionReadRafPlan,
     local_point: &[Fr],
 ) -> Result<Vec<NamedScalar<Fr>>, RuntimePlanError> {
     let (r_address_prime, _) = instruction_read_raf_point_parts(plan, local_point)?;
-    let mut scalars = Vec::with_capacity(plan.point_values.len());
-    for value in plan.point_values {
-        let scalar = evaluate_stage5_instruction_read_raf_point_value(value.kind, r_address_prime)?;
+    let mut scalars = Vec::with_capacity(plan.local_scalars.len());
+    for value in plan.local_scalars {
+        let scalar =
+            evaluate_stage5_instruction_read_raf_local_scalar(value.kind, r_address_prime)?;
         scalars.push(NamedScalar {
             symbol: value.symbol,
             value: scalar,
@@ -240,13 +241,13 @@ pub fn evaluate_stage5_instruction_read_raf_point_scalars(
     Ok(scalars)
 }
 
-fn evaluate_stage5_instruction_read_raf_point_value(
-    kind: Stage5InstructionReadRafPointValueKind,
+fn evaluate_stage5_instruction_read_raf_local_scalar(
+    kind: Stage5InstructionReadRafLocalScalarKind,
     r_address_prime: &[Fr],
 ) -> Result<Fr, RuntimePlanError> {
     const XLEN: usize = 64;
     Ok(match kind {
-        Stage5InstructionReadRafPointValueKind::LookupTable { index } => {
+        Stage5InstructionReadRafLocalScalarKind::LookupTable { index } => {
             let tables = LookupTableKind::<XLEN>::all();
             let table = tables
                 .get(index)
@@ -257,13 +258,13 @@ fn evaluate_stage5_instruction_read_raf_point_value(
                 })?;
             table.evaluate_mle::<Fr, Fr>(r_address_prime)
         }
-        Stage5InstructionReadRafPointValueKind::LeftOperand => {
+        Stage5InstructionReadRafLocalScalarKind::LeftOperand => {
             operand_polynomial_eval(r_address_prime, true)?
         }
-        Stage5InstructionReadRafPointValueKind::RightOperand => {
+        Stage5InstructionReadRafLocalScalarKind::RightOperand => {
             operand_polynomial_eval(r_address_prime, false)?
         }
-        Stage5InstructionReadRafPointValueKind::Identity => {
+        Stage5InstructionReadRafLocalScalarKind::Identity => {
             IdentityPolynomial::new(r_address_prime.len()).evaluate(r_address_prime)
         }
     })

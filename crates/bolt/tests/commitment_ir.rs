@@ -1467,13 +1467,13 @@ fn stage5_rust_targets_extract_and_compile() {
         .contains("relation: Some(Stage5RelationKind::Stage5Batched)"));
     assert!(verifier_source
         .source
-        .contains("evaluate_stage5_instruction_read_raf_point_scalars"));
+        .contains("evaluate_stage5_instruction_read_raf_local_scalars"));
     assert!(verifier_source
         .source
         .contains("Stage5RelationKind::Stage5InstructionReadRaf"));
     assert!(verifier_source
         .source
-        .contains("Stage5InstructionReadRafPointValueKind::LookupTable"));
+        .contains("Stage5InstructionReadRafLocalScalarKind::LookupTable"));
     assert!(!verifier_source
         .source
         .contains("expected_ram_ra_claim_reduction"));
