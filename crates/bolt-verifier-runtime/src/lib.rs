@@ -246,6 +246,8 @@ pub enum FieldExprKind {
     Mul,
     Sum,
     Product,
+    FieldVectorSum,
+    FieldVectorProduct,
     Neg,
     Pow(usize),
     LagrangeBasisEval(i64, usize, usize),
@@ -1136,10 +1138,19 @@ impl<F: Field> ValueStore<F> {
     }
 
     fn try_expr_operands(&self, expr: &FieldExprPlan) -> Option<Vec<F>> {
-        expr.operands
-            .iter()
-            .map(|operand| self.try_scalar(operand))
-            .collect()
+        match expr.kind {
+            FieldExprKind::FieldVectorSum | FieldExprKind::FieldVectorProduct => {
+                let [symbol] = expr.operands else {
+                    return Some(Vec::new());
+                };
+                self.try_field_vector(symbol).map(|values| values.to_vec())
+            }
+            _ => expr
+                .operands
+                .iter()
+                .map(|operand| self.try_scalar(operand))
+                .collect(),
+        }
     }
 
     fn try_concat_point(&self, concat: &PointConcatPlan) -> Option<Vec<F>> {
@@ -1681,12 +1692,7 @@ fn evaluate_available_field_exprs_with_scratch(
             if scratch.scalar_or(store, expr.symbol).is_some() {
                 continue;
             }
-            let Some(operands) = expr
-                .operands
-                .iter()
-                .map(|operand| scratch.scalar_or(store, operand))
-                .collect::<Option<Vec<_>>>()
-            else {
+            let Some(operands) = relation_output_expr_operands(expr, store, scratch) else {
                 continue;
             };
             scratch.insert(expr.symbol, evaluate_field_expr(expr, &operands)?);
@@ -1695,6 +1701,26 @@ fn evaluate_available_field_exprs_with_scratch(
         if progress == 0 {
             return Ok(());
         }
+    }
+}
+
+fn relation_output_expr_operands(
+    expr: &FieldExprPlan,
+    store: &ValueStore<Fr>,
+    scratch: &ScratchScalars,
+) -> Option<Vec<Fr>> {
+    match expr.kind {
+        FieldExprKind::FieldVectorSum | FieldExprKind::FieldVectorProduct => {
+            let [symbol] = expr.operands else {
+                return Some(Vec::new());
+            };
+            store.try_field_vector(symbol).map(|values| values.to_vec())
+        }
+        _ => expr
+            .operands
+            .iter()
+            .map(|operand| scratch.scalar_or(store, operand))
+            .collect(),
     }
 }
 
@@ -1764,6 +1790,20 @@ pub fn evaluate_field_expr<F: Field>(
                 .fold(F::from_u64(0), |acc, operand| acc + operand))
         }
         FieldExprKind::Product => {
+            require_min_operand_count(expr.symbol, 1, operands.len())?;
+            Ok(operands
+                .iter()
+                .copied()
+                .fold(F::from_u64(1), |acc, operand| acc * operand))
+        }
+        FieldExprKind::FieldVectorSum => {
+            require_min_operand_count(expr.symbol, 1, operands.len())?;
+            Ok(operands
+                .iter()
+                .copied()
+                .fold(F::from_u64(0), |acc, operand| acc + operand))
+        }
+        FieldExprKind::FieldVectorProduct => {
             require_min_operand_count(expr.symbol, 1, operands.len())?;
             Ok(operands
                 .iter()
@@ -1923,9 +1963,9 @@ pub fn reverse_slice(values: &[Fr]) -> Vec<Fr> {
 )]
 mod tests {
     use super::{
-        evaluate_relation_output_product_family, Fr, NamedEvalFamilyPlan,
-        RelationOutputProductFamilyPlan, RelationOutputProductFamilyTermPlan, RuntimePlanError,
-        ScratchScalars, ValueStore,
+        evaluate_field_expr, evaluate_relation_output_product_family, FieldExprKind, FieldExprPlan,
+        Fr, NamedEvalFamilyPlan, RelationOutputProductFamilyPlan,
+        RelationOutputProductFamilyTermPlan, RuntimePlanError, ScratchScalars, ValueStore,
     };
 
     #[test]
@@ -1963,6 +2003,33 @@ mod tests {
                 symbol: "eval.missing"
             }
         );
+    }
+
+    #[test]
+    fn value_store_evaluates_field_vector_exprs() {
+        let mut store = ValueStore::default();
+        store.insert_field_vector("family.ab", vec![Fr::from_u64(2), Fr::from_u64(3)]);
+
+        store
+            .evaluate_available_field_exprs(
+                &[
+                    FieldExprPlan {
+                        symbol: "family.ab.product",
+                        kind: FieldExprKind::FieldVectorProduct,
+                        operands: &["family.ab"],
+                    },
+                    FieldExprPlan {
+                        symbol: "family.ab.sum",
+                        kind: FieldExprKind::FieldVectorSum,
+                        operands: &["family.ab"],
+                    },
+                ],
+                evaluate_field_expr,
+            )
+            .unwrap();
+
+        assert_eq!(store.try_scalar("family.ab.product"), Some(Fr::from_u64(6)));
+        assert_eq!(store.try_scalar("family.ab.sum"), Some(Fr::from_u64(5)));
     }
 
     #[test]

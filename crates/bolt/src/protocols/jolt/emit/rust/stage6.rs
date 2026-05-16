@@ -11,6 +11,7 @@ use melior::ir::{Attribute, OperationRef};
 
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
+use crate::protocols::jolt::rust_target_plan::FieldExprKind;
 use crate::protocols::jolt::stage6_bytecode_read_raf_plan::{
     emit_stage6_bytecode_read_raf_plan_constants, stage6_bytecode_read_raf_eval_family_ref,
     stage6_bytecode_read_raf_relation_output_plan, STAGE6_BYTECODE_RA_EVAL_FAMILY,
@@ -701,9 +702,15 @@ impl Stage6CpuProgram {
                 &indexed_eval_families,
                 STAGE6_BYTECODE_RA_EVAL_FAMILY,
             )?;
-            relation_outputs.push(stage6_bytecode_read_raf_relation_output_plan(
-                bytecode_ra_evals,
-            ));
+            let bytecode_output_plan =
+                stage6_bytecode_read_raf_relation_output_plan(bytecode_ra_evals);
+            field_exprs.extend(
+                bytecode_output_plan
+                    .field_exprs
+                    .into_iter()
+                    .map(stage6_relation_output_expr),
+            );
+            relation_outputs.push(bytecode_output_plan.claim);
         }
 
         let mut program = Self {
@@ -809,6 +816,11 @@ impl Stage6CpuProgram {
         } else {
             self.cpu_field_value_sources()
         };
+        let field_vector_values = if self.role == Role::Verifier {
+            Some(self.verifier_plan()?.field_vector_value_sources())
+        } else {
+            None
+        };
         for expr in &self.field_exprs {
             verify_count(
                 "field expr operands",
@@ -816,12 +828,36 @@ impl Stage6CpuProgram {
                 expr.operand_names.len(),
                 expr.operands.len(),
             )?;
-            for operand in &expr.operands {
-                if !field_values.contains(operand) {
-                    return Err(EmitError::new(format!(
-                        "field expr @{} references missing field value @{operand}",
-                        expr.symbol
-                    )));
+            let kind = FieldExprKind::from_cpu_attr(&expr.formula)
+                .map_err(|error| EmitError::new(error.to_string()))?;
+            match kind {
+                FieldExprKind::FieldVectorSum | FieldExprKind::FieldVectorProduct => {
+                    verify_count(
+                        "field vector expr operands",
+                        &expr.symbol,
+                        1,
+                        expr.operands.len(),
+                    )?;
+                    let operand = &expr.operands[0];
+                    if !field_vector_values
+                        .as_ref()
+                        .is_some_and(|values| values.contains(operand))
+                    {
+                        return Err(EmitError::new(format!(
+                            "field vector expr @{} references missing field vector @{operand}",
+                            expr.symbol
+                        )));
+                    }
+                }
+                _ => {
+                    for operand in &expr.operands {
+                        if !field_values.contains(operand) {
+                            return Err(EmitError::new(format!(
+                                "field expr @{} references missing field value @{operand}",
+                                expr.symbol
+                            )));
+                        }
+                    }
                 }
             }
         }

@@ -12,8 +12,8 @@ use crate::protocols::jolt::verifier_relation_outputs::{
     RelationOutputProductFamilyPlan, StructuredPolynomialEvalPlan,
 };
 use crate::protocols::jolt::verifier_values::{
-    VerifierPointSourceKind, VerifierPointSourceSet, VerifierScalarSourceKind,
-    VerifierScalarSourceSet,
+    VerifierFieldVectorSourceKind, VerifierFieldVectorSourceSet, VerifierPointSourceKind,
+    VerifierPointSourceSet, VerifierScalarSourceKind, VerifierScalarSourceSet,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -364,6 +364,17 @@ impl VerifierStagePlan {
         values.extend(
             self.sumcheck_evals.iter().map(|eval| &eval.symbol),
             VerifierScalarSourceKind::SumcheckEval,
+        );
+        values
+    }
+
+    pub(crate) fn field_vector_value_sources(&self) -> VerifierFieldVectorSourceSet {
+        let mut values = VerifierFieldVectorSourceSet::default();
+        values.extend(
+            self.indexed_eval_families
+                .iter()
+                .map(|family| &family.symbol),
+            VerifierFieldVectorSourceKind::IndexedEvalFamily,
         );
         values
     }

@@ -1,7 +1,7 @@
 use crate::emit::rust::{push_format, EmitError};
 use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 use crate::protocols::jolt::verifier_relation_outputs::{
-    RelationOutputPlan, RelationOutputProductFamilyPlan, RelationOutputProductFamilyTermPlan,
+    RelationOutputFieldExprPlan, RelationOutputPlan,
 };
 
 pub(crate) const STAGE6_BYTECODE_RA_EVAL_FAMILY: &str = "stage6.bytecode_read_raf.eval.BytecodeRa";
@@ -338,33 +338,45 @@ pub(crate) fn stage6_bytecode_read_raf_output_contribution_symbol() -> &'static 
 
 pub(crate) fn stage6_bytecode_read_raf_relation_output_plan(
     bytecode_ra_evals: &IndexedEvalFamilyPlan,
-) -> RelationOutputPlan {
+) -> Stage6BytecodeReadRafRelationOutputPlan {
     STAGE6_BYTECODE_READ_RAF_PLAN.relation_output_plan(bytecode_ra_evals)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Stage6BytecodeReadRafRelationOutputPlan {
+    pub(crate) field_exprs: Vec<RelationOutputFieldExprPlan>,
+    pub(crate) claim: RelationOutputPlan,
 }
 
 impl BytecodeReadRafPlan {
     fn relation_output_plan(
         &self,
         bytecode_ra_evals: &IndexedEvalFamilyPlan,
-    ) -> RelationOutputPlan {
-        let product_family = RelationOutputProductFamilyPlan {
-            symbol: "stage6.bytecode_read_raf.output.product.BytecodeReadRaf".to_owned(),
-            gamma: None,
-            terms: vec![RelationOutputProductFamilyTermPlan {
-                gamma_power_offset: 0,
-                evals: vec![self.output_contribution.to_owned()],
-                eval_families: vec![bytecode_ra_evals.symbol.clone()],
-                factors: Vec::new(),
-            }],
-        };
-        RelationOutputPlan {
-            relation: "jolt.stage6.bytecode_read_raf".to_owned(),
-            structured_polynomial_evals: Vec::new(),
-            eval_families: Vec::new(),
-            product_families: vec![product_family.clone()],
-            function_families: Vec::new(),
-            local_scalars: vec![self.output_contribution.to_owned()],
-            expected_output: product_family.symbol,
+    ) -> Stage6BytecodeReadRafRelationOutputPlan {
+        let bytecode_ra_product = "stage6.bytecode_read_raf.output.product.BytecodeRa".to_owned();
+        let claim_expr = "stage6.bytecode_read_raf.output.claim_expr".to_owned();
+        Stage6BytecodeReadRafRelationOutputPlan {
+            field_exprs: vec![
+                RelationOutputFieldExprPlan {
+                    symbol: bytecode_ra_product.clone(),
+                    formula: "field_vector.product".to_owned(),
+                    operands: vec![bytecode_ra_evals.symbol.clone()],
+                },
+                RelationOutputFieldExprPlan {
+                    symbol: claim_expr.clone(),
+                    formula: "field.product".to_owned(),
+                    operands: vec![self.output_contribution.to_owned(), bytecode_ra_product],
+                },
+            ],
+            claim: RelationOutputPlan {
+                relation: "jolt.stage6.bytecode_read_raf".to_owned(),
+                structured_polynomial_evals: Vec::new(),
+                eval_families: Vec::new(),
+                product_families: Vec::new(),
+                function_families: Vec::new(),
+                local_scalars: vec![self.output_contribution.to_owned()],
+                expected_output: claim_expr,
+            },
         }
     }
 }
@@ -675,28 +687,33 @@ mod tests {
     #[test]
     fn stage6_bytecode_relation_output_plan_uses_point_derived_contribution() {
         let bytecode_ra_evals = bytecode_ra_evals();
-        let claim = stage6_bytecode_read_raf_relation_output_plan(&bytecode_ra_evals);
+        let output_plan = stage6_bytecode_read_raf_relation_output_plan(&bytecode_ra_evals);
+        let claim = output_plan.claim;
 
         assert_eq!(claim.relation, "jolt.stage6.bytecode_read_raf");
         assert_eq!(
             claim.expected_output,
-            "stage6.bytecode_read_raf.output.product.BytecodeReadRaf"
+            "stage6.bytecode_read_raf.output.claim_expr"
         );
         assert!(claim.structured_polynomial_evals.is_empty());
         assert!(claim.eval_families.is_empty());
-        assert_eq!(claim.product_families.len(), 1);
-        assert_eq!(claim.product_families[0].terms.len(), 1);
+        assert!(claim.product_families.is_empty());
         assert_eq!(
             claim.local_scalars,
             vec![stage6_bytecode_read_raf_output_contribution_symbol().to_owned()]
         );
+        assert_eq!(output_plan.field_exprs[0].formula, "field_vector.product");
         assert_eq!(
-            claim.product_families[0].terms[0].evals,
-            vec![stage6_bytecode_read_raf_output_contribution_symbol().to_owned()]
-        );
-        assert_eq!(
-            claim.product_families[0].terms[0].eval_families,
+            output_plan.field_exprs[0].operands,
             vec![STAGE6_BYTECODE_RA_EVAL_FAMILY.to_owned()]
+        );
+        assert_eq!(output_plan.field_exprs[1].formula, "field.product");
+        assert_eq!(
+            output_plan.field_exprs[1].operands,
+            vec![
+                stage6_bytecode_read_raf_output_contribution_symbol().to_owned(),
+                "stage6.bytecode_read_raf.output.product.BytecodeRa".to_owned()
+            ]
         );
     }
 

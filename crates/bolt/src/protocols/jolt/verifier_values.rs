@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::emit::rust::EmitError;
 
@@ -60,6 +60,36 @@ impl VerifierScalarSourceSet {
             return Ok(());
         };
         Err(conflicting_source_error(stage, "scalar", conflict))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerifierFieldVectorSourceKind {
+    IndexedEvalFamily,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct VerifierFieldVectorSourceSet {
+    symbols: BTreeSet<String>,
+}
+
+impl VerifierFieldVectorSourceSet {
+    pub fn insert(&mut self, symbol: &str, _kind: VerifierFieldVectorSourceKind) {
+        let _inserted = self.symbols.insert(symbol.to_owned());
+    }
+
+    pub fn extend<'a>(
+        &mut self,
+        symbols: impl IntoIterator<Item = &'a String>,
+        kind: VerifierFieldVectorSourceKind,
+    ) {
+        for symbol in symbols {
+            self.insert(symbol, kind);
+        }
+    }
+
+    pub fn contains(&self, symbol: &str) -> bool {
+        self.symbols.contains(symbol)
     }
 }
 

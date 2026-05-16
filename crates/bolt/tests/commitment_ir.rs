@@ -1761,23 +1761,32 @@ fn stage6_rust_targets_extract_and_compile() {
     let bytecode_claims = verifier_program
         .relation_outputs
         .iter()
-        .filter(|claim| {
-            claim.expected_output == "stage6.bytecode_read_raf.output.product.BytecodeReadRaf"
-        })
+        .filter(|claim| claim.expected_output == "stage6.bytecode_read_raf.output.claim_expr")
         .collect::<Vec<_>>();
     assert_eq!(bytecode_claims.len(), 1);
     assert!(bytecode_claims[0].structured_polynomial_evals.is_empty());
     assert!(bytecode_claims[0].eval_families.is_empty());
-    assert_eq!(bytecode_claims[0].product_families.len(), 1);
-    assert_eq!(
-        bytecode_claims[0].product_families[0].terms[0].evals,
-        vec!["stage6.bytecode_read_raf.output.contribution".to_owned()]
-    );
-    assert_eq!(
-        bytecode_claims[0].product_families[0].terms[0].eval_families,
-        vec!["stage6.bytecode_read_raf.eval.BytecodeRa".to_owned()]
-    );
+    assert!(bytecode_claims[0].product_families.is_empty());
     assert!(bytecode_claims[0].function_families.is_empty());
+    let bytecode_output_exprs = verifier_program
+        .field_exprs
+        .iter()
+        .filter(|expr| expr.symbol.starts_with("stage6.bytecode_read_raf.output."))
+        .collect::<Vec<_>>();
+    assert!(bytecode_output_exprs.iter().any(|expr| {
+        expr.symbol == "stage6.bytecode_read_raf.output.product.BytecodeRa"
+            && expr.formula == "field_vector.product"
+            && expr.operands == vec!["stage6.bytecode_read_raf.eval.BytecodeRa".to_owned()]
+    }));
+    assert!(bytecode_output_exprs.iter().any(|expr| {
+        expr.symbol == "stage6.bytecode_read_raf.output.claim_expr"
+            && expr.formula == "field.product"
+            && expr.operands
+                == vec![
+                    "stage6.bytecode_read_raf.output.contribution".to_owned(),
+                    "stage6.bytecode_read_raf.output.product.BytecodeRa".to_owned(),
+                ]
+    }));
     assert_eq!(prover_program.point_zeros.len(), 1);
     assert_eq!(
         prover_program.point_slices.len(),
@@ -1865,9 +1874,15 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(verifier_source
         .source
         .contains("evaluate_stage67_bytecode_read_raf_output_scalars"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("stage6.bytecode_read_raf.output.product.BytecodeReadRaf"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.bytecode_read_raf.output.claim_expr"));
+    assert!(verifier_source
+        .source
+        .contains("Stage6FieldExprKind::FieldVectorProduct"));
     assert!(!verifier_source
         .source
         .contains("expected_stage67_bytecode_read_raf"));
@@ -1914,7 +1929,7 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(!verifier_source
         .source
         .contains("STAGE6_RELATION_OUTPUT_4_FAMILIES"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("RelationOutputProductFamilyPlan"));
     assert!(!verifier_source
@@ -1923,7 +1938,7 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(!verifier_source
         .source
         .contains("STAGE6_RELATION_OUTPUT_3_PRODUCT_FAMILIES"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("STAGE6_RELATION_OUTPUT_5_PRODUCT_FAMILIES"));
     assert!(verifier_source
