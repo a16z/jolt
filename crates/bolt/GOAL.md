@@ -63,13 +63,15 @@ Current S2.75-S5 implementation status:
   closed relation IDs, old eval-prefix reconstruction sites are gated at zero,
   and handwritten
   `expected_stage67_*` output helpers are gone from generated/runtime code.
-- S2.75 remains the main incomplete architecture item, but its central
-  CPU-to-Rust planning boundary is now explicit: `VerifierStagePlan` is built
-  through named planning functions for program steps, transcript flow,
-  sumchecks, value/relation outputs, opening flow, and Stage 5/6 relation-local
-  inputs. Relation-output, verifier sumcheck-flow, and verifier opening-flow
-  validation are now owned by `VerifierStagePlan`. Remaining S2.75 work is
-  concentrated in target validation still owned by emitters.
+- S2.75 is now largely implemented at the CPU-to-Rust planning boundary:
+  `VerifierStagePlan` is built through named planning functions for program
+  steps, transcript flow, sumchecks, value/relation outputs, opening flow, and
+  relation-local inputs. Stage 2-7 verifier sumcheck-flow, relation-output, and
+  opening-flow validation are owned by `VerifierStagePlan`; Stage 2 also uses
+  the shared CPU row types instead of local copies. Remaining S2.75 risk is no
+  longer the existence of the planning boundary, but the audit quality of the
+  handwritten Stage 2 relation-output formulas and any target validation still
+  tied to emitter-side checks.
 - Performance evidence remains a live completion gate. The SHA2-chain perf
   oracles must be rerun for the interpreter-heavy slices before this goal is
   closed.

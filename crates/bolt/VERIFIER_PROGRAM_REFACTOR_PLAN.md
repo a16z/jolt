@@ -583,10 +583,17 @@ repeated stage-local string sets and batch maps. Verifier-mode opening-flow
 checks for point sources, opening equalities, opening claims, sumcheck eval
 sources, and opening batches also run from `VerifierStagePlan`; prover
 `input_openings` checks remain stage-local because verifier runtime claim rows
-do not carry those fields. The remaining S2.75 work is narrower: continue
-moving target validation toward typed planning outputs instead of stage-local
-emitter checks, and avoid putting any new verifier semantics directly in Rust
-template logic.
+do not carry those fields.
+
+Stage 2 now shares the same compiler-side CPU row structs as Stage 3-7 and
+builds a `VerifierStagePlan` for verifier programs. Its verifier sumcheck,
+relation-output, and opening-flow checks run through the shared plan. The
+remaining S2.75 risk is no longer that Stage 2 lacks the typed planning
+boundary; it is that Stage 2 still contains a handwritten relation-output
+formula table whose operands are validated through the existing field/scalar
+flow checks. The next closeout step should be a completion audit that separates
+true remaining architecture work from gates: semantic/tamper behavior,
+host/zk e2e, and the fragile perf oracle.
 
 ---
 

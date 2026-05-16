@@ -7,17 +7,43 @@ use melior::ir::{Attribute, OperationRef};
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
 use crate::protocols::jolt::rust_target_plan::{
-    structured_polynomial_scalar_formula, ClaimKind, FieldExprKind, JoltVerifierRelationKind,
-    ProgramStepKind, RustTargetPlanError, ScalarExprKind, TranscriptSqueezeKind,
+    structured_polynomial_scalar_formula, JoltVerifierRelationKind, RustTargetPlanError,
+    ScalarExprKind,
 };
-use crate::protocols::jolt::{verifier_plan, verifier_relation_outputs, verifier_values};
+use crate::protocols::jolt::verifier_opening_rows;
+use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
+use crate::protocols::jolt::verifier_point_rows;
+use crate::protocols::jolt::verifier_program_rows;
+use crate::protocols::jolt::verifier_relation_outputs::{
+    self, StructuredPolynomialEvalPlan as Stage2StructuredPolynomialEvalPlan,
+};
+use crate::protocols::jolt::verifier_sumcheck_rows;
+use crate::protocols::jolt::verifier_value_rows;
+use crate::protocols::jolt::verifier_values;
 use crate::schema::verify_cpu_schema;
 
 type Stage2RelationOutputPlan = verifier_relation_outputs::RelationOutputPlan;
+type Stage2TranscriptSqueezePlan = verifier_program_rows::CpuTranscriptSqueezePlan;
+type Stage2ProgramStepPlan = verifier_program_rows::CpuProgramStepPlan;
+type Stage2OpeningInputPlan = verifier_program_rows::CpuOpeningInputPlan;
+type Stage2FieldConstantPlan = verifier_value_rows::CpuFieldConstantPlan;
+type Stage2FieldExprPlan = verifier_value_rows::CpuFieldExprPlan;
+type Stage2ScalarExprPlan = verifier_value_rows::CpuScalarExprPlan;
+type Stage2SumcheckClaimPlan = verifier_sumcheck_rows::CpuSumcheckClaimPlan;
+type Stage2SumcheckBatchPlan = verifier_sumcheck_rows::CpuSumcheckBatchPlan;
+type Stage2SumcheckDriverPlan = verifier_sumcheck_rows::CpuSumcheckDriverPlan;
+type Stage2SumcheckInstanceResultPlan = verifier_sumcheck_rows::CpuSumcheckInstanceResultPlan;
+type Stage2SumcheckEvalPlan = verifier_sumcheck_rows::CpuSumcheckEvalPlan;
+type Stage2PointSlicePlan = verifier_point_rows::CpuPointSlicePlan;
+type Stage2PointConcatPlan = verifier_point_rows::CpuPointConcatPlan;
+type Stage2OpeningClaimPlan = verifier_opening_rows::CpuOpeningClaimPlan;
+type Stage2OpeningClaimEqualityPlan = verifier_opening_rows::CpuOpeningClaimEqualityPlan;
+type Stage2OpeningBatchPlan = verifier_opening_rows::CpuOpeningBatchPlan;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage2CpuProgram {
     pub role: Role,
+    pub(crate) verifier_plan: Option<VerifierStagePlan>,
     pub params: Stage2Params,
     pub steps: Vec<Stage2ProgramStepPlan>,
     pub transcript_squeezes: Vec<Stage2TranscriptSqueezePlan>,
@@ -35,7 +61,9 @@ pub struct Stage2CpuProgram {
     pub point_slices: Vec<Stage2PointSlicePlan>,
     pub point_concats: Vec<Stage2PointConcatPlan>,
     pub opening_claims: Vec<Stage2OpeningClaimPlan>,
+    pub opening_equalities: Vec<Stage2OpeningClaimEqualityPlan>,
     pub opening_batches: Vec<Stage2OpeningBatchPlan>,
+    pub relation_output_values: Vec<Stage2StructuredPolynomialEvalPlan>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,56 +80,6 @@ pub struct Stage2KernelPlan {
     pub kind: String,
     pub backend: String,
     pub abi: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2TranscriptSqueezePlan {
-    pub symbol: String,
-    pub label: String,
-    pub kind: String,
-    pub count: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2ProgramStepPlan {
-    pub kind: String,
-    pub symbol: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2OpeningInputPlan {
-    pub symbol: String,
-    pub source_stage: String,
-    pub source_claim: String,
-    pub oracle: String,
-    pub domain: String,
-    pub point_arity: usize,
-    pub claim_kind: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2FieldConstantPlan {
-    pub symbol: String,
-    pub field: String,
-    pub value: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2FieldExprPlan {
-    pub symbol: String,
-    pub kind: String,
-    pub formula: String,
-    pub operand_names: Vec<String>,
-    pub operands: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2ScalarExprPlan {
-    pub symbol: String,
-    pub kind: String,
-    pub formula: String,
-    pub operand_names: Vec<String>,
-    pub operands: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -453,147 +431,7 @@ fn stage2_relation_output_plans() -> Stage2RelationOutputRows {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckClaimPlan {
-    pub symbol: String,
-    pub stage: String,
-    pub domain: String,
-    pub num_rounds: usize,
-    pub degree: usize,
-    pub claim: String,
-    pub kernel: Option<String>,
-    pub relation: Option<String>,
-    pub claim_value: String,
-    pub input_openings: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckBatchPlan {
-    pub symbol: String,
-    pub stage: String,
-    pub proof_slot: String,
-    pub policy: String,
-    pub count: usize,
-    pub ordered_claims: Vec<String>,
-    pub claim_operands: Vec<String>,
-    pub claim_label: String,
-    pub round_label: String,
-    pub round_schedule: Vec<usize>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckDriverPlan {
-    pub symbol: String,
-    pub stage: String,
-    pub proof_slot: String,
-    pub kernel: Option<String>,
-    pub relation: Option<String>,
-    pub batch: String,
-    pub policy: String,
-    pub round_schedule: Vec<usize>,
-    pub claim_label: String,
-    pub round_label: String,
-    pub num_rounds: usize,
-    pub degree: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckInstanceResultPlan {
-    pub symbol: String,
-    pub source: String,
-    pub claim: String,
-    pub relation: String,
-    pub index: usize,
-    pub point_arity: usize,
-    pub num_rounds: usize,
-    pub round_offset: usize,
-    pub point_order: String,
-    pub degree: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckEvalPlan {
-    pub symbol: String,
-    pub source: String,
-    pub name: String,
-    pub index: usize,
-    pub oracle: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2PointSlicePlan {
-    pub symbol: String,
-    pub source: String,
-    pub offset: usize,
-    pub length: usize,
-    pub input: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2PointConcatPlan {
-    pub symbol: String,
-    pub layout: String,
-    pub arity: usize,
-    pub inputs: Vec<String>,
-}
-
-impl verifier_plan::VerifierPointSliceSource for Stage2PointSlicePlan {
-    fn symbol(&self) -> &str {
-        &self.symbol
-    }
-
-    fn offset(&self) -> usize {
-        self.offset
-    }
-
-    fn length(&self) -> usize {
-        self.length
-    }
-
-    fn input(&self) -> &str {
-        &self.input
-    }
-}
-
-impl verifier_plan::VerifierPointConcatSource for Stage2PointConcatPlan {
-    fn symbol(&self) -> &str {
-        &self.symbol
-    }
-
-    fn layout(&self) -> &str {
-        &self.layout
-    }
-
-    fn arity(&self) -> usize {
-        self.arity
-    }
-
-    fn inputs(&self) -> &[String] {
-        &self.inputs
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2OpeningClaimPlan {
-    pub symbol: String,
-    pub oracle: String,
-    pub domain: String,
-    pub point_arity: usize,
-    pub claim_kind: String,
-    pub point_source: String,
-    pub eval_source: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2OpeningBatchPlan {
-    pub symbol: String,
-    pub stage: String,
-    pub proof_slot: String,
-    pub policy: String,
-    pub count: usize,
-    pub ordered_claims: Vec<String>,
-    pub claim_operands: Vec<String>,
-}
+verifier_plan::impl_verifier_plan_source_traits!(program = Stage2CpuProgram,);
 
 pub fn stage2_cpu_program(module: &BoltModule<'_, Cpu>) -> Result<Stage2CpuProgram, EmitError> {
     verify_cpu_schema(module)?;
@@ -630,7 +468,9 @@ impl Stage2CpuProgram {
         let mut point_slices = Vec::new();
         let mut point_concats = Vec::new();
         let mut opening_claims = Vec::new();
+        let opening_equalities = Vec::new();
         let mut opening_batches = Vec::new();
+        let relation_output_values = Vec::new();
 
         let mut operation = module.as_mlir_module().body().first_operation();
         while let Some(op) = operation {
@@ -886,7 +726,8 @@ impl Stage2CpuProgram {
         let role = module
             .role()
             .ok_or_else(|| EmitError::new("missing cpu party role"))?;
-        if role == Role::Verifier {
+        let is_verifier = role == Role::Verifier;
+        if is_verifier {
             let relation_output_rows = stage2_relation_output_plans();
             field_constants.extend(relation_output_rows.field_constants);
             field_exprs.extend(relation_output_rows.field_exprs);
@@ -894,9 +735,10 @@ impl Stage2CpuProgram {
             relation_outputs.extend(relation_output_rows.relation_outputs);
         }
 
-        Ok(Self {
+        let mut program = Self {
             params: params.ok_or_else(|| EmitError::new("missing cpu.params"))?,
             role,
+            verifier_plan: None,
             steps,
             transcript_squeezes,
             opening_inputs,
@@ -913,8 +755,24 @@ impl Stage2CpuProgram {
             point_slices,
             point_concats,
             opening_claims,
+            opening_equalities,
             opening_batches,
-        })
+            relation_output_values,
+        };
+        if is_verifier {
+            program.verifier_plan = Some(program.plan_verifier()?);
+        }
+        Ok(program)
+    }
+
+    fn plan_verifier(&self) -> Result<VerifierStagePlan, EmitError> {
+        verifier_plan::plan_verifier_stage_from_cpu_sources(self)
+    }
+
+    fn verifier_plan(&self) -> Result<&VerifierStagePlan, EmitError> {
+        self.verifier_plan
+            .as_ref()
+            .ok_or_else(|| EmitError::new("missing stage2 verifier plan"))
     }
 
     fn verify_supported_target(&self) -> Result<(), EmitError> {
@@ -930,8 +788,9 @@ impl Stage2CpuProgram {
                 self.verify_prover_driver_bindings()?;
             }
             Role::Verifier => {
+                self.verifier_plan()?.verify_sumcheck_flow("stage2")?;
                 self.verify_verifier_driver_bindings()?;
-                self.verify_verifier_rust_target()?;
+                self.verify_relation_outputs()?;
             }
         }
         self.verify_opening_flow()
@@ -1260,11 +1119,6 @@ impl Stage2CpuProgram {
                 "verifier stage2 program must not contain kernels",
             ));
         }
-        let batches: BTreeMap<_, _> = self
-            .batches
-            .iter()
-            .map(|batch| (batch.symbol.as_str(), batch))
-            .collect();
         for claim in &self.claims {
             if claim.kernel.is_some() || claim.relation.is_none() {
                 return Err(EmitError::new(format!(
@@ -1280,72 +1134,18 @@ impl Stage2CpuProgram {
                     driver.symbol
                 )));
             }
-            let batch = batches.get(driver.batch.as_str()).ok_or_else(|| {
-                EmitError::new(format!(
-                    "sumcheck driver @{} references missing batch @{}",
-                    driver.symbol, driver.batch
-                ))
-            })?;
-            verify_count(
-                "sumcheck driver round_schedule",
-                &driver.symbol,
-                driver.num_rounds,
-                driver.round_schedule.iter().sum(),
-            )?;
-            if driver.round_schedule != batch.round_schedule {
-                return Err(EmitError::new(format!(
-                    "sumcheck driver @{} round_schedule differs from batch @{}",
-                    driver.symbol, batch.symbol
-                )));
-            }
         }
         Ok(())
     }
 
-    fn verify_verifier_rust_target(&self) -> Result<(), EmitError> {
-        for step in &self.steps {
-            let _ = ProgramStepKind::from_cpu_attr(&step.kind).map_err(rust_target_plan_error)?;
-        }
-        for squeeze in &self.transcript_squeezes {
-            let _ = TranscriptSqueezeKind::from_cpu_attr(&squeeze.kind)
-                .map_err(rust_target_plan_error)?;
-        }
-        for input in &self.opening_inputs {
-            let _ = ClaimKind::from_cpu_attr(&input.claim_kind).map_err(rust_target_plan_error)?;
-        }
-        for expr in &self.field_exprs {
-            let _ = FieldExprKind::from_cpu_attr(&expr.formula).map_err(rust_target_plan_error)?;
-        }
-        for expr in &self.scalar_exprs {
-            let _ = ScalarExprKind::from_cpu_attr(&expr.formula).map_err(rust_target_plan_error)?;
-        }
-        for claim in &self.claims {
-            let relation = claim
-                .relation
-                .as_deref()
-                .ok_or_else(|| missing_role_binding("verifier claim relation", &claim.symbol))?;
-            let _ = JoltVerifierRelationKind::from_cpu_attr(relation)
-                .map_err(rust_target_plan_error)?;
-        }
-        for driver in &self.drivers {
-            let relation = driver
-                .relation
-                .as_deref()
-                .ok_or_else(|| missing_role_binding("verifier driver relation", &driver.symbol))?;
-            let _ = JoltVerifierRelationKind::from_cpu_attr(relation)
-                .map_err(rust_target_plan_error)?;
-        }
-        for instance in &self.instance_results {
-            let _ = JoltVerifierRelationKind::from_cpu_attr(&instance.relation)
-                .map_err(rust_target_plan_error)?;
-        }
-        for claim in &self.opening_claims {
-            let _ = ClaimKind::from_cpu_attr(&claim.claim_kind).map_err(rust_target_plan_error)?;
-        }
-        Ok(())
+    fn verify_relation_outputs(&self) -> Result<(), EmitError> {
+        self.verifier_plan()?.verify_relation_outputs("stage2")
     }
 
     fn verify_opening_flow(&self) -> Result<(), EmitError> {
+        if self.role == Role::Verifier {
+            return self.verifier_plan()?.verify_opening_flow("stage2");
+        }
         let mut point_sources = symbols(self.drivers.iter().map(|driver| &driver.symbol));
         point_sources.extend(symbols(
             self.instance_results

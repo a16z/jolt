@@ -542,6 +542,17 @@ impl VerifierStagePlan {
                 VerifierScalarValueKind::OutputFunctionFamily,
             )
         }));
+        values.extend(
+            self.relation_outputs
+                .iter()
+                .flat_map(|output| output.local_scalar_symbols())
+                .map(|symbol| {
+                    VerifierScalarValuePlan::new(
+                        symbol.clone(),
+                        VerifierScalarValueKind::RelationOutputLocal,
+                    )
+                }),
+        );
         values.extend(self.field_exprs.iter().map(|expr| {
             VerifierScalarValuePlan::new(&expr.symbol, VerifierScalarValueKind::FieldExpr)
         }));
