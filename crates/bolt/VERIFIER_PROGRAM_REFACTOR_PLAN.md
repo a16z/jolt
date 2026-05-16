@@ -1205,6 +1205,14 @@ fix it or explicitly document why the readability/security gain is worth the
 cost. Do not loosen perf thresholds to make a refactor pass. The existing
 S2/S2.5 progress should keep its captured baselines as reference data.
 
+Current evidence from May 16, 2026 on `quang/bolt-stack` is green but close:
+the 2^16 oracle passed with verifier ratio `1.090x` and prove ratio `0.856x`;
+the 2^20 one-sample oracle passed with verifier ratio `1.124x` and prove ratio
+`1.298x` against the `1.300x` prove gate; the 2^20 three-sample oracle passed
+with verifier ratio `0.987x` and prove mean `1.329x`, 95% CI
+`[1.284x, 1.373x]`. Treat this as a fragile-margin risk, not a reason to
+loosen thresholds.
+
 The expected trend is "no measurable verifier change," because the interpreter
 dispatches are straightforward and relation/value-graph evaluation happens a
 small fixed number of times per verification. Any accidental
