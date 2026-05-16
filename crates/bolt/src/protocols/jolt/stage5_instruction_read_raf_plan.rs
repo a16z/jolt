@@ -1,5 +1,8 @@
 use crate::emit::rust::{push_format, EmitError};
 use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
+use crate::protocols::jolt::verifier_local_scalars::{
+    emit_jolt_local_scalar_constants, JoltLocalScalarEmitPlan, JoltLocalScalarMleKind,
+};
 use crate::protocols::jolt::verifier_relation_outputs::{
     RelationOutputPlan, StructuredPolynomialEvalPlan, StructuredPolynomialKind,
     StructuredPolynomialPointLength, StructuredPolynomialPointOrder, StructuredPolynomialPointPlan,
@@ -11,6 +14,8 @@ pub(crate) const STAGE5_TABLE_FLAG_EVAL_FAMILY: &str =
 pub(crate) const STAGE5_INSTRUCTION_RA_EVAL_FAMILY: &str =
     "stage5.instruction_read_raf.eval.InstructionRa";
 const STAGE5_INDEXED_EVAL_FAMILIES_CONST: &str = "STAGE5_INDEXED_EVAL_FAMILIES";
+const STAGE5_INSTRUCTION_READ_RAF_LOCAL_SCALARS_CONST: &str =
+    "STAGE5_INSTRUCTION_READ_RAF_LOCAL_SCALARS";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Stage5InstructionReadRafEmitPlan {
@@ -53,7 +58,10 @@ impl Stage5InstructionReadRafEmitPlan {
 
     pub(crate) fn emit_runtime_constants(&self) -> String {
         let mut source = String::new();
-        source.push_str(&emit_local_scalar_constants(&self.local_scalars));
+        source.push_str(&emit_jolt_local_scalar_constants(
+            STAGE5_INSTRUCTION_READ_RAF_LOCAL_SCALARS_CONST,
+            &self.local_scalars,
+        ));
         push_format(
             &mut source,
             format_args!(
@@ -219,12 +227,6 @@ impl Stage5InstructionReadRafEmitPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct JoltLocalScalarEmitPlan {
-    pub(crate) symbol: String,
-    pub(crate) kind: JoltLocalScalarMleKind,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Stage5InstructionReadRafOutputPlan {
     pub(crate) relation_output_values: Vec<StructuredPolynomialEvalPlan>,
     pub(crate) field_exprs: Vec<Stage5InstructionReadRafOutputFieldExprPlan>,
@@ -236,20 +238,6 @@ pub(crate) struct Stage5InstructionReadRafOutputFieldExprPlan {
     pub(crate) symbol: String,
     pub(crate) formula: String,
     pub(crate) operands: Vec<String>,
-}
-
-impl JoltLocalScalarEmitPlan {
-    pub(crate) fn is_lookup_table(&self) -> bool {
-        matches!(self.kind, JoltLocalScalarMleKind::LookupTable { .. })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum JoltLocalScalarMleKind {
-    LookupTable { index: usize },
-    LeftOperand,
-    RightOperand,
-    Identity,
 }
 
 fn local_scalar_plans(table_count: usize) -> Vec<JoltLocalScalarEmitPlan> {
@@ -285,34 +273,6 @@ fn output_field_expr(
         symbol,
         formula: formula.to_owned(),
         operands,
-    }
-}
-
-fn emit_local_scalar_constants(values: &[JoltLocalScalarEmitPlan]) -> String {
-    let values = values
-        .iter()
-        .map(|value| {
-            format!(
-                "    JoltLocalScalarPlan {{ symbol: {}, kind: {} }},",
-                rust_str(&value.symbol),
-                local_scalar_kind_expr(&value.kind),
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "pub const STAGE5_INSTRUCTION_READ_RAF_LOCAL_SCALARS: &[JoltLocalScalarPlan] = &[\n{values}\n];\n\n"
-    )
-}
-
-fn local_scalar_kind_expr(kind: &JoltLocalScalarMleKind) -> String {
-    match kind {
-        JoltLocalScalarMleKind::LookupTable { index } => {
-            format!("JoltLocalScalarMleKind::LookupTable {{ index: {index} }}")
-        }
-        JoltLocalScalarMleKind::LeftOperand => "JoltLocalScalarMleKind::LeftOperand".to_owned(),
-        JoltLocalScalarMleKind::RightOperand => "JoltLocalScalarMleKind::RightOperand".to_owned(),
-        JoltLocalScalarMleKind::Identity => "JoltLocalScalarMleKind::Identity".to_owned(),
     }
 }
 
