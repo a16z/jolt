@@ -579,10 +579,14 @@ boundaries explicit as named planning functions:
 Stage 5/6 relation-local input plans are also now produced through this shared
 planning boundary. Relation-output validation and verifier-mode sumcheck
 batch/driver consistency checks now run from `VerifierStagePlan` instead of
-repeated stage-local string sets and batch maps. The remaining S2.75 work is
-narrower: continue moving target validation toward typed planning outputs
-instead of stage-local emitter checks, and avoid putting any new verifier
-semantics directly in Rust template logic.
+repeated stage-local string sets and batch maps. Verifier-mode opening-flow
+checks for point sources, opening equalities, opening claims, sumcheck eval
+sources, and opening batches also run from `VerifierStagePlan`; prover
+`input_openings` checks remain stage-local because verifier runtime claim rows
+do not carry those fields. The remaining S2.75 work is narrower: continue
+moving target validation toward typed planning outputs instead of stage-local
+emitter checks, and avoid putting any new verifier semantics directly in Rust
+template logic.
 
 ---
 

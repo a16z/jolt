@@ -609,24 +609,22 @@ impl Stage4CpuProgram {
     }
 
     fn verify_opening_flow(&self) -> Result<(), EmitError> {
-        let point_sources = if self.role == Role::Verifier {
-            self.verifier_plan()?.opening_point_sources()
-        } else {
-            let mut point_sources = symbols(self.drivers.iter().map(|driver| &driver.symbol));
-            point_sources.extend(symbols(
-                self.instance_results
-                    .iter()
-                    .map(|instance| &instance.symbol),
-            ));
-            point_sources.extend(symbols(
-                self.opening_inputs.iter().map(|input| &input.symbol),
-            ));
-            point_sources.extend(symbols(self.point_slices.iter().map(|slice| &slice.symbol)));
-            point_sources.extend(symbols(
-                self.point_concats.iter().map(|concat| &concat.symbol),
-            ));
-            point_sources
-        };
+        if self.role == Role::Verifier {
+            return self.verifier_plan()?.verify_opening_flow("stage4");
+        }
+        let mut point_sources = symbols(self.drivers.iter().map(|driver| &driver.symbol));
+        point_sources.extend(symbols(
+            self.instance_results
+                .iter()
+                .map(|instance| &instance.symbol),
+        ));
+        point_sources.extend(symbols(
+            self.opening_inputs.iter().map(|input| &input.symbol),
+        ));
+        point_sources.extend(symbols(self.point_slices.iter().map(|slice| &slice.symbol)));
+        point_sources.extend(symbols(
+            self.point_concats.iter().map(|concat| &concat.symbol),
+        ));
         for slice in &self.point_slices {
             if !point_sources.contains(&slice.input) {
                 return Err(EmitError::new(format!(
@@ -645,11 +643,7 @@ impl Stage4CpuProgram {
                 }
             }
         }
-        let eval_sources = if self.role == Role::Verifier {
-            self.verifier_plan()?.scalar_value_sources()
-        } else {
-            self.cpu_field_value_sources()
-        };
+        let eval_sources = self.cpu_field_value_sources();
         let mut opening_sources = symbols(self.opening_inputs.iter().map(|input| &input.symbol));
         opening_sources.extend(symbols(
             self.opening_claims.iter().map(|claim| &claim.symbol),

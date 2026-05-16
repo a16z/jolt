@@ -692,6 +692,126 @@ impl VerifierStagePlan {
         )
     }
 
+    pub(crate) fn verify_opening_flow(&self, stage: &str) -> Result<(), EmitError> {
+        let point_sources = self.opening_point_sources();
+        for expr in &self.point_exprs {
+            if let VerifierPointExprKind::Zero { field, .. } = &expr.kind {
+                if field != "bn254_fr" {
+                    return Err(EmitError::new(format!(
+                        "{stage} point expr @{} has unsupported zero field `{field}`",
+                        expr.symbol
+                    )));
+                }
+            }
+            for input in &expr.operands {
+                if !point_sources.contains(input) {
+                    return Err(EmitError::new(format!(
+                        "{stage} point expr @{} uses missing point source @{input}",
+                        expr.symbol
+                    )));
+                }
+            }
+        }
+
+        let mut opening_sources = self
+            .opening_inputs
+            .iter()
+            .map(|input| input.symbol.as_str())
+            .collect::<BTreeSet<_>>();
+        opening_sources.extend(
+            self.opening_claims
+                .iter()
+                .map(|claim| claim.symbol.as_str()),
+        );
+        for equality in &self.opening_equalities {
+            if !opening_sources.contains(equality.lhs.as_str()) {
+                return Err(EmitError::new(format!(
+                    "{stage} opening equality @{} uses missing lhs opening @{}",
+                    equality.symbol, equality.lhs
+                )));
+            }
+            if !opening_sources.contains(equality.rhs.as_str()) {
+                return Err(EmitError::new(format!(
+                    "{stage} opening equality @{} uses missing rhs opening @{}",
+                    equality.symbol, equality.rhs
+                )));
+            }
+        }
+
+        let drivers = self
+            .drivers
+            .iter()
+            .map(|driver| driver.symbol.as_str())
+            .collect::<BTreeSet<_>>();
+        for instance in &self.instance_results {
+            if !drivers.contains(instance.source.as_str()) {
+                return Err(EmitError::new(format!(
+                    "{stage} sumcheck instance result @{} references missing driver @{}",
+                    instance.symbol, instance.source
+                )));
+            }
+        }
+        for eval in &self.sumcheck_evals {
+            if !drivers.contains(eval.source.as_str()) {
+                return Err(EmitError::new(format!(
+                    "{stage} sumcheck eval @{} references missing driver @{}",
+                    eval.symbol, eval.source
+                )));
+            }
+        }
+
+        let eval_sources = self.scalar_value_sources();
+        for claim in &self.opening_claims {
+            if !point_sources.contains(&claim.point_source) {
+                return Err(EmitError::new(format!(
+                    "{stage} opening claim @{} uses missing point source @{}",
+                    claim.symbol, claim.point_source
+                )));
+            }
+            if !eval_sources.contains(&claim.eval_source) {
+                return Err(EmitError::new(format!(
+                    "{stage} opening claim @{} uses missing eval source @{}",
+                    claim.symbol, claim.eval_source
+                )));
+            }
+        }
+
+        let openings = self
+            .opening_claims
+            .iter()
+            .map(|claim| claim.symbol.as_str())
+            .collect::<BTreeSet<_>>();
+        for batch in &self.opening_batches {
+            verify_plan_count(
+                "opening batch",
+                &batch.symbol,
+                batch.count,
+                batch.ordered_claims.len(),
+            )?;
+            verify_plan_count(
+                "opening batch operands",
+                &batch.symbol,
+                batch.count,
+                batch.claim_operands.len(),
+            )?;
+            if batch.ordered_claims != batch.claim_operands {
+                return Err(EmitError::new(format!(
+                    "{stage} opening batch @{} operand order does not match ordered_claims",
+                    batch.symbol
+                )));
+            }
+            for claim in &batch.ordered_claims {
+                if !openings.contains(claim.as_str()) {
+                    return Err(EmitError::new(format!(
+                        "{stage} opening batch @{} references missing opening @{claim}",
+                        batch.symbol
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn opening_point_sources(&self) -> BTreeSet<String> {
         let mut values = BTreeSet::new();
         values.extend(self.drivers.iter().map(|driver| driver.symbol.clone()));

@@ -67,9 +67,9 @@ Current S2.75-S5 implementation status:
   CPU-to-Rust planning boundary is now explicit: `VerifierStagePlan` is built
   through named planning functions for program steps, transcript flow,
   sumchecks, value/relation outputs, opening flow, and Stage 5/6 relation-local
-  inputs. Relation-output and verifier sumcheck-flow validation are now owned
-  by `VerifierStagePlan`. Remaining S2.75 work is concentrated in target
-  validation still owned by emitters.
+  inputs. Relation-output, verifier sumcheck-flow, and verifier opening-flow
+  validation are now owned by `VerifierStagePlan`. Remaining S2.75 work is
+  concentrated in target validation still owned by emitters.
 - Performance evidence remains a live completion gate. The SHA2-chain perf
   oracles must be rerun for the interpreter-heavy slices before this goal is
   closed.
