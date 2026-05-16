@@ -423,35 +423,32 @@ fn stage2_relation_output_plans() -> Stage2RelationOutputRows {
             ),
         ],
         relation_outputs: vec![
-            Stage2RelationOutputPlan {
-                relation: "jolt.stage2.ram.read_write".to_owned(),
-                local_scalars: Vec::new(),
-                expected_output: "stage2.ram_read_write.output.claim_expr".to_owned(),
-            },
-            Stage2RelationOutputPlan {
-                relation: "jolt.stage2.instruction_lookup.claim_reduction".to_owned(),
-                local_scalars: Vec::new(),
-                expected_output: "stage2.instruction_lookup.output.claim_expr".to_owned(),
-            },
-            Stage2RelationOutputPlan {
-                relation: "jolt.stage2.product_virtual.remainder".to_owned(),
-                local_scalars: Vec::new(),
-                expected_output: "stage2.product_virtual.remainder.output.claim_expr".to_owned(),
-            },
-            Stage2RelationOutputPlan {
-                relation: "jolt.stage2.ram.raf_evaluation".to_owned(),
-                local_scalars: vec!["stage2.ram_raf.output.unmap".to_owned()],
-                expected_output: "stage2.ram_raf.output.claim_expr".to_owned(),
-            },
-            Stage2RelationOutputPlan {
-                relation: "jolt.stage2.ram.output_check".to_owned(),
-                local_scalars: vec![
+            Stage2RelationOutputPlan::new(
+                "jolt.stage2.ram.read_write",
+                "stage2.ram_read_write.output.claim_expr",
+            ),
+            Stage2RelationOutputPlan::new(
+                "jolt.stage2.instruction_lookup.claim_reduction",
+                "stage2.instruction_lookup.output.claim_expr",
+            ),
+            Stage2RelationOutputPlan::new(
+                "jolt.stage2.product_virtual.remainder",
+                "stage2.product_virtual.remainder.output.claim_expr",
+            ),
+            Stage2RelationOutputPlan::with_local_scalars(
+                "jolt.stage2.ram.raf_evaluation",
+                ["stage2.ram_raf.output.unmap".to_owned()],
+                "stage2.ram_raf.output.claim_expr",
+            ),
+            Stage2RelationOutputPlan::with_local_scalars(
+                "jolt.stage2.ram.output_check",
+                [
                     "stage2.ram_output.output.eq".to_owned(),
                     "stage2.ram_output.output.io_mask".to_owned(),
                     "stage2.ram_output.output.val_io".to_owned(),
                 ],
-                expected_output: "stage2.ram_output.output.claim_expr".to_owned(),
-            },
+                "stage2.ram_output.output.claim_expr",
+            ),
         ],
     }
 }
@@ -1029,7 +1026,7 @@ impl Stage2CpuProgram {
         values.extend(symbols(
             self.relation_outputs
                 .iter()
-                .flat_map(|output| output.local_scalars.iter()),
+                .flat_map(|output| output.local_scalar_symbols()),
         ));
         values.extend(symbols(self.evals.iter().map(|eval| &eval.symbol)));
         values
@@ -1063,7 +1060,7 @@ impl Stage2CpuProgram {
         values.extend(
             self.relation_outputs
                 .iter()
-                .flat_map(|output| output.local_scalars.iter()),
+                .flat_map(|output| output.local_scalar_symbols()),
             verifier_values::VerifierScalarSourceKind::RelationOutputLocal,
         );
         values.extend(

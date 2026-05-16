@@ -796,7 +796,7 @@ macro_rules! define_stage_adapter_impl {
                         .iter()
                         .map(|plan| $module::$relation_output {
                             relation: super::generated_relation_kind(&plan.relation),
-                            local_scalars: super::leak_str_slice(&plan.local_scalars),
+                            local_scalars: super::leak_str_iter(plan.local_scalar_symbols()),
                             expected_output: super::leak_str(&plan.expected_output),
                         })
                         .collect(),
@@ -1826,8 +1826,12 @@ fn leak_str(value: &str) -> &'static str {
 }
 
 fn leak_str_slice(values: &[String]) -> &'static [&'static str] {
+    leak_str_iter(values.iter())
+}
+
+fn leak_str_iter<'a>(values: impl IntoIterator<Item = &'a String>) -> &'static [&'static str] {
     let leaked = values
-        .iter()
+        .into_iter()
         .map(|value| leak_str(value))
         .collect::<Vec<_>>();
     Box::leak(leaked.into_boxed_slice())

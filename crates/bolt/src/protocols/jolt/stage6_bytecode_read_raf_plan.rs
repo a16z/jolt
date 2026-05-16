@@ -425,11 +425,11 @@ impl BytecodeReadRafPlan {
                     operands: vec![self.output_contribution.to_owned(), bytecode_ra_product],
                 },
             ],
-            claim: RelationOutputPlan {
-                relation: "jolt.stage6.bytecode_read_raf".to_owned(),
-                local_scalars: output_term_symbols,
-                expected_output: claim_expr,
-            },
+            claim: RelationOutputPlan::with_local_scalars(
+                "jolt.stage6.bytecode_read_raf",
+                output_term_symbols,
+                claim_expr,
+            ),
         }
     }
 }
@@ -761,7 +761,7 @@ mod tests {
             "stage6.bytecode_read_raf.output.claim_expr"
         );
         assert_eq!(
-            claim.local_scalars,
+            claim.local_scalar_symbols().cloned().collect::<Vec<_>>(),
             vec![
                 "stage6.bytecode_read_raf.output.term.Stage1".to_owned(),
                 "stage6.bytecode_read_raf.output.term.Stage2".to_owned(),

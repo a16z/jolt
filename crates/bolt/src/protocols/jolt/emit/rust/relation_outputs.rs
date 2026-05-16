@@ -41,7 +41,11 @@ fn emit_local_scalar_constants(
         "{}_RELATION_OUTPUT_{claim_index}_LOCAL_SCALARS",
         stage_type.to_ascii_uppercase()
     );
-    let scalars = rust_str_array(&claim.local_scalars);
+    let scalars = claim
+        .local_scalar_symbols()
+        .map(|symbol| rust_str(symbol))
+        .collect::<Vec<_>>()
+        .join(", ");
     push_format(
         source,
         format_args!("pub const {name}: &[&str] = &[{scalars}];\n"),
@@ -51,12 +55,4 @@ fn emit_local_scalar_constants(
 
 fn rust_str(value: &str) -> String {
     format!("{value:?}")
-}
-
-fn rust_str_array(values: &[String]) -> String {
-    values
-        .iter()
-        .map(|value| rust_str(value))
-        .collect::<Vec<_>>()
-        .join(", ")
 }

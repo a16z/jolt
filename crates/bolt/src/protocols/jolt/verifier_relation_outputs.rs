@@ -12,6 +12,7 @@ use crate::protocols::jolt::rust_target_plan::{
     power_strided_weighted_sum_formula, structured_polynomial_scalar_formula,
 };
 use crate::protocols::jolt::verifier_values::{VerifierPointSourceSet, VerifierScalarSourceSet};
+use crate::protocols::jolt::verifier_values::{VerifierScalarValueKind, VerifierScalarValuePlan};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StructuredPolynomialKind {
@@ -295,8 +296,42 @@ pub struct RelationOutputFunctionFamilyPlan {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationOutputPlan {
     pub relation: String,
-    pub local_scalars: Vec<String>,
+    pub local_scalars: Vec<VerifierScalarValuePlan>,
     pub expected_output: String,
+}
+
+impl RelationOutputPlan {
+    pub fn new(relation: impl Into<String>, expected_output: impl Into<String>) -> Self {
+        Self {
+            relation: relation.into(),
+            local_scalars: Vec::new(),
+            expected_output: expected_output.into(),
+        }
+    }
+
+    pub(crate) fn with_local_scalars(
+        relation: impl Into<String>,
+        local_scalars: impl IntoIterator<Item = String>,
+        expected_output: impl Into<String>,
+    ) -> Self {
+        Self {
+            relation: relation.into(),
+            local_scalars: local_scalars
+                .into_iter()
+                .map(|symbol| {
+                    VerifierScalarValuePlan::new(
+                        symbol,
+                        VerifierScalarValueKind::RelationOutputLocal,
+                    )
+                })
+                .collect(),
+            expected_output: expected_output.into(),
+        }
+    }
+
+    pub fn local_scalar_symbols(&self) -> impl Iterator<Item = &String> {
+        self.local_scalars.iter().map(|value| &value.symbol)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1086,11 +1121,10 @@ where
                     claim.relation
                 )));
             }
-            Ok(RelationOutputPlan {
-                relation: claim.relation,
-                local_scalars: Vec::new(),
-                expected_output: claim.expected_output,
-            })
+            Ok(RelationOutputPlan::new(
+                claim.relation,
+                claim.expected_output,
+            ))
         })
         .collect()
 }
@@ -1443,7 +1477,7 @@ pub fn verify_relation_outputs(
                 claim.relation, claim.expected_output
             )));
         }
-        for local_scalar in &claim.local_scalars {
+        for local_scalar in claim.local_scalar_symbols() {
             if !field_values.contains(local_scalar) {
                 return Err(EmitError::new(format!(
                     "{stage} relation output for @{} references missing local scalar @{}",
@@ -1819,11 +1853,11 @@ mod tests {
         field_values.insert("claim", VerifierScalarSourceKind::FieldExpr);
         let point_values = VerifierPointSourceSet::default();
         let relations = BTreeSet::from(["relation".to_owned()]);
-        let relation_outputs = [RelationOutputPlan {
-            relation: "relation".to_owned(),
-            local_scalars: vec!["local.scalar".to_owned()],
-            expected_output: "claim".to_owned(),
-        }];
+        let relation_outputs = [RelationOutputPlan::with_local_scalars(
+            "relation",
+            ["local.scalar".to_owned()],
+            "claim",
+        )];
 
         let error = match verify_relation_outputs(
             "stage",

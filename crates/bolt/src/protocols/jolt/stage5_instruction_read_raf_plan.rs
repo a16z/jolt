@@ -209,15 +209,11 @@ impl Stage5InstructionReadRafEmitPlan {
         Stage5InstructionReadRafOutputPlan {
             relation_output_values: vec![eq.clone()],
             field_exprs,
-            claim: RelationOutputPlan {
-                relation: "jolt.stage5.instruction_read_raf".to_owned(),
-                local_scalars: self
-                    .local_scalars
-                    .iter()
-                    .map(|value| value.symbol.clone())
-                    .collect(),
-                expected_output: claim_expr,
-            },
+            claim: RelationOutputPlan::with_local_scalars(
+                "jolt.stage5.instruction_read_raf",
+                self.local_scalars.iter().map(|value| value.symbol.clone()),
+                claim_expr,
+            ),
         }
     }
 
@@ -393,7 +389,11 @@ mod tests {
             "stage5.instruction_read_raf.output.eq.LookupOutputCycle"
         );
         assert_eq!(
-            output_plan.claim.local_scalars,
+            output_plan
+                .claim
+                .local_scalar_symbols()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![
                 "stage5.instruction_read_raf.local_scalar.LookupTable_0".to_owned(),
                 "stage5.instruction_read_raf.local_scalar.LookupTable_1".to_owned(),

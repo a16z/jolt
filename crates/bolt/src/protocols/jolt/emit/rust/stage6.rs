@@ -575,7 +575,7 @@ impl Stage6CpuProgram {
         values.extend(
             self.relation_outputs
                 .iter()
-                .flat_map(|claim| claim.local_scalars.iter()),
+                .flat_map(|claim| claim.local_scalar_symbols()),
             verifier_values::VerifierScalarSourceKind::RelationOutputLocal,
         );
         values.extend(
