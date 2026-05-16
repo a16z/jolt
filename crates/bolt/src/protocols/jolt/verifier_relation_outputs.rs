@@ -197,12 +197,6 @@ impl StructuredPolynomialEvalPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StructuredPolynomialEvalRefPlan {
-    pub symbol: String,
-    pub index: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationOutputEvalFamilySharedTermPlan {
     pub gamma_power_offset: usize,
     pub factor: String,
@@ -258,7 +252,6 @@ pub struct RelationOutputFunctionFamilyPlan {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationOutputPlan {
     pub relation: String,
-    pub structured_polynomial_evals: Vec<StructuredPolynomialEvalRefPlan>,
     pub eval_families: Vec<RelationOutputEvalFamilyPlan>,
     pub product_families: Vec<RelationOutputProductFamilyPlan>,
     pub local_scalars: Vec<String>,
@@ -1026,24 +1019,14 @@ where
                     claim.relation
                 )));
             }
-            let structured_polynomial_evals = claim
-                .polynomial_evals
-                .iter()
-                .map(|symbol| {
-                    relation_output_values_by_symbol
-                        .get(symbol.as_str())
-                        .map(|&index| StructuredPolynomialEvalRefPlan {
-                            symbol: symbol.clone(),
-                            index,
-                        })
-                        .ok_or_else(|| {
-                            EmitError::new(format!(
-                                "{stage} relation output for @{} references missing output value @{symbol}",
-                                claim.relation
-                            ))
-                        })
-                })
-                .collect::<Result<Vec<_>, EmitError>>()?;
+            for symbol in &claim.polynomial_evals {
+                if !relation_output_values_by_symbol.contains_key(symbol.as_str()) {
+                    return Err(EmitError::new(format!(
+                        "{stage} relation output for @{} references missing output value @{symbol}",
+                        claim.relation
+                    )));
+                }
+            }
             let dependencies = output_dependency_closure(
                 &relation_output_eval_families_by_symbol,
                 &relation_output_product_families_by_symbol,
@@ -1062,7 +1045,6 @@ where
                 .collect();
             Ok(RelationOutputPlan {
                 relation: claim.relation,
-                structured_polynomial_evals,
                 eval_families,
                 product_families,
                 local_scalars: Vec::new(),

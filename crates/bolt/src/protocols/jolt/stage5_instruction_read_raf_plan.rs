@@ -1,9 +1,9 @@
 use crate::emit::rust::{push_format, EmitError};
 use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 use crate::protocols::jolt::verifier_relation_outputs::{
-    RelationOutputPlan, StructuredPolynomialEvalPlan, StructuredPolynomialEvalRefPlan,
-    StructuredPolynomialKind, StructuredPolynomialPointLength, StructuredPolynomialPointOrder,
-    StructuredPolynomialPointPlan, StructuredPolynomialPointSegment,
+    RelationOutputPlan, StructuredPolynomialEvalPlan, StructuredPolynomialKind,
+    StructuredPolynomialPointLength, StructuredPolynomialPointOrder, StructuredPolynomialPointPlan,
+    StructuredPolynomialPointSegment,
 };
 
 pub(crate) const STAGE5_TABLE_FLAG_EVAL_FAMILY: &str =
@@ -203,10 +203,6 @@ impl Stage5InstructionReadRafEmitPlan {
             field_exprs,
             claim: RelationOutputPlan {
                 relation: "jolt.stage5.instruction_read_raf".to_owned(),
-                structured_polynomial_evals: vec![StructuredPolynomialEvalRefPlan {
-                    symbol: eq.symbol,
-                    index: 0,
-                }],
                 eval_families: Vec::new(),
                 product_families: Vec::new(),
                 local_scalars: self
@@ -438,12 +434,11 @@ mod tests {
             output_plan.claim.expected_output,
             "stage5.instruction_read_raf.output.claim_expr"
         );
-        assert_eq!(output_plan.claim.structured_polynomial_evals.len(), 1);
+        assert_eq!(output_plan.relation_output_values.len(), 1);
         assert_eq!(
-            output_plan.claim.structured_polynomial_evals[0].symbol,
+            output_plan.relation_output_values[0].symbol,
             "stage5.instruction_read_raf.output.eq.LookupOutputCycle"
         );
-        assert_eq!(output_plan.claim.structured_polynomial_evals[0].index, 0);
         assert!(output_plan.claim.product_families.is_empty());
         assert_eq!(
             output_plan.claim.local_scalars,

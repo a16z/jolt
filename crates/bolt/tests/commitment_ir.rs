@@ -1732,11 +1732,10 @@ fn stage6_rust_targets_extract_and_compile() {
     assert_eq!(booleanity_claims.len(), 1);
     assert!(booleanity_claims[0].eval_families.is_empty());
     assert!(booleanity_claims[0].product_families.is_empty());
-    assert_eq!(
-        booleanity_claims[0].structured_polynomial_evals[0].symbol,
-        "stage6.booleanity.output.eq.InstructionRa0"
-    );
-    assert_eq!(booleanity_claims[0].structured_polynomial_evals[0].index, 0);
+    assert!(verifier_program
+        .scalar_exprs
+        .iter()
+        .any(|expr| expr.symbol == "stage6.booleanity.output.eq.InstructionRa0"));
     let hamming_claims = verifier_program
         .relation_outputs
         .iter()
@@ -1767,7 +1766,6 @@ fn stage6_rust_targets_extract_and_compile() {
         .filter(|claim| claim.expected_output == "stage6.bytecode_read_raf.output.claim_expr")
         .collect::<Vec<_>>();
     assert_eq!(bytecode_claims.len(), 1);
-    assert!(bytecode_claims[0].structured_polynomial_evals.is_empty());
     assert!(bytecode_claims[0].eval_families.is_empty());
     assert!(bytecode_claims[0].product_families.is_empty());
     let bytecode_output_scalar_exprs = verifier_program

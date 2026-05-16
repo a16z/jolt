@@ -702,11 +702,6 @@ impl Stage5CpuProgram {
             let output_plan =
                 Stage5InstructionReadRafEmitPlan::from_eval_families(&indexed_eval_families)?
                     .relation_output_plan();
-            let relation_output_value_base = relation_output_values.len();
-            let mut output_claim = output_plan.claim;
-            for value_ref in &mut output_claim.structured_polynomial_evals {
-                value_ref.index += relation_output_value_base;
-            }
             relation_output_values.extend(output_plan.relation_output_values);
             for expr in output_plan.field_exprs {
                 if ScalarExprKind::from_cpu_attr(&expr.formula).is_ok() {
@@ -715,7 +710,7 @@ impl Stage5CpuProgram {
                     field_exprs.push(stage5_field_expr(expr));
                 }
             }
-            relation_outputs.push(output_claim);
+            relation_outputs.push(output_plan.claim);
         }
         if role == Role::Verifier {
             scalar_exprs.extend(
