@@ -65,9 +65,9 @@ Current S2.75-S5 implementation status:
 - S2.75 remains the main incomplete architecture item, but its central
   CPU-to-Rust planning boundary is now explicit: `VerifierStagePlan` is built
   through named planning functions for program steps, transcript flow,
-  sumchecks, value/relation outputs, and opening flow. Remaining S2.75 work is
-  concentrated in stage-specific additions and target validation still owned by
-  emitters.
+  sumchecks, value/relation outputs, opening flow, and Stage 5/6 relation-local
+  inputs. Remaining S2.75 work is concentrated in target validation still owned
+  by emitters.
 - Performance evidence remains a live completion gate. The SHA2-chain perf
   oracles must be rerun for the interpreter-heavy slices before this goal is
   closed.

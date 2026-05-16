@@ -799,6 +799,13 @@ pub(crate) trait VerifierStagePlanSource {
         &[]
     }
     fn relation_outputs(&self) -> &[RelationOutputPlan];
+    fn relation_local_inputs(
+        &self,
+        indexed_eval_families: &[IndexedEvalFamilyPlan],
+    ) -> Result<VerifierRelationLocalInputPlans, EmitError> {
+        let _ = indexed_eval_families;
+        Ok(VerifierRelationLocalInputPlans::default())
+    }
     fn point_exprs(&self) -> Vec<VerifierPointExprPlan>;
     fn opening_claims(&self) -> &[CpuOpeningClaimPlan];
     fn opening_equalities(&self) -> &[CpuOpeningClaimEqualityPlan];
@@ -1271,6 +1278,7 @@ where
     let transcript = plan_transcript_flow(source)?;
     let sumchecks = plan_verifier_sumchecks(source)?;
     let value_graph = plan_field_and_relation_outputs(source)?;
+    let relation_local_inputs = source.relation_local_inputs(&value_graph.indexed_eval_families)?;
     let opening_flow = plan_opening_flow(source)?;
 
     Ok(VerifierStagePlan {
@@ -1292,7 +1300,7 @@ where
         relation_output_product_families: value_graph.relation_output_product_families,
         relation_output_function_families: value_graph.relation_output_function_families,
         relation_outputs: value_graph.relation_outputs,
-        relation_local_inputs: VerifierRelationLocalInputPlans::default(),
+        relation_local_inputs,
         point_exprs: value_graph.point_exprs,
         opening_claims: opening_flow.claims,
         opening_equalities: opening_flow.equalities,
@@ -1635,6 +1643,7 @@ macro_rules! impl_verifier_plan_source_traits {
         $(relation_output_eval_families = $relation_output_eval_families:ident,)?
         $(relation_output_product_families = $relation_output_product_families:ident,)?
         $(relation_output_function_families = $relation_output_function_families:ident,)?
+        $(relation_local_inputs = $relation_local_inputs:ident,)?
         $(,)?
     ) => {
         impl $crate::protocols::jolt::verifier_plan::VerifierStagePlanSource for $program {
@@ -1679,6 +1688,17 @@ macro_rules! impl_verifier_plan_source_traits {
             }
             fn relation_outputs(&self) -> &[$crate::protocols::jolt::verifier_relation_outputs::RelationOutputPlan] {
                 &self.relation_outputs
+            }
+            fn relation_local_inputs(
+                &self,
+                indexed_eval_families: &[$crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan],
+            ) -> Result<
+                $crate::protocols::jolt::verifier_plan::VerifierRelationLocalInputPlans,
+                $crate::emit::rust::EmitError,
+            > {
+                $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
+                    @relation_local_inputs indexed_eval_families $(, $relation_local_inputs)?
+                )
             }
             fn point_exprs(&self) -> Vec<$crate::protocols::jolt::verifier_plan::VerifierPointExprPlan> {
                 $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
@@ -1736,6 +1756,30 @@ macro_rules! impl_verifier_plan_source_traits {
     (@relation_output_function_families $self:ident) => {
         &[]
     };
+    (@relation_local_inputs $indexed_eval_families:ident, stage5_instruction_read_raf) => {{
+        let mut plans =
+            $crate::protocols::jolt::verifier_plan::VerifierRelationLocalInputPlans::default();
+        plans.add_stage5_instruction_read_raf(
+            $crate::protocols::jolt::stage5_instruction_read_raf_plan::Stage5InstructionReadRafEmitPlan::from_eval_families(
+                $indexed_eval_families,
+            )?,
+        )?;
+        Ok(plans)
+    }};
+    (@relation_local_inputs $indexed_eval_families:ident, stage6_bytecode_read_raf) => {{
+        let mut plans =
+            $crate::protocols::jolt::verifier_plan::VerifierRelationLocalInputPlans::default();
+        plans.add_stage6_bytecode_read_raf(
+            $crate::protocols::jolt::stage6_bytecode_read_raf_plan::Stage6BytecodeReadRafEmitPlan::from_eval_families(
+                $indexed_eval_families,
+            )?,
+        )?;
+        Ok(plans)
+    }};
+    (@relation_local_inputs $indexed_eval_families:ident) => {{
+        let _ = $indexed_eval_families;
+        Ok($crate::protocols::jolt::verifier_plan::VerifierRelationLocalInputPlans::default())
+    }};
 }
 
 pub(crate) use impl_verifier_plan_source_traits;

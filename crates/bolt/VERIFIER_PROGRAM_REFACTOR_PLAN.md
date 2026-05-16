@@ -575,10 +575,10 @@ boundaries explicit as named planning functions:
 `plan_verifier_sumchecks`, `plan_field_and_relation_outputs`, and
 `plan_opening_flow`.
 
-The remaining S2.75 work is narrower: keep stage-specific verifier additions
-such as Stage 5/6 relation-local input plans out of Rust template logic where
-possible, and continue moving target validation toward typed planning outputs
-instead of stage-local emitter checks.
+Stage 5/6 relation-local input plans are also now produced through this shared
+planning boundary. The remaining S2.75 work is narrower: continue moving target
+validation toward typed planning outputs instead of stage-local emitter checks,
+and avoid putting any new verifier semantics directly in Rust template logic.
 
 ---
 

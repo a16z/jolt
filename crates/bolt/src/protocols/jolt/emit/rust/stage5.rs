@@ -109,6 +109,7 @@ verifier_plan::impl_verifier_plan_source_traits!(
     relation_output_eval_families = relation_output_eval_families,
     relation_output_product_families = relation_output_product_families,
     relation_output_function_families = relation_output_function_families,
+    relation_local_inputs = stage5_instruction_read_raf,
 );
 
 pub fn stage5_cpu_program(module: &BoltModule<'_, Cpu>) -> Result<Stage5CpuProgram, EmitError> {
@@ -385,11 +386,7 @@ impl Stage5CpuProgram {
     }
 
     fn plan_verifier(&self) -> Result<VerifierStagePlan, EmitError> {
-        let mut plan = verifier_plan::plan_verifier_stage_from_cpu_sources(self)?;
-        plan.relation_local_inputs.add_stage5_instruction_read_raf(
-            Stage5InstructionReadRafEmitPlan::from_eval_families(&plan.indexed_eval_families)?,
-        )?;
-        Ok(plan)
+        verifier_plan::plan_verifier_stage_from_cpu_sources(self)
     }
 
     fn verifier_plan(&self) -> Result<&VerifierStagePlan, EmitError> {
