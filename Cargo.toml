@@ -84,6 +84,8 @@ members = [
   "examples/alloc/guest",
   "examples/stdlib",
   "examples/stdlib/guest",
+  "examples/bn254-fr-poseidon2-arkworks",
+  "examples/bn254-fr-poseidon2-arkworks/guest",
   "examples/muldiv",
   "examples/muldiv/guest",
   "examples/overflow",
