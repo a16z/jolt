@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 use crate::emit::rust::EmitError;
 use crate::protocols::jolt::rust_target_plan::{
     ClaimKind, FieldExprKind, JoltVerifierRelationKind, OpeningEqualityMode, ProgramStepKind,
-    RustTargetPlanError, SumcheckPointOrder, TranscriptSqueezeKind, ValueExprKind,
+    RustTargetPlanError, ScalarExprKind, SumcheckPointOrder, TranscriptSqueezeKind,
 };
 use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 use crate::protocols::jolt::verifier_relation_outputs::{
@@ -134,13 +134,13 @@ impl VerifierFieldExprPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct VerifierValueExprPlan {
+pub(crate) struct VerifierScalarExprPlan {
     pub(crate) symbol: String,
-    pub(crate) kind: ValueExprKind,
+    pub(crate) kind: ScalarExprKind,
     pub(crate) operands: Vec<String>,
 }
 
-impl VerifierValueExprPlan {
+impl VerifierScalarExprPlan {
     pub(crate) fn from_cpu(
         symbol: &str,
         formula: &str,
@@ -148,7 +148,7 @@ impl VerifierValueExprPlan {
     ) -> Result<Self, EmitError> {
         Ok(Self {
             symbol: symbol.to_owned(),
-            kind: ValueExprKind::from_cpu_attr(formula).map_err(plan_error)?,
+            kind: ScalarExprKind::from_cpu_attr(formula).map_err(plan_error)?,
             operands: operands.to_vec(),
         })
     }
@@ -279,7 +279,7 @@ pub(crate) struct VerifierStagePlan {
     pub(crate) opening_inputs: Vec<VerifierOpeningInputPlan>,
     pub(crate) field_constants: Vec<VerifierFieldConstantPlan>,
     pub(crate) field_exprs: Vec<VerifierFieldExprPlan>,
-    pub(crate) value_exprs: Vec<VerifierValueExprPlan>,
+    pub(crate) scalar_exprs: Vec<VerifierScalarExprPlan>,
     pub(crate) claims: Vec<VerifierSumcheckClaimPlan>,
     pub(crate) batches: Vec<VerifierSumcheckBatchPlan>,
     pub(crate) drivers: Vec<VerifierSumcheckDriverPlan>,
@@ -357,8 +357,8 @@ impl VerifierStagePlan {
             VerifierScalarSourceKind::FieldExpr,
         );
         values.extend(
-            self.value_exprs.iter().map(|expr| &expr.symbol),
-            VerifierScalarSourceKind::ValueExpr,
+            self.scalar_exprs.iter().map(|expr| &expr.symbol),
+            VerifierScalarSourceKind::ScalarExpr,
         );
         values.extend(
             self.relation_outputs
@@ -471,7 +471,7 @@ pub(crate) trait VerifierFieldExprSource {
     fn operands(&self) -> &[String];
 }
 
-pub(crate) trait VerifierValueExprSource {
+pub(crate) trait VerifierScalarExprSource {
     fn symbol(&self) -> &str;
     fn formula(&self) -> &str;
     fn operands(&self) -> &[String];
@@ -589,7 +589,7 @@ pub(crate) trait VerifierStagePlanSource {
     type OpeningInput: VerifierOpeningInputSource;
     type FieldConstant: VerifierFieldConstantSource;
     type FieldExpr: VerifierFieldExprSource;
-    type ValueExpr: VerifierValueExprSource;
+    type ScalarExpr: VerifierScalarExprSource;
     type Claim: VerifierSumcheckClaimSource;
     type Batch: VerifierSumcheckBatchSource;
     type Driver: VerifierSumcheckDriverSource;
@@ -607,7 +607,7 @@ pub(crate) trait VerifierStagePlanSource {
     fn opening_inputs(&self) -> &[Self::OpeningInput];
     fn field_constants(&self) -> &[Self::FieldConstant];
     fn field_exprs(&self) -> &[Self::FieldExpr];
-    fn value_exprs(&self) -> &[Self::ValueExpr];
+    fn scalar_exprs(&self) -> &[Self::ScalarExpr];
     fn claims(&self) -> &[Self::Claim];
     fn batches(&self) -> &[Self::Batch];
     fn drivers(&self) -> &[Self::Driver];
@@ -689,11 +689,11 @@ where
                 VerifierFieldExprPlan::from_cpu(expr.symbol(), expr.formula(), expr.operands())
             })
             .collect::<Result<Vec<_>, EmitError>>()?,
-        value_exprs: source
-            .value_exprs()
+        scalar_exprs: source
+            .scalar_exprs()
             .iter()
             .map(|expr| {
-                VerifierValueExprPlan::from_cpu(expr.symbol(), expr.formula(), expr.operands())
+                VerifierScalarExprPlan::from_cpu(expr.symbol(), expr.formula(), expr.operands())
             })
             .collect::<Result<Vec<_>, EmitError>>()?,
         claims: source
@@ -890,7 +890,7 @@ macro_rules! impl_verifier_plan_source_traits {
         opening_input = $opening_input:ty,
         field_constant = $field_constant:ty,
         field_expr = $field_expr:ty,
-        value_expr = $value_expr:ty,
+        scalar_expr = $scalar_expr:ty,
         claim = $claim:ty,
         batch = $batch:ty,
         driver = $driver:ty,
@@ -915,7 +915,7 @@ macro_rules! impl_verifier_plan_source_traits {
             type OpeningInput = $opening_input;
             type FieldConstant = $field_constant;
             type FieldExpr = $field_expr;
-            type ValueExpr = $value_expr;
+            type ScalarExpr = $scalar_expr;
             type Claim = $claim;
             type Batch = $batch;
             type Driver = $driver;
@@ -937,7 +937,7 @@ macro_rules! impl_verifier_plan_source_traits {
             fn opening_inputs(&self) -> &[Self::OpeningInput] { &self.opening_inputs }
             fn field_constants(&self) -> &[Self::FieldConstant] { &self.field_constants }
             fn field_exprs(&self) -> &[Self::FieldExpr] { &self.field_exprs }
-            fn value_exprs(&self) -> &[Self::ValueExpr] { &self.value_exprs }
+            fn scalar_exprs(&self) -> &[Self::ScalarExpr] { &self.scalar_exprs }
             fn claims(&self) -> &[Self::Claim] { &self.claims }
             fn batches(&self) -> &[Self::Batch] { &self.batches }
             fn drivers(&self) -> &[Self::Driver] { &self.drivers }
@@ -1023,7 +1023,7 @@ macro_rules! impl_verifier_plan_source_traits {
             fn operands(&self) -> &[String] { &self.operands }
         }
 
-        impl $crate::protocols::jolt::verifier_plan::VerifierValueExprSource for $value_expr {
+        impl $crate::protocols::jolt::verifier_plan::VerifierScalarExprSource for $scalar_expr {
             fn symbol(&self) -> &str { &self.symbol }
             fn formula(&self) -> &str { &self.formula }
             fn operands(&self) -> &[String] { &self.operands }
@@ -1245,9 +1245,9 @@ pub(crate) fn field_expr_kind_expr(stage_type_prefix: &str, kind: &FieldExprKind
     )
 }
 
-pub(crate) fn value_expr_kind_expr(stage_type_prefix: &str, kind: &ValueExprKind) -> String {
+pub(crate) fn scalar_expr_kind_expr(stage_type_prefix: &str, kind: &ScalarExprKind) -> String {
     format!(
-        "{stage_type_prefix}ValueExprKind::{}",
+        "{stage_type_prefix}ScalarExprKind::{}",
         kind.rust_variant_expr()
     )
 }
@@ -1383,25 +1383,25 @@ pub(crate) fn emit_field_expr_constants(
     )
 }
 
-pub(crate) fn emit_value_expr_constants(
+pub(crate) fn emit_scalar_expr_constants(
     stage_type_prefix: &str,
     const_prefix: &str,
-    exprs: &[VerifierValueExprPlan],
+    exprs: &[VerifierScalarExprPlan],
 ) -> String {
     let exprs = exprs
         .iter()
         .map(|expr| {
             format!(
-                "    {stage_type_prefix}ValueExprPlan {{ symbol: {}, kind: {}, operands: {} }},",
+                "    {stage_type_prefix}ScalarExprPlan {{ symbol: {}, kind: {}, operands: {} }},",
                 rust_str(&expr.symbol),
-                value_expr_kind_expr(stage_type_prefix, &expr.kind),
+                scalar_expr_kind_expr(stage_type_prefix, &expr.kind),
                 rust_str_slice_expr(&expr.operands),
             )
         })
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "pub const {const_prefix}_VALUE_EXPRS: &[{stage_type_prefix}ValueExprPlan] = &[\n{exprs}\n];\n"
+        "pub const {const_prefix}_SCALAR_EXPRS: &[{stage_type_prefix}ScalarExprPlan] = &[\n{exprs}\n];\n"
     )
 }
 
@@ -1436,11 +1436,11 @@ pub(crate) fn emit_field_expr_constants_chunked(
     )
 }
 
-pub(crate) fn emit_value_expr_constants_chunked(
+pub(crate) fn emit_scalar_expr_constants_chunked(
     stage_type_prefix: &str,
     const_prefix: &str,
     helper_name: &str,
-    exprs: &[VerifierValueExprPlan],
+    exprs: &[VerifierScalarExprPlan],
     chunk_size: usize,
 ) -> String {
     let rows = exprs
@@ -1452,7 +1452,7 @@ pub(crate) fn emit_value_expr_constants_chunked(
                     format!(
                         "{helper_name}({}, {}, {})",
                         rust_str(&expr.symbol),
-                        value_expr_kind_expr(stage_type_prefix, &expr.kind),
+                        scalar_expr_kind_expr(stage_type_prefix, &expr.kind),
                         rust_str_slice_expr(&expr.operands)
                     )
                 })
@@ -1463,7 +1463,7 @@ pub(crate) fn emit_value_expr_constants_chunked(
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "const fn {helper_name}(symbol: &'static str, kind: {stage_type_prefix}ValueExprKind, operands: &'static [&'static str]) -> {stage_type_prefix}ValueExprPlan {{\n    {stage_type_prefix}ValueExprPlan {{ symbol, kind, operands }}\n}}\n\n#[rustfmt::skip]\npub const {const_prefix}_VALUE_EXPRS: &[{stage_type_prefix}ValueExprPlan] = &[\n{rows}\n];\n"
+        "const fn {helper_name}(symbol: &'static str, kind: {stage_type_prefix}ScalarExprKind, operands: &'static [&'static str]) -> {stage_type_prefix}ScalarExprPlan {{\n    {stage_type_prefix}ScalarExprPlan {{ symbol, kind, operands }}\n}}\n\n#[rustfmt::skip]\npub const {const_prefix}_SCALAR_EXPRS: &[{stage_type_prefix}ScalarExprPlan] = &[\n{rows}\n];\n"
     )
 }
 

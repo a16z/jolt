@@ -11,7 +11,7 @@ use melior::ir::{Attribute, OperationRef};
 
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
-use crate::protocols::jolt::rust_target_plan::structured_polynomial_value_formula;
+use crate::protocols::jolt::rust_target_plan::structured_polynomial_scalar_formula;
 use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
 use crate::protocols::jolt::verifier_relation_outputs::{
     self, FieldExprDependencies, RelationOutputAst as Stage4RelationOutputAst,
@@ -33,7 +33,7 @@ pub struct Stage4CpuProgram {
     pub opening_inputs: Vec<Stage4OpeningInputPlan>,
     pub field_constants: Vec<Stage4FieldConstantPlan>,
     pub field_exprs: Vec<Stage4FieldExprPlan>,
-    pub value_exprs: Vec<Stage4ValueExprPlan>,
+    pub scalar_exprs: Vec<Stage4ScalarExprPlan>,
     pub kernels: Vec<Stage4KernelPlan>,
     pub claims: Vec<Stage4SumcheckClaimPlan>,
     pub batches: Vec<Stage4SumcheckBatchPlan>,
@@ -114,7 +114,7 @@ pub struct Stage4FieldExprPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage4ValueExprPlan {
+pub struct Stage4ScalarExprPlan {
     pub symbol: String,
     pub kind: String,
     pub formula: String,
@@ -132,14 +132,14 @@ impl FieldExprDependencies for Stage4FieldExprPlan {
     }
 }
 
-fn stage4_structured_polynomial_value_expr(
+fn stage4_structured_polynomial_scalar_expr(
     value: &Stage4StructuredPolynomialEvalPlan,
-) -> Stage4ValueExprPlan {
+) -> Stage4ScalarExprPlan {
     let operands = vec![value.x_point.source.clone(), value.y_point.source.clone()];
-    Stage4ValueExprPlan {
+    Stage4ScalarExprPlan {
         symbol: value.symbol.clone(),
         kind: "op".to_owned(),
-        formula: structured_polynomial_value_formula(
+        formula: structured_polynomial_scalar_formula(
             value.polynomial.as_str(),
             value.x_point.segment.as_str(),
             value.x_point.length.as_str(),
@@ -274,7 +274,7 @@ verifier_plan::impl_verifier_plan_source_traits!(
     opening_input = Stage4OpeningInputPlan,
     field_constant = Stage4FieldConstantPlan,
     field_expr = Stage4FieldExprPlan,
-    value_expr = Stage4ValueExprPlan,
+    scalar_expr = Stage4ScalarExprPlan,
     claim = Stage4SumcheckClaimPlan,
     batch = Stage4SumcheckBatchPlan,
     driver = Stage4SumcheckDriverPlan,
@@ -313,7 +313,7 @@ impl Stage4CpuProgram {
         let mut opening_inputs = Vec::new();
         let mut field_constants = Vec::new();
         let mut field_exprs = Vec::new();
-        let mut value_exprs = Vec::new();
+        let mut scalar_exprs = Vec::new();
         let mut kernels = Vec::new();
         let mut claims = Vec::new();
         let mut batches = Vec::new();
@@ -618,10 +618,10 @@ impl Stage4CpuProgram {
             .ok_or_else(|| EmitError::new("missing cpu party role"))?;
         let is_verifier = role == Role::Verifier;
         if is_verifier {
-            value_exprs.extend(
+            scalar_exprs.extend(
                 relation_output_values
                     .iter()
-                    .map(stage4_structured_polynomial_value_expr),
+                    .map(stage4_structured_polynomial_scalar_expr),
             );
         }
         if role == Role::Prover {
@@ -657,7 +657,7 @@ impl Stage4CpuProgram {
             opening_inputs,
             field_constants,
             field_exprs,
-            value_exprs,
+            scalar_exprs,
             kernels,
             claims,
             batches,
@@ -767,9 +767,9 @@ impl Stage4CpuProgram {
                 }
             }
         }
-        for expr in &self.value_exprs {
-            super::plan_tokens::verify_value_expr_operands(
-                super::plan_tokens::ValueExprVerification {
+        for expr in &self.scalar_exprs {
+            super::plan_tokens::verify_scalar_expr_operands(
+                super::plan_tokens::ScalarExprVerification {
                     stage: "stage4",
                     symbol: &expr.symbol,
                     formula: &expr.formula,
@@ -814,8 +814,8 @@ impl Stage4CpuProgram {
             verifier_values::VerifierScalarSourceKind::FieldExpr,
         );
         values.extend(
-            self.value_exprs.iter().map(|expr| &expr.symbol),
-            verifier_values::VerifierScalarSourceKind::ValueExpr,
+            self.scalar_exprs.iter().map(|expr| &expr.symbol),
+            verifier_values::VerifierScalarSourceKind::ScalarExpr,
         );
         values.extend(
             self.evals.iter().map(|eval| &eval.symbol),
@@ -1423,8 +1423,8 @@ pub use bolt_verifier_runtime::{
     ClaimKind as Stage4ClaimKind, FieldConstantPlan as Stage4FieldConstantPlan,
     FieldExprKind as Stage4FieldExprKind,
     FieldExprPlan as Stage4FieldExprPlan,
-    ValueExprKind as Stage4ValueExprKind,
-    ValueExprPlan as Stage4ValueExprPlan,
+    ScalarExprKind as Stage4ScalarExprKind,
+    ScalarExprPlan as Stage4ScalarExprPlan,
     KernelPlan as Stage4KernelPlan, OpeningBatchPlan as Stage4OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage4OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage4OpeningClaimPlan, OpeningInputPlan as Stage4OpeningInputPlan,
@@ -1487,8 +1487,8 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage4Error);
         } else {
             ""
         };
-        let value_exprs_field = if self.role == Role::Verifier {
-            "    value_exprs: STAGE4_VALUE_EXPRS,\n"
+        let scalar_exprs_field = if self.role == Role::Verifier {
+            "    scalar_exprs: STAGE4_SCALAR_EXPRS,\n"
         } else {
             ""
         };
@@ -1504,7 +1504,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage4Error);
                  \x20   opening_inputs: STAGE4_OPENING_INPUTS,\n\
                  \x20   field_constants: STAGE4_FIELD_CONSTANTS,\n\
                  \x20   field_exprs: STAGE4_FIELD_EXPRS,\n\
-                 {value_exprs_field}\
+                 {scalar_exprs_field}\
                  \x20   kernels: STAGE4_KERNELS,\n\
                  \x20   claims: STAGE4_SUMCHECK_CLAIMS,\n\
                  \x20   batches: STAGE4_SUMCHECK_BATCHES,\n\
@@ -1543,7 +1543,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage4Error);
         source.push_str(&self.emit_field_constant_constants());
         source.push_str(&self.emit_field_expr_constants()?);
         if self.role == Role::Verifier {
-            source.push_str(&self.emit_value_expr_constants()?);
+            source.push_str(&self.emit_scalar_expr_constants()?);
         }
         Ok(source)
     }
@@ -1733,12 +1733,12 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage4Error);
         Ok(source)
     }
 
-    fn emit_value_expr_constants(&self) -> Result<String, EmitError> {
+    fn emit_scalar_expr_constants(&self) -> Result<String, EmitError> {
         let plan = self.verifier_plan()?;
-        Ok(verifier_plan::emit_value_expr_constants(
+        Ok(verifier_plan::emit_scalar_expr_constants(
             "Stage4",
             "STAGE4",
-            &plan.value_exprs,
+            &plan.scalar_exprs,
         ))
     }
 
@@ -2323,7 +2323,7 @@ where
         }
     })?;
     store
-        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
+        .evaluate_available_exprs(program.field_exprs, program.scalar_exprs)
         .map_err(VerifyStage4Error::from)?;
     artifacts.challenge_vectors.push(Stage4ChallengeVector {
         symbol: squeeze.symbol,
@@ -2401,7 +2401,7 @@ where
         program.claims,
         program.batches,
         program.field_exprs,
-        program.value_exprs,
+        program.scalar_exprs,
         program.opening_inputs,
         program.opening_claims,
         program.opening_batches,
@@ -2457,7 +2457,7 @@ fn observe_stage4_sumcheck_output<F: Field>(
         },
     )?;
     store
-        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
+        .evaluate_available_exprs(program.field_exprs, program.scalar_exprs)
         .map_err(VerifyStage4Error::from)?;
     store.verify_opening_equalities(
         program.opening_equalities,
@@ -2496,7 +2496,7 @@ fn expected_batched_output_claim(
         let value = bolt_verifier_runtime::evaluate_relation_output_for_instance(
             program.relation_outputs,
             program.field_exprs,
-            program.value_exprs,
+            program.scalar_exprs,
             store,
             instance,
             evals, &[], &[], local_point,

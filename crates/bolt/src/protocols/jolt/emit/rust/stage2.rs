@@ -1000,7 +1000,7 @@ pub use bolt_verifier_runtime::{
     ClaimKind as Stage2ClaimKind, FieldConstantPlan as Stage2FieldConstantPlan,
     FieldExprKind as Stage2FieldExprKind,
     FieldExprPlan as Stage2FieldExprPlan,
-    ValueExprPlan as Stage2ValueExprPlan,
+    ScalarExprPlan as Stage2ScalarExprPlan,
     OpeningBatchPlan as Stage2OpeningBatchPlan, OpeningClaimPlan as Stage2OpeningClaimPlan,
     OpeningInputPlan as Stage2OpeningInputPlan, PointConcatPlan as Stage2PointConcatPlan,
     PointSlicePlan as Stage2PointSlicePlan, ProgramStepKind as Stage2ProgramStepKind,
@@ -1109,7 +1109,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage2Error);
              \x20   opening_inputs: STAGE2_OPENING_INPUTS,\n\
              \x20   field_constants: STAGE2_FIELD_CONSTANTS,\n\
              \x20   field_exprs: STAGE2_FIELD_EXPRS,\n\
-             \x20   value_exprs: STAGE2_VALUE_EXPRS,\n\
+             \x20   scalar_exprs: STAGE2_SCALAR_EXPRS,\n\
              \x20   claims: STAGE2_SUMCHECK_CLAIMS,\n\
              \x20   batches: STAGE2_SUMCHECK_BATCHES,\n\
              \x20   drivers: STAGE2_SUMCHECK_DRIVERS,\n\
@@ -1151,7 +1151,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage2Error);
         source.push_str(&self.emit_field_constant_constants());
         source.push_str(&self.emit_field_expr_constants()?);
         if self.role == Role::Verifier {
-            source.push_str("pub const STAGE2_VALUE_EXPRS: &[Stage2ValueExprPlan] = &[];\n");
+            source.push_str("pub const STAGE2_SCALAR_EXPRS: &[Stage2ScalarExprPlan] = &[];\n");
         }
         Ok(source)
     }
@@ -2165,7 +2165,7 @@ impl<F: Field> Stage2ValueStore<F> {
         program: &'static Stage2VerifierProgramPlan,
     ) -> Result<(), VerifyStage2Error> {
         self.0
-            .evaluate_available_exprs(program.field_exprs, program.value_exprs)
+            .evaluate_available_exprs(program.field_exprs, program.scalar_exprs)
             .map_err(VerifyStage2Error::from)
     }
 

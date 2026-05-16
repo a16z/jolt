@@ -22,5 +22,5 @@ define_stage_adapter_no_absorb!(
     Stage2PointConcatPlan,
     Stage2OpeningClaimPlan,
     Stage2OpeningBatchPlan,
-    empty_value_exprs = Stage2ValueExprPlan
+    empty_scalar_exprs = Stage2ScalarExprPlan
 );

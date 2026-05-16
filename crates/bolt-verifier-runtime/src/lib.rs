@@ -259,7 +259,7 @@ pub struct FieldExprPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ValueExprKind {
+pub enum ScalarExprKind {
     FieldVectorSum,
     FieldVectorProduct,
     StructuredPolynomial {
@@ -277,9 +277,9 @@ pub enum ValueExprKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ValueExprPlan {
+pub struct ScalarExprPlan {
     pub symbol: &'static str,
-    pub kind: ValueExprKind,
+    pub kind: ScalarExprKind,
     pub operands: &'static [&'static str],
 }
 
@@ -504,7 +504,7 @@ pub struct StageProgramPlan<R: ProtocolRelation> {
     pub opening_inputs: &'static [OpeningInputPlan],
     pub field_constants: &'static [FieldConstantPlan],
     pub field_exprs: &'static [FieldExprPlan],
-    pub value_exprs: &'static [ValueExprPlan],
+    pub scalar_exprs: &'static [ScalarExprPlan],
     pub kernels: &'static [KernelPlan],
     pub claims: &'static [SumcheckClaimPlan<R>],
     pub batches: &'static [SumcheckBatchPlan],
@@ -531,7 +531,7 @@ pub struct StageProgramPlanNoPointZeros<R: ProtocolRelation> {
     pub opening_inputs: &'static [OpeningInputPlan],
     pub field_constants: &'static [FieldConstantPlan],
     pub field_exprs: &'static [FieldExprPlan],
-    pub value_exprs: &'static [ValueExprPlan],
+    pub scalar_exprs: &'static [ScalarExprPlan],
     pub kernels: &'static [KernelPlan],
     pub claims: &'static [SumcheckClaimPlan<R>],
     pub batches: &'static [SumcheckBatchPlan],
@@ -555,7 +555,7 @@ pub struct StageVerifierProgramPlan<R: ProtocolRelation> {
     pub opening_inputs: &'static [OpeningInputPlan],
     pub field_constants: &'static [FieldConstantPlan],
     pub field_exprs: &'static [FieldExprPlan],
-    pub value_exprs: &'static [ValueExprPlan],
+    pub scalar_exprs: &'static [ScalarExprPlan],
     pub claims: &'static [SumcheckClaimPlan<R>],
     pub batches: &'static [SumcheckBatchPlan],
     pub drivers: &'static [SumcheckDriverPlan<R>],
@@ -578,7 +578,7 @@ pub struct StageVerifierProgramPlanNoEqualities<R: ProtocolRelation> {
     pub opening_inputs: &'static [OpeningInputPlan],
     pub field_constants: &'static [FieldConstantPlan],
     pub field_exprs: &'static [FieldExprPlan],
-    pub value_exprs: &'static [ValueExprPlan],
+    pub scalar_exprs: &'static [ScalarExprPlan],
     pub claims: &'static [SumcheckClaimPlan<R>],
     pub batches: &'static [SumcheckBatchPlan],
     pub drivers: &'static [SumcheckDriverPlan<R>],
@@ -993,7 +993,7 @@ impl<F: Field> ValueStore<F> {
     pub fn evaluate_available_exprs(
         &mut self,
         field_exprs: &[FieldExprPlan],
-        value_exprs: &[ValueExprPlan],
+        scalar_exprs: &[ScalarExprPlan],
     ) -> Result<(), RuntimePlanError> {
         loop {
             let mut progress = 0usize;
@@ -1007,14 +1007,14 @@ impl<F: Field> ValueStore<F> {
                 self.insert_scalar(expr.symbol, evaluate_field_expr(expr, &operands)?);
                 progress += 1;
             }
-            for expr in value_exprs {
+            for expr in scalar_exprs {
                 if self.try_scalar(expr.symbol).is_some() {
                     continue;
                 }
-                let Some(operands) = self.try_value_expr_operands(expr) else {
+                let Some(operands) = self.try_scalar_expr_operands(expr) else {
                     continue;
                 };
-                self.insert_scalar(expr.symbol, evaluate_value_expr(expr, &operands)?);
+                self.insert_scalar(expr.symbol, evaluate_scalar_expr(expr, &operands)?);
                 progress += 1;
             }
             if progress == 0 {
@@ -1150,16 +1150,16 @@ impl<F: Field> ValueStore<F> {
             .collect()
     }
 
-    fn try_value_expr_operands(&self, expr: &ValueExprPlan) -> Option<Vec<F>> {
+    fn try_scalar_expr_operands(&self, expr: &ScalarExprPlan) -> Option<Vec<F>> {
         match expr.kind {
-            ValueExprKind::FieldVectorSum | ValueExprKind::FieldVectorProduct => {
+            ScalarExprKind::FieldVectorSum | ScalarExprKind::FieldVectorProduct => {
                 let [symbol] = expr.operands else {
                     return Some(Vec::new());
                 };
                 self.try_field_vector(symbol).map(|values| values.to_vec())
             }
-            ValueExprKind::StructuredPolynomial { .. } => None,
-            ValueExprKind::PowerStridedWeightedSum { .. } => expr
+            ScalarExprKind::StructuredPolynomial { .. } => None,
+            ScalarExprKind::PowerStridedWeightedSum { .. } => expr
                 .operands
                 .iter()
                 .map(|operand| self.try_scalar(operand))
@@ -1208,13 +1208,13 @@ pub fn batch_claims<'a, C: SymbolPlan>(
 pub fn batch_claim_values<C: SumcheckClaimInfo>(
     claims: &[&C],
     field_exprs: &[FieldExprPlan],
-    value_exprs: &[ValueExprPlan],
+    scalar_exprs: &[ScalarExprPlan],
     store: &mut ValueStore<Fr>,
 ) -> Result<Vec<Fr>, RuntimePlanError> {
     claims
         .iter()
         .map(|claim| {
-            store.evaluate_available_exprs(field_exprs, value_exprs)?;
+            store.evaluate_available_exprs(field_exprs, scalar_exprs)?;
             store.scalar_or(claim.claim_value(), |symbol| {
                 RuntimePlanError::MissingValue { symbol }
             })
@@ -1228,7 +1228,7 @@ pub fn verify_batched_sumcheck<T, E, C, D, Expected, Observe, MapSumcheck>(
     claims: &'static [C],
     batches: &'static [SumcheckBatchPlan],
     field_exprs: &'static [FieldExprPlan],
-    value_exprs: &'static [ValueExprPlan],
+    scalar_exprs: &'static [ScalarExprPlan],
     opening_inputs: &'static [OpeningInputPlan],
     opening_claims: &'static [OpeningClaimPlan],
     opening_batches: &'static [OpeningBatchPlan],
@@ -1256,7 +1256,7 @@ where
     }
     let batch = find_batch(batches, driver.symbol(), driver.batch())?;
     let claims = batch_claims(claims, batch)?;
-    let input_claims = batch_claim_values(&claims, field_exprs, value_exprs, store)?;
+    let input_claims = batch_claim_values(&claims, field_exprs, scalar_exprs, store)?;
     for claim in &input_claims {
         append_labeled_scalar(transcript, batch.claim_label, claim);
     }
@@ -1338,7 +1338,7 @@ pub fn eval_family_values<F: Field>(
 pub fn evaluate_relation_output<R: ProtocolRelation>(
     plan: &RelationOutputPlan<R>,
     field_exprs: &[FieldExprPlan],
-    value_exprs: &[ValueExprPlan],
+    scalar_exprs: &[ScalarExprPlan],
     store: &ValueStore<Fr>,
     instance_symbol: &'static str,
     evals: &[StageNamedEval<Fr>],
@@ -1363,7 +1363,7 @@ pub fn evaluate_relation_output<R: ProtocolRelation>(
         local_points,
         local_point,
     };
-    evaluate_available_exprs_with_scratch(field_exprs, value_exprs, store, &mut scratch, context)?;
+    evaluate_available_exprs_with_scratch(field_exprs, scalar_exprs, store, &mut scratch, context)?;
     scratch
         .scalar_or(store, plan.expected_output)
         .ok_or(RuntimePlanError::MissingValue {
@@ -1374,7 +1374,7 @@ pub fn evaluate_relation_output<R: ProtocolRelation>(
 pub fn evaluate_relation_output_for_instance<R: ProtocolRelation>(
     relation_outputs: &[RelationOutputPlan<R>],
     field_exprs: &[FieldExprPlan],
-    value_exprs: &[ValueExprPlan],
+    scalar_exprs: &[ScalarExprPlan],
     store: &ValueStore<Fr>,
     instance: &SumcheckInstanceResultPlan<R>,
     evals: &[StageNamedEval<Fr>],
@@ -1392,7 +1392,7 @@ pub fn evaluate_relation_output_for_instance<R: ProtocolRelation>(
     evaluate_relation_output(
         relation_output,
         field_exprs,
-        value_exprs,
+        scalar_exprs,
         store,
         instance.symbol,
         evals,
@@ -1509,7 +1509,7 @@ impl ScratchScalars {
 
 fn evaluate_available_exprs_with_scratch(
     field_exprs: &[FieldExprPlan],
-    value_exprs: &[ValueExprPlan],
+    scalar_exprs: &[ScalarExprPlan],
     store: &ValueStore<Fr>,
     scratch: &mut ScratchScalars,
     context: RelationOutputContext<'_>,
@@ -1526,11 +1526,11 @@ fn evaluate_available_exprs_with_scratch(
             scratch.insert(expr.symbol, evaluate_field_expr(expr, &operands)?);
             progress += 1;
         }
-        for expr in value_exprs {
+        for expr in scalar_exprs {
             if scratch.scalar_or(store, expr.symbol).is_some() {
                 continue;
             }
-            let Some(value) = evaluate_relation_output_value_expr(expr, store, scratch, context)?
+            let Some(value) = evaluate_relation_output_scalar_expr(expr, store, scratch, context)?
             else {
                 continue;
             };
@@ -1554,27 +1554,27 @@ fn relation_output_expr_operands(
         .collect()
 }
 
-fn evaluate_relation_output_value_expr(
-    expr: &ValueExprPlan,
+fn evaluate_relation_output_scalar_expr(
+    expr: &ScalarExprPlan,
     store: &ValueStore<Fr>,
     scratch: &ScratchScalars,
     context: RelationOutputContext<'_>,
 ) -> Result<Option<Fr>, RuntimePlanError> {
     match expr.kind {
-        ValueExprKind::FieldVectorSum | ValueExprKind::FieldVectorProduct => {
+        ScalarExprKind::FieldVectorSum | ScalarExprKind::FieldVectorProduct => {
             let [symbol] = expr.operands else {
-                return evaluate_value_expr(expr, &[]).map(Some);
+                return evaluate_scalar_expr(expr, &[]).map(Some);
             };
             let Some(values) = store.try_field_vector(symbol) else {
                 return Ok(None);
             };
-            evaluate_value_expr(expr, values).map(Some)
+            evaluate_scalar_expr(expr, values).map(Some)
         }
-        ValueExprKind::StructuredPolynomial {
+        ScalarExprKind::StructuredPolynomial {
             polynomial,
             x_point,
             y_point,
-        } => evaluate_structured_polynomial_value(
+        } => evaluate_structured_polynomial_scalar(
             expr.symbol,
             expr.operands,
             polynomial,
@@ -1584,18 +1584,18 @@ fn evaluate_relation_output_value_expr(
             context,
         )
         .map(Some),
-        ValueExprKind::PowerStridedWeightedSum { .. } => expr
+        ScalarExprKind::PowerStridedWeightedSum { .. } => expr
             .operands
             .iter()
             .map(|operand| scratch.scalar_or(store, operand))
             .collect::<Option<Vec<_>>>()
-            .map(|operands| evaluate_value_expr(expr, &operands).map(Some))
+            .map(|operands| evaluate_scalar_expr(expr, &operands).map(Some))
             .transpose()
             .map(Option::flatten),
     }
 }
 
-fn evaluate_structured_polynomial_value(
+fn evaluate_structured_polynomial_scalar(
     symbol: &'static str,
     operands: &[&'static str],
     polynomial: StructuredPolynomialKind,
@@ -1730,30 +1730,31 @@ pub fn evaluate_field_expr<F: Field>(
     }
 }
 
-pub fn evaluate_value_expr<F: Field>(
-    expr: &ValueExprPlan,
+pub fn evaluate_scalar_expr<F: Field>(
+    expr: &ScalarExprPlan,
     operands: &[F],
 ) -> Result<F, RuntimePlanError> {
     match expr.kind {
-        ValueExprKind::FieldVectorSum => {
+        ScalarExprKind::FieldVectorSum => {
             require_min_operand_count(expr.symbol, 1, operands.len())?;
             Ok(operands
                 .iter()
                 .copied()
                 .fold(F::from_u64(0), |acc, operand| acc + operand))
         }
-        ValueExprKind::FieldVectorProduct => {
+        ScalarExprKind::FieldVectorProduct => {
             require_min_operand_count(expr.symbol, 1, operands.len())?;
             Ok(operands
                 .iter()
                 .copied()
                 .fold(F::from_u64(1), |acc, operand| acc * operand))
         }
-        ValueExprKind::StructuredPolynomial { .. } => Err(RuntimePlanError::InvalidProof {
+        ScalarExprKind::StructuredPolynomial { .. } => Err(RuntimePlanError::InvalidProof {
             driver: expr.symbol,
-            reason: "structured polynomial value expressions require relation-output point context",
+            reason:
+                "structured polynomial scalar expressions require relation-output point context",
         }),
-        ValueExprKind::PowerStridedWeightedSum {
+        ScalarExprKind::PowerStridedWeightedSum {
             row_count,
             power_stride,
             value_term_offsets,
@@ -1964,11 +1965,11 @@ pub fn reverse_slice(values: &[Fr]) -> Vec<Fr> {
 )]
 mod tests {
     use super::{
-        evaluate_relation_output_for_instance, evaluate_value_expr, Fr, NamedEvalFamilyPlan,
-        RelationOutputPlan, RuntimePlanError, StructuredPolynomialKind,
-        StructuredPolynomialPointLength, StructuredPolynomialPointOrder,
+        evaluate_relation_output_for_instance, evaluate_scalar_expr, Fr, NamedEvalFamilyPlan,
+        RelationOutputPlan, RuntimePlanError, ScalarExprKind, ScalarExprPlan,
+        StructuredPolynomialKind, StructuredPolynomialPointLength, StructuredPolynomialPointOrder,
         StructuredPolynomialPointSegment, StructuredPolynomialPointTransform,
-        SumcheckInstanceResultPlan, SumcheckPointOrder, ValueExprKind, ValueExprPlan, ValueStore,
+        SumcheckInstanceResultPlan, SumcheckPointOrder, ValueStore,
     };
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2022,14 +2023,14 @@ mod tests {
             .evaluate_available_exprs(
                 &[],
                 &[
-                    ValueExprPlan {
+                    ScalarExprPlan {
                         symbol: "family.ab.product",
-                        kind: ValueExprKind::FieldVectorProduct,
+                        kind: ScalarExprKind::FieldVectorProduct,
                         operands: &["family.ab"],
                     },
-                    ValueExprPlan {
+                    ScalarExprPlan {
                         symbol: "family.ab.sum",
-                        kind: ValueExprKind::FieldVectorSum,
+                        kind: ScalarExprKind::FieldVectorSum,
                         operands: &["family.ab"],
                     },
                 ],
@@ -2041,11 +2042,11 @@ mod tests {
     }
 
     #[test]
-    fn value_expr_evaluates_power_strided_weighted_sum() {
-        let value = evaluate_value_expr(
-            &ValueExprPlan {
+    fn scalar_expr_evaluates_power_strided_weighted_sum() {
+        let value = evaluate_scalar_expr(
+            &ScalarExprPlan {
                 symbol: "family.weighted",
-                kind: ValueExprKind::PowerStridedWeightedSum {
+                kind: ScalarExprKind::PowerStridedWeightedSum {
                     row_count: 2,
                     power_stride: 3,
                     value_term_offsets: &[0],
@@ -2069,7 +2070,7 @@ mod tests {
     }
 
     #[test]
-    fn relation_output_evaluates_structured_polynomial_value_exprs() {
+    fn relation_output_evaluates_structured_polynomial_scalar_exprs() {
         let x = [Fr::from_u64(1), Fr::from_u64(0)];
         let mut store = ValueStore::default();
         store.insert_point("point.y", x.to_vec());
@@ -2082,9 +2083,9 @@ mod tests {
                 expected_output: "eq.xy",
             }],
             &[],
-            &[ValueExprPlan {
+            &[ScalarExprPlan {
                 symbol: "eq.xy",
-                kind: ValueExprKind::StructuredPolynomial {
+                kind: ScalarExprKind::StructuredPolynomial {
                     polynomial: StructuredPolynomialKind::Eq,
                     x_point: StructuredPolynomialPointTransform {
                         segment: StructuredPolynomialPointSegment::Full,

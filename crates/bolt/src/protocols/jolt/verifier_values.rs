@@ -8,7 +8,7 @@ pub enum VerifierScalarSourceKind {
     FieldConstant,
     TranscriptScalar,
     FieldExpr,
-    ValueExpr,
+    ScalarExpr,
     PointDerived,
     SumcheckEval,
     OutputEvalFamily,

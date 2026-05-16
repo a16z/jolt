@@ -25,7 +25,7 @@ pub use bolt_verifier_runtime::{
     ClaimKind as Stage2ClaimKind, FieldConstantPlan as Stage2FieldConstantPlan,
     FieldExprKind as Stage2FieldExprKind,
     FieldExprPlan as Stage2FieldExprPlan,
-    ValueExprPlan as Stage2ValueExprPlan,
+    ScalarExprPlan as Stage2ScalarExprPlan,
     OpeningBatchPlan as Stage2OpeningBatchPlan, OpeningClaimPlan as Stage2OpeningClaimPlan,
     OpeningInputPlan as Stage2OpeningInputPlan, PointConcatPlan as Stage2PointConcatPlan,
     PointSlicePlan as Stage2PointSlicePlan, ProgramStepKind as Stage2ProgramStepKind,
@@ -145,7 +145,7 @@ pub const STAGE2_FIELD_EXPRS: &[Stage2FieldExprPlan] = &[
     Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.LeftInstructionInput", kind: Stage2FieldExprKind::Add, operands: &["stage2.instruction_lookup.partial.RightOperand", "stage2.instruction_lookup.term.LeftInstructionInput"] },
     Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.claim_reduction.claim_expr", kind: Stage2FieldExprKind::Add, operands: &["stage2.instruction_lookup.partial.LeftInstructionInput", "stage2.instruction_lookup.term.RightInstructionInput"] },
 ];
-pub const STAGE2_VALUE_EXPRS: &[Stage2ValueExprPlan] = &[];
+pub const STAGE2_SCALAR_EXPRS: &[Stage2ScalarExprPlan] = &[];
 pub const STAGE2_SUMCHECK_CLAIMS: &[Stage2SumcheckClaimPlan] = &[
     Stage2SumcheckClaimPlan { symbol: "stage2.product_virtual.uniskip.input", stage: "stage2", domain: "jolt.stage2_uniskip_domain", num_rounds: 1, degree: 6, claim: "stage2.product_virtual.weighted_stage1_outputs", kernel: None, relation: Some(Stage2RelationKind::Stage2ProductVirtualUniskip), claim_value: "stage2.product_virtual.uniskip.claim_expr" },
     Stage2SumcheckClaimPlan { symbol: "stage2.ram_read_write.input", stage: "stage2", domain: "jolt.stage2_ram_rw_domain", num_rounds: 32, degree: 3, claim: "stage2.ram_read_write.weighted_values", kernel: None, relation: Some(Stage2RelationKind::Stage2RamReadWrite), claim_value: "stage2.ram_read_write.claim_expr" },
@@ -248,7 +248,7 @@ pub const STAGE2_PROGRAM: Stage2VerifierProgramPlan = Stage2VerifierProgramPlan 
     opening_inputs: STAGE2_OPENING_INPUTS,
     field_constants: STAGE2_FIELD_CONSTANTS,
     field_exprs: STAGE2_FIELD_EXPRS,
-    value_exprs: STAGE2_VALUE_EXPRS,
+    scalar_exprs: STAGE2_SCALAR_EXPRS,
     claims: STAGE2_SUMCHECK_CLAIMS,
     batches: STAGE2_SUMCHECK_BATCHES,
     drivers: STAGE2_SUMCHECK_DRIVERS,
@@ -641,7 +641,7 @@ impl<F: Field> Stage2ValueStore<F> {
         program: &'static Stage2VerifierProgramPlan,
     ) -> Result<(), VerifyStage2Error> {
         self.0
-            .evaluate_available_exprs(program.field_exprs, program.value_exprs)
+            .evaluate_available_exprs(program.field_exprs, program.scalar_exprs)
             .map_err(VerifyStage2Error::from)
     }
 

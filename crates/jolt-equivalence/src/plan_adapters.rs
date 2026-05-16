@@ -23,11 +23,11 @@ macro_rules! stage_field_expr {
     };
 }
 
-macro_rules! stage_value_expr {
-    (generated, $module:ident, $value_expr:ident, $plan:ident) => {
-        $module::$value_expr {
+macro_rules! stage_scalar_expr {
+    (generated, $module:ident, $scalar_expr:ident, $plan:ident) => {
+        $module::$scalar_expr {
             symbol: super::leak_str(&$plan.symbol),
-            kind: super::generated_value_expr_kind($plan.formula.as_str()),
+            kind: super::generated_scalar_expr_kind($plan.formula.as_str()),
             operands: super::leak_str_slice(&$plan.operands),
         }
     };
@@ -312,12 +312,12 @@ fn generated_field_expr_kind(value: &str) -> bolt_verifier_runtime::FieldExprKin
 #[expect(
     clippy::expect_used,
     clippy::panic,
-    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier value expression tag"
+    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier scalar expression tag"
 )]
-fn generated_value_expr_kind(value: &str) -> bolt_verifier_runtime::ValueExprKind {
+fn generated_scalar_expr_kind(value: &str) -> bolt_verifier_runtime::ScalarExprKind {
     match value {
-        "field_vector.sum" => bolt_verifier_runtime::ValueExprKind::FieldVectorSum,
-        "field_vector.product" => bolt_verifier_runtime::ValueExprKind::FieldVectorProduct,
+        "field_vector.sum" => bolt_verifier_runtime::ScalarExprKind::FieldVectorSum,
+        "field_vector.product" => bolt_verifier_runtime::ScalarExprKind::FieldVectorProduct,
         value if value.starts_with("field.power_strided_weighted_sum:") => {
             let spec = value
                 .strip_prefix("field.power_strided_weighted_sum:")
@@ -327,7 +327,7 @@ fn generated_value_expr_kind(value: &str) -> bolt_verifier_runtime::ValueExprKin
                 parts.len() == 5,
                 "power-strided weighted expression has five fields"
             );
-            bolt_verifier_runtime::ValueExprKind::PowerStridedWeightedSum {
+            bolt_verifier_runtime::ScalarExprKind::PowerStridedWeightedSum {
                 row_count: parts[0]
                     .parse::<usize>()
                     .expect("power-strided weighted row count is usize"),
@@ -348,7 +348,7 @@ fn generated_value_expr_kind(value: &str) -> bolt_verifier_runtime::ValueExprKin
                 parts.len() == 7,
                 "structured polynomial expression has seven fields"
             );
-            bolt_verifier_runtime::ValueExprKind::StructuredPolynomial {
+            bolt_verifier_runtime::ScalarExprKind::StructuredPolynomial {
                 polynomial: generated_structured_polynomial_kind(parts[0]),
                 x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform {
                     segment: generated_structured_polynomial_point_segment(parts[1]),
@@ -362,7 +362,7 @@ fn generated_value_expr_kind(value: &str) -> bolt_verifier_runtime::ValueExprKin
                 },
             }
         }
-        value => panic!("unsupported generated value expression kind `{value}`"),
+        value => panic!("unsupported generated scalar expression kind `{value}`"),
     }
 }
 
@@ -541,8 +541,8 @@ macro_rules! define_stage_adapter_impl {
         $(, role = $role_field:ident)?
         $(, transcript_absorb_bytes = $absorb:ident)?
         $(, kernels = $kernel:ident)?
-        $(, value_expr = $value_expr:ident)?
-        $(, empty_value_exprs = $empty_value_exprs:ident)?
+        $(, scalar_expr = $scalar_expr:ident)?
+        $(, empty_scalar_exprs = $empty_scalar_exprs:ident)?
         $(, point_zeros = $point_zero:ident)?
         $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
@@ -627,17 +627,17 @@ macro_rules! define_stage_adapter_impl {
                         .collect(),
                 ),
                 $(
-                value_exprs: super::leak_slice(
+                scalar_exprs: super::leak_slice(
                     program
-                        .value_exprs
+                        .scalar_exprs
                         .iter()
-                        .map(|plan| stage_value_expr!($mode, $module, $value_expr, plan))
+                        .map(|plan| stage_scalar_expr!($mode, $module, $scalar_expr, plan))
                         .collect(),
                 ),
                 )?
                 $(
-                value_exprs: {
-                    let _ = stringify!($empty_value_exprs);
+                scalar_exprs: {
+                    let _ = stringify!($empty_scalar_exprs);
                     &[]
                 },
                 )?
@@ -875,8 +875,8 @@ macro_rules! define_stage_adapter {
         $opening_equality:ident,
         $opening_batch:ident
         $(, point_zero = $point_zero:ident)?
-        $(, value_expr = $value_expr:ident)?
-        $(, empty_value_exprs = $empty_value_exprs:ident)?
+        $(, scalar_expr = $scalar_expr:ident)?
+        $(, empty_scalar_exprs = $empty_scalar_exprs:ident)?
         $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
     ) => {
@@ -904,8 +904,8 @@ macro_rules! define_stage_adapter {
             role = role,
             transcript_absorb_bytes = $absorb,
             kernels = $kernel
-            $(, value_expr = $value_expr)?
-            $(, empty_value_exprs = $empty_value_exprs)?
+            $(, scalar_expr = $scalar_expr)?
+            $(, empty_scalar_exprs = $empty_scalar_exprs)?
             $(, point_zeros = $point_zero)?
             $(, relation_outputs = $relation_output, relation_output_values = $relation_output_value)?
             $(, empty_relation_outputs = $empty_relation_outputs)?
@@ -938,8 +938,8 @@ macro_rules! define_stage_adapter_no_absorb {
         $opening_claim:ident,
         $opening_batch:ident
         $(, kernels = $kernel:ident)?
-        $(, value_expr = $value_expr:ident)?
-        $(, empty_value_exprs = $empty_value_exprs:ident)?
+        $(, scalar_expr = $scalar_expr:ident)?
+        $(, empty_scalar_exprs = $empty_scalar_exprs:ident)?
         $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
         $(, opening_equalities = $opening_equality:ident)?
@@ -966,8 +966,8 @@ macro_rules! define_stage_adapter_no_absorb {
             $opening_claim,
             $opening_batch
             $(, kernels = $kernel)?
-            $(, value_expr = $value_expr)?
-            $(, empty_value_exprs = $empty_value_exprs)?
+            $(, scalar_expr = $scalar_expr)?
+            $(, empty_scalar_exprs = $empty_scalar_exprs)?
             $(, relation_outputs = $relation_output, relation_output_values = $relation_output_value)?
             $(, empty_relation_outputs = $empty_relation_outputs)?
             $(, opening_equalities = $opening_equality)?

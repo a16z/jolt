@@ -25,8 +25,8 @@ pub use bolt_verifier_runtime::{
     ClaimKind as Stage3ClaimKind, FieldConstantPlan as Stage3FieldConstantPlan,
     FieldExprKind as Stage3FieldExprKind,
     FieldExprPlan as Stage3FieldExprPlan,
-    ValueExprKind as Stage3ValueExprKind,
-    ValueExprPlan as Stage3ValueExprPlan,
+    ScalarExprKind as Stage3ScalarExprKind,
+    ScalarExprPlan as Stage3ScalarExprPlan,
     OpeningBatchPlan as Stage3OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage3OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage3OpeningClaimPlan, OpeningInputPlan as Stage3OpeningInputPlan,
@@ -138,11 +138,11 @@ pub const STAGE3_FIELD_EXPRS: &[Stage3FieldExprPlan] = &[
     Stage3FieldExprPlan { symbol: "stage3.registers.output.weighted_register_values", kind: Stage3FieldExprKind::Add, operands: &["stage3.registers.output.partial.RdWriteValueRs1Value", "stage3.registers.output.term.Rs2Value"] },
     Stage3FieldExprPlan { symbol: "stage3.registers.output.claim_expr", kind: Stage3FieldExprKind::Mul, operands: &["stage3.registers.output.eq.RdWriteValue", "stage3.registers.output.weighted_register_values"] },
 ];
-pub const STAGE3_VALUE_EXPRS: &[Stage3ValueExprPlan] = &[
-    Stage3ValueExprPlan { symbol: "stage3.spartan_shift.output.eq.NextPC", kind: Stage3ValueExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::EqPlusOne, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage3.spartan_shift.instance", "stage3.input.stage1.NextPC"] },
-    Stage3ValueExprPlan { symbol: "stage3.spartan_shift.output.eq.NextIsNoop", kind: Stage3ValueExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::EqPlusOne, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage3.spartan_shift.instance", "stage3.input.stage2.product_virtual.NextIsNoop"] },
-    Stage3ValueExprPlan { symbol: "stage3.instruction_input.output.eq.LeftInstructionInput", kind: Stage3ValueExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Eq, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage3.instruction_input.instance", "stage3.input.stage2.product_virtual.LeftInstructionInput"] },
-    Stage3ValueExprPlan { symbol: "stage3.registers.output.eq.RdWriteValue", kind: Stage3ValueExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Eq, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage3.registers_claim_reduction.instance", "stage3.input.stage1.RdWriteValue"] },
+pub const STAGE3_SCALAR_EXPRS: &[Stage3ScalarExprPlan] = &[
+    Stage3ScalarExprPlan { symbol: "stage3.spartan_shift.output.eq.NextPC", kind: Stage3ScalarExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::EqPlusOne, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage3.spartan_shift.instance", "stage3.input.stage1.NextPC"] },
+    Stage3ScalarExprPlan { symbol: "stage3.spartan_shift.output.eq.NextIsNoop", kind: Stage3ScalarExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::EqPlusOne, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage3.spartan_shift.instance", "stage3.input.stage2.product_virtual.NextIsNoop"] },
+    Stage3ScalarExprPlan { symbol: "stage3.instruction_input.output.eq.LeftInstructionInput", kind: Stage3ScalarExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Eq, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage3.instruction_input.instance", "stage3.input.stage2.product_virtual.LeftInstructionInput"] },
+    Stage3ScalarExprPlan { symbol: "stage3.registers.output.eq.RdWriteValue", kind: Stage3ScalarExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Eq, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage3.registers_claim_reduction.instance", "stage3.input.stage1.RdWriteValue"] },
 ];
 pub const STAGE3_SUMCHECK_CLAIMS: &[Stage3SumcheckClaimPlan] = &[
     Stage3SumcheckClaimPlan { symbol: "stage3.spartan_shift.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage3.spartan_shift.weighted_next_values", kernel: None, relation: Some(Stage3RelationKind::Stage3SpartanShift), claim_value: "stage3.spartan_shift.claim_expr" },
@@ -238,7 +238,7 @@ pub const STAGE3_PROGRAM: Stage3VerifierProgramPlan = Stage3VerifierProgramPlan 
     opening_inputs: STAGE3_OPENING_INPUTS,
     field_constants: STAGE3_FIELD_CONSTANTS,
     field_exprs: STAGE3_FIELD_EXPRS,
-    value_exprs: STAGE3_VALUE_EXPRS,
+    scalar_exprs: STAGE3_SCALAR_EXPRS,
     claims: STAGE3_SUMCHECK_CLAIMS,
     batches: STAGE3_SUMCHECK_BATCHES,
     drivers: STAGE3_SUMCHECK_DRIVERS,
@@ -336,7 +336,7 @@ where
         }
     })?;
     store
-        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
+        .evaluate_available_exprs(program.field_exprs, program.scalar_exprs)
         .map_err(VerifyStage3Error::from)?;
     artifacts.challenge_vectors.push(Stage3ChallengeVector {
         symbol: squeeze.symbol,
@@ -403,7 +403,7 @@ where
         program.claims,
         program.batches,
         program.field_exprs,
-        program.value_exprs,
+        program.scalar_exprs,
         program.opening_inputs,
         program.opening_claims,
         program.opening_batches,
@@ -456,7 +456,7 @@ fn observe_stage3_sumcheck_output<F: Field>(
         },
     )?;
     store
-        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
+        .evaluate_available_exprs(program.field_exprs, program.scalar_exprs)
         .map_err(VerifyStage3Error::from)?;
     store.verify_opening_equalities(
         program.opening_equalities,
@@ -495,7 +495,7 @@ fn expected_batched_output_claim(
         let value = bolt_verifier_runtime::evaluate_relation_output_for_instance(
             program.relation_outputs,
             program.field_exprs,
-            program.value_exprs,
+            program.scalar_exprs,
             store,
             instance,
             evals, &[], &[], local_point,

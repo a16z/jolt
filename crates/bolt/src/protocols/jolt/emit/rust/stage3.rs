@@ -6,7 +6,7 @@ use melior::ir::{Attribute, OperationRef};
 
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
-use crate::protocols::jolt::rust_target_plan::structured_polynomial_value_formula;
+use crate::protocols::jolt::rust_target_plan::structured_polynomial_scalar_formula;
 use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
 use crate::protocols::jolt::verifier_relation_outputs::{
     self, FieldExprDependencies, RelationOutputAst as Stage3RelationOutputAst,
@@ -27,7 +27,7 @@ pub struct Stage3CpuProgram {
     pub opening_inputs: Vec<Stage3OpeningInputPlan>,
     pub field_constants: Vec<Stage3FieldConstantPlan>,
     pub field_exprs: Vec<Stage3FieldExprPlan>,
-    pub value_exprs: Vec<Stage3ValueExprPlan>,
+    pub scalar_exprs: Vec<Stage3ScalarExprPlan>,
     pub kernels: Vec<Stage3KernelPlan>,
     pub claims: Vec<Stage3SumcheckClaimPlan>,
     pub batches: Vec<Stage3SumcheckBatchPlan>,
@@ -101,7 +101,7 @@ pub struct Stage3FieldExprPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3ValueExprPlan {
+pub struct Stage3ScalarExprPlan {
     pub symbol: String,
     pub kind: String,
     pub formula: String,
@@ -119,14 +119,14 @@ impl FieldExprDependencies for Stage3FieldExprPlan {
     }
 }
 
-fn stage3_structured_polynomial_value_expr(
+fn stage3_structured_polynomial_scalar_expr(
     value: &Stage3StructuredPolynomialEvalPlan,
-) -> Stage3ValueExprPlan {
+) -> Stage3ScalarExprPlan {
     let operands = vec![value.x_point.source.clone(), value.y_point.source.clone()];
-    Stage3ValueExprPlan {
+    Stage3ScalarExprPlan {
         symbol: value.symbol.clone(),
         kind: "op".to_owned(),
-        formula: structured_polynomial_value_formula(
+        formula: structured_polynomial_scalar_formula(
             value.polynomial.as_str(),
             value.x_point.segment.as_str(),
             value.x_point.length.as_str(),
@@ -261,7 +261,7 @@ verifier_plan::impl_verifier_plan_source_traits!(
     opening_input = Stage3OpeningInputPlan,
     field_constant = Stage3FieldConstantPlan,
     field_expr = Stage3FieldExprPlan,
-    value_expr = Stage3ValueExprPlan,
+    scalar_expr = Stage3ScalarExprPlan,
     claim = Stage3SumcheckClaimPlan,
     batch = Stage3SumcheckBatchPlan,
     driver = Stage3SumcheckDriverPlan,
@@ -298,7 +298,7 @@ impl Stage3CpuProgram {
         let mut opening_inputs = Vec::new();
         let mut field_constants = Vec::new();
         let mut field_exprs = Vec::new();
-        let mut value_exprs = Vec::new();
+        let mut scalar_exprs = Vec::new();
         let mut kernels = Vec::new();
         let mut claims = Vec::new();
         let mut batches = Vec::new();
@@ -606,10 +606,10 @@ impl Stage3CpuProgram {
             .ok_or_else(|| EmitError::new("missing cpu party role"))?;
         let is_verifier = role == Role::Verifier;
         if is_verifier {
-            value_exprs.extend(
+            scalar_exprs.extend(
                 relation_output_values
                     .iter()
-                    .map(stage3_structured_polynomial_value_expr),
+                    .map(stage3_structured_polynomial_scalar_expr),
             );
         }
         if role == Role::Prover {
@@ -644,7 +644,7 @@ impl Stage3CpuProgram {
             opening_inputs,
             field_constants,
             field_exprs,
-            value_exprs,
+            scalar_exprs,
             kernels,
             claims,
             batches,
@@ -746,9 +746,9 @@ impl Stage3CpuProgram {
                 }
             }
         }
-        for expr in &self.value_exprs {
-            super::plan_tokens::verify_value_expr_operands(
-                super::plan_tokens::ValueExprVerification {
+        for expr in &self.scalar_exprs {
+            super::plan_tokens::verify_scalar_expr_operands(
+                super::plan_tokens::ScalarExprVerification {
                     stage: "stage3",
                     symbol: &expr.symbol,
                     formula: &expr.formula,
@@ -793,8 +793,8 @@ impl Stage3CpuProgram {
             verifier_values::VerifierScalarSourceKind::FieldExpr,
         );
         values.extend(
-            self.value_exprs.iter().map(|expr| &expr.symbol),
-            verifier_values::VerifierScalarSourceKind::ValueExpr,
+            self.scalar_exprs.iter().map(|expr| &expr.symbol),
+            verifier_values::VerifierScalarSourceKind::ScalarExpr,
         );
         values.extend(
             self.evals.iter().map(|eval| &eval.symbol),
@@ -1211,8 +1211,8 @@ pub use bolt_verifier_runtime::{
     ClaimKind as Stage3ClaimKind, FieldConstantPlan as Stage3FieldConstantPlan,
     FieldExprKind as Stage3FieldExprKind,
     FieldExprPlan as Stage3FieldExprPlan,
-    ValueExprKind as Stage3ValueExprKind,
-    ValueExprPlan as Stage3ValueExprPlan,
+    ScalarExprKind as Stage3ScalarExprKind,
+    ScalarExprPlan as Stage3ScalarExprPlan,
     OpeningBatchPlan as Stage3OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage3OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage3OpeningClaimPlan, OpeningInputPlan as Stage3OpeningInputPlan,
@@ -1293,7 +1293,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
              \x20   opening_inputs: STAGE3_OPENING_INPUTS,\n\
              \x20   field_constants: STAGE3_FIELD_CONSTANTS,\n\
              \x20   field_exprs: STAGE3_FIELD_EXPRS,\n\
-             \x20   value_exprs: STAGE3_VALUE_EXPRS,\n\
+             \x20   scalar_exprs: STAGE3_SCALAR_EXPRS,\n\
              \x20   claims: STAGE3_SUMCHECK_CLAIMS,\n\
              \x20   batches: STAGE3_SUMCHECK_BATCHES,\n\
              \x20   drivers: STAGE3_SUMCHECK_DRIVERS,\n\
@@ -1328,7 +1328,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
         source.push_str(&self.emit_field_constant_constants());
         source.push_str(&self.emit_field_expr_constants()?);
         if self.role == Role::Verifier {
-            source.push_str(&self.emit_value_expr_constants()?);
+            source.push_str(&self.emit_scalar_expr_constants()?);
         }
         Ok(source)
     }
@@ -1495,12 +1495,12 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
         Ok(source)
     }
 
-    fn emit_value_expr_constants(&self) -> Result<String, EmitError> {
+    fn emit_scalar_expr_constants(&self) -> Result<String, EmitError> {
         let plan = self.verifier_plan()?;
-        Ok(verifier_plan::emit_value_expr_constants(
+        Ok(verifier_plan::emit_scalar_expr_constants(
             "Stage3",
             "STAGE3",
-            &plan.value_exprs,
+            &plan.scalar_exprs,
         ))
     }
 
@@ -2091,7 +2091,7 @@ where
         }
     })?;
     store
-        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
+        .evaluate_available_exprs(program.field_exprs, program.scalar_exprs)
         .map_err(VerifyStage3Error::from)?;
     artifacts.challenge_vectors.push(Stage3ChallengeVector {
         symbol: squeeze.symbol,
@@ -2158,7 +2158,7 @@ where
         program.claims,
         program.batches,
         program.field_exprs,
-        program.value_exprs,
+        program.scalar_exprs,
         program.opening_inputs,
         program.opening_claims,
         program.opening_batches,
@@ -2211,7 +2211,7 @@ fn observe_stage3_sumcheck_output<F: Field>(
         },
     )?;
     store
-        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
+        .evaluate_available_exprs(program.field_exprs, program.scalar_exprs)
         .map_err(VerifyStage3Error::from)?;
     store.verify_opening_equalities(
         program.opening_equalities,
@@ -2250,7 +2250,7 @@ fn expected_batched_output_claim(
         let value = bolt_verifier_runtime::evaluate_relation_output_for_instance(
             program.relation_outputs,
             program.field_exprs,
-            program.value_exprs,
+            program.scalar_exprs,
             store,
             instance,
             evals, &[], &[], local_point,

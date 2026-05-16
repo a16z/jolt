@@ -266,7 +266,7 @@ pub(crate) enum FieldExprKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ValueExprKind {
+pub(crate) enum ScalarExprKind {
     FieldVectorSum,
     FieldVectorProduct,
     StructuredPolynomial {
@@ -355,19 +355,19 @@ impl FieldExprKind {
     }
 }
 
-impl ValueExprKind {
+impl ScalarExprKind {
     pub(crate) fn from_cpu_attr(value: &str) -> Result<Self, RustTargetPlanError> {
         match value {
             "field_vector.sum" => Ok(Self::FieldVectorSum),
             "field_vector.product" => Ok(Self::FieldVectorProduct),
             value if value.starts_with("poly.structured_eval:") => {
-                parse_structured_polynomial_value(value)
+                parse_structured_polynomial_scalar(value)
             }
             value if value.starts_with("field.power_strided_weighted_sum:") => {
                 parse_power_strided_weighted_sum(value)
             }
             _ => Err(RustTargetPlanError::unsupported(
-                "value expression formula",
+                "scalar expression formula",
                 value,
             )),
         }
@@ -589,25 +589,25 @@ fn parse_lagrange(value: &str) -> Result<FieldExprKind, RustTargetPlanError> {
     })
 }
 
-fn parse_power_strided_weighted_sum(value: &str) -> Result<ValueExprKind, RustTargetPlanError> {
+fn parse_power_strided_weighted_sum(value: &str) -> Result<ScalarExprKind, RustTargetPlanError> {
     let spec = value
         .strip_prefix("field.power_strided_weighted_sum:")
-        .ok_or_else(|| RustTargetPlanError::unsupported("field expression formula", value))?;
+        .ok_or_else(|| RustTargetPlanError::unsupported("scalar expression formula", value))?;
     let parts = spec.split(':').collect::<Vec<_>>();
     let [row_count, power_stride, value_offsets, shared_offsets, row_offsets] = parts.as_slice()
     else {
         return Err(RustTargetPlanError::unsupported(
-            "field expression formula",
+            "scalar expression formula",
             value,
         ));
     };
     let row_count = row_count
         .parse::<usize>()
-        .map_err(|_| RustTargetPlanError::unsupported("field expression formula", value))?;
+        .map_err(|_| RustTargetPlanError::unsupported("scalar expression formula", value))?;
     let power_stride = power_stride
         .parse::<usize>()
-        .map_err(|_| RustTargetPlanError::unsupported("field expression formula", value))?;
-    Ok(ValueExprKind::PowerStridedWeightedSum {
+        .map_err(|_| RustTargetPlanError::unsupported("scalar expression formula", value))?;
+    Ok(ScalarExprKind::PowerStridedWeightedSum {
         row_count,
         power_stride,
         value_term_offsets: parse_usize_list(value_offsets, value)?,
@@ -616,19 +616,19 @@ fn parse_power_strided_weighted_sum(value: &str) -> Result<ValueExprKind, RustTa
     })
 }
 
-fn parse_structured_polynomial_value(value: &str) -> Result<ValueExprKind, RustTargetPlanError> {
+fn parse_structured_polynomial_scalar(value: &str) -> Result<ScalarExprKind, RustTargetPlanError> {
     let spec = value
         .strip_prefix("poly.structured_eval:")
-        .ok_or_else(|| RustTargetPlanError::unsupported("value expression formula", value))?;
+        .ok_or_else(|| RustTargetPlanError::unsupported("scalar expression formula", value))?;
     let [polynomial, x_segment, x_length, x_order, y_segment, y_length, y_order] =
         spec.split(':').collect::<Vec<_>>()[..]
     else {
         return Err(RustTargetPlanError::unsupported(
-            "value expression formula",
+            "scalar expression formula",
             value,
         ));
     };
-    Ok(ValueExprKind::StructuredPolynomial {
+    Ok(ScalarExprKind::StructuredPolynomial {
         polynomial: StructuredPolynomialKind::from_attr(polynomial)?,
         x_point: StructuredPolynomialPointTransform::new(x_segment, x_length, x_order)?,
         y_point: StructuredPolynomialPointTransform::new(y_segment, y_length, y_order)?,
@@ -650,7 +650,7 @@ pub(crate) fn power_strided_weighted_sum_formula(
     )
 }
 
-pub(crate) fn structured_polynomial_value_formula(
+pub(crate) fn structured_polynomial_scalar_formula(
     polynomial: &str,
     x_segment: &str,
     x_length: &str,
@@ -672,7 +672,7 @@ fn parse_usize_list(value: &str, full_formula: &str) -> Result<Vec<usize>, RustT
         .split(',')
         .map(|part| {
             part.parse::<usize>().map_err(|_| {
-                RustTargetPlanError::unsupported("field expression formula", full_formula)
+                RustTargetPlanError::unsupported("scalar expression formula", full_formula)
             })
         })
         .collect()
@@ -705,9 +705,9 @@ fn usize_slice_expr(values: &[usize]) -> String {
 mod tests {
     use super::{
         ClaimKind, FieldExprKind, JoltVerifierRelationKind, OpeningEqualityMode, PcsProofMode,
-        ProgramStepKind, StructuredPolynomialKind, StructuredPolynomialPointLength,
+        ProgramStepKind, ScalarExprKind, StructuredPolynomialKind, StructuredPolynomialPointLength,
         StructuredPolynomialPointOrder, StructuredPolynomialPointSegment,
-        StructuredPolynomialPointTransform, TranscriptSqueezeKind, ValueExprKind,
+        StructuredPolynomialPointTransform, TranscriptSqueezeKind,
     };
 
     #[test]
@@ -766,18 +766,18 @@ mod tests {
     }
 
     #[test]
-    fn parses_value_expr_kinds() {
+    fn parses_scalar_expr_kinds() {
         assert_eq!(
-            ValueExprKind::from_cpu_attr("field_vector.sum").ok(),
-            Some(ValueExprKind::FieldVectorSum)
+            ScalarExprKind::from_cpu_attr("field_vector.sum").ok(),
+            Some(ScalarExprKind::FieldVectorSum)
         );
         assert_eq!(
-            ValueExprKind::from_cpu_attr("field_vector.product").ok(),
-            Some(ValueExprKind::FieldVectorProduct)
+            ScalarExprKind::from_cpu_attr("field_vector.product").ok(),
+            Some(ScalarExprKind::FieldVectorProduct)
         );
         assert_eq!(
-            ValueExprKind::from_cpu_attr("field.power_strided_weighted_sum:39:3:0:1:2").ok(),
-            Some(ValueExprKind::PowerStridedWeightedSum {
+            ScalarExprKind::from_cpu_attr("field.power_strided_weighted_sum:39:3:0:1:2").ok(),
+            Some(ScalarExprKind::PowerStridedWeightedSum {
                 row_count: 39,
                 power_stride: 3,
                 value_term_offsets: vec![0],
@@ -786,11 +786,11 @@ mod tests {
             })
         );
         assert_eq!(
-            ValueExprKind::from_cpu_attr(
+            ScalarExprKind::from_cpu_attr(
                 "poly.structured_eval:lt:suffix:y_point:reverse:full:full:as_is"
             )
             .ok(),
-            Some(ValueExprKind::StructuredPolynomial {
+            Some(ScalarExprKind::StructuredPolynomial {
                 polynomial: StructuredPolynomialKind::Lt,
                 x_point: StructuredPolynomialPointTransform {
                     segment: StructuredPolynomialPointSegment::Suffix,
@@ -804,8 +804,8 @@ mod tests {
                 },
             })
         );
-        assert!(ValueExprKind::from_cpu_attr("field.power_strided_weighted_sum:1:2:0").is_err());
-        assert!(ValueExprKind::from_cpu_attr("poly.structured_eval:eq:full").is_err());
+        assert!(ScalarExprKind::from_cpu_attr("field.power_strided_weighted_sum:1:2:0").is_err());
+        assert!(ScalarExprKind::from_cpu_attr("poly.structured_eval:eq:full").is_err());
     }
 
     #[test]
@@ -824,7 +824,7 @@ mod tests {
             "LagrangeBasisEval(-1, 3, 0)"
         );
         assert_eq!(
-            ValueExprKind::PowerStridedWeightedSum {
+            ScalarExprKind::PowerStridedWeightedSum {
                 row_count: 39,
                 power_stride: 3,
                 value_term_offsets: vec![0],
@@ -835,7 +835,7 @@ mod tests {
             "PowerStridedWeightedSum { row_count: 39, power_stride: 3, value_term_offsets: &[0], shared_term_offsets: &[1], row_term_offsets: &[2] }"
         );
         assert_eq!(
-            ValueExprKind::StructuredPolynomial {
+            ScalarExprKind::StructuredPolynomial {
                 polynomial: StructuredPolynomialKind::EqPlusOne,
                 x_point: StructuredPolynomialPointTransform {
                     segment: StructuredPolynomialPointSegment::Prefix,

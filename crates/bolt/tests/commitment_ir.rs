@@ -2083,20 +2083,20 @@ fn stage7_rust_targets_extract_and_compile() {
         "stage7.hamming_weight_claim_reduction.input.claim_expr"
     );
     let input_expr = verifier_program
-        .value_exprs
+        .scalar_exprs
         .iter()
         .find(|expr| expr.symbol == "stage7.hamming_weight_claim_reduction.input.claim_expr")
-        .expect("stage7 hamming input claim is lowered to a value expression");
+        .expect("stage7 hamming input claim is lowered to a scalar expression");
     assert_eq!(
         input_expr.formula,
         format!("field.power_strided_weighted_sum:{total_ra}:3:_:_:0,1,2")
     );
     assert_eq!(input_expr.operands.len(), 1 + total_ra + 3 * total_ra);
     let output_expr = verifier_program
-        .value_exprs
+        .scalar_exprs
         .iter()
         .find(|expr| expr.symbol == "stage7.hamming_weight_claim_reduction.output.claim_expr")
-        .expect("stage7 hamming output is lowered to a value expression");
+        .expect("stage7 hamming output is lowered to a scalar expression");
     assert_eq!(
         output_expr.formula,
         format!("field.power_strided_weighted_sum:{total_ra}:3:0:1:2")
@@ -2167,7 +2167,7 @@ fn stage7_rust_targets_extract_and_compile() {
         .contains("STAGE7_RELATION_OUTPUT_0_FAMILY_0_EVALS"));
     assert!(verifier_source
         .source
-        .contains("Stage7ValueExprKind::PowerStridedWeightedSum"));
+        .contains("Stage7ScalarExprKind::PowerStridedWeightedSum"));
     assert!(!verifier_source
         .source
         .contains("Stage7FieldExprKind::PowerStridedWeightedSum"));

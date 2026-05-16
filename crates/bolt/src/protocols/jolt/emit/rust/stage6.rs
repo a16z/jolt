@@ -12,7 +12,7 @@ use melior::ir::{Attribute, OperationRef};
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
 use crate::protocols::jolt::rust_target_plan::{
-    structured_polynomial_value_formula, FieldExprKind, ValueExprKind,
+    structured_polynomial_scalar_formula, FieldExprKind, ScalarExprKind,
 };
 use crate::protocols::jolt::stage6_bytecode_read_raf_plan::{
     emit_stage6_bytecode_read_raf_plan_constants, stage6_bytecode_read_raf_eval_family_ref,
@@ -74,7 +74,7 @@ pub struct Stage6CpuProgram {
     pub opening_inputs: Vec<Stage6OpeningInputPlan>,
     pub field_constants: Vec<Stage6FieldConstantPlan>,
     pub field_exprs: Vec<Stage6FieldExprPlan>,
-    pub value_exprs: Vec<Stage6ValueExprPlan>,
+    pub scalar_exprs: Vec<Stage6ScalarExprPlan>,
     pub kernels: Vec<Stage6KernelPlan>,
     pub claims: Vec<Stage6SumcheckClaimPlan>,
     pub batches: Vec<Stage6SumcheckBatchPlan>,
@@ -159,7 +159,7 @@ pub struct Stage6FieldExprPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage6ValueExprPlan {
+pub struct Stage6ScalarExprPlan {
     pub symbol: String,
     pub kind: String,
     pub formula: String,
@@ -305,7 +305,7 @@ verifier_plan::impl_verifier_plan_source_traits!(
     opening_input = Stage6OpeningInputPlan,
     field_constant = Stage6FieldConstantPlan,
     field_expr = Stage6FieldExprPlan,
-    value_expr = Stage6ValueExprPlan,
+    scalar_expr = Stage6ScalarExprPlan,
     claim = Stage6SumcheckClaimPlan,
     batch = Stage6SumcheckBatchPlan,
     driver = Stage6SumcheckDriverPlan,
@@ -349,7 +349,7 @@ impl Stage6CpuProgram {
         let mut opening_inputs = Vec::new();
         let mut field_constants = Vec::new();
         let mut field_exprs = Vec::new();
-        let mut value_exprs = Vec::new();
+        let mut scalar_exprs = Vec::new();
         let mut kernels = Vec::new();
         let mut claims = Vec::new();
         let mut batches = Vec::new();
@@ -719,17 +719,17 @@ impl Stage6CpuProgram {
             let bytecode_output_plan =
                 stage6_bytecode_read_raf_relation_output_plan(bytecode_ra_evals);
             for expr in bytecode_output_plan.field_exprs {
-                if ValueExprKind::from_cpu_attr(&expr.formula).is_ok() {
-                    value_exprs.push(stage6_value_expr(expr));
+                if ScalarExprKind::from_cpu_attr(&expr.formula).is_ok() {
+                    scalar_exprs.push(stage6_scalar_expr(expr));
                 } else {
                     field_exprs.push(stage6_relation_output_expr(expr));
                 }
             }
             relation_outputs.push(bytecode_output_plan.claim);
-            value_exprs.extend(
+            scalar_exprs.extend(
                 relation_output_values
                     .iter()
-                    .map(stage6_structured_polynomial_value_expr),
+                    .map(stage6_structured_polynomial_scalar_expr),
             );
         }
 
@@ -744,7 +744,7 @@ impl Stage6CpuProgram {
             opening_inputs,
             field_constants,
             field_exprs,
-            value_exprs,
+            scalar_exprs,
             kernels,
             claims,
             batches,
@@ -865,9 +865,9 @@ impl Stage6CpuProgram {
                 }
             }
         }
-        for expr in &self.value_exprs {
-            super::plan_tokens::verify_value_expr_operands(
-                super::plan_tokens::ValueExprVerification {
+        for expr in &self.scalar_exprs {
+            super::plan_tokens::verify_scalar_expr_operands(
+                super::plan_tokens::ScalarExprVerification {
                     stage: "stage6",
                     symbol: &expr.symbol,
                     formula: &expr.formula,
@@ -942,8 +942,8 @@ impl Stage6CpuProgram {
             verifier_values::VerifierScalarSourceKind::FieldExpr,
         );
         values.extend(
-            self.value_exprs.iter().map(|expr| &expr.symbol),
-            verifier_values::VerifierScalarSourceKind::ValueExpr,
+            self.scalar_exprs.iter().map(|expr| &expr.symbol),
+            verifier_values::VerifierScalarSourceKind::ScalarExpr,
         );
         values.extend(
             self.relation_outputs
@@ -1565,8 +1565,8 @@ pub use bolt_verifier_runtime::{
     ClaimKind as Stage6ClaimKind, FieldConstantPlan as Stage6FieldConstantPlan,
     FieldExprKind as Stage6FieldExprKind,
     FieldExprPlan as Stage6FieldExprPlan,
-    ValueExprKind as Stage6ValueExprKind,
-    ValueExprPlan as Stage6ValueExprPlan,
+    ScalarExprKind as Stage6ScalarExprKind,
+    ScalarExprPlan as Stage6ScalarExprPlan,
     KernelPlan as Stage6KernelPlan, OpeningBatchPlan as Stage6OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage6OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage6OpeningClaimPlan, OpeningInputPlan as Stage6OpeningInputPlan,
@@ -1693,8 +1693,8 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
         } else {
             ""
         };
-        let value_exprs_field = if self.role == Role::Verifier {
-            "    value_exprs: STAGE6_VALUE_EXPRS,\n"
+        let scalar_exprs_field = if self.role == Role::Verifier {
+            "    scalar_exprs: STAGE6_SCALAR_EXPRS,\n"
         } else {
             ""
         };
@@ -1710,7 +1710,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
                  \x20   opening_inputs: STAGE6_OPENING_INPUTS,\n\
                  \x20   field_constants: STAGE6_FIELD_CONSTANTS,\n\
                  \x20   field_exprs: STAGE6_FIELD_EXPRS,\n\
-                 {value_exprs_field}\
+                 {scalar_exprs_field}\
                  \x20   kernels: STAGE6_KERNELS,\n\
                  \x20   claims: STAGE6_SUMCHECK_CLAIMS,\n\
                  \x20   batches: STAGE6_SUMCHECK_BATCHES,\n\
@@ -1750,7 +1750,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
         source.push_str(&self.emit_field_constant_constants());
         source.push_str(&self.emit_field_expr_constants()?);
         if self.role == Role::Verifier {
-            source.push_str(&self.emit_value_expr_constants()?);
+            source.push_str(&self.emit_scalar_expr_constants()?);
         }
         Ok(source)
     }
@@ -1942,13 +1942,13 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
         Ok(source)
     }
 
-    fn emit_value_expr_constants(&self) -> Result<String, EmitError> {
+    fn emit_scalar_expr_constants(&self) -> Result<String, EmitError> {
         let plan = self.verifier_plan()?;
-        Ok(verifier_plan::emit_value_expr_constants_chunked(
+        Ok(verifier_plan::emit_scalar_expr_constants_chunked(
             "Stage6",
             "STAGE6",
-            "stage6_value_expr",
-            &plan.value_exprs,
+            "stage6_scalar_expr",
+            &plan.scalar_exprs,
             16,
         ))
     }
@@ -2554,7 +2554,7 @@ where
         }
     })?;
     store
-        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
+        .evaluate_available_exprs(program.field_exprs, program.scalar_exprs)
         .map_err(VerifyStage6Error::from)?;
     artifacts.challenge_vectors.push(Stage6ChallengeVector {
         symbol: squeeze.symbol,
@@ -2634,7 +2634,7 @@ where
         program.claims,
         program.batches,
         program.field_exprs,
-        program.value_exprs,
+        program.scalar_exprs,
         program.opening_inputs,
         program.opening_claims,
         program.opening_batches,
@@ -2698,7 +2698,7 @@ fn observe_stage6_sumcheck_output<F: Field>(
         },
     )?;
     store
-        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
+        .evaluate_available_exprs(program.field_exprs, program.scalar_exprs)
         .map_err(VerifyStage6Error::from)?;
     store.verify_opening_equalities(
         program.opening_equalities,
@@ -2790,7 +2790,7 @@ fn expected_plan_relation_output(
     Ok(bolt_verifier_runtime::evaluate_relation_output_for_instance(
         program.relation_outputs,
         program.field_exprs,
-        program.value_exprs,
+        program.scalar_exprs,
         store,
         instance,
         evals,
@@ -2895,9 +2895,9 @@ fn stage6_relation_output_expr(expr: Stage6RelationOutputFieldExprPlan) -> Stage
     }
 }
 
-fn stage6_value_expr(expr: Stage6RelationOutputFieldExprPlan) -> Stage6ValueExprPlan {
+fn stage6_scalar_expr(expr: Stage6RelationOutputFieldExprPlan) -> Stage6ScalarExprPlan {
     let operands = expr.operands;
-    Stage6ValueExprPlan {
+    Stage6ScalarExprPlan {
         symbol: expr.symbol,
         kind: "op".to_owned(),
         formula: expr.formula,
@@ -2906,14 +2906,14 @@ fn stage6_value_expr(expr: Stage6RelationOutputFieldExprPlan) -> Stage6ValueExpr
     }
 }
 
-fn stage6_structured_polynomial_value_expr(
+fn stage6_structured_polynomial_scalar_expr(
     value: &Stage6StructuredPolynomialEvalPlan,
-) -> Stage6ValueExprPlan {
+) -> Stage6ScalarExprPlan {
     let operands = vec![value.x_point.source.clone(), value.y_point.source.clone()];
-    Stage6ValueExprPlan {
+    Stage6ScalarExprPlan {
         symbol: value.symbol.clone(),
         kind: "op".to_owned(),
-        formula: structured_polynomial_value_formula(
+        formula: structured_polynomial_scalar_formula(
             value.polynomial.as_str(),
             value.x_point.segment.as_str(),
             value.x_point.length.as_str(),

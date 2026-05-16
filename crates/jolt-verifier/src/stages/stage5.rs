@@ -24,8 +24,8 @@ pub use bolt_verifier_runtime::{
     ClaimKind as Stage5ClaimKind, FieldConstantPlan as Stage5FieldConstantPlan,
     FieldExprKind as Stage5FieldExprKind,
     FieldExprPlan as Stage5FieldExprPlan,
-    ValueExprKind as Stage5ValueExprKind,
-    ValueExprPlan as Stage5ValueExprPlan,
+    ScalarExprKind as Stage5ScalarExprKind,
+    ScalarExprPlan as Stage5ScalarExprPlan,
     KernelPlan as Stage5KernelPlan, OpeningBatchPlan as Stage5OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage5OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage5OpeningClaimPlan, OpeningInputPlan as Stage5OpeningInputPlan,
@@ -166,13 +166,13 @@ pub const STAGE5_FIELD_EXPRS: &[Stage5FieldExprPlan] = &[
     Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.partial.EqRa", kind: Stage5FieldExprKind::Mul, operands: &["stage5.instruction_read_raf.output.eq.LookupOutputCycle", "stage5.instruction_read_raf.output.product.InstructionRa"] },
     Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.claim_expr", kind: Stage5FieldExprKind::Mul, operands: &["stage5.instruction_read_raf.output.partial.EqRa", "stage5.instruction_read_raf.output.partial.LookupOrRaf"] },
 ];
-pub const STAGE5_VALUE_EXPRS: &[Stage5ValueExprPlan] = &[
-    Stage5ValueExprPlan { symbol: "stage5.instruction_read_raf.output.product.InstructionRa", kind: Stage5ValueExprKind::FieldVectorProduct, operands: &["stage5.instruction_read_raf.eval.InstructionRa"] },
-    Stage5ValueExprPlan { symbol: "stage5.ram_ra_claim_reduction.output.eq.Raf", kind: Stage5ValueExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Eq, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Suffix, length: bolt_verifier_runtime::StructuredPolynomialPointLength::XPoint, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage5.ram_ra_claim_reduction.instance", "stage5.input.stage2.ram_raf.RamRa"] },
-    Stage5ValueExprPlan { symbol: "stage5.ram_ra_claim_reduction.output.eq.ReadWrite", kind: Stage5ValueExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Eq, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Suffix, length: bolt_verifier_runtime::StructuredPolynomialPointLength::XPoint, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage5.ram_ra_claim_reduction.instance", "stage5.input.stage2.ram_read_write.RamRa"] },
-    Stage5ValueExprPlan { symbol: "stage5.ram_ra_claim_reduction.output.eq.ValCheck", kind: Stage5ValueExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Eq, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Suffix, length: bolt_verifier_runtime::StructuredPolynomialPointLength::XPoint, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage5.ram_ra_claim_reduction.instance", "stage5.input.stage4.ram_val_check.RamRa"] },
-    Stage5ValueExprPlan { symbol: "stage5.registers_val_evaluation.output.lt.RegistersValCycle", kind: Stage5ValueExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Lt, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Suffix, length: bolt_verifier_runtime::StructuredPolynomialPointLength::XPoint, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage5.registers_val_evaluation.instance", "stage5.input.stage4.registers.RegistersVal"] },
-    Stage5ValueExprPlan { symbol: "stage5.instruction_read_raf.output.eq.LookupOutputCycle", kind: Stage5ValueExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Eq, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Suffix, length: bolt_verifier_runtime::StructuredPolynomialPointLength::YPoint, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage5.instruction_read_raf.instance", "stage5.input.stage2.instruction.LookupOutput"] },
+pub const STAGE5_SCALAR_EXPRS: &[Stage5ScalarExprPlan] = &[
+    Stage5ScalarExprPlan { symbol: "stage5.instruction_read_raf.output.product.InstructionRa", kind: Stage5ScalarExprKind::FieldVectorProduct, operands: &["stage5.instruction_read_raf.eval.InstructionRa"] },
+    Stage5ScalarExprPlan { symbol: "stage5.ram_ra_claim_reduction.output.eq.Raf", kind: Stage5ScalarExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Eq, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Suffix, length: bolt_verifier_runtime::StructuredPolynomialPointLength::XPoint, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage5.ram_ra_claim_reduction.instance", "stage5.input.stage2.ram_raf.RamRa"] },
+    Stage5ScalarExprPlan { symbol: "stage5.ram_ra_claim_reduction.output.eq.ReadWrite", kind: Stage5ScalarExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Eq, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Suffix, length: bolt_verifier_runtime::StructuredPolynomialPointLength::XPoint, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage5.ram_ra_claim_reduction.instance", "stage5.input.stage2.ram_read_write.RamRa"] },
+    Stage5ScalarExprPlan { symbol: "stage5.ram_ra_claim_reduction.output.eq.ValCheck", kind: Stage5ScalarExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Eq, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Suffix, length: bolt_verifier_runtime::StructuredPolynomialPointLength::XPoint, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage5.ram_ra_claim_reduction.instance", "stage5.input.stage4.ram_val_check.RamRa"] },
+    Stage5ScalarExprPlan { symbol: "stage5.registers_val_evaluation.output.lt.RegistersValCycle", kind: Stage5ScalarExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Lt, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Suffix, length: bolt_verifier_runtime::StructuredPolynomialPointLength::XPoint, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage5.registers_val_evaluation.instance", "stage5.input.stage4.registers.RegistersVal"] },
+    Stage5ScalarExprPlan { symbol: "stage5.instruction_read_raf.output.eq.LookupOutputCycle", kind: Stage5ScalarExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Eq, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Suffix, length: bolt_verifier_runtime::StructuredPolynomialPointLength::YPoint, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage5.instruction_read_raf.instance", "stage5.input.stage2.instruction.LookupOutput"] },
 ];
 pub const STAGE5_KERNELS: &[Stage5KernelPlan] = &[
 
@@ -435,7 +435,7 @@ pub const STAGE5_PROGRAM: Stage5VerifierProgramPlan = Stage5CpuProgramPlan {
     opening_inputs: STAGE5_OPENING_INPUTS,
     field_constants: STAGE5_FIELD_CONSTANTS,
     field_exprs: STAGE5_FIELD_EXPRS,
-    value_exprs: STAGE5_VALUE_EXPRS,
+    scalar_exprs: STAGE5_SCALAR_EXPRS,
     kernels: STAGE5_KERNELS,
     claims: STAGE5_SUMCHECK_CLAIMS,
     batches: STAGE5_SUMCHECK_BATCHES,
@@ -536,7 +536,7 @@ where
         }
     })?;
     store
-        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
+        .evaluate_available_exprs(program.field_exprs, program.scalar_exprs)
         .map_err(VerifyStage5Error::from)?;
     artifacts.challenge_vectors.push(Stage5ChallengeVector {
         symbol: squeeze.symbol,
@@ -614,7 +614,7 @@ where
         program.claims,
         program.batches,
         program.field_exprs,
-        program.value_exprs,
+        program.scalar_exprs,
         program.opening_inputs,
         program.opening_claims,
         program.opening_batches,
@@ -671,7 +671,7 @@ fn observe_stage5_sumcheck_output<F: Field>(
         },
     )?;
     store
-        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
+        .evaluate_available_exprs(program.field_exprs, program.scalar_exprs)
         .map_err(VerifyStage5Error::from)?;
     store.verify_opening_equalities(
         program.opening_equalities,
@@ -722,7 +722,7 @@ fn expected_batched_output_claim(
                 bolt_verifier_runtime::evaluate_relation_output_for_instance(
                     program.relation_outputs,
                     program.field_exprs,
-                    program.value_exprs,
+                    program.scalar_exprs,
                     store,
                     instance,
                     evals,
@@ -736,7 +736,7 @@ fn expected_batched_output_claim(
                 bolt_verifier_runtime::evaluate_relation_output_for_instance(
                     program.relation_outputs,
                     program.field_exprs,
-                    program.value_exprs,
+                    program.scalar_exprs,
                     store,
                     instance,
                     evals, &[], &[], local_point,

@@ -4,7 +4,8 @@ use crate::emit::rust::EmitError;
 use crate::ir::Role;
 use crate::protocols::jolt::rust_target_plan::{
     ClaimKind, FieldExprKind, JoltVerifierRelationKind, OpeningEqualityMode, PcsProofMode,
-    ProgramStepKind, RustTargetPlanError, SumcheckPointOrder, TranscriptSqueezeKind, ValueExprKind,
+    ProgramStepKind, RustTargetPlanError, ScalarExprKind, SumcheckPointOrder,
+    TranscriptSqueezeKind,
 };
 use crate::protocols::jolt::verifier_values::{
     VerifierFieldVectorSourceSet, VerifierPointSourceSet, VerifierScalarSourceSet,
@@ -152,7 +153,7 @@ pub(super) fn symbols<'a>(values: impl Iterator<Item = &'a String>) -> BTreeSet<
     values.cloned().collect()
 }
 
-pub(super) struct ValueExprVerification<'a> {
+pub(super) struct ScalarExprVerification<'a> {
     pub stage: &'static str,
     pub symbol: &'a str,
     pub formula: &'a str,
@@ -163,10 +164,10 @@ pub(super) struct ValueExprVerification<'a> {
     pub point_values: Option<&'a VerifierPointSourceSet>,
 }
 
-pub(super) fn verify_value_expr_operands(
-    verification: ValueExprVerification<'_>,
+pub(super) fn verify_scalar_expr_operands(
+    verification: ScalarExprVerification<'_>,
 ) -> Result<(), EmitError> {
-    let ValueExprVerification {
+    let ScalarExprVerification {
         stage,
         symbol,
         formula,
@@ -177,18 +178,18 @@ pub(super) fn verify_value_expr_operands(
         point_values,
     } = verification;
     verify_count(
-        "value expr operands",
+        "scalar expr operands",
         symbol,
         operand_names.len(),
         operands.len(),
     )?;
-    let kind =
-        ValueExprKind::from_cpu_attr(formula).map_err(|error| EmitError::new(error.to_string()))?;
+    let kind = ScalarExprKind::from_cpu_attr(formula)
+        .map_err(|error| EmitError::new(error.to_string()))?;
     match kind {
-        ValueExprKind::FieldVectorSum | ValueExprKind::FieldVectorProduct => {
+        ScalarExprKind::FieldVectorSum | ScalarExprKind::FieldVectorProduct => {
             let Some(field_vector_values) = field_vector_values else {
                 return Err(EmitError::new(format!(
-                    "{stage} value expr @{symbol} uses unsupported field-vector formula `{formula}`"
+                    "{stage} scalar expr @{symbol} uses unsupported field-vector formula `{formula}`"
                 )));
             };
             verify_count("field vector expr operands", symbol, 1, operands.len())?;
@@ -199,18 +200,18 @@ pub(super) fn verify_value_expr_operands(
                 )));
             }
         }
-        ValueExprKind::PowerStridedWeightedSum { .. } => {
+        ScalarExprKind::PowerStridedWeightedSum { .. } => {
             for operand in operands {
                 if !field_values.contains(operand) {
                     return Err(EmitError::new(format!(
-                        "value expr @{symbol} references missing field value @{operand}"
+                        "scalar expr @{symbol} references missing field value @{operand}"
                     )));
                 }
             }
         }
-        ValueExprKind::StructuredPolynomial { .. } => {
+        ScalarExprKind::StructuredPolynomial { .. } => {
             verify_count(
-                "structured polynomial value expr operands",
+                "structured polynomial scalar expr operands",
                 symbol,
                 2,
                 operands.len(),
@@ -218,7 +219,7 @@ pub(super) fn verify_value_expr_operands(
             for operand in operands {
                 if !point_values.is_some_and(|values| values.contains(operand)) {
                     return Err(EmitError::new(format!(
-                        "structured polynomial value expr @{symbol} references missing point value @{operand}"
+                        "structured polynomial scalar expr @{symbol} references missing point value @{operand}"
                     )));
                 }
             }

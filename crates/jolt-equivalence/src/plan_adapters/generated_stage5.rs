@@ -25,7 +25,7 @@ define_stage_adapter!(
     Stage5OpeningClaimPlan,
     Stage5OpeningClaimEqualityPlan,
     Stage5OpeningBatchPlan,
-    value_expr = Stage5ValueExprPlan,
+    scalar_expr = Stage5ScalarExprPlan,
     relation_outputs = Stage5RelationOutputPlan,
     relation_output_values = Stage5StructuredPolynomialEvalPlan
 );
