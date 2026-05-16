@@ -7,6 +7,20 @@ pub(crate) struct IndexedEvalFamilyPlan {
 }
 
 impl IndexedEvalFamilyPlan {
+    pub(crate) fn from_parts(
+        symbol: String,
+        evals: Vec<String>,
+        count: usize,
+    ) -> Result<Self, EmitError> {
+        if count != evals.len() {
+            return Err(EmitError::new(format!(
+                "indexed eval family @{symbol} count mismatch: expected {count}, got {}",
+                evals.len()
+            )));
+        }
+        Ok(Self { symbol, evals })
+    }
+
     pub(crate) fn find<'a>(
         families: &'a [Self],
         symbol: &str,
@@ -68,13 +82,30 @@ pub(crate) fn emit_runtime_slice_constant(
     source
 }
 
+pub(crate) fn emit_named_runtime_slice_constant(
+    families: &[IndexedEvalFamilyPlan],
+    visibility: &str,
+    names_prefix: &str,
+    families_const: &str,
+) -> String {
+    emit_runtime_slice_constant(
+        families,
+        visibility,
+        names_prefix,
+        families_const,
+        "bolt_verifier_runtime::NamedEvalFamilyPlan",
+    )
+}
+
 fn rust_str(value: &str) -> String {
     format!("{value:?}")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{emit_runtime_slice_constant, IndexedEvalFamilyPlan};
+    use super::{
+        emit_named_runtime_slice_constant, emit_runtime_slice_constant, IndexedEvalFamilyPlan,
+    };
 
     #[test]
     fn find_rejects_missing_families() {
@@ -84,6 +115,22 @@ mod tests {
             .unwrap_or_default();
 
         assert!(error.contains("missing eval family `stage.eval.LookupTableFlag`"));
+    }
+
+    #[test]
+    fn from_parts_rejects_count_mismatch() {
+        let error = IndexedEvalFamilyPlan::from_parts(
+            "stage.eval.BytecodeRa".to_owned(),
+            vec!["stage.eval.BytecodeRa_0".to_owned()],
+            2,
+        )
+        .err()
+        .map(|error| error.to_string())
+        .unwrap_or_default();
+
+        assert!(error.contains(
+            "indexed eval family @stage.eval.BytecodeRa count mismatch: expected 2, got 1"
+        ));
     }
 
     #[test]
@@ -147,5 +194,20 @@ mod tests {
         assert!(source.contains("pub const STAGE_EVAL_FAMILIES"));
         assert!(source.contains("STAGE_EVAL_FAMILY_0_NAMES"));
         assert!(source.contains("stage.eval.BytecodeRa_1"));
+    }
+
+    #[test]
+    fn emit_named_runtime_slice_constant_uses_runtime_family_plan() {
+        let source = emit_named_runtime_slice_constant(
+            &[IndexedEvalFamilyPlan {
+                symbol: "stage.eval.BytecodeRa".to_owned(),
+                evals: vec!["stage.eval.BytecodeRa_0".to_owned()],
+            }],
+            "pub ",
+            "STAGE_EVAL_FAMILY",
+            "STAGE_EVAL_FAMILIES",
+        );
+
+        assert!(source.contains("bolt_verifier_runtime::NamedEvalFamilyPlan"));
     }
 }

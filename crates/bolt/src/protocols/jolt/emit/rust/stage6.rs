@@ -2208,12 +2208,11 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
     }
 
     fn emit_indexed_eval_family_constants(&self) -> Result<String, EmitError> {
-        Ok(verifier_eval_families::emit_runtime_slice_constant(
+        Ok(verifier_eval_families::emit_named_runtime_slice_constant(
             &self.verifier_plan()?.indexed_eval_families,
             "pub ",
             "STAGE6_INDEXED_EVAL_FAMILY",
             "STAGE6_INDEXED_EVAL_FAMILIES",
-            "bolt_verifier_runtime::NamedEvalFamilyPlan",
         ))
     }
 
@@ -2919,13 +2918,7 @@ fn parse_indexed_eval_family(
 ) -> Result<IndexedEvalFamilyPlan, EmitError> {
     let symbol = string_attr(operation, "sym_name")?;
     let evals = symbol_array_attr(operation, "evals")?;
-    verify_count(
-        "indexed eval family",
-        &symbol,
-        int_attr(operation, "count")?,
-        evals.len(),
-    )?;
-    Ok(IndexedEvalFamilyPlan { symbol, evals })
+    IndexedEvalFamilyPlan::from_parts(symbol, evals, int_attr(operation, "count")?)
 }
 
 fn string_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<String, EmitError> {
