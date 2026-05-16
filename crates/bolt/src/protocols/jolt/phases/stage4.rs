@@ -94,6 +94,15 @@ pub fn build_stage4_protocol<'c>(
         "challenge_scalar",
         1,
     )?;
+    let (state, field_reg_gamma) = append_transcript_squeeze(
+        context,
+        &module,
+        state,
+        "stage4.field_reg_rw.gamma",
+        "field_reg_rw_gamma",
+        "challenge_scalar",
+        1,
+    )?;
     let _state = append_stage4_batched_sumcheck(
         context,
         &module,
@@ -104,6 +113,7 @@ pub fn build_stage4_protocol<'c>(
             openings: &inputs,
             registers_gamma,
             ram_val_check_gamma,
+            field_reg_gamma,
         },
     )?;
 
@@ -1272,6 +1282,8 @@ struct Stage4BatchedSumcheckInputs<'c, 'a, 'b> {
     openings: &'b Stage4OpeningInputs<'c, 'a>,
     registers_gamma: Value<'c, 'a>,
     ram_val_check_gamma: Value<'c, 'a>,
+    #[expect(dead_code, reason = "consumed by Phase 4c.2 FR RW claim expression")]
+    field_reg_gamma: Value<'c, 'a>,
 }
 
 struct SumcheckClaimSpec<'a> {
