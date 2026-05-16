@@ -258,7 +258,6 @@ pub struct RelationOutputPlan {
     pub structured_polynomial_evals: Vec<StructuredPolynomialEvalRefPlan>,
     pub eval_families: Vec<RelationOutputEvalFamilyPlan>,
     pub product_families: Vec<RelationOutputProductFamilyPlan>,
-    pub function_families: Vec<RelationOutputFunctionFamilyPlan>,
     pub local_scalars: Vec<String>,
     pub expected_output: String,
 }
@@ -557,42 +556,66 @@ pub fn lower_boolean_zero_function_family_output(
             ))
         })?;
     let family = relation_output_function_families[family_index].clone();
-    if family.gamma.is_some() || family.terms.len() != 1 {
+    if family.terms.is_empty() {
         return Err(EmitError::new(format!(
-            "{stage} relation output function family @{family_symbol} must be one ungamified term"
-        )));
-    }
-    let term = &family.terms[0];
-    if term.gamma_power_offset != 0
-        || term.function != RelationOutputFunctionKind::BooleanZero
-        || term.factors.len() != 1
-    {
-        return Err(EmitError::new(format!(
-            "{stage} relation output function family @{family_symbol} has unsupported boolean-zero shape"
+            "{stage} relation output function family @{family_symbol} has no scalar terms"
         )));
     }
 
     let prefix = relation_output_family_prefix(&family.symbol);
-    let square = format!("{prefix}.boolean_zero.square");
-    let boolean_zero = format!("{prefix}.boolean_zero");
-    let claim_expr = format!("{prefix}.claim_expr");
-    let rows = vec![
-        relation_output_field_expr(
+    let mut rows = Vec::new();
+    let mut term_symbols = Vec::with_capacity(family.terms.len());
+    let mut gamma_powers = BTreeMap::new();
+    for (term_index, term) in family.terms.iter().enumerate() {
+        if term.function != RelationOutputFunctionKind::BooleanZero {
+            return Err(EmitError::new(format!(
+                "{stage} relation output function family @{family_symbol} has unsupported function"
+            )));
+        }
+        let square = format!("{prefix}.term{term_index}.boolean_zero.square");
+        let boolean_zero = format!("{prefix}.term{term_index}.boolean_zero");
+        rows.push(relation_output_field_expr(
             square.clone(),
             "field.product",
             vec![term.eval.clone(), term.eval.clone()],
-        ),
-        relation_output_field_expr(
+        ));
+        rows.push(relation_output_field_expr(
             boolean_zero.clone(),
             "field.sub",
             vec![square, term.eval.clone()],
-        ),
-        relation_output_field_expr(
-            claim_expr.clone(),
-            "field.product",
-            vec![boolean_zero, term.factors[0].clone()],
-        ),
-    ];
+        ));
+        let mut operands = Vec::new();
+        if let Some(gamma) = &family.gamma {
+            if term.gamma_power_offset > 0 {
+                operands.push(eval_family_gamma_power(
+                    term.gamma_power_offset,
+                    gamma,
+                    prefix,
+                    &mut gamma_powers,
+                    &mut rows,
+                ));
+            }
+        } else if term.gamma_power_offset > 0 {
+            return Err(EmitError::new(format!(
+                "{stage} relation output function family @{family_symbol} has gamma power without gamma"
+            )));
+        }
+        operands.push(boolean_zero);
+        operands.extend(term.factors.iter().cloned());
+        push_relation_output_product_term(
+            prefix,
+            term_index,
+            operands,
+            &mut term_symbols,
+            &mut rows,
+        );
+    }
+    let claim_expr = format!("{prefix}.claim_expr");
+    rows.push(relation_output_field_expr(
+        claim_expr.clone(),
+        "field.sum",
+        term_symbols,
+    ));
     claim.expected_output = claim_expr;
     let _removed_family = relation_output_function_families.remove(family_index);
     Ok(rows)
@@ -894,11 +917,12 @@ where
             .iter()
             .map(|family| (family.symbol.as_str(), family))
             .collect();
-    let relation_output_function_families_by_symbol: BTreeMap<_, _> =
-        relation_output_function_families
-            .iter()
-            .map(|family| (family.symbol.as_str(), family))
-            .collect();
+    if let Some(family) = relation_output_function_families.first() {
+        return Err(EmitError::new(format!(
+            "{stage} relation output function family @{} must be lowered before resolving relation outputs",
+            family.symbol
+        )));
+    }
     let field_exprs_by_symbol: BTreeMap<_, _> = field_exprs
         .iter()
         .map(|expr| (expr.symbol(), expr))
@@ -939,7 +963,6 @@ where
             let dependencies = output_dependency_closure(
                 &relation_output_eval_families_by_symbol,
                 &relation_output_product_families_by_symbol,
-                &relation_output_function_families_by_symbol,
                 &field_exprs_by_symbol,
                 std::iter::once(claim.expected_output.as_str()),
             );
@@ -953,17 +976,11 @@ where
                 .filter(|family| dependencies.contains_product_family(&family.symbol))
                 .cloned()
                 .collect();
-            let function_families = relation_output_function_families
-                .iter()
-                .filter(|family| dependencies.contains_function_family(&family.symbol))
-                .cloned()
-                .collect();
             Ok(RelationOutputPlan {
                 relation: claim.relation,
                 structured_polynomial_evals,
                 eval_families,
                 product_families,
-                function_families,
                 local_scalars: Vec::new(),
                 expected_output: claim.expected_output,
             })
@@ -977,14 +994,12 @@ enum OutputDependencyNode {
     FieldExpr(String),
     EvalFamily(String),
     ProductFamily(String),
-    FunctionFamily(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum OutputFamilyDependency {
     Eval(String),
     Product(String),
-    Function(String),
 }
 
 #[derive(Default)]
@@ -1004,18 +1019,11 @@ impl OutputDependencyClosure {
             |family| matches!(family, OutputFamilyDependency::Product(value) if value == symbol),
         )
     }
-
-    fn contains_function_family(&self, symbol: &str) -> bool {
-        self.families.iter().any(
-            |family| matches!(family, OutputFamilyDependency::Function(value) if value == symbol),
-        )
-    }
 }
 
 fn output_dependency_closure<'a, T>(
     relation_output_eval_families_by_symbol: &BTreeMap<&str, &RelationOutputEvalFamilyPlan>,
     relation_output_product_families_by_symbol: &BTreeMap<&str, &RelationOutputProductFamilyPlan>,
-    relation_output_function_families_by_symbol: &BTreeMap<&str, &RelationOutputFunctionFamilyPlan>,
     field_exprs_by_symbol: &BTreeMap<&str, &T>,
     roots: impl Iterator<Item = &'a str>,
 ) -> OutputDependencyClosure
@@ -1029,7 +1037,6 @@ where
             output_dependency_node(
                 relation_output_eval_families_by_symbol,
                 relation_output_product_families_by_symbol,
-                relation_output_function_families_by_symbol,
                 field_exprs_by_symbol,
                 symbol,
             )
@@ -1049,7 +1056,6 @@ where
                     output_dependency_node(
                         relation_output_eval_families_by_symbol,
                         relation_output_product_families_by_symbol,
-                        relation_output_function_families_by_symbol,
                         field_exprs_by_symbol,
                         operand,
                     )
@@ -1066,7 +1072,6 @@ where
                 stack.push(output_dependency_node(
                     relation_output_eval_families_by_symbol,
                     relation_output_product_families_by_symbol,
-                    relation_output_function_families_by_symbol,
                     field_exprs_by_symbol,
                     &family.gamma,
                 ));
@@ -1074,7 +1079,6 @@ where
                     output_dependency_node(
                         relation_output_eval_families_by_symbol,
                         relation_output_product_families_by_symbol,
-                        relation_output_function_families_by_symbol,
                         field_exprs_by_symbol,
                         eval,
                     )
@@ -1083,7 +1087,6 @@ where
                     output_dependency_node(
                         relation_output_eval_families_by_symbol,
                         relation_output_product_families_by_symbol,
-                        relation_output_function_families_by_symbol,
                         field_exprs_by_symbol,
                         &term.factor,
                     )
@@ -1093,7 +1096,6 @@ where
                         output_dependency_node(
                             relation_output_eval_families_by_symbol,
                             relation_output_product_families_by_symbol,
-                            relation_output_function_families_by_symbol,
                             field_exprs_by_symbol,
                             factor,
                         )
@@ -1112,7 +1114,6 @@ where
                     output_dependency_node(
                         relation_output_eval_families_by_symbol,
                         relation_output_product_families_by_symbol,
-                        relation_output_function_families_by_symbol,
                         field_exprs_by_symbol,
                         gamma,
                     )
@@ -1122,7 +1123,6 @@ where
                         output_dependency_node(
                             relation_output_eval_families_by_symbol,
                             relation_output_product_families_by_symbol,
-                            relation_output_function_families_by_symbol,
                             field_exprs_by_symbol,
                             eval,
                         )
@@ -1131,43 +1131,6 @@ where
                         output_dependency_node(
                             relation_output_eval_families_by_symbol,
                             relation_output_product_families_by_symbol,
-                            relation_output_function_families_by_symbol,
-                            field_exprs_by_symbol,
-                            factor,
-                        )
-                    }));
-                }
-            }
-            OutputDependencyNode::FunctionFamily(symbol) => {
-                let Some(family) = relation_output_function_families_by_symbol.get(symbol.as_str())
-                else {
-                    continue;
-                };
-                let _inserted = dependencies
-                    .families
-                    .insert(OutputFamilyDependency::Function(family.symbol.clone()));
-                stack.extend(family.gamma.iter().map(|gamma| {
-                    output_dependency_node(
-                        relation_output_eval_families_by_symbol,
-                        relation_output_product_families_by_symbol,
-                        relation_output_function_families_by_symbol,
-                        field_exprs_by_symbol,
-                        gamma,
-                    )
-                }));
-                for term in &family.terms {
-                    stack.push(output_dependency_node(
-                        relation_output_eval_families_by_symbol,
-                        relation_output_product_families_by_symbol,
-                        relation_output_function_families_by_symbol,
-                        field_exprs_by_symbol,
-                        &term.eval,
-                    ));
-                    stack.extend(term.factors.iter().map(|factor| {
-                        output_dependency_node(
-                            relation_output_eval_families_by_symbol,
-                            relation_output_product_families_by_symbol,
-                            relation_output_function_families_by_symbol,
                             field_exprs_by_symbol,
                             factor,
                         )
@@ -1182,7 +1145,6 @@ where
 fn output_dependency_node(
     relation_output_eval_families_by_symbol: &BTreeMap<&str, &RelationOutputEvalFamilyPlan>,
     relation_output_product_families_by_symbol: &BTreeMap<&str, &RelationOutputProductFamilyPlan>,
-    relation_output_function_families_by_symbol: &BTreeMap<&str, &RelationOutputFunctionFamilyPlan>,
     field_exprs_by_symbol: &BTreeMap<&str, &impl FieldExprDependencies>,
     symbol: &str,
 ) -> OutputDependencyNode {
@@ -1190,8 +1152,6 @@ fn output_dependency_node(
         OutputDependencyNode::EvalFamily(symbol.to_owned())
     } else if relation_output_product_families_by_symbol.contains_key(symbol) {
         OutputDependencyNode::ProductFamily(symbol.to_owned())
-    } else if relation_output_function_families_by_symbol.contains_key(symbol) {
-        OutputDependencyNode::FunctionFamily(symbol.to_owned())
     } else if field_exprs_by_symbol.contains_key(symbol) {
         OutputDependencyNode::FieldExpr(symbol.to_owned())
     } else {
@@ -1655,7 +1615,6 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(family_symbols, vec!["inner.family", "outer.family"]);
         assert!(claim.product_families.is_empty());
-        assert!(claim.function_families.is_empty());
         Ok(())
     }
 
@@ -1707,12 +1666,11 @@ mod tests {
             .map(|family| family.symbol.as_str())
             .collect::<Vec<_>>();
         assert_eq!(family_symbols, vec!["product.family"]);
-        assert!(claim.function_families.is_empty());
         Ok(())
     }
 
     #[test]
-    fn resolves_function_families_reachable_through_field_expressions() -> Result<(), EmitError> {
+    fn resolve_rejects_unlowered_function_families() -> Result<(), EmitError> {
         let function_family = RelationOutputFunctionFamilyPlan {
             symbol: "function.family".to_owned(),
             gamma: Some("function.gamma".to_owned()),
@@ -1723,43 +1681,32 @@ mod tests {
                 factors: vec!["function.factor.expr".to_owned()],
             }],
         };
-        let field_exprs = vec![
-            TestFieldExpr {
-                symbol: "claim.expr".to_owned(),
-                operands: vec!["function.family".to_owned()],
-            },
-            TestFieldExpr {
-                symbol: "function.factor.expr".to_owned(),
-                operands: vec!["unrelated.scalar".to_owned()],
-            },
-        ];
         let claim_asts = vec![RelationOutputAst {
             relation: "relation".to_owned(),
             polynomial_evals: Vec::new(),
             polynomial_eval_operands: Vec::new(),
-            expected_output: "claim.expr".to_owned(),
+            expected_output: "function.family".to_owned(),
         }];
 
-        let claims = resolve_relation_outputs(
+        let error = match resolve_relation_outputs(
             "test",
             &[],
             &[],
             &[],
             &[function_family],
-            &field_exprs,
+            &[] as &[TestFieldExpr],
             claim_asts,
-        )?;
-        let claim = claims
-            .first()
-            .ok_or_else(|| EmitError::new("missing resolved relation output"))?;
-        assert!(claim.eval_families.is_empty());
-        assert!(claim.product_families.is_empty());
-        let family_symbols = claim
-            .function_families
-            .iter()
-            .map(|family| family.symbol.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(family_symbols, vec!["function.family"]);
+        ) {
+            Ok(_) => {
+                return Err(EmitError::new(
+                    "unlowered function family should fail relation output resolution",
+                ));
+            }
+            Err(error) => error,
+        };
+        assert!(error
+            .to_string()
+            .contains("test relation output function family @function.family must be lowered"));
         Ok(())
     }
 

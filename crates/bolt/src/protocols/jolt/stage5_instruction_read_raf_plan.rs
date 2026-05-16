@@ -212,7 +212,6 @@ impl Stage5InstructionReadRafEmitPlan {
                 }],
                 eval_families: Vec::new(),
                 product_families: vec![table_value_family, ra_product_family],
-                function_families: Vec::new(),
                 local_scalars: self
                     .point_values
                     .iter()

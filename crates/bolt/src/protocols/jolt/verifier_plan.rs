@@ -346,12 +346,6 @@ impl VerifierStagePlan {
             VerifierScalarSourceKind::OutputProductFamily,
         );
         values.extend(
-            self.relation_outputs
-                .iter()
-                .flat_map(|claim| claim.function_families.iter().map(|family| &family.symbol)),
-            VerifierScalarSourceKind::OutputFunctionFamily,
-        );
-        values.extend(
             self.field_exprs.iter().map(|expr| &expr.symbol),
             VerifierScalarSourceKind::FieldExpr,
         );

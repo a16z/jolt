@@ -935,12 +935,6 @@ impl Stage6CpuProgram {
             verifier_values::VerifierScalarSourceKind::OutputProductFamily,
         );
         values.extend(
-            self.relation_outputs
-                .iter()
-                .flat_map(|claim| claim.function_families.iter().map(|family| &family.symbol)),
-            verifier_values::VerifierScalarSourceKind::OutputFunctionFamily,
-        );
-        values.extend(
             self.field_exprs.iter().map(|expr| &expr.symbol),
             verifier_values::VerifierScalarSourceKind::FieldExpr,
         );
@@ -2807,6 +2801,16 @@ fn lower_stage6_relation_outputs(
     relation_output_function_families: &mut Vec<Stage6RelationOutputFunctionFamilyPlan>,
     relation_output_asts: &mut [Stage6RelationOutputAst],
 ) -> Result<(), EmitError> {
+    field_exprs.extend(
+        verifier_relation_outputs::lower_boolean_zero_function_family_output(
+            "stage6",
+            "jolt.stage6.booleanity",
+            relation_output_function_families,
+            relation_output_asts,
+        )?
+        .into_iter()
+        .map(stage6_relation_output_expr),
+    );
     field_exprs.extend(
         verifier_relation_outputs::lower_boolean_zero_function_family_output(
             "stage6",

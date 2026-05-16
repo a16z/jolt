@@ -385,19 +385,6 @@ fn generated_sumcheck_point_order(value: &str) -> bolt_verifier_runtime::Sumchec
     }
 }
 
-#[expect(
-    clippy::panic,
-    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
-)]
-fn generated_relation_output_function_kind(
-    value: &str,
-) -> bolt_verifier_runtime::RelationOutputFunctionKind {
-    match value {
-        "boolean_zero" => bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero,
-        value => panic!("unsupported generated output function `{value}`"),
-    }
-}
-
 macro_rules! stage_program_step_kind {
     (kernel, $module:ident, $value:expr) => {
         super::leak_str($value)
@@ -728,33 +715,6 @@ macro_rules! define_stage_adapter_impl {
                                                             .map(|symbol| super::leak_str(symbol))
                                                             .collect(),
                                                     ),
-                                                    factors: super::leak_slice(
-                                                        term
-                                                            .factors
-                                                            .iter()
-                                                            .map(|symbol| super::leak_str(symbol))
-                                                            .collect(),
-                                                    ),
-                                                })
-                                                .collect(),
-                                        ),
-                                    })
-                                    .collect(),
-                            ),
-                            function_families: super::leak_slice(
-                                plan.function_families
-                                    .iter()
-                                    .map(|family| bolt_verifier_runtime::RelationOutputFunctionFamilyPlan {
-                                        symbol: super::leak_str(&family.symbol),
-                                        gamma: family.gamma.as_ref().map(|gamma| super::leak_str(gamma)),
-                                        terms: super::leak_slice(
-                                            family
-                                                .terms
-                                                .iter()
-                                                .map(|term| bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan {
-                                                    gamma_power_offset: term.gamma_power_offset,
-                                                    function: super::generated_relation_output_function_kind(term.function.as_str()),
-                                                    eval: super::leak_str(&term.eval),
                                                     factors: super::leak_slice(
                                                         term
                                                             .factors

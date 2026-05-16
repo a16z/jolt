@@ -327,7 +327,7 @@ pub const STAGE7_RELATION_OUTPUT_0_FAMILIES: &[bolt_verifier_runtime::RelationOu
 ];
 
 pub const STAGE7_RELATION_OUTPUTS: &[Stage7RelationOutputPlan] = &[
-    Stage7RelationOutputPlan { relation: Stage7RelationKind::Stage7HammingWeightClaimReduction, structured_polynomial_evals: STAGE7_RELATION_OUTPUT_0_STRUCTURED_POLYNOMIAL_EVALS, eval_families: STAGE7_RELATION_OUTPUT_0_FAMILIES, product_families: &[], function_families: &[], local_scalars: &[], expected_output: "stage7.hamming_weight_claim_reduction.output.family" },
+    Stage7RelationOutputPlan { relation: Stage7RelationKind::Stage7HammingWeightClaimReduction, structured_polynomial_evals: STAGE7_RELATION_OUTPUT_0_STRUCTURED_POLYNOMIAL_EVALS, eval_families: STAGE7_RELATION_OUTPUT_0_FAMILIES, product_families: &[], local_scalars: &[], expected_output: "stage7.hamming_weight_claim_reduction.output.family" },
 ];
 
 pub const STAGE7_SUMCHECK_INSTANCE_RESULTS: &[Stage7SumcheckInstanceResultPlan] = &[

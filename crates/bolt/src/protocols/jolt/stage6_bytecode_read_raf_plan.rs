@@ -373,7 +373,6 @@ impl BytecodeReadRafPlan {
                 structured_polynomial_evals: Vec::new(),
                 eval_families: Vec::new(),
                 product_families: Vec::new(),
-                function_families: Vec::new(),
                 local_scalars: vec![self.output_contribution.to_owned()],
                 expected_output: claim_expr,
             },

@@ -427,32 +427,11 @@ pub struct RelationOutputProductFamilyPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RelationOutputFunctionKind {
-    BooleanZero,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RelationOutputFunctionFamilyTermPlan {
-    pub gamma_power_offset: usize,
-    pub function: RelationOutputFunctionKind,
-    pub eval: &'static str,
-    pub factors: &'static [&'static str],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RelationOutputFunctionFamilyPlan {
-    pub symbol: &'static str,
-    pub gamma: Option<&'static str>,
-    pub terms: &'static [RelationOutputFunctionFamilyTermPlan],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RelationOutputPlan<R: ProtocolRelation> {
     pub relation: R,
     pub structured_polynomial_evals: &'static [StructuredPolynomialEvalRef],
     pub eval_families: &'static [RelationOutputEvalFamilyPlan],
     pub product_families: &'static [RelationOutputProductFamilyPlan],
-    pub function_families: &'static [RelationOutputFunctionFamilyPlan],
     pub local_scalars: &'static [&'static str],
     pub expected_output: &'static str,
 }
@@ -1385,10 +1364,6 @@ pub fn evaluate_relation_output<R: ProtocolRelation>(
         let value = evaluate_relation_output_eval_family(family, store, &scratch)?;
         scratch.insert(family.symbol, value);
     }
-    for family in plan.function_families {
-        let value = evaluate_relation_output_function_family(family, store, &scratch)?;
-        scratch.insert(family.symbol, value);
-    }
     for family in plan.product_families {
         let value = evaluate_relation_output_product_family(family, store, &scratch)?;
         scratch.insert(family.symbol, value);
@@ -1554,36 +1529,6 @@ fn evaluate_relation_output_product_family(
         result += product;
     }
     Ok(result)
-}
-
-fn evaluate_relation_output_function_family(
-    family: &RelationOutputFunctionFamilyPlan,
-    store: &ValueStore<Fr>,
-    scratch: &ScratchScalars,
-) -> Result<Fr, RuntimePlanError> {
-    let gamma = relation_output_family_gamma(family.gamma, store, scratch)?;
-    let mut result = Fr::from_u64(0);
-    for term in family.terms {
-        let eval = scratch
-            .scalar_or(store, term.eval)
-            .ok_or(RuntimePlanError::MissingValue { symbol: term.eval })?;
-        let mut product = pow_field(gamma, term.gamma_power_offset)
-            * evaluate_relation_output_function(term.function, eval);
-        for &symbol in term.factors {
-            let value = scratch
-                .scalar_or(store, symbol)
-                .ok_or(RuntimePlanError::MissingValue { symbol })?;
-            product *= value;
-        }
-        result += product;
-    }
-    Ok(result)
-}
-
-fn evaluate_relation_output_function(function: RelationOutputFunctionKind, eval: Fr) -> Fr {
-    match function {
-        RelationOutputFunctionKind::BooleanZero => eval * eval - eval,
-    }
 }
 
 fn relation_output_family_gamma(

@@ -1,10 +1,9 @@
 use crate::emit::rust::{push_format, EmitError};
 use crate::ir::Role;
 use crate::protocols::jolt::verifier_relation_outputs::{
-    RelationOutputFunctionKind, RelationOutputPlan, StructuredPolynomialEvalPlan,
-    StructuredPolynomialEvalRefPlan, StructuredPolynomialKind, StructuredPolynomialPointLength,
-    StructuredPolynomialPointOrder, StructuredPolynomialPointPlan,
-    StructuredPolynomialPointSegment,
+    RelationOutputPlan, StructuredPolynomialEvalPlan, StructuredPolynomialEvalRefPlan,
+    StructuredPolynomialKind, StructuredPolynomialPointLength, StructuredPolynomialPointOrder,
+    StructuredPolynomialPointPlan, StructuredPolynomialPointSegment,
 };
 
 pub fn emit_verifier_relation_output_constants(
@@ -28,11 +27,9 @@ pub fn emit_verifier_relation_output_constants(
         );
         let eval_families = emit_eval_family_constants(&mut source, stage_type, index, claim);
         let product_families = emit_product_family_constants(&mut source, stage_type, index, claim);
-        let function_families =
-            emit_function_family_constants(&mut source, stage_type, index, claim)?;
         let local_scalars = emit_local_scalar_constants(&mut source, stage_type, index, claim);
         claims.push(format!(
-            "    {stage_type}RelationOutputPlan {{ relation: {}, structured_polynomial_evals: {values}, eval_families: {eval_families}, product_families: {product_families}, function_families: {function_families}, local_scalars: {local_scalars}, expected_output: {} }},",
+            "    {stage_type}RelationOutputPlan {{ relation: {}, structured_polynomial_evals: {values}, eval_families: {eval_families}, product_families: {product_families}, local_scalars: {local_scalars}, expected_output: {} }},",
             super::plan_tokens::role_relation_kind_expr(stage_type, role, &claim.relation)?,
             rust_str(&claim.expected_output)
         ));
@@ -225,64 +222,6 @@ fn emit_product_family_constants(
         ),
     );
     families_name
-}
-
-fn emit_function_family_constants(
-    source: &mut String,
-    stage_type: &str,
-    claim_index: usize,
-    claim: &RelationOutputPlan,
-) -> Result<String, EmitError> {
-    if claim.function_families.is_empty() {
-        return Ok("&[]".to_owned());
-    }
-    let upper_stage = stage_type.to_ascii_uppercase();
-    let mut family_rows = Vec::new();
-    for (family_index, family) in claim.function_families.iter().enumerate() {
-        let prefix =
-            format!("{upper_stage}_RELATION_OUTPUT_{claim_index}_FUNCTION_FAMILY_{family_index}");
-        let mut term_rows = Vec::new();
-        for (term_index, term) in family.terms.iter().enumerate() {
-            let factors_name = format!("{prefix}_TERM_{term_index}_FACTORS");
-            let factors = emit_str_slice_or_inline(source, &factors_name, &term.factors);
-            term_rows.push(format!(
-                "    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan {{ gamma_power_offset: {}, function: {}, eval: {}, factors: {factors} }},",
-                term.gamma_power_offset,
-                relation_output_function_kind_expr(term.function),
-                rust_str(&term.eval)
-            ));
-        }
-        let terms_name = format!("{prefix}_TERMS");
-        let terms = term_rows.join("\n");
-        push_format(
-            source,
-            format_args!(
-                "pub const {terms_name}: &[bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan] = &[\n{terms}\n];\n"
-            ),
-        );
-        family_rows.push(format!(
-            "    bolt_verifier_runtime::RelationOutputFunctionFamilyPlan {{ symbol: {}, gamma: {}, terms: {terms_name} }},",
-            rust_str(&family.symbol),
-            optional_rust_str(family.gamma.as_deref()),
-        ));
-    }
-    let families_name = format!("{upper_stage}_RELATION_OUTPUT_{claim_index}_FUNCTION_FAMILIES");
-    let families = family_rows.join("\n");
-    push_format(
-        source,
-        format_args!(
-            "pub const {families_name}: &[bolt_verifier_runtime::RelationOutputFunctionFamilyPlan] = &[\n{families}\n];\n\n"
-        ),
-    );
-    Ok(families_name)
-}
-
-fn relation_output_function_kind_expr(function: RelationOutputFunctionKind) -> &'static str {
-    match function {
-        RelationOutputFunctionKind::BooleanZero => {
-            "bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero"
-        }
-    }
 }
 
 fn emit_structured_polynomial_eval_refs_slice_or_inline(
