@@ -1770,16 +1770,21 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(bytecode_claims[0].structured_polynomial_evals.is_empty());
     assert!(bytecode_claims[0].eval_families.is_empty());
     assert!(bytecode_claims[0].product_families.is_empty());
+    let bytecode_output_scalar_exprs = verifier_program
+        .scalar_exprs
+        .iter()
+        .filter(|expr| expr.symbol.starts_with("stage6.bytecode_read_raf.output."))
+        .collect::<Vec<_>>();
+    assert!(bytecode_output_scalar_exprs.iter().any(|expr| {
+        expr.symbol == "stage6.bytecode_read_raf.output.product.BytecodeRa"
+            && expr.formula == "field_vector.product"
+            && expr.operands == vec!["stage6.bytecode_read_raf.eval.BytecodeRa".to_owned()]
+    }));
     let bytecode_output_exprs = verifier_program
         .field_exprs
         .iter()
         .filter(|expr| expr.symbol.starts_with("stage6.bytecode_read_raf.output."))
         .collect::<Vec<_>>();
-    assert!(bytecode_output_exprs.iter().any(|expr| {
-        expr.symbol == "stage6.bytecode_read_raf.output.product.BytecodeRa"
-            && expr.formula == "field_vector.product"
-            && expr.operands == vec!["stage6.bytecode_read_raf.eval.BytecodeRa".to_owned()]
-    }));
     assert!(bytecode_output_exprs.iter().any(|expr| {
         expr.symbol == "stage6.bytecode_read_raf.output.claim_expr"
             && expr.formula == "field.product"
@@ -1884,7 +1889,7 @@ fn stage6_rust_targets_extract_and_compile() {
         .contains("stage6.bytecode_read_raf.output.claim_expr"));
     assert!(verifier_source
         .source
-        .contains("Stage6FieldExprKind::FieldVectorProduct"));
+        .contains("Stage6ScalarExprKind::FieldVectorProduct"));
     assert!(!verifier_source
         .source
         .contains("expected_stage67_bytecode_read_raf"));

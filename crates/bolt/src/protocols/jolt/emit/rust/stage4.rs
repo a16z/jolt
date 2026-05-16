@@ -1416,7 +1416,6 @@ pub type Stage4SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stag
 pub type Stage4SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage4RelationKind>;
 pub type Stage4SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage4RelationKind>;
 pub type Stage4RelationOutputPlan = bolt_verifier_runtime::RelationOutputPlan<Stage4RelationKind>;
-pub type Stage4StructuredPolynomialEvalPlan = bolt_verifier_runtime::StructuredPolynomialEvalPlan;
 
 pub use super::jolt_relations::JoltRelationKind as Stage4RelationKind;
 pub use bolt_verifier_runtime::{
@@ -1434,11 +1433,6 @@ pub use bolt_verifier_runtime::{
     ProgramStepPlan as Stage4ProgramStepPlan, StageParams as Stage4Params,
     SumcheckBatchPlan as Stage4SumcheckBatchPlan,
     SumcheckEvalPlan as Stage4SumcheckEvalPlan,
-    StructuredPolynomialPointLength as Stage4StructuredPolynomialPointLength,
-    StructuredPolynomialPointOrder as Stage4StructuredPolynomialPointOrder,
-    StructuredPolynomialPointPlan as Stage4StructuredPolynomialPointPlan,
-    StructuredPolynomialPointSegment as Stage4StructuredPolynomialPointSegment,
-    StructuredPolynomialKind as Stage4StructuredPolynomialKind,
     TranscriptAbsorbBytesPlan as Stage4TranscriptAbsorbBytesPlan,
     TranscriptSqueezeKind as Stage4TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage4TranscriptSqueezePlan,
@@ -1483,7 +1477,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage4Error);
             source.push_str(&self.emit_verifier_relation_output_constants()?);
         }
         let relation_outputs_field = if self.role == Role::Verifier {
-            "    relation_output_values: STAGE4_RELATION_OUTPUT_VALUES,\n    relation_outputs: STAGE4_RELATION_OUTPUTS,\n"
+            "    relation_outputs: STAGE4_RELATION_OUTPUTS,\n"
         } else {
             ""
         };
@@ -2020,7 +2014,6 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage4Error);
         super::relation_outputs::emit_verifier_relation_output_constants(
             "Stage4",
             &self.role,
-            &self.relation_output_values,
             &self.relation_outputs,
         )
     }

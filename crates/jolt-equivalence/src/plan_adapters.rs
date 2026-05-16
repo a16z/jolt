@@ -585,7 +585,7 @@ macro_rules! define_stage_adapter_impl {
         $(, generated_points_with_zeros = $generated_point_with_zeros:ident, $generated_point_zero:ident)?
         $(, kernel_points = $kernel_point_slice:ident, $kernel_point_concat:ident)?
         $(, kernel_points_with_zeros = $kernel_point_slice_with_zeros:ident, $kernel_point_concat_with_zeros:ident, $kernel_point_zero:ident)?
-        $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
+        $(, relation_outputs = $relation_output:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
         $(, opening_equalities = $opening_equality:ident)?
     ) => {
@@ -750,43 +750,12 @@ macro_rules! define_stage_adapter_impl {
                         .collect(),
                 ),
                 $(
-                relation_output_values: super::leak_slice(
-                    program
-                        .relation_output_values
-                        .iter()
-                        .map(|value| $module::$relation_output_value {
-                            symbol: super::leak_str(&value.symbol),
-                            polynomial: super::generated_structured_polynomial_kind(value.polynomial.as_str()),
-                            x_point: bolt_verifier_runtime::StructuredPolynomialPointPlan {
-                                source: super::leak_str(&value.x_point.source),
-                                segment: super::generated_structured_polynomial_point_segment(value.x_point.segment.as_str()),
-                                length: super::generated_structured_polynomial_point_length(value.x_point.length.as_str()),
-                                order: super::generated_structured_polynomial_point_order(value.x_point.order.as_str()),
-                            },
-                            y_point: bolt_verifier_runtime::StructuredPolynomialPointPlan {
-                                source: super::leak_str(&value.y_point.source),
-                                segment: super::generated_structured_polynomial_point_segment(value.y_point.segment.as_str()),
-                                length: super::generated_structured_polynomial_point_length(value.y_point.length.as_str()),
-                                order: super::generated_structured_polynomial_point_order(value.y_point.order.as_str()),
-                            },
-                        })
-                        .collect(),
-                ),
                 relation_outputs: super::leak_slice(
                     program
                         .relation_outputs
                         .iter()
                         .map(|plan| $module::$relation_output {
                             relation: super::generated_relation_kind(&plan.relation),
-                            structured_polynomial_evals: super::leak_slice(
-                                plan.structured_polynomial_evals
-                                    .iter()
-                                    .map(|value| bolt_verifier_runtime::StructuredPolynomialEvalRef {
-                                        symbol: super::leak_str(&value.symbol),
-                                        index: value.index,
-                                    })
-                                    .collect(),
-                            ),
                             local_scalars: super::leak_str_slice(&plan.local_scalars),
                             expected_output: super::leak_str(&plan.expected_output),
                         })
@@ -794,10 +763,6 @@ macro_rules! define_stage_adapter_impl {
                 ),
                 )?
                 $(
-                relation_output_values: {
-                    let _ = stringify!($empty_relation_outputs);
-                    &[]
-                },
                 relation_outputs: {
                     let _ = stringify!($empty_relation_outputs);
                     &[]
@@ -960,7 +925,7 @@ macro_rules! define_stage_adapter {
         point_zero = $point_zero:ident
         $(, scalar_expr = $scalar_expr:ident)?
         $(, empty_scalar_exprs = $empty_scalar_exprs:ident)?
-        $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
+        $(, relation_outputs = $relation_output:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
     ) => {
         define_stage_adapter_impl!(
@@ -989,7 +954,7 @@ macro_rules! define_stage_adapter {
             $(, empty_scalar_exprs = $empty_scalar_exprs)?
             ,
             generated_points_with_zeros = $point_expr, $point_zero
-            $(, relation_outputs = $relation_output, relation_output_values = $relation_output_value)?
+            $(, relation_outputs = $relation_output)?
             $(, empty_relation_outputs = $empty_relation_outputs)?
             ,
             opening_equalities = $opening_equality
@@ -1021,7 +986,7 @@ macro_rules! define_stage_adapter {
         $opening_batch:ident
         $(, scalar_expr = $scalar_expr:ident)?
         $(, empty_scalar_exprs = $empty_scalar_exprs:ident)?
-        $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
+        $(, relation_outputs = $relation_output:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
     ) => {
         define_stage_adapter_impl!(
@@ -1050,7 +1015,7 @@ macro_rules! define_stage_adapter {
             $(, empty_scalar_exprs = $empty_scalar_exprs)?
             ,
             generated_points = $point_expr
-            $(, relation_outputs = $relation_output, relation_output_values = $relation_output_value)?
+            $(, relation_outputs = $relation_output)?
             $(, empty_relation_outputs = $empty_relation_outputs)?
             ,
             opening_equalities = $opening_equality
@@ -1083,7 +1048,7 @@ macro_rules! define_stage_adapter {
         point_zero = $point_zero:ident
         $(, scalar_expr = $scalar_expr:ident)?
         $(, empty_scalar_exprs = $empty_scalar_exprs:ident)?
-        $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
+        $(, relation_outputs = $relation_output:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
     ) => {
         define_stage_adapter_impl!(
@@ -1112,7 +1077,7 @@ macro_rules! define_stage_adapter {
             $(, empty_scalar_exprs = $empty_scalar_exprs)?
             ,
             kernel_points_with_zeros = $point_slice, $point_concat, $point_zero
-            $(, relation_outputs = $relation_output, relation_output_values = $relation_output_value)?
+            $(, relation_outputs = $relation_output)?
             $(, empty_relation_outputs = $empty_relation_outputs)?
             ,
             opening_equalities = $opening_equality
@@ -1144,7 +1109,7 @@ macro_rules! define_stage_adapter {
         $opening_batch:ident
         $(, scalar_expr = $scalar_expr:ident)?
         $(, empty_scalar_exprs = $empty_scalar_exprs:ident)?
-        $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
+        $(, relation_outputs = $relation_output:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
     ) => {
         define_stage_adapter_impl!(
@@ -1173,7 +1138,7 @@ macro_rules! define_stage_adapter {
             $(, empty_scalar_exprs = $empty_scalar_exprs)?
             ,
             kernel_points = $point_slice, $point_concat
-            $(, relation_outputs = $relation_output, relation_output_values = $relation_output_value)?
+            $(, relation_outputs = $relation_output)?
             $(, empty_relation_outputs = $empty_relation_outputs)?
             ,
             opening_equalities = $opening_equality
@@ -1206,7 +1171,7 @@ macro_rules! define_stage_adapter_no_absorb {
         $(, kernels = $kernel:ident)?
         $(, scalar_expr = $scalar_expr:ident)?
         $(, empty_scalar_exprs = $empty_scalar_exprs:ident)?
-        $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
+        $(, relation_outputs = $relation_output:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
         $(, opening_equalities = $opening_equality:ident)?
     ) => {
@@ -1234,7 +1199,7 @@ macro_rules! define_stage_adapter_no_absorb {
             $(, empty_scalar_exprs = $empty_scalar_exprs)?
             ,
             generated_points = $point_expr
-            $(, relation_outputs = $relation_output, relation_output_values = $relation_output_value)?
+            $(, relation_outputs = $relation_output)?
             $(, empty_relation_outputs = $empty_relation_outputs)?
             $(, opening_equalities = $opening_equality)?
         );
@@ -1263,7 +1228,7 @@ macro_rules! define_stage_adapter_no_absorb {
         $(, kernels = $kernel:ident)?
         $(, scalar_expr = $scalar_expr:ident)?
         $(, empty_scalar_exprs = $empty_scalar_exprs:ident)?
-        $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
+        $(, relation_outputs = $relation_output:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
         $(, opening_equalities = $opening_equality:ident)?
     ) => {
@@ -1291,7 +1256,7 @@ macro_rules! define_stage_adapter_no_absorb {
             $(, empty_scalar_exprs = $empty_scalar_exprs)?
             ,
             kernel_points = $point_slice, $point_concat
-            $(, relation_outputs = $relation_output, relation_output_values = $relation_output_value)?
+            $(, relation_outputs = $relation_output)?
             $(, empty_relation_outputs = $empty_relation_outputs)?
             $(, opening_equalities = $opening_equality)?
         );

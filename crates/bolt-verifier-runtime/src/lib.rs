@@ -383,7 +383,7 @@ pub enum StructuredPolynomialPointLength {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StructuredPolynomialPointPlan {
+struct StructuredPolynomialPointPlan {
     pub source: &'static str,
     pub segment: StructuredPolynomialPointSegment,
     pub length: StructuredPolynomialPointLength,
@@ -405,23 +405,8 @@ pub enum StructuredPolynomialKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StructuredPolynomialEvalPlan {
-    pub symbol: &'static str,
-    pub polynomial: StructuredPolynomialKind,
-    pub x_point: StructuredPolynomialPointPlan,
-    pub y_point: StructuredPolynomialPointPlan,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StructuredPolynomialEvalRef {
-    pub symbol: &'static str,
-    pub index: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RelationOutputPlan<R: ProtocolRelation> {
     pub relation: R,
-    pub structured_polynomial_evals: &'static [StructuredPolynomialEvalRef],
     pub local_scalars: &'static [&'static str],
     pub expected_output: &'static str,
 }
@@ -501,7 +486,6 @@ pub struct StageProgramPlan<R: ProtocolRelation> {
     pub drivers: &'static [SumcheckDriverPlan<R>],
     pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
     pub evals: &'static [SumcheckEvalPlan],
-    pub relation_output_values: &'static [StructuredPolynomialEvalPlan],
     pub relation_outputs: &'static [RelationOutputPlan<R>],
     pub point_exprs: &'static [PointExprPlan],
     pub opening_claims: &'static [OpeningClaimPlan],
@@ -523,7 +507,6 @@ pub struct StageVerifierProgramPlan<R: ProtocolRelation> {
     pub drivers: &'static [SumcheckDriverPlan<R>],
     pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
     pub evals: &'static [SumcheckEvalPlan],
-    pub relation_output_values: &'static [StructuredPolynomialEvalPlan],
     pub relation_outputs: &'static [RelationOutputPlan<R>],
     pub point_exprs: &'static [PointExprPlan],
     pub opening_claims: &'static [OpeningClaimPlan],
@@ -2038,7 +2021,6 @@ mod tests {
         let value = evaluate_relation_output_for_instance(
             &[RelationOutputPlan {
                 relation: TestRelation::Output,
-                structured_polynomial_evals: &[],
                 local_scalars: &[],
                 expected_output: "eq.xy",
             }],

@@ -1204,7 +1204,6 @@ pub type Stage3SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stag
 pub type Stage3SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage3RelationKind>;
 pub type Stage3SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage3RelationKind>;
 pub type Stage3RelationOutputPlan = bolt_verifier_runtime::RelationOutputPlan<Stage3RelationKind>;
-pub type Stage3StructuredPolynomialEvalPlan = bolt_verifier_runtime::StructuredPolynomialEvalPlan;
 
 pub use super::jolt_relations::JoltRelationKind as Stage3RelationKind;
 pub use bolt_verifier_runtime::{
@@ -1221,11 +1220,6 @@ pub use bolt_verifier_runtime::{
     ProgramStepKind as Stage3ProgramStepKind, ProgramStepPlan as Stage3ProgramStepPlan,
     StageParams as Stage3Params,
     SumcheckBatchPlan as Stage3SumcheckBatchPlan, SumcheckEvalPlan as Stage3SumcheckEvalPlan,
-    StructuredPolynomialPointLength as Stage3StructuredPolynomialPointLength,
-    StructuredPolynomialPointOrder as Stage3StructuredPolynomialPointOrder,
-    StructuredPolynomialPointPlan as Stage3StructuredPolynomialPointPlan,
-    StructuredPolynomialPointSegment as Stage3StructuredPolynomialPointSegment,
-    StructuredPolynomialKind as Stage3StructuredPolynomialKind,
     TranscriptSqueezeKind as Stage3TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage3TranscriptSqueezePlan,
 };
@@ -1299,7 +1293,6 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
              \x20   drivers: STAGE3_SUMCHECK_DRIVERS,\n\
              \x20   instance_results: STAGE3_SUMCHECK_INSTANCE_RESULTS,\n\
              \x20   evals: STAGE3_SUMCHECK_EVALS,\n\
-             \x20   relation_output_values: STAGE3_RELATION_OUTPUT_VALUES,\n\
              \x20   relation_outputs: STAGE3_RELATION_OUTPUTS,\n\
              \x20   point_exprs: STAGE3_POINT_EXPRS,\n\
              \x20   opening_claims: STAGE3_OPENING_CLAIMS,\n\
@@ -1782,7 +1775,6 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
         super::relation_outputs::emit_verifier_relation_output_constants(
             "Stage3",
             &self.role,
-            &self.relation_output_values,
             &self.relation_outputs,
         )
     }

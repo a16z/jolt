@@ -1672,7 +1672,6 @@ pub type Stage7SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stag
 pub type Stage7SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage7RelationKind>;
 pub type Stage7SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage7RelationKind>;
 pub type Stage7RelationOutputPlan = bolt_verifier_runtime::RelationOutputPlan<Stage7RelationKind>;
-pub type Stage7StructuredPolynomialEvalPlan = bolt_verifier_runtime::StructuredPolynomialEvalPlan;
 
 pub use super::jolt_relations::JoltRelationKind as Stage7RelationKind;
 pub use bolt_verifier_runtime::{
@@ -1690,11 +1689,6 @@ pub use bolt_verifier_runtime::{
     StageParams as Stage7Params,
     SumcheckBatchPlan as Stage7SumcheckBatchPlan,
     SumcheckEvalPlan as Stage7SumcheckEvalPlan,
-    StructuredPolynomialKind as Stage7StructuredPolynomialKind,
-    StructuredPolynomialPointLength as Stage7StructuredPolynomialPointLength,
-    StructuredPolynomialPointOrder as Stage7StructuredPolynomialPointOrder,
-    StructuredPolynomialPointPlan as Stage7StructuredPolynomialPointPlan,
-    StructuredPolynomialPointSegment as Stage7StructuredPolynomialPointSegment,
     TranscriptAbsorbBytesPlan as Stage7TranscriptAbsorbBytesPlan,
     TranscriptSqueezeKind as Stage7TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage7TranscriptSqueezePlan,
@@ -1739,7 +1733,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
         }
         source.push_str(&self.emit_tail_constants()?);
         let relation_outputs_field = if self.role == Role::Verifier {
-            "    relation_output_values: STAGE7_RELATION_OUTPUT_VALUES,\n    relation_outputs: STAGE7_RELATION_OUTPUTS,\n"
+            "    relation_outputs: STAGE7_RELATION_OUTPUTS,\n"
         } else {
             ""
         };
@@ -2262,7 +2256,6 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
         super::relation_outputs::emit_verifier_relation_output_constants(
             "Stage7",
             &self.role,
-            &self.relation_output_values,
             &self.relation_outputs,
         )
     }

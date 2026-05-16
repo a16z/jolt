@@ -1559,7 +1559,6 @@ pub type Stage6SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stag
 pub type Stage6SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage6RelationKind>;
 pub type Stage6SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage6RelationKind>;
 pub type Stage6RelationOutputPlan = bolt_verifier_runtime::RelationOutputPlan<Stage6RelationKind>;
-pub type Stage6StructuredPolynomialEvalPlan = bolt_verifier_runtime::StructuredPolynomialEvalPlan;
 
 pub use super::jolt_relations::JoltRelationKind as Stage6RelationKind;
 pub use bolt_verifier_runtime::{
@@ -1577,11 +1576,6 @@ pub use bolt_verifier_runtime::{
     StageParams as Stage6Params,
     SumcheckBatchPlan as Stage6SumcheckBatchPlan,
     SumcheckEvalPlan as Stage6SumcheckEvalPlan,
-    StructuredPolynomialPointLength as Stage6StructuredPolynomialPointLength,
-    StructuredPolynomialPointOrder as Stage6StructuredPolynomialPointOrder,
-    StructuredPolynomialPointPlan as Stage6StructuredPolynomialPointPlan,
-    StructuredPolynomialPointSegment as Stage6StructuredPolynomialPointSegment,
-    StructuredPolynomialKind as Stage6StructuredPolynomialKind,
     TranscriptAbsorbBytesPlan as Stage6TranscriptAbsorbBytesPlan,
     TranscriptSqueezeKind as Stage6TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage6TranscriptSqueezePlan,
@@ -1689,7 +1683,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
             source.push_str(&self.emit_verifier_relation_output_constants()?);
         }
         let relation_outputs_field = if self.role == Role::Verifier {
-            "    relation_output_values: STAGE6_RELATION_OUTPUT_VALUES,\n    relation_outputs: STAGE6_RELATION_OUTPUTS,\n"
+            "    relation_outputs: STAGE6_RELATION_OUTPUTS,\n"
         } else {
             ""
         };
@@ -2221,7 +2215,6 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
         super::relation_outputs::emit_verifier_relation_output_constants(
             "Stage6",
             &self.role,
-            &self.relation_output_values,
             &self.relation_outputs,
         )
     }

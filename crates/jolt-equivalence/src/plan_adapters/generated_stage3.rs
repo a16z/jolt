@@ -24,6 +24,5 @@ define_stage_adapter_no_absorb!(
     Stage3OpeningBatchPlan,
     scalar_expr = Stage3ScalarExprPlan,
     relation_outputs = Stage3RelationOutputPlan,
-    relation_output_values = Stage3StructuredPolynomialEvalPlan,
     opening_equalities = Stage3OpeningClaimEqualityPlan
 );

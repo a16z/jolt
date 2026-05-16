@@ -17,7 +17,6 @@ pub type Stage6SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stag
 pub type Stage6SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage6RelationKind>;
 pub type Stage6SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage6RelationKind>;
 pub type Stage6RelationOutputPlan = bolt_verifier_runtime::RelationOutputPlan<Stage6RelationKind>;
-pub type Stage6StructuredPolynomialEvalPlan = bolt_verifier_runtime::StructuredPolynomialEvalPlan;
 
 pub use super::jolt_relations::JoltRelationKind as Stage6RelationKind;
 pub use bolt_verifier_runtime::{
@@ -35,11 +34,6 @@ pub use bolt_verifier_runtime::{
     StageParams as Stage6Params,
     SumcheckBatchPlan as Stage6SumcheckBatchPlan,
     SumcheckEvalPlan as Stage6SumcheckEvalPlan,
-    StructuredPolynomialPointLength as Stage6StructuredPolynomialPointLength,
-    StructuredPolynomialPointOrder as Stage6StructuredPolynomialPointOrder,
-    StructuredPolynomialPointPlan as Stage6StructuredPolynomialPointPlan,
-    StructuredPolynomialPointSegment as Stage6StructuredPolynomialPointSegment,
-    StructuredPolynomialKind as Stage6StructuredPolynomialKind,
     TranscriptAbsorbBytesPlan as Stage6TranscriptAbsorbBytesPlan,
     TranscriptSqueezeKind as Stage6TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage6TranscriptSqueezePlan,
@@ -660,25 +654,14 @@ const STAGE6_BYTECODE_PLAN: Stage67BytecodeReadRafPlan = Stage67BytecodeReadRafP
     },
     entry_lookup_table: "stage6.bytecode.entry.lookup_table",
 };
-pub const STAGE6_RELATION_OUTPUT_VALUES: &[Stage6StructuredPolynomialEvalPlan] = &[
-    Stage6StructuredPolynomialEvalPlan { symbol: "stage6.booleanity.output.eq.InstructionRa0", polynomial: Stage6StructuredPolynomialKind::Eq, x_point: Stage6StructuredPolynomialPointPlan { source: "stage6.booleanity.instance", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::AsIs }, y_point: Stage6StructuredPolynomialPointPlan { source: "stage6.booleanity.output.point", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::AsIs } },
-    Stage6StructuredPolynomialEvalPlan { symbol: "stage6.hamming_booleanity.output.eq.LookupOutput", polynomial: Stage6StructuredPolynomialKind::Eq, x_point: Stage6StructuredPolynomialPointPlan { source: "stage6.hamming_booleanity.instance", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::AsIs }, y_point: Stage6StructuredPolynomialPointPlan { source: "stage6.input.stage1.LookupOutput", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::Reverse } },
-    Stage6StructuredPolynomialEvalPlan { symbol: "stage6.ram_ra_virtual.output.eq.Cycle", polynomial: Stage6StructuredPolynomialKind::Eq, x_point: Stage6StructuredPolynomialPointPlan { source: "stage6.ram_ra_virtual.instance", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::Reverse }, y_point: Stage6StructuredPolynomialPointPlan { source: "stage6.input.stage5.ram_ra_claim_reduction.RamRa", segment: Stage6StructuredPolynomialPointSegment::Suffix, length: Stage6StructuredPolynomialPointLength::XPoint, order: Stage6StructuredPolynomialPointOrder::AsIs } },
-    Stage6StructuredPolynomialEvalPlan { symbol: "stage6.instruction_ra_virtual.output.eq.Cycle", polynomial: Stage6StructuredPolynomialKind::Eq, x_point: Stage6StructuredPolynomialPointPlan { source: "stage6.instruction_ra_virtual.instance", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::Reverse }, y_point: Stage6StructuredPolynomialPointPlan { source: "stage6.input.stage5.instruction_read_raf.InstructionRa_0", segment: Stage6StructuredPolynomialPointSegment::Suffix, length: Stage6StructuredPolynomialPointLength::XPoint, order: Stage6StructuredPolynomialPointOrder::AsIs } },
-    Stage6StructuredPolynomialEvalPlan { symbol: "stage6.inc_claim_reduction.output.eq.RamIncStage2", polynomial: Stage6StructuredPolynomialKind::Eq, x_point: Stage6StructuredPolynomialPointPlan { source: "stage6.inc_claim_reduction.instance", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::Reverse }, y_point: Stage6StructuredPolynomialPointPlan { source: "stage6.input.stage2.ram_read_write.RamInc", segment: Stage6StructuredPolynomialPointSegment::Suffix, length: Stage6StructuredPolynomialPointLength::XPoint, order: Stage6StructuredPolynomialPointOrder::AsIs } },
-    Stage6StructuredPolynomialEvalPlan { symbol: "stage6.inc_claim_reduction.output.eq.RamIncStage4", polynomial: Stage6StructuredPolynomialKind::Eq, x_point: Stage6StructuredPolynomialPointPlan { source: "stage6.inc_claim_reduction.instance", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::Reverse }, y_point: Stage6StructuredPolynomialPointPlan { source: "stage6.input.stage4.ram_val_check.RamInc", segment: Stage6StructuredPolynomialPointSegment::Suffix, length: Stage6StructuredPolynomialPointLength::XPoint, order: Stage6StructuredPolynomialPointOrder::AsIs } },
-    Stage6StructuredPolynomialEvalPlan { symbol: "stage6.inc_claim_reduction.output.eq.RdIncStage4", polynomial: Stage6StructuredPolynomialKind::Eq, x_point: Stage6StructuredPolynomialPointPlan { source: "stage6.inc_claim_reduction.instance", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::Reverse }, y_point: Stage6StructuredPolynomialPointPlan { source: "stage6.input.stage4.registers_read_write.RdInc", segment: Stage6StructuredPolynomialPointSegment::Suffix, length: Stage6StructuredPolynomialPointLength::XPoint, order: Stage6StructuredPolynomialPointOrder::AsIs } },
-    Stage6StructuredPolynomialEvalPlan { symbol: "stage6.inc_claim_reduction.output.eq.RdIncStage5", polynomial: Stage6StructuredPolynomialKind::Eq, x_point: Stage6StructuredPolynomialPointPlan { source: "stage6.inc_claim_reduction.instance", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::Reverse }, y_point: Stage6StructuredPolynomialPointPlan { source: "stage6.input.stage5.registers_val_evaluation.RdInc", segment: Stage6StructuredPolynomialPointSegment::Suffix, length: Stage6StructuredPolynomialPointLength::XPoint, order: Stage6StructuredPolynomialPointOrder::AsIs } },
-];
-
 pub const STAGE6_RELATION_OUTPUT_5_LOCAL_SCALARS: &[&str] = &["stage6.bytecode_read_raf.output.contribution"];
 pub const STAGE6_RELATION_OUTPUTS: &[Stage6RelationOutputPlan] = &[
-    Stage6RelationOutputPlan { relation: Stage6RelationKind::Stage6Booleanity, structured_polynomial_evals: &[bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage6.booleanity.output.eq.InstructionRa0", index: 0 }], local_scalars: &[], expected_output: "stage6.booleanity.output.claim_expr" },
-    Stage6RelationOutputPlan { relation: Stage6RelationKind::Stage6HammingBooleanity, structured_polynomial_evals: &[bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage6.hamming_booleanity.output.eq.LookupOutput", index: 1 }], local_scalars: &[], expected_output: "stage6.hamming_booleanity.output.claim_expr" },
-    Stage6RelationOutputPlan { relation: Stage6RelationKind::Stage6RamRaVirtual, structured_polynomial_evals: &[bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage6.ram_ra_virtual.output.eq.Cycle", index: 2 }], local_scalars: &[], expected_output: "stage6.ram_ra_virtual.output.claim_expr" },
-    Stage6RelationOutputPlan { relation: Stage6RelationKind::Stage6InstructionRaVirtual, structured_polynomial_evals: &[bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage6.instruction_ra_virtual.output.eq.Cycle", index: 3 }], local_scalars: &[], expected_output: "stage6.instruction_ra_virtual.output.claim_expr" },
-    Stage6RelationOutputPlan { relation: Stage6RelationKind::Stage6IncClaimReduction, structured_polynomial_evals: &[bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage6.inc_claim_reduction.output.eq.RamIncStage2", index: 4 }, bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage6.inc_claim_reduction.output.eq.RamIncStage4", index: 5 }, bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage6.inc_claim_reduction.output.eq.RdIncStage4", index: 6 }, bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage6.inc_claim_reduction.output.eq.RdIncStage5", index: 7 }], local_scalars: &[], expected_output: "stage6.inc_claim_reduction.output.claim_expr" },
-    Stage6RelationOutputPlan { relation: Stage6RelationKind::Stage6BytecodeReadRaf, structured_polynomial_evals: &[], local_scalars: STAGE6_RELATION_OUTPUT_5_LOCAL_SCALARS, expected_output: "stage6.bytecode_read_raf.output.claim_expr" },
+    Stage6RelationOutputPlan { relation: Stage6RelationKind::Stage6Booleanity, local_scalars: &[], expected_output: "stage6.booleanity.output.claim_expr" },
+    Stage6RelationOutputPlan { relation: Stage6RelationKind::Stage6HammingBooleanity, local_scalars: &[], expected_output: "stage6.hamming_booleanity.output.claim_expr" },
+    Stage6RelationOutputPlan { relation: Stage6RelationKind::Stage6RamRaVirtual, local_scalars: &[], expected_output: "stage6.ram_ra_virtual.output.claim_expr" },
+    Stage6RelationOutputPlan { relation: Stage6RelationKind::Stage6InstructionRaVirtual, local_scalars: &[], expected_output: "stage6.instruction_ra_virtual.output.claim_expr" },
+    Stage6RelationOutputPlan { relation: Stage6RelationKind::Stage6IncClaimReduction, local_scalars: &[], expected_output: "stage6.inc_claim_reduction.output.claim_expr" },
+    Stage6RelationOutputPlan { relation: Stage6RelationKind::Stage6BytecodeReadRaf, local_scalars: STAGE6_RELATION_OUTPUT_5_LOCAL_SCALARS, expected_output: "stage6.bytecode_read_raf.output.claim_expr" },
 ];
 
 pub const STAGE6_PROGRAM: Stage6VerifierProgramPlan = Stage6CpuProgramPlan {
@@ -697,7 +680,6 @@ pub const STAGE6_PROGRAM: Stage6VerifierProgramPlan = Stage6CpuProgramPlan {
     drivers: STAGE6_SUMCHECK_DRIVERS,
     instance_results: STAGE6_SUMCHECK_INSTANCE_RESULTS,
     evals: STAGE6_SUMCHECK_EVALS,
-    relation_output_values: STAGE6_RELATION_OUTPUT_VALUES,
     relation_outputs: STAGE6_RELATION_OUTPUTS,
     point_exprs: STAGE6_POINT_EXPRS,
     opening_claims: STAGE6_OPENING_CLAIMS,

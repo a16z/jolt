@@ -27,6 +27,5 @@ define_stage_adapter!(
     Stage7OpeningBatchPlan,
     point_zero = Stage7PointExprPlan,
     scalar_expr = Stage7ScalarExprPlan,
-    relation_outputs = Stage7RelationOutputPlan,
-    relation_output_values = Stage7StructuredPolynomialEvalPlan
+    relation_outputs = Stage7RelationOutputPlan
 );
