@@ -1345,6 +1345,53 @@ pub fn evaluate_relation_output_for_instance<R: ProtocolRelation>(
     )
 }
 
+pub fn expected_relation_output_batch<R: ProtocolRelation>(
+    driver: &SumcheckDriverPlan<R>,
+    batches: &[SumcheckBatchPlan],
+    claims: &[SumcheckClaimPlan<R>],
+    instance_results: &[SumcheckInstanceResultPlan<R>],
+    relation_outputs: &[RelationOutputPlan<R>],
+    field_exprs: &[FieldExprPlan],
+    scalar_exprs: &[ScalarExprPlan],
+    store: &ValueStore<Fr>,
+    evals: &[StageNamedEval<Fr>],
+    point: &[Fr],
+    batching_coeffs: &[Fr],
+) -> Result<Fr, RuntimePlanError> {
+    let batch = find_batch(batches, driver.symbol, driver.batch)?;
+    let claims = batch_claims(claims, batch)?;
+    let mut expected = Fr::from_u64(0);
+    for (claim, coefficient) in claims.iter().zip(batching_coeffs) {
+        let instance = instance_results
+            .iter()
+            .find(|instance| instance.claim == claim.symbol && instance.source == driver.symbol)
+            .ok_or(RuntimePlanError::MissingClaim {
+                batch: batch.symbol,
+                claim: claim.symbol,
+            })?;
+        let local_point = point
+            .get(instance.round_offset..instance.round_offset + instance.num_rounds)
+            .ok_or(RuntimePlanError::InvalidInputLength {
+                input: instance.symbol,
+                expected: instance.round_offset + instance.num_rounds,
+                actual: point.len(),
+            })?;
+        let value = evaluate_relation_output_for_instance(
+            relation_outputs,
+            field_exprs,
+            scalar_exprs,
+            store,
+            instance,
+            evals,
+            &[],
+            &[],
+            local_point,
+        )?;
+        expected += *coefficient * value;
+    }
+    Ok(expected)
+}
+
 fn relation_output_x_point_source<'a>(
     source: &'static str,
     instance_symbol: &'static str,

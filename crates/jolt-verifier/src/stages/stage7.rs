@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use bolt_verifier_runtime::{batch_claims, find_batch, find_plan};
+use bolt_verifier_runtime::find_plan;
 use jolt_field::{Field, Fr};
 use jolt_sumcheck::SumcheckError;
 use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};
@@ -473,7 +473,19 @@ where
         store,
         transcript,
         |store, evals, point, batching_coeffs| {
-            expected_batched_output_claim(program, driver, store, evals, point, batching_coeffs)
+            Ok(bolt_verifier_runtime::expected_relation_output_batch(
+                driver,
+                program.batches,
+                program.claims,
+                program.instance_results,
+                program.relation_outputs,
+                program.field_exprs,
+                program.scalar_exprs,
+                store,
+                evals,
+                point,
+                batching_coeffs,
+            )?)
         },
         |store, verified| observe_stage7_sumcheck_output(program, store, verified),
         |driver, error| VerifyStage7Error::Sumcheck { driver, error },
@@ -525,55 +537,4 @@ fn observe_stage7_sumcheck_output<F: Field>(
         |driver, reason| VerifyStage7Error::InvalidProof { driver, reason },
         |symbol| VerifyStage7Error::MissingValue { symbol },
     )
-}
-
-fn expected_batched_output_claim(
-    program: &'static Stage7VerifierProgramPlan,
-    driver: &'static Stage7SumcheckDriverPlan,
-    store: &bolt_verifier_runtime::ValueStore<Fr>,
-    evals: &[Stage7NamedEval<Fr>],
-    point: &[Fr],
-    batching_coeffs: &[Fr],
-) -> Result<Fr, VerifyStage7Error> {
-    let batch = find_batch(program.batches, driver.symbol, driver.batch)?;
-    let claims = batch_claims(program.claims, batch)?;
-    let mut expected = Fr::from_u64(0);
-    for (claim, coefficient) in claims.iter().zip(batching_coeffs) {
-        let instance = program
-            .instance_results
-            .iter()
-            .find(|instance| instance.claim == claim.symbol && instance.source == driver.symbol)
-            .ok_or(VerifyStage7Error::MissingClaim {
-                batch: batch.symbol,
-                claim: claim.symbol,
-            })?;
-        let local_point = point
-            .get(instance.round_offset..instance.round_offset + instance.num_rounds)
-            .ok_or(VerifyStage7Error::InvalidInputLength {
-                input: instance.symbol,
-                expected: instance.round_offset + instance.num_rounds,
-                actual: point.len(),
-            })?;
-        let Some(relation) = claim.relation else {
-            return Err(VerifyStage7Error::InvalidProof {
-                driver: driver.symbol,
-                reason: "missing claim relation",
-            });
-        };
-        let value = match relation {
-            Stage7RelationKind::Stage7HammingWeightClaimReduction => {
-                bolt_verifier_runtime::evaluate_relation_output_for_instance(
-                    program.relation_outputs,
-                    program.field_exprs,
-                    program.scalar_exprs,
-                    store,
-                    instance,
-                    evals, &[], &[], local_point,
-                )?
-            }
-            relation => return Err(VerifyStage7Error::UnsupportedRelation { relation }),
-        };
-        expected += *coefficient * value;
-    }
-    Ok(expected)
 }
