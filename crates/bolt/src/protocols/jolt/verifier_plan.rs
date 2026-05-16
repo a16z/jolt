@@ -31,7 +31,8 @@ use crate::protocols::jolt::verifier_value_rows::{
 };
 use crate::protocols::jolt::verifier_values::{
     VerifierFieldVectorSourceKind, VerifierFieldVectorSourceSet, VerifierPointSourceKind,
-    VerifierPointSourceSet, VerifierScalarSourceKind, VerifierScalarSourceSet,
+    VerifierPointSourceSet, VerifierScalarSourceSet, VerifierScalarValueKind,
+    VerifierScalarValuePlan,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -310,17 +311,22 @@ impl VerifierRelationLocalInputPlan {
         }
     }
 
-    fn insert_scalar_sources(&self, values: &mut VerifierScalarSourceSet) {
+    fn extend_scalar_value_plans(&self, values: &mut Vec<VerifierScalarValuePlan>) {
         match self {
             Self::Stage5InstructionReadRaf(plan) => {
-                values.extend(
-                    plan.local_scalar_symbols(),
-                    VerifierScalarSourceKind::RelationOutputLocal,
-                );
+                values.extend(plan.local_scalar_symbols().map(|symbol| {
+                    VerifierScalarValuePlan::new(
+                        symbol.clone(),
+                        VerifierScalarValueKind::RelationOutputLocal,
+                    )
+                }));
             }
             Self::Stage6BytecodeReadRaf(_) => {
                 for symbol in Stage6BytecodeReadRafEmitPlan::local_scalar_symbols() {
-                    values.insert(symbol, VerifierScalarSourceKind::RelationOutputLocal);
+                    values.push(VerifierScalarValuePlan::new(
+                        symbol,
+                        VerifierScalarValueKind::RelationOutputLocal,
+                    ));
                 }
             }
         }
@@ -385,14 +391,14 @@ impl VerifierRelationLocalInputPlans {
         Ok(())
     }
 
-    fn insert_scalar_sources(&self, values: &mut VerifierScalarSourceSet) {
+    fn extend_scalar_value_plans(&self, values: &mut Vec<VerifierScalarValuePlan>) {
         for row in &self.rows {
-            row.insert_scalar_sources(values);
+            row.extend_scalar_value_plans(values);
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct VerifierStagePlan {
     pub(crate) steps: Vec<VerifierProgramStepPlan>,
     pub(crate) transcript_squeezes: Vec<VerifierTranscriptSqueezePlan>,
@@ -420,16 +426,14 @@ pub(crate) struct VerifierStagePlan {
 }
 
 impl VerifierStagePlan {
-    pub(crate) fn scalar_value_sources(&self) -> VerifierScalarSourceSet {
-        let mut values = VerifierScalarSourceSet::default();
-        values.extend(
-            self.opening_inputs.iter().map(|input| &input.symbol),
-            VerifierScalarSourceKind::OpeningInput,
-        );
-        values.extend(
-            self.field_constants.iter().map(|constant| &constant.symbol),
-            VerifierScalarSourceKind::FieldConstant,
-        );
+    pub(crate) fn scalar_value_plans(&self) -> Vec<VerifierScalarValuePlan> {
+        let mut values = Vec::new();
+        values.extend(self.opening_inputs.iter().map(|input| {
+            VerifierScalarValuePlan::new(&input.symbol, VerifierScalarValueKind::OpeningInput)
+        }));
+        values.extend(self.field_constants.iter().map(|constant| {
+            VerifierScalarValuePlan::new(&constant.symbol, VerifierScalarValueKind::FieldConstant)
+        }));
         values.extend(
             self.transcript_squeezes
                 .iter()
@@ -439,41 +443,69 @@ impl VerifierStagePlan {
                         TranscriptSqueezeKind::ChallengeScalar | TranscriptSqueezeKind::Scalar
                     )
                 })
-                .map(|squeeze| &squeeze.symbol),
-            VerifierScalarSourceKind::TranscriptScalar,
+                .map(|squeeze| {
+                    VerifierScalarValuePlan::new(
+                        &squeeze.symbol,
+                        VerifierScalarValueKind::TranscriptScalar,
+                    )
+                }),
         );
-        values.extend(
-            self.relation_output_eval_families
-                .iter()
-                .map(|family| &family.symbol),
-            VerifierScalarSourceKind::OutputEvalFamily,
-        );
-        values.extend(
-            self.relation_output_product_families
-                .iter()
-                .map(|family| &family.symbol),
-            VerifierScalarSourceKind::OutputProductFamily,
-        );
-        values.extend(
-            self.relation_output_function_families
-                .iter()
-                .map(|family| &family.symbol),
-            VerifierScalarSourceKind::OutputFunctionFamily,
-        );
-        values.extend(
-            self.field_exprs.iter().map(|expr| &expr.symbol),
-            VerifierScalarSourceKind::FieldExpr,
-        );
-        values.extend(
-            self.scalar_exprs.iter().map(|expr| &expr.symbol),
-            VerifierScalarSourceKind::ScalarExpr,
-        );
+        values.extend(self.relation_output_values.iter().map(|value| {
+            VerifierScalarValuePlan::new(
+                &value.symbol,
+                VerifierScalarValueKind::StructuredPolynomialEval,
+            )
+        }));
+        values.extend(self.relation_output_eval_families.iter().map(|family| {
+            VerifierScalarValuePlan::new(&family.symbol, VerifierScalarValueKind::OutputEvalFamily)
+        }));
+        values.extend(self.relation_output_product_families.iter().map(|family| {
+            VerifierScalarValuePlan::new(
+                &family.symbol,
+                VerifierScalarValueKind::OutputProductFamily,
+            )
+        }));
+        values.extend(self.relation_output_function_families.iter().map(|family| {
+            VerifierScalarValuePlan::new(
+                &family.symbol,
+                VerifierScalarValueKind::OutputFunctionFamily,
+            )
+        }));
+        values.extend(self.field_exprs.iter().map(|expr| {
+            VerifierScalarValuePlan::new(&expr.symbol, VerifierScalarValueKind::FieldExpr)
+        }));
+        let structured_eval_symbols = self
+            .relation_output_values
+            .iter()
+            .map(|value| value.symbol.as_str())
+            .collect::<BTreeSet<_>>();
+        values.extend(self.scalar_exprs.iter().filter_map(|expr| {
+            if matches!(expr.kind, ScalarExprKind::StructuredPolynomial { .. }) {
+                if structured_eval_symbols.contains(expr.symbol.as_str()) {
+                    return None;
+                }
+                return Some(VerifierScalarValuePlan::new(
+                    &expr.symbol,
+                    VerifierScalarValueKind::StructuredPolynomialEval,
+                ));
+            }
+            Some(VerifierScalarValuePlan::new(
+                &expr.symbol,
+                VerifierScalarValueKind::ScalarExpr,
+            ))
+        }));
         self.relation_local_inputs
-            .insert_scalar_sources(&mut values);
-        values.extend(
-            self.sumcheck_evals.iter().map(|eval| &eval.symbol),
-            VerifierScalarSourceKind::SumcheckEval,
-        );
+            .extend_scalar_value_plans(&mut values);
+        values.extend(self.sumcheck_evals.iter().map(|eval| {
+            VerifierScalarValuePlan::new(&eval.symbol, VerifierScalarValueKind::SumcheckEval)
+        }));
+        values
+    }
+
+    pub(crate) fn scalar_value_sources(&self) -> VerifierScalarSourceSet {
+        let mut values = VerifierScalarSourceSet::default();
+        let plans = self.scalar_value_plans();
+        values.extend_plans(&plans);
         values
     }
 
@@ -2133,4 +2165,112 @@ fn rust_str(value: &str) -> String {
 
 fn plan_error(error: RustTargetPlanError) -> EmitError {
     EmitError::new(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::protocols::jolt::rust_target_plan::ScalarExprKind;
+    use crate::protocols::jolt::stage5_instruction_read_raf_plan::Stage5InstructionReadRafEmitPlan;
+    use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
+    use crate::protocols::jolt::verifier_local_scalars::{
+        JoltLocalScalarEmitPlan, JoltLocalScalarMleKind,
+    };
+    use crate::protocols::jolt::verifier_relation_outputs::{
+        StructuredPolynomialEvalPlan, StructuredPolynomialKind, StructuredPolynomialPointLength,
+        StructuredPolynomialPointOrder, StructuredPolynomialPointPlan,
+        StructuredPolynomialPointSegment,
+    };
+    use crate::protocols::jolt::verifier_values::{
+        VerifierScalarValueKind, VerifierScalarValuePlan,
+    };
+
+    use super::{VerifierScalarExprPlan, VerifierStagePlan};
+
+    #[test]
+    fn scalar_value_plans_classify_structured_evals_and_local_scalars() -> Result<(), String> {
+        let mut plan = VerifierStagePlan::default();
+        plan.relation_output_values
+            .push(structured_polynomial_eval("stage5.output.eq"));
+        plan.scalar_exprs.push(VerifierScalarExprPlan {
+            symbol: "stage5.output.eq".to_owned(),
+            kind: ScalarExprKind::from_cpu_attr(
+                "poly.structured_eval:eq:full:full:as_is:full:full:as_is",
+            )
+            .map_err(|error| error.to_string())?,
+            operands: vec!["point.x".to_owned(), "point.y".to_owned()],
+        });
+        plan.scalar_exprs.push(VerifierScalarExprPlan {
+            symbol: "stage5.output.sum".to_owned(),
+            kind: ScalarExprKind::FieldVectorSum,
+            operands: vec!["field.vector".to_owned()],
+        });
+        plan.relation_local_inputs
+            .add_stage5_instruction_read_raf(stage5_local_input_plan())
+            .map_err(|error| error.to_string())?;
+
+        let values = plan.scalar_value_plans();
+
+        assert_eq!(
+            values
+                .iter()
+                .filter(|value| value.symbol == "stage5.output.eq")
+                .count(),
+            1
+        );
+        assert!(values.contains(&VerifierScalarValuePlan::new(
+            "stage5.output.eq",
+            VerifierScalarValueKind::StructuredPolynomialEval
+        )));
+        assert!(values.contains(&VerifierScalarValuePlan::new(
+            "stage5.output.sum",
+            VerifierScalarValueKind::ScalarExpr
+        )));
+        assert!(values.contains(&VerifierScalarValuePlan::new(
+            "stage5.local.lookup",
+            VerifierScalarValueKind::RelationOutputLocal
+        )));
+        Ok(())
+    }
+
+    fn structured_polynomial_eval(symbol: &str) -> StructuredPolynomialEvalPlan {
+        StructuredPolynomialEvalPlan {
+            symbol: symbol.to_owned(),
+            polynomial: StructuredPolynomialKind::Eq,
+            x_point: structured_polynomial_point("point.x"),
+            y_point: structured_polynomial_point("point.y"),
+        }
+    }
+
+    fn structured_polynomial_point(source: &str) -> StructuredPolynomialPointPlan {
+        StructuredPolynomialPointPlan {
+            source: source.to_owned(),
+            segment: StructuredPolynomialPointSegment::Full,
+            length: StructuredPolynomialPointLength::Full,
+            order: StructuredPolynomialPointOrder::AsIs,
+        }
+    }
+
+    fn stage5_local_input_plan() -> Stage5InstructionReadRafEmitPlan {
+        Stage5InstructionReadRafEmitPlan {
+            point: "stage5.point".to_owned(),
+            lookup_output_point: "stage2.lookup_output".to_owned(),
+            table_flag_evals: IndexedEvalFamilyPlan {
+                symbol: "table.flags".to_owned(),
+                evals: Vec::new(),
+            },
+            table_flag_evals_ref: "&TABLE_FLAGS".to_owned(),
+            instruction_ra_evals: IndexedEvalFamilyPlan {
+                symbol: "instruction.ra".to_owned(),
+                evals: Vec::new(),
+            },
+            instruction_ra_evals_ref: "&INSTRUCTION_RA".to_owned(),
+            raf_flag_eval: "raf.flag".to_owned(),
+            gamma: "gamma".to_owned(),
+            local_scalars: vec![JoltLocalScalarEmitPlan {
+                symbol: "stage5.local.lookup".to_owned(),
+                kind: JoltLocalScalarMleKind::LookupTable { index: 0 },
+            }],
+            log_k: 128,
+        }
+    }
 }

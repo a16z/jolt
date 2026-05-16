@@ -9,11 +9,60 @@ pub enum VerifierScalarSourceKind {
     TranscriptScalar,
     FieldExpr,
     ScalarExpr,
+    StructuredPolynomialEval,
     RelationOutputLocal,
     SumcheckEval,
     OutputEvalFamily,
     OutputProductFamily,
     OutputFunctionFamily,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VerifierScalarValueKind {
+    OpeningInput,
+    FieldConstant,
+    TranscriptScalar,
+    FieldExpr,
+    ScalarExpr,
+    StructuredPolynomialEval,
+    RelationOutputLocal,
+    SumcheckEval,
+    OutputEvalFamily,
+    OutputProductFamily,
+    OutputFunctionFamily,
+}
+
+impl VerifierScalarValueKind {
+    fn source_kind(self) -> VerifierScalarSourceKind {
+        match self {
+            Self::OpeningInput => VerifierScalarSourceKind::OpeningInput,
+            Self::FieldConstant => VerifierScalarSourceKind::FieldConstant,
+            Self::TranscriptScalar => VerifierScalarSourceKind::TranscriptScalar,
+            Self::FieldExpr => VerifierScalarSourceKind::FieldExpr,
+            Self::ScalarExpr => VerifierScalarSourceKind::ScalarExpr,
+            Self::StructuredPolynomialEval => VerifierScalarSourceKind::StructuredPolynomialEval,
+            Self::RelationOutputLocal => VerifierScalarSourceKind::RelationOutputLocal,
+            Self::SumcheckEval => VerifierScalarSourceKind::SumcheckEval,
+            Self::OutputEvalFamily => VerifierScalarSourceKind::OutputEvalFamily,
+            Self::OutputProductFamily => VerifierScalarSourceKind::OutputProductFamily,
+            Self::OutputFunctionFamily => VerifierScalarSourceKind::OutputFunctionFamily,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VerifierScalarValuePlan {
+    pub(crate) symbol: String,
+    pub(crate) kind: VerifierScalarValueKind,
+}
+
+impl VerifierScalarValuePlan {
+    pub(crate) fn new(symbol: impl Into<String>, kind: VerifierScalarValueKind) -> Self {
+        Self {
+            symbol: symbol.into(),
+            kind,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -38,6 +87,19 @@ impl VerifierScalarSourceSet {
                     });
                 }
             }
+        }
+    }
+
+    pub(crate) fn insert_plan(&mut self, plan: &VerifierScalarValuePlan) {
+        self.insert(&plan.symbol, plan.kind.source_kind());
+    }
+
+    pub(crate) fn extend_plans<'a>(
+        &mut self,
+        plans: impl IntoIterator<Item = &'a VerifierScalarValuePlan>,
+    ) {
+        for plan in plans {
+            self.insert_plan(plan);
         }
     }
 
