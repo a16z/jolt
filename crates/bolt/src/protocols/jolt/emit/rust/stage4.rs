@@ -2046,7 +2046,7 @@ where
                 evals,
                 point,
                 batching_coeffs,
-                |_, _| Ok::<_, VerifyStage4Error>(bolt_verifier_runtime::RelationOutputInputs::empty()),
+                |_, _, _| Ok::<_, VerifyStage4Error>(bolt_verifier_runtime::RelationOutputInputs::empty()),
             )
         },
         |store, verified| observe_stage4_sumcheck_output(program, store, verified),

@@ -546,7 +546,7 @@ where
         &proof.evals,
         &output.point,
         &batching_coeffs,
-        |instance, local_point| stage2_relation_output_inputs(&*store, ram, instance, local_point),
+        |instance, _, local_point| stage2_relation_output_inputs(&*store, ram, instance, local_point),
     )?;
     if output.value != expected {
         return Err(VerifyStage2Error::InvalidProof {

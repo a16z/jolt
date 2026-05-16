@@ -581,6 +581,22 @@ impl<F: Field> RelationOutputInputs<'_, F> {
     }
 }
 
+pub fn select_named_scalars<F: Field>(
+    required_symbols: &[&'static str],
+    scalars: Vec<NamedScalar<F>>,
+) -> Result<Vec<NamedScalar<F>>, RuntimePlanError> {
+    required_symbols
+        .iter()
+        .map(|&symbol| {
+            scalars
+                .iter()
+                .find(|scalar| scalar.symbol == symbol)
+                .cloned()
+                .ok_or(RuntimePlanError::MissingValue { symbol })
+        })
+        .collect()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NamedEvalFamilyPlan {
     pub symbol: &'static str,
@@ -1417,6 +1433,7 @@ where
     E: From<RuntimePlanError>,
     LocalInputs: for<'a> FnMut(
         &SumcheckInstanceResultPlan<R>,
+        &RelationOutputPlan<R>,
         &'a [Fr],
     ) -> Result<RelationOutputInputs<'a, Fr>, E>,
 {
@@ -1431,6 +1448,13 @@ where
                 batch: batch.symbol,
                 claim: claim.symbol,
             })?;
+        let relation_output = relation_outputs
+            .iter()
+            .find(|relation_output| relation_output.relation == instance.relation)
+            .ok_or(RuntimePlanError::InvalidProof {
+                driver: instance.symbol,
+                reason: "missing relation output for relation",
+            })?;
         let local_point = point
             .get(instance.round_offset..instance.round_offset + instance.num_rounds)
             .ok_or(RuntimePlanError::InvalidInputLength {
@@ -1438,14 +1462,14 @@ where
                 expected: instance.round_offset + instance.num_rounds,
                 actual: point.len(),
             })?;
-        let inputs = local_inputs(instance, local_point)?;
-        let value = evaluate_relation_output_for_instance(
-            relation_outputs,
+        let inputs = local_inputs(instance, relation_output, local_point)?;
+        let value = evaluate_relation_output(
+            relation_output,
             field_exprs,
             scalar_exprs,
             eval_families,
             store,
-            instance,
+            instance.symbol,
             evals,
             &inputs.scalars,
             &inputs.points,

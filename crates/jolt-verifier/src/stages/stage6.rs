@@ -886,8 +886,8 @@ where
                 evals,
                 point,
                 batching_coeffs,
-                |instance, local_point| {
-                    stage6_relation_output_inputs(program, verifier_data, store, instance, local_point)
+                |instance, relation_output, local_point| {
+                    stage6_relation_output_inputs(program, verifier_data, store, instance, relation_output, local_point)
                 },
             )
         },
@@ -951,6 +951,7 @@ fn stage6_relation_output_inputs<'a>(
     verifier_data: Option<&Stage6VerifierData>,
     store: &bolt_verifier_runtime::ValueStore<Fr>,
     instance: &Stage6SumcheckInstanceResultPlan,
+    relation_output: &Stage6RelationOutputPlan,
     local_point: &'a [Fr],
 ) -> Result<bolt_verifier_runtime::RelationOutputInputs<'a, Fr>, VerifyStage6Error> {
     if instance.relation != Stage6RelationKind::Stage6BytecodeReadRaf {
@@ -961,16 +962,19 @@ fn stage6_relation_output_inputs<'a>(
         .and_then(|data| data.bytecode_read_raf.as_ref())
         .ok_or(VerifyStage6Error::MissingValue {
             symbol: "stage6.bytecode_read_raf.data",
-        })?;
+    })?;
     Ok(bolt_verifier_runtime::RelationOutputInputs {
-        scalars: evaluate_stage67_bytecode_read_raf_output_scalars(
-            &STAGE6_BYTECODE_PLAN,
-            &data.entries,
-            data.entry_bytecode_index,
-            data.num_lookup_tables,
-            store,
-            local_point,
-            stage6_trace_rounds(program)?,
+        scalars: bolt_verifier_runtime::select_named_scalars(
+            relation_output.local_scalars,
+            evaluate_stage67_bytecode_read_raf_output_scalars(
+                &STAGE6_BYTECODE_PLAN,
+                &data.entries,
+                data.entry_bytecode_index,
+                data.num_lookup_tables,
+                store,
+                local_point,
+                stage6_trace_rounds(program)?,
+            )?,
         )?,
         points: Vec::new(),
     })

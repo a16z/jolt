@@ -2192,6 +2192,7 @@ fn observe_stage5_sumcheck_output<F: Field>(
 
 fn stage5_relation_output_inputs<'a>(
     instance: &Stage5SumcheckInstanceResultPlan,
+    relation_output: &Stage5RelationOutputPlan,
     local_point: &'a [Fr],
 ) -> Result<bolt_verifier_runtime::RelationOutputInputs<'a, Fr>, VerifyStage5Error> {
     if instance.relation != Stage5RelationKind::Stage5InstructionReadRaf {
@@ -2199,9 +2200,12 @@ fn stage5_relation_output_inputs<'a>(
     }
 
     Ok(bolt_verifier_runtime::RelationOutputInputs {
-        scalars: evaluate_stage5_instruction_read_raf_point_scalars(
-            &STAGE5_INSTRUCTION_READ_RAF_PLAN,
-            local_point,
+        scalars: bolt_verifier_runtime::select_named_scalars(
+            relation_output.local_scalars,
+            evaluate_stage5_instruction_read_raf_point_scalars(
+                &STAGE5_INSTRUCTION_READ_RAF_PLAN,
+                local_point,
+            )?,
         )?,
         points: Vec::new(),
     })

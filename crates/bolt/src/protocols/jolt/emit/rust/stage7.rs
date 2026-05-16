@@ -2272,7 +2272,7 @@ where
                 evals,
                 point,
                 batching_coeffs,
-                |_, _| Ok::<_, VerifyStage7Error>(bolt_verifier_runtime::RelationOutputInputs::empty()),
+                |_, _, _| Ok::<_, VerifyStage7Error>(bolt_verifier_runtime::RelationOutputInputs::empty()),
             )
         },
         |store, verified| observe_stage7_sumcheck_output(program, store, verified),
