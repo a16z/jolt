@@ -999,51 +999,18 @@ impl Stage7CpuProgram {
             }
         }
         for expr in &self.value_exprs {
-            verify_count(
-                "value expr operands",
-                &expr.symbol,
-                expr.operand_names.len(),
-                expr.operands.len(),
+            super::plan_tokens::verify_value_expr_operands(
+                super::plan_tokens::ValueExprVerification {
+                    stage: "stage7",
+                    symbol: &expr.symbol,
+                    formula: &expr.formula,
+                    operand_names: &expr.operand_names,
+                    operands: &expr.operands,
+                    field_values: &field_values,
+                    field_vector_values: None,
+                    point_values: point_values.as_ref(),
+                },
             )?;
-            let kind = ValueExprKind::from_cpu_attr(&expr.formula)
-                .map_err(|error| EmitError::new(error.to_string()))?;
-            match kind {
-                ValueExprKind::PowerStridedWeightedSum { .. } => {
-                    for operand in &expr.operands {
-                        if !field_values.contains(operand) {
-                            return Err(EmitError::new(format!(
-                                "value expr @{} references missing field value @{operand}",
-                                expr.symbol
-                            )));
-                        }
-                    }
-                }
-                ValueExprKind::StructuredPolynomial { .. } => {
-                    verify_count(
-                        "structured polynomial value expr operands",
-                        &expr.symbol,
-                        2,
-                        expr.operands.len(),
-                    )?;
-                    for operand in &expr.operands {
-                        if !point_values
-                            .as_ref()
-                            .is_some_and(|values| values.contains(operand))
-                        {
-                            return Err(EmitError::new(format!(
-                                "structured polynomial value expr @{} references missing point value @{operand}",
-                                expr.symbol
-                            )));
-                        }
-                    }
-                }
-                ValueExprKind::FieldVectorSum | ValueExprKind::FieldVectorProduct => {
-                    return Err(EmitError::new(format!(
-                        "stage7 value expr @{} uses unsupported field-vector formula `{}`",
-                        expr.symbol, expr.formula
-                    )));
-                }
-            }
         }
         for claim in &self.claims {
             if !field_values.contains(&claim.claim_value) {

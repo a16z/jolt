@@ -746,6 +746,11 @@ impl Stage4CpuProgram {
         } else {
             self.cpu_field_value_sources()
         };
+        let point_values = if self.role == Role::Verifier {
+            Some(self.verifier_plan()?.point_value_sources())
+        } else {
+            None
+        };
         for expr in &self.field_exprs {
             verify_count(
                 "field expr operands",
@@ -761,6 +766,20 @@ impl Stage4CpuProgram {
                     )));
                 }
             }
+        }
+        for expr in &self.value_exprs {
+            super::plan_tokens::verify_value_expr_operands(
+                super::plan_tokens::ValueExprVerification {
+                    stage: "stage4",
+                    symbol: &expr.symbol,
+                    formula: &expr.formula,
+                    operand_names: &expr.operand_names,
+                    operands: &expr.operands,
+                    field_values: &field_values,
+                    field_vector_values: None,
+                    point_values: point_values.as_ref(),
+                },
+            )?;
         }
         for claim in &self.claims {
             if !field_values.contains(&claim.claim_value) {
