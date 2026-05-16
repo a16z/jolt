@@ -369,7 +369,7 @@ where
         store,
         transcript,
         |store, evals, point, batching_coeffs| {
-            Ok(bolt_verifier_runtime::expected_relation_output_batch(
+            bolt_verifier_runtime::evaluate_relation_output_batch(
                 driver,
                 program.batches,
                 program.claims,
@@ -381,7 +381,8 @@ where
                 evals,
                 point,
                 batching_coeffs,
-            )?)
+                |_, _| Ok::<_, VerifyStage4Error>(bolt_verifier_runtime::RelationOutputInputs::empty()),
+            )
         },
         |store, verified| observe_stage4_sumcheck_output(program, store, verified),
         |driver, error| VerifyStage4Error::Sumcheck { driver, error },

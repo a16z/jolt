@@ -553,6 +553,27 @@ pub struct NamedPoint<'a, F: Field> {
     pub point: &'a [F],
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RelationOutputInputs<'a, F: Field> {
+    pub scalars: Vec<NamedScalar<F>>,
+    pub points: Vec<NamedPoint<'a, F>>,
+}
+
+impl<F: Field> Default for RelationOutputInputs<'_, F> {
+    fn default() -> Self {
+        Self {
+            scalars: Vec::new(),
+            points: Vec::new(),
+        }
+    }
+}
+
+impl<F: Field> RelationOutputInputs<'_, F> {
+    pub fn empty() -> Self {
+        Self::default()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NamedEvalFamilyPlan {
     pub symbol: &'static str,
@@ -1340,7 +1361,7 @@ pub fn evaluate_relation_output_for_instance<R: ProtocolRelation>(
     )
 }
 
-pub fn expected_relation_output_batch<R: ProtocolRelation>(
+pub fn evaluate_relation_output_batch<R, E, LocalInputs>(
     driver: &SumcheckDriverPlan<R>,
     batches: &[SumcheckBatchPlan],
     claims: &[SumcheckClaimPlan<R>],
@@ -1352,7 +1373,16 @@ pub fn expected_relation_output_batch<R: ProtocolRelation>(
     evals: &[StageNamedEval<Fr>],
     point: &[Fr],
     batching_coeffs: &[Fr],
-) -> Result<Fr, RuntimePlanError> {
+    mut local_inputs: LocalInputs,
+) -> Result<Fr, E>
+where
+    R: ProtocolRelation,
+    E: From<RuntimePlanError>,
+    LocalInputs: for<'a> FnMut(
+        &SumcheckInstanceResultPlan<R>,
+        &'a [Fr],
+    ) -> Result<RelationOutputInputs<'a, Fr>, E>,
+{
     let batch = find_batch(batches, driver.symbol, driver.batch)?;
     let claims = batch_claims(claims, batch)?;
     let mut expected = Fr::from_u64(0);
@@ -1371,6 +1401,7 @@ pub fn expected_relation_output_batch<R: ProtocolRelation>(
                 expected: instance.round_offset + instance.num_rounds,
                 actual: point.len(),
             })?;
+        let inputs = local_inputs(instance, local_point)?;
         let value = evaluate_relation_output_for_instance(
             relation_outputs,
             field_exprs,
@@ -1378,8 +1409,8 @@ pub fn expected_relation_output_batch<R: ProtocolRelation>(
             store,
             instance,
             evals,
-            &[],
-            &[],
+            &inputs.scalars,
+            &inputs.points,
             local_point,
         )?;
         expected += *coefficient * value;

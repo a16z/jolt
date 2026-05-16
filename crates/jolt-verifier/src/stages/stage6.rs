@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use bolt_verifier_runtime::{batch_claims, find_batch, find_plan};
+use bolt_verifier_runtime::find_plan;
 use super::jolt_relations::{evaluate_stage67_bytecode_read_raf_output_scalars, normalize_bytecode_read_raf_point, stage67_trace_rounds, Stage67BytecodeEntry, Stage67BytecodeFlag, Stage67BytecodeOutputTermPlan, Stage67BytecodeReadRafPlan, Stage67BytecodeRegister, Stage67BytecodeRegisterSymbols, Stage67BytecodeStagePlan, Stage67BytecodeTermPlan, Stage67RelationSymbols};
 use jolt_field::{Field, Fr};
 use jolt_sumcheck::SumcheckError;
@@ -872,14 +872,21 @@ where
         store,
         transcript,
         |store, evals, point, batching_coeffs| {
-            expected_batched_output_claim(
-                program,
+            bolt_verifier_runtime::evaluate_relation_output_batch(
                 driver,
-                verifier_data,
+                program.batches,
+                program.claims,
+                program.instance_results,
+                program.relation_outputs,
+                program.field_exprs,
+                program.scalar_exprs,
                 store,
                 evals,
                 point,
                 batching_coeffs,
+                |instance, local_point| {
+                    stage6_relation_output_inputs(program, verifier_data, store, instance, local_point)
+                },
             )
         },
         |store, verified| observe_stage6_sumcheck_output(program, store, verified),
@@ -937,96 +944,34 @@ fn observe_stage6_sumcheck_output<F: Field>(
     )
 }
 
-fn expected_batched_output_claim(
+fn stage6_relation_output_inputs<'a>(
     program: &'static Stage6VerifierProgramPlan,
-    driver: &'static Stage6SumcheckDriverPlan,
     verifier_data: Option<&Stage6VerifierData>,
     store: &bolt_verifier_runtime::ValueStore<Fr>,
-    evals: &[Stage6NamedEval<Fr>],
-    point: &[Fr],
-    batching_coeffs: &[Fr],
-) -> Result<Fr, VerifyStage6Error> {
-    let batch = find_batch(program.batches, driver.symbol, driver.batch)?;
-    let claims = batch_claims(program.claims, batch)?;
-    let mut expected = Fr::from_u64(0);
-    for (claim, coefficient) in claims.iter().zip(batching_coeffs) {
-        let instance = program
-            .instance_results
-            .iter()
-            .find(|instance| instance.claim == claim.symbol && instance.source == driver.symbol)
-            .ok_or(VerifyStage6Error::MissingClaim {
-                batch: batch.symbol,
-                claim: claim.symbol,
-            })?;
-        let local_point = point
-            .get(instance.round_offset..instance.round_offset + instance.num_rounds)
-            .ok_or(VerifyStage6Error::InvalidInputLength {
-                input: instance.symbol,
-                expected: instance.round_offset + instance.num_rounds,
-                actual: point.len(),
-            })?;
-        let Some(relation) = claim.relation else {
-            return Err(VerifyStage6Error::InvalidProof {
-                driver: driver.symbol,
-                reason: "missing claim relation",
-            });
-        };
-        let value = match relation {
-            Stage6RelationKind::Stage6BytecodeReadRaf => {
-                let data = verifier_data
-                    .and_then(|data| data.bytecode_read_raf.as_ref())
-                    .ok_or(VerifyStage6Error::MissingValue {
-                        symbol: "stage6.bytecode_read_raf.data",
-                })?;
-                let log_t = stage6_trace_rounds(program)?;
-                let local_scalars = evaluate_stage67_bytecode_read_raf_output_scalars(
-                    &STAGE6_BYTECODE_PLAN,
-                    &data.entries,
-                    data.entry_bytecode_index,
-                    data.num_lookup_tables,
-                    store,
-                    local_point,
-                    log_t,
-                )?;
-                expected_plan_relation_output(program, instance, store, evals, &local_scalars, local_point)?
-            }
-            Stage6RelationKind::Stage6Booleanity
-            | Stage6RelationKind::Stage6HammingBooleanity
-            | Stage6RelationKind::Stage6RamRaVirtual
-            | Stage6RelationKind::Stage6InstructionRaVirtual
-            | Stage6RelationKind::Stage6IncClaimReduction => expected_plan_relation_output(
-                program,
-                instance,
-                store,
-                evals,
-                &[],
-                local_point,
-            )?,
-            relation => return Err(VerifyStage6Error::UnsupportedRelation { relation }),
-        };
-        expected += *coefficient * value;
+    instance: &Stage6SumcheckInstanceResultPlan,
+    local_point: &'a [Fr],
+) -> Result<bolt_verifier_runtime::RelationOutputInputs<'a, Fr>, VerifyStage6Error> {
+    if instance.relation != Stage6RelationKind::Stage6BytecodeReadRaf {
+        return Ok(bolt_verifier_runtime::RelationOutputInputs::empty());
     }
-    Ok(expected)
-}
 
-fn expected_plan_relation_output(
-    program: &'static Stage6VerifierProgramPlan,
-    instance: &'static Stage6SumcheckInstanceResultPlan,
-    store: &bolt_verifier_runtime::ValueStore<Fr>,
-    evals: &[Stage6NamedEval<Fr>],
-    local_scalars: &[bolt_verifier_runtime::NamedScalar<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage6Error> {
-    Ok(bolt_verifier_runtime::evaluate_relation_output_for_instance(
-        program.relation_outputs,
-        program.field_exprs,
-        program.scalar_exprs,
-        store,
-        instance,
-        evals,
-        local_scalars,
-        &[], local_point,
-    )?)
+    let data = verifier_data
+        .and_then(|data| data.bytecode_read_raf.as_ref())
+        .ok_or(VerifyStage6Error::MissingValue {
+            symbol: "stage6.bytecode_read_raf.data",
+        })?;
+    Ok(bolt_verifier_runtime::RelationOutputInputs {
+        scalars: evaluate_stage67_bytecode_read_raf_output_scalars(
+            &STAGE6_BYTECODE_PLAN,
+            &data.entries,
+            data.entry_bytecode_index,
+            data.num_lookup_tables,
+            store,
+            local_point,
+            stage6_trace_rounds(program)?,
+        )?,
+        points: Vec::new(),
+    })
 }
 
 fn stage6_trace_rounds(

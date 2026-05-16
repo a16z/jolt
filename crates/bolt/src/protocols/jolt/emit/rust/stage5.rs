@@ -925,7 +925,7 @@ impl Stage5CpuProgram {
     }
 
     fn emit_verifier_imports() -> &'static str {
-        "use bolt_verifier_runtime::{batch_claims, find_batch, find_plan};\n\
+        "use bolt_verifier_runtime::find_plan;\n\
          use super::jolt_relations::{evaluate_stage5_instruction_read_raf_point_scalars, normalize_instruction_read_raf_point, Stage5InstructionReadRafPlan, Stage5InstructionReadRafPointValueKind, Stage5InstructionReadRafPointValuePlan};\n\
          use jolt_field::{Field, Fr};\n\
          use jolt_sumcheck::SumcheckError;\n\
@@ -2106,7 +2106,20 @@ where
         store,
         transcript,
         |store, evals, point, batching_coeffs| {
-            expected_batched_output_claim(program, driver, store, evals, point, batching_coeffs)
+            bolt_verifier_runtime::evaluate_relation_output_batch(
+                driver,
+                program.batches,
+                program.claims,
+                program.instance_results,
+                program.relation_outputs,
+                program.field_exprs,
+                program.scalar_exprs,
+                store,
+                evals,
+                point,
+                batching_coeffs,
+                stage5_relation_output_inputs,
+            )
         },
         |store, verified| observe_stage5_sumcheck_output(program, store, verified),
         |driver, error| VerifyStage5Error::Sumcheck { driver, error },
@@ -2164,73 +2177,21 @@ fn observe_stage5_sumcheck_output<F: Field>(
     )
 }
 
-fn expected_batched_output_claim(
-    program: &'static Stage5VerifierProgramPlan,
-    driver: &'static Stage5SumcheckDriverPlan,
-    store: &bolt_verifier_runtime::ValueStore<Fr>,
-    evals: &[Stage5NamedEval<Fr>],
-    point: &[Fr],
-    batching_coeffs: &[Fr],
-) -> Result<Fr, VerifyStage5Error> {
-    let batch = find_batch(program.batches, driver.symbol, driver.batch)?;
-    let claims = batch_claims(program.claims, batch)?;
-    let mut expected = Fr::from_u64(0);
-    for (claim, coefficient) in claims.iter().zip(batching_coeffs) {
-        let instance = program
-            .instance_results
-            .iter()
-            .find(|instance| instance.claim == claim.symbol && instance.source == driver.symbol)
-            .ok_or(VerifyStage5Error::MissingClaim {
-                batch: batch.symbol,
-                claim: claim.symbol,
-            })?;
-        let local_point = point
-            .get(instance.round_offset..instance.round_offset + instance.num_rounds)
-            .ok_or(VerifyStage5Error::InvalidInputLength {
-                input: instance.symbol,
-                expected: instance.round_offset + instance.num_rounds,
-                actual: point.len(),
-            })?;
-        let Some(relation) = claim.relation else {
-            return Err(VerifyStage5Error::InvalidProof {
-                driver: driver.symbol,
-                reason: "missing claim relation",
-            });
-        };
-        let value = match relation {
-            Stage5RelationKind::Stage5InstructionReadRaf => {
-                let local_scalars = evaluate_stage5_instruction_read_raf_point_scalars(
-                    &STAGE5_INSTRUCTION_READ_RAF_PLAN,
-                    local_point,
-                )?;
-                bolt_verifier_runtime::evaluate_relation_output_for_instance(
-                    program.relation_outputs,
-                    program.field_exprs,
-                    program.scalar_exprs,
-                    store,
-                    instance,
-                    evals,
-                    &local_scalars,
-                    &[bolt_verifier_runtime::NamedPoint { symbol: STAGE5_INSTRUCTION_READ_RAF_PLAN.point, point: local_point }],
-                    local_point,
-                )?
-            }
-            Stage5RelationKind::Stage5RamRaClaimReduction
-            | Stage5RelationKind::Stage5RegistersValEvaluation => {
-                bolt_verifier_runtime::evaluate_relation_output_for_instance(
-                    program.relation_outputs,
-                    program.field_exprs,
-                    program.scalar_exprs,
-                    store,
-                    instance,
-                    evals, &[], &[], local_point,
-                )?
-            }
-            relation => return Err(VerifyStage5Error::UnsupportedRelation { relation }),
-        };
-        expected += *coefficient * value;
+fn stage5_relation_output_inputs<'a>(
+    instance: &Stage5SumcheckInstanceResultPlan,
+    local_point: &'a [Fr],
+) -> Result<bolt_verifier_runtime::RelationOutputInputs<'a, Fr>, VerifyStage5Error> {
+    if instance.relation != Stage5RelationKind::Stage5InstructionReadRaf {
+        return Ok(bolt_verifier_runtime::RelationOutputInputs::empty());
     }
-    Ok(expected)
+
+    Ok(bolt_verifier_runtime::RelationOutputInputs {
+        scalars: evaluate_stage5_instruction_read_raf_point_scalars(
+            &STAGE5_INSTRUCTION_READ_RAF_PLAN,
+            local_point,
+        )?,
+        points: Vec::new(),
+    })
 }
 
 "#

@@ -1492,7 +1492,10 @@ fn stage5_rust_targets_extract_and_compile() {
         .contains("stage5.registers_val_evaluation.output.lt.RegistersValCycle"));
     assert!(verifier_source
         .source
-        .contains("bolt_verifier_runtime::evaluate_relation_output_for_instance"));
+        .contains("bolt_verifier_runtime::evaluate_relation_output_batch"));
+    assert!(verifier_source
+        .source
+        .contains("stage5_relation_output_inputs"));
     assert!(verifier_source
         .source
         .contains("Stage5RelationKind::Stage5RamRaClaimReduction"));
@@ -1889,7 +1892,10 @@ fn stage6_rust_targets_extract_and_compile() {
         .contains("expected_hamming_booleanity"));
     assert!(verifier_source
         .source
-        .contains("expected_plan_relation_output"));
+        .contains("bolt_verifier_runtime::evaluate_relation_output_batch"));
+    assert!(verifier_source
+        .source
+        .contains("stage6_relation_output_inputs"));
     assert!(verifier_source
         .source
         .contains("stage6.booleanity.output.eq.InstructionRa0"));
