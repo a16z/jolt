@@ -141,18 +141,30 @@ fn stage2_scalar_expr(
     }
 }
 
-fn stage2_ram_read_write_relation_output_plans() -> Stage2RelationOutputRows {
+fn stage2_relation_output_plans() -> Stage2RelationOutputRows {
     Stage2RelationOutputRows {
-        scalar_exprs: vec![stage2_scalar_expr(
-            "stage2.ram_read_write.output.eq.Cycle",
-            structured_polynomial_scalar_formula(
-                "eq", "prefix", "y_point", "reverse", "full", "full", "as_is",
+        scalar_exprs: vec![
+            stage2_scalar_expr(
+                "stage2.ram_read_write.output.eq.Cycle",
+                structured_polynomial_scalar_formula(
+                    "eq", "prefix", "y_point", "reverse", "full", "full", "as_is",
+                ),
+                [
+                    "stage2.ram_read_write.instance",
+                    "stage2.input.stage1.RamReadValue",
+                ],
             ),
-            [
-                "stage2.ram_read_write.instance",
-                "stage2.input.stage1.RamReadValue",
-            ],
-        )],
+            stage2_scalar_expr(
+                "stage2.instruction_lookup.output.eq.LookupOutput",
+                structured_polynomial_scalar_formula(
+                    "eq", "full", "full", "reverse", "full", "full", "as_is",
+                ),
+                [
+                    "stage2.instruction_lookup.claim_reduction.instance",
+                    "stage2.input.stage1.LookupOutput",
+                ],
+            ),
+        ],
         field_exprs: vec![
             stage2_field_expr(
                 "stage2.ram_read_write.output.partial.ValPlusInc",
@@ -187,12 +199,91 @@ fn stage2_ram_read_write_relation_output_plans() -> Stage2RelationOutputRows {
                     "stage2.ram_read_write.output.partial.WeightedVal",
                 ],
             ),
+            stage2_field_expr(
+                "stage2.instruction_lookup.output.term.LeftLookupOperand",
+                "field.mul",
+                [
+                    "stage2.instruction_lookup.gamma",
+                    "stage2.instruction_lookup.claim_reduction.eval.LeftLookupOperand",
+                ],
+            ),
+            stage2_field_expr(
+                "stage2.instruction_lookup.output.term.RightLookupOperand",
+                "field.mul",
+                [
+                    "stage2.instruction_lookup.gamma2",
+                    "stage2.instruction_lookup.claim_reduction.eval.RightLookupOperand",
+                ],
+            ),
+            stage2_field_expr(
+                "stage2.instruction_lookup.output.term.LeftInstructionInput",
+                "field.mul",
+                [
+                    "stage2.instruction_lookup.gamma3",
+                    "stage2.instruction_lookup.claim_reduction.eval.LeftInstructionInput",
+                ],
+            ),
+            stage2_field_expr(
+                "stage2.instruction_lookup.output.term.RightInstructionInput",
+                "field.mul",
+                [
+                    "stage2.instruction_lookup.gamma4",
+                    "stage2.instruction_lookup.claim_reduction.eval.RightInstructionInput",
+                ],
+            ),
+            stage2_field_expr(
+                "stage2.instruction_lookup.output.partial.LookupOutputLeftOperand",
+                "field.add",
+                [
+                    "stage2.instruction_lookup.claim_reduction.eval.LookupOutput",
+                    "stage2.instruction_lookup.output.term.LeftLookupOperand",
+                ],
+            ),
+            stage2_field_expr(
+                "stage2.instruction_lookup.output.partial.RightOperand",
+                "field.add",
+                [
+                    "stage2.instruction_lookup.output.partial.LookupOutputLeftOperand",
+                    "stage2.instruction_lookup.output.term.RightLookupOperand",
+                ],
+            ),
+            stage2_field_expr(
+                "stage2.instruction_lookup.output.partial.LeftInstructionInput",
+                "field.add",
+                [
+                    "stage2.instruction_lookup.output.partial.RightOperand",
+                    "stage2.instruction_lookup.output.term.LeftInstructionInput",
+                ],
+            ),
+            stage2_field_expr(
+                "stage2.instruction_lookup.output.weighted_expr",
+                "field.add",
+                [
+                    "stage2.instruction_lookup.output.partial.LeftInstructionInput",
+                    "stage2.instruction_lookup.output.term.RightInstructionInput",
+                ],
+            ),
+            stage2_field_expr(
+                "stage2.instruction_lookup.output.claim_expr",
+                "field.mul",
+                [
+                    "stage2.instruction_lookup.output.eq.LookupOutput",
+                    "stage2.instruction_lookup.output.weighted_expr",
+                ],
+            ),
         ],
-        relation_outputs: vec![Stage2RelationOutputPlan {
-            relation: "jolt.stage2.ram.read_write".to_owned(),
-            local_scalars: Vec::new(),
-            expected_output: "stage2.ram_read_write.output.claim_expr".to_owned(),
-        }],
+        relation_outputs: vec![
+            Stage2RelationOutputPlan {
+                relation: "jolt.stage2.ram.read_write".to_owned(),
+                local_scalars: Vec::new(),
+                expected_output: "stage2.ram_read_write.output.claim_expr".to_owned(),
+            },
+            Stage2RelationOutputPlan {
+                relation: "jolt.stage2.instruction_lookup.claim_reduction".to_owned(),
+                local_scalars: Vec::new(),
+                expected_output: "stage2.instruction_lookup.output.claim_expr".to_owned(),
+            },
+        ],
     }
 }
 
@@ -630,10 +721,10 @@ impl Stage2CpuProgram {
             .role()
             .ok_or_else(|| EmitError::new("missing cpu party role"))?;
         if role == Role::Verifier {
-            let ram_read_write_output = stage2_ram_read_write_relation_output_plans();
-            field_exprs.extend(ram_read_write_output.field_exprs);
-            scalar_exprs.extend(ram_read_write_output.scalar_exprs);
-            relation_outputs.extend(ram_read_write_output.relation_outputs);
+            let relation_output_rows = stage2_relation_output_plans();
+            field_exprs.extend(relation_output_rows.field_exprs);
+            scalar_exprs.extend(relation_output_rows.scalar_exprs);
+            relation_outputs.extend(relation_output_rows.relation_outputs);
         }
 
         Ok(Self {
@@ -1211,7 +1302,7 @@ impl Stage2CpuProgram {
 
     fn emit_verifier_imports() -> &'static str {
         "use bolt_verifier_runtime::{append_labeled_scalar, batch_claims, eval_by_name, find_batch, find_plan, reverse_slice};\n\
-         use jolt_field::{Field, Fr, MulPow2, MulPrimitiveInt, RingCore};\n\
+         use jolt_field::{Field, Fr, MulPow2, MulPrimitiveInt};\n\
          use jolt_poly::lagrange::{lagrange_evals, lagrange_kernel_eval};\n\
          use jolt_poly::{EqPolynomial, UnivariatePoly};\n\
          use jolt_sumcheck::{CompressedLabeledRoundPoly, SumcheckClaim, SumcheckError, SumcheckVerifier};\n\
@@ -2476,7 +2567,17 @@ fn expected_batched_output_claim(
                 expected_product_remainder(store, evals, local_point)?
             }
             Stage2RelationKind::Stage2InstructionLookupClaimReduction => {
-                expected_instruction_lookup(store, evals, local_point)?
+                bolt_verifier_runtime::evaluate_relation_output_for_instance(
+                    program.relation_outputs,
+                    program.field_exprs,
+                    program.scalar_exprs,
+                    &store.0,
+                    instance,
+                    evals,
+                    &[],
+                    &[],
+                    local_point,
+                )?
             }
             Stage2RelationKind::Stage2RamRafEvaluation => expected_ram_raf(evals, local_point, ram)?,
             Stage2RelationKind::Stage2RamOutputCheck => {
@@ -2527,44 +2628,6 @@ fn expected_product_remainder(
             * (Fr::from_u64(1)
                 - eval_by_name(evals, "stage2.product_virtual.remainder.eval.NextIsNoop")?);
     Ok(high * low * left * right)
-}
-
-fn expected_instruction_lookup(
-    store: &Stage2ValueStore<Fr>,
-    evals: &[Stage2NamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage2Error> {
-    let opening_point = reverse_slice(local_point);
-    let r_spartan = store.point("stage2.input.stage1.LookupOutput")?;
-    let eq_eval = EqPolynomial::<Fr>::mle(&opening_point, r_spartan);
-    let gamma = store.scalar("stage2.instruction_lookup.gamma")?;
-    let gamma2 = gamma.square();
-    let gamma3 = gamma2 * gamma;
-    let gamma4 = gamma2.square();
-    let weighted = eval_by_name(
-        evals,
-        "stage2.instruction_lookup.claim_reduction.eval.LookupOutput",
-    )? + gamma
-        * eval_by_name(
-            evals,
-            "stage2.instruction_lookup.claim_reduction.eval.LeftLookupOperand",
-        )?
-        + gamma2
-            * eval_by_name(
-                evals,
-                "stage2.instruction_lookup.claim_reduction.eval.RightLookupOperand",
-            )?
-        + gamma3
-            * eval_by_name(
-                evals,
-                "stage2.instruction_lookup.claim_reduction.eval.LeftInstructionInput",
-            )?
-        + gamma4
-            * eval_by_name(
-                evals,
-                "stage2.instruction_lookup.claim_reduction.eval.RightInstructionInput",
-            )?;
-    Ok(eq_eval * weighted)
 }
 
 fn expected_ram_raf(

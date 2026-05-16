@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use bolt_verifier_runtime::{append_labeled_scalar, batch_claims, eval_by_name, find_batch, find_plan, reverse_slice};
-use jolt_field::{Field, Fr, MulPow2, MulPrimitiveInt, RingCore};
+use jolt_field::{Field, Fr, MulPow2, MulPrimitiveInt};
 use jolt_poly::lagrange::{lagrange_evals, lagrange_kernel_eval};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{CompressedLabeledRoundPoly, SumcheckClaim, SumcheckError, SumcheckVerifier};
@@ -141,9 +141,19 @@ pub const STAGE2_FIELD_EXPRS: &[Stage2FieldExprPlan] = &[
     Stage2FieldExprPlan { symbol: "stage2.ram_read_write.output.term.GammaValPlusInc", kind: Stage2FieldExprKind::Mul, operands: &["stage2.ram_read_write.gamma", "stage2.ram_read_write.output.partial.ValPlusInc"] },
     Stage2FieldExprPlan { symbol: "stage2.ram_read_write.output.partial.WeightedVal", kind: Stage2FieldExprKind::Add, operands: &["stage2.ram_read_write.eval.RamVal", "stage2.ram_read_write.output.term.GammaValPlusInc"] },
     Stage2FieldExprPlan { symbol: "stage2.ram_read_write.output.claim_expr", kind: Stage2FieldExprKind::Product, operands: &["stage2.ram_read_write.output.eq.Cycle", "stage2.ram_read_write.eval.RamRa", "stage2.ram_read_write.output.partial.WeightedVal"] },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.output.term.LeftLookupOperand", kind: Stage2FieldExprKind::Mul, operands: &["stage2.instruction_lookup.gamma", "stage2.instruction_lookup.claim_reduction.eval.LeftLookupOperand"] },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.output.term.RightLookupOperand", kind: Stage2FieldExprKind::Mul, operands: &["stage2.instruction_lookup.gamma2", "stage2.instruction_lookup.claim_reduction.eval.RightLookupOperand"] },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.output.term.LeftInstructionInput", kind: Stage2FieldExprKind::Mul, operands: &["stage2.instruction_lookup.gamma3", "stage2.instruction_lookup.claim_reduction.eval.LeftInstructionInput"] },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.output.term.RightInstructionInput", kind: Stage2FieldExprKind::Mul, operands: &["stage2.instruction_lookup.gamma4", "stage2.instruction_lookup.claim_reduction.eval.RightInstructionInput"] },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.output.partial.LookupOutputLeftOperand", kind: Stage2FieldExprKind::Add, operands: &["stage2.instruction_lookup.claim_reduction.eval.LookupOutput", "stage2.instruction_lookup.output.term.LeftLookupOperand"] },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.output.partial.RightOperand", kind: Stage2FieldExprKind::Add, operands: &["stage2.instruction_lookup.output.partial.LookupOutputLeftOperand", "stage2.instruction_lookup.output.term.RightLookupOperand"] },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.output.partial.LeftInstructionInput", kind: Stage2FieldExprKind::Add, operands: &["stage2.instruction_lookup.output.partial.RightOperand", "stage2.instruction_lookup.output.term.LeftInstructionInput"] },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.output.weighted_expr", kind: Stage2FieldExprKind::Add, operands: &["stage2.instruction_lookup.output.partial.LeftInstructionInput", "stage2.instruction_lookup.output.term.RightInstructionInput"] },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.output.claim_expr", kind: Stage2FieldExprKind::Mul, operands: &["stage2.instruction_lookup.output.eq.LookupOutput", "stage2.instruction_lookup.output.weighted_expr"] },
 ];
 pub const STAGE2_SCALAR_EXPRS: &[Stage2ScalarExprPlan] = &[
     Stage2ScalarExprPlan { symbol: "stage2.ram_read_write.output.eq.Cycle", kind: Stage2ScalarExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Eq, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Prefix, length: bolt_verifier_runtime::StructuredPolynomialPointLength::YPoint, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage2.ram_read_write.instance", "stage2.input.stage1.RamReadValue"] },
+    Stage2ScalarExprPlan { symbol: "stage2.instruction_lookup.output.eq.LookupOutput", kind: Stage2ScalarExprKind::StructuredPolynomial { polynomial: bolt_verifier_runtime::StructuredPolynomialKind::Eq, x_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::Reverse }, y_point: bolt_verifier_runtime::StructuredPolynomialPointTransform { segment: bolt_verifier_runtime::StructuredPolynomialPointSegment::Full, length: bolt_verifier_runtime::StructuredPolynomialPointLength::Full, order: bolt_verifier_runtime::StructuredPolynomialPointOrder::AsIs } }, operands: &["stage2.instruction_lookup.claim_reduction.instance", "stage2.input.stage1.LookupOutput"] },
 ];
 pub const STAGE2_SUMCHECK_CLAIMS: &[Stage2SumcheckClaimPlan] = &[
     Stage2SumcheckClaimPlan { symbol: "stage2.product_virtual.uniskip.input", stage: "stage2", domain: "jolt.stage2_uniskip_domain", num_rounds: 1, degree: 6, claim: "stage2.product_virtual.weighted_stage1_outputs", kernel: None, relation: Some(Stage2RelationKind::Stage2ProductVirtualUniskip), claim_value: "stage2.product_virtual.uniskip.claim_expr" },
@@ -233,6 +243,7 @@ pub const STAGE2_OPENING_BATCHES: &[Stage2OpeningBatchPlan] = &[
 pub const STAGE2_OPENING_EQUALITIES: &[Stage2OpeningClaimEqualityPlan] = &[];
 pub const STAGE2_RELATION_OUTPUTS: &[Stage2RelationOutputPlan] = &[
     Stage2RelationOutputPlan { relation: Stage2RelationKind::Stage2RamReadWrite, local_scalars: &[], expected_output: "stage2.ram_read_write.output.claim_expr" },
+    Stage2RelationOutputPlan { relation: Stage2RelationKind::Stage2InstructionLookupClaimReduction, local_scalars: &[], expected_output: "stage2.instruction_lookup.output.claim_expr" },
 ];
 
 pub const STAGE2_PROGRAM: Stage2VerifierProgramPlan = Stage2VerifierProgramPlan {
@@ -700,7 +711,17 @@ fn expected_batched_output_claim(
                 expected_product_remainder(store, evals, local_point)?
             }
             Stage2RelationKind::Stage2InstructionLookupClaimReduction => {
-                expected_instruction_lookup(store, evals, local_point)?
+                bolt_verifier_runtime::evaluate_relation_output_for_instance(
+                    program.relation_outputs,
+                    program.field_exprs,
+                    program.scalar_exprs,
+                    &store.0,
+                    instance,
+                    evals,
+                    &[],
+                    &[],
+                    local_point,
+                )?
             }
             Stage2RelationKind::Stage2RamRafEvaluation => expected_ram_raf(evals, local_point, ram)?,
             Stage2RelationKind::Stage2RamOutputCheck => {
@@ -751,44 +772,6 @@ fn expected_product_remainder(
             * (Fr::from_u64(1)
                 - eval_by_name(evals, "stage2.product_virtual.remainder.eval.NextIsNoop")?);
     Ok(high * low * left * right)
-}
-
-fn expected_instruction_lookup(
-    store: &Stage2ValueStore<Fr>,
-    evals: &[Stage2NamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage2Error> {
-    let opening_point = reverse_slice(local_point);
-    let r_spartan = store.point("stage2.input.stage1.LookupOutput")?;
-    let eq_eval = EqPolynomial::<Fr>::mle(&opening_point, r_spartan);
-    let gamma = store.scalar("stage2.instruction_lookup.gamma")?;
-    let gamma2 = gamma.square();
-    let gamma3 = gamma2 * gamma;
-    let gamma4 = gamma2.square();
-    let weighted = eval_by_name(
-        evals,
-        "stage2.instruction_lookup.claim_reduction.eval.LookupOutput",
-    )? + gamma
-        * eval_by_name(
-            evals,
-            "stage2.instruction_lookup.claim_reduction.eval.LeftLookupOperand",
-        )?
-        + gamma2
-            * eval_by_name(
-                evals,
-                "stage2.instruction_lookup.claim_reduction.eval.RightLookupOperand",
-            )?
-        + gamma3
-            * eval_by_name(
-                evals,
-                "stage2.instruction_lookup.claim_reduction.eval.LeftInstructionInput",
-            )?
-        + gamma4
-            * eval_by_name(
-                evals,
-                "stage2.instruction_lookup.claim_reduction.eval.RightInstructionInput",
-            )?;
-    Ok(eq_eval * weighted)
 }
 
 fn expected_ram_raf(
