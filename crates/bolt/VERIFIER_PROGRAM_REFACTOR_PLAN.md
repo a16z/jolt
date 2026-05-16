@@ -1216,9 +1216,9 @@ Current evidence from May 16, 2026 on `quang/bolt-stack` is green but close:
 the 2^16 oracle passed with verifier ratio `1.090x` and prove ratio `0.856x`;
 the 2^20 one-sample oracle passed with verifier ratio `1.124x` and prove ratio
 `1.298x` against the `1.300x` prove gate; the 2^20 three-sample oracle passed
-with verifier ratio `0.987x` and prove mean `1.329x`, 95% CI
-`[1.284x, 1.373x]`. Treat this as a fragile-margin risk, not a reason to
-loosen thresholds.
+after the Stage 2 verifier-plan cutover with verifier ratio `1.089x` and prove
+mean `1.168x`, 95% CI `[0.876x, 1.460x]`. Treat this as a green completion
+gate with noisy margin, not a reason to loosen thresholds.
 
 The expected trend is "no measurable verifier change," because the interpreter
 dispatches are straightforward and relation/value-graph evaluation happens a

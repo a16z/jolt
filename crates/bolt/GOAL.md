@@ -589,13 +589,14 @@ Current perf evidence from May 16, 2026 on `quang/bolt-stack`:
   prove_ms ratio: 1.298x against 1.300x gate
 
 2^20 SHA2-chain oracle, 3 samples: passed
-  verify_ms ratio: 0.987x
-  prove_ms mean ratio: 1.329x, 95% CI [1.284x, 1.373x]
+  verify_ms ratio: 1.089x
+  prove_ms mean ratio: 1.168x, 95% CI [0.876x, 1.460x]
 ```
 
-The previous hard perf blocker has moved to a fragile-margin risk: current
-oracles are green, but the 2^20 prover-time ratio remains close enough to the
-threshold that future completion audits should rerun it.
+The previous hard perf blocker has moved out of the immediate blocker column:
+current oracles are green, and the latest 2^20 three-sample mean is below the
+threshold. The confidence interval still crosses the threshold, so future
+interpreter-heavy slices should continue to rerun it.
 
 Semantic gates:
 
