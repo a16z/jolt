@@ -647,7 +647,13 @@ pub fn lower_eval_family_output(
                 &mut gamma_powers,
                 &mut rows,
             );
-            push_eval_family_term(prefix, term_index, operands, &mut term_symbols, &mut rows);
+            push_relation_output_product_term(
+                prefix,
+                term_index,
+                operands,
+                &mut term_symbols,
+                &mut rows,
+            );
             term_index += 1;
         }
         for term in &family.shared_terms {
@@ -661,7 +667,13 @@ pub fn lower_eval_family_output(
                 &mut gamma_powers,
                 &mut rows,
             );
-            push_eval_family_term(prefix, term_index, operands, &mut term_symbols, &mut rows);
+            push_relation_output_product_term(
+                prefix,
+                term_index,
+                operands,
+                &mut term_symbols,
+                &mut rows,
+            );
             term_index += 1;
         }
         for term in &family.item_terms {
@@ -675,7 +687,13 @@ pub fn lower_eval_family_output(
                 &mut gamma_powers,
                 &mut rows,
             );
-            push_eval_family_term(prefix, term_index, operands, &mut term_symbols, &mut rows);
+            push_relation_output_product_term(
+                prefix,
+                term_index,
+                operands,
+                &mut term_symbols,
+                &mut rows,
+            );
             term_index += 1;
         }
     }
@@ -693,6 +711,78 @@ pub fn lower_eval_family_output(
     ));
     claim.expected_output = claim_expr;
     let _removed_family = relation_output_eval_families.remove(family_index);
+    Ok(rows)
+}
+
+pub fn lower_product_family_output(
+    stage: &str,
+    relation: &str,
+    relation_output_product_families: &mut Vec<RelationOutputProductFamilyPlan>,
+    relation_output_asts: &mut [RelationOutputAst],
+) -> Result<Vec<RelationOutputFieldExprPlan>, EmitError> {
+    let Some(claim) = relation_output_asts
+        .iter_mut()
+        .find(|claim| claim.relation == relation)
+    else {
+        return Ok(Vec::new());
+    };
+    let family_symbol = claim.expected_output.clone();
+    let family_index = relation_output_product_families
+        .iter()
+        .position(|family| family.symbol == family_symbol)
+        .ok_or_else(|| {
+            EmitError::new(format!(
+                "{stage} relation output for @{relation} references missing product family @{family_symbol}"
+            ))
+        })?;
+    let family = relation_output_product_families[family_index].clone();
+
+    let prefix = relation_output_family_prefix(&family.symbol);
+    let mut rows = Vec::new();
+    let mut term_symbols = Vec::with_capacity(family.terms.len());
+    let mut gamma_powers = BTreeMap::new();
+    for (term_index, term) in family.terms.iter().enumerate() {
+        if !term.eval_families.is_empty() {
+            return Err(EmitError::new(format!(
+                "{stage} relation output product family @{family_symbol} requires field-vector product support"
+            )));
+        }
+        let mut operands = Vec::new();
+        if let Some(gamma) = &family.gamma {
+            if term.gamma_power_offset > 0 {
+                operands.push(eval_family_gamma_power(
+                    term.gamma_power_offset,
+                    gamma,
+                    prefix,
+                    &mut gamma_powers,
+                    &mut rows,
+                ));
+            }
+        }
+        operands.extend(term.evals.iter().cloned());
+        operands.extend(term.factors.iter().cloned());
+        if operands.is_empty() {
+            return Err(EmitError::new(format!(
+                "{stage} relation output product family @{family_symbol} has an empty scalar term"
+            )));
+        }
+        push_relation_output_product_term(
+            prefix,
+            term_index,
+            operands,
+            &mut term_symbols,
+            &mut rows,
+        );
+    }
+
+    let claim_expr = format!("{prefix}.claim_expr");
+    rows.push(relation_output_field_expr(
+        claim_expr.clone(),
+        "field.sum",
+        term_symbols,
+    ));
+    claim.expected_output = claim_expr;
+    let _removed_family = relation_output_product_families.remove(family_index);
     Ok(rows)
 }
 
@@ -741,7 +831,7 @@ fn eval_family_gamma_power(
     symbol
 }
 
-fn push_eval_family_term(
+fn push_relation_output_product_term(
     prefix: &str,
     term_index: usize,
     operands: Vec<String>,

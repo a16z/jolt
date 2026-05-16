@@ -678,6 +678,7 @@ impl Stage6CpuProgram {
             lower_stage6_relation_outputs(
                 &mut field_exprs,
                 &mut relation_output_eval_families,
+                &mut relation_output_product_families,
                 &mut relation_output_function_families,
                 &mut relation_output_asts,
             )?;
@@ -2766,6 +2767,7 @@ fn stage6_trace_rounds(
 fn lower_stage6_relation_outputs(
     field_exprs: &mut Vec<Stage6FieldExprPlan>,
     relation_output_eval_families: &mut Vec<Stage6RelationOutputEvalFamilyPlan>,
+    relation_output_product_families: &mut Vec<Stage6RelationOutputProductFamilyPlan>,
     relation_output_function_families: &mut Vec<Stage6RelationOutputFunctionFamilyPlan>,
     relation_output_asts: &mut [Stage6RelationOutputAst],
 ) -> Result<(), EmitError> {
@@ -2784,6 +2786,26 @@ fn lower_stage6_relation_outputs(
             "stage6",
             "jolt.stage6.inc_claim_reduction",
             relation_output_eval_families,
+            relation_output_asts,
+        )?
+        .into_iter()
+        .map(stage6_relation_output_expr),
+    );
+    field_exprs.extend(
+        verifier_relation_outputs::lower_product_family_output(
+            "stage6",
+            "jolt.stage6.ram_ra_virtual",
+            relation_output_product_families,
+            relation_output_asts,
+        )?
+        .into_iter()
+        .map(stage6_relation_output_expr),
+    );
+    field_exprs.extend(
+        verifier_relation_outputs::lower_product_family_output(
+            "stage6",
+            "jolt.stage6.instruction_ra_virtual",
+            relation_output_product_families,
             relation_output_asts,
         )?
         .into_iter()

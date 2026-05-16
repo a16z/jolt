@@ -1557,7 +1557,7 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(prover_program.relation_outputs.is_empty());
     assert_eq!(verifier_program.relation_output_values.len(), 8);
     assert!(verifier_program.relation_output_eval_families.is_empty());
-    assert_eq!(verifier_program.relation_output_product_families.len(), 2);
+    assert!(verifier_program.relation_output_product_families.is_empty());
     assert_eq!(verifier_program.relation_output_function_families.len(), 1);
     assert_eq!(verifier_program.relation_outputs.len(), 6);
     let total_booleanity_ra = params.instruction_d + params.bytecode_d + params.ram_d;
@@ -1614,46 +1614,64 @@ fn stage6_rust_targets_extract_and_compile() {
             "stage6.hamming_booleanity.output.claim_expr"
         ]
     );
-    let ram_product_families = verifier_program
+    assert!(verifier_program
         .relation_output_product_families
         .iter()
-        .filter(|family| family.symbol == "stage6.ram_ra_virtual.output.family")
-        .collect::<Vec<_>>();
-    assert_eq!(ram_product_families.len(), 1);
-    let ram_product_family = ram_product_families[0];
-    assert_eq!(ram_product_family.gamma, None);
-    assert_eq!(ram_product_family.terms.len(), 1);
-    assert_eq!(ram_product_family.terms[0].gamma_power_offset, 0);
-    assert_eq!(
-        ram_product_family.terms[0].evals,
-        (0..params.ram_d)
-            .map(|index| format!("stage6.ram_ra_virtual.eval.RamRa_{index}"))
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(
-        ram_product_family.terms[0].factors,
-        vec!["stage6.ram_ra_virtual.output.eq.Cycle".to_owned()]
-    );
-    let instruction_product_families = verifier_program
+        .all(|family| family.symbol != "stage6.ram_ra_virtual.output.family"));
+    assert!(verifier_program
         .relation_output_product_families
         .iter()
-        .filter(|family| family.symbol == "stage6.instruction_ra_virtual.output.family")
+        .all(|family| family.symbol != "stage6.instruction_ra_virtual.output.family"));
+    let ram_expr_symbols = verifier_program
+        .field_exprs
+        .iter()
+        .filter(|expr| expr.symbol.starts_with("stage6.ram_ra_virtual.output."))
+        .map(|expr| expr.symbol.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(instruction_product_families.len(), 1);
-    let instruction_product_family = instruction_product_families[0];
     assert_eq!(
-        instruction_product_family.gamma,
-        Some("stage6.instruction_ra_virtual.gamma".to_owned())
-    );
-    assert_eq!(
-        instruction_product_family.terms.len(),
-        params.instruction_ra_virtual_d
+        ram_expr_symbols,
+        vec![
+            "stage6.ram_ra_virtual.output.term0",
+            "stage6.ram_ra_virtual.output.claim_expr"
+        ]
     );
     let committed_per_virtual = params.instruction_d / params.instruction_ra_virtual_d;
-    for (virtual_index, term) in instruction_product_family.terms.iter().enumerate() {
-        assert_eq!(term.gamma_power_offset, virtual_index);
+    let instruction_exprs = verifier_program
+        .field_exprs
+        .iter()
+        .filter(|expr| {
+            expr.symbol
+                .starts_with("stage6.instruction_ra_virtual.output.")
+        })
+        .collect::<Vec<_>>();
+    assert!(instruction_exprs
+        .iter()
+        .any(|expr| expr.symbol == "stage6.instruction_ra_virtual.output.claim_expr"));
+    assert!(instruction_exprs
+        .iter()
+        .any(|expr| expr.symbol == "stage6.instruction_ra_virtual.output.gamma_pow_7"));
+    for virtual_index in 0..params.instruction_ra_virtual_d {
+        let term = instruction_exprs
+            .iter()
+            .find(|expr| {
+                expr.symbol == format!("stage6.instruction_ra_virtual.output.term{virtual_index}")
+            })
+            .expect("instruction RA virtual output term");
+        if virtual_index == 0 {
+            assert!(!term
+                .operands
+                .contains(&"stage6.instruction_ra_virtual.output.gamma_pow_0".to_owned()));
+        } else {
+            assert!(term.operands.contains(&format!(
+                "stage6.instruction_ra_virtual.output.gamma_pow_{virtual_index}"
+            )));
+        }
         assert_eq!(
-            term.evals,
+            term.operands
+                .iter()
+                .filter(|operand| operand.contains(".eval.InstructionRa_"))
+                .cloned()
+                .collect::<Vec<_>>(),
             (0..committed_per_virtual)
                 .map(|chunk_index| {
                     let index = virtual_index * committed_per_virtual + chunk_index;
@@ -1661,10 +1679,9 @@ fn stage6_rust_targets_extract_and_compile() {
                 })
                 .collect::<Vec<_>>()
         );
-        assert_eq!(
-            term.factors,
-            vec!["stage6.instruction_ra_virtual.output.eq.Cycle".to_owned()]
-        );
+        assert!(term
+            .operands
+            .contains(&"stage6.instruction_ra_virtual.output.eq.Cycle".to_owned()));
     }
     let inc_expr_symbols = verifier_program
         .field_exprs
@@ -1726,26 +1743,20 @@ fn stage6_rust_targets_extract_and_compile() {
     let ram_ra_claims = verifier_program
         .relation_outputs
         .iter()
-        .filter(|claim| claim.expected_output == "stage6.ram_ra_virtual.output.family")
+        .filter(|claim| claim.expected_output == "stage6.ram_ra_virtual.output.claim_expr")
         .collect::<Vec<_>>();
     assert_eq!(ram_ra_claims.len(), 1);
     assert!(ram_ra_claims[0].eval_families.is_empty());
-    assert_eq!(
-        ram_ra_claims[0].product_families,
-        vec![ram_product_family.clone()]
-    );
+    assert!(ram_ra_claims[0].product_families.is_empty());
     assert!(ram_ra_claims[0].function_families.is_empty());
     let instruction_ra_claims = verifier_program
         .relation_outputs
         .iter()
-        .filter(|claim| claim.expected_output == "stage6.instruction_ra_virtual.output.family")
+        .filter(|claim| claim.expected_output == "stage6.instruction_ra_virtual.output.claim_expr")
         .collect::<Vec<_>>();
     assert_eq!(instruction_ra_claims.len(), 1);
     assert!(instruction_ra_claims[0].eval_families.is_empty());
-    assert_eq!(
-        instruction_ra_claims[0].product_families,
-        vec![instruction_product_family.clone()]
-    );
+    assert!(instruction_ra_claims[0].product_families.is_empty());
     assert!(instruction_ra_claims[0].function_families.is_empty());
     let bytecode_claims = verifier_program
         .relation_outputs
@@ -1906,12 +1917,15 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(verifier_source
         .source
         .contains("RelationOutputProductFamilyPlan"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("STAGE6_RELATION_OUTPUT_2_PRODUCT_FAMILIES"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("STAGE6_RELATION_OUTPUT_3_PRODUCT_FAMILIES"));
+    assert!(verifier_source
+        .source
+        .contains("STAGE6_RELATION_OUTPUT_5_PRODUCT_FAMILIES"));
     assert!(verifier_source
         .source
         .contains("stage6.booleanity.output.family"));
@@ -1930,10 +1944,10 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(verifier_source
         .source
         .contains("stage6.hamming_booleanity.output.boolean_zero"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("stage6.ram_ra_virtual.output.family"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("stage6.instruction_ra_virtual.output.family"));
     assert!(verifier_source
@@ -1964,7 +1978,7 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(!verifier_source
         .source
         .contains("stage6.ram_ra_virtual.output.product.RamRa"));
-    assert!(!verifier_source
+    assert!(verifier_source
         .source
         .contains("stage6.ram_ra_virtual.output.claim_expr"));
     assert!(!verifier_source
@@ -1979,10 +1993,10 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(!verifier_source
         .source
         .contains("stage6.instruction_ra_virtual.output.term.InstructionRa_"));
-    assert!(!verifier_source
+    assert!(verifier_source
         .source
-        .contains("stage6.instruction_ra_virtual.output.gamma_pow_"));
-    assert!(!verifier_source
+        .contains("stage6.instruction_ra_virtual.output.gamma_pow_7"));
+    assert!(verifier_source
         .source
         .contains("stage6.instruction_ra_virtual.output.claim_expr"));
     assert!(verifier_source
