@@ -18,6 +18,9 @@ use crate::protocols::jolt::verifier_sumcheck_rows::{
     CpuSumcheckBatchPlan, CpuSumcheckClaimPlan, CpuSumcheckDriverPlan, CpuSumcheckEvalPlan,
     CpuSumcheckInstanceResultPlan,
 };
+use crate::protocols::jolt::verifier_value_rows::{
+    CpuFieldConstantPlan, CpuFieldExprPlan, CpuScalarExprPlan,
+};
 use crate::protocols::jolt::verifier_values::{
     VerifierFieldVectorSourceKind, VerifierFieldVectorSourceSet, VerifierPointSourceKind,
     VerifierPointSourceSet, VerifierScalarSourceKind, VerifierScalarSourceSet,
@@ -555,9 +558,6 @@ pub(crate) trait VerifierStagePlanSource {
     type Step: VerifierProgramStepSource;
     type Squeeze: VerifierTranscriptSqueezeSource;
     type OpeningInput: VerifierOpeningInputSource;
-    type FieldConstant: VerifierFieldConstantSource;
-    type FieldExpr: VerifierFieldExprSource;
-    type ScalarExpr: VerifierScalarExprSource;
     type PointSlice: VerifierPointSliceSource;
     type PointConcat: VerifierPointConcatSource;
 
@@ -565,9 +565,9 @@ pub(crate) trait VerifierStagePlanSource {
     fn transcript_squeezes(&self) -> &[Self::Squeeze];
     fn transcript_absorb_bytes(&self) -> Vec<VerifierTranscriptAbsorbBytesPlan>;
     fn opening_inputs(&self) -> &[Self::OpeningInput];
-    fn field_constants(&self) -> &[Self::FieldConstant];
-    fn field_exprs(&self) -> &[Self::FieldExpr];
-    fn scalar_exprs(&self) -> &[Self::ScalarExpr];
+    fn field_constants(&self) -> &[CpuFieldConstantPlan];
+    fn field_exprs(&self) -> &[CpuFieldExprPlan];
+    fn scalar_exprs(&self) -> &[CpuScalarExprPlan];
     fn claims(&self) -> &[CpuSumcheckClaimPlan];
     fn batches(&self) -> &[CpuSumcheckBatchPlan];
     fn drivers(&self) -> &[CpuSumcheckDriverPlan];
@@ -666,6 +666,48 @@ impl VerifierOpeningBatchSource for CpuOpeningBatchPlan {
 
     fn claim_operands(&self) -> &[String] {
         &self.claim_operands
+    }
+}
+
+impl VerifierFieldConstantSource for CpuFieldConstantPlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn field(&self) -> &str {
+        &self.field
+    }
+
+    fn value(&self) -> usize {
+        self.value
+    }
+}
+
+impl VerifierFieldExprSource for CpuFieldExprPlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn formula(&self) -> &str {
+        &self.formula
+    }
+
+    fn operands(&self) -> &[String] {
+        &self.operands
+    }
+}
+
+impl VerifierScalarExprSource for CpuScalarExprPlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn formula(&self) -> &str {
+        &self.formula
+    }
+
+    fn operands(&self) -> &[String] {
+        &self.operands
     }
 }
 
@@ -1145,9 +1187,6 @@ macro_rules! impl_verifier_plan_source_traits {
         step = $step:ty,
         squeeze = $squeeze:ty,
         opening_input = $opening_input:ty,
-        field_constant = $field_constant:ty,
-        field_expr = $field_expr:ty,
-        scalar_expr = $scalar_expr:ty,
         point_slice = $point_slice:ty,
         point_concat = $point_concat:ty
         $(, absorb = $absorb:ty)?
@@ -1162,9 +1201,6 @@ macro_rules! impl_verifier_plan_source_traits {
             type Step = $step;
             type Squeeze = $squeeze;
             type OpeningInput = $opening_input;
-            type FieldConstant = $field_constant;
-            type FieldExpr = $field_expr;
-            type ScalarExpr = $scalar_expr;
             type PointSlice = $point_slice;
             type PointConcat = $point_concat;
 
@@ -1176,9 +1212,9 @@ macro_rules! impl_verifier_plan_source_traits {
                 )
             }
             fn opening_inputs(&self) -> &[Self::OpeningInput] { &self.opening_inputs }
-            fn field_constants(&self) -> &[Self::FieldConstant] { &self.field_constants }
-            fn field_exprs(&self) -> &[Self::FieldExpr] { &self.field_exprs }
-            fn scalar_exprs(&self) -> &[Self::ScalarExpr] { &self.scalar_exprs }
+            fn field_constants(&self) -> &[$crate::protocols::jolt::verifier_value_rows::CpuFieldConstantPlan] { &self.field_constants }
+            fn field_exprs(&self) -> &[$crate::protocols::jolt::verifier_value_rows::CpuFieldExprPlan] { &self.field_exprs }
+            fn scalar_exprs(&self) -> &[$crate::protocols::jolt::verifier_value_rows::CpuScalarExprPlan] { &self.scalar_exprs }
             fn claims(&self) -> &[$crate::protocols::jolt::verifier_sumcheck_rows::CpuSumcheckClaimPlan] { &self.claims }
             fn batches(&self) -> &[$crate::protocols::jolt::verifier_sumcheck_rows::CpuSumcheckBatchPlan] { &self.batches }
             fn drivers(&self) -> &[$crate::protocols::jolt::verifier_sumcheck_rows::CpuSumcheckDriverPlan] { &self.drivers }
@@ -1248,24 +1284,6 @@ macro_rules! impl_verifier_plan_source_traits {
             fn domain(&self) -> &str { &self.domain }
             fn point_arity(&self) -> usize { self.point_arity }
             fn claim_kind(&self) -> &str { &self.claim_kind }
-        }
-
-        impl $crate::protocols::jolt::verifier_plan::VerifierFieldConstantSource for $field_constant {
-            fn symbol(&self) -> &str { &self.symbol }
-            fn field(&self) -> &str { &self.field }
-            fn value(&self) -> usize { self.value }
-        }
-
-        impl $crate::protocols::jolt::verifier_plan::VerifierFieldExprSource for $field_expr {
-            fn symbol(&self) -> &str { &self.symbol }
-            fn formula(&self) -> &str { &self.formula }
-            fn operands(&self) -> &[String] { &self.operands }
-        }
-
-        impl $crate::protocols::jolt::verifier_plan::VerifierScalarExprSource for $scalar_expr {
-            fn symbol(&self) -> &str { &self.symbol }
-            fn formula(&self) -> &str { &self.formula }
-            fn operands(&self) -> &[String] { &self.operands }
         }
 
         $(

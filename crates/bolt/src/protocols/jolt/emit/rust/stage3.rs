@@ -6,18 +6,19 @@ use melior::ir::operation::OperationLike;
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{BoltModule, Cpu, Role};
 use crate::protocols::jolt::cpu_attrs::{
-    int_attr, operand_symbol, operand_symbols, operation_name, signed_int_attr, string_attr,
-    symbol_array_attr, symbol_attr,
+    int_attr, operand_symbol, operand_symbols, operation_name, string_attr, symbol_array_attr,
+    symbol_attr,
 };
 use crate::protocols::jolt::verifier_opening_rows;
 use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
 use crate::protocols::jolt::verifier_relation_outputs::{
-    self, FieldExprDependencies, RelationOutputAst as Stage3RelationOutputAst,
+    self, RelationOutputAst as Stage3RelationOutputAst,
     RelationOutputFieldExprPlan as Stage3RelationOutputFieldExprPlan,
     RelationOutputPlan as Stage3RelationOutputPlan,
     StructuredPolynomialEvalPlan as Stage3StructuredPolynomialEvalPlan,
 };
 use crate::protocols::jolt::verifier_sumcheck_rows;
+use crate::protocols::jolt::verifier_value_rows;
 use crate::protocols::jolt::verifier_values;
 use crate::schema::verify_cpu_schema;
 
@@ -29,9 +30,9 @@ pub struct Stage3CpuProgram {
     pub steps: Vec<Stage3ProgramStepPlan>,
     pub transcript_squeezes: Vec<Stage3TranscriptSqueezePlan>,
     pub opening_inputs: Vec<Stage3OpeningInputPlan>,
-    pub field_constants: Vec<Stage3FieldConstantPlan>,
-    pub field_exprs: Vec<Stage3FieldExprPlan>,
-    pub scalar_exprs: Vec<Stage3ScalarExprPlan>,
+    pub field_constants: Vec<verifier_value_rows::CpuFieldConstantPlan>,
+    pub field_exprs: Vec<verifier_value_rows::CpuFieldExprPlan>,
+    pub scalar_exprs: Vec<verifier_value_rows::CpuScalarExprPlan>,
     pub kernels: Vec<Stage3KernelPlan>,
     pub claims: Vec<verifier_sumcheck_rows::CpuSumcheckClaimPlan>,
     pub batches: Vec<verifier_sumcheck_rows::CpuSumcheckBatchPlan>,
@@ -88,49 +89,10 @@ pub struct Stage3OpeningInputPlan {
     pub claim_kind: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3FieldConstantPlan {
-    pub symbol: String,
-    pub field: String,
-    pub value: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3FieldExprPlan {
-    pub symbol: String,
-    pub kind: String,
-    pub formula: String,
-    pub operand_names: Vec<String>,
-    pub operands: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3ScalarExprPlan {
-    pub symbol: String,
-    pub kind: String,
-    pub formula: String,
-    pub operand_names: Vec<String>,
-    pub operands: Vec<String>,
-}
-
-impl FieldExprDependencies for Stage3FieldExprPlan {
-    fn symbol(&self) -> &str {
-        &self.symbol
-    }
-
-    fn operands(&self) -> &[String] {
-        &self.operands
-    }
-}
-
-fn stage3_scalar_expr(expr: Stage3RelationOutputFieldExprPlan) -> Stage3ScalarExprPlan {
-    Stage3ScalarExprPlan {
-        symbol: expr.symbol,
-        kind: "op".to_owned(),
-        formula: expr.formula,
-        operand_names: expr.operands.clone(),
-        operands: expr.operands,
-    }
+fn stage3_scalar_expr(
+    expr: Stage3RelationOutputFieldExprPlan,
+) -> verifier_value_rows::CpuScalarExprPlan {
+    verifier_value_rows::CpuScalarExprPlan::op(expr.symbol, expr.formula, expr.operands)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -155,9 +117,6 @@ verifier_plan::impl_verifier_plan_source_traits!(
     step = Stage3ProgramStepPlan,
     squeeze = Stage3TranscriptSqueezePlan,
     opening_input = Stage3OpeningInputPlan,
-    field_constant = Stage3FieldConstantPlan,
-    field_expr = Stage3FieldExprPlan,
-    scalar_expr = Stage3ScalarExprPlan,
     point_slice = Stage3PointSlicePlan,
     point_concat = Stage3PointConcatPlan,
 );
@@ -246,61 +205,24 @@ impl Stage3CpuProgram {
                     });
                 }
                 "cpu.field_const" => {
-                    field_constants.push(Stage3FieldConstantPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        field: symbol_attr(op, "field")?,
-                        value: int_attr(op, "value")?,
-                    });
+                    field_constants
+                        .push(verifier_value_rows::CpuFieldConstantPlan::from_const(op)?);
                 }
                 "cpu.field_zero" => {
-                    field_constants.push(Stage3FieldConstantPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        field: symbol_attr(op, "field")?,
-                        value: 0,
-                    });
+                    field_constants.push(verifier_value_rows::CpuFieldConstantPlan::from_zero(op)?);
                 }
                 "cpu.field_one" => {
-                    field_constants.push(Stage3FieldConstantPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        field: symbol_attr(op, "field")?,
-                        value: 1,
-                    });
+                    field_constants.push(verifier_value_rows::CpuFieldConstantPlan::from_one(op)?);
                 }
                 "cpu.field_add" | "cpu.field_sub" | "cpu.field_mul" | "cpu.field_neg" => {
-                    let operands = operand_symbols(op, 0)?;
-                    field_exprs.push(Stage3FieldExprPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        kind: "op".to_owned(),
-                        formula: operation_name(op).replace("cpu.field_", "field."),
-                        operand_names: operands.clone(),
-                        operands,
-                    });
+                    field_exprs.push(verifier_value_rows::CpuFieldExprPlan::from_field_op(op)?);
                 }
                 "cpu.field_pow" => {
-                    let exponent = int_attr(op, "exponent")?;
-                    let operands = operand_symbols(op, 0)?;
-                    field_exprs.push(Stage3FieldExprPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        kind: "op".to_owned(),
-                        formula: format!("field.pow:{exponent}"),
-                        operand_names: operands.clone(),
-                        operands,
-                    });
+                    field_exprs.push(verifier_value_rows::CpuFieldExprPlan::from_field_pow(op)?);
                 }
                 "cpu.poly_lagrange_basis_eval" => {
-                    let domain_start = signed_int_attr(op, "domain_start")?;
-                    let domain_size = int_attr(op, "domain_size")?;
-                    let index = int_attr(op, "index")?;
-                    let operands = operand_symbols(op, 0)?;
-                    field_exprs.push(Stage3FieldExprPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        kind: "op".to_owned(),
-                        formula: format!(
-                            "poly.lagrange_basis_eval:{domain_start}:{domain_size}:{index}"
-                        ),
-                        operand_names: operands.clone(),
-                        operands,
-                    });
+                    field_exprs
+                        .push(verifier_value_rows::CpuFieldExprPlan::from_lagrange_basis_eval(op)?);
                 }
                 "cpu.sumcheck_claim" => {
                     claims.push(verifier_sumcheck_rows::CpuSumcheckClaimPlan::from_claim(

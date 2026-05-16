@@ -24,8 +24,7 @@ use crate::protocols::jolt::verifier_opening_rows;
 use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
 use crate::protocols::jolt::verifier_relation_outputs::{
     self, parse_output_eval_family_plan, parse_output_function_family_plan,
-    parse_output_product_family_plan, FieldExprDependencies,
-    RelationOutputAst as Stage6RelationOutputAst,
+    parse_output_product_family_plan, RelationOutputAst as Stage6RelationOutputAst,
     RelationOutputEvalFamilyPlan as Stage6RelationOutputEvalFamilyPlan,
     RelationOutputFieldExprPlan as Stage6RelationOutputFieldExprPlan,
     RelationOutputFunctionFamilyPlan as Stage6RelationOutputFunctionFamilyPlan,
@@ -34,6 +33,7 @@ use crate::protocols::jolt::verifier_relation_outputs::{
     StructuredPolynomialEvalPlan as Stage6StructuredPolynomialEvalPlan,
 };
 use crate::protocols::jolt::verifier_sumcheck_rows;
+use crate::protocols::jolt::verifier_value_rows;
 use crate::protocols::jolt::verifier_values;
 use crate::schema::verify_cpu_schema;
 
@@ -74,9 +74,9 @@ pub struct Stage6CpuProgram {
     pub transcript_squeezes: Vec<Stage6TranscriptSqueezePlan>,
     pub transcript_absorb_bytes: Vec<Stage6TranscriptAbsorbBytesPlan>,
     pub opening_inputs: Vec<Stage6OpeningInputPlan>,
-    pub field_constants: Vec<Stage6FieldConstantPlan>,
-    pub field_exprs: Vec<Stage6FieldExprPlan>,
-    pub scalar_exprs: Vec<Stage6ScalarExprPlan>,
+    pub field_constants: Vec<verifier_value_rows::CpuFieldConstantPlan>,
+    pub field_exprs: Vec<verifier_value_rows::CpuFieldExprPlan>,
+    pub scalar_exprs: Vec<verifier_value_rows::CpuScalarExprPlan>,
     pub kernels: Vec<Stage6KernelPlan>,
     pub claims: Vec<verifier_sumcheck_rows::CpuSumcheckClaimPlan>,
     pub batches: Vec<verifier_sumcheck_rows::CpuSumcheckBatchPlan>,
@@ -145,41 +145,6 @@ pub struct Stage6OpeningInputPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage6FieldConstantPlan {
-    pub symbol: String,
-    pub field: String,
-    pub value: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage6FieldExprPlan {
-    pub symbol: String,
-    pub kind: String,
-    pub formula: String,
-    pub operand_names: Vec<String>,
-    pub operands: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage6ScalarExprPlan {
-    pub symbol: String,
-    pub kind: String,
-    pub formula: String,
-    pub operand_names: Vec<String>,
-    pub operands: Vec<String>,
-}
-
-impl FieldExprDependencies for Stage6FieldExprPlan {
-    fn symbol(&self) -> &str {
-        &self.symbol
-    }
-
-    fn operands(&self) -> &[String] {
-        &self.operands
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6PointZeroPlan {
     pub symbol: String,
     pub field: String,
@@ -208,9 +173,6 @@ verifier_plan::impl_verifier_plan_source_traits!(
     step = Stage6ProgramStepPlan,
     squeeze = Stage6TranscriptSqueezePlan,
     opening_input = Stage6OpeningInputPlan,
-    field_constant = Stage6FieldConstantPlan,
-    field_expr = Stage6FieldExprPlan,
-    scalar_expr = Stage6ScalarExprPlan,
     point_slice = Stage6PointSlicePlan,
     point_concat = Stage6PointConcatPlan,
     absorb = Stage6TranscriptAbsorbBytesPlan,
@@ -323,46 +285,20 @@ impl Stage6CpuProgram {
                     });
                 }
                 "cpu.field_const" => {
-                    field_constants.push(Stage6FieldConstantPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        field: symbol_attr(op, "field")?,
-                        value: int_attr(op, "value")?,
-                    });
+                    field_constants
+                        .push(verifier_value_rows::CpuFieldConstantPlan::from_const(op)?);
                 }
                 "cpu.field_zero" => {
-                    field_constants.push(Stage6FieldConstantPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        field: symbol_attr(op, "field")?,
-                        value: 0,
-                    });
+                    field_constants.push(verifier_value_rows::CpuFieldConstantPlan::from_zero(op)?);
                 }
                 "cpu.field_one" => {
-                    field_constants.push(Stage6FieldConstantPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        field: symbol_attr(op, "field")?,
-                        value: 1,
-                    });
+                    field_constants.push(verifier_value_rows::CpuFieldConstantPlan::from_one(op)?);
                 }
                 "cpu.field_add" | "cpu.field_sub" | "cpu.field_mul" | "cpu.field_neg" => {
-                    let operands = operand_symbols(op, 0)?;
-                    field_exprs.push(Stage6FieldExprPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        kind: "op".to_owned(),
-                        formula: operation_name(op).replace("cpu.field_", "field."),
-                        operand_names: operands.clone(),
-                        operands,
-                    });
+                    field_exprs.push(verifier_value_rows::CpuFieldExprPlan::from_field_op(op)?);
                 }
                 "cpu.field_pow" => {
-                    let exponent = int_attr(op, "exponent")?;
-                    let operands = operand_symbols(op, 0)?;
-                    field_exprs.push(Stage6FieldExprPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        kind: "op".to_owned(),
-                        formula: format!("field.pow:{exponent}"),
-                        operand_names: operands.clone(),
-                        operands,
-                    });
+                    field_exprs.push(verifier_value_rows::CpuFieldExprPlan::from_field_pow(op)?);
                 }
                 "cpu.sumcheck_claim" => {
                     claims.push(verifier_sumcheck_rows::CpuSumcheckClaimPlan::from_claim(
@@ -2577,7 +2513,7 @@ fn stage6_trace_rounds(
 }
 
 fn lower_stage6_relation_outputs(
-    field_exprs: &mut Vec<Stage6FieldExprPlan>,
+    field_exprs: &mut Vec<verifier_value_rows::CpuFieldExprPlan>,
     relation_output_eval_families: &mut Vec<Stage6RelationOutputEvalFamilyPlan>,
     relation_output_product_families: &mut Vec<Stage6RelationOutputProductFamilyPlan>,
     relation_output_function_families: &mut Vec<Stage6RelationOutputFunctionFamilyPlan>,
@@ -2636,26 +2572,16 @@ fn lower_stage6_relation_outputs(
     Ok(())
 }
 
-fn stage6_relation_output_expr(expr: Stage6RelationOutputFieldExprPlan) -> Stage6FieldExprPlan {
-    let operands = expr.operands;
-    Stage6FieldExprPlan {
-        symbol: expr.symbol,
-        kind: "op".to_owned(),
-        formula: expr.formula,
-        operand_names: operands.clone(),
-        operands,
-    }
+fn stage6_relation_output_expr(
+    expr: Stage6RelationOutputFieldExprPlan,
+) -> verifier_value_rows::CpuFieldExprPlan {
+    verifier_value_rows::CpuFieldExprPlan::op(expr.symbol, expr.formula, expr.operands)
 }
 
-fn stage6_scalar_expr(expr: Stage6RelationOutputFieldExprPlan) -> Stage6ScalarExprPlan {
-    let operands = expr.operands;
-    Stage6ScalarExprPlan {
-        symbol: expr.symbol,
-        kind: "op".to_owned(),
-        formula: expr.formula,
-        operand_names: operands.clone(),
-        operands,
-    }
+fn stage6_scalar_expr(
+    expr: Stage6RelationOutputFieldExprPlan,
+) -> verifier_value_rows::CpuScalarExprPlan {
+    verifier_value_rows::CpuScalarExprPlan::op(expr.symbol, expr.formula, expr.operands)
 }
 
 fn stage6_kernel_abi(relation: &str) -> Option<&'static str> {

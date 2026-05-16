@@ -21,8 +21,7 @@ use crate::protocols::jolt::verifier_opening_rows;
 use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
 use crate::protocols::jolt::verifier_relation_outputs::{
     self, parse_output_eval_family_plan, parse_output_function_family_plan,
-    parse_output_product_family_plan, FieldExprDependencies,
-    RelationOutputAst as Stage7RelationOutputAst,
+    parse_output_product_family_plan, RelationOutputAst as Stage7RelationOutputAst,
     RelationOutputEvalFamilyPlan as Stage7RelationOutputEvalFamilyPlan,
     RelationOutputFieldExprPlan as Stage7RelationOutputFieldExprPlan,
     RelationOutputFunctionFamilyPlan as Stage7RelationOutputFunctionFamilyPlan,
@@ -31,6 +30,7 @@ use crate::protocols::jolt::verifier_relation_outputs::{
     StructuredPolynomialEvalPlan as Stage7StructuredPolynomialEvalPlan,
 };
 use crate::protocols::jolt::verifier_sumcheck_rows;
+use crate::protocols::jolt::verifier_value_rows;
 use crate::protocols::jolt::verifier_values;
 use crate::schema::verify_cpu_schema;
 
@@ -56,9 +56,9 @@ pub struct Stage7CpuProgram {
     pub transcript_squeezes: Vec<Stage7TranscriptSqueezePlan>,
     pub transcript_absorb_bytes: Vec<Stage7TranscriptAbsorbBytesPlan>,
     pub opening_inputs: Vec<Stage7OpeningInputPlan>,
-    pub field_constants: Vec<Stage7FieldConstantPlan>,
-    pub field_exprs: Vec<Stage7FieldExprPlan>,
-    pub scalar_exprs: Vec<Stage7ScalarExprPlan>,
+    pub field_constants: Vec<verifier_value_rows::CpuFieldConstantPlan>,
+    pub field_exprs: Vec<verifier_value_rows::CpuFieldExprPlan>,
+    pub scalar_exprs: Vec<verifier_value_rows::CpuScalarExprPlan>,
     pub kernels: Vec<Stage7KernelPlan>,
     pub claims: Vec<verifier_sumcheck_rows::CpuSumcheckClaimPlan>,
     pub batches: Vec<verifier_sumcheck_rows::CpuSumcheckBatchPlan>,
@@ -126,59 +126,16 @@ pub struct Stage7OpeningInputPlan {
     pub claim_kind: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7FieldConstantPlan {
-    pub symbol: String,
-    pub field: String,
-    pub value: usize,
+fn stage7_relation_output_expr(
+    expr: Stage7RelationOutputFieldExprPlan,
+) -> verifier_value_rows::CpuFieldExprPlan {
+    verifier_value_rows::CpuFieldExprPlan::op(expr.symbol, expr.formula, expr.operands)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7FieldExprPlan {
-    pub symbol: String,
-    pub kind: String,
-    pub formula: String,
-    pub operand_names: Vec<String>,
-    pub operands: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7ScalarExprPlan {
-    pub symbol: String,
-    pub kind: String,
-    pub formula: String,
-    pub operand_names: Vec<String>,
-    pub operands: Vec<String>,
-}
-
-impl FieldExprDependencies for Stage7FieldExprPlan {
-    fn symbol(&self) -> &str {
-        &self.symbol
-    }
-
-    fn operands(&self) -> &[String] {
-        &self.operands
-    }
-}
-
-fn stage7_relation_output_expr(expr: Stage7RelationOutputFieldExprPlan) -> Stage7FieldExprPlan {
-    Stage7FieldExprPlan {
-        symbol: expr.symbol,
-        kind: "op".to_owned(),
-        formula: expr.formula,
-        operand_names: expr.operands.clone(),
-        operands: expr.operands,
-    }
-}
-
-fn stage7_scalar_expr(expr: Stage7RelationOutputFieldExprPlan) -> Stage7ScalarExprPlan {
-    Stage7ScalarExprPlan {
-        symbol: expr.symbol,
-        kind: "op".to_owned(),
-        formula: expr.formula,
-        operand_names: expr.operands.clone(),
-        operands: expr.operands,
-    }
+fn stage7_scalar_expr(
+    expr: Stage7RelationOutputFieldExprPlan,
+) -> verifier_value_rows::CpuScalarExprPlan {
+    verifier_value_rows::CpuScalarExprPlan::op(expr.symbol, expr.formula, expr.operands)
 }
 
 struct HammingWeightClaimRow {
@@ -188,8 +145,8 @@ struct HammingWeightClaimRow {
 }
 
 fn compact_hamming_weight_input_claim(
-    field_exprs: &mut Vec<Stage7FieldExprPlan>,
-    scalar_exprs: &mut Vec<Stage7ScalarExprPlan>,
+    field_exprs: &mut Vec<verifier_value_rows::CpuFieldExprPlan>,
+    scalar_exprs: &mut Vec<verifier_value_rows::CpuScalarExprPlan>,
     claims: &mut [verifier_sumcheck_rows::CpuSumcheckClaimPlan],
     opening_inputs: &[Stage7OpeningInputPlan],
 ) -> Result<(), EmitError> {
@@ -223,13 +180,11 @@ fn compact_hamming_weight_input_claim(
     operands.extend(rows.iter().map(|row| row.virtualization.clone()));
 
     field_exprs.retain(|expr| !is_hamming_weight_input_claim_expr(&expr.symbol));
-    scalar_exprs.push(Stage7ScalarExprPlan {
-        symbol: compact_symbol.to_owned(),
-        kind: "op".to_owned(),
-        formula: power_strided_weighted_sum_formula(row_count, 3, &[], &[], &[0, 1, 2]),
-        operand_names: operands.clone(),
+    scalar_exprs.push(verifier_value_rows::CpuScalarExprPlan::op(
+        compact_symbol.to_owned(),
+        power_strided_weighted_sum_formula(row_count, 3, &[], &[], &[0, 1, 2]),
         operands,
-    });
+    ));
     compact_symbol.clone_into(&mut claim.claim_value);
     Ok(())
 }
@@ -338,9 +293,6 @@ verifier_plan::impl_verifier_plan_source_traits!(
     step = Stage7ProgramStepPlan,
     squeeze = Stage7TranscriptSqueezePlan,
     opening_input = Stage7OpeningInputPlan,
-    field_constant = Stage7FieldConstantPlan,
-    field_expr = Stage7FieldExprPlan,
-    scalar_expr = Stage7ScalarExprPlan,
     point_slice = Stage7PointSlicePlan,
     point_concat = Stage7PointConcatPlan,
     absorb = Stage7TranscriptAbsorbBytesPlan,
@@ -451,46 +403,20 @@ impl Stage7CpuProgram {
                     });
                 }
                 "cpu.field_const" => {
-                    field_constants.push(Stage7FieldConstantPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        field: symbol_attr(op, "field")?,
-                        value: int_attr(op, "value")?,
-                    });
+                    field_constants
+                        .push(verifier_value_rows::CpuFieldConstantPlan::from_const(op)?);
                 }
                 "cpu.field_zero" => {
-                    field_constants.push(Stage7FieldConstantPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        field: symbol_attr(op, "field")?,
-                        value: 0,
-                    });
+                    field_constants.push(verifier_value_rows::CpuFieldConstantPlan::from_zero(op)?);
                 }
                 "cpu.field_one" => {
-                    field_constants.push(Stage7FieldConstantPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        field: symbol_attr(op, "field")?,
-                        value: 1,
-                    });
+                    field_constants.push(verifier_value_rows::CpuFieldConstantPlan::from_one(op)?);
                 }
                 "cpu.field_add" | "cpu.field_sub" | "cpu.field_mul" | "cpu.field_neg" => {
-                    let operands = operand_symbols(op, 0)?;
-                    field_exprs.push(Stage7FieldExprPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        kind: "op".to_owned(),
-                        formula: operation_name(op).replace("cpu.field_", "field."),
-                        operand_names: operands.clone(),
-                        operands,
-                    });
+                    field_exprs.push(verifier_value_rows::CpuFieldExprPlan::from_field_op(op)?);
                 }
                 "cpu.field_pow" => {
-                    let exponent = int_attr(op, "exponent")?;
-                    let operands = operand_symbols(op, 0)?;
-                    field_exprs.push(Stage7FieldExprPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        kind: "op".to_owned(),
-                        formula: format!("field.pow:{exponent}"),
-                        operand_names: operands.clone(),
-                        operands,
-                    });
+                    field_exprs.push(verifier_value_rows::CpuFieldExprPlan::from_field_pow(op)?);
                 }
                 "cpu.sumcheck_claim" => {
                     claims.push(verifier_sumcheck_rows::CpuSumcheckClaimPlan::from_claim(
