@@ -12,8 +12,9 @@ use crate::protocols::jolt::rust_target_plan::{
     power_strided_weighted_sum_formula, structured_polynomial_scalar_formula,
 };
 use crate::protocols::jolt::verifier_values::{
-    VerifierPointSourceSet, VerifierScalarValueKind, VerifierScalarValuePlan,
-    VerifierScalarValueRef, VerifierScalarValueSet,
+    VerifierFieldVectorValueRef, VerifierFieldVectorValueSet, VerifierPointSourceSet,
+    VerifierScalarValueKind, VerifierScalarValuePlan, VerifierScalarValueRef,
+    VerifierScalarValueSet,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -269,7 +270,7 @@ pub struct RelationOutputEvalFamilyPlan {
 pub struct RelationOutputProductFamilyTermPlan {
     pub gamma_power_offset: usize,
     pub evals: Vec<VerifierScalarValueRef>,
-    pub eval_families: Vec<String>,
+    pub eval_families: Vec<VerifierFieldVectorValueRef>,
     pub factors: Vec<VerifierScalarValueRef>,
 }
 
@@ -1362,6 +1363,7 @@ pub struct RelationOutputVerification<'a> {
     pub relation_outputs: &'a [RelationOutputPlan],
     pub relations: &'a BTreeSet<String>,
     pub field_values: &'a VerifierScalarValueSet,
+    pub field_vector_values: &'a VerifierFieldVectorValueSet,
     pub point_values: &'a VerifierPointSourceSet,
 }
 
@@ -1377,6 +1379,7 @@ pub fn verify_relation_outputs(
         relation_outputs,
         relations,
         field_values,
+        field_vector_values,
         point_values,
     } = verification;
     field_values.verify_no_conflicts(stage)?;
@@ -1450,11 +1453,20 @@ pub fn verify_relation_outputs(
             }
         }
         for term in &family.terms {
-            if term.evals.is_empty() && term.factors.is_empty() {
+            if term.evals.is_empty() && term.eval_families.is_empty() && term.factors.is_empty() {
                 return Err(EmitError::new(format!(
                     "{stage} relation output product family @{} has an empty term",
                     family.symbol
                 )));
+            }
+            for eval_family in &term.eval_families {
+                if !field_vector_values.contains_ref(eval_family) {
+                    return Err(EmitError::new(format!(
+                        "{stage} relation output product family @{} references missing eval family @{}",
+                        family.symbol,
+                        eval_family.symbol()
+                    )));
+                }
             }
             for eval in &term.evals {
                 if !field_values.contains_ref(eval) {
@@ -1598,8 +1610,8 @@ mod tests {
 
     use crate::emit::rust::EmitError;
     use crate::protocols::jolt::verifier_values::{
-        VerifierPointSourceKind, VerifierPointSourceSet, VerifierScalarValueKind,
-        VerifierScalarValueSet,
+        VerifierFieldVectorValueRef, VerifierFieldVectorValueSet, VerifierPointSourceKind,
+        VerifierPointSourceSet, VerifierScalarValueKind, VerifierScalarValueSet,
     };
 
     use super::{
@@ -1825,6 +1837,7 @@ mod tests {
         let mut field_values = VerifierScalarValueSet::default();
         field_values.insert("value", VerifierScalarValueKind::OpeningInput);
         field_values.insert("value", VerifierScalarValueKind::FieldExpr);
+        let field_vector_values = VerifierFieldVectorValueSet::default();
         let point_values = VerifierPointSourceSet::default();
         let relations = BTreeSet::new();
 
@@ -1838,6 +1851,7 @@ mod tests {
                 relation_outputs: &[],
                 relations: &relations,
                 field_values: &field_values,
+                field_vector_values: &field_vector_values,
                 point_values: &point_values,
             },
         ) {
@@ -1858,6 +1872,7 @@ mod tests {
     #[test]
     fn relation_output_verification_rejects_conflicting_point_sources() -> Result<(), EmitError> {
         let field_values = VerifierScalarValueSet::default();
+        let field_vector_values = VerifierFieldVectorValueSet::default();
         let mut point_values = VerifierPointSourceSet::default();
         point_values.insert("point", VerifierPointSourceKind::OpeningInput);
         point_values.insert("point", VerifierPointSourceKind::PointExpr);
@@ -1873,6 +1888,7 @@ mod tests {
                 relation_outputs: &[],
                 relations: &relations,
                 field_values: &field_values,
+                field_vector_values: &field_vector_values,
                 point_values: &point_values,
             },
         ) {
@@ -1894,6 +1910,7 @@ mod tests {
     fn relation_output_verification_requires_planned_local_scalars() -> Result<(), EmitError> {
         let mut field_values = VerifierScalarValueSet::default();
         field_values.insert("claim", VerifierScalarValueKind::FieldExpr);
+        let field_vector_values = VerifierFieldVectorValueSet::default();
         let point_values = VerifierPointSourceSet::default();
         let relations = BTreeSet::from(["relation".to_owned()]);
         let relation_outputs = [RelationOutputPlan::with_local_scalars(
@@ -1912,6 +1929,7 @@ mod tests {
                 relation_outputs: &relation_outputs,
                 relations: &relations,
                 field_values: &field_values,
+                field_vector_values: &field_vector_values,
                 point_values: &point_values,
             },
         ) {
@@ -1934,6 +1952,7 @@ mod tests {
         let mut field_values = VerifierScalarValueSet::default();
         field_values.insert("family.gamma", VerifierScalarValueKind::TranscriptScalar);
         field_values.insert("family.eval", VerifierScalarValueKind::SumcheckEval);
+        let field_vector_values = VerifierFieldVectorValueSet::default();
         let point_values = VerifierPointSourceSet::default();
         let relations = BTreeSet::new();
         let family = RelationOutputEvalFamilyPlan {
@@ -1959,6 +1978,7 @@ mod tests {
                 relation_outputs: &[],
                 relations: &relations,
                 field_values: &field_values,
+                field_vector_values: &field_vector_values,
                 point_values: &point_values,
             },
         ) {
@@ -1977,10 +1997,56 @@ mod tests {
     }
 
     #[test]
+    fn relation_output_verification_requires_planned_field_vector_refs() -> Result<(), EmitError> {
+        let field_values = VerifierScalarValueSet::default();
+        let field_vector_values = VerifierFieldVectorValueSet::default();
+        let point_values = VerifierPointSourceSet::default();
+        let relations = BTreeSet::new();
+        let family = RelationOutputProductFamilyPlan {
+            symbol: "product.family".to_owned(),
+            gamma: None,
+            terms: vec![RelationOutputProductFamilyTermPlan {
+                gamma_power_offset: 0,
+                evals: Vec::new(),
+                eval_families: vec![VerifierFieldVectorValueRef::new("missing.eval.family")],
+                factors: Vec::new(),
+            }],
+        };
+
+        let error = match verify_relation_outputs(
+            "stage",
+            RelationOutputVerification {
+                relation_output_values: &[],
+                relation_output_eval_families: &[],
+                relation_output_product_families: &[family],
+                relation_output_function_families: &[],
+                relation_outputs: &[],
+                relations: &relations,
+                field_values: &field_values,
+                field_vector_values: &field_vector_values,
+                point_values: &point_values,
+            },
+        ) {
+            Ok(()) => {
+                return Err(EmitError::new(
+                    "missing field-vector ref should fail relation output verification",
+                ));
+            }
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains(
+            "stage relation output product family @product.family references missing eval family @missing.eval.family"
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn relation_output_verification_requires_relation_local_scalar_kind() -> Result<(), EmitError> {
         let mut field_values = VerifierScalarValueSet::default();
         field_values.insert("claim", VerifierScalarValueKind::FieldExpr);
         field_values.insert("local.scalar", VerifierScalarValueKind::FieldExpr);
+        let field_vector_values = VerifierFieldVectorValueSet::default();
         let point_values = VerifierPointSourceSet::default();
         let relations = BTreeSet::from(["relation".to_owned()]);
         let relation_outputs = [RelationOutputPlan::with_local_scalars(
@@ -1999,6 +2065,7 @@ mod tests {
                 relation_outputs: &relation_outputs,
                 relations: &relations,
                 field_values: &field_values,
+                field_vector_values: &field_vector_values,
                 point_values: &point_values,
             },
         ) {

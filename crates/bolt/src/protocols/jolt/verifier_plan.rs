@@ -30,9 +30,9 @@ use crate::protocols::jolt::verifier_value_rows::{
     CpuFieldConstantPlan, CpuFieldExprPlan, CpuScalarExprPlan,
 };
 use crate::protocols::jolt::verifier_values::{
-    VerifierFieldVectorSourceKind, VerifierFieldVectorSourceSet, VerifierPointSourceKind,
-    VerifierPointSourceSet, VerifierScalarSourceSet, VerifierScalarValueKind,
-    VerifierScalarValuePlan, VerifierScalarValueSet,
+    VerifierFieldVectorSourceSet, VerifierFieldVectorValueKind, VerifierFieldVectorValueSet,
+    VerifierPointSourceKind, VerifierPointSourceSet, VerifierScalarSourceSet,
+    VerifierScalarValueKind, VerifierScalarValuePlan, VerifierScalarValueSet,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -513,15 +513,19 @@ impl VerifierStagePlan {
         self.scalar_values().source_set()
     }
 
-    pub(crate) fn field_vector_value_sources(&self) -> VerifierFieldVectorSourceSet {
-        let mut values = VerifierFieldVectorSourceSet::default();
-        values.extend(
-            self.indexed_eval_families
-                .iter()
-                .map(|family| &family.symbol),
-            VerifierFieldVectorSourceKind::IndexedEvalFamily,
-        );
+    pub(crate) fn field_vector_values(&self) -> VerifierFieldVectorValueSet {
+        let mut values = VerifierFieldVectorValueSet::default();
+        for family in &self.indexed_eval_families {
+            values.insert(
+                &family.symbol,
+                VerifierFieldVectorValueKind::IndexedEvalFamily,
+            );
+        }
         values
+    }
+
+    pub(crate) fn field_vector_value_sources(&self) -> VerifierFieldVectorSourceSet {
+        self.field_vector_values().source_set()
     }
 
     pub(crate) fn point_value_sources(&self) -> VerifierPointSourceSet {

@@ -198,6 +198,62 @@ pub enum VerifierFieldVectorSourceKind {
     IndexedEvalFamily,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VerifierFieldVectorValueKind {
+    IndexedEvalFamily,
+}
+
+impl VerifierFieldVectorValueKind {
+    fn source_kind(self) -> VerifierFieldVectorSourceKind {
+        match self {
+            Self::IndexedEvalFamily => VerifierFieldVectorSourceKind::IndexedEvalFamily,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifierFieldVectorValueRef {
+    symbol: String,
+}
+
+impl VerifierFieldVectorValueRef {
+    pub fn new(symbol: impl Into<String>) -> Self {
+        Self {
+            symbol: symbol.into(),
+        }
+    }
+
+    pub fn symbol(&self) -> &str {
+        &self.symbol
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct VerifierFieldVectorValueSet {
+    symbols: BTreeSet<String>,
+}
+
+impl VerifierFieldVectorValueSet {
+    pub(crate) fn insert(&mut self, symbol: &str, _kind: VerifierFieldVectorValueKind) {
+        let _inserted = self.symbols.insert(symbol.to_owned());
+    }
+
+    pub(crate) fn contains_ref(&self, value_ref: &VerifierFieldVectorValueRef) -> bool {
+        self.symbols.contains(value_ref.symbol())
+    }
+
+    pub(crate) fn source_set(&self) -> VerifierFieldVectorSourceSet {
+        let mut sources = VerifierFieldVectorSourceSet::default();
+        for symbol in &self.symbols {
+            sources.insert(
+                symbol,
+                VerifierFieldVectorValueKind::IndexedEvalFamily.source_kind(),
+            );
+        }
+        sources
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct VerifierFieldVectorSourceSet {
     symbols: BTreeSet<String>,
@@ -206,16 +262,6 @@ pub struct VerifierFieldVectorSourceSet {
 impl VerifierFieldVectorSourceSet {
     pub fn insert(&mut self, symbol: &str, _kind: VerifierFieldVectorSourceKind) {
         let _inserted = self.symbols.insert(symbol.to_owned());
-    }
-
-    pub fn extend<'a>(
-        &mut self,
-        symbols: impl IntoIterator<Item = &'a String>,
-        kind: VerifierFieldVectorSourceKind,
-    ) {
-        for symbol in symbols {
-            self.insert(symbol, kind);
-        }
     }
 
     pub fn contains(&self, symbol: &str) -> bool {

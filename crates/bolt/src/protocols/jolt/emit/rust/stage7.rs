@@ -853,6 +853,7 @@ impl Stage7CpuProgram {
         );
         let plan = self.verifier_plan()?;
         let field_values = plan.scalar_values();
+        let field_vector_values = plan.field_vector_values();
         let point_values = plan.point_value_sources();
         verifier_relation_outputs::verify_relation_outputs(
             "stage7",
@@ -864,6 +865,7 @@ impl Stage7CpuProgram {
                 relation_outputs: &self.relation_outputs,
                 relations: &relations,
                 field_values: &field_values,
+                field_vector_values: &field_vector_values,
                 point_values: &point_values,
             },
         )
