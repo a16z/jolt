@@ -379,30 +379,30 @@ pub struct StructuredPolynomialEvalPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SumcheckOutputEvalFamilySharedTermPlan {
+pub struct RelationOutputEvalFamilySharedTermPlan {
     pub gamma_power_offset: usize,
     pub factor: &'static str,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SumcheckOutputEvalFamilyItemTermPlan {
+pub struct RelationOutputEvalFamilyItemTermPlan {
     pub gamma_power_offset: usize,
     pub factors: &'static [&'static str],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SumcheckOutputEvalFamilyPlan {
+pub struct RelationOutputEvalFamilyPlan {
     pub symbol: &'static str,
     pub gamma: &'static str,
     pub evals: &'static [&'static str],
     pub power_stride: usize,
     pub value_term_offsets: &'static [usize],
-    pub shared_terms: &'static [SumcheckOutputEvalFamilySharedTermPlan],
-    pub item_terms: &'static [SumcheckOutputEvalFamilyItemTermPlan],
+    pub shared_terms: &'static [RelationOutputEvalFamilySharedTermPlan],
+    pub item_terms: &'static [RelationOutputEvalFamilyItemTermPlan],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SumcheckOutputProductFamilyTermPlan {
+pub struct RelationOutputProductFamilyTermPlan {
     pub gamma_power_offset: usize,
     pub evals: &'static [&'static str],
     pub eval_families: &'static [&'static str],
@@ -410,39 +410,39 @@ pub struct SumcheckOutputProductFamilyTermPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SumcheckOutputProductFamilyPlan {
+pub struct RelationOutputProductFamilyPlan {
     pub symbol: &'static str,
     pub gamma: Option<&'static str>,
-    pub terms: &'static [SumcheckOutputProductFamilyTermPlan],
+    pub terms: &'static [RelationOutputProductFamilyTermPlan],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SumcheckOutputFunctionKind {
+pub enum RelationOutputFunctionKind {
     BooleanZero,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SumcheckOutputFunctionFamilyTermPlan {
+pub struct RelationOutputFunctionFamilyTermPlan {
     pub gamma_power_offset: usize,
-    pub function: SumcheckOutputFunctionKind,
+    pub function: RelationOutputFunctionKind,
     pub eval: &'static str,
     pub factors: &'static [&'static str],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SumcheckOutputFunctionFamilyPlan {
+pub struct RelationOutputFunctionFamilyPlan {
     pub symbol: &'static str,
     pub gamma: Option<&'static str>,
-    pub terms: &'static [SumcheckOutputFunctionFamilyTermPlan],
+    pub terms: &'static [RelationOutputFunctionFamilyTermPlan],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SumcheckOutputClaimPlan<R: ProtocolRelation> {
+pub struct RelationOutputPlan<R: ProtocolRelation> {
     pub relation: R,
     pub polynomial_evals: &'static [StructuredPolynomialEvalPlan],
-    pub eval_families: &'static [SumcheckOutputEvalFamilyPlan],
-    pub product_families: &'static [SumcheckOutputProductFamilyPlan],
-    pub function_families: &'static [SumcheckOutputFunctionFamilyPlan],
+    pub eval_families: &'static [RelationOutputEvalFamilyPlan],
+    pub product_families: &'static [RelationOutputProductFamilyPlan],
+    pub function_families: &'static [RelationOutputFunctionFamilyPlan],
     pub local_scalars: &'static [&'static str],
     pub expected_output: &'static str,
 }
@@ -531,7 +531,7 @@ pub struct StageProgramPlan<R: ProtocolRelation> {
     pub drivers: &'static [SumcheckDriverPlan<R>],
     pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
     pub evals: &'static [SumcheckEvalPlan],
-    pub output_claims: &'static [SumcheckOutputClaimPlan<R>],
+    pub relation_outputs: &'static [RelationOutputPlan<R>],
     pub point_zeros: &'static [PointZeroPlan],
     pub point_slices: &'static [PointSlicePlan],
     pub point_concats: &'static [PointConcatPlan],
@@ -556,7 +556,7 @@ pub struct StageProgramPlanNoPointZeros<R: ProtocolRelation> {
     pub drivers: &'static [SumcheckDriverPlan<R>],
     pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
     pub evals: &'static [SumcheckEvalPlan],
-    pub output_claims: &'static [SumcheckOutputClaimPlan<R>],
+    pub relation_outputs: &'static [RelationOutputPlan<R>],
     pub point_slices: &'static [PointSlicePlan],
     pub point_concats: &'static [PointConcatPlan],
     pub opening_claims: &'static [OpeningClaimPlan],
@@ -577,7 +577,7 @@ pub struct StageVerifierProgramPlan<R: ProtocolRelation> {
     pub drivers: &'static [SumcheckDriverPlan<R>],
     pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
     pub evals: &'static [SumcheckEvalPlan],
-    pub output_claims: &'static [SumcheckOutputClaimPlan<R>],
+    pub relation_outputs: &'static [RelationOutputPlan<R>],
     pub point_slices: &'static [PointSlicePlan],
     pub point_concats: &'static [PointConcatPlan],
     pub opening_claims: &'static [OpeningClaimPlan],
@@ -1297,8 +1297,8 @@ pub fn eval_family_values<F: Field>(
         .collect()
 }
 
-pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
-    plan: &SumcheckOutputClaimPlan<R>,
+pub fn evaluate_relation_output<R: ProtocolRelation>(
+    plan: &RelationOutputPlan<R>,
     field_exprs: &[FieldExprPlan],
     store: &ValueStore<Fr>,
     instance_symbol: &'static str,
@@ -1320,7 +1320,7 @@ pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
         scratch.insert(eval.name, eval.value);
     }
     for polynomial_eval in plan.polynomial_evals {
-        let x_raw_point = output_claim_x_point_source(
+        let x_raw_point = relation_output_x_point_source(
             polynomial_eval.x_point.source,
             instance_symbol,
             local_points,
@@ -1346,15 +1346,15 @@ pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
         scratch.insert(polynomial_eval.symbol, value);
     }
     for family in plan.eval_families {
-        let value = evaluate_sumcheck_output_eval_family(family, store, &scratch)?;
+        let value = evaluate_relation_output_eval_family(family, store, &scratch)?;
         scratch.insert(family.symbol, value);
     }
     for family in plan.function_families {
-        let value = evaluate_sumcheck_output_function_family(family, store, &scratch)?;
+        let value = evaluate_relation_output_function_family(family, store, &scratch)?;
         scratch.insert(family.symbol, value);
     }
     for family in plan.product_families {
-        let value = evaluate_sumcheck_output_product_family(family, store, &scratch)?;
+        let value = evaluate_relation_output_product_family(family, store, &scratch)?;
         scratch.insert(family.symbol, value);
     }
     evaluate_available_field_exprs_with_scratch(field_exprs, store, &mut scratch)?;
@@ -1365,8 +1365,8 @@ pub fn evaluate_sumcheck_output_claim<R: ProtocolRelation>(
         })
 }
 
-pub fn evaluate_sumcheck_instance_output_claim<R: ProtocolRelation>(
-    output_claims: &[SumcheckOutputClaimPlan<R>],
+pub fn evaluate_relation_output_for_instance<R: ProtocolRelation>(
+    relation_outputs: &[RelationOutputPlan<R>],
     field_exprs: &[FieldExprPlan],
     store: &ValueStore<Fr>,
     instance: &SumcheckInstanceResultPlan<R>,
@@ -1375,15 +1375,15 @@ pub fn evaluate_sumcheck_instance_output_claim<R: ProtocolRelation>(
     local_points: &[NamedPoint<'_, Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, RuntimePlanError> {
-    let output_claim = output_claims
+    let relation_output = relation_outputs
         .iter()
-        .find(|output_claim| output_claim.relation == instance.relation)
+        .find(|relation_output| relation_output.relation == instance.relation)
         .ok_or(RuntimePlanError::InvalidProof {
             driver: instance.symbol,
-            reason: "missing output claim for relation",
+            reason: "missing relation output for relation",
         })?;
-    evaluate_sumcheck_output_claim(
-        output_claim,
+    evaluate_relation_output(
+        relation_output,
         field_exprs,
         store,
         instance.symbol,
@@ -1394,7 +1394,7 @@ pub fn evaluate_sumcheck_instance_output_claim<R: ProtocolRelation>(
     )
 }
 
-fn output_claim_x_point_source<'a>(
+fn relation_output_x_point_source<'a>(
     source: &'static str,
     instance_symbol: &'static str,
     local_points: &'a [NamedPoint<'a, Fr>],
@@ -1410,8 +1410,8 @@ fn output_claim_x_point_source<'a>(
         .ok_or(RuntimePlanError::MissingValue { symbol: source })
 }
 
-fn evaluate_sumcheck_output_eval_family(
-    family: &SumcheckOutputEvalFamilyPlan,
+fn evaluate_relation_output_eval_family(
+    family: &RelationOutputEvalFamilyPlan,
     store: &ValueStore<Fr>,
     scratch: &ScratchScalars,
 ) -> Result<Fr, RuntimePlanError> {
@@ -1476,12 +1476,12 @@ fn evaluate_sumcheck_output_eval_family(
     Ok(result)
 }
 
-fn evaluate_sumcheck_output_product_family(
-    family: &SumcheckOutputProductFamilyPlan,
+fn evaluate_relation_output_product_family(
+    family: &RelationOutputProductFamilyPlan,
     store: &ValueStore<Fr>,
     scratch: &ScratchScalars,
 ) -> Result<Fr, RuntimePlanError> {
-    let gamma = output_family_gamma(family.gamma, store, scratch)?;
+    let gamma = relation_output_family_gamma(family.gamma, store, scratch)?;
     let mut result = Fr::from_u64(0);
     for term in family.terms {
         if term.evals.is_empty() && term.eval_families.is_empty() && term.factors.is_empty() {
@@ -1518,19 +1518,19 @@ fn evaluate_sumcheck_output_product_family(
     Ok(result)
 }
 
-fn evaluate_sumcheck_output_function_family(
-    family: &SumcheckOutputFunctionFamilyPlan,
+fn evaluate_relation_output_function_family(
+    family: &RelationOutputFunctionFamilyPlan,
     store: &ValueStore<Fr>,
     scratch: &ScratchScalars,
 ) -> Result<Fr, RuntimePlanError> {
-    let gamma = output_family_gamma(family.gamma, store, scratch)?;
+    let gamma = relation_output_family_gamma(family.gamma, store, scratch)?;
     let mut result = Fr::from_u64(0);
     for term in family.terms {
         let eval = scratch
             .scalar_or(store, term.eval)
             .ok_or(RuntimePlanError::MissingValue { symbol: term.eval })?;
         let mut product = pow_field(gamma, term.gamma_power_offset)
-            * evaluate_output_function(term.function, eval);
+            * evaluate_relation_output_function(term.function, eval);
         for &symbol in term.factors {
             let value = scratch
                 .scalar_or(store, symbol)
@@ -1542,13 +1542,13 @@ fn evaluate_sumcheck_output_function_family(
     Ok(result)
 }
 
-fn evaluate_output_function(function: SumcheckOutputFunctionKind, eval: Fr) -> Fr {
+fn evaluate_relation_output_function(function: RelationOutputFunctionKind, eval: Fr) -> Fr {
     match function {
-        SumcheckOutputFunctionKind::BooleanZero => eval * eval - eval,
+        RelationOutputFunctionKind::BooleanZero => eval * eval - eval,
     }
 }
 
-fn output_family_gamma(
+fn relation_output_family_gamma(
     gamma: Option<&'static str>,
     store: &ValueStore<Fr>,
     scratch: &ScratchScalars,
@@ -1866,9 +1866,9 @@ pub fn reverse_slice(values: &[Fr]) -> Vec<Fr> {
 )]
 mod tests {
     use super::{
-        evaluate_sumcheck_output_product_family, Fr, NamedEvalFamilyPlan, RuntimePlanError,
-        ScratchScalars, SumcheckOutputProductFamilyPlan, SumcheckOutputProductFamilyTermPlan,
-        ValueStore,
+        evaluate_relation_output_product_family, Fr, NamedEvalFamilyPlan,
+        RelationOutputProductFamilyPlan, RelationOutputProductFamilyTermPlan, RuntimePlanError,
+        ScratchScalars, ValueStore,
     };
 
     #[test]
@@ -1914,11 +1914,11 @@ mod tests {
         store.insert_scalar("scalar.factor", Fr::from_u64(5));
         store.insert_field_vector("family.ab", vec![Fr::from_u64(2), Fr::from_u64(3)]);
 
-        let value = evaluate_sumcheck_output_product_family(
-            &SumcheckOutputProductFamilyPlan {
+        let value = evaluate_relation_output_product_family(
+            &RelationOutputProductFamilyPlan {
                 symbol: "product.family",
                 gamma: None,
-                terms: &[SumcheckOutputProductFamilyTermPlan {
+                terms: &[RelationOutputProductFamilyTermPlan {
                     gamma_power_offset: 0,
                     evals: &["scalar.factor"],
                     eval_families: &["family.ab"],

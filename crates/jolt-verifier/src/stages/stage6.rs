@@ -16,7 +16,7 @@ pub type Stage6CpuProgramPlan = bolt_verifier_runtime::StageProgramPlan<Stage6Re
 pub type Stage6SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stage6RelationKind>;
 pub type Stage6SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage6RelationKind>;
 pub type Stage6SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage6RelationKind>;
-pub type Stage6SumcheckOutputClaimPlan = bolt_verifier_runtime::SumcheckOutputClaimPlan<Stage6RelationKind>;
+pub type Stage6RelationOutputPlan = bolt_verifier_runtime::RelationOutputPlan<Stage6RelationKind>;
 pub type Stage6StructuredPolynomialEvalPlan = bolt_verifier_runtime::StructuredPolynomialEvalPlan;
 
 pub use super::jolt_relations::JoltRelationKind as Stage6RelationKind;
@@ -633,133 +633,133 @@ const STAGE6_BYTECODE_PLAN: Stage67BytecodeReadRafPlan = Stage67BytecodeReadRafP
     },
     entry_lookup_table: "stage6.bytecode.entry.lookup_table",
 };
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_0_VALUES: &[Stage6StructuredPolynomialEvalPlan] = &[
+pub const STAGE6_RELATION_OUTPUT_0_VALUES: &[Stage6StructuredPolynomialEvalPlan] = &[
     Stage6StructuredPolynomialEvalPlan { symbol: "stage6.booleanity.output.eq.InstructionRa0", polynomial: Stage6StructuredPolynomialKind::Eq, x_point: Stage6StructuredPolynomialPointPlan { source: "stage6.booleanity.instance", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::AsIs }, y_point: Stage6StructuredPolynomialPointPlan { source: "stage6.booleanity.output.point", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::AsIs } },
 ];
 
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_0_FUNCTION_FAMILY_0_TERMS: &[bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan] = &[
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 0, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_0", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 2, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_1", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 4, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_2", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 6, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_3", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 8, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_4", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 10, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_5", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 12, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_6", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 14, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_7", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 16, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_8", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 18, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_9", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 20, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_10", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 22, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_11", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 24, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_12", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 26, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_13", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 28, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_14", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 30, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_15", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 32, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_16", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 34, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_17", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 36, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_18", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 38, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_19", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 40, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_20", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 42, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_21", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 44, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_22", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 46, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_23", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 48, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_24", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 50, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_25", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 52, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_26", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 54, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_27", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 56, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_28", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 58, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_29", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 60, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_30", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 62, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_31", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 64, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.BytecodeRa_0", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 66, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.BytecodeRa_1", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 68, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.BytecodeRa_2", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 70, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.RamRa_0", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 72, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.RamRa_1", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 74, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.RamRa_2", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 76, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.RamRa_3", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+pub const STAGE6_RELATION_OUTPUT_0_FUNCTION_FAMILY_0_TERMS: &[bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan] = &[
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 0, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_0", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 2, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_1", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 4, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_2", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 6, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_3", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 8, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_4", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 10, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_5", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 12, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_6", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 14, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_7", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 16, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_8", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 18, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_9", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 20, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_10", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 22, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_11", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 24, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_12", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 26, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_13", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 28, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_14", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 30, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_15", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 32, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_16", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 34, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_17", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 36, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_18", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 38, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_19", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 40, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_20", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 42, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_21", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 44, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_22", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 46, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_23", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 48, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_24", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 50, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_25", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 52, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_26", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 54, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_27", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 56, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_28", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 58, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_29", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 60, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_30", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 62, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.InstructionRa_31", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 64, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.BytecodeRa_0", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 66, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.BytecodeRa_1", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 68, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.BytecodeRa_2", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 70, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.RamRa_0", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 72, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.RamRa_1", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 74, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.RamRa_2", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 76, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.booleanity.eval.RamRa_3", factors: &["stage6.booleanity.output.eq.InstructionRa0"] },
 ];
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_0_FUNCTION_FAMILIES: &[bolt_verifier_runtime::SumcheckOutputFunctionFamilyPlan] = &[
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyPlan { symbol: "stage6.booleanity.output.family", gamma: Some("stage6.booleanity.gamma"), terms: STAGE6_SUMCHECK_OUTPUT_CLAIM_0_FUNCTION_FAMILY_0_TERMS },
+pub const STAGE6_RELATION_OUTPUT_0_FUNCTION_FAMILIES: &[bolt_verifier_runtime::RelationOutputFunctionFamilyPlan] = &[
+    bolt_verifier_runtime::RelationOutputFunctionFamilyPlan { symbol: "stage6.booleanity.output.family", gamma: Some("stage6.booleanity.gamma"), terms: STAGE6_RELATION_OUTPUT_0_FUNCTION_FAMILY_0_TERMS },
 ];
 
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_1_VALUES: &[Stage6StructuredPolynomialEvalPlan] = &[
+pub const STAGE6_RELATION_OUTPUT_1_VALUES: &[Stage6StructuredPolynomialEvalPlan] = &[
     Stage6StructuredPolynomialEvalPlan { symbol: "stage6.hamming_booleanity.output.eq.LookupOutput", polynomial: Stage6StructuredPolynomialKind::Eq, x_point: Stage6StructuredPolynomialPointPlan { source: "stage6.hamming_booleanity.instance", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::AsIs }, y_point: Stage6StructuredPolynomialPointPlan { source: "stage6.input.stage1.LookupOutput", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::Reverse } },
 ];
 
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_1_FUNCTION_FAMILY_0_TERMS: &[bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan] = &[
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan { gamma_power_offset: 0, function: bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero, eval: "stage6.hamming_booleanity.eval.HammingWeight", factors: &["stage6.hamming_booleanity.output.eq.LookupOutput"] },
+pub const STAGE6_RELATION_OUTPUT_1_FUNCTION_FAMILY_0_TERMS: &[bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan] = &[
+    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan { gamma_power_offset: 0, function: bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero, eval: "stage6.hamming_booleanity.eval.HammingWeight", factors: &["stage6.hamming_booleanity.output.eq.LookupOutput"] },
 ];
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_1_FUNCTION_FAMILIES: &[bolt_verifier_runtime::SumcheckOutputFunctionFamilyPlan] = &[
-    bolt_verifier_runtime::SumcheckOutputFunctionFamilyPlan { symbol: "stage6.hamming_booleanity.output.family", gamma: None, terms: STAGE6_SUMCHECK_OUTPUT_CLAIM_1_FUNCTION_FAMILY_0_TERMS },
+pub const STAGE6_RELATION_OUTPUT_1_FUNCTION_FAMILIES: &[bolt_verifier_runtime::RelationOutputFunctionFamilyPlan] = &[
+    bolt_verifier_runtime::RelationOutputFunctionFamilyPlan { symbol: "stage6.hamming_booleanity.output.family", gamma: None, terms: STAGE6_RELATION_OUTPUT_1_FUNCTION_FAMILY_0_TERMS },
 ];
 
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_2_VALUES: &[Stage6StructuredPolynomialEvalPlan] = &[
+pub const STAGE6_RELATION_OUTPUT_2_VALUES: &[Stage6StructuredPolynomialEvalPlan] = &[
     Stage6StructuredPolynomialEvalPlan { symbol: "stage6.ram_ra_virtual.output.eq.Cycle", polynomial: Stage6StructuredPolynomialKind::Eq, x_point: Stage6StructuredPolynomialPointPlan { source: "stage6.ram_ra_virtual.instance", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::Reverse }, y_point: Stage6StructuredPolynomialPointPlan { source: "stage6.input.stage5.ram_ra_claim_reduction.RamRa", segment: Stage6StructuredPolynomialPointSegment::Suffix, length: Stage6StructuredPolynomialPointLength::XPoint, order: Stage6StructuredPolynomialPointOrder::AsIs } },
 ];
 
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERMS: &[bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan] = &[
-    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: &["stage6.ram_ra_virtual.eval.RamRa_0", "stage6.ram_ra_virtual.eval.RamRa_1", "stage6.ram_ra_virtual.eval.RamRa_2", "stage6.ram_ra_virtual.eval.RamRa_3"], eval_families: &[], factors: &["stage6.ram_ra_virtual.output.eq.Cycle"] },
+pub const STAGE6_RELATION_OUTPUT_2_PRODUCT_FAMILY_0_TERMS: &[bolt_verifier_runtime::RelationOutputProductFamilyTermPlan] = &[
+    bolt_verifier_runtime::RelationOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: &["stage6.ram_ra_virtual.eval.RamRa_0", "stage6.ram_ra_virtual.eval.RamRa_1", "stage6.ram_ra_virtual.eval.RamRa_2", "stage6.ram_ra_virtual.eval.RamRa_3"], eval_families: &[], factors: &["stage6.ram_ra_virtual.output.eq.Cycle"] },
 ];
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILIES: &[bolt_verifier_runtime::SumcheckOutputProductFamilyPlan] = &[
-    bolt_verifier_runtime::SumcheckOutputProductFamilyPlan { symbol: "stage6.ram_ra_virtual.output.family", gamma: None, terms: STAGE6_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILY_0_TERMS },
+pub const STAGE6_RELATION_OUTPUT_2_PRODUCT_FAMILIES: &[bolt_verifier_runtime::RelationOutputProductFamilyPlan] = &[
+    bolt_verifier_runtime::RelationOutputProductFamilyPlan { symbol: "stage6.ram_ra_virtual.output.family", gamma: None, terms: STAGE6_RELATION_OUTPUT_2_PRODUCT_FAMILY_0_TERMS },
 ];
 
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_3_VALUES: &[Stage6StructuredPolynomialEvalPlan] = &[
+pub const STAGE6_RELATION_OUTPUT_3_VALUES: &[Stage6StructuredPolynomialEvalPlan] = &[
     Stage6StructuredPolynomialEvalPlan { symbol: "stage6.instruction_ra_virtual.output.eq.Cycle", polynomial: Stage6StructuredPolynomialKind::Eq, x_point: Stage6StructuredPolynomialPointPlan { source: "stage6.instruction_ra_virtual.instance", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::Reverse }, y_point: Stage6StructuredPolynomialPointPlan { source: "stage6.input.stage5.instruction_read_raf.InstructionRa_0", segment: Stage6StructuredPolynomialPointSegment::Suffix, length: Stage6StructuredPolynomialPointLength::XPoint, order: Stage6StructuredPolynomialPointOrder::AsIs } },
 ];
 
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_3_PRODUCT_FAMILY_0_TERMS: &[bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan] = &[
-    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: &["stage6.instruction_ra_virtual.eval.InstructionRa_0", "stage6.instruction_ra_virtual.eval.InstructionRa_1", "stage6.instruction_ra_virtual.eval.InstructionRa_2", "stage6.instruction_ra_virtual.eval.InstructionRa_3"], eval_families: &[], factors: &["stage6.instruction_ra_virtual.output.eq.Cycle"] },
-    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 1, evals: &["stage6.instruction_ra_virtual.eval.InstructionRa_4", "stage6.instruction_ra_virtual.eval.InstructionRa_5", "stage6.instruction_ra_virtual.eval.InstructionRa_6", "stage6.instruction_ra_virtual.eval.InstructionRa_7"], eval_families: &[], factors: &["stage6.instruction_ra_virtual.output.eq.Cycle"] },
-    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 2, evals: &["stage6.instruction_ra_virtual.eval.InstructionRa_8", "stage6.instruction_ra_virtual.eval.InstructionRa_9", "stage6.instruction_ra_virtual.eval.InstructionRa_10", "stage6.instruction_ra_virtual.eval.InstructionRa_11"], eval_families: &[], factors: &["stage6.instruction_ra_virtual.output.eq.Cycle"] },
-    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 3, evals: &["stage6.instruction_ra_virtual.eval.InstructionRa_12", "stage6.instruction_ra_virtual.eval.InstructionRa_13", "stage6.instruction_ra_virtual.eval.InstructionRa_14", "stage6.instruction_ra_virtual.eval.InstructionRa_15"], eval_families: &[], factors: &["stage6.instruction_ra_virtual.output.eq.Cycle"] },
-    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 4, evals: &["stage6.instruction_ra_virtual.eval.InstructionRa_16", "stage6.instruction_ra_virtual.eval.InstructionRa_17", "stage6.instruction_ra_virtual.eval.InstructionRa_18", "stage6.instruction_ra_virtual.eval.InstructionRa_19"], eval_families: &[], factors: &["stage6.instruction_ra_virtual.output.eq.Cycle"] },
-    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 5, evals: &["stage6.instruction_ra_virtual.eval.InstructionRa_20", "stage6.instruction_ra_virtual.eval.InstructionRa_21", "stage6.instruction_ra_virtual.eval.InstructionRa_22", "stage6.instruction_ra_virtual.eval.InstructionRa_23"], eval_families: &[], factors: &["stage6.instruction_ra_virtual.output.eq.Cycle"] },
-    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 6, evals: &["stage6.instruction_ra_virtual.eval.InstructionRa_24", "stage6.instruction_ra_virtual.eval.InstructionRa_25", "stage6.instruction_ra_virtual.eval.InstructionRa_26", "stage6.instruction_ra_virtual.eval.InstructionRa_27"], eval_families: &[], factors: &["stage6.instruction_ra_virtual.output.eq.Cycle"] },
-    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 7, evals: &["stage6.instruction_ra_virtual.eval.InstructionRa_28", "stage6.instruction_ra_virtual.eval.InstructionRa_29", "stage6.instruction_ra_virtual.eval.InstructionRa_30", "stage6.instruction_ra_virtual.eval.InstructionRa_31"], eval_families: &[], factors: &["stage6.instruction_ra_virtual.output.eq.Cycle"] },
+pub const STAGE6_RELATION_OUTPUT_3_PRODUCT_FAMILY_0_TERMS: &[bolt_verifier_runtime::RelationOutputProductFamilyTermPlan] = &[
+    bolt_verifier_runtime::RelationOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: &["stage6.instruction_ra_virtual.eval.InstructionRa_0", "stage6.instruction_ra_virtual.eval.InstructionRa_1", "stage6.instruction_ra_virtual.eval.InstructionRa_2", "stage6.instruction_ra_virtual.eval.InstructionRa_3"], eval_families: &[], factors: &["stage6.instruction_ra_virtual.output.eq.Cycle"] },
+    bolt_verifier_runtime::RelationOutputProductFamilyTermPlan { gamma_power_offset: 1, evals: &["stage6.instruction_ra_virtual.eval.InstructionRa_4", "stage6.instruction_ra_virtual.eval.InstructionRa_5", "stage6.instruction_ra_virtual.eval.InstructionRa_6", "stage6.instruction_ra_virtual.eval.InstructionRa_7"], eval_families: &[], factors: &["stage6.instruction_ra_virtual.output.eq.Cycle"] },
+    bolt_verifier_runtime::RelationOutputProductFamilyTermPlan { gamma_power_offset: 2, evals: &["stage6.instruction_ra_virtual.eval.InstructionRa_8", "stage6.instruction_ra_virtual.eval.InstructionRa_9", "stage6.instruction_ra_virtual.eval.InstructionRa_10", "stage6.instruction_ra_virtual.eval.InstructionRa_11"], eval_families: &[], factors: &["stage6.instruction_ra_virtual.output.eq.Cycle"] },
+    bolt_verifier_runtime::RelationOutputProductFamilyTermPlan { gamma_power_offset: 3, evals: &["stage6.instruction_ra_virtual.eval.InstructionRa_12", "stage6.instruction_ra_virtual.eval.InstructionRa_13", "stage6.instruction_ra_virtual.eval.InstructionRa_14", "stage6.instruction_ra_virtual.eval.InstructionRa_15"], eval_families: &[], factors: &["stage6.instruction_ra_virtual.output.eq.Cycle"] },
+    bolt_verifier_runtime::RelationOutputProductFamilyTermPlan { gamma_power_offset: 4, evals: &["stage6.instruction_ra_virtual.eval.InstructionRa_16", "stage6.instruction_ra_virtual.eval.InstructionRa_17", "stage6.instruction_ra_virtual.eval.InstructionRa_18", "stage6.instruction_ra_virtual.eval.InstructionRa_19"], eval_families: &[], factors: &["stage6.instruction_ra_virtual.output.eq.Cycle"] },
+    bolt_verifier_runtime::RelationOutputProductFamilyTermPlan { gamma_power_offset: 5, evals: &["stage6.instruction_ra_virtual.eval.InstructionRa_20", "stage6.instruction_ra_virtual.eval.InstructionRa_21", "stage6.instruction_ra_virtual.eval.InstructionRa_22", "stage6.instruction_ra_virtual.eval.InstructionRa_23"], eval_families: &[], factors: &["stage6.instruction_ra_virtual.output.eq.Cycle"] },
+    bolt_verifier_runtime::RelationOutputProductFamilyTermPlan { gamma_power_offset: 6, evals: &["stage6.instruction_ra_virtual.eval.InstructionRa_24", "stage6.instruction_ra_virtual.eval.InstructionRa_25", "stage6.instruction_ra_virtual.eval.InstructionRa_26", "stage6.instruction_ra_virtual.eval.InstructionRa_27"], eval_families: &[], factors: &["stage6.instruction_ra_virtual.output.eq.Cycle"] },
+    bolt_verifier_runtime::RelationOutputProductFamilyTermPlan { gamma_power_offset: 7, evals: &["stage6.instruction_ra_virtual.eval.InstructionRa_28", "stage6.instruction_ra_virtual.eval.InstructionRa_29", "stage6.instruction_ra_virtual.eval.InstructionRa_30", "stage6.instruction_ra_virtual.eval.InstructionRa_31"], eval_families: &[], factors: &["stage6.instruction_ra_virtual.output.eq.Cycle"] },
 ];
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_3_PRODUCT_FAMILIES: &[bolt_verifier_runtime::SumcheckOutputProductFamilyPlan] = &[
-    bolt_verifier_runtime::SumcheckOutputProductFamilyPlan { symbol: "stage6.instruction_ra_virtual.output.family", gamma: Some("stage6.instruction_ra_virtual.gamma"), terms: STAGE6_SUMCHECK_OUTPUT_CLAIM_3_PRODUCT_FAMILY_0_TERMS },
+pub const STAGE6_RELATION_OUTPUT_3_PRODUCT_FAMILIES: &[bolt_verifier_runtime::RelationOutputProductFamilyPlan] = &[
+    bolt_verifier_runtime::RelationOutputProductFamilyPlan { symbol: "stage6.instruction_ra_virtual.output.family", gamma: Some("stage6.instruction_ra_virtual.gamma"), terms: STAGE6_RELATION_OUTPUT_3_PRODUCT_FAMILY_0_TERMS },
 ];
 
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_4_VALUES: &[Stage6StructuredPolynomialEvalPlan] = &[
+pub const STAGE6_RELATION_OUTPUT_4_VALUES: &[Stage6StructuredPolynomialEvalPlan] = &[
     Stage6StructuredPolynomialEvalPlan { symbol: "stage6.inc_claim_reduction.output.eq.RamIncStage2", polynomial: Stage6StructuredPolynomialKind::Eq, x_point: Stage6StructuredPolynomialPointPlan { source: "stage6.inc_claim_reduction.instance", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::Reverse }, y_point: Stage6StructuredPolynomialPointPlan { source: "stage6.input.stage2.ram_read_write.RamInc", segment: Stage6StructuredPolynomialPointSegment::Suffix, length: Stage6StructuredPolynomialPointLength::XPoint, order: Stage6StructuredPolynomialPointOrder::AsIs } },
     Stage6StructuredPolynomialEvalPlan { symbol: "stage6.inc_claim_reduction.output.eq.RamIncStage4", polynomial: Stage6StructuredPolynomialKind::Eq, x_point: Stage6StructuredPolynomialPointPlan { source: "stage6.inc_claim_reduction.instance", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::Reverse }, y_point: Stage6StructuredPolynomialPointPlan { source: "stage6.input.stage4.ram_val_check.RamInc", segment: Stage6StructuredPolynomialPointSegment::Suffix, length: Stage6StructuredPolynomialPointLength::XPoint, order: Stage6StructuredPolynomialPointOrder::AsIs } },
     Stage6StructuredPolynomialEvalPlan { symbol: "stage6.inc_claim_reduction.output.eq.RdIncStage4", polynomial: Stage6StructuredPolynomialKind::Eq, x_point: Stage6StructuredPolynomialPointPlan { source: "stage6.inc_claim_reduction.instance", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::Reverse }, y_point: Stage6StructuredPolynomialPointPlan { source: "stage6.input.stage4.registers_read_write.RdInc", segment: Stage6StructuredPolynomialPointSegment::Suffix, length: Stage6StructuredPolynomialPointLength::XPoint, order: Stage6StructuredPolynomialPointOrder::AsIs } },
     Stage6StructuredPolynomialEvalPlan { symbol: "stage6.inc_claim_reduction.output.eq.RdIncStage5", polynomial: Stage6StructuredPolynomialKind::Eq, x_point: Stage6StructuredPolynomialPointPlan { source: "stage6.inc_claim_reduction.instance", segment: Stage6StructuredPolynomialPointSegment::Full, length: Stage6StructuredPolynomialPointLength::Full, order: Stage6StructuredPolynomialPointOrder::Reverse }, y_point: Stage6StructuredPolynomialPointPlan { source: "stage6.input.stage5.registers_val_evaluation.RdInc", segment: Stage6StructuredPolynomialPointSegment::Suffix, length: Stage6StructuredPolynomialPointLength::XPoint, order: Stage6StructuredPolynomialPointOrder::AsIs } },
 ];
 
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_4_FAMILY_0_EVALS: &[&str] = &["stage6.inc_claim_reduction.eval.RamInc", "stage6.inc_claim_reduction.eval.RdInc"];
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_4_FAMILY_0_SHARED_TERMS: &[bolt_verifier_runtime::SumcheckOutputEvalFamilySharedTermPlan] = &[
+pub const STAGE6_RELATION_OUTPUT_4_FAMILY_0_EVALS: &[&str] = &["stage6.inc_claim_reduction.eval.RamInc", "stage6.inc_claim_reduction.eval.RdInc"];
+pub const STAGE6_RELATION_OUTPUT_4_FAMILY_0_SHARED_TERMS: &[bolt_verifier_runtime::RelationOutputEvalFamilySharedTermPlan] = &[
 
 ];
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_4_FAMILY_0_ITEM_TERMS: &[bolt_verifier_runtime::SumcheckOutputEvalFamilyItemTermPlan] = &[
-    bolt_verifier_runtime::SumcheckOutputEvalFamilyItemTermPlan { gamma_power_offset: 0, factors: &["stage6.inc_claim_reduction.output.eq.RamIncStage2", "stage6.inc_claim_reduction.output.eq.RdIncStage4"] },
-    bolt_verifier_runtime::SumcheckOutputEvalFamilyItemTermPlan { gamma_power_offset: 1, factors: &["stage6.inc_claim_reduction.output.eq.RamIncStage4", "stage6.inc_claim_reduction.output.eq.RdIncStage5"] },
+pub const STAGE6_RELATION_OUTPUT_4_FAMILY_0_ITEM_TERMS: &[bolt_verifier_runtime::RelationOutputEvalFamilyItemTermPlan] = &[
+    bolt_verifier_runtime::RelationOutputEvalFamilyItemTermPlan { gamma_power_offset: 0, factors: &["stage6.inc_claim_reduction.output.eq.RamIncStage2", "stage6.inc_claim_reduction.output.eq.RdIncStage4"] },
+    bolt_verifier_runtime::RelationOutputEvalFamilyItemTermPlan { gamma_power_offset: 1, factors: &["stage6.inc_claim_reduction.output.eq.RamIncStage4", "stage6.inc_claim_reduction.output.eq.RdIncStage5"] },
 ];
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_4_FAMILIES: &[bolt_verifier_runtime::SumcheckOutputEvalFamilyPlan] = &[
-    bolt_verifier_runtime::SumcheckOutputEvalFamilyPlan { symbol: "stage6.inc_claim_reduction.output.family", gamma: "stage6.inc_claim_reduction.gamma", evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_4_FAMILY_0_EVALS, power_stride: 2, value_term_offsets: &[], shared_terms: STAGE6_SUMCHECK_OUTPUT_CLAIM_4_FAMILY_0_SHARED_TERMS, item_terms: STAGE6_SUMCHECK_OUTPUT_CLAIM_4_FAMILY_0_ITEM_TERMS },
-];
-
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_5_VALUES: &[Stage6StructuredPolynomialEvalPlan] = &[
-
+pub const STAGE6_RELATION_OUTPUT_4_FAMILIES: &[bolt_verifier_runtime::RelationOutputEvalFamilyPlan] = &[
+    bolt_verifier_runtime::RelationOutputEvalFamilyPlan { symbol: "stage6.inc_claim_reduction.output.family", gamma: "stage6.inc_claim_reduction.gamma", evals: STAGE6_RELATION_OUTPUT_4_FAMILY_0_EVALS, power_stride: 2, value_term_offsets: &[], shared_terms: STAGE6_RELATION_OUTPUT_4_FAMILY_0_SHARED_TERMS, item_terms: STAGE6_RELATION_OUTPUT_4_FAMILY_0_ITEM_TERMS },
 ];
 
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_5_PRODUCT_FAMILY_0_TERMS: &[bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan] = &[
-    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: &["stage6.bytecode_read_raf.output.contribution"], eval_families: &["stage6.bytecode_read_raf.eval.BytecodeRa"], factors: &[] },
-];
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_5_PRODUCT_FAMILIES: &[bolt_verifier_runtime::SumcheckOutputProductFamilyPlan] = &[
-    bolt_verifier_runtime::SumcheckOutputProductFamilyPlan { symbol: "stage6.bytecode_read_raf.output.product.BytecodeReadRaf", gamma: None, terms: STAGE6_SUMCHECK_OUTPUT_CLAIM_5_PRODUCT_FAMILY_0_TERMS },
+pub const STAGE6_RELATION_OUTPUT_5_VALUES: &[Stage6StructuredPolynomialEvalPlan] = &[
+
 ];
 
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIM_5_LOCAL_SCALARS: &[&str] = &["stage6.bytecode_read_raf.output.contribution"];
-pub const STAGE6_SUMCHECK_OUTPUT_CLAIMS: &[Stage6SumcheckOutputClaimPlan] = &[
-    Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6Booleanity, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_0_VALUES, eval_families: &[], product_families: &[], function_families: STAGE6_SUMCHECK_OUTPUT_CLAIM_0_FUNCTION_FAMILIES, local_scalars: &[], expected_output: "stage6.booleanity.output.family" },
-    Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6HammingBooleanity, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_1_VALUES, eval_families: &[], product_families: &[], function_families: STAGE6_SUMCHECK_OUTPUT_CLAIM_1_FUNCTION_FAMILIES, local_scalars: &[], expected_output: "stage6.hamming_booleanity.output.family" },
-    Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6RamRaVirtual, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_2_VALUES, eval_families: &[], product_families: STAGE6_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILIES, function_families: &[], local_scalars: &[], expected_output: "stage6.ram_ra_virtual.output.family" },
-    Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6InstructionRaVirtual, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_3_VALUES, eval_families: &[], product_families: STAGE6_SUMCHECK_OUTPUT_CLAIM_3_PRODUCT_FAMILIES, function_families: &[], local_scalars: &[], expected_output: "stage6.instruction_ra_virtual.output.family" },
-    Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6IncClaimReduction, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_4_VALUES, eval_families: STAGE6_SUMCHECK_OUTPUT_CLAIM_4_FAMILIES, product_families: &[], function_families: &[], local_scalars: &[], expected_output: "stage6.inc_claim_reduction.output.family" },
-    Stage6SumcheckOutputClaimPlan { relation: Stage6RelationKind::Stage6BytecodeReadRaf, polynomial_evals: STAGE6_SUMCHECK_OUTPUT_CLAIM_5_VALUES, eval_families: &[], product_families: STAGE6_SUMCHECK_OUTPUT_CLAIM_5_PRODUCT_FAMILIES, function_families: &[], local_scalars: STAGE6_SUMCHECK_OUTPUT_CLAIM_5_LOCAL_SCALARS, expected_output: "stage6.bytecode_read_raf.output.product.BytecodeReadRaf" },
+pub const STAGE6_RELATION_OUTPUT_5_PRODUCT_FAMILY_0_TERMS: &[bolt_verifier_runtime::RelationOutputProductFamilyTermPlan] = &[
+    bolt_verifier_runtime::RelationOutputProductFamilyTermPlan { gamma_power_offset: 0, evals: &["stage6.bytecode_read_raf.output.contribution"], eval_families: &["stage6.bytecode_read_raf.eval.BytecodeRa"], factors: &[] },
+];
+pub const STAGE6_RELATION_OUTPUT_5_PRODUCT_FAMILIES: &[bolt_verifier_runtime::RelationOutputProductFamilyPlan] = &[
+    bolt_verifier_runtime::RelationOutputProductFamilyPlan { symbol: "stage6.bytecode_read_raf.output.product.BytecodeReadRaf", gamma: None, terms: STAGE6_RELATION_OUTPUT_5_PRODUCT_FAMILY_0_TERMS },
+];
+
+pub const STAGE6_RELATION_OUTPUT_5_LOCAL_SCALARS: &[&str] = &["stage6.bytecode_read_raf.output.contribution"];
+pub const STAGE6_RELATION_OUTPUTS: &[Stage6RelationOutputPlan] = &[
+    Stage6RelationOutputPlan { relation: Stage6RelationKind::Stage6Booleanity, polynomial_evals: STAGE6_RELATION_OUTPUT_0_VALUES, eval_families: &[], product_families: &[], function_families: STAGE6_RELATION_OUTPUT_0_FUNCTION_FAMILIES, local_scalars: &[], expected_output: "stage6.booleanity.output.family" },
+    Stage6RelationOutputPlan { relation: Stage6RelationKind::Stage6HammingBooleanity, polynomial_evals: STAGE6_RELATION_OUTPUT_1_VALUES, eval_families: &[], product_families: &[], function_families: STAGE6_RELATION_OUTPUT_1_FUNCTION_FAMILIES, local_scalars: &[], expected_output: "stage6.hamming_booleanity.output.family" },
+    Stage6RelationOutputPlan { relation: Stage6RelationKind::Stage6RamRaVirtual, polynomial_evals: STAGE6_RELATION_OUTPUT_2_VALUES, eval_families: &[], product_families: STAGE6_RELATION_OUTPUT_2_PRODUCT_FAMILIES, function_families: &[], local_scalars: &[], expected_output: "stage6.ram_ra_virtual.output.family" },
+    Stage6RelationOutputPlan { relation: Stage6RelationKind::Stage6InstructionRaVirtual, polynomial_evals: STAGE6_RELATION_OUTPUT_3_VALUES, eval_families: &[], product_families: STAGE6_RELATION_OUTPUT_3_PRODUCT_FAMILIES, function_families: &[], local_scalars: &[], expected_output: "stage6.instruction_ra_virtual.output.family" },
+    Stage6RelationOutputPlan { relation: Stage6RelationKind::Stage6IncClaimReduction, polynomial_evals: STAGE6_RELATION_OUTPUT_4_VALUES, eval_families: STAGE6_RELATION_OUTPUT_4_FAMILIES, product_families: &[], function_families: &[], local_scalars: &[], expected_output: "stage6.inc_claim_reduction.output.family" },
+    Stage6RelationOutputPlan { relation: Stage6RelationKind::Stage6BytecodeReadRaf, polynomial_evals: STAGE6_RELATION_OUTPUT_5_VALUES, eval_families: &[], product_families: STAGE6_RELATION_OUTPUT_5_PRODUCT_FAMILIES, function_families: &[], local_scalars: STAGE6_RELATION_OUTPUT_5_LOCAL_SCALARS, expected_output: "stage6.bytecode_read_raf.output.product.BytecodeReadRaf" },
 ];
 
 pub const STAGE6_PROGRAM: Stage6VerifierProgramPlan = Stage6CpuProgramPlan {
@@ -777,7 +777,7 @@ pub const STAGE6_PROGRAM: Stage6VerifierProgramPlan = Stage6CpuProgramPlan {
     drivers: STAGE6_SUMCHECK_DRIVERS,
     instance_results: STAGE6_SUMCHECK_INSTANCE_RESULTS,
     evals: STAGE6_SUMCHECK_EVALS,
-    output_claims: STAGE6_SUMCHECK_OUTPUT_CLAIMS,
+    relation_outputs: STAGE6_RELATION_OUTPUTS,
     point_zeros: STAGE6_POINT_ZEROS,
     point_slices: STAGE6_POINT_SLICES,
     point_concats: STAGE6_POINT_CONCATS,
@@ -1089,13 +1089,13 @@ fn expected_batched_output_claim(
                     local_point,
                     log_t,
                 )?;
-                expected_plan_output_claim(program, instance, store, evals, &local_scalars, local_point)?
+                expected_plan_relation_output(program, instance, store, evals, &local_scalars, local_point)?
             }
             Stage6RelationKind::Stage6Booleanity
             | Stage6RelationKind::Stage6HammingBooleanity
             | Stage6RelationKind::Stage6RamRaVirtual
             | Stage6RelationKind::Stage6InstructionRaVirtual
-            | Stage6RelationKind::Stage6IncClaimReduction => expected_plan_output_claim(
+            | Stage6RelationKind::Stage6IncClaimReduction => expected_plan_relation_output(
                 program,
                 instance,
                 store,
@@ -1110,7 +1110,7 @@ fn expected_batched_output_claim(
     Ok(expected)
 }
 
-fn expected_plan_output_claim(
+fn expected_plan_relation_output(
     program: &'static Stage6VerifierProgramPlan,
     instance: &'static Stage6SumcheckInstanceResultPlan,
     store: &bolt_verifier_runtime::ValueStore<Fr>,
@@ -1118,8 +1118,8 @@ fn expected_plan_output_claim(
     local_scalars: &[bolt_verifier_runtime::NamedScalar<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage6Error> {
-    Ok(bolt_verifier_runtime::evaluate_sumcheck_instance_output_claim(
-        program.output_claims,
+    Ok(bolt_verifier_runtime::evaluate_relation_output_for_instance(
+        program.relation_outputs,
         program.field_exprs,
         store,
         instance,

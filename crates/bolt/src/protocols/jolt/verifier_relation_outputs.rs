@@ -118,11 +118,11 @@ impl StructuredPolynomialPointOrder {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SumcheckOutputFunctionKind {
+pub enum RelationOutputFunctionKind {
     BooleanZero,
 }
 
-impl SumcheckOutputFunctionKind {
+impl RelationOutputFunctionKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::BooleanZero => "boolean_zero",
@@ -133,13 +133,13 @@ impl SumcheckOutputFunctionKind {
         match value {
             "boolean_zero" => Ok(Self::BooleanZero),
             _ => Err(EmitError::new(format!(
-                "unsupported output function `{value}`"
+                "unsupported relation output function `{value}`"
             ))),
         }
     }
 }
 
-impl PartialEq<&str> for SumcheckOutputFunctionKind {
+impl PartialEq<&str> for RelationOutputFunctionKind {
     fn eq(&self, other: &&str) -> bool {
         matches!((self, *other), (Self::BooleanZero, "boolean_zero"))
     }
@@ -194,30 +194,30 @@ impl StructuredPolynomialEvalPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SumcheckOutputEvalFamilySharedTermPlan {
+pub struct RelationOutputEvalFamilySharedTermPlan {
     pub gamma_power_offset: usize,
     pub factor: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SumcheckOutputEvalFamilyItemTermPlan {
+pub struct RelationOutputEvalFamilyItemTermPlan {
     pub gamma_power_offset: usize,
     pub factors: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SumcheckOutputEvalFamilyPlan {
+pub struct RelationOutputEvalFamilyPlan {
     pub symbol: String,
     pub gamma: String,
     pub evals: Vec<String>,
     pub power_stride: usize,
     pub value_term_offsets: Vec<usize>,
-    pub shared_terms: Vec<SumcheckOutputEvalFamilySharedTermPlan>,
-    pub item_terms: Vec<SumcheckOutputEvalFamilyItemTermPlan>,
+    pub shared_terms: Vec<RelationOutputEvalFamilySharedTermPlan>,
+    pub item_terms: Vec<RelationOutputEvalFamilyItemTermPlan>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SumcheckOutputProductFamilyTermPlan {
+pub struct RelationOutputProductFamilyTermPlan {
     pub gamma_power_offset: usize,
     pub evals: Vec<String>,
     pub eval_families: Vec<String>,
@@ -225,40 +225,40 @@ pub struct SumcheckOutputProductFamilyTermPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SumcheckOutputProductFamilyPlan {
+pub struct RelationOutputProductFamilyPlan {
     pub symbol: String,
     pub gamma: Option<String>,
-    pub terms: Vec<SumcheckOutputProductFamilyTermPlan>,
+    pub terms: Vec<RelationOutputProductFamilyTermPlan>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SumcheckOutputFunctionFamilyTermPlan {
+pub struct RelationOutputFunctionFamilyTermPlan {
     pub gamma_power_offset: usize,
-    pub function: SumcheckOutputFunctionKind,
+    pub function: RelationOutputFunctionKind,
     pub eval: String,
     pub factors: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SumcheckOutputFunctionFamilyPlan {
+pub struct RelationOutputFunctionFamilyPlan {
     pub symbol: String,
     pub gamma: Option<String>,
-    pub terms: Vec<SumcheckOutputFunctionFamilyTermPlan>,
+    pub terms: Vec<RelationOutputFunctionFamilyTermPlan>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SumcheckOutputClaimPlan {
+pub struct RelationOutputPlan {
     pub relation: String,
     pub polynomial_evals: Vec<StructuredPolynomialEvalPlan>,
-    pub eval_families: Vec<SumcheckOutputEvalFamilyPlan>,
-    pub product_families: Vec<SumcheckOutputProductFamilyPlan>,
-    pub function_families: Vec<SumcheckOutputFunctionFamilyPlan>,
+    pub eval_families: Vec<RelationOutputEvalFamilyPlan>,
+    pub product_families: Vec<RelationOutputProductFamilyPlan>,
+    pub function_families: Vec<RelationOutputFunctionFamilyPlan>,
     pub local_scalars: Vec<String>,
     pub expected_output: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SumcheckOutputClaimAst {
+pub struct RelationOutputAst {
     pub relation: String,
     pub polynomial_evals: Vec<String>,
     pub polynomial_eval_operands: Vec<String>,
@@ -268,7 +268,7 @@ pub struct SumcheckOutputClaimAst {
 pub fn parse_output_eval_family_plan(
     stage: &str,
     operation: OperationRef<'_, '_>,
-) -> Result<SumcheckOutputEvalFamilyPlan, EmitError> {
+) -> Result<RelationOutputEvalFamilyPlan, EmitError> {
     let symbol = string_attr(operation, "sym_name")?;
     let evals = symbol_array_attr(operation, "evals")?;
     let shared_factors = symbol_array_attr(operation, "shared_terms")?;
@@ -277,13 +277,13 @@ pub fn parse_output_eval_family_plan(
     let shared_term_offsets = int_array_attr(operation, "shared_term_offsets")?;
     let item_term_offsets = int_array_attr(operation, "item_term_offsets")?;
     verify_count(
-        "output eval family shared terms",
+        "relation output eval family shared terms",
         &symbol,
         shared_term_offsets.len(),
         shared_factors.len(),
     )?;
     verify_count(
-        "output eval family item term factors",
+        "relation output eval family item term factors",
         &symbol,
         item_term_offsets.len() * evals.len(),
         item_factors.len(),
@@ -292,7 +292,7 @@ pub fn parse_output_eval_family_plan(
     let eval_operands = operand_symbols(operation, 1, 1 + evals.len())?;
     if evals != eval_operands {
         return Err(EmitError::new(format!(
-            "{stage} output eval family @{symbol} evals do not match operands"
+            "{stage} relation output eval family @{symbol} evals do not match operands"
         )));
     }
     let shared_start = 1 + evals.len();
@@ -300,20 +300,20 @@ pub fn parse_output_eval_family_plan(
     let shared_operands = operand_symbols(operation, shared_start, shared_end)?;
     if shared_factors != shared_operands {
         return Err(EmitError::new(format!(
-            "{stage} output eval family @{symbol} shared_terms do not match operands"
+            "{stage} relation output eval family @{symbol} shared_terms do not match operands"
         )));
     }
     let item_operands = operand_symbols(operation, shared_end, operation.operand_count())?;
     if item_factors != item_operands {
         return Err(EmitError::new(format!(
-            "{stage} output eval family @{symbol} item_terms do not match operands"
+            "{stage} relation output eval family @{symbol} item_terms do not match operands"
         )));
     }
     let shared_terms = shared_term_offsets
         .into_iter()
         .zip(shared_factors)
         .map(
-            |(gamma_power_offset, factor)| SumcheckOutputEvalFamilySharedTermPlan {
+            |(gamma_power_offset, factor)| RelationOutputEvalFamilySharedTermPlan {
                 gamma_power_offset,
                 factor,
             },
@@ -323,12 +323,12 @@ pub fn parse_output_eval_family_plan(
     for (term_index, gamma_power_offset) in item_term_offsets.into_iter().enumerate() {
         let start = term_index * evals.len();
         let end = start + evals.len();
-        item_terms.push(SumcheckOutputEvalFamilyItemTermPlan {
+        item_terms.push(RelationOutputEvalFamilyItemTermPlan {
             gamma_power_offset,
             factors: item_factors[start..end].to_vec(),
         });
     }
-    Ok(SumcheckOutputEvalFamilyPlan {
+    Ok(RelationOutputEvalFamilyPlan {
         symbol,
         gamma,
         evals,
@@ -342,7 +342,7 @@ pub fn parse_output_eval_family_plan(
 pub fn parse_output_product_family_plan(
     stage: &str,
     operation: OperationRef<'_, '_>,
-) -> Result<SumcheckOutputProductFamilyPlan, EmitError> {
+) -> Result<RelationOutputProductFamilyPlan, EmitError> {
     let symbol = string_attr(operation, "sym_name")?;
     let gamma = optional_symbol_array_attr(operation, "gamma")?;
     let evals = symbol_array_attr(operation, "evals")?;
@@ -351,25 +351,25 @@ pub fn parse_output_product_family_plan(
     let term_eval_counts = int_array_attr(operation, "term_eval_counts")?;
     let term_factor_counts = int_array_attr(operation, "term_factor_counts")?;
     verify_count(
-        "output product family term eval counts",
+        "relation output product family term eval counts",
         &symbol,
         term_gamma_power_offsets.len(),
         term_eval_counts.len(),
     )?;
     verify_count(
-        "output product family term factor counts",
+        "relation output product family term factor counts",
         &symbol,
         term_gamma_power_offsets.len(),
         term_factor_counts.len(),
     )?;
     verify_count(
-        "output product family evals",
+        "relation output product family evals",
         &symbol,
         term_eval_counts.iter().sum(),
         evals.len(),
     )?;
     verify_count(
-        "output product family factors",
+        "relation output product family factors",
         &symbol,
         term_factor_counts.iter().sum(),
         factors.len(),
@@ -379,7 +379,7 @@ pub fn parse_output_product_family_plan(
         let gamma_operand = operand_symbol(operation, 0)?;
         if gamma_operand != *gamma_symbol {
             return Err(EmitError::new(format!(
-                "{stage} output product family @{symbol} gamma does not match operand"
+                "{stage} relation output product family @{symbol} gamma does not match operand"
             )));
         }
     }
@@ -387,13 +387,13 @@ pub fn parse_output_product_family_plan(
     let eval_operands = operand_symbols(operation, eval_start, eval_end)?;
     if evals != eval_operands {
         return Err(EmitError::new(format!(
-            "{stage} output product family @{symbol} evals do not match operands"
+            "{stage} relation output product family @{symbol} evals do not match operands"
         )));
     }
     let factor_operands = operand_symbols(operation, eval_end, operation.operand_count())?;
     if factors != factor_operands {
         return Err(EmitError::new(format!(
-            "{stage} output product family @{symbol} factors do not match operands"
+            "{stage} relation output product family @{symbol} factors do not match operands"
         )));
     }
     let mut eval_offset = 0;
@@ -406,12 +406,12 @@ pub fn parse_output_product_family_plan(
     {
         if eval_count == 0 && factor_count == 0 {
             return Err(EmitError::new(format!(
-                "{stage} output product family @{symbol} has an empty term"
+                "{stage} relation output product family @{symbol} has an empty term"
             )));
         }
         let eval_end = eval_offset + eval_count;
         let factor_end = factor_offset + factor_count;
-        terms.push(SumcheckOutputProductFamilyTermPlan {
+        terms.push(RelationOutputProductFamilyTermPlan {
             gamma_power_offset,
             evals: evals[eval_offset..eval_end].to_vec(),
             eval_families: Vec::new(),
@@ -420,7 +420,7 @@ pub fn parse_output_product_family_plan(
         eval_offset = eval_end;
         factor_offset = factor_end;
     }
-    Ok(SumcheckOutputProductFamilyPlan {
+    Ok(RelationOutputProductFamilyPlan {
         symbol,
         gamma: gamma.into_iter().next(),
         terms,
@@ -430,7 +430,7 @@ pub fn parse_output_product_family_plan(
 pub fn parse_output_function_family_plan(
     stage: &str,
     operation: OperationRef<'_, '_>,
-) -> Result<SumcheckOutputFunctionFamilyPlan, EmitError> {
+) -> Result<RelationOutputFunctionFamilyPlan, EmitError> {
     let symbol = string_attr(operation, "sym_name")?;
     let gamma = optional_symbol_array_attr(operation, "gamma")?;
     let evals = symbol_array_attr(operation, "evals")?;
@@ -439,25 +439,25 @@ pub fn parse_output_function_family_plan(
     let term_functions = string_array_attr(operation, "term_functions")?;
     let term_factor_counts = int_array_attr(operation, "term_factor_counts")?;
     verify_count(
-        "output function family term functions",
+        "relation output function family term functions",
         &symbol,
         term_gamma_power_offsets.len(),
         term_functions.len(),
     )?;
     verify_count(
-        "output function family term factor counts",
+        "relation output function family term factor counts",
         &symbol,
         term_gamma_power_offsets.len(),
         term_factor_counts.len(),
     )?;
     verify_count(
-        "output function family evals",
+        "relation output function family evals",
         &symbol,
         term_gamma_power_offsets.len(),
         evals.len(),
     )?;
     verify_count(
-        "output function family factors",
+        "relation output function family factors",
         &symbol,
         term_factor_counts.iter().sum(),
         factors.len(),
@@ -467,7 +467,7 @@ pub fn parse_output_function_family_plan(
         let gamma_operand = operand_symbol(operation, 0)?;
         if gamma_operand != *gamma_symbol {
             return Err(EmitError::new(format!(
-                "{stage} output function family @{symbol} gamma does not match operand"
+                "{stage} relation output function family @{symbol} gamma does not match operand"
             )));
         }
     }
@@ -475,13 +475,13 @@ pub fn parse_output_function_family_plan(
     let eval_operands = operand_symbols(operation, eval_start, eval_end)?;
     if evals != eval_operands {
         return Err(EmitError::new(format!(
-            "{stage} output function family @{symbol} evals do not match operands"
+            "{stage} relation output function family @{symbol} evals do not match operands"
         )));
     }
     let factor_operands = operand_symbols(operation, eval_end, operation.operand_count())?;
     if factors != factor_operands {
         return Err(EmitError::new(format!(
-            "{stage} output function family @{symbol} factors do not match operands"
+            "{stage} relation output function family @{symbol} factors do not match operands"
         )));
     }
     let mut factor_offset = 0;
@@ -493,17 +493,19 @@ pub fn parse_output_function_family_plan(
         .zip(term_factor_counts)
     {
         let factor_end = factor_offset + factor_count;
-        terms.push(SumcheckOutputFunctionFamilyTermPlan {
+        terms.push(RelationOutputFunctionFamilyTermPlan {
             gamma_power_offset,
-            function: SumcheckOutputFunctionKind::from_cpu_attr(&function).map_err(|error| {
-                EmitError::new(format!("{stage} output function family @{symbol}: {error}"))
+            function: RelationOutputFunctionKind::from_cpu_attr(&function).map_err(|error| {
+                EmitError::new(format!(
+                    "{stage} relation output function family @{symbol}: {error}"
+                ))
             })?,
             eval,
             factors: factors[factor_offset..factor_end].to_vec(),
         });
         factor_offset = factor_end;
     }
-    Ok(SumcheckOutputFunctionFamilyPlan {
+    Ok(RelationOutputFunctionFamilyPlan {
         symbol,
         gamma: gamma.into_iter().next(),
         terms,
@@ -515,34 +517,36 @@ pub trait FieldExprDependencies {
     fn operands(&self) -> &[String];
 }
 
-pub fn resolve_output_claims<T>(
+pub fn resolve_relation_outputs<T>(
     stage: &str,
-    output_values: &[StructuredPolynomialEvalPlan],
-    output_families: &[SumcheckOutputEvalFamilyPlan],
-    output_product_families: &[SumcheckOutputProductFamilyPlan],
-    output_function_families: &[SumcheckOutputFunctionFamilyPlan],
+    relation_output_values: &[StructuredPolynomialEvalPlan],
+    relation_output_eval_families: &[RelationOutputEvalFamilyPlan],
+    relation_output_product_families: &[RelationOutputProductFamilyPlan],
+    relation_output_function_families: &[RelationOutputFunctionFamilyPlan],
     field_exprs: &[T],
-    claim_asts: Vec<SumcheckOutputClaimAst>,
-) -> Result<Vec<SumcheckOutputClaimPlan>, EmitError>
+    claim_asts: Vec<RelationOutputAst>,
+) -> Result<Vec<RelationOutputPlan>, EmitError>
 where
     T: FieldExprDependencies,
 {
-    let output_values_by_symbol: BTreeMap<_, _> = output_values
+    let relation_output_values_by_symbol: BTreeMap<_, _> = relation_output_values
         .iter()
         .map(|value| (value.symbol.as_str(), value))
         .collect();
-    let output_families_by_symbol: BTreeMap<_, _> = output_families
+    let relation_output_eval_families_by_symbol: BTreeMap<_, _> = relation_output_eval_families
         .iter()
         .map(|family| (family.symbol.as_str(), family))
         .collect();
-    let output_product_families_by_symbol: BTreeMap<_, _> = output_product_families
-        .iter()
-        .map(|family| (family.symbol.as_str(), family))
-        .collect();
-    let output_function_families_by_symbol: BTreeMap<_, _> = output_function_families
-        .iter()
-        .map(|family| (family.symbol.as_str(), family))
-        .collect();
+    let relation_output_product_families_by_symbol: BTreeMap<_, _> =
+        relation_output_product_families
+            .iter()
+            .map(|family| (family.symbol.as_str(), family))
+            .collect();
+    let relation_output_function_families_by_symbol: BTreeMap<_, _> =
+        relation_output_function_families
+            .iter()
+            .map(|family| (family.symbol.as_str(), family))
+            .collect();
     let field_exprs_by_symbol: BTreeMap<_, _> = field_exprs
         .iter()
         .map(|expr| (expr.symbol(), expr))
@@ -551,14 +555,14 @@ where
         .into_iter()
         .map(|claim| {
             verify_count(
-                "sumcheck output claim polynomial_evals",
+                "relation output polynomial_evals",
                 &claim.relation,
                 claim.polynomial_evals.len(),
                 claim.polynomial_eval_operands.len(),
             )?;
             if claim.polynomial_evals != claim.polynomial_eval_operands {
                 return Err(EmitError::new(format!(
-                    "{stage} output claim for @{} polynomial_evals do not match operands",
+                    "{stage} relation output for @{} polynomial_evals do not match operands",
                     claim.relation
                 )));
             }
@@ -566,41 +570,41 @@ where
                 .polynomial_evals
                 .iter()
                 .map(|symbol| {
-                    output_values_by_symbol
+                    relation_output_values_by_symbol
                         .get(symbol.as_str())
                         .copied()
                         .cloned()
                         .ok_or_else(|| {
                             EmitError::new(format!(
-                                "{stage} output claim for @{} references missing output value @{symbol}",
+                                "{stage} relation output for @{} references missing output value @{symbol}",
                                 claim.relation
                             ))
                         })
                 })
                 .collect::<Result<Vec<_>, EmitError>>()?;
             let dependencies = output_dependency_closure(
-                &output_families_by_symbol,
-                &output_product_families_by_symbol,
-                &output_function_families_by_symbol,
+                &relation_output_eval_families_by_symbol,
+                &relation_output_product_families_by_symbol,
+                &relation_output_function_families_by_symbol,
                 &field_exprs_by_symbol,
                 std::iter::once(claim.expected_output.as_str()),
             );
-            let eval_families = output_families
+            let eval_families = relation_output_eval_families
                 .iter()
                 .filter(|family| dependencies.contains_eval_family(&family.symbol))
                 .cloned()
                 .collect();
-            let product_families = output_product_families
+            let product_families = relation_output_product_families
                 .iter()
                 .filter(|family| dependencies.contains_product_family(&family.symbol))
                 .cloned()
                 .collect();
-            let function_families = output_function_families
+            let function_families = relation_output_function_families
                 .iter()
                 .filter(|family| dependencies.contains_function_family(&family.symbol))
                 .cloned()
                 .collect();
-            Ok(SumcheckOutputClaimPlan {
+            Ok(RelationOutputPlan {
                 relation: claim.relation,
                 polynomial_evals,
                 eval_families,
@@ -655,9 +659,9 @@ impl OutputDependencyClosure {
 }
 
 fn output_dependency_closure<'a, T>(
-    output_families_by_symbol: &BTreeMap<&str, &SumcheckOutputEvalFamilyPlan>,
-    output_product_families_by_symbol: &BTreeMap<&str, &SumcheckOutputProductFamilyPlan>,
-    output_function_families_by_symbol: &BTreeMap<&str, &SumcheckOutputFunctionFamilyPlan>,
+    relation_output_eval_families_by_symbol: &BTreeMap<&str, &RelationOutputEvalFamilyPlan>,
+    relation_output_product_families_by_symbol: &BTreeMap<&str, &RelationOutputProductFamilyPlan>,
+    relation_output_function_families_by_symbol: &BTreeMap<&str, &RelationOutputFunctionFamilyPlan>,
     field_exprs_by_symbol: &BTreeMap<&str, &T>,
     roots: impl Iterator<Item = &'a str>,
 ) -> OutputDependencyClosure
@@ -669,9 +673,9 @@ where
     let mut stack = roots
         .map(|symbol| {
             output_dependency_node(
-                output_families_by_symbol,
-                output_product_families_by_symbol,
-                output_function_families_by_symbol,
+                relation_output_eval_families_by_symbol,
+                relation_output_product_families_by_symbol,
+                relation_output_function_families_by_symbol,
                 field_exprs_by_symbol,
                 symbol,
             )
@@ -689,42 +693,43 @@ where
                 };
                 stack.extend(expr.operands().iter().map(|operand| {
                     output_dependency_node(
-                        output_families_by_symbol,
-                        output_product_families_by_symbol,
-                        output_function_families_by_symbol,
+                        relation_output_eval_families_by_symbol,
+                        relation_output_product_families_by_symbol,
+                        relation_output_function_families_by_symbol,
                         field_exprs_by_symbol,
                         operand,
                     )
                 }));
             }
             OutputDependencyNode::EvalFamily(symbol) => {
-                let Some(family) = output_families_by_symbol.get(symbol.as_str()) else {
+                let Some(family) = relation_output_eval_families_by_symbol.get(symbol.as_str())
+                else {
                     continue;
                 };
                 let _inserted = dependencies
                     .families
                     .insert(OutputFamilyDependency::Eval(family.symbol.clone()));
                 stack.push(output_dependency_node(
-                    output_families_by_symbol,
-                    output_product_families_by_symbol,
-                    output_function_families_by_symbol,
+                    relation_output_eval_families_by_symbol,
+                    relation_output_product_families_by_symbol,
+                    relation_output_function_families_by_symbol,
                     field_exprs_by_symbol,
                     &family.gamma,
                 ));
                 stack.extend(family.evals.iter().map(|eval| {
                     output_dependency_node(
-                        output_families_by_symbol,
-                        output_product_families_by_symbol,
-                        output_function_families_by_symbol,
+                        relation_output_eval_families_by_symbol,
+                        relation_output_product_families_by_symbol,
+                        relation_output_function_families_by_symbol,
                         field_exprs_by_symbol,
                         eval,
                     )
                 }));
                 stack.extend(family.shared_terms.iter().map(|term| {
                     output_dependency_node(
-                        output_families_by_symbol,
-                        output_product_families_by_symbol,
-                        output_function_families_by_symbol,
+                        relation_output_eval_families_by_symbol,
+                        relation_output_product_families_by_symbol,
+                        relation_output_function_families_by_symbol,
                         field_exprs_by_symbol,
                         &term.factor,
                     )
@@ -732,9 +737,9 @@ where
                 stack.extend(family.item_terms.iter().flat_map(|term| {
                     term.factors.iter().map(|factor| {
                         output_dependency_node(
-                            output_families_by_symbol,
-                            output_product_families_by_symbol,
-                            output_function_families_by_symbol,
+                            relation_output_eval_families_by_symbol,
+                            relation_output_product_families_by_symbol,
+                            relation_output_function_families_by_symbol,
                             field_exprs_by_symbol,
                             factor,
                         )
@@ -742,7 +747,8 @@ where
                 }));
             }
             OutputDependencyNode::ProductFamily(symbol) => {
-                let Some(family) = output_product_families_by_symbol.get(symbol.as_str()) else {
+                let Some(family) = relation_output_product_families_by_symbol.get(symbol.as_str())
+                else {
                     continue;
                 };
                 let _inserted = dependencies
@@ -750,9 +756,9 @@ where
                     .insert(OutputFamilyDependency::Product(family.symbol.clone()));
                 stack.extend(family.gamma.iter().map(|gamma| {
                     output_dependency_node(
-                        output_families_by_symbol,
-                        output_product_families_by_symbol,
-                        output_function_families_by_symbol,
+                        relation_output_eval_families_by_symbol,
+                        relation_output_product_families_by_symbol,
+                        relation_output_function_families_by_symbol,
                         field_exprs_by_symbol,
                         gamma,
                     )
@@ -760,18 +766,18 @@ where
                 for term in &family.terms {
                     stack.extend(term.evals.iter().map(|eval| {
                         output_dependency_node(
-                            output_families_by_symbol,
-                            output_product_families_by_symbol,
-                            output_function_families_by_symbol,
+                            relation_output_eval_families_by_symbol,
+                            relation_output_product_families_by_symbol,
+                            relation_output_function_families_by_symbol,
                             field_exprs_by_symbol,
                             eval,
                         )
                     }));
                     stack.extend(term.factors.iter().map(|factor| {
                         output_dependency_node(
-                            output_families_by_symbol,
-                            output_product_families_by_symbol,
-                            output_function_families_by_symbol,
+                            relation_output_eval_families_by_symbol,
+                            relation_output_product_families_by_symbol,
+                            relation_output_function_families_by_symbol,
                             field_exprs_by_symbol,
                             factor,
                         )
@@ -779,7 +785,8 @@ where
                 }
             }
             OutputDependencyNode::FunctionFamily(symbol) => {
-                let Some(family) = output_function_families_by_symbol.get(symbol.as_str()) else {
+                let Some(family) = relation_output_function_families_by_symbol.get(symbol.as_str())
+                else {
                     continue;
                 };
                 let _inserted = dependencies
@@ -787,26 +794,26 @@ where
                     .insert(OutputFamilyDependency::Function(family.symbol.clone()));
                 stack.extend(family.gamma.iter().map(|gamma| {
                     output_dependency_node(
-                        output_families_by_symbol,
-                        output_product_families_by_symbol,
-                        output_function_families_by_symbol,
+                        relation_output_eval_families_by_symbol,
+                        relation_output_product_families_by_symbol,
+                        relation_output_function_families_by_symbol,
                         field_exprs_by_symbol,
                         gamma,
                     )
                 }));
                 for term in &family.terms {
                     stack.push(output_dependency_node(
-                        output_families_by_symbol,
-                        output_product_families_by_symbol,
-                        output_function_families_by_symbol,
+                        relation_output_eval_families_by_symbol,
+                        relation_output_product_families_by_symbol,
+                        relation_output_function_families_by_symbol,
                         field_exprs_by_symbol,
                         &term.eval,
                     ));
                     stack.extend(term.factors.iter().map(|factor| {
                         output_dependency_node(
-                            output_families_by_symbol,
-                            output_product_families_by_symbol,
-                            output_function_families_by_symbol,
+                            relation_output_eval_families_by_symbol,
+                            relation_output_product_families_by_symbol,
+                            relation_output_function_families_by_symbol,
                             field_exprs_by_symbol,
                             factor,
                         )
@@ -819,17 +826,17 @@ where
 }
 
 fn output_dependency_node(
-    output_families_by_symbol: &BTreeMap<&str, &SumcheckOutputEvalFamilyPlan>,
-    output_product_families_by_symbol: &BTreeMap<&str, &SumcheckOutputProductFamilyPlan>,
-    output_function_families_by_symbol: &BTreeMap<&str, &SumcheckOutputFunctionFamilyPlan>,
+    relation_output_eval_families_by_symbol: &BTreeMap<&str, &RelationOutputEvalFamilyPlan>,
+    relation_output_product_families_by_symbol: &BTreeMap<&str, &RelationOutputProductFamilyPlan>,
+    relation_output_function_families_by_symbol: &BTreeMap<&str, &RelationOutputFunctionFamilyPlan>,
     field_exprs_by_symbol: &BTreeMap<&str, &impl FieldExprDependencies>,
     symbol: &str,
 ) -> OutputDependencyNode {
-    if output_families_by_symbol.contains_key(symbol) {
+    if relation_output_eval_families_by_symbol.contains_key(symbol) {
         OutputDependencyNode::EvalFamily(symbol.to_owned())
-    } else if output_product_families_by_symbol.contains_key(symbol) {
+    } else if relation_output_product_families_by_symbol.contains_key(symbol) {
         OutputDependencyNode::ProductFamily(symbol.to_owned())
-    } else if output_function_families_by_symbol.contains_key(symbol) {
+    } else if relation_output_function_families_by_symbol.contains_key(symbol) {
         OutputDependencyNode::FunctionFamily(symbol.to_owned())
     } else if field_exprs_by_symbol.contains_key(symbol) {
         OutputDependencyNode::FieldExpr(symbol.to_owned())
@@ -841,7 +848,7 @@ fn output_dependency_node(
 pub fn prune_output_only_field_exprs<'a, 'b, T>(
     field_exprs: &mut Vec<T>,
     sumcheck_claim_roots: impl Iterator<Item = &'a str>,
-    output_claim_roots: impl Iterator<Item = &'b str>,
+    relation_output_roots: impl Iterator<Item = &'b str>,
 ) where
     T: FieldExprDependencies,
 {
@@ -851,42 +858,42 @@ pub fn prune_output_only_field_exprs<'a, 'b, T>(
         .collect();
     let sumcheck_claim_closure =
         field_expr_dependency_closure(&field_exprs_by_symbol, sumcheck_claim_roots);
-    let output_claim_closure =
-        field_expr_dependency_closure(&field_exprs_by_symbol, output_claim_roots);
+    let relation_output_closure =
+        field_expr_dependency_closure(&field_exprs_by_symbol, relation_output_roots);
     field_exprs.retain(|expr| {
-        !output_claim_closure.contains(expr.symbol())
+        !relation_output_closure.contains(expr.symbol())
             || sumcheck_claim_closure.contains(expr.symbol())
     });
 }
 
-pub struct OutputClaimVerification<'a> {
-    pub output_values: &'a [StructuredPolynomialEvalPlan],
-    pub output_families: &'a [SumcheckOutputEvalFamilyPlan],
-    pub output_product_families: &'a [SumcheckOutputProductFamilyPlan],
-    pub output_function_families: &'a [SumcheckOutputFunctionFamilyPlan],
-    pub output_claims: &'a [SumcheckOutputClaimPlan],
+pub struct RelationOutputVerification<'a> {
+    pub relation_output_values: &'a [StructuredPolynomialEvalPlan],
+    pub relation_output_eval_families: &'a [RelationOutputEvalFamilyPlan],
+    pub relation_output_product_families: &'a [RelationOutputProductFamilyPlan],
+    pub relation_output_function_families: &'a [RelationOutputFunctionFamilyPlan],
+    pub relation_outputs: &'a [RelationOutputPlan],
     pub relations: &'a BTreeSet<String>,
     pub field_values: &'a VerifierScalarSourceSet,
     pub point_values: &'a VerifierPointSourceSet,
 }
 
-pub fn verify_output_claims(
+pub fn verify_relation_outputs(
     stage: &str,
-    verification: OutputClaimVerification<'_>,
+    verification: RelationOutputVerification<'_>,
 ) -> Result<(), EmitError> {
-    let OutputClaimVerification {
-        output_values,
-        output_families,
-        output_product_families,
-        output_function_families,
-        output_claims,
+    let RelationOutputVerification {
+        relation_output_values,
+        relation_output_eval_families,
+        relation_output_product_families,
+        relation_output_function_families,
+        relation_outputs,
         relations,
         field_values,
         point_values,
     } = verification;
     field_values.verify_no_conflicts(stage)?;
     point_values.verify_no_conflicts(stage)?;
-    for polynomial_eval in output_values {
+    for polynomial_eval in relation_output_values {
         if !point_values.contains(&polynomial_eval.x_point.source) {
             return Err(EmitError::new(format!(
                 "{stage} structured polynomial eval @{} references missing x-point @{}",
@@ -900,17 +907,17 @@ pub fn verify_output_claims(
             )));
         }
     }
-    for family in output_families {
+    for family in relation_output_eval_families {
         if !field_values.contains(&family.gamma) {
             return Err(EmitError::new(format!(
-                "{stage} output eval family @{} references missing gamma @{}",
+                "{stage} relation output eval family @{} references missing gamma @{}",
                 family.symbol, family.gamma
             )));
         }
         for eval in &family.evals {
             if !field_values.contains(eval) {
                 return Err(EmitError::new(format!(
-                    "{stage} output eval family @{} references missing eval @{}",
+                    "{stage} relation output eval family @{} references missing eval @{}",
                     family.symbol, eval
                 )));
             }
@@ -918,14 +925,14 @@ pub fn verify_output_claims(
         for term in &family.shared_terms {
             if !field_values.contains(&term.factor) {
                 return Err(EmitError::new(format!(
-                    "{stage} output eval family @{} references missing shared factor @{}",
+                    "{stage} relation output eval family @{} references missing shared factor @{}",
                     family.symbol, term.factor
                 )));
             }
         }
         for term in &family.item_terms {
             verify_count(
-                "output eval family item factors",
+                "relation output eval family item factors",
                 &family.symbol,
                 family.evals.len(),
                 term.factors.len(),
@@ -933,18 +940,18 @@ pub fn verify_output_claims(
             for factor in &term.factors {
                 if !field_values.contains(factor) {
                     return Err(EmitError::new(format!(
-                        "{stage} output eval family @{} references missing item factor @{}",
+                        "{stage} relation output eval family @{} references missing item factor @{}",
                         family.symbol, factor
                     )));
                 }
             }
         }
     }
-    for family in output_product_families {
+    for family in relation_output_product_families {
         if let Some(gamma) = &family.gamma {
             if !field_values.contains(gamma) {
                 return Err(EmitError::new(format!(
-                    "{stage} output product family @{} references missing gamma @{}",
+                    "{stage} relation output product family @{} references missing gamma @{}",
                     family.symbol, gamma
                 )));
             }
@@ -952,14 +959,14 @@ pub fn verify_output_claims(
         for term in &family.terms {
             if term.evals.is_empty() && term.factors.is_empty() {
                 return Err(EmitError::new(format!(
-                    "{stage} output product family @{} has an empty term",
+                    "{stage} relation output product family @{} has an empty term",
                     family.symbol
                 )));
             }
             for eval in &term.evals {
                 if !field_values.contains(eval) {
                     return Err(EmitError::new(format!(
-                        "{stage} output product family @{} references missing eval @{}",
+                        "{stage} relation output product family @{} references missing eval @{}",
                         family.symbol, eval
                     )));
                 }
@@ -967,18 +974,18 @@ pub fn verify_output_claims(
             for factor in &term.factors {
                 if !field_values.contains(factor) {
                     return Err(EmitError::new(format!(
-                        "{stage} output product family @{} references missing factor @{}",
+                        "{stage} relation output product family @{} references missing factor @{}",
                         family.symbol, factor
                     )));
                 }
             }
         }
     }
-    for family in output_function_families {
+    for family in relation_output_function_families {
         if let Some(gamma) = &family.gamma {
             if !field_values.contains(gamma) {
                 return Err(EmitError::new(format!(
-                    "{stage} output function family @{} references missing gamma @{}",
+                    "{stage} relation output function family @{} references missing gamma @{}",
                     family.symbol, gamma
                 )));
             }
@@ -986,30 +993,30 @@ pub fn verify_output_claims(
         for term in &family.terms {
             if !field_values.contains(&term.eval) {
                 return Err(EmitError::new(format!(
-                    "{stage} output function family @{} references missing eval @{}",
+                    "{stage} relation output function family @{} references missing eval @{}",
                     family.symbol, term.eval
                 )));
             }
             for factor in &term.factors {
                 if !field_values.contains(factor) {
                     return Err(EmitError::new(format!(
-                        "{stage} output function family @{} references missing factor @{}",
+                        "{stage} relation output function family @{} references missing factor @{}",
                         family.symbol, factor
                     )));
                 }
             }
         }
     }
-    for claim in output_claims {
+    for claim in relation_outputs {
         if !relations.contains(&claim.relation) {
             return Err(EmitError::new(format!(
-                "{stage} output claim references missing relation @{}",
+                "{stage} relation output references missing relation @{}",
                 claim.relation
             )));
         }
         if !field_values.contains(&claim.expected_output) {
             return Err(EmitError::new(format!(
-                "{stage} output claim for @{} uses missing expected output @{}",
+                "{stage} relation output for @{} uses missing expected output @{}",
                 claim.relation, claim.expected_output
             )));
         }
@@ -1208,12 +1215,12 @@ mod tests {
     };
 
     use super::{
-        resolve_output_claims, verify_output_claims, FieldExprDependencies,
-        OutputClaimVerification, SumcheckOutputClaimAst, SumcheckOutputEvalFamilyItemTermPlan,
-        SumcheckOutputEvalFamilyPlan, SumcheckOutputEvalFamilySharedTermPlan,
-        SumcheckOutputFunctionFamilyPlan, SumcheckOutputFunctionFamilyTermPlan,
-        SumcheckOutputFunctionKind, SumcheckOutputProductFamilyPlan,
-        SumcheckOutputProductFamilyTermPlan,
+        resolve_relation_outputs, verify_relation_outputs, FieldExprDependencies,
+        RelationOutputAst, RelationOutputEvalFamilyItemTermPlan, RelationOutputEvalFamilyPlan,
+        RelationOutputEvalFamilySharedTermPlan, RelationOutputFunctionFamilyPlan,
+        RelationOutputFunctionFamilyTermPlan, RelationOutputFunctionKind,
+        RelationOutputProductFamilyPlan, RelationOutputProductFamilyTermPlan,
+        RelationOutputVerification,
     };
 
     struct TestFieldExpr {
@@ -1232,8 +1239,9 @@ mod tests {
     }
 
     #[test]
-    fn resolves_output_families_reachable_through_field_expressions() -> Result<(), EmitError> {
-        let inner_family = SumcheckOutputEvalFamilyPlan {
+    fn resolves_relation_output_eval_families_reachable_through_field_expressions(
+    ) -> Result<(), EmitError> {
+        let inner_family = RelationOutputEvalFamilyPlan {
             symbol: "inner.family".to_owned(),
             gamma: "inner.gamma".to_owned(),
             evals: vec!["inner.eval".to_owned()],
@@ -1242,17 +1250,17 @@ mod tests {
             shared_terms: Vec::new(),
             item_terms: Vec::new(),
         };
-        let outer_family = SumcheckOutputEvalFamilyPlan {
+        let outer_family = RelationOutputEvalFamilyPlan {
             symbol: "outer.family".to_owned(),
             gamma: "outer.gamma".to_owned(),
             evals: vec!["outer.eval".to_owned()],
             power_stride: 1,
             value_term_offsets: Vec::new(),
-            shared_terms: vec![SumcheckOutputEvalFamilySharedTermPlan {
+            shared_terms: vec![RelationOutputEvalFamilySharedTermPlan {
                 gamma_power_offset: 0,
                 factor: "outer.shared.factor".to_owned(),
             }],
-            item_terms: vec![SumcheckOutputEvalFamilyItemTermPlan {
+            item_terms: vec![RelationOutputEvalFamilyItemTermPlan {
                 gamma_power_offset: 1,
                 factors: vec!["factor.expr".to_owned()],
             }],
@@ -1267,14 +1275,14 @@ mod tests {
                 operands: vec!["inner.family".to_owned()],
             },
         ];
-        let claim_asts = vec![SumcheckOutputClaimAst {
+        let claim_asts = vec![RelationOutputAst {
             relation: "relation".to_owned(),
             polynomial_evals: Vec::new(),
             polynomial_eval_operands: Vec::new(),
             expected_output: "claim.expr".to_owned(),
         }];
 
-        let claims = resolve_output_claims(
+        let claims = resolve_relation_outputs(
             "test",
             &[],
             &[inner_family, outer_family],
@@ -1285,7 +1293,7 @@ mod tests {
         )?;
         let claim = claims
             .first()
-            .ok_or_else(|| EmitError::new("missing resolved output claim"))?;
+            .ok_or_else(|| EmitError::new("missing resolved relation output"))?;
         let family_symbols = claim
             .eval_families
             .iter()
@@ -1299,10 +1307,10 @@ mod tests {
 
     #[test]
     fn resolves_product_families_reachable_through_field_expressions() -> Result<(), EmitError> {
-        let product_family = SumcheckOutputProductFamilyPlan {
+        let product_family = RelationOutputProductFamilyPlan {
             symbol: "product.family".to_owned(),
             gamma: Some("product.gamma".to_owned()),
-            terms: vec![SumcheckOutputProductFamilyTermPlan {
+            terms: vec![RelationOutputProductFamilyTermPlan {
                 gamma_power_offset: 2,
                 evals: vec!["product.eval".to_owned()],
                 eval_families: Vec::new(),
@@ -1319,14 +1327,14 @@ mod tests {
                 operands: vec!["unrelated.scalar".to_owned()],
             },
         ];
-        let claim_asts = vec![SumcheckOutputClaimAst {
+        let claim_asts = vec![RelationOutputAst {
             relation: "relation".to_owned(),
             polynomial_evals: Vec::new(),
             polynomial_eval_operands: Vec::new(),
             expected_output: "claim.expr".to_owned(),
         }];
 
-        let claims = resolve_output_claims(
+        let claims = resolve_relation_outputs(
             "test",
             &[],
             &[],
@@ -1337,7 +1345,7 @@ mod tests {
         )?;
         let claim = claims
             .first()
-            .ok_or_else(|| EmitError::new("missing resolved output claim"))?;
+            .ok_or_else(|| EmitError::new("missing resolved relation output"))?;
         assert!(claim.eval_families.is_empty());
         let family_symbols = claim
             .product_families
@@ -1351,12 +1359,12 @@ mod tests {
 
     #[test]
     fn resolves_function_families_reachable_through_field_expressions() -> Result<(), EmitError> {
-        let function_family = SumcheckOutputFunctionFamilyPlan {
+        let function_family = RelationOutputFunctionFamilyPlan {
             symbol: "function.family".to_owned(),
             gamma: Some("function.gamma".to_owned()),
-            terms: vec![SumcheckOutputFunctionFamilyTermPlan {
+            terms: vec![RelationOutputFunctionFamilyTermPlan {
                 gamma_power_offset: 0,
-                function: SumcheckOutputFunctionKind::BooleanZero,
+                function: RelationOutputFunctionKind::BooleanZero,
                 eval: "function.eval".to_owned(),
                 factors: vec!["function.factor.expr".to_owned()],
             }],
@@ -1371,14 +1379,14 @@ mod tests {
                 operands: vec!["unrelated.scalar".to_owned()],
             },
         ];
-        let claim_asts = vec![SumcheckOutputClaimAst {
+        let claim_asts = vec![RelationOutputAst {
             relation: "relation".to_owned(),
             polynomial_evals: Vec::new(),
             polynomial_eval_operands: Vec::new(),
             expected_output: "claim.expr".to_owned(),
         }];
 
-        let claims = resolve_output_claims(
+        let claims = resolve_relation_outputs(
             "test",
             &[],
             &[],
@@ -1389,7 +1397,7 @@ mod tests {
         )?;
         let claim = claims
             .first()
-            .ok_or_else(|| EmitError::new("missing resolved output claim"))?;
+            .ok_or_else(|| EmitError::new("missing resolved relation output"))?;
         assert!(claim.eval_families.is_empty());
         assert!(claim.product_families.is_empty());
         let family_symbols = claim
@@ -1402,21 +1410,21 @@ mod tests {
     }
 
     #[test]
-    fn output_claim_verification_rejects_conflicting_scalar_sources() -> Result<(), EmitError> {
+    fn relation_output_verification_rejects_conflicting_scalar_sources() -> Result<(), EmitError> {
         let mut field_values = VerifierScalarSourceSet::default();
         field_values.insert("value", VerifierScalarSourceKind::OpeningInput);
         field_values.insert("value", VerifierScalarSourceKind::FieldExpr);
         let point_values = VerifierPointSourceSet::default();
         let relations = BTreeSet::new();
 
-        let error = match verify_output_claims(
+        let error = match verify_relation_outputs(
             "stage",
-            OutputClaimVerification {
-                output_values: &[],
-                output_families: &[],
-                output_product_families: &[],
-                output_function_families: &[],
-                output_claims: &[],
+            RelationOutputVerification {
+                relation_output_values: &[],
+                relation_output_eval_families: &[],
+                relation_output_product_families: &[],
+                relation_output_function_families: &[],
+                relation_outputs: &[],
                 relations: &relations,
                 field_values: &field_values,
                 point_values: &point_values,
@@ -1437,21 +1445,21 @@ mod tests {
     }
 
     #[test]
-    fn output_claim_verification_rejects_conflicting_point_sources() -> Result<(), EmitError> {
+    fn relation_output_verification_rejects_conflicting_point_sources() -> Result<(), EmitError> {
         let field_values = VerifierScalarSourceSet::default();
         let mut point_values = VerifierPointSourceSet::default();
         point_values.insert("point", VerifierPointSourceKind::OpeningInput);
         point_values.insert("point", VerifierPointSourceKind::PointSlice);
         let relations = BTreeSet::new();
 
-        let error = match verify_output_claims(
+        let error = match verify_relation_outputs(
             "stage",
-            OutputClaimVerification {
-                output_values: &[],
-                output_families: &[],
-                output_product_families: &[],
-                output_function_families: &[],
-                output_claims: &[],
+            RelationOutputVerification {
+                relation_output_values: &[],
+                relation_output_eval_families: &[],
+                relation_output_product_families: &[],
+                relation_output_function_families: &[],
+                relation_outputs: &[],
                 relations: &relations,
                 field_values: &field_values,
                 point_values: &point_values,

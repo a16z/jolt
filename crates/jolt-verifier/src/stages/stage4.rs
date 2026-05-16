@@ -15,7 +15,7 @@ pub type Stage4CpuProgramPlan = bolt_verifier_runtime::StageProgramPlanNoPointZe
 pub type Stage4SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stage4RelationKind>;
 pub type Stage4SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage4RelationKind>;
 pub type Stage4SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage4RelationKind>;
-pub type Stage4SumcheckOutputClaimPlan = bolt_verifier_runtime::SumcheckOutputClaimPlan<Stage4RelationKind>;
+pub type Stage4RelationOutputPlan = bolt_verifier_runtime::RelationOutputPlan<Stage4RelationKind>;
 pub type Stage4StructuredPolynomialEvalPlan = bolt_verifier_runtime::StructuredPolynomialEvalPlan;
 
 pub use super::jolt_relations::JoltRelationKind as Stage4RelationKind;
@@ -174,17 +174,17 @@ pub const STAGE4_OPENING_EQUALITIES: &[Stage4OpeningClaimEqualityPlan] = &[
 pub const STAGE4_OPENING_BATCHES: &[Stage4OpeningBatchPlan] = &[
     Stage4OpeningBatchPlan { symbol: "stage4.openings", stage: "stage4", proof_slot: "stage4.openings", policy: "jolt_stage4_output_order", count: 7, ordered_claims: &["stage4.registers_read_write.opening.RegistersVal", "stage4.registers_read_write.opening.Rs1Ra", "stage4.registers_read_write.opening.Rs2Ra", "stage4.registers_read_write.opening.RdWa", "stage4.registers_read_write.opening.RdInc", "stage4.ram_val_check.opening.RamRa", "stage4.ram_val_check.opening.RamInc"], claim_operands: &["stage4.registers_read_write.opening.RegistersVal", "stage4.registers_read_write.opening.Rs1Ra", "stage4.registers_read_write.opening.Rs2Ra", "stage4.registers_read_write.opening.RdWa", "stage4.registers_read_write.opening.RdInc", "stage4.ram_val_check.opening.RamRa", "stage4.ram_val_check.opening.RamInc"] },
 ];
-pub const STAGE4_SUMCHECK_OUTPUT_CLAIM_0_VALUES: &[Stage4StructuredPolynomialEvalPlan] = &[
+pub const STAGE4_RELATION_OUTPUT_0_VALUES: &[Stage4StructuredPolynomialEvalPlan] = &[
     Stage4StructuredPolynomialEvalPlan { symbol: "stage4.registers_read_write.output.eq.RdWriteValue", polynomial: Stage4StructuredPolynomialKind::Eq, x_point: Stage4StructuredPolynomialPointPlan { source: "stage4.registers_read_write.instance", segment: Stage4StructuredPolynomialPointSegment::Prefix, length: Stage4StructuredPolynomialPointLength::YPoint, order: Stage4StructuredPolynomialPointOrder::Reverse }, y_point: Stage4StructuredPolynomialPointPlan { source: "stage4.input.stage3.registers.RdWriteValue", segment: Stage4StructuredPolynomialPointSegment::Full, length: Stage4StructuredPolynomialPointLength::Full, order: Stage4StructuredPolynomialPointOrder::AsIs } },
 ];
 
-pub const STAGE4_SUMCHECK_OUTPUT_CLAIM_1_VALUES: &[Stage4StructuredPolynomialEvalPlan] = &[
+pub const STAGE4_RELATION_OUTPUT_1_VALUES: &[Stage4StructuredPolynomialEvalPlan] = &[
     Stage4StructuredPolynomialEvalPlan { symbol: "stage4.ram_val_check.output.lt.RamValCycle", polynomial: Stage4StructuredPolynomialKind::Lt, x_point: Stage4StructuredPolynomialPointPlan { source: "stage4.ram_val_check.instance", segment: Stage4StructuredPolynomialPointSegment::Full, length: Stage4StructuredPolynomialPointLength::Full, order: Stage4StructuredPolynomialPointOrder::Reverse }, y_point: Stage4StructuredPolynomialPointPlan { source: "stage4.input.stage2.RamVal", segment: Stage4StructuredPolynomialPointSegment::Suffix, length: Stage4StructuredPolynomialPointLength::XPoint, order: Stage4StructuredPolynomialPointOrder::AsIs } },
 ];
 
-pub const STAGE4_SUMCHECK_OUTPUT_CLAIMS: &[Stage4SumcheckOutputClaimPlan] = &[
-    Stage4SumcheckOutputClaimPlan { relation: Stage4RelationKind::Stage4RegistersReadWrite, polynomial_evals: STAGE4_SUMCHECK_OUTPUT_CLAIM_0_VALUES, eval_families: &[], product_families: &[], function_families: &[], local_scalars: &[], expected_output: "stage4.registers_read_write.output.claim_expr" },
-    Stage4SumcheckOutputClaimPlan { relation: Stage4RelationKind::Stage4RamValCheck, polynomial_evals: STAGE4_SUMCHECK_OUTPUT_CLAIM_1_VALUES, eval_families: &[], product_families: &[], function_families: &[], local_scalars: &[], expected_output: "stage4.ram_val_check.output.claim_expr" },
+pub const STAGE4_RELATION_OUTPUTS: &[Stage4RelationOutputPlan] = &[
+    Stage4RelationOutputPlan { relation: Stage4RelationKind::Stage4RegistersReadWrite, polynomial_evals: STAGE4_RELATION_OUTPUT_0_VALUES, eval_families: &[], product_families: &[], function_families: &[], local_scalars: &[], expected_output: "stage4.registers_read_write.output.claim_expr" },
+    Stage4RelationOutputPlan { relation: Stage4RelationKind::Stage4RamValCheck, polynomial_evals: STAGE4_RELATION_OUTPUT_1_VALUES, eval_families: &[], product_families: &[], function_families: &[], local_scalars: &[], expected_output: "stage4.ram_val_check.output.claim_expr" },
 ];
 
 pub const STAGE4_PROGRAM: Stage4VerifierProgramPlan = Stage4CpuProgramPlan {
@@ -202,7 +202,7 @@ pub const STAGE4_PROGRAM: Stage4VerifierProgramPlan = Stage4CpuProgramPlan {
     drivers: STAGE4_SUMCHECK_DRIVERS,
     instance_results: STAGE4_SUMCHECK_INSTANCE_RESULTS,
     evals: STAGE4_SUMCHECK_EVALS,
-    output_claims: STAGE4_SUMCHECK_OUTPUT_CLAIMS,
+    relation_outputs: STAGE4_RELATION_OUTPUTS,
     point_slices: STAGE4_POINT_SLICES,
     point_concats: STAGE4_POINT_CONCATS,
     opening_claims: STAGE4_OPENING_CLAIMS,
@@ -464,8 +464,8 @@ fn expected_batched_output_claim(
                 expected: instance.round_offset + instance.num_rounds,
                 actual: point.len(),
             })?;
-        let value = bolt_verifier_runtime::evaluate_sumcheck_instance_output_claim(
-            program.output_claims,
+        let value = bolt_verifier_runtime::evaluate_relation_output_for_instance(
+            program.relation_outputs,
             program.field_exprs,
             store,
             instance,

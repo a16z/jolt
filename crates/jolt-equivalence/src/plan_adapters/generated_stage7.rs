@@ -26,6 +26,6 @@ define_stage_adapter!(
     Stage7OpeningClaimEqualityPlan,
     Stage7OpeningBatchPlan,
     point_zero = Stage7PointZeroPlan,
-    output_claims = Stage7SumcheckOutputClaimPlan,
-    output_values = Stage7StructuredPolynomialEvalPlan
+    relation_outputs = Stage7RelationOutputPlan,
+    relation_output_values = Stage7StructuredPolynomialEvalPlan
 );

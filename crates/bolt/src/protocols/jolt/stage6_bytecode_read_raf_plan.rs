@@ -1,7 +1,7 @@
 use crate::emit::rust::{push_format, EmitError};
 use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
-use crate::protocols::jolt::verifier_output_claims::{
-    SumcheckOutputClaimPlan, SumcheckOutputProductFamilyPlan, SumcheckOutputProductFamilyTermPlan,
+use crate::protocols::jolt::verifier_relation_outputs::{
+    RelationOutputPlan, RelationOutputProductFamilyPlan, RelationOutputProductFamilyTermPlan,
 };
 
 pub(crate) const STAGE6_BYTECODE_RA_EVAL_FAMILY: &str = "stage6.bytecode_read_raf.eval.BytecodeRa";
@@ -336,28 +336,28 @@ pub(crate) fn stage6_bytecode_read_raf_output_contribution_symbol() -> &'static 
     STAGE6_BYTECODE_READ_RAF_PLAN.output_contribution
 }
 
-pub(crate) fn stage6_bytecode_read_raf_output_claim_plan(
+pub(crate) fn stage6_bytecode_read_raf_relation_output_plan(
     bytecode_ra_evals: &IndexedEvalFamilyPlan,
-) -> SumcheckOutputClaimPlan {
-    STAGE6_BYTECODE_READ_RAF_PLAN.output_claim_plan(bytecode_ra_evals)
+) -> RelationOutputPlan {
+    STAGE6_BYTECODE_READ_RAF_PLAN.relation_output_plan(bytecode_ra_evals)
 }
 
 impl BytecodeReadRafPlan {
-    fn output_claim_plan(
+    fn relation_output_plan(
         &self,
         bytecode_ra_evals: &IndexedEvalFamilyPlan,
-    ) -> SumcheckOutputClaimPlan {
-        let product_family = SumcheckOutputProductFamilyPlan {
+    ) -> RelationOutputPlan {
+        let product_family = RelationOutputProductFamilyPlan {
             symbol: "stage6.bytecode_read_raf.output.product.BytecodeReadRaf".to_owned(),
             gamma: None,
-            terms: vec![SumcheckOutputProductFamilyTermPlan {
+            terms: vec![RelationOutputProductFamilyTermPlan {
                 gamma_power_offset: 0,
                 evals: vec![self.output_contribution.to_owned()],
                 eval_families: vec![bytecode_ra_evals.symbol.clone()],
                 factors: Vec::new(),
             }],
         };
-        SumcheckOutputClaimPlan {
+        RelationOutputPlan {
             relation: "jolt.stage6.bytecode_read_raf".to_owned(),
             polynomial_evals: Vec::new(),
             eval_families: Vec::new(),
@@ -567,8 +567,8 @@ mod tests {
 
     use super::{
         emit_stage6_bytecode_read_raf_plan_constants, stage6_bytecode_read_raf_eval_family_ref,
-        stage6_bytecode_read_raf_output_claim_plan,
-        stage6_bytecode_read_raf_output_contribution_symbol, BytecodeFlag, BytecodeOutputTermPlan,
+        stage6_bytecode_read_raf_output_contribution_symbol,
+        stage6_bytecode_read_raf_relation_output_plan, BytecodeFlag, BytecodeOutputTermPlan,
         BytecodeReadRafTermPlan, BytecodeRegister, STAGE6_BYTECODE_RA_EVAL_FAMILY,
         STAGE6_BYTECODE_READ_RAF_PLAN,
     };
@@ -673,9 +673,9 @@ mod tests {
     }
 
     #[test]
-    fn stage6_bytecode_output_claim_plan_uses_point_derived_contribution() {
+    fn stage6_bytecode_relation_output_plan_uses_point_derived_contribution() {
         let bytecode_ra_evals = bytecode_ra_evals();
-        let claim = stage6_bytecode_read_raf_output_claim_plan(&bytecode_ra_evals);
+        let claim = stage6_bytecode_read_raf_relation_output_plan(&bytecode_ra_evals);
 
         assert_eq!(claim.relation, "jolt.stage6.bytecode_read_raf");
         assert_eq!(

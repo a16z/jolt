@@ -1,21 +1,21 @@
 use crate::emit::rust::{push_format, EmitError};
 use crate::ir::Role;
-use crate::protocols::jolt::verifier_output_claims::{
-    StructuredPolynomialKind, StructuredPolynomialPointLength, StructuredPolynomialPointOrder,
-    StructuredPolynomialPointPlan, StructuredPolynomialPointSegment, SumcheckOutputClaimPlan,
-    SumcheckOutputFunctionKind,
+use crate::protocols::jolt::verifier_relation_outputs::{
+    RelationOutputFunctionKind, RelationOutputPlan, StructuredPolynomialKind,
+    StructuredPolynomialPointLength, StructuredPolynomialPointOrder, StructuredPolynomialPointPlan,
+    StructuredPolynomialPointSegment,
 };
 
-pub fn emit_verifier_output_claim_constants(
+pub fn emit_verifier_relation_output_constants(
     stage_type: &str,
     role: &Role,
-    output_claims: &[SumcheckOutputClaimPlan],
+    relation_outputs: &[RelationOutputPlan],
 ) -> Result<String, EmitError> {
     let mut source = String::new();
     let mut claims = Vec::new();
-    for (index, claim) in output_claims.iter().enumerate() {
+    for (index, claim) in relation_outputs.iter().enumerate() {
         let values_name = format!(
-            "{}_SUMCHECK_OUTPUT_CLAIM_{index}_VALUES",
+            "{}_RELATION_OUTPUT_{index}_VALUES",
             stage_type.to_ascii_uppercase()
         );
         let values = claim
@@ -44,17 +44,17 @@ pub fn emit_verifier_output_claim_constants(
             emit_function_family_constants(&mut source, stage_type, index, claim)?;
         let local_scalars = emit_local_scalar_constants(&mut source, stage_type, index, claim);
         claims.push(format!(
-            "    {stage_type}SumcheckOutputClaimPlan {{ relation: {}, polynomial_evals: {values_name}, eval_families: {eval_families}, product_families: {product_families}, function_families: {function_families}, local_scalars: {local_scalars}, expected_output: {} }},",
+            "    {stage_type}RelationOutputPlan {{ relation: {}, polynomial_evals: {values_name}, eval_families: {eval_families}, product_families: {product_families}, function_families: {function_families}, local_scalars: {local_scalars}, expected_output: {} }},",
             super::plan_tokens::role_relation_kind_expr(stage_type, role, &claim.relation)?,
             rust_str(&claim.expected_output)
         ));
     }
     let claims = claims.join("\n");
-    let claims_name = format!("{}_SUMCHECK_OUTPUT_CLAIMS", stage_type.to_ascii_uppercase());
+    let claims_name = format!("{}_RELATION_OUTPUTS", stage_type.to_ascii_uppercase());
     push_format(
         &mut source,
         format_args!(
-            "pub const {claims_name}: &[{stage_type}SumcheckOutputClaimPlan] = &[\n{claims}\n];\n\n"
+            "pub const {claims_name}: &[{stage_type}RelationOutputPlan] = &[\n{claims}\n];\n\n"
         ),
     );
     Ok(source)
@@ -64,13 +64,13 @@ fn emit_local_scalar_constants(
     source: &mut String,
     stage_type: &str,
     claim_index: usize,
-    claim: &SumcheckOutputClaimPlan,
+    claim: &RelationOutputPlan,
 ) -> String {
     if claim.local_scalars.is_empty() {
         return "&[]".to_owned();
     }
     let name = format!(
-        "{}_SUMCHECK_OUTPUT_CLAIM_{claim_index}_LOCAL_SCALARS",
+        "{}_RELATION_OUTPUT_{claim_index}_LOCAL_SCALARS",
         stage_type.to_ascii_uppercase()
     );
     let scalars = rust_str_array(&claim.local_scalars);
@@ -85,7 +85,7 @@ fn emit_eval_family_constants(
     source: &mut String,
     stage_type: &str,
     claim_index: usize,
-    claim: &SumcheckOutputClaimPlan,
+    claim: &RelationOutputPlan,
 ) -> String {
     if claim.eval_families.is_empty() {
         return "&[]".to_owned();
@@ -93,8 +93,7 @@ fn emit_eval_family_constants(
     let upper_stage = stage_type.to_ascii_uppercase();
     let mut family_rows = Vec::new();
     for (family_index, family) in claim.eval_families.iter().enumerate() {
-        let prefix =
-            format!("{upper_stage}_SUMCHECK_OUTPUT_CLAIM_{claim_index}_FAMILY_{family_index}");
+        let prefix = format!("{upper_stage}_RELATION_OUTPUT_{claim_index}_FAMILY_{family_index}");
         let evals_name = format!("{prefix}_EVALS");
         let evals = rust_str_array(&family.evals);
         push_format(
@@ -110,7 +109,7 @@ fn emit_eval_family_constants(
             .iter()
             .map(|term| {
                 format!(
-                    "    bolt_verifier_runtime::SumcheckOutputEvalFamilySharedTermPlan {{ gamma_power_offset: {}, factor: {} }},",
+                    "    bolt_verifier_runtime::RelationOutputEvalFamilySharedTermPlan {{ gamma_power_offset: {}, factor: {} }},",
                     term.gamma_power_offset,
                     rust_str(&term.factor)
                 )
@@ -120,7 +119,7 @@ fn emit_eval_family_constants(
         push_format(
             source,
             format_args!(
-                "pub const {shared_terms_name}: &[bolt_verifier_runtime::SumcheckOutputEvalFamilySharedTermPlan] = &[\n{shared_terms}\n];\n"
+                "pub const {shared_terms_name}: &[bolt_verifier_runtime::RelationOutputEvalFamilySharedTermPlan] = &[\n{shared_terms}\n];\n"
             ),
         );
 
@@ -129,7 +128,7 @@ fn emit_eval_family_constants(
             let factors_name = format!("{prefix}_ITEM_TERM_{term_index}_FACTORS");
             let factors = emit_str_slice_or_inline(source, &factors_name, &term.factors);
             item_rows.push(format!(
-                "    bolt_verifier_runtime::SumcheckOutputEvalFamilyItemTermPlan {{ gamma_power_offset: {}, factors: {factors} }},",
+                "    bolt_verifier_runtime::RelationOutputEvalFamilyItemTermPlan {{ gamma_power_offset: {}, factors: {factors} }},",
                 term.gamma_power_offset
             ));
         }
@@ -138,22 +137,22 @@ fn emit_eval_family_constants(
         push_format(
             source,
             format_args!(
-                "pub const {item_terms_name}: &[bolt_verifier_runtime::SumcheckOutputEvalFamilyItemTermPlan] = &[\n{item_terms}\n];\n"
+                "pub const {item_terms_name}: &[bolt_verifier_runtime::RelationOutputEvalFamilyItemTermPlan] = &[\n{item_terms}\n];\n"
             ),
         );
         family_rows.push(format!(
-            "    bolt_verifier_runtime::SumcheckOutputEvalFamilyPlan {{ symbol: {}, gamma: {}, evals: {evals_name}, power_stride: {}, value_term_offsets: {value_offsets}, shared_terms: {shared_terms_name}, item_terms: {item_terms_name} }},",
+            "    bolt_verifier_runtime::RelationOutputEvalFamilyPlan {{ symbol: {}, gamma: {}, evals: {evals_name}, power_stride: {}, value_term_offsets: {value_offsets}, shared_terms: {shared_terms_name}, item_terms: {item_terms_name} }},",
             rust_str(&family.symbol),
             rust_str(&family.gamma),
             family.power_stride
         ));
     }
-    let families_name = format!("{upper_stage}_SUMCHECK_OUTPUT_CLAIM_{claim_index}_FAMILIES");
+    let families_name = format!("{upper_stage}_RELATION_OUTPUT_{claim_index}_FAMILIES");
     let families = family_rows.join("\n");
     push_format(
         source,
         format_args!(
-            "pub const {families_name}: &[bolt_verifier_runtime::SumcheckOutputEvalFamilyPlan] = &[\n{families}\n];\n\n"
+            "pub const {families_name}: &[bolt_verifier_runtime::RelationOutputEvalFamilyPlan] = &[\n{families}\n];\n\n"
         ),
     );
     families_name
@@ -163,7 +162,7 @@ fn emit_product_family_constants(
     source: &mut String,
     stage_type: &str,
     claim_index: usize,
-    claim: &SumcheckOutputClaimPlan,
+    claim: &RelationOutputPlan,
 ) -> String {
     if claim.product_families.is_empty() {
         return "&[]".to_owned();
@@ -171,9 +170,8 @@ fn emit_product_family_constants(
     let upper_stage = stage_type.to_ascii_uppercase();
     let mut family_rows = Vec::new();
     for (family_index, family) in claim.product_families.iter().enumerate() {
-        let prefix = format!(
-            "{upper_stage}_SUMCHECK_OUTPUT_CLAIM_{claim_index}_PRODUCT_FAMILY_{family_index}"
-        );
+        let prefix =
+            format!("{upper_stage}_RELATION_OUTPUT_{claim_index}_PRODUCT_FAMILY_{family_index}");
         let mut term_rows = Vec::new();
         for (term_index, term) in family.terms.iter().enumerate() {
             let evals_name = format!("{prefix}_TERM_{term_index}_EVALS");
@@ -184,7 +182,7 @@ fn emit_product_family_constants(
             let factors_name = format!("{prefix}_TERM_{term_index}_FACTORS");
             let factors = emit_str_slice_or_inline(source, &factors_name, &term.factors);
             term_rows.push(format!(
-                "    bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan {{ gamma_power_offset: {}, evals: {evals}, eval_families: {eval_families}, factors: {factors} }},",
+                "    bolt_verifier_runtime::RelationOutputProductFamilyTermPlan {{ gamma_power_offset: {}, evals: {evals}, eval_families: {eval_families}, factors: {factors} }},",
                 term.gamma_power_offset
             ));
         }
@@ -193,22 +191,21 @@ fn emit_product_family_constants(
         push_format(
             source,
             format_args!(
-                "pub const {terms_name}: &[bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan] = &[\n{terms}\n];\n"
+                "pub const {terms_name}: &[bolt_verifier_runtime::RelationOutputProductFamilyTermPlan] = &[\n{terms}\n];\n"
             ),
         );
         family_rows.push(format!(
-            "    bolt_verifier_runtime::SumcheckOutputProductFamilyPlan {{ symbol: {}, gamma: {}, terms: {terms_name} }},",
+            "    bolt_verifier_runtime::RelationOutputProductFamilyPlan {{ symbol: {}, gamma: {}, terms: {terms_name} }},",
             rust_str(&family.symbol),
             optional_rust_str(family.gamma.as_deref()),
         ));
     }
-    let families_name =
-        format!("{upper_stage}_SUMCHECK_OUTPUT_CLAIM_{claim_index}_PRODUCT_FAMILIES");
+    let families_name = format!("{upper_stage}_RELATION_OUTPUT_{claim_index}_PRODUCT_FAMILIES");
     let families = family_rows.join("\n");
     push_format(
         source,
         format_args!(
-            "pub const {families_name}: &[bolt_verifier_runtime::SumcheckOutputProductFamilyPlan] = &[\n{families}\n];\n\n"
+            "pub const {families_name}: &[bolt_verifier_runtime::RelationOutputProductFamilyPlan] = &[\n{families}\n];\n\n"
         ),
     );
     families_name
@@ -218,7 +215,7 @@ fn emit_function_family_constants(
     source: &mut String,
     stage_type: &str,
     claim_index: usize,
-    claim: &SumcheckOutputClaimPlan,
+    claim: &RelationOutputPlan,
 ) -> Result<String, EmitError> {
     if claim.function_families.is_empty() {
         return Ok("&[]".to_owned());
@@ -226,17 +223,16 @@ fn emit_function_family_constants(
     let upper_stage = stage_type.to_ascii_uppercase();
     let mut family_rows = Vec::new();
     for (family_index, family) in claim.function_families.iter().enumerate() {
-        let prefix = format!(
-            "{upper_stage}_SUMCHECK_OUTPUT_CLAIM_{claim_index}_FUNCTION_FAMILY_{family_index}"
-        );
+        let prefix =
+            format!("{upper_stage}_RELATION_OUTPUT_{claim_index}_FUNCTION_FAMILY_{family_index}");
         let mut term_rows = Vec::new();
         for (term_index, term) in family.terms.iter().enumerate() {
             let factors_name = format!("{prefix}_TERM_{term_index}_FACTORS");
             let factors = emit_str_slice_or_inline(source, &factors_name, &term.factors);
             term_rows.push(format!(
-                "    bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan {{ gamma_power_offset: {}, function: {}, eval: {}, factors: {factors} }},",
+                "    bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan {{ gamma_power_offset: {}, function: {}, eval: {}, factors: {factors} }},",
                 term.gamma_power_offset,
-                output_function_kind_expr(term.function),
+                relation_output_function_kind_expr(term.function),
                 rust_str(&term.eval)
             ));
         }
@@ -245,31 +241,30 @@ fn emit_function_family_constants(
         push_format(
             source,
             format_args!(
-                "pub const {terms_name}: &[bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan] = &[\n{terms}\n];\n"
+                "pub const {terms_name}: &[bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan] = &[\n{terms}\n];\n"
             ),
         );
         family_rows.push(format!(
-            "    bolt_verifier_runtime::SumcheckOutputFunctionFamilyPlan {{ symbol: {}, gamma: {}, terms: {terms_name} }},",
+            "    bolt_verifier_runtime::RelationOutputFunctionFamilyPlan {{ symbol: {}, gamma: {}, terms: {terms_name} }},",
             rust_str(&family.symbol),
             optional_rust_str(family.gamma.as_deref()),
         ));
     }
-    let families_name =
-        format!("{upper_stage}_SUMCHECK_OUTPUT_CLAIM_{claim_index}_FUNCTION_FAMILIES");
+    let families_name = format!("{upper_stage}_RELATION_OUTPUT_{claim_index}_FUNCTION_FAMILIES");
     let families = family_rows.join("\n");
     push_format(
         source,
         format_args!(
-            "pub const {families_name}: &[bolt_verifier_runtime::SumcheckOutputFunctionFamilyPlan] = &[\n{families}\n];\n\n"
+            "pub const {families_name}: &[bolt_verifier_runtime::RelationOutputFunctionFamilyPlan] = &[\n{families}\n];\n\n"
         ),
     );
     Ok(families_name)
 }
 
-fn output_function_kind_expr(function: SumcheckOutputFunctionKind) -> &'static str {
+fn relation_output_function_kind_expr(function: RelationOutputFunctionKind) -> &'static str {
     match function {
-        SumcheckOutputFunctionKind::BooleanZero => {
-            "bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero"
+        RelationOutputFunctionKind::BooleanZero => {
+            "bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero"
         }
     }
 }

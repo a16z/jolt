@@ -1415,10 +1415,10 @@ fn stage5_rust_targets_extract_and_compile() {
         prover_program.evals.len(),
         params.lookup_table_count + params.instruction_ra_virtual_d + 4
     );
-    assert_eq!(prover_program.output_values.len(), 4);
-    assert!(prover_program.output_claims.is_empty());
-    assert_eq!(verifier_program.output_values.len(), 4);
-    assert_eq!(verifier_program.output_claims.len(), 3);
+    assert_eq!(prover_program.relation_output_values.len(), 4);
+    assert!(prover_program.relation_outputs.is_empty());
+    assert_eq!(verifier_program.relation_output_values.len(), 4);
+    assert_eq!(verifier_program.relation_outputs.len(), 3);
     assert_eq!(
         prover_program.point_slices.len(),
         params.instruction_ra_virtual_d + 3
@@ -1480,9 +1480,7 @@ fn stage5_rust_targets_extract_and_compile() {
     assert!(!verifier_source
         .source
         .contains("expected_registers_val_evaluation"));
-    assert!(verifier_source
-        .source
-        .contains("Stage5SumcheckOutputClaimPlan"));
+    assert!(verifier_source.source.contains("Stage5RelationOutputPlan"));
     assert!(verifier_source
         .source
         .contains("stage5.instruction_read_raf.output.claim_expr"));
@@ -1494,7 +1492,7 @@ fn stage5_rust_targets_extract_and_compile() {
         .contains("stage5.registers_val_evaluation.output.lt.RegistersValCycle"));
     assert!(verifier_source
         .source
-        .contains("bolt_verifier_runtime::evaluate_sumcheck_instance_output_claim"));
+        .contains("bolt_verifier_runtime::evaluate_relation_output_for_instance"));
     assert!(verifier_source
         .source
         .contains("Stage5RelationKind::Stage5RamRaClaimReduction"));
@@ -1555,16 +1553,16 @@ fn stage6_rust_targets_extract_and_compile() {
             + params.instruction_d
             + 2
     );
-    assert_eq!(prover_program.output_values.len(), 8);
-    assert!(prover_program.output_claims.is_empty());
-    assert_eq!(verifier_program.output_values.len(), 8);
-    assert_eq!(verifier_program.output_families.len(), 1);
-    assert_eq!(verifier_program.output_product_families.len(), 2);
-    assert_eq!(verifier_program.output_function_families.len(), 2);
-    assert_eq!(verifier_program.output_claims.len(), 6);
+    assert_eq!(prover_program.relation_output_values.len(), 8);
+    assert!(prover_program.relation_outputs.is_empty());
+    assert_eq!(verifier_program.relation_output_values.len(), 8);
+    assert_eq!(verifier_program.relation_output_eval_families.len(), 1);
+    assert_eq!(verifier_program.relation_output_product_families.len(), 2);
+    assert_eq!(verifier_program.relation_output_function_families.len(), 2);
+    assert_eq!(verifier_program.relation_outputs.len(), 6);
     let total_booleanity_ra = params.instruction_d + params.bytecode_d + params.ram_d;
     let booleanity_function_families = verifier_program
-        .output_function_families
+        .relation_output_function_families
         .iter()
         .filter(|family| family.symbol == "stage6.booleanity.output.family")
         .collect::<Vec<_>>();
@@ -1599,7 +1597,7 @@ fn stage6_rust_targets_extract_and_compile() {
         vec!["stage6.booleanity.output.eq.InstructionRa0".to_owned()]
     );
     let hamming_function_families = verifier_program
-        .output_function_families
+        .relation_output_function_families
         .iter()
         .filter(|family| family.symbol == "stage6.hamming_booleanity.output.family")
         .collect::<Vec<_>>();
@@ -1618,7 +1616,7 @@ fn stage6_rust_targets_extract_and_compile() {
         vec!["stage6.hamming_booleanity.output.eq.LookupOutput".to_owned()]
     );
     let ram_product_families = verifier_program
-        .output_product_families
+        .relation_output_product_families
         .iter()
         .filter(|family| family.symbol == "stage6.ram_ra_virtual.output.family")
         .collect::<Vec<_>>();
@@ -1638,7 +1636,7 @@ fn stage6_rust_targets_extract_and_compile() {
         vec!["stage6.ram_ra_virtual.output.eq.Cycle".to_owned()]
     );
     let instruction_product_families = verifier_program
-        .output_product_families
+        .relation_output_product_families
         .iter()
         .filter(|family| family.symbol == "stage6.instruction_ra_virtual.output.family")
         .collect::<Vec<_>>();
@@ -1669,7 +1667,7 @@ fn stage6_rust_targets_extract_and_compile() {
             vec!["stage6.instruction_ra_virtual.output.eq.Cycle".to_owned()]
         );
     }
-    let inc_family = &verifier_program.output_families[0];
+    let inc_family = &verifier_program.relation_output_eval_families[0];
     assert_eq!(
         inc_family.symbol,
         "stage6.inc_claim_reduction.output.family"
@@ -1703,7 +1701,7 @@ fn stage6_rust_targets_extract_and_compile() {
         ]
     );
     let inc_claims = verifier_program
-        .output_claims
+        .relation_outputs
         .iter()
         .filter(|claim| claim.expected_output == "stage6.inc_claim_reduction.output.family")
         .collect::<Vec<_>>();
@@ -1712,7 +1710,7 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(inc_claims[0].product_families.is_empty());
     assert!(inc_claims[0].function_families.is_empty());
     let booleanity_claims = verifier_program
-        .output_claims
+        .relation_outputs
         .iter()
         .filter(|claim| claim.expected_output == "stage6.booleanity.output.family")
         .collect::<Vec<_>>();
@@ -1728,7 +1726,7 @@ fn stage6_rust_targets_extract_and_compile() {
         "stage6.booleanity.output.eq.InstructionRa0"
     );
     let hamming_claims = verifier_program
-        .output_claims
+        .relation_outputs
         .iter()
         .filter(|claim| claim.expected_output == "stage6.hamming_booleanity.output.family")
         .collect::<Vec<_>>();
@@ -1740,7 +1738,7 @@ fn stage6_rust_targets_extract_and_compile() {
         vec![hamming_function_family.clone()]
     );
     let ram_ra_claims = verifier_program
-        .output_claims
+        .relation_outputs
         .iter()
         .filter(|claim| claim.expected_output == "stage6.ram_ra_virtual.output.family")
         .collect::<Vec<_>>();
@@ -1752,7 +1750,7 @@ fn stage6_rust_targets_extract_and_compile() {
     );
     assert!(ram_ra_claims[0].function_families.is_empty());
     let instruction_ra_claims = verifier_program
-        .output_claims
+        .relation_outputs
         .iter()
         .filter(|claim| claim.expected_output == "stage6.instruction_ra_virtual.output.family")
         .collect::<Vec<_>>();
@@ -1764,7 +1762,7 @@ fn stage6_rust_targets_extract_and_compile() {
     );
     assert!(instruction_ra_claims[0].function_families.is_empty());
     let bytecode_claims = verifier_program
-        .output_claims
+        .relation_outputs
         .iter()
         .filter(|claim| {
             claim.expected_output == "stage6.bytecode_read_raf.output.product.BytecodeReadRaf"
@@ -1886,7 +1884,7 @@ fn stage6_rust_targets_extract_and_compile() {
         .contains("expected_hamming_booleanity"));
     assert!(verifier_source
         .source
-        .contains("expected_plan_output_claim"));
+        .contains("expected_plan_relation_output"));
     assert!(verifier_source
         .source
         .contains("stage6.booleanity.output.eq.InstructionRa0"));
@@ -1909,27 +1907,25 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(!verifier_source
         .source
         .contains("expected_inc_claim_reduction"));
+    assert!(verifier_source.source.contains("Stage6RelationOutputPlan"));
     assert!(verifier_source
         .source
-        .contains("Stage6SumcheckOutputClaimPlan"));
+        .contains("RelationOutputFunctionFamilyPlan"));
     assert!(verifier_source
         .source
-        .contains("SumcheckOutputFunctionFamilyPlan"));
+        .contains("STAGE6_RELATION_OUTPUT_0_FUNCTION_FAMILIES"));
     assert!(verifier_source
         .source
-        .contains("STAGE6_SUMCHECK_OUTPUT_CLAIM_0_FUNCTION_FAMILIES"));
+        .contains("STAGE6_RELATION_OUTPUT_4_FAMILIES"));
     assert!(verifier_source
         .source
-        .contains("STAGE6_SUMCHECK_OUTPUT_CLAIM_4_FAMILIES"));
+        .contains("RelationOutputProductFamilyPlan"));
     assert!(verifier_source
         .source
-        .contains("SumcheckOutputProductFamilyPlan"));
+        .contains("STAGE6_RELATION_OUTPUT_2_PRODUCT_FAMILIES"));
     assert!(verifier_source
         .source
-        .contains("STAGE6_SUMCHECK_OUTPUT_CLAIM_2_PRODUCT_FAMILIES"));
-    assert!(verifier_source
-        .source
-        .contains("STAGE6_SUMCHECK_OUTPUT_CLAIM_3_PRODUCT_FAMILIES"));
+        .contains("STAGE6_RELATION_OUTPUT_3_PRODUCT_FAMILIES"));
     assert!(verifier_source
         .source
         .contains("stage6.booleanity.output.family"));
@@ -2038,12 +2034,12 @@ fn stage7_rust_targets_extract_and_compile() {
     assert_eq!(prover_program.drivers.len(), 1);
     assert_eq!(prover_program.instance_results.len(), 1);
     assert_eq!(prover_program.evals.len(), total_ra);
-    assert_eq!(prover_program.output_values.len(), total_ra + 1);
-    assert!(prover_program.output_claims.is_empty());
-    assert_eq!(verifier_program.output_values.len(), total_ra + 1);
-    assert_eq!(verifier_program.output_families.len(), 1);
-    assert_eq!(verifier_program.output_claims.len(), 1);
-    let output_family = &verifier_program.output_families[0];
+    assert_eq!(prover_program.relation_output_values.len(), total_ra + 1);
+    assert!(prover_program.relation_outputs.is_empty());
+    assert_eq!(verifier_program.relation_output_values.len(), total_ra + 1);
+    assert_eq!(verifier_program.relation_output_eval_families.len(), 1);
+    assert_eq!(verifier_program.relation_outputs.len(), 1);
+    let output_family = &verifier_program.relation_output_eval_families[0];
     assert_eq!(
         output_family.symbol,
         "stage7.hamming_weight_claim_reduction.output.family"
@@ -2065,7 +2061,7 @@ fn stage7_rust_targets_extract_and_compile() {
     assert_eq!(output_family.item_terms[0].gamma_power_offset, 2);
     assert_eq!(output_family.item_terms[0].factors.len(), total_ra);
     assert_eq!(
-        verifier_program.output_claims[0].eval_families,
+        verifier_program.relation_outputs[0].eval_families,
         vec![output_family.clone()]
     );
     assert!(prover_program.point_zeros.is_empty());
@@ -2116,15 +2112,13 @@ fn stage7_rust_targets_extract_and_compile() {
     assert!(!verifier_source
         .source
         .contains("expected_hamming_weight_claim_reduction"));
+    assert!(verifier_source.source.contains("Stage7RelationOutputPlan"));
     assert!(verifier_source
         .source
-        .contains("Stage7SumcheckOutputClaimPlan"));
+        .contains("RelationOutputEvalFamilyPlan"));
     assert!(verifier_source
         .source
-        .contains("SumcheckOutputEvalFamilyPlan"));
-    assert!(verifier_source
-        .source
-        .contains("STAGE7_SUMCHECK_OUTPUT_CLAIM_0_FAMILY_0_EVALS"));
+        .contains("STAGE7_RELATION_OUTPUT_0_FAMILY_0_EVALS"));
     assert!(verifier_source
         .source
         .contains("stage7.hamming_weight_claim_reduction.output.eq.Booleanity"));
@@ -2136,7 +2130,7 @@ fn stage7_rust_targets_extract_and_compile() {
         .contains("stage7.hamming_weight_claim_reduction.output.term"));
     assert!(verifier_source
         .source
-        .contains("bolt_verifier_runtime::evaluate_sumcheck_instance_output_claim"));
+        .contains("bolt_verifier_runtime::evaluate_relation_output_for_instance"));
     assert!(verifier_source
         .source
         .contains("stage7.input.stage6.booleanity.InstructionRa_0"));

@@ -7,9 +7,9 @@ use crate::protocols::jolt::rust_target_plan::{
     RustTargetPlanError, SumcheckPointOrder, TranscriptSqueezeKind,
 };
 use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
-use crate::protocols::jolt::verifier_output_claims::{
-    StructuredPolynomialEvalPlan, SumcheckOutputClaimPlan, SumcheckOutputEvalFamilyPlan,
-    SumcheckOutputFunctionFamilyPlan, SumcheckOutputProductFamilyPlan,
+use crate::protocols::jolt::verifier_relation_outputs::{
+    RelationOutputEvalFamilyPlan, RelationOutputFunctionFamilyPlan, RelationOutputPlan,
+    RelationOutputProductFamilyPlan, StructuredPolynomialEvalPlan,
 };
 use crate::protocols::jolt::verifier_values::{
     VerifierPointSourceKind, VerifierPointSourceSet, VerifierScalarSourceKind,
@@ -264,11 +264,11 @@ pub(crate) struct VerifierStagePlan {
     pub(crate) instance_results: Vec<VerifierSumcheckInstanceResultPlan>,
     pub(crate) sumcheck_evals: Vec<VerifierSumcheckEvalPlan>,
     pub(crate) indexed_eval_families: Vec<IndexedEvalFamilyPlan>,
-    pub(crate) output_values: Vec<StructuredPolynomialEvalPlan>,
-    pub(crate) output_families: Vec<SumcheckOutputEvalFamilyPlan>,
-    pub(crate) output_product_families: Vec<SumcheckOutputProductFamilyPlan>,
-    pub(crate) output_function_families: Vec<SumcheckOutputFunctionFamilyPlan>,
-    pub(crate) output_claims: Vec<SumcheckOutputClaimPlan>,
+    pub(crate) relation_output_values: Vec<StructuredPolynomialEvalPlan>,
+    pub(crate) relation_output_eval_families: Vec<RelationOutputEvalFamilyPlan>,
+    pub(crate) relation_output_product_families: Vec<RelationOutputProductFamilyPlan>,
+    pub(crate) relation_output_function_families: Vec<RelationOutputFunctionFamilyPlan>,
+    pub(crate) relation_outputs: Vec<RelationOutputPlan>,
     pub(crate) point_zeros: Vec<VerifierPointZeroPlan>,
     pub(crate) point_slices: Vec<VerifierPointSlicePlan>,
     pub(crate) point_concats: Vec<VerifierPointConcatPlan>,
@@ -301,45 +301,49 @@ impl VerifierStagePlan {
             VerifierScalarSourceKind::TranscriptScalar,
         );
         values.extend(
-            self.output_values.iter().map(|value| &value.symbol),
+            self.relation_output_values
+                .iter()
+                .map(|value| &value.symbol),
             VerifierScalarSourceKind::StructuredPolynomialEval,
         );
         values.extend(
-            self.output_claims
+            self.relation_outputs
                 .iter()
                 .flat_map(|claim| claim.polynomial_evals.iter().map(|value| &value.symbol)),
             VerifierScalarSourceKind::StructuredPolynomialEval,
         );
         values.extend(
-            self.output_families.iter().map(|family| &family.symbol),
+            self.relation_output_eval_families
+                .iter()
+                .map(|family| &family.symbol),
             VerifierScalarSourceKind::OutputEvalFamily,
         );
         values.extend(
-            self.output_product_families
+            self.relation_output_product_families
                 .iter()
                 .map(|family| &family.symbol),
             VerifierScalarSourceKind::OutputProductFamily,
         );
         values.extend(
-            self.output_function_families
+            self.relation_output_function_families
                 .iter()
                 .map(|family| &family.symbol),
             VerifierScalarSourceKind::OutputFunctionFamily,
         );
         values.extend(
-            self.output_claims
+            self.relation_outputs
                 .iter()
                 .flat_map(|claim| claim.eval_families.iter().map(|family| &family.symbol)),
             VerifierScalarSourceKind::OutputEvalFamily,
         );
         values.extend(
-            self.output_claims
+            self.relation_outputs
                 .iter()
                 .flat_map(|claim| claim.product_families.iter().map(|family| &family.symbol)),
             VerifierScalarSourceKind::OutputProductFamily,
         );
         values.extend(
-            self.output_claims
+            self.relation_outputs
                 .iter()
                 .flat_map(|claim| claim.function_families.iter().map(|family| &family.symbol)),
             VerifierScalarSourceKind::OutputFunctionFamily,
@@ -349,7 +353,7 @@ impl VerifierStagePlan {
             VerifierScalarSourceKind::FieldExpr,
         );
         values.extend(
-            self.output_claims
+            self.relation_outputs
                 .iter()
                 .flat_map(|claim| claim.local_scalars.iter()),
             VerifierScalarSourceKind::PointDerived,
@@ -583,17 +587,17 @@ pub(crate) trait VerifierStagePlanSource {
     fn instance_results(&self) -> &[Self::Instance];
     fn sumcheck_evals(&self) -> &[Self::Eval];
     fn indexed_eval_families(&self) -> &[IndexedEvalFamilyPlan];
-    fn output_values(&self) -> &[StructuredPolynomialEvalPlan];
-    fn output_families(&self) -> &[SumcheckOutputEvalFamilyPlan] {
+    fn relation_output_values(&self) -> &[StructuredPolynomialEvalPlan];
+    fn relation_output_eval_families(&self) -> &[RelationOutputEvalFamilyPlan] {
         &[]
     }
-    fn output_product_families(&self) -> &[SumcheckOutputProductFamilyPlan] {
+    fn relation_output_product_families(&self) -> &[RelationOutputProductFamilyPlan] {
         &[]
     }
-    fn output_function_families(&self) -> &[SumcheckOutputFunctionFamilyPlan] {
+    fn relation_output_function_families(&self) -> &[RelationOutputFunctionFamilyPlan] {
         &[]
     }
-    fn output_claims(&self) -> &[SumcheckOutputClaimPlan];
+    fn relation_outputs(&self) -> &[RelationOutputPlan];
     fn point_zeros(&self) -> Vec<VerifierPointZeroPlan>;
     fn point_slices(&self) -> &[Self::PointSlice];
     fn point_concats(&self) -> &[Self::PointConcat];
@@ -746,11 +750,11 @@ where
             })
             .collect(),
         indexed_eval_families: source.indexed_eval_families().to_vec(),
-        output_values: source.output_values().to_vec(),
-        output_families: source.output_families().to_vec(),
-        output_product_families: source.output_product_families().to_vec(),
-        output_function_families: source.output_function_families().to_vec(),
-        output_claims: source.output_claims().to_vec(),
+        relation_output_values: source.relation_output_values().to_vec(),
+        relation_output_eval_families: source.relation_output_eval_families().to_vec(),
+        relation_output_product_families: source.relation_output_product_families().to_vec(),
+        relation_output_function_families: source.relation_output_function_families().to_vec(),
+        relation_outputs: source.relation_outputs().to_vec(),
         point_zeros: source.point_zeros(),
         point_slices: source
             .point_slices()
@@ -865,9 +869,9 @@ macro_rules! impl_verifier_plan_source_traits {
         $(, absorb = $absorb:ty)?
         $(, point_zero = $point_zero:ty)?
         $(, indexed_eval_families = $indexed_eval_families:ident)?
-        $(, output_families = $output_families:ident)?
-        $(, output_product_families = $output_product_families:ident)?
-        $(, output_function_families = $output_function_families:ident)?
+        $(, relation_output_eval_families = $relation_output_eval_families:ident)?
+        $(, relation_output_product_families = $relation_output_product_families:ident)?
+        $(, relation_output_function_families = $relation_output_function_families:ident)?
         $(,)?
     ) => {
         impl $crate::protocols::jolt::verifier_plan::VerifierStagePlanSource for $program {
@@ -907,26 +911,26 @@ macro_rules! impl_verifier_plan_source_traits {
                     @indexed_eval_families self $(, $indexed_eval_families)?
                 )
             }
-            fn output_values(&self) -> &[$crate::protocols::jolt::verifier_output_claims::StructuredPolynomialEvalPlan] {
-                &self.output_values
+            fn relation_output_values(&self) -> &[$crate::protocols::jolt::verifier_relation_outputs::StructuredPolynomialEvalPlan] {
+                &self.relation_output_values
             }
-            fn output_families(&self) -> &[$crate::protocols::jolt::verifier_output_claims::SumcheckOutputEvalFamilyPlan] {
+            fn relation_output_eval_families(&self) -> &[$crate::protocols::jolt::verifier_relation_outputs::RelationOutputEvalFamilyPlan] {
                 $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
-                    @output_families self $(, $output_families)?
+                    @relation_output_eval_families self $(, $relation_output_eval_families)?
                 )
             }
-            fn output_product_families(&self) -> &[$crate::protocols::jolt::verifier_output_claims::SumcheckOutputProductFamilyPlan] {
+            fn relation_output_product_families(&self) -> &[$crate::protocols::jolt::verifier_relation_outputs::RelationOutputProductFamilyPlan] {
                 $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
-                    @output_product_families self $(, $output_product_families)?
+                    @relation_output_product_families self $(, $relation_output_product_families)?
                 )
             }
-            fn output_function_families(&self) -> &[$crate::protocols::jolt::verifier_output_claims::SumcheckOutputFunctionFamilyPlan] {
+            fn relation_output_function_families(&self) -> &[$crate::protocols::jolt::verifier_relation_outputs::RelationOutputFunctionFamilyPlan] {
                 $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
-                    @output_function_families self $(, $output_function_families)?
+                    @relation_output_function_families self $(, $relation_output_function_families)?
                 )
             }
-            fn output_claims(&self) -> &[$crate::protocols::jolt::verifier_output_claims::SumcheckOutputClaimPlan] {
-                &self.output_claims
+            fn relation_outputs(&self) -> &[$crate::protocols::jolt::verifier_relation_outputs::RelationOutputPlan] {
+                &self.relation_outputs
             }
             fn point_zeros(&self) -> Vec<$crate::protocols::jolt::verifier_plan::VerifierPointZeroPlan> {
                 $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
@@ -1110,22 +1114,22 @@ macro_rules! impl_verifier_plan_source_traits {
     (@indexed_eval_families $self:ident) => {
         &[]
     };
-    (@output_families $self:ident, $output_families:ident) => {
-        &$self.$output_families
+    (@relation_output_eval_families $self:ident, $relation_output_eval_families:ident) => {
+        &$self.$relation_output_eval_families
     };
-    (@output_families $self:ident) => {
+    (@relation_output_eval_families $self:ident) => {
         &[]
     };
-    (@output_product_families $self:ident, $output_product_families:ident) => {
-        &$self.$output_product_families
+    (@relation_output_product_families $self:ident, $relation_output_product_families:ident) => {
+        &$self.$relation_output_product_families
     };
-    (@output_product_families $self:ident) => {
+    (@relation_output_product_families $self:ident) => {
         &[]
     };
-    (@output_function_families $self:ident, $output_function_families:ident) => {
-        &$self.$output_function_families
+    (@relation_output_function_families $self:ident, $relation_output_function_families:ident) => {
+        &$self.$relation_output_function_families
     };
-    (@output_function_families $self:ident) => {
+    (@relation_output_function_families $self:ident) => {
         &[]
     };
 }

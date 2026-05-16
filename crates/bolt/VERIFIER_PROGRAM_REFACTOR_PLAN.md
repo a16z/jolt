@@ -29,7 +29,7 @@ The current stack has already moved beyond the original S1 framing:
 - Generated stages use typed relation enums instead of relation `&'static str`
   dispatch.
 - The top-level verifier executes a typed verifier-program plan.
-- Structured output-claim and polynomial-eval plans have started replacing
+- Structured relation-output and polynomial-eval plans have started replacing
   handwritten verifier math.
 
 The remaining plan is therefore **pass-first, runtime-second**. The primary
@@ -140,11 +140,11 @@ pub enum VerifierStepPlan {
 ```
 
 `SumcheckDriverPlan` is the central verifier concept. It should contain the
-proof slot, round schedule, input-claim plan, batching plan, output-claim
-emission, value/eval observation, expected-output scalar, and opening-claim
-emission for one sumcheck driver. Planning passes should assemble this shape
-before Rust emission. The runtime should not need to rediscover whether a driver
-came from "Stage 3" or "Stage 6" except for diagnostics and proof-record layout.
+proof slot, round schedule, input-claim plan, batching plan, relation-output
+plan, value/eval observation, expected-output scalar, and opening-claim emission
+for one sumcheck driver. Planning passes should assemble this shape before Rust
+emission. The runtime should not need to rediscover whether a driver came from
+"Stage 3" or "Stage 6" except for diagnostics and proof-record layout.
 
 Commitment receipt and PCS opening verification are first-class verifier steps,
 not synthetic stages. Partial verification targets should eventually be named
@@ -184,7 +184,7 @@ an explicit decision, or weaker semantically.
 | Slice | Tier A | Tier B | Tier C | jolt-verifier total | Notes |
 |-------|-------:|-------:|-------:|--------------------:|-------|
 | post-S1 (today) | 1,265 | 638 | 6,430 | 7,905 | hard ceilings: A 1,400 / B 700 / C surface 6,100 |
-| current stack | ~0 in generated crate | <=700 | bounded by cleanup gates | bounded by cleanup gates | runtime extraction, typed relations, top-level verifier program, output-claim plans |
+| current stack | ~0 in generated crate | <=700 | bounded by cleanup gates | bounded by cleanup gates | runtime extraction, typed relations, top-level verifier program, relation-output plans |
 | next pass-first slice | narrow runtime | <=700 | stable or lower | stable or lower | classify runtime/codegen/poly ownership and add planning-pass seams |
 | value graph | narrow runtime | <=638 | ~6,300-6,500 | ~6,500 | typed scalar/point/vector/eval-family plans |
 | eval families | narrow runtime | ~350 | ~6,500 | ~6,500 | typed indexed-eval addressing |
@@ -526,7 +526,7 @@ emitter or `bolt-verifier-runtime` responsible for discovering verifier
 semantics.
 
 The current `cpu` layer still carries protocol-plan material such as stages,
-proof slots, relation symbols, opening sources, point order, output claims, and
+proof slots, relation symbols, opening sources, point order, relation outputs, and
 PCS policies. That is acceptable as a transitional representation, but the
 Rust emitter should not parse those fields into execution meaning. It should
 consume a typed Rust-plan / verifier-plan representation produced by passes.
@@ -540,8 +540,8 @@ consume a typed Rust-plan / verifier-plan representation produced by passes.
    verifier data requirements, and kernel ABI where relevant.
 3. `plan-verifier-sumchecks`: lower verifier sumcheck ops plus batches and
    instance results into `SumcheckDriverPlan` rows.
-4. `plan-field-and-output-claims`: canonicalize field expressions, structured
-   polynomial evals, and output-claim equations into a typed scalar/point/value
+4. `plan-field-and-relation-outputs`: canonicalize field expressions, structured
+   polynomial evals, and relation-output equations into a typed scalar/point/value
    graph.
 5. `plan-opening-flow`: resolve opening inputs, claims, equalities, batches,
    point/eval sources, arities, and ordering.
@@ -557,7 +557,7 @@ consume a typed Rust-plan / verifier-plan representation produced by passes.
   parsing or new runtime string dispatch.
 - Relation strings are converted to typed relation IDs before Rust token
   emission.
-- Output-claim and point-normalization planning can be inspected without
+- Relation-output and point-normalization planning can be inspected without
   reading emitted Rust templates.
 - The Rust emitter's responsibility is mostly formatting typed const data and
   importing the right runtime/Jolt-boundary APIs.
@@ -580,9 +580,9 @@ eval-family values.
 ### Current status
 
 The scalar/point source registry has been moved out of
-`verifier_output_claims` into `verifier_values`. This is only the foundation:
+`verifier_relation_outputs` into `verifier_values`. This is only the foundation:
 it gives scalar and point domains an explicit home. `VerifierStagePlan` now
-carries enough scalar/point source data for Stage 3-7 output-claim validation
+carries enough scalar/point source data for Stage 3-7 relation-output validation
 and verifier opening-flow validation to consume plan-derived value sources
 instead of rebuilding point sources in each stage. Verifier field-flow
 validation also consumes plan-derived scalar sources; the remaining CPU scalar
@@ -597,8 +597,11 @@ bytecode read-RAF relation plans now reference the same plan-level
 `STAGE*_INDEXED_EVAL_FAMILIES` rows instead of emitting duplicate
 relation-local `NamedEvalFamilyPlan` constants. Output relation rows now name
 their terminal scalar `expected_output`, keeping verifier expected-output data
-separate from input sumcheck `claim_value` data. Output eval families are still
-scalar-output claim machinery rather than first-class value rows.
+separate from input sumcheck `claim_value` data. The Rust planning surface now
+uses `RelationOutputPlan`, `relation_outputs`, and `STAGE*_RELATION_OUTPUTS`
+instead of the old `SumcheckOutputClaimPlan`/`output_claims` names. Output eval
+families are still relation-output scalar machinery rather than first-class
+value rows.
 
 ### Dialect changes
 
@@ -774,7 +777,7 @@ relation code and the runtime against reintroducing indexed eval-prefix APIs.
 
 Stage 5 instruction read-RAF and Stage 6 bytecode read-RAF now carry explicit
 Bolt-side `IndexedEvalFamilyPlan` rows in the verifier-stage plan. The relevant
-relation/output-claim planners consume those rows instead of re-deriving the
+relation-output planners consume those rows instead of re-deriving the
 family from raw evals at the point of Rust token emission.
 
 Stage 5/6 family membership now originates as first-class
@@ -1216,7 +1219,7 @@ next autonomous implementation slices:
 ```text
 Current stack.                                   [already in progress]
   Runtime extraction, typed relation IDs, top-level verifier program,
-  output-claim plans, cleanup gates.
+  relation-output plans, cleanup gates.
 
 Do S2 boundary audit next.                        [unconditional]
   Narrow runtime APIs.

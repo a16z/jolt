@@ -15,18 +15,18 @@ use crate::protocols::jolt::stage5_instruction_read_raf_plan::{
     Stage5InstructionReadRafEmitPlan, Stage5InstructionReadRafOutputFieldExprPlan,
 };
 use crate::protocols::jolt::verifier_eval_families::{self, IndexedEvalFamilyPlan};
-use crate::protocols::jolt::verifier_output_claims::{
+use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
+use crate::protocols::jolt::verifier_relation_outputs::{
     self, parse_output_eval_family_plan, parse_output_function_family_plan,
     parse_output_product_family_plan, FieldExprDependencies,
+    RelationOutputAst as Stage5RelationOutputAst,
+    RelationOutputEvalFamilyPlan as Stage5RelationOutputEvalFamilyPlan,
+    RelationOutputFunctionFamilyPlan as Stage5RelationOutputFunctionFamilyPlan,
+    RelationOutputPlan as Stage5RelationOutputPlan,
+    RelationOutputProductFamilyPlan as Stage5RelationOutputProductFamilyPlan,
     StructuredPolynomialEvalPlan as Stage5StructuredPolynomialEvalPlan,
     StructuredPolynomialPointPlan as Stage5StructuredPolynomialPointPlan,
-    SumcheckOutputClaimAst as Stage5SumcheckOutputClaimAst,
-    SumcheckOutputClaimPlan as Stage5SumcheckOutputClaimPlan,
-    SumcheckOutputEvalFamilyPlan as Stage5SumcheckOutputEvalFamilyPlan,
-    SumcheckOutputFunctionFamilyPlan as Stage5SumcheckOutputFunctionFamilyPlan,
-    SumcheckOutputProductFamilyPlan as Stage5SumcheckOutputProductFamilyPlan,
 };
-use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
 use crate::protocols::jolt::verifier_values;
 use crate::schema::verify_cpu_schema;
 
@@ -48,11 +48,11 @@ pub struct Stage5CpuProgram {
     pub drivers: Vec<Stage5SumcheckDriverPlan>,
     pub instance_results: Vec<Stage5SumcheckInstanceResultPlan>,
     pub evals: Vec<Stage5SumcheckEvalPlan>,
-    pub output_values: Vec<Stage5StructuredPolynomialEvalPlan>,
-    pub output_families: Vec<Stage5SumcheckOutputEvalFamilyPlan>,
-    pub output_product_families: Vec<Stage5SumcheckOutputProductFamilyPlan>,
-    pub output_function_families: Vec<Stage5SumcheckOutputFunctionFamilyPlan>,
-    pub output_claims: Vec<Stage5SumcheckOutputClaimPlan>,
+    pub relation_output_values: Vec<Stage5StructuredPolynomialEvalPlan>,
+    pub relation_output_eval_families: Vec<Stage5RelationOutputEvalFamilyPlan>,
+    pub relation_output_product_families: Vec<Stage5RelationOutputProductFamilyPlan>,
+    pub relation_output_function_families: Vec<Stage5RelationOutputFunctionFamilyPlan>,
+    pub relation_outputs: Vec<Stage5RelationOutputPlan>,
     pub point_slices: Vec<Stage5PointSlicePlan>,
     pub point_concats: Vec<Stage5PointConcatPlan>,
     pub opening_claims: Vec<Stage5OpeningClaimPlan>,
@@ -277,9 +277,9 @@ verifier_plan::impl_verifier_plan_source_traits!(
     opening_batch = Stage5OpeningBatchPlan,
     absorb = Stage5TranscriptAbsorbBytesPlan,
     indexed_eval_families = indexed_eval_families,
-    output_families = output_families,
-    output_product_families = output_product_families,
-    output_function_families = output_function_families,
+    relation_output_eval_families = relation_output_eval_families,
+    relation_output_product_families = relation_output_product_families,
+    relation_output_function_families = relation_output_function_families,
 );
 
 pub fn stage5_cpu_program(module: &BoltModule<'_, Cpu>) -> Result<Stage5CpuProgram, EmitError> {
@@ -314,11 +314,11 @@ impl Stage5CpuProgram {
         let mut instance_results = Vec::new();
         let mut evals = Vec::new();
         let mut indexed_eval_families = Vec::new();
-        let mut output_values = Vec::new();
-        let mut output_families = Vec::new();
-        let mut output_product_families = Vec::new();
-        let mut output_function_families = Vec::new();
-        let mut output_claim_asts = Vec::new();
+        let mut relation_output_values = Vec::new();
+        let mut relation_output_eval_families = Vec::new();
+        let mut relation_output_product_families = Vec::new();
+        let mut relation_output_function_families = Vec::new();
+        let mut relation_output_asts = Vec::new();
         let mut point_slices = Vec::new();
         let mut point_concats = Vec::new();
         let mut opening_claims = Vec::new();
@@ -547,7 +547,7 @@ impl Stage5CpuProgram {
                         string_attr(op, "y_point_length")?,
                         string_attr(op, "y_point_order")?,
                     )?;
-                    output_values.push(Stage5StructuredPolynomialEvalPlan::from_cpu(
+                    relation_output_values.push(Stage5StructuredPolynomialEvalPlan::from_cpu(
                         symbol,
                         string_attr(op, "polynomial")?,
                         x_point,
@@ -555,16 +555,19 @@ impl Stage5CpuProgram {
                     )?);
                 }
                 "cpu.sumcheck_output_eval_family" => {
-                    output_families.push(parse_output_eval_family_plan("stage5", op)?);
+                    relation_output_eval_families
+                        .push(parse_output_eval_family_plan("stage5", op)?);
                 }
                 "cpu.sumcheck_output_product_family" => {
-                    output_product_families.push(parse_output_product_family_plan("stage5", op)?);
+                    relation_output_product_families
+                        .push(parse_output_product_family_plan("stage5", op)?);
                 }
                 "cpu.sumcheck_output_function_family" => {
-                    output_function_families.push(parse_output_function_family_plan("stage5", op)?);
+                    relation_output_function_families
+                        .push(parse_output_function_family_plan("stage5", op)?);
                 }
                 "cpu.sumcheck_output_claim" => {
-                    output_claim_asts.push(Stage5SumcheckOutputClaimAst {
+                    relation_output_asts.push(Stage5RelationOutputAst {
                         relation: symbol_attr(op, "relation")?,
                         expected_output: operand_symbol(op, 0)?,
                         polynomial_evals: symbol_array_attr(op, "polynomial_evals")?,
@@ -627,23 +630,23 @@ impl Stage5CpuProgram {
             .ok_or_else(|| EmitError::new("missing cpu party role"))?;
         let is_verifier = role == Role::Verifier;
         if role == Role::Prover {
-            verifier_output_claims::prune_output_only_field_exprs(
+            verifier_relation_outputs::prune_output_only_field_exprs(
                 &mut field_exprs,
                 claims.iter().map(|claim| claim.claim_value.as_str()),
-                output_claim_asts
+                relation_output_asts
                     .iter()
                     .map(|claim| claim.expected_output.as_str()),
             );
         }
-        let mut output_claims = if role == Role::Verifier {
-            verifier_output_claims::resolve_output_claims(
+        let mut relation_outputs = if role == Role::Verifier {
+            verifier_relation_outputs::resolve_relation_outputs(
                 "stage5",
-                &output_values,
-                &output_families,
-                &output_product_families,
-                &output_function_families,
+                &relation_output_values,
+                &relation_output_eval_families,
+                &relation_output_product_families,
+                &relation_output_function_families,
                 &field_exprs,
-                output_claim_asts,
+                relation_output_asts,
             )?
         } else {
             Vec::new()
@@ -651,9 +654,9 @@ impl Stage5CpuProgram {
         if role == Role::Verifier {
             let output_plan =
                 Stage5InstructionReadRafEmitPlan::from_eval_families(&indexed_eval_families)?
-                    .output_claim_plan();
+                    .relation_output_plan();
             field_exprs.extend(output_plan.field_exprs.into_iter().map(stage5_field_expr));
-            output_claims.push(output_plan.claim);
+            relation_outputs.push(output_plan.claim);
         }
 
         let mut program = Self {
@@ -673,11 +676,11 @@ impl Stage5CpuProgram {
             drivers,
             instance_results,
             evals,
-            output_values,
-            output_families,
-            output_product_families,
-            output_function_families,
-            output_claims,
+            relation_output_values,
+            relation_output_eval_families,
+            relation_output_product_families,
+            relation_output_function_families,
+            relation_outputs,
             point_slices,
             point_concats,
             opening_claims,
@@ -715,7 +718,7 @@ impl Stage5CpuProgram {
             Role::Verifier => self.verify_verifier_driver_bindings()?,
         }
         if self.role == Role::Verifier {
-            self.verify_output_claims()?;
+            self.verify_relation_outputs()?;
         }
         self.verify_opening_flow()
     }
@@ -803,45 +806,49 @@ impl Stage5CpuProgram {
             verifier_values::VerifierScalarSourceKind::TranscriptScalar,
         );
         values.extend(
-            self.output_values.iter().map(|value| &value.symbol),
+            self.relation_output_values
+                .iter()
+                .map(|value| &value.symbol),
             verifier_values::VerifierScalarSourceKind::StructuredPolynomialEval,
         );
         values.extend(
-            self.output_claims
+            self.relation_outputs
                 .iter()
                 .flat_map(|claim| claim.polynomial_evals.iter().map(|value| &value.symbol)),
             verifier_values::VerifierScalarSourceKind::StructuredPolynomialEval,
         );
         values.extend(
-            self.output_families.iter().map(|family| &family.symbol),
+            self.relation_output_eval_families
+                .iter()
+                .map(|family| &family.symbol),
             verifier_values::VerifierScalarSourceKind::OutputEvalFamily,
         );
         values.extend(
-            self.output_product_families
+            self.relation_output_product_families
                 .iter()
                 .map(|family| &family.symbol),
             verifier_values::VerifierScalarSourceKind::OutputProductFamily,
         );
         values.extend(
-            self.output_function_families
+            self.relation_output_function_families
                 .iter()
                 .map(|family| &family.symbol),
             verifier_values::VerifierScalarSourceKind::OutputFunctionFamily,
         );
         values.extend(
-            self.output_claims
+            self.relation_outputs
                 .iter()
                 .flat_map(|claim| claim.eval_families.iter().map(|family| &family.symbol)),
             verifier_values::VerifierScalarSourceKind::OutputEvalFamily,
         );
         values.extend(
-            self.output_claims
+            self.relation_outputs
                 .iter()
                 .flat_map(|claim| claim.product_families.iter().map(|family| &family.symbol)),
             verifier_values::VerifierScalarSourceKind::OutputProductFamily,
         );
         values.extend(
-            self.output_claims
+            self.relation_outputs
                 .iter()
                 .flat_map(|claim| claim.function_families.iter().map(|family| &family.symbol)),
             verifier_values::VerifierScalarSourceKind::OutputFunctionFamily,
@@ -851,7 +858,7 @@ impl Stage5CpuProgram {
             verifier_values::VerifierScalarSourceKind::FieldExpr,
         );
         values.extend(
-            self.output_claims
+            self.relation_outputs
                 .iter()
                 .flat_map(|claim| claim.local_scalars.iter()),
             verifier_values::VerifierScalarSourceKind::PointDerived,
@@ -1036,7 +1043,7 @@ impl Stage5CpuProgram {
         Ok(())
     }
 
-    fn verify_output_claims(&self) -> Result<(), EmitError> {
+    fn verify_relation_outputs(&self) -> Result<(), EmitError> {
         let relations = symbols(
             self.instance_results
                 .iter()
@@ -1045,14 +1052,14 @@ impl Stage5CpuProgram {
         let plan = self.verifier_plan()?;
         let field_values = plan.scalar_value_sources();
         let point_values = plan.point_value_sources();
-        verifier_output_claims::verify_output_claims(
+        verifier_relation_outputs::verify_relation_outputs(
             "stage5",
-            verifier_output_claims::OutputClaimVerification {
-                output_values: &self.output_values,
-                output_families: &self.output_families,
-                output_product_families: &self.output_product_families,
-                output_function_families: &self.output_function_families,
-                output_claims: &self.output_claims,
+            verifier_relation_outputs::RelationOutputVerification {
+                relation_output_values: &self.relation_output_values,
+                relation_output_eval_families: &self.relation_output_eval_families,
+                relation_output_product_families: &self.relation_output_product_families,
+                relation_output_function_families: &self.relation_output_function_families,
+                relation_outputs: &self.relation_outputs,
                 relations: &relations,
                 field_values: &field_values,
                 point_values: &point_values,
@@ -1456,7 +1463,7 @@ pub type Stage5CpuProgramPlan = bolt_verifier_runtime::StageProgramPlanNoPointZe
 pub type Stage5SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stage5RelationKind>;
 pub type Stage5SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage5RelationKind>;
 pub type Stage5SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage5RelationKind>;
-pub type Stage5SumcheckOutputClaimPlan = bolt_verifier_runtime::SumcheckOutputClaimPlan<Stage5RelationKind>;
+pub type Stage5RelationOutputPlan = bolt_verifier_runtime::RelationOutputPlan<Stage5RelationKind>;
 pub type Stage5StructuredPolynomialEvalPlan = bolt_verifier_runtime::StructuredPolynomialEvalPlan;
 
 pub use super::jolt_relations::JoltRelationKind as Stage5RelationKind;
@@ -1520,10 +1527,10 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
         source.push_str(&self.emit_tail_constants()?);
         if self.role == Role::Verifier {
             source.push_str(&self.emit_indexed_eval_family_constants()?);
-            source.push_str(&self.emit_verifier_output_claim_constants()?);
+            source.push_str(&self.emit_verifier_relation_output_constants()?);
         }
-        let output_claims_field = if self.role == Role::Verifier {
-            "    output_claims: STAGE5_SUMCHECK_OUTPUT_CLAIMS,\n"
+        let relation_outputs_field = if self.role == Role::Verifier {
+            "    relation_outputs: STAGE5_RELATION_OUTPUTS,\n"
         } else {
             ""
         };
@@ -1545,7 +1552,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
                  \x20   drivers: STAGE5_SUMCHECK_DRIVERS,\n\
                  \x20   instance_results: STAGE5_SUMCHECK_INSTANCE_RESULTS,\n\
                  \x20   evals: STAGE5_SUMCHECK_EVALS,\n\
-                 {output_claims_field}\
+                 {relation_outputs_field}\
                  \x20   point_slices: STAGE5_POINT_SLICES,\n\
                  \x20   point_concats: STAGE5_POINT_CONCATS,\n\
                  \x20   opening_claims: STAGE5_OPENING_CLAIMS,\n\
@@ -2028,11 +2035,11 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
         Ok(plan.emit_runtime_constants())
     }
 
-    fn emit_verifier_output_claim_constants(&self) -> Result<String, EmitError> {
-        super::output_claims::emit_verifier_output_claim_constants(
+    fn emit_verifier_relation_output_constants(&self) -> Result<String, EmitError> {
+        super::relation_outputs::emit_verifier_relation_output_constants(
             "Stage5",
             &self.role,
-            &self.output_claims,
+            &self.relation_outputs,
         )
     }
 
@@ -2504,8 +2511,8 @@ fn expected_batched_output_claim(
                     &STAGE5_INSTRUCTION_READ_RAF_PLAN,
                     local_point,
                 )?;
-                bolt_verifier_runtime::evaluate_sumcheck_instance_output_claim(
-                    program.output_claims,
+                bolt_verifier_runtime::evaluate_relation_output_for_instance(
+                    program.relation_outputs,
                     program.field_exprs,
                     store,
                     instance,
@@ -2517,8 +2524,8 @@ fn expected_batched_output_claim(
             }
             Stage5RelationKind::Stage5RamRaClaimReduction
             | Stage5RelationKind::Stage5RegistersValEvaluation => {
-                bolt_verifier_runtime::evaluate_sumcheck_instance_output_claim(
-                    program.output_claims,
+                bolt_verifier_runtime::evaluate_relation_output_for_instance(
+                    program.relation_outputs,
                     program.field_exprs,
                     store,
                     instance,

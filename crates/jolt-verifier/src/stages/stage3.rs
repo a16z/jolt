@@ -17,7 +17,7 @@ pub type Stage3VerifierProgramPlan = bolt_verifier_runtime::StageVerifierProgram
 pub type Stage3SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stage3RelationKind>;
 pub type Stage3SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage3RelationKind>;
 pub type Stage3SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage3RelationKind>;
-pub type Stage3SumcheckOutputClaimPlan = bolt_verifier_runtime::SumcheckOutputClaimPlan<Stage3RelationKind>;
+pub type Stage3RelationOutputPlan = bolt_verifier_runtime::RelationOutputPlan<Stage3RelationKind>;
 pub type Stage3StructuredPolynomialEvalPlan = bolt_verifier_runtime::StructuredPolynomialEvalPlan;
 
 pub use super::jolt_relations::JoltRelationKind as Stage3RelationKind;
@@ -210,23 +210,23 @@ pub const STAGE3_OPENING_EQUALITIES: &[Stage3OpeningClaimEqualityPlan] = &[
 pub const STAGE3_OPENING_BATCHES: &[Stage3OpeningBatchPlan] = &[
     Stage3OpeningBatchPlan { symbol: "stage3.openings", stage: "stage3", proof_slot: "stage3.openings", policy: "jolt_stage3_output_order", count: 16, ordered_claims: &["stage3.spartan_shift.opening.UnexpandedPC", "stage3.spartan_shift.opening.PC", "stage3.spartan_shift.opening.OpFlagVirtualInstruction", "stage3.spartan_shift.opening.OpFlagIsFirstInSequence", "stage3.spartan_shift.opening.InstructionFlagIsNoop", "stage3.instruction_input.opening.InstructionFlagLeftOperandIsRs1Value", "stage3.instruction_input.opening.Rs1Value", "stage3.instruction_input.opening.InstructionFlagLeftOperandIsPC", "stage3.instruction_input.opening.UnexpandedPC", "stage3.instruction_input.opening.InstructionFlagRightOperandIsRs2Value", "stage3.instruction_input.opening.Rs2Value", "stage3.instruction_input.opening.InstructionFlagRightOperandIsImm", "stage3.instruction_input.opening.Imm", "stage3.registers_claim_reduction.opening.RdWriteValue", "stage3.registers_claim_reduction.opening.Rs1Value", "stage3.registers_claim_reduction.opening.Rs2Value"], claim_operands: &["stage3.spartan_shift.opening.UnexpandedPC", "stage3.spartan_shift.opening.PC", "stage3.spartan_shift.opening.OpFlagVirtualInstruction", "stage3.spartan_shift.opening.OpFlagIsFirstInSequence", "stage3.spartan_shift.opening.InstructionFlagIsNoop", "stage3.instruction_input.opening.InstructionFlagLeftOperandIsRs1Value", "stage3.instruction_input.opening.Rs1Value", "stage3.instruction_input.opening.InstructionFlagLeftOperandIsPC", "stage3.instruction_input.opening.UnexpandedPC", "stage3.instruction_input.opening.InstructionFlagRightOperandIsRs2Value", "stage3.instruction_input.opening.Rs2Value", "stage3.instruction_input.opening.InstructionFlagRightOperandIsImm", "stage3.instruction_input.opening.Imm", "stage3.registers_claim_reduction.opening.RdWriteValue", "stage3.registers_claim_reduction.opening.Rs1Value", "stage3.registers_claim_reduction.opening.Rs2Value"] },
 ];
-pub const STAGE3_SUMCHECK_OUTPUT_CLAIM_0_VALUES: &[Stage3StructuredPolynomialEvalPlan] = &[
+pub const STAGE3_RELATION_OUTPUT_0_VALUES: &[Stage3StructuredPolynomialEvalPlan] = &[
     Stage3StructuredPolynomialEvalPlan { symbol: "stage3.spartan_shift.output.eq.NextPC", polynomial: Stage3StructuredPolynomialKind::EqPlusOne, x_point: Stage3StructuredPolynomialPointPlan { source: "stage3.spartan_shift.instance", segment: Stage3StructuredPolynomialPointSegment::Full, length: Stage3StructuredPolynomialPointLength::Full, order: Stage3StructuredPolynomialPointOrder::Reverse }, y_point: Stage3StructuredPolynomialPointPlan { source: "stage3.input.stage1.NextPC", segment: Stage3StructuredPolynomialPointSegment::Full, length: Stage3StructuredPolynomialPointLength::Full, order: Stage3StructuredPolynomialPointOrder::AsIs } },
     Stage3StructuredPolynomialEvalPlan { symbol: "stage3.spartan_shift.output.eq.NextIsNoop", polynomial: Stage3StructuredPolynomialKind::EqPlusOne, x_point: Stage3StructuredPolynomialPointPlan { source: "stage3.spartan_shift.instance", segment: Stage3StructuredPolynomialPointSegment::Full, length: Stage3StructuredPolynomialPointLength::Full, order: Stage3StructuredPolynomialPointOrder::Reverse }, y_point: Stage3StructuredPolynomialPointPlan { source: "stage3.input.stage2.product_virtual.NextIsNoop", segment: Stage3StructuredPolynomialPointSegment::Full, length: Stage3StructuredPolynomialPointLength::Full, order: Stage3StructuredPolynomialPointOrder::AsIs } },
 ];
 
-pub const STAGE3_SUMCHECK_OUTPUT_CLAIM_1_VALUES: &[Stage3StructuredPolynomialEvalPlan] = &[
+pub const STAGE3_RELATION_OUTPUT_1_VALUES: &[Stage3StructuredPolynomialEvalPlan] = &[
     Stage3StructuredPolynomialEvalPlan { symbol: "stage3.instruction_input.output.eq.LeftInstructionInput", polynomial: Stage3StructuredPolynomialKind::Eq, x_point: Stage3StructuredPolynomialPointPlan { source: "stage3.instruction_input.instance", segment: Stage3StructuredPolynomialPointSegment::Full, length: Stage3StructuredPolynomialPointLength::Full, order: Stage3StructuredPolynomialPointOrder::Reverse }, y_point: Stage3StructuredPolynomialPointPlan { source: "stage3.input.stage2.product_virtual.LeftInstructionInput", segment: Stage3StructuredPolynomialPointSegment::Full, length: Stage3StructuredPolynomialPointLength::Full, order: Stage3StructuredPolynomialPointOrder::AsIs } },
 ];
 
-pub const STAGE3_SUMCHECK_OUTPUT_CLAIM_2_VALUES: &[Stage3StructuredPolynomialEvalPlan] = &[
+pub const STAGE3_RELATION_OUTPUT_2_VALUES: &[Stage3StructuredPolynomialEvalPlan] = &[
     Stage3StructuredPolynomialEvalPlan { symbol: "stage3.registers.output.eq.RdWriteValue", polynomial: Stage3StructuredPolynomialKind::Eq, x_point: Stage3StructuredPolynomialPointPlan { source: "stage3.registers_claim_reduction.instance", segment: Stage3StructuredPolynomialPointSegment::Full, length: Stage3StructuredPolynomialPointLength::Full, order: Stage3StructuredPolynomialPointOrder::Reverse }, y_point: Stage3StructuredPolynomialPointPlan { source: "stage3.input.stage1.RdWriteValue", segment: Stage3StructuredPolynomialPointSegment::Full, length: Stage3StructuredPolynomialPointLength::Full, order: Stage3StructuredPolynomialPointOrder::AsIs } },
 ];
 
-pub const STAGE3_SUMCHECK_OUTPUT_CLAIMS: &[Stage3SumcheckOutputClaimPlan] = &[
-    Stage3SumcheckOutputClaimPlan { relation: Stage3RelationKind::Stage3SpartanShift, polynomial_evals: STAGE3_SUMCHECK_OUTPUT_CLAIM_0_VALUES, eval_families: &[], product_families: &[], function_families: &[], local_scalars: &[], expected_output: "stage3.spartan_shift.output.claim_expr" },
-    Stage3SumcheckOutputClaimPlan { relation: Stage3RelationKind::Stage3InstructionInput, polynomial_evals: STAGE3_SUMCHECK_OUTPUT_CLAIM_1_VALUES, eval_families: &[], product_families: &[], function_families: &[], local_scalars: &[], expected_output: "stage3.instruction_input.output.claim_expr" },
-    Stage3SumcheckOutputClaimPlan { relation: Stage3RelationKind::Stage3RegistersClaimReduction, polynomial_evals: STAGE3_SUMCHECK_OUTPUT_CLAIM_2_VALUES, eval_families: &[], product_families: &[], function_families: &[], local_scalars: &[], expected_output: "stage3.registers.output.claim_expr" },
+pub const STAGE3_RELATION_OUTPUTS: &[Stage3RelationOutputPlan] = &[
+    Stage3RelationOutputPlan { relation: Stage3RelationKind::Stage3SpartanShift, polynomial_evals: STAGE3_RELATION_OUTPUT_0_VALUES, eval_families: &[], product_families: &[], function_families: &[], local_scalars: &[], expected_output: "stage3.spartan_shift.output.claim_expr" },
+    Stage3RelationOutputPlan { relation: Stage3RelationKind::Stage3InstructionInput, polynomial_evals: STAGE3_RELATION_OUTPUT_1_VALUES, eval_families: &[], product_families: &[], function_families: &[], local_scalars: &[], expected_output: "stage3.instruction_input.output.claim_expr" },
+    Stage3RelationOutputPlan { relation: Stage3RelationKind::Stage3RegistersClaimReduction, polynomial_evals: STAGE3_RELATION_OUTPUT_2_VALUES, eval_families: &[], product_families: &[], function_families: &[], local_scalars: &[], expected_output: "stage3.registers.output.claim_expr" },
 ];
 
 pub const STAGE3_PROGRAM: Stage3VerifierProgramPlan = Stage3VerifierProgramPlan {
@@ -241,7 +241,7 @@ pub const STAGE3_PROGRAM: Stage3VerifierProgramPlan = Stage3VerifierProgramPlan 
     drivers: STAGE3_SUMCHECK_DRIVERS,
     instance_results: STAGE3_SUMCHECK_INSTANCE_RESULTS,
     evals: STAGE3_SUMCHECK_EVALS,
-    output_claims: STAGE3_SUMCHECK_OUTPUT_CLAIMS,
+    relation_outputs: STAGE3_RELATION_OUTPUTS,
     point_slices: STAGE3_POINT_SLICES,
     point_concats: STAGE3_POINT_CONCATS,
     opening_claims: STAGE3_OPENING_CLAIMS,
@@ -487,8 +487,8 @@ fn expected_batched_output_claim(
                 expected: instance.round_offset + instance.num_rounds,
                 actual: point.len(),
             })?;
-        let value = bolt_verifier_runtime::evaluate_sumcheck_instance_output_claim(
-            program.output_claims,
+        let value = bolt_verifier_runtime::evaluate_relation_output_for_instance(
+            program.relation_outputs,
             program.field_exprs,
             store,
             instance,

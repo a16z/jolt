@@ -389,11 +389,11 @@ fn generated_sumcheck_point_order(value: &str) -> bolt_verifier_runtime::Sumchec
     clippy::panic,
     reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier enum tag"
 )]
-fn generated_output_function_kind(
+fn generated_relation_output_function_kind(
     value: &str,
-) -> bolt_verifier_runtime::SumcheckOutputFunctionKind {
+) -> bolt_verifier_runtime::RelationOutputFunctionKind {
     match value {
-        "boolean_zero" => bolt_verifier_runtime::SumcheckOutputFunctionKind::BooleanZero,
+        "boolean_zero" => bolt_verifier_runtime::RelationOutputFunctionKind::BooleanZero,
         value => panic!("unsupported generated output function `{value}`"),
     }
 }
@@ -469,8 +469,8 @@ macro_rules! define_stage_adapter_impl {
         $(, transcript_absorb_bytes = $absorb:ident)?
         $(, kernels = $kernel:ident)?
         $(, point_zeros = $point_zero:ident)?
-        $(, output_claims = $output_claim:ident, output_values = $output_value:ident)?
-        $(, empty_output_claims = $empty_output_claims:ident)?
+        $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
+        $(, empty_relation_outputs = $empty_relation_outputs:ident)?
         $(, opening_equalities = $opening_equality:ident)?
     ) => {
         pub fn $function(program: &$compiler) -> &'static $module::$program {
@@ -619,16 +619,16 @@ macro_rules! define_stage_adapter_impl {
                         .collect(),
                 ),
                 $(
-                output_claims: super::leak_slice(
+                relation_outputs: super::leak_slice(
                     program
-                        .output_claims
+                        .relation_outputs
                         .iter()
-                        .map(|plan| $module::$output_claim {
+                        .map(|plan| $module::$relation_output {
                             relation: super::generated_relation_kind(&plan.relation),
                             polynomial_evals: super::leak_slice(
                                 plan.polynomial_evals
                                     .iter()
-                                    .map(|value| $module::$output_value {
+                                    .map(|value| $module::$relation_output_value {
                                         symbol: super::leak_str(&value.symbol),
                                         polynomial: super::generated_structured_polynomial_kind(value.polynomial.as_str()),
                                         x_point: bolt_verifier_runtime::StructuredPolynomialPointPlan {
@@ -649,7 +649,7 @@ macro_rules! define_stage_adapter_impl {
                             eval_families: super::leak_slice(
                                 plan.eval_families
                                     .iter()
-                                    .map(|family| bolt_verifier_runtime::SumcheckOutputEvalFamilyPlan {
+                                    .map(|family| bolt_verifier_runtime::RelationOutputEvalFamilyPlan {
                                         symbol: super::leak_str(&family.symbol),
                                         gamma: super::leak_str(&family.gamma),
                                         evals: super::leak_slice(
@@ -667,7 +667,7 @@ macro_rules! define_stage_adapter_impl {
                                             family
                                                 .shared_terms
                                                 .iter()
-                                                .map(|term| bolt_verifier_runtime::SumcheckOutputEvalFamilySharedTermPlan {
+                                                .map(|term| bolt_verifier_runtime::RelationOutputEvalFamilySharedTermPlan {
                                                     gamma_power_offset: term.gamma_power_offset,
                                                     factor: super::leak_str(&term.factor),
                                                 })
@@ -677,7 +677,7 @@ macro_rules! define_stage_adapter_impl {
                                             family
                                                 .item_terms
                                                 .iter()
-                                                .map(|term| bolt_verifier_runtime::SumcheckOutputEvalFamilyItemTermPlan {
+                                                .map(|term| bolt_verifier_runtime::RelationOutputEvalFamilyItemTermPlan {
                                                     gamma_power_offset: term.gamma_power_offset,
                                                     factors: super::leak_slice(
                                                         term
@@ -695,14 +695,14 @@ macro_rules! define_stage_adapter_impl {
                             product_families: super::leak_slice(
                                 plan.product_families
                                     .iter()
-                                    .map(|family| bolt_verifier_runtime::SumcheckOutputProductFamilyPlan {
+                                    .map(|family| bolt_verifier_runtime::RelationOutputProductFamilyPlan {
                                         symbol: super::leak_str(&family.symbol),
                                         gamma: family.gamma.as_ref().map(|gamma| super::leak_str(gamma)),
                                         terms: super::leak_slice(
                                             family
                                                 .terms
                                                 .iter()
-                                                .map(|term| bolt_verifier_runtime::SumcheckOutputProductFamilyTermPlan {
+                                                .map(|term| bolt_verifier_runtime::RelationOutputProductFamilyTermPlan {
                                                     gamma_power_offset: term.gamma_power_offset,
                                                     evals: super::leak_slice(
                                                         term
@@ -734,16 +734,16 @@ macro_rules! define_stage_adapter_impl {
                             function_families: super::leak_slice(
                                 plan.function_families
                                     .iter()
-                                    .map(|family| bolt_verifier_runtime::SumcheckOutputFunctionFamilyPlan {
+                                    .map(|family| bolt_verifier_runtime::RelationOutputFunctionFamilyPlan {
                                         symbol: super::leak_str(&family.symbol),
                                         gamma: family.gamma.as_ref().map(|gamma| super::leak_str(gamma)),
                                         terms: super::leak_slice(
                                             family
                                                 .terms
                                                 .iter()
-                                                .map(|term| bolt_verifier_runtime::SumcheckOutputFunctionFamilyTermPlan {
+                                                .map(|term| bolt_verifier_runtime::RelationOutputFunctionFamilyTermPlan {
                                                     gamma_power_offset: term.gamma_power_offset,
-                                                    function: super::generated_output_function_kind(term.function.as_str()),
+                                                    function: super::generated_relation_output_function_kind(term.function.as_str()),
                                                     eval: super::leak_str(&term.eval),
                                                     factors: super::leak_slice(
                                                         term
@@ -765,8 +765,8 @@ macro_rules! define_stage_adapter_impl {
                 ),
                 )?
                 $(
-                output_claims: {
-                    let _ = stringify!($empty_output_claims);
+                relation_outputs: {
+                    let _ = stringify!($empty_relation_outputs);
                     &[]
                 },
                 )?
@@ -883,8 +883,8 @@ macro_rules! define_stage_adapter {
         $opening_equality:ident,
         $opening_batch:ident
         $(, point_zero = $point_zero:ident)?
-        $(, output_claims = $output_claim:ident, output_values = $output_value:ident)?
-        $(, empty_output_claims = $empty_output_claims:ident)?
+        $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
+        $(, empty_relation_outputs = $empty_relation_outputs:ident)?
     ) => {
         define_stage_adapter_impl!(
             $mode,
@@ -911,8 +911,8 @@ macro_rules! define_stage_adapter {
             transcript_absorb_bytes = $absorb,
             kernels = $kernel
             $(, point_zeros = $point_zero)?
-            $(, output_claims = $output_claim, output_values = $output_value)?
-            $(, empty_output_claims = $empty_output_claims)?
+            $(, relation_outputs = $relation_output, relation_output_values = $relation_output_value)?
+            $(, empty_relation_outputs = $empty_relation_outputs)?
             ,
             opening_equalities = $opening_equality
         );
@@ -942,8 +942,8 @@ macro_rules! define_stage_adapter_no_absorb {
         $opening_claim:ident,
         $opening_batch:ident
         $(, kernels = $kernel:ident)?
-        $(, output_claims = $output_claim:ident, output_values = $output_value:ident)?
-        $(, empty_output_claims = $empty_output_claims:ident)?
+        $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
+        $(, empty_relation_outputs = $empty_relation_outputs:ident)?
         $(, opening_equalities = $opening_equality:ident)?
     ) => {
         define_stage_adapter_impl!(
@@ -968,8 +968,8 @@ macro_rules! define_stage_adapter_no_absorb {
             $opening_claim,
             $opening_batch
             $(, kernels = $kernel)?
-            $(, output_claims = $output_claim, output_values = $output_value)?
-            $(, empty_output_claims = $empty_output_claims)?
+            $(, relation_outputs = $relation_output, relation_output_values = $relation_output_value)?
+            $(, empty_relation_outputs = $empty_relation_outputs)?
             $(, opening_equalities = $opening_equality)?
         );
     };

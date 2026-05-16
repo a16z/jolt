@@ -1,6 +1,6 @@
 mod commitment;
-mod output_claims;
 mod plan_tokens;
+mod relation_outputs;
 mod stage1;
 mod stage2;
 mod stage3;

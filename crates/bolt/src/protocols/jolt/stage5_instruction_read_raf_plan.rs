@@ -1,10 +1,10 @@
 use crate::emit::rust::{push_format, EmitError};
 use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
-use crate::protocols::jolt::verifier_output_claims::{
+use crate::protocols::jolt::verifier_relation_outputs::{
+    RelationOutputPlan, RelationOutputProductFamilyPlan, RelationOutputProductFamilyTermPlan,
     StructuredPolynomialEvalPlan, StructuredPolynomialKind, StructuredPolynomialPointLength,
     StructuredPolynomialPointOrder, StructuredPolynomialPointPlan,
-    StructuredPolynomialPointSegment, SumcheckOutputClaimPlan, SumcheckOutputProductFamilyPlan,
-    SumcheckOutputProductFamilyTermPlan,
+    StructuredPolynomialPointSegment,
 };
 
 pub(crate) const STAGE5_TABLE_FLAG_EVAL_FAMILY: &str =
@@ -80,10 +80,10 @@ impl Stage5InstructionReadRafEmitPlan {
         source
     }
 
-    pub(crate) fn output_claim_plan(&self) -> Stage5InstructionReadRafOutputPlan {
+    pub(crate) fn relation_output_plan(&self) -> Stage5InstructionReadRafOutputPlan {
         const PREFIX: &str = "stage5.instruction_read_raf.output";
 
-        let table_value_family = SumcheckOutputProductFamilyPlan {
+        let table_value_family = RelationOutputProductFamilyPlan {
             symbol: format!("{PREFIX}.product.LookupTableValues"),
             gamma: None,
             terms: self
@@ -96,7 +96,7 @@ impl Stage5InstructionReadRafEmitPlan {
                         .filter(|value| value.is_lookup_table()),
                 )
                 .map(
-                    |(flag_eval, table_value)| SumcheckOutputProductFamilyTermPlan {
+                    |(flag_eval, table_value)| RelationOutputProductFamilyTermPlan {
                         gamma_power_offset: 0,
                         evals: vec![table_value.symbol.clone(), flag_eval.clone()],
                         eval_families: Vec::new(),
@@ -105,10 +105,10 @@ impl Stage5InstructionReadRafEmitPlan {
                 )
                 .collect(),
         };
-        let ra_product_family = SumcheckOutputProductFamilyPlan {
+        let ra_product_family = RelationOutputProductFamilyPlan {
             symbol: format!("{PREFIX}.product.InstructionRa"),
             gamma: None,
-            terms: vec![SumcheckOutputProductFamilyTermPlan {
+            terms: vec![RelationOutputProductFamilyTermPlan {
                 gamma_power_offset: 0,
                 evals: Vec::new(),
                 eval_families: vec![self.instruction_ra_evals.symbol.clone()],
@@ -203,7 +203,7 @@ impl Stage5InstructionReadRafEmitPlan {
 
         Stage5InstructionReadRafOutputPlan {
             field_exprs,
-            claim: SumcheckOutputClaimPlan {
+            claim: RelationOutputPlan {
                 relation: "jolt.stage5.instruction_read_raf".to_owned(),
                 polynomial_evals: vec![eq],
                 eval_families: Vec::new(),
@@ -229,7 +229,7 @@ pub(crate) struct Stage5InstructionReadRafPointValueEmitPlan {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Stage5InstructionReadRafOutputPlan {
     pub(crate) field_exprs: Vec<Stage5InstructionReadRafOutputFieldExprPlan>,
-    pub(crate) claim: SumcheckOutputClaimPlan,
+    pub(crate) claim: RelationOutputPlan,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -411,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    fn instruction_read_raf_output_claim_plan_is_typed() -> Result<(), EmitError> {
+    fn instruction_read_raf_relation_output_plan_is_typed() -> Result<(), EmitError> {
         let families = instruction_read_raf_families([
             (
                 "LookupTableFlag_0",
@@ -427,7 +427,7 @@ mod tests {
             ),
         ]);
         let plan = Stage5InstructionReadRafEmitPlan::from_eval_families(&families)?;
-        let output_plan = plan.output_claim_plan();
+        let output_plan = plan.relation_output_plan();
 
         assert_eq!(
             output_plan.claim.relation,

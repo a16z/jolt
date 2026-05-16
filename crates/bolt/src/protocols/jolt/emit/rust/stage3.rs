@@ -6,14 +6,13 @@ use melior::ir::{Attribute, OperationRef};
 
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
-use crate::protocols::jolt::verifier_output_claims::{
-    self, FieldExprDependencies,
+use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
+use crate::protocols::jolt::verifier_relation_outputs::{
+    self, FieldExprDependencies, RelationOutputAst as Stage3RelationOutputAst,
+    RelationOutputPlan as Stage3RelationOutputPlan,
     StructuredPolynomialEvalPlan as Stage3StructuredPolynomialEvalPlan,
     StructuredPolynomialPointPlan as Stage3StructuredPolynomialPointPlan,
-    SumcheckOutputClaimAst as Stage3SumcheckOutputClaimAst,
-    SumcheckOutputClaimPlan as Stage3SumcheckOutputClaimPlan,
 };
-use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
 use crate::protocols::jolt::verifier_values;
 use crate::schema::verify_cpu_schema;
 
@@ -33,8 +32,8 @@ pub struct Stage3CpuProgram {
     pub drivers: Vec<Stage3SumcheckDriverPlan>,
     pub instance_results: Vec<Stage3SumcheckInstanceResultPlan>,
     pub evals: Vec<Stage3SumcheckEvalPlan>,
-    pub output_values: Vec<Stage3StructuredPolynomialEvalPlan>,
-    pub output_claims: Vec<Stage3SumcheckOutputClaimPlan>,
+    pub relation_output_values: Vec<Stage3StructuredPolynomialEvalPlan>,
+    pub relation_outputs: Vec<Stage3RelationOutputPlan>,
     pub point_slices: Vec<Stage3PointSlicePlan>,
     pub point_concats: Vec<Stage3PointConcatPlan>,
     pub opening_claims: Vec<Stage3OpeningClaimPlan>,
@@ -272,8 +271,8 @@ impl Stage3CpuProgram {
         let mut drivers = Vec::new();
         let mut instance_results = Vec::new();
         let mut evals = Vec::new();
-        let mut output_values = Vec::new();
-        let mut output_claim_asts = Vec::new();
+        let mut relation_output_values = Vec::new();
+        let mut relation_output_asts = Vec::new();
         let mut point_slices = Vec::new();
         let mut point_concats = Vec::new();
         let mut opening_claims = Vec::new();
@@ -502,7 +501,7 @@ impl Stage3CpuProgram {
                         string_attr(op, "y_point_length")?,
                         string_attr(op, "y_point_order")?,
                     )?;
-                    output_values.push(Stage3StructuredPolynomialEvalPlan::from_cpu(
+                    relation_output_values.push(Stage3StructuredPolynomialEvalPlan::from_cpu(
                         symbol,
                         string_attr(op, "polynomial")?,
                         x_point,
@@ -510,7 +509,7 @@ impl Stage3CpuProgram {
                     )?);
                 }
                 "cpu.sumcheck_output_claim" => {
-                    output_claim_asts.push(Stage3SumcheckOutputClaimAst {
+                    relation_output_asts.push(Stage3RelationOutputAst {
                         relation: symbol_attr(op, "relation")?,
                         expected_output: operand_symbol(op, 0)?,
                         polynomial_evals: symbol_array_attr(op, "polynomial_evals")?,
@@ -573,23 +572,23 @@ impl Stage3CpuProgram {
             .ok_or_else(|| EmitError::new("missing cpu party role"))?;
         let is_verifier = role == Role::Verifier;
         if role == Role::Prover {
-            verifier_output_claims::prune_output_only_field_exprs(
+            verifier_relation_outputs::prune_output_only_field_exprs(
                 &mut field_exprs,
                 claims.iter().map(|claim| claim.claim_value.as_str()),
-                output_claim_asts
+                relation_output_asts
                     .iter()
                     .map(|claim| claim.expected_output.as_str()),
             );
         }
-        let output_claims = if role == Role::Verifier {
-            verifier_output_claims::resolve_output_claims(
+        let relation_outputs = if role == Role::Verifier {
+            verifier_relation_outputs::resolve_relation_outputs(
                 "stage3",
-                &output_values,
+                &relation_output_values,
                 &[],
                 &[],
                 &[],
                 &field_exprs,
-                output_claim_asts,
+                relation_output_asts,
             )?
         } else {
             Vec::new()
@@ -610,8 +609,8 @@ impl Stage3CpuProgram {
             drivers,
             instance_results,
             evals,
-            output_values,
-            output_claims,
+            relation_output_values,
+            relation_outputs,
             point_slices,
             point_concats,
             opening_claims,
@@ -649,7 +648,7 @@ impl Stage3CpuProgram {
             Role::Verifier => self.verify_verifier_driver_bindings()?,
         }
         if self.role == Role::Verifier {
-            self.verify_output_claims()?;
+            self.verify_relation_outputs()?;
         }
         self.verify_opening_flow()
     }
@@ -737,7 +736,9 @@ impl Stage3CpuProgram {
             verifier_values::VerifierScalarSourceKind::SumcheckEval,
         );
         values.extend(
-            self.output_values.iter().map(|value| &value.symbol),
+            self.relation_output_values
+                .iter()
+                .map(|value| &value.symbol),
             verifier_values::VerifierScalarSourceKind::StructuredPolynomialEval,
         );
         values
@@ -916,7 +917,7 @@ impl Stage3CpuProgram {
         Ok(())
     }
 
-    fn verify_output_claims(&self) -> Result<(), EmitError> {
+    fn verify_relation_outputs(&self) -> Result<(), EmitError> {
         let relations = symbols(
             self.instance_results
                 .iter()
@@ -925,14 +926,14 @@ impl Stage3CpuProgram {
         let plan = self.verifier_plan()?;
         let field_values = plan.scalar_value_sources();
         let point_values = plan.point_value_sources();
-        verifier_output_claims::verify_output_claims(
+        verifier_relation_outputs::verify_relation_outputs(
             "stage3",
-            verifier_output_claims::OutputClaimVerification {
-                output_values: &self.output_values,
-                output_families: &[],
-                output_product_families: &[],
-                output_function_families: &[],
-                output_claims: &self.output_claims,
+            verifier_relation_outputs::RelationOutputVerification {
+                relation_output_values: &self.relation_output_values,
+                relation_output_eval_families: &[],
+                relation_output_product_families: &[],
+                relation_output_function_families: &[],
+                relation_outputs: &self.relation_outputs,
                 relations: &relations,
                 field_values: &field_values,
                 point_values: &point_values,
@@ -1143,7 +1144,7 @@ pub type Stage3VerifierProgramPlan = bolt_verifier_runtime::StageVerifierProgram
 pub type Stage3SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stage3RelationKind>;
 pub type Stage3SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage3RelationKind>;
 pub type Stage3SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage3RelationKind>;
-pub type Stage3SumcheckOutputClaimPlan = bolt_verifier_runtime::SumcheckOutputClaimPlan<Stage3RelationKind>;
+pub type Stage3RelationOutputPlan = bolt_verifier_runtime::RelationOutputPlan<Stage3RelationKind>;
 pub type Stage3StructuredPolynomialEvalPlan = bolt_verifier_runtime::StructuredPolynomialEvalPlan;
 
 pub use super::jolt_relations::JoltRelationKind as Stage3RelationKind;
@@ -1222,7 +1223,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
         source.push_str(&self.emit_sumcheck_batch_constants());
         source.push_str(&self.emit_verifier_sumcheck_driver_constants()?);
         source.push_str(&self.emit_tail_constants()?);
-        source.push_str(&self.emit_verifier_output_claim_constants()?);
+        source.push_str(&self.emit_verifier_relation_output_constants()?);
         source.push_str(
             "pub const STAGE3_PROGRAM: Stage3VerifierProgramPlan = Stage3VerifierProgramPlan {\n\
              \x20   params: STAGE3_PARAMS,\n\
@@ -1236,7 +1237,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
              \x20   drivers: STAGE3_SUMCHECK_DRIVERS,\n\
              \x20   instance_results: STAGE3_SUMCHECK_INSTANCE_RESULTS,\n\
              \x20   evals: STAGE3_SUMCHECK_EVALS,\n\
-             \x20   output_claims: STAGE3_SUMCHECK_OUTPUT_CLAIMS,\n\
+             \x20   relation_outputs: STAGE3_RELATION_OUTPUTS,\n\
              \x20   point_slices: STAGE3_POINT_SLICES,\n\
              \x20   point_concats: STAGE3_POINT_CONCATS,\n\
              \x20   opening_claims: STAGE3_OPENING_CLAIMS,\n\
@@ -1704,11 +1705,11 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
         format!("pub const STAGE3_SUMCHECK_EVALS: &[Stage3SumcheckEvalPlan] = &[\n{evals}\n];\n\n")
     }
 
-    fn emit_verifier_output_claim_constants(&self) -> Result<String, EmitError> {
-        super::output_claims::emit_verifier_output_claim_constants(
+    fn emit_verifier_relation_output_constants(&self) -> Result<String, EmitError> {
+        super::relation_outputs::emit_verifier_relation_output_constants(
             "Stage3",
             &self.role,
-            &self.output_claims,
+            &self.relation_outputs,
         )
     }
 
@@ -2169,8 +2170,8 @@ fn expected_batched_output_claim(
                 expected: instance.round_offset + instance.num_rounds,
                 actual: point.len(),
             })?;
-        let value = bolt_verifier_runtime::evaluate_sumcheck_instance_output_claim(
-            program.output_claims,
+        let value = bolt_verifier_runtime::evaluate_relation_output_for_instance(
+            program.relation_outputs,
             program.field_exprs,
             store,
             instance,
