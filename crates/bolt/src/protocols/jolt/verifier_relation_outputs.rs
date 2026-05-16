@@ -1,13 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use melior::ir::operation::{OperationLike, OperationResult};
-use melior::ir::{Attribute, OperationRef};
+use melior::ir::OperationRef;
 
 use crate::emit::rust::EmitError;
-use crate::ir::string_attribute_value;
+use crate::protocols::jolt::cpu_attrs::{
+    int_array_attr, int_attr, operation_name, optional_symbol_array_attr, string_array_attr,
+    string_attr, symbol_array_attr,
+};
 use crate::protocols::jolt::rust_target_plan::power_strided_weighted_sum_formula;
 use crate::protocols::jolt::verifier_values::{VerifierPointSourceSet, VerifierScalarSourceSet};
-use crate::schema::operation_name;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StructuredPolynomialKind {
@@ -1455,118 +1457,6 @@ fn verify_count(kind: &str, symbol: &str, expected: usize, actual: usize) -> Res
     }
 }
 
-fn string_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<String, EmitError> {
-    operation
-        .attribute(attr)
-        .ok()
-        .and_then(string_attribute_value)
-        .ok_or_else(|| attr_error(operation, attr, "string"))
-}
-
-fn symbol_array_attr(
-    operation: OperationRef<'_, '_>,
-    attr: &str,
-) -> Result<Vec<String>, EmitError> {
-    let attribute = operation
-        .attribute(attr)
-        .map(|attribute| attribute.to_string())
-        .ok()
-        .ok_or_else(|| attr_error(operation, attr, "symbol array"))?;
-    parse_symbol_array(&attribute).ok_or_else(|| attr_error(operation, attr, "symbol array"))
-}
-
-fn optional_symbol_array_attr(
-    operation: OperationRef<'_, '_>,
-    attr: &str,
-) -> Result<Vec<String>, EmitError> {
-    let values = symbol_array_attr(operation, attr)?;
-    if values.len() <= 1 {
-        Ok(values)
-    } else {
-        Err(EmitError::new(format!(
-            "{} attr `{attr}` expected zero or one symbols, got {}",
-            operation_name(operation),
-            values.len()
-        )))
-    }
-}
-
-fn parse_symbol_array(attribute: &str) -> Option<Vec<String>> {
-    let inner = attribute.strip_prefix('[')?.strip_suffix(']')?.trim();
-    if inner.is_empty() {
-        return Some(Vec::new());
-    }
-    inner
-        .split(',')
-        .map(|item| item.trim().strip_prefix('@').map(ToOwned::to_owned))
-        .collect()
-}
-
-fn string_array_attr(
-    operation: OperationRef<'_, '_>,
-    attr: &str,
-) -> Result<Vec<String>, EmitError> {
-    let attribute = operation
-        .attribute(attr)
-        .map(|attribute| attribute.to_string())
-        .ok()
-        .ok_or_else(|| attr_error(operation, attr, "string array"))?;
-    parse_string_array(&attribute).ok_or_else(|| attr_error(operation, attr, "string array"))
-}
-
-fn parse_string_array(attribute: &str) -> Option<Vec<String>> {
-    let inner = attribute.strip_prefix('[')?.strip_suffix(']')?.trim();
-    if inner.is_empty() {
-        return Some(Vec::new());
-    }
-    inner
-        .split(',')
-        .map(|item| {
-            item.trim()
-                .strip_prefix('"')?
-                .strip_suffix('"')
-                .map(ToOwned::to_owned)
-        })
-        .collect()
-}
-
-fn int_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<usize, EmitError> {
-    operation
-        .attribute(attr)
-        .map(parse_integer_attr)
-        .ok()
-        .flatten()
-        .ok_or_else(|| attr_error(operation, attr, "integer"))
-}
-
-fn parse_integer_attr(attribute: Attribute<'_>) -> Option<usize> {
-    attribute
-        .to_string()
-        .split_whitespace()
-        .next()
-        .and_then(|value| value.parse().ok())
-}
-
-fn int_array_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<Vec<usize>, EmitError> {
-    let attribute = operation
-        .attribute(attr)
-        .map(|attribute| attribute.to_string())
-        .ok()
-        .ok_or_else(|| attr_error(operation, attr, "integer array"))?;
-    parse_int_array(&attribute).ok_or_else(|| attr_error(operation, attr, "integer array"))
-}
-
-fn parse_int_array(attribute: &str) -> Option<Vec<usize>> {
-    let inner = attribute.strip_prefix('[')?.strip_suffix(']')?.trim();
-    if inner.is_empty() {
-        return Some(Vec::new());
-    }
-    inner
-        .split(',')
-        .map(|item| item.trim().parse().ok())
-        .collect()
-}
-
 fn operand_symbols(
     operation: OperationRef<'_, '_>,
     start_index: usize,
@@ -1591,13 +1481,6 @@ fn operand_symbol(operation: OperationRef<'_, '_>, index: usize) -> Result<Strin
         ))
     })?;
     string_attr(owner.owner(), "sym_name")
-}
-
-fn attr_error(operation: OperationRef<'_, '_>, attr: &str, expected: &str) -> EmitError {
-    EmitError::new(format!(
-        "{} attr `{attr}` is not a {expected}",
-        operation_name(operation)
-    ))
 }
 
 #[cfg(test)]
