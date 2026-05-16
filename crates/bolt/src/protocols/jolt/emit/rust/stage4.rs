@@ -633,7 +633,7 @@ impl Stage4CpuProgram {
         let plan = self.verifier_plan()?;
         let field_values = plan.scalar_values();
         let field_vector_values = plan.field_vector_values();
-        let point_values = plan.point_value_sources();
+        let point_values = plan.point_values();
         verifier_relation_outputs::verify_relation_outputs(
             "stage4",
             verifier_relation_outputs::RelationOutputVerification {

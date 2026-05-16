@@ -8,6 +8,7 @@ use crate::protocols::jolt::verifier_relation_outputs::{
     StructuredPolynomialPointLength, StructuredPolynomialPointOrder, StructuredPolynomialPointPlan,
     StructuredPolynomialPointSegment,
 };
+use crate::protocols::jolt::verifier_values::VerifierPointValueRef;
 
 pub(crate) const STAGE5_TABLE_FLAG_EVAL_FAMILY: &str =
     "stage5.instruction_read_raf.eval.LookupTableFlag";
@@ -94,13 +95,13 @@ impl Stage5InstructionReadRafEmitPlan {
             symbol: format!("{PREFIX}.eq.LookupOutputCycle"),
             polynomial: StructuredPolynomialKind::Eq,
             x_point: StructuredPolynomialPointPlan {
-                source: self.point.clone(),
+                source: VerifierPointValueRef::new(self.point.clone()),
                 segment: StructuredPolynomialPointSegment::Suffix,
                 length: StructuredPolynomialPointLength::YPoint,
                 order: StructuredPolynomialPointOrder::Reverse,
             },
             y_point: StructuredPolynomialPointPlan {
-                source: self.lookup_output_point.clone(),
+                source: VerifierPointValueRef::new(self.lookup_output_point.clone()),
                 segment: StructuredPolynomialPointSegment::Full,
                 length: StructuredPolynomialPointLength::Full,
                 order: StructuredPolynomialPointOrder::AsIs,

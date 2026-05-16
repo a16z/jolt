@@ -31,9 +31,9 @@ use crate::protocols::jolt::verifier_value_rows::{
 };
 use crate::protocols::jolt::verifier_values::{
     VerifierFieldVectorValueKind, VerifierFieldVectorValueRef, VerifierFieldVectorValueSet,
-    VerifierPointSourceSet, VerifierPointValueKind, VerifierPointValueRef, VerifierPointValueSet,
-    VerifierScalarSourceSet, VerifierScalarValueKind, VerifierScalarValuePlan,
-    VerifierScalarValueRef, VerifierScalarValueSet,
+    VerifierPointValueKind, VerifierPointValueRef, VerifierPointValueSet, VerifierScalarSourceSet,
+    VerifierScalarValueKind, VerifierScalarValuePlan, VerifierScalarValueRef,
+    VerifierScalarValueSet,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -607,10 +607,6 @@ impl VerifierStagePlan {
             values.insert(&expr.symbol, VerifierPointValueKind::PointExpr);
         }
         values
-    }
-
-    pub(crate) fn point_value_sources(&self) -> VerifierPointSourceSet {
-        self.point_values().source_set()
     }
 
     pub(crate) fn opening_point_sources(&self) -> BTreeSet<String> {
@@ -2446,7 +2442,7 @@ mod tests {
 
     fn structured_polynomial_point(source: &str) -> StructuredPolynomialPointPlan {
         StructuredPolynomialPointPlan {
-            source: source.to_owned(),
+            source: VerifierPointValueRef::new(source),
             segment: StructuredPolynomialPointSegment::Full,
             length: StructuredPolynomialPointLength::Full,
             order: StructuredPolynomialPointOrder::AsIs,

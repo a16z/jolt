@@ -12,9 +12,9 @@ use crate::protocols::jolt::rust_target_plan::{
     power_strided_weighted_sum_formula, structured_polynomial_scalar_formula,
 };
 use crate::protocols::jolt::verifier_values::{
-    VerifierFieldVectorValueRef, VerifierFieldVectorValueSet, VerifierPointSourceSet,
-    VerifierScalarValueKind, VerifierScalarValuePlan, VerifierScalarValueRef,
-    VerifierScalarValueSet,
+    VerifierFieldVectorValueRef, VerifierFieldVectorValueSet, VerifierPointValueRef,
+    VerifierPointValueSet, VerifierScalarValueKind, VerifierScalarValuePlan,
+    VerifierScalarValueRef, VerifierScalarValueSet,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,7 +156,7 @@ impl PartialEq<&str> for RelationOutputFunctionKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StructuredPolynomialPointPlan {
-    pub source: String,
+    pub source: VerifierPointValueRef,
     pub segment: StructuredPolynomialPointSegment,
     pub length: StructuredPolynomialPointLength,
     pub order: StructuredPolynomialPointOrder,
@@ -170,7 +170,7 @@ impl StructuredPolynomialPointPlan {
         order: String,
     ) -> Result<Self, EmitError> {
         Ok(Self {
-            source,
+            source: VerifierPointValueRef::new(source),
             segment: StructuredPolynomialPointSegment::from_cpu_attr(&segment)?,
             length: StructuredPolynomialPointLength::from_cpu_attr(&length)?,
             order: StructuredPolynomialPointOrder::from_cpu_attr(&order)?,
@@ -239,7 +239,10 @@ pub fn structured_polynomial_scalar_expr_plan(
             value.y_point.length.as_str(),
             value.y_point.order.as_str(),
         ),
-        operands: vec![value.x_point.source.clone(), value.y_point.source.clone()],
+        operands: vec![
+            value.x_point.source.symbol().to_owned(),
+            value.y_point.source.symbol().to_owned(),
+        ],
     }
 }
 
@@ -1364,7 +1367,7 @@ pub struct RelationOutputVerification<'a> {
     pub relations: &'a BTreeSet<String>,
     pub field_values: &'a VerifierScalarValueSet,
     pub field_vector_values: &'a VerifierFieldVectorValueSet,
-    pub point_values: &'a VerifierPointSourceSet,
+    pub point_values: &'a VerifierPointValueSet,
 }
 
 pub fn verify_relation_outputs(
@@ -1385,16 +1388,18 @@ pub fn verify_relation_outputs(
     field_values.verify_no_conflicts(stage)?;
     point_values.verify_no_conflicts(stage)?;
     for polynomial_eval in relation_output_values {
-        if !point_values.contains(&polynomial_eval.x_point.source) {
+        if !point_values.contains_ref(&polynomial_eval.x_point.source) {
             return Err(EmitError::new(format!(
                 "{stage} structured polynomial eval @{} references missing x-point @{}",
-                polynomial_eval.symbol, polynomial_eval.x_point.source
+                polynomial_eval.symbol,
+                polynomial_eval.x_point.source.symbol()
             )));
         }
-        if !point_values.contains(&polynomial_eval.y_point.source) {
+        if !point_values.contains_ref(&polynomial_eval.y_point.source) {
             return Err(EmitError::new(format!(
                 "{stage} structured polynomial eval @{} references missing y-point @{}",
-                polynomial_eval.symbol, polynomial_eval.y_point.source
+                polynomial_eval.symbol,
+                polynomial_eval.y_point.source.symbol()
             )));
         }
     }
@@ -1610,8 +1615,9 @@ mod tests {
 
     use crate::emit::rust::EmitError;
     use crate::protocols::jolt::verifier_values::{
-        VerifierFieldVectorValueRef, VerifierFieldVectorValueSet, VerifierPointSourceKind,
-        VerifierPointSourceSet, VerifierScalarValueKind, VerifierScalarValueSet,
+        VerifierFieldVectorValueRef, VerifierFieldVectorValueSet, VerifierPointValueKind,
+        VerifierPointValueRef, VerifierPointValueSet, VerifierScalarValueKind,
+        VerifierScalarValueSet,
     };
 
     use super::{
@@ -1647,13 +1653,13 @@ mod tests {
             symbol: "eq.output".to_owned(),
             polynomial: StructuredPolynomialKind::EqPlusOne,
             x_point: StructuredPolynomialPointPlan {
-                source: "x.source".to_owned(),
+                source: VerifierPointValueRef::new("x.source"),
                 segment: StructuredPolynomialPointSegment::Prefix,
                 length: StructuredPolynomialPointLength::YPoint,
                 order: StructuredPolynomialPointOrder::Reverse,
             },
             y_point: StructuredPolynomialPointPlan {
-                source: "y.source".to_owned(),
+                source: VerifierPointValueRef::new("y.source"),
                 segment: StructuredPolynomialPointSegment::Full,
                 length: StructuredPolynomialPointLength::Full,
                 order: StructuredPolynomialPointOrder::AsIs,
@@ -1838,7 +1844,7 @@ mod tests {
         field_values.insert("value", VerifierScalarValueKind::OpeningInput);
         field_values.insert("value", VerifierScalarValueKind::FieldExpr);
         let field_vector_values = VerifierFieldVectorValueSet::default();
-        let point_values = VerifierPointSourceSet::default();
+        let point_values = VerifierPointValueSet::default();
         let relations = BTreeSet::new();
 
         let error = match verify_relation_outputs(
@@ -1870,12 +1876,12 @@ mod tests {
     }
 
     #[test]
-    fn relation_output_verification_rejects_conflicting_point_sources() -> Result<(), EmitError> {
+    fn relation_output_verification_rejects_conflicting_point_values() -> Result<(), EmitError> {
         let field_values = VerifierScalarValueSet::default();
         let field_vector_values = VerifierFieldVectorValueSet::default();
-        let mut point_values = VerifierPointSourceSet::default();
-        point_values.insert("point", VerifierPointSourceKind::OpeningInput);
-        point_values.insert("point", VerifierPointSourceKind::PointExpr);
+        let mut point_values = VerifierPointValueSet::default();
+        point_values.insert("point", VerifierPointValueKind::OpeningInput);
+        point_values.insert("point", VerifierPointValueKind::PointExpr);
         let relations = BTreeSet::new();
 
         let error = match verify_relation_outputs(
@@ -1901,7 +1907,59 @@ mod tests {
         };
 
         assert!(error.to_string().contains(
-            "stage point source @point has conflicting kinds OpeningInput and PointExpr"
+            "stage point value source @point has conflicting kinds OpeningInput and PointExpr"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn relation_output_verification_requires_planned_point_refs() -> Result<(), EmitError> {
+        let field_values = VerifierScalarValueSet::default();
+        let field_vector_values = VerifierFieldVectorValueSet::default();
+        let mut point_values = VerifierPointValueSet::default();
+        point_values.insert("point.y", VerifierPointValueKind::OpeningInput);
+        let relations = BTreeSet::new();
+        let relation_output_values = [StructuredPolynomialEvalPlan {
+            symbol: "eq.output".to_owned(),
+            polynomial: StructuredPolynomialKind::Eq,
+            x_point: StructuredPolynomialPointPlan {
+                source: VerifierPointValueRef::new("missing.point"),
+                segment: StructuredPolynomialPointSegment::Full,
+                length: StructuredPolynomialPointLength::Full,
+                order: StructuredPolynomialPointOrder::AsIs,
+            },
+            y_point: StructuredPolynomialPointPlan {
+                source: VerifierPointValueRef::new("point.y"),
+                segment: StructuredPolynomialPointSegment::Full,
+                length: StructuredPolynomialPointLength::Full,
+                order: StructuredPolynomialPointOrder::AsIs,
+            },
+        }];
+
+        let error = match verify_relation_outputs(
+            "stage",
+            RelationOutputVerification {
+                relation_output_values: &relation_output_values,
+                relation_output_eval_families: &[],
+                relation_output_product_families: &[],
+                relation_output_function_families: &[],
+                relation_outputs: &[],
+                relations: &relations,
+                field_values: &field_values,
+                field_vector_values: &field_vector_values,
+                point_values: &point_values,
+            },
+        ) {
+            Ok(()) => {
+                return Err(EmitError::new(
+                    "missing point ref should fail relation output verification",
+                ));
+            }
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains(
+            "stage structured polynomial eval @eq.output references missing x-point @missing.point"
         ));
         Ok(())
     }
@@ -1911,7 +1969,7 @@ mod tests {
         let mut field_values = VerifierScalarValueSet::default();
         field_values.insert("claim", VerifierScalarValueKind::FieldExpr);
         let field_vector_values = VerifierFieldVectorValueSet::default();
-        let point_values = VerifierPointSourceSet::default();
+        let point_values = VerifierPointValueSet::default();
         let relations = BTreeSet::from(["relation".to_owned()]);
         let relation_outputs = [RelationOutputPlan::with_local_scalars(
             "relation",
@@ -1953,7 +2011,7 @@ mod tests {
         field_values.insert("family.gamma", VerifierScalarValueKind::TranscriptScalar);
         field_values.insert("family.eval", VerifierScalarValueKind::SumcheckEval);
         let field_vector_values = VerifierFieldVectorValueSet::default();
-        let point_values = VerifierPointSourceSet::default();
+        let point_values = VerifierPointValueSet::default();
         let relations = BTreeSet::new();
         let family = RelationOutputEvalFamilyPlan {
             symbol: "family".to_owned(),
@@ -2000,7 +2058,7 @@ mod tests {
     fn relation_output_verification_requires_planned_field_vector_refs() -> Result<(), EmitError> {
         let field_values = VerifierScalarValueSet::default();
         let field_vector_values = VerifierFieldVectorValueSet::default();
-        let point_values = VerifierPointSourceSet::default();
+        let point_values = VerifierPointValueSet::default();
         let relations = BTreeSet::new();
         let family = RelationOutputProductFamilyPlan {
             symbol: "product.family".to_owned(),
@@ -2047,7 +2105,7 @@ mod tests {
         field_values.insert("claim", VerifierScalarValueKind::FieldExpr);
         field_values.insert("local.scalar", VerifierScalarValueKind::FieldExpr);
         let field_vector_values = VerifierFieldVectorValueSet::default();
-        let point_values = VerifierPointSourceSet::default();
+        let point_values = VerifierPointValueSet::default();
         let relations = BTreeSet::from(["relation".to_owned()]);
         let relation_outputs = [RelationOutputPlan::with_local_scalars(
             "relation",
