@@ -218,9 +218,9 @@ pub const STAGE3_RELATION_OUTPUT_VALUES: &[Stage3StructuredPolynomialEvalPlan] =
 ];
 
 pub const STAGE3_RELATION_OUTPUTS: &[Stage3RelationOutputPlan] = &[
-    Stage3RelationOutputPlan { relation: Stage3RelationKind::Stage3SpartanShift, structured_polynomial_evals: &[bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage3.spartan_shift.output.eq.NextPC", index: 0 }, bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage3.spartan_shift.output.eq.NextIsNoop", index: 1 }], eval_families: &[], local_scalars: &[], expected_output: "stage3.spartan_shift.output.claim_expr" },
-    Stage3RelationOutputPlan { relation: Stage3RelationKind::Stage3InstructionInput, structured_polynomial_evals: &[bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage3.instruction_input.output.eq.LeftInstructionInput", index: 2 }], eval_families: &[], local_scalars: &[], expected_output: "stage3.instruction_input.output.claim_expr" },
-    Stage3RelationOutputPlan { relation: Stage3RelationKind::Stage3RegistersClaimReduction, structured_polynomial_evals: &[bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage3.registers.output.eq.RdWriteValue", index: 3 }], eval_families: &[], local_scalars: &[], expected_output: "stage3.registers.output.claim_expr" },
+    Stage3RelationOutputPlan { relation: Stage3RelationKind::Stage3SpartanShift, structured_polynomial_evals: &[bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage3.spartan_shift.output.eq.NextPC", index: 0 }, bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage3.spartan_shift.output.eq.NextIsNoop", index: 1 }], local_scalars: &[], expected_output: "stage3.spartan_shift.output.claim_expr" },
+    Stage3RelationOutputPlan { relation: Stage3RelationKind::Stage3InstructionInput, structured_polynomial_evals: &[bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage3.instruction_input.output.eq.LeftInstructionInput", index: 2 }], local_scalars: &[], expected_output: "stage3.instruction_input.output.claim_expr" },
+    Stage3RelationOutputPlan { relation: Stage3RelationKind::Stage3RegistersClaimReduction, structured_polynomial_evals: &[bolt_verifier_runtime::StructuredPolynomialEvalRef { symbol: "stage3.registers.output.eq.RdWriteValue", index: 3 }], local_scalars: &[], expected_output: "stage3.registers.output.claim_expr" },
 ];
 
 pub const STAGE3_PROGRAM: Stage3VerifierProgramPlan = Stage3VerifierProgramPlan {

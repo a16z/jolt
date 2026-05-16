@@ -5,6 +5,7 @@ use melior::ir::{Attribute, OperationRef};
 
 use crate::emit::rust::EmitError;
 use crate::ir::string_attribute_value;
+use crate::protocols::jolt::rust_target_plan::eval_family_weighted_sum_formula;
 use crate::protocols::jolt::verifier_values::{VerifierPointSourceSet, VerifierScalarSourceSet};
 use crate::schema::operation_name;
 
@@ -735,6 +736,87 @@ pub fn lower_eval_family_output(
     claim.expected_output = claim_expr;
     let _removed_family = relation_output_eval_families.remove(family_index);
     Ok(rows)
+}
+
+pub fn lower_eval_family_output_to_weighted_sum(
+    stage: &str,
+    relation: &str,
+    relation_output_eval_families: &mut Vec<RelationOutputEvalFamilyPlan>,
+    relation_output_asts: &mut [RelationOutputAst],
+) -> Result<Vec<RelationOutputFieldExprPlan>, EmitError> {
+    let Some(claim) = relation_output_asts
+        .iter_mut()
+        .find(|claim| claim.relation == relation)
+    else {
+        return Ok(Vec::new());
+    };
+    let family_symbol = claim.expected_output.clone();
+    let family_index = relation_output_eval_families
+        .iter()
+        .position(|family| family.symbol == family_symbol)
+        .ok_or_else(|| {
+            EmitError::new(format!(
+                "{stage} relation output for @{relation} references missing eval family @{family_symbol}"
+            ))
+        })?;
+    let family = relation_output_eval_families[family_index].clone();
+    if family.evals.is_empty() {
+        return Err(EmitError::new(format!(
+            "{stage} relation output eval family @{family_symbol} has no eval terms"
+        )));
+    }
+    let term_count =
+        family.value_term_offsets.len() + family.shared_terms.len() + family.item_terms.len();
+    if term_count == 0 {
+        return Err(EmitError::new(format!(
+            "{stage} relation output eval family @{family_symbol} has no scalar terms"
+        )));
+    }
+    for term in &family.item_terms {
+        verify_count(
+            "relation output eval family item factors",
+            &family.symbol,
+            family.evals.len(),
+            term.factors.len(),
+        )?;
+    }
+
+    let prefix = relation_output_family_prefix(&family.symbol);
+    let claim_expr = format!("{prefix}.claim_expr");
+    let mut operands = Vec::with_capacity(
+        1 + family.evals.len()
+            + family.shared_terms.len()
+            + family.evals.len() * family.item_terms.len(),
+    );
+    operands.push(family.gamma.clone());
+    operands.extend(family.evals.iter().cloned());
+    operands.extend(family.shared_terms.iter().map(|term| term.factor.clone()));
+    operands.extend(
+        family
+            .item_terms
+            .iter()
+            .flat_map(|term| term.factors.iter().cloned()),
+    );
+    let formula = eval_family_weighted_sum_formula(
+        family.evals.len(),
+        family.power_stride,
+        &family.value_term_offsets,
+        &family
+            .shared_terms
+            .iter()
+            .map(|term| term.gamma_power_offset)
+            .collect::<Vec<_>>(),
+        &family
+            .item_terms
+            .iter()
+            .map(|term| term.gamma_power_offset)
+            .collect::<Vec<_>>(),
+    );
+    claim.expected_output.clone_from(&claim_expr);
+    let _removed_family = relation_output_eval_families.remove(family_index);
+    Ok(vec![relation_output_field_expr(
+        claim_expr, &formula, operands,
+    )])
 }
 
 pub fn lower_product_family_output(

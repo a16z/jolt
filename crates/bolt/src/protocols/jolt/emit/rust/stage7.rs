@@ -17,6 +17,7 @@ use crate::protocols::jolt::verifier_relation_outputs::{
     parse_output_product_family_plan, FieldExprDependencies,
     RelationOutputAst as Stage7RelationOutputAst,
     RelationOutputEvalFamilyPlan as Stage7RelationOutputEvalFamilyPlan,
+    RelationOutputFieldExprPlan as Stage7RelationOutputFieldExprPlan,
     RelationOutputFunctionFamilyPlan as Stage7RelationOutputFunctionFamilyPlan,
     RelationOutputPlan as Stage7RelationOutputPlan,
     RelationOutputProductFamilyPlan as Stage7RelationOutputProductFamilyPlan,
@@ -140,6 +141,16 @@ impl FieldExprDependencies for Stage7FieldExprPlan {
 
     fn operands(&self) -> &[String] {
         &self.operands
+    }
+}
+
+fn stage7_relation_output_expr(expr: Stage7RelationOutputFieldExprPlan) -> Stage7FieldExprPlan {
+    Stage7FieldExprPlan {
+        symbol: expr.symbol,
+        kind: "op".to_owned(),
+        formula: expr.formula,
+        operand_names: expr.operands.clone(),
+        operands: expr.operands,
     }
 }
 
@@ -639,6 +650,18 @@ impl Stage7CpuProgram {
             .role()
             .ok_or_else(|| EmitError::new("missing cpu party role"))?;
         let is_verifier = role == Role::Verifier;
+        if is_verifier {
+            field_exprs.extend(
+                verifier_relation_outputs::lower_eval_family_output_to_weighted_sum(
+                    "stage7",
+                    "jolt.stage7.hamming_weight_claim_reduction",
+                    &mut relation_output_eval_families,
+                    &mut relation_output_asts,
+                )?
+                .into_iter()
+                .map(stage7_relation_output_expr),
+            );
+        }
         if role == Role::Prover {
             verifier_relation_outputs::prune_output_only_field_exprs(
                 &mut field_exprs,

@@ -16,6 +16,12 @@ pub fn emit_verifier_relation_output_constants(
     emit_relation_output_value_constants(&mut source, stage_type, relation_output_values)?;
     let mut claims = Vec::new();
     for (index, claim) in relation_outputs.iter().enumerate() {
+        if let Some(family) = claim.eval_families.first() {
+            return Err(EmitError::new(format!(
+                "{stage_type} relation output eval family @{} must be lowered before Rust verifier emission",
+                family.symbol
+            )));
+        }
         if let Some(family) = claim.product_families.first() {
             return Err(EmitError::new(format!(
                 "{stage_type} relation output product family @{} must be lowered before Rust verifier emission",
@@ -31,10 +37,9 @@ pub fn emit_verifier_relation_output_constants(
             &values_name,
             &claim.structured_polynomial_evals,
         );
-        let eval_families = emit_eval_family_constants(&mut source, stage_type, index, claim);
         let local_scalars = emit_local_scalar_constants(&mut source, stage_type, index, claim);
         claims.push(format!(
-            "    {stage_type}RelationOutputPlan {{ relation: {}, structured_polynomial_evals: {values}, eval_families: {eval_families}, local_scalars: {local_scalars}, expected_output: {} }},",
+            "    {stage_type}RelationOutputPlan {{ relation: {}, structured_polynomial_evals: {values}, local_scalars: {local_scalars}, expected_output: {} }},",
             super::plan_tokens::role_relation_kind_expr(stage_type, role, &claim.relation)?,
             rust_str(&claim.expected_output)
         ));
@@ -99,83 +104,6 @@ fn emit_local_scalar_constants(
     name
 }
 
-fn emit_eval_family_constants(
-    source: &mut String,
-    stage_type: &str,
-    claim_index: usize,
-    claim: &RelationOutputPlan,
-) -> String {
-    if claim.eval_families.is_empty() {
-        return "&[]".to_owned();
-    }
-    let upper_stage = stage_type.to_ascii_uppercase();
-    let mut family_rows = Vec::new();
-    for (family_index, family) in claim.eval_families.iter().enumerate() {
-        let prefix = format!("{upper_stage}_RELATION_OUTPUT_{claim_index}_FAMILY_{family_index}");
-        let evals_name = format!("{prefix}_EVALS");
-        let evals = rust_str_array(&family.evals);
-        push_format(
-            source,
-            format_args!("pub const {evals_name}: &[&str] = &[{evals}];\n"),
-        );
-        let value_offsets_name = format!("{prefix}_VALUE_TERM_OFFSETS");
-        let value_offsets =
-            emit_usize_slice_or_inline(source, &value_offsets_name, &family.value_term_offsets);
-        let shared_terms_name = format!("{prefix}_SHARED_TERMS");
-        let shared_terms = family
-            .shared_terms
-            .iter()
-            .map(|term| {
-                format!(
-                    "    bolt_verifier_runtime::RelationOutputEvalFamilySharedTermPlan {{ gamma_power_offset: {}, factor: {} }},",
-                    term.gamma_power_offset,
-                    rust_str(&term.factor)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        push_format(
-            source,
-            format_args!(
-                "pub const {shared_terms_name}: &[bolt_verifier_runtime::RelationOutputEvalFamilySharedTermPlan] = &[\n{shared_terms}\n];\n"
-            ),
-        );
-
-        let mut item_rows = Vec::new();
-        for (term_index, term) in family.item_terms.iter().enumerate() {
-            let factors_name = format!("{prefix}_ITEM_TERM_{term_index}_FACTORS");
-            let factors = emit_str_slice_or_inline(source, &factors_name, &term.factors);
-            item_rows.push(format!(
-                "    bolt_verifier_runtime::RelationOutputEvalFamilyItemTermPlan {{ gamma_power_offset: {}, factors: {factors} }},",
-                term.gamma_power_offset
-            ));
-        }
-        let item_terms_name = format!("{prefix}_ITEM_TERMS");
-        let item_terms = item_rows.join("\n");
-        push_format(
-            source,
-            format_args!(
-                "pub const {item_terms_name}: &[bolt_verifier_runtime::RelationOutputEvalFamilyItemTermPlan] = &[\n{item_terms}\n];\n"
-            ),
-        );
-        family_rows.push(format!(
-            "    bolt_verifier_runtime::RelationOutputEvalFamilyPlan {{ symbol: {}, gamma: {}, evals: {evals_name}, power_stride: {}, value_term_offsets: {value_offsets}, shared_terms: {shared_terms_name}, item_terms: {item_terms_name} }},",
-            rust_str(&family.symbol),
-            rust_str(&family.gamma),
-            family.power_stride
-        ));
-    }
-    let families_name = format!("{upper_stage}_RELATION_OUTPUT_{claim_index}_FAMILIES");
-    let families = family_rows.join("\n");
-    push_format(
-        source,
-        format_args!(
-            "pub const {families_name}: &[bolt_verifier_runtime::RelationOutputEvalFamilyPlan] = &[\n{families}\n];\n\n"
-        ),
-    );
-    families_name
-}
-
 fn emit_structured_polynomial_eval_refs_slice_or_inline(
     source: &mut String,
     name: &str,
@@ -208,30 +136,6 @@ fn structured_polynomial_eval_ref_expr(value: &StructuredPolynomialEvalRefPlan) 
         rust_str(&value.symbol),
         value.index
     )
-}
-
-fn emit_str_slice_or_inline(source: &mut String, name: &str, values: &[String]) -> String {
-    if values.len() <= 4 {
-        return format!("&[{}]", rust_str_array(values));
-    }
-    let values = rust_str_array(values);
-    push_format(
-        source,
-        format_args!("pub const {name}: &[&str] = &[{values}];\n"),
-    );
-    name.to_owned()
-}
-
-fn emit_usize_slice_or_inline(source: &mut String, name: &str, values: &[usize]) -> String {
-    if values.len() <= 4 {
-        return format!("&[{}]", usize_array(values));
-    }
-    let values = usize_array(values);
-    push_format(
-        source,
-        format_args!("pub const {name}: &[usize] = &[{values}];\n"),
-    );
-    name.to_owned()
 }
 
 fn structured_polynomial_kind_expr(
@@ -302,14 +206,6 @@ fn rust_str_array(values: &[String]) -> String {
     values
         .iter()
         .map(|value| rust_str(value))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn usize_array(values: &[usize]) -> String {
-    values
-        .iter()
-        .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ")
 }

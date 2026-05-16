@@ -268,6 +268,10 @@ fn generated_field_expr_kind(value: &str) -> bolt_verifier_runtime::FieldExprKin
         "field.add" => bolt_verifier_runtime::FieldExprKind::Add,
         "field.sub" => bolt_verifier_runtime::FieldExprKind::Sub,
         "field.mul" => bolt_verifier_runtime::FieldExprKind::Mul,
+        "field.sum" => bolt_verifier_runtime::FieldExprKind::Sum,
+        "field.product" => bolt_verifier_runtime::FieldExprKind::Product,
+        "field_vector.sum" => bolt_verifier_runtime::FieldExprKind::FieldVectorSum,
+        "field_vector.product" => bolt_verifier_runtime::FieldExprKind::FieldVectorProduct,
         "field.neg" => bolt_verifier_runtime::FieldExprKind::Neg,
         value if value.starts_with("field.pow:") => {
             let exponent = value
@@ -293,8 +297,46 @@ fn generated_field_expr_kind(value: &str) -> bolt_verifier_runtime::FieldExprKin
                 parts[2].parse::<usize>().expect("lagrange index is usize"),
             )
         }
+        value if value.starts_with("eval_family.weighted_sum:") => {
+            let spec = value
+                .strip_prefix("eval_family.weighted_sum:")
+                .expect("weighted eval-family expression has prefix");
+            let parts = spec.split(':').collect::<Vec<_>>();
+            assert!(
+                parts.len() == 5,
+                "weighted eval-family expression has five fields"
+            );
+            bolt_verifier_runtime::FieldExprKind::EvalFamilyWeightedSum {
+                eval_count: parts[0]
+                    .parse::<usize>()
+                    .expect("weighted eval-family eval count is usize"),
+                power_stride: parts[1]
+                    .parse::<usize>()
+                    .expect("weighted eval-family power stride is usize"),
+                value_term_offsets: leak_slice(parse_usize_list(parts[2])),
+                shared_term_offsets: leak_slice(parse_usize_list(parts[3])),
+                item_term_offsets: leak_slice(parse_usize_list(parts[4])),
+            }
+        }
         value => panic!("unsupported generated field expression kind `{value}`"),
     }
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "equivalence adapters fail fast when a compiler weighted-sum field expression is malformed"
+)]
+fn parse_usize_list(value: &str) -> Vec<usize> {
+    if value == "_" {
+        return Vec::new();
+    }
+    value
+        .split(',')
+        .map(|part| {
+            part.parse::<usize>()
+                .expect("weighted eval-family offset is usize")
+        })
+        .collect()
 }
 
 #[expect(
@@ -640,52 +682,6 @@ macro_rules! define_stage_adapter_impl {
                                     .map(|value| bolt_verifier_runtime::StructuredPolynomialEvalRef {
                                         symbol: super::leak_str(&value.symbol),
                                         index: value.index,
-                                    })
-                                    .collect(),
-                            ),
-                            eval_families: super::leak_slice(
-                                plan.eval_families
-                                    .iter()
-                                    .map(|family| bolt_verifier_runtime::RelationOutputEvalFamilyPlan {
-                                        symbol: super::leak_str(&family.symbol),
-                                        gamma: super::leak_str(&family.gamma),
-                                        evals: super::leak_slice(
-                                            family
-                                                .evals
-                                                .iter()
-                                                .map(|symbol| super::leak_str(symbol))
-                                                .collect(),
-                                        ),
-                                        power_stride: family.power_stride,
-                                        value_term_offsets: super::leak_slice(
-                                            family.value_term_offsets.clone(),
-                                        ),
-                                        shared_terms: super::leak_slice(
-                                            family
-                                                .shared_terms
-                                                .iter()
-                                                .map(|term| bolt_verifier_runtime::RelationOutputEvalFamilySharedTermPlan {
-                                                    gamma_power_offset: term.gamma_power_offset,
-                                                    factor: super::leak_str(&term.factor),
-                                                })
-                                                .collect(),
-                                        ),
-                                        item_terms: super::leak_slice(
-                                            family
-                                                .item_terms
-                                                .iter()
-                                                .map(|term| bolt_verifier_runtime::RelationOutputEvalFamilyItemTermPlan {
-                                                    gamma_power_offset: term.gamma_power_offset,
-                                                    factors: super::leak_slice(
-                                                        term
-                                                            .factors
-                                                            .iter()
-                                                            .map(|symbol| super::leak_str(symbol))
-                                                            .collect(),
-                                                    ),
-                                                })
-                                                .collect(),
-                                        ),
                                     })
                                     .collect(),
                             ),

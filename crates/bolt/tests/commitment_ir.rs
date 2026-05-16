@@ -2064,32 +2064,32 @@ fn stage7_rust_targets_extract_and_compile() {
     assert_eq!(prover_program.relation_output_values.len(), total_ra + 1);
     assert!(prover_program.relation_outputs.is_empty());
     assert_eq!(verifier_program.relation_output_values.len(), total_ra + 1);
-    assert_eq!(verifier_program.relation_output_eval_families.len(), 1);
+    assert!(verifier_program.relation_output_eval_families.is_empty());
     assert_eq!(verifier_program.relation_outputs.len(), 1);
-    let output_family = &verifier_program.relation_output_eval_families[0];
+    assert!(verifier_program.relation_outputs[0]
+        .eval_families
+        .is_empty());
     assert_eq!(
-        output_family.symbol,
-        "stage7.hamming_weight_claim_reduction.output.family"
+        verifier_program.relation_outputs[0].expected_output,
+        "stage7.hamming_weight_claim_reduction.output.claim_expr"
     );
+    let output_expr = verifier_program
+        .field_exprs
+        .iter()
+        .find(|expr| expr.symbol == "stage7.hamming_weight_claim_reduction.output.claim_expr")
+        .expect("stage7 hamming output is lowered to a field expression");
     assert_eq!(
-        output_family.gamma,
+        output_expr.formula,
+        format!("eval_family.weighted_sum:{total_ra}:3:0:1:2")
+    );
+    assert_eq!(output_expr.operands.len(), 2 * total_ra + 2);
+    assert_eq!(
+        output_expr.operands[0],
         "stage7.hamming_weight_claim_reduction.gamma"
     );
-    assert_eq!(output_family.evals.len(), total_ra);
-    assert_eq!(output_family.power_stride, 3);
-    assert_eq!(output_family.value_term_offsets, vec![0]);
-    assert_eq!(output_family.shared_terms.len(), 1);
-    assert_eq!(output_family.shared_terms[0].gamma_power_offset, 1);
     assert_eq!(
-        output_family.shared_terms[0].factor,
+        output_expr.operands[1 + total_ra],
         "stage7.hamming_weight_claim_reduction.output.eq.Booleanity"
-    );
-    assert_eq!(output_family.item_terms.len(), 1);
-    assert_eq!(output_family.item_terms[0].gamma_power_offset, 2);
-    assert_eq!(output_family.item_terms[0].factors.len(), total_ra);
-    assert_eq!(
-        verifier_program.relation_outputs[0].eval_families,
-        vec![output_family.clone()]
     );
     assert!(prover_program.point_zeros.is_empty());
     assert_eq!(prover_program.point_slices.len(), 1);
@@ -2140,12 +2140,15 @@ fn stage7_rust_targets_extract_and_compile() {
         .source
         .contains("expected_hamming_weight_claim_reduction"));
     assert!(verifier_source.source.contains("Stage7RelationOutputPlan"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("RelationOutputEvalFamilyPlan"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("STAGE7_RELATION_OUTPUT_0_FAMILY_0_EVALS"));
+    assert!(verifier_source
+        .source
+        .contains("Stage7FieldExprKind::EvalFamilyWeightedSum"));
     assert!(verifier_source
         .source
         .contains("stage7.hamming_weight_claim_reduction.output.eq.Booleanity"));

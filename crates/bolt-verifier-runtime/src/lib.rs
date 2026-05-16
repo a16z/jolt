@@ -251,6 +251,13 @@ pub enum FieldExprKind {
     Neg,
     Pow(usize),
     LagrangeBasisEval(i64, usize, usize),
+    EvalFamilyWeightedSum {
+        eval_count: usize,
+        power_stride: usize,
+        value_term_offsets: &'static [usize],
+        shared_term_offsets: &'static [usize],
+        item_term_offsets: &'static [usize],
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -389,33 +396,9 @@ pub struct StructuredPolynomialEvalRef {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RelationOutputEvalFamilySharedTermPlan {
-    pub gamma_power_offset: usize,
-    pub factor: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RelationOutputEvalFamilyItemTermPlan {
-    pub gamma_power_offset: usize,
-    pub factors: &'static [&'static str],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RelationOutputEvalFamilyPlan {
-    pub symbol: &'static str,
-    pub gamma: &'static str,
-    pub evals: &'static [&'static str],
-    pub power_stride: usize,
-    pub value_term_offsets: &'static [usize],
-    pub shared_terms: &'static [RelationOutputEvalFamilySharedTermPlan],
-    pub item_terms: &'static [RelationOutputEvalFamilyItemTermPlan],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RelationOutputPlan<R: ProtocolRelation> {
     pub relation: R,
     pub structured_polynomial_evals: &'static [StructuredPolynomialEvalRef],
-    pub eval_families: &'static [RelationOutputEvalFamilyPlan],
     pub local_scalars: &'static [&'static str],
     pub expected_output: &'static str,
 }
@@ -1344,10 +1327,6 @@ pub fn evaluate_relation_output<R: ProtocolRelation>(
         let value = evaluate_structured_polynomial(polynomial_eval.polynomial, &x_point, y_point)?;
         scratch.insert(polynomial_eval.symbol, value);
     }
-    for family in plan.eval_families {
-        let value = evaluate_relation_output_eval_family(family, store, &scratch)?;
-        scratch.insert(family.symbol, value);
-    }
     evaluate_available_field_exprs_with_scratch(field_exprs, store, &mut scratch)?;
     scratch
         .scalar_or(store, plan.expected_output)
@@ -1401,72 +1380,6 @@ fn relation_output_x_point_source<'a>(
         .or_else(|| (source == instance_symbol).then_some(local_point))
         .or_else(|| store.try_point(source))
         .ok_or(RuntimePlanError::MissingValue { symbol: source })
-}
-
-fn evaluate_relation_output_eval_family(
-    family: &RelationOutputEvalFamilyPlan,
-    store: &ValueStore<Fr>,
-    scratch: &ScratchScalars,
-) -> Result<Fr, RuntimePlanError> {
-    let gamma = scratch
-        .scalar_or(store, family.gamma)
-        .ok_or(RuntimePlanError::MissingValue {
-            symbol: family.gamma,
-        })?;
-    for term in family.item_terms {
-        require_operand_count(family.symbol, family.evals.len(), term.factors.len())?;
-    }
-    let value_offset_powers = family
-        .value_term_offsets
-        .iter()
-        .map(|&offset| pow_field(gamma, offset))
-        .collect::<Vec<_>>();
-    let shared_terms = family
-        .shared_terms
-        .iter()
-        .map(|term| (term, pow_field(gamma, term.gamma_power_offset)))
-        .collect::<Vec<_>>();
-    let item_terms = family
-        .item_terms
-        .iter()
-        .map(|term| (term, pow_field(gamma, term.gamma_power_offset)))
-        .collect::<Vec<_>>();
-    let gamma_stride = pow_field(gamma, family.power_stride);
-    let mut gamma_base = Fr::from_u64(1);
-
-    let mut result = Fr::from_u64(0);
-    for (index, eval_symbol) in family.evals.iter().enumerate() {
-        let eval = scratch
-            .scalar_or(store, eval_symbol)
-            .ok_or(RuntimePlanError::MissingValue {
-                symbol: eval_symbol,
-            })?;
-        let weighted_eval = eval * gamma_base;
-        for offset_power in &value_offset_powers {
-            result += weighted_eval * *offset_power;
-        }
-        for (term, offset_power) in &shared_terms {
-            let factor =
-                scratch
-                    .scalar_or(store, term.factor)
-                    .ok_or(RuntimePlanError::MissingValue {
-                        symbol: term.factor,
-                    })?;
-            result += weighted_eval * factor * *offset_power;
-        }
-        for (term, offset_power) in &item_terms {
-            let factor_symbol = term.factors[index];
-            let factor =
-                scratch
-                    .scalar_or(store, factor_symbol)
-                    .ok_or(RuntimePlanError::MissingValue {
-                        symbol: factor_symbol,
-                    })?;
-            result += weighted_eval * factor * *offset_power;
-        }
-        gamma_base *= gamma_stride;
-    }
-    Ok(result)
 }
 
 fn evaluate_structured_polynomial_point(
@@ -1700,7 +1613,85 @@ pub fn evaluate_field_expr<F: Field>(
                     actual: weights.len(),
                 })
         }
+        FieldExprKind::EvalFamilyWeightedSum {
+            eval_count,
+            power_stride,
+            value_term_offsets,
+            shared_term_offsets,
+            item_term_offsets,
+        } => evaluate_eval_family_weighted_sum(
+            expr.symbol,
+            operands,
+            eval_count,
+            power_stride,
+            value_term_offsets,
+            shared_term_offsets,
+            item_term_offsets,
+        ),
     }
+}
+
+fn evaluate_eval_family_weighted_sum<F: Field>(
+    symbol: &'static str,
+    operands: &[F],
+    eval_count: usize,
+    power_stride: usize,
+    value_term_offsets: &[usize],
+    shared_term_offsets: &[usize],
+    item_term_offsets: &[usize],
+) -> Result<F, RuntimePlanError> {
+    let term_count = value_term_offsets.len() + shared_term_offsets.len() + item_term_offsets.len();
+    if eval_count == 0 || term_count == 0 {
+        return Err(RuntimePlanError::InvalidInputLength {
+            input: symbol,
+            expected: 1,
+            actual: 0,
+        });
+    }
+    let expected_operands =
+        1 + eval_count + shared_term_offsets.len() + eval_count * item_term_offsets.len();
+    require_operand_count(symbol, expected_operands, operands.len())?;
+
+    let gamma = operands[0];
+    let evals_start = 1;
+    let shared_start = evals_start + eval_count;
+    let item_start = shared_start + shared_term_offsets.len();
+    let evals = &operands[evals_start..shared_start];
+    let shared_factors = &operands[shared_start..item_start];
+    let item_factors = &operands[item_start..];
+
+    let value_offset_powers = value_term_offsets
+        .iter()
+        .map(|&offset| pow_field(gamma, offset))
+        .collect::<Vec<_>>();
+    let shared_terms = shared_term_offsets
+        .iter()
+        .zip(shared_factors.iter())
+        .map(|(&offset, &factor)| (pow_field(gamma, offset), factor))
+        .collect::<Vec<_>>();
+    let item_offset_powers = item_term_offsets
+        .iter()
+        .map(|&offset| pow_field(gamma, offset))
+        .collect::<Vec<_>>();
+
+    let gamma_stride = pow_field(gamma, power_stride);
+    let mut gamma_base = F::from_u64(1);
+    let mut result = F::from_u64(0);
+    for (eval_index, &eval) in evals.iter().enumerate() {
+        let weighted_eval = eval * gamma_base;
+        for offset_power in &value_offset_powers {
+            result += weighted_eval * *offset_power;
+        }
+        for (offset_power, factor) in &shared_terms {
+            result += weighted_eval * *factor * *offset_power;
+        }
+        for (term_index, offset_power) in item_offset_powers.iter().enumerate() {
+            let factor = item_factors[term_index * eval_count + eval_index];
+            result += weighted_eval * factor * *offset_power;
+        }
+        gamma_base *= gamma_stride;
+    }
+    Ok(result)
 }
 
 pub fn field_powers(base: Fr, count: usize) -> Vec<Fr> {
@@ -1899,5 +1890,33 @@ mod tests {
 
         assert_eq!(store.try_scalar("family.ab.product"), Some(Fr::from_u64(6)));
         assert_eq!(store.try_scalar("family.ab.sum"), Some(Fr::from_u64(5)));
+    }
+
+    #[test]
+    fn field_expr_evaluates_eval_family_weighted_sum() {
+        let value = evaluate_field_expr(
+            &FieldExprPlan {
+                symbol: "family.weighted",
+                kind: FieldExprKind::EvalFamilyWeightedSum {
+                    eval_count: 2,
+                    power_stride: 3,
+                    value_term_offsets: &[0],
+                    shared_term_offsets: &[1],
+                    item_term_offsets: &[2],
+                },
+                operands: &["gamma", "eval.a", "eval.b", "shared.eq", "item.a", "item.b"],
+            },
+            &[
+                Fr::from_u64(2),
+                Fr::from_u64(3),
+                Fr::from_u64(5),
+                Fr::from_u64(7),
+                Fr::from_u64(11),
+                Fr::from_u64(13),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(value, Fr::from_u64(2857));
     }
 }

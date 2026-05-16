@@ -1203,7 +1203,7 @@ pub(crate) fn claim_kind_expr(stage_type_prefix: &str, kind: ClaimKind) -> Strin
     format!("{stage_type_prefix}ClaimKind::{}", kind.rust_variant())
 }
 
-pub(crate) fn field_expr_kind_expr(stage_type_prefix: &str, kind: FieldExprKind) -> String {
+pub(crate) fn field_expr_kind_expr(stage_type_prefix: &str, kind: &FieldExprKind) -> String {
     format!(
         "{stage_type_prefix}FieldExprKind::{}",
         kind.rust_variant_expr()
@@ -1330,7 +1330,7 @@ pub(crate) fn emit_field_expr_constants(
             format!(
                 "    {stage_type_prefix}FieldExprPlan {{ symbol: {}, kind: {}, operands: {} }},",
                 rust_str(&expr.symbol),
-                field_expr_kind_expr(stage_type_prefix, expr.kind),
+                field_expr_kind_expr(stage_type_prefix, &expr.kind),
                 rust_str_slice_expr(&expr.operands),
             )
         })
@@ -1357,7 +1357,7 @@ pub(crate) fn emit_field_expr_constants_chunked(
                     format!(
                         "{helper_name}({}, {}, {})",
                         rust_str(&expr.symbol),
-                        field_expr_kind_expr(stage_type_prefix, expr.kind),
+                        field_expr_kind_expr(stage_type_prefix, &expr.kind),
                         rust_str_slice_expr(&expr.operands)
                     )
                 })
