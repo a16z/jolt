@@ -22,7 +22,7 @@ pub(crate) struct Stage5InstructionReadRafEmitPlan {
     pub(crate) instruction_ra_evals_ref: String,
     pub(crate) raf_flag_eval: String,
     pub(crate) gamma: String,
-    pub(crate) local_scalars: Vec<Stage5InstructionReadRafLocalScalarEmitPlan>,
+    pub(crate) local_scalars: Vec<JoltLocalScalarEmitPlan>,
     pub(crate) log_k: usize,
 }
 
@@ -219,9 +219,9 @@ impl Stage5InstructionReadRafEmitPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Stage5InstructionReadRafLocalScalarEmitPlan {
+pub(crate) struct JoltLocalScalarEmitPlan {
     pub(crate) symbol: String,
-    pub(crate) kind: Stage5InstructionReadRafLocalScalarKind,
+    pub(crate) kind: JoltLocalScalarMleKind,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -238,42 +238,39 @@ pub(crate) struct Stage5InstructionReadRafOutputFieldExprPlan {
     pub(crate) operands: Vec<String>,
 }
 
-impl Stage5InstructionReadRafLocalScalarEmitPlan {
+impl JoltLocalScalarEmitPlan {
     pub(crate) fn is_lookup_table(&self) -> bool {
-        matches!(
-            self.kind,
-            Stage5InstructionReadRafLocalScalarKind::LookupTable { .. }
-        )
+        matches!(self.kind, JoltLocalScalarMleKind::LookupTable { .. })
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Stage5InstructionReadRafLocalScalarKind {
+pub(crate) enum JoltLocalScalarMleKind {
     LookupTable { index: usize },
     LeftOperand,
     RightOperand,
     Identity,
 }
 
-fn local_scalar_plans(table_count: usize) -> Vec<Stage5InstructionReadRafLocalScalarEmitPlan> {
+fn local_scalar_plans(table_count: usize) -> Vec<JoltLocalScalarEmitPlan> {
     let mut values = (0..table_count)
-        .map(|index| Stage5InstructionReadRafLocalScalarEmitPlan {
+        .map(|index| JoltLocalScalarEmitPlan {
             symbol: format!("stage5.instruction_read_raf.local_scalar.LookupTable_{index}"),
-            kind: Stage5InstructionReadRafLocalScalarKind::LookupTable { index },
+            kind: JoltLocalScalarMleKind::LookupTable { index },
         })
         .collect::<Vec<_>>();
     values.extend([
-        Stage5InstructionReadRafLocalScalarEmitPlan {
+        JoltLocalScalarEmitPlan {
             symbol: "stage5.instruction_read_raf.local_scalar.LeftLookupOperand".to_owned(),
-            kind: Stage5InstructionReadRafLocalScalarKind::LeftOperand,
+            kind: JoltLocalScalarMleKind::LeftOperand,
         },
-        Stage5InstructionReadRafLocalScalarEmitPlan {
+        JoltLocalScalarEmitPlan {
             symbol: "stage5.instruction_read_raf.local_scalar.RightLookupOperand".to_owned(),
-            kind: Stage5InstructionReadRafLocalScalarKind::RightOperand,
+            kind: JoltLocalScalarMleKind::RightOperand,
         },
-        Stage5InstructionReadRafLocalScalarEmitPlan {
+        JoltLocalScalarEmitPlan {
             symbol: "stage5.instruction_read_raf.local_scalar.Identity".to_owned(),
-            kind: Stage5InstructionReadRafLocalScalarKind::Identity,
+            kind: JoltLocalScalarMleKind::Identity,
         },
     ]);
     values
@@ -291,12 +288,12 @@ fn output_field_expr(
     }
 }
 
-fn emit_local_scalar_constants(values: &[Stage5InstructionReadRafLocalScalarEmitPlan]) -> String {
+fn emit_local_scalar_constants(values: &[JoltLocalScalarEmitPlan]) -> String {
     let values = values
         .iter()
         .map(|value| {
             format!(
-                "    Stage5InstructionReadRafLocalScalarPlan {{ symbol: {}, kind: {} }},",
+                "    JoltLocalScalarPlan {{ symbol: {}, kind: {} }},",
                 rust_str(&value.symbol),
                 local_scalar_kind_expr(&value.kind),
             )
@@ -304,24 +301,18 @@ fn emit_local_scalar_constants(values: &[Stage5InstructionReadRafLocalScalarEmit
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "pub const STAGE5_INSTRUCTION_READ_RAF_LOCAL_SCALARS: &[Stage5InstructionReadRafLocalScalarPlan] = &[\n{values}\n];\n\n"
+        "pub const STAGE5_INSTRUCTION_READ_RAF_LOCAL_SCALARS: &[JoltLocalScalarPlan] = &[\n{values}\n];\n\n"
     )
 }
 
-fn local_scalar_kind_expr(kind: &Stage5InstructionReadRafLocalScalarKind) -> String {
+fn local_scalar_kind_expr(kind: &JoltLocalScalarMleKind) -> String {
     match kind {
-        Stage5InstructionReadRafLocalScalarKind::LookupTable { index } => {
-            format!("Stage5InstructionReadRafLocalScalarKind::LookupTable {{ index: {index} }}")
+        JoltLocalScalarMleKind::LookupTable { index } => {
+            format!("JoltLocalScalarMleKind::LookupTable {{ index: {index} }}")
         }
-        Stage5InstructionReadRafLocalScalarKind::LeftOperand => {
-            "Stage5InstructionReadRafLocalScalarKind::LeftOperand".to_owned()
-        }
-        Stage5InstructionReadRafLocalScalarKind::RightOperand => {
-            "Stage5InstructionReadRafLocalScalarKind::RightOperand".to_owned()
-        }
-        Stage5InstructionReadRafLocalScalarKind::Identity => {
-            "Stage5InstructionReadRafLocalScalarKind::Identity".to_owned()
-        }
+        JoltLocalScalarMleKind::LeftOperand => "JoltLocalScalarMleKind::LeftOperand".to_owned(),
+        JoltLocalScalarMleKind::RightOperand => "JoltLocalScalarMleKind::RightOperand".to_owned(),
+        JoltLocalScalarMleKind::Identity => "JoltLocalScalarMleKind::Identity".to_owned(),
     }
 }
 

@@ -1473,7 +1473,7 @@ fn stage5_rust_targets_extract_and_compile() {
         .contains("Stage5RelationKind::Stage5InstructionReadRaf"));
     assert!(verifier_source
         .source
-        .contains("Stage5InstructionReadRafLocalScalarKind::LookupTable"));
+        .contains("JoltLocalScalarMleKind::LookupTable"));
     assert!(!verifier_source
         .source
         .contains("expected_ram_ra_claim_reduction"));

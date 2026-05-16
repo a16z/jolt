@@ -936,7 +936,7 @@ impl Stage5CpuProgram {
 
     fn emit_verifier_imports() -> &'static str {
         "use bolt_verifier_runtime::find_plan;\n\
-         use super::jolt_relations::{evaluate_stage5_instruction_read_raf_local_scalars, normalize_instruction_read_raf_point, Stage5InstructionReadRafPlan, Stage5InstructionReadRafLocalScalarKind, Stage5InstructionReadRafLocalScalarPlan};\n\
+         use super::jolt_relations::{evaluate_stage5_instruction_read_raf_local_scalars, normalize_instruction_read_raf_point, JoltLocalScalarMleKind, JoltLocalScalarPlan, Stage5InstructionReadRafPlan};\n\
          use jolt_field::{Field, Fr};\n\
          use jolt_sumcheck::SumcheckError;\n\
          use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};"

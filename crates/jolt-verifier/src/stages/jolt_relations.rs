@@ -94,18 +94,18 @@ pub struct Stage5InstructionReadRafPlan {
     pub instruction_ra_evals: &'static NamedEvalFamilyPlan,
     pub raf_flag_eval: &'static str,
     pub gamma: &'static str,
-    pub local_scalars: &'static [Stage5InstructionReadRafLocalScalarPlan],
+    pub local_scalars: &'static [JoltLocalScalarPlan],
     pub log_k: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5InstructionReadRafLocalScalarPlan {
+pub struct JoltLocalScalarPlan {
     pub symbol: &'static str,
-    pub kind: Stage5InstructionReadRafLocalScalarKind,
+    pub kind: JoltLocalScalarMleKind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Stage5InstructionReadRafLocalScalarKind {
+pub enum JoltLocalScalarMleKind {
     LookupTable { index: usize },
     LeftOperand,
     RightOperand,
@@ -229,10 +229,16 @@ pub fn evaluate_stage5_instruction_read_raf_local_scalars(
     local_point: &[Fr],
 ) -> Result<Vec<NamedScalar<Fr>>, RuntimePlanError> {
     let (r_address_prime, _) = instruction_read_raf_point_parts(plan, local_point)?;
-    let mut scalars = Vec::with_capacity(plan.local_scalars.len());
-    for value in plan.local_scalars {
-        let scalar =
-            evaluate_stage5_instruction_read_raf_local_scalar(value.kind, r_address_prime)?;
+    evaluate_jolt_local_scalars(plan.local_scalars, r_address_prime)
+}
+
+pub fn evaluate_jolt_local_scalars(
+    plans: &[JoltLocalScalarPlan],
+    point: &[Fr],
+) -> Result<Vec<NamedScalar<Fr>>, RuntimePlanError> {
+    let mut scalars = Vec::with_capacity(plans.len());
+    for value in plans {
+        let scalar = evaluate_jolt_local_scalar(value.kind, point)?;
         scalars.push(NamedScalar {
             symbol: value.symbol,
             value: scalar,
@@ -241,13 +247,13 @@ pub fn evaluate_stage5_instruction_read_raf_local_scalars(
     Ok(scalars)
 }
 
-fn evaluate_stage5_instruction_read_raf_local_scalar(
-    kind: Stage5InstructionReadRafLocalScalarKind,
-    r_address_prime: &[Fr],
+fn evaluate_jolt_local_scalar(
+    kind: JoltLocalScalarMleKind,
+    point: &[Fr],
 ) -> Result<Fr, RuntimePlanError> {
     const XLEN: usize = 64;
     Ok(match kind {
-        Stage5InstructionReadRafLocalScalarKind::LookupTable { index } => {
+        JoltLocalScalarMleKind::LookupTable { index } => {
             let tables = LookupTableKind::<XLEN>::all();
             let table = tables
                 .get(index)
@@ -256,17 +262,11 @@ fn evaluate_stage5_instruction_read_raf_local_scalar(
                     expected: tables.len(),
                     actual: index + 1,
                 })?;
-            table.evaluate_mle::<Fr, Fr>(r_address_prime)
+            table.evaluate_mle::<Fr, Fr>(point)
         }
-        Stage5InstructionReadRafLocalScalarKind::LeftOperand => {
-            operand_polynomial_eval(r_address_prime, true)?
-        }
-        Stage5InstructionReadRafLocalScalarKind::RightOperand => {
-            operand_polynomial_eval(r_address_prime, false)?
-        }
-        Stage5InstructionReadRafLocalScalarKind::Identity => {
-            IdentityPolynomial::new(r_address_prime.len()).evaluate(r_address_prime)
-        }
+        JoltLocalScalarMleKind::LeftOperand => operand_polynomial_eval(point, true)?,
+        JoltLocalScalarMleKind::RightOperand => operand_polynomial_eval(point, false)?,
+        JoltLocalScalarMleKind::Identity => IdentityPolynomial::new(point.len()).evaluate(point),
     })
 }
 
