@@ -1556,7 +1556,7 @@ fn stage6_rust_targets_extract_and_compile() {
     assert_eq!(prover_program.relation_output_values.len(), 8);
     assert!(prover_program.relation_outputs.is_empty());
     assert_eq!(verifier_program.relation_output_values.len(), 8);
-    assert_eq!(verifier_program.relation_output_eval_families.len(), 1);
+    assert!(verifier_program.relation_output_eval_families.is_empty());
     assert_eq!(verifier_program.relation_output_product_families.len(), 2);
     assert_eq!(verifier_program.relation_output_function_families.len(), 1);
     assert_eq!(verifier_program.relation_outputs.len(), 6);
@@ -1666,46 +1666,35 @@ fn stage6_rust_targets_extract_and_compile() {
             vec!["stage6.instruction_ra_virtual.output.eq.Cycle".to_owned()]
         );
     }
-    let inc_family = &verifier_program.relation_output_eval_families[0];
+    let inc_expr_symbols = verifier_program
+        .field_exprs
+        .iter()
+        .filter(|expr| {
+            expr.symbol
+                .starts_with("stage6.inc_claim_reduction.output.")
+        })
+        .map(|expr| expr.symbol.as_str())
+        .collect::<Vec<_>>();
     assert_eq!(
-        inc_family.symbol,
-        "stage6.inc_claim_reduction.output.family"
-    );
-    assert_eq!(inc_family.gamma, "stage6.inc_claim_reduction.gamma");
-    assert_eq!(
-        inc_family.evals,
+        inc_expr_symbols,
         vec![
-            "stage6.inc_claim_reduction.eval.RamInc".to_owned(),
-            "stage6.inc_claim_reduction.eval.RdInc".to_owned()
-        ]
-    );
-    assert_eq!(inc_family.power_stride, 2);
-    assert!(inc_family.value_term_offsets.is_empty());
-    assert!(inc_family.shared_terms.is_empty());
-    assert_eq!(inc_family.item_terms.len(), 2);
-    assert_eq!(inc_family.item_terms[0].gamma_power_offset, 0);
-    assert_eq!(
-        inc_family.item_terms[0].factors,
-        vec![
-            "stage6.inc_claim_reduction.output.eq.RamIncStage2".to_owned(),
-            "stage6.inc_claim_reduction.output.eq.RdIncStage4".to_owned()
-        ]
-    );
-    assert_eq!(inc_family.item_terms[1].gamma_power_offset, 1);
-    assert_eq!(
-        inc_family.item_terms[1].factors,
-        vec![
-            "stage6.inc_claim_reduction.output.eq.RamIncStage4".to_owned(),
-            "stage6.inc_claim_reduction.output.eq.RdIncStage5".to_owned()
+            "stage6.inc_claim_reduction.output.term0",
+            "stage6.inc_claim_reduction.output.gamma_pow_1",
+            "stage6.inc_claim_reduction.output.term1",
+            "stage6.inc_claim_reduction.output.gamma_pow_2",
+            "stage6.inc_claim_reduction.output.term2",
+            "stage6.inc_claim_reduction.output.gamma_pow_3",
+            "stage6.inc_claim_reduction.output.term3",
+            "stage6.inc_claim_reduction.output.claim_expr"
         ]
     );
     let inc_claims = verifier_program
         .relation_outputs
         .iter()
-        .filter(|claim| claim.expected_output == "stage6.inc_claim_reduction.output.family")
+        .filter(|claim| claim.expected_output == "stage6.inc_claim_reduction.output.claim_expr")
         .collect::<Vec<_>>();
     assert_eq!(inc_claims.len(), 1);
-    assert_eq!(inc_claims[0].eval_families, vec![inc_family.clone()]);
+    assert!(inc_claims[0].eval_families.is_empty());
     assert!(inc_claims[0].product_families.is_empty());
     assert!(inc_claims[0].function_families.is_empty());
     let booleanity_claims = verifier_program
@@ -1911,7 +1900,7 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(verifier_source
         .source
         .contains("STAGE6_RELATION_OUTPUT_0_FUNCTION_FAMILIES"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("STAGE6_RELATION_OUTPUT_4_FAMILIES"));
     assert!(verifier_source
@@ -1952,6 +1941,19 @@ fn stage6_rust_targets_extract_and_compile() {
         .contains("stage6.inc_claim_reduction.output.eq.RdIncStage5"));
     assert!(!verifier_source
         .source
+        .contains("stage6.inc_claim_reduction.output.family"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.inc_claim_reduction.output.claim_expr"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.inc_claim_reduction.output.gamma_pow_3"));
+    assert!(verifier_source.source.contains("Stage6FieldExprKind::Sum"));
+    assert!(verifier_source
+        .source
+        .contains("Stage6FieldExprKind::Product"));
+    assert!(!verifier_source
+        .source
         .contains("stage6.hamming_booleanity.output.square.HammingWeight"));
     assert!(!verifier_source
         .source
@@ -1983,12 +1985,9 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(!verifier_source
         .source
         .contains("stage6.instruction_ra_virtual.output.claim_expr"));
-    assert!(!verifier_source
+    assert!(verifier_source
         .source
-        .contains("stage6.inc_claim_reduction.output.term.RamInc"));
-    assert!(!verifier_source
-        .source
-        .contains("stage6.inc_claim_reduction.output.gamma2"));
+        .contains("stage6.inc_claim_reduction.output.term0"));
     assert!(verifier_source
         .source
         .contains("stage6.bytecode_read_raf.eval.BytecodeRa_0"));

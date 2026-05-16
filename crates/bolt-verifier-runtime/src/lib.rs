@@ -244,6 +244,8 @@ pub enum FieldExprKind {
     Add,
     Sub,
     Mul,
+    Sum,
+    Product,
     Neg,
     Pow(usize),
     LagrangeBasisEval(i64, usize, usize),
@@ -1720,6 +1722,22 @@ pub fn require_operand_count(
     }
 }
 
+pub fn require_min_operand_count(
+    input: &'static str,
+    minimum: usize,
+    actual: usize,
+) -> Result<(), RuntimePlanError> {
+    if actual >= minimum {
+        Ok(())
+    } else {
+        Err(RuntimePlanError::InvalidInputLength {
+            input,
+            expected: minimum,
+            actual,
+        })
+    }
+}
+
 pub fn evaluate_field_expr<F: Field>(
     expr: &FieldExprPlan,
     operands: &[F],
@@ -1737,6 +1755,20 @@ pub fn evaluate_field_expr<F: Field>(
         FieldExprKind::Mul => {
             require_operand_count(expr.symbol, 2, operands.len())?;
             Ok(operands[0] * operands[1])
+        }
+        FieldExprKind::Sum => {
+            require_min_operand_count(expr.symbol, 1, operands.len())?;
+            Ok(operands
+                .iter()
+                .copied()
+                .fold(F::from_u64(0), |acc, operand| acc + operand))
+        }
+        FieldExprKind::Product => {
+            require_min_operand_count(expr.symbol, 1, operands.len())?;
+            Ok(operands
+                .iter()
+                .copied()
+                .fold(F::from_u64(1), |acc, operand| acc * operand))
         }
         FieldExprKind::Neg => {
             require_operand_count(expr.symbol, 1, operands.len())?;

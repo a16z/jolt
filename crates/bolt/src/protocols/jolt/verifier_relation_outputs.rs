@@ -271,6 +271,23 @@ pub struct RelationOutputAst {
     pub expected_output: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RelationOutputFieldExprPlan {
+    pub symbol: String,
+    pub formula: String,
+    pub operands: Vec<String>,
+}
+
+impl FieldExprDependencies for RelationOutputFieldExprPlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn operands(&self) -> &[String] {
+        &self.operands
+    }
+}
+
 pub fn parse_output_eval_family_plan(
     stage: &str,
     operation: OperationRef<'_, '_>,
@@ -516,6 +533,244 @@ pub fn parse_output_function_family_plan(
         gamma: gamma.into_iter().next(),
         terms,
     })
+}
+
+pub fn lower_boolean_zero_function_family_output(
+    stage: &str,
+    relation: &str,
+    relation_output_function_families: &mut Vec<RelationOutputFunctionFamilyPlan>,
+    relation_output_asts: &mut [RelationOutputAst],
+) -> Result<Vec<RelationOutputFieldExprPlan>, EmitError> {
+    let Some(claim) = relation_output_asts
+        .iter_mut()
+        .find(|claim| claim.relation == relation)
+    else {
+        return Ok(Vec::new());
+    };
+    let family_symbol = claim.expected_output.clone();
+    let family_index = relation_output_function_families
+        .iter()
+        .position(|family| family.symbol == family_symbol)
+        .ok_or_else(|| {
+            EmitError::new(format!(
+                "{stage} relation output for @{relation} references missing function family @{family_symbol}"
+            ))
+        })?;
+    let family = relation_output_function_families[family_index].clone();
+    if family.gamma.is_some() || family.terms.len() != 1 {
+        return Err(EmitError::new(format!(
+            "{stage} relation output function family @{family_symbol} must be one ungamified term"
+        )));
+    }
+    let term = &family.terms[0];
+    if term.gamma_power_offset != 0
+        || term.function != RelationOutputFunctionKind::BooleanZero
+        || term.factors.len() != 1
+    {
+        return Err(EmitError::new(format!(
+            "{stage} relation output function family @{family_symbol} has unsupported boolean-zero shape"
+        )));
+    }
+
+    let prefix = relation_output_family_prefix(&family.symbol);
+    let square = format!("{prefix}.boolean_zero.square");
+    let boolean_zero = format!("{prefix}.boolean_zero");
+    let claim_expr = format!("{prefix}.claim_expr");
+    let rows = vec![
+        relation_output_field_expr(
+            square.clone(),
+            "field.product",
+            vec![term.eval.clone(), term.eval.clone()],
+        ),
+        relation_output_field_expr(
+            boolean_zero.clone(),
+            "field.sub",
+            vec![square, term.eval.clone()],
+        ),
+        relation_output_field_expr(
+            claim_expr.clone(),
+            "field.product",
+            vec![boolean_zero, term.factors[0].clone()],
+        ),
+    ];
+    claim.expected_output = claim_expr;
+    let _removed_family = relation_output_function_families.remove(family_index);
+    Ok(rows)
+}
+
+pub fn lower_eval_family_output(
+    stage: &str,
+    relation: &str,
+    relation_output_eval_families: &mut Vec<RelationOutputEvalFamilyPlan>,
+    relation_output_asts: &mut [RelationOutputAst],
+) -> Result<Vec<RelationOutputFieldExprPlan>, EmitError> {
+    let Some(claim) = relation_output_asts
+        .iter_mut()
+        .find(|claim| claim.relation == relation)
+    else {
+        return Ok(Vec::new());
+    };
+    let family_symbol = claim.expected_output.clone();
+    let family_index = relation_output_eval_families
+        .iter()
+        .position(|family| family.symbol == family_symbol)
+        .ok_or_else(|| {
+            EmitError::new(format!(
+                "{stage} relation output for @{relation} references missing eval family @{family_symbol}"
+            ))
+        })?;
+    let family = relation_output_eval_families[family_index].clone();
+    for term in &family.item_terms {
+        verify_count(
+            "relation output eval family item factors",
+            &family.symbol,
+            family.evals.len(),
+            term.factors.len(),
+        )?;
+    }
+
+    let prefix = relation_output_family_prefix(&family.symbol);
+    let mut rows = Vec::new();
+    let mut term_symbols = Vec::new();
+    let mut gamma_powers = BTreeMap::new();
+    let mut term_index = 0usize;
+    for (eval_index, eval_symbol) in family.evals.iter().enumerate() {
+        let gamma_base = eval_index * family.power_stride;
+        for &offset in &family.value_term_offsets {
+            let gamma_power_offset = gamma_base + offset;
+            let operands = eval_family_term_operands(
+                eval_symbol,
+                gamma_power_offset,
+                None,
+                &family.gamma,
+                prefix,
+                &mut gamma_powers,
+                &mut rows,
+            );
+            push_eval_family_term(prefix, term_index, operands, &mut term_symbols, &mut rows);
+            term_index += 1;
+        }
+        for term in &family.shared_terms {
+            let gamma_power_offset = gamma_base + term.gamma_power_offset;
+            let operands = eval_family_term_operands(
+                eval_symbol,
+                gamma_power_offset,
+                Some(&term.factor),
+                &family.gamma,
+                prefix,
+                &mut gamma_powers,
+                &mut rows,
+            );
+            push_eval_family_term(prefix, term_index, operands, &mut term_symbols, &mut rows);
+            term_index += 1;
+        }
+        for term in &family.item_terms {
+            let gamma_power_offset = gamma_base + term.gamma_power_offset;
+            let operands = eval_family_term_operands(
+                eval_symbol,
+                gamma_power_offset,
+                Some(&term.factors[eval_index]),
+                &family.gamma,
+                prefix,
+                &mut gamma_powers,
+                &mut rows,
+            );
+            push_eval_family_term(prefix, term_index, operands, &mut term_symbols, &mut rows);
+            term_index += 1;
+        }
+    }
+    if term_symbols.is_empty() {
+        return Err(EmitError::new(format!(
+            "{stage} relation output eval family @{family_symbol} has no scalar terms"
+        )));
+    }
+
+    let claim_expr = format!("{prefix}.claim_expr");
+    rows.push(relation_output_field_expr(
+        claim_expr.clone(),
+        "field.sum",
+        term_symbols,
+    ));
+    claim.expected_output = claim_expr;
+    let _removed_family = relation_output_eval_families.remove(family_index);
+    Ok(rows)
+}
+
+fn eval_family_term_operands(
+    eval_symbol: &str,
+    gamma_power_offset: usize,
+    factor: Option<&String>,
+    gamma: &str,
+    prefix: &str,
+    gamma_powers: &mut BTreeMap<usize, String>,
+    rows: &mut Vec<RelationOutputFieldExprPlan>,
+) -> Vec<String> {
+    let mut operands = vec![eval_symbol.to_owned()];
+    if gamma_power_offset > 0 {
+        operands.push(eval_family_gamma_power(
+            gamma_power_offset,
+            gamma,
+            prefix,
+            gamma_powers,
+            rows,
+        ));
+    }
+    if let Some(factor) = factor {
+        operands.push(factor.clone());
+    }
+    operands
+}
+
+fn eval_family_gamma_power(
+    exponent: usize,
+    gamma: &str,
+    prefix: &str,
+    gamma_powers: &mut BTreeMap<usize, String>,
+    rows: &mut Vec<RelationOutputFieldExprPlan>,
+) -> String {
+    if let Some(symbol) = gamma_powers.get(&exponent) {
+        return symbol.clone();
+    }
+    let symbol = format!("{prefix}.gamma_pow_{exponent}");
+    rows.push(relation_output_field_expr(
+        symbol.clone(),
+        format!("field.pow:{exponent}"),
+        vec![gamma.to_owned()],
+    ));
+    let _old = gamma_powers.insert(exponent, symbol.clone());
+    symbol
+}
+
+fn push_eval_family_term(
+    prefix: &str,
+    term_index: usize,
+    operands: Vec<String>,
+    term_symbols: &mut Vec<String>,
+    rows: &mut Vec<RelationOutputFieldExprPlan>,
+) {
+    let symbol = format!("{prefix}.term{term_index}");
+    rows.push(relation_output_field_expr(
+        symbol.clone(),
+        "field.product",
+        operands,
+    ));
+    term_symbols.push(symbol);
+}
+
+fn relation_output_family_prefix(symbol: &str) -> &str {
+    symbol.strip_suffix(".family").unwrap_or(symbol)
+}
+
+fn relation_output_field_expr(
+    symbol: String,
+    formula: impl Into<String>,
+    operands: Vec<String>,
+) -> RelationOutputFieldExprPlan {
+    RelationOutputFieldExprPlan {
+        symbol,
+        formula: formula.into(),
+        operands,
+    }
 }
 
 pub trait FieldExprDependencies {

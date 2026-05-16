@@ -254,6 +254,8 @@ pub(crate) enum FieldExprKind {
     Add,
     Sub,
     Mul,
+    Sum,
+    Product,
     Neg,
     Pow(usize),
     LagrangeBasisEval {
@@ -270,6 +272,8 @@ impl FieldExprKind {
             "field.add" => Ok(Self::Add),
             "field.sub" => Ok(Self::Sub),
             "field.mul" => Ok(Self::Mul),
+            "field.sum" => Ok(Self::Sum),
+            "field.product" => Ok(Self::Product),
             "field.neg" => Ok(Self::Neg),
             value if value.starts_with("field.pow:") => parse_pow(value),
             value if value.starts_with("poly.lagrange_basis_eval:") => parse_lagrange(value),
@@ -286,6 +290,8 @@ impl FieldExprKind {
             Self::Add => "Add".to_owned(),
             Self::Sub => "Sub".to_owned(),
             Self::Mul => "Mul".to_owned(),
+            Self::Sum => "Sum".to_owned(),
+            Self::Product => "Product".to_owned(),
             Self::Neg => "Neg".to_owned(),
             Self::Pow(exponent) => format!("Pow({exponent})"),
             Self::LagrangeBasisEval {
@@ -418,6 +424,14 @@ mod tests {
         assert_eq!(
             FieldExprKind::from_cpu_attr("field.pow:32").ok(),
             Some(FieldExprKind::Pow(32))
+        );
+        assert_eq!(
+            FieldExprKind::from_cpu_attr("field.sum").ok(),
+            Some(FieldExprKind::Sum)
+        );
+        assert_eq!(
+            FieldExprKind::from_cpu_attr("field.product").ok(),
+            Some(FieldExprKind::Product)
         );
         assert_eq!(
             FieldExprKind::from_cpu_attr("poly.lagrange_basis_eval:-1:3:2").ok(),

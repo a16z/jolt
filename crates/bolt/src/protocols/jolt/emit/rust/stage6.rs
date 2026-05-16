@@ -22,6 +22,7 @@ use crate::protocols::jolt::verifier_relation_outputs::{
     parse_output_product_family_plan, FieldExprDependencies,
     RelationOutputAst as Stage6RelationOutputAst,
     RelationOutputEvalFamilyPlan as Stage6RelationOutputEvalFamilyPlan,
+    RelationOutputFieldExprPlan as Stage6RelationOutputFieldExprPlan,
     RelationOutputFunctionFamilyPlan as Stage6RelationOutputFunctionFamilyPlan,
     RelationOutputPlan as Stage6RelationOutputPlan,
     RelationOutputProductFamilyPlan as Stage6RelationOutputProductFamilyPlan,
@@ -674,8 +675,9 @@ impl Stage6CpuProgram {
             );
         }
         if role == Role::Verifier {
-            lower_stage6_hamming_booleanity_output(
+            lower_stage6_relation_outputs(
                 &mut field_exprs,
+                &mut relation_output_eval_families,
                 &mut relation_output_function_families,
                 &mut relation_output_asts,
             )?;
@@ -2761,71 +2763,41 @@ fn stage6_trace_rounds(
     }
 }
 
-fn lower_stage6_hamming_booleanity_output(
+fn lower_stage6_relation_outputs(
     field_exprs: &mut Vec<Stage6FieldExprPlan>,
+    relation_output_eval_families: &mut Vec<Stage6RelationOutputEvalFamilyPlan>,
     relation_output_function_families: &mut Vec<Stage6RelationOutputFunctionFamilyPlan>,
     relation_output_asts: &mut [Stage6RelationOutputAst],
 ) -> Result<(), EmitError> {
-    let Some(claim) = relation_output_asts
-        .iter_mut()
-        .find(|claim| claim.relation == "jolt.stage6.hamming_booleanity")
-    else {
-        return Ok(());
-    };
-    let family_symbol = claim.expected_output.clone();
-    let Some(family_index) = relation_output_function_families
-        .iter()
-        .position(|family| family.symbol == family_symbol)
-    else {
-        return Err(EmitError::new(format!(
-            "stage6 hamming booleanity output references missing function family @{family_symbol}"
-        )));
-    };
-    let family = &relation_output_function_families[family_index];
-    if family.gamma.is_some() || family.terms.len() != 1 {
-        return Err(EmitError::new(format!(
-            "stage6 hamming booleanity output family @{family_symbol} must be one ungamified term"
-        )));
-    }
-    let term = &family.terms[0];
-    if term.gamma_power_offset != 0 || term.function != "boolean_zero" || term.factors.len() != 1 {
-        return Err(EmitError::new(format!(
-            "stage6 hamming booleanity output family @{family_symbol} has unsupported term shape"
-        )));
-    }
-
-    let square = "stage6.hamming_booleanity.output.boolean_zero.square";
-    let boolean_zero = "stage6.hamming_booleanity.output.boolean_zero";
-    let claim_expr = "stage6.hamming_booleanity.output.claim_expr";
-    field_exprs.push(stage6_relation_output_expr(
-        square,
-        "field.mul",
-        vec![term.eval.clone(), term.eval.clone()],
-    ));
-    field_exprs.push(stage6_relation_output_expr(
-        boolean_zero,
-        "field.sub",
-        vec![square.to_owned(), term.eval.clone()],
-    ));
-    field_exprs.push(stage6_relation_output_expr(
-        claim_expr,
-        "field.mul",
-        vec![boolean_zero.to_owned(), term.factors[0].clone()],
-    ));
-    claim_expr.clone_into(&mut claim.expected_output);
-    let _removed_family = relation_output_function_families.remove(family_index);
+    field_exprs.extend(
+        verifier_relation_outputs::lower_boolean_zero_function_family_output(
+            "stage6",
+            "jolt.stage6.hamming_booleanity",
+            relation_output_function_families,
+            relation_output_asts,
+        )?
+        .into_iter()
+        .map(stage6_relation_output_expr),
+    );
+    field_exprs.extend(
+        verifier_relation_outputs::lower_eval_family_output(
+            "stage6",
+            "jolt.stage6.inc_claim_reduction",
+            relation_output_eval_families,
+            relation_output_asts,
+        )?
+        .into_iter()
+        .map(stage6_relation_output_expr),
+    );
     Ok(())
 }
 
-fn stage6_relation_output_expr(
-    symbol: &str,
-    formula: &str,
-    operands: Vec<String>,
-) -> Stage6FieldExprPlan {
+fn stage6_relation_output_expr(expr: Stage6RelationOutputFieldExprPlan) -> Stage6FieldExprPlan {
+    let operands = expr.operands;
     Stage6FieldExprPlan {
-        symbol: symbol.to_owned(),
+        symbol: expr.symbol,
         kind: "op".to_owned(),
-        formula: formula.to_owned(),
+        formula: expr.formula,
         operand_names: operands.clone(),
         operands,
     }
