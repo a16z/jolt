@@ -1558,7 +1558,7 @@ fn stage6_rust_targets_extract_and_compile() {
     assert_eq!(verifier_program.relation_output_values.len(), 8);
     assert_eq!(verifier_program.relation_output_eval_families.len(), 1);
     assert_eq!(verifier_program.relation_output_product_families.len(), 2);
-    assert_eq!(verifier_program.relation_output_function_families.len(), 2);
+    assert_eq!(verifier_program.relation_output_function_families.len(), 1);
     assert_eq!(verifier_program.relation_outputs.len(), 6);
     let total_booleanity_ra = params.instruction_d + params.bytecode_d + params.ram_d;
     let booleanity_function_families = verifier_program
@@ -1596,24 +1596,23 @@ fn stage6_rust_targets_extract_and_compile() {
         booleanity_function_family.terms[0].factors,
         vec!["stage6.booleanity.output.eq.InstructionRa0".to_owned()]
     );
-    let hamming_function_families = verifier_program
+    assert!(verifier_program
         .relation_output_function_families
         .iter()
-        .filter(|family| family.symbol == "stage6.hamming_booleanity.output.family")
+        .all(|family| family.symbol != "stage6.hamming_booleanity.output.family"));
+    let hamming_expr_symbols = verifier_program
+        .field_exprs
+        .iter()
+        .filter(|expr| expr.symbol.starts_with("stage6.hamming_booleanity.output."))
+        .map(|expr| expr.symbol.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(hamming_function_families.len(), 1);
-    let hamming_function_family = hamming_function_families[0];
-    assert_eq!(hamming_function_family.gamma, None);
-    assert_eq!(hamming_function_family.terms.len(), 1);
-    assert_eq!(hamming_function_family.terms[0].gamma_power_offset, 0);
-    assert_eq!(hamming_function_family.terms[0].function, "boolean_zero");
     assert_eq!(
-        hamming_function_family.terms[0].eval,
-        "stage6.hamming_booleanity.eval.HammingWeight"
-    );
-    assert_eq!(
-        hamming_function_family.terms[0].factors,
-        vec!["stage6.hamming_booleanity.output.eq.LookupOutput".to_owned()]
+        hamming_expr_symbols,
+        vec![
+            "stage6.hamming_booleanity.output.boolean_zero.square",
+            "stage6.hamming_booleanity.output.boolean_zero",
+            "stage6.hamming_booleanity.output.claim_expr"
+        ]
     );
     let ram_product_families = verifier_program
         .relation_output_product_families
@@ -1729,15 +1728,12 @@ fn stage6_rust_targets_extract_and_compile() {
     let hamming_claims = verifier_program
         .relation_outputs
         .iter()
-        .filter(|claim| claim.expected_output == "stage6.hamming_booleanity.output.family")
+        .filter(|claim| claim.expected_output == "stage6.hamming_booleanity.output.claim_expr")
         .collect::<Vec<_>>();
     assert_eq!(hamming_claims.len(), 1);
     assert!(hamming_claims[0].eval_families.is_empty());
     assert!(hamming_claims[0].product_families.is_empty());
-    assert_eq!(
-        hamming_claims[0].function_families,
-        vec![hamming_function_family.clone()]
-    );
+    assert!(hamming_claims[0].function_families.is_empty());
     let ram_ra_claims = verifier_program
         .relation_outputs
         .iter()
@@ -1936,9 +1932,15 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(!verifier_source
         .source
         .contains("stage6.booleanity.output.gamma_sq_"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("stage6.hamming_booleanity.output.family"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.hamming_booleanity.output.claim_expr"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.hamming_booleanity.output.boolean_zero"));
     assert!(verifier_source
         .source
         .contains("stage6.ram_ra_virtual.output.family"));
@@ -1954,12 +1956,6 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(!verifier_source
         .source
         .contains("stage6.hamming_booleanity.output.neg.HammingWeight"));
-    assert!(!verifier_source
-        .source
-        .contains("stage6.hamming_booleanity.output.boolean"));
-    assert!(!verifier_source
-        .source
-        .contains("stage6.hamming_booleanity.output.claim_expr"));
     assert!(!verifier_source
         .source
         .contains("stage6.hamming_booleanity.output.gamma_identity"));

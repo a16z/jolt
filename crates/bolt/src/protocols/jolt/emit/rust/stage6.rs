@@ -673,6 +673,13 @@ impl Stage6CpuProgram {
                     .map(|claim| claim.expected_output.as_str()),
             );
         }
+        if role == Role::Verifier {
+            lower_stage6_hamming_booleanity_output(
+                &mut field_exprs,
+                &mut relation_output_function_families,
+                &mut relation_output_asts,
+            )?;
+        }
         let mut relation_outputs = if role == Role::Verifier {
             verifier_relation_outputs::resolve_relation_outputs(
                 "stage6",
@@ -2751,6 +2758,76 @@ fn stage6_trace_rounds(
             Role::Prover => "Stage6CpuProgramPlan",
             Role::Verifier => "Stage6VerifierProgramPlan",
         }
+    }
+}
+
+fn lower_stage6_hamming_booleanity_output(
+    field_exprs: &mut Vec<Stage6FieldExprPlan>,
+    relation_output_function_families: &mut Vec<Stage6RelationOutputFunctionFamilyPlan>,
+    relation_output_asts: &mut [Stage6RelationOutputAst],
+) -> Result<(), EmitError> {
+    let Some(claim) = relation_output_asts
+        .iter_mut()
+        .find(|claim| claim.relation == "jolt.stage6.hamming_booleanity")
+    else {
+        return Ok(());
+    };
+    let family_symbol = claim.expected_output.clone();
+    let Some(family_index) = relation_output_function_families
+        .iter()
+        .position(|family| family.symbol == family_symbol)
+    else {
+        return Err(EmitError::new(format!(
+            "stage6 hamming booleanity output references missing function family @{family_symbol}"
+        )));
+    };
+    let family = &relation_output_function_families[family_index];
+    if family.gamma.is_some() || family.terms.len() != 1 {
+        return Err(EmitError::new(format!(
+            "stage6 hamming booleanity output family @{family_symbol} must be one ungamified term"
+        )));
+    }
+    let term = &family.terms[0];
+    if term.gamma_power_offset != 0 || term.function != "boolean_zero" || term.factors.len() != 1 {
+        return Err(EmitError::new(format!(
+            "stage6 hamming booleanity output family @{family_symbol} has unsupported term shape"
+        )));
+    }
+
+    let square = "stage6.hamming_booleanity.output.boolean_zero.square";
+    let boolean_zero = "stage6.hamming_booleanity.output.boolean_zero";
+    let claim_expr = "stage6.hamming_booleanity.output.claim_expr";
+    field_exprs.push(stage6_relation_output_expr(
+        square,
+        "field.mul",
+        vec![term.eval.clone(), term.eval.clone()],
+    ));
+    field_exprs.push(stage6_relation_output_expr(
+        boolean_zero,
+        "field.sub",
+        vec![square.to_owned(), term.eval.clone()],
+    ));
+    field_exprs.push(stage6_relation_output_expr(
+        claim_expr,
+        "field.mul",
+        vec![boolean_zero.to_owned(), term.factors[0].clone()],
+    ));
+    claim_expr.clone_into(&mut claim.expected_output);
+    let _removed_family = relation_output_function_families.remove(family_index);
+    Ok(())
+}
+
+fn stage6_relation_output_expr(
+    symbol: &str,
+    formula: &str,
+    operands: Vec<String>,
+) -> Stage6FieldExprPlan {
+    Stage6FieldExprPlan {
+        symbol: symbol.to_owned(),
+        kind: "op".to_owned(),
+        formula: formula.to_owned(),
+        operand_names: operands.clone(),
+        operands,
     }
 }
 
