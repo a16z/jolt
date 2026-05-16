@@ -25,6 +25,8 @@ pub use bolt_verifier_runtime::{
     ClaimKind as Stage3ClaimKind, FieldConstantPlan as Stage3FieldConstantPlan,
     FieldExprKind as Stage3FieldExprKind,
     FieldExprPlan as Stage3FieldExprPlan,
+    ValueExprKind as Stage3ValueExprKind,
+    ValueExprPlan as Stage3ValueExprPlan,
     OpeningBatchPlan as Stage3OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage3OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage3OpeningClaimPlan, OpeningInputPlan as Stage3OpeningInputPlan,
@@ -136,6 +138,9 @@ pub const STAGE3_FIELD_EXPRS: &[Stage3FieldExprPlan] = &[
     Stage3FieldExprPlan { symbol: "stage3.registers.output.weighted_register_values", kind: Stage3FieldExprKind::Add, operands: &["stage3.registers.output.partial.RdWriteValueRs1Value", "stage3.registers.output.term.Rs2Value"] },
     Stage3FieldExprPlan { symbol: "stage3.registers.output.claim_expr", kind: Stage3FieldExprKind::Mul, operands: &["stage3.registers.output.eq.RdWriteValue", "stage3.registers.output.weighted_register_values"] },
 ];
+pub const STAGE3_VALUE_EXPRS: &[Stage3ValueExprPlan] = &[
+
+];
 pub const STAGE3_SUMCHECK_CLAIMS: &[Stage3SumcheckClaimPlan] = &[
     Stage3SumcheckClaimPlan { symbol: "stage3.spartan_shift.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage3.spartan_shift.weighted_next_values", kernel: None, relation: Some(Stage3RelationKind::Stage3SpartanShift), claim_value: "stage3.spartan_shift.claim_expr" },
     Stage3SumcheckClaimPlan { symbol: "stage3.instruction_input.input", stage: "stage3", domain: "jolt.trace_domain", num_rounds: 16, degree: 3, claim: "stage3.instruction_input.weighted_inputs", kernel: None, relation: Some(Stage3RelationKind::Stage3InstructionInput), claim_value: "stage3.instruction_input.claim_expr" },
@@ -230,6 +235,7 @@ pub const STAGE3_PROGRAM: Stage3VerifierProgramPlan = Stage3VerifierProgramPlan 
     opening_inputs: STAGE3_OPENING_INPUTS,
     field_constants: STAGE3_FIELD_CONSTANTS,
     field_exprs: STAGE3_FIELD_EXPRS,
+    value_exprs: STAGE3_VALUE_EXPRS,
     claims: STAGE3_SUMCHECK_CLAIMS,
     batches: STAGE3_SUMCHECK_BATCHES,
     drivers: STAGE3_SUMCHECK_DRIVERS,
@@ -327,7 +333,7 @@ where
         }
     })?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
+        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
         .map_err(VerifyStage3Error::from)?;
     artifacts.challenge_vectors.push(Stage3ChallengeVector {
         symbol: squeeze.symbol,
@@ -394,6 +400,7 @@ where
         program.claims,
         program.batches,
         program.field_exprs,
+        program.value_exprs,
         program.opening_inputs,
         program.opening_claims,
         program.opening_batches,
@@ -446,7 +453,7 @@ fn observe_stage3_sumcheck_output<F: Field>(
         },
     )?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
+        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
         .map_err(VerifyStage3Error::from)?;
     store.verify_opening_equalities(
         program.opening_equalities,
@@ -486,6 +493,7 @@ fn expected_batched_output_claim(
             program.relation_outputs,
         program.relation_output_values,
             program.field_exprs,
+            program.value_exprs,
             store,
             instance,
             evals, &[], &[], local_point,

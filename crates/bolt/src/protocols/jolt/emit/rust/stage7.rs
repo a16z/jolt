@@ -11,7 +11,7 @@ use melior::ir::{Attribute, OperationRef};
 
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
-use crate::protocols::jolt::rust_target_plan::power_strided_weighted_sum_formula;
+use crate::protocols::jolt::rust_target_plan::{power_strided_weighted_sum_formula, ValueExprKind};
 use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
 use crate::protocols::jolt::verifier_relation_outputs::{
     self, parse_output_eval_family_plan, parse_output_function_family_plan,
@@ -52,6 +52,7 @@ pub struct Stage7CpuProgram {
     pub opening_inputs: Vec<Stage7OpeningInputPlan>,
     pub field_constants: Vec<Stage7FieldConstantPlan>,
     pub field_exprs: Vec<Stage7FieldExprPlan>,
+    pub value_exprs: Vec<Stage7ValueExprPlan>,
     pub kernels: Vec<Stage7KernelPlan>,
     pub claims: Vec<Stage7SumcheckClaimPlan>,
     pub batches: Vec<Stage7SumcheckBatchPlan>,
@@ -135,6 +136,15 @@ pub struct Stage7FieldExprPlan {
     pub operands: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage7ValueExprPlan {
+    pub symbol: String,
+    pub kind: String,
+    pub formula: String,
+    pub operand_names: Vec<String>,
+    pub operands: Vec<String>,
+}
+
 impl FieldExprDependencies for Stage7FieldExprPlan {
     fn symbol(&self) -> &str {
         &self.symbol
@@ -155,6 +165,16 @@ fn stage7_relation_output_expr(expr: Stage7RelationOutputFieldExprPlan) -> Stage
     }
 }
 
+fn stage7_value_expr(expr: Stage7RelationOutputFieldExprPlan) -> Stage7ValueExprPlan {
+    Stage7ValueExprPlan {
+        symbol: expr.symbol,
+        kind: "op".to_owned(),
+        formula: expr.formula,
+        operand_names: expr.operands.clone(),
+        operands: expr.operands,
+    }
+}
+
 struct HammingWeightClaimRow {
     hamming_factor: String,
     booleanity: String,
@@ -163,6 +183,7 @@ struct HammingWeightClaimRow {
 
 fn compact_hamming_weight_input_claim(
     field_exprs: &mut Vec<Stage7FieldExprPlan>,
+    value_exprs: &mut Vec<Stage7ValueExprPlan>,
     claims: &mut [Stage7SumcheckClaimPlan],
     opening_inputs: &[Stage7OpeningInputPlan],
 ) -> Result<(), EmitError> {
@@ -196,7 +217,7 @@ fn compact_hamming_weight_input_claim(
     operands.extend(rows.iter().map(|row| row.virtualization.clone()));
 
     field_exprs.retain(|expr| !is_hamming_weight_input_claim_expr(&expr.symbol));
-    field_exprs.push(Stage7FieldExprPlan {
+    value_exprs.push(Stage7ValueExprPlan {
         symbol: compact_symbol.to_owned(),
         kind: "op".to_owned(),
         formula: power_strided_weighted_sum_formula(row_count, 3, &[], &[], &[0, 1, 2]),
@@ -410,6 +431,7 @@ verifier_plan::impl_verifier_plan_source_traits!(
     opening_input = Stage7OpeningInputPlan,
     field_constant = Stage7FieldConstantPlan,
     field_expr = Stage7FieldExprPlan,
+    value_expr = Stage7ValueExprPlan,
     claim = Stage7SumcheckClaimPlan,
     batch = Stage7SumcheckBatchPlan,
     driver = Stage7SumcheckDriverPlan,
@@ -452,6 +474,7 @@ impl Stage7CpuProgram {
         let mut opening_inputs = Vec::new();
         let mut field_constants = Vec::new();
         let mut field_exprs = Vec::new();
+        let mut value_exprs = Vec::new();
         let mut kernels = Vec::new();
         let mut claims = Vec::new();
         let mut batches = Vec::new();
@@ -779,17 +802,24 @@ impl Stage7CpuProgram {
             .ok_or_else(|| EmitError::new("missing cpu party role"))?;
         let is_verifier = role == Role::Verifier;
         if is_verifier {
-            compact_hamming_weight_input_claim(&mut field_exprs, &mut claims, &opening_inputs)?;
-            field_exprs.extend(
-                verifier_relation_outputs::lower_eval_family_output_to_weighted_sum(
-                    "stage7",
-                    "jolt.stage7.hamming_weight_claim_reduction",
-                    &mut relation_output_eval_families,
-                    &mut relation_output_asts,
-                )?
-                .into_iter()
-                .map(stage7_relation_output_expr),
-            );
+            compact_hamming_weight_input_claim(
+                &mut field_exprs,
+                &mut value_exprs,
+                &mut claims,
+                &opening_inputs,
+            )?;
+            for expr in verifier_relation_outputs::lower_eval_family_output_to_weighted_sum(
+                "stage7",
+                "jolt.stage7.hamming_weight_claim_reduction",
+                &mut relation_output_eval_families,
+                &mut relation_output_asts,
+            )? {
+                if ValueExprKind::from_cpu_attr(&expr.formula).is_ok() {
+                    value_exprs.push(stage7_value_expr(expr));
+                } else {
+                    field_exprs.push(stage7_relation_output_expr(expr));
+                }
+            }
         }
         if role == Role::Prover {
             verifier_relation_outputs::prune_output_only_field_exprs(
@@ -824,6 +854,7 @@ impl Stage7CpuProgram {
             opening_inputs,
             field_constants,
             field_exprs,
+            value_exprs,
             kernels,
             claims,
             batches,
@@ -927,6 +958,24 @@ impl Stage7CpuProgram {
                 if !field_values.contains(operand) {
                     return Err(EmitError::new(format!(
                         "field expr @{} references missing field value @{operand}",
+                        expr.symbol
+                    )));
+                }
+            }
+        }
+        for expr in &self.value_exprs {
+            verify_count(
+                "value expr operands",
+                &expr.symbol,
+                expr.operand_names.len(),
+                expr.operands.len(),
+            )?;
+            let _kind = ValueExprKind::from_cpu_attr(&expr.formula)
+                .map_err(|error| EmitError::new(error.to_string()))?;
+            for operand in &expr.operands {
+                if !field_values.contains(operand) {
+                    return Err(EmitError::new(format!(
+                        "value expr @{} references missing field value @{operand}",
                         expr.symbol
                     )));
                 }
@@ -1601,6 +1650,8 @@ pub use bolt_verifier_runtime::{
     ClaimKind as Stage7ClaimKind, FieldConstantPlan as Stage7FieldConstantPlan,
     FieldExprKind as Stage7FieldExprKind,
     FieldExprPlan as Stage7FieldExprPlan,
+    ValueExprKind as Stage7ValueExprKind,
+    ValueExprPlan as Stage7ValueExprPlan,
     KernelPlan as Stage7KernelPlan, OpeningBatchPlan as Stage7OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage7OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage7OpeningClaimPlan, OpeningInputPlan as Stage7OpeningInputPlan,
@@ -1664,6 +1715,11 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
         } else {
             ""
         };
+        let value_exprs_field = if self.role == Role::Verifier {
+            "    value_exprs: STAGE7_VALUE_EXPRS,\n"
+        } else {
+            ""
+        };
         push_format(
             &mut source,
             format_args!(
@@ -1676,6 +1732,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
                  \x20   opening_inputs: STAGE7_OPENING_INPUTS,\n\
                  \x20   field_constants: STAGE7_FIELD_CONSTANTS,\n\
                  \x20   field_exprs: STAGE7_FIELD_EXPRS,\n\
+                 {value_exprs_field}\
                  \x20   kernels: STAGE7_KERNELS,\n\
                  \x20   claims: STAGE7_SUMCHECK_CLAIMS,\n\
                  \x20   batches: STAGE7_SUMCHECK_BATCHES,\n\
@@ -1714,6 +1771,9 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
         source.push_str(&self.emit_opening_input_constants()?);
         source.push_str(&self.emit_field_constant_constants());
         source.push_str(&self.emit_field_expr_constants()?);
+        if self.role == Role::Verifier {
+            source.push_str(&self.emit_value_expr_constants()?);
+        }
         Ok(source)
     }
 
@@ -1902,6 +1962,17 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
             ),
         );
         Ok(source)
+    }
+
+    fn emit_value_expr_constants(&self) -> Result<String, EmitError> {
+        let plan = self.verifier_plan()?;
+        Ok(verifier_plan::emit_value_expr_constants_chunked(
+            "Stage7",
+            "STAGE7",
+            "stage7_value_expr",
+            &plan.value_exprs,
+            8,
+        ))
     }
 
     fn emit_kernel_constants(&self) -> String {
@@ -2488,7 +2559,7 @@ where
         }
     })?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
+        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
         .map_err(VerifyStage7Error::from)?;
     artifacts.challenge_vectors.push(Stage7ChallengeVector {
         symbol: squeeze.symbol,
@@ -2566,6 +2637,7 @@ where
         program.claims,
         program.batches,
         program.field_exprs,
+        program.value_exprs,
         program.opening_inputs,
         program.opening_claims,
         program.opening_batches,
@@ -2618,7 +2690,7 @@ fn observe_stage7_sumcheck_output<F: Field>(
         },
     )?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
+        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
         .map_err(VerifyStage7Error::from)?;
     store.verify_opening_equalities(
         program.opening_equalities,
@@ -2666,6 +2738,7 @@ fn expected_batched_output_claim(
                     program.relation_outputs,
         program.relation_output_values,
                     program.field_exprs,
+                    program.value_exprs,
                     store,
                     instance,
                     evals, &[], &[], local_point,

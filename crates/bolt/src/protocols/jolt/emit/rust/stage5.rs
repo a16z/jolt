@@ -11,7 +11,7 @@ use melior::ir::{Attribute, OperationRef};
 
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
-use crate::protocols::jolt::rust_target_plan::FieldExprKind;
+use crate::protocols::jolt::rust_target_plan::{FieldExprKind, ValueExprKind};
 use crate::protocols::jolt::stage5_instruction_read_raf_plan::{
     Stage5InstructionReadRafEmitPlan, Stage5InstructionReadRafOutputFieldExprPlan,
 };
@@ -43,6 +43,7 @@ pub struct Stage5CpuProgram {
     pub opening_inputs: Vec<Stage5OpeningInputPlan>,
     pub field_constants: Vec<Stage5FieldConstantPlan>,
     pub field_exprs: Vec<Stage5FieldExprPlan>,
+    pub value_exprs: Vec<Stage5ValueExprPlan>,
     pub kernels: Vec<Stage5KernelPlan>,
     pub claims: Vec<Stage5SumcheckClaimPlan>,
     pub batches: Vec<Stage5SumcheckBatchPlan>,
@@ -118,6 +119,15 @@ pub struct Stage5FieldConstantPlan {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage5FieldExprPlan {
+    pub symbol: String,
+    pub kind: String,
+    pub formula: String,
+    pub operand_names: Vec<String>,
+    pub operands: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage5ValueExprPlan {
     pub symbol: String,
     pub kind: String,
     pub formula: String,
@@ -212,6 +222,16 @@ fn stage5_field_expr(expr: Stage5InstructionReadRafOutputFieldExprPlan) -> Stage
     }
 }
 
+fn stage5_value_expr(expr: Stage5InstructionReadRafOutputFieldExprPlan) -> Stage5ValueExprPlan {
+    Stage5ValueExprPlan {
+        symbol: expr.symbol,
+        kind: "op".to_owned(),
+        formula: expr.formula,
+        operand_names: expr.operands.clone(),
+        operands: expr.operands,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage5PointSlicePlan {
     pub symbol: String,
@@ -266,6 +286,7 @@ verifier_plan::impl_verifier_plan_source_traits!(
     opening_input = Stage5OpeningInputPlan,
     field_constant = Stage5FieldConstantPlan,
     field_expr = Stage5FieldExprPlan,
+    value_expr = Stage5ValueExprPlan,
     claim = Stage5SumcheckClaimPlan,
     batch = Stage5SumcheckBatchPlan,
     driver = Stage5SumcheckDriverPlan,
@@ -308,6 +329,7 @@ impl Stage5CpuProgram {
         let mut opening_inputs = Vec::new();
         let mut field_constants = Vec::new();
         let mut field_exprs = Vec::new();
+        let mut value_exprs = Vec::new();
         let mut kernels = Vec::new();
         let mut claims = Vec::new();
         let mut batches = Vec::new();
@@ -662,7 +684,13 @@ impl Stage5CpuProgram {
                 value_ref.index += relation_output_value_base;
             }
             relation_output_values.extend(output_plan.relation_output_values);
-            field_exprs.extend(output_plan.field_exprs.into_iter().map(stage5_field_expr));
+            for expr in output_plan.field_exprs {
+                if ValueExprKind::from_cpu_attr(&expr.formula).is_ok() {
+                    value_exprs.push(stage5_value_expr(expr));
+                } else {
+                    field_exprs.push(stage5_field_expr(expr));
+                }
+            }
             relation_outputs.push(output_claim);
         }
 
@@ -677,6 +705,7 @@ impl Stage5CpuProgram {
             opening_inputs,
             field_constants,
             field_exprs,
+            value_exprs,
             kernels,
             claims,
             batches,
@@ -780,10 +809,28 @@ impl Stage5CpuProgram {
                 expr.operand_names.len(),
                 expr.operands.len(),
             )?;
-            let kind = FieldExprKind::from_cpu_attr(&expr.formula)
+            let _kind = FieldExprKind::from_cpu_attr(&expr.formula)
+                .map_err(|error| EmitError::new(error.to_string()))?;
+            for operand in &expr.operands {
+                if !field_values.contains(operand) {
+                    return Err(EmitError::new(format!(
+                        "field expr @{} references missing field value @{operand}",
+                        expr.symbol
+                    )));
+                }
+            }
+        }
+        for expr in &self.value_exprs {
+            verify_count(
+                "value expr operands",
+                &expr.symbol,
+                expr.operand_names.len(),
+                expr.operands.len(),
+            )?;
+            let kind = ValueExprKind::from_cpu_attr(&expr.formula)
                 .map_err(|error| EmitError::new(error.to_string()))?;
             match kind {
-                FieldExprKind::FieldVectorSum | FieldExprKind::FieldVectorProduct => {
+                ValueExprKind::FieldVectorSum | ValueExprKind::FieldVectorProduct => {
                     verify_count(
                         "field vector expr operands",
                         &expr.symbol,
@@ -801,11 +848,11 @@ impl Stage5CpuProgram {
                         )));
                     }
                 }
-                _ => {
+                ValueExprKind::PowerStridedWeightedSum { .. } => {
                     for operand in &expr.operands {
                         if !field_values.contains(operand) {
                             return Err(EmitError::new(format!(
-                                "field expr @{} references missing field value @{operand}",
+                                "value expr @{} references missing field value @{operand}",
                                 expr.symbol
                             )));
                         }
@@ -1504,6 +1551,8 @@ pub use bolt_verifier_runtime::{
     ClaimKind as Stage5ClaimKind, FieldConstantPlan as Stage5FieldConstantPlan,
     FieldExprKind as Stage5FieldExprKind,
     FieldExprPlan as Stage5FieldExprPlan,
+    ValueExprKind as Stage5ValueExprKind,
+    ValueExprPlan as Stage5ValueExprPlan,
     KernelPlan as Stage5KernelPlan, OpeningBatchPlan as Stage5OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage5OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage5OpeningClaimPlan, OpeningInputPlan as Stage5OpeningInputPlan,
@@ -1567,6 +1616,11 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
         } else {
             ""
         };
+        let value_exprs_field = if self.role == Role::Verifier {
+            "    value_exprs: STAGE5_VALUE_EXPRS,\n"
+        } else {
+            ""
+        };
         push_format(
             &mut source,
             format_args!(
@@ -1579,6 +1633,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
                  \x20   opening_inputs: STAGE5_OPENING_INPUTS,\n\
                  \x20   field_constants: STAGE5_FIELD_CONSTANTS,\n\
                  \x20   field_exprs: STAGE5_FIELD_EXPRS,\n\
+                 {value_exprs_field}\
                  \x20   kernels: STAGE5_KERNELS,\n\
                  \x20   claims: STAGE5_SUMCHECK_CLAIMS,\n\
                  \x20   batches: STAGE5_SUMCHECK_BATCHES,\n\
@@ -1616,6 +1671,9 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
         source.push_str(&self.emit_opening_input_constants()?);
         source.push_str(&self.emit_field_constant_constants());
         source.push_str(&self.emit_field_expr_constants()?);
+        if self.role == Role::Verifier {
+            source.push_str(&self.emit_value_expr_constants()?);
+        }
         Ok(source)
     }
 
@@ -1802,6 +1860,15 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage5Error);
             ),
         );
         Ok(source)
+    }
+
+    fn emit_value_expr_constants(&self) -> Result<String, EmitError> {
+        let plan = self.verifier_plan()?;
+        Ok(verifier_plan::emit_value_expr_constants(
+            "Stage5",
+            "STAGE5",
+            &plan.value_exprs,
+        ))
     }
 
     fn emit_kernel_constants(&self) -> String {
@@ -2363,7 +2430,7 @@ where
         }
     })?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
+        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
         .map_err(VerifyStage5Error::from)?;
     artifacts.challenge_vectors.push(Stage5ChallengeVector {
         symbol: squeeze.symbol,
@@ -2441,6 +2508,7 @@ where
         program.claims,
         program.batches,
         program.field_exprs,
+        program.value_exprs,
         program.opening_inputs,
         program.opening_claims,
         program.opening_batches,
@@ -2497,7 +2565,7 @@ fn observe_stage5_sumcheck_output<F: Field>(
         },
     )?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
+        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
         .map_err(VerifyStage5Error::from)?;
     store.verify_opening_equalities(
         program.opening_equalities,
@@ -2549,6 +2617,7 @@ fn expected_batched_output_claim(
                     program.relation_outputs,
         program.relation_output_values,
                     program.field_exprs,
+                    program.value_exprs,
                     store,
                     instance,
                     evals,
@@ -2563,6 +2632,7 @@ fn expected_batched_output_claim(
                     program.relation_outputs,
         program.relation_output_values,
                     program.field_exprs,
+                    program.value_exprs,
                     store,
                     instance,
                     evals, &[], &[], local_point,

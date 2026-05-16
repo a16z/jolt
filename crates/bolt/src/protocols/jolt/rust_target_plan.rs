@@ -256,8 +256,6 @@ pub(crate) enum FieldExprKind {
     Mul,
     Sum,
     Product,
-    FieldVectorSum,
-    FieldVectorProduct,
     Neg,
     Pow(usize),
     LagrangeBasisEval {
@@ -265,6 +263,12 @@ pub(crate) enum FieldExprKind {
         domain_size: usize,
         index: usize,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ValueExprKind {
+    FieldVectorSum,
+    FieldVectorProduct,
     PowerStridedWeightedSum {
         row_count: usize,
         power_stride: usize,
@@ -283,14 +287,9 @@ impl FieldExprKind {
             "field.mul" => Ok(Self::Mul),
             "field.sum" => Ok(Self::Sum),
             "field.product" => Ok(Self::Product),
-            "field_vector.sum" => Ok(Self::FieldVectorSum),
-            "field_vector.product" => Ok(Self::FieldVectorProduct),
             "field.neg" => Ok(Self::Neg),
             value if value.starts_with("field.pow:") => parse_pow(value),
             value if value.starts_with("poly.lagrange_basis_eval:") => parse_lagrange(value),
-            value if value.starts_with("field.power_strided_weighted_sum:") => {
-                parse_power_strided_weighted_sum(value)
-            }
             _ => Err(RustTargetPlanError::unsupported(
                 "field expression formula",
                 value,
@@ -306,8 +305,6 @@ impl FieldExprKind {
             Self::Mul => "Mul".to_owned(),
             Self::Sum => "Sum".to_owned(),
             Self::Product => "Product".to_owned(),
-            Self::FieldVectorSum => "FieldVectorSum".to_owned(),
-            Self::FieldVectorProduct => "FieldVectorProduct".to_owned(),
             Self::Neg => "Neg".to_owned(),
             Self::Pow(exponent) => format!("Pow({exponent})"),
             Self::LagrangeBasisEval {
@@ -315,6 +312,29 @@ impl FieldExprKind {
                 domain_size,
                 index,
             } => format!("LagrangeBasisEval({domain_start}, {domain_size}, {index})"),
+        }
+    }
+}
+
+impl ValueExprKind {
+    pub(crate) fn from_cpu_attr(value: &str) -> Result<Self, RustTargetPlanError> {
+        match value {
+            "field_vector.sum" => Ok(Self::FieldVectorSum),
+            "field_vector.product" => Ok(Self::FieldVectorProduct),
+            value if value.starts_with("field.power_strided_weighted_sum:") => {
+                parse_power_strided_weighted_sum(value)
+            }
+            _ => Err(RustTargetPlanError::unsupported(
+                "value expression formula",
+                value,
+            )),
+        }
+    }
+
+    pub(crate) fn rust_variant_expr(&self) -> String {
+        match self {
+            Self::FieldVectorSum => "FieldVectorSum".to_owned(),
+            Self::FieldVectorProduct => "FieldVectorProduct".to_owned(),
             Self::PowerStridedWeightedSum {
                 row_count,
                 power_stride,
@@ -412,7 +432,7 @@ fn parse_lagrange(value: &str) -> Result<FieldExprKind, RustTargetPlanError> {
     })
 }
 
-fn parse_power_strided_weighted_sum(value: &str) -> Result<FieldExprKind, RustTargetPlanError> {
+fn parse_power_strided_weighted_sum(value: &str) -> Result<ValueExprKind, RustTargetPlanError> {
     let spec = value
         .strip_prefix("field.power_strided_weighted_sum:")
         .ok_or_else(|| RustTargetPlanError::unsupported("field expression formula", value))?;
@@ -430,7 +450,7 @@ fn parse_power_strided_weighted_sum(value: &str) -> Result<FieldExprKind, RustTa
     let power_stride = power_stride
         .parse::<usize>()
         .map_err(|_| RustTargetPlanError::unsupported("field expression formula", value))?;
-    Ok(FieldExprKind::PowerStridedWeightedSum {
+    Ok(ValueExprKind::PowerStridedWeightedSum {
         row_count,
         power_stride,
         value_term_offsets: parse_usize_list(value_offsets, value)?,
@@ -495,7 +515,7 @@ fn usize_slice_expr(values: &[usize]) -> String {
 mod tests {
     use super::{
         ClaimKind, FieldExprKind, JoltVerifierRelationKind, OpeningEqualityMode, PcsProofMode,
-        ProgramStepKind, TranscriptSqueezeKind,
+        ProgramStepKind, TranscriptSqueezeKind, ValueExprKind,
     };
 
     #[test]
@@ -541,14 +561,6 @@ mod tests {
             Some(FieldExprKind::Product)
         );
         assert_eq!(
-            FieldExprKind::from_cpu_attr("field_vector.sum").ok(),
-            Some(FieldExprKind::FieldVectorSum)
-        );
-        assert_eq!(
-            FieldExprKind::from_cpu_attr("field_vector.product").ok(),
-            Some(FieldExprKind::FieldVectorProduct)
-        );
-        assert_eq!(
             FieldExprKind::from_cpu_attr("poly.lagrange_basis_eval:-1:3:2").ok(),
             Some(FieldExprKind::LagrangeBasisEval {
                 domain_start: -1,
@@ -556,9 +568,24 @@ mod tests {
                 index: 2,
             })
         );
+        assert!(FieldExprKind::from_cpu_attr("field_vector.sum").is_err());
+        assert!(FieldExprKind::from_cpu_attr("field.pow:nope").is_err());
+        assert!(FieldExprKind::from_cpu_attr("poly.lagrange_basis_eval:1:2").is_err());
+    }
+
+    #[test]
+    fn parses_value_expr_kinds() {
         assert_eq!(
-            FieldExprKind::from_cpu_attr("field.power_strided_weighted_sum:39:3:0:1:2").ok(),
-            Some(FieldExprKind::PowerStridedWeightedSum {
+            ValueExprKind::from_cpu_attr("field_vector.sum").ok(),
+            Some(ValueExprKind::FieldVectorSum)
+        );
+        assert_eq!(
+            ValueExprKind::from_cpu_attr("field_vector.product").ok(),
+            Some(ValueExprKind::FieldVectorProduct)
+        );
+        assert_eq!(
+            ValueExprKind::from_cpu_attr("field.power_strided_weighted_sum:39:3:0:1:2").ok(),
+            Some(ValueExprKind::PowerStridedWeightedSum {
                 row_count: 39,
                 power_stride: 3,
                 value_term_offsets: vec![0],
@@ -566,9 +593,7 @@ mod tests {
                 row_term_offsets: vec![2],
             })
         );
-        assert!(FieldExprKind::from_cpu_attr("field.pow:nope").is_err());
-        assert!(FieldExprKind::from_cpu_attr("poly.lagrange_basis_eval:1:2").is_err());
-        assert!(FieldExprKind::from_cpu_attr("field.power_strided_weighted_sum:1:2:0").is_err());
+        assert!(ValueExprKind::from_cpu_attr("field.power_strided_weighted_sum:1:2:0").is_err());
     }
 
     #[test]
@@ -587,7 +612,7 @@ mod tests {
             "LagrangeBasisEval(-1, 3, 0)"
         );
         assert_eq!(
-            FieldExprKind::PowerStridedWeightedSum {
+            ValueExprKind::PowerStridedWeightedSum {
                 row_count: 39,
                 power_stride: 3,
                 value_term_offsets: vec![0],

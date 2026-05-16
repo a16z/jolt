@@ -26,6 +26,7 @@ pub struct Stage3CpuProgram {
     pub opening_inputs: Vec<Stage3OpeningInputPlan>,
     pub field_constants: Vec<Stage3FieldConstantPlan>,
     pub field_exprs: Vec<Stage3FieldExprPlan>,
+    pub value_exprs: Vec<Stage3ValueExprPlan>,
     pub kernels: Vec<Stage3KernelPlan>,
     pub claims: Vec<Stage3SumcheckClaimPlan>,
     pub batches: Vec<Stage3SumcheckBatchPlan>,
@@ -91,6 +92,15 @@ pub struct Stage3FieldConstantPlan {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage3FieldExprPlan {
+    pub symbol: String,
+    pub kind: String,
+    pub formula: String,
+    pub operand_names: Vec<String>,
+    pub operands: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage3ValueExprPlan {
     pub symbol: String,
     pub kind: String,
     pub formula: String,
@@ -229,6 +239,7 @@ verifier_plan::impl_verifier_plan_source_traits!(
     opening_input = Stage3OpeningInputPlan,
     field_constant = Stage3FieldConstantPlan,
     field_expr = Stage3FieldExprPlan,
+    value_expr = Stage3ValueExprPlan,
     claim = Stage3SumcheckClaimPlan,
     batch = Stage3SumcheckBatchPlan,
     driver = Stage3SumcheckDriverPlan,
@@ -265,6 +276,7 @@ impl Stage3CpuProgram {
         let mut opening_inputs = Vec::new();
         let mut field_constants = Vec::new();
         let mut field_exprs = Vec::new();
+        let value_exprs = Vec::new();
         let mut kernels = Vec::new();
         let mut claims = Vec::new();
         let mut batches = Vec::new();
@@ -603,6 +615,7 @@ impl Stage3CpuProgram {
             opening_inputs,
             field_constants,
             field_exprs,
+            value_exprs,
             kernels,
             claims,
             batches,
@@ -1152,6 +1165,8 @@ pub use bolt_verifier_runtime::{
     ClaimKind as Stage3ClaimKind, FieldConstantPlan as Stage3FieldConstantPlan,
     FieldExprKind as Stage3FieldExprKind,
     FieldExprPlan as Stage3FieldExprPlan,
+    ValueExprKind as Stage3ValueExprKind,
+    ValueExprPlan as Stage3ValueExprPlan,
     OpeningBatchPlan as Stage3OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage3OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage3OpeningClaimPlan, OpeningInputPlan as Stage3OpeningInputPlan,
@@ -1232,6 +1247,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
              \x20   opening_inputs: STAGE3_OPENING_INPUTS,\n\
              \x20   field_constants: STAGE3_FIELD_CONSTANTS,\n\
              \x20   field_exprs: STAGE3_FIELD_EXPRS,\n\
+             \x20   value_exprs: STAGE3_VALUE_EXPRS,\n\
              \x20   claims: STAGE3_SUMCHECK_CLAIMS,\n\
              \x20   batches: STAGE3_SUMCHECK_BATCHES,\n\
              \x20   drivers: STAGE3_SUMCHECK_DRIVERS,\n\
@@ -1265,6 +1281,9 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
         source.push_str(&self.emit_opening_input_constants()?);
         source.push_str(&self.emit_field_constant_constants());
         source.push_str(&self.emit_field_expr_constants()?);
+        if self.role == Role::Verifier {
+            source.push_str(&self.emit_value_expr_constants()?);
+        }
         Ok(source)
     }
 
@@ -1428,6 +1447,15 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
             ),
         );
         Ok(source)
+    }
+
+    fn emit_value_expr_constants(&self) -> Result<String, EmitError> {
+        let plan = self.verifier_plan()?;
+        Ok(verifier_plan::emit_value_expr_constants(
+            "Stage3",
+            "STAGE3",
+            &plan.value_exprs,
+        ))
     }
 
     fn emit_kernel_constants(&self) -> String {
@@ -2017,7 +2045,7 @@ where
         }
     })?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
+        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
         .map_err(VerifyStage3Error::from)?;
     artifacts.challenge_vectors.push(Stage3ChallengeVector {
         symbol: squeeze.symbol,
@@ -2084,6 +2112,7 @@ where
         program.claims,
         program.batches,
         program.field_exprs,
+        program.value_exprs,
         program.opening_inputs,
         program.opening_claims,
         program.opening_batches,
@@ -2136,7 +2165,7 @@ fn observe_stage3_sumcheck_output<F: Field>(
         },
     )?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
+        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
         .map_err(VerifyStage3Error::from)?;
     store.verify_opening_equalities(
         program.opening_equalities,
@@ -2176,6 +2205,7 @@ fn expected_batched_output_claim(
             program.relation_outputs,
         program.relation_output_values,
             program.field_exprs,
+            program.value_exprs,
             store,
             instance,
             evals, &[], &[], local_point,

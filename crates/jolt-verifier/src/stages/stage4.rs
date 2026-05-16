@@ -23,6 +23,8 @@ pub use bolt_verifier_runtime::{
     ClaimKind as Stage4ClaimKind, FieldConstantPlan as Stage4FieldConstantPlan,
     FieldExprKind as Stage4FieldExprKind,
     FieldExprPlan as Stage4FieldExprPlan,
+    ValueExprKind as Stage4ValueExprKind,
+    ValueExprPlan as Stage4ValueExprPlan,
     KernelPlan as Stage4KernelPlan, OpeningBatchPlan as Stage4OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage4OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage4OpeningClaimPlan, OpeningInputPlan as Stage4OpeningInputPlan,
@@ -115,6 +117,9 @@ pub const STAGE4_FIELD_EXPRS: &[Stage4FieldExprPlan] = &[
     Stage4FieldExprPlan { symbol: "stage4.ram_val_check.output.term.RamIncRamRa", kind: Stage4FieldExprKind::Mul, operands: &["stage4.ram_val_check.eval.RamInc", "stage4.ram_val_check.eval.RamRa"] },
     Stage4FieldExprPlan { symbol: "stage4.ram_val_check.output.claim_expr", kind: Stage4FieldExprKind::Mul, operands: &["stage4.ram_val_check.output.term.RamIncRamRa", "stage4.ram_val_check.output.lt_plus_gamma"] },
 ];
+pub const STAGE4_VALUE_EXPRS: &[Stage4ValueExprPlan] = &[
+
+];
 pub const STAGE4_KERNELS: &[Stage4KernelPlan] = &[
 
 ];
@@ -193,6 +198,7 @@ pub const STAGE4_PROGRAM: Stage4VerifierProgramPlan = Stage4CpuProgramPlan {
     opening_inputs: STAGE4_OPENING_INPUTS,
     field_constants: STAGE4_FIELD_CONSTANTS,
     field_exprs: STAGE4_FIELD_EXPRS,
+    value_exprs: STAGE4_VALUE_EXPRS,
     kernels: STAGE4_KERNELS,
     claims: STAGE4_SUMCHECK_CLAIMS,
     batches: STAGE4_SUMCHECK_BATCHES,
@@ -293,7 +299,7 @@ where
         }
     })?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
+        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
         .map_err(VerifyStage4Error::from)?;
     artifacts.challenge_vectors.push(Stage4ChallengeVector {
         symbol: squeeze.symbol,
@@ -371,6 +377,7 @@ where
         program.claims,
         program.batches,
         program.field_exprs,
+        program.value_exprs,
         program.opening_inputs,
         program.opening_claims,
         program.opening_batches,
@@ -426,7 +433,7 @@ fn observe_stage4_sumcheck_output<F: Field>(
         },
     )?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
+        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
         .map_err(VerifyStage4Error::from)?;
     store.verify_opening_equalities(
         program.opening_equalities,
@@ -466,6 +473,7 @@ fn expected_batched_output_claim(
             program.relation_outputs,
         program.relation_output_values,
             program.field_exprs,
+            program.value_exprs,
             store,
             instance,
             evals, &[], &[], local_point,

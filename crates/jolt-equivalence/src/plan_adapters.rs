@@ -23,6 +23,16 @@ macro_rules! stage_field_expr {
     };
 }
 
+macro_rules! stage_value_expr {
+    (generated, $module:ident, $value_expr:ident, $plan:ident) => {
+        $module::$value_expr {
+            symbol: super::leak_str(&$plan.symbol),
+            kind: super::generated_value_expr_kind($plan.formula.as_str()),
+            operands: super::leak_str_slice(&$plan.operands),
+        }
+    };
+}
+
 macro_rules! stage_optional_relation_kind {
     (kernel, $value:expr) => {
         $value.map(super::leak_str)
@@ -270,8 +280,6 @@ fn generated_field_expr_kind(value: &str) -> bolt_verifier_runtime::FieldExprKin
         "field.mul" => bolt_verifier_runtime::FieldExprKind::Mul,
         "field.sum" => bolt_verifier_runtime::FieldExprKind::Sum,
         "field.product" => bolt_verifier_runtime::FieldExprKind::Product,
-        "field_vector.sum" => bolt_verifier_runtime::FieldExprKind::FieldVectorSum,
-        "field_vector.product" => bolt_verifier_runtime::FieldExprKind::FieldVectorProduct,
         "field.neg" => bolt_verifier_runtime::FieldExprKind::Neg,
         value if value.starts_with("field.pow:") => {
             let exponent = value
@@ -297,6 +305,19 @@ fn generated_field_expr_kind(value: &str) -> bolt_verifier_runtime::FieldExprKin
                 parts[2].parse::<usize>().expect("lagrange index is usize"),
             )
         }
+        value => panic!("unsupported generated field expression kind `{value}`"),
+    }
+}
+
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "equivalence adapters fail fast when a compiler plan contains an unsupported generated verifier value expression tag"
+)]
+fn generated_value_expr_kind(value: &str) -> bolt_verifier_runtime::ValueExprKind {
+    match value {
+        "field_vector.sum" => bolt_verifier_runtime::ValueExprKind::FieldVectorSum,
+        "field_vector.product" => bolt_verifier_runtime::ValueExprKind::FieldVectorProduct,
         value if value.starts_with("field.power_strided_weighted_sum:") => {
             let spec = value
                 .strip_prefix("field.power_strided_weighted_sum:")
@@ -306,7 +327,7 @@ fn generated_field_expr_kind(value: &str) -> bolt_verifier_runtime::FieldExprKin
                 parts.len() == 5,
                 "power-strided weighted expression has five fields"
             );
-            bolt_verifier_runtime::FieldExprKind::PowerStridedWeightedSum {
+            bolt_verifier_runtime::ValueExprKind::PowerStridedWeightedSum {
                 row_count: parts[0]
                     .parse::<usize>()
                     .expect("power-strided weighted row count is usize"),
@@ -318,7 +339,7 @@ fn generated_field_expr_kind(value: &str) -> bolt_verifier_runtime::FieldExprKin
                 row_term_offsets: leak_slice(parse_usize_list(parts[4])),
             }
         }
-        value => panic!("unsupported generated field expression kind `{value}`"),
+        value => panic!("unsupported generated value expression kind `{value}`"),
     }
 }
 
@@ -497,6 +518,8 @@ macro_rules! define_stage_adapter_impl {
         $(, role = $role_field:ident)?
         $(, transcript_absorb_bytes = $absorb:ident)?
         $(, kernels = $kernel:ident)?
+        $(, value_expr = $value_expr:ident)?
+        $(, empty_value_exprs = $empty_value_exprs:ident)?
         $(, point_zeros = $point_zero:ident)?
         $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
@@ -580,6 +603,21 @@ macro_rules! define_stage_adapter_impl {
                         .map(|plan| stage_field_expr!($mode, $module, $field_expr, plan))
                         .collect(),
                 ),
+                $(
+                value_exprs: super::leak_slice(
+                    program
+                        .value_exprs
+                        .iter()
+                        .map(|plan| stage_value_expr!($mode, $module, $value_expr, plan))
+                        .collect(),
+                ),
+                )?
+                $(
+                value_exprs: {
+                    let _ = stringify!($empty_value_exprs);
+                    &[]
+                },
+                )?
                 $(
                 kernels: super::leak_slice(
                     program
@@ -814,6 +852,8 @@ macro_rules! define_stage_adapter {
         $opening_equality:ident,
         $opening_batch:ident
         $(, point_zero = $point_zero:ident)?
+        $(, value_expr = $value_expr:ident)?
+        $(, empty_value_exprs = $empty_value_exprs:ident)?
         $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
     ) => {
@@ -841,6 +881,8 @@ macro_rules! define_stage_adapter {
             role = role,
             transcript_absorb_bytes = $absorb,
             kernels = $kernel
+            $(, value_expr = $value_expr)?
+            $(, empty_value_exprs = $empty_value_exprs)?
             $(, point_zeros = $point_zero)?
             $(, relation_outputs = $relation_output, relation_output_values = $relation_output_value)?
             $(, empty_relation_outputs = $empty_relation_outputs)?
@@ -873,6 +915,8 @@ macro_rules! define_stage_adapter_no_absorb {
         $opening_claim:ident,
         $opening_batch:ident
         $(, kernels = $kernel:ident)?
+        $(, value_expr = $value_expr:ident)?
+        $(, empty_value_exprs = $empty_value_exprs:ident)?
         $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
         $(, opening_equalities = $opening_equality:ident)?
@@ -899,6 +943,8 @@ macro_rules! define_stage_adapter_no_absorb {
             $opening_claim,
             $opening_batch
             $(, kernels = $kernel)?
+            $(, value_expr = $value_expr)?
+            $(, empty_value_exprs = $empty_value_exprs)?
             $(, relation_outputs = $relation_output, relation_output_values = $relation_output_value)?
             $(, empty_relation_outputs = $empty_relation_outputs)?
             $(, opening_equalities = $opening_equality)?

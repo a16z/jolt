@@ -24,6 +24,8 @@ pub use bolt_verifier_runtime::{
     ClaimKind as Stage5ClaimKind, FieldConstantPlan as Stage5FieldConstantPlan,
     FieldExprKind as Stage5FieldExprKind,
     FieldExprPlan as Stage5FieldExprPlan,
+    ValueExprKind as Stage5ValueExprKind,
+    ValueExprPlan as Stage5ValueExprPlan,
     KernelPlan as Stage5KernelPlan, OpeningBatchPlan as Stage5OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage5OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage5OpeningClaimPlan, OpeningInputPlan as Stage5OpeningInputPlan,
@@ -152,7 +154,6 @@ pub const STAGE5_FIELD_EXPRS: &[Stage5FieldExprPlan] = &[
     Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.term.LookupTableValue_39", kind: Stage5FieldExprKind::Mul, operands: &["stage5.instruction_read_raf.point_value.LookupTable_39", "stage5.instruction_read_raf.eval.LookupTableFlag_39"] },
     Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.term.LookupTableValue_40", kind: Stage5FieldExprKind::Mul, operands: &["stage5.instruction_read_raf.point_value.LookupTable_40", "stage5.instruction_read_raf.eval.LookupTableFlag_40"] },
     Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.product.LookupTableValues", kind: Stage5FieldExprKind::Sum, operands: &["stage5.instruction_read_raf.output.term.LookupTableValue_0", "stage5.instruction_read_raf.output.term.LookupTableValue_1", "stage5.instruction_read_raf.output.term.LookupTableValue_2", "stage5.instruction_read_raf.output.term.LookupTableValue_3", "stage5.instruction_read_raf.output.term.LookupTableValue_4", "stage5.instruction_read_raf.output.term.LookupTableValue_5", "stage5.instruction_read_raf.output.term.LookupTableValue_6", "stage5.instruction_read_raf.output.term.LookupTableValue_7", "stage5.instruction_read_raf.output.term.LookupTableValue_8", "stage5.instruction_read_raf.output.term.LookupTableValue_9", "stage5.instruction_read_raf.output.term.LookupTableValue_10", "stage5.instruction_read_raf.output.term.LookupTableValue_11", "stage5.instruction_read_raf.output.term.LookupTableValue_12", "stage5.instruction_read_raf.output.term.LookupTableValue_13", "stage5.instruction_read_raf.output.term.LookupTableValue_14", "stage5.instruction_read_raf.output.term.LookupTableValue_15", "stage5.instruction_read_raf.output.term.LookupTableValue_16", "stage5.instruction_read_raf.output.term.LookupTableValue_17", "stage5.instruction_read_raf.output.term.LookupTableValue_18", "stage5.instruction_read_raf.output.term.LookupTableValue_19", "stage5.instruction_read_raf.output.term.LookupTableValue_20", "stage5.instruction_read_raf.output.term.LookupTableValue_21", "stage5.instruction_read_raf.output.term.LookupTableValue_22", "stage5.instruction_read_raf.output.term.LookupTableValue_23", "stage5.instruction_read_raf.output.term.LookupTableValue_24", "stage5.instruction_read_raf.output.term.LookupTableValue_25", "stage5.instruction_read_raf.output.term.LookupTableValue_26", "stage5.instruction_read_raf.output.term.LookupTableValue_27", "stage5.instruction_read_raf.output.term.LookupTableValue_28", "stage5.instruction_read_raf.output.term.LookupTableValue_29", "stage5.instruction_read_raf.output.term.LookupTableValue_30", "stage5.instruction_read_raf.output.term.LookupTableValue_31", "stage5.instruction_read_raf.output.term.LookupTableValue_32", "stage5.instruction_read_raf.output.term.LookupTableValue_33", "stage5.instruction_read_raf.output.term.LookupTableValue_34", "stage5.instruction_read_raf.output.term.LookupTableValue_35", "stage5.instruction_read_raf.output.term.LookupTableValue_36", "stage5.instruction_read_raf.output.term.LookupTableValue_37", "stage5.instruction_read_raf.output.term.LookupTableValue_38", "stage5.instruction_read_raf.output.term.LookupTableValue_39", "stage5.instruction_read_raf.output.term.LookupTableValue_40"] },
-    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.product.InstructionRa", kind: Stage5FieldExprKind::FieldVectorProduct, operands: &["stage5.instruction_read_raf.eval.InstructionRa"] },
     Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.term.GammaRightLookupOperand", kind: Stage5FieldExprKind::Mul, operands: &["stage5.instruction_read_raf.gamma", "stage5.instruction_read_raf.point_value.RightLookupOperand"] },
     Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.partial.LeftPlusGammaRight", kind: Stage5FieldExprKind::Add, operands: &["stage5.instruction_read_raf.point_value.LeftLookupOperand", "stage5.instruction_read_raf.output.term.GammaRightLookupOperand"] },
     Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.term.RafFlagLeftPlusGammaRight", kind: Stage5FieldExprKind::Mul, operands: &["stage5.instruction_read_raf.eval.InstructionRafFlag", "stage5.instruction_read_raf.output.partial.LeftPlusGammaRight"] },
@@ -164,6 +165,9 @@ pub const STAGE5_FIELD_EXPRS: &[Stage5FieldExprPlan] = &[
     Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.partial.LookupOrRaf", kind: Stage5FieldExprKind::Add, operands: &["stage5.instruction_read_raf.output.product.LookupTableValues", "stage5.instruction_read_raf.output.term.GammaRafClaim"] },
     Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.partial.EqRa", kind: Stage5FieldExprKind::Mul, operands: &["stage5.instruction_read_raf.output.eq.LookupOutputCycle", "stage5.instruction_read_raf.output.product.InstructionRa"] },
     Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.output.claim_expr", kind: Stage5FieldExprKind::Mul, operands: &["stage5.instruction_read_raf.output.partial.EqRa", "stage5.instruction_read_raf.output.partial.LookupOrRaf"] },
+];
+pub const STAGE5_VALUE_EXPRS: &[Stage5ValueExprPlan] = &[
+    Stage5ValueExprPlan { symbol: "stage5.instruction_read_raf.output.product.InstructionRa", kind: Stage5ValueExprKind::FieldVectorProduct, operands: &["stage5.instruction_read_raf.eval.InstructionRa"] },
 ];
 pub const STAGE5_KERNELS: &[Stage5KernelPlan] = &[
 
@@ -426,6 +430,7 @@ pub const STAGE5_PROGRAM: Stage5VerifierProgramPlan = Stage5CpuProgramPlan {
     opening_inputs: STAGE5_OPENING_INPUTS,
     field_constants: STAGE5_FIELD_CONSTANTS,
     field_exprs: STAGE5_FIELD_EXPRS,
+    value_exprs: STAGE5_VALUE_EXPRS,
     kernels: STAGE5_KERNELS,
     claims: STAGE5_SUMCHECK_CLAIMS,
     batches: STAGE5_SUMCHECK_BATCHES,
@@ -526,7 +531,7 @@ where
         }
     })?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
+        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
         .map_err(VerifyStage5Error::from)?;
     artifacts.challenge_vectors.push(Stage5ChallengeVector {
         symbol: squeeze.symbol,
@@ -604,6 +609,7 @@ where
         program.claims,
         program.batches,
         program.field_exprs,
+        program.value_exprs,
         program.opening_inputs,
         program.opening_claims,
         program.opening_batches,
@@ -660,7 +666,7 @@ fn observe_stage5_sumcheck_output<F: Field>(
         },
     )?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
+        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
         .map_err(VerifyStage5Error::from)?;
     store.verify_opening_equalities(
         program.opening_equalities,
@@ -712,6 +718,7 @@ fn expected_batched_output_claim(
                     program.relation_outputs,
         program.relation_output_values,
                     program.field_exprs,
+                    program.value_exprs,
                     store,
                     instance,
                     evals,
@@ -726,6 +733,7 @@ fn expected_batched_output_claim(
                     program.relation_outputs,
         program.relation_output_values,
                     program.field_exprs,
+                    program.value_exprs,
                     store,
                     instance,
                     evals, &[], &[], local_point,

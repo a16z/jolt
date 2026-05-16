@@ -32,6 +32,7 @@ pub struct Stage4CpuProgram {
     pub opening_inputs: Vec<Stage4OpeningInputPlan>,
     pub field_constants: Vec<Stage4FieldConstantPlan>,
     pub field_exprs: Vec<Stage4FieldExprPlan>,
+    pub value_exprs: Vec<Stage4ValueExprPlan>,
     pub kernels: Vec<Stage4KernelPlan>,
     pub claims: Vec<Stage4SumcheckClaimPlan>,
     pub batches: Vec<Stage4SumcheckBatchPlan>,
@@ -104,6 +105,15 @@ pub struct Stage4FieldConstantPlan {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage4FieldExprPlan {
+    pub symbol: String,
+    pub kind: String,
+    pub formula: String,
+    pub operand_names: Vec<String>,
+    pub operands: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage4ValueExprPlan {
     pub symbol: String,
     pub kind: String,
     pub formula: String,
@@ -242,6 +252,7 @@ verifier_plan::impl_verifier_plan_source_traits!(
     opening_input = Stage4OpeningInputPlan,
     field_constant = Stage4FieldConstantPlan,
     field_expr = Stage4FieldExprPlan,
+    value_expr = Stage4ValueExprPlan,
     claim = Stage4SumcheckClaimPlan,
     batch = Stage4SumcheckBatchPlan,
     driver = Stage4SumcheckDriverPlan,
@@ -280,6 +291,7 @@ impl Stage4CpuProgram {
         let mut opening_inputs = Vec::new();
         let mut field_constants = Vec::new();
         let mut field_exprs = Vec::new();
+        let value_exprs = Vec::new();
         let mut kernels = Vec::new();
         let mut claims = Vec::new();
         let mut batches = Vec::new();
@@ -616,6 +628,7 @@ impl Stage4CpuProgram {
             opening_inputs,
             field_constants,
             field_exprs,
+            value_exprs,
             kernels,
             claims,
             batches,
@@ -1364,6 +1377,8 @@ pub use bolt_verifier_runtime::{
     ClaimKind as Stage4ClaimKind, FieldConstantPlan as Stage4FieldConstantPlan,
     FieldExprKind as Stage4FieldExprKind,
     FieldExprPlan as Stage4FieldExprPlan,
+    ValueExprKind as Stage4ValueExprKind,
+    ValueExprPlan as Stage4ValueExprPlan,
     KernelPlan as Stage4KernelPlan, OpeningBatchPlan as Stage4OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage4OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage4OpeningClaimPlan, OpeningInputPlan as Stage4OpeningInputPlan,
@@ -1426,6 +1441,11 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage4Error);
         } else {
             ""
         };
+        let value_exprs_field = if self.role == Role::Verifier {
+            "    value_exprs: STAGE4_VALUE_EXPRS,\n"
+        } else {
+            ""
+        };
         push_format(
             &mut source,
             format_args!(
@@ -1438,6 +1458,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage4Error);
                  \x20   opening_inputs: STAGE4_OPENING_INPUTS,\n\
                  \x20   field_constants: STAGE4_FIELD_CONSTANTS,\n\
                  \x20   field_exprs: STAGE4_FIELD_EXPRS,\n\
+                 {value_exprs_field}\
                  \x20   kernels: STAGE4_KERNELS,\n\
                  \x20   claims: STAGE4_SUMCHECK_CLAIMS,\n\
                  \x20   batches: STAGE4_SUMCHECK_BATCHES,\n\
@@ -1475,6 +1496,9 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage4Error);
         source.push_str(&self.emit_opening_input_constants()?);
         source.push_str(&self.emit_field_constant_constants());
         source.push_str(&self.emit_field_expr_constants()?);
+        if self.role == Role::Verifier {
+            source.push_str(&self.emit_value_expr_constants()?);
+        }
         Ok(source)
     }
 
@@ -1661,6 +1685,15 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage4Error);
             ),
         );
         Ok(source)
+    }
+
+    fn emit_value_expr_constants(&self) -> Result<String, EmitError> {
+        let plan = self.verifier_plan()?;
+        Ok(verifier_plan::emit_value_expr_constants(
+            "Stage4",
+            "STAGE4",
+            &plan.value_exprs,
+        ))
     }
 
     fn emit_kernel_constants(&self) -> String {
@@ -2244,7 +2277,7 @@ where
         }
     })?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
+        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
         .map_err(VerifyStage4Error::from)?;
     artifacts.challenge_vectors.push(Stage4ChallengeVector {
         symbol: squeeze.symbol,
@@ -2322,6 +2355,7 @@ where
         program.claims,
         program.batches,
         program.field_exprs,
+        program.value_exprs,
         program.opening_inputs,
         program.opening_claims,
         program.opening_batches,
@@ -2377,7 +2411,7 @@ fn observe_stage4_sumcheck_output<F: Field>(
         },
     )?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
+        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
         .map_err(VerifyStage4Error::from)?;
     store.verify_opening_equalities(
         program.opening_equalities,
@@ -2417,6 +2451,7 @@ fn expected_batched_output_claim(
             program.relation_outputs,
         program.relation_output_values,
             program.field_exprs,
+            program.value_exprs,
             store,
             instance,
             evals, &[], &[], local_point,

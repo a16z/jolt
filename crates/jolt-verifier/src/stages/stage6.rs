@@ -24,6 +24,8 @@ pub use bolt_verifier_runtime::{
     ClaimKind as Stage6ClaimKind, FieldConstantPlan as Stage6FieldConstantPlan,
     FieldExprKind as Stage6FieldExprKind,
     FieldExprPlan as Stage6FieldExprPlan,
+    ValueExprKind as Stage6ValueExprKind,
+    ValueExprPlan as Stage6ValueExprPlan,
     KernelPlan as Stage6KernelPlan, OpeningBatchPlan as Stage6OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage6OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage6OpeningClaimPlan, OpeningInputPlan as Stage6OpeningInputPlan,
@@ -317,7 +319,15 @@ pub const STAGE6_FIELD_EXPRS: &[Stage6FieldExprPlan] = &[
     stage6_field_expr("stage6.hamming_booleanity.output.term0", Stage6FieldExprKind::Product, &["stage6.hamming_booleanity.output.term0.boolean_zero", "stage6.hamming_booleanity.output.eq.LookupOutput"]), stage6_field_expr("stage6.hamming_booleanity.output.claim_expr", Stage6FieldExprKind::Sum, &["stage6.hamming_booleanity.output.term0"]), stage6_field_expr("stage6.inc_claim_reduction.output.term0", Stage6FieldExprKind::Product, &["stage6.inc_claim_reduction.eval.RamInc", "stage6.inc_claim_reduction.output.eq.RamIncStage2"]), stage6_field_expr("stage6.inc_claim_reduction.output.gamma_pow_1", Stage6FieldExprKind::Pow(1), &["stage6.inc_claim_reduction.gamma"]), stage6_field_expr("stage6.inc_claim_reduction.output.term1", Stage6FieldExprKind::Product, &["stage6.inc_claim_reduction.eval.RamInc", "stage6.inc_claim_reduction.output.gamma_pow_1", "stage6.inc_claim_reduction.output.eq.RamIncStage4"]), stage6_field_expr("stage6.inc_claim_reduction.output.gamma_pow_2", Stage6FieldExprKind::Pow(2), &["stage6.inc_claim_reduction.gamma"]), stage6_field_expr("stage6.inc_claim_reduction.output.term2", Stage6FieldExprKind::Product, &["stage6.inc_claim_reduction.eval.RdInc", "stage6.inc_claim_reduction.output.gamma_pow_2", "stage6.inc_claim_reduction.output.eq.RdIncStage4"]), stage6_field_expr("stage6.inc_claim_reduction.output.gamma_pow_3", Stage6FieldExprKind::Pow(3), &["stage6.inc_claim_reduction.gamma"]),
     stage6_field_expr("stage6.inc_claim_reduction.output.term3", Stage6FieldExprKind::Product, &["stage6.inc_claim_reduction.eval.RdInc", "stage6.inc_claim_reduction.output.gamma_pow_3", "stage6.inc_claim_reduction.output.eq.RdIncStage5"]), stage6_field_expr("stage6.inc_claim_reduction.output.claim_expr", Stage6FieldExprKind::Sum, &["stage6.inc_claim_reduction.output.term0", "stage6.inc_claim_reduction.output.term1", "stage6.inc_claim_reduction.output.term2", "stage6.inc_claim_reduction.output.term3"]), stage6_field_expr("stage6.ram_ra_virtual.output.term0", Stage6FieldExprKind::Product, &["stage6.ram_ra_virtual.eval.RamRa_0", "stage6.ram_ra_virtual.eval.RamRa_1", "stage6.ram_ra_virtual.eval.RamRa_2", "stage6.ram_ra_virtual.eval.RamRa_3", "stage6.ram_ra_virtual.output.eq.Cycle"]), stage6_field_expr("stage6.ram_ra_virtual.output.claim_expr", Stage6FieldExprKind::Sum, &["stage6.ram_ra_virtual.output.term0"]), stage6_field_expr("stage6.instruction_ra_virtual.output.term0", Stage6FieldExprKind::Product, &["stage6.instruction_ra_virtual.eval.InstructionRa_0", "stage6.instruction_ra_virtual.eval.InstructionRa_1", "stage6.instruction_ra_virtual.eval.InstructionRa_2", "stage6.instruction_ra_virtual.eval.InstructionRa_3", "stage6.instruction_ra_virtual.output.eq.Cycle"]), stage6_field_expr("stage6.instruction_ra_virtual.output.gamma_pow_1", Stage6FieldExprKind::Pow(1), &["stage6.instruction_ra_virtual.gamma"]), stage6_field_expr("stage6.instruction_ra_virtual.output.term1", Stage6FieldExprKind::Product, &["stage6.instruction_ra_virtual.output.gamma_pow_1", "stage6.instruction_ra_virtual.eval.InstructionRa_4", "stage6.instruction_ra_virtual.eval.InstructionRa_5", "stage6.instruction_ra_virtual.eval.InstructionRa_6", "stage6.instruction_ra_virtual.eval.InstructionRa_7", "stage6.instruction_ra_virtual.output.eq.Cycle"]), stage6_field_expr("stage6.instruction_ra_virtual.output.gamma_pow_2", Stage6FieldExprKind::Pow(2), &["stage6.instruction_ra_virtual.gamma"]),
     stage6_field_expr("stage6.instruction_ra_virtual.output.term2", Stage6FieldExprKind::Product, &["stage6.instruction_ra_virtual.output.gamma_pow_2", "stage6.instruction_ra_virtual.eval.InstructionRa_8", "stage6.instruction_ra_virtual.eval.InstructionRa_9", "stage6.instruction_ra_virtual.eval.InstructionRa_10", "stage6.instruction_ra_virtual.eval.InstructionRa_11", "stage6.instruction_ra_virtual.output.eq.Cycle"]), stage6_field_expr("stage6.instruction_ra_virtual.output.gamma_pow_3", Stage6FieldExprKind::Pow(3), &["stage6.instruction_ra_virtual.gamma"]), stage6_field_expr("stage6.instruction_ra_virtual.output.term3", Stage6FieldExprKind::Product, &["stage6.instruction_ra_virtual.output.gamma_pow_3", "stage6.instruction_ra_virtual.eval.InstructionRa_12", "stage6.instruction_ra_virtual.eval.InstructionRa_13", "stage6.instruction_ra_virtual.eval.InstructionRa_14", "stage6.instruction_ra_virtual.eval.InstructionRa_15", "stage6.instruction_ra_virtual.output.eq.Cycle"]), stage6_field_expr("stage6.instruction_ra_virtual.output.gamma_pow_4", Stage6FieldExprKind::Pow(4), &["stage6.instruction_ra_virtual.gamma"]), stage6_field_expr("stage6.instruction_ra_virtual.output.term4", Stage6FieldExprKind::Product, &["stage6.instruction_ra_virtual.output.gamma_pow_4", "stage6.instruction_ra_virtual.eval.InstructionRa_16", "stage6.instruction_ra_virtual.eval.InstructionRa_17", "stage6.instruction_ra_virtual.eval.InstructionRa_18", "stage6.instruction_ra_virtual.eval.InstructionRa_19", "stage6.instruction_ra_virtual.output.eq.Cycle"]), stage6_field_expr("stage6.instruction_ra_virtual.output.gamma_pow_5", Stage6FieldExprKind::Pow(5), &["stage6.instruction_ra_virtual.gamma"]), stage6_field_expr("stage6.instruction_ra_virtual.output.term5", Stage6FieldExprKind::Product, &["stage6.instruction_ra_virtual.output.gamma_pow_5", "stage6.instruction_ra_virtual.eval.InstructionRa_20", "stage6.instruction_ra_virtual.eval.InstructionRa_21", "stage6.instruction_ra_virtual.eval.InstructionRa_22", "stage6.instruction_ra_virtual.eval.InstructionRa_23", "stage6.instruction_ra_virtual.output.eq.Cycle"]), stage6_field_expr("stage6.instruction_ra_virtual.output.gamma_pow_6", Stage6FieldExprKind::Pow(6), &["stage6.instruction_ra_virtual.gamma"]),
-    stage6_field_expr("stage6.instruction_ra_virtual.output.term6", Stage6FieldExprKind::Product, &["stage6.instruction_ra_virtual.output.gamma_pow_6", "stage6.instruction_ra_virtual.eval.InstructionRa_24", "stage6.instruction_ra_virtual.eval.InstructionRa_25", "stage6.instruction_ra_virtual.eval.InstructionRa_26", "stage6.instruction_ra_virtual.eval.InstructionRa_27", "stage6.instruction_ra_virtual.output.eq.Cycle"]), stage6_field_expr("stage6.instruction_ra_virtual.output.gamma_pow_7", Stage6FieldExprKind::Pow(7), &["stage6.instruction_ra_virtual.gamma"]), stage6_field_expr("stage6.instruction_ra_virtual.output.term7", Stage6FieldExprKind::Product, &["stage6.instruction_ra_virtual.output.gamma_pow_7", "stage6.instruction_ra_virtual.eval.InstructionRa_28", "stage6.instruction_ra_virtual.eval.InstructionRa_29", "stage6.instruction_ra_virtual.eval.InstructionRa_30", "stage6.instruction_ra_virtual.eval.InstructionRa_31", "stage6.instruction_ra_virtual.output.eq.Cycle"]), stage6_field_expr("stage6.instruction_ra_virtual.output.claim_expr", Stage6FieldExprKind::Sum, &["stage6.instruction_ra_virtual.output.term0", "stage6.instruction_ra_virtual.output.term1", "stage6.instruction_ra_virtual.output.term2", "stage6.instruction_ra_virtual.output.term3", "stage6.instruction_ra_virtual.output.term4", "stage6.instruction_ra_virtual.output.term5", "stage6.instruction_ra_virtual.output.term6", "stage6.instruction_ra_virtual.output.term7"]), stage6_field_expr("stage6.bytecode_read_raf.output.product.BytecodeRa", Stage6FieldExprKind::FieldVectorProduct, &["stage6.bytecode_read_raf.eval.BytecodeRa"]), stage6_field_expr("stage6.bytecode_read_raf.output.claim_expr", Stage6FieldExprKind::Product, &["stage6.bytecode_read_raf.output.contribution", "stage6.bytecode_read_raf.output.product.BytecodeRa"]),
+    stage6_field_expr("stage6.instruction_ra_virtual.output.term6", Stage6FieldExprKind::Product, &["stage6.instruction_ra_virtual.output.gamma_pow_6", "stage6.instruction_ra_virtual.eval.InstructionRa_24", "stage6.instruction_ra_virtual.eval.InstructionRa_25", "stage6.instruction_ra_virtual.eval.InstructionRa_26", "stage6.instruction_ra_virtual.eval.InstructionRa_27", "stage6.instruction_ra_virtual.output.eq.Cycle"]), stage6_field_expr("stage6.instruction_ra_virtual.output.gamma_pow_7", Stage6FieldExprKind::Pow(7), &["stage6.instruction_ra_virtual.gamma"]), stage6_field_expr("stage6.instruction_ra_virtual.output.term7", Stage6FieldExprKind::Product, &["stage6.instruction_ra_virtual.output.gamma_pow_7", "stage6.instruction_ra_virtual.eval.InstructionRa_28", "stage6.instruction_ra_virtual.eval.InstructionRa_29", "stage6.instruction_ra_virtual.eval.InstructionRa_30", "stage6.instruction_ra_virtual.eval.InstructionRa_31", "stage6.instruction_ra_virtual.output.eq.Cycle"]), stage6_field_expr("stage6.instruction_ra_virtual.output.claim_expr", Stage6FieldExprKind::Sum, &["stage6.instruction_ra_virtual.output.term0", "stage6.instruction_ra_virtual.output.term1", "stage6.instruction_ra_virtual.output.term2", "stage6.instruction_ra_virtual.output.term3", "stage6.instruction_ra_virtual.output.term4", "stage6.instruction_ra_virtual.output.term5", "stage6.instruction_ra_virtual.output.term6", "stage6.instruction_ra_virtual.output.term7"]), stage6_field_expr("stage6.bytecode_read_raf.output.claim_expr", Stage6FieldExprKind::Product, &["stage6.bytecode_read_raf.output.contribution", "stage6.bytecode_read_raf.output.product.BytecodeRa"]),
+];
+const fn stage6_value_expr(symbol: &'static str, kind: Stage6ValueExprKind, operands: &'static [&'static str]) -> Stage6ValueExprPlan {
+    Stage6ValueExprPlan { symbol, kind, operands }
+}
+
+#[rustfmt::skip]
+pub const STAGE6_VALUE_EXPRS: &[Stage6ValueExprPlan] = &[
+    stage6_value_expr("stage6.bytecode_read_raf.output.product.BytecodeRa", Stage6ValueExprKind::FieldVectorProduct, &["stage6.bytecode_read_raf.eval.BytecodeRa"]),
 ];
 pub const STAGE6_KERNELS: &[Stage6KernelPlan] = &[
 
@@ -686,6 +696,7 @@ pub const STAGE6_PROGRAM: Stage6VerifierProgramPlan = Stage6CpuProgramPlan {
     opening_inputs: STAGE6_OPENING_INPUTS,
     field_constants: STAGE6_FIELD_CONSTANTS,
     field_exprs: STAGE6_FIELD_EXPRS,
+    value_exprs: STAGE6_VALUE_EXPRS,
     kernels: STAGE6_KERNELS,
     claims: STAGE6_SUMCHECK_CLAIMS,
     batches: STAGE6_SUMCHECK_BATCHES,
@@ -802,7 +813,7 @@ where
         }
     })?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
+        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
         .map_err(VerifyStage6Error::from)?;
     artifacts.challenge_vectors.push(Stage6ChallengeVector {
         symbol: squeeze.symbol,
@@ -882,6 +893,7 @@ where
         program.claims,
         program.batches,
         program.field_exprs,
+        program.value_exprs,
         program.opening_inputs,
         program.opening_claims,
         program.opening_batches,
@@ -945,7 +957,7 @@ fn observe_stage6_sumcheck_output<F: Field>(
         },
     )?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, bolt_verifier_runtime::evaluate_field_expr)
+        .evaluate_available_exprs(program.field_exprs, program.value_exprs)
         .map_err(VerifyStage6Error::from)?;
     store.verify_opening_equalities(
         program.opening_equalities,
@@ -1038,6 +1050,7 @@ fn expected_plan_relation_output(
         program.relation_outputs,
         program.relation_output_values,
         program.field_exprs,
+        program.value_exprs,
         store,
         instance,
         evals,

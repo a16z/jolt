@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 use crate::emit::rust::EmitError;
 use crate::protocols::jolt::rust_target_plan::{
     ClaimKind, FieldExprKind, JoltVerifierRelationKind, OpeningEqualityMode, ProgramStepKind,
-    RustTargetPlanError, SumcheckPointOrder, TranscriptSqueezeKind,
+    RustTargetPlanError, SumcheckPointOrder, TranscriptSqueezeKind, ValueExprKind,
 };
 use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 use crate::protocols::jolt::verifier_relation_outputs::{
@@ -128,6 +128,27 @@ impl VerifierFieldExprPlan {
         Ok(Self {
             symbol: symbol.to_owned(),
             kind: FieldExprKind::from_cpu_attr(formula).map_err(plan_error)?,
+            operands: operands.to_vec(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VerifierValueExprPlan {
+    pub(crate) symbol: String,
+    pub(crate) kind: ValueExprKind,
+    pub(crate) operands: Vec<String>,
+}
+
+impl VerifierValueExprPlan {
+    pub(crate) fn from_cpu(
+        symbol: &str,
+        formula: &str,
+        operands: &[String],
+    ) -> Result<Self, EmitError> {
+        Ok(Self {
+            symbol: symbol.to_owned(),
+            kind: ValueExprKind::from_cpu_attr(formula).map_err(plan_error)?,
             operands: operands.to_vec(),
         })
     }
@@ -258,6 +279,7 @@ pub(crate) struct VerifierStagePlan {
     pub(crate) opening_inputs: Vec<VerifierOpeningInputPlan>,
     pub(crate) field_constants: Vec<VerifierFieldConstantPlan>,
     pub(crate) field_exprs: Vec<VerifierFieldExprPlan>,
+    pub(crate) value_exprs: Vec<VerifierValueExprPlan>,
     pub(crate) claims: Vec<VerifierSumcheckClaimPlan>,
     pub(crate) batches: Vec<VerifierSumcheckBatchPlan>,
     pub(crate) drivers: Vec<VerifierSumcheckDriverPlan>,
@@ -348,6 +370,10 @@ impl VerifierStagePlan {
         values.extend(
             self.field_exprs.iter().map(|expr| &expr.symbol),
             VerifierScalarSourceKind::FieldExpr,
+        );
+        values.extend(
+            self.value_exprs.iter().map(|expr| &expr.symbol),
+            VerifierScalarSourceKind::ValueExpr,
         );
         values.extend(
             self.relation_outputs
@@ -455,6 +481,12 @@ pub(crate) trait VerifierFieldConstantSource {
 }
 
 pub(crate) trait VerifierFieldExprSource {
+    fn symbol(&self) -> &str;
+    fn formula(&self) -> &str;
+    fn operands(&self) -> &[String];
+}
+
+pub(crate) trait VerifierValueExprSource {
     fn symbol(&self) -> &str;
     fn formula(&self) -> &str;
     fn operands(&self) -> &[String];
@@ -572,6 +604,7 @@ pub(crate) trait VerifierStagePlanSource {
     type OpeningInput: VerifierOpeningInputSource;
     type FieldConstant: VerifierFieldConstantSource;
     type FieldExpr: VerifierFieldExprSource;
+    type ValueExpr: VerifierValueExprSource;
     type Claim: VerifierSumcheckClaimSource;
     type Batch: VerifierSumcheckBatchSource;
     type Driver: VerifierSumcheckDriverSource;
@@ -589,6 +622,7 @@ pub(crate) trait VerifierStagePlanSource {
     fn opening_inputs(&self) -> &[Self::OpeningInput];
     fn field_constants(&self) -> &[Self::FieldConstant];
     fn field_exprs(&self) -> &[Self::FieldExpr];
+    fn value_exprs(&self) -> &[Self::ValueExpr];
     fn claims(&self) -> &[Self::Claim];
     fn batches(&self) -> &[Self::Batch];
     fn drivers(&self) -> &[Self::Driver];
@@ -668,6 +702,13 @@ where
             .iter()
             .map(|expr| {
                 VerifierFieldExprPlan::from_cpu(expr.symbol(), expr.formula(), expr.operands())
+            })
+            .collect::<Result<Vec<_>, EmitError>>()?,
+        value_exprs: source
+            .value_exprs()
+            .iter()
+            .map(|expr| {
+                VerifierValueExprPlan::from_cpu(expr.symbol(), expr.formula(), expr.operands())
             })
             .collect::<Result<Vec<_>, EmitError>>()?,
         claims: source
@@ -864,6 +905,7 @@ macro_rules! impl_verifier_plan_source_traits {
         opening_input = $opening_input:ty,
         field_constant = $field_constant:ty,
         field_expr = $field_expr:ty,
+        value_expr = $value_expr:ty,
         claim = $claim:ty,
         batch = $batch:ty,
         driver = $driver:ty,
@@ -888,6 +930,7 @@ macro_rules! impl_verifier_plan_source_traits {
             type OpeningInput = $opening_input;
             type FieldConstant = $field_constant;
             type FieldExpr = $field_expr;
+            type ValueExpr = $value_expr;
             type Claim = $claim;
             type Batch = $batch;
             type Driver = $driver;
@@ -909,6 +952,7 @@ macro_rules! impl_verifier_plan_source_traits {
             fn opening_inputs(&self) -> &[Self::OpeningInput] { &self.opening_inputs }
             fn field_constants(&self) -> &[Self::FieldConstant] { &self.field_constants }
             fn field_exprs(&self) -> &[Self::FieldExpr] { &self.field_exprs }
+            fn value_exprs(&self) -> &[Self::ValueExpr] { &self.value_exprs }
             fn claims(&self) -> &[Self::Claim] { &self.claims }
             fn batches(&self) -> &[Self::Batch] { &self.batches }
             fn drivers(&self) -> &[Self::Driver] { &self.drivers }
@@ -989,6 +1033,12 @@ macro_rules! impl_verifier_plan_source_traits {
         }
 
         impl $crate::protocols::jolt::verifier_plan::VerifierFieldExprSource for $field_expr {
+            fn symbol(&self) -> &str { &self.symbol }
+            fn formula(&self) -> &str { &self.formula }
+            fn operands(&self) -> &[String] { &self.operands }
+        }
+
+        impl $crate::protocols::jolt::verifier_plan::VerifierValueExprSource for $value_expr {
             fn symbol(&self) -> &str { &self.symbol }
             fn formula(&self) -> &str { &self.formula }
             fn operands(&self) -> &[String] { &self.operands }
@@ -1210,6 +1260,13 @@ pub(crate) fn field_expr_kind_expr(stage_type_prefix: &str, kind: &FieldExprKind
     )
 }
 
+pub(crate) fn value_expr_kind_expr(stage_type_prefix: &str, kind: &ValueExprKind) -> String {
+    format!(
+        "{stage_type_prefix}ValueExprKind::{}",
+        kind.rust_variant_expr()
+    )
+}
+
 pub(crate) fn sumcheck_point_order_expr(point_order: SumcheckPointOrder) -> String {
     format!(
         "bolt_verifier_runtime::SumcheckPointOrder::{}",
@@ -1341,6 +1398,28 @@ pub(crate) fn emit_field_expr_constants(
     )
 }
 
+pub(crate) fn emit_value_expr_constants(
+    stage_type_prefix: &str,
+    const_prefix: &str,
+    exprs: &[VerifierValueExprPlan],
+) -> String {
+    let exprs = exprs
+        .iter()
+        .map(|expr| {
+            format!(
+                "    {stage_type_prefix}ValueExprPlan {{ symbol: {}, kind: {}, operands: {} }},",
+                rust_str(&expr.symbol),
+                value_expr_kind_expr(stage_type_prefix, &expr.kind),
+                rust_str_slice_expr(&expr.operands),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "pub const {const_prefix}_VALUE_EXPRS: &[{stage_type_prefix}ValueExprPlan] = &[\n{exprs}\n];\n"
+    )
+}
+
 pub(crate) fn emit_field_expr_constants_chunked(
     stage_type_prefix: &str,
     const_prefix: &str,
@@ -1369,6 +1448,37 @@ pub(crate) fn emit_field_expr_constants_chunked(
         .join("\n");
     format!(
         "const fn {helper_name}(symbol: &'static str, kind: {stage_type_prefix}FieldExprKind, operands: &'static [&'static str]) -> {stage_type_prefix}FieldExprPlan {{\n    {stage_type_prefix}FieldExprPlan {{ symbol, kind, operands }}\n}}\n\n#[rustfmt::skip]\npub const {const_prefix}_FIELD_EXPRS: &[{stage_type_prefix}FieldExprPlan] = &[\n{rows}\n];\n"
+    )
+}
+
+pub(crate) fn emit_value_expr_constants_chunked(
+    stage_type_prefix: &str,
+    const_prefix: &str,
+    helper_name: &str,
+    exprs: &[VerifierValueExprPlan],
+    chunk_size: usize,
+) -> String {
+    let rows = exprs
+        .chunks(chunk_size)
+        .map(|chunk| {
+            let exprs = chunk
+                .iter()
+                .map(|expr| {
+                    format!(
+                        "{helper_name}({}, {}, {})",
+                        rust_str(&expr.symbol),
+                        value_expr_kind_expr(stage_type_prefix, &expr.kind),
+                        rust_str_slice_expr(&expr.operands)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("    {exprs},")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "const fn {helper_name}(symbol: &'static str, kind: {stage_type_prefix}ValueExprKind, operands: &'static [&'static str]) -> {stage_type_prefix}ValueExprPlan {{\n    {stage_type_prefix}ValueExprPlan {{ symbol, kind, operands }}\n}}\n\n#[rustfmt::skip]\npub const {const_prefix}_VALUE_EXPRS: &[{stage_type_prefix}ValueExprPlan] = &[\n{rows}\n];\n"
     )
 }
 
