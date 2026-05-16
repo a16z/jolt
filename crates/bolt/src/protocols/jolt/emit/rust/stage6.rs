@@ -11,9 +11,7 @@ use melior::ir::{Attribute, OperationRef};
 
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
-use crate::protocols::jolt::rust_target_plan::{
-    structured_polynomial_scalar_formula, FieldExprKind, ScalarExprKind,
-};
+use crate::protocols::jolt::rust_target_plan::{FieldExprKind, ScalarExprKind};
 use crate::protocols::jolt::stage6_bytecode_read_raf_plan::{
     emit_stage6_bytecode_read_raf_plan_constants, stage6_bytecode_read_raf_eval_family_ref,
     stage6_bytecode_read_raf_relation_output_plan, STAGE6_BYTECODE_RA_EVAL_FAMILY,
@@ -30,7 +28,6 @@ use crate::protocols::jolt::verifier_relation_outputs::{
     RelationOutputPlan as Stage6RelationOutputPlan,
     RelationOutputProductFamilyPlan as Stage6RelationOutputProductFamilyPlan,
     StructuredPolynomialEvalPlan as Stage6StructuredPolynomialEvalPlan,
-    StructuredPolynomialPointPlan as Stage6StructuredPolynomialPointPlan,
 };
 use crate::protocols::jolt::verifier_values;
 use crate::schema::verify_cpu_schema;
@@ -579,25 +576,9 @@ impl Stage6CpuProgram {
                         .push(verifier_eval_families::parse_indexed_eval_family(op)?);
                 }
                 "cpu.structured_polynomial_eval" => {
-                    let symbol = string_attr(op, "sym_name")?;
-                    let x_point = Stage6StructuredPolynomialPointPlan::from_cpu(
-                        operand_symbol(op, 0)?,
-                        string_attr(op, "x_point_segment")?,
-                        string_attr(op, "x_point_length")?,
-                        string_attr(op, "x_point_order")?,
-                    )?;
-                    let y_point = Stage6StructuredPolynomialPointPlan::from_cpu(
-                        operand_symbol(op, 1)?,
-                        string_attr(op, "y_point_segment")?,
-                        string_attr(op, "y_point_length")?,
-                        string_attr(op, "y_point_order")?,
-                    )?;
-                    relation_output_values.push(Stage6StructuredPolynomialEvalPlan::from_cpu(
-                        symbol,
-                        string_attr(op, "polynomial")?,
-                        x_point,
-                        y_point,
-                    )?);
+                    relation_output_values.push(
+                        verifier_relation_outputs::parse_structured_polynomial_eval_plan(op)?,
+                    );
                 }
                 "cpu.sumcheck_output_eval_family" => {
                     relation_output_eval_families
@@ -730,7 +711,8 @@ impl Stage6CpuProgram {
             scalar_exprs.extend(
                 relation_output_values
                     .iter()
-                    .map(stage6_structured_polynomial_scalar_expr),
+                    .map(verifier_relation_outputs::structured_polynomial_scalar_expr_plan)
+                    .map(stage6_scalar_expr),
             );
         }
 
@@ -2863,27 +2845,6 @@ fn stage6_scalar_expr(expr: Stage6RelationOutputFieldExprPlan) -> Stage6ScalarEx
         symbol: expr.symbol,
         kind: "op".to_owned(),
         formula: expr.formula,
-        operand_names: operands.clone(),
-        operands,
-    }
-}
-
-fn stage6_structured_polynomial_scalar_expr(
-    value: &Stage6StructuredPolynomialEvalPlan,
-) -> Stage6ScalarExprPlan {
-    let operands = vec![value.x_point.source.clone(), value.y_point.source.clone()];
-    Stage6ScalarExprPlan {
-        symbol: value.symbol.clone(),
-        kind: "op".to_owned(),
-        formula: structured_polynomial_scalar_formula(
-            value.polynomial.as_str(),
-            value.x_point.segment.as_str(),
-            value.x_point.length.as_str(),
-            value.x_point.order.as_str(),
-            value.y_point.segment.as_str(),
-            value.y_point.length.as_str(),
-            value.y_point.order.as_str(),
-        ),
         operand_names: operands.clone(),
         operands,
     }

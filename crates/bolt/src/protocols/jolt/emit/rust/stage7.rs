@@ -12,7 +12,7 @@ use melior::ir::{Attribute, OperationRef};
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
 use crate::protocols::jolt::rust_target_plan::{
-    power_strided_weighted_sum_formula, structured_polynomial_scalar_formula, ScalarExprKind,
+    power_strided_weighted_sum_formula, ScalarExprKind,
 };
 use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
 use crate::protocols::jolt::verifier_relation_outputs::{
@@ -25,7 +25,6 @@ use crate::protocols::jolt::verifier_relation_outputs::{
     RelationOutputPlan as Stage7RelationOutputPlan,
     RelationOutputProductFamilyPlan as Stage7RelationOutputProductFamilyPlan,
     StructuredPolynomialEvalPlan as Stage7StructuredPolynomialEvalPlan,
-    StructuredPolynomialPointPlan as Stage7StructuredPolynomialPointPlan,
 };
 use crate::protocols::jolt::verifier_values;
 use crate::schema::verify_cpu_schema;
@@ -174,27 +173,6 @@ fn stage7_scalar_expr(expr: Stage7RelationOutputFieldExprPlan) -> Stage7ScalarEx
         formula: expr.formula,
         operand_names: expr.operands.clone(),
         operands: expr.operands,
-    }
-}
-
-fn stage7_structured_polynomial_scalar_expr(
-    value: &Stage7StructuredPolynomialEvalPlan,
-) -> Stage7ScalarExprPlan {
-    let operands = vec![value.x_point.source.clone(), value.y_point.source.clone()];
-    Stage7ScalarExprPlan {
-        symbol: value.symbol.clone(),
-        kind: "op".to_owned(),
-        formula: structured_polynomial_scalar_formula(
-            value.polynomial.as_str(),
-            value.x_point.segment.as_str(),
-            value.x_point.length.as_str(),
-            value.x_point.order.as_str(),
-            value.y_point.segment.as_str(),
-            value.y_point.length.as_str(),
-            value.y_point.order.as_str(),
-        ),
-        operand_names: operands.clone(),
-        operands,
     }
 }
 
@@ -722,25 +700,9 @@ impl Stage7CpuProgram {
                     });
                 }
                 "cpu.structured_polynomial_eval" => {
-                    let symbol = string_attr(op, "sym_name")?;
-                    let x_point = Stage7StructuredPolynomialPointPlan::from_cpu(
-                        operand_symbol(op, 0)?,
-                        string_attr(op, "x_point_segment")?,
-                        string_attr(op, "x_point_length")?,
-                        string_attr(op, "x_point_order")?,
-                    )?;
-                    let y_point = Stage7StructuredPolynomialPointPlan::from_cpu(
-                        operand_symbol(op, 1)?,
-                        string_attr(op, "y_point_segment")?,
-                        string_attr(op, "y_point_length")?,
-                        string_attr(op, "y_point_order")?,
-                    )?;
-                    relation_output_values.push(Stage7StructuredPolynomialEvalPlan::from_cpu(
-                        symbol,
-                        string_attr(op, "polynomial")?,
-                        x_point,
-                        y_point,
-                    )?);
+                    relation_output_values.push(
+                        verifier_relation_outputs::parse_structured_polynomial_eval_plan(op)?,
+                    );
                 }
                 "cpu.sumcheck_output_eval_family" => {
                     relation_output_eval_families
@@ -870,7 +832,8 @@ impl Stage7CpuProgram {
             scalar_exprs.extend(
                 relation_output_values
                     .iter()
-                    .map(stage7_structured_polynomial_scalar_expr),
+                    .map(verifier_relation_outputs::structured_polynomial_scalar_expr_plan)
+                    .map(stage7_scalar_expr),
             );
         }
 

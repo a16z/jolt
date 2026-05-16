@@ -8,7 +8,9 @@ use crate::protocols::jolt::cpu_attrs::{
     int_array_attr, int_attr, operation_name, optional_symbol_array_attr, string_array_attr,
     string_attr, symbol_array_attr,
 };
-use crate::protocols::jolt::rust_target_plan::power_strided_weighted_sum_formula;
+use crate::protocols::jolt::rust_target_plan::{
+    power_strided_weighted_sum_formula, structured_polynomial_scalar_formula,
+};
 use crate::protocols::jolt::verifier_values::{VerifierPointSourceSet, VerifierScalarSourceSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -193,6 +195,47 @@ impl StructuredPolynomialEvalPlan {
             x_point,
             y_point,
         })
+    }
+}
+
+pub fn parse_structured_polynomial_eval_plan(
+    operation: OperationRef<'_, '_>,
+) -> Result<StructuredPolynomialEvalPlan, EmitError> {
+    let x_point = StructuredPolynomialPointPlan::from_cpu(
+        operand_symbol(operation, 0)?,
+        string_attr(operation, "x_point_segment")?,
+        string_attr(operation, "x_point_length")?,
+        string_attr(operation, "x_point_order")?,
+    )?;
+    let y_point = StructuredPolynomialPointPlan::from_cpu(
+        operand_symbol(operation, 1)?,
+        string_attr(operation, "y_point_segment")?,
+        string_attr(operation, "y_point_length")?,
+        string_attr(operation, "y_point_order")?,
+    )?;
+    StructuredPolynomialEvalPlan::from_cpu(
+        string_attr(operation, "sym_name")?,
+        string_attr(operation, "polynomial")?,
+        x_point,
+        y_point,
+    )
+}
+
+pub fn structured_polynomial_scalar_expr_plan(
+    value: &StructuredPolynomialEvalPlan,
+) -> RelationOutputFieldExprPlan {
+    RelationOutputFieldExprPlan {
+        symbol: value.symbol.clone(),
+        formula: structured_polynomial_scalar_formula(
+            value.polynomial.as_str(),
+            value.x_point.segment.as_str(),
+            value.x_point.length.as_str(),
+            value.x_point.order.as_str(),
+            value.y_point.segment.as_str(),
+            value.y_point.length.as_str(),
+            value.y_point.order.as_str(),
+        ),
+        operands: vec![value.x_point.source.clone(), value.y_point.source.clone()],
     }
 }
 
@@ -1481,7 +1524,9 @@ mod tests {
         RelationOutputEvalFamilySharedTermPlan, RelationOutputFunctionFamilyPlan,
         RelationOutputFunctionFamilyTermPlan, RelationOutputFunctionKind,
         RelationOutputProductFamilyPlan, RelationOutputProductFamilyTermPlan,
-        RelationOutputVerification,
+        RelationOutputVerification, StructuredPolynomialEvalPlan, StructuredPolynomialKind,
+        StructuredPolynomialPointLength, StructuredPolynomialPointOrder,
+        StructuredPolynomialPointPlan, StructuredPolynomialPointSegment,
     };
 
     struct TestFieldExpr {
@@ -1497,6 +1542,38 @@ mod tests {
         fn operands(&self) -> &[String] {
             &self.operands
         }
+    }
+
+    #[test]
+    fn structured_polynomial_scalar_expr_plan_preserves_typed_point_transforms() {
+        let value = StructuredPolynomialEvalPlan {
+            symbol: "eq.output".to_owned(),
+            polynomial: StructuredPolynomialKind::EqPlusOne,
+            x_point: StructuredPolynomialPointPlan {
+                source: "x.source".to_owned(),
+                segment: StructuredPolynomialPointSegment::Prefix,
+                length: StructuredPolynomialPointLength::YPoint,
+                order: StructuredPolynomialPointOrder::Reverse,
+            },
+            y_point: StructuredPolynomialPointPlan {
+                source: "y.source".to_owned(),
+                segment: StructuredPolynomialPointSegment::Full,
+                length: StructuredPolynomialPointLength::Full,
+                order: StructuredPolynomialPointOrder::AsIs,
+            },
+        };
+
+        let expr = super::structured_polynomial_scalar_expr_plan(&value);
+
+        assert_eq!(expr.symbol, "eq.output");
+        assert_eq!(
+            expr.formula,
+            "poly.structured_eval:eq_plus_one:prefix:y_point:reverse:full:full:as_is"
+        );
+        assert_eq!(
+            expr.operands,
+            vec!["x.source".to_owned(), "y.source".to_owned()]
+        );
     }
 
     #[test]
