@@ -1,4 +1,5 @@
 pub mod artifacts;
+pub(crate) mod cpu_attrs;
 pub mod emit;
 pub mod oracles;
 pub mod params;

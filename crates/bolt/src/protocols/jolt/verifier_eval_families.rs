@@ -1,4 +1,7 @@
+use melior::ir::OperationRef;
+
 use crate::emit::rust::{push_format, EmitError};
+use crate::protocols::jolt::cpu_attrs::{int_attr, string_attr, symbol_array_attr};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct IndexedEvalFamilyPlan {
@@ -95,6 +98,14 @@ pub(crate) fn emit_named_runtime_slice_constant(
         families_const,
         "bolt_verifier_runtime::NamedEvalFamilyPlan",
     )
+}
+
+pub(crate) fn parse_indexed_eval_family(
+    operation: OperationRef<'_, '_>,
+) -> Result<IndexedEvalFamilyPlan, EmitError> {
+    let symbol = string_attr(operation, "sym_name")?;
+    let evals = symbol_array_attr(operation, "evals")?;
+    IndexedEvalFamilyPlan::from_parts(symbol, evals, int_attr(operation, "count")?)
 }
 
 fn rust_str(value: &str) -> String {

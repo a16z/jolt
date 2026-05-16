@@ -577,7 +577,8 @@ impl Stage5CpuProgram {
                     });
                 }
                 "cpu.sumcheck_eval_family" => {
-                    indexed_eval_families.push(parse_indexed_eval_family(op)?);
+                    indexed_eval_families
+                        .push(verifier_eval_families::parse_indexed_eval_family(op)?);
                 }
                 "cpu.structured_polynomial_eval" => {
                     let symbol = string_attr(op, "sym_name")?;
@@ -2651,14 +2652,6 @@ fn expected_batched_output_claim(
             Role::Verifier => "Stage5VerifierProgramPlan",
         }
     }
-}
-
-fn parse_indexed_eval_family(
-    operation: OperationRef<'_, '_>,
-) -> Result<IndexedEvalFamilyPlan, EmitError> {
-    let symbol = string_attr(operation, "sym_name")?;
-    let evals = symbol_array_attr(operation, "evals")?;
-    IndexedEvalFamilyPlan::from_parts(symbol, evals, int_attr(operation, "count")?)
 }
 
 fn require_supported_symbol(kind: &str, actual: &str, expected: &str) -> Result<(), EmitError> {
