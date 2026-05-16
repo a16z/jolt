@@ -1617,6 +1617,11 @@ fn kernel_spec(relation: &str) -> Result<KernelSpec, MlirError> {
             kind: "sumcheck",
             abi: "jolt_stage4_registers_read_write",
         }),
+        "jolt.stage4.field_reg_rw" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage4.field_reg_rw",
+            kind: "sumcheck",
+            abi: "jolt_stage4_field_reg_rw",
+        }),
         "jolt.stage4.ram_val_check" => Ok(KernelSpec {
             symbol: "jolt.cpu.stage4.ram_val_check",
             kind: "sumcheck",

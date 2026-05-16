@@ -388,6 +388,8 @@ pub struct Stage45SparseTraceWitness<F: Field> {
     pub ram_addresses: Vec<Option<usize>>,
     pub ram_inc: Vec<F>,
     pub rd_write_addresses: Vec<Option<usize>>,
+    pub fr_zeros_k_t: Vec<F>,
+    pub fr_zeros_t: Vec<F>,
 }
 
 pub fn stage4_5_sparse_trace_witness<F: Field>(
@@ -413,11 +415,17 @@ pub fn stage4_5_sparse_trace_witness<F: Field>(
         ram_inc.push(u64_increment(read_value, write_value));
     }
 
+    let trace_len = rd_inc.len();
+    let fr_zeros_t = vec![F::zero(); trace_len];
+    let fr_zeros_k_t = vec![F::zero(); field_reg::FIELD_REG_COUNT * trace_len];
+
     Stage45SparseTraceWitness {
         rd_inc,
         ram_addresses,
         ram_inc,
         rd_write_addresses,
+        fr_zeros_k_t,
+        fr_zeros_t,
     }
 }
 

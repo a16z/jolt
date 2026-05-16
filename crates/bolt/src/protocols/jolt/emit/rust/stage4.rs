@@ -642,6 +642,7 @@ impl Stage4CpuProgram {
             }
             let expected_abi = match kernel.relation.as_str() {
                 "jolt.stage4.registers_read_write" => "jolt_stage4_registers_read_write",
+                "jolt.stage4.field_reg_rw" => "jolt_stage4_field_reg_rw",
                 "jolt.stage4.ram_val_check" => "jolt_stage4_ram_val_check",
                 "jolt.stage4.batched" => "jolt_stage4_batched",
                 _ => {
@@ -2087,6 +2088,9 @@ fn observe_stage4_sumcheck_output<F: Field>(
                 "stage4_registers_rw" => {
                     point = normalize_stage4_registers_rw_point(program, output.driver, &point)?;
                 }
+                "stage4_field_reg_rw" => {
+                    point = normalize_stage4_field_reg_rw_point(program, output.driver, &point)?;
+                }
                 _ => {
                     return Err(VerifyStage4Error::InvalidProof {
                         driver: output.driver,
@@ -2154,6 +2158,9 @@ fn expected_batched_output_claim(
             "jolt.stage4.registers_read_write" => {
                 expected_registers_read_write(store, evals, local_point)?
             }
+            "jolt.stage4.field_reg_rw" => {
+                expected_field_reg_rw(store, evals, local_point)?
+            }
             "jolt.stage4.ram_val_check" => {
                 expected_ram_val_check(store, evals, local_point)?
             }
@@ -2188,6 +2195,29 @@ fn expected_registers_read_write(
     Ok(eq_eval
         * (rd_wa * (registers_val + rd_inc)
             + gamma * (rs1_ra * registers_val + gamma * rs2_ra * registers_val)))
+}
+
+fn expected_field_reg_rw(
+    store: &super::common::ValueStore<Fr>,
+    evals: &[Stage4NamedEval<Fr>],
+    local_point: &[Fr],
+) -> Result<Fr, VerifyStage4Error> {
+    let trace_point = super::common::store_point(store, "stage4.input.stage3.field_reg.FieldRdWriteValue")?;
+    let r_cycle = normalize_stage4_registers_rw_cycle_point(
+        local_point,
+        trace_point.len(),
+        "stage4.field_reg_rw.instance",
+    )?;
+    let eq_eval = EqPolynomial::<Fr>::mle(&r_cycle, trace_point);
+    let field_reg_val = eval_by_name(evals, "stage4.field_reg_rw.eval.FieldRegVal")?;
+    let frs1_ra = eval_by_name(evals, "stage4.field_reg_rw.eval.FrRs1Ra")?;
+    let frs2_ra = eval_by_name(evals, "stage4.field_reg_rw.eval.FrRs2Ra")?;
+    let frd_wa = eval_by_name(evals, "stage4.field_reg_rw.eval.FrdWa")?;
+    let frd_inc = eval_by_name(evals, "stage4.field_reg_rw.eval.FrdInc")?;
+    let gamma = super::common::store_scalar(store, "stage4.field_reg_rw.gamma")?;
+    Ok(eq_eval
+        * (frd_wa * (field_reg_val + frd_inc)
+            + gamma * (frs1_ra * field_reg_val + gamma * frs2_ra * field_reg_val)))
 }
 
 fn expected_ram_val_check(
@@ -2270,6 +2300,37 @@ fn normalize_stage4_registers_rw_cycle_point<F: Field>(
             actual: point.len(),
         })?;
     Ok(cycle.iter().rev().copied().collect())
+}
+
+fn normalize_stage4_field_reg_rw_point<F: Field>(
+    program: &'static Stage4VerifierProgramPlan,
+    driver: &'static str,
+    point: &[F],
+) -> Result<Vec<F>, VerifyStage4Error> {
+    let driver_plan = find_plan(program.drivers, driver).ok_or(VerifyStage4Error::MissingProof {
+        driver,
+    })?;
+    if driver_plan.round_schedule.is_empty() {
+        return Err(VerifyStage4Error::InvalidProof {
+            driver,
+            reason: "stage4 field_reg point normalization requires non-empty schedule",
+        });
+    }
+    let cycle_rounds = driver_plan.round_schedule[0];
+    if point.len() < cycle_rounds {
+        return Err(VerifyStage4Error::InvalidInputLength {
+            input: "stage4.field_reg_rw.instance",
+            expected: cycle_rounds,
+            actual: point.len(),
+        });
+    }
+    let (cycle, address) = point.split_at(cycle_rounds);
+    Ok(address
+        .iter()
+        .rev()
+        .copied()
+        .chain(cycle.iter().rev().copied())
+        .collect())
 }
 
 "#

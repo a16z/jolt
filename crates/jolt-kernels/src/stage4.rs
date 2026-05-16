@@ -554,6 +554,15 @@ impl<'a, F: Field> Stage4ProverInputs<'a, F> {
             &witness.ram_addresses,
             &witness.ram_inc,
         )
+        .with_field_reg(Stage4FieldRegWitness {
+            field_reg_count: jolt_witness::field_reg::FIELD_REG_COUNT,
+            trace_len,
+            field_reg_val: &witness.fr_zeros_k_t,
+            frs1_ra: &witness.fr_zeros_k_t,
+            frs2_ra: &witness.fr_zeros_k_t,
+            frd_wa: &witness.fr_zeros_k_t,
+            frd_inc: &witness.fr_zeros_t,
+        })
     }
 }
 
@@ -697,6 +706,10 @@ impl<F: Field> Stage4ValueStore<F> {
                 "stage4_registers_rw" => {
                     instance_point =
                         normalize_stage4_registers_rw_point(program, driver, &instance_point)?;
+                }
+                "stage4_field_reg_rw" => {
+                    instance_point =
+                        normalize_stage4_field_reg_rw_point(program, driver, &instance_point)?;
                 }
                 _ => {
                     return Err(Stage4KernelError::InvalidProof {
@@ -3629,6 +3642,36 @@ fn normalize_stage4_registers_rw_cycle_point<F: Field>(
             actual: point.len(),
         })?;
     Ok(cycle.iter().rev().copied().collect())
+}
+
+fn normalize_stage4_field_reg_rw_point<F: Field>(
+    program: &'static Stage4CpuProgramPlan,
+    driver: &'static str,
+    point: &[F],
+) -> Result<Vec<F>, Stage4KernelError> {
+    let driver_plan =
+        find_driver(program, driver).ok_or(Stage4KernelError::MissingDriver { driver })?;
+    if driver_plan.round_schedule.is_empty() {
+        return Err(Stage4KernelError::InvalidProof {
+            driver,
+            reason: "stage4 field_reg point normalization requires non-empty schedule",
+        });
+    }
+    let cycle_rounds = driver_plan.round_schedule[0];
+    if point.len() < cycle_rounds {
+        return Err(Stage4KernelError::InvalidInputLength {
+            input: "stage4.field_reg_rw.instance",
+            expected: cycle_rounds,
+            actual: point.len(),
+        });
+    }
+    let (cycle, address) = point.split_at(cycle_rounds);
+    Ok(address
+        .iter()
+        .rev()
+        .copied()
+        .chain(cycle.iter().rev().copied())
+        .collect())
 }
 
 fn suffix_point<'a, F: Field>(

@@ -609,6 +609,42 @@ fn append_stage4_batched_sumcheck<'c, 'a>(
         rs2_term,
     )?;
 
+    let field_reg_gamma2 = append_field_pow(
+        context,
+        module,
+        "stage4.field_reg_rw.gamma2",
+        spec.field_reg_gamma,
+        2,
+    )?;
+    let fr_rs1_term = append_field_mul(
+        context,
+        module,
+        "stage4.field_reg_rw.term.FieldRs1Value",
+        spec.field_reg_gamma,
+        inputs.field_rs1_value.eval,
+    )?;
+    let fr_rs2_term = append_field_mul(
+        context,
+        module,
+        "stage4.field_reg_rw.term.FieldRs2Value",
+        field_reg_gamma2,
+        inputs.field_rs2_value.eval,
+    )?;
+    let fr_sum = append_field_add(
+        context,
+        module,
+        "stage4.field_reg_rw.partial.FieldRdWriteValueFieldRs1Value",
+        inputs.field_rd_write_value.eval,
+        fr_rs1_term,
+    )?;
+    let field_reg_claim = append_field_add(
+        context,
+        module,
+        "stage4.field_reg_rw.claim_expr",
+        fr_sum,
+        fr_rs2_term,
+    )?;
+
     let ram_val_delta = append_field_sub(
         context,
         module,
@@ -662,6 +698,25 @@ fn append_stage4_batched_sumcheck<'c, 'a>(
             context,
             module,
             SumcheckClaimSpec {
+                symbol: "stage4.field_reg_rw.input",
+                stage: "stage4",
+                domain: "jolt.stage4_field_reg_rw_domain",
+                num_rounds: stage4_field_reg_rw_rounds(params),
+                degree: FIELD_REG_RW_DEGREE,
+                claim: "stage4.field_reg_rw.weighted_values",
+                relation: "jolt.stage4.field_reg_rw",
+            },
+            field_reg_claim,
+            &[
+                inputs.field_rd_write_value.claim,
+                inputs.field_rs1_value.claim,
+                inputs.field_rs2_value.claim,
+            ],
+        )?,
+        append_sumcheck_claim(
+            context,
+            module,
+            SumcheckClaimSpec {
                 symbol: "stage4.ram_val_check.input",
                 stage: "stage4",
                 domain: "jolt.trace_domain",
@@ -690,6 +745,7 @@ fn append_stage4_batched_sumcheck<'c, 'a>(
             policy: "jolt_core_stage4_aligned",
             ordered_claims: &[
                 "stage4.registers_read_write.input",
+                "stage4.field_reg_rw.input",
                 "stage4.ram_val_check.input",
             ],
             claim_label: "sumcheck_claim",
@@ -733,6 +789,24 @@ fn append_stage4_batched_sumcheck<'c, 'a>(
         point,
         result_value,
     )?;
+    let field_reg_rw = append_sumcheck_instance_result(
+        context,
+        module,
+        SumcheckInstanceResultSpec {
+            symbol: "stage4.field_reg_rw.instance",
+            source: "stage4.sumcheck",
+            claim: "stage4.field_reg_rw.input",
+            relation: "jolt.stage4.field_reg_rw",
+            index: 1,
+            point_arity: stage4_field_reg_rw_rounds(params),
+            num_rounds: stage4_field_reg_rw_rounds(params),
+            round_offset: params.register_log_k - params.field_reg_log_k,
+            point_order: "stage4_field_reg_rw",
+            degree: FIELD_REG_RW_DEGREE,
+        },
+        point,
+        result_value,
+    )?;
     let ram_val_check = append_sumcheck_instance_result(
         context,
         module,
@@ -741,7 +815,7 @@ fn append_stage4_batched_sumcheck<'c, 'a>(
             source: "stage4.sumcheck",
             claim: "stage4.ram_val_check.input",
             relation: "jolt.stage4.ram_val_check",
-            index: 1,
+            index: 2,
             point_arity: params.log_t,
             num_rounds: params.log_t,
             round_offset: params.register_log_k,
@@ -751,7 +825,15 @@ fn append_stage4_batched_sumcheck<'c, 'a>(
         point,
         result_value,
     )?;
-    append_stage4_output_openings(context, module, params, inputs, registers, ram_val_check)?;
+    append_stage4_output_openings(
+        context,
+        module,
+        params,
+        inputs,
+        registers,
+        field_reg_rw,
+        ram_val_check,
+    )?;
     Ok(state)
 }
 
@@ -761,6 +843,7 @@ fn append_stage4_output_openings<'c, 'a>(
     params: &JoltProtocolParams,
     inputs: &Stage4OpeningInputs<'c, 'a>,
     registers: (Value<'c, 'a>, Value<'c, 'a>),
+    field_reg_rw: (Value<'c, 'a>, Value<'c, 'a>),
     ram_val_check: (Value<'c, 'a>, Value<'c, 'a>),
 ) -> Result<(), MlirError> {
     let mut claims = Vec::new();
@@ -823,6 +906,69 @@ fn append_stage4_output_openings<'c, 'a>(
         OpeningClaimSpec {
             symbol: "stage4.registers_read_write.opening.RdInc",
             oracle: "RdInc",
+            domain: "jolt.trace_domain",
+            point_arity: params.log_t,
+            claim_kind: "committed",
+        },
+    )?);
+
+    for (index, &oracle) in ["FieldRegVal", "FrRs1Ra", "FrRs2Ra", "FrdWa"]
+        .iter()
+        .enumerate()
+    {
+        let symbol = format!("stage4.field_reg_rw.opening.{oracle}");
+        let eval = append_sumcheck_eval(
+            context,
+            module,
+            &format!("stage4.field_reg_rw.eval.{oracle}"),
+            "stage4.sumcheck",
+            oracle,
+            index,
+            field_reg_rw.1,
+        )?;
+        claim_symbols.push(symbol.clone());
+        claims.push(append_opening_claim(
+            context,
+            module,
+            field_reg_rw.0,
+            eval,
+            OpeningClaimSpec {
+                symbol: &symbol,
+                oracle,
+                domain: "jolt.stage4_field_reg_rw_domain",
+                point_arity: stage4_field_reg_rw_rounds(params),
+                claim_kind: "virtual",
+            },
+        )?);
+    }
+
+    let frd_inc_point = append_point_slice(
+        context,
+        module,
+        "stage4.field_reg_rw.point.FrdInc",
+        "stage4.field_reg_rw.instance",
+        params.field_reg_log_k,
+        params.log_t,
+        field_reg_rw.0,
+    )?;
+    let frd_inc_eval = append_sumcheck_eval(
+        context,
+        module,
+        "stage4.field_reg_rw.eval.FrdInc",
+        "stage4.sumcheck",
+        "FrdInc",
+        4,
+        field_reg_rw.1,
+    )?;
+    claim_symbols.push("stage4.field_reg_rw.opening.FrdInc".to_owned());
+    claims.push(append_opening_claim(
+        context,
+        module,
+        frd_inc_point,
+        frd_inc_eval,
+        OpeningClaimSpec {
+            symbol: "stage4.field_reg_rw.opening.FrdInc",
+            oracle: "FrdInc",
             domain: "jolt.trace_domain",
             point_arity: params.log_t,
             claim_kind: "committed",
@@ -1248,11 +1394,8 @@ struct Stage4OpeningInputs<'c, 'a> {
     rd_write_value: Stage4OpeningInput<'c, 'a>,
     rs1_registers: Stage4OpeningInput<'c, 'a>,
     rs2_registers: Stage4OpeningInput<'c, 'a>,
-    #[expect(dead_code, reason = "consumed by Phase 4c FR Twist wiring")]
     field_rd_write_value: Stage4OpeningInput<'c, 'a>,
-    #[expect(dead_code, reason = "consumed by Phase 4c FR Twist wiring")]
     field_rs1_value: Stage4OpeningInput<'c, 'a>,
-    #[expect(dead_code, reason = "consumed by Phase 4c FR Twist wiring")]
     field_rs2_value: Stage4OpeningInput<'c, 'a>,
     rs1_instruction: Stage4OpeningInput<'c, 'a>,
     rs2_instruction: Stage4OpeningInput<'c, 'a>,
@@ -1282,7 +1425,6 @@ struct Stage4BatchedSumcheckInputs<'c, 'a, 'b> {
     openings: &'b Stage4OpeningInputs<'c, 'a>,
     registers_gamma: Value<'c, 'a>,
     ram_val_check_gamma: Value<'c, 'a>,
-    #[expect(dead_code, reason = "consumed by Phase 4c.2 FR RW claim expression")]
     field_reg_gamma: Value<'c, 'a>,
 }
 

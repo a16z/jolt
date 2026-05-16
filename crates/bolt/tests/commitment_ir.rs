@@ -704,7 +704,7 @@ fn jolt_stage4_protocol_defines_registers_and_ram_val_flow() {
     assert!(text.contains("sym_name = \"stage4.registers.rs1_claim_consistency\""));
     assert!(text.contains("sym_name = \"stage4.registers.rs2_claim_consistency\""));
     assert!(text.contains(
-        "ordered_claims = [@stage4.registers_read_write.input, @stage4.ram_val_check.input]"
+        "ordered_claims = [@stage4.registers_read_write.input, @stage4.field_reg_rw.input, @stage4.ram_val_check.input]"
     ));
     assert!(text.contains("ordered_claims = [@stage4.registers_read_write.opening.RegistersVal"));
     assert!(text.contains("@stage4.ram_val_check.opening.RamRa"));
@@ -1251,22 +1251,22 @@ fn stage4_rust_targets_extract_and_compile() {
 
     assert_eq!(prover_program.role, Role::Prover);
     assert_eq!(verifier_program.role, Role::Verifier);
-    assert_eq!(prover_program.kernels.len(), 3);
+    assert_eq!(prover_program.kernels.len(), 4);
     assert!(verifier_program.kernels.is_empty());
-    assert_eq!(prover_program.steps.len(), 4);
-    assert_eq!(prover_program.transcript_squeezes.len(), 2);
+    assert_eq!(prover_program.steps.len(), 5);
+    assert_eq!(prover_program.transcript_squeezes.len(), 3);
     assert_eq!(prover_program.transcript_absorb_bytes.len(), 1);
-    assert_eq!(prover_program.opening_inputs.len(), 8);
-    assert_eq!(prover_program.field_exprs.len(), 9);
+    assert_eq!(prover_program.opening_inputs.len(), 11);
+    assert_eq!(prover_program.field_exprs.len(), 14);
     assert!(prover_program.field_constants.is_empty());
     assert_eq!(prover_program.opening_equalities.len(), 2);
-    assert_eq!(prover_program.claims.len(), 2);
+    assert_eq!(prover_program.claims.len(), 3);
     assert_eq!(prover_program.drivers.len(), 1);
-    assert_eq!(prover_program.instance_results.len(), 2);
-    assert_eq!(prover_program.evals.len(), 7);
-    assert_eq!(prover_program.point_slices.len(), 2);
+    assert_eq!(prover_program.instance_results.len(), 3);
+    assert_eq!(prover_program.evals.len(), 12);
+    assert_eq!(prover_program.point_slices.len(), 3);
     assert_eq!(prover_program.point_concats.len(), 1);
-    assert_eq!(prover_program.opening_claims.len(), 7);
+    assert_eq!(prover_program.opening_claims.len(), 12);
     assert_eq!(prover_program.opening_batches.len(), 1);
     assert!(prover_program
         .transcript_absorb_bytes
