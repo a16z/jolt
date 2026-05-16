@@ -6,12 +6,12 @@ use melior::ir::operation::OperationLike;
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{BoltModule, Cpu, Role};
 use crate::protocols::jolt::cpu_attrs::{
-    int_attr, operand_symbol, operand_symbols, operation_name, string_attr, symbol_array_attr,
-    symbol_attr,
+    operand_symbol, operand_symbols, operation_name, string_attr, symbol_array_attr, symbol_attr,
 };
 use crate::protocols::jolt::verifier_opening_rows;
 use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
 use crate::protocols::jolt::verifier_point_rows;
+use crate::protocols::jolt::verifier_program_rows;
 use crate::protocols::jolt::verifier_relation_outputs::{
     self, RelationOutputAst as Stage3RelationOutputAst,
     RelationOutputFieldExprPlan as Stage3RelationOutputFieldExprPlan,
@@ -28,9 +28,9 @@ pub struct Stage3CpuProgram {
     pub role: Role,
     pub(crate) verifier_plan: Option<VerifierStagePlan>,
     pub params: Stage3Params,
-    pub steps: Vec<Stage3ProgramStepPlan>,
-    pub transcript_squeezes: Vec<Stage3TranscriptSqueezePlan>,
-    pub opening_inputs: Vec<Stage3OpeningInputPlan>,
+    pub steps: Vec<verifier_program_rows::CpuProgramStepPlan>,
+    pub transcript_squeezes: Vec<verifier_program_rows::CpuTranscriptSqueezePlan>,
+    pub opening_inputs: Vec<verifier_program_rows::CpuOpeningInputPlan>,
     pub field_constants: Vec<verifier_value_rows::CpuFieldConstantPlan>,
     pub field_exprs: Vec<verifier_value_rows::CpuFieldExprPlan>,
     pub scalar_exprs: Vec<verifier_value_rows::CpuScalarExprPlan>,
@@ -65,43 +65,13 @@ pub struct Stage3KernelPlan {
     pub abi: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3TranscriptSqueezePlan {
-    pub symbol: String,
-    pub label: String,
-    pub kind: String,
-    pub count: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3ProgramStepPlan {
-    pub kind: String,
-    pub symbol: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3OpeningInputPlan {
-    pub symbol: String,
-    pub source_stage: String,
-    pub source_claim: String,
-    pub oracle: String,
-    pub domain: String,
-    pub point_arity: usize,
-    pub claim_kind: String,
-}
-
 fn stage3_scalar_expr(
     expr: Stage3RelationOutputFieldExprPlan,
 ) -> verifier_value_rows::CpuScalarExprPlan {
     verifier_value_rows::CpuScalarExprPlan::op(expr.symbol, expr.formula, expr.operands)
 }
 
-verifier_plan::impl_verifier_plan_source_traits!(
-    program = Stage3CpuProgram,
-    step = Stage3ProgramStepPlan,
-    squeeze = Stage3TranscriptSqueezePlan,
-    opening_input = Stage3OpeningInputPlan,
-);
+verifier_plan::impl_verifier_plan_source_traits!(program = Stage3CpuProgram,);
 
 pub fn stage3_cpu_program(module: &BoltModule<'_, Cpu>) -> Result<Stage3CpuProgram, EmitError> {
     verify_cpu_schema(module)?;
@@ -163,28 +133,15 @@ impl Stage3CpuProgram {
                     });
                 }
                 "cpu.transcript_squeeze" => {
-                    let symbol = string_attr(op, "sym_name")?;
-                    steps.push(Stage3ProgramStepPlan {
-                        kind: "transcript_squeeze".to_owned(),
-                        symbol: symbol.clone(),
-                    });
-                    transcript_squeezes.push(Stage3TranscriptSqueezePlan {
-                        symbol,
-                        label: string_attr(op, "label")?,
-                        kind: string_attr(op, "kind")?,
-                        count: int_attr(op, "count")?,
-                    });
+                    let squeeze = verifier_program_rows::CpuTranscriptSqueezePlan::from_cpu(op)?;
+                    steps.push(verifier_program_rows::CpuProgramStepPlan::new(
+                        "transcript_squeeze",
+                        squeeze.symbol.clone(),
+                    ));
+                    transcript_squeezes.push(squeeze);
                 }
                 "cpu.opening_input" => {
-                    opening_inputs.push(Stage3OpeningInputPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        source_stage: symbol_attr(op, "source_stage")?,
-                        source_claim: symbol_attr(op, "source_claim")?,
-                        oracle: symbol_attr(op, "oracle")?,
-                        domain: symbol_attr(op, "domain")?,
-                        point_arity: int_attr(op, "point_arity")?,
-                        claim_kind: string_attr(op, "claim_kind")?,
-                    });
+                    opening_inputs.push(verifier_program_rows::CpuOpeningInputPlan::from_cpu(op)?);
                 }
                 "cpu.field_const" => {
                     field_constants
@@ -220,18 +177,18 @@ impl Stage3CpuProgram {
                 }
                 "cpu.sumcheck_driver" => {
                     let driver = verifier_sumcheck_rows::CpuSumcheckDriverPlan::from_driver(op)?;
-                    steps.push(Stage3ProgramStepPlan {
-                        kind: "sumcheck_driver".to_owned(),
-                        symbol: driver.symbol.clone(),
-                    });
+                    steps.push(verifier_program_rows::CpuProgramStepPlan::new(
+                        "sumcheck_driver",
+                        driver.symbol.clone(),
+                    ));
                     drivers.push(driver);
                 }
                 "cpu.sumcheck_verify" => {
                     let driver = verifier_sumcheck_rows::CpuSumcheckDriverPlan::from_verify(op)?;
-                    steps.push(Stage3ProgramStepPlan {
-                        kind: "sumcheck_driver".to_owned(),
-                        symbol: driver.symbol.clone(),
-                    });
+                    steps.push(verifier_program_rows::CpuProgramStepPlan::new(
+                        "sumcheck_driver",
+                        driver.symbol.clone(),
+                    ));
                     drivers.push(driver);
                 }
                 "cpu.sumcheck_instance_result" => {

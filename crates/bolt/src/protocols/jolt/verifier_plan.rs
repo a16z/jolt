@@ -13,6 +13,9 @@ use crate::protocols::jolt::verifier_opening_rows::{
 use crate::protocols::jolt::verifier_point_rows::{
     CpuPointConcatPlan, CpuPointSlicePlan, CpuPointZeroPlan,
 };
+use crate::protocols::jolt::verifier_program_rows::{
+    CpuOpeningInputPlan, CpuProgramStepPlan, CpuTranscriptAbsorbBytesPlan, CpuTranscriptSqueezePlan,
+};
 use crate::protocols::jolt::verifier_relation_outputs::{
     RelationOutputEvalFamilyPlan, RelationOutputFunctionFamilyPlan, RelationOutputPlan,
     RelationOutputProductFamilyPlan, StructuredPolynomialEvalPlan,
@@ -558,14 +561,10 @@ pub(crate) trait VerifierOpeningBatchSource {
 }
 
 pub(crate) trait VerifierStagePlanSource {
-    type Step: VerifierProgramStepSource;
-    type Squeeze: VerifierTranscriptSqueezeSource;
-    type OpeningInput: VerifierOpeningInputSource;
-
-    fn steps(&self) -> &[Self::Step];
-    fn transcript_squeezes(&self) -> &[Self::Squeeze];
+    fn steps(&self) -> &[CpuProgramStepPlan];
+    fn transcript_squeezes(&self) -> &[CpuTranscriptSqueezePlan];
     fn transcript_absorb_bytes(&self) -> Vec<VerifierTranscriptAbsorbBytesPlan>;
-    fn opening_inputs(&self) -> &[Self::OpeningInput];
+    fn opening_inputs(&self) -> &[CpuOpeningInputPlan];
     fn field_constants(&self) -> &[CpuFieldConstantPlan];
     fn field_exprs(&self) -> &[CpuFieldExprPlan];
     fn scalar_exprs(&self) -> &[CpuScalarExprPlan];
@@ -667,6 +666,78 @@ impl VerifierOpeningBatchSource for CpuOpeningBatchPlan {
 
     fn claim_operands(&self) -> &[String] {
         &self.claim_operands
+    }
+}
+
+impl VerifierProgramStepSource for CpuProgramStepPlan {
+    fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+}
+
+impl VerifierTranscriptSqueezeSource for CpuTranscriptSqueezePlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn label(&self) -> &str {
+        &self.label
+    }
+
+    fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    fn count(&self) -> usize {
+        self.count
+    }
+}
+
+impl VerifierTranscriptAbsorbBytesSource for CpuTranscriptAbsorbBytesPlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn label(&self) -> &str {
+        &self.label
+    }
+
+    fn payload(&self) -> &str {
+        &self.payload
+    }
+}
+
+impl VerifierOpeningInputSource for CpuOpeningInputPlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn source_stage(&self) -> &str {
+        &self.source_stage
+    }
+
+    fn source_claim(&self) -> &str {
+        &self.source_claim
+    }
+
+    fn oracle(&self) -> &str {
+        &self.oracle
+    }
+
+    fn domain(&self) -> &str {
+        &self.domain
+    }
+
+    fn point_arity(&self) -> usize {
+        self.point_arity
+    }
+
+    fn claim_kind(&self) -> &str {
+        &self.claim_kind
     }
 }
 
@@ -1235,10 +1306,7 @@ where
 macro_rules! impl_verifier_plan_source_traits {
     (
         program = $program:ty,
-        step = $step:ty,
-        squeeze = $squeeze:ty,
-        opening_input = $opening_input:ty,
-        $(absorb = $absorb:ty,)?
+        $(absorb = $absorb:ident,)?
         $(point_zero = $point_zero:ty,)?
         $(indexed_eval_families = $indexed_eval_families:ident,)?
         $(relation_output_eval_families = $relation_output_eval_families:ident,)?
@@ -1247,18 +1315,14 @@ macro_rules! impl_verifier_plan_source_traits {
         $(,)?
     ) => {
         impl $crate::protocols::jolt::verifier_plan::VerifierStagePlanSource for $program {
-            type Step = $step;
-            type Squeeze = $squeeze;
-            type OpeningInput = $opening_input;
-
-            fn steps(&self) -> &[Self::Step] { &self.steps }
-            fn transcript_squeezes(&self) -> &[Self::Squeeze] { &self.transcript_squeezes }
+            fn steps(&self) -> &[$crate::protocols::jolt::verifier_program_rows::CpuProgramStepPlan] { &self.steps }
+            fn transcript_squeezes(&self) -> &[$crate::protocols::jolt::verifier_program_rows::CpuTranscriptSqueezePlan] { &self.transcript_squeezes }
             fn transcript_absorb_bytes(&self) -> Vec<$crate::protocols::jolt::verifier_plan::VerifierTranscriptAbsorbBytesPlan> {
                 $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
                     @transcript_absorb_bytes self $(, $absorb)?
                 )
             }
-            fn opening_inputs(&self) -> &[Self::OpeningInput] { &self.opening_inputs }
+            fn opening_inputs(&self) -> &[$crate::protocols::jolt::verifier_program_rows::CpuOpeningInputPlan] { &self.opening_inputs }
             fn field_constants(&self) -> &[$crate::protocols::jolt::verifier_value_rows::CpuFieldConstantPlan] { &self.field_constants }
             fn field_exprs(&self) -> &[$crate::protocols::jolt::verifier_value_rows::CpuFieldExprPlan] { &self.field_exprs }
             fn scalar_exprs(&self) -> &[$crate::protocols::jolt::verifier_value_rows::CpuScalarExprPlan] { &self.scalar_exprs }
@@ -1303,38 +1367,8 @@ macro_rules! impl_verifier_plan_source_traits {
             fn opening_batches(&self) -> &[$crate::protocols::jolt::verifier_opening_rows::CpuOpeningBatchPlan] { &self.opening_batches }
         }
 
-        impl $crate::protocols::jolt::verifier_plan::VerifierProgramStepSource for $step {
-            fn kind(&self) -> &str { &self.kind }
-            fn symbol(&self) -> &str { &self.symbol }
-        }
-
-        impl $crate::protocols::jolt::verifier_plan::VerifierTranscriptSqueezeSource for $squeeze {
-            fn symbol(&self) -> &str { &self.symbol }
-            fn label(&self) -> &str { &self.label }
-            fn kind(&self) -> &str { &self.kind }
-            fn count(&self) -> usize { self.count }
-        }
-
-        $(
-        impl $crate::protocols::jolt::verifier_plan::VerifierTranscriptAbsorbBytesSource for $absorb {
-            fn symbol(&self) -> &str { &self.symbol }
-            fn label(&self) -> &str { &self.label }
-            fn payload(&self) -> &str { &self.payload }
-        }
-        )?
-
-        impl $crate::protocols::jolt::verifier_plan::VerifierOpeningInputSource for $opening_input {
-            fn symbol(&self) -> &str { &self.symbol }
-            fn source_stage(&self) -> &str { &self.source_stage }
-            fn source_claim(&self) -> &str { &self.source_claim }
-            fn oracle(&self) -> &str { &self.oracle }
-            fn domain(&self) -> &str { &self.domain }
-            fn point_arity(&self) -> usize { self.point_arity }
-            fn claim_kind(&self) -> &str { &self.claim_kind }
-        }
-
     };
-    (@transcript_absorb_bytes $self:ident, $absorb:ty) => {
+    (@transcript_absorb_bytes $self:ident, $absorb:ident) => {
         $crate::protocols::jolt::verifier_plan::transcript_absorb_bytes_from_cpu(
             &$self.transcript_absorb_bytes,
         )

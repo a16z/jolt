@@ -11,8 +11,7 @@ use melior::ir::operation::OperationLike;
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{BoltModule, Cpu, Role};
 use crate::protocols::jolt::cpu_attrs::{
-    int_attr, operand_symbol, operand_symbols, operation_name, string_attr, symbol_array_attr,
-    symbol_attr,
+    operand_symbol, operand_symbols, operation_name, string_attr, symbol_array_attr, symbol_attr,
 };
 use crate::protocols::jolt::rust_target_plan::{
     power_strided_weighted_sum_formula, ScalarExprKind,
@@ -20,6 +19,7 @@ use crate::protocols::jolt::rust_target_plan::{
 use crate::protocols::jolt::verifier_opening_rows;
 use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
 use crate::protocols::jolt::verifier_point_rows;
+use crate::protocols::jolt::verifier_program_rows;
 use crate::protocols::jolt::verifier_relation_outputs::{
     self, parse_output_eval_family_plan, parse_output_function_family_plan,
     parse_output_product_family_plan, RelationOutputAst as Stage7RelationOutputAst,
@@ -53,10 +53,10 @@ pub struct Stage7CpuProgram {
     pub role: Role,
     pub(crate) verifier_plan: Option<VerifierStagePlan>,
     pub params: Stage7Params,
-    pub steps: Vec<Stage7ProgramStepPlan>,
-    pub transcript_squeezes: Vec<Stage7TranscriptSqueezePlan>,
-    pub transcript_absorb_bytes: Vec<Stage7TranscriptAbsorbBytesPlan>,
-    pub opening_inputs: Vec<Stage7OpeningInputPlan>,
+    pub steps: Vec<verifier_program_rows::CpuProgramStepPlan>,
+    pub transcript_squeezes: Vec<verifier_program_rows::CpuTranscriptSqueezePlan>,
+    pub transcript_absorb_bytes: Vec<verifier_program_rows::CpuTranscriptAbsorbBytesPlan>,
+    pub opening_inputs: Vec<verifier_program_rows::CpuOpeningInputPlan>,
     pub field_constants: Vec<verifier_value_rows::CpuFieldConstantPlan>,
     pub field_exprs: Vec<verifier_value_rows::CpuFieldExprPlan>,
     pub scalar_exprs: Vec<verifier_value_rows::CpuScalarExprPlan>,
@@ -95,38 +95,6 @@ pub struct Stage7KernelPlan {
     pub abi: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7TranscriptSqueezePlan {
-    pub symbol: String,
-    pub label: String,
-    pub kind: String,
-    pub count: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7TranscriptAbsorbBytesPlan {
-    pub symbol: String,
-    pub label: String,
-    pub payload: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7ProgramStepPlan {
-    pub kind: String,
-    pub symbol: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7OpeningInputPlan {
-    pub symbol: String,
-    pub source_stage: String,
-    pub source_claim: String,
-    pub oracle: String,
-    pub domain: String,
-    pub point_arity: usize,
-    pub claim_kind: String,
-}
-
 fn stage7_relation_output_expr(
     expr: Stage7RelationOutputFieldExprPlan,
 ) -> verifier_value_rows::CpuFieldExprPlan {
@@ -149,7 +117,7 @@ fn compact_hamming_weight_input_claim(
     field_exprs: &mut Vec<verifier_value_rows::CpuFieldExprPlan>,
     scalar_exprs: &mut Vec<verifier_value_rows::CpuScalarExprPlan>,
     claims: &mut [verifier_sumcheck_rows::CpuSumcheckClaimPlan],
-    opening_inputs: &[Stage7OpeningInputPlan],
+    opening_inputs: &[verifier_program_rows::CpuOpeningInputPlan],
 ) -> Result<(), EmitError> {
     let Some(claim) = claims
         .iter_mut()
@@ -191,7 +159,7 @@ fn compact_hamming_weight_input_claim(
 }
 
 fn hamming_weight_claim_rows(
-    opening_inputs: &[Stage7OpeningInputPlan],
+    opening_inputs: &[verifier_program_rows::CpuOpeningInputPlan],
 ) -> Result<Vec<HammingWeightClaimRow>, EmitError> {
     const HAMMING_INPUT: &str = "stage7.input.stage6.hamming_booleanity.HammingWeight";
     const BOOLEANITY_PREFIX: &str = "stage7.input.stage6.booleanity.";
@@ -267,10 +235,7 @@ fn is_hamming_weight_input_claim_expr(symbol: &str) -> bool {
 
 verifier_plan::impl_verifier_plan_source_traits!(
     program = Stage7CpuProgram,
-    step = Stage7ProgramStepPlan,
-    squeeze = Stage7TranscriptSqueezePlan,
-    opening_input = Stage7OpeningInputPlan,
-    absorb = Stage7TranscriptAbsorbBytesPlan,
+    absorb = transcript_absorb_bytes,
     point_zero = verifier_point_rows::CpuPointZeroPlan,
     relation_output_eval_families = relation_output_eval_families,
     relation_output_product_families = relation_output_product_families,
@@ -342,40 +307,23 @@ impl Stage7CpuProgram {
                     });
                 }
                 "cpu.transcript_squeeze" => {
-                    let symbol = string_attr(op, "sym_name")?;
-                    steps.push(Stage7ProgramStepPlan {
-                        kind: "transcript_squeeze".to_owned(),
-                        symbol: symbol.clone(),
-                    });
-                    transcript_squeezes.push(Stage7TranscriptSqueezePlan {
-                        symbol,
-                        label: string_attr(op, "label")?,
-                        kind: string_attr(op, "kind")?,
-                        count: int_attr(op, "count")?,
-                    });
+                    let squeeze = verifier_program_rows::CpuTranscriptSqueezePlan::from_cpu(op)?;
+                    steps.push(verifier_program_rows::CpuProgramStepPlan::new(
+                        "transcript_squeeze",
+                        squeeze.symbol.clone(),
+                    ));
+                    transcript_squeezes.push(squeeze);
                 }
                 "cpu.transcript_absorb_bytes" => {
-                    let symbol = string_attr(op, "sym_name")?;
-                    steps.push(Stage7ProgramStepPlan {
-                        kind: "transcript_absorb_bytes".to_owned(),
-                        symbol: symbol.clone(),
-                    });
-                    transcript_absorb_bytes.push(Stage7TranscriptAbsorbBytesPlan {
-                        symbol,
-                        label: string_attr(op, "label")?,
-                        payload: string_attr(op, "payload")?,
-                    });
+                    let absorb = verifier_program_rows::CpuTranscriptAbsorbBytesPlan::from_cpu(op)?;
+                    steps.push(verifier_program_rows::CpuProgramStepPlan::new(
+                        "transcript_absorb_bytes",
+                        absorb.symbol.clone(),
+                    ));
+                    transcript_absorb_bytes.push(absorb);
                 }
                 "cpu.opening_input" => {
-                    opening_inputs.push(Stage7OpeningInputPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        source_stage: symbol_attr(op, "source_stage")?,
-                        source_claim: symbol_attr(op, "source_claim")?,
-                        oracle: symbol_attr(op, "oracle")?,
-                        domain: symbol_attr(op, "domain")?,
-                        point_arity: int_attr(op, "point_arity")?,
-                        claim_kind: string_attr(op, "claim_kind")?,
-                    });
+                    opening_inputs.push(verifier_program_rows::CpuOpeningInputPlan::from_cpu(op)?);
                 }
                 "cpu.field_const" => {
                     field_constants
@@ -407,18 +355,18 @@ impl Stage7CpuProgram {
                 }
                 "cpu.sumcheck_driver" => {
                     let driver = verifier_sumcheck_rows::CpuSumcheckDriverPlan::from_driver(op)?;
-                    steps.push(Stage7ProgramStepPlan {
-                        kind: "sumcheck_driver".to_owned(),
-                        symbol: driver.symbol.clone(),
-                    });
+                    steps.push(verifier_program_rows::CpuProgramStepPlan::new(
+                        "sumcheck_driver",
+                        driver.symbol.clone(),
+                    ));
                     drivers.push(driver);
                 }
                 "cpu.sumcheck_verify" => {
                     let driver = verifier_sumcheck_rows::CpuSumcheckDriverPlan::from_verify(op)?;
-                    steps.push(Stage7ProgramStepPlan {
-                        kind: "sumcheck_driver".to_owned(),
-                        symbol: driver.symbol.clone(),
-                    });
+                    steps.push(verifier_program_rows::CpuProgramStepPlan::new(
+                        "sumcheck_driver",
+                        driver.symbol.clone(),
+                    ));
                     drivers.push(driver);
                 }
                 "cpu.sumcheck_instance_result" => {
