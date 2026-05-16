@@ -13,7 +13,7 @@ use crate::ir::{BoltModule, Cpu, Role};
 use crate::protocols::jolt::cpu_attrs::{
     operand_symbol, operand_symbols, operation_name, string_attr, symbol_array_attr, symbol_attr,
 };
-use crate::protocols::jolt::rust_target_plan::{FieldExprKind, ScalarExprKind};
+use crate::protocols::jolt::rust_target_plan::ScalarExprKind;
 use crate::protocols::jolt::stage6_bytecode_read_raf_plan::Stage6BytecodeReadRafEmitPlan;
 use crate::protocols::jolt::verifier_eval_families::{self, IndexedEvalFamilyPlan};
 use crate::protocols::jolt::verifier_opening_rows;
@@ -483,24 +483,14 @@ impl Stage6CpuProgram {
         );
         let field_vector_values = verifier_plan.map(|plan| plan.field_vector_values());
         let point_values = verifier_plan.map(|plan| plan.point_value_sources());
-        for expr in &self.field_exprs {
-            verify_count(
-                "field expr operands",
-                &expr.symbol,
-                expr.operand_names.len(),
-                expr.operands.len(),
-            )?;
-            let _kind = FieldExprKind::from_cpu_attr(&expr.formula)
-                .map_err(|error| EmitError::new(error.to_string()))?;
-            for operand in &expr.operands {
-                if !field_values.contains(operand) {
-                    return Err(EmitError::new(format!(
-                        "field expr @{} references missing field value @{operand}",
-                        expr.symbol
-                    )));
-                }
-            }
-        }
+        super::plan_tokens::verify_field_expr_flow(
+            super::plan_tokens::FieldExprFlowVerification {
+                cpu_exprs: &self.field_exprs,
+                verifier_exprs: verifier_plan.map(|plan| plan.field_exprs.as_slice()),
+                field_values: &field_values,
+                verifier_field_values: verifier_scalar_values.as_ref(),
+            },
+        )?;
         super::plan_tokens::verify_scalar_expr_flow(
             super::plan_tokens::ScalarExprFlowVerification {
                 stage: "stage6",

@@ -7,8 +7,10 @@ use crate::protocols::jolt::rust_target_plan::{
     ProgramStepKind, RustTargetPlanError, ScalarExprKind, SumcheckPointOrder,
     TranscriptSqueezeKind,
 };
-use crate::protocols::jolt::verifier_plan::{VerifierScalarExprOperand, VerifierScalarExprPlan};
-use crate::protocols::jolt::verifier_value_rows::CpuScalarExprPlan;
+use crate::protocols::jolt::verifier_plan::{
+    VerifierFieldExprPlan, VerifierScalarExprOperand, VerifierScalarExprPlan,
+};
+use crate::protocols::jolt::verifier_value_rows::{CpuFieldExprPlan, CpuScalarExprPlan};
 use crate::protocols::jolt::verifier_values::{
     VerifierFieldVectorValueRef, VerifierFieldVectorValueSet, VerifierPointSourceSet,
     VerifierScalarSourceSet, VerifierScalarValueSet,
@@ -154,6 +156,57 @@ pub(super) fn verify_count(
 
 pub(super) fn symbols<'a>(values: impl Iterator<Item = &'a String>) -> BTreeSet<String> {
     values.cloned().collect()
+}
+
+pub(super) struct FieldExprFlowVerification<'a> {
+    pub cpu_exprs: &'a [CpuFieldExprPlan],
+    pub verifier_exprs: Option<&'a [VerifierFieldExprPlan]>,
+    pub field_values: &'a VerifierScalarSourceSet,
+    pub verifier_field_values: Option<&'a VerifierScalarValueSet>,
+}
+
+pub(super) fn verify_field_expr_flow(
+    verification: FieldExprFlowVerification<'_>,
+) -> Result<(), EmitError> {
+    let FieldExprFlowVerification {
+        cpu_exprs,
+        verifier_exprs,
+        field_values,
+        verifier_field_values,
+    } = verification;
+    if let (Some(exprs), Some(field_values)) = (verifier_exprs, verifier_field_values) {
+        for expr in exprs {
+            for operand in &expr.operands {
+                if !field_values.contains_ref(operand) {
+                    return Err(EmitError::new(format!(
+                        "field expr @{} references missing field value @{}",
+                        expr.symbol,
+                        operand.symbol()
+                    )));
+                }
+            }
+        }
+    } else {
+        for expr in cpu_exprs {
+            verify_count(
+                "field expr operands",
+                &expr.symbol,
+                expr.operand_names.len(),
+                expr.operands.len(),
+            )?;
+            let _kind = FieldExprKind::from_cpu_attr(&expr.formula)
+                .map_err(|error| EmitError::new(error.to_string()))?;
+            for operand in &expr.operands {
+                if !field_values.contains(operand) {
+                    return Err(EmitError::new(format!(
+                        "field expr @{} references missing field value @{operand}",
+                        expr.symbol
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(super) struct ScalarExprVerification<'a> {

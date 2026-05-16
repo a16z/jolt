@@ -363,22 +363,14 @@ impl Stage3CpuProgram {
         );
         let field_vector_values = verifier_plan.map(|plan| plan.field_vector_values());
         let point_values = verifier_plan.map(|plan| plan.point_value_sources());
-        for expr in &self.field_exprs {
-            verify_count(
-                "field expr operands",
-                &expr.symbol,
-                expr.operand_names.len(),
-                expr.operands.len(),
-            )?;
-            for operand in &expr.operands {
-                if !field_values.contains(operand) {
-                    return Err(EmitError::new(format!(
-                        "field expr @{} references missing field value @{operand}",
-                        expr.symbol
-                    )));
-                }
-            }
-        }
+        super::plan_tokens::verify_field_expr_flow(
+            super::plan_tokens::FieldExprFlowVerification {
+                cpu_exprs: &self.field_exprs,
+                verifier_exprs: verifier_plan.map(|plan| plan.field_exprs.as_slice()),
+                field_values: &field_values,
+                verifier_field_values: verifier_scalar_values.as_ref(),
+            },
+        )?;
         super::plan_tokens::verify_scalar_expr_flow(
             super::plan_tokens::ScalarExprFlowVerification {
                 stage: "stage3",

@@ -136,7 +136,7 @@ pub(crate) struct VerifierFieldConstantPlan {
 pub(crate) struct VerifierFieldExprPlan {
     pub(crate) symbol: String,
     pub(crate) kind: FieldExprKind,
-    pub(crate) operands: Vec<String>,
+    pub(crate) operands: Vec<VerifierScalarValueRef>,
 }
 
 impl VerifierFieldExprPlan {
@@ -148,7 +148,10 @@ impl VerifierFieldExprPlan {
         Ok(Self {
             symbol: symbol.to_owned(),
             kind: FieldExprKind::from_cpu_attr(formula).map_err(plan_error)?,
-            operands: operands.to_vec(),
+            operands: operands
+                .iter()
+                .map(|operand| VerifierScalarValueRef::new(operand.as_str()))
+                .collect(),
         })
     }
 }
@@ -1828,7 +1831,7 @@ pub(crate) fn emit_field_expr_constants(
                 "    {stage_type_prefix}FieldExprPlan {{ symbol: {}, kind: {}, operands: {} }},",
                 rust_str(&expr.symbol),
                 field_expr_kind_expr(stage_type_prefix, &expr.kind),
-                rust_str_slice_expr(&expr.operands),
+                field_expr_operand_slice_expr(&expr.operands),
             )
         })
         .collect::<Vec<_>>()
@@ -1877,7 +1880,7 @@ pub(crate) fn emit_field_expr_constants_chunked(
                         "{helper_name}({}, {}, {})",
                         rust_str(&expr.symbol),
                         field_expr_kind_expr(stage_type_prefix, &expr.kind),
-                        rust_str_slice_expr(&expr.operands)
+                        field_expr_operand_slice_expr(&expr.operands)
                     )
                 })
                 .collect::<Vec<_>>()
@@ -1889,6 +1892,18 @@ pub(crate) fn emit_field_expr_constants_chunked(
     format!(
         "const fn {helper_name}(symbol: &'static str, kind: {stage_type_prefix}FieldExprKind, operands: &'static [&'static str]) -> {stage_type_prefix}FieldExprPlan {{\n    {stage_type_prefix}FieldExprPlan {{ symbol, kind, operands }}\n}}\n\n#[rustfmt::skip]\npub const {const_prefix}_FIELD_EXPRS: &[{stage_type_prefix}FieldExprPlan] = &[\n{rows}\n];\n"
     )
+}
+
+fn field_expr_operand_slice_expr(operands: &[VerifierScalarValueRef]) -> String {
+    if operands.is_empty() {
+        return "&[]".to_owned();
+    }
+    let values = operands
+        .iter()
+        .map(|operand| rust_str(operand.symbol()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("&[{values}]")
 }
 
 pub(crate) fn emit_scalar_expr_constants_chunked(
@@ -2282,7 +2297,9 @@ mod tests {
         VerifierFieldVectorValueRef, VerifierScalarValueKind, VerifierScalarValuePlan,
     };
 
-    use super::{VerifierScalarExprOperand, VerifierScalarExprPlan, VerifierStagePlan};
+    use super::{
+        VerifierFieldExprPlan, VerifierScalarExprOperand, VerifierScalarExprPlan, VerifierStagePlan,
+    };
 
     #[test]
     fn scalar_value_plans_classify_structured_evals_and_local_scalars() -> Result<(), String> {
@@ -2330,6 +2347,20 @@ mod tests {
             "stage5.local.lookup",
             VerifierScalarValueKind::RelationOutputLocal
         )));
+        Ok(())
+    }
+
+    #[test]
+    fn field_expr_plan_types_scalar_operands() -> Result<(), String> {
+        let expr = VerifierFieldExprPlan::from_cpu(
+            "field.expr",
+            "field.add",
+            &["left.value".to_owned(), "right.value".to_owned()],
+        )
+        .map_err(|error| error.to_string())?;
+
+        assert_eq!(expr.operands[0].symbol(), "left.value");
+        assert_eq!(expr.operands[1].symbol(), "right.value");
         Ok(())
     }
 
