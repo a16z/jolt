@@ -1508,7 +1508,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
         }
         source.push_str(&self.emit_tail_constants()?);
         let relation_outputs_field = if self.role == Role::Verifier {
-            "    relation_outputs: STAGE7_RELATION_OUTPUTS,\n"
+            "    relation_output_values: STAGE7_RELATION_OUTPUT_VALUES,\n    relation_outputs: STAGE7_RELATION_OUTPUTS,\n"
         } else {
             ""
         };
@@ -2010,6 +2010,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage7Error);
         super::relation_outputs::emit_verifier_relation_output_constants(
             "Stage7",
             &self.role,
+            &self.relation_output_values,
             &self.relation_outputs,
         )
     }
@@ -2511,6 +2512,7 @@ fn expected_batched_output_claim(
             Stage7RelationKind::Stage7HammingWeightClaimReduction => {
                 bolt_verifier_runtime::evaluate_relation_output_for_instance(
                     program.relation_outputs,
+        program.relation_output_values,
                     program.field_exprs,
                     store,
                     instance,

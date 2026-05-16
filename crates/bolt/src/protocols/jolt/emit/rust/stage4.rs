@@ -1422,7 +1422,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage4Error);
             source.push_str(&self.emit_verifier_relation_output_constants()?);
         }
         let relation_outputs_field = if self.role == Role::Verifier {
-            "    relation_outputs: STAGE4_RELATION_OUTPUTS,\n"
+            "    relation_output_values: STAGE4_RELATION_OUTPUT_VALUES,\n    relation_outputs: STAGE4_RELATION_OUTPUTS,\n"
         } else {
             ""
         };
@@ -1938,6 +1938,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage4Error);
         super::relation_outputs::emit_verifier_relation_output_constants(
             "Stage4",
             &self.role,
+            &self.relation_output_values,
             &self.relation_outputs,
         )
     }
@@ -2414,6 +2415,7 @@ fn expected_batched_output_claim(
             })?;
         let value = bolt_verifier_runtime::evaluate_relation_output_for_instance(
             program.relation_outputs,
+        program.relation_output_values,
             program.field_exprs,
             store,
             instance,

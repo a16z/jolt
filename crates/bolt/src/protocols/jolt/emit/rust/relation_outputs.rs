@@ -1,42 +1,29 @@
 use crate::emit::rust::{push_format, EmitError};
 use crate::ir::Role;
 use crate::protocols::jolt::verifier_relation_outputs::{
-    RelationOutputFunctionKind, RelationOutputPlan, StructuredPolynomialKind,
-    StructuredPolynomialPointLength, StructuredPolynomialPointOrder, StructuredPolynomialPointPlan,
-    StructuredPolynomialPointSegment,
+    RelationOutputFunctionKind, RelationOutputPlan, StructuredPolynomialEvalPlan,
+    StructuredPolynomialKind, StructuredPolynomialPointLength, StructuredPolynomialPointOrder,
+    StructuredPolynomialPointPlan, StructuredPolynomialPointSegment,
 };
 
 pub fn emit_verifier_relation_output_constants(
     stage_type: &str,
     role: &Role,
+    relation_output_values: &[StructuredPolynomialEvalPlan],
     relation_outputs: &[RelationOutputPlan],
 ) -> Result<String, EmitError> {
     let mut source = String::new();
+    emit_relation_output_value_constants(&mut source, stage_type, relation_output_values)?;
     let mut claims = Vec::new();
     for (index, claim) in relation_outputs.iter().enumerate() {
         let values_name = format!(
-            "{}_RELATION_OUTPUT_{index}_VALUES",
+            "{}_RELATION_OUTPUT_{index}_STRUCTURED_POLYNOMIAL_EVALS",
             stage_type.to_ascii_uppercase()
         );
-        let values = claim
-            .polynomial_evals
-            .iter()
-            .map(|value| {
-                Ok(format!(
-                    "    {stage_type}StructuredPolynomialEvalPlan {{ symbol: {}, polynomial: {}, x_point: {}, y_point: {} }},",
-                    rust_str(&value.symbol),
-                    structured_polynomial_kind_expr(stage_type, value.polynomial),
-                    structured_polynomial_point_expr(stage_type, &value.x_point),
-                    structured_polynomial_point_expr(stage_type, &value.y_point),
-                ))
-            })
-            .collect::<Result<Vec<_>, EmitError>>()?
-            .join("\n");
-        push_format(
+        let values = emit_str_slice_or_inline(
             &mut source,
-            format_args!(
-                "pub const {values_name}: &[{stage_type}StructuredPolynomialEvalPlan] = &[\n{values}\n];\n\n"
-            ),
+            &values_name,
+            &claim.structured_polynomial_evals,
         );
         let eval_families = emit_eval_family_constants(&mut source, stage_type, index, claim);
         let product_families = emit_product_family_constants(&mut source, stage_type, index, claim);
@@ -44,7 +31,7 @@ pub fn emit_verifier_relation_output_constants(
             emit_function_family_constants(&mut source, stage_type, index, claim)?;
         let local_scalars = emit_local_scalar_constants(&mut source, stage_type, index, claim);
         claims.push(format!(
-            "    {stage_type}RelationOutputPlan {{ relation: {}, polynomial_evals: {values_name}, eval_families: {eval_families}, product_families: {product_families}, function_families: {function_families}, local_scalars: {local_scalars}, expected_output: {} }},",
+            "    {stage_type}RelationOutputPlan {{ relation: {}, structured_polynomial_evals: {values}, eval_families: {eval_families}, product_families: {product_families}, function_families: {function_families}, local_scalars: {local_scalars}, expected_output: {} }},",
             super::plan_tokens::role_relation_kind_expr(stage_type, role, &claim.relation)?,
             rust_str(&claim.expected_output)
         ));
@@ -58,6 +45,34 @@ pub fn emit_verifier_relation_output_constants(
         ),
     );
     Ok(source)
+}
+
+fn emit_relation_output_value_constants(
+    source: &mut String,
+    stage_type: &str,
+    relation_output_values: &[StructuredPolynomialEvalPlan],
+) -> Result<(), EmitError> {
+    let values_name = format!("{}_RELATION_OUTPUT_VALUES", stage_type.to_ascii_uppercase());
+    let values = relation_output_values
+        .iter()
+        .map(|value| {
+            Ok(format!(
+                "    {stage_type}StructuredPolynomialEvalPlan {{ symbol: {}, polynomial: {}, x_point: {}, y_point: {} }},",
+                rust_str(&value.symbol),
+                structured_polynomial_kind_expr(stage_type, value.polynomial),
+                structured_polynomial_point_expr(stage_type, &value.x_point),
+                structured_polynomial_point_expr(stage_type, &value.y_point),
+            ))
+        })
+        .collect::<Result<Vec<_>, EmitError>>()?
+        .join("\n");
+    push_format(
+        source,
+        format_args!(
+            "pub const {values_name}: &[{stage_type}StructuredPolynomialEvalPlan] = &[\n{values}\n];\n\n"
+        ),
+    );
+    Ok(())
 }
 
 fn emit_local_scalar_constants(

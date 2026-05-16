@@ -359,7 +359,7 @@ impl BytecodeReadRafPlan {
         };
         RelationOutputPlan {
             relation: "jolt.stage6.bytecode_read_raf".to_owned(),
-            polynomial_evals: Vec::new(),
+            structured_polynomial_evals: Vec::new(),
             eval_families: Vec::new(),
             product_families: vec![product_family.clone()],
             function_families: Vec::new(),
@@ -682,7 +682,7 @@ mod tests {
             claim.expected_output,
             "stage6.bytecode_read_raf.output.product.BytecodeReadRaf"
         );
-        assert!(claim.polynomial_evals.is_empty());
+        assert!(claim.structured_polynomial_evals.is_empty());
         assert!(claim.eval_families.is_empty());
         assert_eq!(claim.product_families.len(), 1);
         assert_eq!(claim.product_families[0].terms.len(), 1);

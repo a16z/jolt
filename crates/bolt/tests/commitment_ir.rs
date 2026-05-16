@@ -1417,7 +1417,7 @@ fn stage5_rust_targets_extract_and_compile() {
     );
     assert_eq!(prover_program.relation_output_values.len(), 4);
     assert!(prover_program.relation_outputs.is_empty());
-    assert_eq!(verifier_program.relation_output_values.len(), 4);
+    assert_eq!(verifier_program.relation_output_values.len(), 5);
     assert_eq!(verifier_program.relation_outputs.len(), 3);
     assert_eq!(
         prover_program.point_slices.len(),
@@ -1722,7 +1722,7 @@ fn stage6_rust_targets_extract_and_compile() {
         vec![booleanity_function_family.clone()]
     );
     assert_eq!(
-        booleanity_claims[0].polynomial_evals[0].symbol,
+        booleanity_claims[0].structured_polynomial_evals[0],
         "stage6.booleanity.output.eq.InstructionRa0"
     );
     let hamming_claims = verifier_program
@@ -1769,7 +1769,7 @@ fn stage6_rust_targets_extract_and_compile() {
         })
         .collect::<Vec<_>>();
     assert_eq!(bytecode_claims.len(), 1);
-    assert!(bytecode_claims[0].polynomial_evals.is_empty());
+    assert!(bytecode_claims[0].structured_polynomial_evals.is_empty());
     assert!(bytecode_claims[0].eval_families.is_empty());
     assert_eq!(bytecode_claims[0].product_families.len(), 1);
     assert_eq!(

@@ -39,7 +39,7 @@ impl Stage5InstructionReadRafEmitPlan {
                 STAGE5_INSTRUCTION_RA_EVAL_FAMILY,
             )?;
         Ok(Self {
-            point: "stage5.instruction_read_raf.point".to_owned(),
+            point: "stage5.instruction_read_raf.instance".to_owned(),
             lookup_output_point: "stage5.input.stage2.instruction.LookupOutput".to_owned(),
             point_values: point_value_plans(table_flag_evals.evals.len()),
             table_flag_evals: table_flag_evals.clone(),
@@ -202,10 +202,11 @@ impl Stage5InstructionReadRafEmitPlan {
         ];
 
         Stage5InstructionReadRafOutputPlan {
+            relation_output_values: vec![eq.clone()],
             field_exprs,
             claim: RelationOutputPlan {
                 relation: "jolt.stage5.instruction_read_raf".to_owned(),
-                polynomial_evals: vec![eq],
+                structured_polynomial_evals: vec![eq.symbol],
                 eval_families: Vec::new(),
                 product_families: vec![table_value_family, ra_product_family],
                 function_families: Vec::new(),
@@ -228,6 +229,7 @@ pub(crate) struct Stage5InstructionReadRafPointValueEmitPlan {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Stage5InstructionReadRafOutputPlan {
+    pub(crate) relation_output_values: Vec<StructuredPolynomialEvalPlan>,
     pub(crate) field_exprs: Vec<Stage5InstructionReadRafOutputFieldExprPlan>,
     pub(crate) claim: RelationOutputPlan,
 }
@@ -437,9 +439,9 @@ mod tests {
             output_plan.claim.expected_output,
             "stage5.instruction_read_raf.output.claim_expr"
         );
-        assert_eq!(output_plan.claim.polynomial_evals.len(), 1);
+        assert_eq!(output_plan.claim.structured_polynomial_evals.len(), 1);
         assert_eq!(
-            output_plan.claim.polynomial_evals[0].symbol,
+            output_plan.claim.structured_polynomial_evals[0],
             "stage5.instruction_read_raf.output.eq.LookupOutputCycle"
         );
         assert_eq!(output_plan.claim.product_families.len(), 2);

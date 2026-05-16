@@ -309,7 +309,7 @@ impl VerifierStagePlan {
         values.extend(
             self.relation_outputs
                 .iter()
-                .flat_map(|claim| claim.polynomial_evals.iter().map(|value| &value.symbol)),
+                .flat_map(|claim| claim.structured_polynomial_evals.iter()),
             VerifierScalarSourceKind::StructuredPolynomialEval,
         );
         values.extend(

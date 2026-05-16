@@ -439,7 +439,7 @@ pub struct RelationOutputFunctionFamilyPlan {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RelationOutputPlan<R: ProtocolRelation> {
     pub relation: R,
-    pub polynomial_evals: &'static [StructuredPolynomialEvalPlan],
+    pub structured_polynomial_evals: &'static [&'static str],
     pub eval_families: &'static [RelationOutputEvalFamilyPlan],
     pub product_families: &'static [RelationOutputProductFamilyPlan],
     pub function_families: &'static [RelationOutputFunctionFamilyPlan],
@@ -531,6 +531,7 @@ pub struct StageProgramPlan<R: ProtocolRelation> {
     pub drivers: &'static [SumcheckDriverPlan<R>],
     pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
     pub evals: &'static [SumcheckEvalPlan],
+    pub relation_output_values: &'static [StructuredPolynomialEvalPlan],
     pub relation_outputs: &'static [RelationOutputPlan<R>],
     pub point_zeros: &'static [PointZeroPlan],
     pub point_slices: &'static [PointSlicePlan],
@@ -556,6 +557,7 @@ pub struct StageProgramPlanNoPointZeros<R: ProtocolRelation> {
     pub drivers: &'static [SumcheckDriverPlan<R>],
     pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
     pub evals: &'static [SumcheckEvalPlan],
+    pub relation_output_values: &'static [StructuredPolynomialEvalPlan],
     pub relation_outputs: &'static [RelationOutputPlan<R>],
     pub point_slices: &'static [PointSlicePlan],
     pub point_concats: &'static [PointConcatPlan],
@@ -577,6 +579,7 @@ pub struct StageVerifierProgramPlan<R: ProtocolRelation> {
     pub drivers: &'static [SumcheckDriverPlan<R>],
     pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
     pub evals: &'static [SumcheckEvalPlan],
+    pub relation_output_values: &'static [StructuredPolynomialEvalPlan],
     pub relation_outputs: &'static [RelationOutputPlan<R>],
     pub point_slices: &'static [PointSlicePlan],
     pub point_concats: &'static [PointConcatPlan],
@@ -1299,6 +1302,7 @@ pub fn eval_family_values<F: Field>(
 
 pub fn evaluate_relation_output<R: ProtocolRelation>(
     plan: &RelationOutputPlan<R>,
+    relation_output_values: &[StructuredPolynomialEvalPlan],
     field_exprs: &[FieldExprPlan],
     store: &ValueStore<Fr>,
     instance_symbol: &'static str,
@@ -1319,7 +1323,13 @@ pub fn evaluate_relation_output<R: ProtocolRelation>(
     for eval in evals {
         scratch.insert(eval.name, eval.value);
     }
-    for polynomial_eval in plan.polynomial_evals {
+    for polynomial_eval_symbol in plan.structured_polynomial_evals {
+        let polynomial_eval = relation_output_values
+            .iter()
+            .find(|value| value.symbol == *polynomial_eval_symbol)
+            .ok_or(RuntimePlanError::MissingValue {
+                symbol: polynomial_eval_symbol,
+            })?;
         let x_raw_point = relation_output_x_point_source(
             polynomial_eval.x_point.source,
             instance_symbol,
@@ -1367,6 +1377,7 @@ pub fn evaluate_relation_output<R: ProtocolRelation>(
 
 pub fn evaluate_relation_output_for_instance<R: ProtocolRelation>(
     relation_outputs: &[RelationOutputPlan<R>],
+    relation_output_values: &[StructuredPolynomialEvalPlan],
     field_exprs: &[FieldExprPlan],
     store: &ValueStore<Fr>,
     instance: &SumcheckInstanceResultPlan<R>,
@@ -1384,6 +1395,7 @@ pub fn evaluate_relation_output_for_instance<R: ProtocolRelation>(
         })?;
     evaluate_relation_output(
         relation_output,
+        relation_output_values,
         field_exprs,
         store,
         instance.symbol,

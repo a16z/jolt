@@ -1237,6 +1237,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
              \x20   drivers: STAGE3_SUMCHECK_DRIVERS,\n\
              \x20   instance_results: STAGE3_SUMCHECK_INSTANCE_RESULTS,\n\
              \x20   evals: STAGE3_SUMCHECK_EVALS,\n\
+             \x20   relation_output_values: STAGE3_RELATION_OUTPUT_VALUES,\n\
              \x20   relation_outputs: STAGE3_RELATION_OUTPUTS,\n\
              \x20   point_slices: STAGE3_POINT_SLICES,\n\
              \x20   point_concats: STAGE3_POINT_CONCATS,\n\
@@ -1709,6 +1710,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
         super::relation_outputs::emit_verifier_relation_output_constants(
             "Stage3",
             &self.role,
+            &self.relation_output_values,
             &self.relation_outputs,
         )
     }
@@ -2172,6 +2174,7 @@ fn expected_batched_output_claim(
             })?;
         let value = bolt_verifier_runtime::evaluate_relation_output_for_instance(
             program.relation_outputs,
+        program.relation_output_values,
             program.field_exprs,
             store,
             instance,

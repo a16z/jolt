@@ -249,7 +249,7 @@ pub struct RelationOutputFunctionFamilyPlan {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationOutputPlan {
     pub relation: String,
-    pub polynomial_evals: Vec<StructuredPolynomialEvalPlan>,
+    pub structured_polynomial_evals: Vec<String>,
     pub eval_families: Vec<RelationOutputEvalFamilyPlan>,
     pub product_families: Vec<RelationOutputProductFamilyPlan>,
     pub function_families: Vec<RelationOutputFunctionFamilyPlan>,
@@ -566,14 +566,13 @@ where
                     claim.relation
                 )));
             }
-            let polynomial_evals = claim
+            let structured_polynomial_evals = claim
                 .polynomial_evals
                 .iter()
                 .map(|symbol| {
                     relation_output_values_by_symbol
                         .get(symbol.as_str())
-                        .copied()
-                        .cloned()
+                        .map(|_| symbol.clone())
                         .ok_or_else(|| {
                             EmitError::new(format!(
                                 "{stage} relation output for @{} references missing output value @{symbol}",
@@ -606,7 +605,7 @@ where
                 .collect();
             Ok(RelationOutputPlan {
                 relation: claim.relation,
-                polynomial_evals,
+                structured_polynomial_evals,
                 eval_families,
                 product_families,
                 function_families,

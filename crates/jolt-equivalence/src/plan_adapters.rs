@@ -619,33 +619,35 @@ macro_rules! define_stage_adapter_impl {
                         .collect(),
                 ),
                 $(
+                relation_output_values: super::leak_slice(
+                    program
+                        .relation_output_values
+                        .iter()
+                        .map(|value| $module::$relation_output_value {
+                            symbol: super::leak_str(&value.symbol),
+                            polynomial: super::generated_structured_polynomial_kind(value.polynomial.as_str()),
+                            x_point: bolt_verifier_runtime::StructuredPolynomialPointPlan {
+                                source: super::leak_str(&value.x_point.source),
+                                segment: super::generated_structured_polynomial_point_segment(value.x_point.segment.as_str()),
+                                length: super::generated_structured_polynomial_point_length(value.x_point.length.as_str()),
+                                order: super::generated_structured_polynomial_point_order(value.x_point.order.as_str()),
+                            },
+                            y_point: bolt_verifier_runtime::StructuredPolynomialPointPlan {
+                                source: super::leak_str(&value.y_point.source),
+                                segment: super::generated_structured_polynomial_point_segment(value.y_point.segment.as_str()),
+                                length: super::generated_structured_polynomial_point_length(value.y_point.length.as_str()),
+                                order: super::generated_structured_polynomial_point_order(value.y_point.order.as_str()),
+                            },
+                        })
+                        .collect(),
+                ),
                 relation_outputs: super::leak_slice(
                     program
                         .relation_outputs
                         .iter()
                         .map(|plan| $module::$relation_output {
                             relation: super::generated_relation_kind(&plan.relation),
-                            polynomial_evals: super::leak_slice(
-                                plan.polynomial_evals
-                                    .iter()
-                                    .map(|value| $module::$relation_output_value {
-                                        symbol: super::leak_str(&value.symbol),
-                                        polynomial: super::generated_structured_polynomial_kind(value.polynomial.as_str()),
-                                        x_point: bolt_verifier_runtime::StructuredPolynomialPointPlan {
-                                            source: super::leak_str(&value.x_point.source),
-                                            segment: super::generated_structured_polynomial_point_segment(value.x_point.segment.as_str()),
-                                            length: super::generated_structured_polynomial_point_length(value.x_point.length.as_str()),
-                                            order: super::generated_structured_polynomial_point_order(value.x_point.order.as_str()),
-                                        },
-                                        y_point: bolt_verifier_runtime::StructuredPolynomialPointPlan {
-                                            source: super::leak_str(&value.y_point.source),
-                                            segment: super::generated_structured_polynomial_point_segment(value.y_point.segment.as_str()),
-                                            length: super::generated_structured_polynomial_point_length(value.y_point.length.as_str()),
-                                            order: super::generated_structured_polynomial_point_order(value.y_point.order.as_str()),
-                                        },
-                                    })
-                                    .collect(),
-                            ),
+                            structured_polynomial_evals: super::leak_str_slice(&plan.structured_polynomial_evals),
                             eval_families: super::leak_slice(
                                 plan.eval_families
                                     .iter()
@@ -765,6 +767,10 @@ macro_rules! define_stage_adapter_impl {
                 ),
                 )?
                 $(
+                relation_output_values: {
+                    let _ = stringify!($empty_relation_outputs);
+                    &[]
+                },
                 relation_outputs: {
                     let _ = stringify!($empty_relation_outputs);
                     &[]

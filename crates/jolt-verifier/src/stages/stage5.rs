@@ -251,7 +251,7 @@ pub const STAGE5_INSTRUCTION_READ_RAF_POINT_VALUES: &[Stage5InstructionReadRafPo
 ];
 
 pub const STAGE5_INSTRUCTION_READ_RAF_PLAN: Stage5InstructionReadRafPlan = Stage5InstructionReadRafPlan {
-    point: "stage5.instruction_read_raf.point",
+    point: "stage5.instruction_read_raf.instance",
     lookup_output_point: "stage5.input.stage2.instruction.LookupOutput",
     table_flag_evals: &STAGE5_INDEXED_EVAL_FAMILIES[0],
     instruction_ra_evals: &STAGE5_INDEXED_EVAL_FAMILIES[1],
@@ -359,18 +359,12 @@ pub const STAGE5_INDEXED_EVAL_FAMILIES: &[bolt_verifier_runtime::NamedEvalFamily
     bolt_verifier_runtime::NamedEvalFamilyPlan { symbol: "stage5.instruction_read_raf.eval.InstructionRa", evals: STAGE5_INDEXED_EVAL_FAMILY_1_NAMES },
 ];
 
-pub const STAGE5_RELATION_OUTPUT_0_VALUES: &[Stage5StructuredPolynomialEvalPlan] = &[
+pub const STAGE5_RELATION_OUTPUT_VALUES: &[Stage5StructuredPolynomialEvalPlan] = &[
     Stage5StructuredPolynomialEvalPlan { symbol: "stage5.ram_ra_claim_reduction.output.eq.Raf", polynomial: Stage5StructuredPolynomialKind::Eq, x_point: Stage5StructuredPolynomialPointPlan { source: "stage5.ram_ra_claim_reduction.instance", segment: Stage5StructuredPolynomialPointSegment::Full, length: Stage5StructuredPolynomialPointLength::Full, order: Stage5StructuredPolynomialPointOrder::Reverse }, y_point: Stage5StructuredPolynomialPointPlan { source: "stage5.input.stage2.ram_raf.RamRa", segment: Stage5StructuredPolynomialPointSegment::Suffix, length: Stage5StructuredPolynomialPointLength::XPoint, order: Stage5StructuredPolynomialPointOrder::AsIs } },
     Stage5StructuredPolynomialEvalPlan { symbol: "stage5.ram_ra_claim_reduction.output.eq.ReadWrite", polynomial: Stage5StructuredPolynomialKind::Eq, x_point: Stage5StructuredPolynomialPointPlan { source: "stage5.ram_ra_claim_reduction.instance", segment: Stage5StructuredPolynomialPointSegment::Full, length: Stage5StructuredPolynomialPointLength::Full, order: Stage5StructuredPolynomialPointOrder::Reverse }, y_point: Stage5StructuredPolynomialPointPlan { source: "stage5.input.stage2.ram_read_write.RamRa", segment: Stage5StructuredPolynomialPointSegment::Suffix, length: Stage5StructuredPolynomialPointLength::XPoint, order: Stage5StructuredPolynomialPointOrder::AsIs } },
     Stage5StructuredPolynomialEvalPlan { symbol: "stage5.ram_ra_claim_reduction.output.eq.ValCheck", polynomial: Stage5StructuredPolynomialKind::Eq, x_point: Stage5StructuredPolynomialPointPlan { source: "stage5.ram_ra_claim_reduction.instance", segment: Stage5StructuredPolynomialPointSegment::Full, length: Stage5StructuredPolynomialPointLength::Full, order: Stage5StructuredPolynomialPointOrder::Reverse }, y_point: Stage5StructuredPolynomialPointPlan { source: "stage5.input.stage4.ram_val_check.RamRa", segment: Stage5StructuredPolynomialPointSegment::Suffix, length: Stage5StructuredPolynomialPointLength::XPoint, order: Stage5StructuredPolynomialPointOrder::AsIs } },
-];
-
-pub const STAGE5_RELATION_OUTPUT_1_VALUES: &[Stage5StructuredPolynomialEvalPlan] = &[
     Stage5StructuredPolynomialEvalPlan { symbol: "stage5.registers_val_evaluation.output.lt.RegistersValCycle", polynomial: Stage5StructuredPolynomialKind::Lt, x_point: Stage5StructuredPolynomialPointPlan { source: "stage5.registers_val_evaluation.instance", segment: Stage5StructuredPolynomialPointSegment::Full, length: Stage5StructuredPolynomialPointLength::Full, order: Stage5StructuredPolynomialPointOrder::Reverse }, y_point: Stage5StructuredPolynomialPointPlan { source: "stage5.input.stage4.registers.RegistersVal", segment: Stage5StructuredPolynomialPointSegment::Suffix, length: Stage5StructuredPolynomialPointLength::XPoint, order: Stage5StructuredPolynomialPointOrder::AsIs } },
-];
-
-pub const STAGE5_RELATION_OUTPUT_2_VALUES: &[Stage5StructuredPolynomialEvalPlan] = &[
-    Stage5StructuredPolynomialEvalPlan { symbol: "stage5.instruction_read_raf.output.eq.LookupOutputCycle", polynomial: Stage5StructuredPolynomialKind::Eq, x_point: Stage5StructuredPolynomialPointPlan { source: "stage5.instruction_read_raf.point", segment: Stage5StructuredPolynomialPointSegment::Suffix, length: Stage5StructuredPolynomialPointLength::YPoint, order: Stage5StructuredPolynomialPointOrder::Reverse }, y_point: Stage5StructuredPolynomialPointPlan { source: "stage5.input.stage2.instruction.LookupOutput", segment: Stage5StructuredPolynomialPointSegment::Full, length: Stage5StructuredPolynomialPointLength::Full, order: Stage5StructuredPolynomialPointOrder::AsIs } },
+    Stage5StructuredPolynomialEvalPlan { symbol: "stage5.instruction_read_raf.output.eq.LookupOutputCycle", polynomial: Stage5StructuredPolynomialKind::Eq, x_point: Stage5StructuredPolynomialPointPlan { source: "stage5.instruction_read_raf.instance", segment: Stage5StructuredPolynomialPointSegment::Suffix, length: Stage5StructuredPolynomialPointLength::YPoint, order: Stage5StructuredPolynomialPointOrder::Reverse }, y_point: Stage5StructuredPolynomialPointPlan { source: "stage5.input.stage2.instruction.LookupOutput", segment: Stage5StructuredPolynomialPointSegment::Full, length: Stage5StructuredPolynomialPointLength::Full, order: Stage5StructuredPolynomialPointOrder::AsIs } },
 ];
 
 pub const STAGE5_RELATION_OUTPUT_2_PRODUCT_FAMILY_0_TERMS: &[bolt_verifier_runtime::RelationOutputProductFamilyTermPlan] = &[
@@ -426,9 +420,9 @@ pub const STAGE5_RELATION_OUTPUT_2_PRODUCT_FAMILIES: &[bolt_verifier_runtime::Re
 
 pub const STAGE5_RELATION_OUTPUT_2_LOCAL_SCALARS: &[&str] = &["stage5.instruction_read_raf.point_value.LookupTable_0", "stage5.instruction_read_raf.point_value.LookupTable_1", "stage5.instruction_read_raf.point_value.LookupTable_2", "stage5.instruction_read_raf.point_value.LookupTable_3", "stage5.instruction_read_raf.point_value.LookupTable_4", "stage5.instruction_read_raf.point_value.LookupTable_5", "stage5.instruction_read_raf.point_value.LookupTable_6", "stage5.instruction_read_raf.point_value.LookupTable_7", "stage5.instruction_read_raf.point_value.LookupTable_8", "stage5.instruction_read_raf.point_value.LookupTable_9", "stage5.instruction_read_raf.point_value.LookupTable_10", "stage5.instruction_read_raf.point_value.LookupTable_11", "stage5.instruction_read_raf.point_value.LookupTable_12", "stage5.instruction_read_raf.point_value.LookupTable_13", "stage5.instruction_read_raf.point_value.LookupTable_14", "stage5.instruction_read_raf.point_value.LookupTable_15", "stage5.instruction_read_raf.point_value.LookupTable_16", "stage5.instruction_read_raf.point_value.LookupTable_17", "stage5.instruction_read_raf.point_value.LookupTable_18", "stage5.instruction_read_raf.point_value.LookupTable_19", "stage5.instruction_read_raf.point_value.LookupTable_20", "stage5.instruction_read_raf.point_value.LookupTable_21", "stage5.instruction_read_raf.point_value.LookupTable_22", "stage5.instruction_read_raf.point_value.LookupTable_23", "stage5.instruction_read_raf.point_value.LookupTable_24", "stage5.instruction_read_raf.point_value.LookupTable_25", "stage5.instruction_read_raf.point_value.LookupTable_26", "stage5.instruction_read_raf.point_value.LookupTable_27", "stage5.instruction_read_raf.point_value.LookupTable_28", "stage5.instruction_read_raf.point_value.LookupTable_29", "stage5.instruction_read_raf.point_value.LookupTable_30", "stage5.instruction_read_raf.point_value.LookupTable_31", "stage5.instruction_read_raf.point_value.LookupTable_32", "stage5.instruction_read_raf.point_value.LookupTable_33", "stage5.instruction_read_raf.point_value.LookupTable_34", "stage5.instruction_read_raf.point_value.LookupTable_35", "stage5.instruction_read_raf.point_value.LookupTable_36", "stage5.instruction_read_raf.point_value.LookupTable_37", "stage5.instruction_read_raf.point_value.LookupTable_38", "stage5.instruction_read_raf.point_value.LookupTable_39", "stage5.instruction_read_raf.point_value.LookupTable_40", "stage5.instruction_read_raf.point_value.LeftLookupOperand", "stage5.instruction_read_raf.point_value.RightLookupOperand", "stage5.instruction_read_raf.point_value.Identity"];
 pub const STAGE5_RELATION_OUTPUTS: &[Stage5RelationOutputPlan] = &[
-    Stage5RelationOutputPlan { relation: Stage5RelationKind::Stage5RamRaClaimReduction, polynomial_evals: STAGE5_RELATION_OUTPUT_0_VALUES, eval_families: &[], product_families: &[], function_families: &[], local_scalars: &[], expected_output: "stage5.ram_ra_claim_reduction.output.claim_expr" },
-    Stage5RelationOutputPlan { relation: Stage5RelationKind::Stage5RegistersValEvaluation, polynomial_evals: STAGE5_RELATION_OUTPUT_1_VALUES, eval_families: &[], product_families: &[], function_families: &[], local_scalars: &[], expected_output: "stage5.registers_val_evaluation.output.claim_expr" },
-    Stage5RelationOutputPlan { relation: Stage5RelationKind::Stage5InstructionReadRaf, polynomial_evals: STAGE5_RELATION_OUTPUT_2_VALUES, eval_families: &[], product_families: STAGE5_RELATION_OUTPUT_2_PRODUCT_FAMILIES, function_families: &[], local_scalars: STAGE5_RELATION_OUTPUT_2_LOCAL_SCALARS, expected_output: "stage5.instruction_read_raf.output.claim_expr" },
+    Stage5RelationOutputPlan { relation: Stage5RelationKind::Stage5RamRaClaimReduction, structured_polynomial_evals: &["stage5.ram_ra_claim_reduction.output.eq.Raf", "stage5.ram_ra_claim_reduction.output.eq.ReadWrite", "stage5.ram_ra_claim_reduction.output.eq.ValCheck"], eval_families: &[], product_families: &[], function_families: &[], local_scalars: &[], expected_output: "stage5.ram_ra_claim_reduction.output.claim_expr" },
+    Stage5RelationOutputPlan { relation: Stage5RelationKind::Stage5RegistersValEvaluation, structured_polynomial_evals: &["stage5.registers_val_evaluation.output.lt.RegistersValCycle"], eval_families: &[], product_families: &[], function_families: &[], local_scalars: &[], expected_output: "stage5.registers_val_evaluation.output.claim_expr" },
+    Stage5RelationOutputPlan { relation: Stage5RelationKind::Stage5InstructionReadRaf, structured_polynomial_evals: &["stage5.instruction_read_raf.output.eq.LookupOutputCycle"], eval_families: &[], product_families: STAGE5_RELATION_OUTPUT_2_PRODUCT_FAMILIES, function_families: &[], local_scalars: STAGE5_RELATION_OUTPUT_2_LOCAL_SCALARS, expected_output: "stage5.instruction_read_raf.output.claim_expr" },
 ];
 
 pub const STAGE5_PROGRAM: Stage5VerifierProgramPlan = Stage5CpuProgramPlan {
@@ -446,6 +440,7 @@ pub const STAGE5_PROGRAM: Stage5VerifierProgramPlan = Stage5CpuProgramPlan {
     drivers: STAGE5_SUMCHECK_DRIVERS,
     instance_results: STAGE5_SUMCHECK_INSTANCE_RESULTS,
     evals: STAGE5_SUMCHECK_EVALS,
+    relation_output_values: STAGE5_RELATION_OUTPUT_VALUES,
     relation_outputs: STAGE5_RELATION_OUTPUTS,
     point_slices: STAGE5_POINT_SLICES,
     point_concats: STAGE5_POINT_CONCATS,
@@ -723,6 +718,7 @@ fn expected_batched_output_claim(
                 )?;
                 bolt_verifier_runtime::evaluate_relation_output_for_instance(
                     program.relation_outputs,
+        program.relation_output_values,
                     program.field_exprs,
                     store,
                     instance,
@@ -736,6 +732,7 @@ fn expected_batched_output_claim(
             | Stage5RelationKind::Stage5RegistersValEvaluation => {
                 bolt_verifier_runtime::evaluate_relation_output_for_instance(
                     program.relation_outputs,
+        program.relation_output_values,
                     program.field_exprs,
                     store,
                     instance,
