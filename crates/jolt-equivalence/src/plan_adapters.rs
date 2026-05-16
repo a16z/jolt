@@ -795,7 +795,7 @@ macro_rules! define_stage_adapter_impl {
                         .relation_outputs
                         .iter()
                         .map(|plan| $module::$relation_output {
-                            relation: super::generated_relation_kind(&plan.relation),
+                            relation: super::generated_relation_kind(plan.relation_symbol()),
                             local_scalars: super::leak_str_iter(plan.local_scalar_symbols()),
                             expected_output: super::leak_str(plan.expected_output_symbol()),
                         })

@@ -10,6 +10,7 @@ use crate::protocols::jolt::cpu_attrs::{
 };
 use crate::protocols::jolt::rust_target_plan::{
     power_strided_weighted_sum_formula, structured_polynomial_scalar_formula,
+    JoltVerifierRelationKind,
 };
 use crate::protocols::jolt::verifier_values::{
     VerifierFieldVectorValueRef, VerifierFieldVectorValueSet, VerifierPointValueRef,
@@ -301,27 +302,30 @@ pub struct RelationOutputFunctionFamilyPlan {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationOutputPlan {
-    pub relation: String,
+    pub(crate) relation: JoltVerifierRelationKind,
     local_scalars: Vec<VerifierScalarValuePlan>,
     expected_output: VerifierScalarValueRef,
 }
 
 impl RelationOutputPlan {
-    pub fn new(relation: impl Into<String>, expected_output: impl Into<String>) -> Self {
+    pub(crate) fn new(
+        relation: JoltVerifierRelationKind,
+        expected_output: impl Into<String>,
+    ) -> Self {
         Self {
-            relation: relation.into(),
+            relation,
             local_scalars: Vec::new(),
             expected_output: VerifierScalarValueRef::new(expected_output),
         }
     }
 
     pub(crate) fn with_local_scalars(
-        relation: impl Into<String>,
+        relation: JoltVerifierRelationKind,
         local_scalars: impl IntoIterator<Item = String>,
         expected_output: impl Into<String>,
     ) -> Self {
         Self {
-            relation: relation.into(),
+            relation,
             local_scalars: local_scalars
                 .into_iter()
                 .map(|symbol| {
@@ -345,6 +349,14 @@ impl RelationOutputPlan {
 
     pub fn expected_output_symbol(&self) -> &str {
         self.expected_output.symbol()
+    }
+
+    pub fn relation_symbol(&self) -> &'static str {
+        self.relation.cpu_symbol()
+    }
+
+    pub(crate) fn relation(&self) -> JoltVerifierRelationKind {
+        self.relation
     }
 }
 
@@ -1156,10 +1168,9 @@ where
                     claim.relation
                 )));
             }
-            Ok(RelationOutputPlan::new(
-                claim.relation,
-                claim.expected_output,
-            ))
+            let relation = JoltVerifierRelationKind::from_cpu_attr(&claim.relation)
+                .map_err(|error| EmitError::new(error.to_string()))?;
+            Ok(RelationOutputPlan::new(relation, claim.expected_output))
         })
         .collect()
 }
@@ -1364,7 +1375,7 @@ pub struct RelationOutputVerification<'a> {
     pub relation_output_product_families: &'a [RelationOutputProductFamilyPlan],
     pub relation_output_function_families: &'a [RelationOutputFunctionFamilyPlan],
     pub relation_outputs: &'a [RelationOutputPlan],
-    pub relations: &'a BTreeSet<String>,
+    pub relations: &'a BTreeSet<JoltVerifierRelationKind>,
     pub field_values: &'a VerifierScalarValueSet,
     pub field_vector_values: &'a VerifierFieldVectorValueSet,
     pub point_values: &'a VerifierPointValueSet,
@@ -1526,21 +1537,23 @@ pub fn verify_relation_outputs(
         if !relations.contains(&claim.relation) {
             return Err(EmitError::new(format!(
                 "{stage} relation output references missing relation @{}",
-                claim.relation
+                claim.relation.cpu_symbol()
             )));
         }
         let expected_output = claim.expected_output_symbol();
         if !field_values.contains_ref(&claim.expected_output) {
             return Err(EmitError::new(format!(
                 "{stage} relation output for @{} uses missing expected output @{}",
-                claim.relation, expected_output
+                claim.relation.cpu_symbol(),
+                expected_output
             )));
         }
         for local_scalar in &claim.local_scalars {
             if !field_values.contains_plan(local_scalar) {
                 return Err(EmitError::new(format!(
                     "{stage} relation output for @{} references missing local scalar @{}",
-                    claim.relation, local_scalar.symbol
+                    claim.relation.cpu_symbol(),
+                    local_scalar.symbol
                 )));
             }
         }
@@ -1614,6 +1627,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use crate::emit::rust::EmitError;
+    use crate::protocols::jolt::rust_target_plan::JoltVerifierRelationKind;
     use crate::protocols::jolt::verifier_values::{
         VerifierFieldVectorValueRef, VerifierFieldVectorValueSet, VerifierPointValueKind,
         VerifierPointValueRef, VerifierPointValueSet, VerifierScalarValueKind,
@@ -1970,9 +1984,9 @@ mod tests {
         field_values.insert("claim", VerifierScalarValueKind::FieldExpr);
         let field_vector_values = VerifierFieldVectorValueSet::default();
         let point_values = VerifierPointValueSet::default();
-        let relations = BTreeSet::from(["relation".to_owned()]);
+        let relations = BTreeSet::from([JoltVerifierRelationKind::Stage3Batched]);
         let relation_outputs = [RelationOutputPlan::with_local_scalars(
-            "relation",
+            JoltVerifierRelationKind::Stage3Batched,
             ["local.scalar".to_owned()],
             "claim",
         )];
@@ -2000,7 +2014,7 @@ mod tests {
         };
 
         assert!(error.to_string().contains(
-            "stage relation output for @relation references missing local scalar @local.scalar"
+            "stage relation output for @jolt.stage3.batched references missing local scalar @local.scalar"
         ));
         Ok(())
     }
@@ -2106,9 +2120,9 @@ mod tests {
         field_values.insert("local.scalar", VerifierScalarValueKind::FieldExpr);
         let field_vector_values = VerifierFieldVectorValueSet::default();
         let point_values = VerifierPointValueSet::default();
-        let relations = BTreeSet::from(["relation".to_owned()]);
+        let relations = BTreeSet::from([JoltVerifierRelationKind::Stage3Batched]);
         let relation_outputs = [RelationOutputPlan::with_local_scalars(
-            "relation",
+            JoltVerifierRelationKind::Stage3Batched,
             ["local.scalar".to_owned()],
             "claim",
         )];
@@ -2136,7 +2150,7 @@ mod tests {
         };
 
         assert!(error.to_string().contains(
-            "stage relation output for @relation references missing local scalar @local.scalar"
+            "stage relation output for @jolt.stage3.batched references missing local scalar @local.scalar"
         ));
         Ok(())
     }

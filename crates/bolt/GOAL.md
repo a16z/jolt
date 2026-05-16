@@ -59,15 +59,17 @@ boring to audit, and driven by explicit MLIR-derived plan data.
 Current S2.75-S5 implementation status:
 
 - S3/S4/S5 have largely landed in the generated verifier shape: Stage 2-7 emit
-  typed scalar/point/vector/eval-family refs and `RelationOutputPlan` rows, old
-  eval-prefix reconstruction sites are gated at zero, and handwritten
+  typed scalar/point/vector/eval-family refs and `RelationOutputPlan` rows with
+  closed relation IDs, old eval-prefix reconstruction sites are gated at zero,
+  and handwritten
   `expected_stage67_*` output helpers are gone from generated/runtime code.
 - S2.75 remains the main incomplete architecture item, but its central
   CPU-to-Rust planning boundary is now explicit: `VerifierStagePlan` is built
   through named planning functions for program steps, transcript flow,
   sumchecks, value/relation outputs, opening flow, and Stage 5/6 relation-local
-  inputs. Remaining S2.75 work is concentrated in target validation still owned
-  by emitters.
+  inputs. Relation-output validation is now owned by `VerifierStagePlan`.
+  Remaining S2.75 work is concentrated in target validation still owned by
+  emitters.
 - Performance evidence remains a live completion gate. The SHA2-chain perf
   oracles must be rerun for the interpreter-heavy slices before this goal is
   closed.

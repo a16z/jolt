@@ -1,4 +1,5 @@
 use crate::emit::rust::{push_format, EmitError};
+use crate::protocols::jolt::rust_target_plan::JoltVerifierRelationKind;
 use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 use crate::protocols::jolt::verifier_relation_outputs::{
     RelationOutputFieldExprPlan, RelationOutputPlan,
@@ -426,7 +427,7 @@ impl BytecodeReadRafPlan {
                 },
             ],
             claim: RelationOutputPlan::with_local_scalars(
-                "jolt.stage6.bytecode_read_raf",
+                JoltVerifierRelationKind::Stage6BytecodeReadRaf,
                 output_term_symbols,
                 claim_expr,
             ),
@@ -636,6 +637,7 @@ fn rust_option_str(value: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use crate::emit::rust::EmitError;
+    use crate::protocols::jolt::rust_target_plan::JoltVerifierRelationKind;
     use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 
     use super::{
@@ -755,7 +757,10 @@ mod tests {
                 .relation_output_plan();
         let claim = output_plan.claim;
 
-        assert_eq!(claim.relation, "jolt.stage6.bytecode_read_raf");
+        assert_eq!(
+            claim.relation(),
+            JoltVerifierRelationKind::Stage6BytecodeReadRaf
+        );
         assert_eq!(
             claim.expected_output_symbol(),
             "stage6.bytecode_read_raf.output.claim_expr"

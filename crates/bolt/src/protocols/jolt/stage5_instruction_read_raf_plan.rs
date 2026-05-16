@@ -1,4 +1,5 @@
 use crate::emit::rust::{push_format, EmitError};
+use crate::protocols::jolt::rust_target_plan::JoltVerifierRelationKind;
 use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 use crate::protocols::jolt::verifier_local_scalars::{
     emit_jolt_local_scalar_constants, JoltLocalScalarEmitPlan, JoltLocalScalarMleKind,
@@ -211,7 +212,7 @@ impl Stage5InstructionReadRafEmitPlan {
             relation_output_values: vec![eq.clone()],
             field_exprs,
             claim: RelationOutputPlan::with_local_scalars(
-                "jolt.stage5.instruction_read_raf",
+                JoltVerifierRelationKind::Stage5InstructionReadRaf,
                 self.local_scalars.iter().map(|value| value.symbol.clone()),
                 claim_expr,
             ),
@@ -284,6 +285,7 @@ fn indexed_eval_family_ref(index: usize) -> String {
 #[cfg(test)]
 mod tests {
     use crate::emit::rust::EmitError;
+    use crate::protocols::jolt::rust_target_plan::JoltVerifierRelationKind;
     use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
 
     use super::{
@@ -377,8 +379,8 @@ mod tests {
         let output_plan = plan.relation_output_plan();
 
         assert_eq!(
-            output_plan.claim.relation,
-            "jolt.stage5.instruction_read_raf"
+            output_plan.claim.relation(),
+            JoltVerifierRelationKind::Stage5InstructionReadRaf
         );
         assert_eq!(
             output_plan.claim.expected_output_symbol(),

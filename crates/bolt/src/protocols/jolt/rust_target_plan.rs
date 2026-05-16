@@ -140,7 +140,7 @@ impl SumcheckPointOrder {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum JoltVerifierRelationKind {
     Stage1OuterUniskip,
     Stage1OuterRemaining,
@@ -174,6 +174,42 @@ pub(crate) enum JoltVerifierRelationKind {
 }
 
 impl JoltVerifierRelationKind {
+    pub(crate) fn cpu_symbol(self) -> &'static str {
+        match self {
+            Self::Stage1OuterUniskip => "jolt.stage1.outer.uniskip",
+            Self::Stage1OuterRemaining => "jolt.stage1.outer.remaining",
+            Self::Stage2ProductVirtualUniskip => "jolt.stage2.product_virtual.uniskip",
+            Self::Stage2RamReadWrite => "jolt.stage2.ram.read_write",
+            Self::Stage2ProductVirtualRemainder => "jolt.stage2.product_virtual.remainder",
+            Self::Stage2InstructionLookupClaimReduction => {
+                "jolt.stage2.instruction_lookup.claim_reduction"
+            }
+            Self::Stage2RamRafEvaluation => "jolt.stage2.ram.raf_evaluation",
+            Self::Stage2RamOutputCheck => "jolt.stage2.ram.output_check",
+            Self::Stage2Batched => "jolt.stage2.batched",
+            Self::Stage3SpartanShift => "jolt.stage3.spartan_shift",
+            Self::Stage3InstructionInput => "jolt.stage3.instruction_input",
+            Self::Stage3RegistersClaimReduction => "jolt.stage3.registers_claim_reduction",
+            Self::Stage3Batched => "jolt.stage3.batched",
+            Self::Stage4RegistersReadWrite => "jolt.stage4.registers_read_write",
+            Self::Stage4RamValCheck => "jolt.stage4.ram_val_check",
+            Self::Stage4Batched => "jolt.stage4.batched",
+            Self::Stage5InstructionReadRaf => "jolt.stage5.instruction_read_raf",
+            Self::Stage5RamRaClaimReduction => "jolt.stage5.ram_ra_claim_reduction",
+            Self::Stage5RegistersValEvaluation => "jolt.stage5.registers_val_evaluation",
+            Self::Stage5Batched => "jolt.stage5.batched",
+            Self::Stage6BytecodeReadRaf => "jolt.stage6.bytecode_read_raf",
+            Self::Stage6Booleanity => "jolt.stage6.booleanity",
+            Self::Stage6HammingBooleanity => "jolt.stage6.hamming_booleanity",
+            Self::Stage6RamRaVirtual => "jolt.stage6.ram_ra_virtual",
+            Self::Stage6InstructionRaVirtual => "jolt.stage6.instruction_ra_virtual",
+            Self::Stage6IncClaimReduction => "jolt.stage6.inc_claim_reduction",
+            Self::Stage6Batched => "jolt.stage6.batched",
+            Self::Stage7HammingWeightClaimReduction => "jolt.stage7.hamming_weight_claim_reduction",
+            Self::Stage7Batched => "jolt.stage7.batched",
+        }
+    }
+
     pub(crate) fn from_cpu_attr(value: &str) -> Result<Self, RustTargetPlanError> {
         match value {
             "jolt.stage1.outer.uniskip" => Ok(Self::Stage1OuterUniskip),

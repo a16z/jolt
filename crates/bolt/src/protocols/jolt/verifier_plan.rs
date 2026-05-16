@@ -19,7 +19,7 @@ use crate::protocols::jolt::verifier_program_rows::{
     CpuOpeningInputPlan, CpuProgramStepPlan, CpuTranscriptAbsorbBytesPlan, CpuTranscriptSqueezePlan,
 };
 use crate::protocols::jolt::verifier_relation_outputs::{
-    RelationOutputEvalFamilyPlan, RelationOutputFunctionFamilyPlan, RelationOutputPlan,
+    self, RelationOutputEvalFamilyPlan, RelationOutputFunctionFamilyPlan, RelationOutputPlan,
     RelationOutputProductFamilyPlan, StructuredPolynomialEvalPlan,
 };
 use crate::protocols::jolt::verifier_sumcheck_rows::{
@@ -607,6 +607,31 @@ impl VerifierStagePlan {
             values.insert(&expr.symbol, VerifierPointValueKind::PointExpr);
         }
         values
+    }
+
+    pub(crate) fn verify_relation_outputs(&self, stage: &str) -> Result<(), EmitError> {
+        let relations = self
+            .instance_results
+            .iter()
+            .map(|instance| instance.relation)
+            .collect::<BTreeSet<_>>();
+        let field_values = self.scalar_values();
+        let field_vector_values = self.field_vector_values();
+        let point_values = self.point_values();
+        verifier_relation_outputs::verify_relation_outputs(
+            stage,
+            verifier_relation_outputs::RelationOutputVerification {
+                relation_output_values: &self.relation_output_values,
+                relation_output_eval_families: &self.relation_output_eval_families,
+                relation_output_product_families: &self.relation_output_product_families,
+                relation_output_function_families: &self.relation_output_function_families,
+                relation_outputs: &self.relation_outputs,
+                relations: &relations,
+                field_values: &field_values,
+                field_vector_values: &field_vector_values,
+                point_values: &point_values,
+            },
+        )
     }
 
     pub(crate) fn opening_point_sources(&self) -> BTreeSet<String> {

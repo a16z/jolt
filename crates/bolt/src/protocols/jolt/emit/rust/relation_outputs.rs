@@ -4,7 +4,7 @@ use crate::protocols::jolt::verifier_relation_outputs::RelationOutputPlan;
 
 pub fn emit_verifier_relation_output_constants(
     stage_type: &str,
-    role: &Role,
+    _role: &Role,
     relation_outputs: &[RelationOutputPlan],
 ) -> Result<String, EmitError> {
     let mut source = String::new();
@@ -13,7 +13,7 @@ pub fn emit_verifier_relation_output_constants(
         let local_scalars = emit_local_scalar_constants(&mut source, stage_type, index, claim);
         claims.push(format!(
             "    {stage_type}RelationOutputPlan {{ relation: {}, local_scalars: {local_scalars}, expected_output: {} }},",
-            super::plan_tokens::role_relation_kind_expr(stage_type, role, &claim.relation)?,
+            crate::protocols::jolt::verifier_plan::relation_kind_expr(stage_type, claim.relation()),
             rust_str(claim.expected_output_symbol())
         ));
     }

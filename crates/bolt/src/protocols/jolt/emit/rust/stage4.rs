@@ -625,29 +625,7 @@ impl Stage4CpuProgram {
     }
 
     fn verify_relation_outputs(&self) -> Result<(), EmitError> {
-        let relations = symbols(
-            self.instance_results
-                .iter()
-                .map(|instance| &instance.relation),
-        );
-        let plan = self.verifier_plan()?;
-        let field_values = plan.scalar_values();
-        let field_vector_values = plan.field_vector_values();
-        let point_values = plan.point_values();
-        verifier_relation_outputs::verify_relation_outputs(
-            "stage4",
-            verifier_relation_outputs::RelationOutputVerification {
-                relation_output_values: &self.relation_output_values,
-                relation_output_eval_families: &[],
-                relation_output_product_families: &[],
-                relation_output_function_families: &[],
-                relation_outputs: &self.relation_outputs,
-                relations: &relations,
-                field_values: &field_values,
-                field_vector_values: &field_vector_values,
-                point_values: &point_values,
-            },
-        )
+        self.verifier_plan()?.verify_relation_outputs("stage4")
     }
 
     fn verify_opening_flow(&self) -> Result<(), EmitError> {

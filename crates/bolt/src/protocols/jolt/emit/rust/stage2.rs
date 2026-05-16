@@ -424,24 +424,24 @@ fn stage2_relation_output_plans() -> Stage2RelationOutputRows {
         ],
         relation_outputs: vec![
             Stage2RelationOutputPlan::new(
-                "jolt.stage2.ram.read_write",
+                JoltVerifierRelationKind::Stage2RamReadWrite,
                 "stage2.ram_read_write.output.claim_expr",
             ),
             Stage2RelationOutputPlan::new(
-                "jolt.stage2.instruction_lookup.claim_reduction",
+                JoltVerifierRelationKind::Stage2InstructionLookupClaimReduction,
                 "stage2.instruction_lookup.output.claim_expr",
             ),
             Stage2RelationOutputPlan::new(
-                "jolt.stage2.product_virtual.remainder",
+                JoltVerifierRelationKind::Stage2ProductVirtualRemainder,
                 "stage2.product_virtual.remainder.output.claim_expr",
             ),
             Stage2RelationOutputPlan::with_local_scalars(
-                "jolt.stage2.ram.raf_evaluation",
+                JoltVerifierRelationKind::Stage2RamRafEvaluation,
                 ["stage2.ram_raf.output.unmap".to_owned()],
                 "stage2.ram_raf.output.claim_expr",
             ),
             Stage2RelationOutputPlan::with_local_scalars(
-                "jolt.stage2.ram.output_check",
+                JoltVerifierRelationKind::Stage2RamOutputCheck,
                 [
                     "stage2.ram_output.output.eq".to_owned(),
                     "stage2.ram_output.output.io_mask".to_owned(),
@@ -1337,10 +1337,6 @@ impl Stage2CpuProgram {
         }
         for instance in &self.instance_results {
             let _ = JoltVerifierRelationKind::from_cpu_attr(&instance.relation)
-                .map_err(rust_target_plan_error)?;
-        }
-        for output in &self.relation_outputs {
-            let _ = JoltVerifierRelationKind::from_cpu_attr(&output.relation)
                 .map_err(rust_target_plan_error)?;
         }
         for claim in &self.opening_claims {

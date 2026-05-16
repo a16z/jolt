@@ -567,8 +567,9 @@ consume a typed Rust-plan / verifier-plan representation produced by passes.
 The current stack has most of the typed planning data this section calls for:
 `VerifierStagePlan` owns stage-local scalar, point, vector, eval-family, and
 relation-output plan rows; generated Stage 2-7 code emits typed
-`RelationOutputPlan` data; and the Rust emitters increasingly consume typed
-refs rather than rebuilding meaning from raw strings. The shared
+`RelationOutputPlan` data with closed relation IDs; and the Rust emitters
+increasingly consume typed refs rather than rebuilding meaning from raw strings.
+The shared
 `plan_verifier_stage_from_cpu_sources` entrypoint now makes the main S2.75
 boundaries explicit as named planning functions:
 `resolve_cpu_program_steps`, `plan_transcript_flow`,
@@ -576,9 +577,11 @@ boundaries explicit as named planning functions:
 `plan_opening_flow`.
 
 Stage 5/6 relation-local input plans are also now produced through this shared
-planning boundary. The remaining S2.75 work is narrower: continue moving target
-validation toward typed planning outputs instead of stage-local emitter checks,
-and avoid putting any new verifier semantics directly in Rust template logic.
+planning boundary, and relation-output validation now runs from
+`VerifierStagePlan` instead of repeated stage-local string sets. The remaining
+S2.75 work is narrower: continue moving target validation toward typed planning
+outputs instead of stage-local emitter checks, and avoid putting any new
+verifier semantics directly in Rust template logic.
 
 ---
 
@@ -948,8 +951,11 @@ compute.sumcheck_output_claim %expected, %eval0, %eval1 {
 The CPU lowering preserves that shape as `cpu.sumcheck_output_claim`. Stage
 emitters lower those rows into generated `RelationOutputPlan` data whose
 `expected_output` field points at the typed scalar produced by the value graph.
-The expression feeding `expected_output` must remain ordinary typed value-graph
-data, not hidden inside the emitter.
+Those rows also carry a closed `JoltVerifierRelationKind` relation ID; the
+serialization symbol remains available for diagnostics and equivalence adapters,
+but relation-output verification no longer treats raw strings as the execution
+contract. The expression feeding `expected_output` must remain ordinary typed
+value-graph data, not hidden inside the emitter.
 
 This keeps relation declarations and relation-output claims separate:
 
