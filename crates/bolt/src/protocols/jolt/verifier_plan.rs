@@ -32,7 +32,7 @@ use crate::protocols::jolt::verifier_value_rows::{
 use crate::protocols::jolt::verifier_values::{
     VerifierFieldVectorSourceKind, VerifierFieldVectorSourceSet, VerifierPointSourceKind,
     VerifierPointSourceSet, VerifierScalarSourceSet, VerifierScalarValueKind,
-    VerifierScalarValuePlan,
+    VerifierScalarValuePlan, VerifierScalarValueSet,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -502,11 +502,15 @@ impl VerifierStagePlan {
         values
     }
 
-    pub(crate) fn scalar_value_sources(&self) -> VerifierScalarSourceSet {
-        let mut values = VerifierScalarSourceSet::default();
+    pub(crate) fn scalar_values(&self) -> VerifierScalarValueSet {
+        let mut values = VerifierScalarValueSet::default();
         let plans = self.scalar_value_plans();
         values.extend_plans(&plans);
         values
+    }
+
+    pub(crate) fn scalar_value_sources(&self) -> VerifierScalarSourceSet {
+        self.scalar_values().source_set()
     }
 
     pub(crate) fn field_vector_value_sources(&self) -> VerifierFieldVectorSourceSet {

@@ -11,9 +11,9 @@ use crate::protocols::jolt::cpu_attrs::{
 use crate::protocols::jolt::rust_target_plan::{
     power_strided_weighted_sum_formula, structured_polynomial_scalar_formula,
 };
-use crate::protocols::jolt::verifier_values::{VerifierPointSourceSet, VerifierScalarSourceSet};
 use crate::protocols::jolt::verifier_values::{
-    VerifierScalarValueKind, VerifierScalarValuePlan, VerifierScalarValueRef,
+    VerifierPointSourceSet, VerifierScalarValueKind, VerifierScalarValuePlan,
+    VerifierScalarValueRef, VerifierScalarValueSet,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1340,7 +1340,7 @@ pub struct RelationOutputVerification<'a> {
     pub relation_output_function_families: &'a [RelationOutputFunctionFamilyPlan],
     pub relation_outputs: &'a [RelationOutputPlan],
     pub relations: &'a BTreeSet<String>,
-    pub field_values: &'a VerifierScalarSourceSet,
+    pub field_values: &'a VerifierScalarValueSet,
     pub point_values: &'a VerifierPointSourceSet,
 }
 
@@ -1375,14 +1375,14 @@ pub fn verify_relation_outputs(
         }
     }
     for family in relation_output_eval_families {
-        if !field_values.contains(&family.gamma) {
+        if !field_values.contains_symbol(&family.gamma) {
             return Err(EmitError::new(format!(
                 "{stage} relation output eval family @{} references missing gamma @{}",
                 family.symbol, family.gamma
             )));
         }
         for eval in &family.evals {
-            if !field_values.contains(eval) {
+            if !field_values.contains_symbol(eval) {
                 return Err(EmitError::new(format!(
                     "{stage} relation output eval family @{} references missing eval @{}",
                     family.symbol, eval
@@ -1390,7 +1390,7 @@ pub fn verify_relation_outputs(
             }
         }
         for term in &family.shared_terms {
-            if !field_values.contains(&term.factor) {
+            if !field_values.contains_symbol(&term.factor) {
                 return Err(EmitError::new(format!(
                     "{stage} relation output eval family @{} references missing shared factor @{}",
                     family.symbol, term.factor
@@ -1405,7 +1405,7 @@ pub fn verify_relation_outputs(
                 term.factors.len(),
             )?;
             for factor in &term.factors {
-                if !field_values.contains(factor) {
+                if !field_values.contains_symbol(factor) {
                     return Err(EmitError::new(format!(
                         "{stage} relation output eval family @{} references missing item factor @{}",
                         family.symbol, factor
@@ -1416,7 +1416,7 @@ pub fn verify_relation_outputs(
     }
     for family in relation_output_product_families {
         if let Some(gamma) = &family.gamma {
-            if !field_values.contains(gamma) {
+            if !field_values.contains_symbol(gamma) {
                 return Err(EmitError::new(format!(
                     "{stage} relation output product family @{} references missing gamma @{}",
                     family.symbol, gamma
@@ -1431,7 +1431,7 @@ pub fn verify_relation_outputs(
                 )));
             }
             for eval in &term.evals {
-                if !field_values.contains(eval) {
+                if !field_values.contains_symbol(eval) {
                     return Err(EmitError::new(format!(
                         "{stage} relation output product family @{} references missing eval @{}",
                         family.symbol, eval
@@ -1439,7 +1439,7 @@ pub fn verify_relation_outputs(
                 }
             }
             for factor in &term.factors {
-                if !field_values.contains(factor) {
+                if !field_values.contains_symbol(factor) {
                     return Err(EmitError::new(format!(
                         "{stage} relation output product family @{} references missing factor @{}",
                         family.symbol, factor
@@ -1450,7 +1450,7 @@ pub fn verify_relation_outputs(
     }
     for family in relation_output_function_families {
         if let Some(gamma) = &family.gamma {
-            if !field_values.contains(gamma) {
+            if !field_values.contains_symbol(gamma) {
                 return Err(EmitError::new(format!(
                     "{stage} relation output function family @{} references missing gamma @{}",
                     family.symbol, gamma
@@ -1458,14 +1458,14 @@ pub fn verify_relation_outputs(
             }
         }
         for term in &family.terms {
-            if !field_values.contains(&term.eval) {
+            if !field_values.contains_symbol(&term.eval) {
                 return Err(EmitError::new(format!(
                     "{stage} relation output function family @{} references missing eval @{}",
                     family.symbol, term.eval
                 )));
             }
             for factor in &term.factors {
-                if !field_values.contains(factor) {
+                if !field_values.contains_symbol(factor) {
                     return Err(EmitError::new(format!(
                         "{stage} relation output function family @{} references missing factor @{}",
                         family.symbol, factor
@@ -1482,17 +1482,17 @@ pub fn verify_relation_outputs(
             )));
         }
         let expected_output = claim.expected_output_symbol();
-        if !field_values.contains(expected_output) {
+        if !field_values.contains_ref(&claim.expected_output) {
             return Err(EmitError::new(format!(
                 "{stage} relation output for @{} uses missing expected output @{}",
                 claim.relation, expected_output
             )));
         }
-        for local_scalar in claim.local_scalar_symbols() {
-            if !field_values.contains(local_scalar) {
+        for local_scalar in &claim.local_scalars {
+            if !field_values.contains_plan(local_scalar) {
                 return Err(EmitError::new(format!(
                     "{stage} relation output for @{} references missing local scalar @{}",
-                    claim.relation, local_scalar
+                    claim.relation, local_scalar.symbol
                 )));
             }
         }
@@ -1567,8 +1567,8 @@ mod tests {
 
     use crate::emit::rust::EmitError;
     use crate::protocols::jolt::verifier_values::{
-        VerifierPointSourceKind, VerifierPointSourceSet, VerifierScalarSourceKind,
-        VerifierScalarSourceSet,
+        VerifierPointSourceKind, VerifierPointSourceSet, VerifierScalarValueKind,
+        VerifierScalarValueSet,
     };
 
     use super::{
@@ -1789,10 +1789,10 @@ mod tests {
     }
 
     #[test]
-    fn relation_output_verification_rejects_conflicting_scalar_sources() -> Result<(), EmitError> {
-        let mut field_values = VerifierScalarSourceSet::default();
-        field_values.insert("value", VerifierScalarSourceKind::OpeningInput);
-        field_values.insert("value", VerifierScalarSourceKind::FieldExpr);
+    fn relation_output_verification_rejects_conflicting_scalar_values() -> Result<(), EmitError> {
+        let mut field_values = VerifierScalarValueSet::default();
+        field_values.insert("value", VerifierScalarValueKind::OpeningInput);
+        field_values.insert("value", VerifierScalarValueKind::FieldExpr);
         let point_values = VerifierPointSourceSet::default();
         let relations = BTreeSet::new();
 
@@ -1818,14 +1818,14 @@ mod tests {
         };
 
         assert!(error.to_string().contains(
-            "stage scalar source @value has conflicting kinds OpeningInput and FieldExpr"
+            "stage scalar value source @value has conflicting kinds OpeningInput and FieldExpr"
         ));
         Ok(())
     }
 
     #[test]
     fn relation_output_verification_rejects_conflicting_point_sources() -> Result<(), EmitError> {
-        let field_values = VerifierScalarSourceSet::default();
+        let field_values = VerifierScalarValueSet::default();
         let mut point_values = VerifierPointSourceSet::default();
         point_values.insert("point", VerifierPointSourceKind::OpeningInput);
         point_values.insert("point", VerifierPointSourceKind::PointExpr);
@@ -1860,8 +1860,8 @@ mod tests {
 
     #[test]
     fn relation_output_verification_requires_planned_local_scalars() -> Result<(), EmitError> {
-        let mut field_values = VerifierScalarSourceSet::default();
-        field_values.insert("claim", VerifierScalarSourceKind::FieldExpr);
+        let mut field_values = VerifierScalarValueSet::default();
+        field_values.insert("claim", VerifierScalarValueKind::FieldExpr);
         let point_values = VerifierPointSourceSet::default();
         let relations = BTreeSet::from(["relation".to_owned()]);
         let relation_outputs = [RelationOutputPlan::with_local_scalars(
@@ -1886,6 +1886,46 @@ mod tests {
             Ok(()) => {
                 return Err(EmitError::new(
                     "unplanned local scalar should fail relation output verification",
+                ));
+            }
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains(
+            "stage relation output for @relation references missing local scalar @local.scalar"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn relation_output_verification_requires_relation_local_scalar_kind() -> Result<(), EmitError> {
+        let mut field_values = VerifierScalarValueSet::default();
+        field_values.insert("claim", VerifierScalarValueKind::FieldExpr);
+        field_values.insert("local.scalar", VerifierScalarValueKind::FieldExpr);
+        let point_values = VerifierPointSourceSet::default();
+        let relations = BTreeSet::from(["relation".to_owned()]);
+        let relation_outputs = [RelationOutputPlan::with_local_scalars(
+            "relation",
+            ["local.scalar".to_owned()],
+            "claim",
+        )];
+
+        let error = match verify_relation_outputs(
+            "stage",
+            RelationOutputVerification {
+                relation_output_values: &[],
+                relation_output_eval_families: &[],
+                relation_output_product_families: &[],
+                relation_output_function_families: &[],
+                relation_outputs: &relation_outputs,
+                relations: &relations,
+                field_values: &field_values,
+                point_values: &point_values,
+            },
+        ) {
+            Ok(()) => {
+                return Err(EmitError::new(
+                    "wrong local scalar value kind should fail relation output verification",
                 ));
             }
             Err(error) => error,

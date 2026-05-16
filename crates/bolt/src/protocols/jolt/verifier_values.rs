@@ -83,6 +83,74 @@ impl VerifierScalarValueRef {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct VerifierScalarValueSet {
+    symbols: BTreeMap<String, VerifierScalarValueKind>,
+    conflicts: Vec<VerifierSourceConflict<VerifierScalarValueKind>>,
+}
+
+impl VerifierScalarValueSet {
+    pub(crate) fn insert(&mut self, symbol: &str, kind: VerifierScalarValueKind) {
+        match self.symbols.entry(symbol.to_owned()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let _entry = entry.insert(kind);
+            }
+            std::collections::btree_map::Entry::Occupied(entry) => {
+                let existing = *entry.get();
+                if existing != kind {
+                    self.conflicts.push(VerifierSourceConflict {
+                        symbol: symbol.to_owned(),
+                        existing,
+                        incoming: kind,
+                    });
+                }
+            }
+        }
+    }
+
+    pub(crate) fn insert_plan(&mut self, plan: &VerifierScalarValuePlan) {
+        self.insert(&plan.symbol, plan.kind);
+    }
+
+    pub(crate) fn extend_plans<'a>(
+        &mut self,
+        plans: impl IntoIterator<Item = &'a VerifierScalarValuePlan>,
+    ) {
+        for plan in plans {
+            self.insert_plan(plan);
+        }
+    }
+
+    pub(crate) fn contains_ref(&self, value_ref: &VerifierScalarValueRef) -> bool {
+        self.symbols.contains_key(value_ref.symbol())
+    }
+
+    pub(crate) fn contains_plan(&self, plan: &VerifierScalarValuePlan) -> bool {
+        self.symbols
+            .get(&plan.symbol)
+            .is_some_and(|kind| *kind == plan.kind)
+    }
+
+    pub(crate) fn contains_symbol(&self, symbol: &str) -> bool {
+        self.symbols.contains_key(symbol)
+    }
+
+    pub(crate) fn source_set(&self) -> VerifierScalarSourceSet {
+        let mut sources = VerifierScalarSourceSet::default();
+        for (symbol, kind) in &self.symbols {
+            sources.insert(symbol, kind.source_kind());
+        }
+        sources
+    }
+
+    pub(crate) fn verify_no_conflicts(&self, stage: &str) -> Result<(), EmitError> {
+        let Some(conflict) = self.conflicts.first() else {
+            return Ok(());
+        };
+        Err(conflicting_source_error(stage, "scalar value", conflict))
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct VerifierScalarSourceSet {
     symbols: BTreeMap<String, VerifierScalarSourceKind>,
     conflicts: Vec<VerifierSourceConflict<VerifierScalarSourceKind>>,
@@ -104,19 +172,6 @@ impl VerifierScalarSourceSet {
                     });
                 }
             }
-        }
-    }
-
-    pub(crate) fn insert_plan(&mut self, plan: &VerifierScalarValuePlan) {
-        self.insert(&plan.symbol, plan.kind.source_kind());
-    }
-
-    pub(crate) fn extend_plans<'a>(
-        &mut self,
-        plans: impl IntoIterator<Item = &'a VerifierScalarValuePlan>,
-    ) {
-        for plan in plans {
-            self.insert_plan(plan);
         }
     }
 
