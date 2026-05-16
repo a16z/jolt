@@ -175,6 +175,42 @@ pub struct Stage2PointConcatPlan {
     pub inputs: Vec<String>,
 }
 
+impl verifier_plan::VerifierPointSliceSource for Stage2PointSlicePlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn offset(&self) -> usize {
+        self.offset
+    }
+
+    fn length(&self) -> usize {
+        self.length
+    }
+
+    fn input(&self) -> &str {
+        &self.input
+    }
+}
+
+impl verifier_plan::VerifierPointConcatSource for Stage2PointConcatPlan {
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    fn layout(&self) -> &str {
+        &self.layout
+    }
+
+    fn arity(&self) -> usize {
+        self.arity
+    }
+
+    fn inputs(&self) -> &[String] {
+        &self.inputs
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage2OpeningClaimPlan {
     pub symbol: String,
@@ -1606,28 +1642,8 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage2Error);
 
     fn emit_point_expr_constants(&self) -> Result<String, EmitError> {
         if self.role == Role::Verifier {
-            let mut point_exprs = self
-                .point_slices
-                .iter()
-                .map(|slice| verifier_plan::VerifierPointExprPlan {
-                    symbol: slice.symbol.clone(),
-                    kind: verifier_plan::VerifierPointExprKind::Slice {
-                        offset: slice.offset,
-                        length: slice.length,
-                    },
-                    operands: vec![slice.input.clone()],
-                })
-                .collect::<Vec<_>>();
-            point_exprs.extend(self.point_concats.iter().map(|concat| {
-                verifier_plan::VerifierPointExprPlan {
-                    symbol: concat.symbol.clone(),
-                    kind: verifier_plan::VerifierPointExprKind::Concat {
-                        layout: concat.layout.clone(),
-                        arity: concat.arity,
-                    },
-                    operands: concat.inputs.clone(),
-                }
-            }));
+            let point_exprs =
+                verifier_plan::point_exprs_from_cpu(&self.point_slices, &self.point_concats);
             return Ok(verifier_plan::emit_point_expr_constants(
                 "Stage2",
                 "STAGE2",

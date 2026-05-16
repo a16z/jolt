@@ -867,6 +867,31 @@ pub(crate) fn point_concat_exprs_from_cpu<T: VerifierPointConcatSource>(
         .collect()
 }
 
+pub(crate) fn point_exprs_from_cpu<S, C>(slices: &[S], concats: &[C]) -> Vec<VerifierPointExprPlan>
+where
+    S: VerifierPointSliceSource,
+    C: VerifierPointConcatSource,
+{
+    let mut exprs = point_slice_exprs_from_cpu(slices);
+    exprs.extend(point_concat_exprs_from_cpu(concats));
+    exprs
+}
+
+pub(crate) fn point_exprs_with_zeros_from_cpu<Z, S, C>(
+    zeros: &[Z],
+    slices: &[S],
+    concats: &[C],
+) -> Vec<VerifierPointExprPlan>
+where
+    Z: VerifierPointZeroSource,
+    S: VerifierPointSliceSource,
+    C: VerifierPointConcatSource,
+{
+    let mut exprs = point_zero_exprs_from_cpu(zeros);
+    exprs.extend(point_exprs_from_cpu(slices, concats));
+    exprs
+}
+
 macro_rules! impl_verifier_plan_source_traits {
     (
         program = $program:ty,
@@ -955,20 +980,9 @@ macro_rules! impl_verifier_plan_source_traits {
                 &self.relation_outputs
             }
             fn point_exprs(&self) -> Vec<$crate::protocols::jolt::verifier_plan::VerifierPointExprPlan> {
-                let mut exprs = $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
-                    @point_zero_exprs self $(, $point_zero)?
-                );
-                exprs.extend(
-                    $crate::protocols::jolt::verifier_plan::point_slice_exprs_from_cpu(
-                        &self.point_slices,
-                    ),
-                );
-                exprs.extend(
-                    $crate::protocols::jolt::verifier_plan::point_concat_exprs_from_cpu(
-                        &self.point_concats,
-                    ),
-                );
-                exprs
+                $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
+                    @point_exprs self $(, $point_zero)?
+                )
             }
             fn opening_claims(&self) -> &[Self::OpeningClaim] { &self.opening_claims }
             fn opening_equalities(&self) -> &[Self::OpeningEquality] { &self.opening_equalities }
@@ -1138,11 +1152,18 @@ macro_rules! impl_verifier_plan_source_traits {
     (@transcript_absorb_bytes $self:ident) => {
         Vec::new()
     };
-    (@point_zero_exprs $self:ident, $point_zero:ty) => {
-        $crate::protocols::jolt::verifier_plan::point_zero_exprs_from_cpu(&$self.point_zeros)
+    (@point_exprs $self:ident, $point_zero:ty) => {
+        $crate::protocols::jolt::verifier_plan::point_exprs_with_zeros_from_cpu(
+            &$self.point_zeros,
+            &$self.point_slices,
+            &$self.point_concats,
+        )
     };
-    (@point_zero_exprs $self:ident) => {
-        Vec::new()
+    (@point_exprs $self:ident) => {
+        $crate::protocols::jolt::verifier_plan::point_exprs_from_cpu(
+            &$self.point_slices,
+            &$self.point_concats,
+        )
     };
     (@indexed_eval_families $self:ident, $indexed_eval_families:ident) => {
         &$self.$indexed_eval_families
