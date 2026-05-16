@@ -407,6 +407,41 @@ Host/runtime advice features may depend on:
 Static sequence modules in shipped inline crates must not import tracer types
 directly or indirectly through SDK re-exports.
 
+## Extraction Impact And Limits
+
+The extraction target for this follow-up is static bytecode expansion semantics,
+not runtime execution. The implementation should remove the architectural
+blocker that currently hides registered inline recipes behind tracer instruction
+construction, `InstrAssembler`, CPU/advice state, RAII register guards, and
+inventory callback plumbing.
+
+Static recipe builders for shipped inlines must therefore be ordinary callable
+Rust functions over explicit operands and recipe-builder types. They must be
+usable from tests or extraction harnesses without constructing a tracer CPU,
+executing inventory lookup, or converting through tracer instructions. Inventory
+may remain a host registration mechanism, but it must not be the only way to
+name the static recipe body.
+
+This does not mean that `cargo hax -p jolt-program ...` alone will necessarily
+contain every shipped inline recipe. If recipe bodies remain in
+`jolt-inlines/*`, an extraction experiment must either extract those crates too
+or use an explicit aggregation target that calls their static recipe entry
+points. This spec does not require moving all inline recipe bodies into
+`jolt-program`; it does require that the bodies be visible through direct,
+tracer-free static entry points.
+
+After this cutover, Hax and Charon should be able to see the registered static
+recipe bodies in principle. A fully typechecked Lean model is still outside this
+PR. Known remaining extractor issues in the current codebase include heap-backed
+`Vec` APIs, iterator/`collect` paths, allocator and metadata loops, materializer
+borrow loops, generated prelude coverage, and Aeneas support for ordinary Rust
+control-flow shapes. Those are follow-up extraction-engineering problems rather
+than reasons to keep static inline expansion behind tracer.
+
+Runtime advice remains deliberately outside the extraction target. Static
+recipes may expose the number and order of `VirtualAdvice` rows; CPU-derived
+advice values and trace-time memory/register reads remain host/tracer semantics.
+
 ## Acceptance Criteria
 
 - [ ] Static recipe construction compiles through a tracer-free SDK surface.
@@ -421,6 +456,8 @@ directly or indirectly through SDK re-exports.
 - [ ] Registration keys are unique and tested.
 - [ ] Provider output is an `ExpandedInstructionSequence` or equivalent recipe,
       not a direct final row/instruction vector.
+- [ ] Every shipped static inline recipe has a direct tracer-free entry point
+      usable by tests or extraction harnesses without inventory lookup.
 - [ ] Inline reset rows are produced by the central expansion
       allocator/materializer path, not by `VirtualRegisterAllocator` or RAII
       helpers.
