@@ -372,6 +372,14 @@ impl Stage6BytecodeReadRafEmitPlan {
     pub(crate) fn relation_output_plan(&self) -> Stage6BytecodeReadRafRelationOutputPlan {
         STAGE6_BYTECODE_READ_RAF_PLAN.relation_output_plan(&self.bytecode_ra_evals)
     }
+
+    pub(crate) fn local_scalar_symbols() -> impl Iterator<Item = &'static str> {
+        STAGE6_BYTECODE_READ_RAF_PLAN
+            .output_terms
+            .iter()
+            .copied()
+            .map(BytecodeOutputTermPlan::symbol)
+    }
 }
 
 #[cfg(test)]

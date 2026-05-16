@@ -212,6 +212,10 @@ impl Stage5InstructionReadRafEmitPlan {
             },
         }
     }
+
+    pub(crate) fn local_scalar_symbols(&self) -> impl Iterator<Item = &String> {
+        self.point_values.iter().map(|value| &value.symbol)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

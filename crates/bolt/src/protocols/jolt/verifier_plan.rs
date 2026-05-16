@@ -309,6 +309,22 @@ impl VerifierRelationLocalInputPlan {
             Self::Stage6BytecodeReadRaf(_) => VerifierRelationLocalInputKind::Stage6BytecodeReadRaf,
         }
     }
+
+    fn insert_scalar_sources(&self, values: &mut VerifierScalarSourceSet) {
+        match self {
+            Self::Stage5InstructionReadRaf(plan) => {
+                values.extend(
+                    plan.local_scalar_symbols(),
+                    VerifierScalarSourceKind::RelationOutputLocal,
+                );
+            }
+            Self::Stage6BytecodeReadRaf(_) => {
+                for symbol in Stage6BytecodeReadRafEmitPlan::local_scalar_symbols() {
+                    values.insert(symbol, VerifierScalarSourceKind::RelationOutputLocal);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -367,6 +383,12 @@ impl VerifierRelationLocalInputPlans {
         }
         self.rows.push(row);
         Ok(())
+    }
+
+    fn insert_scalar_sources(&self, values: &mut VerifierScalarSourceSet) {
+        for row in &self.rows {
+            row.insert_scalar_sources(values);
+        }
     }
 }
 
@@ -446,12 +468,8 @@ impl VerifierStagePlan {
             self.scalar_exprs.iter().map(|expr| &expr.symbol),
             VerifierScalarSourceKind::ScalarExpr,
         );
-        values.extend(
-            self.relation_outputs
-                .iter()
-                .flat_map(|claim| claim.local_scalars.iter()),
-            VerifierScalarSourceKind::RelationOutputLocal,
-        );
+        self.relation_local_inputs
+            .insert_scalar_sources(&mut values);
         values.extend(
             self.sumcheck_evals.iter().map(|eval| &eval.symbol),
             VerifierScalarSourceKind::SumcheckEval,

@@ -1443,6 +1443,14 @@ pub fn verify_relation_outputs(
                 claim.relation, claim.expected_output
             )));
         }
+        for local_scalar in &claim.local_scalars {
+            if !field_values.contains(local_scalar) {
+                return Err(EmitError::new(format!(
+                    "{stage} relation output for @{} references missing local scalar @{}",
+                    claim.relation, local_scalar
+                )));
+            }
+        }
     }
     Ok(())
 }
@@ -1522,7 +1530,7 @@ mod tests {
         resolve_relation_outputs, verify_relation_outputs, FieldExprDependencies,
         RelationOutputAst, RelationOutputEvalFamilyItemTermPlan, RelationOutputEvalFamilyPlan,
         RelationOutputEvalFamilySharedTermPlan, RelationOutputFunctionFamilyPlan,
-        RelationOutputFunctionFamilyTermPlan, RelationOutputFunctionKind,
+        RelationOutputFunctionFamilyTermPlan, RelationOutputFunctionKind, RelationOutputPlan,
         RelationOutputProductFamilyPlan, RelationOutputProductFamilyTermPlan,
         RelationOutputVerification, StructuredPolynomialEvalPlan, StructuredPolynomialKind,
         StructuredPolynomialPointLength, StructuredPolynomialPointOrder,
@@ -1801,6 +1809,45 @@ mod tests {
 
         assert!(error.to_string().contains(
             "stage point source @point has conflicting kinds OpeningInput and PointExpr"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn relation_output_verification_requires_planned_local_scalars() -> Result<(), EmitError> {
+        let mut field_values = VerifierScalarSourceSet::default();
+        field_values.insert("claim", VerifierScalarSourceKind::FieldExpr);
+        let point_values = VerifierPointSourceSet::default();
+        let relations = BTreeSet::from(["relation".to_owned()]);
+        let relation_outputs = [RelationOutputPlan {
+            relation: "relation".to_owned(),
+            local_scalars: vec!["local.scalar".to_owned()],
+            expected_output: "claim".to_owned(),
+        }];
+
+        let error = match verify_relation_outputs(
+            "stage",
+            RelationOutputVerification {
+                relation_output_values: &[],
+                relation_output_eval_families: &[],
+                relation_output_product_families: &[],
+                relation_output_function_families: &[],
+                relation_outputs: &relation_outputs,
+                relations: &relations,
+                field_values: &field_values,
+                point_values: &point_values,
+            },
+        ) {
+            Ok(()) => {
+                return Err(EmitError::new(
+                    "unplanned local scalar should fail relation output verification",
+                ));
+            }
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains(
+            "stage relation output for @relation references missing local scalar @local.scalar"
         ));
         Ok(())
     }
