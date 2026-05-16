@@ -1570,9 +1570,8 @@ pub use bolt_verifier_runtime::{
     KernelPlan as Stage6KernelPlan, OpeningBatchPlan as Stage6OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage6OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage6OpeningClaimPlan, OpeningInputPlan as Stage6OpeningInputPlan,
-    OpeningEqualityMode as Stage6OpeningEqualityMode,
-    PointConcatPlan as Stage6PointConcatPlan, PointSlicePlan as Stage6PointSlicePlan,
-    PointZeroPlan as Stage6PointZeroPlan, ProgramStepKind as Stage6ProgramStepKind,
+    OpeningEqualityMode as Stage6OpeningEqualityMode, PointExprKind as Stage6PointExprKind,
+    PointExprPlan as Stage6PointExprPlan, ProgramStepKind as Stage6ProgramStepKind,
     ProgramStepPlan as Stage6ProgramStepPlan,
     StageParams as Stage6Params,
     SumcheckBatchPlan as Stage6SumcheckBatchPlan,
@@ -1698,6 +1697,11 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
         } else {
             ""
         };
+        let point_exprs_field = if self.role == Role::Verifier {
+            "    point_exprs: STAGE6_POINT_EXPRS,\n"
+        } else {
+            "    point_zeros: STAGE6_POINT_ZEROS,\n    point_slices: STAGE6_POINT_SLICES,\n    point_concats: STAGE6_POINT_CONCATS,\n"
+        };
         push_format(
             &mut source,
             format_args!(
@@ -1718,9 +1722,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
                  \x20   instance_results: STAGE6_SUMCHECK_INSTANCE_RESULTS,\n\
                  \x20   evals: STAGE6_SUMCHECK_EVALS,\n\
                  {relation_outputs_field}\
-                 \x20   point_zeros: STAGE6_POINT_ZEROS,\n\
-                 \x20   point_slices: STAGE6_POINT_SLICES,\n\
-                 \x20   point_concats: STAGE6_POINT_CONCATS,\n\
+                 {point_exprs_field}\
                  \x20   opening_claims: STAGE6_OPENING_CLAIMS,\n\
                  \x20   opening_equalities: STAGE6_OPENING_EQUALITIES,\n\
                  \x20   opening_batches: STAGE6_OPENING_BATCHES,\n\
@@ -2129,9 +2131,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
         let mut source = String::new();
         source.push_str(&self.emit_sumcheck_instance_result_constants()?);
         source.push_str(&self.emit_sumcheck_eval_constants());
-        source.push_str(&self.emit_point_zero_constants()?);
-        source.push_str(&self.emit_point_slice_constants()?);
-        source.push_str(&self.emit_point_concat_constants()?);
+        source.push_str(&self.emit_point_constants()?);
         source.push_str(&self.emit_opening_claim_constants()?);
         source.push_str(&self.emit_opening_claim_equality_constants()?);
         source.push_str(&self.emit_opening_batch_constants()?);
@@ -2226,15 +2226,17 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
         )
     }
 
-    fn emit_point_zero_constants(&self) -> Result<String, EmitError> {
+    fn emit_point_constants(&self) -> Result<String, EmitError> {
         if self.role == Role::Verifier {
             let plan = self.verifier_plan()?;
-            return Ok(verifier_plan::emit_point_zero_constants(
+            return Ok(verifier_plan::emit_point_expr_constants(
                 "Stage6",
                 "STAGE6",
-                &plan.point_zeros,
+                &plan.point_exprs,
             ));
         }
+
+        let mut source = String::new();
         let zeros = self
             .point_zeros
             .iter()
@@ -2248,20 +2250,12 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
             })
             .collect::<Vec<_>>()
             .join("\n");
-        Ok(format!(
-            "pub const STAGE6_POINT_ZEROS: &[Stage6PointZeroPlan] = &[\n{zeros}\n];\n\n"
-        ))
-    }
-
-    fn emit_point_slice_constants(&self) -> Result<String, EmitError> {
-        if self.role == Role::Verifier {
-            let plan = self.verifier_plan()?;
-            return Ok(verifier_plan::emit_point_slice_constants(
-                "Stage6",
-                "STAGE6",
-                &plan.point_slices,
-            ));
-        }
+        push_format(
+            &mut source,
+            format_args!(
+                "pub const STAGE6_POINT_ZEROS: &[Stage6PointZeroPlan] = &[\n{zeros}\n];\n\n"
+            ),
+        );
         let slices = self
             .point_slices
             .iter()
@@ -2277,22 +2271,12 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage6Error);
             })
             .collect::<Vec<_>>()
             .join("\n");
-        Ok(format!(
-            "pub const STAGE6_POINT_SLICES: &[Stage6PointSlicePlan] = &[\n{slices}\n];\n\n"
-        ))
-    }
-
-    fn emit_point_concat_constants(&self) -> Result<String, EmitError> {
-        if self.role == Role::Verifier {
-            let plan = self.verifier_plan()?;
-            return Ok(verifier_plan::emit_point_concat_constants(
-                "Stage6",
-                "STAGE6",
-                &plan.point_concats,
-            ));
-        }
-
-        let mut source = String::new();
+        push_format(
+            &mut source,
+            format_args!(
+                "pub const STAGE6_POINT_SLICES: &[Stage6PointSlicePlan] = &[\n{slices}\n];\n\n"
+            ),
+        );
         for (index, concat) in self.point_concats.iter().enumerate() {
             source.push_str(&emit_str_array(
                 &format!("STAGE6_POINT_CONCAT_{index}_INPUTS"),
@@ -2485,7 +2469,6 @@ where
     let mut store =
         bolt_verifier_runtime::ValueStore::with_opening_inputs(opening_inputs, program.opening_inputs)?;
     store.seed_constants(program.field_constants);
-    store.seed_point_zeros(program.point_zeros);
     let mut artifacts = Stage6ExecutionArtifacts::default();
     for step in program.steps {
         match step.kind {
@@ -2620,8 +2603,7 @@ where
     T: Transcript<Challenge = Fr>,
 {
     store.evaluate_available_points(
-        program.point_slices,
-        program.point_concats,
+        program.point_exprs,
         |input, expected, actual| VerifyStage6Error::InvalidInputLength {
             input,
             expected,
@@ -2689,8 +2671,7 @@ fn observe_stage6_sumcheck_output<F: Field>(
     )?;
     store.evaluate_named_eval_families(STAGE6_INDEXED_EVAL_FAMILIES)?;
     store.evaluate_available_points(
-        program.point_slices,
-        program.point_concats,
+        program.point_exprs,
         |input, expected, actual| VerifyStage6Error::InvalidInputLength {
             input,
             expected,

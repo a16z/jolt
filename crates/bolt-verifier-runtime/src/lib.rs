@@ -436,27 +436,17 @@ pub struct SumcheckEvalPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PointZeroPlan {
-    pub symbol: &'static str,
-    pub field: &'static str,
-    pub arity: usize,
+pub enum PointExprKind {
+    Zero { field: &'static str, arity: usize },
+    Slice { offset: usize, length: usize },
+    Concat { layout: &'static str, arity: usize },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PointSlicePlan {
+pub struct PointExprPlan {
     pub symbol: &'static str,
-    pub source: &'static str,
-    pub offset: usize,
-    pub length: usize,
-    pub input: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PointConcatPlan {
-    pub symbol: &'static str,
-    pub layout: &'static str,
-    pub arity: usize,
-    pub inputs: &'static [&'static str],
+    pub kind: PointExprKind,
+    pub operands: &'static [&'static str],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -513,35 +503,7 @@ pub struct StageProgramPlan<R: ProtocolRelation> {
     pub evals: &'static [SumcheckEvalPlan],
     pub relation_output_values: &'static [StructuredPolynomialEvalPlan],
     pub relation_outputs: &'static [RelationOutputPlan<R>],
-    pub point_zeros: &'static [PointZeroPlan],
-    pub point_slices: &'static [PointSlicePlan],
-    pub point_concats: &'static [PointConcatPlan],
-    pub opening_claims: &'static [OpeningClaimPlan],
-    pub opening_equalities: &'static [OpeningClaimEqualityPlan],
-    pub opening_batches: &'static [OpeningBatchPlan],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StageProgramPlanNoPointZeros<R: ProtocolRelation> {
-    pub role: &'static str,
-    pub params: StageParams,
-    pub steps: &'static [ProgramStepPlan],
-    pub transcript_squeezes: &'static [TranscriptSqueezePlan],
-    pub transcript_absorb_bytes: &'static [TranscriptAbsorbBytesPlan],
-    pub opening_inputs: &'static [OpeningInputPlan],
-    pub field_constants: &'static [FieldConstantPlan],
-    pub field_exprs: &'static [FieldExprPlan],
-    pub scalar_exprs: &'static [ScalarExprPlan],
-    pub kernels: &'static [KernelPlan],
-    pub claims: &'static [SumcheckClaimPlan<R>],
-    pub batches: &'static [SumcheckBatchPlan],
-    pub drivers: &'static [SumcheckDriverPlan<R>],
-    pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
-    pub evals: &'static [SumcheckEvalPlan],
-    pub relation_output_values: &'static [StructuredPolynomialEvalPlan],
-    pub relation_outputs: &'static [RelationOutputPlan<R>],
-    pub point_slices: &'static [PointSlicePlan],
-    pub point_concats: &'static [PointConcatPlan],
+    pub point_exprs: &'static [PointExprPlan],
     pub opening_claims: &'static [OpeningClaimPlan],
     pub opening_equalities: &'static [OpeningClaimEqualityPlan],
     pub opening_batches: &'static [OpeningBatchPlan],
@@ -563,8 +525,7 @@ pub struct StageVerifierProgramPlan<R: ProtocolRelation> {
     pub evals: &'static [SumcheckEvalPlan],
     pub relation_output_values: &'static [StructuredPolynomialEvalPlan],
     pub relation_outputs: &'static [RelationOutputPlan<R>],
-    pub point_slices: &'static [PointSlicePlan],
-    pub point_concats: &'static [PointConcatPlan],
+    pub point_exprs: &'static [PointExprPlan],
     pub opening_claims: &'static [OpeningClaimPlan],
     pub opening_equalities: &'static [OpeningClaimEqualityPlan],
     pub opening_batches: &'static [OpeningBatchPlan],
@@ -584,8 +545,7 @@ pub struct StageVerifierProgramPlanNoEqualities<R: ProtocolRelation> {
     pub drivers: &'static [SumcheckDriverPlan<R>],
     pub instance_results: &'static [SumcheckInstanceResultPlan<R>],
     pub evals: &'static [SumcheckEvalPlan],
-    pub point_slices: &'static [PointSlicePlan],
-    pub point_concats: &'static [PointConcatPlan],
+    pub point_exprs: &'static [PointExprPlan],
     pub opening_claims: &'static [OpeningClaimPlan],
     pub opening_batches: &'static [OpeningBatchPlan],
 }
@@ -863,12 +823,6 @@ impl<F: Field> ValueStore<F> {
         }
     }
 
-    pub fn seed_point_zeros(&mut self, point_zeros: &[PointZeroPlan]) {
-        for zero in point_zeros {
-            self.insert_point(zero.symbol, vec![F::from_u64(0); zero.arity]);
-        }
-    }
-
     pub fn observe_challenge_vector<E>(
         &mut self,
         plan: &TranscriptSqueezePlan,
@@ -923,42 +877,19 @@ impl<F: Field> ValueStore<F> {
 
     pub fn evaluate_available_points<E>(
         &mut self,
-        point_slices: &[PointSlicePlan],
-        point_concats: &[PointConcatPlan],
+        point_exprs: &[PointExprPlan],
         invalid_input_length: impl Fn(&'static str, usize, usize) -> E,
     ) -> Result<(), E> {
         loop {
             let mut progress = 0usize;
-            for slice in point_slices {
-                if self.try_point(slice.symbol).is_some() {
+            for expr in point_exprs {
+                if self.try_point(expr.symbol).is_some() {
                     continue;
                 }
-                let Some(input) = self.try_point(slice.input) else {
+                let Some(point) = self.try_point_expr(expr, &invalid_input_length)? else {
                     continue;
                 };
-                let end = slice.offset + slice.length;
-                let point = input
-                    .get(slice.offset..end)
-                    .ok_or_else(|| invalid_input_length(slice.symbol, end, input.len()))?
-                    .to_vec();
-                self.insert_point(slice.symbol, point);
-                progress += 1;
-            }
-            for concat in point_concats {
-                if self.try_point(concat.symbol).is_some() {
-                    continue;
-                }
-                let Some(point) = self.try_concat_point(concat) else {
-                    continue;
-                };
-                if point.len() != concat.arity {
-                    return Err(invalid_input_length(
-                        concat.symbol,
-                        concat.arity,
-                        point.len(),
-                    ));
-                }
-                self.insert_point(concat.symbol, point);
+                self.insert_point(expr.symbol, point);
                 progress += 1;
             }
             if progress == 0 {
@@ -1167,12 +1098,41 @@ impl<F: Field> ValueStore<F> {
         }
     }
 
-    fn try_concat_point(&self, concat: &PointConcatPlan) -> Option<Vec<F>> {
-        let mut point = Vec::with_capacity(concat.arity);
-        for input in concat.inputs {
-            point.extend_from_slice(self.try_point(input)?);
+    fn try_point_expr<E>(
+        &self,
+        expr: &PointExprPlan,
+        invalid_input_length: &impl Fn(&'static str, usize, usize) -> E,
+    ) -> Result<Option<Vec<F>>, E> {
+        match expr.kind {
+            PointExprKind::Zero { arity, .. } => Ok(Some(vec![F::from_u64(0); arity])),
+            PointExprKind::Slice { offset, length } => {
+                let [input] = expr.operands else {
+                    return Err(invalid_input_length(expr.symbol, 1, expr.operands.len()));
+                };
+                let Some(point) = self.try_point(input) else {
+                    return Ok(None);
+                };
+                let end = offset + length;
+                let point = point
+                    .get(offset..end)
+                    .ok_or_else(|| invalid_input_length(expr.symbol, end, point.len()))?
+                    .to_vec();
+                Ok(Some(point))
+            }
+            PointExprKind::Concat { arity, .. } => {
+                let mut point = Vec::with_capacity(arity);
+                for input in expr.operands {
+                    let Some(input) = self.try_point(input) else {
+                        return Ok(None);
+                    };
+                    point.extend_from_slice(input);
+                }
+                if point.len() != arity {
+                    return Err(invalid_input_length(expr.symbol, arity, point.len()));
+                }
+                Ok(Some(point))
+            }
         }
-        Some(point)
     }
 }
 

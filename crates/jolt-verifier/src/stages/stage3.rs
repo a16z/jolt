@@ -30,7 +30,7 @@ pub use bolt_verifier_runtime::{
     OpeningBatchPlan as Stage3OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage3OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage3OpeningClaimPlan, OpeningInputPlan as Stage3OpeningInputPlan,
-    PointConcatPlan as Stage3PointConcatPlan, PointSlicePlan as Stage3PointSlicePlan,
+    PointExprKind as Stage3PointExprKind, PointExprPlan as Stage3PointExprPlan,
     OpeningEqualityMode as Stage3OpeningEqualityMode,
     ProgramStepKind as Stage3ProgramStepKind, ProgramStepPlan as Stage3ProgramStepPlan,
     StageParams as Stage3Params,
@@ -184,13 +184,10 @@ pub const STAGE3_SUMCHECK_EVALS: &[Stage3SumcheckEvalPlan] = &[
     Stage3SumcheckEvalPlan { symbol: "stage3.registers_claim_reduction.eval.Rs2Value", source: "stage3.sumcheck", name: "stage3.registers_claim_reduction.eval.Rs2Value", index: 15, oracle: "Rs2Value" },
 ];
 
-pub const STAGE3_POINT_SLICES: &[Stage3PointSlicePlan] = &[
+pub const STAGE3_POINT_EXPRS: &[Stage3PointExprPlan] = &[
 
 ];
 
-pub const STAGE3_POINT_CONCATS: &[Stage3PointConcatPlan] = &[
-
-];
 pub const STAGE3_OPENING_CLAIMS: &[Stage3OpeningClaimPlan] = &[
     Stage3OpeningClaimPlan { symbol: "stage3.spartan_shift.opening.UnexpandedPC", oracle: "UnexpandedPC", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual, point_source: "stage3.spartan_shift.instance", eval_source: "stage3.spartan_shift.eval.UnexpandedPC" },
     Stage3OpeningClaimPlan { symbol: "stage3.spartan_shift.opening.PC", oracle: "PC", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage3ClaimKind::Virtual, point_source: "stage3.spartan_shift.instance", eval_source: "stage3.spartan_shift.eval.PC" },
@@ -246,8 +243,7 @@ pub const STAGE3_PROGRAM: Stage3VerifierProgramPlan = Stage3VerifierProgramPlan 
     evals: STAGE3_SUMCHECK_EVALS,
     relation_output_values: STAGE3_RELATION_OUTPUT_VALUES,
     relation_outputs: STAGE3_RELATION_OUTPUTS,
-    point_slices: STAGE3_POINT_SLICES,
-    point_concats: STAGE3_POINT_CONCATS,
+    point_exprs: STAGE3_POINT_EXPRS,
     opening_claims: STAGE3_OPENING_CLAIMS,
     opening_equalities: STAGE3_OPENING_EQUALITIES,
     opening_batches: STAGE3_OPENING_BATCHES,
@@ -389,8 +385,7 @@ where
     T: Transcript<Challenge = Fr>,
 {
     store.evaluate_available_points(
-        program.point_slices,
-        program.point_concats,
+        program.point_exprs,
         |input, expected, actual| VerifyStage3Error::InvalidInputLength {
             input,
             expected,
@@ -447,8 +442,7 @@ fn observe_stage3_sumcheck_output<F: Field>(
         |symbol| VerifyStage3Error::MissingValue { symbol },
     )?;
     store.evaluate_available_points(
-        program.point_slices,
-        program.point_concats,
+        program.point_exprs,
         |input, expected, actual| VerifyStage3Error::InvalidInputLength {
             input,
             expected,

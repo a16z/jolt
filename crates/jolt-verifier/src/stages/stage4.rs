@@ -11,7 +11,7 @@ pub type Stage4ChallengeVector<F> = bolt_verifier_runtime::StageChallengeVector<
 pub type Stage4ExecutionArtifacts<F> = bolt_verifier_runtime::StageExecutionArtifacts<F>;
 pub type Stage4Proof<F> = bolt_verifier_runtime::StageProof<F>;
 pub type Stage4OpeningInputValue<F> = bolt_verifier_runtime::StageOpeningInputValue<F>;
-pub type Stage4CpuProgramPlan = bolt_verifier_runtime::StageProgramPlanNoPointZeros<Stage4RelationKind>;
+pub type Stage4CpuProgramPlan = bolt_verifier_runtime::StageProgramPlan<Stage4RelationKind>;
 pub type Stage4SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stage4RelationKind>;
 pub type Stage4SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage4RelationKind>;
 pub type Stage4SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage4RelationKind>;
@@ -28,8 +28,8 @@ pub use bolt_verifier_runtime::{
     KernelPlan as Stage4KernelPlan, OpeningBatchPlan as Stage4OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage4OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage4OpeningClaimPlan, OpeningInputPlan as Stage4OpeningInputPlan,
-    OpeningEqualityMode as Stage4OpeningEqualityMode,
-    PointConcatPlan as Stage4PointConcatPlan, PointSlicePlan as Stage4PointSlicePlan,
+    OpeningEqualityMode as Stage4OpeningEqualityMode, PointExprKind as Stage4PointExprKind,
+    PointExprPlan as Stage4PointExprPlan,
     ProgramStepKind as Stage4ProgramStepKind,
     ProgramStepPlan as Stage4ProgramStepPlan, StageParams as Stage4Params,
     SumcheckBatchPlan as Stage4SumcheckBatchPlan,
@@ -154,14 +154,12 @@ pub const STAGE4_SUMCHECK_EVALS: &[Stage4SumcheckEvalPlan] = &[
     Stage4SumcheckEvalPlan { symbol: "stage4.ram_val_check.eval.RamInc", source: "stage4.sumcheck", name: "stage4.ram_val_check.eval.RamInc", index: 1, oracle: "RamInc" },
 ];
 
-pub const STAGE4_POINT_SLICES: &[Stage4PointSlicePlan] = &[
-    Stage4PointSlicePlan { symbol: "stage4.registers_read_write.point.RdInc", source: "stage4.registers_read_write.instance", offset: 7, length: 16, input: "stage4.registers_read_write.instance" },
-    Stage4PointSlicePlan { symbol: "stage4.ram_val_check.point.RamAddress", source: "stage4.input.stage2.RamVal", offset: 0, length: 16, input: "stage4.input.stage2.RamVal" },
+pub const STAGE4_POINT_EXPRS: &[Stage4PointExprPlan] = &[
+    Stage4PointExprPlan { symbol: "stage4.registers_read_write.point.RdInc", kind: Stage4PointExprKind::Slice { offset: 7, length: 16 }, operands: &["stage4.registers_read_write.instance"] },
+    Stage4PointExprPlan { symbol: "stage4.ram_val_check.point.RamAddress", kind: Stage4PointExprKind::Slice { offset: 0, length: 16 }, operands: &["stage4.input.stage2.RamVal"] },
+    Stage4PointExprPlan { symbol: "stage4.ram_val_check.point.RamRa", kind: Stage4PointExprKind::Concat { layout: "address_then_cycle", arity: 32 }, operands: &["stage4.ram_val_check.point.RamAddress", "stage4.ram_val_check.instance"] },
 ];
 
-pub const STAGE4_POINT_CONCATS: &[Stage4PointConcatPlan] = &[
-    Stage4PointConcatPlan { symbol: "stage4.ram_val_check.point.RamRa", layout: "address_then_cycle", arity: 32, inputs: &["stage4.ram_val_check.point.RamAddress", "stage4.ram_val_check.instance"] },
-];
 pub const STAGE4_OPENING_CLAIMS: &[Stage4OpeningClaimPlan] = &[
     Stage4OpeningClaimPlan { symbol: "stage4.registers_read_write.opening.RegistersVal", oracle: "RegistersVal", domain: "jolt.stage4_registers_rw_domain", point_arity: 23, claim_kind: Stage4ClaimKind::Virtual, point_source: "stage4.registers_read_write.instance", eval_source: "stage4.registers_read_write.eval.RegistersVal" },
     Stage4OpeningClaimPlan { symbol: "stage4.registers_read_write.opening.Rs1Ra", oracle: "Rs1Ra", domain: "jolt.stage4_registers_rw_domain", point_arity: 23, claim_kind: Stage4ClaimKind::Virtual, point_source: "stage4.registers_read_write.instance", eval_source: "stage4.registers_read_write.eval.Rs1Ra" },
@@ -208,8 +206,7 @@ pub const STAGE4_PROGRAM: Stage4VerifierProgramPlan = Stage4CpuProgramPlan {
     evals: STAGE4_SUMCHECK_EVALS,
     relation_output_values: STAGE4_RELATION_OUTPUT_VALUES,
     relation_outputs: STAGE4_RELATION_OUTPUTS,
-    point_slices: STAGE4_POINT_SLICES,
-    point_concats: STAGE4_POINT_CONCATS,
+    point_exprs: STAGE4_POINT_EXPRS,
     opening_claims: STAGE4_OPENING_CLAIMS,
     opening_equalities: STAGE4_OPENING_EQUALITIES,
     opening_batches: STAGE4_OPENING_BATCHES,
@@ -364,8 +361,7 @@ where
     T: Transcript<Challenge = Fr>,
 {
     store.evaluate_available_points(
-        program.point_slices,
-        program.point_concats,
+        program.point_exprs,
         |input, expected, actual| VerifyStage4Error::InvalidInputLength {
             input,
             expected,
@@ -425,8 +421,7 @@ fn observe_stage4_sumcheck_output<F: Field>(
         |symbol| VerifyStage4Error::MissingValue { symbol },
     )?;
     store.evaluate_available_points(
-        program.point_slices,
-        program.point_concats,
+        program.point_exprs,
         |input, expected, actual| VerifyStage4Error::InvalidInputLength {
             input,
             expected,

@@ -28,9 +28,8 @@ pub use bolt_verifier_runtime::{
     KernelPlan as Stage7KernelPlan, OpeningBatchPlan as Stage7OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage7OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage7OpeningClaimPlan, OpeningInputPlan as Stage7OpeningInputPlan,
-    OpeningEqualityMode as Stage7OpeningEqualityMode,
-    PointConcatPlan as Stage7PointConcatPlan, PointSlicePlan as Stage7PointSlicePlan,
-    PointZeroPlan as Stage7PointZeroPlan, ProgramStepKind as Stage7ProgramStepKind,
+    OpeningEqualityMode as Stage7OpeningEqualityMode, PointExprKind as Stage7PointExprKind,
+    PointExprPlan as Stage7PointExprPlan, ProgramStepKind as Stage7ProgramStepKind,
     ProgramStepPlan as Stage7ProgramStepPlan,
     StageParams as Stage7Params,
     SumcheckBatchPlan as Stage7SumcheckBatchPlan,
@@ -312,17 +311,11 @@ pub const STAGE7_SUMCHECK_EVALS: &[Stage7SumcheckEvalPlan] = &[
     stage7_sumcheck_eval("stage7.hamming_weight_claim_reduction.eval.RamRa_1", "stage7.sumcheck", "stage7.hamming_weight_claim_reduction.eval.RamRa_1", 36, "RamRa_1"), stage7_sumcheck_eval("stage7.hamming_weight_claim_reduction.eval.RamRa_2", "stage7.sumcheck", "stage7.hamming_weight_claim_reduction.eval.RamRa_2", 37, "RamRa_2"), stage7_sumcheck_eval("stage7.hamming_weight_claim_reduction.eval.RamRa_3", "stage7.sumcheck", "stage7.hamming_weight_claim_reduction.eval.RamRa_3", 38, "RamRa_3"),
 ];
 
-pub const STAGE7_POINT_ZEROS: &[Stage7PointZeroPlan] = &[
-
+pub const STAGE7_POINT_EXPRS: &[Stage7PointExprPlan] = &[
+    Stage7PointExprPlan { symbol: "stage7.hamming_weight_claim_reduction.point.cycle", kind: Stage7PointExprKind::Slice { offset: 4, length: 16 }, operands: &["stage7.input.stage6.booleanity.InstructionRa_0"] },
+    Stage7PointExprPlan { symbol: "stage7.hamming_weight_claim_reduction.point", kind: Stage7PointExprKind::Concat { layout: "address_chunk_then_cycle", arity: 20 }, operands: &["stage7.hamming_weight_claim_reduction.instance", "stage7.hamming_weight_claim_reduction.point.cycle"] },
 ];
 
-pub const STAGE7_POINT_SLICES: &[Stage7PointSlicePlan] = &[
-    Stage7PointSlicePlan { symbol: "stage7.hamming_weight_claim_reduction.point.cycle", source: "stage7.input.stage6.booleanity.InstructionRa_0", offset: 4, length: 16, input: "stage7.input.stage6.booleanity.InstructionRa_0" },
-];
-
-pub const STAGE7_POINT_CONCATS: &[Stage7PointConcatPlan] = &[
-    Stage7PointConcatPlan { symbol: "stage7.hamming_weight_claim_reduction.point", layout: "address_chunk_then_cycle", arity: 20, inputs: &["stage7.hamming_weight_claim_reduction.instance", "stage7.hamming_weight_claim_reduction.point.cycle"] },
-];
 pub const STAGE7_OPENING_CLAIMS: &[Stage7OpeningClaimPlan] = &[
     Stage7OpeningClaimPlan { symbol: "stage7.hamming_weight_claim_reduction.opening.InstructionRa_0", oracle: "InstructionRa_0", domain: "jolt.main_witness_commit_domain", point_arity: 20, claim_kind: Stage7ClaimKind::Committed, point_source: "stage7.hamming_weight_claim_reduction.point", eval_source: "stage7.hamming_weight_claim_reduction.eval.InstructionRa_0" },
     Stage7OpeningClaimPlan { symbol: "stage7.hamming_weight_claim_reduction.opening.InstructionRa_1", oracle: "InstructionRa_1", domain: "jolt.main_witness_commit_domain", point_arity: 20, claim_kind: Stage7ClaimKind::Committed, point_source: "stage7.hamming_weight_claim_reduction.point", eval_source: "stage7.hamming_weight_claim_reduction.eval.InstructionRa_1" },
@@ -390,9 +383,7 @@ pub const STAGE7_PROGRAM: Stage7VerifierProgramPlan = Stage7CpuProgramPlan {
     evals: STAGE7_SUMCHECK_EVALS,
     relation_output_values: STAGE7_RELATION_OUTPUT_VALUES,
     relation_outputs: STAGE7_RELATION_OUTPUTS,
-    point_zeros: STAGE7_POINT_ZEROS,
-    point_slices: STAGE7_POINT_SLICES,
-    point_concats: STAGE7_POINT_CONCATS,
+    point_exprs: STAGE7_POINT_EXPRS,
     opening_claims: STAGE7_OPENING_CLAIMS,
     opening_equalities: STAGE7_OPENING_EQUALITIES,
     opening_batches: STAGE7_OPENING_BATCHES,
@@ -427,7 +418,6 @@ where
     let mut store =
         bolt_verifier_runtime::ValueStore::with_opening_inputs(opening_inputs, program.opening_inputs)?;
     store.seed_constants(program.field_constants);
-    store.seed_point_zeros(program.point_zeros);
     let mut artifacts = Stage7ExecutionArtifacts::default();
     for step in program.steps {
         match step.kind {
@@ -555,8 +545,7 @@ where
     T: Transcript<Challenge = Fr>,
 {
     store.evaluate_available_points(
-        program.point_slices,
-        program.point_concats,
+        program.point_exprs,
         |input, expected, actual| VerifyStage7Error::InvalidInputLength {
             input,
             expected,
@@ -613,8 +602,7 @@ fn observe_stage7_sumcheck_output<F: Field>(
         |symbol| VerifyStage7Error::MissingValue { symbol },
     )?;
     store.evaluate_available_points(
-        program.point_slices,
-        program.point_concats,
+        program.point_exprs,
         |input, expected, actual| VerifyStage7Error::InvalidInputLength {
             input,
             expected,

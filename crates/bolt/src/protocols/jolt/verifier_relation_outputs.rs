@@ -1832,7 +1832,7 @@ mod tests {
         let field_values = VerifierScalarSourceSet::default();
         let mut point_values = VerifierPointSourceSet::default();
         point_values.insert("point", VerifierPointSourceKind::OpeningInput);
-        point_values.insert("point", VerifierPointSourceKind::PointSlice);
+        point_values.insert("point", VerifierPointSourceKind::PointExpr);
         let relations = BTreeSet::new();
 
         let error = match verify_relation_outputs(
@@ -1857,7 +1857,7 @@ mod tests {
         };
 
         assert!(error.to_string().contains(
-            "stage point source @point has conflicting kinds OpeningInput and PointSlice"
+            "stage point source @point has conflicting kinds OpeningInput and PointExpr"
         ));
         Ok(())
     }

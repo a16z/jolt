@@ -218,27 +218,17 @@ pub(crate) struct VerifierSumcheckInstanceResultPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct VerifierPointZeroPlan {
-    pub(crate) symbol: String,
-    pub(crate) field: String,
-    pub(crate) arity: usize,
+pub(crate) enum VerifierPointExprKind {
+    Zero { field: String, arity: usize },
+    Slice { offset: usize, length: usize },
+    Concat { layout: String, arity: usize },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct VerifierPointSlicePlan {
+pub(crate) struct VerifierPointExprPlan {
     pub(crate) symbol: String,
-    pub(crate) source: String,
-    pub(crate) offset: usize,
-    pub(crate) length: usize,
-    pub(crate) input: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct VerifierPointConcatPlan {
-    pub(crate) symbol: String,
-    pub(crate) layout: String,
-    pub(crate) arity: usize,
-    pub(crate) inputs: Vec<String>,
+    pub(crate) kind: VerifierPointExprKind,
+    pub(crate) operands: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -291,9 +281,7 @@ pub(crate) struct VerifierStagePlan {
     pub(crate) relation_output_product_families: Vec<RelationOutputProductFamilyPlan>,
     pub(crate) relation_output_function_families: Vec<RelationOutputFunctionFamilyPlan>,
     pub(crate) relation_outputs: Vec<RelationOutputPlan>,
-    pub(crate) point_zeros: Vec<VerifierPointZeroPlan>,
-    pub(crate) point_slices: Vec<VerifierPointSlicePlan>,
-    pub(crate) point_concats: Vec<VerifierPointConcatPlan>,
+    pub(crate) point_exprs: Vec<VerifierPointExprPlan>,
     pub(crate) opening_claims: Vec<VerifierOpeningClaimPlan>,
     pub(crate) opening_equalities: Vec<VerifierOpeningClaimEqualityPlan>,
     pub(crate) opening_batches: Vec<VerifierOpeningBatchPlan>,
@@ -397,16 +385,8 @@ impl VerifierStagePlan {
             VerifierPointSourceKind::OpeningInput,
         );
         values.extend(
-            self.point_zeros.iter().map(|zero| &zero.symbol),
-            VerifierPointSourceKind::PointZero,
-        );
-        values.extend(
-            self.point_slices.iter().map(|slice| &slice.symbol),
-            VerifierPointSourceKind::PointSlice,
-        );
-        values.extend(
-            self.point_concats.iter().map(|concat| &concat.symbol),
-            VerifierPointSourceKind::PointConcat,
+            self.point_exprs.iter().map(|expr| &expr.symbol),
+            VerifierPointSourceKind::PointExpr,
         );
         values
     }
@@ -420,13 +400,7 @@ impl VerifierStagePlan {
                 .map(|instance| instance.symbol.clone()),
         );
         values.extend(self.opening_inputs.iter().map(|input| input.symbol.clone()));
-        values.extend(self.point_zeros.iter().map(|zero| zero.symbol.clone()));
-        values.extend(self.point_slices.iter().map(|slice| slice.symbol.clone()));
-        values.extend(
-            self.point_concats
-                .iter()
-                .map(|concat| concat.symbol.clone()),
-        );
+        values.extend(self.point_exprs.iter().map(|expr| expr.symbol.clone()));
         values
     }
 }
@@ -543,7 +517,6 @@ pub(crate) trait VerifierPointZeroSource {
 
 pub(crate) trait VerifierPointSliceSource {
     fn symbol(&self) -> &str;
-    fn source(&self) -> &str;
     fn offset(&self) -> usize;
     fn length(&self) -> usize;
     fn input(&self) -> &str;
@@ -625,9 +598,7 @@ pub(crate) trait VerifierStagePlanSource {
         &[]
     }
     fn relation_outputs(&self) -> &[RelationOutputPlan];
-    fn point_zeros(&self) -> Vec<VerifierPointZeroPlan>;
-    fn point_slices(&self) -> &[Self::PointSlice];
-    fn point_concats(&self) -> &[Self::PointConcat];
+    fn point_exprs(&self) -> Vec<VerifierPointExprPlan>;
     fn opening_claims(&self) -> &[Self::OpeningClaim];
     fn opening_equalities(&self) -> &[Self::OpeningEquality];
     fn opening_batches(&self) -> &[Self::OpeningBatch];
@@ -789,28 +760,7 @@ where
         relation_output_product_families: source.relation_output_product_families().to_vec(),
         relation_output_function_families: source.relation_output_function_families().to_vec(),
         relation_outputs: source.relation_outputs().to_vec(),
-        point_zeros: source.point_zeros(),
-        point_slices: source
-            .point_slices()
-            .iter()
-            .map(|slice| VerifierPointSlicePlan {
-                symbol: slice.symbol().to_owned(),
-                source: slice.source().to_owned(),
-                offset: slice.offset(),
-                length: slice.length(),
-                input: slice.input().to_owned(),
-            })
-            .collect(),
-        point_concats: source
-            .point_concats()
-            .iter()
-            .map(|concat| VerifierPointConcatPlan {
-                symbol: concat.symbol().to_owned(),
-                layout: concat.layout().to_owned(),
-                arity: concat.arity(),
-                inputs: concat.inputs().to_vec(),
-            })
-            .collect(),
+        point_exprs: source.point_exprs(),
         opening_claims: source
             .opening_claims()
             .iter()
@@ -869,15 +819,50 @@ pub(crate) fn transcript_absorb_bytes_from_cpu<T: VerifierTranscriptAbsorbBytesS
         .collect()
 }
 
-pub(crate) fn point_zeros_from_cpu<T: VerifierPointZeroSource>(
+pub(crate) fn point_zero_exprs_from_cpu<T: VerifierPointZeroSource>(
     zeros: &[T],
-) -> Vec<VerifierPointZeroPlan> {
+) -> Vec<VerifierPointExprPlan> {
     zeros
         .iter()
-        .map(|zero| VerifierPointZeroPlan {
+        .map(|zero| VerifierPointExprPlan {
             symbol: zero.symbol().to_owned(),
-            field: zero.field().to_owned(),
-            arity: zero.arity(),
+            kind: VerifierPointExprKind::Zero {
+                field: zero.field().to_owned(),
+                arity: zero.arity(),
+            },
+            operands: Vec::new(),
+        })
+        .collect()
+}
+
+pub(crate) fn point_slice_exprs_from_cpu<T: VerifierPointSliceSource>(
+    slices: &[T],
+) -> Vec<VerifierPointExprPlan> {
+    slices
+        .iter()
+        .map(|slice| VerifierPointExprPlan {
+            symbol: slice.symbol().to_owned(),
+            kind: VerifierPointExprKind::Slice {
+                offset: slice.offset(),
+                length: slice.length(),
+            },
+            operands: vec![slice.input().to_owned()],
+        })
+        .collect()
+}
+
+pub(crate) fn point_concat_exprs_from_cpu<T: VerifierPointConcatSource>(
+    concats: &[T],
+) -> Vec<VerifierPointExprPlan> {
+    concats
+        .iter()
+        .map(|concat| VerifierPointExprPlan {
+            symbol: concat.symbol().to_owned(),
+            kind: VerifierPointExprKind::Concat {
+                layout: concat.layout().to_owned(),
+                arity: concat.arity(),
+            },
+            operands: concat.inputs().to_vec(),
         })
         .collect()
 }
@@ -969,13 +954,22 @@ macro_rules! impl_verifier_plan_source_traits {
             fn relation_outputs(&self) -> &[$crate::protocols::jolt::verifier_relation_outputs::RelationOutputPlan] {
                 &self.relation_outputs
             }
-            fn point_zeros(&self) -> Vec<$crate::protocols::jolt::verifier_plan::VerifierPointZeroPlan> {
-                $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
-                    @point_zeros self $(, $point_zero)?
-                )
+            fn point_exprs(&self) -> Vec<$crate::protocols::jolt::verifier_plan::VerifierPointExprPlan> {
+                let mut exprs = $crate::protocols::jolt::verifier_plan::impl_verifier_plan_source_traits!(
+                    @point_zero_exprs self $(, $point_zero)?
+                );
+                exprs.extend(
+                    $crate::protocols::jolt::verifier_plan::point_slice_exprs_from_cpu(
+                        &self.point_slices,
+                    ),
+                );
+                exprs.extend(
+                    $crate::protocols::jolt::verifier_plan::point_concat_exprs_from_cpu(
+                        &self.point_concats,
+                    ),
+                );
+                exprs
             }
-            fn point_slices(&self) -> &[Self::PointSlice] { &self.point_slices }
-            fn point_concats(&self) -> &[Self::PointConcat] { &self.point_concats }
             fn opening_claims(&self) -> &[Self::OpeningClaim] { &self.opening_claims }
             fn opening_equalities(&self) -> &[Self::OpeningEquality] { &self.opening_equalities }
             fn opening_batches(&self) -> &[Self::OpeningBatch] { &self.opening_batches }
@@ -1097,7 +1091,6 @@ macro_rules! impl_verifier_plan_source_traits {
 
         impl $crate::protocols::jolt::verifier_plan::VerifierPointSliceSource for $point_slice {
             fn symbol(&self) -> &str { &self.symbol }
-            fn source(&self) -> &str { &self.source }
             fn offset(&self) -> usize { self.offset }
             fn length(&self) -> usize { self.length }
             fn input(&self) -> &str { &self.input }
@@ -1145,10 +1138,10 @@ macro_rules! impl_verifier_plan_source_traits {
     (@transcript_absorb_bytes $self:ident) => {
         Vec::new()
     };
-    (@point_zeros $self:ident, $point_zero:ty) => {
-        $crate::protocols::jolt::verifier_plan::point_zeros_from_cpu(&$self.point_zeros)
+    (@point_zero_exprs $self:ident, $point_zero:ty) => {
+        $crate::protocols::jolt::verifier_plan::point_zero_exprs_from_cpu(&$self.point_zeros)
     };
-    (@point_zeros $self:ident) => {
+    (@point_zero_exprs $self:ident) => {
         Vec::new()
     };
     (@indexed_eval_families $self:ident, $indexed_eval_families:ident) => {
@@ -1610,72 +1603,46 @@ pub(crate) fn emit_sumcheck_instance_result_constants(
     )
 }
 
-pub(crate) fn emit_point_slice_constants(
+pub(crate) fn point_expr_kind_expr(
     stage_type_prefix: &str,
-    const_prefix: &str,
-    slices: &[VerifierPointSlicePlan],
+    kind: &VerifierPointExprKind,
 ) -> String {
-    let slices = slices
-        .iter()
-        .map(|slice| {
+    match kind {
+        VerifierPointExprKind::Zero { field, arity } => format!(
+            "{stage_type_prefix}PointExprKind::Zero {{ field: {}, arity: {arity} }}",
+            rust_str(field)
+        ),
+        VerifierPointExprKind::Slice { offset, length } => {
             format!(
-                "    {stage_type_prefix}PointSlicePlan {{ symbol: {}, source: {}, offset: {}, length: {}, input: {} }},",
-                rust_str(&slice.symbol),
-                rust_str(&slice.source),
-                slice.offset,
-                slice.length,
-                rust_str(&slice.input)
+                "{stage_type_prefix}PointExprKind::Slice {{ offset: {offset}, length: {length} }}"
             )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "pub const {const_prefix}_POINT_SLICES: &[{stage_type_prefix}PointSlicePlan] = &[\n{slices}\n];\n\n"
-    )
+        }
+        VerifierPointExprKind::Concat { layout, arity } => format!(
+            "{stage_type_prefix}PointExprKind::Concat {{ layout: {}, arity: {arity} }}",
+            rust_str(layout)
+        ),
+    }
 }
 
-pub(crate) fn emit_point_zero_constants(
+pub(crate) fn emit_point_expr_constants(
     stage_type_prefix: &str,
     const_prefix: &str,
-    zeros: &[VerifierPointZeroPlan],
+    exprs: &[VerifierPointExprPlan],
 ) -> String {
-    let zeros = zeros
+    let exprs = exprs
         .iter()
-        .map(|zero| {
+        .map(|expr| {
             format!(
-                "    {stage_type_prefix}PointZeroPlan {{ symbol: {}, field: {}, arity: {} }},",
-                rust_str(&zero.symbol),
-                rust_str(&zero.field),
-                zero.arity
+                "    {stage_type_prefix}PointExprPlan {{ symbol: {}, kind: {}, operands: {} }},",
+                rust_str(&expr.symbol),
+                point_expr_kind_expr(stage_type_prefix, &expr.kind),
+                rust_str_slice_expr(&expr.operands)
             )
         })
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "pub const {const_prefix}_POINT_ZEROS: &[{stage_type_prefix}PointZeroPlan] = &[\n{zeros}\n];\n\n"
-    )
-}
-
-pub(crate) fn emit_point_concat_constants(
-    stage_type_prefix: &str,
-    const_prefix: &str,
-    concats: &[VerifierPointConcatPlan],
-) -> String {
-    let concats = concats
-        .iter()
-        .map(|concat| {
-            format!(
-                "    {stage_type_prefix}PointConcatPlan {{ symbol: {}, layout: {}, arity: {}, inputs: {} }},",
-                rust_str(&concat.symbol),
-                rust_str(&concat.layout),
-                concat.arity,
-                rust_str_slice_expr(&concat.inputs)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "pub const {const_prefix}_POINT_CONCATS: &[{stage_type_prefix}PointConcatPlan] = &[\n{concats}\n];\n"
+        "pub const {const_prefix}_POINT_EXPRS: &[{stage_type_prefix}PointExprPlan] = &[\n{exprs}\n];\n\n"
     )
 }
 

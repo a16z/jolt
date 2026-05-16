@@ -27,8 +27,8 @@ pub use bolt_verifier_runtime::{
     FieldExprPlan as Stage2FieldExprPlan,
     ScalarExprPlan as Stage2ScalarExprPlan,
     OpeningBatchPlan as Stage2OpeningBatchPlan, OpeningClaimPlan as Stage2OpeningClaimPlan,
-    OpeningInputPlan as Stage2OpeningInputPlan, PointConcatPlan as Stage2PointConcatPlan,
-    PointSlicePlan as Stage2PointSlicePlan, ProgramStepKind as Stage2ProgramStepKind,
+    OpeningInputPlan as Stage2OpeningInputPlan, PointExprKind as Stage2PointExprKind,
+    PointExprPlan as Stage2PointExprPlan, ProgramStepKind as Stage2ProgramStepKind,
     ProgramStepPlan as Stage2ProgramStepPlan, StageParams as Stage2Params,
     SumcheckBatchPlan as Stage2SumcheckBatchPlan,
     SumcheckEvalPlan as Stage2SumcheckEvalPlan,
@@ -201,13 +201,11 @@ pub const STAGE2_SUMCHECK_EVALS: &[Stage2SumcheckEvalPlan] = &[
     Stage2SumcheckEvalPlan { symbol: "stage2.ram_output.eval.RamValFinal", source: "stage2.sumcheck", name: "stage2.ram_output.eval.RamValFinal", index: 0, oracle: "RamValFinal" },
 ];
 
-pub const STAGE2_POINT_SLICES: &[Stage2PointSlicePlan] = &[
-    Stage2PointSlicePlan { symbol: "stage2.ram_read_write.point.RamInc", source: "stage2.ram_read_write.instance", offset: 16, length: 16, input: "stage2.ram_read_write.instance" },
+pub const STAGE2_POINT_EXPRS: &[Stage2PointExprPlan] = &[
+    Stage2PointExprPlan { symbol: "stage2.ram_read_write.point.RamInc", kind: Stage2PointExprKind::Slice { offset: 16, length: 16 }, operands: &["stage2.ram_read_write.instance"] },
+    Stage2PointExprPlan { symbol: "stage2.ram_raf.point.RamRa", kind: Stage2PointExprKind::Concat { layout: "address_then_cycle", arity: 32 }, operands: &["stage2.ram_raf.instance", "stage2.input.stage1.RamAddress"] },
 ];
 
-pub const STAGE2_POINT_CONCATS: &[Stage2PointConcatPlan] = &[
-    Stage2PointConcatPlan { symbol: "stage2.ram_raf.point.RamRa", layout: "address_then_cycle", arity: 32, inputs: &["stage2.ram_raf.instance", "stage2.input.stage1.RamAddress"] },
-];
 pub const STAGE2_OPENING_CLAIMS: &[Stage2OpeningClaimPlan] = &[
     Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.uniskip.opening.UnivariateSkip", oracle: "UnivariateSkip", domain: "jolt.stage2_uniskip_domain", point_arity: 1, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.product_virtual.uniskip.instance", eval_source: "stage2.product_virtual.uniskip.eval.UnivariateSkip" },
     Stage2OpeningClaimPlan { symbol: "stage2.ram_read_write.opening.RamVal", oracle: "RamVal", domain: "jolt.stage2_ram_rw_domain", point_arity: 32, claim_kind: Stage2ClaimKind::Virtual, point_source: "stage2.ram_read_write.instance", eval_source: "stage2.ram_read_write.eval.RamVal" },
@@ -254,8 +252,7 @@ pub const STAGE2_PROGRAM: Stage2VerifierProgramPlan = Stage2VerifierProgramPlan 
     drivers: STAGE2_SUMCHECK_DRIVERS,
     instance_results: STAGE2_SUMCHECK_INSTANCE_RESULTS,
     evals: STAGE2_SUMCHECK_EVALS,
-    point_slices: STAGE2_POINT_SLICES,
-    point_concats: STAGE2_POINT_CONCATS,
+    point_exprs: STAGE2_POINT_EXPRS,
     opening_claims: STAGE2_OPENING_CLAIMS,
     opening_batches: STAGE2_OPENING_BATCHES,
 };
@@ -626,8 +623,7 @@ impl<F: Field> Stage2ValueStore<F> {
         program: &'static Stage2VerifierProgramPlan,
     ) -> Result<(), VerifyStage2Error> {
         self.0.evaluate_available_points(
-            program.point_slices,
-            program.point_concats,
+            program.point_exprs,
             |input, expected, actual| VerifyStage2Error::InvalidInputLength {
                 input,
                 expected,

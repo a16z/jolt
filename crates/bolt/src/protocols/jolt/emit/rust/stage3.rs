@@ -1216,7 +1216,7 @@ pub use bolt_verifier_runtime::{
     OpeningBatchPlan as Stage3OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage3OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage3OpeningClaimPlan, OpeningInputPlan as Stage3OpeningInputPlan,
-    PointConcatPlan as Stage3PointConcatPlan, PointSlicePlan as Stage3PointSlicePlan,
+    PointExprKind as Stage3PointExprKind, PointExprPlan as Stage3PointExprPlan,
     OpeningEqualityMode as Stage3OpeningEqualityMode,
     ProgramStepKind as Stage3ProgramStepKind, ProgramStepPlan as Stage3ProgramStepPlan,
     StageParams as Stage3Params,
@@ -1301,8 +1301,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
              \x20   evals: STAGE3_SUMCHECK_EVALS,\n\
              \x20   relation_output_values: STAGE3_RELATION_OUTPUT_VALUES,\n\
              \x20   relation_outputs: STAGE3_RELATION_OUTPUTS,\n\
-             \x20   point_slices: STAGE3_POINT_SLICES,\n\
-             \x20   point_concats: STAGE3_POINT_CONCATS,\n\
+             \x20   point_exprs: STAGE3_POINT_EXPRS,\n\
              \x20   opening_claims: STAGE3_OPENING_CLAIMS,\n\
              \x20   opening_equalities: STAGE3_OPENING_EQUALITIES,\n\
              \x20   opening_batches: STAGE3_OPENING_BATCHES,\n\
@@ -1712,8 +1711,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
         let mut source = String::new();
         source.push_str(&self.emit_sumcheck_instance_result_constants()?);
         source.push_str(&self.emit_sumcheck_eval_constants());
-        source.push_str(&self.emit_point_slice_constants());
-        source.push_str(&self.emit_point_concat_constants());
+        source.push_str(&self.emit_point_constants()?);
         source.push_str(&self.emit_opening_claim_constants()?);
         source.push_str(&self.emit_opening_claim_equality_constants()?);
         source.push_str(&self.emit_opening_batch_constants());
@@ -1789,7 +1787,17 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
         )
     }
 
-    fn emit_point_slice_constants(&self) -> String {
+    fn emit_point_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_point_expr_constants(
+                "Stage3",
+                "STAGE3",
+                &plan.point_exprs,
+            ));
+        }
+
+        let mut source = String::new();
         let slices = self
             .point_slices
             .iter()
@@ -1805,31 +1813,12 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
             })
             .collect::<Vec<_>>()
             .join("\n");
-        format!("pub const STAGE3_POINT_SLICES: &[Stage3PointSlicePlan] = &[\n{slices}\n];\n\n")
-    }
-
-    fn emit_point_concat_constants(&self) -> String {
-        if self.role == Role::Verifier {
-            let concats = self
-                .point_concats
-                .iter()
-                .map(|concat| {
-                    format!(
-                        "    Stage3PointConcatPlan {{ symbol: {}, layout: {}, arity: {}, inputs: {} }},",
-                        rust_str(&concat.symbol),
-                        rust_str(&concat.layout),
-                        concat.arity,
-                        super::plan_tokens::rust_str_slice_expr(&concat.inputs)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            return format!(
-                "pub const STAGE3_POINT_CONCATS: &[Stage3PointConcatPlan] = &[\n{concats}\n];\n"
-            );
-        }
-
-        let mut source = String::new();
+        push_format(
+            &mut source,
+            format_args!(
+                "pub const STAGE3_POINT_SLICES: &[Stage3PointSlicePlan] = &[\n{slices}\n];\n\n"
+            ),
+        );
         for (index, concat) in self.point_concats.iter().enumerate() {
             source.push_str(&emit_str_array(
                 &format!("STAGE3_POINT_CONCAT_{index}_INPUTS"),
@@ -1856,7 +1845,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
                 "pub const STAGE3_POINT_CONCATS: &[Stage3PointConcatPlan] = &[\n{concats}\n];\n"
             ),
         );
-        source
+        Ok(source)
     }
 
     fn emit_opening_claim_constants(&self) -> Result<String, EmitError> {
@@ -2144,8 +2133,7 @@ where
     T: Transcript<Challenge = Fr>,
 {
     store.evaluate_available_points(
-        program.point_slices,
-        program.point_concats,
+        program.point_exprs,
         |input, expected, actual| VerifyStage3Error::InvalidInputLength {
             input,
             expected,
@@ -2202,8 +2190,7 @@ fn observe_stage3_sumcheck_output<F: Field>(
         |symbol| VerifyStage3Error::MissingValue { symbol },
     )?;
     store.evaluate_available_points(
-        program.point_slices,
-        program.point_concats,
+        program.point_exprs,
         |input, expected, actual| VerifyStage3Error::InvalidInputLength {
             input,
             expected,

@@ -33,6 +33,46 @@ macro_rules! stage_scalar_expr {
     };
 }
 
+macro_rules! stage_generated_point_exprs {
+    ($module:ident, $point_expr:ident, $program:ident $(, point_zero = $point_zero:ident)?) => {{
+        let mut exprs = Vec::new();
+        $(
+        let _ = stringify!($point_zero);
+        exprs.extend($program.point_zeros.iter().map(|plan| {
+            $module::$point_expr {
+                symbol: super::leak_str(&plan.symbol),
+                kind: bolt_verifier_runtime::PointExprKind::Zero {
+                    field: super::leak_str(&plan.field),
+                    arity: plan.arity,
+                },
+                operands: &[],
+            }
+        }));
+        )?
+        exprs.extend($program.point_slices.iter().map(|plan| {
+            $module::$point_expr {
+                symbol: super::leak_str(&plan.symbol),
+                kind: bolt_verifier_runtime::PointExprKind::Slice {
+                    offset: plan.offset,
+                    length: plan.length,
+                },
+                operands: super::leak_str_slice(std::slice::from_ref(&plan.input)),
+            }
+        }));
+        exprs.extend($program.point_concats.iter().map(|plan| {
+            $module::$point_expr {
+                symbol: super::leak_str(&plan.symbol),
+                kind: bolt_verifier_runtime::PointExprKind::Concat {
+                    layout: super::leak_str(&plan.layout),
+                    arity: plan.arity,
+                },
+                operands: super::leak_str_slice(&plan.inputs),
+            }
+        }));
+        super::leak_slice(exprs)
+    }};
+}
+
 macro_rules! stage_optional_relation_kind {
     (kernel, $value:expr) => {
         $value.map(super::leak_str)
@@ -534,8 +574,6 @@ macro_rules! define_stage_adapter_impl {
         $driver:ident,
         $instance_result:ident,
         $eval:ident,
-        $point_slice:ident,
-        $point_concat:ident,
         $opening_claim:ident,
         $opening_batch:ident
         $(, role = $role_field:ident)?
@@ -543,7 +581,10 @@ macro_rules! define_stage_adapter_impl {
         $(, kernels = $kernel:ident)?
         $(, scalar_expr = $scalar_expr:ident)?
         $(, empty_scalar_exprs = $empty_scalar_exprs:ident)?
-        $(, point_zeros = $point_zero:ident)?
+        $(, generated_points = $generated_point:ident)?
+        $(, generated_points_with_zeros = $generated_point_with_zeros:ident, $generated_point_zero:ident)?
+        $(, kernel_points = $kernel_point_slice:ident, $kernel_point_concat:ident)?
+        $(, kernel_points_with_zeros = $kernel_point_slice_with_zeros:ident, $kernel_point_concat_with_zeros:ident, $kernel_point_zero:ident)?
         $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
         $(, opening_equalities = $opening_equality:ident)?
@@ -763,23 +804,26 @@ macro_rules! define_stage_adapter_impl {
                 },
                 )?
                 $(
-                point_zeros: super::leak_slice(
+                point_exprs: stage_generated_point_exprs!(
+                    $module,
+                    $generated_point,
                     program
-                        .point_zeros
-                        .iter()
-                        .map(|plan| $module::$point_zero {
-                            symbol: super::leak_str(&plan.symbol),
-                            field: super::leak_str(&plan.field),
-                            arity: plan.arity,
-                        })
-                        .collect(),
                 ),
                 )?
+                $(
+                point_exprs: stage_generated_point_exprs!(
+                    $module,
+                    $generated_point_with_zeros,
+                    program,
+                    point_zero = $generated_point_zero
+                ),
+                )?
+                $(
                 point_slices: super::leak_slice(
                     program
                         .point_slices
                         .iter()
-                        .map(|plan| $module::$point_slice {
+                        .map(|plan| $module::$kernel_point_slice {
                             symbol: super::leak_str(&plan.symbol),
                             source: super::leak_str(&plan.source),
                             offset: plan.offset,
@@ -792,7 +836,7 @@ macro_rules! define_stage_adapter_impl {
                     program
                         .point_concats
                         .iter()
-                        .map(|plan| $module::$point_concat {
+                        .map(|plan| $module::$kernel_point_concat {
                             symbol: super::leak_str(&plan.symbol),
                             layout: super::leak_str(&plan.layout),
                             arity: plan.arity,
@@ -800,6 +844,45 @@ macro_rules! define_stage_adapter_impl {
                         })
                         .collect(),
                 ),
+                )?
+                $(
+                point_zeros: super::leak_slice(
+                    program
+                        .point_zeros
+                        .iter()
+                        .map(|plan| $module::$kernel_point_zero {
+                            symbol: super::leak_str(&plan.symbol),
+                            field: super::leak_str(&plan.field),
+                            arity: plan.arity,
+                        })
+                        .collect(),
+                ),
+                point_slices: super::leak_slice(
+                    program
+                        .point_slices
+                        .iter()
+                        .map(|plan| $module::$kernel_point_slice_with_zeros {
+                            symbol: super::leak_str(&plan.symbol),
+                            source: super::leak_str(&plan.source),
+                            offset: plan.offset,
+                            length: plan.length,
+                            input: super::leak_str(&plan.input),
+                        })
+                        .collect(),
+                ),
+                point_concats: super::leak_slice(
+                    program
+                        .point_concats
+                        .iter()
+                        .map(|plan| $module::$kernel_point_concat_with_zeros {
+                            symbol: super::leak_str(&plan.symbol),
+                            layout: super::leak_str(&plan.layout),
+                            arity: plan.arity,
+                            inputs: super::leak_str_slice(&plan.inputs),
+                        })
+                        .collect(),
+                ),
+                )?
                 opening_claims: super::leak_slice(
                     program
                         .opening_claims
@@ -851,7 +934,192 @@ macro_rules! define_stage_adapter_impl {
 
 macro_rules! define_stage_adapter {
     (
-        $mode:ident,
+        generated,
+        $function:ident,
+        $compiler:ty,
+        $module:ident,
+        $program:ident,
+        $params:ident,
+        $step:ident,
+        $squeeze:ident,
+        $absorb:ident,
+        $opening_input:ident,
+        $field_constant:ident,
+        $field_expr:ident,
+        $kernel:ident,
+        $claim:ident,
+        $batch:ident,
+        $driver:ident,
+        $instance_result:ident,
+        $eval:ident,
+        $point_expr:ident,
+        $point_concat:ident,
+        $opening_claim:ident,
+        $opening_equality:ident,
+        $opening_batch:ident,
+        point_zero = $point_zero:ident
+        $(, scalar_expr = $scalar_expr:ident)?
+        $(, empty_scalar_exprs = $empty_scalar_exprs:ident)?
+        $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
+        $(, empty_relation_outputs = $empty_relation_outputs:ident)?
+    ) => {
+        define_stage_adapter_impl!(
+            generated,
+            $function,
+            $compiler,
+            $module,
+            $program,
+            $params,
+            $step,
+            $squeeze,
+            $opening_input,
+            $field_constant,
+            $field_expr,
+            $claim,
+            $batch,
+            $driver,
+            $instance_result,
+            $eval,
+            $opening_claim,
+            $opening_batch,
+            role = role,
+            transcript_absorb_bytes = $absorb,
+            kernels = $kernel
+            $(, scalar_expr = $scalar_expr)?
+            $(, empty_scalar_exprs = $empty_scalar_exprs)?
+            ,
+            generated_points_with_zeros = $point_expr, $point_zero
+            $(, relation_outputs = $relation_output, relation_output_values = $relation_output_value)?
+            $(, empty_relation_outputs = $empty_relation_outputs)?
+            ,
+            opening_equalities = $opening_equality
+        );
+    };
+    (
+        generated,
+        $function:ident,
+        $compiler:ty,
+        $module:ident,
+        $program:ident,
+        $params:ident,
+        $step:ident,
+        $squeeze:ident,
+        $absorb:ident,
+        $opening_input:ident,
+        $field_constant:ident,
+        $field_expr:ident,
+        $kernel:ident,
+        $claim:ident,
+        $batch:ident,
+        $driver:ident,
+        $instance_result:ident,
+        $eval:ident,
+        $point_expr:ident,
+        $point_concat:ident,
+        $opening_claim:ident,
+        $opening_equality:ident,
+        $opening_batch:ident
+        $(, scalar_expr = $scalar_expr:ident)?
+        $(, empty_scalar_exprs = $empty_scalar_exprs:ident)?
+        $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
+        $(, empty_relation_outputs = $empty_relation_outputs:ident)?
+    ) => {
+        define_stage_adapter_impl!(
+            generated,
+            $function,
+            $compiler,
+            $module,
+            $program,
+            $params,
+            $step,
+            $squeeze,
+            $opening_input,
+            $field_constant,
+            $field_expr,
+            $claim,
+            $batch,
+            $driver,
+            $instance_result,
+            $eval,
+            $opening_claim,
+            $opening_batch,
+            role = role,
+            transcript_absorb_bytes = $absorb,
+            kernels = $kernel
+            $(, scalar_expr = $scalar_expr)?
+            $(, empty_scalar_exprs = $empty_scalar_exprs)?
+            ,
+            generated_points = $point_expr
+            $(, relation_outputs = $relation_output, relation_output_values = $relation_output_value)?
+            $(, empty_relation_outputs = $empty_relation_outputs)?
+            ,
+            opening_equalities = $opening_equality
+        );
+    };
+    (
+        kernel,
+        $function:ident,
+        $compiler:ty,
+        $module:ident,
+        $program:ident,
+        $params:ident,
+        $step:ident,
+        $squeeze:ident,
+        $absorb:ident,
+        $opening_input:ident,
+        $field_constant:ident,
+        $field_expr:ident,
+        $kernel:ident,
+        $claim:ident,
+        $batch:ident,
+        $driver:ident,
+        $instance_result:ident,
+        $eval:ident,
+        $point_slice:ident,
+        $point_concat:ident,
+        $opening_claim:ident,
+        $opening_equality:ident,
+        $opening_batch:ident,
+        point_zero = $point_zero:ident
+        $(, scalar_expr = $scalar_expr:ident)?
+        $(, empty_scalar_exprs = $empty_scalar_exprs:ident)?
+        $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
+        $(, empty_relation_outputs = $empty_relation_outputs:ident)?
+    ) => {
+        define_stage_adapter_impl!(
+            kernel,
+            $function,
+            $compiler,
+            $module,
+            $program,
+            $params,
+            $step,
+            $squeeze,
+            $opening_input,
+            $field_constant,
+            $field_expr,
+            $claim,
+            $batch,
+            $driver,
+            $instance_result,
+            $eval,
+            $opening_claim,
+            $opening_batch,
+            role = role,
+            transcript_absorb_bytes = $absorb,
+            kernels = $kernel
+            $(, scalar_expr = $scalar_expr)?
+            $(, empty_scalar_exprs = $empty_scalar_exprs)?
+            ,
+            kernel_points_with_zeros = $point_slice, $point_concat, $point_zero
+            $(, relation_outputs = $relation_output, relation_output_values = $relation_output_value)?
+            $(, empty_relation_outputs = $empty_relation_outputs)?
+            ,
+            opening_equalities = $opening_equality
+        );
+    };
+    (
+        kernel,
         $function:ident,
         $compiler:ty,
         $module:ident,
@@ -874,14 +1142,13 @@ macro_rules! define_stage_adapter {
         $opening_claim:ident,
         $opening_equality:ident,
         $opening_batch:ident
-        $(, point_zero = $point_zero:ident)?
         $(, scalar_expr = $scalar_expr:ident)?
         $(, empty_scalar_exprs = $empty_scalar_exprs:ident)?
         $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
         $(, empty_relation_outputs = $empty_relation_outputs:ident)?
     ) => {
         define_stage_adapter_impl!(
-            $mode,
+            kernel,
             $function,
             $compiler,
             $module,
@@ -897,8 +1164,6 @@ macro_rules! define_stage_adapter {
             $driver,
             $instance_result,
             $eval,
-            $point_slice,
-            $point_concat,
             $opening_claim,
             $opening_batch,
             role = role,
@@ -906,7 +1171,8 @@ macro_rules! define_stage_adapter {
             kernels = $kernel
             $(, scalar_expr = $scalar_expr)?
             $(, empty_scalar_exprs = $empty_scalar_exprs)?
-            $(, point_zeros = $point_zero)?
+            ,
+            kernel_points = $point_slice, $point_concat
             $(, relation_outputs = $relation_output, relation_output_values = $relation_output_value)?
             $(, empty_relation_outputs = $empty_relation_outputs)?
             ,
@@ -917,7 +1183,64 @@ macro_rules! define_stage_adapter {
 
 macro_rules! define_stage_adapter_no_absorb {
     (
-        $mode:ident,
+        generated,
+        $function:ident,
+        $compiler:ty,
+        $module:ident,
+        $program:ident,
+        $params:ident,
+        $step:ident,
+        $squeeze:ident,
+        $opening_input:ident,
+        $field_constant:ident,
+        $field_expr:ident,
+        $claim:ident,
+        $batch:ident,
+        $driver:ident,
+        $instance_result:ident,
+        $eval:ident,
+        $point_expr:ident,
+        $point_concat:ident,
+        $opening_claim:ident,
+        $opening_batch:ident
+        $(, kernels = $kernel:ident)?
+        $(, scalar_expr = $scalar_expr:ident)?
+        $(, empty_scalar_exprs = $empty_scalar_exprs:ident)?
+        $(, relation_outputs = $relation_output:ident, relation_output_values = $relation_output_value:ident)?
+        $(, empty_relation_outputs = $empty_relation_outputs:ident)?
+        $(, opening_equalities = $opening_equality:ident)?
+    ) => {
+        define_stage_adapter_impl!(
+            generated,
+            $function,
+            $compiler,
+            $module,
+            $program,
+            $params,
+            $step,
+            $squeeze,
+            $opening_input,
+            $field_constant,
+            $field_expr,
+            $claim,
+            $batch,
+            $driver,
+            $instance_result,
+            $eval,
+            $opening_claim,
+            $opening_batch
+            $(, kernels = $kernel)?
+            $(, scalar_expr = $scalar_expr)?
+            $(, empty_scalar_exprs = $empty_scalar_exprs)?
+            ,
+            generated_points = $point_expr
+            $(, relation_outputs = $relation_output, relation_output_values = $relation_output_value)?
+            $(, empty_relation_outputs = $empty_relation_outputs)?
+            $(, opening_equalities = $opening_equality)?
+        );
+    };
+    (
+        kernel,
         $function:ident,
         $compiler:ty,
         $module:ident,
@@ -945,7 +1268,7 @@ macro_rules! define_stage_adapter_no_absorb {
         $(, opening_equalities = $opening_equality:ident)?
     ) => {
         define_stage_adapter_impl!(
-            $mode,
+            kernel,
             $function,
             $compiler,
             $module,
@@ -961,13 +1284,13 @@ macro_rules! define_stage_adapter_no_absorb {
             $driver,
             $instance_result,
             $eval,
-            $point_slice,
-            $point_concat,
             $opening_claim,
             $opening_batch
             $(, kernels = $kernel)?
             $(, scalar_expr = $scalar_expr)?
             $(, empty_scalar_exprs = $empty_scalar_exprs)?
+            ,
+            kernel_points = $point_slice, $point_concat
             $(, relation_outputs = $relation_output, relation_output_values = $relation_output_value)?
             $(, empty_relation_outputs = $empty_relation_outputs)?
             $(, opening_equalities = $opening_equality)?

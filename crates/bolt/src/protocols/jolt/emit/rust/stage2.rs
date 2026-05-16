@@ -10,6 +10,7 @@ use crate::protocols::jolt::rust_target_plan::{
     ClaimKind, FieldExprKind, JoltVerifierRelationKind, ProgramStepKind, RustTargetPlanError,
     TranscriptSqueezeKind,
 };
+use crate::protocols::jolt::verifier_plan;
 use crate::schema::verify_cpu_schema;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1002,8 +1003,8 @@ pub use bolt_verifier_runtime::{
     FieldExprPlan as Stage2FieldExprPlan,
     ScalarExprPlan as Stage2ScalarExprPlan,
     OpeningBatchPlan as Stage2OpeningBatchPlan, OpeningClaimPlan as Stage2OpeningClaimPlan,
-    OpeningInputPlan as Stage2OpeningInputPlan, PointConcatPlan as Stage2PointConcatPlan,
-    PointSlicePlan as Stage2PointSlicePlan, ProgramStepKind as Stage2ProgramStepKind,
+    OpeningInputPlan as Stage2OpeningInputPlan, PointExprKind as Stage2PointExprKind,
+    PointExprPlan as Stage2PointExprPlan, ProgramStepKind as Stage2ProgramStepKind,
     ProgramStepPlan as Stage2ProgramStepPlan, StageParams as Stage2Params,
     SumcheckBatchPlan as Stage2SumcheckBatchPlan,
     SumcheckEvalPlan as Stage2SumcheckEvalPlan,
@@ -1115,8 +1116,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage2Error);
              \x20   drivers: STAGE2_SUMCHECK_DRIVERS,\n\
              \x20   instance_results: STAGE2_SUMCHECK_INSTANCE_RESULTS,\n\
              \x20   evals: STAGE2_SUMCHECK_EVALS,\n\
-             \x20   point_slices: STAGE2_POINT_SLICES,\n\
-             \x20   point_concats: STAGE2_POINT_CONCATS,\n\
+             \x20   point_exprs: STAGE2_POINT_EXPRS,\n\
              \x20   opening_claims: STAGE2_OPENING_CLAIMS,\n\
              \x20   opening_batches: STAGE2_OPENING_BATCHES,\n\
              };\n",
@@ -1546,8 +1546,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage2Error);
         let mut source = String::new();
         source.push_str(&self.emit_sumcheck_instance_result_constants()?);
         source.push_str(&self.emit_sumcheck_eval_constants());
-        source.push_str(&self.emit_point_slice_constants());
-        source.push_str(&self.emit_point_concat_constants());
+        source.push_str(&self.emit_point_expr_constants()?);
         source.push_str(&self.emit_opening_claim_constants()?);
         source.push_str(&self.emit_opening_batch_constants());
         Ok(source)
@@ -1605,7 +1604,38 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage2Error);
         format!("pub const STAGE2_SUMCHECK_EVALS: &[Stage2SumcheckEvalPlan] = &[\n{evals}\n];\n\n")
     }
 
-    fn emit_point_slice_constants(&self) -> String {
+    fn emit_point_expr_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let mut point_exprs = self
+                .point_slices
+                .iter()
+                .map(|slice| verifier_plan::VerifierPointExprPlan {
+                    symbol: slice.symbol.clone(),
+                    kind: verifier_plan::VerifierPointExprKind::Slice {
+                        offset: slice.offset,
+                        length: slice.length,
+                    },
+                    operands: vec![slice.input.clone()],
+                })
+                .collect::<Vec<_>>();
+            point_exprs.extend(self.point_concats.iter().map(|concat| {
+                verifier_plan::VerifierPointExprPlan {
+                    symbol: concat.symbol.clone(),
+                    kind: verifier_plan::VerifierPointExprKind::Concat {
+                        layout: concat.layout.clone(),
+                        arity: concat.arity,
+                    },
+                    operands: concat.inputs.clone(),
+                }
+            }));
+            return Ok(verifier_plan::emit_point_expr_constants(
+                "Stage2",
+                "STAGE2",
+                &point_exprs,
+            ));
+        }
+
+        let mut source = String::new();
         let slices = self
             .point_slices
             .iter()
@@ -1621,31 +1651,12 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage2Error);
             })
             .collect::<Vec<_>>()
             .join("\n");
-        format!("pub const STAGE2_POINT_SLICES: &[Stage2PointSlicePlan] = &[\n{slices}\n];\n\n")
-    }
-
-    fn emit_point_concat_constants(&self) -> String {
-        if self.role == Role::Verifier {
-            let concats = self
-                .point_concats
-                .iter()
-                .map(|concat| {
-                    format!(
-                        "    Stage2PointConcatPlan {{ symbol: {}, layout: {}, arity: {}, inputs: {} }},",
-                        rust_str(&concat.symbol),
-                        rust_str(&concat.layout),
-                        concat.arity,
-                        super::plan_tokens::rust_str_slice_expr(&concat.inputs)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            return format!(
-                "pub const STAGE2_POINT_CONCATS: &[Stage2PointConcatPlan] = &[\n{concats}\n];\n"
-            );
-        }
-
-        let mut source = String::new();
+        push_format(
+            &mut source,
+            format_args!(
+                "pub const STAGE2_POINT_SLICES: &[Stage2PointSlicePlan] = &[\n{slices}\n];\n\n"
+            ),
+        );
         for (index, concat) in self.point_concats.iter().enumerate() {
             source.push_str(&emit_str_array(
                 &format!("STAGE2_POINT_CONCAT_{index}_INPUTS"),
@@ -1672,7 +1683,7 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage2Error);
                 "pub const STAGE2_POINT_CONCATS: &[Stage2PointConcatPlan] = &[\n{concats}\n];\n"
             ),
         );
-        source
+        Ok(source)
     }
 
     fn emit_opening_claim_constants(&self) -> Result<String, EmitError> {
@@ -2150,8 +2161,7 @@ impl<F: Field> Stage2ValueStore<F> {
         program: &'static Stage2VerifierProgramPlan,
     ) -> Result<(), VerifyStage2Error> {
         self.0.evaluate_available_points(
-            program.point_slices,
-            program.point_concats,
+            program.point_exprs,
             |input, expected, actual| VerifyStage2Error::InvalidInputLength {
                 input,
                 expected,

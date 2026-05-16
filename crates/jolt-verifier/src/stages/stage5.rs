@@ -12,7 +12,7 @@ pub type Stage5ChallengeVector<F> = bolt_verifier_runtime::StageChallengeVector<
 pub type Stage5ExecutionArtifacts<F> = bolt_verifier_runtime::StageExecutionArtifacts<F>;
 pub type Stage5Proof<F> = bolt_verifier_runtime::StageProof<F>;
 pub type Stage5OpeningInputValue<F> = bolt_verifier_runtime::StageOpeningInputValue<F>;
-pub type Stage5CpuProgramPlan = bolt_verifier_runtime::StageProgramPlanNoPointZeros<Stage5RelationKind>;
+pub type Stage5CpuProgramPlan = bolt_verifier_runtime::StageProgramPlan<Stage5RelationKind>;
 pub type Stage5SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stage5RelationKind>;
 pub type Stage5SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage5RelationKind>;
 pub type Stage5SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage5RelationKind>;
@@ -29,8 +29,8 @@ pub use bolt_verifier_runtime::{
     KernelPlan as Stage5KernelPlan, OpeningBatchPlan as Stage5OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage5OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage5OpeningClaimPlan, OpeningInputPlan as Stage5OpeningInputPlan,
-    OpeningEqualityMode as Stage5OpeningEqualityMode,
-    PointConcatPlan as Stage5PointConcatPlan, PointSlicePlan as Stage5PointSlicePlan,
+    OpeningEqualityMode as Stage5OpeningEqualityMode, PointExprKind as Stage5PointExprKind,
+    PointExprPlan as Stage5PointExprPlan,
     ProgramStepKind as Stage5ProgramStepKind,
     ProgramStepPlan as Stage5ProgramStepPlan, StageParams as Stage5Params,
     SumcheckBatchPlan as Stage5SumcheckBatchPlan,
@@ -313,32 +313,30 @@ pub const STAGE5_INSTRUCTION_READ_RAF_PLAN: Stage5InstructionReadRafPlan = Stage
     log_k: 128,
 };
 
-pub const STAGE5_POINT_SLICES: &[Stage5PointSlicePlan] = &[
-    Stage5PointSlicePlan { symbol: "stage5.instruction_read_raf.point.Cycle", source: "stage5.instruction_read_raf.instance", offset: 128, length: 16, input: "stage5.instruction_read_raf.instance" },
-    Stage5PointSlicePlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_0.address", source: "stage5.instruction_read_raf.instance", offset: 0, length: 16, input: "stage5.instruction_read_raf.instance" },
-    Stage5PointSlicePlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_1.address", source: "stage5.instruction_read_raf.instance", offset: 16, length: 16, input: "stage5.instruction_read_raf.instance" },
-    Stage5PointSlicePlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_2.address", source: "stage5.instruction_read_raf.instance", offset: 32, length: 16, input: "stage5.instruction_read_raf.instance" },
-    Stage5PointSlicePlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_3.address", source: "stage5.instruction_read_raf.instance", offset: 48, length: 16, input: "stage5.instruction_read_raf.instance" },
-    Stage5PointSlicePlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_4.address", source: "stage5.instruction_read_raf.instance", offset: 64, length: 16, input: "stage5.instruction_read_raf.instance" },
-    Stage5PointSlicePlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_5.address", source: "stage5.instruction_read_raf.instance", offset: 80, length: 16, input: "stage5.instruction_read_raf.instance" },
-    Stage5PointSlicePlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_6.address", source: "stage5.instruction_read_raf.instance", offset: 96, length: 16, input: "stage5.instruction_read_raf.instance" },
-    Stage5PointSlicePlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_7.address", source: "stage5.instruction_read_raf.instance", offset: 112, length: 16, input: "stage5.instruction_read_raf.instance" },
-    Stage5PointSlicePlan { symbol: "stage5.ram_ra_claim_reduction.point.RamAddress", source: "stage5.input.stage2.ram_raf.RamRa", offset: 0, length: 16, input: "stage5.input.stage2.ram_raf.RamRa" },
-    Stage5PointSlicePlan { symbol: "stage5.registers_val_evaluation.point.RegisterAddress", source: "stage5.input.stage4.registers.RegistersVal", offset: 0, length: 7, input: "stage5.input.stage4.registers.RegistersVal" },
+pub const STAGE5_POINT_EXPRS: &[Stage5PointExprPlan] = &[
+    Stage5PointExprPlan { symbol: "stage5.instruction_read_raf.point.Cycle", kind: Stage5PointExprKind::Slice { offset: 128, length: 16 }, operands: &["stage5.instruction_read_raf.instance"] },
+    Stage5PointExprPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_0.address", kind: Stage5PointExprKind::Slice { offset: 0, length: 16 }, operands: &["stage5.instruction_read_raf.instance"] },
+    Stage5PointExprPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_1.address", kind: Stage5PointExprKind::Slice { offset: 16, length: 16 }, operands: &["stage5.instruction_read_raf.instance"] },
+    Stage5PointExprPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_2.address", kind: Stage5PointExprKind::Slice { offset: 32, length: 16 }, operands: &["stage5.instruction_read_raf.instance"] },
+    Stage5PointExprPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_3.address", kind: Stage5PointExprKind::Slice { offset: 48, length: 16 }, operands: &["stage5.instruction_read_raf.instance"] },
+    Stage5PointExprPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_4.address", kind: Stage5PointExprKind::Slice { offset: 64, length: 16 }, operands: &["stage5.instruction_read_raf.instance"] },
+    Stage5PointExprPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_5.address", kind: Stage5PointExprKind::Slice { offset: 80, length: 16 }, operands: &["stage5.instruction_read_raf.instance"] },
+    Stage5PointExprPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_6.address", kind: Stage5PointExprKind::Slice { offset: 96, length: 16 }, operands: &["stage5.instruction_read_raf.instance"] },
+    Stage5PointExprPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_7.address", kind: Stage5PointExprKind::Slice { offset: 112, length: 16 }, operands: &["stage5.instruction_read_raf.instance"] },
+    Stage5PointExprPlan { symbol: "stage5.ram_ra_claim_reduction.point.RamAddress", kind: Stage5PointExprKind::Slice { offset: 0, length: 16 }, operands: &["stage5.input.stage2.ram_raf.RamRa"] },
+    Stage5PointExprPlan { symbol: "stage5.registers_val_evaluation.point.RegisterAddress", kind: Stage5PointExprKind::Slice { offset: 0, length: 7 }, operands: &["stage5.input.stage4.registers.RegistersVal"] },
+    Stage5PointExprPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_0", kind: Stage5PointExprKind::Concat { layout: "address_chunk_then_cycle", arity: 32 }, operands: &["stage5.instruction_read_raf.point.InstructionRa_0.address", "stage5.instruction_read_raf.point.Cycle"] },
+    Stage5PointExprPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_1", kind: Stage5PointExprKind::Concat { layout: "address_chunk_then_cycle", arity: 32 }, operands: &["stage5.instruction_read_raf.point.InstructionRa_1.address", "stage5.instruction_read_raf.point.Cycle"] },
+    Stage5PointExprPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_2", kind: Stage5PointExprKind::Concat { layout: "address_chunk_then_cycle", arity: 32 }, operands: &["stage5.instruction_read_raf.point.InstructionRa_2.address", "stage5.instruction_read_raf.point.Cycle"] },
+    Stage5PointExprPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_3", kind: Stage5PointExprKind::Concat { layout: "address_chunk_then_cycle", arity: 32 }, operands: &["stage5.instruction_read_raf.point.InstructionRa_3.address", "stage5.instruction_read_raf.point.Cycle"] },
+    Stage5PointExprPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_4", kind: Stage5PointExprKind::Concat { layout: "address_chunk_then_cycle", arity: 32 }, operands: &["stage5.instruction_read_raf.point.InstructionRa_4.address", "stage5.instruction_read_raf.point.Cycle"] },
+    Stage5PointExprPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_5", kind: Stage5PointExprKind::Concat { layout: "address_chunk_then_cycle", arity: 32 }, operands: &["stage5.instruction_read_raf.point.InstructionRa_5.address", "stage5.instruction_read_raf.point.Cycle"] },
+    Stage5PointExprPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_6", kind: Stage5PointExprKind::Concat { layout: "address_chunk_then_cycle", arity: 32 }, operands: &["stage5.instruction_read_raf.point.InstructionRa_6.address", "stage5.instruction_read_raf.point.Cycle"] },
+    Stage5PointExprPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_7", kind: Stage5PointExprKind::Concat { layout: "address_chunk_then_cycle", arity: 32 }, operands: &["stage5.instruction_read_raf.point.InstructionRa_7.address", "stage5.instruction_read_raf.point.Cycle"] },
+    Stage5PointExprPlan { symbol: "stage5.ram_ra_claim_reduction.point.RamRa", kind: Stage5PointExprKind::Concat { layout: "address_then_cycle", arity: 32 }, operands: &["stage5.ram_ra_claim_reduction.point.RamAddress", "stage5.ram_ra_claim_reduction.instance"] },
+    Stage5PointExprPlan { symbol: "stage5.registers_val_evaluation.point.RdWa", kind: Stage5PointExprKind::Concat { layout: "register_address_then_cycle", arity: 23 }, operands: &["stage5.registers_val_evaluation.point.RegisterAddress", "stage5.registers_val_evaluation.instance"] },
 ];
 
-pub const STAGE5_POINT_CONCATS: &[Stage5PointConcatPlan] = &[
-    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_0", layout: "address_chunk_then_cycle", arity: 32, inputs: &["stage5.instruction_read_raf.point.InstructionRa_0.address", "stage5.instruction_read_raf.point.Cycle"] },
-    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_1", layout: "address_chunk_then_cycle", arity: 32, inputs: &["stage5.instruction_read_raf.point.InstructionRa_1.address", "stage5.instruction_read_raf.point.Cycle"] },
-    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_2", layout: "address_chunk_then_cycle", arity: 32, inputs: &["stage5.instruction_read_raf.point.InstructionRa_2.address", "stage5.instruction_read_raf.point.Cycle"] },
-    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_3", layout: "address_chunk_then_cycle", arity: 32, inputs: &["stage5.instruction_read_raf.point.InstructionRa_3.address", "stage5.instruction_read_raf.point.Cycle"] },
-    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_4", layout: "address_chunk_then_cycle", arity: 32, inputs: &["stage5.instruction_read_raf.point.InstructionRa_4.address", "stage5.instruction_read_raf.point.Cycle"] },
-    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_5", layout: "address_chunk_then_cycle", arity: 32, inputs: &["stage5.instruction_read_raf.point.InstructionRa_5.address", "stage5.instruction_read_raf.point.Cycle"] },
-    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_6", layout: "address_chunk_then_cycle", arity: 32, inputs: &["stage5.instruction_read_raf.point.InstructionRa_6.address", "stage5.instruction_read_raf.point.Cycle"] },
-    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_7", layout: "address_chunk_then_cycle", arity: 32, inputs: &["stage5.instruction_read_raf.point.InstructionRa_7.address", "stage5.instruction_read_raf.point.Cycle"] },
-    Stage5PointConcatPlan { symbol: "stage5.ram_ra_claim_reduction.point.RamRa", layout: "address_then_cycle", arity: 32, inputs: &["stage5.ram_ra_claim_reduction.point.RamAddress", "stage5.ram_ra_claim_reduction.instance"] },
-    Stage5PointConcatPlan { symbol: "stage5.registers_val_evaluation.point.RdWa", layout: "register_address_then_cycle", arity: 23, inputs: &["stage5.registers_val_evaluation.point.RegisterAddress", "stage5.registers_val_evaluation.instance"] },
-];
 pub const STAGE5_OPENING_CLAIMS: &[Stage5OpeningClaimPlan] = &[
     Stage5OpeningClaimPlan { symbol: "stage5.instruction_read_raf.opening.LookupTableFlag_0", oracle: "LookupTableFlag_0", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage5ClaimKind::Virtual, point_source: "stage5.instruction_read_raf.point.Cycle", eval_source: "stage5.instruction_read_raf.eval.LookupTableFlag_0" },
     Stage5OpeningClaimPlan { symbol: "stage5.instruction_read_raf.opening.LookupTableFlag_1", oracle: "LookupTableFlag_1", domain: "jolt.trace_domain", point_arity: 16, claim_kind: Stage5ClaimKind::Virtual, point_source: "stage5.instruction_read_raf.point.Cycle", eval_source: "stage5.instruction_read_raf.eval.LookupTableFlag_1" },
@@ -444,8 +442,7 @@ pub const STAGE5_PROGRAM: Stage5VerifierProgramPlan = Stage5CpuProgramPlan {
     evals: STAGE5_SUMCHECK_EVALS,
     relation_output_values: STAGE5_RELATION_OUTPUT_VALUES,
     relation_outputs: STAGE5_RELATION_OUTPUTS,
-    point_slices: STAGE5_POINT_SLICES,
-    point_concats: STAGE5_POINT_CONCATS,
+    point_exprs: STAGE5_POINT_EXPRS,
     opening_claims: STAGE5_OPENING_CLAIMS,
     opening_equalities: STAGE5_OPENING_EQUALITIES,
     opening_batches: STAGE5_OPENING_BATCHES,
@@ -600,8 +597,7 @@ where
     T: Transcript<Challenge = Fr>,
 {
     store.evaluate_available_points(
-        program.point_slices,
-        program.point_concats,
+        program.point_exprs,
         |input, expected, actual| VerifyStage5Error::InvalidInputLength {
             input,
             expected,
@@ -662,8 +658,7 @@ fn observe_stage5_sumcheck_output<F: Field>(
     )?;
     store.evaluate_named_eval_families(STAGE5_INDEXED_EVAL_FAMILIES)?;
     store.evaluate_available_points(
-        program.point_slices,
-        program.point_concats,
+        program.point_exprs,
         |input, expected, actual| VerifyStage5Error::InvalidInputLength {
             input,
             expected,

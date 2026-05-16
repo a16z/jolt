@@ -97,9 +97,7 @@ impl VerifierFieldVectorSourceSet {
 pub enum VerifierPointSourceKind {
     OpeningInput,
     SumcheckInstance,
-    PointZero,
-    PointSlice,
-    PointConcat,
+    PointExpr,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
