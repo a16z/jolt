@@ -757,7 +757,7 @@ mod tests {
 
         assert_eq!(claim.relation, "jolt.stage6.bytecode_read_raf");
         assert_eq!(
-            claim.expected_output,
+            claim.expected_output_symbol(),
             "stage6.bytecode_read_raf.output.claim_expr"
         );
         assert_eq!(

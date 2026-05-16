@@ -65,6 +65,23 @@ impl VerifierScalarValuePlan {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VerifierScalarValueRef {
+    symbol: String,
+}
+
+impl VerifierScalarValueRef {
+    pub(crate) fn new(symbol: impl Into<String>) -> Self {
+        Self {
+            symbol: symbol.into(),
+        }
+    }
+
+    pub(crate) fn symbol(&self) -> &str {
+        &self.symbol
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct VerifierScalarSourceSet {
     symbols: BTreeMap<String, VerifierScalarSourceKind>,

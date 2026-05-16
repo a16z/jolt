@@ -1722,13 +1722,15 @@ fn stage6_rust_targets_extract_and_compile() {
     let inc_claims = verifier_program
         .relation_outputs
         .iter()
-        .filter(|claim| claim.expected_output == "stage6.inc_claim_reduction.output.claim_expr")
+        .filter(|claim| {
+            claim.expected_output_symbol() == "stage6.inc_claim_reduction.output.claim_expr"
+        })
         .collect::<Vec<_>>();
     assert_eq!(inc_claims.len(), 1);
     let booleanity_claims = verifier_program
         .relation_outputs
         .iter()
-        .filter(|claim| claim.expected_output == "stage6.booleanity.output.claim_expr")
+        .filter(|claim| claim.expected_output_symbol() == "stage6.booleanity.output.claim_expr")
         .collect::<Vec<_>>();
     assert_eq!(booleanity_claims.len(), 1);
     assert!(verifier_program
@@ -1738,25 +1740,31 @@ fn stage6_rust_targets_extract_and_compile() {
     let hamming_claims = verifier_program
         .relation_outputs
         .iter()
-        .filter(|claim| claim.expected_output == "stage6.hamming_booleanity.output.claim_expr")
+        .filter(|claim| {
+            claim.expected_output_symbol() == "stage6.hamming_booleanity.output.claim_expr"
+        })
         .collect::<Vec<_>>();
     assert_eq!(hamming_claims.len(), 1);
     let ram_ra_claims = verifier_program
         .relation_outputs
         .iter()
-        .filter(|claim| claim.expected_output == "stage6.ram_ra_virtual.output.claim_expr")
+        .filter(|claim| claim.expected_output_symbol() == "stage6.ram_ra_virtual.output.claim_expr")
         .collect::<Vec<_>>();
     assert_eq!(ram_ra_claims.len(), 1);
     let instruction_ra_claims = verifier_program
         .relation_outputs
         .iter()
-        .filter(|claim| claim.expected_output == "stage6.instruction_ra_virtual.output.claim_expr")
+        .filter(|claim| {
+            claim.expected_output_symbol() == "stage6.instruction_ra_virtual.output.claim_expr"
+        })
         .collect::<Vec<_>>();
     assert_eq!(instruction_ra_claims.len(), 1);
     let bytecode_claims = verifier_program
         .relation_outputs
         .iter()
-        .filter(|claim| claim.expected_output == "stage6.bytecode_read_raf.output.claim_expr")
+        .filter(|claim| {
+            claim.expected_output_symbol() == "stage6.bytecode_read_raf.output.claim_expr"
+        })
         .collect::<Vec<_>>();
     assert_eq!(bytecode_claims.len(), 1);
     let bytecode_output_scalar_exprs = verifier_program
@@ -2064,7 +2072,7 @@ fn stage7_rust_targets_extract_and_compile() {
     assert!(verifier_program.relation_output_eval_families.is_empty());
     assert_eq!(verifier_program.relation_outputs.len(), 1);
     assert_eq!(
-        verifier_program.relation_outputs[0].expected_output,
+        verifier_program.relation_outputs[0].expected_output_symbol(),
         "stage7.hamming_weight_claim_reduction.output.claim_expr"
     );
     let input_claim = verifier_program

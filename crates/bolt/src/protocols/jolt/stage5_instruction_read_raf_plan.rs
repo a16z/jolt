@@ -380,7 +380,7 @@ mod tests {
             "jolt.stage5.instruction_read_raf"
         );
         assert_eq!(
-            output_plan.claim.expected_output,
+            output_plan.claim.expected_output_symbol(),
             "stage5.instruction_read_raf.output.claim_expr"
         );
         assert_eq!(output_plan.relation_output_values.len(), 1);

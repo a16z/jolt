@@ -12,7 +12,9 @@ use crate::protocols::jolt::rust_target_plan::{
     power_strided_weighted_sum_formula, structured_polynomial_scalar_formula,
 };
 use crate::protocols::jolt::verifier_values::{VerifierPointSourceSet, VerifierScalarSourceSet};
-use crate::protocols::jolt::verifier_values::{VerifierScalarValueKind, VerifierScalarValuePlan};
+use crate::protocols::jolt::verifier_values::{
+    VerifierScalarValueKind, VerifierScalarValuePlan, VerifierScalarValueRef,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StructuredPolynomialKind {
@@ -297,7 +299,7 @@ pub struct RelationOutputFunctionFamilyPlan {
 pub struct RelationOutputPlan {
     pub relation: String,
     local_scalars: Vec<VerifierScalarValuePlan>,
-    pub expected_output: String,
+    expected_output: VerifierScalarValueRef,
 }
 
 impl RelationOutputPlan {
@@ -305,7 +307,7 @@ impl RelationOutputPlan {
         Self {
             relation: relation.into(),
             local_scalars: Vec::new(),
-            expected_output: expected_output.into(),
+            expected_output: VerifierScalarValueRef::new(expected_output),
         }
     }
 
@@ -325,7 +327,7 @@ impl RelationOutputPlan {
                     )
                 })
                 .collect(),
-            expected_output: expected_output.into(),
+            expected_output: VerifierScalarValueRef::new(expected_output),
         }
     }
 
@@ -335,6 +337,10 @@ impl RelationOutputPlan {
 
     pub fn has_local_scalars(&self) -> bool {
         !self.local_scalars.is_empty()
+    }
+
+    pub fn expected_output_symbol(&self) -> &str {
+        self.expected_output.symbol()
     }
 }
 
@@ -1475,10 +1481,11 @@ pub fn verify_relation_outputs(
                 claim.relation
             )));
         }
-        if !field_values.contains(&claim.expected_output) {
+        let expected_output = claim.expected_output_symbol();
+        if !field_values.contains(expected_output) {
             return Err(EmitError::new(format!(
                 "{stage} relation output for @{} uses missing expected output @{}",
-                claim.relation, claim.expected_output
+                claim.relation, expected_output
             )));
         }
         for local_scalar in claim.local_scalar_symbols() {

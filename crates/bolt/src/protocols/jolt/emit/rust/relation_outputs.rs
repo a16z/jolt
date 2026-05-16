@@ -14,7 +14,7 @@ pub fn emit_verifier_relation_output_constants(
         claims.push(format!(
             "    {stage_type}RelationOutputPlan {{ relation: {}, local_scalars: {local_scalars}, expected_output: {} }},",
             super::plan_tokens::role_relation_kind_expr(stage_type, role, &claim.relation)?,
-            rust_str(&claim.expected_output)
+            rust_str(claim.expected_output_symbol())
         ));
     }
     let claims = claims.join("\n");
