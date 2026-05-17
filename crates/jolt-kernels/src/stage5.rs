@@ -438,8 +438,8 @@ impl<'a, F: Field> Stage5ProverInputs<'a, F> {
         .with_field_reg_val(Stage5FieldRegValWitness {
             field_reg_count: jolt_witness::field_reg::FIELD_REG_COUNT,
             trace_len,
-            frd_inc: &witness.fr_zeros_t,
-            frd_wa: &witness.fr_zeros_k_t,
+            frd_inc: &witness.frd_inc,
+            frd_wa: &witness.frd_wa,
         })
     }
 }

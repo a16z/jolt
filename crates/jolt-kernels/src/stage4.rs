@@ -557,11 +557,11 @@ impl<'a, F: Field> Stage4ProverInputs<'a, F> {
         .with_field_reg(Stage4FieldRegWitness {
             field_reg_count: jolt_witness::field_reg::FIELD_REG_COUNT,
             trace_len,
-            field_reg_val: &witness.fr_zeros_k_t,
-            frs1_ra: &witness.fr_zeros_k_t,
-            frs2_ra: &witness.fr_zeros_k_t,
-            frd_wa: &witness.fr_zeros_k_t,
-            frd_inc: &witness.fr_zeros_t,
+            field_reg_val: &witness.field_reg_val,
+            frs1_ra: &witness.frs1_ra,
+            frs2_ra: &witness.frs2_ra,
+            frd_wa: &witness.frd_wa,
+            frd_inc: &witness.frd_inc,
         })
     }
 }

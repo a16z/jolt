@@ -382,14 +382,46 @@ pub fn optional_usize_column(
     values.into_iter().collect()
 }
 
+/// Stage 4/5 sparse trace witness with materialized FR Twist polynomials.
+///
+/// The five FR buffers (`field_reg_val`, `frs1_ra`, `frs2_ra`, `frd_wa`,
+/// `frd_inc`) default to all-zero shape — Stage 4 FieldRegRW and Stage 5
+/// FieldRegValEvaluation then evaluate to zero claims that are trivially
+/// satisfied. To activate FR-active witness generation for a trace carrying
+/// FieldRegEvents, attach a [`field_reg::FieldRegReplay`] via
+/// [`Stage45SparseTraceWitness::with_field_reg_replay`] before passing the
+/// witness to `Stage4ProverInputs::with_stage45_sparse_trace_witness`.
 #[derive(Clone, Debug)]
 pub struct Stage45SparseTraceWitness<F: Field> {
     pub rd_inc: Vec<F>,
     pub ram_addresses: Vec<Option<usize>>,
     pub ram_inc: Vec<F>,
     pub rd_write_addresses: Vec<Option<usize>>,
-    pub fr_zeros_k_t: Vec<F>,
-    pub fr_zeros_t: Vec<F>,
+    pub field_reg_val: Vec<F>,
+    pub frs1_ra: Vec<F>,
+    pub frs2_ra: Vec<F>,
+    pub frd_wa: Vec<F>,
+    pub frd_inc: Vec<F>,
+}
+
+impl<F: Field> Stage45SparseTraceWitness<F> {
+    /// Replace the inert (all-zero) FR Twist buffers with materialized
+    /// polynomials computed from `replay`. If `replay.events` is empty the
+    /// materializers still return zero shapes — same as the default — so
+    /// this call is safe to make unconditionally from FR-active call sites.
+    pub fn with_field_reg_replay(mut self, replay: &field_reg::FieldRegReplay) -> Self {
+        assert_eq!(
+            replay.num_cycles,
+            self.rd_inc.len(),
+            "FieldRegReplay.num_cycles must match the trace length"
+        );
+        self.field_reg_val = replay.materialize_field_reg_val::<F>();
+        self.frs1_ra = replay.materialize_frs1_ra::<F>();
+        self.frs2_ra = replay.materialize_frs2_ra::<F>();
+        self.frd_wa = replay.materialize_frd_wa::<F>();
+        self.frd_inc = replay.materialize_frd_inc::<F>();
+        self
+    }
 }
 
 pub fn stage4_5_sparse_trace_witness<F: Field>(
@@ -424,8 +456,11 @@ pub fn stage4_5_sparse_trace_witness<F: Field>(
         ram_addresses,
         ram_inc,
         rd_write_addresses,
-        fr_zeros_k_t,
-        fr_zeros_t,
+        field_reg_val: fr_zeros_k_t.clone(),
+        frs1_ra: fr_zeros_k_t.clone(),
+        frs2_ra: fr_zeros_k_t.clone(),
+        frd_wa: fr_zeros_k_t,
+        frd_inc: fr_zeros_t,
     }
 }
 
