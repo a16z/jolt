@@ -1,0 +1,11 @@
+[package]
+name = "bn254-fr-poseidon2-sdk"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-sdk = { workspace = true, features = ["host"] }
+jolt-inlines-bn254-fr = { workspace = true, features = ["host"] }
+tracing-subscriber.workspace = true
+tracing.workspace = true
+guest = { package = "bn254-fr-poseidon2-sdk-guest", path = "./guest" }

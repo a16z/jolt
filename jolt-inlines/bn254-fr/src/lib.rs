@@ -41,4 +41,7 @@ pub const FUNCT3_FIELD_SLL192: u32 = 0x02;
 /// Number of 256-bit field registers in the FR coprocessor's register file.
 pub const FIELD_REG_COUNT: usize = 16;
 
+pub mod encode;
 pub mod sdk;
+
+pub use sdk::Fr;

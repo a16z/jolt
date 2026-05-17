@@ -505,6 +505,54 @@ fn convert_fr_events(
         .collect()
 }
 
+/// Post-process R1CS witness to populate FR slots (V_FIELD_RS1_VALUE,
+/// V_FIELD_RS2_VALUE, V_FIELD_RD_WRITE_VALUE) on FR-active cycles.
+///
+/// `extract_trace_rows` leaves these slots at zero — the R1CS witness
+/// generator doesn't know about FR events. Stage 3 FieldRegClaimReduction
+/// reads these slots via the oracle plumbing and publishes the claim that
+/// Stage 4 FieldRegRW must reconcile against materialized FR polynomials.
+/// Without this pass the two sides disagree and Stage 4 fails with an
+/// input-claim mismatch.
+///
+/// Walks the FR replay's running state to derive pre-values for each event
+/// (rs1_pre = state[frs1] at cycle c, rs2_pre = state[frs2], rd_post = the
+/// post-event new value). Encodes via `limbs_to_field` (natural-form
+/// `a0 + a1·2^64 + a2·2^128 + a3·2^192`) to match the materializer.
+fn populate_r1cs_fr_slots(
+    r1cs_witness: &mut [Fr],
+    num_vars_padded: usize,
+    trace: &[TraceRow],
+    replay: &jolt_witness::field_reg::FieldRegReplay,
+) {
+    use jolt_witness::field_reg::{limbs_to_field, FieldRegEvent, FIELD_REG_COUNT};
+    if replay.events.is_empty() {
+        return;
+    }
+    let mut current: [Fr; FIELD_REG_COUNT] = [Fr::from_u64(0); FIELD_REG_COUNT];
+    let mut events = replay.events.iter().peekable();
+    for c in 0..replay.num_cycles.min(trace.len()) {
+        let offset = c * num_vars_padded;
+        let bc = replay.bytecode.get(c).copied().unwrap_or_default();
+        if bc.reads_frs1 {
+            let slot = (bc.frs1 as usize) & 0xF;
+            r1cs_witness[offset + rv64::V_FIELD_RS1_VALUE] = current[slot];
+        }
+        if bc.reads_frs2 {
+            let slot = (bc.frs2 as usize) & 0xF;
+            r1cs_witness[offset + rv64::V_FIELD_RS2_VALUE] = current[slot];
+        }
+        if let Some(ev) = events.next_if(|ev: &&FieldRegEvent| ev.cycle as usize == c) {
+            if ev.rd_written {
+                let slot = (ev.frd as usize) & 0xF;
+                let post: Fr = limbs_to_field(ev.rd_post.into_limbs());
+                r1cs_witness[offset + rv64::V_FIELD_RD_WRITE_VALUE] = post;
+                current[slot] = post;
+            }
+        }
+    }
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "thin internal helper; arguments are derived state from prove_program"
@@ -524,13 +572,27 @@ fn assemble_and_prove(
     let memory_layout = io_device.memory_layout.clone();
 
     let r1cs_key = R1csKey::new(rv64::rv64_constraints::<Fr>(), trace_length);
-    let (cycle_inputs, r1cs_witness) = extract_trace_rows::<Fr>(
+    let (cycle_inputs, mut r1cs_witness) = extract_trace_rows::<Fr>(
         trace,
         trace_length,
         bytecode,
         &memory_layout,
         r1cs_key.num_vars_padded,
     );
+
+    // Build the FR replay early so it can populate both the R1CS witness's
+    // FR slots (V_FIELD_RS1/RS2/RD_WRITE_VALUE) and Stage 4/5 materializers
+    // off the same event stream + bytecode metadata.
+    let fr_replay = jolt_witness::field_reg::FieldRegReplay {
+        num_cycles: trace_length,
+        bytecode: {
+            let mut bc = fr_bytecode_from_trace(trace);
+            bc.resize(trace_length, jolt_witness::field_reg::FrCycleBytecode::default());
+            bc
+        },
+        events: convert_fr_events(field_reg_events),
+    };
+    populate_r1cs_fr_slots(&mut r1cs_witness, r1cs_key.num_vars_padded, trace, &fr_replay);
     let rv64_cycles: Vec<Stage1Rv64Cycle> = stage1_rv64_cycles(trace, trace_length, bytecode);
     let product_virtual_cycles = stage2_product_virtual_cycles(trace, trace_length);
     let instruction_lookup_cycles = stage2_instruction_lookup_cycles(trace, trace_length);
@@ -645,15 +707,6 @@ fn assemble_and_prove(
         &stage2_artifacts,
         &stage3_artifacts,
     )?;
-    let fr_replay = jolt_witness::field_reg::FieldRegReplay {
-        num_cycles: params.trace_length,
-        bytecode: {
-            let mut bc = fr_bytecode_from_trace(trace);
-            bc.resize(params.trace_length, jolt_witness::field_reg::FrCycleBytecode::default());
-            bc
-        },
-        events: convert_fr_events(field_reg_events),
-    };
     let mut stage45_witness = jolt_kernels::stage4::stage4_5_sparse_trace_witness_from_accesses::<Fr>(
         &stage4_register_accesses_vec,
         &ram_accesses,

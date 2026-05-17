@@ -1115,6 +1115,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "bn254-fr-poseidon2-sdk"
+version = "0.1.0"
+dependencies = [
+ "bn254-fr-poseidon2-sdk-guest",
+ "jolt-inlines-bn254-fr",
+ "jolt-sdk",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "bn254-fr-poseidon2-sdk-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-bn254-fr",
+ "jolt-sdk",
+]
+
+[[package]]
 name = "bolt"
 version = "0.1.0"
 dependencies = [

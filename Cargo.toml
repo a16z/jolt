@@ -86,6 +86,8 @@ members = [
   "examples/stdlib/guest",
   "examples/bn254-fr-poseidon2-arkworks",
   "examples/bn254-fr-poseidon2-arkworks/guest",
+  "examples/bn254-fr-poseidon2-sdk",
+  "examples/bn254-fr-poseidon2-sdk/guest",
   "examples/muldiv",
   "examples/muldiv/guest",
   "examples/overflow",

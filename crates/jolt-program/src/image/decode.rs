@@ -56,7 +56,8 @@ pub fn decode_instruction(
         0b0001111 => SourceInstructionKind::FENCE,
         0b0101111 => decode_amo(word)?,
         0b1110011 => decode_system(word)?,
-        0b0001011 | 0b0101011 => SourceInstructionKind::Inline,
+        0b0001011 => decode_field_op_or_inline(word)?,
+        0b0101011 => SourceInstructionKind::Inline,
         0b1011011 => decode_custom(word)?,
         _ => return invalid("unknown RV64 opcode"),
     };
@@ -167,6 +168,22 @@ fn decode_system(word: u32) -> Result<SourceInstructionKind, ProgramError> {
         (1, _, _) => Ok(SourceInstructionKind::CSRRW),
         (2, _, _) => Ok(SourceInstructionKind::CSRRS),
         _ => invalid("unsupported system instruction"),
+    }
+}
+
+/// Custom-0 opcode (0x0B) is shared between the BN254 Fr coprocessor instructions
+/// (FieldOp/FieldAssertEq/FieldMov/FieldSLL*) and the general Inline mechanism.
+/// FR ops are recognized by their funct7 = 0x40 (FieldOp/AssertEq/Mov) or 0x41
+/// (FieldSLL* family); anything else falls back to Inline dispatch.
+fn decode_field_op_or_inline(word: u32) -> Result<SourceInstructionKind, ProgramError> {
+    match (funct7(word), funct3(word)) {
+        (0x40, 0x02..=0x05) => Ok(SourceInstructionKind::FieldOp),
+        (0x40, 0x06) => Ok(SourceInstructionKind::FieldAssertEq),
+        (0x40, 0x07) => Ok(SourceInstructionKind::FieldMov),
+        (0x41, 0x00) => Ok(SourceInstructionKind::FieldSLL64),
+        (0x41, 0x01) => Ok(SourceInstructionKind::FieldSLL128),
+        (0x41, 0x02) => Ok(SourceInstructionKind::FieldSLL192),
+        _ => Ok(SourceInstructionKind::Inline),
     }
 }
 
@@ -299,6 +316,14 @@ fn uses_r_format(instruction_kind: JoltInstructionKind) -> bool {
             | JoltInstructionKind::DIVUW
             | JoltInstructionKind::REMW
             | JoltInstructionKind::REMUW
+            // BN254 Fr coprocessor ops — R-type with frd/frs1/frs2 (or rs1
+            // for the bridge ops; rs2 is reserved/0).
+            | JoltInstructionKind::FieldOp
+            | JoltInstructionKind::FieldAssertEq
+            | JoltInstructionKind::FieldMov
+            | JoltInstructionKind::FieldSLL64
+            | JoltInstructionKind::FieldSLL128
+            | JoltInstructionKind::FieldSLL192
     )
 }
 
