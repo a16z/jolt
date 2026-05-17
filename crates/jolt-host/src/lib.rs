@@ -758,7 +758,7 @@ fn assemble_and_prove(
         &stage4_register_accesses_vec,
         &ram_accesses,
     );
-    stage45_witness = stage45_witness.with_field_reg_replay(&fr_replay);
+    stage45_witness = stage45_witness.with_field_reg_replay(fr_replay.clone());
 
     let stage4_artifacts = jolt_prover::prove_stage4_with_witness_inputs(
         programs.stage4,

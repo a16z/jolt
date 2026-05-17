@@ -118,7 +118,16 @@ impl RISCVInstruction for FieldOp {
             FUNCT3_FMUL => a * b,
             FUNCT3_FADD => a + b,
             FUNCT3_FSUB => a - b,
-            FUNCT3_FINV => a.inverse().unwrap_or(Fr::from(0u64)),
+            // FINV(0) is unsatisfiable (the R1CS row `rs1 · rd = 1` has no
+            // solution for `rs1 = 0`). The SDK's `Fr::inverse()` returns
+            // `Option<Fr>` and guards the zero case before emitting a
+            // FieldOp(FINV) cycle. Inline-asm callers that bypass the SDK
+            // guard land here — panic so the prover refuses to produce a
+            // non-provable trace rather than silently filling in zero and
+            // failing later during Stage 4 RW.
+            FUNCT3_FINV => a
+                .inverse()
+                .expect("FieldOp(FINV) on zero input; the SDK guards this via Fr::inverse() -> Option<Fr>"),
             other => panic!("invalid FieldOp funct3: {other:#x}"),
         };
 

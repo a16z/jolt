@@ -382,44 +382,40 @@ pub fn optional_usize_column(
     values.into_iter().collect()
 }
 
-/// Stage 4/5 sparse trace witness with materialized FR Twist polynomials.
+/// Stage 4/5 sparse trace witness.
 ///
-/// The five FR buffers (`field_reg_val`, `frs1_ra`, `frs2_ra`, `frd_wa`,
-/// `frd_inc`) default to all-zero shape — Stage 4 FieldRegRW and Stage 5
-/// FieldRegValEvaluation then evaluate to zero claims that are trivially
-/// satisfied. To activate FR-active witness generation for a trace carrying
-/// FieldRegEvents, attach a [`field_reg::FieldRegReplay`] via
-/// [`Stage45SparseTraceWitness::with_field_reg_replay`] before passing the
-/// witness to `Stage4ProverInputs::with_stage45_sparse_trace_witness`.
+/// FR Twist witness data is stored as a sparse [`field_reg::FieldRegReplay`]
+/// (bytecode + event stream) rather than as 5 pre-materialized `K_FR × T`
+/// dense vectors. Stage 4/5 kernels call `replay.materialize_*` to expand
+/// only the polys they need, kernel-scoped — host RSS stays ~10 MB
+/// regardless of trace length instead of paying the ~500 MB the dense
+/// materialization would cost. Empty `replay` (no FR events) is the inert
+/// default — kernels short-circuit to zero-claim states.
 #[derive(Clone, Debug)]
 pub struct Stage45SparseTraceWitness<F: Field> {
     pub rd_inc: Vec<F>,
     pub ram_addresses: Vec<Option<usize>>,
     pub ram_inc: Vec<F>,
     pub rd_write_addresses: Vec<Option<usize>>,
-    pub field_reg_val: Vec<F>,
-    pub frs1_ra: Vec<F>,
-    pub frs2_ra: Vec<F>,
-    pub frd_wa: Vec<F>,
-    pub frd_inc: Vec<F>,
+    /// Sparse FR replay: bytecode metadata + FR event stream. Empty `events`
+    /// is the inert default; `with_field_reg_replay` overlays a real replay.
+    pub fr_replay: field_reg::FieldRegReplay,
+    // Phantom to keep the existing `<F: Field>` API surface intact —
+    // FR materialization is generic over `F` but the replay itself is not.
+    _field: core::marker::PhantomData<F>,
 }
 
 impl<F: Field> Stage45SparseTraceWitness<F> {
-    /// Replace the inert (all-zero) FR Twist buffers with materialized
-    /// polynomials computed from `replay`. If `replay.events` is empty the
-    /// materializers still return zero shapes — same as the default — so
-    /// this call is safe to make unconditionally from FR-active call sites.
-    pub fn with_field_reg_replay(mut self, replay: &field_reg::FieldRegReplay) -> Self {
+    /// Attach the FR Twist replay. Kernels later call
+    /// `self.fr_replay.materialize_*::<F>()` for the polys they need.
+    /// Empty `replay.events` leaves the witness in the inert shape.
+    pub fn with_field_reg_replay(mut self, replay: field_reg::FieldRegReplay) -> Self {
         assert_eq!(
             replay.num_cycles,
             self.rd_inc.len(),
             "FieldRegReplay.num_cycles must match the trace length"
         );
-        self.field_reg_val = replay.materialize_field_reg_val::<F>();
-        self.frs1_ra = replay.materialize_frs1_ra::<F>();
-        self.frs2_ra = replay.materialize_frs2_ra::<F>();
-        self.frd_wa = replay.materialize_frd_wa::<F>();
-        self.frd_inc = replay.materialize_frd_inc::<F>();
+        self.fr_replay = replay;
         self
     }
 }
@@ -448,19 +444,14 @@ pub fn stage4_5_sparse_trace_witness<F: Field>(
     }
 
     let trace_len = rd_inc.len();
-    let fr_zeros_t = vec![F::zero(); trace_len];
-    let fr_zeros_k_t = vec![F::zero(); field_reg::FIELD_REG_COUNT * trace_len];
 
     Stage45SparseTraceWitness {
         rd_inc,
         ram_addresses,
         ram_inc,
         rd_write_addresses,
-        field_reg_val: fr_zeros_k_t.clone(),
-        frs1_ra: fr_zeros_k_t.clone(),
-        frs2_ra: fr_zeros_k_t.clone(),
-        frd_wa: fr_zeros_k_t,
-        frd_inc: fr_zeros_t,
+        fr_replay: field_reg::FieldRegReplay::empty(trace_len),
+        _field: core::marker::PhantomData,
     }
 }
 

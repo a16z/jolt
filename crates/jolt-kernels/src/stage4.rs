@@ -455,15 +455,16 @@ pub struct Stage4RamWitness<'a, F: Field> {
     pub ram_inc: &'a [F],
 }
 
+/// Stage 4 FieldRegRW input — sparse FR replay only. The kernel materializes
+/// the `K_FR × T` and `T`-sized dense polynomials (field_reg_val, frs1_ra,
+/// frs2_ra, frd_wa, frd_inc) inside `field_reg_rw_state` for the lifetime
+/// of the Stage 4 sumcheck, keeping the host-side witness storage at
+/// `O(events + cycles)` bytes instead of `O(K_FR × T × 32)`.
 #[derive(Clone, Copy)]
-pub struct Stage4FieldRegWitness<'a, F: Field> {
+pub struct Stage4FieldRegWitness<'a> {
     pub field_reg_count: usize,
     pub trace_len: usize,
-    pub field_reg_val: &'a [F],
-    pub frs1_ra: &'a [F],
-    pub frs2_ra: &'a [F],
-    pub frd_wa: &'a [F],
-    pub frd_inc: &'a [F],
+    pub replay: &'a jolt_witness::field_reg::FieldRegReplay,
 }
 
 #[derive(Clone, Copy)]
@@ -471,7 +472,7 @@ pub struct Stage4ProverInputs<'a, F: Field> {
     pub opening_inputs: &'a [Stage4OpeningInputValue<F>],
     pub registers: Option<Stage4RegistersWitness<'a, F>>,
     pub ram: Option<Stage4RamWitness<'a, F>>,
-    pub field_reg: Option<Stage4FieldRegWitness<'a, F>>,
+    pub field_reg: Option<Stage4FieldRegWitness<'a>>,
 }
 
 impl<'a, F: Field> Stage4ProverInputs<'a, F> {
@@ -503,7 +504,7 @@ impl<'a, F: Field> Stage4ProverInputs<'a, F> {
         self
     }
 
-    pub fn with_field_reg(mut self, field_reg: Stage4FieldRegWitness<'a, F>) -> Self {
+    pub fn with_field_reg(mut self, field_reg: Stage4FieldRegWitness<'a>) -> Self {
         self.field_reg = Some(field_reg);
         self
     }
@@ -557,11 +558,7 @@ impl<'a, F: Field> Stage4ProverInputs<'a, F> {
         .with_field_reg(Stage4FieldRegWitness {
             field_reg_count: jolt_witness::field_reg::FIELD_REG_COUNT,
             trace_len,
-            field_reg_val: &witness.field_reg_val,
-            frs1_ra: &witness.frs1_ra,
-            frs2_ra: &witness.frs2_ra,
-            frd_wa: &witness.frd_wa,
-            frd_inc: &witness.frd_inc,
+            replay: &witness.fr_replay,
         })
     }
 }
@@ -2196,14 +2193,6 @@ fn field_reg_rw_state<F: Field>(
         kernel: "jolt_stage4_batched",
         input: "field_reg",
     })?;
-    let expected_len = witness
-        .field_reg_count
-        .checked_mul(witness.trace_len)
-        .ok_or(Stage4KernelError::InvalidInputLength {
-            input: "stage4.field_reg",
-            expected: usize::MAX,
-            actual: witness.field_reg_count,
-        })?;
     let trace_point = store.point("stage4.input.stage3.field_reg.FieldRdWriteValue")?;
     let address_rounds = log2_exact(witness.field_reg_count, "stage4.field_reg_count")?;
     let trace_rounds = log2_exact(witness.trace_len, "stage4.trace_len")?;
@@ -2213,36 +2202,37 @@ fn field_reg_rw_state<F: Field>(
         trace_point.len(),
     )?;
     require_operand_count(claim.symbol, address_rounds + trace_rounds, claim.num_rounds)?;
-    require_operand_count(
-        "stage4.field_reg.FieldRegVal",
-        expected_len,
-        witness.field_reg_val.len(),
-    )?;
-    require_operand_count("stage4.field_reg.FrRs1Ra", expected_len, witness.frs1_ra.len())?;
-    require_operand_count("stage4.field_reg.FrRs2Ra", expected_len, witness.frs2_ra.len())?;
-    require_operand_count("stage4.field_reg.FrdWa", expected_len, witness.frd_wa.len())?;
-    require_operand_count(
-        "stage4.field_reg.FrdInc",
-        witness.trace_len,
-        witness.frd_inc.len(),
-    )?;
+    assert_eq!(
+        witness.replay.num_cycles, witness.trace_len,
+        "FieldRegReplay.num_cycles must match the FR RW trace_len"
+    );
     let gamma = store.scalar("stage4.field_reg_rw.gamma")?;
     let gamma2 = store
         .try_scalar("stage4.field_reg_rw.gamma2")
         .unwrap_or_else(|| gamma * gamma);
+    // Materialize the FR Twist factors kernel-locally — they live only for
+    // the duration of Stage 4 RW's sumcheck rounds, then drop. Host-side
+    // `Stage45SparseTraceWitness` carries just the sparse replay (~10 MB)
+    // rather than these `K_FR × T` dense buffers (~512 MB).
+    let field_reg_val = witness.replay.materialize_field_reg_val::<F>();
+    let frs1_ra = witness.replay.materialize_frs1_ra::<F>();
+    let frs2_ra = witness.replay.materialize_frs2_ra::<F>();
+    let frd_wa = witness.replay.materialize_frd_wa::<F>();
+    let frd_inc = witness.replay.materialize_frd_inc::<F>();
+    let expected_len = witness.field_reg_count * witness.trace_len;
     let eq_cycle = EqPolynomial::<F>::evals(trace_point, None);
     let mut eq_cycle_expanded = Vec::with_capacity(expected_len);
     let mut frd_inc_expanded = Vec::with_capacity(expected_len);
     for _address in 0..witness.field_reg_count {
         eq_cycle_expanded.extend_from_slice(&eq_cycle);
-        frd_inc_expanded.extend_from_slice(witness.frd_inc);
+        frd_inc_expanded.extend_from_slice(&frd_inc);
     }
     Ok(field_reg_dense_state(
         eq_cycle_expanded,
-        witness.field_reg_val.to_vec(),
-        witness.frs1_ra.to_vec(),
-        witness.frs2_ra.to_vec(),
-        witness.frd_wa.to_vec(),
+        field_reg_val,
+        frs1_ra,
+        frs2_ra,
+        frd_wa,
         frd_inc_expanded,
         gamma,
         gamma2,

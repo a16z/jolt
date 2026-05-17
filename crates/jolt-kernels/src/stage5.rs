@@ -289,12 +289,15 @@ pub struct Stage5RegistersValWitness<'a, F: Field> {
     pub rd_write_addresses: Option<&'a [Option<usize>]>,
 }
 
+/// Stage 5 FieldRegValEvaluation input — sparse FR replay only. The kernel
+/// materializes the `K_FR × T` `frd_wa` and `T` `frd_inc` polys kernel-
+/// locally so host-side `Stage45SparseTraceWitness` carries just the sparse
+/// replay. Matches the Stage 4 RW sparsification.
 #[derive(Clone, Copy)]
-pub struct Stage5FieldRegValWitness<'a, F: Field> {
+pub struct Stage5FieldRegValWitness<'a> {
     pub field_reg_count: usize,
     pub trace_len: usize,
-    pub frd_inc: &'a [F],
-    pub frd_wa: &'a [F],
+    pub replay: &'a jolt_witness::field_reg::FieldRegReplay,
 }
 
 #[derive(Clone, Copy)]
@@ -327,7 +330,7 @@ pub struct Stage5ProverInputs<'a, F: Field> {
     pub instruction_read_raf: Option<Stage5InstructionReadRafWitness<'a>>,
     pub ram_ra: Option<Stage5RamRaWitness<'a, F>>,
     pub registers_val: Option<Stage5RegistersValWitness<'a, F>>,
-    pub field_reg_val: Option<Stage5FieldRegValWitness<'a, F>>,
+    pub field_reg_val: Option<Stage5FieldRegValWitness<'a>>,
 }
 
 impl<'a, F: Field> Stage5ProverInputs<'a, F> {
@@ -371,7 +374,7 @@ impl<'a, F: Field> Stage5ProverInputs<'a, F> {
 
     pub fn with_field_reg_val(
         mut self,
-        field_reg_val: Stage5FieldRegValWitness<'a, F>,
+        field_reg_val: Stage5FieldRegValWitness<'a>,
     ) -> Self {
         self.field_reg_val = Some(field_reg_val);
         self
@@ -438,8 +441,7 @@ impl<'a, F: Field> Stage5ProverInputs<'a, F> {
         .with_field_reg_val(Stage5FieldRegValWitness {
             field_reg_count: jolt_witness::field_reg::FIELD_REG_COUNT,
             trace_len,
-            frd_inc: &witness.frd_inc,
-            frd_wa: &witness.frd_wa,
+            replay: &witness.fr_replay,
         })
     }
 }
@@ -2927,11 +2929,6 @@ fn field_reg_val_evaluation_state<F: Field>(
             input: "field_reg_val",
         })?;
     require_operand_count(
-        "stage5.field_reg_val_evaluation.FrdInc",
-        witness.trace_len,
-        witness.frd_inc.len(),
-    )?;
-    require_operand_count(
         "stage5.field_reg_val_evaluation.input",
         log2_exact(witness.trace_len, "stage5.trace_len")?,
         claim.num_rounds,
@@ -2948,6 +2945,12 @@ fn field_reg_val_evaluation_state<F: Field>(
     let (address_point, cycle_point) = field_reg_val_point.split_at(address_rounds);
     let address_eq = EqPolynomial::<F>::evals(address_point, None);
     let frd_wa_at_address = frd_wa_at_field_reg_address(witness, &address_eq)?;
+    let frd_inc = witness.replay.materialize_frd_inc::<F>();
+    require_operand_count(
+        "stage5.field_reg_val_evaluation.FrdInc",
+        witness.trace_len,
+        frd_inc.len(),
+    )?;
     let lt = lt_evals_big_endian(cycle_point);
     require_operand_count(
         "stage5.field_reg_val_evaluation.lt",
@@ -2956,7 +2959,7 @@ fn field_reg_val_evaluation_state<F: Field>(
     )?;
 
     Ok(DenseStage5State::new(
-        vec![witness.frd_inc.to_vec(), frd_wa_at_address, lt],
+        vec![frd_inc, frd_wa_at_address, lt],
         vec![DenseTerm {
             coefficient: F::one(),
             factors: vec![0, 1, 2],
@@ -2978,28 +2981,27 @@ fn field_reg_val_evaluation_state<F: Field>(
 }
 
 fn frd_wa_at_field_reg_address<F: Field>(
-    witness: Stage5FieldRegValWitness<'_, F>,
+    witness: Stage5FieldRegValWitness<'_>,
     address_eq: &[F],
 ) -> Result<Vec<F>, Stage5KernelError> {
-    let expected_len = witness
-        .field_reg_count
-        .checked_mul(witness.trace_len)
-        .ok_or(Stage5KernelError::InvalidInputLength {
-            input: "stage5.field_reg_val_evaluation.FrdWa",
-            expected: usize::MAX,
-            actual: witness.field_reg_count,
-        })?;
-    require_operand_count(
-        "stage5.field_reg_val_evaluation.FrdWa",
-        expected_len,
-        witness.frd_wa.len(),
-    )?;
+    if address_eq.len() != witness.field_reg_count {
+        return Err(Stage5KernelError::InvalidInputLength {
+            input: "stage5.field_reg_val_evaluation.address_eq",
+            expected: witness.field_reg_count,
+            actual: address_eq.len(),
+        });
+    }
     let mut output = vec![F::zero(); witness.trace_len];
-    for (address, &weight) in address_eq.iter().enumerate() {
-        let base = address * witness.trace_len;
-        for (cycle, output) in output.iter_mut().enumerate() {
-            *output += weight * witness.frd_wa[base + cycle];
+    for ev in &witness.replay.events {
+        if !ev.rd_written {
+            continue;
         }
+        let cycle = ev.cycle as usize;
+        if cycle >= witness.trace_len {
+            continue;
+        }
+        let slot = (ev.frd as usize) & (witness.field_reg_count - 1);
+        output[cycle] += address_eq[slot];
     }
     Ok(output)
 }

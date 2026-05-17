@@ -710,7 +710,7 @@ where
         inputs.ram.accesses,
     );
     if let Some(replay) = inputs.field_reg_replay {
-        stage45_witness = stage45_witness.with_field_reg_replay(replay);
+        stage45_witness = stage45_witness.with_field_reg_replay(replay.clone());
     }
     drop(_stage45_witness_span);
     let _stage4_input_span = tracing::info_span!("bolt.prove.inputs.stage4").entered();
