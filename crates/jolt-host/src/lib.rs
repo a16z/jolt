@@ -351,7 +351,7 @@ pub fn prove_program(
     // discards info that gen_ram_memory_states reads via
     // `get_doubleword`, producing a different RAM state vs the verifier.
     let (bytecode_raw, init_mem, _program_size, entry_address) = program.decode();
-    let (_lazy, cycles, final_memory, io_device) =
+    let (_lazy, cycles, final_memory, io_device, field_reg_events) =
         program.trace(inputs, untrusted_advice, trusted_advice);
     let trace: Vec<TraceRow> = cycles.into_iter().map(trace_row_from_cycle).collect();
 
@@ -368,6 +368,7 @@ pub fn prove_program(
         &params,
         shape.trace_length,
         shape.ram_k,
+        field_reg_events,
     )?;
 
     Ok(ProofBundle {
@@ -450,6 +451,60 @@ struct ProveStageOutput {
     pcs_setup: DoryProverSetup,
 }
 
+/// Per-cycle FR bytecode metadata derived from `NormalizedInstruction.instruction_kind`.
+/// `FieldOp` (FMUL/FADD/FSUB/FINV) and `FieldAssertEq` are treated as both-reading
+/// for now — this overstates `reads_frs2` on FINV cycles, but Poseidon2 doesn't use
+/// FINV so the approximation is fine. Bridge ops (FieldMov/FieldSLL*) read integer
+/// registers, not FR, so both flags are false.
+fn fr_bytecode_from_trace(
+    trace: &[TraceRow],
+) -> Vec<jolt_witness::field_reg::FrCycleBytecode> {
+    use jolt_riscv::JoltInstructionKind;
+    trace
+        .iter()
+        .map(|row| {
+            let instr = row.instruction;
+            let (reads_frs1, reads_frs2) = match instr.instruction_kind {
+                JoltInstructionKind::FieldOp | JoltInstructionKind::FieldAssertEq => (true, true),
+                JoltInstructionKind::FieldMov
+                | JoltInstructionKind::FieldSLL64
+                | JoltInstructionKind::FieldSLL128
+                | JoltInstructionKind::FieldSLL192 => (false, false),
+                _ => (false, false),
+            };
+            jolt_witness::field_reg::FrCycleBytecode {
+                frs1: instr.operands.rs1.unwrap_or(0) & 0xF,
+                frs2: instr.operands.rs2.unwrap_or(0) & 0xF,
+                frd: instr.operands.rd.unwrap_or(0) & 0xF,
+                reads_frs1,
+                reads_frs2,
+            }
+        })
+        .collect()
+}
+
+/// Convert the tracer's `FieldRegEvent` stream to `jolt-witness` events. The
+/// tracer emits one event per FR write (old != new). For Phase 5b's
+/// materializer, we only need `cycle`, `frd`, `rd_post`, and `rd_written`;
+/// the other fields are unused by the materialize methods.
+fn convert_fr_events(
+    events: Vec<tracer::emulator::cpu::FieldRegEvent>,
+) -> Vec<jolt_witness::field_reg::FieldRegEvent> {
+    events
+        .into_iter()
+        .map(|ev| jolt_witness::field_reg::FieldRegEvent {
+            cycle: ev.cycle_index as u64,
+            frs1: 0,
+            frs2: 0,
+            frd: ev.slot,
+            rs1_pre: jolt_witness::field_reg::FrLimbs::ZERO,
+            rs2_pre: jolt_witness::field_reg::FrLimbs::ZERO,
+            rd_post: jolt_witness::field_reg::FrLimbs::from_limbs(ev.new),
+            rd_written: true,
+        })
+        .collect()
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "thin internal helper; arguments are derived state from prove_program"
@@ -464,6 +519,7 @@ fn assemble_and_prove(
     params: &ModularJoltParams,
     trace_length: usize,
     ram_k: usize,
+    field_reg_events: Vec<tracer::emulator::cpu::FieldRegEvent>,
 ) -> Result<ProveStageOutput, ProveProgramError> {
     let memory_layout = io_device.memory_layout.clone();
 
@@ -589,14 +645,29 @@ fn assemble_and_prove(
         &stage2_artifacts,
         &stage3_artifacts,
     )?;
-    let stage4_artifacts = jolt_prover::prove_stage4_with_trace_witness_inputs(
+    let fr_replay = jolt_witness::field_reg::FieldRegReplay {
+        num_cycles: params.trace_length,
+        bytecode: {
+            let mut bc = fr_bytecode_from_trace(trace);
+            bc.resize(params.trace_length, jolt_witness::field_reg::FrCycleBytecode::default());
+            bc
+        },
+        events: convert_fr_events(field_reg_events),
+    };
+    let mut stage45_witness = jolt_kernels::stage4::stage4_5_sparse_trace_witness_from_accesses::<Fr>(
+        &stage4_register_accesses_vec,
+        &ram_accesses,
+    );
+    stage45_witness = stage45_witness.with_field_reg_replay(&fr_replay);
+
+    let stage4_artifacts = jolt_prover::prove_stage4_with_witness_inputs(
         programs.stage4,
         &stage4_openings,
         1usize << params.register_log_k,
         params.trace_length,
         params.ram_k,
         &stage4_register_accesses_vec,
-        &ram_accesses,
+        &stage45_witness,
         &mut transcript,
     )
     .map_err(JoltProveError::Stage4)?;
@@ -606,7 +677,7 @@ fn assemble_and_prove(
         &stage2_artifacts,
         &stage4_artifacts,
     )?;
-    let stage5_artifacts = jolt_prover::prove_stage5_with_trace_witness_inputs(
+    let stage5_artifacts = jolt_prover::prove_stage5_with_witness_inputs(
         programs.stage5,
         &stage5_openings,
         params.trace_length,
@@ -616,8 +687,7 @@ fn assemble_and_prove(
         &lookup_trace.lookup_table_indices,
         &lookup_trace.is_interleaved_operands,
         params.lookups_ra_virtual_log_k_chunk,
-        &stage4_register_accesses_vec,
-        &ram_accesses,
+        &stage45_witness,
         &mut transcript,
     )
     .map_err(JoltProveError::Stage5)?;

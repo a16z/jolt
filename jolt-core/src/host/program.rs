@@ -310,7 +310,13 @@ impl Program {
         inputs: &[u8],
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
-    ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
+    ) -> (
+        LazyTraceIterator,
+        Vec<Cycle>,
+        Memory,
+        JoltDevice,
+        Vec<tracer::emulator::cpu::FieldRegEvent>,
+    ) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
@@ -322,7 +328,7 @@ impl Program {
         let memory_config =
             self.memory_config_with_program_size(image.program_end - RAM_START_ADDRESS);
 
-        let (lazy_trace, trace, memory, jolt_device, _advice_tape, _field_reg_events) = guest::program::trace(
+        let (lazy_trace, trace, memory, jolt_device, _advice_tape, field_reg_events) = guest::program::trace(
             &elf_contents,
             self.elf.as_ref(),
             inputs,
@@ -331,7 +337,7 @@ impl Program {
             &memory_config,
             None,
         );
-        (lazy_trace, trace, memory, jolt_device)
+        (lazy_trace, trace, memory, jolt_device, field_reg_events)
     }
 
     #[tracing::instrument(skip_all, name = "Program::trace_to_file")]

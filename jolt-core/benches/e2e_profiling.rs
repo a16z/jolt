@@ -202,7 +202,7 @@ fn prove_example(
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
     let (bytecode, init_memory_state, _, e_entry) = program.decode();
-    let (_lazy_trace, trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
+    let (_lazy_trace, trace, _, program_io, _) = program.trace(&serialized_input, &[], &[]);
     let padded_trace_len = (trace.len() + 1).next_power_of_two();
     drop(trace);
 
@@ -256,7 +256,7 @@ fn prove_example_with_trace(
 ) -> (std::time::Duration, usize, usize, usize) {
     let mut program = host::Program::new(example_name);
     let (bytecode, init_memory_state, _, e_entry) = program.decode();
-    let (_, trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
+    let (_, trace, _, program_io, _) = program.trace(&serialized_input, &[], &[]);
 
     assert!(
         trace.len().next_power_of_two() <= max_trace_length,

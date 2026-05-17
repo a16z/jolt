@@ -673,6 +673,7 @@ pub fn assert_bolt_full_real_trace_self_parity(
                 instruction_ra_virtual_d: fixture.params.instruction_ra_virtual_d,
                 stage7_openings: &kernel_stage7_openings,
                 evaluation_openings: Some(&kernel_stage7_openings),
+                field_reg_replay: None,
             },
             monolithic_prover_programs,
             &mut monolithic_prover_transcript,
