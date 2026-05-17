@@ -372,10 +372,7 @@ impl<'a, F: Field> Stage5ProverInputs<'a, F> {
         self
     }
 
-    pub fn with_field_reg_val(
-        mut self,
-        field_reg_val: Stage5FieldRegValWitness<'a>,
-    ) -> Self {
+    pub fn with_field_reg_val(mut self, field_reg_val: Stage5FieldRegValWitness<'a>) -> Self {
         self.field_reg_val = Some(field_reg_val);
         self
     }
