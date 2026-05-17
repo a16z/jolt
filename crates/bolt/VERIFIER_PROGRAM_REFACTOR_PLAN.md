@@ -13,12 +13,12 @@ transcript events, sumcheck drivers, value-graph computations, opening batches,
 and PCS checks.
 
 S1 (the audit-tier split that landed in PR #1523) reframes the shared
-verifier runtime as two explicitly-bounded tiers:
+verifier runtime as explicitly-bounded tiers:
 
 ```text
-Tier A (Bolt verifier runtime)        stages/common.rs           1,265 LOC
-Tier B (audited Jolt verifier core)   stages/jolt_relations.rs     638 LOC
-Tier C (generated stage data + verifier.rs)                      6,430 LOC
+Tier A (Bolt verifier runtime)        bolt-verifier-runtime/src/lib.rs   ~2.5k LOC
+Tier B (audited Jolt verifier core)   stages/jolt_relations.rs             696 LOC
+Tier C (generated stage data + verifier.rs)                              ~6.1k LOC
 ```
 
 The current stack has already moved beyond the original S1 framing:
@@ -296,10 +296,10 @@ projected/operand polynomial evaluation.
 ### Concrete plumbing already done or retained
 
 1. New crate `crates/bolt-verifier-runtime/` with `src/lib.rs` seeded from
-   today's `crates/bolt/src/protocols/jolt/verifier_common.rs.template`, but
-   reviewed as a public runtime API rather than copied verbatim. At minimum:
-   cross-crate paths, the error-conversion macro, and protocol-ID ownership
-   must be corrected during the move.
+   the old verifier-common template, but reviewed as a public runtime API
+   rather than copied verbatim. At minimum: cross-crate paths, the
+   error-conversion macro, and protocol-ID ownership must be corrected during
+   the move.
 2. Workspace `Cargo.toml` registers the new crate.
 3. `crates/bolt/src/protocols/jolt/artifacts.rs::verifier_runtime_modules`
    stops emitting the `common` module (the `ProtocolRuntimeModule` entry
@@ -868,10 +868,10 @@ deleting more Tier B prefix code.
 ### Blockers and complications
 
 - **Proof format.** The proof's `evals` field is already
-  `Vec<StageNamedEval<F>>` with explicit `name` strings (verified in
-  `verifier_common.rs.template:393-397`). S4 changes how the *verifier
-  consumes* named evals, not how they are serialized. No back-compat
-  break. *This was the biggest risk; it is not real.*
+  `Vec<StageNamedEval<F>>` with explicit `name` strings in the extracted
+  `bolt-verifier-runtime` API. S4 changes how the *verifier consumes* named
+  evals, not how they are serialized. No back-compat break. *This was the
+  biggest risk; it is not real.*
 - **Prover/verifier symmetry.** The prover-side emitter must annotate the
   same eval block as a family. If this is a separate emitter, both must be
   updated together.

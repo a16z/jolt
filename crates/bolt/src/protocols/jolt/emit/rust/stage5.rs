@@ -2127,14 +2127,14 @@ fn observe_stage5_sumcheck_output<F: Field>(
             match instance.point_order {
                 bolt_verifier_runtime::SumcheckPointOrder::AsIs => {}
                 bolt_verifier_runtime::SumcheckPointOrder::Reverse => point.reverse(),
-                bolt_verifier_runtime::SumcheckPointOrder::InstructionReadRaf => {
+                bolt_verifier_runtime::SumcheckPointOrder::RelationLocal => {
+                    if instance.relation != Stage5RelationKind::Stage5InstructionReadRaf {
+                        return Err(VerifyStage5Error::InvalidProof {
+                            driver: output.driver,
+                            reason: "unsupported relation-local point order",
+                        });
+                    }
                     point = normalize_instruction_read_raf_point(&point, "stage5.instruction_read_raf.point")?;
-                }
-                _ => {
-                    return Err(VerifyStage5Error::InvalidProof {
-                        driver: output.driver,
-                        reason: "unsupported point order",
-                    });
                 }
             }
             Ok(point)

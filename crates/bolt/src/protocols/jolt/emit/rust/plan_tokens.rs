@@ -49,17 +49,6 @@ pub(super) fn role_claim_kind_expr(
     claim_kind_expr(stage_type_prefix, kind)
 }
 
-pub(super) fn role_field_expr_kind_expr(
-    stage_type_prefix: &str,
-    role: &Role,
-    formula: &str,
-) -> Result<String, EmitError> {
-    if role == &Role::Prover {
-        return Ok(format!("{formula:?}"));
-    }
-    field_expr_kind_expr(stage_type_prefix, formula)
-}
-
 pub(super) fn rust_str_slice_expr(values: &[String]) -> String {
     if values.is_empty() {
         return "&[]".to_owned();
@@ -557,13 +546,6 @@ fn relation_kind_expr(stage_type_prefix: &str, relation: &str) -> Result<String,
         .map_err(plan_error)?
         .rust_variant();
     Ok(format!("{stage_type_prefix}RelationKind::{variant}"))
-}
-
-fn field_expr_kind_expr(stage_type_prefix: &str, formula: &str) -> Result<String, EmitError> {
-    let variant = FieldExprKind::from_cpu_attr(formula)
-        .map_err(plan_error)?
-        .rust_variant_expr();
-    Ok(format!("{stage_type_prefix}FieldExprKind::{variant}"))
 }
 
 fn sumcheck_point_order_expr(point_order: &str) -> Result<String, EmitError> {

@@ -367,8 +367,8 @@ pub const STAGE6_SUMCHECK_DRIVERS: &[Stage6SumcheckDriverPlan] = &[
     Stage6SumcheckDriverPlan { symbol: "stage6.sumcheck", stage: "stage6", proof_slot: "stage6.sumcheck", kernel: None, relation: Some(Stage6RelationKind::Stage6Batched), batch: "stage6.batch", policy: "jolt_core_stage6_aligned", round_schedule: STAGE6_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 26, degree: 5 },
 ];
 pub const STAGE6_SUMCHECK_INSTANCE_RESULTS: &[Stage6SumcheckInstanceResultPlan] = &[
-    Stage6SumcheckInstanceResultPlan { symbol: "stage6.bytecode_read_raf.instance", source: "stage6.sumcheck", claim: "stage6.bytecode_read_raf.input", relation: Stage6RelationKind::Stage6BytecodeReadRaf, index: 0, point_arity: 26, num_rounds: 26, round_offset: 0, point_order: bolt_verifier_runtime::SumcheckPointOrder::BytecodeReadRaf, degree: 4 },
-    Stage6SumcheckInstanceResultPlan { symbol: "stage6.booleanity.instance", source: "stage6.sumcheck", claim: "stage6.booleanity.input", relation: Stage6RelationKind::Stage6Booleanity, index: 1, point_arity: 20, num_rounds: 20, round_offset: 6, point_order: bolt_verifier_runtime::SumcheckPointOrder::Stage6Booleanity, degree: 3 },
+    Stage6SumcheckInstanceResultPlan { symbol: "stage6.bytecode_read_raf.instance", source: "stage6.sumcheck", claim: "stage6.bytecode_read_raf.input", relation: Stage6RelationKind::Stage6BytecodeReadRaf, index: 0, point_arity: 26, num_rounds: 26, round_offset: 0, point_order: bolt_verifier_runtime::SumcheckPointOrder::RelationLocal, degree: 4 },
+    Stage6SumcheckInstanceResultPlan { symbol: "stage6.booleanity.instance", source: "stage6.sumcheck", claim: "stage6.booleanity.input", relation: Stage6RelationKind::Stage6Booleanity, index: 1, point_arity: 20, num_rounds: 20, round_offset: 6, point_order: bolt_verifier_runtime::SumcheckPointOrder::AsIs, degree: 3 },
     Stage6SumcheckInstanceResultPlan { symbol: "stage6.hamming_booleanity.instance", source: "stage6.sumcheck", claim: "stage6.hamming_booleanity.input", relation: Stage6RelationKind::Stage6HammingBooleanity, index: 2, point_arity: 16, num_rounds: 16, round_offset: 10, point_order: bolt_verifier_runtime::SumcheckPointOrder::Reverse, degree: 3 },
     Stage6SumcheckInstanceResultPlan { symbol: "stage6.ram_ra_virtual.instance", source: "stage6.sumcheck", claim: "stage6.ram_ra_virtual.input", relation: Stage6RelationKind::Stage6RamRaVirtual, index: 3, point_arity: 16, num_rounds: 16, round_offset: 10, point_order: bolt_verifier_runtime::SumcheckPointOrder::Reverse, degree: 5 },
     Stage6SumcheckInstanceResultPlan { symbol: "stage6.instruction_ra_virtual.instance", source: "stage6.sumcheck", claim: "stage6.instruction_ra_virtual.input", relation: Stage6RelationKind::Stage6InstructionRaVirtual, index: 4, point_arity: 16, num_rounds: 16, round_offset: 10, point_order: bolt_verifier_runtime::SumcheckPointOrder::Reverse, degree: 5 },
@@ -925,13 +925,14 @@ fn observe_stage6_sumcheck_output<F: Field>(
             match instance.point_order {
                 bolt_verifier_runtime::SumcheckPointOrder::AsIs => {}
                 bolt_verifier_runtime::SumcheckPointOrder::Reverse => point.reverse(),
-                bolt_verifier_runtime::SumcheckPointOrder::BytecodeReadRaf => point = normalize_bytecode_read_raf_point(&point, stage6_trace_rounds(program)?, "stage6.bytecode_read_raf.point")?,
-                bolt_verifier_runtime::SumcheckPointOrder::Stage6Booleanity => {}
-                _ => {
-                    return Err(VerifyStage6Error::InvalidProof {
-                        driver: output.driver,
-                        reason: "unsupported point order",
-                    });
+                bolt_verifier_runtime::SumcheckPointOrder::RelationLocal => {
+                    if instance.relation != Stage6RelationKind::Stage6BytecodeReadRaf {
+                        return Err(VerifyStage6Error::InvalidProof {
+                            driver: output.driver,
+                            reason: "unsupported relation-local point order",
+                        });
+                    }
+                    point = normalize_bytecode_read_raf_point(&point, stage6_trace_rounds(program)?, "stage6.bytecode_read_raf.point")?;
                 }
             }
             Ok(point)

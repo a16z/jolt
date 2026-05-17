@@ -505,6 +505,71 @@ fn verifier_runtime_has_no_indexed_eval_prefix_api() {
 }
 
 #[test]
+fn verifier_runtime_has_no_name_then_position_eval_fallback() {
+    let runtime = workspace_root().join("crates/bolt-verifier-runtime/src/lib.rs");
+    if !runtime.exists() {
+        return;
+    }
+    let source = std::fs::read_to_string(&runtime).expect("read verifier runtime source");
+    for stale in [
+        ".or_else(|| output.evals.get(eval.index))",
+        "output.evals.get(eval.index)",
+    ] {
+        assert!(
+            !source.contains(stale),
+            "bolt-verifier-runtime still accepts sumcheck evals by position fallback `{stale}`"
+        );
+    }
+}
+
+#[test]
+fn verifier_runtime_has_no_jolt_specific_sumcheck_point_orders() {
+    let runtime = workspace_root().join("crates/bolt-verifier-runtime/src/lib.rs");
+    if !runtime.exists() {
+        return;
+    }
+    let source = std::fs::read_to_string(&runtime).expect("read verifier runtime source");
+    for stale in [
+        "Stage4RegistersReadWrite",
+        "InstructionReadRaf",
+        "BytecodeReadRaf",
+        "Stage6Booleanity",
+        "stage4_registers_rw",
+        "instruction_read_raf",
+        "bytecode_read_raf",
+        "stage6_booleanity",
+    ] {
+        assert!(
+            !source.contains(stale),
+            "bolt-verifier-runtime still exposes Jolt-specific point order `{stale}`"
+        );
+    }
+}
+
+#[test]
+fn verifier_goal_doc_tracks_extracted_runtime_boundary() {
+    let goal = workspace_root().join("crates/bolt/GOAL.md");
+    if !goal.exists() {
+        return;
+    }
+    let source = std::fs::read_to_string(&goal).expect("read verifier goal doc");
+    assert!(
+        source.contains("crates/bolt-verifier-runtime/src/lib.rs"),
+        "GOAL.md should name the extracted Bolt verifier runtime crate as Tier A"
+    );
+    for stale in [
+        "crates/jolt-verifier/src/stages/common.rs",
+        "crates/bolt/src/protocols/jolt/verifier_common.rs.template",
+        "shared verifier plan/runtime scaffolding exists in stages/common.rs",
+    ] {
+        assert!(
+            !source.contains(stale),
+            "GOAL.md still references deleted Tier A path `{stale}`"
+        );
+    }
+}
+
+#[test]
 fn verifier_cpu_fixtures_are_kernel_free() {
     let fixtures = workspace_root().join("crates/bolt/tests/fixtures");
     if !fixtures.exists() {

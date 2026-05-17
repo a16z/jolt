@@ -527,12 +527,10 @@ fn generated_sumcheck_point_order(value: &str) -> bolt_verifier_runtime::Sumchec
     match value {
         "as_is" => bolt_verifier_runtime::SumcheckPointOrder::AsIs,
         "reverse" => bolt_verifier_runtime::SumcheckPointOrder::Reverse,
-        "stage4_registers_rw" => {
-            bolt_verifier_runtime::SumcheckPointOrder::Stage4RegistersReadWrite
+        "stage4_registers_rw" | "instruction_read_raf" | "bytecode_read_raf" => {
+            bolt_verifier_runtime::SumcheckPointOrder::RelationLocal
         }
-        "instruction_read_raf" => bolt_verifier_runtime::SumcheckPointOrder::InstructionReadRaf,
-        "bytecode_read_raf" => bolt_verifier_runtime::SumcheckPointOrder::BytecodeReadRaf,
-        "stage6_booleanity" => bolt_verifier_runtime::SumcheckPointOrder::Stage6Booleanity,
+        "stage6_booleanity" => bolt_verifier_runtime::SumcheckPointOrder::AsIs,
         value => panic!("unsupported generated sumcheck point order `{value}`"),
     }
 }

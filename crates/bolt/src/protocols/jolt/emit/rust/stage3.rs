@@ -1759,10 +1759,10 @@ fn observe_stage3_sumcheck_output<F: Field>(
             match instance.point_order {
                 bolt_verifier_runtime::SumcheckPointOrder::AsIs => {}
                 bolt_verifier_runtime::SumcheckPointOrder::Reverse => point.reverse(),
-                _ => {
+                bolt_verifier_runtime::SumcheckPointOrder::RelationLocal => {
                     return Err(VerifyStage3Error::InvalidProof {
                         driver: output.driver,
-                        reason: "unsupported point order",
+                        reason: "unsupported relation-local point order",
                     });
                 }
             }

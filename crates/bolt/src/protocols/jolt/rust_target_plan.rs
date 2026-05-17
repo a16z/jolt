@@ -106,10 +106,7 @@ impl ClaimKind {
 pub(crate) enum SumcheckPointOrder {
     AsIs,
     Reverse,
-    Stage4RegistersReadWrite,
-    InstructionReadRaf,
-    BytecodeReadRaf,
-    Stage6Booleanity,
+    RelationLocal,
 }
 
 impl SumcheckPointOrder {
@@ -117,10 +114,10 @@ impl SumcheckPointOrder {
         match value {
             "as_is" => Ok(Self::AsIs),
             "reverse" => Ok(Self::Reverse),
-            "stage4_registers_rw" => Ok(Self::Stage4RegistersReadWrite),
-            "instruction_read_raf" => Ok(Self::InstructionReadRaf),
-            "bytecode_read_raf" => Ok(Self::BytecodeReadRaf),
-            "stage6_booleanity" => Ok(Self::Stage6Booleanity),
+            "stage4_registers_rw" | "instruction_read_raf" | "bytecode_read_raf" => {
+                Ok(Self::RelationLocal)
+            }
+            "stage6_booleanity" => Ok(Self::AsIs),
             _ => Err(RustTargetPlanError::unsupported(
                 "sumcheck point order",
                 value,
@@ -132,10 +129,7 @@ impl SumcheckPointOrder {
         match self {
             Self::AsIs => "AsIs",
             Self::Reverse => "Reverse",
-            Self::Stage4RegistersReadWrite => "Stage4RegistersReadWrite",
-            Self::InstructionReadRaf => "InstructionReadRaf",
-            Self::BytecodeReadRaf => "BytecodeReadRaf",
-            Self::Stage6Booleanity => "Stage6Booleanity",
+            Self::RelationLocal => "RelationLocal",
         }
     }
 }
@@ -792,7 +786,7 @@ mod tests {
         ClaimKind, FieldExprKind, JoltVerifierRelationKind, OpeningEqualityMode, PcsProofMode,
         ProgramStepKind, ScalarExprKind, StructuredPolynomialKind, StructuredPolynomialPointLength,
         StructuredPolynomialPointOrder, StructuredPolynomialPointSegment,
-        StructuredPolynomialPointTransform, TranscriptSqueezeKind,
+        StructuredPolynomialPointTransform, SumcheckPointOrder, TranscriptSqueezeKind,
     };
 
     #[test]
@@ -820,6 +814,14 @@ mod tests {
         assert_eq!(
             OpeningEqualityMode::from_cpu_attr("point_and_eval").ok(),
             Some(OpeningEqualityMode::PointAndEval)
+        );
+        assert_eq!(
+            SumcheckPointOrder::from_cpu_attr("instruction_read_raf").ok(),
+            Some(SumcheckPointOrder::RelationLocal)
+        );
+        assert_eq!(
+            SumcheckPointOrder::from_cpu_attr("stage6_booleanity").ok(),
+            Some(SumcheckPointOrder::AsIs)
         );
     }
 

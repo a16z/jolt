@@ -7,8 +7,7 @@ use melior::ir::{Attribute, OperationRef};
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
 use crate::protocols::jolt::rust_target_plan::{
-    structured_polynomial_scalar_formula, JoltVerifierRelationKind, RustTargetPlanError,
-    ScalarExprKind,
+    structured_polynomial_scalar_formula, JoltVerifierRelationKind,
 };
 use crate::protocols::jolt::verifier_opening_rows;
 use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
@@ -1569,25 +1568,11 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage2Error);
 
     fn emit_field_expr_constants(&self) -> Result<String, EmitError> {
         if self.role == Role::Verifier {
-            let exprs = self
-                .field_exprs
-                .iter()
-                .map(|expr| {
-                    Ok(format!(
-                        "    Stage2FieldExprPlan {{ symbol: {}, kind: {}, operands: {} }},",
-                        rust_str(&expr.symbol),
-                        super::plan_tokens::role_field_expr_kind_expr(
-                            "Stage2",
-                            &self.role,
-                            &expr.formula
-                        )?,
-                        super::plan_tokens::rust_str_slice_expr(&expr.operands)
-                    ))
-                })
-                .collect::<Result<Vec<_>, EmitError>>()?
-                .join("\n");
-            return Ok(format!(
-                "pub const STAGE2_FIELD_EXPRS: &[Stage2FieldExprPlan] = &[\n{exprs}\n];\n"
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_field_expr_constants(
+                "Stage2",
+                "STAGE2",
+                &plan.field_exprs,
             ));
         }
 
@@ -1634,23 +1619,11 @@ bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage2Error);
     }
 
     fn emit_scalar_expr_constants(&self) -> Result<String, EmitError> {
-        let exprs = self
-            .scalar_exprs
-            .iter()
-            .map(|expr| {
-                let kind = ScalarExprKind::from_cpu_attr(&expr.formula)
-                    .map_err(rust_target_plan_error)?
-                    .rust_variant_expr();
-                Ok(format!(
-                    "    Stage2ScalarExprPlan {{ symbol: {}, kind: Stage2ScalarExprKind::{kind}, operands: {} }},",
-                    rust_str(&expr.symbol),
-                    super::plan_tokens::rust_str_slice_expr(&expr.operands)
-                ))
-            })
-            .collect::<Result<Vec<_>, EmitError>>()?
-            .join("\n");
-        Ok(format!(
-            "pub const STAGE2_SCALAR_EXPRS: &[Stage2ScalarExprPlan] = &[\n{exprs}\n];\n"
+        let plan = self.verifier_plan()?;
+        Ok(verifier_plan::emit_scalar_expr_constants(
+            "Stage2",
+            "STAGE2",
+            &plan.scalar_exprs,
         ))
     }
 
@@ -2448,13 +2421,13 @@ impl<F: Field> Stage2ValueStore<F> {
             program.evals,
             output,
             |instance, mut point| {
-                match instance.point_order {
+            match instance.point_order {
                 bolt_verifier_runtime::SumcheckPointOrder::AsIs => {}
                 bolt_verifier_runtime::SumcheckPointOrder::Reverse => point.reverse(),
-                _ => {
+                bolt_verifier_runtime::SumcheckPointOrder::RelationLocal => {
                     return Err(VerifyStage2Error::InvalidProof {
                         driver: output.driver,
-                        reason: "unsupported point order",
+                        reason: "unsupported relation-local point order",
                     });
                 }
             }
@@ -2766,10 +2739,6 @@ fn require_supported_symbol(kind: &str, actual: &str, expected: &str) -> Result<
             "unsupported {kind} @{actual}; expected @{expected}"
         )))
     }
-}
-
-fn rust_target_plan_error(error: RustTargetPlanError) -> EmitError {
-    EmitError::new(error.to_string())
 }
 
 fn emit_str_array(name: &str, values: &[String]) -> String {

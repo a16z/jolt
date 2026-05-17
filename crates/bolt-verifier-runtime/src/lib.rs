@@ -350,10 +350,7 @@ pub struct SumcheckInstanceResultPlan<R: ProtocolRelation> {
 pub enum SumcheckPointOrder {
     AsIs,
     Reverse,
-    Stage4RegistersReadWrite,
-    InstructionReadRaf,
-    BytecodeReadRaf,
-    Stage6Booleanity,
+    RelationLocal,
 }
 
 impl SumcheckPointOrder {
@@ -361,10 +358,7 @@ impl SumcheckPointOrder {
         match self {
             Self::AsIs => "as_is",
             Self::Reverse => "reverse",
-            Self::Stage4RegistersReadWrite => "stage4_registers_rw",
-            Self::InstructionReadRaf => "instruction_read_raf",
-            Self::BytecodeReadRaf => "bytecode_read_raf",
-            Self::Stage6Booleanity => "stage6_booleanity",
+            Self::RelationLocal => "relation_local",
         }
     }
 }
@@ -881,7 +875,6 @@ impl<F: Field> ValueStore<F> {
                 .evals
                 .iter()
                 .find(|value| value.name == eval.name)
-                .or_else(|| output.evals.get(eval.index))
                 .ok_or_else(|| missing_value(eval.symbol))?
                 .value;
             self.insert_scalar(eval.symbol, value);
@@ -2108,10 +2101,10 @@ mod tests {
     use super::{
         evaluate_relation_output_for_instance, evaluate_scalar_expr, FieldExprKind, FieldExprPlan,
         Fr, NamedEvalFamilyPlan, RelationOutputPlan, RuntimePlanError, ScalarExprKind,
-        ScalarExprPlan, StageNamedEval, StructuredPolynomialKind, StructuredPolynomialPointLength,
-        StructuredPolynomialPointOrder, StructuredPolynomialPointSegment,
-        StructuredPolynomialPointTransform, SumcheckInstanceResultPlan, SumcheckPointOrder,
-        ValueStore,
+        ScalarExprPlan, StageNamedEval, StageSumcheckOutput, StructuredPolynomialKind,
+        StructuredPolynomialPointLength, StructuredPolynomialPointOrder,
+        StructuredPolynomialPointSegment, StructuredPolynomialPointTransform, SumcheckEvalPlan,
+        SumcheckInstanceResultPlan, SumcheckPointOrder, SumcheckProof, ValueStore,
     };
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2155,6 +2148,49 @@ mod tests {
                 symbol: "eval.missing"
             }
         );
+    }
+
+    #[test]
+    fn value_store_requires_sumcheck_eval_names_to_match() {
+        let mut store = ValueStore::default();
+        let instance_results: &[SumcheckInstanceResultPlan<TestRelation>] = &[];
+        let error = store
+            .observe_sumcheck_output(
+                instance_results,
+                &[SumcheckEvalPlan {
+                    symbol: "planned.eval",
+                    source: "driver",
+                    name: "planned.eval.name",
+                    index: 0,
+                    oracle: "Oracle",
+                }],
+                &StageSumcheckOutput {
+                    driver: "driver",
+                    point: Vec::new(),
+                    evals: vec![StageNamedEval {
+                        name: "wrong.eval.name",
+                        oracle: "Oracle",
+                        value: Fr::from_u64(7),
+                    }],
+                    proof: SumcheckProof::default(),
+                },
+                |_, point| Ok(point),
+                |input, expected, actual| RuntimePlanError::InvalidInputLength {
+                    input,
+                    expected,
+                    actual,
+                },
+                |symbol| RuntimePlanError::MissingValue { symbol },
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            RuntimePlanError::MissingValue {
+                symbol: "planned.eval"
+            }
+        );
+        assert_eq!(store.try_scalar("planned.eval"), None);
     }
 
     #[test]

@@ -613,13 +613,13 @@ impl<F: Field> Stage2ValueStore<F> {
             program.evals,
             output,
             |instance, mut point| {
-                match instance.point_order {
+            match instance.point_order {
                 bolt_verifier_runtime::SumcheckPointOrder::AsIs => {}
                 bolt_verifier_runtime::SumcheckPointOrder::Reverse => point.reverse(),
-                _ => {
+                bolt_verifier_runtime::SumcheckPointOrder::RelationLocal => {
                     return Err(VerifyStage2Error::InvalidProof {
                         driver: output.driver,
-                        reason: "unsupported point order",
+                        reason: "unsupported relation-local point order",
                     });
                 }
             }

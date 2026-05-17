@@ -2252,13 +2252,14 @@ fn observe_stage6_sumcheck_output<F: Field>(
             match instance.point_order {
                 bolt_verifier_runtime::SumcheckPointOrder::AsIs => {}
                 bolt_verifier_runtime::SumcheckPointOrder::Reverse => point.reverse(),
-                bolt_verifier_runtime::SumcheckPointOrder::BytecodeReadRaf => point = normalize_bytecode_read_raf_point(&point, stage6_trace_rounds(program)?, "stage6.bytecode_read_raf.point")?,
-                bolt_verifier_runtime::SumcheckPointOrder::Stage6Booleanity => {}
-                _ => {
-                    return Err(VerifyStage6Error::InvalidProof {
-                        driver: output.driver,
-                        reason: "unsupported point order",
-                    });
+                bolt_verifier_runtime::SumcheckPointOrder::RelationLocal => {
+                    if instance.relation != Stage6RelationKind::Stage6BytecodeReadRaf {
+                        return Err(VerifyStage6Error::InvalidProof {
+                            driver: output.driver,
+                            reason: "unsupported relation-local point order",
+                        });
+                    }
+                    point = normalize_bytecode_read_raf_point(&point, stage6_trace_rounds(program)?, "stage6.bytecode_read_raf.point")?;
                 }
             }
             Ok(point)

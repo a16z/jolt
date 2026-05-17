@@ -134,7 +134,7 @@ pub const STAGE4_SUMCHECK_DRIVERS: &[Stage4SumcheckDriverPlan] = &[
     Stage4SumcheckDriverPlan { symbol: "stage4.sumcheck", stage: "stage4", proof_slot: "stage4.sumcheck", kernel: None, relation: Some(Stage4RelationKind::Stage4Batched), batch: "stage4.batch", policy: "jolt_core_stage4_aligned", round_schedule: STAGE4_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 23, degree: 3 },
 ];
 pub const STAGE4_SUMCHECK_INSTANCE_RESULTS: &[Stage4SumcheckInstanceResultPlan] = &[
-    Stage4SumcheckInstanceResultPlan { symbol: "stage4.registers_read_write.instance", source: "stage4.sumcheck", claim: "stage4.registers_read_write.input", relation: Stage4RelationKind::Stage4RegistersReadWrite, index: 0, point_arity: 23, num_rounds: 23, round_offset: 0, point_order: bolt_verifier_runtime::SumcheckPointOrder::Stage4RegistersReadWrite, degree: 3 },
+    Stage4SumcheckInstanceResultPlan { symbol: "stage4.registers_read_write.instance", source: "stage4.sumcheck", claim: "stage4.registers_read_write.input", relation: Stage4RelationKind::Stage4RegistersReadWrite, index: 0, point_arity: 23, num_rounds: 23, round_offset: 0, point_order: bolt_verifier_runtime::SumcheckPointOrder::RelationLocal, degree: 3 },
     Stage4SumcheckInstanceResultPlan { symbol: "stage4.ram_val_check.instance", source: "stage4.sumcheck", claim: "stage4.ram_val_check.input", relation: Stage4RelationKind::Stage4RamValCheck, index: 1, point_arity: 16, num_rounds: 16, round_offset: 7, point_order: bolt_verifier_runtime::SumcheckPointOrder::Reverse, degree: 3 },
 ];
 
@@ -404,14 +404,14 @@ fn observe_stage4_sumcheck_output<F: Field>(
             match instance.point_order {
                 bolt_verifier_runtime::SumcheckPointOrder::AsIs => {}
                 bolt_verifier_runtime::SumcheckPointOrder::Reverse => point.reverse(),
-                bolt_verifier_runtime::SumcheckPointOrder::Stage4RegistersReadWrite => {
+                bolt_verifier_runtime::SumcheckPointOrder::RelationLocal => {
+                    if instance.relation != Stage4RelationKind::Stage4RegistersReadWrite {
+                        return Err(VerifyStage4Error::InvalidProof {
+                            driver: output.driver,
+                            reason: "unsupported relation-local point order",
+                        });
+                    }
                     point = normalize_stage4_registers_rw_point(program, output.driver, &point)?;
-                }
-                _ => {
-                    return Err(VerifyStage4Error::InvalidProof {
-                        driver: output.driver,
-                        reason: "unsupported point order",
-                    });
                 }
             }
             Ok(point)

@@ -25,15 +25,15 @@ stage6 + stage7:        ~13.2k LOC
 verifier.rs:              649 LOC
 ```
 
-Current locked cleanup baseline (post-S1 audit-tier split):
+Current cleanup baseline (S2.75-S5 verifier-program cutover):
 
 ```text
-generated jolt-verifier total:     7,905 LOC
-generated verifier surface:        6,002 LOC
-tier A (Bolt verifier runtime):    1,265 LOC   stages/common.rs
-tier B (Jolt verifier core):         638 LOC   stages/jolt_relations.rs
-stage6 + stage7:                   1,660 LOC
-verifier.rs:                         428 LOC
+generated jolt-verifier total:     6,752 LOC
+generated verifier surface:        6,056 LOC
+tier A (Bolt verifier runtime):    2,520 LOC   crates/bolt-verifier-runtime/src/lib.rs
+tier B (Jolt verifier core):         696 LOC   stages/jolt_relations.rs
+stage6 + stage7:                   1,547 LOC
+verifier.rs:                         696 LOC
 ```
 
 The shared runtime is now split along an explicit audit boundary. See
@@ -85,10 +85,10 @@ growth is attributed to the right trust boundary.
 - **Tier A (Bolt verifier runtime):** generic, protocol-agnostic helpers
   (plan structs, `ValueStore`, sumcheck driver loop, opening-equality
   interpreter, transcript helpers). Lives in
-  `crates/jolt-verifier/src/stages/common.rs`, generated from
-  `crates/bolt/src/protocols/jolt/verifier_common.rs.template`. Tier A should
-  ratchet *down* over time as more helpers move into typed plan data driven
-  from MLIR.
+  `crates/bolt-verifier-runtime/src/lib.rs` as a standalone workspace crate.
+  Tier A should ratchet *down* over time as more helpers move into typed plan
+  data driven from MLIR. It must stay protocol-neutral; Jolt-specific math and
+  point normalization belong in Tier B or typed Jolt plan data.
 
 - **Tier B (audited Jolt verifier core):** hand-written Jolt-specific verifier
   math and relations (Stage 6/7 evaluators, `normalize_*_point`,
@@ -183,7 +183,7 @@ generic artifact assembly no longer owns Jolt artifact APIs
 root bolt exports keep Jolt helpers under bolt::protocols::jolt
 generic compiler source is guarded against accidental Jolt protocol strings
 checked-in generated verifier is under the current LOC target
-shared verifier plan/runtime scaffolding exists in stages/common.rs
+shared verifier plan/runtime scaffolding lives in crates/bolt-verifier-runtime
 ```
 
 The remaining work is no longer a stage bring-up task or a pure LOC cleanup.
@@ -529,10 +529,11 @@ Readability and LOC gates (enforced by `crates/bolt/tests/verifier_cleanup.rs`):
 
 ```text
 total generated jolt-verifier LOC trends down
-generated verifier surface (Tier C) <= 6.1k, target <= 6k, stretch <= 3k
-tier A bolt verifier runtime <= 1.4k, ratcheting down
+generated verifier surface (Tier C) <= 6.5k, target <= 6k, stretch <= 3k
+generated Tier A surface in jolt-verifier stays at zero; standalone
+bolt-verifier-runtime ratchets down separately
 tier B audited Jolt verifier core <= 700 (growth requires protocol-math review)
-verifier.rs <= 500 LOC, stretch <= 350
+verifier.rs <= 850 LOC today, target <= 500 LOC, stretch <= 350
 stage6 + stage7 generated LOC <= 3k-5k, stretch <= 2k-3k
 no duplicate stage-local generic plan structs
 no duplicate stage-local field-expression interpreter

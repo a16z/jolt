@@ -2016,14 +2016,14 @@ fn observe_stage4_sumcheck_output<F: Field>(
             match instance.point_order {
                 bolt_verifier_runtime::SumcheckPointOrder::AsIs => {}
                 bolt_verifier_runtime::SumcheckPointOrder::Reverse => point.reverse(),
-                bolt_verifier_runtime::SumcheckPointOrder::Stage4RegistersReadWrite => {
+                bolt_verifier_runtime::SumcheckPointOrder::RelationLocal => {
+                    if instance.relation != Stage4RelationKind::Stage4RegistersReadWrite {
+                        return Err(VerifyStage4Error::InvalidProof {
+                            driver: output.driver,
+                            reason: "unsupported relation-local point order",
+                        });
+                    }
                     point = normalize_stage4_registers_rw_point(program, output.driver, &point)?;
-                }
-                _ => {
-                    return Err(VerifyStage4Error::InvalidProof {
-                        driver: output.driver,
-                        reason: "unsupported point order",
-                    });
                 }
             }
             Ok(point)
