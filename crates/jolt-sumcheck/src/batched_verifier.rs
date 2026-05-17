@@ -11,7 +11,7 @@ use jolt_transcript::{AppendToTranscript, Transcript};
 
 use crate::claim::{EvaluationClaim, SumcheckClaim};
 use crate::error::SumcheckError;
-use crate::round_proof::RoundProof;
+use crate::round_proof::ClearRound;
 use crate::scalar::SumcheckScalar;
 
 /// Batched sumcheck verifier.
@@ -40,7 +40,7 @@ impl BatchedSumcheckVerifier {
     where
         F: SumcheckScalar,
         T: Transcript<Challenge = F>,
-        P: RoundProof<F>,
+        P: ClearRound<F>,
     {
         let (first, rest) = claims.split_first().ok_or(SumcheckError::EmptyClaims)?;
         let max_num_vars = rest

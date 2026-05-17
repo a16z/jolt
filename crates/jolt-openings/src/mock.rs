@@ -210,6 +210,7 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
 mod tests {
     use super::*;
     use crate::{reduce_prover, reduce_verifier, ProverClaim, VerifierClaim};
+    use jolt_claims::EvaluationClaim;
     use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
     use jolt_poly::Polynomial;
     use jolt_transcript::Blake2bTranscript;
@@ -317,16 +318,14 @@ mod tests {
             let eval = poly.evaluate(point);
             prover_claims.push(ProverClaim {
                 polynomial: Polynomial::new(poly.evaluations().to_vec()),
-                point: point.clone(),
-                eval,
+                evaluation: EvaluationClaim::new(point.clone(), eval),
             });
 
             let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
             let v_eval = verifier_evals.map_or(eval, |overrides| overrides[i]);
             verifier_claims.push(VerifierClaim {
                 commitment,
-                point: point.clone(),
-                eval: v_eval,
+                evaluation: EvaluationClaim::new(point.clone(), v_eval),
             });
         }
 
@@ -338,8 +337,8 @@ mod tests {
             .map(|claim| {
                 MockPCS::open(
                     &claim.polynomial,
-                    &claim.point,
-                    claim.eval,
+                    &claim.evaluation.point,
+                    claim.evaluation.value,
                     &(),
                     None,
                     &mut transcript_p,
@@ -356,8 +355,8 @@ mod tests {
         for (claim, proof) in reduced_verifier.iter().zip(proofs.iter()) {
             MockPCS::verify(
                 &claim.commitment,
-                &claim.point,
-                claim.eval,
+                &claim.evaluation.point,
+                claim.evaluation.value,
                 proof,
                 &(),
                 &mut transcript_v,
@@ -439,18 +438,15 @@ mod tests {
         let claims = vec![
             ProverClaim {
                 polynomial: Polynomial::new(p1.evaluations().to_vec()),
-                point: r.clone(),
-                eval: p1.evaluate(&r),
+                evaluation: EvaluationClaim::new(r.clone(), p1.evaluate(&r)),
             },
             ProverClaim {
                 polynomial: Polynomial::new(p2.evaluations().to_vec()),
-                point: r.clone(),
-                eval: p2.evaluate(&r),
+                evaluation: EvaluationClaim::new(r.clone(), p2.evaluate(&r)),
             },
             ProverClaim {
                 polynomial: Polynomial::new(p3.evaluations().to_vec()),
-                point: s.clone(),
-                eval: p3.evaluate(&s),
+                evaluation: EvaluationClaim::new(s.clone(), p3.evaluate(&s)),
             },
         ];
 

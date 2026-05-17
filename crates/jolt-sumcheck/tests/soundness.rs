@@ -11,7 +11,7 @@ use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
 use jolt_sumcheck::error::SumcheckError;
 use jolt_sumcheck::proof::SumcheckProof;
-use jolt_sumcheck::round_proof::RoundProof;
+use jolt_sumcheck::round_proof::RoundMessage;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckVerifier};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 
@@ -55,7 +55,7 @@ fn honest_prove(
             eval_1 += buf[i + half];
         }
         let round_poly = UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]);
-        <UnivariatePoly<F> as RoundProof<F>>::append_to_transcript(&round_poly, transcript);
+        <UnivariatePoly<F> as RoundMessage>::append_to_transcript(&round_poly, transcript);
         let r: F = transcript.challenge();
         round_polys.push(round_poly);
         for i in 0..half {

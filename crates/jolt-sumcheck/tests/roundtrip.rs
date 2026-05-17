@@ -10,7 +10,7 @@ use jolt_field::{Fr, FromPrimitiveInt, MulPow2};
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
 use jolt_sumcheck::proof::SumcheckProof;
-use jolt_sumcheck::round_proof::{CompressedLabeledRoundPoly, LabeledRoundPoly, RoundProof};
+use jolt_sumcheck::round_proof::{CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckVerifier};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 
@@ -73,7 +73,7 @@ fn prove_product(
         let round_poly = UnivariatePoly::interpolate(&points);
 
         // Absorb through the same path the unlabelled verifier uses.
-        <UnivariatePoly<F> as RoundProof<F>>::append_to_transcript(&round_poly, transcript);
+        <UnivariatePoly<F> as RoundMessage>::append_to_transcript(&round_poly, transcript);
 
         let r: F = transcript.challenge();
         round_polys.push(round_poly);
@@ -296,7 +296,7 @@ fn batched_heterogeneous_degrees() {
             .collect();
         let round_poly = UnivariatePoly::interpolate(&points);
 
-        <UnivariatePoly<F> as RoundProof<F>>::append_to_transcript(&round_poly, &mut pt);
+        <UnivariatePoly<F> as RoundMessage>::append_to_transcript(&round_poly, &mut pt);
         let r: F = pt.challenge();
         round_polys.push(round_poly);
 
@@ -387,7 +387,7 @@ fn compressed_round_verifier_roundtrip() {
         let round_poly = UnivariatePoly::interpolate(&points);
 
         let compressed = CompressedLabeledRoundPoly::new(&round_poly, label);
-        <CompressedLabeledRoundPoly<'_, F> as RoundProof<F>>::append_to_transcript(
+        <CompressedLabeledRoundPoly<'_, F> as RoundMessage>::append_to_transcript(
             &compressed,
             &mut pt,
         );
@@ -472,7 +472,7 @@ fn labeled_round_verifier_roundtrip() {
         let round_poly = UnivariatePoly::interpolate(&points);
 
         let labeled = LabeledRoundPoly::new(&round_poly, label);
-        <LabeledRoundPoly<'_, F> as RoundProof<F>>::append_to_transcript(&labeled, &mut pt);
+        <LabeledRoundPoly<'_, F> as RoundMessage>::append_to_transcript(&labeled, &mut pt);
 
         let r: F = pt.challenge();
         round_polys.push(round_poly);

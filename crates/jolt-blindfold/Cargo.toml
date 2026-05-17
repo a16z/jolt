@@ -1,0 +1,20 @@
+[package]
+name = "jolt-blindfold"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Generic BlindFold verifier infrastructure for the Jolt zkVM"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-claims.workspace = true
+jolt-crypto.workspace = true
+jolt-field.workspace = true
+jolt-r1cs.workspace = true
+jolt-sumcheck = { workspace = true, features = ["r1cs"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+jolt-field = { workspace = true, features = ["bn254"] }

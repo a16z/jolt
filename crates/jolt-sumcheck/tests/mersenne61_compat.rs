@@ -19,7 +19,7 @@ use jolt_field::{
     FixedBytes, FromPrimitiveInt, Invertible, MulPow2, MulPrimitiveInt, NaiveAccumulator,
     RandomSampling, ReducingBytes, RingCore, TranscriptChallenge, WithAccumulator,
 };
-use jolt_sumcheck::{EvaluationClaim, RoundProof, SumcheckClaim, SumcheckError, SumcheckVerifier};
+use jolt_sumcheck::{ClearRound, EvaluationClaim, RoundMessage, SumcheckClaim, SumcheckVerifier};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, KeccakTranscript, Transcript};
 use num_traits::{One, Zero};
 
@@ -294,35 +294,20 @@ struct LinearRound {
     coeffs: [Mersenne61; 2],
 }
 
-impl RoundProof<Mersenne61> for LinearRound {
+impl RoundMessage for LinearRound {
     fn degree(&self) -> usize {
         1
     }
 
-    fn check_sum(
-        &self,
-        running_sum: Mersenne61,
-        round: usize,
-    ) -> Result<(), SumcheckError<Mersenne61>> {
-        let actual = self.evaluate(Mersenne61::zero()) + self.evaluate(Mersenne61::one());
-        if actual == running_sum {
-            Ok(())
-        } else {
-            Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: running_sum,
-                actual,
-            })
-        }
-    }
-
-    fn evaluate(&self, challenge: Mersenne61) -> Mersenne61 {
-        self.coeffs[0] + self.coeffs[1] * challenge
-    }
-
-    fn append_to_transcript(&self, transcript: &mut impl Transcript) {
+    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         self.coeffs[0].append_to_transcript(transcript);
         self.coeffs[1].append_to_transcript(transcript);
+    }
+}
+
+impl ClearRound<Mersenne61> for LinearRound {
+    fn evaluate(&self, challenge: Mersenne61) -> Mersenne61 {
+        self.coeffs[0] + self.coeffs[1] * challenge
     }
 }
 

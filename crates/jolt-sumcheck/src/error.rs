@@ -52,6 +52,10 @@ pub enum SumcheckError<F: FieldCore> {
         got: usize,
     },
 
+    /// A round witness did not contain any coefficients.
+    #[error("round polynomial must contain at least one coefficient")]
+    EmptyRoundCoefficients,
+
     /// Batched verification received an empty claims slice.
     #[error("batched verification requires at least one claim")]
     EmptyClaims,

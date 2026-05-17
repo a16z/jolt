@@ -5,12 +5,18 @@ edition = "2021"
 license = "MIT"
 description = "Sumcheck protocol types and verification for the Jolt zkVM"
 
+[features]
+r1cs = ["dep:jolt-r1cs"]
+
 [lints]
 workspace = true
 
 [dependencies]
+jolt-claims.workspace = true
+jolt-crypto.workspace = true
 jolt-field.workspace = true
 jolt-poly.workspace = true
+jolt-r1cs = { workspace = true, optional = true }
 jolt-transcript.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true

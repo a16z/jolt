@@ -24,6 +24,8 @@ keywords = ["SNARK", "cryptography", "proofs"]
 
 [workspace]
 members = [
+  "crates/jolt-claims",
+  "crates/jolt-blindfold",
   "crates/jolt-crypto",
   "crates/jolt-program",
   "crates/jolt-poly",
@@ -31,6 +33,7 @@ members = [
   "crates/jolt-r1cs",
   "crates/jolt-sumcheck",
   "crates/jolt-openings",
+  "crates/jolt-verifier",
   "crates/jolt-dory",
   "crates/jolt-hyperkzg",
   "crates/jolt-riscv",
@@ -376,10 +379,14 @@ secp256k1 = { version = "0.31", features = ["recovery", "rand"] }
 common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
 jolt-core = { path = "./jolt-core", default-features = false }
+jolt-blindfold = { path = "./crates/jolt-blindfold" }
+jolt-claims = { path = "./crates/jolt-claims" }
 jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-field = { path = "./crates/jolt-field" }
 jolt-openings = { path = "./crates/jolt-openings" }
+jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-poly = { path = "./crates/jolt-poly" }
+jolt-r1cs = { path = "./crates/jolt-r1cs" }
 jolt-transcript = { path = "./crates/jolt-transcript" }
 jolt-sumcheck = { path = "./crates/jolt-sumcheck" }
 jolt-riscv = { path = "./crates/jolt-riscv", default-features = false }

@@ -35,7 +35,7 @@ pub mod mock;
 mod reduction;
 mod schemes;
 
-pub use claims::{ProverClaim, VerifierClaim};
+pub use claims::{ProverClaim, ProverOpeningClaim, VerifierClaim, VerifierOpeningClaim};
 pub use error::OpeningsError;
 pub use reduction::{reduce_prover, reduce_verifier, rlc_combine, rlc_combine_scalars};
 

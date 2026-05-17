@@ -2,6 +2,39 @@
 
 use jolt_field::FieldCore;
 
+pub use jolt_claims::EvaluationClaim;
+
+/// Round count and degree bound for a sumcheck instance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SumcheckShape {
+    pub num_vars: usize,
+    pub degree: usize,
+}
+
+impl SumcheckShape {
+    /// Construct a sumcheck shape.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `degree == 0`.
+    pub fn new(num_vars: usize, degree: usize) -> Self {
+        assert!(
+            degree >= 1,
+            "sumcheck round polynomial must have degree >= 1, got {degree}"
+        );
+        Self { num_vars, degree }
+    }
+}
+
+impl<F: FieldCore> From<&SumcheckClaim<F>> for SumcheckShape {
+    fn from(claim: &SumcheckClaim<F>) -> Self {
+        Self {
+            num_vars: claim.num_vars,
+            degree: claim.degree,
+        }
+    }
+}
+
 /// A sumcheck claim asserting that
 /// $\sum_{x \in \{0,1\}^n} g(x) = C$
 /// where $g$ is a polynomial of individual degree at most `degree` in each variable.
@@ -40,19 +73,4 @@ impl<F: FieldCore> SumcheckClaim<F> {
             claimed_sum,
         }
     }
-}
-
-/// Oracle evaluation claim produced by a successful sumcheck reduction.
-///
-/// Sumcheck reduces `∑_{x ∈ {0,1}^n} g(x) = C` to a single query
-/// `g(r) = v` at a Fiat-Shamir-derived point `r`. The caller MUST
-/// discharge this claim against the polynomial oracle (opening proof,
-/// BlindFold, etc.) to retain soundness — sumcheck alone does not
-/// verify `v` against any commitment.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EvaluationClaim<F: FieldCore> {
-    /// Challenge point `r = (r_1, ..., r_n)`.
-    pub point: Vec<F>,
-    /// Claimed evaluation `g(r) = v`.
-    pub value: F,
 }

@@ -2699,6 +2699,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-blindfold"
+version = "0.1.0"
+dependencies = [
+ "jolt-claims",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-r1cs",
+ "jolt-sumcheck",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "jolt-claims"
+version = "0.1.0"
+dependencies = [
+ "jolt-field",
+ "jolt-riscv",
+ "serde",
+]
+
+[[package]]
 name = "jolt-core"
 version = "0.1.0"
 dependencies = [
@@ -2990,6 +3011,7 @@ name = "jolt-openings"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "jolt-claims",
  "jolt-crypto",
  "jolt-field",
  "jolt-poly",
@@ -3079,6 +3101,7 @@ dependencies = [
 name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
+ "jolt-claims",
  "jolt-field",
  "jolt-poly",
  "num-traits",
@@ -3086,6 +3109,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "serde",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
@@ -3132,8 +3156,11 @@ dependencies = [
 name = "jolt-sumcheck"
 version = "0.1.0"
 dependencies = [
+ "jolt-claims",
+ "jolt-crypto",
  "jolt-field",
  "jolt-poly",
+ "jolt-r1cs",
  "jolt-transcript",
  "num-traits",
  "rand_core 0.6.4",
@@ -3156,6 +3183,18 @@ dependencies = [
  "light-poseidon",
  "num-traits",
  "sha3 0.11.0",
+]
+
+[[package]]
+name = "jolt-verifier"
+version = "0.1.0"
+dependencies = [
+ "ark-serialize 0.5.0",
+ "common",
+ "jolt-core",
+ "jolt-riscv",
+ "serde",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

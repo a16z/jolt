@@ -13,7 +13,8 @@
     reason = "tests may panic on assertion failures"
 )]
 
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling, ReducingBytes};
+use jolt_claims::EvaluationClaim;
+use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
 use jolt_openings::mock::MockCommitmentScheme;
 use jolt_openings::{reduce_prover, reduce_verifier, CommitmentScheme, ProverClaim, VerifierClaim};
 use jolt_poly::Polynomial;
@@ -38,14 +39,12 @@ fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
         let eval = poly.evaluate(point);
         prover_claims.push(ProverClaim {
             polynomial: Polynomial::new(poly.evaluations().to_vec()),
-            point: point.clone(),
-            eval,
+            evaluation: EvaluationClaim::new(point.clone(), eval),
         });
         let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
         verifier_claims.push(VerifierClaim {
             commitment,
-            point: point.clone(),
-            eval,
+            evaluation: EvaluationClaim::new(point.clone(), eval),
         });
     }
 
@@ -57,8 +56,8 @@ fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
         .map(|c| {
             MockPCS::open(
                 &c.polynomial,
-                &c.point,
-                c.eval,
+                &c.evaluation.point,
+                c.evaluation.value,
                 &(),
                 None,
                 &mut transcript_p,
@@ -75,8 +74,8 @@ fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
     for (claim, proof) in reduced_v.iter().zip(proofs.iter()) {
         MockPCS::verify(
             &claim.commitment,
-            &claim.point,
-            claim.eval,
+            &claim.evaluation.point,
+            claim.evaluation.value,
             proof,
             &(),
             &mut transcript_v,
@@ -179,13 +178,11 @@ fn tampered_eval_detected() {
     let prover_claims = vec![
         ProverClaim {
             polynomial: Polynomial::new(poly_a.evaluations().to_vec()),
-            point: point.clone(),
-            eval: eval_a,
+            evaluation: EvaluationClaim::new(point.clone(), eval_a),
         },
         ProverClaim {
             polynomial: Polynomial::new(poly_b.evaluations().to_vec()),
-            point: point.clone(),
-            eval: eval_b,
+            evaluation: EvaluationClaim::new(point.clone(), eval_b),
         },
     ];
 
@@ -194,13 +191,11 @@ fn tampered_eval_detected() {
     let verifier_claims = vec![
         VerifierClaim {
             commitment: com_a,
-            point: point.clone(),
-            eval: eval_a,
+            evaluation: EvaluationClaim::new(point.clone(), eval_a),
         },
         VerifierClaim {
             commitment: com_b,
-            point: point.clone(),
-            eval: eval_b + Fr::from_u64(1), // tampered
+            evaluation: EvaluationClaim::new(point.clone(), eval_b + Fr::from_u64(1)),
         },
     ];
 
@@ -211,8 +206,8 @@ fn tampered_eval_detected() {
         .map(|c| {
             MockPCS::open(
                 &c.polynomial,
-                &c.point,
-                c.eval,
+                &c.evaluation.point,
+                c.evaluation.value,
                 &(),
                 None,
                 &mut transcript_p,
@@ -228,8 +223,8 @@ fn tampered_eval_detected() {
     for (claim, proof) in reduced_v.iter().zip(proofs.iter()) {
         if MockPCS::verify(
             &claim.commitment,
-            &claim.point,
-            claim.eval,
+            &claim.evaluation.point,
+            claim.evaluation.value,
             proof,
             &(),
             &mut transcript_v,
