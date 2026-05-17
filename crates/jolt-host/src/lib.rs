@@ -553,6 +553,52 @@ fn populate_r1cs_fr_slots(
     }
 }
 
+/// Walks the FR replay running state in lockstep with the materializer/R1CS
+/// post-pass and stamps the FR fields on both `Stage1Rv64Cycle` (for the Stage 1
+/// outer Spartan sumcheck's virtual oracle reads) and `Stage3Cycle` (for the
+/// Stage 3 FieldRegClaimReduction sumcheck's factor population). Mutates the
+/// vectors in place — non-FR cycles keep their `[0; 4]` defaults.
+fn populate_fr_cycle_fields(
+    rv64_cycles: &mut [Stage1Rv64Cycle],
+    stage3_cycles: &mut [Stage3Cycle],
+    replay: &jolt_witness::field_reg::FieldRegReplay,
+) {
+    use jolt_witness::field_reg::{FieldRegEvent, FIELD_REG_COUNT};
+    if replay.events.is_empty() {
+        return;
+    }
+    let mut current: [[u64; 4]; FIELD_REG_COUNT] = [[0; 4]; FIELD_REG_COUNT];
+    let mut events = replay.events.iter().peekable();
+    let len = rv64_cycles.len().min(stage3_cycles.len()).min(replay.num_cycles);
+    for c in 0..len {
+        let bc = replay.bytecode.get(c).copied().unwrap_or_default();
+        let rs1 = if bc.reads_frs1 { current[(bc.frs1 as usize) & 0xF] } else { [0; 4] };
+        let rs2 = if bc.reads_frs2 { current[(bc.frs2 as usize) & 0xF] } else { [0; 4] };
+        // Apply the event (if any) to get rd_post and advance state.
+        let (rd, is_field_op) =
+            if let Some(ev) = events.next_if(|ev: &&FieldRegEvent| ev.cycle as usize == c) {
+                if ev.rd_written {
+                    let slot = (ev.frd as usize) & 0xF;
+                    current[slot] = ev.rd_post.into_limbs();
+                    (current[slot], true)
+                } else {
+                    ([0; 4], true)
+                }
+            } else if bc.reads_frs1 || bc.reads_frs2 {
+                ([0; 4], true)
+            } else {
+                ([0; 4], false)
+            };
+        rv64_cycles[c].field_rs1 = rs1;
+        rv64_cycles[c].field_rs2 = rs2;
+        rv64_cycles[c].field_rd = rd;
+        stage3_cycles[c].field_rs1 = rs1;
+        stage3_cycles[c].field_rs2 = rs2;
+        stage3_cycles[c].field_rd = rd;
+        stage3_cycles[c].is_field_op = is_field_op;
+    }
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "thin internal helper; arguments are derived state from prove_program"
@@ -593,7 +639,7 @@ fn assemble_and_prove(
         events: convert_fr_events(field_reg_events),
     };
     populate_r1cs_fr_slots(&mut r1cs_witness, r1cs_key.num_vars_padded, trace, &fr_replay);
-    let rv64_cycles: Vec<Stage1Rv64Cycle> = stage1_rv64_cycles(trace, trace_length, bytecode);
+    let mut rv64_cycles: Vec<Stage1Rv64Cycle> = stage1_rv64_cycles(trace, trace_length, bytecode);
     let product_virtual_cycles = stage2_product_virtual_cycles(trace, trace_length);
     let instruction_lookup_cycles = stage2_instruction_lookup_cycles(trace, trace_length);
     let lowest_addr = memory_layout.get_lowest_address();
@@ -605,7 +651,8 @@ fn assemble_and_prove(
         }
     };
     let ram_accesses: Vec<Stage2RamAccess> = stage2_ram_accesses(trace, trace_length, remap_addr);
-    let stage3_cycles_vec: Vec<Stage3Cycle> = stage3_cycles(trace, trace_length, bytecode);
+    let mut stage3_cycles_vec: Vec<Stage3Cycle> = stage3_cycles(trace, trace_length, bytecode);
+    populate_fr_cycle_fields(&mut rv64_cycles, &mut stage3_cycles_vec, &fr_replay);
     let stage4_register_accesses_vec: Vec<Stage4RegisterAccess> =
         stage4_register_accesses(trace, trace_length);
     let lookup_trace: Stage5LookupTrace = stage5_lookup_trace(trace, trace_length, |cycle| {

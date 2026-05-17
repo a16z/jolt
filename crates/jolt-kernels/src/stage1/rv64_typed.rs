@@ -65,6 +65,13 @@ pub struct Stage1Rv64Cycle {
     pub should_branch: bool,
     pub next_is_virtual: bool,
     pub next_is_first_in_sequence: bool,
+    /// BN254 Fr coprocessor: pre-read value at the cycle's `frs1` slot,
+    /// natural-form little-endian `[u64; 4]`. Zero on non-FR cycles.
+    pub field_rs1: [u64; 4],
+    /// Pre-read value at the cycle's `frs2` slot. Zero on non-FR cycles.
+    pub field_rs2: [u64; 4],
+    /// Post-write value at the cycle's `frd` slot. Zero on non-FR cycles.
+    pub field_rd: [u64; 4],
 }
 
 impl Stage1Rv64Cycle {
@@ -94,6 +101,9 @@ impl Stage1Rv64Cycle {
             should_branch: false,
             next_is_virtual: false,
             next_is_first_in_sequence: false,
+            field_rs1: [0; 4],
+            field_rs2: [0; 4],
+            field_rd: [0; 4],
         }
     }
 }
@@ -491,11 +501,11 @@ impl Stage1Rv64Oracle {
             Self::OpFlagIsFieldSll64 => Stage1Rv64Scalar::Bool(row.flags[FLAG_IS_FIELD_SLL64]),
             Self::OpFlagIsFieldSll128 => Stage1Rv64Scalar::Bool(row.flags[FLAG_IS_FIELD_SLL128]),
             Self::OpFlagIsFieldSll192 => Stage1Rv64Scalar::Bool(row.flags[FLAG_IS_FIELD_SLL192]),
-            // Phase 4a: FR operand evaluators return 0 — populated when Phase
-            // 4 wires up the FR Twist witness path.
-            Self::FieldRs1Value => Stage1Rv64Scalar::U64(0),
-            Self::FieldRs2Value => Stage1Rv64Scalar::U64(0),
-            Self::FieldRdWriteValue => Stage1Rv64Scalar::U64(0),
+            // BN254 Fr coprocessor: full-width Fr value packed from the
+            // cycle's natural-form `[u64; 4]` slot. Zero on non-FR cycles.
+            Self::FieldRs1Value => Stage1Rv64Scalar::Fr(field_reg_limbs_to_fr(row.field_rs1)),
+            Self::FieldRs2Value => Stage1Rv64Scalar::Fr(field_reg_limbs_to_fr(row.field_rs2)),
+            Self::FieldRdWriteValue => Stage1Rv64Scalar::Fr(field_reg_limbs_to_fr(row.field_rd)),
         }
     }
 
@@ -507,6 +517,16 @@ impl Stage1Rv64Oracle {
     }
 }
 
+/// Convert natural-form `[u64; 4]` limbs to `Fr` for FR coprocessor virtual oracles.
+#[inline]
+fn field_reg_limbs_to_fr(limbs: [u64; 4]) -> Fr {
+    let mut bytes = [0u8; 32];
+    for (i, &limb) in limbs.iter().enumerate() {
+        bytes[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
+    }
+    Fr::from_le_bytes_mod_order(&bytes)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Stage1Rv64Scalar {
     Bool(bool),
@@ -514,6 +534,10 @@ enum Stage1Rv64Scalar {
     U128(u128),
     S64(S64),
     S128(S128),
+    /// Full-width Fr value, used by the BN254 Fr coprocessor's
+    /// `V_FIELD_RS1/RS2/RD_WRITE_VALUE` virtual oracles. The other
+    /// variants stop at 128 bits; FR values are 256.
+    Fr(Fr),
 }
 
 struct Stage1Rv64Eval<'a> {
@@ -1010,6 +1034,9 @@ impl FrSignedProductAccumulator {
             Stage1Rv64Scalar::U128(value) => self.fmadd_u128(field, value),
             Stage1Rv64Scalar::S64(value) => self.fmadd_s64(field, value),
             Stage1Rv64Scalar::S128(value) => self.fmadd_s128(field, value),
+            // FR oracles need full-width Fr multiplication. Bypass the
+            // limb-based accumulation and add the Fr product directly.
+            Stage1Rv64Scalar::Fr(value) => self.add_positive_field(field * value),
         }
     }
 

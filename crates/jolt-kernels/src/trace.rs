@@ -465,6 +465,11 @@ fn stage1_rv64_cycle<C: CycleRow>(
         should_branch: instruction_flags[InstructionFlags::Branch] && lookup_output == 1,
         next_is_virtual: false,
         next_is_first_in_sequence: false,
+        // FR coprocessor: zero defaults; the host overlays real values
+        // from `FieldRegReplay` via `populate_stage1_rv64_fr_fields`.
+        field_rs1: [0; 4],
+        field_rs2: [0; 4],
+        field_rd: [0; 4],
     };
     fill_next_rv64_fields(&mut row, next, bytecode);
     row
