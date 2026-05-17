@@ -2107,7 +2107,23 @@ impl<F: Field> SparseFieldRegState<F> {
         // host-side replay invariant: every event-bearing cycle has its
         // `bytecode[cycle].reads_*` flags set, and a cycle without an event
         // never reads or writes FR.
+        //
+        // Events must be sorted strictly increasing by cycle. The sparse
+        // round-poly pairs entries by `row / 2` and assumes monotone row
+        // ordering; duplicate or out-of-order events would silently corrupt
+        // the binding pairs.
+        let mut last_cycle: Option<u64> = None;
         for event in &replay.events {
+            if let Some(prev) = last_cycle {
+                if event.cycle <= prev {
+                    return Err(Stage4KernelError::InvalidInputLength {
+                        input: "stage4.field_reg.events.order",
+                        expected: prev as usize + 1,
+                        actual: event.cycle as usize,
+                    });
+                }
+            }
+            last_cycle = Some(event.cycle);
             let row = event.cycle as usize;
             if row >= trace_len {
                 return Err(Stage4KernelError::InvalidInputLength {

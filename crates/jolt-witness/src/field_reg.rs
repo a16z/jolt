@@ -4,15 +4,15 @@
 //! the tracer emits as a stream of [`FieldRegEvent`]s. This module owns:
 //!
 //! - [`FrLimbs`]: natural-form 256-bit Fr value (4 × u64 little-endian limbs)
-//! - [`FrCycleData`]: per-cycle FR operand snapshot (rs1_pre, rs2_pre, rd_post)
-//! - [`replay_field_regs`]: walks the tracer event stream and produces a
-//!   per-cycle data table sized to the (padded) trace length
+//! - [`FieldRegEvent`]: a single FR-active cycle's read/write payload
+//! - [`FrCycleBytecode`]: per-cycle FR read-flag metadata (sized to T)
+//! - [`FieldRegReplay`]: bytecode + event stream consumed by Stage 4/5
+//!   sumchecks
 //! - [`sub_limbs`]: borrow-aware 256-bit subtraction used by FSUB events
 //!
-//! Phase 3 scope: types + replay scaffolding. Until guest programs actually
-//! execute FR instructions, the event stream is empty and replay produces
-//! all-zero data — keeping the new R1CS rows (Phase 2) trivially satisfied.
-//! Phase 4 (FR Twist sumchecks) consumes the populated `FrCycleData`.
+//! Stage 4's `SparseFieldRegState` walks the replay events directly and
+//! emits sparse cycle-major entries; only [`FieldRegReplay::materialize_frd_inc`]
+//! (T-length) is still materialized as a dense vector.
 
 /// Number of 256-bit Fr registers (matches `tracer::emulator::cpu::FIELD_REG_COUNT`).
 pub const FIELD_REG_COUNT: usize = 16;
@@ -57,22 +57,6 @@ impl From<FrLimbs> for [u64; 4] {
     }
 }
 
-/// One FR cycle's operand snapshot: pre-values of the two read registers and
-/// the post-value of the write register. Phase 4's FieldRegRW sumcheck binds
-/// the R1CS `V_FIELD_RS1/RS2/RD_WRITE_VALUE` slots to these values.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct FrCycleData {
-    pub rs1_pre: FrLimbs,
-    pub rs2_pre: FrLimbs,
-    pub rd_post: FrLimbs,
-    /// Index of the destination FR register in `0..FIELD_REG_COUNT`. The
-    /// FR Twist's `Wa` one-hot polynomial reads this value.
-    pub rd_index: u8,
-    /// Whether this cycle wrote a field register (every FR op except
-    /// `FieldAssertEq`). Drives the `IsFieldWrite` mask in Phase 4.
-    pub rd_written: bool,
-}
-
 /// Borrow-aware 256-bit subtraction over `FrLimbs`. Wraps modulo 2^256;
 /// callers reduce the result against the BN254 Fr prime themselves.
 #[inline]
@@ -101,34 +85,6 @@ pub struct FieldRegEvent {
     pub rs2_pre: FrLimbs,
     pub rd_post: FrLimbs,
     pub rd_written: bool,
-}
-
-/// Replays the tracer's FR event stream into a per-cycle data table sized
-/// to `trace_len`. Non-FR cycles are filled with [`FrCycleData::default()`]
-/// (all-zero, `rd_index = 0`, `rd_written = false`), which keeps the
-/// Phase-2 R1CS rows trivially satisfied.
-///
-/// Panics if any event has a cycle index ≥ `trace_len`, since that would
-/// corrupt the Fr Twist sumcheck domain.
-pub fn replay_field_regs(events: Vec<FieldRegEvent>, trace_len: usize) -> Vec<FrCycleData> {
-    let mut table = vec![FrCycleData::default(); trace_len];
-    for event in events {
-        // 32-bit hosts only — `event.cycle` is bounded by `trace_len: usize`,
-        // so the conversion never fails on the supported targets.
-        let cycle = event.cycle as usize;
-        assert!(
-            cycle < trace_len,
-            "FR event at cycle {cycle} exceeds trace_len {trace_len}"
-        );
-        table[cycle] = FrCycleData {
-            rs1_pre: event.rs1_pre,
-            rs2_pre: event.rs2_pre,
-            rd_post: event.rd_post,
-            rd_index: event.frd,
-            rd_written: event.rd_written,
-        };
-    }
-    table
 }
 
 /// Per-cycle bytecode metadata consumed by the FR Twist materializers.
@@ -169,88 +125,6 @@ impl FieldRegReplay {
             bytecode: vec![FrCycleBytecode::default(); num_cycles],
             events: Vec::new(),
         }
-    }
-
-    fn k_t(&self) -> usize {
-        FIELD_REG_COUNT * self.num_cycles
-    }
-
-    /// `K_FR × T` register-file state, row-major by slot then by cycle.
-    /// `val(k, t)` = Fr-encoded value of slot `k` at the START of cycle `t`.
-    /// Slots start at zero and update to `event.rd_post` after each event.
-    pub fn materialize_field_reg_val<F: jolt_field::Field>(&self) -> Vec<F> {
-        if self.events.is_empty() {
-            return vec![F::zero(); self.k_t()];
-        }
-        let t = self.num_cycles;
-        let mut out = vec![F::zero(); self.k_t()];
-        let mut current: [F; FIELD_REG_COUNT] = [F::zero(); FIELD_REG_COUNT];
-        let mut events = self.events.iter().peekable();
-
-        for c in 0..t {
-            for (k, val) in current.iter().enumerate() {
-                out[k * t + c] = *val;
-            }
-            if let Some(ev) = events.next_if(|ev| ev.cycle as usize == c) {
-                if ev.rd_written {
-                    let slot = (ev.frd as usize) & 0xF;
-                    current[slot] = limbs_to_field::<F>(ev.rd_post.into_limbs());
-                }
-            }
-        }
-        out
-    }
-
-    /// `K_FR × T` one-hot at `(frs1(t) & 0xF, t)` when bytecode marks the
-    /// cycle as reading FR slot `frs1` (i.e., FMUL/FADD/FSUB/FAssertEq/FINV).
-    pub fn materialize_frs1_ra<F: jolt_field::Field>(&self) -> Vec<F> {
-        if self.events.is_empty() {
-            return vec![F::zero(); self.k_t()];
-        }
-        let t = self.num_cycles;
-        let mut out = vec![F::zero(); self.k_t()];
-        for (c, bc) in self.bytecode.iter().enumerate().take(t) {
-            if bc.reads_frs1 {
-                let slot = (bc.frs1 as usize) & 0xF;
-                out[slot * t + c] = F::one();
-            }
-        }
-        out
-    }
-
-    /// `K_FR × T` one-hot at `(frs2(t) & 0xF, t)` when bytecode marks the
-    /// cycle as reading FR slot `frs2` (FMUL/FADD/FSUB/FAssertEq).
-    pub fn materialize_frs2_ra<F: jolt_field::Field>(&self) -> Vec<F> {
-        if self.events.is_empty() {
-            return vec![F::zero(); self.k_t()];
-        }
-        let t = self.num_cycles;
-        let mut out = vec![F::zero(); self.k_t()];
-        for (c, bc) in self.bytecode.iter().enumerate().take(t) {
-            if bc.reads_frs2 {
-                let slot = (bc.frs2 as usize) & 0xF;
-                out[slot * t + c] = F::one();
-            }
-        }
-        out
-    }
-
-    /// `K_FR × T` one-hot at `(event.frd & 0xF, event.cycle)` for cycles
-    /// with a writing FR event. Drawn from the event stream rather than
-    /// bytecode so the shape matches what `FrdInc` commits.
-    pub fn materialize_frd_wa<F: jolt_field::Field>(&self) -> Vec<F> {
-        if self.events.is_empty() {
-            return vec![F::zero(); self.k_t()];
-        }
-        let t = self.num_cycles;
-        let mut out = vec![F::zero(); self.k_t()];
-        for ev in &self.events {
-            if ev.rd_written {
-                let slot = (ev.frd as usize) & 0xF;
-                out[slot * t + (ev.cycle as usize)] = F::one();
-            }
-        }
-        out
     }
 
     /// T-element FR write delta: `inc(t) = limbs_to_field(rd_post) - val_pre`
@@ -321,127 +195,12 @@ mod tests {
     }
 
     #[test]
-    fn replay_zero_events_yields_all_default_rows() {
-        let table = replay_field_regs(Vec::new(), 8);
-        assert_eq!(table.len(), 8);
-        assert!(table.iter().all(|c| *c == FrCycleData::default()));
-    }
-
-    #[test]
-    fn empty_replay_yields_zero_materializers() {
+    fn empty_replay_yields_zero_frd_inc() {
         use jolt_field::Fr;
         let replay = FieldRegReplay::empty(8);
-        let val: Vec<Fr> = replay.materialize_field_reg_val();
-        assert_eq!(val.len(), FIELD_REG_COUNT * 8);
-        assert!(val.iter().all(|v| *v == Fr::from_u64(0)));
         let inc: Vec<Fr> = replay.materialize_frd_inc();
         assert_eq!(inc.len(), 8);
         assert!(inc.iter().all(|v| *v == Fr::from_u64(0)));
-    }
-
-    #[test]
-    fn frs1_ra_one_hot_at_read_cycles() {
-        use jolt_field::Fr;
-        let t = 4;
-        let event = FieldRegEvent {
-            cycle: 0,
-            frs1: 3,
-            frs2: 0,
-            frd: 7,
-            rs1_pre: FrLimbs::ZERO,
-            rs2_pre: FrLimbs::ZERO,
-            rd_post: FrLimbs::ZERO,
-            rd_written: true,
-        };
-        let bytecode = vec![
-            FrCycleBytecode { frs1: 3, frs2: 0, frd: 7, reads_frs1: true, reads_frs2: false },
-            FrCycleBytecode::default(),
-            FrCycleBytecode::default(),
-            FrCycleBytecode::default(),
-        ];
-        let replay = FieldRegReplay { num_cycles: t, bytecode, events: vec![event] };
-        let ra: Vec<Fr> = replay.materialize_frs1_ra();
-        assert_eq!(ra.len(), FIELD_REG_COUNT * t);
-        // Slot 3, cycle 0 should be 1.
-        assert_eq!(ra[3 * t], Fr::from_u64(1));
-        // Everything else zero.
-        for (i, v) in ra.iter().enumerate() {
-            if i == 3 * t {
-                continue;
-            }
-            assert_eq!(*v, Fr::from_u64(0), "non-write slot {i} should be zero");
-        }
-    }
-
-    #[test]
-    fn frd_wa_marks_write_slot_at_event_cycle() {
-        use jolt_field::Fr;
-        let t = 4;
-        let event = FieldRegEvent {
-            cycle: 2,
-            frs1: 0,
-            frs2: 0,
-            frd: 9,
-            rs1_pre: FrLimbs::ZERO,
-            rs2_pre: FrLimbs::ZERO,
-            rd_post: FrLimbs::ZERO,
-            rd_written: true,
-        };
-        let replay = FieldRegReplay {
-            num_cycles: t,
-            bytecode: vec![FrCycleBytecode::default(); t],
-            events: vec![event],
-        };
-        let wa: Vec<Fr> = replay.materialize_frd_wa();
-        // Slot 9, cycle 2.
-        assert_eq!(wa[9 * t + 2], Fr::from_u64(1));
-        for (i, v) in wa.iter().enumerate() {
-            if i == 9 * t + 2 {
-                continue;
-            }
-            assert_eq!(*v, Fr::from_u64(0), "non-write slot {i} should be zero");
-        }
-    }
-
-    #[test]
-    fn field_reg_val_tracks_running_state() {
-        use jolt_field::Fr;
-        let t = 4;
-        // Two events: cycle 1 writes slot 5 = 42; cycle 2 writes slot 5 = 99.
-        let events = vec![
-            FieldRegEvent {
-                cycle: 1, frs1: 0, frs2: 0, frd: 5,
-                rs1_pre: FrLimbs::ZERO, rs2_pre: FrLimbs::ZERO,
-                rd_post: FrLimbs([42, 0, 0, 0]),
-                rd_written: true,
-            },
-            FieldRegEvent {
-                cycle: 2, frs1: 0, frs2: 0, frd: 5,
-                rs1_pre: FrLimbs::ZERO, rs2_pre: FrLimbs::ZERO,
-                rd_post: FrLimbs([99, 0, 0, 0]),
-                rd_written: true,
-            },
-        ];
-        let replay = FieldRegReplay {
-            num_cycles: t,
-            bytecode: vec![FrCycleBytecode::default(); t],
-            events,
-        };
-        let val: Vec<Fr> = replay.materialize_field_reg_val();
-        // Slot 5 timeline (pre-cycle values): [0, 0, 42, 99]
-        assert_eq!(val[5 * t], Fr::from_u64(0));
-        assert_eq!(val[5 * t + 1], Fr::from_u64(0));
-        assert_eq!(val[5 * t + 2], Fr::from_u64(42));
-        assert_eq!(val[5 * t + 3], Fr::from_u64(99));
-        // Other slots remain zero throughout.
-        for k in 0..FIELD_REG_COUNT {
-            if k == 5 {
-                continue;
-            }
-            for c in 0..t {
-                assert_eq!(val[k * t + c], Fr::from_u64(0), "slot {k} cycle {c}");
-            }
-        }
     }
 
     #[test]
@@ -485,29 +244,4 @@ mod tests {
         assert_eq!(limbs_to_field::<Fr>([0, 1, 0, 0]), two_64);
     }
 
-    #[test]
-    fn replay_writes_event_to_indexed_cycle() {
-        let event = FieldRegEvent {
-            cycle: 3,
-            frs1: 1,
-            frs2: 2,
-            frd: 5,
-            rs1_pre: FrLimbs([10, 0, 0, 0]),
-            rs2_pre: FrLimbs([20, 0, 0, 0]),
-            rd_post: FrLimbs([30, 0, 0, 0]),
-            rd_written: true,
-        };
-        let table = replay_field_regs(vec![event], 8);
-        assert_eq!(table[3].rs1_pre, FrLimbs([10, 0, 0, 0]));
-        assert_eq!(table[3].rs2_pre, FrLimbs([20, 0, 0, 0]));
-        assert_eq!(table[3].rd_post, FrLimbs([30, 0, 0, 0]));
-        assert_eq!(table[3].rd_index, 5);
-        assert!(table[3].rd_written);
-        // All other cycles stay default.
-        for (idx, cycle) in table.iter().enumerate() {
-            if idx != 3 {
-                assert_eq!(*cycle, FrCycleData::default());
-            }
-        }
-    }
 }

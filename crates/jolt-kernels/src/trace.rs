@@ -407,8 +407,9 @@ fn stage3_cycle<C: CycleRow>(cycle: Option<C>, bytecode: &BytecodePreprocessing)
         right_operand_is_imm: instruction_flags[InstructionFlags::RightOperandIsImm],
         imm: cycle.imm(),
         rd_write_value: cycle.rd_write().map_or(0, |(_, _, post)| post),
-        // Phase 4a: FR coprocessor inert (zero events). Phase 4b+ replaces
-        // these defaults with `replay_field_regs` output keyed by cycle index.
+        // FR coprocessor stays inert here — Stage 1's per-cycle row format
+        // never carries the FR operand snapshot. FR events live in the
+        // separate `FieldRegReplay` consumed by Stages 4/5.
         is_field_op: false,
         field_rs1: [0; 4],
         field_rs2: [0; 4],
