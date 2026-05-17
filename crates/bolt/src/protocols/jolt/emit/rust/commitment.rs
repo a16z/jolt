@@ -1101,8 +1101,15 @@ pub enum CommitmentPhaseError {
         for (index, plan) in self.batch_plans.iter().enumerate() {
             let oracles = plan
                 .oracles
-                .iter()
-                .map(|oracle| format!("    {},", rust_str(oracle)))
+                .chunks(8)
+                .map(|chunk| {
+                    let entries = chunk
+                        .iter()
+                        .map(|oracle| rust_str(oracle))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("    {entries},")
+                })
                 .collect::<Vec<_>>()
                 .join("\n");
             push_format(

@@ -1,4 +1,6 @@
+mod field_formula;
 mod lowering;
+mod sumcheck_output;
 
 pub mod commitment;
 pub mod stage1;

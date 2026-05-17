@@ -23,6 +23,7 @@ ark-serialize.workspace = true
 postcard.workspace = true
 
 # Bolt-generated Jolt path and shared modular primitives.
+bolt-verifier-runtime.workspace = true
 common = { path = "../../common" }
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
 jolt-transcript = { path = "../jolt-transcript" }

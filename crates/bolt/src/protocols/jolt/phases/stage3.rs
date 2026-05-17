@@ -14,9 +14,14 @@ use crate::schema::{
 
 use super::super::oracles;
 use super::super::params::JoltProtocolParams;
+use super::field_formula::{FieldFormulaBuilder, FieldFormulaStep};
 use super::lowering::{
     copy_attrs, field_lowering_attrs as field_compute_attrs, string_attr,
     transcript_squeeze_compute_result_types, transcript_squeeze_protocol_result_type,
+};
+use super::sumcheck_output::{
+    append_structured_polynomial_eval, append_sumcheck_output_claim, OutputClaimSpec,
+    StructuredPolynomialPointSpec, StructuredPolynomialSpec,
 };
 
 const SPARTAN_SHIFT_DEGREE: usize = 2;
@@ -48,6 +53,140 @@ const STAGE3_INSTRUCTION_INPUT_OUTPUTS: [&str; 8] = [
     "Imm",
 ];
 const STAGE3_REGISTER_INPUTS: [&str; 3] = ["RdWriteValue", "Rs1Value", "Rs2Value"];
+
+const STAGE3_SHIFT_OUTPUT_FORMULAS: [FieldFormulaStep; 11] = [
+    FieldFormulaStep::mul(
+        "stage3.spartan_shift.output.term.PC",
+        "stage3.spartan_shift.gamma",
+        "stage3.spartan_shift.eval.PC",
+    ),
+    FieldFormulaStep::mul(
+        "stage3.spartan_shift.output.term.OpFlagVirtualInstruction",
+        "stage3.spartan_shift.gamma2",
+        "stage3.spartan_shift.eval.OpFlagVirtualInstruction",
+    ),
+    FieldFormulaStep::mul(
+        "stage3.spartan_shift.output.term.OpFlagIsFirstInSequence",
+        "stage3.spartan_shift.gamma3",
+        "stage3.spartan_shift.eval.OpFlagIsFirstInSequence",
+    ),
+    FieldFormulaStep::sub(
+        "stage3.spartan_shift.output.one_minus.InstructionFlagIsNoop",
+        "stage3.field.one",
+        "stage3.spartan_shift.eval.InstructionFlagIsNoop",
+    ),
+    FieldFormulaStep::add(
+        "stage3.spartan_shift.output.partial.PC",
+        "stage3.spartan_shift.eval.UnexpandedPC",
+        "stage3.spartan_shift.output.term.PC",
+    ),
+    FieldFormulaStep::add(
+        "stage3.spartan_shift.output.partial.OpFlagVirtualInstruction",
+        "stage3.spartan_shift.output.partial.PC",
+        "stage3.spartan_shift.output.term.OpFlagVirtualInstruction",
+    ),
+    FieldFormulaStep::add(
+        "stage3.spartan_shift.output.weighted_outer",
+        "stage3.spartan_shift.output.partial.OpFlagVirtualInstruction",
+        "stage3.spartan_shift.output.term.OpFlagIsFirstInSequence",
+    ),
+    FieldFormulaStep::mul(
+        "stage3.spartan_shift.output.outer",
+        "stage3.spartan_shift.output.eq.NextPC",
+        "stage3.spartan_shift.output.weighted_outer",
+    ),
+    FieldFormulaStep::mul(
+        "stage3.spartan_shift.output.noop_product",
+        "stage3.spartan_shift.output.eq.NextIsNoop",
+        "stage3.spartan_shift.output.one_minus.InstructionFlagIsNoop",
+    ),
+    FieldFormulaStep::mul(
+        "stage3.spartan_shift.output.noop_term",
+        "stage3.spartan_shift.gamma4",
+        "stage3.spartan_shift.output.noop_product",
+    ),
+    FieldFormulaStep::add(
+        "stage3.spartan_shift.output.claim_expr",
+        "stage3.spartan_shift.output.outer",
+        "stage3.spartan_shift.output.noop_term",
+    ),
+];
+
+const STAGE3_INSTRUCTION_OUTPUT_FORMULAS: [FieldFormulaStep; 9] = [
+    FieldFormulaStep::mul(
+        "stage3.instruction_input.output.left.term.Rs1Value",
+        "stage3.instruction_input.eval.InstructionFlagLeftOperandIsRs1Value",
+        "stage3.instruction_input.eval.Rs1Value",
+    ),
+    FieldFormulaStep::mul(
+        "stage3.instruction_input.output.left.term.PC",
+        "stage3.instruction_input.eval.InstructionFlagLeftOperandIsPC",
+        "stage3.instruction_input.eval.UnexpandedPC",
+    ),
+    FieldFormulaStep::add(
+        "stage3.instruction_input.output.left",
+        "stage3.instruction_input.output.left.term.Rs1Value",
+        "stage3.instruction_input.output.left.term.PC",
+    ),
+    FieldFormulaStep::mul(
+        "stage3.instruction_input.output.right.term.Rs2Value",
+        "stage3.instruction_input.eval.InstructionFlagRightOperandIsRs2Value",
+        "stage3.instruction_input.eval.Rs2Value",
+    ),
+    FieldFormulaStep::mul(
+        "stage3.instruction_input.output.right.term.Imm",
+        "stage3.instruction_input.eval.InstructionFlagRightOperandIsImm",
+        "stage3.instruction_input.eval.Imm",
+    ),
+    FieldFormulaStep::add(
+        "stage3.instruction_input.output.right",
+        "stage3.instruction_input.output.right.term.Rs2Value",
+        "stage3.instruction_input.output.right.term.Imm",
+    ),
+    FieldFormulaStep::mul(
+        "stage3.instruction_input.output.left_weighted",
+        "stage3.instruction_input.gamma",
+        "stage3.instruction_input.output.left",
+    ),
+    FieldFormulaStep::add(
+        "stage3.instruction_input.output.weighted_inputs",
+        "stage3.instruction_input.output.right",
+        "stage3.instruction_input.output.left_weighted",
+    ),
+    FieldFormulaStep::mul(
+        "stage3.instruction_input.output.claim_expr",
+        "stage3.instruction_input.output.eq.LeftInstructionInput",
+        "stage3.instruction_input.output.weighted_inputs",
+    ),
+];
+
+const STAGE3_REGISTERS_OUTPUT_FORMULAS: [FieldFormulaStep; 5] = [
+    FieldFormulaStep::mul(
+        "stage3.registers.output.term.Rs1Value",
+        "stage3.registers.gamma",
+        "stage3.registers_claim_reduction.eval.Rs1Value",
+    ),
+    FieldFormulaStep::mul(
+        "stage3.registers.output.term.Rs2Value",
+        "stage3.registers.gamma2",
+        "stage3.registers_claim_reduction.eval.Rs2Value",
+    ),
+    FieldFormulaStep::add(
+        "stage3.registers.output.partial.RdWriteValueRs1Value",
+        "stage3.registers_claim_reduction.eval.RdWriteValue",
+        "stage3.registers.output.term.Rs1Value",
+    ),
+    FieldFormulaStep::add(
+        "stage3.registers.output.weighted_register_values",
+        "stage3.registers.output.partial.RdWriteValueRs1Value",
+        "stage3.registers.output.term.Rs2Value",
+    ),
+    FieldFormulaStep::mul(
+        "stage3.registers.output.claim_expr",
+        "stage3.registers.output.eq.RdWriteValue",
+        "stage3.registers.output.weighted_register_values",
+    ),
+];
 
 pub fn build_stage3_protocol<'c>(
     context: &'c MeliorContext,
@@ -473,6 +612,44 @@ pub fn lower_stage3_to_compute<'c>(
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
                 insert_result_mapping(&mut value_map, op, operation, 1, 1)?;
             }
+            "piop.structured_polynomial_eval" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "polynomial",
+                        "x_point_segment",
+                        "x_point_length",
+                        "x_point_order",
+                        "y_point_segment",
+                        "y_point_length",
+                        "y_point_order",
+                    ],
+                )?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.structured_polynomial_eval",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "piop.sumcheck_output_claim" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["stage", "relation", "count", "polynomial_evals"])?;
+                let _operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.sumcheck_output_claim",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &[],
+                )?;
+            }
             "piop.opening_claim" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let symbol = string_attr(op, "sym_name")?;
@@ -805,6 +982,7 @@ fn append_stage_input<'c, 'a>(
         &["!poly.point", "!field.scalar", "!piop.opening_claim_type"],
     )?;
     Ok(Stage3OpeningInput {
+        point: result(op, 0, "piop.opening_input")?,
         eval: result(op, 1, "piop.opening_input")?,
         claim: result(op, 2, "piop.opening_input")?,
     })
@@ -1250,30 +1428,36 @@ fn append_stage3_batched_sumcheck<'c, 'a>(
         point,
         result_value,
     )?;
-    append_stage3_output_openings(
+    let output_evals = append_stage3_output_openings(
         context,
         module,
-        &[
-            InstanceOutput {
-                prefix: "stage3.spartan_shift",
-                instance: shift,
-                outputs: &STAGE3_SHIFT_OUTPUTS,
-                degree_offset: 0,
-            },
-            InstanceOutput {
-                prefix: "stage3.instruction_input",
-                instance: instruction,
-                outputs: &STAGE3_INSTRUCTION_INPUT_OUTPUTS,
-                degree_offset: STAGE3_SHIFT_OUTPUTS.len(),
-            },
-            InstanceOutput {
-                prefix: "stage3.registers_claim_reduction",
-                instance: registers,
-                outputs: &STAGE3_REGISTER_INPUTS,
-                degree_offset: STAGE3_SHIFT_OUTPUTS.len() + STAGE3_INSTRUCTION_INPUT_OUTPUTS.len(),
-            },
-        ],
+        Stage3Instances {
+            shift,
+            instruction,
+            registers,
+        },
         params.log_t,
+    )?;
+    append_stage3_output_claims(
+        context,
+        module,
+        Stage3OutputClaimInputs {
+            openings: inputs,
+            output_evals: &output_evals,
+            instances: Stage3Instances {
+                shift,
+                instruction,
+                registers,
+            },
+            shift_gamma: spec.shift_gamma,
+            shift_gamma2,
+            shift_gamma3,
+            shift_gamma4,
+            field_one: one,
+            instruction_gamma: spec.instruction_gamma,
+            registers_gamma: spec.registers_gamma,
+            registers_gamma2,
+        },
     )?;
     Ok(state)
 }
@@ -1281,40 +1465,244 @@ fn append_stage3_batched_sumcheck<'c, 'a>(
 fn append_stage3_output_openings<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
-    outputs: &[InstanceOutput<'c, 'a, '_>],
+    instances: Stage3Instances<'c, 'a>,
     point_arity: usize,
-) -> Result<(), MlirError> {
+) -> Result<Stage3OutputEvals<'c, 'a>, MlirError> {
     let mut claims = Vec::new();
     let mut claim_symbols = Vec::new();
 
-    for output in outputs {
-        for (index, &oracle) in output.outputs.iter().enumerate() {
-            let symbol = format!("{}.opening.{oracle}", output.prefix);
-            let eval = append_sumcheck_eval(
-                context,
-                module,
-                &format!("{}.eval.{oracle}", output.prefix),
-                "stage3.sumcheck",
-                oracle,
-                output.degree_offset + index,
-                output.instance.1,
-            )?;
-            claim_symbols.push(symbol.clone());
-            claims.push(append_opening_claim(
-                context,
-                module,
-                output.instance.0,
-                eval,
-                OpeningClaimSpec {
-                    symbol: &symbol,
-                    oracle,
-                    domain: "jolt.trace_domain",
-                    point_arity,
-                    claim_kind: "virtual",
-                },
-            )?);
-        }
-    }
+    let shift = Stage3ShiftOutputEvals {
+        unexpanded_pc: append_output_eval_claim(
+            context,
+            module,
+            &mut claims,
+            &mut claim_symbols,
+            OutputEvalClaimSpec {
+                prefix: "stage3.spartan_shift",
+                oracle: "UnexpandedPC",
+                index: 0,
+                degree_offset: 0,
+                instance: instances.shift,
+                point_arity,
+            },
+        )?,
+        pc: append_output_eval_claim(
+            context,
+            module,
+            &mut claims,
+            &mut claim_symbols,
+            OutputEvalClaimSpec {
+                prefix: "stage3.spartan_shift",
+                oracle: "PC",
+                index: 1,
+                degree_offset: 0,
+                instance: instances.shift,
+                point_arity,
+            },
+        )?,
+        op_flag_virtual_instruction: append_output_eval_claim(
+            context,
+            module,
+            &mut claims,
+            &mut claim_symbols,
+            OutputEvalClaimSpec {
+                prefix: "stage3.spartan_shift",
+                oracle: "OpFlagVirtualInstruction",
+                index: 2,
+                degree_offset: 0,
+                instance: instances.shift,
+                point_arity,
+            },
+        )?,
+        op_flag_is_first_in_sequence: append_output_eval_claim(
+            context,
+            module,
+            &mut claims,
+            &mut claim_symbols,
+            OutputEvalClaimSpec {
+                prefix: "stage3.spartan_shift",
+                oracle: "OpFlagIsFirstInSequence",
+                index: 3,
+                degree_offset: 0,
+                instance: instances.shift,
+                point_arity,
+            },
+        )?,
+        instruction_flag_is_noop: append_output_eval_claim(
+            context,
+            module,
+            &mut claims,
+            &mut claim_symbols,
+            OutputEvalClaimSpec {
+                prefix: "stage3.spartan_shift",
+                oracle: "InstructionFlagIsNoop",
+                index: 4,
+                degree_offset: 0,
+                instance: instances.shift,
+                point_arity,
+            },
+        )?,
+    };
+
+    let instruction = Stage3InstructionInputOutputEvals {
+        left_operand_is_rs1_value: append_output_eval_claim(
+            context,
+            module,
+            &mut claims,
+            &mut claim_symbols,
+            OutputEvalClaimSpec {
+                prefix: "stage3.instruction_input",
+                oracle: "InstructionFlagLeftOperandIsRs1Value",
+                index: 0,
+                degree_offset: STAGE3_SHIFT_OUTPUTS.len(),
+                instance: instances.instruction,
+                point_arity,
+            },
+        )?,
+        rs1_value: append_output_eval_claim(
+            context,
+            module,
+            &mut claims,
+            &mut claim_symbols,
+            OutputEvalClaimSpec {
+                prefix: "stage3.instruction_input",
+                oracle: "Rs1Value",
+                index: 1,
+                degree_offset: STAGE3_SHIFT_OUTPUTS.len(),
+                instance: instances.instruction,
+                point_arity,
+            },
+        )?,
+        left_operand_is_pc: append_output_eval_claim(
+            context,
+            module,
+            &mut claims,
+            &mut claim_symbols,
+            OutputEvalClaimSpec {
+                prefix: "stage3.instruction_input",
+                oracle: "InstructionFlagLeftOperandIsPC",
+                index: 2,
+                degree_offset: STAGE3_SHIFT_OUTPUTS.len(),
+                instance: instances.instruction,
+                point_arity,
+            },
+        )?,
+        unexpanded_pc: append_output_eval_claim(
+            context,
+            module,
+            &mut claims,
+            &mut claim_symbols,
+            OutputEvalClaimSpec {
+                prefix: "stage3.instruction_input",
+                oracle: "UnexpandedPC",
+                index: 3,
+                degree_offset: STAGE3_SHIFT_OUTPUTS.len(),
+                instance: instances.instruction,
+                point_arity,
+            },
+        )?,
+        right_operand_is_rs2_value: append_output_eval_claim(
+            context,
+            module,
+            &mut claims,
+            &mut claim_symbols,
+            OutputEvalClaimSpec {
+                prefix: "stage3.instruction_input",
+                oracle: "InstructionFlagRightOperandIsRs2Value",
+                index: 4,
+                degree_offset: STAGE3_SHIFT_OUTPUTS.len(),
+                instance: instances.instruction,
+                point_arity,
+            },
+        )?,
+        rs2_value: append_output_eval_claim(
+            context,
+            module,
+            &mut claims,
+            &mut claim_symbols,
+            OutputEvalClaimSpec {
+                prefix: "stage3.instruction_input",
+                oracle: "Rs2Value",
+                index: 5,
+                degree_offset: STAGE3_SHIFT_OUTPUTS.len(),
+                instance: instances.instruction,
+                point_arity,
+            },
+        )?,
+        right_operand_is_imm: append_output_eval_claim(
+            context,
+            module,
+            &mut claims,
+            &mut claim_symbols,
+            OutputEvalClaimSpec {
+                prefix: "stage3.instruction_input",
+                oracle: "InstructionFlagRightOperandIsImm",
+                index: 6,
+                degree_offset: STAGE3_SHIFT_OUTPUTS.len(),
+                instance: instances.instruction,
+                point_arity,
+            },
+        )?,
+        imm: append_output_eval_claim(
+            context,
+            module,
+            &mut claims,
+            &mut claim_symbols,
+            OutputEvalClaimSpec {
+                prefix: "stage3.instruction_input",
+                oracle: "Imm",
+                index: 7,
+                degree_offset: STAGE3_SHIFT_OUTPUTS.len(),
+                instance: instances.instruction,
+                point_arity,
+            },
+        )?,
+    };
+
+    let registers = Stage3RegistersOutputEvals {
+        rd_write: append_output_eval_claim(
+            context,
+            module,
+            &mut claims,
+            &mut claim_symbols,
+            OutputEvalClaimSpec {
+                prefix: "stage3.registers_claim_reduction",
+                oracle: "RdWriteValue",
+                index: 0,
+                degree_offset: STAGE3_SHIFT_OUTPUTS.len() + STAGE3_INSTRUCTION_INPUT_OUTPUTS.len(),
+                instance: instances.registers,
+                point_arity,
+            },
+        )?,
+        rs1: append_output_eval_claim(
+            context,
+            module,
+            &mut claims,
+            &mut claim_symbols,
+            OutputEvalClaimSpec {
+                prefix: "stage3.registers_claim_reduction",
+                oracle: "Rs1Value",
+                index: 1,
+                degree_offset: STAGE3_SHIFT_OUTPUTS.len() + STAGE3_INSTRUCTION_INPUT_OUTPUTS.len(),
+                instance: instances.registers,
+                point_arity,
+            },
+        )?,
+        rs2: append_output_eval_claim(
+            context,
+            module,
+            &mut claims,
+            &mut claim_symbols,
+            OutputEvalClaimSpec {
+                prefix: "stage3.registers_claim_reduction",
+                oracle: "Rs2Value",
+                index: 2,
+                degree_offset: STAGE3_SHIFT_OUTPUTS.len() + STAGE3_INSTRUCTION_INPUT_OUTPUTS.len(),
+                instance: instances.registers,
+                point_arity,
+            },
+        )?,
+    };
 
     let claim_names = claim_symbols.iter().map(String::as_str).collect::<Vec<_>>();
     let _batch = context.append_typed_op(
@@ -1331,7 +1719,244 @@ fn append_stage3_output_openings<'c, 'a>(
         &claims,
         &["!piop.opening_batch_type"],
     )?;
-    Ok(())
+    Ok(Stage3OutputEvals {
+        shift,
+        instruction,
+        registers,
+    })
+}
+
+fn append_output_eval_claim<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    claims: &mut Vec<Value<'c, 'a>>,
+    claim_symbols: &mut Vec<String>,
+    spec: OutputEvalClaimSpec<'c, 'a, '_>,
+) -> Result<Value<'c, 'a>, MlirError> {
+    let symbol = format!("{}.opening.{}", spec.prefix, spec.oracle);
+    let eval = append_sumcheck_eval(
+        context,
+        module,
+        &format!("{}.eval.{}", spec.prefix, spec.oracle),
+        "stage3.sumcheck",
+        spec.oracle,
+        spec.degree_offset + spec.index,
+        spec.instance.1,
+    )?;
+    claim_symbols.push(symbol.clone());
+    claims.push(append_opening_claim(
+        context,
+        module,
+        spec.instance.0,
+        eval,
+        OpeningClaimSpec {
+            symbol: &symbol,
+            oracle: spec.oracle,
+            domain: "jolt.trace_domain",
+            point_arity: spec.point_arity,
+            claim_kind: "virtual",
+        },
+    )?);
+    Ok(eval)
+}
+
+fn append_stage3_output_claims<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    spec: Stage3OutputClaimInputs<'c, 'a, '_>,
+) -> Result<(), MlirError> {
+    let shift_eq_next_pc = append_structured_polynomial_eval(
+        context,
+        module,
+        StructuredPolynomialSpec {
+            symbol: "stage3.spartan_shift.output.eq.NextPC",
+            polynomial: "eq_plus_one",
+            x_point: StructuredPolynomialPointSpec::full("reverse"),
+            y_point: StructuredPolynomialPointSpec::full("as_is"),
+        },
+        spec.instances.shift.0,
+        spec.openings.next_pc.point,
+    )?;
+    let shift_eq_next_is_noop = append_structured_polynomial_eval(
+        context,
+        module,
+        StructuredPolynomialSpec {
+            symbol: "stage3.spartan_shift.output.eq.NextIsNoop",
+            polynomial: "eq_plus_one",
+            x_point: StructuredPolynomialPointSpec::full("reverse"),
+            y_point: StructuredPolynomialPointSpec::full("as_is"),
+        },
+        spec.instances.shift.0,
+        spec.openings.product_next_is_noop.point,
+    )?;
+    let mut formula = FieldFormulaBuilder::new(context, module);
+    formula.bind_all(&[
+        ("stage3.spartan_shift.gamma", spec.shift_gamma),
+        ("stage3.spartan_shift.gamma2", spec.shift_gamma2),
+        ("stage3.spartan_shift.gamma3", spec.shift_gamma3),
+        ("stage3.spartan_shift.gamma4", spec.shift_gamma4),
+        ("stage3.field.one", spec.field_one),
+        (
+            "stage3.spartan_shift.eval.UnexpandedPC",
+            spec.output_evals.shift.unexpanded_pc,
+        ),
+        ("stage3.spartan_shift.eval.PC", spec.output_evals.shift.pc),
+        (
+            "stage3.spartan_shift.eval.OpFlagVirtualInstruction",
+            spec.output_evals.shift.op_flag_virtual_instruction,
+        ),
+        (
+            "stage3.spartan_shift.eval.OpFlagIsFirstInSequence",
+            spec.output_evals.shift.op_flag_is_first_in_sequence,
+        ),
+        (
+            "stage3.spartan_shift.eval.InstructionFlagIsNoop",
+            spec.output_evals.shift.instruction_flag_is_noop,
+        ),
+        ("stage3.spartan_shift.output.eq.NextPC", shift_eq_next_pc),
+        (
+            "stage3.spartan_shift.output.eq.NextIsNoop",
+            shift_eq_next_is_noop,
+        ),
+    ]);
+    formula.append_all(&STAGE3_SHIFT_OUTPUT_FORMULAS)?;
+    let shift_claim = formula.value("stage3.spartan_shift.output.claim_expr")?;
+    append_sumcheck_output_claim(
+        context,
+        module,
+        OutputClaimSpec {
+            symbol: "stage3.spartan_shift.output.claim",
+            stage: "stage3",
+            relation: "jolt.stage3.spartan_shift",
+        },
+        shift_claim,
+        &[
+            ("stage3.spartan_shift.output.eq.NextPC", shift_eq_next_pc),
+            (
+                "stage3.spartan_shift.output.eq.NextIsNoop",
+                shift_eq_next_is_noop,
+            ),
+        ],
+    )?;
+
+    let instruction_eq_left = append_structured_polynomial_eval(
+        context,
+        module,
+        StructuredPolynomialSpec {
+            symbol: "stage3.instruction_input.output.eq.LeftInstructionInput",
+            polynomial: "eq",
+            x_point: StructuredPolynomialPointSpec::full("reverse"),
+            y_point: StructuredPolynomialPointSpec::full("as_is"),
+        },
+        spec.instances.instruction.0,
+        spec.openings.product_left_instruction_input.point,
+    )?;
+    let mut formula = FieldFormulaBuilder::new(context, module);
+    formula.bind_all(&[
+        ("stage3.instruction_input.gamma", spec.instruction_gamma),
+        (
+            "stage3.instruction_input.eval.InstructionFlagLeftOperandIsRs1Value",
+            spec.output_evals.instruction.left_operand_is_rs1_value,
+        ),
+        (
+            "stage3.instruction_input.eval.Rs1Value",
+            spec.output_evals.instruction.rs1_value,
+        ),
+        (
+            "stage3.instruction_input.eval.InstructionFlagLeftOperandIsPC",
+            spec.output_evals.instruction.left_operand_is_pc,
+        ),
+        (
+            "stage3.instruction_input.eval.UnexpandedPC",
+            spec.output_evals.instruction.unexpanded_pc,
+        ),
+        (
+            "stage3.instruction_input.eval.InstructionFlagRightOperandIsRs2Value",
+            spec.output_evals.instruction.right_operand_is_rs2_value,
+        ),
+        (
+            "stage3.instruction_input.eval.Rs2Value",
+            spec.output_evals.instruction.rs2_value,
+        ),
+        (
+            "stage3.instruction_input.eval.InstructionFlagRightOperandIsImm",
+            spec.output_evals.instruction.right_operand_is_imm,
+        ),
+        (
+            "stage3.instruction_input.eval.Imm",
+            spec.output_evals.instruction.imm,
+        ),
+        (
+            "stage3.instruction_input.output.eq.LeftInstructionInput",
+            instruction_eq_left,
+        ),
+    ]);
+    formula.append_all(&STAGE3_INSTRUCTION_OUTPUT_FORMULAS)?;
+    let instruction_claim = formula.value("stage3.instruction_input.output.claim_expr")?;
+    append_sumcheck_output_claim(
+        context,
+        module,
+        OutputClaimSpec {
+            symbol: "stage3.instruction_input.output.claim",
+            stage: "stage3",
+            relation: "jolt.stage3.instruction_input",
+        },
+        instruction_claim,
+        &[(
+            "stage3.instruction_input.output.eq.LeftInstructionInput",
+            instruction_eq_left,
+        )],
+    )?;
+
+    let registers_eq_rd_write = append_structured_polynomial_eval(
+        context,
+        module,
+        StructuredPolynomialSpec {
+            symbol: "stage3.registers.output.eq.RdWriteValue",
+            polynomial: "eq",
+            x_point: StructuredPolynomialPointSpec::full("reverse"),
+            y_point: StructuredPolynomialPointSpec::full("as_is"),
+        },
+        spec.instances.registers.0,
+        spec.openings.rd_write_value.point,
+    )?;
+    let mut formula = FieldFormulaBuilder::new(context, module);
+    formula.bind_all(&[
+        ("stage3.registers.gamma", spec.registers_gamma),
+        ("stage3.registers.gamma2", spec.registers_gamma2),
+        (
+            "stage3.registers_claim_reduction.eval.RdWriteValue",
+            spec.output_evals.registers.rd_write,
+        ),
+        (
+            "stage3.registers_claim_reduction.eval.Rs1Value",
+            spec.output_evals.registers.rs1,
+        ),
+        (
+            "stage3.registers_claim_reduction.eval.Rs2Value",
+            spec.output_evals.registers.rs2,
+        ),
+        (
+            "stage3.registers.output.eq.RdWriteValue",
+            registers_eq_rd_write,
+        ),
+    ]);
+    formula.append_all(&STAGE3_REGISTERS_OUTPUT_FORMULAS)?;
+    let registers_claim = formula.value("stage3.registers.output.claim_expr")?;
+    append_sumcheck_output_claim(
+        context,
+        module,
+        OutputClaimSpec {
+            symbol: "stage3.registers.output.claim",
+            stage: "stage3",
+            relation: "jolt.stage3.registers_claim_reduction",
+        },
+        registers_claim,
+        &[(
+            "stage3.registers.output.eq.RdWriteValue",
+            registers_eq_rd_write,
+        )],
+    )
 }
 
 fn append_sumcheck_claim<'c, 'a>(
@@ -1655,6 +2280,7 @@ fn schema_error(message: impl Into<String>) -> MlirError {
 
 #[derive(Clone, Copy)]
 struct Stage3OpeningInput<'c, 'a> {
+    point: Value<'c, 'a>,
     eval: Value<'c, 'a>,
     claim: Value<'c, 'a>,
 }
@@ -1754,9 +2380,63 @@ struct OpeningClaimSpec<'a> {
     claim_kind: &'a str,
 }
 
-struct InstanceOutput<'c, 'a, 'b> {
+#[derive(Clone, Copy)]
+struct Stage3Instances<'c, 'a> {
+    shift: (Value<'c, 'a>, Value<'c, 'a>),
+    instruction: (Value<'c, 'a>, Value<'c, 'a>),
+    registers: (Value<'c, 'a>, Value<'c, 'a>),
+}
+
+struct OutputEvalClaimSpec<'c, 'a, 'b> {
     prefix: &'b str,
-    instance: (Value<'c, 'a>, Value<'c, 'a>),
-    outputs: &'b [&'b str],
+    oracle: &'b str,
+    index: usize,
     degree_offset: usize,
+    instance: (Value<'c, 'a>, Value<'c, 'a>),
+    point_arity: usize,
+}
+
+struct Stage3OutputEvals<'c, 'a> {
+    shift: Stage3ShiftOutputEvals<'c, 'a>,
+    instruction: Stage3InstructionInputOutputEvals<'c, 'a>,
+    registers: Stage3RegistersOutputEvals<'c, 'a>,
+}
+
+struct Stage3ShiftOutputEvals<'c, 'a> {
+    unexpanded_pc: Value<'c, 'a>,
+    pc: Value<'c, 'a>,
+    op_flag_virtual_instruction: Value<'c, 'a>,
+    op_flag_is_first_in_sequence: Value<'c, 'a>,
+    instruction_flag_is_noop: Value<'c, 'a>,
+}
+
+struct Stage3InstructionInputOutputEvals<'c, 'a> {
+    left_operand_is_rs1_value: Value<'c, 'a>,
+    rs1_value: Value<'c, 'a>,
+    left_operand_is_pc: Value<'c, 'a>,
+    unexpanded_pc: Value<'c, 'a>,
+    right_operand_is_rs2_value: Value<'c, 'a>,
+    rs2_value: Value<'c, 'a>,
+    right_operand_is_imm: Value<'c, 'a>,
+    imm: Value<'c, 'a>,
+}
+
+struct Stage3RegistersOutputEvals<'c, 'a> {
+    rd_write: Value<'c, 'a>,
+    rs1: Value<'c, 'a>,
+    rs2: Value<'c, 'a>,
+}
+
+struct Stage3OutputClaimInputs<'c, 'a, 'b> {
+    openings: &'b Stage3OpeningInputs<'c, 'a>,
+    output_evals: &'b Stage3OutputEvals<'c, 'a>,
+    instances: Stage3Instances<'c, 'a>,
+    shift_gamma: Value<'c, 'a>,
+    shift_gamma2: Value<'c, 'a>,
+    shift_gamma3: Value<'c, 'a>,
+    shift_gamma4: Value<'c, 'a>,
+    field_one: Value<'c, 'a>,
+    instruction_gamma: Value<'c, 'a>,
+    registers_gamma: Value<'c, 'a>,
+    registers_gamma2: Value<'c, 'a>,
 }

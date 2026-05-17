@@ -821,6 +821,16 @@ pub fn resolve_compute_kernels<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
+            "compute.sumcheck_eval_family" => {
+                let attrs = copy_attrs(op, &["source", "oracle_family", "count", "evals"])?;
+                let symbol = string_attr(op, "sym_name")?;
+                context.append_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.sumcheck_eval_family",
+                    Some(&symbol),
+                    &attrs,
+                )?;
+            }
             "compute.sumcheck_instance_result" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let attrs = copy_attrs(
@@ -848,6 +858,117 @@ pub fn resolve_compute_kernels<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
                 insert_result_mapping(&mut value_map, op, operation, 1, 1)?;
+            }
+            "compute.structured_polynomial_eval" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "polynomial",
+                        "x_point_segment",
+                        "x_point_length",
+                        "x_point_order",
+                        "y_point_segment",
+                        "y_point_length",
+                        "y_point_order",
+                    ],
+                )?;
+                let symbol = string_attr(op, "sym_name")?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.structured_polynomial_eval",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.sumcheck_output_eval_family" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "power_stride",
+                        "value_term_offsets",
+                        "shared_term_offsets",
+                        "item_term_offsets",
+                        "evals",
+                        "shared_terms",
+                        "item_terms",
+                    ],
+                )?;
+                let symbol = string_attr(op, "sym_name")?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.sumcheck_output_eval_family",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.sumcheck_output_product_family" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "gamma",
+                        "term_gamma_power_offsets",
+                        "term_eval_counts",
+                        "term_factor_counts",
+                        "evals",
+                        "factors",
+                    ],
+                )?;
+                let symbol = string_attr(op, "sym_name")?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.sumcheck_output_product_family",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.sumcheck_output_function_family" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "gamma",
+                        "term_gamma_power_offsets",
+                        "term_functions",
+                        "term_factor_counts",
+                        "evals",
+                        "factors",
+                    ],
+                )?;
+                let symbol = string_attr(op, "sym_name")?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.sumcheck_output_function_family",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.sumcheck_output_claim" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let attrs = copy_attrs(op, &["stage", "relation", "count", "polynomial_evals"])?;
+                let symbol = string_attr(op, "sym_name")?;
+                let _operation = context.append_typed_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.sumcheck_output_claim",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &[],
+                )?;
             }
             "compute.opening_claim" => {
                 let operands = lowered_operands(op, &value_map, 0)?;

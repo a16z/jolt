@@ -20,9 +20,12 @@ define_stage_adapter!(
     Stage4SumcheckDriverPlan,
     Stage4SumcheckInstanceResultPlan,
     Stage4SumcheckEvalPlan,
-    Stage4PointSlicePlan,
-    Stage4PointConcatPlan,
+    Stage4PointExprPlan,
+    Stage4PointExprPlan,
     Stage4OpeningClaimPlan,
     Stage4OpeningClaimEqualityPlan,
-    Stage4OpeningBatchPlan
+    Stage4OpeningBatchPlan,
+    scalar_expr = Stage4ScalarExprPlan,
+    empty_indexed_eval_families = empty_indexed_eval_families,
+    relation_outputs = Stage4RelationOutputPlan
 );

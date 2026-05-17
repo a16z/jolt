@@ -1,9 +1,23 @@
 pub mod artifacts;
+pub(crate) mod cpu_attrs;
 pub mod emit;
 pub mod oracles;
 pub mod params;
 pub mod phases;
+pub(crate) mod rust_target_plan;
+pub(crate) mod stage5_instruction_read_raf_plan;
+pub(crate) mod stage6_bytecode_read_raf_plan;
 pub mod validate;
+pub(crate) mod verifier_eval_families;
+pub(crate) mod verifier_local_scalars;
+pub(crate) mod verifier_opening_rows;
+pub(crate) mod verifier_plan;
+pub(crate) mod verifier_point_rows;
+pub(crate) mod verifier_program_rows;
+pub(crate) mod verifier_relation_outputs;
+pub(crate) mod verifier_sumcheck_rows;
+pub(crate) mod verifier_value_rows;
+pub(crate) mod verifier_values;
 
 pub use artifacts::{
     assemble_jolt_generated_crates, assemble_jolt_workspace_generated_crates, jolt_artifact_config,

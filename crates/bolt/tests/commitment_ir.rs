@@ -329,6 +329,35 @@ fn protocol_schema_accepts_explicit_sumcheck_and_opening_flow() {
 }
 
 #[test]
+fn protocol_schema_rejects_eval_family_count_mismatch() {
+    let context = MeliorContext::new();
+    let protocol = context
+        .parse_module::<bolt::Protocol>(&explicit_sumcheck_protocol_with_eval_family(
+            2,
+            "[@stage1.outer.eval]",
+        ))
+        .expect("parse protocol with mismatched eval family");
+
+    let error = verify_protocol_schema(&protocol).expect_err("eval family count mismatch");
+    assert!(error
+        .to_string()
+        .contains("piop.sumcheck_eval_family attr `evals` length 1 does not match count 2"));
+}
+
+#[test]
+fn protocol_schema_rejects_empty_eval_family() {
+    let context = MeliorContext::new();
+    let protocol = context
+        .parse_module::<bolt::Protocol>(&explicit_sumcheck_protocol_with_eval_family(0, "[]"))
+        .expect("parse protocol with empty eval family");
+
+    let error = verify_protocol_schema(&protocol).expect_err("empty eval family rejected");
+    assert!(error
+        .to_string()
+        .contains("piop.sumcheck_eval_family attr `evals` must contain at least one symbol"));
+}
+
+#[test]
 fn opening_batch_schema_rejects_hidden_or_reordered_claims() {
     let context = MeliorContext::new();
     let protocol = context
@@ -816,6 +845,12 @@ fn jolt_stage5_protocol_defines_value_lookup_reduction_flow() {
     assert!(text.contains("@stage5.ram_ra_claim_reduction.opening.RamRa"));
     assert!(text.contains("@stage5.registers_val_evaluation.opening.RdInc"));
     assert!(text.contains("@stage5.registers_val_evaluation.opening.RdWa"));
+    assert!(text.contains("sym_name = \"stage5.ram_ra_claim_reduction.output.eq.Raf\""));
+    assert!(text.contains("sym_name = \"stage5.ram_ra_claim_reduction.output.claim\""));
+    assert!(
+        text.contains("sym_name = \"stage5.registers_val_evaluation.output.lt.RegistersValCycle\"")
+    );
+    assert!(text.contains("sym_name = \"stage5.registers_val_evaluation.output.claim\""));
     assert!(!text.contains("kernel = @"));
     assert!(!text.contains("\"compute."));
 }
@@ -868,6 +903,8 @@ fn jolt_stage5_lowers_to_compute_and_cpu_role_ir() {
     assert!(prover_kernel_text.contains("kernel = @jolt.cpu.stage5.batched"));
     assert!(prover_cpu_text.contains("kernel = @jolt.cpu.stage5.batched"));
     assert!(prover_cpu_text.contains("point_order = \"instruction_read_raf\""));
+    assert!(verifier_cpu_text.contains("\"cpu.structured_polynomial_eval\""));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_output_claim\""));
     assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify_claim\""));
     assert!(!verifier_kernel_text.contains("kernel = @"));
     assert!(!verifier_cpu_text.contains("kernel = @"));
@@ -895,7 +932,6 @@ fn jolt_stage6_protocol_defines_bytecode_booleanity_and_virtualization_flow() {
     assert!(text.contains("sym_name = \"stage6.booleanity.gamma\""));
     assert!(text.contains("sym_name = \"stage6.instruction_ra_virtual.gamma\""));
     assert!(text.contains("sym_name = \"stage6.inc_claim_reduction.gamma\""));
-    assert!(text.contains("sym_name = \"stage6.booleanity.gamma_sq_0\""));
     assert!(text.contains("source_claim = @stage2.ram_read_write.opening.RamInc"));
     assert!(text.contains("source_claim = @stage4.registers_read_write.opening.RdInc"));
     assert!(text.contains("source_claim = @stage5.registers_val_evaluation.opening.RdInc"));
@@ -908,6 +944,21 @@ fn jolt_stage6_protocol_defines_bytecode_booleanity_and_virtualization_flow() {
     assert!(text.contains("@stage6.instruction_ra_virtual.opening.InstructionRa_0"));
     assert!(text.contains("@stage6.inc_claim_reduction.opening.RamInc"));
     assert!(text.contains("@stage6.inc_claim_reduction.opening.RdInc"));
+    assert!(text.contains("sym_name = \"stage6.booleanity.output.claim\""));
+    assert!(text.contains("sym_name = \"stage6.hamming_booleanity.output.claim\""));
+    assert!(text.contains("sym_name = \"stage6.ram_ra_virtual.output.claim\""));
+    assert!(text.contains("sym_name = \"stage6.instruction_ra_virtual.output.claim\""));
+    assert!(text.contains("sym_name = \"stage6.inc_claim_reduction.output.claim\""));
+    assert!(text.contains("sym_name = \"stage6.booleanity.output.family\""));
+    assert!(text.contains("sym_name = \"stage6.hamming_booleanity.output.family\""));
+    assert!(text.contains("sym_name = \"stage6.ram_ra_virtual.output.family\""));
+    assert!(text.contains("sym_name = \"stage6.instruction_ra_virtual.output.family\""));
+    assert!(text.contains("sym_name = \"stage6.inc_claim_reduction.output.family\""));
+    assert!(text.contains("\"piop.sumcheck_output_function_family\""));
+    assert!(text.contains("\"piop.sumcheck_output_product_family\""));
+    assert!(text.contains("\"piop.sumcheck_output_eval_family\""));
+    assert!(text.contains("sym_name = \"stage6.inc_claim_reduction.output.eq.RdIncStage5\""));
+    assert!(text.contains("sym_name = \"stage6.booleanity.output.eq.InstructionRa0\""));
     assert!(!text.contains("kernel = @"));
     assert!(!text.contains("\"compute."));
 }
@@ -961,6 +1012,9 @@ fn jolt_stage6_lowers_to_compute_and_cpu_role_ir() {
     assert!(prover_cpu_text.contains("kernel = @jolt.cpu.stage6.batched"));
     assert!(prover_cpu_text.contains("point_order = \"bytecode_read_raf\""));
     assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify_claim\""));
+    assert!(verifier_cpu_text.contains("\"cpu.structured_polynomial_eval\""));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_output_eval_family\""));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_output_claim\""));
     assert!(!verifier_kernel_text.contains("kernel = @"));
     assert!(!verifier_cpu_text.contains("kernel = @"));
 }
@@ -991,6 +1045,15 @@ fn jolt_stage7_protocol_defines_hamming_weight_claim_reduction_flow() {
     assert!(text.contains("source_claim = @stage6.hamming_booleanity.opening.HammingWeight"));
     assert!(text.contains("sym_name = \"stage7.hamming_weight_claim_reduction.point.cycle\""));
     assert!(text.contains("sym_name = \"stage7.hamming_weight_claim_reduction.point\""));
+    assert!(
+        text.contains("sym_name = \"stage7.hamming_weight_claim_reduction.output.eq.Booleanity\"")
+    );
+    assert!(text.contains(
+        "sym_name = \"stage7.hamming_weight_claim_reduction.output.eq.InstructionRa_0.virtualization\""
+    ));
+    assert!(text.contains("sym_name = \"stage7.hamming_weight_claim_reduction.output.family\""));
+    assert!(text.contains("\"piop.sumcheck_output_eval_family\""));
+    assert!(text.contains("sym_name = \"stage7.hamming_weight_claim_reduction.output\""));
     assert!(text.contains("@stage7.hamming_weight_claim_reduction.opening.InstructionRa_0"));
     assert!(text.contains("@stage7.hamming_weight_claim_reduction.opening.BytecodeRa_0"));
     assert!(text.contains("@stage7.hamming_weight_claim_reduction.opening.RamRa_0"));
@@ -1047,6 +1110,9 @@ fn jolt_stage7_lowers_to_compute_and_cpu_role_ir() {
     assert!(prover_kernel_text.contains("kernel = @jolt.cpu.stage7.batched"));
     assert!(prover_cpu_text.contains("kernel = @jolt.cpu.stage7.batched"));
     assert!(prover_cpu_text.contains("point_order = \"reverse\""));
+    assert!(verifier_cpu_text.contains("\"cpu.structured_polynomial_eval\""));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_output_eval_family\""));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_output_claim\""));
     assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify_claim\""));
     assert!(!verifier_kernel_text.contains("kernel = @"));
     assert!(!verifier_cpu_text.contains("kernel = @"));
@@ -1229,7 +1295,7 @@ fn stage3_rust_targets_extract_and_compile() {
     assert!(verifier_source.source.contains("pub fn verify_stage3"));
     assert!(verifier_source
         .source
-        .contains("super::common::verify_batched_sumcheck"));
+        .contains("bolt_verifier_runtime::verify_batched_sumcheck"));
     assert!(verifier_source
         .source
         .contains("Stage3OpeningClaimEqualityPlan"));
@@ -1308,13 +1374,13 @@ fn stage4_rust_targets_extract_and_compile() {
         .contains("Stage4TranscriptAbsorbBytesPlan"));
     assert!(verifier_source
         .source
-        .contains("relation: Some(\"jolt.stage4.batched\")"));
+        .contains("relation: Some(Stage4RelationKind::Stage4Batched)"));
     assert!(verifier_source.source.contains("Stage4VerifierProgramPlan"));
     assert!(verifier_source.source.contains("pub fn verify_stage4"));
     assert!(verifier_source.source.contains("LabelWithCount"));
     assert!(verifier_source
         .source
-        .contains("super::common::verify_batched_sumcheck"));
+        .contains("bolt_verifier_runtime::verify_batched_sumcheck"));
     assert!(verifier_source.source.contains("stage4_verifier_program"));
     assert_or_update_fixture("tests/fixtures/prove_stage4.rs", &prover_source.source);
     assert_or_update_fixture("tests/fixtures/verify_stage4.rs", &verifier_source.source);
@@ -1349,6 +1415,10 @@ fn stage5_rust_targets_extract_and_compile() {
         prover_program.evals.len(),
         params.lookup_table_count + params.instruction_ra_virtual_d + 4
     );
+    assert_eq!(prover_program.relation_output_values.len(), 4);
+    assert!(prover_program.relation_outputs.is_empty());
+    assert_eq!(verifier_program.relation_output_values.len(), 5);
+    assert_eq!(verifier_program.relation_outputs.len(), 3);
     assert_eq!(
         prover_program.point_slices.len(),
         params.instruction_ra_virtual_d + 3
@@ -1394,31 +1464,44 @@ fn stage5_rust_targets_extract_and_compile() {
     assert!(verifier_source.source.contains("pub fn verify_stage5"));
     assert!(verifier_source
         .source
-        .contains("relation: Some(\"jolt.stage5.batched\")"));
+        .contains("relation: Some(Stage5RelationKind::Stage5Batched)"));
     assert!(verifier_source
         .source
-        .contains("expected_instruction_read_raf"));
+        .contains("evaluate_stage5_instruction_read_raf_local_scalars"));
     assert!(verifier_source
         .source
-        .contains("jolt.stage5.instruction_read_raf"));
+        .contains("Stage5RelationKind::Stage5InstructionReadRaf"));
     assert!(verifier_source
         .source
-        .contains("LookupTableKind::<XLEN>::all"));
-    assert!(verifier_source
-        .source
-        .contains("use jolt_lookup_tables::LookupTableKind"));
-    assert!(verifier_source
+        .contains("JoltLocalScalarMleKind::LookupTable"));
+    assert!(!verifier_source
         .source
         .contains("expected_ram_ra_claim_reduction"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("expected_registers_val_evaluation"));
+    assert!(verifier_source.source.contains("Stage5RelationOutputPlan"));
     assert!(verifier_source
         .source
-        .contains("jolt.stage5.ram_ra_claim_reduction"));
+        .contains("stage5.instruction_read_raf.output.claim_expr"));
     assert!(verifier_source
         .source
-        .contains("jolt.stage5.registers_val_evaluation"));
+        .contains("stage5.ram_ra_claim_reduction.output.eq.ReadWrite"));
+    assert!(verifier_source
+        .source
+        .contains("stage5.registers_val_evaluation.output.lt.RegistersValCycle"));
+    assert!(verifier_source
+        .source
+        .contains("bolt_verifier_runtime::evaluate_relation_output_batch"));
+    assert!(verifier_source
+        .source
+        .contains("stage5_relation_output_inputs"));
+    assert!(verifier_source
+        .source
+        .contains("Stage5RelationKind::Stage5RamRaClaimReduction"));
+    assert!(verifier_source
+        .source
+        .contains("Stage5RelationKind::Stage5RegistersValEvaluation"));
     assert!(verifier_source.source.contains("LookupTableFlag_40"));
     assert!(!verifier_source.source.contains("LookupTableFlag_41"));
     assert!(verifier_source
@@ -1433,7 +1516,7 @@ fn stage5_rust_targets_extract_and_compile() {
     assert!(!verifier_source.source.contains("jolt.stage5.ram_val_check"));
     assert!(verifier_source
         .source
-        .contains("super::common::verify_batched_sumcheck"));
+        .contains("bolt_verifier_runtime::verify_batched_sumcheck"));
     assert!(verifier_source.source.contains("stage5_verifier_program"));
     assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
     assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
@@ -1473,14 +1556,249 @@ fn stage6_rust_targets_extract_and_compile() {
             + params.instruction_d
             + 2
     );
+    assert_eq!(prover_program.relation_output_values.len(), 8);
+    assert!(prover_program.relation_outputs.is_empty());
+    assert_eq!(verifier_program.relation_output_values.len(), 8);
+    assert!(verifier_program.relation_output_eval_families.is_empty());
+    assert!(verifier_program.relation_output_product_families.is_empty());
+    assert!(verifier_program
+        .relation_output_function_families
+        .is_empty());
+    assert_eq!(verifier_program.relation_outputs.len(), 6);
+    let total_booleanity_ra = params.instruction_d + params.bytecode_d + params.ram_d;
+    let booleanity_exprs = verifier_program
+        .field_exprs
+        .iter()
+        .filter(|expr| expr.symbol.starts_with("stage6.booleanity.output."))
+        .collect::<Vec<_>>();
+    assert!(booleanity_exprs.iter().any(|expr| {
+        expr.symbol == "stage6.booleanity.output.term0.boolean_zero.square"
+            && expr.formula == "field.product"
+            && expr.operands
+                == vec![
+                    "stage6.booleanity.eval.InstructionRa_0".to_owned(),
+                    "stage6.booleanity.eval.InstructionRa_0".to_owned(),
+                ]
+    }));
+    assert!(booleanity_exprs.iter().any(|expr| {
+        expr.symbol == "stage6.booleanity.output.term0.boolean_zero"
+            && expr.formula == "field.sub"
+            && expr.operands
+                == vec![
+                    "stage6.booleanity.output.term0.boolean_zero.square".to_owned(),
+                    "stage6.booleanity.eval.InstructionRa_0".to_owned(),
+                ]
+    }));
+    assert!(booleanity_exprs.iter().any(|expr| {
+        expr.symbol == "stage6.booleanity.output.term0"
+            && expr.formula == "field.product"
+            && expr.operands
+                == vec![
+                    "stage6.booleanity.output.term0.boolean_zero".to_owned(),
+                    "stage6.booleanity.output.eq.InstructionRa0".to_owned(),
+                ]
+    }));
+    assert!(booleanity_exprs.iter().any(|expr| {
+        expr.symbol == "stage6.booleanity.output.gamma_pow_2"
+            && expr.formula == "field.pow:2"
+            && expr.operands == vec!["stage6.booleanity.gamma".to_owned()]
+    }));
+    assert!(booleanity_exprs.iter().any(|expr| {
+        expr.symbol
+            == format!(
+                "stage6.booleanity.output.gamma_pow_{}",
+                2 * (total_booleanity_ra - 1)
+            )
+    }));
+    assert!(booleanity_exprs.iter().any(|expr| {
+        expr.symbol == "stage6.booleanity.output.claim_expr" && expr.formula == "field.sum"
+    }));
+    let hamming_expr_symbols = verifier_program
+        .field_exprs
+        .iter()
+        .filter(|expr| expr.symbol.starts_with("stage6.hamming_booleanity.output."))
+        .map(|expr| expr.symbol.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        hamming_expr_symbols,
+        vec![
+            "stage6.hamming_booleanity.output.term0.boolean_zero.square",
+            "stage6.hamming_booleanity.output.term0.boolean_zero",
+            "stage6.hamming_booleanity.output.term0",
+            "stage6.hamming_booleanity.output.claim_expr"
+        ]
+    );
+    assert!(verifier_program
+        .relation_output_product_families
+        .iter()
+        .all(|family| family.symbol != "stage6.ram_ra_virtual.output.family"));
+    assert!(verifier_program
+        .relation_output_product_families
+        .iter()
+        .all(|family| family.symbol != "stage6.instruction_ra_virtual.output.family"));
+    let ram_expr_symbols = verifier_program
+        .field_exprs
+        .iter()
+        .filter(|expr| expr.symbol.starts_with("stage6.ram_ra_virtual.output."))
+        .map(|expr| expr.symbol.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ram_expr_symbols,
+        vec![
+            "stage6.ram_ra_virtual.output.term0",
+            "stage6.ram_ra_virtual.output.claim_expr"
+        ]
+    );
+    let committed_per_virtual = params.instruction_d / params.instruction_ra_virtual_d;
+    let instruction_exprs = verifier_program
+        .field_exprs
+        .iter()
+        .filter(|expr| {
+            expr.symbol
+                .starts_with("stage6.instruction_ra_virtual.output.")
+        })
+        .collect::<Vec<_>>();
+    assert!(instruction_exprs
+        .iter()
+        .any(|expr| expr.symbol == "stage6.instruction_ra_virtual.output.claim_expr"));
+    assert!(instruction_exprs
+        .iter()
+        .any(|expr| expr.symbol == "stage6.instruction_ra_virtual.output.gamma_pow_7"));
+    for virtual_index in 0..params.instruction_ra_virtual_d {
+        let term = instruction_exprs
+            .iter()
+            .find(|expr| {
+                expr.symbol == format!("stage6.instruction_ra_virtual.output.term{virtual_index}")
+            })
+            .expect("instruction RA virtual output term");
+        if virtual_index == 0 {
+            assert!(!term
+                .operands
+                .contains(&"stage6.instruction_ra_virtual.output.gamma_pow_0".to_owned()));
+        } else {
+            assert!(term.operands.contains(&format!(
+                "stage6.instruction_ra_virtual.output.gamma_pow_{virtual_index}"
+            )));
+        }
+        assert_eq!(
+            term.operands
+                .iter()
+                .filter(|operand| operand.contains(".eval.InstructionRa_"))
+                .cloned()
+                .collect::<Vec<_>>(),
+            (0..committed_per_virtual)
+                .map(|chunk_index| {
+                    let index = virtual_index * committed_per_virtual + chunk_index;
+                    format!("stage6.instruction_ra_virtual.eval.InstructionRa_{index}")
+                })
+                .collect::<Vec<_>>()
+        );
+        assert!(term
+            .operands
+            .contains(&"stage6.instruction_ra_virtual.output.eq.Cycle".to_owned()));
+    }
+    let inc_expr_symbols = verifier_program
+        .field_exprs
+        .iter()
+        .filter(|expr| {
+            expr.symbol
+                .starts_with("stage6.inc_claim_reduction.output.")
+        })
+        .map(|expr| expr.symbol.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        inc_expr_symbols,
+        vec![
+            "stage6.inc_claim_reduction.output.term0",
+            "stage6.inc_claim_reduction.output.gamma_pow_1",
+            "stage6.inc_claim_reduction.output.term1",
+            "stage6.inc_claim_reduction.output.gamma_pow_2",
+            "stage6.inc_claim_reduction.output.term2",
+            "stage6.inc_claim_reduction.output.gamma_pow_3",
+            "stage6.inc_claim_reduction.output.term3",
+            "stage6.inc_claim_reduction.output.claim_expr"
+        ]
+    );
+    let inc_claims = verifier_program
+        .relation_outputs
+        .iter()
+        .filter(|claim| {
+            claim.expected_output_symbol() == "stage6.inc_claim_reduction.output.claim_expr"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(inc_claims.len(), 1);
+    let booleanity_claims = verifier_program
+        .relation_outputs
+        .iter()
+        .filter(|claim| claim.expected_output_symbol() == "stage6.booleanity.output.claim_expr")
+        .collect::<Vec<_>>();
+    assert_eq!(booleanity_claims.len(), 1);
+    assert!(verifier_program
+        .scalar_exprs
+        .iter()
+        .any(|expr| expr.symbol == "stage6.booleanity.output.eq.InstructionRa0"));
+    let hamming_claims = verifier_program
+        .relation_outputs
+        .iter()
+        .filter(|claim| {
+            claim.expected_output_symbol() == "stage6.hamming_booleanity.output.claim_expr"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(hamming_claims.len(), 1);
+    let ram_ra_claims = verifier_program
+        .relation_outputs
+        .iter()
+        .filter(|claim| claim.expected_output_symbol() == "stage6.ram_ra_virtual.output.claim_expr")
+        .collect::<Vec<_>>();
+    assert_eq!(ram_ra_claims.len(), 1);
+    let instruction_ra_claims = verifier_program
+        .relation_outputs
+        .iter()
+        .filter(|claim| {
+            claim.expected_output_symbol() == "stage6.instruction_ra_virtual.output.claim_expr"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(instruction_ra_claims.len(), 1);
+    let bytecode_claims = verifier_program
+        .relation_outputs
+        .iter()
+        .filter(|claim| {
+            claim.expected_output_symbol() == "stage6.bytecode_read_raf.output.claim_expr"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(bytecode_claims.len(), 1);
+    let bytecode_output_scalar_exprs = verifier_program
+        .scalar_exprs
+        .iter()
+        .filter(|expr| expr.symbol.starts_with("stage6.bytecode_read_raf.output."))
+        .collect::<Vec<_>>();
+    assert!(bytecode_output_scalar_exprs.iter().any(|expr| {
+        expr.symbol == "stage6.bytecode_read_raf.output.product.BytecodeRa"
+            && expr.formula == "field_vector.product"
+            && expr.operands == vec!["stage6.bytecode_read_raf.eval.BytecodeRa".to_owned()]
+    }));
+    let bytecode_output_exprs = verifier_program
+        .field_exprs
+        .iter()
+        .filter(|expr| expr.symbol.starts_with("stage6.bytecode_read_raf.output."))
+        .collect::<Vec<_>>();
+    assert!(bytecode_output_exprs.iter().any(|expr| {
+        expr.symbol == "stage6.bytecode_read_raf.output.claim_expr"
+            && expr.formula == "field.product"
+            && expr.operands
+                == vec![
+                    "stage6.bytecode_read_raf.output.contribution".to_owned(),
+                    "stage6.bytecode_read_raf.output.product.BytecodeRa".to_owned(),
+                ]
+    }));
     assert_eq!(prover_program.point_zeros.len(), 1);
     assert_eq!(
         prover_program.point_slices.len(),
-        params.bytecode_d + 1 + params.ram_d + params.instruction_d
+        params.bytecode_d + 3 + params.ram_d + params.instruction_d
     );
     assert_eq!(
         prover_program.point_concats.len(),
-        params.bytecode_d + 1 + params.ram_d + params.instruction_d
+        params.bytecode_d + 2 + params.ram_d + params.instruction_d
     );
     assert_eq!(
         prover_program.opening_claims.len(),
@@ -1537,36 +1855,175 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(verifier_source.source.contains("pub fn verify_stage6"));
     assert!(verifier_source
         .source
-        .contains("relation: Some(\"jolt.stage6.batched\")"));
+        .contains("relation: Some(Stage6RelationKind::Stage6Batched)"));
     assert!(verifier_source
         .source
-        .contains("jolt.stage6.bytecode_read_raf"));
+        .contains("Stage6RelationKind::Stage6BytecodeReadRaf"));
     assert!(verifier_source.source.contains("Stage6VerifierData"));
     assert!(verifier_source.source.contains("Stage6BytecodeReadRafData"));
     assert!(verifier_source.source.contains("Stage6BytecodeEntry"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("expected_bytecode_read_raf"));
+    assert!(verifier_source.source.contains("STAGE6_BYTECODE_PLAN"));
+    assert!(verifier_source
+        .source
+        .contains("Stage67BytecodeReadRafPlan"));
+    assert!(verifier_source
+        .source
+        .contains("Stage67BytecodeTermPlan::LookupTable"));
+    assert!(verifier_source
+        .source
+        .contains("Stage67BytecodeTermPlan::RegisterEq"));
+    assert!(verifier_source
+        .source
+        .contains("evaluate_stage67_bytecode_read_raf_output_scalars"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.bytecode_read_raf.output.product.BytecodeReadRaf"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.bytecode_read_raf.output.claim_expr"));
+    assert!(verifier_source
+        .source
+        .contains("Stage6ScalarExprKind::FieldVectorProduct"));
+    assert!(!verifier_source
+        .source
+        .contains("expected_stage67_bytecode_read_raf"));
+    assert!(!verifier_source.source.contains("Stage67BytecodeSymbols"));
     assert!(verifier_source
         .source
         .contains("stage6.bytecode_read_raf.data"));
-    assert!(verifier_source.source.contains("expected_booleanity"));
-    assert!(verifier_source
+    assert!(!verifier_source.source.contains("expected_booleanity"));
+    assert!(!verifier_source
         .source
         .contains("expected_hamming_booleanity"));
     assert!(verifier_source
         .source
-        .contains("jolt.stage6.inc_claim_reduction"));
+        .contains("bolt_verifier_runtime::evaluate_relation_output_batch"));
+    assert!(verifier_source
+        .source
+        .contains("stage6_relation_output_inputs"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.booleanity.output.eq.InstructionRa0"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.booleanity.output.family"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.hamming_booleanity.output.eq.LookupOutput"));
+    assert!(verifier_source
+        .source
+        .contains("Stage6RelationKind::Stage6IncClaimReduction"));
     assert!(verifier_source
         .source
         .contains("stage6.input.stage1.LookupOutput"));
-    assert!(verifier_source.source.contains("expected_ram_ra_virtual"));
-    assert!(verifier_source
+    assert!(!verifier_source.source.contains("expected_ram_ra_virtual"));
+    assert!(!verifier_source
         .source
         .contains("expected_instruction_ra_virtual"));
-    assert!(verifier_source
+    assert!(!verifier_source
         .source
         .contains("expected_inc_claim_reduction"));
+    assert!(verifier_source.source.contains("Stage6RelationOutputPlan"));
+    assert!(!verifier_source
+        .source
+        .contains("RelationOutputFunctionFamilyPlan"));
+    assert!(!verifier_source
+        .source
+        .contains("STAGE6_RELATION_OUTPUT_0_FUNCTION_FAMILIES"));
+    assert!(!verifier_source
+        .source
+        .contains("STAGE6_RELATION_OUTPUT_4_FAMILIES"));
+    assert!(!verifier_source
+        .source
+        .contains("RelationOutputProductFamilyPlan"));
+    assert!(!verifier_source
+        .source
+        .contains("STAGE6_RELATION_OUTPUT_2_PRODUCT_FAMILIES"));
+    assert!(!verifier_source
+        .source
+        .contains("STAGE6_RELATION_OUTPUT_3_PRODUCT_FAMILIES"));
+    assert!(!verifier_source
+        .source
+        .contains("STAGE6_RELATION_OUTPUT_5_PRODUCT_FAMILIES"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.booleanity.output.family"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.booleanity.output.eq.InstructionRa0"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.booleanity.output.gamma_sq_"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.hamming_booleanity.output.family"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.hamming_booleanity.output.claim_expr"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.hamming_booleanity.output.term0.boolean_zero"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.ram_ra_virtual.output.family"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.instruction_ra_virtual.output.family"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.inc_claim_reduction.output.eq.RdIncStage5"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.inc_claim_reduction.output.family"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.inc_claim_reduction.output.claim_expr"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.inc_claim_reduction.output.gamma_pow_3"));
+    assert!(verifier_source.source.contains("Stage6FieldExprKind::Sum"));
+    assert!(verifier_source
+        .source
+        .contains("Stage6FieldExprKind::Product"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.hamming_booleanity.output.square.HammingWeight"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.hamming_booleanity.output.neg.HammingWeight"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.hamming_booleanity.output.gamma_identity"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.ram_ra_virtual.output.product.RamRa"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.ram_ra_virtual.output.claim_expr"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.ram_ra_virtual.output.gamma_identity"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.instruction_ra_virtual.output.product.InstructionRa_0"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.instruction_ra_virtual.output.weighted_sum"));
+    assert!(!verifier_source
+        .source
+        .contains("stage6.instruction_ra_virtual.output.term.InstructionRa_"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.instruction_ra_virtual.output.gamma_pow_7"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.instruction_ra_virtual.output.claim_expr"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.inc_claim_reduction.output.term0"));
     assert!(verifier_source
         .source
         .contains("stage6.bytecode_read_raf.eval.BytecodeRa_0"));
@@ -1578,7 +2035,7 @@ fn stage6_rust_targets_extract_and_compile() {
         .contains("stage6.inc_claim_reduction.eval.RdInc"));
     assert!(verifier_source
         .source
-        .contains("super::common::verify_batched_sumcheck"));
+        .contains("bolt_verifier_runtime::verify_batched_sumcheck"));
     assert!(verifier_source.source.contains("stage6_verifier_program"));
     assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
     assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
@@ -1609,6 +2066,52 @@ fn stage7_rust_targets_extract_and_compile() {
     assert_eq!(prover_program.drivers.len(), 1);
     assert_eq!(prover_program.instance_results.len(), 1);
     assert_eq!(prover_program.evals.len(), total_ra);
+    assert_eq!(prover_program.relation_output_values.len(), total_ra + 1);
+    assert!(prover_program.relation_outputs.is_empty());
+    assert_eq!(verifier_program.relation_output_values.len(), total_ra + 1);
+    assert!(verifier_program.relation_output_eval_families.is_empty());
+    assert_eq!(verifier_program.relation_outputs.len(), 1);
+    assert_eq!(
+        verifier_program.relation_outputs[0].expected_output_symbol(),
+        "stage7.hamming_weight_claim_reduction.output.claim_expr"
+    );
+    let input_claim = verifier_program
+        .claims
+        .iter()
+        .find(|claim| claim.symbol == "stage7.hamming_weight_claim_reduction.input")
+        .expect("stage7 hamming input claim exists");
+    assert_eq!(
+        input_claim.claim_value,
+        "stage7.hamming_weight_claim_reduction.input.claim_expr"
+    );
+    let input_expr = verifier_program
+        .scalar_exprs
+        .iter()
+        .find(|expr| expr.symbol == "stage7.hamming_weight_claim_reduction.input.claim_expr")
+        .expect("stage7 hamming input claim is lowered to a scalar expression");
+    assert_eq!(
+        input_expr.formula,
+        format!("field.power_strided_weighted_sum:{total_ra}:3:_:_:0,1,2")
+    );
+    assert_eq!(input_expr.operands.len(), 1 + total_ra + 3 * total_ra);
+    let output_expr = verifier_program
+        .scalar_exprs
+        .iter()
+        .find(|expr| expr.symbol == "stage7.hamming_weight_claim_reduction.output.claim_expr")
+        .expect("stage7 hamming output is lowered to a scalar expression");
+    assert_eq!(
+        output_expr.formula,
+        format!("field.power_strided_weighted_sum:{total_ra}:3:0:1:2")
+    );
+    assert_eq!(output_expr.operands.len(), 2 * total_ra + 2);
+    assert_eq!(
+        output_expr.operands[0],
+        "stage7.hamming_weight_claim_reduction.gamma"
+    );
+    assert_eq!(
+        output_expr.operands[1 + total_ra],
+        "stage7.hamming_weight_claim_reduction.output.eq.Booleanity"
+    );
     assert!(prover_program.point_zeros.is_empty());
     assert_eq!(prover_program.point_slices.len(), 1);
     assert_eq!(prover_program.point_concats.len(), 1);
@@ -1650,13 +2153,41 @@ fn stage7_rust_targets_extract_and_compile() {
     assert!(verifier_source.source.contains("pub fn verify_stage7"));
     assert!(verifier_source
         .source
-        .contains("relation: Some(\"jolt.stage7.batched\")"));
+        .contains("relation: Some(Stage7RelationKind::Stage7Batched)"));
     assert!(verifier_source
         .source
-        .contains("jolt.stage7.hamming_weight_claim_reduction"));
-    assert!(verifier_source
+        .contains("Stage7RelationKind::Stage7HammingWeightClaimReduction"));
+    assert!(!verifier_source
         .source
         .contains("expected_hamming_weight_claim_reduction"));
+    assert!(verifier_source.source.contains("Stage7RelationOutputPlan"));
+    assert!(!verifier_source
+        .source
+        .contains("RelationOutputEvalFamilyPlan"));
+    assert!(!verifier_source
+        .source
+        .contains("STAGE7_RELATION_OUTPUT_0_FAMILY_0_EVALS"));
+    assert!(verifier_source
+        .source
+        .contains("Stage7ScalarExprKind::PowerStridedWeightedSum"));
+    assert!(!verifier_source
+        .source
+        .contains("Stage7FieldExprKind::PowerStridedWeightedSum"));
+    assert!(!verifier_source
+        .source
+        .contains("stage7.hamming_weight_claim_reduction.claim_expr.partial"));
+    assert!(verifier_source
+        .source
+        .contains("stage7.hamming_weight_claim_reduction.output.eq.Booleanity"));
+    assert!(verifier_source.source.contains(
+        "stage7.hamming_weight_claim_reduction.output.eq.InstructionRa_0.virtualization"
+    ));
+    assert!(!verifier_source
+        .source
+        .contains("stage7.hamming_weight_claim_reduction.output.term"));
+    assert!(verifier_source
+        .source
+        .contains("bolt_verifier_runtime::evaluate_relation_output_batch"));
     assert!(verifier_source
         .source
         .contains("stage7.input.stage6.booleanity.InstructionRa_0"));
@@ -1665,7 +2196,7 @@ fn stage7_rust_targets_extract_and_compile() {
         .contains("stage7.hamming_weight_claim_reduction.eval.InstructionRa_0"));
     assert!(verifier_source
         .source
-        .contains("super::common::verify_batched_sumcheck"));
+        .contains("bolt_verifier_runtime::verify_batched_sumcheck"));
     assert!(verifier_source.source.contains("stage7_verifier_program"));
     assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
     assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
@@ -1717,7 +2248,9 @@ fn stage8_rust_targets_extract_and_compile() {
     assert!(prover_source
         .source
         .contains("stage7.hamming_weight_claim_reduction.eval.InstructionRa_0"));
-    assert!(verifier_source.source.contains("mode: \"verify\""));
+    assert!(verifier_source
+        .source
+        .contains("mode: Stage8PcsProofMode::Verify"));
     assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
     assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
 }
@@ -3122,6 +3655,16 @@ module @explicit.sumcheck attributes {bolt.phase = "protocol"} {
 "#
 }
 
+fn explicit_sumcheck_protocol_with_eval_family(count: usize, evals: &str) -> String {
+    explicit_sumcheck_protocol().replace(
+        r#"  %opening = "pcs.opening_claim""#,
+        &format!(
+            r#"  "piop.sumcheck_eval_family"() {{count = {count} : i64, evals = {evals}, oracle_family = @RdInc, source = @stage1.outer.sumcheck, sym_name = "stage1.outer.eval.family"}} : () -> ()
+  %opening = "pcs.opening_claim""#
+        ),
+    )
+}
+
 fn explicit_sumcheck_compute() -> &'static str {
     r#"
 module @explicit.sumcheck attributes {bolt.phase = "compute", bolt.role = "prover"} {
@@ -3170,16 +3713,18 @@ fn assert_rust_source_compiles(_filename: &str, source: &str) {
     )
     .expect("write generated cargo manifest");
     std::fs::create_dir_all(dir.join("src")).expect("create generated src dir");
-    if source.contains("super::common") {
+    if source.contains("super::jolt_relations") {
+        // Tier B: audited Jolt verifier core. Tier A is provided by the
+        // bolt-verifier-runtime crate and is not staged as generated source.
         std::fs::write(
-            dir.join("src/common.rs"),
-            generated_verifier_common_source(&workspace_root),
+            dir.join("src/jolt_relations.rs"),
+            generated_verifier_jolt_relations_source(&workspace_root),
         )
-        .expect("write generated common source");
+        .expect("write generated jolt_relations source");
         std::fs::write(dir.join("src/generated.rs"), source).expect("write generated source");
         std::fs::write(
             dir.join("src/lib.rs"),
-            "pub mod common;\n#[rustfmt::skip]\npub mod generated;\n",
+            "pub mod jolt_relations;\n#[rustfmt::skip]\npub mod generated;\n",
         )
         .expect("write generated lib wrapper");
     } else {
@@ -3367,9 +3912,9 @@ fn assert_generated_stage1_self_parity_runs(
     .expect("write generated cargo manifest");
     let src_dir = dir.join("src");
     std::fs::create_dir_all(&src_dir).expect("create generated src dir");
-    let main_source = if verifier_source.source.contains("super::common") {
-        write_verifier_common_module(&src_dir, &workspace_root);
-        format!("mod common;\n{main_source}")
+    let main_source = if verifier_source.source.contains("super::jolt_relations") {
+        write_verifier_jolt_relations_module(&src_dir, &workspace_root);
+        format!("mod jolt_relations;\n{main_source}")
     } else {
         main_source.to_owned()
     };
@@ -3417,10 +3962,10 @@ fn assert_generated_jolt_chain_self_parity_runs(files: &[&RustSourceFile], main_
     std::fs::create_dir_all(&src_dir).expect("create generated src dir");
     let main_source = if files
         .iter()
-        .any(|file| file.source.contains("super::common"))
+        .any(|file| file.source.contains("super::jolt_relations"))
     {
-        write_verifier_common_module(&src_dir, &workspace_root);
-        format!("mod common;\n{main_source}")
+        write_verifier_jolt_relations_module(&src_dir, &workspace_root);
+        format!("mod jolt_relations;\n{main_source}")
     } else {
         main_source.to_owned()
     };
@@ -3450,20 +3995,21 @@ fn assert_generated_jolt_chain_self_parity_runs(files: &[&RustSourceFile], main_
     let _ = std::fs::remove_dir_all(dir);
 }
 
-fn write_verifier_common_module(src_dir: &Path, workspace_root: &Path) {
+fn write_verifier_jolt_relations_module(src_dir: &Path, workspace_root: &Path) {
     std::fs::write(
-        src_dir.join("common.rs"),
-        generated_verifier_common_source(workspace_root),
+        src_dir.join("jolt_relations.rs"),
+        generated_verifier_jolt_relations_source(workspace_root),
     )
-    .expect("write generated common source");
+    .expect("write generated jolt_relations source");
 }
 
-fn generated_verifier_common_source(workspace_root: &Path) -> String {
-    let common =
-        std::fs::read_to_string(workspace_root.join("crates/jolt-verifier/src/stages/common.rs"))
-            .expect("read generated verifier common stage source");
+fn generated_verifier_jolt_relations_source(workspace_root: &Path) -> String {
+    let jolt_relations = std::fs::read_to_string(
+        workspace_root.join("crates/jolt-verifier/src/stages/jolt_relations.rs"),
+    )
+    .expect("read generated verifier jolt_relations stage source");
     format!(
-        "#![allow(dead_code, unused_imports, unused_macros, reason = \"generated verifier helpers are shared across generated stage subsets\")]\n{common}"
+        "#![allow(dead_code, unused_imports, unused_macros, reason = \"audited Jolt verifier core helpers are shared across generated stage subsets\")]\n{jolt_relations}"
     )
 }
 
@@ -3481,7 +4027,10 @@ fn generated_jolt_runtime_available() -> bool {
         .join("crates/jolt-kernels/Cargo.toml")
         .exists()
         && workspace_root
-            .join("crates/jolt-verifier/src/stages/common.rs")
+            .join("crates/bolt-verifier-runtime/Cargo.toml")
+            .exists()
+        && workspace_root
+            .join("crates/jolt-verifier/src/stages/jolt_relations.rs")
             .exists()
 }
 
@@ -3510,6 +4059,7 @@ ark-ff = {{ git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twis
 ark-serialize = {{ git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }}
 
 [dependencies]
+bolt-verifier-runtime = {{ path = "{}" }}
 jolt-dory = {{ path = "{}" }}
 jolt-field = {{ path = "{}" }}
 jolt-kernels = {{ path = "{}" }}
@@ -3524,6 +4074,9 @@ rayon = "1.12.0"
 serde = {{ version = "1.0", default-features = false, features = ["derive"] }}
 tracing = {{ version = "0.1.37", default-features = false, features = ["attributes"] }}
 "#,
+        workspace_root
+            .join("crates/bolt-verifier-runtime")
+            .display(),
         workspace_root.join("crates/jolt-dory").display(),
         workspace_root.join("crates/jolt-field").display(),
         workspace_root.join("crates/jolt-kernels").display(),

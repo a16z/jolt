@@ -14,6 +14,48 @@ use crate::ir::{
 use crate::mlir::MlirError;
 use crate::pass::{verify_concrete_transcript, VerifyError};
 
+const STRUCTURED_POLYNOMIAL_EVAL_ATTRS: &[&str] = &[
+    "sym_name",
+    "polynomial",
+    "x_point_segment",
+    "x_point_length",
+    "x_point_order",
+    "y_point_segment",
+    "y_point_length",
+    "y_point_order",
+];
+
+const SUMCHECK_OUTPUT_EVAL_FAMILY_ATTRS: &[&str] = &[
+    "sym_name",
+    "power_stride",
+    "value_term_offsets",
+    "shared_term_offsets",
+    "item_term_offsets",
+    "evals",
+    "shared_terms",
+    "item_terms",
+];
+
+const SUMCHECK_OUTPUT_PRODUCT_FAMILY_ATTRS: &[&str] = &[
+    "sym_name",
+    "gamma",
+    "term_gamma_power_offsets",
+    "term_eval_counts",
+    "term_factor_counts",
+    "evals",
+    "factors",
+];
+
+const SUMCHECK_OUTPUT_FUNCTION_FAMILY_ATTRS: &[&str] = &[
+    "sym_name",
+    "gamma",
+    "term_gamma_power_offsets",
+    "term_functions",
+    "term_factor_counts",
+    "evals",
+    "factors",
+];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaError {
     message: String,
@@ -344,6 +386,14 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             )?;
             require_shape(operation, 1, 1)
         }
+        "piop.sumcheck_eval_family" => {
+            require_attrs(
+                operation,
+                &["sym_name", "source", "oracle_family", "count", "evals"],
+            )?;
+            require_shape(operation, 0, 0)?;
+            require_counted_symbols(operation, "evals")
+        }
         "piop.sumcheck_instance_result" => {
             require_attrs(
                 operation,
@@ -361,6 +411,34 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
                 ],
             )?;
             require_shape(operation, 2, 2)
+        }
+        "piop.structured_polynomial_eval" => {
+            require_attrs(operation, STRUCTURED_POLYNOMIAL_EVAL_ATTRS)?;
+            require_shape(operation, 2, 1)?;
+            require_structured_polynomial_eval(operation)
+        }
+        "piop.sumcheck_output_eval_family" => {
+            require_attrs(operation, SUMCHECK_OUTPUT_EVAL_FAMILY_ATTRS)?;
+            require_min_shape(operation, 1, 1)?;
+            require_sumcheck_output_eval_family(operation)
+        }
+        "piop.sumcheck_output_product_family" => {
+            require_attrs(operation, SUMCHECK_OUTPUT_PRODUCT_FAMILY_ATTRS)?;
+            require_min_shape(operation, 1, 1)?;
+            require_sumcheck_output_product_family(operation)
+        }
+        "piop.sumcheck_output_function_family" => {
+            require_attrs(operation, SUMCHECK_OUTPUT_FUNCTION_FAMILY_ATTRS)?;
+            require_min_shape(operation, 1, 1)?;
+            require_sumcheck_output_function_family(operation)
+        }
+        "piop.sumcheck_output_claim" => {
+            require_attrs(
+                operation,
+                &["sym_name", "stage", "relation", "count", "polynomial_evals"],
+            )?;
+            require_min_shape(operation, 1, 0)?;
+            require_sumcheck_output_claim(operation)
         }
         "piop.opening_claim" => {
             require_attrs(
@@ -688,6 +766,14 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             )?;
             require_shape(operation, 1, 1)
         }
+        "compute.sumcheck_eval_family" => {
+            require_attrs(
+                operation,
+                &["sym_name", "source", "oracle_family", "count", "evals"],
+            )?;
+            require_shape(operation, 0, 0)?;
+            require_counted_symbols(operation, "evals")
+        }
         "compute.sumcheck_instance_result" => {
             require_attrs(
                 operation,
@@ -705,6 +791,34 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
                 ],
             )?;
             require_shape(operation, 2, 2)
+        }
+        "compute.structured_polynomial_eval" => {
+            require_attrs(operation, STRUCTURED_POLYNOMIAL_EVAL_ATTRS)?;
+            require_shape(operation, 2, 1)?;
+            require_structured_polynomial_eval(operation)
+        }
+        "compute.sumcheck_output_eval_family" => {
+            require_attrs(operation, SUMCHECK_OUTPUT_EVAL_FAMILY_ATTRS)?;
+            require_min_shape(operation, 1, 1)?;
+            require_sumcheck_output_eval_family(operation)
+        }
+        "compute.sumcheck_output_product_family" => {
+            require_attrs(operation, SUMCHECK_OUTPUT_PRODUCT_FAMILY_ATTRS)?;
+            require_min_shape(operation, 1, 1)?;
+            require_sumcheck_output_product_family(operation)
+        }
+        "compute.sumcheck_output_function_family" => {
+            require_attrs(operation, SUMCHECK_OUTPUT_FUNCTION_FAMILY_ATTRS)?;
+            require_min_shape(operation, 1, 1)?;
+            require_sumcheck_output_function_family(operation)
+        }
+        "compute.sumcheck_output_claim" => {
+            require_attrs(
+                operation,
+                &["sym_name", "stage", "relation", "count", "polynomial_evals"],
+            )?;
+            require_min_shape(operation, 1, 0)?;
+            require_sumcheck_output_claim(operation)
         }
         "compute.opening_claim" => {
             require_attrs(
@@ -1015,6 +1129,14 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             )?;
             require_shape(operation, 1, 1)
         }
+        "cpu.sumcheck_eval_family" => {
+            require_attrs(
+                operation,
+                &["sym_name", "source", "oracle_family", "count", "evals"],
+            )?;
+            require_shape(operation, 0, 0)?;
+            require_counted_symbols(operation, "evals")
+        }
         "cpu.sumcheck_instance_result" => {
             require_attrs(
                 operation,
@@ -1032,6 +1154,34 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
                 ],
             )?;
             require_shape(operation, 2, 2)
+        }
+        "cpu.structured_polynomial_eval" => {
+            require_attrs(operation, STRUCTURED_POLYNOMIAL_EVAL_ATTRS)?;
+            require_shape(operation, 2, 1)?;
+            require_structured_polynomial_eval(operation)
+        }
+        "cpu.sumcheck_output_eval_family" => {
+            require_attrs(operation, SUMCHECK_OUTPUT_EVAL_FAMILY_ATTRS)?;
+            require_min_shape(operation, 1, 1)?;
+            require_sumcheck_output_eval_family(operation)
+        }
+        "cpu.sumcheck_output_product_family" => {
+            require_attrs(operation, SUMCHECK_OUTPUT_PRODUCT_FAMILY_ATTRS)?;
+            require_min_shape(operation, 1, 1)?;
+            require_sumcheck_output_product_family(operation)
+        }
+        "cpu.sumcheck_output_function_family" => {
+            require_attrs(operation, SUMCHECK_OUTPUT_FUNCTION_FAMILY_ATTRS)?;
+            require_min_shape(operation, 1, 1)?;
+            require_sumcheck_output_function_family(operation)
+        }
+        "cpu.sumcheck_output_claim" => {
+            require_attrs(
+                operation,
+                &["sym_name", "stage", "relation", "count", "polynomial_evals"],
+            )?;
+            require_min_shape(operation, 1, 0)?;
+            require_sumcheck_output_claim(operation)
         }
         "cpu.opening_claim" => {
             require_attrs(
@@ -1158,6 +1308,293 @@ fn require_opening_claim_equality(operation: OperationRef<'_, '_>) -> Result<(),
     Ok(())
 }
 
+fn require_structured_polynomial_eval(operation: OperationRef<'_, '_>) -> Result<(), SchemaError> {
+    let polynomial = string_attr(operation, "polynomial")?;
+    if !matches!(polynomial.as_str(), "eq" | "eq_plus_one" | "lt") {
+        return Err(SchemaError::new(format!(
+            "{} attr `polynomial` has unsupported structured polynomial `{polynomial}`",
+            operation_name(operation)
+        )));
+    }
+    require_structured_polynomial_point_attrs(operation, "x_point")?;
+    require_structured_polynomial_point_attrs(operation, "y_point")?;
+    Ok(())
+}
+
+fn require_structured_polynomial_point_attrs(
+    operation: OperationRef<'_, '_>,
+    prefix: &str,
+) -> Result<(), SchemaError> {
+    let segment_attr = format!("{prefix}_segment");
+    let segment = string_attr(operation, &segment_attr)?;
+    if !matches!(segment.as_str(), "full" | "prefix" | "suffix") {
+        return Err(SchemaError::new(format!(
+            "{} attr `{segment_attr}` has unsupported output point segment `{segment}`",
+            operation_name(operation)
+        )));
+    }
+    let length_attr = format!("{prefix}_length");
+    let length = string_attr(operation, &length_attr)?;
+    if !matches!(length.as_str(), "full" | "x_point" | "y_point") {
+        return Err(SchemaError::new(format!(
+            "{} attr `{length_attr}` has unsupported output point length `{length}`",
+            operation_name(operation)
+        )));
+    }
+    if segment == "full" && length != "full" {
+        return Err(SchemaError::new(format!(
+            "{} output point `{prefix}` uses segment `full` but length `{length}`; full segments must use length `full`",
+            operation_name(operation)
+        )));
+    }
+    let order_attr = format!("{prefix}_order");
+    let order = string_attr(operation, &order_attr)?;
+    if !matches!(order.as_str(), "as_is" | "reverse") {
+        return Err(SchemaError::new(format!(
+            "{} attr `{order_attr}` has unsupported output point order `{order}`",
+            operation_name(operation)
+        )));
+    }
+    Ok(())
+}
+
+fn require_sumcheck_output_eval_family(operation: OperationRef<'_, '_>) -> Result<(), SchemaError> {
+    let evals = symbol_array_attr(operation, "evals")?;
+    let shared_terms = symbol_array_attr(operation, "shared_terms")?;
+    let item_terms = symbol_array_attr(operation, "item_terms")?;
+    let shared_offsets = int_array_attr(operation, "shared_term_offsets")?;
+    let item_offsets = int_array_attr(operation, "item_term_offsets")?;
+    if shared_terms.len() != shared_offsets.len() {
+        return Err(SchemaError::new(format!(
+            "{} attr `shared_terms` length {} does not match shared_term_offsets length {}",
+            operation_name(operation),
+            shared_terms.len(),
+            shared_offsets.len()
+        )));
+    }
+    let expected_item_terms = item_offsets.len() * evals.len();
+    if item_terms.len() != expected_item_terms {
+        return Err(SchemaError::new(format!(
+            "{} attr `item_terms` length {} does not match item_term_offsets length {} times evals length {}",
+            operation_name(operation),
+            item_terms.len(),
+            item_offsets.len(),
+            evals.len()
+        )));
+    }
+    let expected_operands = 1 + evals.len() + shared_terms.len() + item_terms.len();
+    if operation.operand_count() != expected_operands {
+        return Err(SchemaError::new(format!(
+            "{} expected {expected_operands} operands, got {}",
+            operation_name(operation),
+            operation.operand_count()
+        )));
+    }
+    let expected_symbols = evals
+        .iter()
+        .chain(shared_terms.iter())
+        .chain(item_terms.iter())
+        .collect::<Vec<_>>();
+    for (index, expected) in expected_symbols.iter().enumerate() {
+        let operand_index = index + 1;
+        let actual = operand_owner_symbol(operation, operand_index)?;
+        if &actual != *expected {
+            return Err(SchemaError::new(format!(
+                "{} operand {operand_index} expected @{expected}, got @{actual}",
+                operation_name(operation)
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn require_sumcheck_output_product_family(
+    operation: OperationRef<'_, '_>,
+) -> Result<(), SchemaError> {
+    let gamma = optional_symbol_array_attr(operation, "gamma")?;
+    let evals = symbol_array_attr(operation, "evals")?;
+    let factors = symbol_array_attr(operation, "factors")?;
+    let term_gamma_power_offsets = int_array_attr(operation, "term_gamma_power_offsets")?;
+    let term_eval_counts = int_array_attr(operation, "term_eval_counts")?;
+    let term_factor_counts = int_array_attr(operation, "term_factor_counts")?;
+    if term_eval_counts.len() != term_gamma_power_offsets.len() {
+        return Err(SchemaError::new(format!(
+            "{} attr `term_eval_counts` length {} does not match term_gamma_power_offsets length {}",
+            operation_name(operation),
+            term_eval_counts.len(),
+            term_gamma_power_offsets.len()
+        )));
+    }
+    if term_factor_counts.len() != term_gamma_power_offsets.len() {
+        return Err(SchemaError::new(format!(
+            "{} attr `term_factor_counts` length {} does not match term_gamma_power_offsets length {}",
+            operation_name(operation),
+            term_factor_counts.len(),
+            term_gamma_power_offsets.len()
+        )));
+    }
+    for ((index, eval_count), factor_count) in term_eval_counts
+        .iter()
+        .enumerate()
+        .zip(term_factor_counts.iter())
+    {
+        if *eval_count == 0 && *factor_count == 0 {
+            return Err(SchemaError::new(format!(
+                "{} product-family term {index} is empty",
+                operation_name(operation)
+            )));
+        }
+    }
+    let expected_evals: usize = term_eval_counts.iter().sum();
+    if evals.len() != expected_evals {
+        return Err(SchemaError::new(format!(
+            "{} attr `evals` length {} does not match sum(term_eval_counts) {}",
+            operation_name(operation),
+            evals.len(),
+            expected_evals
+        )));
+    }
+    let expected_factors: usize = term_factor_counts.iter().sum();
+    if factors.len() != expected_factors {
+        return Err(SchemaError::new(format!(
+            "{} attr `factors` length {} does not match sum(term_factor_counts) {}",
+            operation_name(operation),
+            factors.len(),
+            expected_factors
+        )));
+    }
+    let expected_operands = gamma.len() + evals.len() + factors.len();
+    if operation.operand_count() != expected_operands {
+        return Err(SchemaError::new(format!(
+            "{} expected {expected_operands} operands, got {}",
+            operation_name(operation),
+            operation.operand_count()
+        )));
+    }
+    let expected_symbols = gamma
+        .iter()
+        .chain(evals.iter())
+        .chain(factors.iter())
+        .collect::<Vec<_>>();
+    for (index, expected) in expected_symbols.iter().enumerate() {
+        let operand_index = index;
+        let actual = operand_owner_symbol(operation, operand_index)?;
+        if &actual != *expected {
+            return Err(SchemaError::new(format!(
+                "{} operand {operand_index} expected @{expected}, got @{actual}",
+                operation_name(operation)
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn require_sumcheck_output_function_family(
+    operation: OperationRef<'_, '_>,
+) -> Result<(), SchemaError> {
+    let gamma = optional_symbol_array_attr(operation, "gamma")?;
+    let evals = symbol_array_attr(operation, "evals")?;
+    let factors = symbol_array_attr(operation, "factors")?;
+    let term_gamma_power_offsets = int_array_attr(operation, "term_gamma_power_offsets")?;
+    let term_functions = string_array_attr(operation, "term_functions")?;
+    let term_factor_counts = int_array_attr(operation, "term_factor_counts")?;
+    if term_functions.len() != term_gamma_power_offsets.len() {
+        return Err(SchemaError::new(format!(
+            "{} attr `term_functions` length {} does not match term_gamma_power_offsets length {}",
+            operation_name(operation),
+            term_functions.len(),
+            term_gamma_power_offsets.len()
+        )));
+    }
+    if term_factor_counts.len() != term_gamma_power_offsets.len() {
+        return Err(SchemaError::new(format!(
+            "{} attr `term_factor_counts` length {} does not match term_gamma_power_offsets length {}",
+            operation_name(operation),
+            term_factor_counts.len(),
+            term_gamma_power_offsets.len()
+        )));
+    }
+    for (index, function) in term_functions.iter().enumerate() {
+        if function != "boolean_zero" {
+            return Err(SchemaError::new(format!(
+                "{} function-family term {index} has unsupported function `{function}`",
+                operation_name(operation)
+            )));
+        }
+    }
+    if evals.len() != term_gamma_power_offsets.len() {
+        return Err(SchemaError::new(format!(
+            "{} attr `evals` length {} does not match term count {}",
+            operation_name(operation),
+            evals.len(),
+            term_gamma_power_offsets.len()
+        )));
+    }
+    let expected_factors: usize = term_factor_counts.iter().sum();
+    if factors.len() != expected_factors {
+        return Err(SchemaError::new(format!(
+            "{} attr `factors` length {} does not match sum(term_factor_counts) {}",
+            operation_name(operation),
+            factors.len(),
+            expected_factors
+        )));
+    }
+    let expected_operands = gamma.len() + evals.len() + factors.len();
+    if operation.operand_count() != expected_operands {
+        return Err(SchemaError::new(format!(
+            "{} expected {expected_operands} operands, got {}",
+            operation_name(operation),
+            operation.operand_count()
+        )));
+    }
+    let expected_symbols = gamma
+        .iter()
+        .chain(evals.iter())
+        .chain(factors.iter())
+        .collect::<Vec<_>>();
+    for (index, expected) in expected_symbols.iter().enumerate() {
+        let operand_index = index;
+        let actual = operand_owner_symbol(operation, operand_index)?;
+        if &actual != *expected {
+            return Err(SchemaError::new(format!(
+                "{} operand {operand_index} expected @{expected}, got @{actual}",
+                operation_name(operation)
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn require_sumcheck_output_claim(operation: OperationRef<'_, '_>) -> Result<(), SchemaError> {
+    let count = int_attr(operation, "count")?;
+    let polynomial_evals = symbol_array_attr(operation, "polynomial_evals")?;
+    if polynomial_evals.len() != count {
+        return Err(SchemaError::new(format!(
+            "{} attr `polynomial_evals` length {} does not match count {count}",
+            operation_name(operation),
+            polynomial_evals.len()
+        )));
+    }
+    let dynamic_count = operation.operand_count().saturating_sub(1);
+    if dynamic_count != count {
+        return Err(SchemaError::new(format!(
+            "{} attr `count` expected {dynamic_count}, got {count}",
+            operation_name(operation)
+        )));
+    }
+    for (index, expected) in polynomial_evals.iter().enumerate() {
+        let operand_index = index + 1;
+        let actual = operand_owner_symbol(operation, operand_index)?;
+        if &actual != expected {
+            return Err(SchemaError::new(format!(
+                "{} operand {operand_index} expected @{expected}, got @{actual}",
+                operation_name(operation)
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn opening_claim_metadata(
     equality_op: OperationRef<'_, '_>,
     operand_index: usize,
@@ -1280,6 +1717,28 @@ fn require_counted_operands(
     Ok(())
 }
 
+fn require_counted_symbols(
+    operation: OperationRef<'_, '_>,
+    ordered_attr: &str,
+) -> Result<(), SchemaError> {
+    let count = int_attr(operation, "count")?;
+    let ordered = symbol_array_attr(operation, ordered_attr)?;
+    if count == 0 {
+        return Err(SchemaError::new(format!(
+            "{} attr `{ordered_attr}` must contain at least one symbol",
+            operation_name(operation)
+        )));
+    }
+    if ordered.len() != count {
+        return Err(SchemaError::new(format!(
+            "{} attr `{ordered_attr}` length {} does not match count {count}",
+            operation_name(operation),
+            ordered.len()
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) fn require_attrs(
     operation: OperationRef<'_, '_>,
     attrs: &[&str],
@@ -1394,6 +1853,22 @@ pub(crate) fn symbol_array_attr(
     parse_symbol_array(&attribute).ok_or_else(|| attr_error(operation, attr, "symbol array"))
 }
 
+fn optional_symbol_array_attr(
+    operation: OperationRef<'_, '_>,
+    attr: &str,
+) -> Result<Vec<String>, SchemaError> {
+    let values = symbol_array_attr(operation, attr)?;
+    if values.len() <= 1 {
+        Ok(values)
+    } else {
+        Err(SchemaError::new(format!(
+            "{} attr `{attr}` expected zero or one symbols, got {}",
+            operation_name(operation),
+            values.len()
+        )))
+    }
+}
+
 fn parse_symbol_array(attribute: &str) -> Option<Vec<String>> {
     let inner = attribute.strip_prefix('[')?.strip_suffix(']')?.trim();
     if inner.is_empty() {
@@ -1402,6 +1877,54 @@ fn parse_symbol_array(attribute: &str) -> Option<Vec<String>> {
     inner
         .split(',')
         .map(|item| item.trim().strip_prefix('@').map(ToOwned::to_owned))
+        .collect()
+}
+
+fn string_array_attr(
+    operation: OperationRef<'_, '_>,
+    attr: &str,
+) -> Result<Vec<String>, SchemaError> {
+    let attribute = operation
+        .attribute(attr)
+        .map(|attribute| attribute.to_string())
+        .ok()
+        .ok_or_else(|| attr_error(operation, attr, "string array"))?;
+    parse_string_array(&attribute).ok_or_else(|| attr_error(operation, attr, "string array"))
+}
+
+fn parse_string_array(attribute: &str) -> Option<Vec<String>> {
+    let inner = attribute.strip_prefix('[')?.strip_suffix(']')?.trim();
+    if inner.is_empty() {
+        return Some(Vec::new());
+    }
+    inner
+        .split(',')
+        .map(|item| {
+            item.trim()
+                .strip_prefix('"')?
+                .strip_suffix('"')
+                .map(ToOwned::to_owned)
+        })
+        .collect()
+}
+
+fn int_array_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<Vec<usize>, SchemaError> {
+    let attribute = operation
+        .attribute(attr)
+        .map(|attribute| attribute.to_string())
+        .ok()
+        .ok_or_else(|| attr_error(operation, attr, "integer array"))?;
+    parse_int_array(&attribute).ok_or_else(|| attr_error(operation, attr, "integer array"))
+}
+
+fn parse_int_array(attribute: &str) -> Option<Vec<usize>> {
+    let inner = attribute.strip_prefix('[')?.strip_suffix(']')?.trim();
+    if inner.is_empty() {
+        return Some(Vec::new());
+    }
+    inner
+        .split(',')
+        .map(|item| item.trim().parse().ok())
         .collect()
 }
 

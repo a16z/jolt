@@ -8,6 +8,11 @@ use crate::schema::{verify_protocol_schema, SchemaError};
 use super::super::oracles;
 use super::super::params::JoltProtocolParams;
 use super::lowering::{lower_party_to_compute, transcript_squeeze_protocol_result_type};
+use super::sumcheck_output::{
+    append_structured_polynomial_eval, append_sumcheck_output_claim,
+    append_sumcheck_output_eval_family, OutputClaimSpec, OutputEvalFamilySpec,
+    StructuredPolynomialPointSpec, StructuredPolynomialSpec,
+};
 
 const HAMMING_WEIGHT_CLAIM_REDUCTION_DEGREE: usize = 2;
 
@@ -450,7 +455,7 @@ fn append_stage7_sumcheck<'c, 'a>(
         point,
         result_value,
     )?;
-    append_stage7_output_openings(context, module, params, spec.openings, instance)?;
+    append_stage7_output_openings(context, module, params, spec.openings, spec.gamma, instance)?;
     Ok(state)
 }
 
@@ -532,6 +537,7 @@ fn append_stage7_output_openings<'c, 'a>(
     module: &'a BoltModule<'c, Protocol>,
     params: &JoltProtocolParams,
     inputs: &Stage7OpeningInputs<'c, 'a>,
+    gamma: Value<'c, 'a>,
     instance: (Value<'c, 'a>, Value<'c, 'a>),
 ) -> Result<(), MlirError> {
     let cycle = append_point_slice(
@@ -554,6 +560,7 @@ fn append_stage7_output_openings<'c, 'a>(
 
     let mut claims = Vec::with_capacity(inputs.ra_inputs.len());
     let mut claim_symbols = Vec::with_capacity(inputs.ra_inputs.len());
+    let mut output_evals = Vec::with_capacity(inputs.ra_inputs.len());
     for (index, input) in inputs.ra_inputs.iter().enumerate() {
         let eval = append_sumcheck_eval(
             context,
@@ -567,6 +574,7 @@ fn append_stage7_output_openings<'c, 'a>(
             index,
             instance.1,
         )?;
+        output_evals.push(eval);
         let symbol = format!(
             "stage7.hamming_weight_claim_reduction.opening.{}",
             input.oracle
@@ -586,6 +594,7 @@ fn append_stage7_output_openings<'c, 'a>(
             },
         )?);
     }
+    append_stage7_output_claim(context, module, inputs, instance.0, gamma, &output_evals)?;
     let claim_names = claim_symbols.iter().map(String::as_str).collect::<Vec<_>>();
     let _batch = context.append_typed_op(
         module,
@@ -602,6 +611,99 @@ fn append_stage7_output_openings<'c, 'a>(
         &["!piop.opening_batch_type"],
     )?;
     Ok(())
+}
+
+fn append_stage7_output_claim<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    inputs: &Stage7OpeningInputs<'c, 'a>,
+    instance_point: Value<'c, 'a>,
+    gamma: Value<'c, 'a>,
+    output_evals: &[Value<'c, 'a>],
+) -> Result<(), MlirError> {
+    let booleanity_eq_symbol = "stage7.hamming_weight_claim_reduction.output.eq.Booleanity";
+    let booleanity_eq = append_structured_polynomial_eval(
+        context,
+        module,
+        StructuredPolynomialSpec {
+            symbol: booleanity_eq_symbol,
+            polynomial: "eq",
+            x_point: StructuredPolynomialPointSpec::full("reverse"),
+            y_point: StructuredPolynomialPointSpec::prefix("x_point", "as_is"),
+        },
+        instance_point,
+        inputs.booleanity_point,
+    )?;
+
+    let mut polynomial_evals = Vec::with_capacity(output_evals.len() + 1);
+    polynomial_evals.push((booleanity_eq_symbol.to_owned(), booleanity_eq));
+    let mut eval_terms = Vec::with_capacity(output_evals.len());
+    let mut item_terms = Vec::with_capacity(output_evals.len());
+    for (input, &output_eval) in inputs.ra_inputs.iter().zip(output_evals) {
+        let virtualization_eq_symbol = format!(
+            "stage7.hamming_weight_claim_reduction.output.eq.{}.virtualization",
+            input.oracle
+        );
+        let virtualization_eq = append_structured_polynomial_eval(
+            context,
+            module,
+            StructuredPolynomialSpec {
+                symbol: &virtualization_eq_symbol,
+                polynomial: "eq",
+                x_point: StructuredPolynomialPointSpec::full("reverse"),
+                y_point: StructuredPolynomialPointSpec::prefix("x_point", "as_is"),
+            },
+            instance_point,
+            input.virtualization.point,
+        )?;
+        polynomial_evals.push((virtualization_eq_symbol.clone(), virtualization_eq));
+        eval_terms.push((
+            format!(
+                "stage7.hamming_weight_claim_reduction.eval.{}",
+                input.oracle
+            ),
+            output_eval,
+        ));
+        item_terms.push((virtualization_eq_symbol, virtualization_eq));
+    }
+    let eval_term_refs = eval_terms
+        .iter()
+        .map(|(symbol, value)| (symbol.as_str(), *value))
+        .collect::<Vec<_>>();
+    let item_term_refs = item_terms
+        .iter()
+        .map(|(symbol, value)| (symbol.as_str(), *value))
+        .collect::<Vec<_>>();
+    let output_claim = append_sumcheck_output_eval_family(
+        context,
+        module,
+        OutputEvalFamilySpec {
+            symbol: "stage7.hamming_weight_claim_reduction.output.family",
+            power_stride: 3,
+            value_term_offsets: &[0],
+            shared_term_offsets: &[1],
+            item_term_offsets: &[2],
+        },
+        gamma,
+        &eval_term_refs,
+        &[(booleanity_eq_symbol, booleanity_eq)],
+        &item_term_refs,
+    )?;
+    let polynomial_eval_refs = polynomial_evals
+        .iter()
+        .map(|(symbol, value)| (symbol.as_str(), *value))
+        .collect::<Vec<_>>();
+    append_sumcheck_output_claim(
+        context,
+        module,
+        OutputClaimSpec {
+            symbol: "stage7.hamming_weight_claim_reduction.output",
+            stage: "stage7",
+            relation: "jolt.stage7.hamming_weight_claim_reduction",
+        },
+        output_claim,
+        &polynomial_eval_refs,
+    )
 }
 
 fn append_transcript_squeeze<'c, 'a>(

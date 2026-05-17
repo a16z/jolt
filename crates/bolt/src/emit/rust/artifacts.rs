@@ -132,6 +132,7 @@ pub struct ProtocolVerifierApiExtension {
     pub error_conversions: String,
     pub after_default_verify: String,
     pub with_programs_body_intro: String,
+    pub verification_body_override: String,
     pub stage_verification_override: String,
     pub after_stage_verification: String,
     pub helper_items: String,
@@ -847,51 +848,58 @@ fn generated_verifier_api(
     if let Some(extension) = extension {
         source.push_str(&extension.verifier.with_programs_body_intro);
     }
-    if let Some(prefix) = &config.instrumentation_prefix {
-        source.push_str(&format!(
-            "    let _verify_span = tracing::info_span!(\"{prefix}.verify\").entered();\n"
-        ));
-    }
-    if let Some(commitment) = &commitment {
-        let verifier_fn = commitment
-            .with_program_verifier_fn
-            .as_deref()
-            .or(commitment.verifier_fn.as_deref())
-            .unwrap_or("missing_commitment_verifier_function");
-        let program_arg = if commitment.with_program_verifier_fn.is_some()
-            && commitment.program_type.is_some()
-            && commitment.program_const.is_some()
-        {
-            format!("programs.{}, ", commitment.field_name)
-        } else {
-            String::new()
-        };
-        source.push_str(&format!(
-            "    let {field} = {module}::{verifier_fn}({program_arg}&proof.commitments, transcript)?;\n",
-            field = commitment.field_name,
-            module = commitment.module_alias,
-        ));
-    }
-    if let Some(extension) = extension {
-        if !extension.verifier.stage_verification_override.is_empty() {
-            source.push_str(&extension.verifier.stage_verification_override);
+    let verification_body_override = extension
+        .map(|extension| extension.verifier.verification_body_override.as_str())
+        .unwrap_or_default();
+    if !verification_body_override.is_empty() {
+        source.push_str(verification_body_override);
+    } else {
+        if let Some(prefix) = &config.instrumentation_prefix {
+            source.push_str(&format!(
+                "    let _verify_span = tracing::info_span!(\"{prefix}.verify\").entered();\n"
+            ));
+        }
+        if let Some(commitment) = &commitment {
+            let verifier_fn = commitment
+                .with_program_verifier_fn
+                .as_deref()
+                .or(commitment.verifier_fn.as_deref())
+                .unwrap_or("missing_commitment_verifier_function");
+            let program_arg = if commitment.with_program_verifier_fn.is_some()
+                && commitment.program_type.is_some()
+                && commitment.program_const.is_some()
+            {
+                format!("programs.{}, ", commitment.field_name)
+            } else {
+                String::new()
+            };
+            source.push_str(&format!(
+                "    let {field} = {module}::{verifier_fn}({program_arg}&proof.commitments, transcript)?;\n",
+                field = commitment.field_name,
+                module = commitment.module_alias,
+            ));
+        }
+        if let Some(extension) = extension {
+            if !extension.verifier.stage_verification_override.is_empty() {
+                source.push_str(&extension.verifier.stage_verification_override);
+            } else {
+                emit_verifier_stage_calls(&mut source, &stages);
+            }
         } else {
             emit_verifier_stage_calls(&mut source, &stages);
         }
-    } else {
-        emit_verifier_stage_calls(&mut source, &stages);
+        if let Some(extension) = extension {
+            source.push_str(&extension.verifier.after_stage_verification);
+        }
+        source.push_str(&format!("\n    Ok({verification_artifacts_type} {{\n"));
+        if let Some(commitment) = &commitment {
+            source.push_str(&format!("        {},\n", commitment.field_name));
+        }
+        for stage in &stages {
+            source.push_str(&format!("        {},\n", stage.field_name));
+        }
+        source.push_str("    })\n}\n\n");
     }
-    if let Some(extension) = extension {
-        source.push_str(&extension.verifier.after_stage_verification);
-    }
-    source.push_str(&format!("\n    Ok({verification_artifacts_type} {{\n"));
-    if let Some(commitment) = &commitment {
-        source.push_str(&format!("        {},\n", commitment.field_name));
-    }
-    for stage in &stages {
-        source.push_str(&format!("        {},\n", stage.field_name));
-    }
-    source.push_str("    })\n}\n\n");
 
     if let Some(extension) = extension {
         source.push_str(&extension.verifier.helper_items);

@@ -139,6 +139,49 @@ impl<F: Field> EqPolynomial<F> {
             .fold(F::one(), |acc, v| acc * v)
     }
 
+    /// Checked version of [`Self::mle`].
+    ///
+    /// Returns `None` when the two points do not have the same arity.
+    pub fn try_mle<C>(x: &[C], y: &[C]) -> Option<F>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: Mul<C, Output = F> + SubAssign<F>,
+    {
+        if x.len() != y.len() {
+            return None;
+        }
+        Some(Self::mle(x, y))
+    }
+
+    /// Evaluates `eq(point, index_bits)` where `index_bits` is the big-endian
+    /// Boolean vector encoded by `index`.
+    ///
+    /// Returns `None` if `point` is too large to address with `usize`, or if
+    /// `index` is outside the Boolean hypercube for `point.len()` variables.
+    pub fn try_mle_at_boolean_index<C>(index: usize, point: &[C]) -> Option<F>
+    where
+        C: Copy + Into<F>,
+    {
+        let count = 1usize.checked_shl(point.len() as u32)?;
+        if index >= count {
+            return None;
+        }
+        Some(
+            point
+                .iter()
+                .enumerate()
+                .map(|(bit, value)| {
+                    let value = (*value).into();
+                    if (index >> (point.len() - 1 - bit)) & 1 == 1 {
+                        value
+                    } else {
+                        F::one() - value
+                    }
+                })
+                .product(),
+        )
+    }
+
     /// Computes `eq(r, 0) = Π_i (1 - r_i)`, selecting the all-zeros vertex.
     pub fn zero_selector<C>(r: &[C]) -> F
     where
@@ -392,6 +435,25 @@ mod tests {
     }
 
     #[test]
+    fn try_mle_at_boolean_index_selects_entry() {
+        let mut rng = ChaCha20Rng::seed_from_u64(101);
+        let n = 4;
+        let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+        let table = EqPolynomial::new(point.clone()).evaluations();
+
+        for (index, &entry) in table.iter().enumerate() {
+            assert_eq!(
+                EqPolynomial::<Fr>::try_mle_at_boolean_index(index, &point),
+                Some(entry)
+            );
+        }
+        assert_eq!(
+            EqPolynomial::<Fr>::try_mle_at_boolean_index(table.len(), &point),
+            None
+        );
+    }
+
+    #[test]
     fn evaluations_matches_evaluate_pointwise() {
         let mut rng = ChaCha20Rng::seed_from_u64(7);
         let n = 5;
@@ -578,6 +640,15 @@ mod tests {
         let via_instance = EqPolynomial::new(x.clone()).evaluate(&y);
         let via_static = EqPolynomial::<Fr>::mle(&x, &y);
         assert_eq!(via_instance, via_static);
+    }
+
+    #[test]
+    fn try_mle_rejects_dimension_mismatch() {
+        let x = [Fr::one(), Fr::zero()];
+        let y = [Fr::one()];
+
+        assert_eq!(EqPolynomial::<Fr>::try_mle(&x, &x), Some(Fr::one()));
+        assert_eq!(EqPolynomial::<Fr>::try_mle(&x, &y), None);
     }
 
     #[test]

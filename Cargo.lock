@@ -1103,6 +1103,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bolt-verifier-runtime"
+version = "0.1.0"
+dependencies = [
+ "jolt-field",
+ "jolt-poly",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "serde",
+]
+
+[[package]]
 name = "borsh"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2902,6 +2913,7 @@ dependencies = [
  "ark-bn254",
  "ark-serialize 0.5.0",
  "bolt",
+ "bolt-verifier-runtime",
  "common",
  "jolt-core",
  "jolt-dory",
@@ -3322,6 +3334,7 @@ dependencies = [
 name = "jolt-verifier"
 version = "0.0.0"
 dependencies = [
+ "bolt-verifier-runtime",
  "jolt-dory",
  "jolt-field",
  "jolt-lookup-tables",
@@ -3329,7 +3342,6 @@ dependencies = [
  "jolt-poly",
  "jolt-sumcheck",
  "jolt-transcript",
- "serde",
  "tracing",
 ]
 

@@ -41,6 +41,7 @@ members = [
   "crates/jolt-prover",
   "crates/jolt-verifier",
   "crates/jolt-equivalence",
+  "crates/bolt-verifier-runtime",
   "crates/jolt-profiling",
   "crates/jolt-field",
   "jolt-core",
@@ -393,6 +394,7 @@ jolt-sumcheck = { path = "./crates/jolt-sumcheck" }
 jolt-r1cs = { path = "./crates/jolt-r1cs" }
 jolt-witness = { path = "./crates/jolt-witness" }
 bolt = { path = "./crates/bolt" }
+bolt-verifier-runtime = { path = "./crates/bolt-verifier-runtime" }
 jolt-kernels = { path = "./crates/jolt-kernels" }
 jolt-prover = { path = "./crates/jolt-prover" }
 jolt-verifier = { path = "./crates/jolt-verifier" }

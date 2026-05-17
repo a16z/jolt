@@ -8,7 +8,7 @@ use jolt_field::Fr;
 use jolt_kernels::{stage1, stage2, stage3, stage4, stage5, stage6, stage7};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{EqPolynomial, Polynomial};
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
+use jolt_transcript::{Blake2bTranscript, Transcript};
 use jolt_verifier::{JoltEvaluationProof, JoltNamedEval, JoltProof, JoltStage2RamAccess, JoltStage2RamData, JoltStage2RamOutputLayout, JoltStage6BytecodeEntry, JoltStage6BytecodeReadRafData, JoltStage6VerifierData, JoltStageChallengeVector, JoltStageExecutionArtifacts, JoltStageOpeningInputValue, JoltStageProof, JoltSumcheckOutput};
 use jolt_witness::{stage4_ram_val_init_opening, CycleInput, Stage45SparseTraceWitness, Stage6BytecodeEntry as WitnessStage6BytecodeEntry, Stage6WitnessParams, Stage6WitnessPolynomials, Stage6WitnessSlices};
 use rayon::prelude::*;
@@ -268,6 +268,61 @@ where
     Ok((proof, artifacts))
 }
 
+impl stage8_stage::Stage8NamedEvalView<Fr> for stage7::Stage7NamedEval<Fr> {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn value(&self) -> Fr {
+        self.value
+    }
+}
+
+impl stage8_stage::Stage8SumcheckOutputView<Fr>
+    for stage7::Stage7SumcheckOutput<Fr>
+{
+    type Eval = stage7::Stage7NamedEval<Fr>;
+
+    fn point(&self) -> &[Fr] {
+        &self.point
+    }
+
+    fn evals(&self) -> &[Self::Eval] {
+        &self.evals
+    }
+}
+
+impl stage8_stage::Stage8OpeningInputView<Fr>
+    for stage7::Stage7OpeningInputValue<Fr>
+{
+    fn symbol(&self) -> &'static str {
+        self.symbol
+    }
+
+    fn point(&self) -> &[Fr] {
+        &self.point
+    }
+}
+
+impl From<stage8_stage::Stage8EvaluationOpeningPointError> for JoltEvaluationProveError {
+    fn from(error: stage8_stage::Stage8EvaluationOpeningPointError) -> Self {
+        match error {
+            stage8_stage::Stage8EvaluationOpeningPointError::MissingStage7EvaluationPoint => {
+                Self::MissingStage7EvaluationPoint
+            }
+            stage8_stage::Stage8EvaluationOpeningPointError::InvalidPointLength {
+                artifact,
+                expected,
+                actual,
+            } => Self::InvalidPointLength {
+                artifact,
+                expected,
+                actual,
+            },
+        }
+    }
+}
+
 pub fn prove_jolt_evaluation_proof<I, T>(
     program: &'static stage8_stage::Stage8EvaluationProgramPlan,
     commitment_inputs: &mut I,
@@ -283,17 +338,24 @@ where
     T: Transcript<Challenge = Fr>,
 {
     let _claims_span = tracing::info_span!("bolt.evaluate.claims").entered();
-    let (sumcheck_address_point, stage7_values) = stage7_claim_values(program, stage7)?;
-    let address_point = reverse_point(&sumcheck_address_point);
+    let (sumcheck_address_point, stage7_values) =
+        stage8_stage::stage7_claim_values(program, &stage7.sumchecks)
+            .ok_or(JoltEvaluationProveError::MissingStage7RaEval)?;
+    let address_point = stage8_stage::reverse_point(&sumcheck_address_point);
     let (opening_point, log_t) =
-        stage7_evaluation_opening_point(program, &address_point, stage7_openings)?;
+        stage8_stage::stage7_evaluation_opening_point(program, &address_point, stage7_openings)?;
     let lagrange_factor = EqPolynomial::<Fr>::zero_selector(&address_point);
-    let claims = evaluation_claims(program, stage6, &stage7_values, lagrange_factor)?;
+    let claims =
+        stage8_stage::evaluation_claims(program, &stage6.sumchecks, &stage7_values, lagrange_factor)
+            .map_err(|error| JoltEvaluationProveError::MissingStageEval {
+                stage: error.stage,
+                eval: error.eval,
+            })?;
     drop(_claims_span);
 
     let _rlc_span = tracing::info_span!("bolt.evaluate.rlc_claims").entered();
-    append_rlc_claims(transcript, &claims);
-    let gamma_powers = gamma_powers(transcript, claims.len());
+    stage8_stage::append_rlc_claims(transcript, &claims);
+    let gamma_powers = stage8_stage::gamma_powers(transcript, claims.len());
     let joint_claim = claims
         .iter()
         .zip(&gamma_powers)
@@ -334,137 +396,9 @@ where
     Ok(JoltEvaluationProof { joint_opening_proof })
 }
 
-struct EvaluationClaim {
-    oracle: &'static str,
-    source_stage: &'static str,
-    value: Fr,
-}
-
-fn stage6_eval_claim(
-    artifacts: &stage6::Stage6ExecutionArtifacts<Fr>,
-    eval_name: &'static str,
-) -> Result<Fr, JoltEvaluationProveError> {
-    for output in &artifacts.sumchecks {
-        if let Some(eval) = output.evals.iter().find(|eval| eval.name == eval_name) {
-            return Ok(eval.value);
-        }
-    }
-    Err(JoltEvaluationProveError::MissingStageEval {
-        stage: "stage6",
-        eval: eval_name,
-    })
-}
-
-fn evaluation_claims(
-    program: &'static stage8_stage::Stage8EvaluationProgramPlan,
-    stage6: &stage6::Stage6ExecutionArtifacts<Fr>,
-    stage7_values: &std::collections::BTreeMap<&'static str, Fr>,
-    lagrange_factor: Fr,
-) -> Result<Vec<EvaluationClaim>, JoltEvaluationProveError> {
-    let mut claims = Vec::with_capacity(program.opening_claims.len());
-    for plan in program.opening_claims {
-        let value = match plan.source_stage {
-            "stage6" => stage6_eval_claim(stage6, plan.source_claim)? * lagrange_factor,
-            "stage7" => *stage7_values.get(plan.source_claim).ok_or(
-                JoltEvaluationProveError::MissingStageEval {
-                    stage: plan.source_stage,
-                    eval: plan.source_claim,
-                },
-            )?,
-            _ => {
-                return Err(JoltEvaluationProveError::MissingStageEval {
-                    stage: plan.source_stage,
-                    eval: plan.source_claim,
-                });
-            }
-        };
-        claims.push(EvaluationClaim {
-            oracle: plan.oracle,
-            source_stage: plan.source_stage,
-            value,
-        });
-    }
-    Ok(claims)
-}
-
-fn stage7_claim_values(
-    program: &'static stage8_stage::Stage8EvaluationProgramPlan,
-    artifacts: &stage7::Stage7ExecutionArtifacts<Fr>,
-) -> Result<(Vec<Fr>, std::collections::BTreeMap<&'static str, Fr>), JoltEvaluationProveError> {
-    let stage7_plans = program
-        .opening_claims
-        .iter()
-        .filter(|plan| plan.source_stage == "stage7")
-        .collect::<Vec<_>>();
-    for output in &artifacts.sumchecks {
-        let mut values = std::collections::BTreeMap::new();
-        for plan in &stage7_plans {
-            if let Some(eval) = output.evals.iter().find(|eval| eval.name == plan.source_claim) {
-                let _ = values.insert(plan.source_claim, eval.value);
-            }
-        }
-        if values.len() == stage7_plans.len() {
-            return Ok((output.point.clone(), values));
-        }
-    }
-    Err(JoltEvaluationProveError::MissingStage7RaEval)
-}
-
-fn reverse_point(point: &[Fr]) -> Vec<Fr> {
-    point.iter().rev().copied().collect()
-}
-
-fn stage7_evaluation_opening_point(
-    program: &'static stage8_stage::Stage8EvaluationProgramPlan,
-    address_point: &[Fr],
-    stage7_openings: &[stage7::Stage7OpeningInputValue<Fr>],
-) -> Result<(Vec<Fr>, usize), JoltEvaluationProveError> {
-    let cycle_source_symbol = program.evaluation_point_source.source_claim;
-    let cycle_source = stage7_openings
-        .iter()
-        .find(|input| input.symbol == cycle_source_symbol)
-        .ok_or(JoltEvaluationProveError::MissingStage7EvaluationPoint)?;
-    if cycle_source.point.len() < address_point.len() {
-        return Err(JoltEvaluationProveError::InvalidPointLength {
-            artifact: cycle_source_symbol,
-            expected: address_point.len(),
-            actual: cycle_source.point.len(),
-        });
-    }
-    let cycle_len = cycle_source.point.len() - address_point.len();
-    let mut point = Vec::with_capacity(cycle_source.point.len());
-    point.extend_from_slice(address_point);
-    point.extend_from_slice(&cycle_source.point[address_point.len()..]);
-    Ok((point, cycle_len))
-}
-
-fn append_rlc_claims<T>(transcript: &mut T, claims: &[EvaluationClaim])
-where
-    T: Transcript<Challenge = Fr>,
-{
-    transcript.append(&LabelWithCount(b"rlc_claims", claims.len() as u64));
-    for claim in claims {
-        claim.value.append_to_transcript(transcript);
-    }
-}
-
-fn gamma_powers<T>(transcript: &mut T, count: usize) -> Vec<Fr>
-where
-    T: Transcript<Challenge = Fr>,
-{
-    let gamma = transcript.challenge();
-    let mut powers = Vec::with_capacity(count);
-    let mut power = Fr::from_u64(1);
-    for _ in 0..count {
-        powers.push(power);
-        power *= gamma;
-    }
-    powers
-}
-
 fn materialize_joint_polynomial<I>(
     commitment_inputs: &mut I,
-    claims: &[EvaluationClaim],
+    claims: &[stage8_stage::Stage8EvaluationClaim<Fr>],
     gamma_powers: &[Fr],
     log_t: usize,
     main_num_vars: usize,
@@ -476,7 +410,7 @@ where
     let main_len = target_len(main_num_vars)?;
     let mut joint = vec![Fr::from_u64(0); main_len];
     for (claim, gamma) in claims.iter().zip(gamma_powers) {
-        if claim.source_stage == "stage6" {
+        if claim.source_stage == stage8_stage::Stage8SourceStage::Stage6 {
             add_oracle_scaled(commitment_inputs, &mut joint, claim.oracle, log_t, trace_len, *gamma)?;
         } else {
             add_oracle_scaled(
@@ -551,7 +485,7 @@ where
 
 fn joint_opening_hint(
     commitments: &commitment_stage::CommitmentArtifacts,
-    claims: &[EvaluationClaim],
+    claims: &[stage8_stage::Stage8EvaluationClaim<Fr>],
     gamma_powers: &[Fr],
 ) -> Result<DoryHint, JoltEvaluationProveError> {
     let mut coefficients = std::collections::BTreeMap::<&'static str, Fr>::new();

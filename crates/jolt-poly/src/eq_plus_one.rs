@@ -56,6 +56,16 @@ impl<F: Field> EqPlusOnePolynomial<F> {
             .sum()
     }
 
+    /// Checked version of [`Self::evaluate`].
+    ///
+    /// Returns `None` when `y` does not have the same arity as the fixed point.
+    pub fn try_evaluate(&self, y: &[F]) -> Option<F> {
+        if y.len() != self.point.len() {
+            return None;
+        }
+        Some(self.evaluate(y))
+    }
+
     /// Computes full evaluation tables `(eq_evals, eq_plus_one_evals)` over the
     /// Boolean hypercube, where:
     ///
@@ -215,6 +225,17 @@ mod tests {
         let y = vec![Fr::zero(); l];
         let eq_plus_one = EqPlusOnePolynomial::new(x);
         assert!(eq_plus_one.evaluate(&y).is_zero());
+    }
+
+    #[test]
+    fn try_evaluate_rejects_dimension_mismatch() {
+        let eq_plus_one = EqPlusOnePolynomial::new(vec![Fr::zero(), Fr::one()]);
+
+        assert_eq!(eq_plus_one.try_evaluate(&[Fr::one()]), None);
+        assert_eq!(
+            eq_plus_one.try_evaluate(&[Fr::one(), Fr::zero()]),
+            Some(eq_plus_one.evaluate(&[Fr::one(), Fr::zero()]))
+        );
     }
 
     #[test]

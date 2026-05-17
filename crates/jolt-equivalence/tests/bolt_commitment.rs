@@ -312,7 +312,6 @@ fn bolt_stage2_batched_real_muldiv_self_parity() {
 }
 
 #[test]
-#[ignore = "Stage 5+ instruction-read-RAF parity needs the follow-up generated kernel rewrite"]
 fn bolt_stage3_batched_real_muldiv_self_parity() {
     let _ = assert_bolt_full_real_trace_self_parity(core_muldiv_commitment_fixture(), false);
 }

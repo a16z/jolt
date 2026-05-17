@@ -6,20 +6,39 @@
 
 use std::path::{Path, PathBuf};
 
-const GENERATED_VERIFIER_TARGET_LOC: usize = 6_000;
+/// S2.5 keeps only Jolt-specific verifier-program data in generated
+/// `verifier.rs`; reusable program shape and dispatch live in
+/// `crates/bolt-verifier-runtime`.
+const GENERATED_VERIFIER_TARGET_LOC: usize = 6_500;
 const GENERATED_VERIFIER_STRETCH_LOC: usize = 3_000;
-const VERIFIER_RS_TARGET_LOC: usize = 500;
+const VERIFIER_RS_TARGET_LOC: usize = 850;
 const VERIFIER_RS_STRETCH_LOC: usize = 350;
 const STAGE6_STAGE7_TARGET_LOC: usize = 3_000;
 
 const GENERATED_VERIFIER_BASELINE_LOC_CEILING: usize = 9_185;
-const SHARED_RUNTIME_BASELINE_LOC_CEILING: usize = 1_900;
 const VERIFIER_RS_BASELINE_LOC_CEILING: usize = VERIFIER_RS_TARGET_LOC;
 const STAGE6_STAGE7_BASELINE_LOC_CEILING: usize = STAGE6_STAGE7_TARGET_LOC;
+
+/// Tier A ceiling inside the generated verifier crate. S2 moves generic Bolt
+/// verifier scaffolding into `crates/bolt-verifier-runtime`, so this generated
+/// surface should stay at zero after the extraction.
+const BOLT_RUNTIME_BASELINE_LOC_CEILING: usize = 0;
+
+/// Tier B ceiling: hand-written Jolt verifier math lives in
+/// `stages/jolt_relations.rs`. Growth here is a *protocol-math* decision and
+/// should be reviewed as such, not as emitter-LOC creep.
+const JOLT_VERIFIER_CORE_BASELINE_LOC_CEILING: usize = 700;
 const STAGE_LOCAL_PLAN_STRUCT_BASELINE_CEILING: usize = 18;
 const FIELD_EXPR_OPERAND_CONSTANT_BASELINE_CEILING: usize = 0;
+const BATCH_OPERAND_STRING_SITE_BASELINE_CEILING: usize = 0;
+const CLAIM_INPUT_OPENING_STRING_SITE_BASELINE_CEILING: usize = 0;
+const POINT_CONCAT_INPUT_STRING_SITE_BASELINE_CEILING: usize = 0;
+const STAGE_LOCAL_MACRO_RULES_BASELINE_CEILING: usize = 0;
 const STAGE_HELPER_FUNCTION_BASELINE_CEILING: usize = 38;
-const RELATION_STRING_SITE_BASELINE_CEILING: usize = 72;
+const RELATION_STRING_SITE_BASELINE_CEILING: usize = 0;
+const SUMCHECK_POINT_ORDER_STRING_SITE_BASELINE_CEILING: usize = 0;
+const RELATION_INDEXED_EVAL_PREFIX_SITE_BASELINE_CEILING: usize = 0;
+const HANDWRITTEN_EXPECTED_OUTPUT_FUNCTION_BASELINE_CEILING: usize = 12;
 
 const ALLOWED_JOLT_PROTOCOL_SYMBOLS: &[&str] = &[
     "jolt.commitment_phase",
@@ -109,13 +128,28 @@ const GENERIC_COMPILER_JOLT_PATTERNS: &[&str] = &[
 struct VerifierCleanupMetrics {
     total_loc: usize,
     generated_surface_loc: usize,
-    shared_runtime_loc: usize,
+    /// Tier A: generic Bolt verifier scaffolding still emitted inside
+    /// `crates/jolt-verifier/src` after extraction.
+    bolt_runtime_loc: usize,
+    /// Tier B: audited Jolt verifier core
+    /// (`crates/jolt-verifier/src/stages/jolt_relations.rs`).
+    jolt_verifier_core_loc: usize,
     verifier_rs_loc: usize,
     stage6_stage7_loc: usize,
     stage_local_generic_plan_structs: usize,
     field_expr_operand_constants: usize,
+    batch_operand_string_sites: usize,
+    claim_input_opening_string_sites: usize,
+    point_concat_input_string_sites: usize,
+    stage_local_macro_rules: usize,
     stage_local_helper_functions: usize,
     relation_string_sites: usize,
+    sumcheck_point_order_string_sites: usize,
+    relation_indexed_eval_prefix_sites: usize,
+    compute_poly_op_call_sites: usize,
+    compute_point_op_call_sites: usize,
+    value_graph_relation_outputs: usize,
+    handwritten_expected_output_functions: usize,
 }
 
 #[test]
@@ -129,17 +163,30 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
     eprintln!(
         "\nGenerated verifier cleanup metrics\n\
          generated_surface_loc: {generated_surface_loc} (target <= {target_loc}, stretch <= {stretch_loc})\n\
-         shared_runtime_loc: {shared_runtime_loc} (baseline ceiling <= {shared_runtime_baseline})\n\
+         tier_a_bolt_runtime_loc: {bolt_runtime_loc} (baseline ceiling <= {bolt_runtime_baseline}; Tier A: generic Bolt scaffolding)\n\
+         tier_b_jolt_verifier_core_loc: {jolt_verifier_core_loc} (baseline ceiling <= {jolt_core_baseline}; Tier B: audited Jolt verifier math)\n\
          total_loc: {total_loc} (baseline ceiling <= {baseline_loc})\n\
          verifier_rs_loc: {verifier_rs_loc} (target <= {verifier_target}, stretch <= {verifier_stretch}, baseline ceiling <= {verifier_baseline})\n\
          stage6_stage7_loc: {stage6_stage7_loc} (target <= {stage67_target}, baseline ceiling <= {stage67_baseline})\n\
          stage_local_generic_plan_structs: {plan_structs} (baseline ceiling <= {plan_baseline})\n\
          field_expr_operand_constants: {operand_constants} (baseline ceiling <= {operand_baseline})\n\
+         batch_operand_string_sites: {batch_operand_string_sites} (baseline ceiling <= {batch_operand_baseline})\n\
+         claim_input_opening_string_sites: {claim_input_opening_string_sites} (baseline ceiling <= {claim_input_opening_baseline})\n\
+         point_concat_input_string_sites: {point_concat_input_string_sites} (baseline ceiling <= {point_concat_input_baseline})\n\
+         stage_local_macro_rules: {stage_local_macro_rules} (baseline ceiling <= {macro_rules_baseline})\n\
          stage_local_helper_functions: {helper_functions} (baseline ceiling <= {helper_baseline})\n\
-         relation_string_sites: {relation_sites} (baseline ceiling <= {relation_baseline})",
+         relation_string_sites: {relation_sites} (baseline ceiling <= {relation_baseline})\n\
+         sumcheck_point_order_string_sites: {point_order_sites} (baseline ceiling <= {point_order_baseline})\n\
+         relation_indexed_eval_prefix_sites: {indexed_eval_prefix_sites} (baseline ceiling <= {indexed_eval_prefix_baseline})\n\
+         compute_poly_op_call_sites: {compute_poly_op_call_sites}\n\
+         compute_point_op_call_sites: {compute_point_op_call_sites}\n\
+         value_graph_relation_outputs: {value_graph_relation_outputs}\n\
+         handwritten_expected_output_functions: {expected_output_functions} (baseline ceiling <= {expected_output_functions_baseline})",
         generated_surface_loc = metrics.generated_surface_loc,
-        shared_runtime_loc = metrics.shared_runtime_loc,
-        shared_runtime_baseline = SHARED_RUNTIME_BASELINE_LOC_CEILING,
+        bolt_runtime_loc = metrics.bolt_runtime_loc,
+        bolt_runtime_baseline = BOLT_RUNTIME_BASELINE_LOC_CEILING,
+        jolt_verifier_core_loc = metrics.jolt_verifier_core_loc,
+        jolt_core_baseline = JOLT_VERIFIER_CORE_BASELINE_LOC_CEILING,
         total_loc = metrics.total_loc,
         target_loc = GENERATED_VERIFIER_TARGET_LOC,
         stretch_loc = GENERATED_VERIFIER_STRETCH_LOC,
@@ -155,30 +202,58 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
         plan_baseline = STAGE_LOCAL_PLAN_STRUCT_BASELINE_CEILING,
         operand_constants = metrics.field_expr_operand_constants,
         operand_baseline = FIELD_EXPR_OPERAND_CONSTANT_BASELINE_CEILING,
+        batch_operand_string_sites = metrics.batch_operand_string_sites,
+        batch_operand_baseline = BATCH_OPERAND_STRING_SITE_BASELINE_CEILING,
+        claim_input_opening_string_sites = metrics.claim_input_opening_string_sites,
+        claim_input_opening_baseline = CLAIM_INPUT_OPENING_STRING_SITE_BASELINE_CEILING,
+        point_concat_input_string_sites = metrics.point_concat_input_string_sites,
+        point_concat_input_baseline = POINT_CONCAT_INPUT_STRING_SITE_BASELINE_CEILING,
+        stage_local_macro_rules = metrics.stage_local_macro_rules,
+        macro_rules_baseline = STAGE_LOCAL_MACRO_RULES_BASELINE_CEILING,
         helper_functions = metrics.stage_local_helper_functions,
         helper_baseline = STAGE_HELPER_FUNCTION_BASELINE_CEILING,
         relation_sites = metrics.relation_string_sites,
         relation_baseline = RELATION_STRING_SITE_BASELINE_CEILING,
+        point_order_sites = metrics.sumcheck_point_order_string_sites,
+        point_order_baseline = SUMCHECK_POINT_ORDER_STRING_SITE_BASELINE_CEILING,
+        indexed_eval_prefix_sites = metrics.relation_indexed_eval_prefix_sites,
+        indexed_eval_prefix_baseline = RELATION_INDEXED_EVAL_PREFIX_SITE_BASELINE_CEILING,
+        compute_poly_op_call_sites = metrics.compute_poly_op_call_sites,
+        compute_point_op_call_sites = metrics.compute_point_op_call_sites,
+        value_graph_relation_outputs = metrics.value_graph_relation_outputs,
+        expected_output_functions = metrics.handwritten_expected_output_functions,
+        expected_output_functions_baseline =
+            HANDWRITTEN_EXPECTED_OUTPUT_FUNCTION_BASELINE_CEILING,
     );
 
     assert!(
         metrics.generated_surface_loc <= GENERATED_VERIFIER_TARGET_LOC,
-        "generated verifier surface is {} LOC; keep reducing generated stage/orchestration code or intentionally update the cleanup target",
-        metrics.generated_surface_loc
+        "generated verifier surface grew to {} LOC; keep stage files thin (target <= {})",
+        metrics.generated_surface_loc,
+        GENERATED_VERIFIER_TARGET_LOC,
+    );
+    if metrics.generated_surface_loc <= GENERATED_VERIFIER_STRETCH_LOC {
+        eprintln!(
+            "[verifier_cleanup] notice: generated_surface_loc = {} reached stretch target {}; \
+             tighten GENERATED_VERIFIER_TARGET_LOC",
+            metrics.generated_surface_loc, GENERATED_VERIFIER_STRETCH_LOC,
+        );
+    }
+    assert_eq!(
+        metrics.bolt_runtime_loc, BOLT_RUNTIME_BASELINE_LOC_CEILING,
+        "Tier A bolt verifier runtime grew to {} LOC (ceiling {}); generic Bolt scaffolding should ratchet down, not up",
+        metrics.bolt_runtime_loc, BOLT_RUNTIME_BASELINE_LOC_CEILING
     );
     assert!(
-        metrics.generated_surface_loc > GENERATED_VERIFIER_STRETCH_LOC,
-        "cleanup metric reached the stretch target; tighten the generated verifier surface gate"
-    );
-    assert!(
-        metrics.shared_runtime_loc <= SHARED_RUNTIME_BASELINE_LOC_CEILING,
-        "shared verifier runtime grew to {} LOC; keep generic runtime small and audited",
-        metrics.shared_runtime_loc
+        metrics.jolt_verifier_core_loc <= JOLT_VERIFIER_CORE_BASELINE_LOC_CEILING,
+        "Tier B audited Jolt verifier core grew to {} LOC (ceiling {}); growth here must be reviewed as a protocol-math decision",
+        metrics.jolt_verifier_core_loc, JOLT_VERIFIER_CORE_BASELINE_LOC_CEILING,
     );
     assert!(
         metrics.total_loc <= GENERATED_VERIFIER_BASELINE_LOC_CEILING,
-        "checked-in verifier grew to {} LOC; lower generated/runtime surface, or intentionally update the cleanup baseline",
-        metrics.total_loc
+        "generated verifier total grew to {} LOC (ceiling {})",
+        metrics.total_loc,
+        GENERATED_VERIFIER_BASELINE_LOC_CEILING,
     );
     assert!(
         metrics.verifier_rs_loc <= VERIFIER_RS_BASELINE_LOC_CEILING,
@@ -187,8 +262,9 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
     );
     assert!(
         metrics.stage6_stage7_loc <= STAGE6_STAGE7_BASELINE_LOC_CEILING,
-        "Stage 6/7 generated verifier surface grew to {} LOC; compact plan data before adding more generated code",
-        metrics.stage6_stage7_loc
+        "stage6 + stage7 grew to {} LOC (ceiling {})",
+        metrics.stage6_stage7_loc,
+        STAGE6_STAGE7_BASELINE_LOC_CEILING,
     );
     assert!(
         metrics.stage_local_generic_plan_structs <= STAGE_LOCAL_PLAN_STRUCT_BASELINE_CEILING,
@@ -201,14 +277,53 @@ fn checked_in_generated_verifier_metrics_are_recorded_and_bounded() {
         metrics.field_expr_operand_constants
     );
     assert!(
+        metrics.batch_operand_string_sites == BATCH_OPERAND_STRING_SITE_BASELINE_CEILING,
+        "batch operand string sites grew to {}; prefer structured claim slices",
+        metrics.batch_operand_string_sites
+    );
+    assert!(
+        metrics.claim_input_opening_string_sites
+            == CLAIM_INPUT_OPENING_STRING_SITE_BASELINE_CEILING,
+        "claim input-opening string sites grew to {}; prefer structured input-opening slices",
+        metrics.claim_input_opening_string_sites
+    );
+    assert!(
+        metrics.point_concat_input_string_sites == POINT_CONCAT_INPUT_STRING_SITE_BASELINE_CEILING,
+        "point-concat input string sites grew to {}; prefer structured point input slices",
+        metrics.point_concat_input_string_sites
+    );
+    assert!(
+        metrics.stage_local_macro_rules == STAGE_LOCAL_MACRO_RULES_BASELINE_CEILING,
+        "stage-local macro_rules sites grew to {}; prefer named constructors or shared runtime helpers",
+        metrics.stage_local_macro_rules
+    );
+    assert!(
         metrics.stage_local_helper_functions <= STAGE_HELPER_FUNCTION_BASELINE_CEILING,
         "stage-local helper function count grew to {}; factor verifier mechanics into shared runtime",
         metrics.stage_local_helper_functions
     );
     assert!(
-        metrics.relation_string_sites <= RELATION_STRING_SITE_BASELINE_CEILING,
+        metrics.relation_string_sites == RELATION_STRING_SITE_BASELINE_CEILING,
         "relation string sites grew to {}; prefer typed relation plan data or explicit allowlists",
         metrics.relation_string_sites
+    );
+    assert!(
+        metrics.sumcheck_point_order_string_sites
+            == SUMCHECK_POINT_ORDER_STRING_SITE_BASELINE_CEILING,
+        "sumcheck point-order string sites grew to {}; prefer typed point-order plan data",
+        metrics.sumcheck_point_order_string_sites
+    );
+    assert!(
+        metrics.relation_indexed_eval_prefix_sites
+            == RELATION_INDEXED_EVAL_PREFIX_SITE_BASELINE_CEILING,
+        "relation indexed-eval prefix sites grew to {}; prefer typed eval-family plan data",
+        metrics.relation_indexed_eval_prefix_sites
+    );
+    assert!(
+        metrics.handwritten_expected_output_functions
+            <= HANDWRITTEN_EXPECTED_OUTPUT_FUNCTION_BASELINE_CEILING,
+        "handwritten expected-output helper count grew to {}; move output math into typed value-graph plan data",
+        metrics.handwritten_expected_output_functions
     );
 }
 
@@ -262,6 +377,194 @@ fn checked_in_generated_verifier_respects_boundary_hygiene() {
                 && !source.contains("Challenge = <"),
             "generated verifier source `{}` drifted away from the full-field transcript path",
             path.display()
+        );
+    }
+}
+
+#[test]
+fn checked_in_generated_verifier_uses_typed_top_level_program() {
+    let verifier_rs = workspace_root().join("crates/jolt-verifier/src/verifier.rs");
+    if !verifier_rs.exists() {
+        return;
+    }
+    let source = std::fs::read_to_string(&verifier_rs).expect("read verifier.rs");
+    for pattern in [
+        "pub const VERIFIER_PROGRAM",
+        "pub const JOLT_VERIFIER_STEPS",
+        "pub enum JoltProofSlot",
+        "pub enum JoltVerifierCheckpoint",
+        "pub type JoltVerifierStepKind = bolt_verifier_runtime::VerifierProgramStepKind",
+        "pub type JoltVerifierStepPlan = bolt_verifier_runtime::VerifierProgramStepPlan<JoltProofSlot>",
+        "pub type JoltVerifierTargetPlan = bolt_verifier_runtime::VerifierTargetPlan<JoltVerifierCheckpoint>",
+        "JoltVerifierStepKind::ReceiveCommitments",
+        "JoltVerifierStepKind::VerifySumcheckStage",
+        "JoltVerifierStepKind::VerifyPcsOpening",
+        "step_count:",
+        "bolt_verifier_runtime::execute_verifier_program",
+        "fn execute_jolt_verifier_program",
+        "fn execute_jolt_verifier_step",
+        "struct JoltArtifactStore",
+    ] {
+        assert!(
+            source.contains(pattern),
+            "generated verifier.rs is missing typed top-level verifier-program pattern `{pattern}`"
+        );
+    }
+    for stale_pattern in [
+        "JoltVerifierTarget::ThroughStage",
+        "fn verifies_stage6",
+        "fn verifies_stage7",
+        "fn verifies_evaluation",
+        "fn allows_optional_evaluation",
+        "target.verifies_stage",
+        "target.allows_optional_evaluation",
+    ] {
+        assert!(
+            !source.contains(stale_pattern),
+            "generated verifier.rs still contains stale target-control-flow pattern `{stale_pattern}`"
+        );
+    }
+}
+
+#[test]
+fn stage67_output_plan_cutover_removed_obsolete_relation_helpers() {
+    let root = workspace_root();
+    let generated_relations = root.join("crates/jolt-verifier/src/stages/jolt_relations.rs");
+    if !generated_relations.exists() {
+        return;
+    }
+
+    let relation_sources = [
+        generated_relations,
+        root.join("crates/bolt/src/protocols/jolt/verifier_jolt_relations.rs.template"),
+    ];
+    for path in relation_sources {
+        let source = std::fs::read_to_string(&path).expect("read Jolt relation source");
+        for stale in [
+            "expected_stage67_bytecode_read_raf",
+            "expected_stage67_booleanity",
+            "expected_stage67_hamming_booleanity",
+            "expected_stage67_ram_ra_virtual",
+            "expected_stage67_instruction_ra_virtual",
+            "expected_stage67_inc_claim_reduction",
+        ] {
+            assert!(
+                !source.contains(stale),
+                "`{}` still contains obsolete Stage 6/7 relation helper `{stale}`",
+                path.display()
+            );
+        }
+    }
+
+    let stage6_source =
+        std::fs::read_to_string(root.join("crates/jolt-verifier/src/stages/stage6.rs"))
+            .expect("read generated Stage 6 verifier source");
+    for stale_field in [
+        "booleanity_point",
+        "stage5_instruction_ra0",
+        "booleanity_combined_point",
+        "booleanity_instruction_ra_prefix",
+        "booleanity_bytecode_ra_prefix",
+        "booleanity_ram_ra_prefix",
+        "hamming_weight_eval",
+        "hamming_lookup_output",
+        "ram_ra_virtual_cycle",
+        "ram_ra_virtual_eval_prefix",
+        "instruction_ra_virtual_cycle",
+        "instruction_ra_virtual_eval_prefix",
+        "instruction_ra_virtual_input_prefix",
+        "instruction_ra_virtual_gamma",
+        "inc_ram_stage2",
+        "inc_ram_stage4",
+        "inc_rd_stage4",
+        "inc_rd_stage5",
+        "inc_gamma",
+        "inc_ram_eval",
+        "inc_rd_eval",
+    ] {
+        assert!(
+            !stage6_source.contains(stale_field),
+            "generated Stage 6 relation symbol table still exposes obsolete field `{stale_field}`"
+        );
+    }
+}
+
+#[test]
+fn verifier_runtime_has_no_indexed_eval_prefix_api() {
+    let runtime = workspace_root().join("crates/bolt-verifier-runtime/src/lib.rs");
+    if !runtime.exists() {
+        return;
+    }
+    let source = std::fs::read_to_string(&runtime).expect("read verifier runtime source");
+    for stale in ["indexed_evals_by_prefix", "eval_prefix"] {
+        assert!(
+            !source.contains(stale),
+            "bolt-verifier-runtime still exposes indexed eval-prefix API `{stale}`"
+        );
+    }
+}
+
+#[test]
+fn verifier_runtime_has_no_name_then_position_eval_fallback() {
+    let runtime = workspace_root().join("crates/bolt-verifier-runtime/src/lib.rs");
+    if !runtime.exists() {
+        return;
+    }
+    let source = std::fs::read_to_string(&runtime).expect("read verifier runtime source");
+    for stale in [
+        ".or_else(|| output.evals.get(eval.index))",
+        "output.evals.get(eval.index)",
+    ] {
+        assert!(
+            !source.contains(stale),
+            "bolt-verifier-runtime still accepts sumcheck evals by position fallback `{stale}`"
+        );
+    }
+}
+
+#[test]
+fn verifier_runtime_has_no_jolt_specific_sumcheck_point_orders() {
+    let runtime = workspace_root().join("crates/bolt-verifier-runtime/src/lib.rs");
+    if !runtime.exists() {
+        return;
+    }
+    let source = std::fs::read_to_string(&runtime).expect("read verifier runtime source");
+    for stale in [
+        "Stage4RegistersReadWrite",
+        "InstructionReadRaf",
+        "BytecodeReadRaf",
+        "Stage6Booleanity",
+        "stage4_registers_rw",
+        "instruction_read_raf",
+        "bytecode_read_raf",
+        "stage6_booleanity",
+    ] {
+        assert!(
+            !source.contains(stale),
+            "bolt-verifier-runtime still exposes Jolt-specific point order `{stale}`"
+        );
+    }
+}
+
+#[test]
+fn verifier_goal_doc_tracks_extracted_runtime_boundary() {
+    let goal = workspace_root().join("crates/bolt/GOAL.md");
+    if !goal.exists() {
+        return;
+    }
+    let source = std::fs::read_to_string(&goal).expect("read verifier goal doc");
+    assert!(
+        source.contains("crates/bolt-verifier-runtime/src/lib.rs"),
+        "GOAL.md should name the extracted Bolt verifier runtime crate as Tier A"
+    );
+    for stale in [
+        "crates/jolt-verifier/src/stages/common.rs",
+        "crates/bolt/src/protocols/jolt/verifier_common.rs.template",
+        "shared verifier plan/runtime scaffolding exists in stages/common.rs",
+    ] {
+        assert!(
+            !source.contains(stale),
+            "GOAL.md still references deleted Tier A path `{stale}`"
         );
     }
 }
@@ -413,7 +716,9 @@ fn verifier_cleanup_metrics(verifier_src: &Path) -> VerifierCleanupMetrics {
         let line_count = source.lines().count();
         metrics.total_loc += line_count;
         if relative == Path::new("stages/common.rs") {
-            metrics.shared_runtime_loc += line_count;
+            metrics.bolt_runtime_loc += line_count;
+        } else if relative == Path::new("stages/jolt_relations.rs") {
+            metrics.jolt_verifier_core_loc += line_count;
         } else {
             metrics.generated_surface_loc += line_count;
         }
@@ -423,12 +728,29 @@ fn verifier_cleanup_metrics(verifier_src: &Path) -> VerifierCleanupMetrics {
         if relative == Path::new("stages/stage6.rs") || relative == Path::new("stages/stage7.rs") {
             metrics.stage6_stage7_loc += line_count;
         }
+        if relative.to_string_lossy().starts_with("stages/stage") {
+            metrics.stage_local_macro_rules += count_stage_local_macro_rules(&source);
+        }
         if relative.starts_with("stages") {
             metrics.stage_local_generic_plan_structs +=
                 count_stage_local_generic_plan_structs(&source);
             metrics.field_expr_operand_constants += count_field_expr_operand_constants(&source);
+            metrics.batch_operand_string_sites += count_batch_operand_string_sites(&source);
+            metrics.claim_input_opening_string_sites +=
+                count_claim_input_opening_string_sites(&source);
+            metrics.point_concat_input_string_sites +=
+                count_point_concat_input_string_sites(&source);
             metrics.stage_local_helper_functions += count_stage_local_helper_functions(&source);
             metrics.relation_string_sites += count_relation_string_sites(&source);
+            metrics.sumcheck_point_order_string_sites +=
+                count_sumcheck_point_order_string_sites(&source);
+            metrics.relation_indexed_eval_prefix_sites +=
+                count_relation_indexed_eval_prefix_sites(&source);
+            metrics.compute_poly_op_call_sites += count_compute_poly_op_call_sites(&source);
+            metrics.compute_point_op_call_sites += count_compute_point_op_call_sites(&source);
+            metrics.value_graph_relation_outputs += count_value_graph_relation_outputs(&source);
+            metrics.handwritten_expected_output_functions +=
+                count_handwritten_expected_output_functions(&source);
         }
     }
     metrics
@@ -456,6 +778,9 @@ fn count_stage_local_generic_plan_structs(source: &str) -> usize {
         .lines()
         .filter(|line| {
             let line = line.trim_start();
+            if line.starts_with("pub type Stage") && line.contains("bolt_verifier_runtime::") {
+                return false;
+            }
             (line.starts_with("pub struct Stage") || line.starts_with("pub type Stage"))
                 && PLAN_SUFFIXES.iter().any(|suffix| line.contains(suffix))
         })
@@ -466,6 +791,34 @@ fn count_field_expr_operand_constants(source: &str) -> usize {
     source
         .lines()
         .filter(|line| line.contains("FIELD_EXPR_") && line.contains("OPERAND"))
+        .count()
+}
+
+fn count_batch_operand_string_sites(source: &str) -> usize {
+    source
+        .lines()
+        .filter(|line| line.contains("ordered_claims: \"") || line.contains("claim_operands: \""))
+        .count()
+}
+
+fn count_claim_input_opening_string_sites(source: &str) -> usize {
+    source
+        .lines()
+        .filter(|line| line.contains("input_openings: \""))
+        .count()
+}
+
+fn count_point_concat_input_string_sites(source: &str) -> usize {
+    source
+        .lines()
+        .filter(|line| line.contains("PointConcatPlan") && line.contains("inputs: \""))
+        .count()
+}
+
+fn count_stage_local_macro_rules(source: &str) -> usize {
+    source
+        .lines()
+        .filter(|line| line.trim_start().starts_with("macro_rules!"))
         .count()
 }
 
@@ -495,12 +848,51 @@ fn count_relation_string_sites(source: &str) -> usize {
     source
         .lines()
         .filter(|line| {
-            line.contains("match instance.relation")
-                || line.contains("match claim.relation")
-                || line.contains("match driver.relation")
-                || line.contains("relation: Some(\"jolt.")
+            line.contains("relation: Some(\"jolt.")
                 || line.contains("relation: \"jolt.")
+                || line.contains("relation == \"jolt.")
         })
+        .count()
+}
+
+fn count_sumcheck_point_order_string_sites(source: &str) -> usize {
+    source
+        .lines()
+        .filter(|line| line.contains("point_order: \""))
+        .count()
+}
+
+fn count_relation_indexed_eval_prefix_sites(source: &str) -> usize {
+    source
+        .lines()
+        .filter(|line| line.contains("indexed_evals_by_prefix") || line.contains("eval_prefix"))
+        .count()
+}
+
+fn count_compute_poly_op_call_sites(source: &str) -> usize {
+    source
+        .matches("ScalarExprKind::StructuredPolynomial")
+        .count()
+}
+
+fn count_compute_point_op_call_sites(source: &str) -> usize {
+    source
+        .lines()
+        .filter(|line| line.contains("PointExprKind::") && line.contains("PointExprPlan"))
+        .count()
+}
+
+fn count_value_graph_relation_outputs(source: &str) -> usize {
+    source
+        .lines()
+        .filter(|line| line.contains("RelationOutputPlan {") && line.contains("expected_output:"))
+        .count()
+}
+
+fn count_handwritten_expected_output_functions(source: &str) -> usize {
+    source
+        .lines()
+        .filter(|line| line.trim_start().starts_with("fn expected_"))
         .count()
 }
 

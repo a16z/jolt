@@ -188,6 +188,20 @@ irdl.dialect @piop {
     irdl.operands(result: %result)
     irdl.results(eval: %eval)
   }
+  irdl.operation @sumcheck_eval_family {
+    %sym = irdl.any
+    %source = irdl.any
+    %oracle_family = irdl.any
+    %count = irdl.any
+    %evals = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "source" = %source,
+      "oracle_family" = %oracle_family,
+      "count" = %count,
+      "evals" = %evals
+    }
+  }
   irdl.operation @sumcheck_instance_result {
     %input_point = irdl.parametric @poly::@point<>
     %output_point = irdl.parametric @poly::@point<>
@@ -217,6 +231,111 @@ irdl.dialect @piop {
     }
     irdl.operands(input_point: %input_point, input_result: %input_result)
     irdl.results(instance_point: %output_point, instance_result: %output_result)
+  }
+  irdl.operation @structured_polynomial_eval {
+    %point = irdl.parametric @poly::@point<>
+    %value = irdl.parametric @field::@scalar<>
+    %sym = irdl.any
+    %polynomial = irdl.any
+    %x_point_segment = irdl.any
+    %x_point_length = irdl.any
+    %x_point_order = irdl.any
+    %y_point_segment = irdl.any
+    %y_point_length = irdl.any
+    %y_point_order = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "polynomial" = %polynomial,
+      "x_point_segment" = %x_point_segment,
+      "x_point_length" = %x_point_length,
+      "x_point_order" = %x_point_order,
+      "y_point_segment" = %y_point_segment,
+      "y_point_length" = %y_point_length,
+      "y_point_order" = %y_point_order
+    }
+    irdl.operands(x_point: %point, y_point: %point)
+    irdl.results(value: %value)
+  }
+  irdl.operation @sumcheck_output_eval_family {
+    %value = irdl.parametric @field::@scalar<>
+    %sym = irdl.any
+    %power_stride = irdl.any
+    %value_term_offsets = irdl.any
+    %shared_term_offsets = irdl.any
+    %item_term_offsets = irdl.any
+    %evals = irdl.any
+    %shared_terms = irdl.any
+    %item_terms = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "power_stride" = %power_stride,
+      "value_term_offsets" = %value_term_offsets,
+      "shared_term_offsets" = %shared_term_offsets,
+      "item_term_offsets" = %item_term_offsets,
+      "evals" = %evals,
+      "shared_terms" = %shared_terms,
+      "item_terms" = %item_terms
+    }
+    irdl.operands(gamma: %value, inputs: variadic %value)
+    irdl.results(value: %value)
+  }
+  irdl.operation @sumcheck_output_product_family {
+    %value = irdl.parametric @field::@scalar<>
+    %sym = irdl.any
+    %gamma = irdl.any
+    %term_gamma_power_offsets = irdl.any
+    %term_eval_counts = irdl.any
+    %term_factor_counts = irdl.any
+    %evals = irdl.any
+    %factors = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "gamma" = %gamma,
+      "term_gamma_power_offsets" = %term_gamma_power_offsets,
+      "term_eval_counts" = %term_eval_counts,
+      "term_factor_counts" = %term_factor_counts,
+      "evals" = %evals,
+      "factors" = %factors
+    }
+    irdl.operands(inputs: variadic %value)
+    irdl.results(value: %value)
+  }
+  irdl.operation @sumcheck_output_function_family {
+    %value = irdl.parametric @field::@scalar<>
+    %sym = irdl.any
+    %gamma = irdl.any
+    %term_gamma_power_offsets = irdl.any
+    %term_functions = irdl.any
+    %term_factor_counts = irdl.any
+    %evals = irdl.any
+    %factors = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "gamma" = %gamma,
+      "term_gamma_power_offsets" = %term_gamma_power_offsets,
+      "term_functions" = %term_functions,
+      "term_factor_counts" = %term_factor_counts,
+      "evals" = %evals,
+      "factors" = %factors
+    }
+    irdl.operands(inputs: variadic %value)
+    irdl.results(value: %value)
+  }
+  irdl.operation @sumcheck_output_claim {
+    %value = irdl.parametric @field::@scalar<>
+    %sym = irdl.any
+    %stage = irdl.any
+    %relation = irdl.any
+    %count = irdl.any
+    %polynomial_evals = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "stage" = %stage,
+      "relation" = %relation,
+      "count" = %count,
+      "polynomial_evals" = %polynomial_evals
+    }
+    irdl.operands(claim_value: %value, polynomial_evals: variadic %value)
   }
   irdl.operation @opening_claim {
     %point = irdl.parametric @poly::@point<>

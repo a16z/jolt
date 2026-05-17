@@ -1,0 +1,489 @@
+use crate::emit::rust::{push_format, EmitError};
+use crate::protocols::jolt::rust_target_plan::JoltVerifierRelationKind;
+use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
+use crate::protocols::jolt::verifier_local_scalars::{
+    emit_jolt_local_scalar_constants, JoltLocalScalarEmitPlan, JoltLocalScalarMleKind,
+};
+use crate::protocols::jolt::verifier_relation_outputs::{
+    RelationOutputPlan, StructuredPolynomialEvalPlan, StructuredPolynomialKind,
+    StructuredPolynomialPointLength, StructuredPolynomialPointOrder, StructuredPolynomialPointPlan,
+    StructuredPolynomialPointSegment,
+};
+use crate::protocols::jolt::verifier_values::VerifierPointValueRef;
+
+pub(crate) const STAGE5_TABLE_FLAG_EVAL_FAMILY: &str =
+    "stage5.instruction_read_raf.eval.LookupTableFlag";
+pub(crate) const STAGE5_INSTRUCTION_RA_EVAL_FAMILY: &str =
+    "stage5.instruction_read_raf.eval.InstructionRa";
+const STAGE5_INDEXED_EVAL_FAMILIES_CONST: &str = "STAGE5_INDEXED_EVAL_FAMILIES";
+const STAGE5_INSTRUCTION_READ_RAF_LOCAL_SCALARS_CONST: &str =
+    "STAGE5_INSTRUCTION_READ_RAF_LOCAL_SCALARS";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Stage5InstructionReadRafEmitPlan {
+    pub(crate) point: String,
+    pub(crate) lookup_output_point: String,
+    pub(crate) table_flag_evals: IndexedEvalFamilyPlan,
+    pub(crate) table_flag_evals_ref: String,
+    pub(crate) instruction_ra_evals: IndexedEvalFamilyPlan,
+    pub(crate) instruction_ra_evals_ref: String,
+    pub(crate) raf_flag_eval: String,
+    pub(crate) gamma: String,
+    pub(crate) local_scalars: Vec<JoltLocalScalarEmitPlan>,
+    pub(crate) log_k: usize,
+}
+
+impl Stage5InstructionReadRafEmitPlan {
+    pub(crate) fn from_eval_families(
+        eval_families: &[IndexedEvalFamilyPlan],
+    ) -> Result<Self, EmitError> {
+        let (table_flag_evals_index, table_flag_evals) =
+            IndexedEvalFamilyPlan::find_with_index(eval_families, STAGE5_TABLE_FLAG_EVAL_FAMILY)?;
+        let (instruction_ra_evals_index, instruction_ra_evals) =
+            IndexedEvalFamilyPlan::find_with_index(
+                eval_families,
+                STAGE5_INSTRUCTION_RA_EVAL_FAMILY,
+            )?;
+        Ok(Self {
+            point: "stage5.instruction_read_raf.instance".to_owned(),
+            lookup_output_point: "stage5.input.stage2.instruction.LookupOutput".to_owned(),
+            local_scalars: local_scalar_plans(table_flag_evals.evals.len()),
+            table_flag_evals: table_flag_evals.clone(),
+            table_flag_evals_ref: indexed_eval_family_ref(table_flag_evals_index),
+            instruction_ra_evals: instruction_ra_evals.clone(),
+            instruction_ra_evals_ref: indexed_eval_family_ref(instruction_ra_evals_index),
+            raf_flag_eval: "stage5.instruction_read_raf.eval.InstructionRafFlag".to_owned(),
+            gamma: "stage5.instruction_read_raf.gamma".to_owned(),
+            log_k: 128,
+        })
+    }
+
+    pub(crate) fn emit_runtime_constants(&self) -> String {
+        let mut source = String::new();
+        source.push_str(&emit_jolt_local_scalar_constants(
+            STAGE5_INSTRUCTION_READ_RAF_LOCAL_SCALARS_CONST,
+            &self.local_scalars,
+        ));
+        push_format(
+            &mut source,
+            format_args!(
+                "pub const STAGE5_INSTRUCTION_READ_RAF_PLAN: Stage5InstructionReadRafPlan = Stage5InstructionReadRafPlan {{\n\
+                 \x20   point: {},\n\
+                 \x20   lookup_output_point: {},\n\
+                 \x20   table_flag_evals: {},\n\
+                 \x20   instruction_ra_evals: {},\n\
+                 \x20   raf_flag_eval: {},\n\
+                 \x20   gamma: {},\n\
+                 \x20   local_scalars: STAGE5_INSTRUCTION_READ_RAF_LOCAL_SCALARS,\n\
+                 \x20   log_k: {},\n\
+                 }};\n\n",
+                rust_str(&self.point),
+                rust_str(&self.lookup_output_point),
+                self.table_flag_evals_ref,
+                self.instruction_ra_evals_ref,
+                rust_str(&self.raf_flag_eval),
+                rust_str(&self.gamma),
+                self.log_k,
+            ),
+        );
+        source
+    }
+
+    pub(crate) fn relation_output_plan(&self) -> Stage5InstructionReadRafOutputPlan {
+        const PREFIX: &str = "stage5.instruction_read_raf.output";
+
+        let eq = StructuredPolynomialEvalPlan {
+            symbol: format!("{PREFIX}.eq.LookupOutputCycle"),
+            polynomial: StructuredPolynomialKind::Eq,
+            x_point: StructuredPolynomialPointPlan {
+                source: VerifierPointValueRef::new(self.point.clone()),
+                segment: StructuredPolynomialPointSegment::Suffix,
+                length: StructuredPolynomialPointLength::YPoint,
+                order: StructuredPolynomialPointOrder::Reverse,
+            },
+            y_point: StructuredPolynomialPointPlan {
+                source: VerifierPointValueRef::new(self.lookup_output_point.clone()),
+                segment: StructuredPolynomialPointSegment::Full,
+                length: StructuredPolynomialPointLength::Full,
+                order: StructuredPolynomialPointOrder::AsIs,
+            },
+        };
+
+        let left = "stage5.instruction_read_raf.local_scalar.LeftLookupOperand".to_owned();
+        let right = "stage5.instruction_read_raf.local_scalar.RightLookupOperand".to_owned();
+        let identity = "stage5.instruction_read_raf.local_scalar.Identity".to_owned();
+        let gamma_right = format!("{PREFIX}.term.GammaRightLookupOperand");
+        let left_plus_gamma_right = format!("{PREFIX}.partial.LeftPlusGammaRight");
+        let raf_flag_left_plus_gamma_right = format!("{PREFIX}.term.RafFlagLeftPlusGammaRight");
+        let non_raf_lookup_operands = format!("{PREFIX}.partial.NonRafLookupOperands");
+        let gamma_identity = format!("{PREFIX}.term.GammaIdentity");
+        let raf_flag_gamma_identity = format!("{PREFIX}.term.RafFlagGammaIdentity");
+        let raf_claim = format!("{PREFIX}.partial.RafClaim");
+        let gamma_raf_claim = format!("{PREFIX}.term.GammaRafClaim");
+        let table_values = format!("{PREFIX}.product.LookupTableValues");
+        let instruction_ra_product = format!("{PREFIX}.product.InstructionRa");
+        let lookup_or_raf = format!("{PREFIX}.partial.LookupOrRaf");
+        let eq_ra = format!("{PREFIX}.partial.EqRa");
+        let claim_expr = format!("{PREFIX}.claim_expr");
+
+        let mut field_exprs =
+            Vec::with_capacity(self.table_flag_evals.evals.len().saturating_add(12));
+        let mut table_value_terms = Vec::with_capacity(self.table_flag_evals.evals.len());
+        for (index, (flag_eval, table_value)) in self
+            .table_flag_evals
+            .evals
+            .iter()
+            .zip(
+                self.local_scalars
+                    .iter()
+                    .filter(|value| value.is_lookup_table()),
+            )
+            .enumerate()
+        {
+            let term = format!("{PREFIX}.term.LookupTableValue_{index}");
+            table_value_terms.push(term.clone());
+            field_exprs.push(output_field_expr(
+                term,
+                "field.mul",
+                vec![table_value.symbol.clone(), flag_eval.clone()],
+            ));
+        }
+        field_exprs.extend([
+            output_field_expr(table_values.clone(), "field.sum", table_value_terms),
+            output_field_expr(
+                instruction_ra_product.clone(),
+                "field_vector.product",
+                vec![self.instruction_ra_evals.symbol.clone()],
+            ),
+            output_field_expr(
+                gamma_right.clone(),
+                "field.mul",
+                vec![self.gamma.clone(), right],
+            ),
+            output_field_expr(
+                left_plus_gamma_right.clone(),
+                "field.add",
+                vec![left, gamma_right],
+            ),
+            output_field_expr(
+                raf_flag_left_plus_gamma_right.clone(),
+                "field.mul",
+                vec![self.raf_flag_eval.clone(), left_plus_gamma_right.clone()],
+            ),
+            output_field_expr(
+                non_raf_lookup_operands.clone(),
+                "field.sub",
+                vec![left_plus_gamma_right, raf_flag_left_plus_gamma_right],
+            ),
+            output_field_expr(
+                gamma_identity.clone(),
+                "field.mul",
+                vec![self.gamma.clone(), identity],
+            ),
+            output_field_expr(
+                raf_flag_gamma_identity.clone(),
+                "field.mul",
+                vec![self.raf_flag_eval.clone(), gamma_identity],
+            ),
+            output_field_expr(
+                raf_claim.clone(),
+                "field.add",
+                vec![non_raf_lookup_operands, raf_flag_gamma_identity],
+            ),
+            output_field_expr(
+                gamma_raf_claim.clone(),
+                "field.mul",
+                vec![self.gamma.clone(), raf_claim],
+            ),
+            output_field_expr(
+                lookup_or_raf.clone(),
+                "field.add",
+                vec![table_values, gamma_raf_claim],
+            ),
+            output_field_expr(
+                eq_ra.clone(),
+                "field.mul",
+                vec![eq.symbol.clone(), instruction_ra_product],
+            ),
+            output_field_expr(claim_expr.clone(), "field.mul", vec![eq_ra, lookup_or_raf]),
+        ]);
+
+        Stage5InstructionReadRafOutputPlan {
+            relation_output_values: vec![eq.clone()],
+            field_exprs,
+            claim: RelationOutputPlan::with_local_scalars(
+                JoltVerifierRelationKind::Stage5InstructionReadRaf,
+                self.local_scalars.iter().map(|value| value.symbol.clone()),
+                claim_expr,
+            ),
+        }
+    }
+
+    pub(crate) fn local_scalar_symbols(&self) -> impl Iterator<Item = &String> {
+        self.local_scalars.iter().map(|value| &value.symbol)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Stage5InstructionReadRafOutputPlan {
+    pub(crate) relation_output_values: Vec<StructuredPolynomialEvalPlan>,
+    pub(crate) field_exprs: Vec<Stage5InstructionReadRafOutputFieldExprPlan>,
+    pub(crate) claim: RelationOutputPlan,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Stage5InstructionReadRafOutputFieldExprPlan {
+    pub(crate) symbol: String,
+    pub(crate) formula: String,
+    pub(crate) operands: Vec<String>,
+}
+
+fn local_scalar_plans(table_count: usize) -> Vec<JoltLocalScalarEmitPlan> {
+    let mut values = (0..table_count)
+        .map(|index| JoltLocalScalarEmitPlan {
+            symbol: format!("stage5.instruction_read_raf.local_scalar.LookupTable_{index}"),
+            kind: JoltLocalScalarMleKind::LookupTable { index },
+        })
+        .collect::<Vec<_>>();
+    values.extend([
+        JoltLocalScalarEmitPlan {
+            symbol: "stage5.instruction_read_raf.local_scalar.LeftLookupOperand".to_owned(),
+            kind: JoltLocalScalarMleKind::LeftOperand,
+        },
+        JoltLocalScalarEmitPlan {
+            symbol: "stage5.instruction_read_raf.local_scalar.RightLookupOperand".to_owned(),
+            kind: JoltLocalScalarMleKind::RightOperand,
+        },
+        JoltLocalScalarEmitPlan {
+            symbol: "stage5.instruction_read_raf.local_scalar.Identity".to_owned(),
+            kind: JoltLocalScalarMleKind::Identity,
+        },
+    ]);
+    values
+}
+
+fn output_field_expr(
+    symbol: String,
+    formula: &str,
+    operands: Vec<String>,
+) -> Stage5InstructionReadRafOutputFieldExprPlan {
+    Stage5InstructionReadRafOutputFieldExprPlan {
+        symbol,
+        formula: formula.to_owned(),
+        operands,
+    }
+}
+
+fn rust_str(value: &str) -> String {
+    format!("{value:?}")
+}
+
+fn indexed_eval_family_ref(index: usize) -> String {
+    format!("&{STAGE5_INDEXED_EVAL_FAMILIES_CONST}[{index}]")
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::emit::rust::EmitError;
+    use crate::protocols::jolt::rust_target_plan::JoltVerifierRelationKind;
+    use crate::protocols::jolt::verifier_eval_families::IndexedEvalFamilyPlan;
+
+    use super::{
+        Stage5InstructionReadRafEmitPlan, STAGE5_INSTRUCTION_RA_EVAL_FAMILY,
+        STAGE5_TABLE_FLAG_EVAL_FAMILY,
+    };
+
+    #[test]
+    fn instruction_read_raf_plan_groups_indexed_eval_families() -> Result<(), EmitError> {
+        let families = instruction_read_raf_families([
+            (
+                "LookupTableFlag_1",
+                "stage5.instruction_read_raf.eval.LookupTableFlag_1",
+            ),
+            (
+                "InstructionRafFlag",
+                "stage5.instruction_read_raf.eval.InstructionRafFlag",
+            ),
+            (
+                "InstructionRa_0",
+                "stage5.instruction_read_raf.eval.InstructionRa_0",
+            ),
+            (
+                "LookupTableFlag_0",
+                "stage5.instruction_read_raf.eval.LookupTableFlag_0",
+            ),
+        ]);
+        let plan = Stage5InstructionReadRafEmitPlan::from_eval_families(&families)?;
+
+        assert_eq!(
+            plan.table_flag_evals.evals,
+            vec![
+                "stage5.instruction_read_raf.eval.LookupTableFlag_0",
+                "stage5.instruction_read_raf.eval.LookupTableFlag_1"
+            ]
+        );
+        assert_eq!(
+            plan.instruction_ra_evals.evals,
+            vec!["stage5.instruction_read_raf.eval.InstructionRa_0"]
+        );
+        assert_eq!(
+            plan.table_flag_evals_ref,
+            "&STAGE5_INDEXED_EVAL_FAMILIES[0]"
+        );
+        assert_eq!(
+            plan.instruction_ra_evals_ref,
+            "&STAGE5_INDEXED_EVAL_FAMILIES[1]"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn instruction_read_raf_plan_references_indexed_eval_family_rows() -> Result<(), EmitError> {
+        let families = instruction_read_raf_families([
+            (
+                "LookupTableFlag_0",
+                "stage5.instruction_read_raf.eval.LookupTableFlag_0",
+            ),
+            (
+                "InstructionRa_0",
+                "stage5.instruction_read_raf.eval.InstructionRa_0",
+            ),
+        ]);
+        let plan = Stage5InstructionReadRafEmitPlan::from_eval_families(&families)?;
+        let source = plan.emit_runtime_constants();
+
+        assert!(!source.contains("STAGE5_INSTRUCTION_READ_RAF_TABLE_FLAG_EVALS"));
+        assert!(!source.contains("STAGE5_INSTRUCTION_READ_RAF_INSTRUCTION_RA_EVALS"));
+        assert!(source.contains("table_flag_evals: &STAGE5_INDEXED_EVAL_FAMILIES[0]"));
+        assert!(source.contains("instruction_ra_evals: &STAGE5_INDEXED_EVAL_FAMILIES[1]"));
+        Ok(())
+    }
+
+    #[test]
+    fn instruction_read_raf_relation_output_plan_is_typed() -> Result<(), EmitError> {
+        let families = instruction_read_raf_families([
+            (
+                "LookupTableFlag_0",
+                "stage5.instruction_read_raf.eval.LookupTableFlag_0",
+            ),
+            (
+                "LookupTableFlag_1",
+                "stage5.instruction_read_raf.eval.LookupTableFlag_1",
+            ),
+            (
+                "InstructionRa_0",
+                "stage5.instruction_read_raf.eval.InstructionRa_0",
+            ),
+        ]);
+        let plan = Stage5InstructionReadRafEmitPlan::from_eval_families(&families)?;
+        let output_plan = plan.relation_output_plan();
+
+        assert_eq!(
+            output_plan.claim.relation(),
+            JoltVerifierRelationKind::Stage5InstructionReadRaf
+        );
+        assert_eq!(
+            output_plan.claim.expected_output_symbol(),
+            "stage5.instruction_read_raf.output.claim_expr"
+        );
+        assert_eq!(output_plan.relation_output_values.len(), 1);
+        assert_eq!(
+            output_plan.relation_output_values[0].symbol,
+            "stage5.instruction_read_raf.output.eq.LookupOutputCycle"
+        );
+        assert_eq!(
+            output_plan
+                .claim
+                .local_scalar_symbols()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![
+                "stage5.instruction_read_raf.local_scalar.LookupTable_0".to_owned(),
+                "stage5.instruction_read_raf.local_scalar.LookupTable_1".to_owned(),
+                "stage5.instruction_read_raf.local_scalar.LeftLookupOperand".to_owned(),
+                "stage5.instruction_read_raf.local_scalar.RightLookupOperand".to_owned(),
+                "stage5.instruction_read_raf.local_scalar.Identity".to_owned(),
+            ]
+        );
+        assert!(output_plan.field_exprs.iter().any(|expr| {
+            expr.symbol == "stage5.instruction_read_raf.output.term.LookupTableValue_0"
+                && expr.formula == "field.mul"
+                && expr.operands
+                    == vec![
+                        "stage5.instruction_read_raf.local_scalar.LookupTable_0".to_owned(),
+                        "stage5.instruction_read_raf.eval.LookupTableFlag_0".to_owned(),
+                    ]
+        }));
+        assert!(output_plan.field_exprs.iter().any(|expr| {
+            expr.symbol == "stage5.instruction_read_raf.output.product.LookupTableValues"
+                && expr.formula == "field.sum"
+                && expr.operands
+                    == vec![
+                        "stage5.instruction_read_raf.output.term.LookupTableValue_0".to_owned(),
+                        "stage5.instruction_read_raf.output.term.LookupTableValue_1".to_owned(),
+                    ]
+        }));
+        assert!(output_plan.field_exprs.iter().any(|expr| {
+            expr.symbol == "stage5.instruction_read_raf.output.product.InstructionRa"
+                && expr.formula == "field_vector.product"
+                && expr.operands == vec![STAGE5_INSTRUCTION_RA_EVAL_FAMILY.to_owned()]
+        }));
+        assert!(output_plan.field_exprs.iter().any(|expr| {
+            expr.symbol == "stage5.instruction_read_raf.output.claim_expr"
+                && expr.formula == "field.mul"
+                && expr.operands
+                    == vec![
+                        "stage5.instruction_read_raf.output.partial.EqRa".to_owned(),
+                        "stage5.instruction_read_raf.output.partial.LookupOrRaf".to_owned(),
+                    ]
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn instruction_read_raf_plan_requires_explicit_eval_family_rows() {
+        let families = [IndexedEvalFamilyPlan {
+            symbol: STAGE5_TABLE_FLAG_EVAL_FAMILY.to_owned(),
+            evals: vec!["stage5.instruction_read_raf.eval.LookupTableFlag_0".to_owned()],
+        }];
+
+        let error = Stage5InstructionReadRafEmitPlan::from_eval_families(&families)
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+
+        assert!(
+            error.contains("missing eval family `stage5.instruction_read_raf.eval.InstructionRa`")
+        );
+    }
+
+    fn instruction_read_raf_families<'a>(
+        evals: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Vec<IndexedEvalFamilyPlan> {
+        let evals = evals.into_iter().collect::<Vec<_>>();
+        vec![
+            IndexedEvalFamilyPlan {
+                symbol: STAGE5_TABLE_FLAG_EVAL_FAMILY.to_owned(),
+                evals: indexed_names("LookupTableFlag_", &evals),
+            },
+            IndexedEvalFamilyPlan {
+                symbol: STAGE5_INSTRUCTION_RA_EVAL_FAMILY.to_owned(),
+                evals: indexed_names("InstructionRa_", &evals),
+            },
+        ]
+    }
+
+    fn indexed_names(prefix: &str, evals: &[(&str, &str)]) -> Vec<String> {
+        let mut names = evals
+            .iter()
+            .filter_map(|(oracle, name)| {
+                oracle
+                    .strip_prefix(prefix)
+                    .and_then(|index| index.parse::<usize>().ok())
+                    .map(|index| (index, (*name).to_owned()))
+            })
+            .collect::<Vec<_>>();
+        names.sort_by_key(|(index, _)| *index);
+        names.into_iter().map(|(_, name)| name).collect()
+    }
+}

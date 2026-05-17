@@ -1,0 +1,17 @@
+[package]
+name = "bolt-verifier-runtime"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Protocol-generic runtime helpers for Bolt-generated verifier crates"
+repository = "https://github.com/a16z/jolt"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-field.workspace = true
+jolt-poly.workspace = true
+jolt-sumcheck.workspace = true
+jolt-transcript.workspace = true
+serde.workspace = true

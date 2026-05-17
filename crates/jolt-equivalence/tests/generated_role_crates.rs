@@ -77,11 +77,11 @@ fn generated_role_crates_expose_matching_stage_prefix() {
         .is_empty());
     assert_eq!(
         jolt_prover::stages::stage8::STAGE8_PROGRAM.pcs_proof.mode,
-        "open"
+        jolt_prover::stages::stage8::Stage8PcsProofMode::Open
     );
     assert_eq!(
         jolt_verifier::stages::stage8::STAGE8_PROGRAM.pcs_proof.mode,
-        "verify"
+        jolt_verifier::stages::stage8::Stage8PcsProofMode::Verify
     );
     let _proof = jolt_verifier::JoltProof {
         commitments: Vec::new(),

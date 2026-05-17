@@ -18,9 +18,11 @@ define_stage_adapter_no_absorb!(
     Stage3SumcheckDriverPlan,
     Stage3SumcheckInstanceResultPlan,
     Stage3SumcheckEvalPlan,
-    Stage3PointSlicePlan,
-    Stage3PointConcatPlan,
+    Stage3PointExprPlan,
+    Stage3PointExprPlan,
     Stage3OpeningClaimPlan,
     Stage3OpeningBatchPlan,
+    scalar_expr = Stage3ScalarExprPlan,
+    relation_outputs = Stage3RelationOutputPlan,
     opening_equalities = Stage3OpeningClaimEqualityPlan
 );

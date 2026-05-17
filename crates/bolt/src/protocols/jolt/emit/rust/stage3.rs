@@ -1,33 +1,52 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use melior::ir::block::BlockLike;
-use melior::ir::operation::{OperationLike, OperationResult};
-use melior::ir::{Attribute, OperationRef};
+use melior::ir::operation::OperationLike;
 
 use crate::emit::rust::{push_format, EmitError, RustSourceFile};
-use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
+use crate::ir::{BoltModule, Cpu, Role};
+use crate::protocols::jolt::cpu_attrs::{
+    operand_symbol, operand_symbols, operation_name, string_attr, symbol_array_attr, symbol_attr,
+};
+use crate::protocols::jolt::verifier_opening_rows;
+use crate::protocols::jolt::verifier_plan::{self, VerifierStagePlan};
+use crate::protocols::jolt::verifier_point_rows;
+use crate::protocols::jolt::verifier_program_rows;
+use crate::protocols::jolt::verifier_relation_outputs::{
+    self, RelationOutputAst as Stage3RelationOutputAst,
+    RelationOutputFieldExprPlan as Stage3RelationOutputFieldExprPlan,
+    RelationOutputPlan as Stage3RelationOutputPlan,
+    StructuredPolynomialEvalPlan as Stage3StructuredPolynomialEvalPlan,
+};
+use crate::protocols::jolt::verifier_sumcheck_rows;
+use crate::protocols::jolt::verifier_value_rows;
+use crate::protocols::jolt::verifier_values;
 use crate::schema::verify_cpu_schema;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage3CpuProgram {
     pub role: Role,
+    pub(crate) verifier_plan: Option<VerifierStagePlan>,
     pub params: Stage3Params,
-    pub steps: Vec<Stage3ProgramStepPlan>,
-    pub transcript_squeezes: Vec<Stage3TranscriptSqueezePlan>,
-    pub opening_inputs: Vec<Stage3OpeningInputPlan>,
-    pub field_constants: Vec<Stage3FieldConstantPlan>,
-    pub field_exprs: Vec<Stage3FieldExprPlan>,
+    pub steps: Vec<verifier_program_rows::CpuProgramStepPlan>,
+    pub transcript_squeezes: Vec<verifier_program_rows::CpuTranscriptSqueezePlan>,
+    pub opening_inputs: Vec<verifier_program_rows::CpuOpeningInputPlan>,
+    pub field_constants: Vec<verifier_value_rows::CpuFieldConstantPlan>,
+    pub field_exprs: Vec<verifier_value_rows::CpuFieldExprPlan>,
+    pub scalar_exprs: Vec<verifier_value_rows::CpuScalarExprPlan>,
     pub kernels: Vec<Stage3KernelPlan>,
-    pub claims: Vec<Stage3SumcheckClaimPlan>,
-    pub batches: Vec<Stage3SumcheckBatchPlan>,
-    pub drivers: Vec<Stage3SumcheckDriverPlan>,
-    pub instance_results: Vec<Stage3SumcheckInstanceResultPlan>,
-    pub evals: Vec<Stage3SumcheckEvalPlan>,
-    pub point_slices: Vec<Stage3PointSlicePlan>,
-    pub point_concats: Vec<Stage3PointConcatPlan>,
-    pub opening_claims: Vec<Stage3OpeningClaimPlan>,
-    pub opening_equalities: Vec<Stage3OpeningClaimEqualityPlan>,
-    pub opening_batches: Vec<Stage3OpeningBatchPlan>,
+    pub claims: Vec<verifier_sumcheck_rows::CpuSumcheckClaimPlan>,
+    pub batches: Vec<verifier_sumcheck_rows::CpuSumcheckBatchPlan>,
+    pub drivers: Vec<verifier_sumcheck_rows::CpuSumcheckDriverPlan>,
+    pub instance_results: Vec<verifier_sumcheck_rows::CpuSumcheckInstanceResultPlan>,
+    pub evals: Vec<verifier_sumcheck_rows::CpuSumcheckEvalPlan>,
+    pub relation_output_values: Vec<Stage3StructuredPolynomialEvalPlan>,
+    pub relation_outputs: Vec<Stage3RelationOutputPlan>,
+    pub point_slices: Vec<verifier_point_rows::CpuPointSlicePlan>,
+    pub point_concats: Vec<verifier_point_rows::CpuPointConcatPlan>,
+    pub opening_claims: Vec<verifier_opening_rows::CpuOpeningClaimPlan>,
+    pub opening_equalities: Vec<verifier_opening_rows::CpuOpeningClaimEqualityPlan>,
+    pub opening_batches: Vec<verifier_opening_rows::CpuOpeningBatchPlan>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,160 +65,13 @@ pub struct Stage3KernelPlan {
     pub abi: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3TranscriptSqueezePlan {
-    pub symbol: String,
-    pub label: String,
-    pub kind: String,
-    pub count: usize,
+fn stage3_scalar_expr(
+    expr: Stage3RelationOutputFieldExprPlan,
+) -> verifier_value_rows::CpuScalarExprPlan {
+    verifier_value_rows::CpuScalarExprPlan::op(expr.symbol, expr.formula, expr.operands)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3ProgramStepPlan {
-    pub kind: String,
-    pub symbol: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3OpeningInputPlan {
-    pub symbol: String,
-    pub source_stage: String,
-    pub source_claim: String,
-    pub oracle: String,
-    pub domain: String,
-    pub point_arity: usize,
-    pub claim_kind: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3FieldConstantPlan {
-    pub symbol: String,
-    pub field: String,
-    pub value: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3FieldExprPlan {
-    pub symbol: String,
-    pub kind: String,
-    pub formula: String,
-    pub operand_names: Vec<String>,
-    pub operands: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3SumcheckClaimPlan {
-    pub symbol: String,
-    pub stage: String,
-    pub domain: String,
-    pub num_rounds: usize,
-    pub degree: usize,
-    pub claim: String,
-    pub kernel: Option<String>,
-    pub relation: Option<String>,
-    pub claim_value: String,
-    pub input_openings: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3SumcheckBatchPlan {
-    pub symbol: String,
-    pub stage: String,
-    pub proof_slot: String,
-    pub policy: String,
-    pub count: usize,
-    pub ordered_claims: Vec<String>,
-    pub claim_operands: Vec<String>,
-    pub claim_label: String,
-    pub round_label: String,
-    pub round_schedule: Vec<usize>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3SumcheckDriverPlan {
-    pub symbol: String,
-    pub stage: String,
-    pub proof_slot: String,
-    pub kernel: Option<String>,
-    pub relation: Option<String>,
-    pub batch: String,
-    pub policy: String,
-    pub round_schedule: Vec<usize>,
-    pub claim_label: String,
-    pub round_label: String,
-    pub num_rounds: usize,
-    pub degree: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3SumcheckInstanceResultPlan {
-    pub symbol: String,
-    pub source: String,
-    pub claim: String,
-    pub relation: String,
-    pub index: usize,
-    pub point_arity: usize,
-    pub num_rounds: usize,
-    pub round_offset: usize,
-    pub point_order: String,
-    pub degree: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3SumcheckEvalPlan {
-    pub symbol: String,
-    pub source: String,
-    pub name: String,
-    pub index: usize,
-    pub oracle: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3PointSlicePlan {
-    pub symbol: String,
-    pub source: String,
-    pub offset: usize,
-    pub length: usize,
-    pub input: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3PointConcatPlan {
-    pub symbol: String,
-    pub layout: String,
-    pub arity: usize,
-    pub inputs: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3OpeningClaimPlan {
-    pub symbol: String,
-    pub oracle: String,
-    pub domain: String,
-    pub point_arity: usize,
-    pub claim_kind: String,
-    pub point_source: String,
-    pub eval_source: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3OpeningClaimEqualityPlan {
-    pub symbol: String,
-    pub mode: String,
-    pub lhs: String,
-    pub rhs: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3OpeningBatchPlan {
-    pub symbol: String,
-    pub stage: String,
-    pub proof_slot: String,
-    pub policy: String,
-    pub count: usize,
-    pub ordered_claims: Vec<String>,
-    pub claim_operands: Vec<String>,
-}
+verifier_plan::impl_verifier_plan_source_traits!(program = Stage3CpuProgram,);
 
 pub fn stage3_cpu_program(module: &BoltModule<'_, Cpu>) -> Result<Stage3CpuProgram, EmitError> {
     verify_cpu_schema(module)?;
@@ -225,12 +97,15 @@ impl Stage3CpuProgram {
         let mut opening_inputs = Vec::new();
         let mut field_constants = Vec::new();
         let mut field_exprs = Vec::new();
+        let mut scalar_exprs = Vec::new();
         let mut kernels = Vec::new();
         let mut claims = Vec::new();
         let mut batches = Vec::new();
         let mut drivers = Vec::new();
         let mut instance_results = Vec::new();
         let mut evals = Vec::new();
+        let mut relation_output_values = Vec::new();
+        let mut relation_output_asts = Vec::new();
         let mut point_slices = Vec::new();
         let mut point_concats = Vec::new();
         let mut opening_claims = Vec::new();
@@ -258,266 +133,177 @@ impl Stage3CpuProgram {
                     });
                 }
                 "cpu.transcript_squeeze" => {
-                    let symbol = string_attr(op, "sym_name")?;
-                    steps.push(Stage3ProgramStepPlan {
-                        kind: "transcript_squeeze".to_owned(),
-                        symbol: symbol.clone(),
-                    });
-                    transcript_squeezes.push(Stage3TranscriptSqueezePlan {
-                        symbol,
-                        label: string_attr(op, "label")?,
-                        kind: string_attr(op, "kind")?,
-                        count: int_attr(op, "count")?,
-                    });
+                    let squeeze = verifier_program_rows::CpuTranscriptSqueezePlan::from_cpu(op)?;
+                    steps.push(verifier_program_rows::CpuProgramStepPlan::new(
+                        "transcript_squeeze",
+                        squeeze.symbol.clone(),
+                    ));
+                    transcript_squeezes.push(squeeze);
                 }
                 "cpu.opening_input" => {
-                    opening_inputs.push(Stage3OpeningInputPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        source_stage: symbol_attr(op, "source_stage")?,
-                        source_claim: symbol_attr(op, "source_claim")?,
-                        oracle: symbol_attr(op, "oracle")?,
-                        domain: symbol_attr(op, "domain")?,
-                        point_arity: int_attr(op, "point_arity")?,
-                        claim_kind: string_attr(op, "claim_kind")?,
-                    });
+                    opening_inputs.push(verifier_program_rows::CpuOpeningInputPlan::from_cpu(op)?);
                 }
                 "cpu.field_const" => {
-                    field_constants.push(Stage3FieldConstantPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        field: symbol_attr(op, "field")?,
-                        value: int_attr(op, "value")?,
-                    });
+                    field_constants
+                        .push(verifier_value_rows::CpuFieldConstantPlan::from_const(op)?);
                 }
                 "cpu.field_zero" => {
-                    field_constants.push(Stage3FieldConstantPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        field: symbol_attr(op, "field")?,
-                        value: 0,
-                    });
+                    field_constants.push(verifier_value_rows::CpuFieldConstantPlan::from_zero(op)?);
                 }
                 "cpu.field_one" => {
-                    field_constants.push(Stage3FieldConstantPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        field: symbol_attr(op, "field")?,
-                        value: 1,
-                    });
+                    field_constants.push(verifier_value_rows::CpuFieldConstantPlan::from_one(op)?);
                 }
                 "cpu.field_add" | "cpu.field_sub" | "cpu.field_mul" | "cpu.field_neg" => {
-                    let operands = operand_symbols(op, 0)?;
-                    field_exprs.push(Stage3FieldExprPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        kind: "op".to_owned(),
-                        formula: operation_name(op).replace("cpu.field_", "field."),
-                        operand_names: operands.clone(),
-                        operands,
-                    });
+                    field_exprs.push(verifier_value_rows::CpuFieldExprPlan::from_field_op(op)?);
                 }
                 "cpu.field_pow" => {
-                    let exponent = int_attr(op, "exponent")?;
-                    let operands = operand_symbols(op, 0)?;
-                    field_exprs.push(Stage3FieldExprPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        kind: "op".to_owned(),
-                        formula: format!("field.pow:{exponent}"),
-                        operand_names: operands.clone(),
-                        operands,
-                    });
+                    field_exprs.push(verifier_value_rows::CpuFieldExprPlan::from_field_pow(op)?);
                 }
                 "cpu.poly_lagrange_basis_eval" => {
-                    let domain_start = signed_int_attr(op, "domain_start")?;
-                    let domain_size = int_attr(op, "domain_size")?;
-                    let index = int_attr(op, "index")?;
-                    let operands = operand_symbols(op, 0)?;
-                    field_exprs.push(Stage3FieldExprPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        kind: "op".to_owned(),
-                        formula: format!(
-                            "poly.lagrange_basis_eval:{domain_start}:{domain_size}:{index}"
-                        ),
-                        operand_names: operands.clone(),
-                        operands,
-                    });
+                    field_exprs
+                        .push(verifier_value_rows::CpuFieldExprPlan::from_lagrange_basis_eval(op)?);
                 }
                 "cpu.sumcheck_claim" => {
-                    claims.push(Stage3SumcheckClaimPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        stage: symbol_attr(op, "stage")?,
-                        domain: symbol_attr(op, "domain")?,
-                        num_rounds: int_attr(op, "num_rounds")?,
-                        degree: int_attr(op, "degree")?,
-                        claim: symbol_attr(op, "claim")?,
-                        kernel: Some(symbol_attr(op, "kernel")?),
-                        relation: None,
-                        claim_value: operand_symbol(op, 0)?,
-                        input_openings: operand_symbols(op, 1)?,
-                    });
+                    claims.push(verifier_sumcheck_rows::CpuSumcheckClaimPlan::from_claim(
+                        op,
+                    )?);
                 }
                 "cpu.sumcheck_verify_claim" => {
-                    claims.push(Stage3SumcheckClaimPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        stage: symbol_attr(op, "stage")?,
-                        domain: symbol_attr(op, "domain")?,
-                        num_rounds: int_attr(op, "num_rounds")?,
-                        degree: int_attr(op, "degree")?,
-                        claim: symbol_attr(op, "claim")?,
-                        kernel: None,
-                        relation: Some(symbol_attr(op, "relation")?),
-                        claim_value: operand_symbol(op, 0)?,
-                        input_openings: operand_symbols(op, 1)?,
-                    });
+                    claims
+                        .push(verifier_sumcheck_rows::CpuSumcheckClaimPlan::from_verify_claim(op)?);
                 }
                 "cpu.sumcheck_batch" => {
-                    batches.push(Stage3SumcheckBatchPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        stage: symbol_attr(op, "stage")?,
-                        proof_slot: symbol_attr(op, "proof_slot")?,
-                        policy: string_attr(op, "policy")?,
-                        count: int_attr(op, "count")?,
-                        ordered_claims: symbol_array_attr(op, "ordered_claims")?,
-                        claim_operands: operand_symbols(op, 0)?,
-                        claim_label: string_attr(op, "claim_label")?,
-                        round_label: string_attr(op, "round_label")?,
-                        round_schedule: int_array_attr(op, "round_schedule")?,
-                    });
+                    batches.push(verifier_sumcheck_rows::CpuSumcheckBatchPlan::from_cpu(op)?);
                 }
                 "cpu.sumcheck_driver" => {
-                    let symbol = string_attr(op, "sym_name")?;
-                    steps.push(Stage3ProgramStepPlan {
-                        kind: "sumcheck_driver".to_owned(),
-                        symbol: symbol.clone(),
-                    });
-                    drivers.push(Stage3SumcheckDriverPlan {
-                        symbol,
-                        stage: symbol_attr(op, "stage")?,
-                        proof_slot: symbol_attr(op, "proof_slot")?,
-                        kernel: Some(symbol_attr(op, "kernel")?),
-                        relation: None,
-                        batch: operand_symbol(op, 1)?,
-                        policy: string_attr(op, "policy")?,
-                        round_schedule: int_array_attr(op, "round_schedule")?,
-                        claim_label: string_attr(op, "claim_label")?,
-                        round_label: string_attr(op, "round_label")?,
-                        num_rounds: int_attr(op, "num_rounds")?,
-                        degree: int_attr(op, "degree")?,
-                    });
+                    let driver = verifier_sumcheck_rows::CpuSumcheckDriverPlan::from_driver(op)?;
+                    steps.push(verifier_program_rows::CpuProgramStepPlan::new(
+                        "sumcheck_driver",
+                        driver.symbol.clone(),
+                    ));
+                    drivers.push(driver);
                 }
                 "cpu.sumcheck_verify" => {
-                    let symbol = string_attr(op, "sym_name")?;
-                    steps.push(Stage3ProgramStepPlan {
-                        kind: "sumcheck_driver".to_owned(),
-                        symbol: symbol.clone(),
-                    });
-                    drivers.push(Stage3SumcheckDriverPlan {
-                        symbol,
-                        stage: symbol_attr(op, "stage")?,
-                        proof_slot: symbol_attr(op, "proof_slot")?,
-                        kernel: None,
-                        relation: Some(symbol_attr(op, "relation")?),
-                        batch: operand_symbol(op, 1)?,
-                        policy: string_attr(op, "policy")?,
-                        round_schedule: int_array_attr(op, "round_schedule")?,
-                        claim_label: string_attr(op, "claim_label")?,
-                        round_label: string_attr(op, "round_label")?,
-                        num_rounds: int_attr(op, "num_rounds")?,
-                        degree: int_attr(op, "degree")?,
-                    });
+                    let driver = verifier_sumcheck_rows::CpuSumcheckDriverPlan::from_verify(op)?;
+                    steps.push(verifier_program_rows::CpuProgramStepPlan::new(
+                        "sumcheck_driver",
+                        driver.symbol.clone(),
+                    ));
+                    drivers.push(driver);
                 }
                 "cpu.sumcheck_instance_result" => {
-                    instance_results.push(Stage3SumcheckInstanceResultPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        source: symbol_attr(op, "source")?,
-                        claim: symbol_attr(op, "claim")?,
-                        relation: symbol_attr(op, "relation")?,
-                        index: int_attr(op, "index")?,
-                        point_arity: int_attr(op, "point_arity")?,
-                        num_rounds: int_attr(op, "num_rounds")?,
-                        round_offset: int_attr(op, "round_offset")?,
-                        point_order: string_attr(op, "point_order")?,
-                        degree: int_attr(op, "degree")?,
-                    });
+                    instance_results
+                        .push(verifier_sumcheck_rows::CpuSumcheckInstanceResultPlan::from_cpu(op)?);
                 }
                 "cpu.sumcheck_eval" => {
-                    evals.push(Stage3SumcheckEvalPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        source: symbol_attr(op, "source")?,
-                        name: symbol_attr(op, "name")?,
-                        index: int_attr(op, "index")?,
-                        oracle: symbol_attr(op, "oracle")?,
+                    evals.push(verifier_sumcheck_rows::CpuSumcheckEvalPlan::from_cpu(op)?);
+                }
+                "cpu.structured_polynomial_eval" => {
+                    relation_output_values.push(
+                        verifier_relation_outputs::parse_structured_polynomial_eval_plan(op)?,
+                    );
+                }
+                "cpu.sumcheck_output_claim" => {
+                    relation_output_asts.push(Stage3RelationOutputAst {
+                        relation: symbol_attr(op, "relation")?,
+                        expected_output: operand_symbol(op, 0)?,
+                        polynomial_evals: symbol_array_attr(op, "polynomial_evals")?,
+                        polynomial_eval_operands: operand_symbols(op, 1)?,
                     });
                 }
                 "cpu.point_slice" => {
-                    point_slices.push(Stage3PointSlicePlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        source: symbol_attr(op, "source")?,
-                        offset: int_attr(op, "offset")?,
-                        length: int_attr(op, "length")?,
-                        input: operand_symbol(op, 0)?,
-                    });
+                    point_slices.push(verifier_point_rows::CpuPointSlicePlan::from_cpu(op)?);
                 }
                 "cpu.point_concat" => {
-                    point_concats.push(Stage3PointConcatPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        layout: string_attr(op, "layout")?,
-                        arity: int_attr(op, "arity")?,
-                        inputs: operand_symbols(op, 0)?,
-                    });
+                    point_concats.push(verifier_point_rows::CpuPointConcatPlan::from_cpu(op)?);
                 }
                 "cpu.opening_claim" => {
-                    opening_claims.push(Stage3OpeningClaimPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        oracle: symbol_attr(op, "oracle")?,
-                        domain: symbol_attr(op, "domain")?,
-                        point_arity: int_attr(op, "point_arity")?,
-                        claim_kind: string_attr(op, "claim_kind")?,
-                        point_source: operand_symbol(op, 0)?,
-                        eval_source: operand_symbol(op, 1)?,
-                    });
+                    opening_claims.push(verifier_opening_rows::CpuOpeningClaimPlan::from_cpu(op)?);
                 }
                 "cpu.opening_claim_equal" => {
-                    opening_equalities.push(Stage3OpeningClaimEqualityPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        mode: string_attr(op, "mode")?,
-                        lhs: operand_symbol(op, 0)?,
-                        rhs: operand_symbol(op, 1)?,
-                    });
+                    opening_equalities
+                        .push(verifier_opening_rows::CpuOpeningClaimEqualityPlan::from_cpu(op)?);
                 }
                 "cpu.opening_batch" => {
-                    opening_batches.push(Stage3OpeningBatchPlan {
-                        symbol: string_attr(op, "sym_name")?,
-                        stage: symbol_attr(op, "stage")?,
-                        proof_slot: symbol_attr(op, "proof_slot")?,
-                        policy: string_attr(op, "policy")?,
-                        count: int_attr(op, "count")?,
-                        ordered_claims: symbol_array_attr(op, "ordered_claims")?,
-                        claim_operands: operand_symbols(op, 0)?,
-                    });
+                    opening_batches.push(verifier_opening_rows::CpuOpeningBatchPlan::from_cpu(op)?);
                 }
                 _ => {}
             }
         }
 
-        Ok(Self {
+        let role = module
+            .role()
+            .ok_or_else(|| EmitError::new("missing cpu party role"))?;
+        let is_verifier = role == Role::Verifier;
+        if is_verifier {
+            scalar_exprs.extend(
+                relation_output_values
+                    .iter()
+                    .map(verifier_relation_outputs::structured_polynomial_scalar_expr_plan)
+                    .map(stage3_scalar_expr),
+            );
+        }
+        if role == Role::Prover {
+            verifier_relation_outputs::prune_output_only_field_exprs(
+                &mut field_exprs,
+                claims.iter().map(|claim| claim.claim_value.as_str()),
+                relation_output_asts
+                    .iter()
+                    .map(|claim| claim.expected_output.as_str()),
+            );
+        }
+        let relation_outputs = if role == Role::Verifier {
+            verifier_relation_outputs::resolve_relation_outputs(
+                "stage3",
+                &relation_output_values,
+                &[],
+                &[],
+                &[],
+                &field_exprs,
+                relation_output_asts,
+            )?
+        } else {
+            Vec::new()
+        };
+
+        let mut program = Self {
             params: params.ok_or_else(|| EmitError::new("missing cpu.params"))?,
-            role: module
-                .role()
-                .ok_or_else(|| EmitError::new("missing cpu party role"))?,
+            role,
+            verifier_plan: None,
             steps,
             transcript_squeezes,
             opening_inputs,
             field_constants,
             field_exprs,
+            scalar_exprs,
             kernels,
             claims,
             batches,
             drivers,
             instance_results,
             evals,
+            relation_output_values,
+            relation_outputs,
             point_slices,
             point_concats,
             opening_claims,
             opening_equalities,
             opening_batches,
-        })
+        };
+        if is_verifier {
+            program.verifier_plan = Some(program.plan_verifier()?);
+        }
+        Ok(program)
+    }
+
+    fn plan_verifier(&self) -> Result<VerifierStagePlan, EmitError> {
+        verifier_plan::plan_verifier_stage_from_cpu_sources(self)
+    }
+
+    fn verifier_plan(&self) -> Result<&VerifierStagePlan, EmitError> {
+        self.verifier_plan
+            .as_ref()
+            .ok_or_else(|| EmitError::new("missing stage3 verifier plan"))
     }
 
     fn verify_supported_target(&self) -> Result<(), EmitError> {
@@ -526,13 +312,19 @@ impl Stage3CpuProgram {
         require_supported_symbol("transcript", &self.params.transcript, "blake2b_transcript")?;
         self.verify_transcript_squeezes()?;
         self.verify_field_flow()?;
-        self.verify_claim_batches()?;
         match self.role {
             Role::Prover => {
+                self.verify_claim_batches()?;
                 self.verify_kernel_definitions()?;
                 self.verify_prover_driver_bindings()?;
             }
-            Role::Verifier => self.verify_verifier_driver_bindings()?,
+            Role::Verifier => {
+                self.verifier_plan()?.verify_sumcheck_flow("stage3")?;
+                self.verify_verifier_driver_bindings()?;
+            }
+        }
+        if self.role == Role::Verifier {
+            self.verify_relation_outputs()?;
         }
         self.verify_opening_flow()
     }
@@ -562,23 +354,41 @@ impl Stage3CpuProgram {
         for constant in &self.field_constants {
             require_supported_symbol("field constant field", &constant.field, "bn254_fr")?;
         }
-        let field_values = self.field_value_symbols();
-        for expr in &self.field_exprs {
-            verify_count(
-                "field expr operands",
-                &expr.symbol,
-                expr.operand_names.len(),
-                expr.operands.len(),
-            )?;
-            for operand in &expr.operands {
-                if !field_values.contains(operand) {
-                    return Err(EmitError::new(format!(
-                        "field expr @{} references missing field value @{operand}",
-                        expr.symbol
-                    )));
-                }
-            }
-        }
+        let verifier_plan = if self.role == Role::Verifier {
+            Some(self.verifier_plan()?)
+        } else {
+            None
+        };
+        let verifier_scalar_values = verifier_plan.map(|plan| plan.scalar_values());
+        let field_values = verifier_scalar_values.as_ref().map_or_else(
+            || self.cpu_field_value_sources(),
+            |values| values.source_set(),
+        );
+        let field_vector_values = verifier_plan.map(|plan| plan.field_vector_values());
+        let verifier_point_values = verifier_plan.map(|plan| plan.point_values());
+        let point_values = verifier_point_values
+            .as_ref()
+            .map(|values| values.source_set());
+        super::plan_tokens::verify_field_expr_flow(
+            super::plan_tokens::FieldExprFlowVerification {
+                cpu_exprs: &self.field_exprs,
+                verifier_exprs: verifier_plan.map(|plan| plan.field_exprs.as_slice()),
+                field_values: &field_values,
+                verifier_field_values: verifier_scalar_values.as_ref(),
+            },
+        )?;
+        super::plan_tokens::verify_scalar_expr_flow(
+            super::plan_tokens::ScalarExprFlowVerification {
+                stage: "stage3",
+                cpu_exprs: &self.scalar_exprs,
+                verifier_exprs: verifier_plan.map(|plan| plan.scalar_exprs.as_slice()),
+                field_values: &field_values,
+                verifier_field_values: verifier_scalar_values.as_ref(),
+                field_vector_values: field_vector_values.as_ref(),
+                point_values: point_values.as_ref(),
+                verifier_point_values: verifier_point_values.as_ref(),
+            },
+        )?;
         for claim in &self.claims {
             if !field_values.contains(&claim.claim_value) {
                 return Err(EmitError::new(format!(
@@ -590,19 +400,35 @@ impl Stage3CpuProgram {
         Ok(())
     }
 
-    fn field_value_symbols(&self) -> BTreeSet<String> {
-        let mut values = symbols(self.opening_inputs.iter().map(|input| &input.symbol));
-        values.extend(symbols(
+    fn cpu_field_value_sources(&self) -> verifier_values::VerifierScalarSourceSet {
+        let mut values = verifier_values::VerifierScalarSourceSet::default();
+        values.extend(
+            self.opening_inputs.iter().map(|input| &input.symbol),
+            verifier_values::VerifierScalarSourceKind::OpeningInput,
+        );
+        values.extend(
             self.field_constants.iter().map(|constant| &constant.symbol),
-        ));
-        values.extend(symbols(
+            verifier_values::VerifierScalarSourceKind::FieldConstant,
+        );
+        values.extend(
             self.transcript_squeezes
                 .iter()
                 .filter(|squeeze| matches!(squeeze.kind.as_str(), "challenge_scalar" | "scalar"))
                 .map(|squeeze| &squeeze.symbol),
-        ));
-        values.extend(symbols(self.field_exprs.iter().map(|expr| &expr.symbol)));
-        values.extend(symbols(self.evals.iter().map(|eval| &eval.symbol)));
+            verifier_values::VerifierScalarSourceKind::TranscriptScalar,
+        );
+        values.extend(
+            self.field_exprs.iter().map(|expr| &expr.symbol),
+            verifier_values::VerifierScalarSourceKind::FieldExpr,
+        );
+        values.extend(
+            self.scalar_exprs.iter().map(|expr| &expr.symbol),
+            verifier_values::VerifierScalarSourceKind::ScalarExpr,
+        );
+        values.extend(
+            self.evals.iter().map(|eval| &eval.symbol),
+            verifier_values::VerifierScalarSourceKind::SumcheckEval,
+        );
         values
     }
 
@@ -737,11 +563,6 @@ impl Stage3CpuProgram {
                 "verifier stage3 program must not contain kernels",
             ));
         }
-        let batches: BTreeMap<_, _> = self
-            .batches
-            .iter()
-            .map(|batch| (batch.symbol.as_str(), batch))
-            .collect();
         for claim in &self.claims {
             if claim.kernel.is_some() || claim.relation.is_none() {
                 return Err(EmitError::new(format!(
@@ -757,29 +578,18 @@ impl Stage3CpuProgram {
                     driver.symbol
                 )));
             }
-            let batch = batches.get(driver.batch.as_str()).ok_or_else(|| {
-                EmitError::new(format!(
-                    "sumcheck driver @{} references missing batch @{}",
-                    driver.symbol, driver.batch
-                ))
-            })?;
-            verify_count(
-                "sumcheck driver round_schedule",
-                &driver.symbol,
-                driver.num_rounds,
-                driver.round_schedule.iter().sum(),
-            )?;
-            if driver.round_schedule != batch.round_schedule {
-                return Err(EmitError::new(format!(
-                    "sumcheck driver @{} round_schedule differs from batch @{}",
-                    driver.symbol, batch.symbol
-                )));
-            }
         }
         Ok(())
     }
 
+    fn verify_relation_outputs(&self) -> Result<(), EmitError> {
+        self.verifier_plan()?.verify_relation_outputs("stage3")
+    }
+
     fn verify_opening_flow(&self) -> Result<(), EmitError> {
+        if self.role == Role::Verifier {
+            return self.verifier_plan()?.verify_opening_flow("stage3");
+        }
         let mut point_sources = symbols(self.drivers.iter().map(|driver| &driver.symbol));
         point_sources.extend(symbols(
             self.instance_results
@@ -811,7 +621,7 @@ impl Stage3CpuProgram {
                 }
             }
         }
-        let eval_sources = self.field_value_symbols();
+        let eval_sources = self.cpu_field_value_sources();
         let mut opening_sources = symbols(self.opening_inputs.iter().map(|input| &input.symbol));
         opening_sources.extend(symbols(
             self.opening_claims.iter().map(|claim| &claim.symbol),
@@ -954,9 +764,8 @@ impl Stage3CpuProgram {
     }
 
     fn emit_verifier_imports() -> &'static str {
-        "use super::common::{batch_claims, eval_by_name, find_batch, find_plan, reverse_slice};\n\
+        "use bolt_verifier_runtime::find_plan;\n\
          use jolt_field::{Field, Fr};\n\
-         use jolt_poly::{EqPlusOnePolynomial, EqPolynomial};\n\
          use jolt_sumcheck::SumcheckError;\n\
          use jolt_transcript::{Blake2bTranscript, Transcript};"
     }
@@ -964,26 +773,35 @@ impl Stage3CpuProgram {
     fn emit_verifier_types() -> &'static str {
         r"pub type DefaultStage3Transcript = Blake2bTranscript<Fr>;
 
-pub type Stage3NamedEval<F> = super::common::StageNamedEval<F>;
-pub type Stage3SumcheckOutput<F> = super::common::StageSumcheckOutput<F>;
-pub type Stage3ChallengeVector<F> = super::common::StageChallengeVector<F>;
-pub type Stage3ExecutionArtifacts<F> = super::common::StageExecutionArtifacts<F>;
-pub type Stage3Proof<F> = super::common::StageProof<F>;
-pub type Stage3OpeningInputValue<F> = super::common::StageOpeningInputValue<F>;
-pub type Stage3VerifierProgramPlan = super::common::StageVerifierProgramPlan;
+pub type Stage3NamedEval<F> = bolt_verifier_runtime::StageNamedEval<F>;
+pub type Stage3SumcheckOutput<F> = bolt_verifier_runtime::StageSumcheckOutput<F>;
+pub type Stage3ChallengeVector<F> = bolt_verifier_runtime::StageChallengeVector<F>;
+pub type Stage3ExecutionArtifacts<F> = bolt_verifier_runtime::StageExecutionArtifacts<F>;
+pub type Stage3Proof<F> = bolt_verifier_runtime::StageProof<F>;
+pub type Stage3OpeningInputValue<F> = bolt_verifier_runtime::StageOpeningInputValue<F>;
+pub type Stage3VerifierProgramPlan = bolt_verifier_runtime::StageVerifierProgramPlan<Stage3RelationKind>;
+pub type Stage3SumcheckClaimPlan = bolt_verifier_runtime::SumcheckClaimPlan<Stage3RelationKind>;
+pub type Stage3SumcheckDriverPlan = bolt_verifier_runtime::SumcheckDriverPlan<Stage3RelationKind>;
+pub type Stage3SumcheckInstanceResultPlan = bolt_verifier_runtime::SumcheckInstanceResultPlan<Stage3RelationKind>;
+pub type Stage3RelationOutputPlan = bolt_verifier_runtime::RelationOutputPlan<Stage3RelationKind>;
 
-pub use super::common::{
-    FieldConstantPlan as Stage3FieldConstantPlan, FieldExprPlan as Stage3FieldExprPlan,
+pub use super::jolt_relations::JoltRelationKind as Stage3RelationKind;
+pub use bolt_verifier_runtime::{
+    ClaimKind as Stage3ClaimKind, FieldConstantPlan as Stage3FieldConstantPlan,
+    FieldExprKind as Stage3FieldExprKind,
+    FieldExprPlan as Stage3FieldExprPlan,
+    ScalarExprKind as Stage3ScalarExprKind,
+    ScalarExprPlan as Stage3ScalarExprPlan,
     OpeningBatchPlan as Stage3OpeningBatchPlan,
     OpeningClaimEqualityPlan as Stage3OpeningClaimEqualityPlan,
     OpeningClaimPlan as Stage3OpeningClaimPlan, OpeningInputPlan as Stage3OpeningInputPlan,
-    PointConcatPlan as Stage3PointConcatPlan, PointSlicePlan as Stage3PointSlicePlan,
-    ProgramStepPlan as Stage3ProgramStepPlan, StageParams as Stage3Params,
+    PointExprKind as Stage3PointExprKind, PointExprPlan as Stage3PointExprPlan,
+    OpeningEqualityMode as Stage3OpeningEqualityMode,
+    ProgramStepKind as Stage3ProgramStepKind, ProgramStepPlan as Stage3ProgramStepPlan,
+    StageParams as Stage3Params,
     SumcheckBatchPlan as Stage3SumcheckBatchPlan, SumcheckEvalPlan as Stage3SumcheckEvalPlan,
-    SumcheckInstanceResultPlan as Stage3SumcheckInstanceResultPlan,
+    TranscriptSqueezeKind as Stage3TranscriptSqueezeKind,
     TranscriptSqueezePlan as Stage3TranscriptSqueezePlan,
-    SumcheckClaimPlan as Stage3SumcheckClaimPlan,
-    SumcheckDriverPlan as Stage3SumcheckDriverPlan,
 };
 
 #[derive(Debug)]
@@ -995,22 +813,21 @@ pub enum VerifyStage3Error {
     MissingValue { symbol: &'static str },
     InvalidInputLength { input: &'static str, expected: usize, actual: usize },
     InvalidProof { driver: &'static str, reason: &'static str },
-    UnsupportedFieldExpr { symbol: &'static str, formula: &'static str },
-    UnsupportedRelation { relation: &'static str },
+    UnsupportedRelation { relation: Stage3RelationKind },
     Sumcheck { driver: &'static str, error: SumcheckError<Fr> },
 }
 
-super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
+bolt_verifier_runtime::impl_runtime_plan_error_conversion!(VerifyStage3Error);
 "
     }
 
     fn emit_prover_constants(&self) -> Result<String, EmitError> {
-        let mut source = self.emit_shared_constants();
+        let mut source = self.emit_shared_constants()?;
         source.push_str(&self.emit_kernel_constants());
         source.push_str(&self.emit_prover_sumcheck_claim_constants()?);
         source.push_str(&self.emit_sumcheck_batch_constants());
         source.push_str(&self.emit_prover_sumcheck_driver_constants()?);
-        source.push_str(&self.emit_tail_constants());
+        source.push_str(&self.emit_tail_constants()?);
         source.push_str(
             "pub const STAGE3_PROGRAM: Stage3CpuProgramPlan = Stage3CpuProgramPlan {\n\
              \x20   params: STAGE3_PARAMS,\n\
@@ -1036,11 +853,12 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
     }
 
     fn emit_verifier_constants(&self) -> Result<String, EmitError> {
-        let mut source = self.emit_shared_constants();
+        let mut source = self.emit_shared_constants()?;
         source.push_str(&self.emit_verifier_sumcheck_claim_constants()?);
         source.push_str(&self.emit_sumcheck_batch_constants());
         source.push_str(&self.emit_verifier_sumcheck_driver_constants()?);
-        source.push_str(&self.emit_tail_constants());
+        source.push_str(&self.emit_tail_constants()?);
+        source.push_str(&self.emit_verifier_relation_output_constants()?);
         source.push_str(
             "pub const STAGE3_PROGRAM: Stage3VerifierProgramPlan = Stage3VerifierProgramPlan {\n\
              \x20   params: STAGE3_PARAMS,\n\
@@ -1049,13 +867,14 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
              \x20   opening_inputs: STAGE3_OPENING_INPUTS,\n\
              \x20   field_constants: STAGE3_FIELD_CONSTANTS,\n\
              \x20   field_exprs: STAGE3_FIELD_EXPRS,\n\
+             \x20   scalar_exprs: STAGE3_SCALAR_EXPRS,\n\
              \x20   claims: STAGE3_SUMCHECK_CLAIMS,\n\
              \x20   batches: STAGE3_SUMCHECK_BATCHES,\n\
              \x20   drivers: STAGE3_SUMCHECK_DRIVERS,\n\
              \x20   instance_results: STAGE3_SUMCHECK_INSTANCE_RESULTS,\n\
              \x20   evals: STAGE3_SUMCHECK_EVALS,\n\
-             \x20   point_slices: STAGE3_POINT_SLICES,\n\
-             \x20   point_concats: STAGE3_POINT_CONCATS,\n\
+             \x20   relation_outputs: STAGE3_RELATION_OUTPUTS,\n\
+             \x20   point_exprs: STAGE3_POINT_EXPRS,\n\
              \x20   opening_claims: STAGE3_OPENING_CLAIMS,\n\
              \x20   opening_equalities: STAGE3_OPENING_EQUALITIES,\n\
              \x20   opening_batches: STAGE3_OPENING_BATCHES,\n\
@@ -1064,71 +883,102 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
         Ok(source)
     }
 
-    fn emit_shared_constants(&self) -> String {
+    fn emit_shared_constants(&self) -> Result<String, EmitError> {
         let mut source = String::new();
         push_format(
             &mut source,
             format_args!(
-                "pub const STAGE3_PARAMS: Stage3Params = Stage3Params {{\n\
-             \x20   field: {},\n\
-             \x20   pcs: {},\n\
-             \x20   transcript: {},\n\
-             }};\n",
+                "pub const STAGE3_PARAMS: Stage3Params = Stage3Params {{ field: {}, pcs: {}, transcript: {} }};\n",
                 rust_str(&self.params.field),
                 rust_str(&self.params.pcs),
                 rust_str(&self.params.transcript)
             ),
         );
-        source.push_str(&self.emit_program_step_constants());
-        source.push_str(&self.emit_transcript_squeeze_constants());
-        source.push_str(&self.emit_opening_input_constants());
+        source.push_str(&self.emit_program_step_constants()?);
+        source.push_str(&self.emit_transcript_squeeze_constants()?);
+        source.push_str(&self.emit_opening_input_constants()?);
         source.push_str(&self.emit_field_constant_constants());
-        source.push_str(&self.emit_field_expr_constants());
-        source
+        source.push_str(&self.emit_field_expr_constants()?);
+        if self.role == Role::Verifier {
+            source.push_str(&self.emit_scalar_expr_constants()?);
+        }
+        Ok(source)
     }
 
-    fn emit_program_step_constants(&self) -> String {
+    fn emit_program_step_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_program_step_constants(
+                "Stage3",
+                "STAGE3",
+                &plan.steps,
+            ));
+        }
         let steps = self
             .steps
             .iter()
             .map(|step| {
-                format!(
+                Ok(format!(
                     "    Stage3ProgramStepPlan {{ kind: {}, symbol: {} }},",
-                    rust_str(&step.kind),
+                    super::plan_tokens::role_program_step_kind_expr(
+                        "Stage3", &self.role, &step.kind
+                    )?,
                     rust_str(&step.symbol),
-                )
+                ))
             })
-            .collect::<Vec<_>>()
+            .collect::<Result<Vec<_>, EmitError>>()?
             .join("\n");
-        format!("pub const STAGE3_PROGRAM_STEPS: &[Stage3ProgramStepPlan] = &[\n{steps}\n];\n\n")
+        Ok(format!(
+            "pub const STAGE3_PROGRAM_STEPS: &[Stage3ProgramStepPlan] = &[\n{steps}\n];\n\n"
+        ))
     }
 
-    fn emit_transcript_squeeze_constants(&self) -> String {
+    fn emit_transcript_squeeze_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_transcript_squeeze_constants(
+                "Stage3",
+                "STAGE3",
+                &plan.transcript_squeezes,
+            ));
+        }
         let squeezes = self
             .transcript_squeezes
             .iter()
             .map(|squeeze| {
-                format!(
+                Ok(format!(
                     "    Stage3TranscriptSqueezePlan {{ symbol: {}, label: {}, kind: {}, count: {} }},",
                     rust_str(&squeeze.symbol),
                     rust_str(&squeeze.label),
-                    rust_str(&squeeze.kind),
+                    super::plan_tokens::role_transcript_squeeze_kind_expr(
+                        "Stage3",
+                        &self.role,
+                        &squeeze.kind
+                    )?,
                     squeeze.count,
-                )
+                ))
             })
-            .collect::<Vec<_>>()
+            .collect::<Result<Vec<_>, EmitError>>()?
             .join("\n");
-        format!(
+        Ok(format!(
             "pub const STAGE3_TRANSCRIPT_SQUEEZES: &[Stage3TranscriptSqueezePlan] = &[\n{squeezes}\n];\n\n"
-        )
+        ))
     }
 
-    fn emit_opening_input_constants(&self) -> String {
+    fn emit_opening_input_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_opening_input_constants(
+                "Stage3",
+                "STAGE3",
+                &plan.opening_inputs,
+            ));
+        }
         let inputs = self
             .opening_inputs
             .iter()
             .map(|input| {
-                format!(
+                Ok(format!(
                     "    Stage3OpeningInputPlan {{ symbol: {}, source_stage: {}, source_claim: {}, oracle: {}, domain: {}, point_arity: {}, claim_kind: {} }},",
                     rust_str(&input.symbol),
                     rust_str(&input.source_stage),
@@ -1136,12 +986,14 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
                     rust_str(&input.oracle),
                     rust_str(&input.domain),
                     input.point_arity,
-                    rust_str(&input.claim_kind)
-                )
+                    super::plan_tokens::role_claim_kind_expr("Stage3", &self.role, &input.claim_kind)?
+                ))
             })
-            .collect::<Vec<_>>()
+            .collect::<Result<Vec<_>, EmitError>>()?
             .join("\n");
-        format!("pub const STAGE3_OPENING_INPUTS: &[Stage3OpeningInputPlan] = &[\n{inputs}\n];\n\n")
+        Ok(format!(
+            "pub const STAGE3_OPENING_INPUTS: &[Stage3OpeningInputPlan] = &[\n{inputs}\n];\n\n"
+        ))
     }
 
     fn emit_field_constant_constants(&self) -> String {
@@ -1163,25 +1015,14 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
         )
     }
 
-    fn emit_field_expr_constants(&self) -> String {
+    fn emit_field_expr_constants(&self) -> Result<String, EmitError> {
         if self.role == Role::Verifier {
-            let exprs = self
-                .field_exprs
-                .iter()
-                .map(|expr| {
-                    format!(
-                        "    Stage3FieldExprPlan {{ symbol: {}, kind: {}, formula: {}, operands: {} }},",
-                        rust_str(&expr.symbol),
-                        rust_str(&expr.kind),
-                        rust_str(&expr.formula),
-                        rust_str(&expr.operands.join("|"))
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            return format!(
-                "pub const STAGE3_FIELD_EXPRS: &[Stage3FieldExprPlan] = &[\n{exprs}\n];\n"
-            );
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_field_expr_constants(
+                "Stage3",
+                "STAGE3",
+                &plan.field_exprs,
+            ));
         }
 
         let mut source = String::new();
@@ -1223,7 +1064,16 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
                 "pub const STAGE3_FIELD_EXPRS: &[Stage3FieldExprPlan] = &[\n{exprs}\n];\n"
             ),
         );
-        source
+        Ok(source)
+    }
+
+    fn emit_scalar_expr_constants(&self) -> Result<String, EmitError> {
+        let plan = self.verifier_plan()?;
+        Ok(verifier_plan::emit_scalar_expr_constants(
+            "Stage3",
+            "STAGE3",
+            &plan.scalar_exprs,
+        ))
     }
 
     fn emit_kernel_constants(&self) -> String {
@@ -1254,23 +1104,28 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
     }
 
     fn emit_sumcheck_claim_constants(&self, prover: bool) -> Result<String, EmitError> {
+        if !prover {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_sumcheck_claim_constants(
+                "Stage3",
+                "STAGE3",
+                &plan.claims,
+            ));
+        }
         let mut source = String::new();
-        if prover {
-            for (index, claim) in self.claims.iter().enumerate() {
-                source.push_str(&emit_str_array(
-                    &format!("STAGE3_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS"),
-                    &claim.input_openings,
-                ));
-            }
+        for (index, claim) in self.claims.iter().enumerate() {
+            source.push_str(&emit_str_array(
+                &format!("STAGE3_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS"),
+                &claim.input_openings,
+            ));
         }
         let mut claims = Vec::new();
         for (index, claim) in self.claims.iter().enumerate() {
-            if prover {
-                let kernel = claim
-                    .kernel
-                    .as_deref()
-                    .ok_or_else(|| missing_role_binding("prover claim kernel", &claim.symbol))?;
-                claims.push(format!(
+            let kernel = claim
+                .kernel
+                .as_deref()
+                .ok_or_else(|| missing_role_binding("prover claim kernel", &claim.symbol))?;
+            claims.push(format!(
                         "    Stage3SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: Some({}), relation: None, claim_value: {}, input_openings: STAGE3_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS }},",
                         rust_str(&claim.symbol),
                         rust_str(&claim.stage),
@@ -1281,23 +1136,6 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
                         rust_str(kernel),
                         rust_str(&claim.claim_value)
                     ));
-            } else {
-                let relation = claim.relation.as_deref().ok_or_else(|| {
-                    missing_role_binding("verifier claim relation", &claim.symbol)
-                })?;
-                claims.push(format!(
-                        "    Stage3SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: None, relation: Some({}), claim_value: {}, input_openings: {} }},",
-                        rust_str(&claim.symbol),
-                        rust_str(&claim.stage),
-                        rust_str(&claim.domain),
-                        claim.num_rounds,
-                        claim.degree,
-                        rust_str(&claim.claim),
-                        rust_str(relation),
-                        rust_str(&claim.claim_value),
-                        rust_str(&claim.input_openings.join("|"))
-                    ));
-            }
         }
         let claims = claims.join("\n");
         push_format(
@@ -1324,14 +1162,13 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
                 .enumerate()
                 .map(|(index, batch)| {
                     format!(
-                        "    Stage3SumcheckBatchPlan {{ symbol: {}, stage: {}, proof_slot: {}, policy: {}, count: {}, ordered_claims: {}, claim_operands: {}, claim_label: {}, round_label: {}, round_schedule: STAGE3_SUMCHECK_BATCH_{index}_ROUND_SCHEDULE }},",
+                        "    Stage3SumcheckBatchPlan {{ symbol: {}, stage: {}, proof_slot: {}, policy: {}, count: {}, claim_operands: {}, claim_label: {}, round_label: {}, round_schedule: STAGE3_SUMCHECK_BATCH_{index}_ROUND_SCHEDULE }},",
                         rust_str(&batch.symbol),
                         rust_str(&batch.stage),
                         rust_str(&batch.proof_slot),
                         rust_str(&batch.policy),
                         batch.count,
-                        rust_str(&batch.ordered_claims.join("|")),
-                        rust_str(&batch.claim_operands.join("|")),
+                        super::plan_tokens::rust_str_slice_expr(&batch.claim_operands),
                         rust_str(&batch.claim_label),
                         rust_str(&batch.round_label)
                     )
@@ -1398,6 +1235,14 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
     }
 
     fn emit_sumcheck_driver_constants(&self, prover: bool) -> Result<String, EmitError> {
+        if !prover {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_sumcheck_driver_constants(
+                "Stage3",
+                "STAGE3",
+                &plan.drivers,
+            ));
+        }
         let mut source = String::new();
         for (index, driver) in self.drivers.iter().enumerate() {
             source.push_str(&emit_usize_array(
@@ -1407,12 +1252,11 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
         }
         let mut drivers = Vec::new();
         for (index, driver) in self.drivers.iter().enumerate() {
-            if prover {
-                let kernel = driver
-                    .kernel
-                    .as_deref()
-                    .ok_or_else(|| missing_role_binding("prover driver kernel", &driver.symbol))?;
-                drivers.push(format!(
+            let kernel = driver
+                .kernel
+                .as_deref()
+                .ok_or_else(|| missing_role_binding("prover driver kernel", &driver.symbol))?;
+            drivers.push(format!(
                         "    Stage3SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, kernel: Some({}), relation: None, batch: {}, policy: {}, round_schedule: STAGE3_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
                         rust_str(&driver.symbol),
                         rust_str(&driver.stage),
@@ -1425,24 +1269,6 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
                         driver.num_rounds,
                         driver.degree
                     ));
-            } else {
-                let relation = driver.relation.as_deref().ok_or_else(|| {
-                    missing_role_binding("verifier driver relation", &driver.symbol)
-                })?;
-                drivers.push(format!(
-                        "    Stage3SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, kernel: None, relation: Some({}), batch: {}, policy: {}, round_schedule: STAGE3_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
-                        rust_str(&driver.symbol),
-                        rust_str(&driver.stage),
-                        rust_str(&driver.proof_slot),
-                        rust_str(relation),
-                        rust_str(&driver.batch),
-                        rust_str(&driver.policy),
-                        rust_str(&driver.claim_label),
-                        rust_str(&driver.round_label),
-                        driver.num_rounds,
-                        driver.degree
-                    ));
-            }
         }
         let drivers = drivers.join("\n");
         push_format(
@@ -1454,42 +1280,56 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
         Ok(source)
     }
 
-    fn emit_tail_constants(&self) -> String {
+    fn emit_tail_constants(&self) -> Result<String, EmitError> {
         let mut source = String::new();
-        source.push_str(&self.emit_sumcheck_instance_result_constants());
+        source.push_str(&self.emit_sumcheck_instance_result_constants()?);
         source.push_str(&self.emit_sumcheck_eval_constants());
-        source.push_str(&self.emit_point_slice_constants());
-        source.push_str(&self.emit_point_concat_constants());
-        source.push_str(&self.emit_opening_claim_constants());
-        source.push_str(&self.emit_opening_claim_equality_constants());
+        source.push_str(&self.emit_point_constants()?);
+        source.push_str(&self.emit_opening_claim_constants()?);
+        source.push_str(&self.emit_opening_claim_equality_constants()?);
         source.push_str(&self.emit_opening_batch_constants());
-        source
+        Ok(source)
     }
 
-    fn emit_sumcheck_instance_result_constants(&self) -> String {
+    fn emit_sumcheck_instance_result_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_sumcheck_instance_result_constants(
+                "Stage3",
+                "STAGE3",
+                &plan.instance_results,
+            ));
+        }
         let instances = self
             .instance_results
             .iter()
             .map(|instance| {
-                format!(
+                Ok(format!(
                     "    Stage3SumcheckInstanceResultPlan {{ symbol: {}, source: {}, claim: {}, relation: {}, index: {}, point_arity: {}, num_rounds: {}, round_offset: {}, point_order: {}, degree: {} }},",
                     rust_str(&instance.symbol),
                     rust_str(&instance.source),
                     rust_str(&instance.claim),
-                    rust_str(&instance.relation),
+                    super::plan_tokens::role_relation_kind_expr(
+                        "Stage3",
+                        &self.role,
+                        &instance.relation
+                    )?,
                     instance.index,
                     instance.point_arity,
                     instance.num_rounds,
                     instance.round_offset,
-                    rust_str(&instance.point_order),
+                    super::plan_tokens::role_sumcheck_point_order_expr(
+                        &self.role,
+                        &instance.point_order
+                    )?,
                     instance.degree
-                )
+                ))
             })
-            .collect::<Vec<_>>()
+            .collect::<Result<Vec<_>, EmitError>>()?
             .join("\n");
-        format!(
+        Ok(format!(
             "pub const STAGE3_SUMCHECK_INSTANCE_RESULTS: &[Stage3SumcheckInstanceResultPlan] = &[\n{instances}\n];\n\n"
-        )
+        ))
     }
 
     fn emit_sumcheck_eval_constants(&self) -> String {
@@ -1511,7 +1351,25 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
         format!("pub const STAGE3_SUMCHECK_EVALS: &[Stage3SumcheckEvalPlan] = &[\n{evals}\n];\n\n")
     }
 
-    fn emit_point_slice_constants(&self) -> String {
+    fn emit_verifier_relation_output_constants(&self) -> Result<String, EmitError> {
+        super::relation_outputs::emit_verifier_relation_output_constants(
+            "Stage3",
+            &self.role,
+            &self.relation_outputs,
+        )
+    }
+
+    fn emit_point_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_point_expr_constants(
+                "Stage3",
+                "STAGE3",
+                &plan.point_exprs,
+            ));
+        }
+
+        let mut source = String::new();
         let slices = self
             .point_slices
             .iter()
@@ -1527,31 +1385,12 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
             })
             .collect::<Vec<_>>()
             .join("\n");
-        format!("pub const STAGE3_POINT_SLICES: &[Stage3PointSlicePlan] = &[\n{slices}\n];\n\n")
-    }
-
-    fn emit_point_concat_constants(&self) -> String {
-        if self.role == Role::Verifier {
-            let concats = self
-                .point_concats
-                .iter()
-                .map(|concat| {
-                    format!(
-                        "    Stage3PointConcatPlan {{ symbol: {}, layout: {}, arity: {}, inputs: {} }},",
-                        rust_str(&concat.symbol),
-                        rust_str(&concat.layout),
-                        concat.arity,
-                        rust_str(&concat.inputs.join("|"))
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            return format!(
-                "pub const STAGE3_POINT_CONCATS: &[Stage3PointConcatPlan] = &[\n{concats}\n];\n"
-            );
-        }
-
-        let mut source = String::new();
+        push_format(
+            &mut source,
+            format_args!(
+                "pub const STAGE3_POINT_SLICES: &[Stage3PointSlicePlan] = &[\n{slices}\n];\n\n"
+            ),
+        );
         for (index, concat) in self.point_concats.iter().enumerate() {
             source.push_str(&emit_str_array(
                 &format!("STAGE3_POINT_CONCAT_{index}_INPUTS"),
@@ -1578,48 +1417,70 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
                 "pub const STAGE3_POINT_CONCATS: &[Stage3PointConcatPlan] = &[\n{concats}\n];\n"
             ),
         );
-        source
+        Ok(source)
     }
 
-    fn emit_opening_claim_constants(&self) -> String {
+    fn emit_opening_claim_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_opening_claim_constants(
+                "Stage3",
+                "STAGE3",
+                &plan.opening_claims,
+            ));
+        }
         let claims = self
             .opening_claims
             .iter()
             .map(|claim| {
-                format!(
+                Ok(format!(
                     "    Stage3OpeningClaimPlan {{ symbol: {}, oracle: {}, domain: {}, point_arity: {}, claim_kind: {}, point_source: {}, eval_source: {} }},",
                     rust_str(&claim.symbol),
                     rust_str(&claim.oracle),
                     rust_str(&claim.domain),
                     claim.point_arity,
-                    rust_str(&claim.claim_kind),
+                    super::plan_tokens::role_claim_kind_expr("Stage3", &self.role, &claim.claim_kind)?,
                     rust_str(&claim.point_source),
                     rust_str(&claim.eval_source)
-                )
+                ))
             })
-            .collect::<Vec<_>>()
+            .collect::<Result<Vec<_>, EmitError>>()?
             .join("\n");
-        format!("pub const STAGE3_OPENING_CLAIMS: &[Stage3OpeningClaimPlan] = &[\n{claims}\n];\n\n")
+        Ok(format!(
+            "pub const STAGE3_OPENING_CLAIMS: &[Stage3OpeningClaimPlan] = &[\n{claims}\n];\n\n"
+        ))
     }
 
-    fn emit_opening_claim_equality_constants(&self) -> String {
+    fn emit_opening_claim_equality_constants(&self) -> Result<String, EmitError> {
+        if self.role == Role::Verifier {
+            let plan = self.verifier_plan()?;
+            return Ok(verifier_plan::emit_opening_claim_equality_constants(
+                "Stage3",
+                "STAGE3",
+                &plan.opening_equalities,
+            ));
+        }
         let equalities = self
             .opening_equalities
             .iter()
             .map(|equality| {
-                format!(
+                Ok(format!(
                     "    Stage3OpeningClaimEqualityPlan {{ symbol: {}, mode: {}, lhs: {}, rhs: {} }},",
                     rust_str(&equality.symbol),
-                    rust_str(&equality.mode),
+                    super::plan_tokens::role_opening_equality_mode_expr(
+                        "Stage3",
+                        &self.role,
+                        &equality.mode
+                    )?,
                     rust_str(&equality.lhs),
                     rust_str(&equality.rhs)
-                )
+                ))
             })
-            .collect::<Vec<_>>()
+            .collect::<Result<Vec<_>, EmitError>>()?
             .join("\n");
-        format!(
+        Ok(format!(
             "pub const STAGE3_OPENING_EQUALITIES: &[Stage3OpeningClaimEqualityPlan] = &[\n{equalities}\n];\n\n"
-        )
+        ))
     }
 
     fn emit_opening_batch_constants(&self) -> String {
@@ -1635,8 +1496,8 @@ super::common::impl_runtime_plan_error_conversion!(VerifyStage3Error);
                         rust_str(&batch.proof_slot),
                         rust_str(&batch.policy),
                         batch.count,
-                        rust_str(&batch.ordered_claims.join("|")),
-                        rust_str(&batch.claim_operands.join("|"))
+                        super::plan_tokens::rust_str_slice_expr(&batch.ordered_claims),
+                        super::plan_tokens::rust_str_slice_expr(&batch.claim_operands)
                     )
                 })
                 .collect::<Vec<_>>()
@@ -1735,26 +1596,26 @@ where
         });
     }
     let mut store =
-        super::common::ValueStore::with_opening_inputs(opening_inputs, program.opening_inputs)?;
+        bolt_verifier_runtime::ValueStore::with_opening_inputs(opening_inputs, program.opening_inputs)?;
     store.seed_constants(program.field_constants);
     let mut artifacts = Stage3ExecutionArtifacts::default();
     for step in program.steps {
         match step.kind {
-            "transcript_squeeze" => {
+            Stage3ProgramStepKind::TranscriptSqueeze => {
                 let squeeze =
                     find_plan(program.transcript_squeezes, step.symbol).ok_or(VerifyStage3Error::MissingValue {
                         symbol: step.symbol,
                     })?;
                 verify_stage3_squeeze(program, squeeze, &mut store, transcript, &mut artifacts)?;
             }
-            "sumcheck_driver" => {
+            Stage3ProgramStepKind::SumcheckDriver => {
                 let driver =
                     find_plan(program.drivers, step.symbol).ok_or(VerifyStage3Error::MissingProof {
                         driver: step.symbol,
                     })?;
                 verify_stage3_driver(program, driver, proof, &mut store, transcript, &mut artifacts)?;
             }
-            _ => {
+            Stage3ProgramStepKind::TranscriptAbsorbBytes => {
                 return Err(VerifyStage3Error::InvalidProof {
                     driver: step.symbol,
                     reason: "unsupported stage3 program step",
@@ -1775,7 +1636,7 @@ pub fn stage3_verifier_program() -> &'static Stage3VerifierProgramPlan {
 fn verify_stage3_squeeze<T>(
     program: &'static Stage3VerifierProgramPlan,
     squeeze: &'static Stage3TranscriptSqueezePlan,
-    store: &mut super::common::ValueStore<Fr>,
+    store: &mut bolt_verifier_runtime::ValueStore<Fr>,
     transcript: &mut T,
     artifacts: &mut Stage3ExecutionArtifacts<Fr>,
 ) -> Result<(), VerifyStage3Error>
@@ -1791,7 +1652,7 @@ where
         }
     })?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, super::common::evaluate_field_expr)
+        .evaluate_available_exprs(program.field_exprs, program.scalar_exprs)
         .map_err(VerifyStage3Error::from)?;
     artifacts.challenge_vectors.push(Stage3ChallengeVector {
         symbol: squeeze.symbol,
@@ -1804,7 +1665,7 @@ fn verify_stage3_driver<T>(
     program: &'static Stage3VerifierProgramPlan,
     driver: &'static Stage3SumcheckDriverPlan,
     proof: &Stage3Proof<Fr>,
-    store: &mut super::common::ValueStore<Fr>,
+    store: &mut bolt_verifier_runtime::ValueStore<Fr>,
     transcript: &mut T,
     artifacts: &mut Stage3ExecutionArtifacts<Fr>,
 ) -> Result<(), VerifyStage3Error>
@@ -1817,16 +1678,17 @@ where
         .ok_or(VerifyStage3Error::MissingProof {
             driver: driver.symbol,
         })?;
-    let relation = driver.relation.unwrap_or("<missing>");
+    let Some(relation) = driver.relation else {
+        return Err(VerifyStage3Error::InvalidProof {
+            driver: driver.symbol,
+            reason: "missing driver relation",
+        });
+    };
     let output = match relation {
-        "jolt.stage3.batched" => {
+        Stage3RelationKind::Stage3Batched => {
             verify_batched_stage3(program, driver, proof, store, transcript)?
         }
-        _ => {
-            return Err(VerifyStage3Error::UnsupportedRelation {
-                relation,
-            });
-        }
+        relation => return Err(VerifyStage3Error::UnsupportedRelation { relation }),
     };
     artifacts.sumchecks.push(output);
     Ok(())
@@ -1836,25 +1698,48 @@ fn verify_batched_stage3<T>(
     program: &'static Stage3VerifierProgramPlan,
     driver: &'static Stage3SumcheckDriverPlan,
     proof: &Stage3SumcheckOutput<Fr>,
-    store: &mut super::common::ValueStore<Fr>,
+    store: &mut bolt_verifier_runtime::ValueStore<Fr>,
     transcript: &mut T,
 ) -> Result<Stage3SumcheckOutput<Fr>, VerifyStage3Error>
 where
     T: Transcript<Challenge = Fr>,
 {
-    super::common::verify_batched_sumcheck(
+    store.evaluate_available_points(
+        program.point_exprs,
+        |input, expected, actual| VerifyStage3Error::InvalidInputLength {
+            input,
+            expected,
+            actual,
+        },
+    )?;
+    bolt_verifier_runtime::verify_batched_sumcheck(
         driver,
         proof,
         program.claims,
         program.batches,
         program.field_exprs,
+        program.scalar_exprs,
         program.opening_inputs,
         program.opening_claims,
         program.opening_batches,
         store,
         transcript,
         |store, evals, point, batching_coeffs| {
-            expected_batched_output_claim(program, driver, store, evals, point, batching_coeffs)
+            bolt_verifier_runtime::evaluate_relation_output_batch(
+                driver,
+                program.batches,
+                program.claims,
+                program.instance_results,
+                program.relation_outputs,
+                program.field_exprs,
+                program.scalar_exprs,
+                &[],
+                store,
+                evals,
+                point,
+                batching_coeffs,
+                |_, _, _| Ok::<_, VerifyStage3Error>(bolt_verifier_runtime::RelationOutputInputs::empty()),
+            )
         },
         |store, verified| observe_stage3_sumcheck_output(program, store, verified),
         |driver, error| VerifyStage3Error::Sumcheck { driver, error },
@@ -1863,7 +1748,7 @@ where
 
 fn observe_stage3_sumcheck_output<F: Field>(
     program: &'static Stage3VerifierProgramPlan,
-    store: &mut super::common::ValueStore<F>,
+    store: &mut bolt_verifier_runtime::ValueStore<F>,
     output: &Stage3SumcheckOutput<F>,
 ) -> Result<(), VerifyStage3Error> {
     store.observe_sumcheck_output(
@@ -1872,12 +1757,12 @@ fn observe_stage3_sumcheck_output<F: Field>(
         output,
         |instance, mut point| {
             match instance.point_order {
-                "as_is" => {}
-                "reverse" => point.reverse(),
-                _ => {
+                bolt_verifier_runtime::SumcheckPointOrder::AsIs => {}
+                bolt_verifier_runtime::SumcheckPointOrder::Reverse => point.reverse(),
+                bolt_verifier_runtime::SumcheckPointOrder::RelationLocal => {
                     return Err(VerifyStage3Error::InvalidProof {
                         driver: output.driver,
-                        reason: "unsupported point order",
+                        reason: "unsupported relation-local point order",
                     });
                 }
             }
@@ -1891,8 +1776,7 @@ fn observe_stage3_sumcheck_output<F: Field>(
         |symbol| VerifyStage3Error::MissingValue { symbol },
     )?;
     store.evaluate_available_points(
-        program.point_slices,
-        program.point_concats,
+        program.point_exprs,
         |input, expected, actual| VerifyStage3Error::InvalidInputLength {
             input,
             expected,
@@ -1900,136 +1784,13 @@ fn observe_stage3_sumcheck_output<F: Field>(
         },
     )?;
     store
-        .evaluate_available_field_exprs(program.field_exprs, super::common::evaluate_field_expr)
+        .evaluate_available_exprs(program.field_exprs, program.scalar_exprs)
         .map_err(VerifyStage3Error::from)?;
     store.verify_opening_equalities(
         program.opening_equalities,
         |driver, reason| VerifyStage3Error::InvalidProof { driver, reason },
         |symbol| VerifyStage3Error::MissingValue { symbol },
     )
-}
-
-fn expected_batched_output_claim(
-    program: &'static Stage3VerifierProgramPlan,
-    driver: &'static Stage3SumcheckDriverPlan,
-    store: &super::common::ValueStore<Fr>,
-    evals: &[Stage3NamedEval<Fr>],
-    point: &[Fr],
-    batching_coeffs: &[Fr],
-) -> Result<Fr, VerifyStage3Error> {
-    let batch = find_batch(program.batches, driver.symbol, driver.batch)?;
-    let claims = batch_claims(program.claims, batch)?;
-    let mut expected = Fr::from_u64(0);
-    for (claim, coefficient) in claims.iter().zip(batching_coeffs) {
-        let instance = program
-            .instance_results
-            .iter()
-            .find(|instance| instance.claim == claim.symbol && instance.source == driver.symbol)
-            .ok_or(VerifyStage3Error::MissingClaim {
-                batch: batch.symbol,
-                claim: claim.symbol,
-            })?;
-        let local_point = point
-            .get(instance.round_offset..instance.round_offset + instance.num_rounds)
-            .ok_or(VerifyStage3Error::InvalidInputLength {
-                input: instance.symbol,
-                expected: instance.round_offset + instance.num_rounds,
-                actual: point.len(),
-            })?;
-        let value = match instance.relation {
-            "jolt.stage3.spartan_shift" => {
-                expected_spartan_shift(store, evals, local_point)?
-            }
-            "jolt.stage3.instruction_input" => {
-                expected_instruction_input(store, evals, local_point)?
-            }
-            "jolt.stage3.registers_claim_reduction" => {
-                expected_registers(store, evals, local_point)?
-            }
-            _ => {
-                return Err(VerifyStage3Error::UnsupportedRelation {
-                    relation: instance.relation,
-                });
-            }
-        };
-        expected += *coefficient * value;
-    }
-    Ok(expected)
-}
-
-fn expected_spartan_shift(
-    store: &super::common::ValueStore<Fr>,
-    evals: &[Stage3NamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage3Error> {
-    let opening_point = reverse_slice(local_point);
-    let eq_outer =
-        EqPlusOnePolynomial::<Fr>::new(super::common::store_point(store, "stage3.input.stage1.NextPC")?.to_vec())
-            .evaluate(&opening_point);
-    let eq_product = EqPlusOnePolynomial::<Fr>::new(
-        super::common::store_point(store, "stage3.input.stage2.product_virtual.NextIsNoop")?
-            .to_vec(),
-    )
-    .evaluate(&opening_point);
-    let weighted_outer = eval_by_name(evals, "stage3.spartan_shift.eval.UnexpandedPC")?
-        + super::common::store_scalar(store, "stage3.spartan_shift.gamma")?
-            * eval_by_name(evals, "stage3.spartan_shift.eval.PC")?
-        + super::common::store_scalar(store, "stage3.spartan_shift.gamma2")?
-            * eval_by_name(evals, "stage3.spartan_shift.eval.OpFlagVirtualInstruction")?
-        + super::common::store_scalar(store, "stage3.spartan_shift.gamma3")?
-            * eval_by_name(evals, "stage3.spartan_shift.eval.OpFlagIsFirstInSequence")?;
-    Ok(eq_outer * weighted_outer
-        + super::common::store_scalar(store, "stage3.spartan_shift.gamma4")?
-            * eq_product
-            * (Fr::from_u64(1)
-                - eval_by_name(evals, "stage3.spartan_shift.eval.InstructionFlagIsNoop")?))
-}
-
-fn expected_instruction_input(
-    store: &super::common::ValueStore<Fr>,
-    evals: &[Stage3NamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage3Error> {
-    let opening_point = reverse_slice(local_point);
-    let eq_eval = EqPolynomial::<Fr>::mle(
-        &opening_point,
-        super::common::store_point(store, "stage3.input.stage2.product_virtual.LeftInstructionInput")?,
-    );
-    let left = eval_by_name(
-        evals,
-        "stage3.instruction_input.eval.InstructionFlagLeftOperandIsRs1Value",
-    )? * eval_by_name(evals, "stage3.instruction_input.eval.Rs1Value")?
-        + eval_by_name(
-            evals,
-            "stage3.instruction_input.eval.InstructionFlagLeftOperandIsPC",
-        )? * eval_by_name(evals, "stage3.instruction_input.eval.UnexpandedPC")?;
-    let right = eval_by_name(
-        evals,
-        "stage3.instruction_input.eval.InstructionFlagRightOperandIsRs2Value",
-    )? * eval_by_name(evals, "stage3.instruction_input.eval.Rs2Value")?
-        + eval_by_name(
-            evals,
-            "stage3.instruction_input.eval.InstructionFlagRightOperandIsImm",
-        )? * eval_by_name(evals, "stage3.instruction_input.eval.Imm")?;
-    Ok(eq_eval * (right + super::common::store_scalar(store, "stage3.instruction_input.gamma")? * left))
-}
-
-fn expected_registers(
-    store: &super::common::ValueStore<Fr>,
-    evals: &[Stage3NamedEval<Fr>],
-    local_point: &[Fr],
-) -> Result<Fr, VerifyStage3Error> {
-    let opening_point = reverse_slice(local_point);
-    let eq_eval = EqPolynomial::<Fr>::mle(
-        &opening_point,
-        super::common::store_point(store, "stage3.input.stage1.RdWriteValue")?,
-    );
-    Ok(eq_eval
-        * (eval_by_name(evals, "stage3.registers_claim_reduction.eval.RdWriteValue")?
-            + super::common::store_scalar(store, "stage3.registers.gamma")?
-                * eval_by_name(evals, "stage3.registers_claim_reduction.eval.Rs1Value")?
-            + super::common::store_scalar(store, "stage3.registers.gamma2")?
-                * eval_by_name(evals, "stage3.registers_claim_reduction.eval.Rs2Value")?))
 }
 
 "#
@@ -2064,10 +1825,10 @@ fn emit_str_array(name: &str, values: &[String]) -> String {
 fn emit_usize_array(name: &str, values: &[usize]) -> String {
     let entries = values
         .iter()
-        .map(|value| format!("    {value},"))
+        .map(usize::to_string)
         .collect::<Vec<_>>()
-        .join("\n");
-    format!("pub const {name}: &[usize] = &[\n{entries}\n];\n\n")
+        .join(", ");
+    format!("pub const {name}: &[usize] = &[{entries}];\n\n")
 }
 
 fn intern_str_array(
@@ -2108,138 +1869,4 @@ fn missing_role_binding(kind: &str, symbol: &str) -> EmitError {
 
 fn symbols<'a>(values: impl Iterator<Item = &'a String>) -> BTreeSet<String> {
     values.cloned().collect()
-}
-
-fn string_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<String, EmitError> {
-    operation
-        .attribute(attr)
-        .ok()
-        .and_then(string_attribute_value)
-        .ok_or_else(|| attr_error(operation, attr, "string"))
-}
-
-fn symbol_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<String, EmitError> {
-    operation
-        .attribute(attr)
-        .ok()
-        .and_then(symbol_attribute_value)
-        .ok_or_else(|| attr_error(operation, attr, "symbol"))
-}
-
-fn symbol_array_attr(
-    operation: OperationRef<'_, '_>,
-    attr: &str,
-) -> Result<Vec<String>, EmitError> {
-    let attribute = operation
-        .attribute(attr)
-        .map(|attribute| attribute.to_string())
-        .ok()
-        .ok_or_else(|| attr_error(operation, attr, "symbol array"))?;
-    parse_symbol_array(&attribute).ok_or_else(|| attr_error(operation, attr, "symbol array"))
-}
-
-fn parse_symbol_array(attribute: &str) -> Option<Vec<String>> {
-    let inner = attribute.strip_prefix('[')?.strip_suffix(']')?.trim();
-    if inner.is_empty() {
-        return Some(Vec::new());
-    }
-    inner
-        .split(',')
-        .map(|item| item.trim().strip_prefix('@').map(ToOwned::to_owned))
-        .collect()
-}
-
-fn int_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<usize, EmitError> {
-    operation
-        .attribute(attr)
-        .map(parse_integer_attr)
-        .ok()
-        .flatten()
-        .ok_or_else(|| attr_error(operation, attr, "integer"))
-}
-
-fn signed_int_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<isize, EmitError> {
-    operation
-        .attribute(attr)
-        .map(parse_signed_integer_attr)
-        .ok()
-        .flatten()
-        .ok_or_else(|| attr_error(operation, attr, "signed integer"))
-}
-
-fn parse_integer_attr(attribute: Attribute<'_>) -> Option<usize> {
-    attribute
-        .to_string()
-        .split_whitespace()
-        .next()
-        .and_then(|value| value.parse().ok())
-}
-
-fn parse_signed_integer_attr(attribute: Attribute<'_>) -> Option<isize> {
-    attribute
-        .to_string()
-        .split_whitespace()
-        .next()
-        .and_then(|value| value.parse().ok())
-}
-
-fn int_array_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<Vec<usize>, EmitError> {
-    let attribute = operation
-        .attribute(attr)
-        .map(|attribute| attribute.to_string())
-        .ok()
-        .ok_or_else(|| attr_error(operation, attr, "integer array"))?;
-    parse_int_array(&attribute).ok_or_else(|| attr_error(operation, attr, "integer array"))
-}
-
-fn parse_int_array(attribute: &str) -> Option<Vec<usize>> {
-    let inner = attribute.strip_prefix('[')?.strip_suffix(']')?.trim();
-    if inner.is_empty() {
-        return Some(Vec::new());
-    }
-    inner
-        .split(',')
-        .map(|item| item.trim().parse().ok())
-        .collect()
-}
-
-fn operand_symbols(
-    operation: OperationRef<'_, '_>,
-    start_index: usize,
-) -> Result<Vec<String>, EmitError> {
-    (start_index..operation.operand_count())
-        .map(|index| operand_symbol(operation, index))
-        .collect()
-}
-
-fn operand_symbol(operation: OperationRef<'_, '_>, index: usize) -> Result<String, EmitError> {
-    let operand = operation.operand(index).map_err(|_| {
-        EmitError::new(format!(
-            "{} requires operand {index}",
-            operation_name(operation)
-        ))
-    })?;
-    let owner = OperationResult::try_from(operand).map_err(|_| {
-        EmitError::new(format!(
-            "{} operand {index} must be an op result",
-            operation_name(operation)
-        ))
-    })?;
-    string_attr(owner.owner(), "sym_name")
-}
-
-fn attr_error(operation: OperationRef<'_, '_>, attr: &str, expected: &str) -> EmitError {
-    EmitError::new(format!(
-        "{} attr `{attr}` is not a {expected}",
-        operation_name(operation)
-    ))
-}
-
-fn operation_name<'c: 'a, 'a>(operation: impl OperationLike<'c, 'a>) -> String {
-    operation
-        .name()
-        .as_string_ref()
-        .as_str()
-        .unwrap_or("<invalid-operation-name>")
-        .to_owned()
 }

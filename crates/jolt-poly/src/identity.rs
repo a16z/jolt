@@ -24,6 +24,37 @@ impl IdentityPolynomial {
         self.num_vars
     }
 
+    pub fn try_evaluate<F: Field>(&self, point: &[F]) -> Option<F> {
+        if point.len() != self.num_vars {
+            return None;
+        }
+        Some(evaluate_identity(point.iter().copied(), self.num_vars))
+    }
+
+    pub fn try_evaluate_projected<F: Field>(
+        &self,
+        point: &[F],
+        offset: usize,
+        stride: usize,
+    ) -> Option<F> {
+        if self.num_vars == 0 {
+            return Some(F::zero());
+        }
+        if stride == 0 {
+            return None;
+        }
+        let last_index = stride
+            .checked_mul(self.num_vars - 1)
+            .and_then(|last_offset| offset.checked_add(last_offset))?;
+        if last_index >= point.len() {
+            return None;
+        }
+        Some(evaluate_identity(
+            (0..self.num_vars).map(|index| point[offset + stride * index]),
+            self.num_vars,
+        ))
+    }
+
     /// Evaluates $\widetilde{I}(r) = \sum_{i=1}^{n} r_i \cdot 2^{n-i}$.
     ///
     /// Time: $O(n)$. No heap allocation.
@@ -34,12 +65,14 @@ impl IdentityPolynomial {
             self.num_vars,
             "point dimension must match num_vars"
         );
-        let n = self.num_vars;
-        point
-            .iter()
-            .enumerate()
-            .fold(F::zero(), |acc, (i, &r_i)| acc + r_i.mul_pow_2(n - 1 - i))
+        evaluate_identity(point.iter().copied(), self.num_vars)
     }
+}
+
+fn evaluate_identity<F: Field>(values: impl Iterator<Item = F>, num_vars: usize) -> F {
+    values.enumerate().fold(F::zero(), |acc, (index, value)| {
+        acc + value.mul_pow_2(num_vars - 1 - index)
+    })
 }
 
 impl<F: Field> crate::MultilinearEvaluation<F> for IdentityPolynomial {
@@ -96,5 +129,38 @@ mod tests {
         let id = IdentityPolynomial::new(1);
         assert!(id.evaluate(&[Fr::zero()]).is_zero());
         assert_eq!(id.evaluate(&[Fr::one()]), Fr::one());
+    }
+
+    #[test]
+    fn try_evaluate_rejects_dimension_mismatch() {
+        let id = IdentityPolynomial::new(2);
+        assert_eq!(id.try_evaluate::<Fr>(&[Fr::one()]), None);
+    }
+
+    #[test]
+    fn projected_identity_uses_offset_and_stride() {
+        let id = IdentityPolynomial::new(3);
+        let point = [
+            Fr::from_u64(1),
+            Fr::from_u64(9),
+            Fr::from_u64(0),
+            Fr::from_u64(8),
+            Fr::from_u64(1),
+        ];
+
+        assert_eq!(
+            id.try_evaluate_projected(&point, 0, 2),
+            Some(Fr::from_u64(5))
+        );
+    }
+
+    #[test]
+    fn projected_identity_rejects_out_of_range_projection() {
+        let id = IdentityPolynomial::new(3);
+        assert_eq!(id.try_evaluate_projected::<Fr>(&[Fr::one()], 0, 2), None);
+        assert_eq!(
+            id.try_evaluate_projected::<Fr>(&[Fr::one(), Fr::one()], 0, 0),
+            None
+        );
     }
 }
