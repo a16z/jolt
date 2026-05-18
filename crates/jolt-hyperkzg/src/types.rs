@@ -2,6 +2,8 @@
 //!
 //! All types are generic over `P: PairingGroup` — no arkworks leakage.
 
+use std::fmt::{Debug, Formatter, Result as FmtResult};
+
 use jolt_crypto::{HomomorphicCommitment, JoltGroup, PairingGroup};
 use serde::{Deserialize, Serialize};
 
@@ -27,8 +29,8 @@ impl<P: PairingGroup> Clone for HyperKZGCommitment<P> {
     }
 }
 
-impl<P: PairingGroup> std::fmt::Debug for HyperKZGCommitment<P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<P: PairingGroup> Debug for HyperKZGCommitment<P> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.debug_struct("HyperKZGCommitment")
             .field("point", &self.point)
             .finish()
