@@ -55,7 +55,11 @@ registered inline expansion -------+--> ExpansionOp grammar
   runtime trace formatting.
 - Preserve the final `JoltInstructionRow` stream emitted by the old static path,
   except for intentional documented bug fixes locked by fixtures.
-- Keep runtime inline advice generation separate and host/tracer-owned.
+- Keep runtime inline advice generation as an execution-time host/tracer path:
+  the tracer executes the source inline row, selects the same registration key,
+  calls the registration's advice provider with operands plus CPU/memory context,
+  and checks the returned advice against the statically materialized
+  `VirtualAdvice` rows.
 - Port every shipped inline package in one full static cutover. Do not merge a
   partial state where some shipped inlines still use the old static tracer
   builder.
@@ -80,8 +84,8 @@ registered inline expansion -------+--> ExpansionOp grammar
 - Do not replace inventory registration if the registration surface calls a
   tracer-free static recipe builder. Inventory is a host discovery mechanism,
   not the place where static expansion semantics may be hidden.
-- Do not remove tracer's execution-time virtual register allocator if concrete
-  tracing still needs it after static expansion is cut over.
+- Do not keep a separate tracer-owned static virtual-register allocator,
+  `VirtualRegisterGuard`, or RAII reset path for program bytecode expansion.
 - Do not introduce compatibility wrappers, deprecated aliases, or alternate
   static expansion paths.
 
@@ -339,6 +343,22 @@ same thing as the SDK `TrustedAdvice`/`UntrustedAdvice` tape.
 Each registration owns one static recipe and one optional advice provider under
 the same `(opcode, funct3, funct7, InlineExtension)` identity.
 
+The runtime flow is:
+
+```text
+tracer executes SourceInstructionKind::Inline
+  -> read SourceInstructionRow.inline and operands
+  -> lookup the same registration used by static expansion
+  -> profile.supports_source(SourceInstructionKind::Inline)
+  -> profile.supports_inline(registration.extension)
+  -> build_advice(InlineAdviceContext { operands, cpu, memory helpers })
+  -> attach returned values to the materialized VirtualAdvice rows in order
+```
+
+Static expansion is authoritative for where advice is consumed. The advice
+provider computes values only; it must not emit instructions, allocate registers,
+or decide the static row sequence.
+
 Advice rules:
 
 - `InlineAdviceContext` may expose inline operands and CPU/memory read helpers.
@@ -461,6 +481,8 @@ advice values and trace-time memory/register reads remain host/tracer semantics.
 - [ ] Inline reset rows are produced by the central expansion
       allocator/materializer path, not by `VirtualRegisterAllocator` or RAII
       helpers.
+- [ ] Any remaining tracer virtual-register helper is runtime/test-only and
+      cannot be reached by program bytecode expansion or static inline builders.
 - [ ] Metadata stamping is performed once over the flattened inline sequence,
       including reset rows.
 - [ ] Static inline rows reject illegal write targets with
