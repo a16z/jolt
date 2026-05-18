@@ -4,7 +4,7 @@
 |-------------|-------|
 | Author(s)   | Quang Dao |
 | Created     | 2026-05-13 |
-| Revised     | 2026-05-15 |
+| Revised     | 2026-05-18 |
 | Status      | proposed |
 | PR          | follow-up to [#1522](https://github.com/a16z/jolt/pull/1522) |
 
@@ -504,6 +504,14 @@ usable from tests or extraction harnesses without constructing a tracer CPU,
 executing inventory lookup, or converting through tracer instructions. Inventory
 may remain a host registration mechanism, but it must not be the only way to
 name the static recipe body.
+
+Within extraction-targeted static recipe bodies, prefer first-order helper
+shapes over higher-order generic callback helpers. A helper that takes
+`F: FnMut(...)` or a similar generic closure can force extractor backends to
+model Rust's `Fn*` traits and associated output constraints even when the helper
+only names a fixed instruction schedule. For fixed schedules, use concrete
+methods, small loops, or macro-expanded direct calls so the extracted body stays
+close to the emitted instruction sequence.
 
 This does not mean that `cargo hax -p jolt-program ...` alone will necessarily
 contain every shipped inline recipe. If recipe bodies remain in

@@ -33,28 +33,6 @@ pub const NEEDED_REGISTERS: usize = 45;
 /// Layout: v[0..15] + m[0..15] only (no separate h/counter/flags banks, no temp regs).
 pub const NEEDED_REGISTERS_KEYED64: usize = 32;
 
-/// Apply the BLAKE3 round schedule for a given round index by calling `g` 8 times
-/// in the exact order required by the spec.
-#[inline]
-fn blake3_apply_round_schedule<F>(round: u8, mut g: F)
-where
-    F: FnMut(usize, usize, usize, usize, usize, usize),
-{
-    let msg_schedule_round = &MSG_SCHEDULE[round as usize];
-
-    // Column step: apply G function to columns
-    g(0, 4, 8, 12, msg_schedule_round[0], msg_schedule_round[1]);
-    g(1, 5, 9, 13, msg_schedule_round[2], msg_schedule_round[3]);
-    g(2, 6, 10, 14, msg_schedule_round[4], msg_schedule_round[5]);
-    g(3, 7, 11, 15, msg_schedule_round[6], msg_schedule_round[7]);
-
-    // Diagonal step: apply G function to diagonals
-    g(0, 5, 10, 15, msg_schedule_round[8], msg_schedule_round[9]);
-    g(1, 6, 11, 12, msg_schedule_round[10], msg_schedule_round[11]);
-    g(2, 7, 8, 13, msg_schedule_round[12], msg_schedule_round[13]);
-    g(3, 4, 9, 14, msg_schedule_round[14], msg_schedule_round[15]);
-}
-
 /// Virtual register layout:
 /// - vr[0..15]:  Internal state `v`
 /// - vr[16..31]: Message block `m`
@@ -178,8 +156,19 @@ impl Blake3SequenceBuilder {
 
     /// Execute one round of BLAKE3 compression
     fn blake3_round(&mut self) {
-        let round = self.round;
-        blake3_apply_round_schedule(round, |a, b, c, d, x, y| self.g_function(a, b, c, d, x, y));
+        let msg_schedule_round = &MSG_SCHEDULE[self.round as usize];
+
+        // Column step: apply G function to columns
+        self.g_function(0, 4, 8, 12, msg_schedule_round[0], msg_schedule_round[1]);
+        self.g_function(1, 5, 9, 13, msg_schedule_round[2], msg_schedule_round[3]);
+        self.g_function(2, 6, 10, 14, msg_schedule_round[4], msg_schedule_round[5]);
+        self.g_function(3, 7, 11, 15, msg_schedule_round[6], msg_schedule_round[7]);
+
+        // Diagonal step: apply G function to diagonals
+        self.g_function(0, 5, 10, 15, msg_schedule_round[8], msg_schedule_round[9]);
+        self.g_function(1, 6, 11, 12, msg_schedule_round[10], msg_schedule_round[11]);
+        self.g_function(2, 7, 8, 13, msg_schedule_round[12], msg_schedule_round[13]);
+        self.g_function(3, 4, 9, 14, msg_schedule_round[14], msg_schedule_round[15]);
     }
 
     fn g_function(&mut self, a: usize, b: usize, c: usize, d: usize, x: usize, y: usize) {
@@ -386,8 +375,19 @@ impl Blake3Keyed64SequenceBuilder {
 
     /// Execute one round of BLAKE3 compression
     fn blake3_round(&mut self) {
-        let round = self.round;
-        blake3_apply_round_schedule(round, |a, b, c, d, x, y| self.g_function(a, b, c, d, x, y));
+        let msg_schedule_round = &MSG_SCHEDULE[self.round as usize];
+
+        // Column step: apply G function to columns
+        self.g_function(0, 4, 8, 12, msg_schedule_round[0], msg_schedule_round[1]);
+        self.g_function(1, 5, 9, 13, msg_schedule_round[2], msg_schedule_round[3]);
+        self.g_function(2, 6, 10, 14, msg_schedule_round[4], msg_schedule_round[5]);
+        self.g_function(3, 7, 11, 15, msg_schedule_round[6], msg_schedule_round[7]);
+
+        // Diagonal step: apply G function to diagonals
+        self.g_function(0, 5, 10, 15, msg_schedule_round[8], msg_schedule_round[9]);
+        self.g_function(1, 6, 11, 12, msg_schedule_round[10], msg_schedule_round[11]);
+        self.g_function(2, 7, 8, 13, msg_schedule_round[12], msg_schedule_round[13]);
+        self.g_function(3, 4, 9, 14, msg_schedule_round[14], msg_schedule_round[15]);
     }
 
     #[inline]
