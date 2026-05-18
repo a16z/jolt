@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 // (16, 10, 16) → (18, 14, 14). Higher log_t / log_k_bytecode produces
 // larger round-schedule arrays and more verifier descriptor entries.
 // Re-tighten when the generated surface drops below this.
-const GENERATED_VERIFIER_TARGET_LOC: usize = 6_050;
+const GENERATED_VERIFIER_TARGET_LOC: usize = 6_250;
 const GENERATED_VERIFIER_STRETCH_LOC: usize = 3_000;
 const VERIFIER_RS_TARGET_LOC: usize = 500;
 const VERIFIER_RS_STRETCH_LOC: usize = 350;
@@ -48,15 +48,19 @@ const ALLOWED_JOLT_PROTOCOL_SYMBOLS: &[&str] = &[
     "jolt.stage2_uniskip_domain",
     "jolt.stage3",
     "jolt.stage3.batched",
+    "jolt.stage3.field_reg_claim_reduction",
     "jolt.stage3.instruction_input",
     "jolt.stage3.registers_claim_reduction",
     "jolt.stage3.spartan_shift",
     "jolt.stage4",
     "jolt.stage4.batched",
+    "jolt.stage4.field_reg_rw",
     "jolt.stage4.ram_val_check",
     "jolt.stage4.registers_read_write",
+    "jolt.stage4_field_reg_rw_domain",
     "jolt.stage4_registers_rw_domain",
     "jolt.stage5.batched",
+    "jolt.stage5.field_reg_val_evaluation",
     "jolt.stage5.instruction_read_raf",
     "jolt.stage5.ram_ra_claim_reduction",
     "jolt.stage5.registers_val_evaluation",

@@ -1176,7 +1176,7 @@ pub struct Stage67RelationSymbols {
 }
 
 /// Number of bytecode-RAF stage groups (5 integer + 1 FR). Mirrors the
-/// prover-side `jolt_kernels::stage6::BYTECODE_READ_RAF_STAGE_COUNT` and
+/// prover-side stage 6 `BYTECODE_READ_RAF_STAGE_COUNT` and
 /// the Bolt-emitted `STAGE6_OPENING_INPUTS` layout. Any change here
 /// requires synchronizing the prover/emit/verifier triple.
 pub const STAGE67_BYTECODE_STAGE_COUNT: usize = 6;
@@ -1224,6 +1224,8 @@ pub trait Stage67BytecodeEntry {
     fn reads_frs2(&self) -> bool;
     fn writes_frd(&self) -> bool;
 }
+
+
 
 pub fn store_scalar(store: &ValueStore<Fr>, symbol: &'static str) -> Result<Fr, RuntimePlanError> {
     store.scalar_or(symbol, |symbol| RuntimePlanError::MissingValue { symbol })
