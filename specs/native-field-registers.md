@@ -55,7 +55,7 @@ Prove BN254 Fr arithmetic at native cost: one FR register-file slot per Fr value
 
 All criteria are validated and reflect the shipped state:
 
-- [x] `bn254-fr-poseidon2-sdk` end-to-end prove + verify succeeds with `valid: true` (driver at `examples/bn254-fr-poseidon2-sdk/src/main.rs`).
+- [x] `bn254-poseidon2 --backend inline` end-to-end prove + verify succeeds with `valid: true` (driver at `examples/bn254-poseidon2/src/main.rs`).
 - [x] `cargo nextest run -p jolt-kernels` — all kernel tests pass (Stage 3/4/5 batched-kernel synthetic-witness round-trips remain green; see `stage4.rs:4492-4593` for the witness-shape verification tests).
 - [x] `cargo nextest run -p jolt-witness` — `field_reg` unit tests pass (`crates/jolt-witness/src/field_reg.rs:164-247`: limbs round-trip, sub_limbs borrow, `frd_inc` post-minus-pre, `limbs_to_field` LE assembly, empty-replay shape).
 - [x] `cargo clippy --features host -- -D warnings` clean across `jolt-kernels`, `jolt-host`, `jolt-prover`, `jolt-witness`.
@@ -73,7 +73,7 @@ All criteria are validated and reflect the shipped state:
 
 **End-to-end** (standard `--features host`):
 
-- `examples/bn254-fr-poseidon2-sdk` — A guest program performing one Poseidon2 permutation over BN254 Fr using the SDK. Drives the full stack: SDK three-mode dispatch (`jolt-inlines/bn254-fr/src/sdk.rs`), tracer FieldOp emission, `FieldRegEvent` stream, `populate_r1cs_fr_slots`, `populate_fr_cycle_fields`, Stage 3/4/5 FR sumchecks, Dory commitments, verifier round-trip. Validated at `log_T = 18`; see Performance section.
+- `examples/bn254-poseidon2` — host driver running one Poseidon2 permutation over BN254 Fr, with `--backend inline|native` selecting between the FR coprocessor and software arkworks. Drives the full stack: SDK three-mode dispatch (`jolt-inlines/bn254-fr/src/sdk.rs`), tracer FieldOp emission, `FieldRegEvent` stream, `populate_r1cs_fr_slots`, `populate_fr_cycle_fields`, Stage 3/4/5 FR sumchecks, Dory commitments, verifier round-trip. Validated at `log_T = 18`; see Performance section.
 
 **Gaps**:
 
@@ -170,4 +170,4 @@ Tracked here for visibility; none block the "shipped" status:
   - `crates/jolt-r1cs/src/constraints/rv64.rs:84-604`
   - `tracer/src/emulator/cpu.rs:160-208`, `tracer/src/instruction/field_*.rs`
   - `jolt-inlines/bn254-fr/src/sdk.rs`, `jolt-sdk/macros/src/lib.rs:154`
-  - `examples/bn254-fr-poseidon2-sdk/`
+  - `examples/bn254-poseidon2/`

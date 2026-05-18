@@ -6,9 +6,9 @@ extern crate alloc;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 
-/// Poseidon2 BN254 t=3 permutation benchmark using software `ark_bn254::Fr`.
+/// Poseidon2 BN254 t=3 permutation using software `ark_bn254::Fr`.
 ///
-/// This is the no-coprocessor baseline that mirrors `bn254-fr-poseidon2-sdk`:
+/// No-coprocessor baseline mirroring `bn254-poseidon2-inline-guest`:
 /// same HorizenLabs Poseidon2 BN256 instance (d=5, R_F=8, R_P=56, t=3,
 /// MDS_int diag=[1,1,2]). Every Fr add/mul executes via ark-bn254 software
 /// arithmetic (Montgomery multiplication in Rust), generating ordinary
@@ -23,7 +23,7 @@ use ark_ff::{BigInteger, PrimeField};
     max_input_size = 8192,
     max_trace_length = 262_144
 )]
-fn fr_poseidon2_arkworks(s0: [u64; 4], s1: [u64; 4], s2: [u64; 4]) -> [[u64; 4]; 3] {
+fn bn254_poseidon2_native(s0: [u64; 4], s1: [u64; 4], s2: [u64; 4]) -> [[u64; 4]; 3] {
     let mut state = [fr_from_limbs(s0), fr_from_limbs(s1), fr_from_limbs(s2)];
     poseidon2_permute(&mut state);
     [

@@ -2,4 +2,4 @@
 #![no_main]
 
 #[allow(unused_imports)]
-use bn254_fr_poseidon2_sdk_guest::*;
+use bn254_poseidon2_inline_guest::*;

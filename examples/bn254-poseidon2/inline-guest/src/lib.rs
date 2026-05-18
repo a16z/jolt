@@ -2,9 +2,9 @@
 
 use jolt_inlines_bn254_fr::Fr;
 
-/// Poseidon2 BN254 t=3 permutation benchmark using the native-field coprocessor.
+/// Poseidon2 BN254 t=3 permutation using the inline FR coprocessor.
 ///
-/// Same parameters as `bn254-fr-poseidon2-arkworks-guest` (HorizenLabs Poseidon2
+/// Same parameters as `bn254-poseidon2-native-guest` (HorizenLabs Poseidon2
 /// BN256 instance: d=5, R_F=8, R_P=56, t=3, MDS_int diag=[1,1,2]). Every Fr
 /// add/mul dispatches to the FieldOp coprocessor rather than software.
 ///
@@ -17,7 +17,7 @@ use jolt_inlines_bn254_fr::Fr;
     max_input_size = 8192,
     max_trace_length = 262_144
 )]
-fn fr_poseidon2_sdk(s0: [u64; 4], s1: [u64; 4], s2: [u64; 4]) -> [[u64; 4]; 3] {
+fn bn254_poseidon2_inline(s0: [u64; 4], s1: [u64; 4], s2: [u64; 4]) -> [[u64; 4]; 3] {
     let mut state = [Fr::from_limbs(s0), Fr::from_limbs(s1), Fr::from_limbs(s2)];
     poseidon2_permute(&mut state);
     [

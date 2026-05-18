@@ -1,0 +1,13 @@
+[package]
+name = "bn254-poseidon2"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-sdk = { workspace = true, features = ["host"] }
+jolt-inlines-bn254-fr = { workspace = true, features = ["host"] }
+tracing-subscriber.workspace = true
+tracing.workspace = true
+clap = { workspace = true, features = ["derive"] }
+inline-guest = { package = "bn254-poseidon2-inline-guest", path = "./inline-guest" }
+native-guest = { package = "bn254-poseidon2-native-guest", path = "./native-guest" }
