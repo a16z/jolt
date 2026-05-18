@@ -2093,6 +2093,21 @@ impl<F: Field> SparseFieldRegState<F> {
             })?;
         let mut entries: Vec<SparseFieldRegEntry<F>> = Vec::with_capacity(replay.events.len() * 3);
         let mut frs2_reads: Vec<(usize, usize)> = Vec::with_capacity(replay.events.len());
+        // Init the running FR register file to zero. This is the all-zero
+        // initial state shared by every FR-coprocessor execution.
+        //
+        // Soundness: the all-zero init is *enforced* — not just assumed —
+        // by Stage 5 FieldRegValEvaluation. That sumcheck proves
+        //   FieldRegVal(addr, t) = Σ_{j < t} FrdInc(j) · FrdWa(addr, j)
+        // and includes an `lt(t, j)` truncation factor. At t = 0 the `lt`
+        // MLE is identically zero, so the RHS sum is empty and forces
+        // FieldRegVal(addr, 0) = 0 for every address. A malicious prover
+        // claiming any non-zero init would fail Stage 5's check.
+        //
+        // Integer registers use the same mechanism (Stage 5
+        // RegistersValEvaluation, same `lt`-truncated prefix-sum shape).
+        // RAM differs because ELF init values aren't all zero — RAM has
+        // an explicit `RamValInit` public opening; FR does not need one.
         let mut running: Vec<F> = vec![F::zero(); field_reg_count];
         let bytecode = replay.bytecode.as_slice();
         if bytecode.len() != trace_len {

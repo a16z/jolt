@@ -2913,6 +2913,22 @@ fn registers_val_evaluation_state<F: Field>(
     ))
 }
 
+/// FR Stage 5 val-evaluation sumcheck — also the load-bearing FR init-state
+/// constraint.
+///
+/// The claim
+///   FieldRegVal(addr, t) = Σ_j FrdInc(j) · FrdWa(addr, j) · lt(t, j)
+/// proves two things at once:
+///   1. Internal consistency of the FR register file across the trace
+///      (every read of slot k at cycle t equals the sum of prior writes
+///      to k).
+///   2. **Initial state = zero**. At t = 0 the `lt(0, j)` MLE is identically
+///      0, so the RHS sum is empty and forces FieldRegVal(addr, 0) = 0 for
+///      every address. No separate init-eval public commitment is required —
+///      the `lt` factor algebraically anchors the chain. This mirrors the
+///      Stage 5 `registers_val_evaluation` shape for integer registers
+///      (RAM is the odd one out — it has `RamValInit` because ELF init
+///      values aren't all zero).
 fn field_reg_val_evaluation_state<F: Field>(
     claim: &Stage5SumcheckClaimPlan,
     inputs: &Stage5ProverInputs<'_, F>,
