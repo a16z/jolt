@@ -13,7 +13,8 @@ use jolt_crypto::HomomorphicCommitment;
 use crate::error::OpeningsError;
 use crate::schemes::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
 pub struct MockCommitmentScheme<F: Field>(PhantomData<F>);
 
 /// Stores the full evaluation table so `combine` is truly homomorphic.
@@ -23,7 +24,7 @@ pub struct MockCommitment<F: Field> {
     evaluations: Vec<F>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct MockProof<F: Field> {
     evaluations: Vec<F>,

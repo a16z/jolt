@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// The proof is complete when all $n$ round polynomials have been sent;
 /// the verifier is left with a single evaluation claim at the point
 /// $(r_1, \ldots, r_n)$.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct ClearSumcheckProof<F: jolt_field::Field> {
     /// Round polynomials $s_1, \ldots, s_n$ in the order they were generated.
@@ -29,14 +29,35 @@ pub struct CompressedSumcheckProof<F: jolt_field::Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub enum ClearProof<F: jolt_field::Field> {
+    Full(ClearSumcheckProof<F>),
+    Compressed(CompressedSumcheckProof<F>),
+}
+
+impl<F: jolt_field::Field> Default for ClearProof<F> {
+    fn default() -> Self {
+        Self::Full(ClearSumcheckProof::default())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "C: Serialize", deserialize = "C: Deserialize<'de>"))]
 pub enum SumcheckProof<F: jolt_field::Field, C> {
-    Clear(CompressedSumcheckProof<F>),
+    Clear(ClearProof<F>),
     Committed(CommittedSumcheckProof<C>),
 }
 
 impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
-    pub fn as_clear(&self) -> Option<&CompressedSumcheckProof<F>> {
+    pub fn is_committed(&self) -> bool {
+        matches!(self, Self::Committed(_))
+    }
+
+    pub fn is_clear(&self) -> bool {
+        matches!(self, Self::Clear(_))
+    }
+
+    pub fn as_clear(&self) -> Option<&ClearProof<F>> {
         match self {
             Self::Clear(proof) => Some(proof),
             Self::Committed(_) => None,

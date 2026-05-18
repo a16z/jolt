@@ -13,19 +13,27 @@ workspace = true
 
 [features]
 default = ["transcript-blake2b"]
-jolt-core-compat = ["dep:jolt-core"]
+jolt-core-compat = ["dep:ark-bn254", "dep:jolt-core", "dep:jolt-dory"]
 zk = ["jolt-core?/zk"]
 transcript-blake2b = []
 transcript-keccak = []
 transcript-poseidon = []
 
 [dependencies]
+ark-bn254 = { workspace = true, optional = true }
 ark-serialize.workspace = true
 common.workspace = true
 jolt-core = { workspace = true, features = ["minimal"], optional = true }
+jolt-blindfold.workspace = true
+jolt-claims.workspace = true
+jolt-crypto.workspace = true
+jolt-dory = { path = "../jolt-dory", optional = true }
 jolt-field.workspace = true
+jolt-openings.workspace = true
+jolt-poly.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-sumcheck.workspace = true
+jolt-transcript.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 

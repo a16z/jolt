@@ -3194,12 +3194,20 @@ dependencies = [
 name = "jolt-verifier"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254",
  "ark-serialize 0.5.0",
  "common",
+ "jolt-blindfold",
+ "jolt-claims",
  "jolt-core",
+ "jolt-crypto",
+ "jolt-dory",
  "jolt-field",
+ "jolt-openings",
+ "jolt-poly",
  "jolt-riscv",
  "jolt-sumcheck",
+ "jolt-transcript",
  "serde",
  "thiserror 2.0.18",
 ]

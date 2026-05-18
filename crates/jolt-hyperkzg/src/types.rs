@@ -73,7 +73,7 @@ impl<P: PairingGroup> Default for HyperKZGCommitment<P> {
 /// - `w`: KZG witness commitments for the three evaluation points `[r, -r, r^2]`
 /// - `v`: evaluations of all intermediate polynomials at the three points
 ///   (`v[t][k]` = polynomial k evaluated at point t)
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "P::G1: Serialize, P::ScalarField: Serialize",
     deserialize = "P::G1: for<'a> Deserialize<'a>, P::ScalarField: for<'a> Deserialize<'a>"
@@ -83,6 +83,24 @@ pub struct HyperKZGProof<P: PairingGroup> {
     pub w: [P::G1; 3],
     pub v: [Vec<P::ScalarField>; 3],
 }
+
+impl<P: PairingGroup> std::fmt::Debug for HyperKZGProof<P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HyperKZGProof")
+            .field("com", &self.com)
+            .field("w", &self.w)
+            .field("v", &self.v)
+            .finish()
+    }
+}
+
+impl<P: PairingGroup> PartialEq for HyperKZGProof<P> {
+    fn eq(&self, other: &Self) -> bool {
+        self.com == other.com && self.w == other.w && self.v == other.v
+    }
+}
+
+impl<P: PairingGroup> Eq for HyperKZGProof<P> {}
 
 /// Prover setup: SRS G1 and G2 powers.
 ///

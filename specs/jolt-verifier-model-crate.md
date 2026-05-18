@@ -4,7 +4,7 @@
 |-------|-------|
 | Author(s) | Markos Georghiades, Codex |
 | Created | 2026-05-16 |
-| Status | draft |
+| Status | approved |
 | PR | TBD |
 
 ## Context

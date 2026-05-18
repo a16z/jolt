@@ -16,9 +16,9 @@ use serde::{de::DeserializeOwned, Serialize};
 use crate::error::OpeningsError;
 
 /// Commit to f: F^n -> F, then prove f(r) = v for verifier-chosen r.
-pub trait CommitmentScheme: Commitment + Clone + Send + Sync + 'static {
+pub trait CommitmentScheme: Commitment {
     type Field: Field;
-    type Proof: Clone + Send + Sync + Serialize + DeserializeOwned;
+    type Proof: Clone + Debug + Eq + Send + Sync + 'static + Serialize + DeserializeOwned;
     type ProverSetup: Clone + Send + Sync;
     type VerifierSetup: Clone + Send + Sync + Serialize + DeserializeOwned;
 

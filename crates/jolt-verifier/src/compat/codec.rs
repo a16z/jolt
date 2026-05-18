@@ -6,11 +6,10 @@ use ark_serialize::{
 };
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 
-use crate::proof::DoryLayout;
-
 use super::{
     config::{OneHotConfig, ReadWriteConfig},
     ids::{CommittedPolynomial, OpeningId, PolynomialId, SumcheckId, VirtualPolynomial},
+    layout::TracePolynomialOrder,
 };
 
 const OPENING_ID_UNTRUSTED_ADVICE_BASE: u8 = 0;
@@ -142,7 +141,7 @@ impl CanonicalDeserialize for OneHotConfig {
     }
 }
 
-impl CanonicalSerialize for DoryLayout {
+impl CanonicalSerialize for TracePolynomialOrder {
     fn serialize_with_mode<W: Write>(
         &self,
         writer: W,
@@ -156,13 +155,13 @@ impl CanonicalSerialize for DoryLayout {
     }
 }
 
-impl Valid for DoryLayout {
+impl Valid for TracePolynomialOrder {
     fn check(&self) -> Result<(), SerializationError> {
         Ok(())
     }
 }
 
-impl CanonicalDeserialize for DoryLayout {
+impl CanonicalDeserialize for TracePolynomialOrder {
     fn deserialize_with_mode<R: Read>(
         reader: R,
         compress: Compress,
@@ -609,30 +608,33 @@ mod tests {
     }
 
     #[test]
-    fn dory_layout_matches_jolt_core() -> Result<(), SerializationError> {
+    fn trace_polynomial_order_matches_jolt_core() -> Result<(), SerializationError> {
         for (layout, core_layout) in [
-            (DoryLayout::CycleMajor, CoreDoryLayout::CycleMajor),
-            (DoryLayout::AddressMajor, CoreDoryLayout::AddressMajor),
+            (TracePolynomialOrder::CycleMajor, CoreDoryLayout::CycleMajor),
+            (
+                TracePolynomialOrder::AddressMajor,
+                CoreDoryLayout::AddressMajor,
+            ),
         ] {
             round_trip(layout)?;
             assert_eq!(bytes(&layout)?, bytes(&core_layout)?);
         }
 
-        assert!(DoryLayout::deserialize_compressed([2u8].as_slice()).is_err());
+        assert!(TracePolynomialOrder::deserialize_compressed([2u8].as_slice()).is_err());
         assert_eq!(
-            DoryLayout::CycleMajor.address_cycle_to_index(3, 4, 10, 20),
+            TracePolynomialOrder::CycleMajor.address_cycle_to_index(3, 4, 10, 20),
             64
         );
         assert_eq!(
-            DoryLayout::AddressMajor.address_cycle_to_index(3, 4, 10, 20),
+            TracePolynomialOrder::AddressMajor.address_cycle_to_index(3, 4, 10, 20),
             43
         );
         assert_eq!(
-            DoryLayout::CycleMajor.index_to_address_cycle(64, 10, 20),
+            TracePolynomialOrder::CycleMajor.index_to_address_cycle(64, 10, 20),
             (3, 4)
         );
         assert_eq!(
-            DoryLayout::AddressMajor.index_to_address_cycle(43, 10, 20),
+            TracePolynomialOrder::AddressMajor.index_to_address_cycle(43, 10, 20),
             (3, 4)
         );
         Ok(())

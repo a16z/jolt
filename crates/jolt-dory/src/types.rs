@@ -56,6 +56,14 @@ impl<F: jolt_field::Field> HomomorphicCommitment<F> for DoryCommitment {
 #[derive(Clone, Debug)]
 pub struct DoryProof(pub ArkDoryProof);
 
+impl PartialEq for DoryProof {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for DoryProof {}
+
 impl Serialize for DoryProof {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         canonical_serialize(&self.0, serializer)

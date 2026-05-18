@@ -18,7 +18,9 @@ const PAR_THRESHOLD: usize = 1024;
 /// polynomial commitment schemes (`jolt_openings::CommitmentScheme`).
 /// The `Output` associated type is the single piece of connective tissue
 /// between these different levels of abstraction.
-pub trait Commitment {
+pub trait Commitment:
+    Clone + Debug + Eq + Send + Sync + 'static + Serialize + DeserializeOwned
+{
     /// The commitment value (e.g., a group element, a Merkle root, a lattice vector).
     type Output: Clone + Debug + Eq + Send + Sync + 'static + Serialize + DeserializeOwned;
 }
@@ -28,10 +30,11 @@ pub trait Commitment {
 /// Extends [`Commitment`] with the ability to commit to a vector of field
 /// elements with a blinding factor. Uses `Self::Output` from the supertrait
 /// as the commitment value type.
-pub trait VectorCommitment: Commitment + Clone + Send + Sync + 'static
-where
-    Self::Output: Copy + AppendToTranscript + Serialize + for<'de> Deserialize<'de>,
+pub trait VectorCommitment:
+    Commitment<Output: Copy + AppendToTranscript + Serialize + DeserializeOwned>
 {
+    type Field: Field;
+
     /// Transparent setup parameters (generators, public parameters, etc.).
     type Setup: Clone + Send + Sync;
 
@@ -45,27 +48,27 @@ where
     ///
     /// May panic if `values.len()` exceeds [`Self::capacity()`].
     #[must_use]
-    fn commit<F: Field>(setup: &Self::Setup, values: &[F], blinding: &F) -> Self::Output;
+    fn commit(setup: &Self::Setup, values: &[Self::Field], blinding: &Self::Field) -> Self::Output;
 
     /// Returns `true` if `commitment` opens to `(values, blinding)`.
     #[must_use]
-    fn verify<F: Field>(
+    fn verify(
         setup: &Self::Setup,
         commitment: &Self::Output,
-        values: &[F],
-        blinding: &F,
+        values: &[Self::Field],
+        blinding: &Self::Field,
     ) -> bool;
 
     /// Opens a row-major matrix of committed rows at `(row_point, entry_point)`.
     ///
     /// Missing entries at the end of `flattened_rows` are treated as zero.
-    fn open_committed_rows<F: Field>(
-        flattened_rows: &[F],
-        row_blindings: &[F],
+    fn open_committed_rows(
+        flattened_rows: &[Self::Field],
+        row_blindings: &[Self::Field],
         row_len: usize,
-        row_point: &[F],
-        entry_point: &[F],
-    ) -> Result<(VectorCommitmentOpening<F>, F), VectorOpeningError> {
+        row_point: &[Self::Field],
+        entry_point: &[Self::Field],
+    ) -> Result<(VectorCommitmentOpening<Self::Field>, Self::Field), VectorOpeningError> {
         let row_count = point_len_to_basis_len(row_point.len())?;
         validate_row_len(row_len, entry_point.len())?;
         let max_len = row_count
@@ -101,15 +104,15 @@ where
 
     /// Verifies a row-combined opening and returns the evaluation at `entry_point`.
     ///
-    fn verify_committed_rows<F: Field>(
+    fn verify_committed_rows(
         setup: &Self::Setup,
         row_commitments: &[Self::Output],
-        row_point: &[F],
-        entry_point: &[F],
-        opening: &VectorCommitmentOpening<F>,
-    ) -> Result<F, VectorOpeningError>
+        row_point: &[Self::Field],
+        entry_point: &[Self::Field],
+        opening: &VectorCommitmentOpening<Self::Field>,
+    ) -> Result<Self::Field, VectorOpeningError>
     where
-        Self::Output: HomomorphicCommitment<F>,
+        Self::Output: HomomorphicCommitment<Self::Field>,
     {
         let row_count = point_len_to_basis_len(row_point.len())?;
         if row_commitments.len() != row_count {

@@ -16,7 +16,7 @@
 //! | Module | Purpose |
 //! |--------|---------|
 //! | [`claim`] | [`SumcheckClaim`] (input statement) and [`EvaluationClaim`] (reduction output) |
-//! | [`proof`] | [`ClearSumcheckProof`], [`CompressedSumcheckProof`], and [`SumcheckProof`] — serializable proofs |
+//! | [`proof`] | [`ClearProof`], [`ClearSumcheckProof`], [`CompressedSumcheckProof`], and [`SumcheckProof`] — serializable proofs |
 //! | [`verifier`] | [`SumcheckVerifier`] engine |
 //! | [`batched_verifier`] | [`BatchedSumcheckVerifier`] — batched verification via RLC |
 //! | [`domain`] | [`SumcheckDomain`] implementations for round-sum checks |
@@ -32,7 +32,8 @@
 //! - [`SumcheckShape`] — round count and degree bound without a claimed sum.
 //! - [`EvaluationClaim<F>`] — the oracle evaluation claim `g(r) = v` produced by a
 //!   successful reduction; the caller MUST discharge it against the polynomial oracle.
-//! - [`ClearSumcheckProof<F>`] — a sequence of univariate round polynomials, one per variable.
+//! - [`ClearProof<F>`] — clear proof wire representation, either full or compressed.
+//! - [`ClearSumcheckProof<F>`] — a sequence of full univariate round polynomials, one per variable.
 //! - [`CompressedSumcheckProof<F>`] — owned wire form omitting each linear coefficient.
 //! - [`SumcheckProof<F, C>`] — clear or committed sumcheck proof data.
 //! - [`CommittedSumcheckProof<C>`] — committed round messages and output-claim commitments.
@@ -89,7 +90,7 @@ pub use committed::{
 };
 pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain};
 pub use error::SumcheckError;
-pub use proof::{ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
+pub use proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
 #[cfg(feature = "r1cs")]
 pub use r1cs::{
     allocate_sumcheck_r1cs_layout, append_sumcheck_r1cs_constraints, SumcheckR1csError,

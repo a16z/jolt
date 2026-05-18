@@ -3,7 +3,11 @@ pub mod formulas;
 mod ids;
 mod stage;
 
-pub use formulas::dimensions::{JoltSumcheckDomain, JoltSumcheckSpec};
+pub use formulas::dimensions::{
+    JoltFormulaDimensions, JoltFormulaDimensionsError, JoltOneHotConfig, JoltOneHotDimensions,
+    JoltReadWriteConfig, JoltSumcheckDomain, JoltSumcheckSpec, ReadWriteDimensions,
+    TraceDimensions,
+};
 pub use ids::{
     AdviceClaimReductionPublic, BooleanityChallenge, BooleanityPublic, BytecodeReadRafChallenge,
     BytecodeReadRafPublic, HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic,

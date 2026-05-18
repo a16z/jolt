@@ -20,7 +20,7 @@ pub fn verify<F, VC, T>(
 ) -> Result<(), VerificationError<F>>
 where
     F: Field + AppendToTranscript,
-    VC: VectorCommitment,
+    VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
@@ -131,7 +131,7 @@ fn verify_outer_folded_r1cs<F, VC, T>(
 ) -> Result<OuterCheck<F>, VerificationError<F>>
 where
     F: Field + AppendToTranscript,
-    VC: VectorCommitment,
+    VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
@@ -193,7 +193,7 @@ fn verify_folded_eval_commitments<F, VC>(
 ) -> Result<(), VerificationError<F>>
 where
     F: Field,
-    VC: VectorCommitment,
+    VC: VectorCommitment<Field = F>,
     VC::Output: Copy + AppendToTranscript,
 {
     for (index, ((commitment, &output), &blinding)) in folded
@@ -221,7 +221,7 @@ fn verify_inner_folded_r1cs<F, VC, T>(
 ) -> Result<(), VerificationError<F>>
 where
     F: Field + AppendToTranscript,
-    VC: VectorCommitment,
+    VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {

@@ -135,6 +135,42 @@ impl From<(usize, usize, usize, usize)> for ReadWriteDimensions {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoltReadWriteConfig {
+    pub ram_rw_phase1_num_rounds: u8,
+    pub ram_rw_phase2_num_rounds: u8,
+    pub registers_rw_phase1_num_rounds: u8,
+    pub registers_rw_phase2_num_rounds: u8,
+}
+
+impl JoltReadWriteConfig {
+    pub const fn ram_dimensions(self, log_t: usize, ram_log_k: usize) -> ReadWriteDimensions {
+        ReadWriteDimensions::new(
+            log_t,
+            ram_log_k,
+            self.ram_rw_phase1_num_rounds as usize,
+            self.ram_rw_phase2_num_rounds as usize,
+        )
+    }
+
+    pub const fn register_dimensions(
+        self,
+        log_t: usize,
+        register_log_k: usize,
+    ) -> ReadWriteDimensions {
+        ReadWriteDimensions::new(
+            log_t,
+            register_log_k,
+            self.registers_rw_phase1_num_rounds as usize,
+            self.registers_rw_phase2_num_rounds as usize,
+        )
+    }
+
+    pub const fn needs_single_advice_opening(self, log_t: usize) -> bool {
+        self.ram_rw_phase1_num_rounds as usize == log_t
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct AdviceClaimReductionDimensions {
     cycle_phase_rounds: usize,
@@ -266,6 +302,39 @@ pub struct JoltOneHotDimensions {
     pub ram_k: usize,
     pub committed_chunk_bits: usize,
     pub lookup_virtual_chunk_bits: usize,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoltOneHotConfig {
+    pub log_k_chunk: u8,
+    pub lookups_ra_virtual_log_k_chunk: u8,
+}
+
+impl JoltOneHotConfig {
+    pub const fn committed_chunk_bits(self) -> usize {
+        self.log_k_chunk as usize
+    }
+
+    pub const fn lookup_virtual_chunk_bits(self) -> usize {
+        self.lookups_ra_virtual_log_k_chunk as usize
+    }
+
+    pub const fn dimensions(
+        self,
+        log_t: usize,
+        instruction_address_bits: usize,
+        bytecode_k: usize,
+        ram_k: usize,
+    ) -> JoltOneHotDimensions {
+        JoltOneHotDimensions {
+            log_t,
+            instruction_address_bits,
+            bytecode_k,
+            ram_k,
+            committed_chunk_bits: self.committed_chunk_bits(),
+            lookup_virtual_chunk_bits: self.lookup_virtual_chunk_bits(),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

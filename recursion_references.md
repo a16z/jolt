@@ -536,6 +536,177 @@ For the full Spartan outer output-claim expression, including `Eq` and scaling t
 
 Caveat: this assumes a structured lowering that keeps row evals as linear combinations and only multiplies by challenge-dependent weights. A naive expanded sum-of-products lowering could be much larger.
 
+## Sagar Field Inline / BN254 Fr Coprocessor Notes
+
+Checked: 2026-05-17
+
+Public GitHub PRs by `sagar-a16z` that are adjacent to this work:
+
+- https://github.com/a16z/jolt/pull/1535
+  - Open PR: `feat(sdk): #[jolt::provable(backend = "modular")] + modular prove/verify entry points`
+  - Head branch: `sagar/modular-sdk`
+  - This is not the FR coprocessor itself, but it is the ergonomic SDK entry point that would make modular-only features such as the BN254 Fr coprocessor usable from `#[jolt::provable(backend = "modular")]`.
+- https://github.com/a16z/jolt/pull/1381
+  - Merged PR: `feat(inlines): add P-256 (secp256r1) inline instructions and ECDSA example`
+  - Adds P-256 field/scalar inlines and a Fake-GLV advice inline for ECDSA verification.
+- https://github.com/a16z/jolt/pull/1458
+  - Merged PR: `fix: use independent per-point Shamirs in P-256 Fake GLV ECDSA verify`
+  - Important soundness lesson: one combined relation over multiple prover-controlled advised points left a cross-cancellation degree of freedom; the fix binds each point with its own Shamir relation.
+
+The BN254 Fr coprocessor / FieldReg Twist work appears mainly as branches, not as a public PR found by `head=a16z:<branch>`:
+
+| Branch | Tip | Date | Notes |
+| --- | --- | --- | --- |
+| `sagar/fr-coprocessor` | `0e558455` | 2026-05-13 | Most recent stack found; includes FR coprocessor, sparse FR Twist kernels, jolt-host, modular SDK pieces, Bolt fixes. |
+| `feat/fr-coprocessor-v2` | `7575e6f0` | 2026-04-27 | Audit-hardened v2 stack: verifier FR wiring, runtime replay asserts, FINV(0) handling, committed bytecode anchoring. |
+| `feat/field-register-twist` | `c01910e0` | 2026-04-24 | Earlier FieldReg Twist productization and bridge design. |
+
+Branch links:
+
+- https://github.com/a16z/jolt/tree/sagar/fr-coprocessor
+- https://github.com/a16z/jolt/tree/feat/fr-coprocessor-v2
+- https://github.com/a16z/jolt/tree/feat/field-register-twist
+
+### What The FR Coprocessor Adds
+
+The branch spec is `specs/bn254-fr-coprocessor.md` on `sagar/fr-coprocessor`.
+
+High-level design:
+
+- Adds a modular-stack-only BN254 scalar-field coprocessor.
+- Adds a 16-slot native-field register file.
+- Adds dedicated FR opcodes:
+  - `FieldOp` for `FMUL/FADD/FSUB/FINV`
+  - `FieldMov`
+  - `FieldSLL{64,128,192}`
+  - `FieldAssertEq`
+- Adds `jolt-inlines/bn254-fr` as the guest-facing SDK.
+- Adds sparse FieldReg Twist protocols across stages 3, 4, and 5.
+- Wires host/prover/verifier support through the modular stack and Bolt-generated artifacts.
+
+The SDK is two-pass:
+
+```text
+Pass 1 / compute_advice:
+  compute ark-bn254 Fr results
+  write result limbs to advice tape
+
+Pass 2 / normal RISC-V:
+  emit FR coprocessor opcodes
+  load advised result limbs
+  reconstruct result into FR register
+  FieldAssertEq binds coprocessor output to advice
+```
+
+This is not a separate precompile proof system. It is still Jolt execution: the field operation appears as cycles/instructions in the trace, and the proof system must check the new FR register state and R1CS rows.
+
+### Protocol Surface
+
+The modular R1CS surface changes materially:
+
+- `NUM_R1CS_INPUTS` grows to `47` in the modular RV64 R1CS.
+- `NUM_VARS_PER_CYCLE` becomes `50`.
+- There are `32` equality rows: `19` base RV rows plus `13` BN254 Fr coprocessor rows.
+- New FR flags occupy the field-op family:
+  - `IsFieldMul`
+  - `IsFieldAdd`
+  - `IsFieldSub`
+  - `IsFieldInv`
+  - `IsFieldAssertEq`
+  - `IsFieldMov`
+  - `IsFieldSLL64`
+  - `IsFieldSLL128`
+  - `IsFieldSLL192`
+- New virtual FR operand columns:
+  - `V_FIELD_RS1_VALUE`
+  - `V_FIELD_RS2_VALUE`
+  - `V_FIELD_RD_VALUE`
+
+The FR operand columns are not ordinary integer-register values. They are bound by the FR Twist protocols:
+
+- Stage 3: `FieldRegistersClaimReduction`
+- Stage 4: `FieldRegistersReadWrite`
+- Stage 5: `FieldRegValEvaluation`
+
+The key implementation choice is sparse FieldReg state. FR-active cycles are usually sparse relative to the full padded trace, and the FR register file has `K = 16` slots. The branch explicitly avoids `K * T` dense materialization for one-hot FR polynomials. Dense materialization happens only after the cycle dimension collapses, mirroring the existing RV register Twist shape.
+
+### Performance Notes
+
+The branch spec reports that a Poseidon2 BN254 t=3 permutation drops from roughly `253k` cycles in software ark-bn254 to roughly `36k` cycles with the FR coprocessor, about a `7x` trace reduction.
+
+At a fixed modular fixture shape, the prove-time win is smaller than the cycle win because both variants still pad to the same `log_t`. The spec reports one fixed-shape comparison around:
+
+```text
+FR coprocessor:       35,890 raw cycles, 3.53s prove
+software ark-bn254:  252,978 raw cycles, 4.54s prove
+```
+
+It also reports a modular host comparison where the FR coprocessor path is much faster than modular software Fr at the same workload:
+
+```text
+modular inline FR:       35,890 cycles, 2.30s prove
+modular ark-bn254 Fr:   252,978 cycles, 5.01s prove
+```
+
+The important protocol point: the cycle reduction is real, but once a universal proof fixture pads both workloads to the same trace length, some of that reduction becomes latent until the system supports per-program or multi-shape fixtures.
+
+### Fit With Groth16 Wrapping
+
+This work helps, but it is not a direct replacement for the Groth16 wrapper or recursion SNARK.
+
+Where it helps:
+
+- It makes FR-heavy guest programs, especially Poseidon/Poseidon2-style code over BN254 Fr, much smaller as Jolt traces.
+- If the wrapper/recursion verifier itself is ever run as a Jolt guest and does lots of BN254 Fr arithmetic, the FR coprocessor could reduce that guest verifier trace.
+- It pushes the modular stack toward explicit stage artifacts, typed host/prover/verifier surfaces, and Bolt-generated protocol code, which is directionally aligned with replacing the current `MleAst` Groth16 transpiler with semantic protocol lowering.
+- It gives a concrete example of how a new protocol surface should be represented in modular crates: new instructions, new R1CS rows, new witness columns, new stage relations, and explicit host/prover/verifier plumbing.
+
+Where it does not directly help:
+
+- The current `transpiler` Groth16 path wraps `jolt-core` stages 1-7. The FR coprocessor is modular-stack-only and intentionally not supported by monolithic `jolt-core`, so the current Groth16 transpiler will not automatically handle FR-active proofs.
+- It does not solve Stage 8 PCS/Dory verification in a Groth16 circuit.
+- It does not remove the need to prove transcript/challenge construction inside a full wrapper.
+- It does not directly accelerate the paper's Dory-assist recursion proof over BN254 base-field / Grumpkin-scalar arithmetic. The coprocessor is for BN254 `Fr`; the recursion paper's Dory assist spends much of its work over BN254 `Fq` / GT-related data.
+
+Net effect for Groth16:
+
+- If Groth16 wraps a Jolt proof whose guest uses the FR coprocessor, the verifier/protocol being wrapped has a larger semantic surface: extra FR R1CS rows, extra FR Twist sumchecks, extra openings, and extra transcript messages.
+- The Groth16 circuit generator must know those formulas. This fits better with `jolt-claims` + `jolt-sumcheck::r1cs` than with blindly recording a monolithic `jolt-core` verifier that does not understand FR opcodes.
+- The R1CS matrix-evaluation estimate above changes from `19` base rows to `32` rows. With structured lowering, the inner row-evaluation portion scales roughly with row count: expect something closer to `80` constraints for the inner matrix eval and maybe `100-160` for the full Spartan outer expression, excluding Poseidon/hash constraints. This is still small compared with transcript hashing and full verifier wrapping.
+
+### Fit With BlindFold / Modular Claims
+
+The FR coprocessor adds new claim formulas that must be modeled explicitly:
+
+- Stage 3 field-register claim reduction input/output formulas.
+- Stage 4 field-register read/write checking formulas.
+- Stage 5 field-register value-evaluation formulas.
+- Spartan/R1CS formulas reflecting the 13 new FR rows and 3 virtual FR operand columns.
+
+For BlindFold-style infrastructure, the same invariant applies as elsewhere:
+
+```text
+native claim computation == BlindFold/R1CS lowered claim expression
+```
+
+If the modular stack gains FR-aware BlindFold, `jolt-claims` must include the FR formulas and `jolt-r1cs`/`jolt-sumcheck` lowering must connect them to the committed sumcheck rounds. The branch spec lists BlindFold ZK for FR Twist as out of scope, so this is a future integration item.
+
+### Soundness Lessons From The Inline Work
+
+The P-256 Fake-GLV fix in PR #1458 is directly relevant to wrapper/claims design. The broken construction combined multiple prover-controlled advised points into one equation, leaving a cross-cancellation degree of freedom. The fix uses independent per-point equations.
+
+Protocol takeaway:
+
+- Do not compress multiple prover-controlled hints into a single relation unless the relation is known to bind each object independently.
+- For `jolt-claims`, prefer formulas that preserve object boundaries and make the source of each opening/advice value explicit.
+- For Groth16 lowering, the same value must be both transcript-bound and equation-bound. Advice that is only used in arithmetic but not transcript-bound, or transcript-bound but not independently constrained, is a soundness risk.
+
+Applied to BN254 Fr:
+
+- The two-pass advice tape is acceptable only because Pass 2 reconstructs the advised result and `FieldAssertEq` binds it to the actual FR coprocessor output.
+- `FINV(0)` is guarded at the SDK/tracer layer because the R1CS relation `rs1 * rd = 1` is unsatisfiable for zero.
+- FR write-slot indicators must be anchored in committed bytecode; otherwise the prover could choose easier FR read/write wiring.
+
 ## Quick Commands
 
 List relevant Quang fork branches:
