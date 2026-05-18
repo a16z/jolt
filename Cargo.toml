@@ -44,6 +44,7 @@ members = [
   "jolt-sdk",
   "jolt-sdk/macros",
   "jolt-inlines/sdk",
+  "jolt-inlines/fixtures",
   "jolt-inlines/sha2",
   "jolt-inlines/keccak256",
   "jolt-inlines/blake2",

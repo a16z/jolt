@@ -2914,6 +2914,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-inlines-fixtures"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "inventory",
+ "jolt-inlines-bigint",
+ "jolt-inlines-blake2",
+ "jolt-inlines-blake3",
+ "jolt-inlines-grumpkin",
+ "jolt-inlines-keccak256",
+ "jolt-inlines-p256",
+ "jolt-inlines-secp256k1",
+ "jolt-inlines-sha2",
+ "jolt-program",
+ "jolt-riscv",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tracer",
+]
+
+[[package]]
 name = "jolt-inlines-grumpkin"
 version = "0.1.0"
 dependencies = [
