@@ -209,12 +209,17 @@ pub enum InlineAdmissibility {
 }
 ```
 
-The exact names may differ, but the policy must be explicit and default-deny:
+The exact names may differ, but the policy must be explicit and default-deny.
+There is no separate global bytecode trust-mode switch in this spec; admission is
+decided per registration:
 
 - `Public` registrations may be selected for verifier-facing
   `SourceInstructionKind::Inline` rows.
 - `InternalOnly` registrations must be rejected from decoded guest bytecode with
   a structured expansion/preprocessing error before proving.
+- Missing or unspecified admissibility is a registration error; inline authors
+  should start from `InternalOnly` and opt into `Public` only when the recipe is
+  self-contained under verifier-visible checks.
 - Public registrations with non-empty safety requirements must satisfy those
   requirements through the static recipe, not through guest SDK wrapper
   conventions.
@@ -235,12 +240,14 @@ combinators rather than on ad hoc instruction sequences.
 Current shipped inlines should be classified conservatively while porting:
 
 - hash/compression/permutation inlines and `bigint256_mul` are expected to be
-  public if their recipes are deterministic and advice-free;
-- secp256k1 and P-256 field mul/square/div inlines need public safety
-  requirements for canonical outputs and division preconditions, unless those
-  opcodes are made internal to a larger checked recipe;
+  `Public { requirements: [] }` if their recipes remain deterministic and
+  advice-free;
+- secp256k1 and P-256 field mul/square/div inlines are `InternalOnly` unless
+  they are upgraded to `Public` with evidenced requirements for canonical
+  outputs and division preconditions, or are only reachable through a larger
+  checked public recipe;
 - Grumpkin division advice, secp256k1 GLV advice, and P-256 Fake GLV advice are
-  internal-only until their full relation, sign/canonicality, and recomposition
+  `InternalOnly` until their full relation, sign/canonicality, and recomposition
   checks are emitted and evidenced by static expansion.
 
 Registered inline expansion must require both:
