@@ -3360,10 +3360,13 @@ fn linear_eval<F: Field>(low: F, high: F, x: F) -> F {
     low + x * (high - low)
 }
 
-/// Sparse FR round-poly coefficient accumulation. Sequential — FR events
-/// are sparse (~3 entries per FR-active cycle, typically ≪ T) so the cost
-/// is dominated by entry count, not trace length. The K_FR × T factor
-/// space is never materialized.
+/// Sparse FR round-poly coefficient accumulation. Mirrors the integer
+/// Twist's structure: split low-round (`e_in.len() > 1`) from high-round
+/// (`e_in.len() == 1`), and shell out to Rayon `par_chunk_by` once the
+/// entry count crosses `DENSE_BIND_PAR_THRESHOLD`. At production T the
+/// FR-active entry count grows linearly with T, so single-threaded
+/// accumulation here becomes the prover bottleneck on FR-heavy workloads;
+/// the integer path was already parallel — FR now matches.
 fn sparse_field_reg_split_round_coefficients<F: Field>(
     entries: &[SparseFieldRegEntry<F>],
     eq_cycle: &SplitEqState<F>,
@@ -3381,44 +3384,185 @@ fn sparse_field_reg_split_round_coefficients<F: Field>(
     }
     let e_in = eq_cycle.e_in();
     let e_out = eq_cycle.e_out();
-    let mut acc_const = F::Accumulator::default();
-    let mut acc_quad = F::Accumulator::default();
+    if e_in.len() > 1 {
+        sparse_field_reg_low_round_coefficients(entries, frd_inc, e_in, e_out)
+    } else {
+        sparse_field_reg_high_round_coefficients(entries, frd_inc, e_in[0], e_out)
+    }
+}
+
+fn sparse_field_reg_low_round_coefficients<F: Field>(
+    entries: &[SparseFieldRegEntry<F>],
+    frd_inc: &[F],
+    e_in: &[F],
+    e_out: &[F],
+) -> Result<(F, F), Stage4KernelError> {
+    let in_pairs = e_in.len() / 2;
+    if entries.len() >= DENSE_BIND_PAR_THRESHOLD {
+        let accumulators = entries
+            .par_chunk_by(|left, right| (left.row / 2) / in_pairs == (right.row / 2) / in_pairs)
+            .map(|chunk| {
+                let mut local = [F::Accumulator::default(); 2];
+                accumulate_sparse_field_reg_low_outer_chunk(
+                    &mut local, chunk, frd_inc, e_in, e_out, in_pairs,
+                );
+                local
+            })
+            .reduce(
+                || [F::Accumulator::default(); 2],
+                |mut left, right| {
+                    for (left, right) in left.iter_mut().zip(right) {
+                        left.merge(right);
+                    }
+                    left
+                },
+            );
+        return Ok((accumulators[0].reduce(), accumulators[1].reduce()));
+    }
+
+    let mut accumulators = [F::Accumulator::default(); 2];
     let mut cursor = 0usize;
     while cursor < entries.len() {
         let pair = entries[cursor].row / 2;
-        let weight = if e_in.len() > 1 {
-            let in_pairs = e_in.len() / 2;
-            let x_out = pair / in_pairs;
-            let x_in = pair % in_pairs;
-            e_out[x_out] * (e_in[2 * x_in] + e_in[2 * x_in + 1])
-        } else {
-            e_in[0] * (e_out[2 * pair] + e_out[2 * pair + 1])
-        };
-        let even_row = 2 * pair;
-        let odd_row = even_row + 1;
-        let even_start = cursor;
-        while cursor < entries.len() && entries[cursor].row == even_row {
-            cursor += 1;
-        }
-        let even = &entries[even_start..cursor];
-        let odd_start = cursor;
-        while cursor < entries.len() && entries[cursor].row == odd_row {
-            cursor += 1;
-        }
-        let odd = &entries[odd_start..cursor];
-        let inc0 = frd_inc[even_row];
-        let inc_delta = frd_inc[odd_row] - inc0;
-        accumulate_sparse_field_reg_row_pair(
-            &mut acc_const,
-            &mut acc_quad,
-            even,
-            odd,
-            inc0,
-            inc_delta,
+        let x_out = pair / in_pairs;
+        let x_in = pair % in_pairs;
+        let weight = e_out[x_out] * (e_in[2 * x_in] + e_in[2 * x_in + 1]);
+        cursor = accumulate_sparse_field_reg_pair_at_cursor(
+            &mut accumulators,
+            entries,
+            cursor,
+            pair,
+            frd_inc,
             weight,
         );
     }
-    Ok((acc_const.reduce(), acc_quad.reduce()))
+    Ok((accumulators[0].reduce(), accumulators[1].reduce()))
+}
+
+fn sparse_field_reg_high_round_coefficients<F: Field>(
+    entries: &[SparseFieldRegEntry<F>],
+    frd_inc: &[F],
+    in_weight: F,
+    e_out: &[F],
+) -> Result<(F, F), Stage4KernelError> {
+    if entries.len() >= DENSE_BIND_PAR_THRESHOLD {
+        let accumulators = entries
+            .par_chunk_by(|left, right| left.row / 2 == right.row / 2)
+            .map(|chunk| {
+                let mut local = [F::Accumulator::default(); 2];
+                let pair = chunk[0].row / 2;
+                let weight = in_weight * (e_out[2 * pair] + e_out[2 * pair + 1]);
+                accumulate_sparse_field_reg_row_pair_chunk(
+                    &mut local, chunk, pair, frd_inc, weight,
+                );
+                local
+            })
+            .reduce(
+                || [F::Accumulator::default(); 2],
+                |mut left, right| {
+                    for (left, right) in left.iter_mut().zip(right) {
+                        left.merge(right);
+                    }
+                    left
+                },
+            );
+        return Ok((accumulators[0].reduce(), accumulators[1].reduce()));
+    }
+
+    let mut accumulators = [F::Accumulator::default(); 2];
+    let mut cursor = 0usize;
+    while cursor < entries.len() {
+        let pair = entries[cursor].row / 2;
+        let weight = in_weight * (e_out[2 * pair] + e_out[2 * pair + 1]);
+        cursor = accumulate_sparse_field_reg_pair_at_cursor(
+            &mut accumulators,
+            entries,
+            cursor,
+            pair,
+            frd_inc,
+            weight,
+        );
+    }
+    Ok((accumulators[0].reduce(), accumulators[1].reduce()))
+}
+
+/// Walks `entries[cursor..]` until past the rows belonging to `pair`,
+/// accumulating that pair's contribution. Returns the new cursor.
+fn accumulate_sparse_field_reg_pair_at_cursor<F: Field>(
+    accumulators: &mut [F::Accumulator; 2],
+    entries: &[SparseFieldRegEntry<F>],
+    cursor: usize,
+    pair: usize,
+    frd_inc: &[F],
+    weight: F,
+) -> usize {
+    let even_row = 2 * pair;
+    let odd_row = even_row + 1;
+    let mut c = cursor;
+    let even_start = c;
+    while c < entries.len() && entries[c].row == even_row {
+        c += 1;
+    }
+    let even = &entries[even_start..c];
+    let odd_start = c;
+    while c < entries.len() && entries[c].row == odd_row {
+        c += 1;
+    }
+    let odd = &entries[odd_start..c];
+    let inc0 = frd_inc[even_row];
+    let inc_delta = frd_inc[odd_row] - inc0;
+    let [acc_const, acc_quad] = accumulators;
+    accumulate_sparse_field_reg_row_pair(acc_const, acc_quad, even, odd, inc0, inc_delta, weight);
+    c
+}
+
+/// Low-round chunk processor: a `par_chunk_by` chunk groups entries
+/// sharing the same `x_out` outer EQ index, but may span multiple pairs
+/// within that outer chunk.
+fn accumulate_sparse_field_reg_low_outer_chunk<F: Field>(
+    accumulators: &mut [F::Accumulator; 2],
+    entries: &[SparseFieldRegEntry<F>],
+    frd_inc: &[F],
+    e_in: &[F],
+    e_out: &[F],
+    in_pairs: usize,
+) {
+    let x_out = (entries[0].row / 2) / in_pairs;
+    let out_weight = e_out[x_out];
+    let mut cursor = 0usize;
+    while cursor < entries.len() {
+        let pair = entries[cursor].row / 2;
+        let x_in = pair % in_pairs;
+        let weight = out_weight * (e_in[2 * x_in] + e_in[2 * x_in + 1]);
+        cursor = accumulate_sparse_field_reg_pair_at_cursor(
+            accumulators,
+            entries,
+            cursor,
+            pair,
+            frd_inc,
+            weight,
+        );
+    }
+}
+
+/// High-round chunk processor: chunk groups entries from a single pair
+/// (possibly even + odd rows).
+fn accumulate_sparse_field_reg_row_pair_chunk<F: Field>(
+    accumulators: &mut [F::Accumulator; 2],
+    entries: &[SparseFieldRegEntry<F>],
+    pair: usize,
+    frd_inc: &[F],
+    weight: F,
+) {
+    let even_row = 2 * pair;
+    let odd_start = entries.partition_point(|entry| entry.row == even_row);
+    let (even, odd) = entries.split_at(odd_start);
+    let inc0 = frd_inc[even_row];
+    let inc_delta = frd_inc[even_row + 1] - inc0;
+    let [acc_const, acc_quad] = accumulators;
+    accumulate_sparse_field_reg_row_pair(
+        acc_const, acc_quad, even, odd, inc0, inc_delta, weight,
+    );
 }
 
 fn accumulate_sparse_field_reg_row_pair<F: Field>(
@@ -3535,11 +3679,59 @@ fn sparse_field_reg_entry_eval<F: Field>(
 
 fn bind_sparse_field_reg_entries_into<F: Field>(
     entries: &[SparseFieldRegEntry<F>],
-    _current_trace_len: usize,
+    current_trace_len: usize,
     challenge: F,
     output: &mut Vec<SparseFieldRegEntry<F>>,
 ) {
     output.clear();
+    if entries.len() >= DENSE_BIND_PAR_THRESHOLD {
+        if let Ok(ranges) = sparse_field_reg_pair_ranges(entries, current_trace_len) {
+            let bound_lengths = ranges
+                .par_iter()
+                .map(|range| {
+                    sparse_field_reg_row_pair_bound_len(
+                        &entries[range.even.clone()],
+                        &entries[range.odd.clone()],
+                    )
+                })
+                .collect::<Vec<_>>();
+            let output_len: usize = bound_lengths.iter().sum();
+            output.reserve(output_len);
+            let mut spare = output.spare_capacity_mut();
+            let mut output_slices = Vec::with_capacity(ranges.len());
+            for &bound_len in &bound_lengths {
+                let (slice, rest) = spare.split_at_mut(bound_len);
+                output_slices.push(slice);
+                spare = rest;
+            }
+            ranges
+                .par_iter()
+                .zip(output_slices.into_par_iter())
+                .for_each(|(range, output)| {
+                    bind_sparse_field_reg_row_pair_into(
+                        &entries[range.even.clone()],
+                        &entries[range.odd.clone()],
+                        range.pair,
+                        challenge,
+                        output,
+                    );
+                });
+            // SAFETY: every slot in `output_slices` was initialized exactly once
+            // by `bind_sparse_field_reg_row_pair_into`.
+            unsafe {
+                output.set_len(output_len);
+            }
+            return;
+        }
+    }
+    bind_sparse_field_reg_entries_sequential_into(entries, challenge, output);
+}
+
+fn bind_sparse_field_reg_entries_sequential_into<F: Field>(
+    entries: &[SparseFieldRegEntry<F>],
+    challenge: F,
+    output: &mut Vec<SparseFieldRegEntry<F>>,
+) {
     output.reserve(entries.len());
     let mut cursor = 0usize;
     while cursor < entries.len() {
@@ -3556,42 +3748,158 @@ fn bind_sparse_field_reg_entries_into<F: Field>(
             cursor += 1;
         }
         let odd = &entries[odd_start..cursor];
-        let mut i = 0usize;
-        let mut j = 0usize;
-        while i < even.len() || j < odd.len() {
-            let (even_entry, odd_entry, col) =
-                if j >= odd.len() || (i < even.len() && even[i].col < odd[j].col) {
-                    let p = (Some(&even[i]), None, even[i].col);
-                    i += 1;
-                    p
-                } else if i >= even.len() || odd[j].col < even[i].col {
-                    let p = (None, Some(&odd[j]), odd[j].col);
-                    j += 1;
-                    p
-                } else {
-                    let p = (Some(&even[i]), Some(&odd[j]), even[i].col);
-                    i += 1;
-                    j += 1;
-                    p
-                };
-            let (val, read_ra, frd_wa) =
-                sparse_field_reg_entry_eval(even_entry, odd_entry, challenge);
-            let (prev_val, next_val) = match (even_entry, odd_entry) {
-                (Some(even), Some(odd)) => (even.prev_val, odd.next_val),
-                (Some(even), None) => (even.prev_val, even.next_val),
-                (None, Some(odd)) => (odd.prev_val, odd.next_val),
-                (None, None) => (F::zero(), F::zero()),
-            };
-            output.push(SparseFieldRegEntry {
-                row: pair,
-                col,
-                val,
-                prev_val,
-                next_val,
-                read_ra,
-                frd_wa,
+        bind_sparse_field_reg_row_pair(even, odd, pair, challenge, output);
+    }
+}
+
+#[derive(Clone)]
+struct SparseFieldRegPairRange {
+    pair: usize,
+    even: std::ops::Range<usize>,
+    odd: std::ops::Range<usize>,
+}
+
+fn sparse_field_reg_pair_ranges<F: Field>(
+    entries: &[SparseFieldRegEntry<F>],
+    current_trace_len: usize,
+) -> Result<Vec<SparseFieldRegPairRange>, Stage4KernelError> {
+    let half = current_trace_len / 2;
+    let mut ranges = Vec::new();
+    let mut cursor = 0usize;
+    while cursor < entries.len() {
+        let pair = entries[cursor].row / 2;
+        if pair >= half {
+            return Err(Stage4KernelError::InvalidInputLength {
+                input: "stage4.field_reg.entries",
+                expected: current_trace_len,
+                actual: entries[cursor].row + 1,
             });
         }
+        let even_row = 2 * pair;
+        let odd_row = even_row + 1;
+        let even_start = cursor;
+        while cursor < entries.len() && entries[cursor].row == even_row {
+            cursor += 1;
+        }
+        let even = even_start..cursor;
+        let odd_start = cursor;
+        while cursor < entries.len() && entries[cursor].row == odd_row {
+            cursor += 1;
+        }
+        let odd = odd_start..cursor;
+        ranges.push(SparseFieldRegPairRange { pair, even, odd });
+    }
+    Ok(ranges)
+}
+
+fn sparse_field_reg_row_pair_bound_len<F: Field>(
+    even: &[SparseFieldRegEntry<F>],
+    odd: &[SparseFieldRegEntry<F>],
+) -> usize {
+    let mut i = 0usize;
+    let mut j = 0usize;
+    let mut len = 0usize;
+    while i < even.len() || j < odd.len() {
+        if j >= odd.len() || (i < even.len() && even[i].col < odd[j].col) {
+            i += 1;
+        } else if i >= even.len() || odd[j].col < even[i].col {
+            j += 1;
+        } else {
+            i += 1;
+            j += 1;
+        }
+        len += 1;
+    }
+    len
+}
+
+fn bind_sparse_field_reg_row_pair_into<F: Field>(
+    even: &[SparseFieldRegEntry<F>],
+    odd: &[SparseFieldRegEntry<F>],
+    pair: usize,
+    challenge: F,
+    output: &mut [MaybeUninit<SparseFieldRegEntry<F>>],
+) {
+    let mut i = 0usize;
+    let mut j = 0usize;
+    let mut out = 0usize;
+    while i < even.len() || j < odd.len() {
+        let (even_entry, odd_entry, col) =
+            if j >= odd.len() || (i < even.len() && even[i].col < odd[j].col) {
+                let p = (Some(&even[i]), None, even[i].col);
+                i += 1;
+                p
+            } else if i >= even.len() || odd[j].col < even[i].col {
+                let p = (None, Some(&odd[j]), odd[j].col);
+                j += 1;
+                p
+            } else {
+                let p = (Some(&even[i]), Some(&odd[j]), even[i].col);
+                i += 1;
+                j += 1;
+                p
+            };
+        output[out] = MaybeUninit::new(bind_sparse_field_reg_entry_pair(
+            even_entry, odd_entry, pair, col, challenge,
+        ));
+        out += 1;
+    }
+    debug_assert_eq!(out, output.len());
+}
+
+fn bind_sparse_field_reg_row_pair<F: Field>(
+    even: &[SparseFieldRegEntry<F>],
+    odd: &[SparseFieldRegEntry<F>],
+    pair: usize,
+    challenge: F,
+    output: &mut Vec<SparseFieldRegEntry<F>>,
+) {
+    let mut i = 0usize;
+    let mut j = 0usize;
+    while i < even.len() || j < odd.len() {
+        let (even_entry, odd_entry, col) =
+            if j >= odd.len() || (i < even.len() && even[i].col < odd[j].col) {
+                let p = (Some(&even[i]), None, even[i].col);
+                i += 1;
+                p
+            } else if i >= even.len() || odd[j].col < even[i].col {
+                let p = (None, Some(&odd[j]), odd[j].col);
+                j += 1;
+                p
+            } else {
+                let p = (Some(&even[i]), Some(&odd[j]), even[i].col);
+                i += 1;
+                j += 1;
+                p
+            };
+        output.push(bind_sparse_field_reg_entry_pair(
+            even_entry, odd_entry, pair, col, challenge,
+        ));
+    }
+}
+
+fn bind_sparse_field_reg_entry_pair<F: Field>(
+    even: Option<&SparseFieldRegEntry<F>>,
+    odd: Option<&SparseFieldRegEntry<F>>,
+    pair: usize,
+    col: u8,
+    challenge: F,
+) -> SparseFieldRegEntry<F> {
+    let (val, read_ra, frd_wa) = sparse_field_reg_entry_eval(even, odd, challenge);
+    let (prev_val, next_val) = match (even, odd) {
+        (Some(even), Some(odd)) => (even.prev_val, odd.next_val),
+        (Some(even), None) => (even.prev_val, even.next_val),
+        (None, Some(odd)) => (odd.prev_val, odd.next_val),
+        (None, None) => (F::zero(), F::zero()),
+    };
+    SparseFieldRegEntry {
+        row: pair,
+        col,
+        val,
+        prev_val,
+        next_val,
+        read_ra,
+        frd_wa,
     }
 }
 
