@@ -145,6 +145,8 @@ Beyond the usual Rust rules around `unsafe` and undefined behavior, Jolt guest p
 
 - **Outputs and the panic flag are public.** The return value and `io_device.panic` are revealed to the verifier and are what the proof attests to. Returning a value derived from a private input leaks that value; panicking conditionally on a private input leaks one bit per panic site. Guests handling secret data should be written so that the output and panic behavior depend only on public information.
 
+- **Output byte representation.** The output memory region is zero-initialized, and both prover and verifier strip trailing zero bytes before binding outputs to the Fiat-Shamir transcript. As a result, byte strings that differ only in trailing zeros (e.g., `[0x41]` vs `[0x41, 0x00]`) produce identical proofs. Typed outputs are unaffected — the SDK restores the full serialized length before deserialization — but protocols that consume `program_io.outputs` as raw bytes must not treat trailing zeros as semantically meaningful, or must encode an explicit length.
+
 - **No side-channel resistance.** The `zk` feature, via the [BlindFold](../../how/blindfold.md) protocol, makes proofs zero-knowledge with respect to the verifier. However, Jolt's prover implementation is **not constant-time** and makes no claims of resistance to side-channel attacks. A party that observes prover execution (timing, memory access patterns, power consumption, etc.) may learn information about private inputs. Do not run the prover on secret data in adversarial environments without additional mitigations.
 
 ## Standard Library
