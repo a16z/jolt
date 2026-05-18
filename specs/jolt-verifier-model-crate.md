@@ -427,6 +427,257 @@ Stage implementation rules:
 - use `jolt-r1cs` and `jolt-blindfold` for ZK verifier-equation constraints;
 - return named values needed by later stages instead of writing into a map.
 
+## Incremental Testing Strategy
+
+There is no modular `jolt-prover` yet, so native prover/verifier parity is not
+available for this crate. Until that exists, completeness is established by
+using real `jolt-core` prover output and converting it through `compat` into the
+`jolt-verifier` proof/preprocessing model. Soundness is established in two
+tracks: transitivity against proofs rejected by the existing core verifier, and
+direct tampering of every verifier-owned input field.
+
+The integration-test layout should be:
+
+```text
+crates/jolt-verifier/tests/
+  completeness.rs      # Cargo integration-test target for the folder below
+  soundness.rs         # Cargo integration-test target for the folder below
+  support/
+    mod.rs             # shared test-only checkpoint and fixture metadata
+
+  completeness/
+    mod.rs
+    fixtures.rs
+    cases.rs
+    standard.rs
+    zk.rs
+    advice.rs
+
+  soundness/
+    mod.rs
+    fixtures.rs
+    core_transitivity/
+      mod.rs
+      preamble.rs
+      commitments.rs
+      proof_shape.rs
+      openings.rs
+      configs.rs
+      zk.rs
+    tampering/
+      mod.rs
+      preamble.rs
+      commitments.rs
+      proof_shape.rs
+      sumcheck.rs
+      openings.rs
+      configs.rs
+      output_claims.rs
+      zk.rs
+```
+
+The root `completeness.rs` and `soundness.rs` files exist only because Cargo
+discovers integration-test targets at the top level of `tests/`; the test logic
+belongs in the two folders. Use `core_transitivity/` for the Rust path of the
+core-transitivity soundness track.
+
+### Checkpoints
+
+Tests must be stage-gated so they can be unlocked as the verifier is ported.
+Use a shared checkpoint enum in the test harness:
+
+```rust
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum VerifierCheckpoint {
+    Preamble,
+    Commitments,
+    Stage1,
+    Stage2,
+    Stage3,
+    Stage4,
+    Stage5,
+    Stage6,
+    Stage7,
+    Stage8Openings,
+    Zk,
+    Full,
+}
+```
+
+Each test case declares the first checkpoint where the case is meaningful:
+
+```rust
+struct TestCase {
+    name: &'static str,
+    zk: bool,
+    fixture: FixtureId,
+    first_checked_at: VerifierCheckpoint,
+}
+```
+
+The harness has a single configured horizon, initially `Commitments` or
+`Stage1`. A completeness case passes when a valid core proof reaches the
+configured horizon. Before the full verifier exists, reaching the next
+unimplemented stage is success; after the full verifier exists, success means
+`Ok(())`.
+
+A soundness case is skipped or left ignored until
+`horizon >= first_checked_at`. Once unlocked, the modular verifier must reject
+the tampered proof at or before the configured horizon. This lets each stage add
+both positive and negative coverage without waiting for the whole verifier.
+
+Checkpointing is test-harness metadata only. It must not leak into the public
+verifier API, production verifier structs, or production `VerifierError`
+variants. The harness owns the current frontier:
+
+```rust
+const CURRENT_VERIFIER_FRONTIER: VerifierCheckpoint = VerifierCheckpoint::Commitments;
+```
+
+The harness interprets results relative to this frontier:
+
+- valid proof + `Ok(())` passes when the full verifier is implemented;
+- valid proof + `VerifierError::Unimplemented` passes only when the configured
+  frontier says the proof was expected to reach currently unimplemented code;
+- tampered proof whose `first_checked_at <= CURRENT_VERIFIER_FRONTIER` must
+  return a real verifier rejection, not `Ok(())` or the generic unimplemented
+  sentinel;
+- tampered proof whose first observable checkpoint is after the current frontier
+  remains ignored or skipped.
+
+If finer-grained progress is needed before production stages exist, add
+`cfg(test)` or integration-test helper code that calls explicit verifier
+substeps directly. Do not add checkpoint fields to production errors just to
+support the harness.
+
+### Completeness
+
+Completeness tests produce or load real proofs from `jolt-core`, convert them
+through `compat`, and assert:
+
+```text
+if core verifier accepts the proof, jolt-verifier accepts it through the
+configured checkpoint.
+```
+
+The fixture matrix should cover:
+
+- standard mode and ZK mode;
+- programs with and without trusted advice;
+- different public input/output payload sizes, including empty inputs and
+  trailing-zero outputs;
+- panic and non-panic public I/O;
+- small traces that can be generated live in CI;
+- larger traces stored as fixtures once regeneration is too expensive;
+- memory/RAM-heavy programs, register-heavy programs, instruction-lookup-heavy
+  programs, and bytecode edge cases;
+- multiple `ReadWriteConfig` and `OneHotConfig` shapes, including boundary
+  values.
+
+Fixtures should include enough metadata to be self-describing:
+
+```text
+FixtureMetadata
+- fixture id
+- program/case name
+- mode: standard or ZK
+- feature set used to generate it
+- public I/O digest
+- preprocessing digest
+- trace length and RAM domain size
+- whether trusted advice is present
+- expected core verifier result
+```
+
+Small fixtures should be generated live by default. Expensive fixtures may be
+checked in as serialized core artifacts with regeneration commands documented
+next to the fixture. The compatibility boundary under test is always:
+
+```text
+jolt-core proof/preprocessing/public I/O
+  -> compat conversion
+  -> JoltVerifierPreprocessing + JoltProof
+  -> jolt-verifier::verify(...)
+```
+
+### Soundness: Core Transitivity
+
+Core-transitivity tests use `jolt-core` as the oracle. For each invalid proof or
+edge case:
+
+```text
+if core verifier rejects the artifact, jolt-verifier must also reject once the
+relevant checkpoint is implemented.
+```
+
+This track should include proofs made invalid through mutations to core proof
+artifacts before compat conversion, especially:
+
+- public I/O mismatches;
+- wrong trusted advice commitment;
+- changed preprocessing/verifier setup;
+- malformed or inconsistent proof mode;
+- missing or extra opening claims in standard mode;
+- missing or extra BlindFold proof in ZK mode;
+- changed configs, trace length, or RAM domain size;
+- tampered commitments, sumcheck proof payloads, opening proof payloads, and
+  final output claims.
+
+Intentional hardening differences are allowed only when documented in the test
+case metadata. The default rule is strict transitivity: reject if core rejects.
+
+### Soundness: Direct Tampering
+
+Direct tampering tests operate after compat conversion against
+`JoltVerifierPreprocessing`, `JoltProof`, public I/O, and verifier inputs. They
+should attempt to mutate every field that the verifier consumes, including:
+
+- preamble data: public inputs, public outputs, panic flag, memory layout,
+  trace length, RAM domain size, entry address, preprocessing digest;
+- commitments: committed-polynomial order, values, duplicates, missing entries,
+  trusted advice commitment, untrusted advice commitment;
+- proof shape: clear vs committed stage proofs, mixed modes, opening claims in
+  ZK mode, BlindFold proofs in standard mode;
+- configs: every `JoltReadWriteConfig` and `JoltOneHotConfig` field, zero and
+  out-of-range values, truncating numeric conversions;
+- sumchecks: claimed sums, round polynomials or round commitments, compressed
+  coefficients, first-round uni-skip proofs, final claims, batching
+  coefficients once exposed;
+- stage claim inputs: stage input/output claim formulas, MLE final claims,
+  consistency claims, same-evaluation checks, output-claim checks;
+- openings: missing/extra claims, wrong points, wrong values, wrong PCS proof,
+  opening order mismatches, duplicate claims;
+- ZK: wrong vector-commitment setup, wrong BlindFold proof, tampered committed
+  round proofs, mismatched Dory ZK evaluation commitment, and malformed
+  BlindFold public inputs.
+
+Every tamper case should declare the checkpoint where the mutation must first be
+observable. For example, a proof-shape mutation is checked at `Preamble` or
+`Commitments`; an output-claim mutation is checked at the stage that verifies
+the final claim expression or at `Stage8Openings`; a BlindFold mutation is
+checked at `Zk`.
+
+### Running
+
+The default package test run should keep long-running or future-stage tests
+ignored. Focused commands should make it easy to run one track:
+
+```bash
+cargo nextest run -p jolt-verifier --cargo-quiet
+cargo nextest run -p jolt-verifier --features core-fixtures --cargo-quiet
+cargo nextest run -p jolt-verifier --features jolt-core-compat,zk --cargo-quiet
+cargo nextest run -p jolt-verifier --features core-fixtures,zk --cargo-quiet
+```
+
+Use `jolt-core-compat` when only conversion code needs to compile. Use
+`core-fixtures` when tests should live-generate `jolt-core` proofs; it enables
+`jolt-core-compat` plus the `jolt-core/host` fixture-generation path.
+
+As stages land, tests should move from ignored to active when they are cheap and
+stable enough for the default package run. Expensive fixture-generation tests
+can remain ignored permanently, but their loaded-fixture equivalents should be
+active once the verifier can reach their checkpoint.
+
 ## Implementation Steps
 
 Each step should be reviewed before the next step begins.
@@ -471,15 +722,16 @@ Review criteria:
 - Transcript-sensitive operations are visible.
 - Generic verifier compiles with the concrete compatibility stack in tests.
 
-### 3. Claim Evaluation Pattern And Differential Test Harness
+### 3. Claim Evaluation Pattern And Incremental Test Harness
 
 Objective: establish the modular pattern for final sumcheck/MLE claim checks
-and set up the target end-to-end tests against the Step 2 API.
+and set up the incremental completeness/soundness harness against the Step 2
+API.
 
 Tasks:
 
 - Define how a stage evaluates `jolt-claims` input and output expressions
-  using explicit stage-local resolved claims, not an accumulator or catch-all
+  using explicit stage-local claim inputs, not an accumulator or catch-all
   context.
 - Define the `jolt-sumcheck` verifier return shape needed by `jolt-verifier`,
   including final evaluation claims, per-instance batching coefficients, and
@@ -488,33 +740,52 @@ Tasks:
   `sumcheck_final_claim == evaluated_output_expression`.
 - Document the ZK-mode lowering of the same output expression into BlindFold
   final-output constraints.
-- Add ignored integration-test skeletons for standard and ZK compatibility
-  against real `jolt-core` prover output.
-- Add ignored differential-test skeletons that compare old core verifier
-  acceptance against `jolt-verifier` acceptance once implemented.
+- Add `tests/completeness/` integration-test skeletons that use real
+  `jolt-core` prover output, cast through `compat`, and check that accepted core
+  proofs reach the configured verifier checkpoint.
+- Add `tests/soundness/core_transitivity/` skeletons that use `jolt-core`
+  rejection as the oracle and require `jolt-verifier` rejection once the
+  relevant checkpoint is implemented.
+- Add `tests/soundness/tampering/` skeletons that mutate verifier inputs after
+  compat conversion, with each mutation labeled by the first checkpoint that
+  must observe it.
+- Add shared fixture metadata and checkpoint gating so individual stage tests
+  can be unignored or activated as each verifier stage lands.
 
 Review criteria:
 
 - The MLE/final-claim pattern is explicit, typed, and local to each stage.
 - `jolt-claims` and `jolt-sumcheck` compose without a verifier accumulator.
-- E2E tests are present as clear targets but do not block the partially ported
-  verifier.
+- Completeness and soundness tests are present as clear targets but do not block
+  the partially ported verifier.
+- Every future-stage soundness case records the checkpoint where it becomes
+  enforceable.
 
 ### 4. Typed Opening Conversion
 
-Objective: convert compatibility opening claims into typed stage inputs.
+Objective: convert compatibility opening claims into verifier-native typed
+opening inputs without letting legacy IDs or point construction leak into stage
+logic.
 
 Tasks:
 
-- Convert legacy standard-mode opening maps into `EvaluationClaim<F>` values.
-- Define stage-local opening views where first needed.
+- Convert legacy standard-mode opening maps into named opening-claim scalars
+  keyed by `jolt_claims::protocols::jolt::JoltOpeningId`.
+- Define stage-local opening views where first needed. These views should pair
+  named opening scalars with stage-derived `jolt_poly::Point<F>` values only
+  when the stage has the information needed to choose the point order.
 - Add missing/extra checks for selected proof mode and shape.
-- Add an `OpeningPlan` skeleton in or near `stage8.rs`.
+- Add an `OpeningPlan` skeleton in or near `stage8.rs` that assembles full
+  `jolt_openings::EvaluationClaim<F>` / verifier opening claims from typed
+  commitments, stage-derived points, and named opening scalars.
 
 Review criteria:
 
-- Stage code receives named openings, not legacy IDs.
+- Stage code receives named opening scalars and stage-local opening views, not
+  legacy IDs.
 - Opening points use `jolt_poly::Point<F>`.
+- Full `EvaluationClaim<F>` values are assembled only once the verifier has
+  both the scalar claim and the stage-derived point.
 - No top-level opening wrapper is introduced without concrete need.
 
 ### 5. Stage 1: Spartan Outer Split
@@ -671,19 +942,26 @@ Review criteria:
 
 ### 14. End-To-End Compatibility
 
-Objective: verify existing prover output.
+Objective: activate the full compatibility and soundness harness against
+existing prover output.
 
 Tasks:
 
-- Add a minimal compatibility fixture path.
-- Add at least one concrete Dory/Pedersen/Blake2b test instantiation.
+- Unignore or activate the full-checkpoint completeness tests for standard and
+  ZK fixtures.
+- Add at least one concrete Dory/Pedersen/Blake2b test instantiation that runs
+  through the full verifier.
 - Add `muldiv` coverage in standard and ZK modes.
-- Compare failures against the existing verifier where practical.
+- Activate core-transitivity tests whose checkpoints are fully implemented.
+- Activate direct tampering tests whose checkpoints are fully implemented.
+- Document any intentional hardening difference from the existing core verifier.
 
 Review criteria:
 
-- At least one existing prover proof verifies in `jolt-verifier`.
+- Existing prover proofs verify in `jolt-verifier` through the completeness
+  harness.
 - Standard and ZK modes are both covered.
+- Soundness tests reject tampered artifacts at the correct checkpoints.
 - Any intentional hardening difference is documented.
 
 ## API Pressure Log
@@ -737,13 +1015,13 @@ cargo nextest run -p jolt-blindfold --cargo-quiet
 
 - `JoltProof` lives in `jolt-verifier`. Do not introduce a shared `jolt-proof`
   crate for this model.
-- Verifier preprocessing should be derived from `jolt-program` data or live in
-  `jolt-program` when the semantics are shared by prover and verifier.
-  `jolt-verifier` should not grow a parallel preprocessing model unless the data
-  is verifier-specific.
-- Differential compatibility tests should use real proofs produced by
-  `jolt-core`. Do not use synthetic proof fixtures while there is no
-  `jolt-prover` crate producing modular-native proofs.
+- Verifier preprocessing should compose reusable `jolt-program` data with
+  verifier-owned PCS/VC setup. Program preprocessing semantics stay in
+  `jolt-program`; verifier setup ownership stays in `jolt-verifier`.
+- Compatibility tests should use real proofs produced by `jolt-core`. Do not
+  use synthetic proof fixtures while there is no `jolt-prover` crate producing
+  modular-native proofs. Serialized fixtures are allowed when they are real
+  `jolt-core` artifacts with regeneration commands and metadata.
 - Do not expose convenience aliases for the Dory/Pedersen/Blake2b stack as part
   of the normal public API. Concrete aliases or helper types may exist under
   `cfg(test)` for integration tests.

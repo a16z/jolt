@@ -14,6 +14,7 @@ workspace = true
 [features]
 default = ["transcript-blake2b"]
 jolt-core-compat = ["dep:ark-bn254", "dep:jolt-core", "dep:jolt-dory"]
+core-fixtures = ["jolt-core-compat", "jolt-core/host"]
 zk = ["jolt-core?/zk"]
 transcript-blake2b = []
 transcript-keccak = []
@@ -40,3 +41,5 @@ thiserror.workspace = true
 
 [dev-dependencies]
 jolt-core = { workspace = true, features = ["minimal"] }
+jolt-dory = { path = "../jolt-dory" }
+postcard = { workspace = true, features = ["use-std"] }

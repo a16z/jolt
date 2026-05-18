@@ -3209,6 +3209,7 @@ dependencies = [
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
+ "postcard",
  "serde",
  "thiserror 2.0.18",
 ]

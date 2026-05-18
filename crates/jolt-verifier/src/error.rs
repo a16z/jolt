@@ -1,5 +1,7 @@
 //! Verifier error types.
 
+use jolt_claims::protocols::jolt::{JoltChallengeId, JoltOpeningId, JoltPublicId, JoltStageId};
+
 #[derive(Debug, thiserror::Error)]
 pub enum VerifierError {
     #[error("proof field {field} must be clear for non-ZK verification")]
@@ -37,6 +39,37 @@ pub enum VerifierError {
 
     #[error("invalid RAM domain size {got}; expected a power of two")]
     InvalidRamK { got: usize },
+
+    #[error("missing stage claim opening input {id:?}")]
+    MissingStageClaimOpening { id: JoltOpeningId },
+
+    #[error("missing stage claim challenge input {id:?}")]
+    MissingStageClaimChallenge { id: JoltChallengeId },
+
+    #[error("missing stage claim public input {id:?}")]
+    MissingStageClaimPublic { id: JoltPublicId },
+
+    #[error("stage {stage:?} opening inputs {left:?} and {right:?} must have the same evaluation")]
+    StageClaimOpeningMismatch {
+        stage: JoltStageId,
+        left: JoltOpeningId,
+        right: JoltOpeningId,
+    },
+
+    #[error("stage {stage:?} claim expressions must evaluate to the same value")]
+    StageClaimExpressionMismatch { stage: JoltStageId },
+
+    #[error("stage {stage:?} sumcheck degree {degree} is invalid")]
+    InvalidStageSumcheckDegree { stage: JoltStageId, degree: usize },
+
+    #[error("stage {stage:?} compressed sumcheck proof requires a Boolean domain")]
+    CompressedStageClaimRequiresBooleanDomain { stage: JoltStageId },
+
+    #[error("stage {stage:?} sumcheck verification failed: {reason}")]
+    StageClaimSumcheckFailed { stage: JoltStageId, reason: String },
+
+    #[error("stage {stage:?} sumcheck output does not match evaluated output claim")]
+    StageClaimOutputMismatch { stage: JoltStageId },
 
     #[error("verifier functionality has not been implemented yet")]
     Unimplemented,

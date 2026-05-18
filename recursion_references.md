@@ -674,6 +674,177 @@ Net effect for Groth16:
 - The Groth16 circuit generator must know those formulas. This fits better with `jolt-claims` + `jolt-sumcheck::r1cs` than with blindly recording a monolithic `jolt-core` verifier that does not understand FR opcodes.
 - The R1CS matrix-evaluation estimate above changes from `19` base rows to `32` rows. With structured lowering, the inner row-evaluation portion scales roughly with row count: expect something closer to `80` constraints for the inner matrix eval and maybe `100-160` for the full Spartan outer expression, excluding Poseidon/hash constraints. This is still small compared with transcript hashing and full verifier wrapping.
 
+### Field-Op Protocol Semantics
+
+The clean intuition is that each protocol component owns one kind of truth:
+
+```text
+1. Bytecode / flags
+   "Which instruction is this cycle?"
+
+2. Normal register Twist
+   "Are the x-register reads/writes consistent over time?"
+
+3. FR register Twist
+   "Are the field-register reads/writes consistent over time?"
+
+4. Product virtualization
+   "Is this product column actually left * right?"
+
+5. R1CS rows
+   "Do the values touched by this instruction satisfy the instruction equation?"
+```
+
+For a pure FR op:
+
+```text
+FMUL f2, f0, f1
+```
+
+the intended semantics decompose as:
+
+```text
+Bytecode:
+  this row is IsFieldMul, with frd=2, frs1=0, frs2=1
+
+FR Twist:
+  FieldRs1Value = current FReg[0]
+  FieldRs2Value = current FReg[1]
+  FieldRdValue  = new FReg[2]
+  and the write to FReg[2] updates the field-register timeline correctly
+
+Product virtualization:
+  Product = LeftInstructionInput * RightInstructionInput
+
+R1CS:
+  LeftInstructionInput  = FieldRs1Value
+  RightInstructionInput = FieldRs2Value
+  Product               = FieldRdValue
+```
+
+Together:
+
+```text
+new FReg[2] = old FReg[0] * old FReg[1]
+```
+
+For an additive FR op:
+
+```text
+FADD f2, f0, f1
+```
+
+there is no need for product virtualization:
+
+```text
+FR Twist:
+  binds FieldRs1Value, FieldRs2Value, FieldRdValue to the FR register file
+
+R1CS:
+  FieldRs1Value + FieldRs2Value = FieldRdValue
+```
+
+For a bridge op:
+
+```text
+FieldMov f0, x5
+```
+
+the semantics cross the two register files:
+
+```text
+Normal register Twist:
+  Rs1Value = current XReg[5]
+
+FR Twist:
+  FieldRdValue = new FReg[0]
+
+R1CS:
+  Rs1Value = FieldRdValue
+```
+
+So the split is:
+
+```text
+Twist protocols do not know instruction semantics.
+They only prove memory/register timeline consistency.
+
+R1CS does not know full timeline consistency.
+It only checks local per-cycle equations.
+
+Product virtualization is a helper for one expensive local equation:
+multiplication.
+```
+
+In Sagar's branch, pure FR op cycles are not fully exclusive from the normal register path. `FieldOp` is R-format, so generic trace plumbing can still record incidental `x[rs1]`, `x[rs2]`, and zero-increment `x[rd]` accesses. Those are regular-register bookkeeping, not the field-op semantics. The actual FR semantics come from `fr_meta`, `FieldRegEvent`, FR Twist, and the FR R1CS rows. Bridge ops are the case where the normal register path is semantically important because R1CS ties an `XReg` value to a `FReg` write.
+
+### Open Questions For Sagar
+
+#### Product Virtualization Wiring
+
+I understand the intended FMUL constraint as:
+
+```text
+Product = LeftInstructionInput * RightInstructionInput
+
+IsFieldMul * (LeftInstructionInput  - FieldRs1Value) = 0
+IsFieldMul * (RightInstructionInput - FieldRs2Value) = 0
+IsFieldMul * (Product               - FieldRdValue)  = 0
+```
+
+So semantically this should imply:
+
+```text
+FieldRdValue = FieldRs1Value * FieldRs2Value
+```
+
+The question is about the witness/source of `LeftInstructionInput`, `RightInstructionInput`, and `Product` on `FieldMul` / `FieldInv` cycles. The stage-2 product virtual trace path I looked at still seemed to source those from normal RV instruction inputs, which are `u64/i128` shaped and driven by normal instruction flags. Since `FieldMul` has no `LeftOperandIsRs1Value` / `RightOperandIsRs2Value` flags, I was not sure where full-width `Fr` values get routed into the product-virtual columns.
+
+Question:
+
+```text
+Is there a separate FR-aware product witness path, generated Bolt path, or
+planned change that makes:
+
+  LeftInstructionInput  = FieldRs1Value
+  RightInstructionInput = FieldRs2Value
+  Product               = FieldRs1Value * FieldRs2Value
+
+on FR cycles? Or should this be a distinct FieldProduct relation instead of
+reusing the normal product-virtual columns?
+```
+
+#### Incidental Normal Register Accesses On FieldOp Cycles
+
+Pure `FieldOp` instructions are encoded as R-format instructions, so the generic tracer/register plumbing still appears to capture `rs1`, `rs2`, and `rd` as normal `x` register accesses. For a cycle like:
+
+```text
+FMUL f2, f0, f1
+```
+
+the regular register Twist may still see something like:
+
+```text
+read XReg[0]
+read XReg[1]
+write XReg[2] with zero increment
+```
+
+even though the actual semantics are over `FReg[0]`, `FReg[1]`, and `FReg[2]`.
+
+Question:
+
+```text
+Is that incidental normal-register access intentional and considered harmless
+overhead, or should pure FR arithmetic ops suppress normal x-register
+reads/writes entirely?
+
+Only bridge ops like FieldMov f0, x5 / FieldSLL* seem like they should
+semantically involve normal register Twist. Pure FieldMul / FieldAdd /
+FieldSub / FieldInv should arguably only use FR metadata/events plus
+FR Twist/R1CS.
+```
+
 ### Fit With BlindFold / Modular Claims
 
 The FR coprocessor adds new claim formulas that must be modeled explicitly:
