@@ -65,6 +65,13 @@ The implementation should make proof code depend on logical accessors, not raw
 layout fields. That keeps the row representation benchmarkable: 40B, 48B, 64B,
 and 80B layouts can be compared without changing proof semantics.
 
+The implementation deliverable should be one production representation, not a
+family of permanent layout variants. The code PR should land the accessor API,
+the builder, parity tests, and one selected default layout. Candidate layouts
+may be compared in local benchmark branches or benchmark-only scaffolding, but
+they should not remain as public feature flags or alternate production paths
+unless a later optimization PR makes that explicit.
+
 ### Invariants
 
 - `JoltTraceRow` is proof-facing. It is produced after tracing/decode has been
@@ -171,15 +178,20 @@ and 80B layouts can be compared without changing proof semantics.
 
 - [ ] A new proof-facing row type exists, tentatively named `JoltTraceRow`.
 - [ ] The row type has private physical fields and public logical accessors.
-- [ ] The selected layout has a checked size budget. The initial target should
-      be chosen only after benchmarking the options below; expected candidates
-      are 40B, 48B, 64B, and 80B.
+- [ ] The selected default layout has a checked size budget. The implementation
+      PR ships exactly one production layout; 40B, 48B, 64B, and 80B candidates
+      may inform the choice but should not all land as maintained variants.
 - [ ] A builder constructs `Vec<JoltTraceRow>` once from final trace data and
       bytecode preprocessing.
 - [ ] The builder rejects source-only cycles that do not have a final
       `JoltInstructionRow`.
 - [ ] Unit tests compare every logical accessor against the current
       `Cycle`/`JoltTraceCycle` derivation on representative rows.
+- [ ] A `jolt-eval` parity invariant captures the reference-vs-optimized
+      property that `JoltTraceRow` accessors match the current
+      `Cycle`/`JoltTraceCycle` derivation. The first implementation should at
+      least generate deterministic tests; fuzz/red-team targets may be added
+      once useful trace-row input generation exists.
 - [ ] Focused memory-row tests cover final `LD`, final `SD`, expanded `LB/LH/LW`
       families, expanded `SB/SH/SW` families, LR/SC, and AMO source expansions.
 - [ ] `R1CSCycleInputs::from_trace` or its replacement consumes
@@ -195,7 +207,7 @@ and 80B layouts can be compared without changing proof semantics.
 - [ ] If the chosen trace-row layout relies on bytecode metadata lookups, a
       compact bytecode-row design is implemented or explicitly deferred with
       benchmark evidence showing the current 48-byte `JoltInstructionRow` table
-      is not the bottleneck.
+      is not a material bottleneck under the performance gate below.
 - [ ] Any `u32` `bytecode_pc` or compact bytecode index has a checked
       construction path and a test for overflow/rejection.
 - [ ] Proving code does not depend directly on the physical width of
@@ -220,6 +232,11 @@ Add focused tests:
 
 - `JoltTraceRow` accessor parity tests against raw `Cycle` for all final Jolt
   instruction kinds supported by the selected profile.
+- a `jolt-eval` invariant, tentatively `trace_row_accessor_parity`, that checks
+  each logical accessor against the existing reference derivation through
+  `Cycle`/`JoltTraceCycle`. This is the stable guard for future layout changes:
+  alternate physical storage is allowed only when the logical accessor outputs
+  remain unchanged.
 - property-style tests over random final rows where the old `Cycle` path can
   generate meaningful register/RAM state.
 - expansion-driven tests for source memory instructions proving that source
@@ -249,6 +266,37 @@ least these measurements:
 - bytecode read-RAF time;
 - cache behavior when bytecode is small, medium, and intentionally large enough
   that repeated bytecode metadata lookups may miss cache.
+
+Performance is a gate for the implementation PR, not just an informational
+appendix. The selected layout should satisfy:
+
+- no proof, verifier, or serialization correctness changes;
+- no more than a 2% end-to-end prover-time regression on
+  `prover_time_fibonacci_100` and `prover_time_sha2_chain_100`, measured against
+  the same base revision on the same machine with the same feature set;
+- material trace-row storage smaller than today's 96-byte `Cycle`, preferably
+  no larger than 64 bytes unless the expanded layout has clear phase-level
+  evidence, with a checked `size_of::<JoltTraceRow>()` assertion;
+- phase-level measurements for Spartan outer, RAM/register phases,
+  instruction lookup read-RAF, and bytecode read-RAF recorded as diagnostic
+  evidence for the layout choice.
+
+If benchmark variance makes a 2% wall-clock decision unreliable, the code PR
+should report the raw measurements and profile evidence and choose the smaller
+or simpler layout unless there is a clear phase-level win.
+
+Compact bytecode rows may be deferred only with named benchmark or profile
+evidence. Acceptable evidence includes one of:
+
+- lookup-heavy and ordinary guest benchmarks, including
+  `prover_time_fibonacci_100` and `prover_time_sha2_chain_100`, showing the
+  trace-row layout is neutral within the 2% end-to-end gate while keeping current
+  `Vec<JoltInstructionRow>` bytecode storage;
+- profiler data showing bytecode metadata lookup/read-RAF is less than 5% of
+  end-to-end prover time for the selected layout and is not the source of a
+  measured phase regression;
+- a direct comparison showing a compact bytecode prototype does not materially
+  improve the selected layout on the named benches.
 
 Expected layout targets:
 
@@ -550,7 +598,8 @@ Cons:
   preprocessing.
 
 This is the likely default if benchmarks show that repeated bytecode lookups
-are costly.
+are costly. Otherwise, the implementation should prefer the smallest layout
+that satisfies the accessor contract and performance gate.
 
 #### Option D: Address-Cached Row
 
@@ -998,17 +1047,22 @@ Suggested implementation slices:
    such as `BytecodePc(u32)` and any compact PC offsets.
 3. Add a construction pass that builds `Vec<JoltTraceRow>` once in the prover
    setup path.
-4. If benchmarks favor lookup-heavy trace rows, add `CompactBytecodeRow` or an
+4. Choose and land one production layout. Benchmark-only alternatives can exist
+   during development, but the merged implementation should expose a single
+   default representation behind the accessor API.
+5. If benchmarks favor lookup-heavy trace rows, add `CompactBytecodeRow` or an
    equivalent proof-facing bytecode table before relying on repeated
    `bytecode_pc` lookups in hot loops.
-5. Cut `R1CSCycleInputs` and Spartan outer loops over to `JoltTraceRow`.
-6. Cut RAM/register/instruction-lookup/bytecode phases over to
+6. Cut `R1CSCycleInputs` and `ProductCycleInputs` over to `JoltTraceRow`.
+7. Cut Spartan outer loops over to `JoltTraceRow` or derived phase-local
+   columns.
+8. Cut RAM/register/instruction-lookup/bytecode phases over to
    `JoltTraceRow` accessors or derived phase-local columns.
-7. Remove proof hot-path `JoltTraceCycle::try_new` usage.
-8. Benchmark 40B, 48B, 64B, and 80B candidate layouts behind the same accessor
-   API, including current versus compact bytecode tables.
-9. Choose the default layout, keep size assertions, and document any deferred
-   performance work.
+9. Add the `jolt-eval` accessor-parity invariant and keep size assertions.
+10. Remove proof hot-path `JoltTraceCycle::try_new` usage once each phase is cut
+    over.
+11. Document the selected layout, the benchmark evidence, and any explicitly
+    deferred bytecode compaction work.
 
 Implementation should prefer `#[inline(always)]` for tiny accessors that sit in
 sumcheck loops, but only after confirming they are on hot paths. The row type
@@ -1023,5 +1077,6 @@ should remain `Copy`, and construction should avoid heap allocation per row.
   `tracer/src/instruction/mod.rs::rv64imac_cycle_size`
 - Current R1CS memory/register equality constraints:
   `jolt-core/src/zkvm/r1cs/constraints.rs`
-- Companion C++ tracer prior art:
-  `jolt-cpp/src/tracer/trace_owner.hpp`
+- Companion C++ tracer prior art in Quang's local companion checkout, not a
+  repo-local `a16z/jolt` path:
+  `/Users/quang.dao/Documents/SNARKs/jolt-cpp/src/tracer/trace_owner.hpp`
