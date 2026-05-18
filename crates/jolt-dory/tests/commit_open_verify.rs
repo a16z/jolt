@@ -112,7 +112,13 @@ impl CommitmentSource<Fr> for DenseSource<'_> {
         V: for<'row> FnMut(usize, SourceRow<'row, Fr>),
     {
         for (row_index, row) in self.evaluations.chunks(chunk_len).enumerate() {
-            visit(row_index, SourceRow::FieldElements(row));
+            visit(
+                row_index,
+                SourceRow::StridedFieldElements {
+                    values: row,
+                    column_stride: 1,
+                },
+            );
         }
     }
 
@@ -177,7 +183,10 @@ impl BatchCommitmentSource<Fr> for DenseBatch {
                         let end = start + chunk_len;
                         visit(
                             id,
-                            SourceRow::FieldElements(&self.evaluations[id][start..end]),
+                            SourceRow::StridedFieldElements {
+                                values: &self.evaluations[id][start..end],
+                                column_stride: 1,
+                            },
                         )
                     })
                     .collect()
@@ -244,7 +253,13 @@ impl BatchCommitmentSource<Fr> for I128Batch {
                     .map(|&id| {
                         let start = row_index * chunk_len;
                         let end = start + chunk_len;
-                        visit(id, SourceRow::I128(&self.rows[id][start..end]))
+                        visit(
+                            id,
+                            SourceRow::StridedI128 {
+                                values: &self.rows[id][start..end],
+                                column_stride: 1,
+                            },
+                        )
                     })
                     .collect()
             })

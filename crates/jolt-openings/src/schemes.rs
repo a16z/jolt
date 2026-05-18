@@ -61,11 +61,14 @@ pub trait CommitmentSchemeVerifier: Commitment + Clone + Send + Sync + 'static {
 /// cannot: their verifier setup contains trapdoor-derived elements generated
 /// during setup, so verifier-only code should receive the verifier setup as an
 /// input rather than pretending it can derive it from public generators.
-pub trait PublicVerifierSetup: CommitmentSchemeVerifier {
+///
+/// This is separate from [`CommitmentSchemeVerifier`] so verifier code can stay
+/// generic over schemes that require a supplied verifier key.
+pub trait VerifierSetupFromPublicParams: CommitmentSchemeVerifier {
     type PublicParams;
 
     /// Builds verifier setup directly from public parameters.
-    fn verifier_setup(params: Self::PublicParams) -> Self::VerifierSetup;
+    fn verifier_setup_from_public_params(params: Self::PublicParams) -> Self::VerifierSetup;
 }
 
 /// Prover-side interface for a polynomial commitment scheme.
@@ -77,8 +80,8 @@ pub trait CommitmentScheme: CommitmentSchemeVerifier {
     /// Builds prover and verifier setup.
     fn setup(params: Self::SetupParams) -> (Self::ProverSetup, Self::VerifierSetup);
 
-    /// Projects prover setup down to verifier setup.
-    fn project_verifier_setup(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup;
+    /// Derives verifier setup from prover setup.
+    fn prover_to_verifier_setup(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup;
 
     /// Commits to one source.
     fn commit<S: CommitmentSource<Self::Field> + ?Sized>(

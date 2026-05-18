@@ -312,11 +312,11 @@ where
         let mut rng = rand_core::OsRng;
         let max_degree = 1usize << max_num_vars;
         let prover = HyperKZGScheme::setup(&mut rng, max_degree, g1, g2);
-        let verifier = Self::project_verifier_setup(&prover);
+        let verifier = Self::prover_to_verifier_setup(&prover);
         (prover, verifier)
     }
 
-    fn project_verifier_setup(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {
+    fn prover_to_verifier_setup(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {
         HyperKZGVerifierSetup::from(prover_setup)
     }
 
@@ -401,7 +401,7 @@ mod tests {
         let g1 = Bn254::g1_generator();
         let g2 = Bn254::g2_generator();
         let prover = TestScheme::setup(&mut rng, max_degree, g1, g2);
-        let verifier = TestScheme::project_verifier_setup(&prover);
+        let verifier = TestScheme::prover_to_verifier_setup(&prover);
         (prover, verifier)
     }
 

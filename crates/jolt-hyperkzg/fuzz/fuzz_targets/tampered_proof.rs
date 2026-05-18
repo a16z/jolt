@@ -29,7 +29,7 @@ fuzz_target!(|data: &[u8]| {
     let g1 = Bn254::g1_generator();
     let g2 = Bn254::g2_generator();
     let pk = TestScheme::setup(&mut rng, n, g1, g2);
-    let vk = TestScheme::project_verifier_setup(&pk);
+    let vk = TestScheme::prover_to_verifier_setup(&pk);
 
     let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
     let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();

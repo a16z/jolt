@@ -95,39 +95,33 @@ impl OneHotEntries<'_> {
 /// can exploit row structure consume these rows directly. Backends that do not
 /// care about the encoding may interpret the row as field evaluations.
 pub enum SourceRow<'a, F> {
-    /// A dense row of field evaluations.
-    FieldElements(&'a [F]),
-
-    /// A dense row whose entries occupy evenly spaced columns.
+    /// A row whose entries occupy evenly spaced columns.
     ///
     /// `column_stride` is the distance between consecutive occupied columns in
     /// the backend's row view. For example, values with stride `4` occupy
     /// columns `0, 4, 8, ...`; all intervening columns are zero.
+    /// Use stride `1` for a dense row.
     StridedFieldElements {
         values: &'a [F],
         column_stride: usize,
     },
 
-    /// A dense row of signed integers embedded canonically into the field.
+    /// A row of signed integers embedded canonically into the field.
     ///
     /// This preserves small-scalar MSM paths without first materializing field
     /// elements.
-    I128(&'a [i128]),
-
-    /// A strided signed-integer row embedded canonically into the field.
+    /// Use stride `1` for a dense row.
     StridedI128 {
         values: &'a [i128],
         column_stride: usize,
     },
 
-    /// A dense row of unsigned 64-bit integers embedded canonically into the field.
+    /// A row of unsigned 64-bit integers embedded canonically into the field.
     ///
     /// This preserves the common compact-polynomial benchmark and commitment
     /// path without paying the cost of first converting every row entry into a
     /// full-width field element.
-    U64(&'a [u64]),
-
-    /// A strided unsigned-integer row embedded canonically into the field.
+    /// Use stride `1` for a dense row.
     StridedU64 {
         values: &'a [u64],
         column_stride: usize,
@@ -297,7 +291,13 @@ where
 {
     let sigma = chunk_len_to_sigma(chunk_len);
     MultilinearPoly::for_each_row(source, sigma, &mut |row_index, row| {
-        visit(row_index, SourceRow::FieldElements(row));
+        visit(
+            row_index,
+            SourceRow::StridedFieldElements {
+                values: row,
+                column_stride: 1,
+            },
+        );
     });
 }
 
@@ -477,10 +477,6 @@ where
         .natural_chunk_len()
         .unwrap_or_else(|| 1usize << source.num_vars());
     source.for_each_row(chunk_len, |_, row| match row {
-        SourceRow::FieldElements(values) => {
-            flush_one_hot(&mut evaluations, &mut one_hot_chunks);
-            evaluations.extend_from_slice(values);
-        }
         SourceRow::StridedFieldElements {
             values,
             column_stride,
@@ -491,10 +487,6 @@ where
                 evaluations.extend(repeat_n(F::zero(), column_stride.saturating_sub(1)));
             }
         }
-        SourceRow::I128(values) => {
-            flush_one_hot(&mut evaluations, &mut one_hot_chunks);
-            evaluations.extend(values.iter().map(|&value| F::from_i128(value)));
-        }
         SourceRow::StridedI128 {
             values,
             column_stride,
@@ -504,10 +496,6 @@ where
                 evaluations.push(F::from_i128(*value));
                 evaluations.extend(repeat_n(F::zero(), column_stride.saturating_sub(1)));
             }
-        }
-        SourceRow::U64(values) => {
-            flush_one_hot(&mut evaluations, &mut one_hot_chunks);
-            evaluations.extend(values.iter().map(|&value| F::from_u64(value)));
         }
         SourceRow::StridedU64 {
             values,

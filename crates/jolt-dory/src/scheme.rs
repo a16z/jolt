@@ -35,8 +35,8 @@ use jolt_openings::{
     BatchOutputValue, CommitmentScheme, CommitmentSchemeVerifier, CommitmentSource,
     EvaluationCommitmentProver, EvaluationCommitmentScheme, LinearCombinationOpeningSource,
     LinearOpeningScheme, LinearOpeningSchemeVerifier, LinearSourceTerm, OneHotEntries, OneHotRow,
-    OpenedBatchOutput, OpeningClaim, OpeningsError, ProverBatchOpeningTerm, ProverClaim,
-    PublicVerifierSetup, SourceId, SourceRow, VerifierBatchOpeningTerm, ZkBatchOpeningProverResult,
+    OpenedBatchOutput, OpeningClaim, OpeningsError, ProverBatchOpeningTerm, ProverClaim, SourceId,
+    SourceRow, VerifierBatchOpeningTerm, VerifierSetupFromPublicParams, ZkBatchOpeningProverResult,
     ZkBatchOpeningWitness, ZkLinearOpeningScheme, ZkLinearOpeningSchemeVerifier, ZkOpeningScheme,
     ZkOpeningSchemeVerifier,
 };
@@ -902,10 +902,10 @@ impl CommitmentSchemeVerifier for DoryScheme {
     }
 }
 
-impl PublicVerifierSetup for DoryScheme {
+impl VerifierSetupFromPublicParams for DoryScheme {
     type PublicParams = usize;
 
-    fn verifier_setup(max_num_vars: Self::PublicParams) -> DoryVerifierSetup {
+    fn verifier_setup_from_public_params(max_num_vars: Self::PublicParams) -> DoryVerifierSetup {
         Self::setup_verifier(max_num_vars)
     }
 }
@@ -917,11 +917,11 @@ impl CommitmentScheme for DoryScheme {
 
     fn setup(max_num_vars: Self::SetupParams) -> (DoryProverSetup, DoryVerifierSetup) {
         let prover = Self::setup_prover(max_num_vars);
-        let verifier = Self::project_verifier_setup(&prover);
+        let verifier = Self::prover_to_verifier_setup(&prover);
         (prover, verifier)
     }
 
-    fn project_verifier_setup(prover_setup: &DoryProverSetup) -> DoryVerifierSetup {
+    fn prover_to_verifier_setup(prover_setup: &DoryProverSetup) -> DoryVerifierSetup {
         DoryVerifierSetup(prover_setup.0.to_verifier_setup())
     }
 
@@ -1437,23 +1437,39 @@ fn g1_bases_affine(setup: &ArkworksProverSetup, len: usize) -> Vec<G1Affine> {
 
 fn commit_source_row(row: SourceRow<'_, Fr>, ctx: &CommitRowContext<'_>) -> DoryChunkCommitment {
     match row {
-        SourceRow::FieldElements(values) => {
-            DoryChunkCommitment::Dense(commit_field_row(values, ctx.setup))
-        }
         SourceRow::StridedFieldElements {
             values,
             column_stride,
-        } => DoryChunkCommitment::Dense(commit_strided_field_row(values, column_stride, ctx)),
-        SourceRow::I128(values) => DoryChunkCommitment::Dense(commit_i128_row(values, ctx)),
+        } => {
+            let commitment = if column_stride == 1 {
+                commit_field_row(values, ctx.setup)
+            } else {
+                commit_strided_field_row(values, column_stride, ctx)
+            };
+            DoryChunkCommitment::Dense(commitment)
+        }
         SourceRow::StridedI128 {
             values,
             column_stride,
-        } => DoryChunkCommitment::Dense(commit_strided_i128_row(values, column_stride, ctx)),
-        SourceRow::U64(values) => DoryChunkCommitment::Dense(commit_u64_row(values, ctx)),
+        } => {
+            let commitment = if column_stride == 1 {
+                commit_i128_row(values, ctx)
+            } else {
+                commit_strided_i128_row(values, column_stride, ctx)
+            };
+            DoryChunkCommitment::Dense(commitment)
+        }
         SourceRow::StridedU64 {
             values,
             column_stride,
-        } => DoryChunkCommitment::Dense(commit_strided_u64_row(values, column_stride, ctx)),
+        } => {
+            let commitment = if column_stride == 1 {
+                commit_u64_row(values, ctx)
+            } else {
+                commit_strided_u64_row(values, column_stride, ctx)
+            };
+            DoryChunkCommitment::Dense(commitment)
+        }
         SourceRow::OneHot(row) => DoryChunkCommitment::OneHot(commit_one_hot_row(row, ctx)),
     }
 }
@@ -1778,7 +1794,13 @@ mod tests {
             V: for<'row> FnMut(usize, SourceRow<'row, Fr>),
         {
             for (row_index, row) in self.evaluations.chunks(chunk_len).enumerate() {
-                visit(row_index, SourceRow::U64(row));
+                visit(
+                    row_index,
+                    SourceRow::StridedU64 {
+                        values: row,
+                        column_stride: 1,
+                    },
+                );
             }
         }
 
@@ -2164,7 +2186,7 @@ mod tests {
         let mut rng = ChaCha20Rng::seed_from_u64(601);
 
         let prover_setup = DoryScheme::setup_prover(num_vars);
-        let verifier_setup = DoryScheme::project_verifier_setup(&prover_setup);
+        let verifier_setup = DoryScheme::prover_to_verifier_setup(&prover_setup);
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars)
@@ -2210,7 +2232,7 @@ mod tests {
         let mut rng = ChaCha20Rng::seed_from_u64(603);
 
         let prover_setup = DoryScheme::setup_prover(num_vars);
-        let verifier_setup = DoryScheme::project_verifier_setup(&prover_setup);
+        let verifier_setup = DoryScheme::prover_to_verifier_setup(&prover_setup);
 
         let p1 = Polynomial::<Fr>::random(num_vars, &mut rng);
         let p2 = Polynomial::<Fr>::random(num_vars, &mut rng);
@@ -2290,7 +2312,7 @@ mod tests {
         let mut rng = ChaCha20Rng::seed_from_u64(604);
 
         let prover_setup = DoryScheme::setup_prover(num_vars);
-        let verifier_setup = DoryScheme::project_verifier_setup(&prover_setup);
+        let verifier_setup = DoryScheme::prover_to_verifier_setup(&prover_setup);
 
         let p1 = Polynomial::<Fr>::random(num_vars, &mut rng);
         let p2 = Polynomial::<Fr>::random(num_vars, &mut rng);

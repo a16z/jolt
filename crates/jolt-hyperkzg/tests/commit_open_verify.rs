@@ -18,7 +18,7 @@ fn make_setup(max_degree: usize) -> (HyperKZGProverSetup<Bn254>, HyperKZGVerifie
     let g1 = Bn254::g1_generator();
     let g2 = Bn254::g2_generator();
     let pk = KzgPCS::setup(&mut rng, max_degree, g1, g2);
-    let vk = KzgPCS::project_verifier_setup(&pk);
+    let vk = KzgPCS::prover_to_verifier_setup(&pk);
     (pk, vk)
 }
 
@@ -202,8 +202,8 @@ fn deterministic_setup_from_secret() {
 
     let pk1 = KzgPCS::setup_from_secret(beta, 16, g1, g2);
     let pk2 = KzgPCS::setup_from_secret(beta, 16, g1, g2);
-    let _vk1 = KzgPCS::project_verifier_setup(&pk1);
-    let vk2 = KzgPCS::project_verifier_setup(&pk2);
+    let _vk1 = KzgPCS::prover_to_verifier_setup(&pk1);
+    let vk2 = KzgPCS::prover_to_verifier_setup(&pk2);
 
     // Same setup yields same commitments
     let poly = Polynomial::new(vec![Fr::from_u64(1), Fr::from_u64(2)]);

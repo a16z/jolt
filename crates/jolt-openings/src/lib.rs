@@ -12,7 +12,7 @@
 //! CommitmentScheme                commit / commit_batch / open / prove_batch
 //! LinearOpeningScheme             linear source-backed batch openings
 //!
-//! PublicVerifierSetup             verifier_setup from public params
+//! VerifierSetupFromPublicParams derives verifier setup from public params
 //!
 //! AdditivelyHomomorphicVerifier   combine commitments
 //!          │
@@ -45,8 +45,8 @@ pub use homomorphic::{
 pub use schemes::{
     AdditivelyHomomorphic, AdditivelyHomomorphicVerifier, CommitmentScheme,
     CommitmentSchemeVerifier, EvaluationCommitmentProver, EvaluationCommitmentScheme,
-    LinearOpeningScheme, LinearOpeningSchemeVerifier, PublicVerifierSetup, ZkLinearOpeningScheme,
-    ZkLinearOpeningSchemeVerifier, ZkOpeningScheme, ZkOpeningSchemeVerifier,
+    LinearOpeningScheme, LinearOpeningSchemeVerifier, VerifierSetupFromPublicParams,
+    ZkLinearOpeningScheme, ZkLinearOpeningSchemeVerifier, ZkOpeningScheme, ZkOpeningSchemeVerifier,
 };
 pub use sources::{
     materialize_source_evaluations, BatchCommitmentSource, BatchOpeningSource, CommitmentSource,

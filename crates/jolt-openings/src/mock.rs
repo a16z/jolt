@@ -16,7 +16,7 @@ use crate::homomorphic::{homomorphic_prove_batch, homomorphic_verify_batch};
 use crate::schemes::{
     AdditivelyHomomorphic, AdditivelyHomomorphicVerifier, CommitmentScheme,
     CommitmentSchemeVerifier, LinearOpeningScheme, LinearOpeningSchemeVerifier,
-    PublicVerifierSetup, ZkOpeningScheme, ZkOpeningSchemeVerifier,
+    VerifierSetupFromPublicParams, ZkOpeningScheme, ZkOpeningSchemeVerifier,
 };
 use crate::sources::{materialize_source_evaluations, CommitmentSource};
 
@@ -100,10 +100,10 @@ impl<F: Field> CommitmentSchemeVerifier for MockCommitmentScheme<F> {
     }
 }
 
-impl<F: Field> PublicVerifierSetup for MockCommitmentScheme<F> {
+impl<F: Field> VerifierSetupFromPublicParams for MockCommitmentScheme<F> {
     type PublicParams = ();
 
-    fn verifier_setup(_params: Self::PublicParams) -> Self::VerifierSetup {}
+    fn verifier_setup_from_public_params(_params: Self::PublicParams) -> Self::VerifierSetup {}
 }
 
 impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
@@ -115,7 +115,7 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
         ((), ())
     }
 
-    fn project_verifier_setup(_prover_setup: &()) {}
+    fn prover_to_verifier_setup(_prover_setup: &()) {}
 
     fn commit<S: CommitmentSource<Self::Field> + ?Sized>(
         source: &S,
