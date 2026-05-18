@@ -93,7 +93,7 @@ Measured at `log_T = 18` on the FR-active Poseidon2 workload:
 Memory-shape change:
 
 - **Host-side**: the host now carries a single sparse `FieldRegReplay` (~few KB) instead of 5 dense K_FR×T buffers (`field_reg_val`, `frs1_ra`, `frs2_ra`, `frd_wa`, `frd_inc`). For `log_T = 18`, that is a reduction from ~520 MB of host-side scratch to ~9K sparse entries.
-- **Kernel-side**: the transient K_FR×T materialization that the previous (Phase 4 first-pass) kernel performed inside Stage 4 has been eliminated — the sparse Hamming round-poly walks `entries: Vec<SparseFieldRegEntry<F>>` directly. Estimated kernel-side transient saving ~3 GB at `log_T = 18`.
+- **Kernel-side**: the transient K_FR×T materialization that the original Stage 4 RW kernel performed has been eliminated — the sparse Hamming round-poly walks `entries: Vec<SparseFieldRegEntry<F>>` directly. Estimated kernel-side transient saving ~3 GB at `log_T = 18`.
 
 There are no `jolt-eval` objectives tied specifically to FR today. The relevant cross-cutting objectives (Stage 4 prove time, peak RSS at `log_T = 18`) move in the FR-active direction; FR-inactive traces (e.g. `muldiv`) are functionally unchanged because `replay.events.is_empty()` short-circuits every sparse code path to `F::zero()`.
 
@@ -129,7 +129,7 @@ Data flow, in execution order:
 
 ### Alternatives Considered
 
-- **Dense K_FR×T materialization** (the original Phase 4 first-pass kernel): kept the kernel code identical in shape to the integer-register Twist but blew up host RAM by ~520 MB at `log_T = 18` and forced kernel-side transient allocations of ~3 GB. Replaced with the current sparse representation (`SparseFieldRegState`) once the sparse round-poly + per-cycle entries were proven equivalent against the dense path on small synthetic inputs.
+- **Dense K_FR×T materialization** (the first Stage 4 RW kernel): kept the kernel code identical in shape to the integer-register Twist but blew up host RAM by ~520 MB at `log_T = 18` and forced kernel-side transient allocations of ~3 GB. Replaced with the current sparse representation (`SparseFieldRegState`) once the sparse round-poly + per-cycle entries were proven equivalent against the dense path on small synthetic inputs.
 - **New `OracleGeneration` variant for FR**: rejected. FR polynomials fit the existing `DenseTrace` (FieldRegInc) and `OneHotChunk` (FieldRegRa_d) shapes; virtual oracles (`FieldRegVal`, `Wa`, `RaRs1`, `RaRs2`) are declared as `Reference` in Stage 4/5 phases. Keeping the oracle taxonomy unchanged limited blast radius on MLIR plumbing.
 - **Threading FR through Stage 1 outer Spartan as full-precision Fr field values**: would double the per-cycle witness footprint. Instead `Stage1Rv64Cycle` carries the four-limb natural form (`field_rs1/2/d: [u64; 4]`) and the conversion to `F` happens at the Stage 3 sumcheck boundary via `fr_limbs_to_field` (`stage3.rs:2468-2476`).
 - **Multi-cycle FAssertEq**: rejected for simplicity. The single-cycle constraint `V_FIELD_RS1 − V_FIELD_RS2 = 0` is sufficient; the SDK couples it with the 4×`ADVICE_LD` + 7-cycle Horner reconstruction so the advice limbs are bound natively.
@@ -140,9 +140,9 @@ No `book/` changes required for this internal coprocessor — guest authors inte
 
 ## Execution
 
-The shipped implementation followed the five-phase port plan previously captured in `specs/fr-v2-port-plan.md` (now deleted; superseded by this spec). Key deviations from the plan:
+Notes on what was built vs. early sketches:
 
-- The Phase-5b dense K_FR×T materializers landed first and were then replaced wholesale by `SparseFieldRegState` (Stage 4) and `frd_wa_at_field_reg_address` (Stage 5). Only `materialize_frd_inc` remains in `field_reg.rs`.
+- The initial dense K_FR×T materializers landed first and were then replaced wholesale by `SparseFieldRegState` (Stage 4) and `frd_wa_at_field_reg_address` (Stage 5). Only `materialize_frd_inc` remains in `field_reg.rs`.
 - The originally planned `FrCycleData` + `replay_field_regs` helpers were removed once the Stage 4 sparse path subsumed their use cases.
 - `field_reg_d` stayed at 0 (`crates/bolt/src/protocols/jolt/params.rs:58`) — the FR oracle family (`FieldRegInc`, `FieldRegRa_*`) is registered on the MLIR side but not yet committed, since the in-process `FieldRegReplay` → Stage 4/5 path supplies the same witness without needing committed oracles.
 
@@ -155,14 +155,13 @@ Tracked here for visibility; none block the "shipped" status:
    - `SparseFieldRegState.frd_inc: Vec<F>` (T-length, all zeros on non-FR cycles).
    - Stage 5 `frd_wa_at_field_reg_address` output (T-length scratch).
    Each is ~32 B/cycle at `log_T = 18` = ~8 MB; aggregate is ~25 MB. Replacing with `Vec<(cycle, F)>` would tighten the FR-inactive zero footprint.
-2. **Dead-code prune**: the `FieldRegInc` / `FieldRegRa_*` oracle registration code in `crates/bolt/src/protocols/jolt/oracles.rs` and `params.rs` is gated by `field_reg_d > 0` and currently unreachable in production (today's runs use `field_reg_d = 0`). Either wire `field_reg_d = 1` once committed-FR is ready, or remove the gated paths. `sub_limbs` is currently only exercised by unit tests; it remains in `field_reg.rs` pending a Phase-6 use site.
+2. **Dead-code prune**: the `FieldRegInc` / `FieldRegRa_*` oracle registration code in `crates/bolt/src/protocols/jolt/oracles.rs` and `params.rs` is gated by `field_reg_d > 0` and currently unreachable in production (today's runs use `field_reg_d = 0`). Either wire `field_reg_d = 1` once committed-FR is ready, or remove the gated paths. `sub_limbs` is currently only exercised by unit tests; it remains in `field_reg.rs` pending a future use site.
 3. **ZK BlindFold integration**: the three new sumcheck instances need `input_claim_constraint` / `output_claim_constraint` / `input_constraint_challenge_values` / `output_constraint_challenge_values` implementations to participate in the modular BlindFold protocol. Until then, FR is standard-mode only.
 4. **Pinned-slot SDK API**: amortize the 12-cycle extract over runs of in-field ops to drop per-op cost from 27 cycles toward the 13-cycle v1 baseline.
 5. **Dedicated FR Stage 4 unit test**: today the SDK e2e is the only direct exercise of `SparseFieldRegState::round_poly`. A synthetic `stage4_field_reg_rw_proves_synthetic_events` test in `crates/jolt-kernels/src/stage4.rs#mod tests` would catch sparse-path regressions without rebuilding the guest ELF.
 
 ## References
 
-- `specs/fr-v2-port-plan.md` (deleted; predecessor port plan)
 - `specs/TEMPLATE.md`
 - Source files cited inline above; primary entry points:
   - `crates/jolt-witness/src/field_reg.rs`

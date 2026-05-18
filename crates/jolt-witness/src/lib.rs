@@ -33,8 +33,9 @@ pub struct CycleInput {
 impl CycleInput {
     pub const PADDING: Self = Self {
         dense: [0; NUM_DENSE_TRACE_COLUMNS],
-        // FieldReg accesses default to register 0 on non-Fr cycles, matching
-        // the inert-Phase-2 semantics.
+        // FieldReg access defaults to register 0 on non-FR cycles (matches
+        // the all-zero initial FR register file; FieldReg flags are also
+        // zero, so the FR R1CS rows are trivially satisfied).
         one_hot: [Some(0), Some(0), None, Some(0)],
     };
 }

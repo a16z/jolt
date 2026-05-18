@@ -48,12 +48,12 @@ impl JoltProtocolParams {
         let bytecode_d = log_k_bytecode.div_ceil(log_k_chunk);
         let ram_d = log_k_ram.div_ceil(log_k_chunk);
         // BN254 Fr coprocessor: 16 = 2^4 registers, so log_k_fr = 4.
-        // Phase 3 leaves `field_reg_d = 0` so the FR oracle family (FieldRegInc
-        // + FieldRegRa_*) is not yet registered on the MLIR side — that wiring
-        // is part of Phase 4, alongside the sumchecks that produce the source
-        // claims those openings reference. The witness-side scaffolding
-        // (`crates/jolt-witness/src/field_reg.rs`, `CycleInput` FR slots) is
-        // ready ahead of time and stays inert until Phase 4 toggles this on.
+        // Today `field_reg_d = 0`, which keeps the FR oracle family
+        // (FieldRegInc + FieldRegRa_*) unregistered on the MLIR side; the FR
+        // Twist witness flows in-process via `Stage4FieldRegWitness` /
+        // `Stage5FieldRegValWitness` directly from `FieldRegReplay`. Flipping
+        // `field_reg_d > 0` is the path to committed-FR oracles once we want
+        // them on the MLIR-emitted commitment surface.
         let field_reg_log_k: usize = 4;
         let field_reg_d: usize = 0;
         Self {
@@ -81,8 +81,8 @@ impl JoltProtocolParams {
             field_reg_d,
             // Adds `field_reg_d` for the FieldRegRa_* one-hot oracle family,
             // and a constant `+1` for the FieldRegInc dense oracle, but only
-            // when FR oracles are active. Phase 3 keeps `field_reg_d = 0`,
-            // collapsing the formula back to the Phase 2 shape (2 + i + b + r).
+            // when FR oracles are active. Today `field_reg_d = 0`, so the
+            // formula collapses to `2 + instruction_d + bytecode_d + ram_d`.
             num_committed: 2 + instruction_d + bytecode_d + ram_d
                 + if field_reg_d > 0 { 1 + field_reg_d } else { 0 },
             num_r1cs_constraints: 32,
@@ -161,10 +161,12 @@ pub(crate) struct ParsedJoltProtocolParams {
     pub(crate) instruction_ra_virtual_d: usize,
     pub(crate) bytecode_d: usize,
     pub(crate) ram_d: usize,
-    // Read off the parsed MLIR schema but only consumed by the Phase-4 FR
-    // Twist wiring once `field_reg_d > 0`. Annotated to suppress the
-    // dead-code lint on the Phase-3 shape (`field_reg_d = 0`).
-    #[expect(dead_code, reason = "consumed by Phase 4 FR Twist wiring")]
+    // Read off the parsed MLIR schema but only consumed by the FR Twist
+    // wiring once `field_reg_d > 0`. Annotated to suppress the dead-code
+    // lint while `field_reg_d = 0` (today's default — FR oracles flow
+    // in-process from `FieldRegReplay` rather than through committed
+    // MLIR-emitted columns).
+    #[expect(dead_code, reason = "consumed once field_reg_d > 0 enables committed FR oracles")]
     pub(crate) field_reg_log_k: usize,
     pub(crate) field_reg_d: usize,
     pub(crate) num_committed: usize,

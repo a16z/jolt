@@ -81,8 +81,8 @@ pub const V_FLAG_IS_FIELD_SLL64: usize = 42;
 pub const V_FLAG_IS_FIELD_SLL128: usize = 43;
 pub const V_FLAG_IS_FIELD_SLL192: usize = 44;
 
-// Virtual Fr operand slots — Fr-valued witnesses bound to FieldReg sumcheck
-// claims in Phase 4. Zero on non-FR cycles.
+// Virtual Fr operand slots — Fr-valued witnesses bound to the FR Twist
+// sumcheck claims (Stage 4 FieldRegRW). Zero on non-FR cycles.
 pub const V_FIELD_RS1_VALUE: usize = 45;
 pub const V_FIELD_RS2_VALUE: usize = 46;
 pub const V_FIELD_RD_WRITE_VALUE: usize = 47;

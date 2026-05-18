@@ -701,7 +701,7 @@ pub fn cycle_input(
     });
 
     CycleInput {
-        // FieldRegInc is 0 on every non-FR cycle (Phase 3 inert default).
+        // FieldRegInc is 0 on every non-FR cycle.
         dense: [rd_inc, ram_inc, 0],
         one_hot: [
             Some(cycle.lookup_index()),
