@@ -18,13 +18,15 @@
 //!
 //! # Constraint forms
 //!
-//! - **Eq-conditional** (rows 0–31): `guard · (left − right) = 0`
-//! - **Product** (rows 32–35): `left · right = output`
+//! - **Eq-conditional** (rows 0–35): `guard · (left − right) = 0`
+//! - **Product** (rows 36–38): `left · right = output`
 //!
-//! The Fr eq-conditional rows (19–31) are gated by the per-op Fr flags
-//! (V_FLAG_IS_FIELD_*). Until Phase 3 wires the FieldReg witness, those
-//! flag slots stay zero across every cycle and the new rows trivially
-//! satisfy.
+//! The Fr eq-conditional rows (19–35) are gated by the per-op Fr flags
+//! (V_FLAG_IS_FIELD_*). After the FieldOp→{FieldMul,FieldAdd,FieldSub,FieldInv}
+//! kind split (commit closing C-A1), each FR-active cycle commits exactly
+//! one of these flags via the static `circuit flags: [IsFieldX]` declaration
+//! on the typed instruction, and rows 26-31 route the operands through the
+//! canonical product gate (row 36) for native multiplicative enforcement.
 
 /// Constant-1 wire.
 pub const V_CONST: usize = 0;
@@ -446,11 +448,13 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     ]));
     c_rows.push(empty());
 
-    // --- BN254 Fr coprocessor eq-conditional rows (19-31) ---------------
-    // Until Phase 3 wires FieldReg witness population, all Fr flag slots
-    // (V_FLAG_IS_FIELD_*) stay zero, so every guard collapses to 0 and these
-    // rows trivially satisfy. Phase 4 will tighten the FMUL/FINV placeholder
-    // rows once the FR Twist sumchecks bind the operand witnesses.
+    // --- BN254 Fr coprocessor eq-conditional rows (19-35) ---------------
+    // Per-op Fr flags (V_FLAG_IS_FIELD_*) are committed via the per-kind
+    // `circuit flags: [IsFieldX]` declarations on `FieldMul / FieldAdd /
+    // FieldSub / FieldInv / FieldAssertEq / FieldMov / FieldSLL{64,128,192}`.
+    // FMUL/FINV rows 26-31 route operands through the canonical product gate
+    // (row 36); FADD/FSUB rows 19-20 are linear; FAssertEq row 21 is an
+    // equality; bridge rows 22-25 cross from integer V_RS1_VALUE to FR.
 
     // 19: IsFieldAdd · (V_FIELD_RD − V_FIELD_RS1 − V_FIELD_RS2) = 0
     a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_ADD, 1)]));
@@ -523,7 +527,7 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     ]));
     c_rows.push(empty());
 
-    // 26-28: FMUL via V_PRODUCT reuse. The canonical product gate row 32
+    // 26-28: FMUL via V_PRODUCT reuse. The canonical product gate row 36
     //        (`V_LEFT_INSTRUCTION_INPUT × V_RIGHT_INSTRUCTION_INPUT = V_PRODUCT`)
     //        fires on every cycle. On FMUL cycles we route the FR operands
     //        into Left/Right and force V_PRODUCT to equal V_FIELD_RD; this
@@ -557,9 +561,9 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
 
     // 29-31: FINV via V_PRODUCT reuse. Same trick — bind Left = FieldRs1,
     //        Right = FieldRd_inverse (prover-supplied advice), Product = 1.
-    //        Row 32 then enforces `Rs1 · Rd = 1`, i.e., Rd = Rs1⁻¹.
+    //        Row 36 then enforces `Rs1 · Rd = 1`, i.e., Rd = Rs1⁻¹.
     //        Forgery-resistant because the canonical product gate cannot be
-    //        bypassed — wrong advice makes row 32 unsatisfiable.
+    //        bypassed — wrong advice makes row 36 unsatisfiable.
 
     // 29: IsFieldInv · (V_LEFT_INSTRUCTION_INPUT − V_FIELD_RS1_VALUE) = 0
     a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_INV, 1)]));

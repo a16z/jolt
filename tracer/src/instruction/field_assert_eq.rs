@@ -109,6 +109,12 @@ impl RISCVTrace for FieldAssertEq {
 
         if let Some(trace_vec) = trace {
             let cycle_index = cpu.trace_len + trace_vec.len();
+            // `slot = frs1` here is intentional: FieldAssertEq has no destination
+            // register (FormatR.rd is reserved/0), so we attach the event to
+            // the asserted-equality slot. `old == new` so `rd_written = false`
+            // downstream (`convert_fr_events` in jolt-host derives the flag
+            // from new != old), keeping FieldAssertEq out of the FR Twist
+            // write-side accounting.
             cpu.field_reg_events.push(FieldRegEvent {
                 cycle_index,
                 slot: frs1,

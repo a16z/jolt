@@ -487,10 +487,19 @@ fn fr_bytecode_from_trace(
         .collect()
 }
 
-/// Convert the tracer's `FieldRegEvent` stream to `jolt-witness` events. The
-/// tracer emits one event per FR write (old != new). For Phase 5b's
-/// materializer, we only need `cycle`, `frd`, `rd_post`, and `rd_written`;
-/// the other fields are unused by the materialize methods.
+/// Convert the tracer's `FieldRegEvent` stream to `jolt-witness` events.
+///
+/// `rd_written` is derived from `new != old` rather than hardcoded to `true`:
+///   - FieldMul/Add/Sub/Inv almost always change `field_regs[frd]`.
+///   - FieldAssertEq emits an event with `slot = frs1` (see
+///     `tracer/src/instruction/field_assert_eq.rs`) and the value is
+///     unchanged, so `new == old` and `rd_written = false` — keeping
+///     FieldAssertEq out of the FR Twist's write-side accounting.
+///   - FieldMov / FieldSLL* always change `field_regs[frd]` because they
+///     write the (zero-extended) integer rs1.
+/// Only `cycle`, `frd`, `rd_post`, and `rd_written` flow into the
+/// materializer; `frs1/frs2/rs1_pre/rs2_pre` are populated separately by
+/// `populate_r1cs_fr_slots` (which walks the trace + running state).
 fn convert_fr_events(
     events: Vec<tracer::emulator::cpu::FieldRegEvent>,
 ) -> Vec<jolt_witness::field_reg::FieldRegEvent> {
@@ -504,7 +513,7 @@ fn convert_fr_events(
             rs1_pre: jolt_witness::field_reg::FrLimbs::ZERO,
             rs2_pre: jolt_witness::field_reg::FrLimbs::ZERO,
             rd_post: jolt_witness::field_reg::FrLimbs::from_limbs(ev.new),
-            rd_written: true,
+            rd_written: ev.new != ev.old,
         })
         .collect()
 }
