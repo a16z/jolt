@@ -7,24 +7,24 @@
 
 ## Summary
 
-A native-field coprocessor that adds a 16-slot BN254 Fr register file and 9 new RISC-V instructions to the modular Jolt zkVM, with three sumcheck instances (Stage 3 / 4 / 5) wired into the existing Twist register-checking pipeline and a Stage 6 bytecode-RAF anchor binding FR access to bytecode. Guest programs that use the `jolt_inlines_bn254_fr::Fr` SDK type emit one `FieldOp` cycle per (mul, add, sub, inv) operation whose constraint witness is bound natively to the Fr field. Software-emulated Fr arithmetic (arkworks on RV) is replaced end-to-end for FMUL/FADD/FSUB/FINV; FAssertEq closes the prover advice loop, and FieldMov/FieldSLL64/128/192 form the integer→FR bridge ABI for loading inputs and reconstructing outputs.
+A native-field coprocessor that adds a 16-slot BN254 Fr register file and 9 new RISC-V instructions to the modular Jolt zkVM, with three sumcheck instances (Stage 3 / 4 / 5) wired into the existing Twist register-checking pipeline and a Stage 6 bytecode-RAF anchor binding FR access to bytecode. Guest programs that use the `jolt_inlines_bn254_fr::Fr` SDK type emit one native cycle per Fr operation (`FieldMul` / `FieldAdd` / `FieldSub` / `FieldInv`) whose constraint witness is bound natively to the Fr field. Software-emulated Fr arithmetic (arkworks on RV) is replaced end-to-end for those four ops; `FieldAssertEq` closes the prover advice loop, and `FieldMov` / `FieldSLL{64,128,192}` form the integer→FR bridge ABI for loading inputs and reconstructing outputs.
 
 ## Intent
 
 ### Goal
 
-Prove BN254 Fr arithmetic at native cost: one FR register-file slot per Fr value, one `FieldOp` cycle per binary op, and one constraint relation tying R1CS witnesses to a 16-slot FR Twist register file. The architectural boundaries:
+Prove BN254 Fr arithmetic at native cost: one FR register-file slot per Fr value, one native cycle per Fr operation, and one constraint relation tying R1CS witnesses to a 16-slot FR Twist register file. The architectural boundaries:
 
 - **Tracer**: `tracer::emulator::cpu::FieldRegEvent`, `Cpu.field_regs: [[u64; 4]; 16]`, `Cpu.field_reg_events: Vec<FieldRegEvent>` (`tracer/src/emulator/cpu.rs`), and the per-instruction files under `tracer/src/instruction/field_*.rs`.
-- **ISA**: 9 instruction kinds — `FieldOp` (funct7=0x40, opcode=0x0B; funct3 selects FMUL/FADD/FSUB/FINV), `FieldAssertEq`, `FieldMov`, and `FieldSLL{64,128,192}` (funct7=0x41). FR-access classification (which slots are read/written per kind) lives in `JoltInstructionKind::fr_access_flags()` (`crates/jolt-riscv/src/kind.rs`) as the single source of truth shared by host and kernel sites.
-- **R1CS**: 13 new eq-constraint rows (rows 19–31 in `crates/jolt-r1cs/src/constraints/rv64.rs`) over slots `V_FIELD_RS1_VALUE=45`, `V_FIELD_RS2_VALUE=46`, `V_FIELD_RD_WRITE_VALUE=47`. `NUM_R1CS_INPUTS=47`, `NUM_VARS_PER_CYCLE=50`, `NUM_EQ_CONSTRAINTS=32`.
+- **ISA**: 9 distinct `JoltInstructionKind` variants — `FieldMul`, `FieldAdd`, `FieldSub`, `FieldInv` (funct7=0x40, opcode=0x0B; funct3=2/3/4/5), `FieldAssertEq` (funct7=0x40 funct3=0x00), `FieldMov` (funct7=0x40 funct3=0x01), and `FieldSLL{64,128,192}` (funct7=0x41). Splitting `FieldOp` into four explicit kinds (rather than one variant gated on funct3) lets the R1CS / sumcheck layers route per-kind constraints without re-decoding. FR-access classification (which slots are read/written per kind) lives in `JoltInstructionKind::fr_access_flags()` (`crates/jolt-riscv/src/kind.rs`) as the single source of truth shared by host and kernel sites.
+- **R1CS**: 13 new eq-constraint rows (rows 19–31 in `crates/jolt-r1cs/src/constraints/rv64.rs`) over slots `V_FIELD_RS1_VALUE=45`, `V_FIELD_RS2_VALUE=46`, `V_FIELD_RD_WRITE_VALUE=47`. `NUM_R1CS_INPUTS=47`, `NUM_VARS_PER_CYCLE=50`, `NUM_EQ_CONSTRAINTS=32`. FieldAdd/FieldSub use direct linear rows (`RD = RS1 ± RS2`). FieldMul and FieldInv route their operands through the canonical product gate at row 36 (`V_LEFT × V_RIGHT = V_PRODUCT`) via rows 26–31, which bind `V_LEFT = V_FIELD_RS1`, `V_RIGHT = V_FIELD_RS2` (FMUL) or `V_FIELD_RD` (FINV), and `V_PRODUCT = V_FIELD_RD` (FMUL) or `1` (FINV). FieldMov / FieldSLL{64,128,192} bind `V_FIELD_RD = V_RS1_VALUE · 2^k` (k ∈ {0, 64, 128, 192}) so the limb-to-Fr bridge composes natively.
 - **Witness types**: `jolt_witness::field_reg::{FrLimbs, FieldRegEvent, FrCycleBytecode, FieldRegReplay, FIELD_REG_COUNT (=16), LOG_K_FR (=4), FIELD_REG_ADDR_MASK (=0xF), limbs_to_field, sub_limbs}` in `crates/jolt-witness/src/field_reg.rs`. Sparse-first: only `materialize_frd_inc<F>` (T-length) is retained, and it is cached once per proof in `Stage45SparseTraceWitness.fr_frd_inc` so both Stage 4 and Stage 5 share the materialization.
 - **Sumcheck kernels** in `crates/jolt-kernels/`:
   - Stage 3 `FieldRegClaimReduction` (`stage3.rs`) — γ-batched eq sumcheck reducing rd/rs1/rs2 R1CS values to FR write/read claims.
   - Stage 4 `FieldRegRW` (`stage4.rs`, `SparseFieldRegState`) — sparse Hamming-shaped Twist read-write check over `K_FR = 16 × T`. Round-poly accumulation and bind shell out to Rayon `par_chunk_by` once the entry count crosses `DENSE_BIND_PAR_THRESHOLD` (mirrors the integer Twist's parallelization).
   - Stage 5 `FieldRegValEvaluation` (`stage5.rs`) — degree-3 `frd_inc · frd_wa_at_address · lt` evaluation.
   - Stage 6 bytecode-RAF (`stage6.rs::bytecode_entry_stage_values`, `BYTECODE_READ_RAF_STAGE_COUNT=6`) — adds an FR stage group `γ_fr·writes_frd·register_eq(frd) + γ_fr²·reads_frs1·register_eq(frs1) + γ_fr³·reads_frs2·register_eq(frs2)` that binds FR access against bytecode. Mirrored on the verifier side in `crates/jolt-verifier/src/stages/common.rs` (`STAGE67_BYTECODE_STAGE_COUNT=6`).
-- **SDK**: `jolt_inlines_bn254_fr::Fr` (`jolt-inlines/bn254-fr/src/sdk.rs`) with three compile-time dispatch paths (host arkworks, `compute_advice` pass populating the advice tape, RV pass-2 emitting the FieldOp instruction sequence). `#[jolt::provable(backend = "modular")]` (`jolt-sdk/macros/src/lib.rs`) auto-builds the two-pass advice-tape ELF.
+- **SDK**: `jolt_inlines_bn254_fr::Fr` (`jolt-inlines/bn254-fr/src/sdk.rs`) with three compile-time dispatch paths (host arkworks, `compute_advice` pass populating the advice tape, RV pass-2 emitting the native FR instruction sequence). `#[jolt::provable(backend = "modular")]` (`jolt-sdk/macros/src/lib.rs`) auto-builds the two-pass advice-tape ELF.
 
 ### Invariants
 
@@ -33,7 +33,7 @@ Prove BN254 Fr arithmetic at native cost: one FR register-file slot per Fr value
 - **Monotone event order**: events are sorted strictly increasing by cycle; duplicates and out-of-order events are rejected at `SparseFieldRegState::new`.
 - **Address mask**: FR slot indices are masked `& FIELD_REG_ADDR_MASK` at producer and consumer sites (host `fr_bytecode_from_trace`, `populate_r1cs_fr_slots`, `populate_fr_cycle_fields`, kernel Stage 4 / Stage 5). `FIELD_REG_COUNT` must be a power of two; `SparseFieldRegState::new` and `frd_wa_at_field_reg_address` both enforce this.
 - **Initial FR state is zero, algebraically enforced**: Stage 5 `FieldRegValEvaluation` proves `FieldRegVal(addr, t) = Σ_j FrdInc(j) · FrdWa(addr, j) · lt(t, j)`. At `t = 0` the `lt(0, j)` MLE is identically 0, so the RHS is empty and `FieldRegVal(addr, 0) = 0` is forced — no separate init-eval opening required. This is the same mechanism integer registers use. RAM is the outlier (its `RamValInit` opening is bound to a precomputed public ELF image because RAM init values aren't all zero).
-- **FINV(0) is unsatisfiable**: the tracer panics in `field_op.rs`; the SDK guards via `Fr::inverse() -> Option<Fr>`. Either fails closed before any proof is attempted.
+- **FINV(0) is unsatisfiable**: the tracer panics in `tracer/src/instruction/field_inv.rs`; the SDK guards via `Fr::inverse() -> Option<Fr>`. Either fails closed before any proof is attempted.
 - **Bytecode/event consistency**: every event-bearing cycle has at least one FR access flag set on the corresponding bytecode row. `SparseFieldRegState::new` rejects stray events that land on bc-all-false cycles (defense in depth against tracer / preprocessing classifier drift).
 - **Bytecode-anchored FR access (drop-event soundness)**: the Stage 6 bytecode-RAF sumcheck adds an FR stage group whose verifier-recomputable claim depends on the *bytecode-derived* (frd, frs1, frs2, reads_*, writes_frd) — not on event presence. A malicious prover that drops an FR event on a bc-active cycle leaves the Stage 4 FrdWa polynomial short of that cycle's contribution, so the Stage 6 input-claim equality fails. This is the load-bearing check; FR write-slot indicators must be sourced from `bc.frd` (committed) rather than `event.frd` (uncommitted prover input) in both the FrdInc materializer and the Stage 4 sparse-entry construction.
 - **Bit ordering**: Stage 4 binds `r_cycle` LowToHigh inside `SparseFieldRegState`; `final_frs2_read_eval` reverses both the cycle and address halves of the bound point so `EqPolynomial::evals` receives MSB-first input matching `sparse_register_read_eval`.
@@ -46,7 +46,7 @@ Prove BN254 Fr arithmetic at native cost: one FR register-file slot per Fr value
 - **ZK mode for the FR Twist sumchecks.** BlindFold integration (`input_claim_constraint` / `output_claim_constraint` synchronization, Pedersen-committed round polynomials) is not implemented for the three FR sumcheck instances. The modular stack's BlindFold port itself is also incomplete; this work is contingent on that landing.
 - **Multi-cycle FINV / FAssertEq.** Both are single-cycle today. FINV(0) is unsatisfiable and fails closed (tracer panic + SDK `Option<Fr>`).
 - **Other native fields.** The coprocessor is hardcoded to BN254 Fr at 256 bits. The Stage 4/5 kernels are generic over `F: Field`, but the tracer arithmetic helpers and `Stage1OuterRv64Data` are pinned to `ark_bn254::Fr`. Supporting BLS12-381 Fr (or any other native-aligned ≤256-bit prime field) requires parameterizing the tracer helpers and threading a generic `F` through Stage 1; the Stage 3/4/5 sumchecks and the R1CS constraint system itself need no change.
-- **Pinned-slot SDK API.** The current SDK pays 7+7+1+12 = 27 cycles per binary op (Horner-load A, Horner-load B, FieldOp, advice-bound extract). Amortizing the extract over runs of in-field ops is future work.
+- **Pinned-slot SDK API.** The current SDK pays 7+7+1+12 = 27 cycles per binary op (Horner-load A, Horner-load B, native FR op, advice-bound extract). Amortizing the extract over runs of in-field ops is future work.
 - **Fully sparsifying remaining T-sized vectors.** `materialize_frd_inc` (cached, T-length), `FieldRegReplay.bytecode` (T-length), and the Stage 5 `frd_wa_at_field_reg_address` scratch (T-length) are all still dense. The K_FR×T factor space is never materialized.
 
 ## Evaluation
@@ -74,7 +74,7 @@ Unit tests (`--features host`):
 
 End-to-end (`--features host`):
 
-- `examples/bn254-poseidon2` — host driver running one Poseidon2 permutation over BN254 Fr, with `--backend inline|native` selecting between the FR coprocessor and software arkworks. Drives the full stack: SDK three-mode dispatch, tracer FieldOp emission, `FieldRegEvent` stream, R1CS slot population, Stage 3/4/5/6 sumchecks, Dory commitments, verifier round-trip.
+- `examples/bn254-poseidon2` — host driver running one Poseidon2 permutation over BN254 Fr, with `--backend inline|native` selecting between the FR coprocessor and software arkworks. Drives the full stack: SDK three-mode dispatch, tracer native-FR instruction emission, `FieldRegEvent` stream, R1CS slot population, Stage 3/4/5/6 sumchecks, Dory commitments, verifier round-trip.
 
 Gaps:
 
@@ -104,9 +104,9 @@ Data flow, in execution order:
 1. **Guest SDK** (`jolt-inlines/bn254-fr/src/sdk.rs`). Three compile-time paths:
    - *Host* (default, no RV target): delegates to `ark_bn254::Fr`.
    - *`compute_advice` pass on RV* (built automatically by the macro): computes via arkworks, writes the 4 result limbs to the advice tape using `VirtualHostIO`.
-   - *Pass-2 RV*: emits a 27-cycle sequence per binary op — 7-cycle Horner load A + 7-cycle Horner load B + 1 FieldOp + 12-cycle advice-bound extract (4 `ADVICE_LD` + 7-cycle Horner reconstruction + FieldAssertEq).
+   - *Pass-2 RV*: emits a 27-cycle sequence per binary op — 7-cycle Horner load A + 7-cycle Horner load B + 1 native FieldMul/Add/Sub/Inv + 12-cycle advice-bound extract (4 `ADVICE_LD` + 7-cycle Horner reconstruction + FieldAssertEq).
 2. **Macro** (`jolt-sdk/macros/src/lib.rs`). `#[jolt::provable(backend = "modular")]` builds two ELFs (default + `compute_advice` feature) via `build_with_features`, so the host replays the compute-advice ELF first to populate the advice tape, then proves the pass-2 ELF.
-3. **Tracer** (`tracer/src/instruction/field_op.rs`, `field_assert_eq.rs`, `field_mov.rs`, `field_sll{64,128,192}.rs`). Opcode `0x0B` decodes on funct7: `0x40` → FieldOp/FieldAssertEq/FieldMov (funct3 selects); `0x41` → FieldSLL64/128/192. Execution mutates `Cpu.field_regs` and appends a `FieldRegEvent` on every write.
+3. **Tracer** (`tracer/src/instruction/field_{mul,add,sub,inv,assert_eq,mov,sll64,sll128,sll192}.rs`). Opcode `0x0B` decodes on funct7: `0x40` → one of FieldMul/Add/Sub/Inv/AssertEq/Mov (funct3 selects); `0x41` → one of FieldSLL64/128/192. Execution mutates `Cpu.field_regs` and appends a `FieldRegEvent` on every write.
 4. **jolt-host** (`crates/jolt-host/src/lib.rs`):
    - `fr_bytecode_from_trace` derives `FrCycleBytecode` per trace row via `JoltInstructionKind::fr_access_flags()`; slot indices are masked `& FIELD_REG_ADDR_MASK`.
    - `convert_fr_events` maps tracer events into `jolt_witness::field_reg::FieldRegEvent`.
