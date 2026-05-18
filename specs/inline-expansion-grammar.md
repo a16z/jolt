@@ -184,12 +184,64 @@ Every registration must declare:
 - funct7
 - `InlineExtension`
 - human-readable name
+- verifier admissibility
 - static recipe builder
 - optional runtime advice provider
 
 Registration keys must be unique. Duplicate `(opcode, funct3, funct7)` entries
 must be rejected deterministically or covered by a test that proves the linked
 registration table contains no duplicates.
+
+Registration metadata is also where the verifier-facing admission decision
+lives. A registered inline opcode is not automatically safe to accept from an
+arbitrary decoded guest ELF just because the host has a recipe for it. The
+registration must declare whether the raw opcode is public bytecode or an
+internal helper:
+
+```rust
+pub enum InlineAdmissibility {
+    Public {
+        requirements: &'static [SafetyRequirement],
+    },
+    InternalOnly {
+        reason: &'static str,
+    },
+}
+```
+
+The exact names may differ, but the policy must be explicit and default-deny:
+
+- `Public` registrations may be selected for verifier-facing
+  `SourceInstructionKind::Inline` rows.
+- `InternalOnly` registrations must be rejected from decoded guest bytecode with
+  a structured expansion/preprocessing error before proving.
+- Public registrations with non-empty safety requirements must satisfy those
+  requirements through the static recipe, not through guest SDK wrapper
+  conventions.
+- SDK-side Rust types, constructors, post-inline `spoil_proof()` calls, or
+  comments do not satisfy a safety requirement unless the corresponding check is
+  represented in verifier-visible expanded rows.
+
+For requirements that need evidence, the builder should expose certified helper
+methods whose contract is "emit the check rows and record the evidence". For
+example, helpers for field canonicality, nonzero divisors, modular multiplication
+relations, GLV sign-word validity, or decomposition recomposition may record
+`SafetyEvidence` tokens while emitting the relevant `VirtualAssert*`, range, or
+helper-expansion rows. Finalizing the recipe must fail if the registration's
+declared `SafetyRequirement`s are not covered by the recipe's evidence. This
+keeps the per-inline review burden on a small library of checked helper
+combinators rather than on ad hoc instruction sequences.
+
+Current shipped inlines should be classified conservatively while porting:
+
+- hash/compression/permutation inlines and `bigint256_mul` are expected to be
+  public if their recipes are deterministic and advice-free;
+- secp256k1 and P-256 field mul/square/div inlines need public safety
+  requirements for canonical outputs and division preconditions, unless those
+  opcodes are made internal to a larger checked recipe;
+- Grumpkin division advice, secp256k1 GLV advice, and P-256 Fake GLV advice are
+  internal-only until their full relation, sign/canonicality, and recomposition
+  checks are emitted and evidenced by static expansion.
 
 Registered inline expansion must require both:
 
@@ -200,6 +252,10 @@ profile.supports_inline(registration.extension)
 
 Neither check implies the other. The final rows emitted by materialization must
 also pass target legality under the active profile.
+
+Verifier-admissibility must be checked in the same preprocessing/expansion path
+as profile gating. It is not a tracer concern and not an inventory-side
+convention.
 
 Provider-free expansion continues to reject `SourceInstructionKind::Inline` with
 `ExpansionError::InlineProviderRequired`.
@@ -474,6 +530,11 @@ advice values and trace-time memory/register reads remain host/tracer semantics.
 - [ ] Registered inline expansion checks both source inline support and package
       `InlineExtension` support.
 - [ ] Registration keys are unique and tested.
+- [ ] Every registration declares verifier admissibility. Internal-only raw
+      opcodes are rejected from decoded guest bytecode before proving.
+- [ ] Public registrations with declared safety requirements emit builder-owned
+      safety evidence from verifier-visible check helpers; missing evidence is
+      an expansion/materialization error.
 - [ ] Provider output is an `ExpandedInstructionSequence` or equivalent recipe,
       not a direct final row/instruction vector.
 - [ ] Every shipped static inline recipe has a direct tracer-free entry point
@@ -559,6 +620,14 @@ Add focused tests:
 - Advice tests for each advice-bearing shipped inline, asserting exact
   `VirtualAdvice` count/order and too-few/too-many mismatch behavior.
 - Registration table tests proving all linked keys are unique and expected.
+- Registration admissibility tests proving all linked keys declare either
+  `Public` requirements or `InternalOnly`.
+- Negative raw-opcode tests for internal-only registrations, using direct
+  `.insn`/decoded inline rows for advice-only or SDK-checked helper opcodes and
+  asserting rejection before proving.
+- Safety-evidence tests for public registrations with requirements, including a
+  deliberately incomplete test provider that emits the functional rows without
+  the required evidence and must fail finalization.
 - Trace fixture tests proving placeholder replacement covers address, `rs1`,
   `rs2`, `rd`/`rs3`, compressed tail, and reset rows.
 
@@ -597,16 +666,18 @@ allocation churn.
 1. Generate and check in old-path golden fixtures for every registered inline
    key before changing the static `InlineOp` signature.
 2. Add tracer-free static recipe traits and builder APIs.
-3. Add host-only runtime advice registration/adapters.
-4. Move reusable static helper logic from `InstrAssembler` into SDK-owned,
+3. Add explicit registration admissibility metadata and a small safety-evidence
+   mechanism for builder-owned check helpers.
+4. Add host-only runtime advice registration/adapters.
+5. Move reusable static helper logic from `InstrAssembler` into SDK-owned,
    tracer-free helper traits with documented contracts.
-5. Port one small inline and validate fixtures.
-6. Port every shipped inline package in one full cutover.
-7. Remove static SDK access to `InstrAssembler`, tracer instruction markers,
+6. Port one small inline and validate fixtures.
+7. Port every shipped inline package in one full cutover.
+8. Remove static SDK access to `InstrAssembler`, tracer instruction markers,
    `FormatInline`, and tracer-normalized static output.
-8. Update trace fixture generation to consume recipes or `JoltInstructionRow`s.
-9. Update related specs that still describe the old compromise.
-10. Run the full validation stack.
+9. Update trace fixture generation to consume recipes or `JoltInstructionRow`s.
+10. Update related specs that still describe the old compromise.
+11. Run the full validation stack.
 
 ## Modules To Touch
 
@@ -615,18 +686,21 @@ Expected core changes:
 - `crates/jolt-program/src/expand/grammar.rs`
   - expose or generalize recipe types for inline use;
   - add inline-specific recipe operations only where they express real inline
-    invariants.
+    invariants;
+  - expose safety-evidence recording only through checked helper methods.
 - `crates/jolt-program/src/expand/materialize.rs`
   - materialize inline recipes through the same central state machine;
   - append inline reset rows;
-  - stamp flattened metadata exactly once.
+  - stamp flattened metadata exactly once;
+  - reject public inline recipes that do not satisfy their declared safety
+    requirements.
 - `crates/jolt-program/src/expand/allocator.rs`
   - preserve the reserved/instruction/inline register split;
   - report inline reset registers without tracer allocator involvement.
 - `crates/jolt-program/src/expand/mod.rs`
   - revise `InlineExpansionProvider` to accept source inline rows and return
     recipes;
-  - enforce source/profile/provider-free legality.
+  - enforce source/profile/admissibility/provider-free legality.
 - `jolt-inlines/sdk`
   - split static recipe declaration from host advice;
   - provide tracer-free helper traits and op aliases;
