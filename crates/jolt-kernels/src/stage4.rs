@@ -2180,10 +2180,21 @@ impl<F: Field> SparseFieldRegState<F> {
                     });
                 }
             }
-            if event.rd_written {
-                let col = (event.frd as usize) & address_mask;
+            // Write slot sourced from committed bytecode (`bc.frd`). The
+            // `bc.writes_frd` gate alone determines whether FrdWa is set —
+            // NOT `event.rd_written` — so the FrdWa polynomial reflects every
+            // bytecode-active write, matching the Stage 6 bytecode-RAF
+            // stage_fr binding. When `event.rd_written` is false (new == old,
+            // rare), `post == pre` keeps FrdInc[j] = 0 and avoids changing
+            // FieldRegVal accumulation.
+            if bc.writes_frd {
+                let col = (bc.frd as usize) & address_mask;
                 let pre = running[col];
-                let post = jolt_witness::field_reg::limbs_to_field::<F>(event.rd_post.into_limbs());
+                let post = if event.rd_written {
+                    jolt_witness::field_reg::limbs_to_field::<F>(event.rd_post.into_limbs())
+                } else {
+                    pre
+                };
                 if let Some(entry) = entries[start..].iter_mut().find(|e| e.col as usize == col) {
                     entry.frd_wa = F::one();
                     entry.next_val = post;

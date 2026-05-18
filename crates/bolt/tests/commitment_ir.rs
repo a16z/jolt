@@ -1453,10 +1453,10 @@ fn stage6_rust_targets_extract_and_compile() {
     assert_eq!(verifier_program.role, Role::Verifier);
     assert_eq!(prover_program.kernels.len(), 7);
     assert!(verifier_program.kernels.is_empty());
-    assert_eq!(prover_program.steps.len(), 10);
-    assert_eq!(prover_program.transcript_squeezes.len(), 9);
+    assert_eq!(prover_program.steps.len(), 11);
+    assert_eq!(prover_program.transcript_squeezes.len(), 10);
     assert!(prover_program.transcript_absorb_bytes.is_empty());
-    assert_eq!(prover_program.opening_inputs.len(), 91);
+    assert_eq!(prover_program.opening_inputs.len(), 94);
     assert!(prover_program.field_exprs.len() > 150);
     assert_eq!(prover_program.field_constants.len(), 1);
     assert!(prover_program.opening_equalities.is_empty());

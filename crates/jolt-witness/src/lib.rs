@@ -613,6 +613,17 @@ pub struct Stage6BytecodeEntry<F: Field> {
     pub right_is_rs2: bool,
     pub right_is_imm: bool,
     pub is_noop: bool,
+    // FR-coprocessor slots: the bytecode-RAF entries expose these so the
+    // Stage 6 bytecode-RAF binding can prove FR Twist's `FrRs1Ra / FrRs2Ra
+    // / FrdWa` openings agree with per-cycle bytecode-derived one-hots —
+    // preventing a malicious prover from smuggling an FR-active R1CS row
+    // with zero operands by dropping the FR event entirely.
+    pub frd: Option<usize>,
+    pub frs1: Option<usize>,
+    pub frs2: Option<usize>,
+    pub reads_frs1: bool,
+    pub reads_frs2: bool,
+    pub writes_frd: bool,
 }
 
 #[derive(Clone, Copy, Debug)]

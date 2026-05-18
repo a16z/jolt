@@ -464,17 +464,17 @@ fn fr_bytecode_from_trace(
         .iter()
         .map(|row| {
             let instr = row.instruction;
-            let (reads_frs1, reads_frs2) = match instr.instruction_kind {
+            let (reads_frs1, reads_frs2, writes_frd) = match instr.instruction_kind {
                 JoltInstructionKind::FieldMul
                 | JoltInstructionKind::FieldAdd
-                | JoltInstructionKind::FieldSub
-                | JoltInstructionKind::FieldAssertEq => (true, true),
-                JoltInstructionKind::FieldInv => (true, false),
+                | JoltInstructionKind::FieldSub => (true, true, true),
+                JoltInstructionKind::FieldInv => (true, false, true),
+                JoltInstructionKind::FieldAssertEq => (true, true, false),
                 JoltInstructionKind::FieldMov
                 | JoltInstructionKind::FieldSLL64
                 | JoltInstructionKind::FieldSLL128
-                | JoltInstructionKind::FieldSLL192 => (false, false),
-                _ => (false, false),
+                | JoltInstructionKind::FieldSLL192 => (false, false, true),
+                _ => (false, false, false),
             };
             jolt_witness::field_reg::FrCycleBytecode {
                 frs1: instr.operands.rs1.unwrap_or(0) & 0xF,
@@ -482,6 +482,7 @@ fn fr_bytecode_from_trace(
                 frd: instr.operands.rd.unwrap_or(0) & 0xF,
                 reads_frs1,
                 reads_frs2,
+                writes_frd,
             }
         })
         .collect()
@@ -497,6 +498,7 @@ fn fr_bytecode_from_trace(
 ///     FieldAssertEq out of the FR Twist's write-side accounting.
 ///   - FieldMov / FieldSLL* always change `field_regs[frd]` because they
 ///     write the (zero-extended) integer rs1.
+///
 /// Only `cycle`, `frd`, `rd_post`, and `rd_written` flow into the
 /// materializer; `frs1/frs2/rs1_pre/rs2_pre` are populated separately by
 /// `populate_r1cs_fr_slots` (which walks the trace + running state).
@@ -558,15 +560,22 @@ fn populate_r1cs_fr_slots(
             let slot = (bc.frs2 as usize) & 0xF;
             r1cs_witness[offset + rv64::V_FIELD_RS2_VALUE] = current[slot];
         }
+        // Populate V_FIELD_RD_WRITE_VALUE on every cycle where bytecode says
+        // writes_frd=true. When the event lacks rd_written=true (rare new==old
+        // case), the post value equals the current state — consistent with
+        // Stage 4 RW's bytecode-anchored `frd_wa` polynomial (always 1 when
+        // bc.writes_frd) and Stage 5 ValEvaluation.
+        let event_opt = events.next_if(|ev: &&FieldRegEvent| ev.cycle as usize == c);
         let mut rd_post_opt: Option<Fr> = None;
-        if let Some(ev) = events.next_if(|ev: &&FieldRegEvent| ev.cycle as usize == c) {
-            if ev.rd_written {
-                let slot = (ev.frd as usize) & 0xF;
-                let post: Fr = limbs_to_field(ev.rd_post.into_limbs());
-                r1cs_witness[offset + rv64::V_FIELD_RD_WRITE_VALUE] = post;
-                current[slot] = post;
-                rd_post_opt = Some(post);
-            }
+        if bc.writes_frd {
+            let slot = (bc.frd as usize) & 0xF;
+            let post: Fr = match event_opt {
+                Some(ev) if ev.rd_written => limbs_to_field(ev.rd_post.into_limbs()),
+                _ => current[slot],
+            };
+            r1cs_witness[offset + rv64::V_FIELD_RD_WRITE_VALUE] = post;
+            current[slot] = post;
+            rd_post_opt = Some(post);
         }
         // FMUL / FINV route FR operands through the canonical product gate
         // (R1CS row 36: `Left × Right = Product`). The eq-rows 26-31 then
@@ -621,21 +630,25 @@ fn populate_fr_cycle_fields(
         let bc = replay.bytecode.get(c).copied().unwrap_or_default();
         let rs1 = if bc.reads_frs1 { current[(bc.frs1 as usize) & 0xF] } else { [0; 4] };
         let rs2 = if bc.reads_frs2 { current[(bc.frs2 as usize) & 0xF] } else { [0; 4] };
-        // Apply the event (if any) to get rd_post and advance state.
-        let (rd, is_field_op) =
-            if let Some(ev) = events.next_if(|ev: &&FieldRegEvent| ev.cycle as usize == c) {
-                if ev.rd_written {
-                    let slot = (ev.frd as usize) & 0xF;
-                    current[slot] = ev.rd_post.into_limbs();
-                    (current[slot], true)
-                } else {
-                    ([0; 4], true)
-                }
-            } else if bc.reads_frs1 || bc.reads_frs2 {
-                ([0; 4], true)
-            } else {
-                ([0; 4], false)
+        // Bytecode-anchored: write the post-state to slot bc.frd on every
+        // bc.writes_frd cycle, regardless of event.rd_written. When the event
+        // is absent or rd_written=false, post equals the current state (no
+        // change). Keeps field_rd in sync with the bytecode-anchored
+        // V_FIELD_RD_WRITE_VALUE column.
+        let event_opt = events.next_if(|ev: &&FieldRegEvent| ev.cycle as usize == c);
+        let (rd, is_field_op) = if bc.writes_frd {
+            let slot = (bc.frd as usize) & 0xF;
+            let post = match event_opt {
+                Some(ev) if ev.rd_written => ev.rd_post.into_limbs(),
+                _ => current[slot],
             };
+            current[slot] = post;
+            (post, true)
+        } else if event_opt.is_some() || bc.reads_frs1 || bc.reads_frs2 {
+            ([0; 4], true)
+        } else {
+            ([0; 4], false)
+        };
         rv64_cycles[c].field_rs1 = rs1;
         rv64_cycles[c].field_rs2 = rs2;
         rv64_cycles[c].field_rd = rd;

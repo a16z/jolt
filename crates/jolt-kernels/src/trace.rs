@@ -299,6 +299,29 @@ where
             let instr = *instruction;
             let circuit_flags = instruction_circuit_flags(instruction);
             let instruction_flags = instruction_instruction_flags(instruction);
+            // FR slot classification: bytecode-derived flags determining
+            // which FR operands are read/written. The Stage 6 bytecode-RAF
+            // binding ties FR Twist's per-cycle Ra/Wa polynomials against
+            // these flags. Must match the host-side `fr_bytecode_from_trace`
+            // (jolt-host/src/lib.rs) classification exactly — same instruction
+            // kinds.
+            let kind = instruction.instruction_kind;
+            let (reads_frs1, reads_frs2, writes_frd) = match kind {
+                jolt_riscv::JoltInstructionKind::FieldMul
+                | jolt_riscv::JoltInstructionKind::FieldAdd
+                | jolt_riscv::JoltInstructionKind::FieldSub => (true, true, true),
+                jolt_riscv::JoltInstructionKind::FieldInv => (true, false, true),
+                jolt_riscv::JoltInstructionKind::FieldAssertEq => (true, true, false),
+                jolt_riscv::JoltInstructionKind::FieldMov
+                | jolt_riscv::JoltInstructionKind::FieldSLL64
+                | jolt_riscv::JoltInstructionKind::FieldSLL128
+                | jolt_riscv::JoltInstructionKind::FieldSLL192 => (false, false, true),
+                _ => (false, false, false),
+            };
+            let fr_slot = |opt: Option<u8>| opt.map(|raw| (raw as usize) & 0xF);
+            let frd = if writes_frd { fr_slot(instr.operands.rd) } else { None };
+            let frs1 = if reads_frs1 { fr_slot(instr.operands.rs1) } else { None };
+            let frs2 = if reads_frs2 { fr_slot(instr.operands.rs2) } else { None };
             Stage6BytecodeEntry {
                 address: F::from_u64(instr.address as u64),
                 imm: F::from_i128(instr.operands.imm),
@@ -314,6 +337,12 @@ where
                 right_is_rs2: instruction_flags[InstructionFlags::RightOperandIsRs2Value],
                 right_is_imm: instruction_flags[InstructionFlags::RightOperandIsImm],
                 is_noop: instruction_flags[InstructionFlags::IsNoop],
+                frd,
+                frs1,
+                frs2,
+                reads_frs1,
+                reads_frs2,
+                writes_frd,
             }
         })
         .collect()

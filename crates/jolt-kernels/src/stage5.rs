@@ -3004,16 +3004,20 @@ fn frd_wa_at_field_reg_address<F: Field>(
             actual: address_eq.len(),
         });
     }
+    // FrdWa polynomial: 1 at (bc.frd, cycle) for every cycle with
+    // bc.writes_frd=true, regardless of whether ev.rd_written is set —
+    // mirrors Stage 4 sparse FR Twist's gating. Cycles where new==old
+    // contribute FrdWa=1 but FrdInc=0, so they don't change FieldRegVal.
     let mut output = vec![F::zero(); witness.trace_len];
-    for ev in &witness.replay.events {
-        if !ev.rd_written {
-            continue;
-        }
-        let cycle = ev.cycle as usize;
+    let mask = witness.field_reg_count - 1;
+    for (cycle, bc) in witness.replay.bytecode.iter().enumerate() {
         if cycle >= witness.trace_len {
+            break;
+        }
+        if !bc.writes_frd {
             continue;
         }
-        let slot = (ev.frd as usize) & (witness.field_reg_count - 1);
+        let slot = (bc.frd as usize) & mask;
         output[cycle] += address_eq[slot];
     }
     Ok(output)

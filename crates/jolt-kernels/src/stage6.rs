@@ -192,7 +192,14 @@ impl Stage6KernelAbi {
     }
 }
 
-const BYTECODE_READ_RAF_STAGE_COUNT: usize = 5;
+// Stage 6 bytecode-RAF stage groups:
+//   0 = stage1 (PC + circuit flags)
+//   1 = stage2 (branch flags + jump)
+//   2 = stage3 (instruction inputs + Spartan shift)
+//   3 = stage4 (integer RW + register Ra/Wa via integer Twist's r_cycle)
+//   4 = stage5 (register val-eval + lookup tables)
+//   5 = stage_fr (FR Twist FrRs1Ra/FrRs2Ra/FrdWa via FR Twist's r_cycle_fr)
+const BYTECODE_READ_RAF_STAGE_COUNT: usize = 6;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage6KernelError {
@@ -380,6 +387,12 @@ pub struct Stage6BytecodeEntry<F: Field> {
     pub right_is_rs2: bool,
     pub right_is_imm: bool,
     pub is_noop: bool,
+    pub frd: Option<usize>,
+    pub frs1: Option<usize>,
+    pub frs2: Option<usize>,
+    pub reads_frs1: bool,
+    pub reads_frs2: bool,
+    pub writes_frd: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -406,6 +419,12 @@ impl<F: Field> From<jolt_witness::Stage6BytecodeEntry<F>> for Stage6BytecodeEntr
             right_is_rs2: entry.right_is_rs2,
             right_is_imm: entry.right_is_imm,
             is_noop: entry.is_noop,
+            frd: entry.frd,
+            frs1: entry.frs1,
+            frs2: entry.frs2,
+            reads_frs1: entry.reads_frs1,
+            reads_frs2: entry.reads_frs2,
+            writes_frd: entry.writes_frd,
         }
     }
 }
@@ -1600,6 +1619,7 @@ fn expected_bytecode_read_raf<F: Field>(
         gamma_powers[4] * int_eval,
         F::zero(),
         F::zero(),
+        F::zero(),
     ];
 
     let mut val = F::zero();
@@ -2004,16 +2024,23 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
         let stage3_gamma = store.scalar("stage6.bytecode_read_raf.stage3_gamma")?;
         let stage4_gamma = store.scalar("stage6.bytecode_read_raf.stage4_gamma")?;
         let stage5_gamma = store.scalar("stage6.bytecode_read_raf.stage5_gamma")?;
+        let stage_fr_gamma = store.scalar("stage6.bytecode_read_raf.stage_fr_gamma")?;
         let stage1_gamma_powers = field_powers(stage1_gamma, 16);
         let stage2_gamma_powers = field_powers(stage2_gamma, 4);
         let stage3_gamma_powers = field_powers(stage3_gamma, 9);
         let stage4_gamma_powers = field_powers(stage4_gamma, 3);
         let stage5_gamma_powers = field_powers(stage5_gamma, data.num_lookup_tables + 2);
+        let stage_fr_gamma_powers = field_powers(stage_fr_gamma, 3);
         let stage4_register_point =
             register_prefix_point(store, "stage6.input.stage4.Rs1Ra", log_t)?;
         let stage5_register_point = register_prefix_point(
             store,
             "stage6.input.stage5.registers_val_evaluation.RdWa",
+            log_t,
+        )?;
+        let stage_fr_register_point = register_prefix_point(
+            store,
+            "stage6.input.stage4.field_reg_rw.FrRs1Ra",
             log_t,
         )?;
 
@@ -2025,11 +2052,13 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                 data.num_lookup_tables,
                 stage4_register_point,
                 stage5_register_point,
+                stage_fr_register_point,
                 &stage1_gamma_powers,
                 &stage2_gamma_powers,
                 &stage3_gamma_powers,
                 &stage4_gamma_powers,
                 &stage5_gamma_powers,
+                &stage_fr_gamma_powers,
             )?;
             let int_eval = F::from_u64(index as u64);
             values[0] += gamma_powers[5] * int_eval;
@@ -2046,6 +2075,7 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                 stage_factors[stage][bytecode_index] += cycle_eqs[stage][cycle];
             }
         }
+
 
         let mut entry_trace = vec![F::zero(); expected_entries];
         entry_trace[bytecode_cycle_indices[0]] = F::one();
@@ -4447,7 +4477,7 @@ fn bytecode_gamma_powers<F: Field>(gamma: F) -> [F; 8] {
 fn bytecode_stage_cycle_points<F: Field>(
     store: &Stage6ValueStore<F>,
     log_t: usize,
-) -> Result<[Vec<F>; 5], Stage6KernelError> {
+) -> Result<[Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT], Stage6KernelError> {
     Ok([
         suffix_point(
             store.point("stage6.input.stage1.Imm")?,
@@ -4479,6 +4509,14 @@ fn bytecode_stage_cycle_points<F: Field>(
             "stage6.input.stage5.registers_val_evaluation.RdWa",
         )?
         .to_vec(),
+        // stage_fr: FR Twist's r_cycle (suffix of any FR opening point; all
+        // three FrRs1Ra/FrRs2Ra/FrdWa share the same Stage 4 instance point).
+        suffix_point(
+            store.point("stage6.input.stage4.field_reg_rw.FrRs1Ra")?,
+            log_t,
+            "stage6.input.stage4.field_reg_rw.FrRs1Ra",
+        )?
+        .to_vec(),
     ])
 }
 
@@ -4487,7 +4525,7 @@ fn bytecode_stage_value_evals<F: Field>(
     store: &Stage6ValueStore<F>,
     r_address: &[F],
     log_t: usize,
-) -> Result<[F; 5], Stage6KernelError> {
+) -> Result<[F; BYTECODE_READ_RAF_STAGE_COUNT], Stage6KernelError> {
     let expected_len = 1usize.checked_shl(r_address.len() as u32).ok_or(
         Stage6KernelError::InvalidInputLength {
             input: "stage6.bytecode_read_raf.entries",
@@ -4513,11 +4551,13 @@ fn bytecode_stage_value_evals<F: Field>(
     let stage3_gamma = store.scalar("stage6.bytecode_read_raf.stage3_gamma")?;
     let stage4_gamma = store.scalar("stage6.bytecode_read_raf.stage4_gamma")?;
     let stage5_gamma = store.scalar("stage6.bytecode_read_raf.stage5_gamma")?;
+    let stage_fr_gamma = store.scalar("stage6.bytecode_read_raf.stage_fr_gamma")?;
     let stage1_gamma_powers = field_powers(stage1_gamma, 16);
     let stage2_gamma_powers = field_powers(stage2_gamma, 4);
     let stage3_gamma_powers = field_powers(stage3_gamma, 9);
     let stage4_gamma_powers = field_powers(stage4_gamma, 3);
     let stage5_gamma_powers = field_powers(stage5_gamma, data.num_lookup_tables + 2);
+    let stage_fr_gamma_powers = field_powers(stage_fr_gamma, 3);
 
     let stage4_register_point = register_prefix_point(store, "stage6.input.stage4.Rs1Ra", log_t)?;
     let stage5_register_point = register_prefix_point(
@@ -4525,8 +4565,13 @@ fn bytecode_stage_value_evals<F: Field>(
         "stage6.input.stage5.registers_val_evaluation.RdWa",
         log_t,
     )?;
+    let stage_fr_register_point = register_prefix_point(
+        store,
+        "stage6.input.stage4.field_reg_rw.FrRs1Ra",
+        log_t,
+    )?;
 
-    let mut evals = [F::zero(); 5];
+    let mut evals = [F::zero(); BYTECODE_READ_RAF_STAGE_COUNT];
     for (index, entry) in data.entries.iter().enumerate() {
         let eq = indexed_boolean_eq(index, r_address)?;
         let values = bytecode_entry_stage_values(
@@ -4534,11 +4579,13 @@ fn bytecode_stage_value_evals<F: Field>(
             data.num_lookup_tables,
             stage4_register_point,
             stage5_register_point,
+            stage_fr_register_point,
             &stage1_gamma_powers,
             &stage2_gamma_powers,
             &stage3_gamma_powers,
             &stage4_gamma_powers,
             &stage5_gamma_powers,
+            &stage_fr_gamma_powers,
         )?;
         for stage in 0..evals.len() {
             evals[stage] += eq * values[stage];
@@ -4563,15 +4610,22 @@ fn bytecode_weighted_value_factor<F: Field>(
     let stage3_gamma = store.scalar("stage6.bytecode_read_raf.stage3_gamma")?;
     let stage4_gamma = store.scalar("stage6.bytecode_read_raf.stage4_gamma")?;
     let stage5_gamma = store.scalar("stage6.bytecode_read_raf.stage5_gamma")?;
+    let stage_fr_gamma = store.scalar("stage6.bytecode_read_raf.stage_fr_gamma")?;
     let stage1_gamma_powers = field_powers(stage1_gamma, 16);
     let stage2_gamma_powers = field_powers(stage2_gamma, 4);
     let stage3_gamma_powers = field_powers(stage3_gamma, 9);
     let stage4_gamma_powers = field_powers(stage4_gamma, 3);
     let stage5_gamma_powers = field_powers(stage5_gamma, data.num_lookup_tables + 2);
+    let stage_fr_gamma_powers = field_powers(stage_fr_gamma, 3);
     let stage4_register_point = register_prefix_point(store, "stage6.input.stage4.Rs1Ra", log_t)?;
     let stage5_register_point = register_prefix_point(
         store,
         "stage6.input.stage5.registers_val_evaluation.RdWa",
+        log_t,
+    )?;
+    let stage_fr_register_point = register_prefix_point(
+        store,
+        "stage6.input.stage4.field_reg_rw.FrRs1Ra",
         log_t,
     )?;
     let stage_values = data
@@ -4583,11 +4637,13 @@ fn bytecode_weighted_value_factor<F: Field>(
                 data.num_lookup_tables,
                 stage4_register_point,
                 stage5_register_point,
+                stage_fr_register_point,
                 &stage1_gamma_powers,
                 &stage2_gamma_powers,
                 &stage3_gamma_powers,
                 &stage4_gamma_powers,
                 &stage5_gamma_powers,
+                &stage_fr_gamma_powers,
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -4601,6 +4657,7 @@ fn bytecode_weighted_value_factor<F: Field>(
                 gamma_powers[5] * int_eval,
                 F::zero(),
                 gamma_powers[4] * int_eval,
+                F::zero(),
                 F::zero(),
                 F::zero(),
             ];
@@ -4797,12 +4854,14 @@ fn bytecode_entry_stage_values<F: Field>(
     num_lookup_tables: usize,
     stage4_register_point: &[F],
     stage5_register_point: &[F],
+    stage_fr_register_point: &[F],
     stage1_gamma_powers: &[F],
     stage2_gamma_powers: &[F],
     stage3_gamma_powers: &[F],
     stage4_gamma_powers: &[F],
     stage5_gamma_powers: &[F],
-) -> Result<[F; 5], Stage6KernelError> {
+    stage_fr_gamma_powers: &[F],
+) -> Result<[F; BYTECODE_READ_RAF_STAGE_COUNT], Stage6KernelError> {
     let mut stage1 = entry.address + entry.imm * stage1_gamma_powers[1];
     for (flag, gamma) in entry
         .circuit_flags
@@ -4880,7 +4939,29 @@ fn bytecode_entry_stage_values<F: Field>(
         stage5 += stage5_gamma_powers[2 + table];
     }
 
-    Ok([stage1, stage2, stage3, stage4, stage5])
+    // FR stage group: each per-entry FR factor contributes
+    // `flag[entry] · register_eq(slot[entry], r_addr_fr)`, batched via the
+    // stage_fr gamma. When summed over entries × cycles weighted by Ra_bc
+    // and eq(r_cycle_fr, j), this reproduces the FR Twist's per-row Ra/Wa
+    // openings at (r_addr_fr, r_cycle_fr) — forcing the prover to produce
+    // non-zero FR Twist evaluations on every bytecode-FR-active cycle.
+    let mut stage_fr = F::zero();
+    if entry.writes_frd {
+        stage_fr += register_eq(entry.frd, stage_fr_register_point, "stage6.bytecode.entry.frd")?
+            * stage_fr_gamma_powers[0];
+    }
+    if entry.reads_frs1 {
+        stage_fr +=
+            register_eq(entry.frs1, stage_fr_register_point, "stage6.bytecode.entry.frs1")?
+                * stage_fr_gamma_powers[1];
+    }
+    if entry.reads_frs2 {
+        stage_fr +=
+            register_eq(entry.frs2, stage_fr_register_point, "stage6.bytecode.entry.frs2")?
+                * stage_fr_gamma_powers[2];
+    }
+
+    Ok([stage1, stage2, stage3, stage4, stage5, stage_fr])
 }
 
 fn register_eq<F: Field>(
@@ -5819,6 +5900,11 @@ mod tests {
             symbol: "stage6.bytecode_read_raf.stage5_gamma",
             field: "bn254_fr",
             value: 13,
+        },
+        Stage6FieldConstantPlan {
+            symbol: "stage6.bytecode_read_raf.stage_fr_gamma",
+            field: "bn254_fr",
+            value: 17,
         },
     ];
     const BYTECODE_CLAIM_INPUT_OPENINGS: &[&str] = &["stage6.input.bytecode_read_raf_claim"];
@@ -7653,6 +7739,12 @@ mod tests {
             right_is_rs2: rs2.is_some(),
             right_is_imm: address == 3,
             is_noop: address == 0,
+            frd: None,
+            frs1: None,
+            frs2: None,
+            reads_frs1: false,
+            reads_frs2: false,
+            writes_frd: false,
         }
     }
 
@@ -7681,6 +7773,24 @@ mod tests {
             Stage6OpeningInputValue {
                 symbol: "stage6.input.stage5.registers_val_evaluation.RdWa",
                 point: frs(&[5, 7, 31]),
+                eval: Fr::from_u64(0),
+            },
+            // FR Twist Stage 4 opening point: 4-dim FR address + 1-dim cycle
+            // (log_t=1 for this test fixture). Eval = 0 since fixture entries
+            // have no FR-active flags set.
+            Stage6OpeningInputValue {
+                symbol: "stage6.input.stage4.field_reg_rw.FrRs1Ra",
+                point: frs(&[11, 13, 17, 19, 37]),
+                eval: Fr::from_u64(0),
+            },
+            Stage6OpeningInputValue {
+                symbol: "stage6.input.stage4.field_reg_rw.FrRs2Ra",
+                point: frs(&[11, 13, 17, 19, 37]),
+                eval: Fr::from_u64(0),
+            },
+            Stage6OpeningInputValue {
+                symbol: "stage6.input.stage4.field_reg_rw.FrdWa",
+                point: frs(&[11, 13, 17, 19, 37]),
                 eval: Fr::from_u64(0),
             },
         ]

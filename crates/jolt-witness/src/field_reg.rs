@@ -92,7 +92,13 @@ pub struct FieldRegEvent {
 /// Mirrors the source-branch `FrCycleBytecode`: the low 4 bits of the
 /// instruction's `rs1`/`rs2`/`rd` fields plus boolean flags marking which
 /// reads are FR-register reads (as opposed to integer-register reads on
-/// FieldMov/FieldSll* bridges).
+/// FieldMov/FieldSll* bridges) and whether the instruction writes back to
+/// `frd` (false for FieldAssertEq, true for all other FR-active kinds).
+///
+/// `writes_frd` + `frd` together are the *cryptographic anchor* for the FR
+/// write-slot indicator: FR Twist materializers source the slot from
+/// `bc.frd` (committed via bytecode preprocessing), not from `event.frd`
+/// (uncommitted prover input).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FrCycleBytecode {
     pub frs1: u8,
@@ -100,6 +106,7 @@ pub struct FrCycleBytecode {
     pub frd: u8,
     pub reads_frs1: bool,
     pub reads_frs2: bool,
+    pub writes_frd: bool,
 }
 
 /// Replay context: bytecode metadata + tracer event stream for one trace.
@@ -139,9 +146,13 @@ impl FieldRegReplay {
         let mut current: [F; FIELD_REG_COUNT] = [F::zero(); FIELD_REG_COUNT];
         let mut events = self.events.iter().peekable();
         for (c, slot_out) in out.iter_mut().enumerate().take(t) {
+            let bc = self.bytecode.get(c).copied().unwrap_or_default();
             if let Some(ev) = events.next_if(|ev| ev.cycle as usize == c) {
-                if ev.rd_written {
-                    let slot = (ev.frd as usize) & 0xF;
+                // Slot comes from bytecode (committed via preprocessing), not
+                // event.frd (uncommitted). Gate on bc.writes_frd so a malicious
+                // event claiming rd_written on a non-writing kind is dropped.
+                if ev.rd_written && bc.writes_frd {
+                    let slot = (bc.frd as usize) & 0xF;
                     let post = limbs_to_field::<F>(ev.rd_post.into_limbs());
                     *slot_out = post - current[slot];
                     current[slot] = post;
@@ -221,11 +232,18 @@ mod tests {
                 rd_written: true,
             },
         ];
-        let replay = FieldRegReplay {
-            num_cycles: t,
-            bytecode: vec![FrCycleBytecode::default(); t],
-            events,
-        };
+        // Post-C7: the write slot is sourced from `bc.frd`, not `event.frd`.
+        // For inc to land at slot 5 on cycles 1 and 2, the bytecode for those
+        // cycles must say `writes_frd=true, frd=5`.
+        let mut bytecode = vec![FrCycleBytecode::default(); t];
+        for cycle in [1usize, 2] {
+            bytecode[cycle] = FrCycleBytecode {
+                frd: 5,
+                writes_frd: true,
+                ..FrCycleBytecode::default()
+            };
+        }
+        let replay = FieldRegReplay { num_cycles: t, bytecode, events };
         let inc: Vec<Fr> = replay.materialize_frd_inc();
         // inc[1] = 42 - 0 = 42; inc[2] = 99 - 42 = 57.
         assert_eq!(inc[0], Fr::from_u64(0));

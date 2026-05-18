@@ -1491,6 +1491,12 @@ pub fn stage6_verifier_data_from_witness_entries(
                     right_is_rs2: entry.right_is_rs2,
                     right_is_imm: entry.right_is_imm,
                     is_noop: entry.is_noop,
+                    frd: entry.frd,
+                    frs1: entry.frs1,
+                    frs2: entry.frs2,
+                    reads_frs1: entry.reads_frs1,
+                    reads_frs2: entry.reads_frs2,
+                    writes_frd: entry.writes_frd,
                 })
                 .collect(),
             entry_bytecode_index,
