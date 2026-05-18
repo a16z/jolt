@@ -2,8 +2,12 @@
 
 pub mod compat;
 pub mod error;
+pub mod preprocessing;
 pub mod proof;
+pub mod stages;
 pub mod verifier;
 
 pub use error::VerifierError;
+pub use preprocessing::JoltVerifierPreprocessing;
 pub use proof::JoltProof;
+pub use verifier::{verify, CheckedInputs};

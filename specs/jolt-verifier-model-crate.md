@@ -56,25 +56,36 @@ Dory. Dory is the compatibility instantiation, not the verifier architecture.
 The public API should have this shape:
 
 ```rust
-pub fn verify<PCS, VC, T>(
-    preprocessing: &JoltVerifierPreprocessing<PCS::VerifierSetup, VC::Setup>,
-    proof: JoltProof<PCS::Field, PCS::Output, PCS::Proof, VC::Output>,
+pub fn verify<F, PCS, VC, T>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    proof: JoltProof<PCS, VC>,
     io: common::jolt_device::JoltDevice,
     trusted_advice_commitment: Option<PCS::Output>,
-    transcript: T,
+    zk: bool,
 ) -> Result<(), VerifierError>
 where
-    PCS: jolt_openings::CommitmentScheme
+    F: jolt_field::Field,
+    PCS: jolt_openings::CommitmentScheme<Field = F>
         + jolt_openings::AdditivelyHomomorphic
-        + jolt_openings::ZkOpeningScheme,
-    VC: jolt_crypto::VectorCommitment,
-    T: jolt_transcript::Transcript<Challenge = PCS::Field>;
+        + jolt_openings::ZkOpeningScheme<HidingCommitment = VC::Output>,
+    PCS::Output: jolt_transcript::AppendToTranscript
+        + jolt_crypto::HomomorphicCommitment<F>,
+    VC: jolt_crypto::VectorCommitment<Field = F>,
+    VC::Output: jolt_crypto::HomomorphicCommitment<F>,
+    T: jolt_transcript::Transcript<Challenge = F>;
 ```
 
-The exact associated-type bounds should follow the modular traits as the
-implementation lands. The invariant is that verifier stage code is generic, and
-tests instantiate concrete stacks such as Dory PCS, Pedersen vector commitments,
-BN254 scalar field, and Blake2b transcript.
+`JoltVerifierPreprocessing<PCS, VC>` owns the verifier PCS setup and the optional
+vector-commitment setup. When a backend can reuse generators from the PCS setup
+source, construct preprocessing through the
+`DeriveSetup<PCS::ProverSetup>` path; for Dory this means deriving the Pedersen
+setup from the same public URS `g1_vec`/`h1` used by the PCS. The verifier API
+still carries the derived `VC::Setup` explicitly because Dory's compact verifier
+setup intentionally does not contain the full generator vectors.
+
+The invariant is that verifier stage code is generic, and tests instantiate
+concrete stacks such as Dory PCS, Pedersen vector commitments, BN254 scalar
+field, and Blake2b transcript.
 
 ### Free Function Entry Point
 
@@ -259,9 +270,9 @@ Rules:
 | `jolt-program` | Reusable program/preprocessing model pieces |
 | `jolt-lookup-tables` | Lookup table definitions and final-row routing |
 
-Verifier preprocessing should primarily compose reusable `jolt-program` data
-with PCS verifier setup. Avoid a local preprocessing wrapper if it only aliases
-or repackages those pieces.
+Verifier preprocessing should compose reusable `jolt-program` data with PCS and
+vector-commitment setup. Keep it local to `jolt-verifier` only for verifier
+setup ownership; program preprocessing itself belongs in `jolt-program`.
 
 ## Target Layout
 
@@ -271,6 +282,7 @@ crates/jolt-verifier/src/
   verifier.rs
   error.rs
   proof.rs
+  preprocessing.rs
 
   compat/
     mod.rs
@@ -294,9 +306,10 @@ crates/jolt-verifier/src/
     zk.rs
 ```
 
-Do not add top-level `preprocessing.rs` or `openings.rs` unless there is
-substantial verifier-owned logic to put there. Do not add `stages/blindfold.rs`;
-Jolt-specific BlindFold instance construction is `stages/zk.rs`.
+Keep verifier preprocessing in top-level `preprocessing.rs`. Do not add a
+top-level `openings.rs` unless there is substantial verifier-owned logic to put
+there. Do not add `stages/blindfold.rs`; Jolt-specific BlindFold instance
+construction is `stages/zk.rs`.
 
 ## Verification Flow
 
@@ -305,7 +318,7 @@ The top-level verifier should make transcript-sensitive order visible:
 ```rust
 pub fn verify<PCS, VC, T>(...) -> Result<(), VerifierError> {
     let checked = validate_inputs(preprocessing, &proof, &io)?;
-    proof.validate_mode(checked.proof_mode)?;
+    validate_proof_consistency(&proof, checked.zk)?;
 
     let mut transcript = new_transcript();
     bind_preamble(&checked, preprocessing, &proof, &mut transcript)?;
@@ -313,23 +326,51 @@ pub fn verify<PCS, VC, T>(...) -> Result<(), VerifierError> {
 
     let proof_openings = convert_openings(&proof, &checked)?;
 
-    let stage1 = stages::stage1::verify(Stage1Inputs { ... })?;
-    let stage2 = stages::stage2::verify(Stage2Inputs { ... })?;
-    let stage3 = stages::stage3::verify(Stage3Inputs { ... })?;
-    let stage4 = stages::stage4::verify(Stage4Inputs { ... })?;
-    let stage5 = stages::stage5::verify(Stage5Inputs { ... })?;
-    let stage6 = stages::stage6::verify(Stage6Inputs { ... })?;
-    let stage7 = stages::stage7::verify(Stage7Inputs { ... })?;
+    let stage1 = stages::stage1::verify(&checked, preprocessing, &proof, &mut transcript)?;
+    let stage2 = stages::stage2::verify(
+        &checked,
+        preprocessing,
+        &proof,
+        &mut transcript,
+        stages::stage2::deps(&stage1),
+    )?;
+    let stage3 = stages::stage3::verify(
+        &checked,
+        preprocessing,
+        &proof,
+        &mut transcript,
+        stages::stage3::deps(&stage1, &stage2),
+    )?;
+    let stage4 = stages::stage4::verify(..., stages::stage4::deps(&stage1, &stage2, &stage3))?;
+    let stage5 =
+        stages::stage5::verify(..., stages::stage5::deps(&stage1, &stage2, &stage3, &stage4))?;
+    let stage6 = stages::stage6::verify(
+        ...,
+        stages::stage6::deps(&stage1, &stage2, &stage3, &stage4, &stage5),
+    )?;
+    let stage7 = stages::stage7::verify(
+        ...,
+        stages::stage7::deps(&stage1, &stage2, &stage3, &stage4, &stage5, &stage6),
+    )?;
 
-    let stage8 = stages::stage8::verify(Stage8Inputs {
-        opening_plan: OpeningPlan::from_stage_outputs(
-            &stage1, &stage2, &stage3, &stage4, &stage5, &stage6, &stage7,
-        )?,
-        ...
-    })?;
+    let stage8 = stages::stage8::verify(
+        &checked,
+        preprocessing,
+        &proof,
+        &mut transcript,
+        stages::stage8::deps(&stage1, &stage2, &stage3, &stage4, &stage5, &stage6, &stage7),
+    )?;
 
-    if checked.proof_mode.is_zk() {
-        stages::zk::verify(ZkInputs { ... })?;
+    if checked.zk {
+        stages::zk::verify(
+            &checked,
+            preprocessing,
+            &proof,
+            &mut transcript,
+            stages::zk::deps(
+                &stage1, &stage2, &stage3, &stage4, &stage5, &stage6, &stage7, &stage8,
+            ),
+        )?;
     }
 
     Ok(())
@@ -341,17 +382,16 @@ hide protocol checks or Fiat-Shamir ordering.
 
 ## Stage Contract
 
-Each stage should be a free function with stage-specific input and output
-types:
+Each stage should be a free function with explicit verifier inputs,
+stage-local typed dependencies, and stage-specific output types:
 
 ```rust
-pub struct StageNInputs<'a, F, T> {
-    pub checked: &'a CheckedInputs,
-    pub preprocessing: &'a JoltVerifierPreprocessing<...>,
-    pub proof: &'a JoltProof<...>,
-    pub transcript: &'a mut T,
-    pub openings: StageNOpenings<'a, F>,
-    pub previous: StageNPrevious<'a, F>,
+pub struct Deps<'a, F> {
+    pub previous_output: &'a PreviousStageOutput<F>,
+}
+
+pub fn deps<F>(previous_output: &PreviousStageOutput<F>) -> Deps<'_, F> {
+    Deps { previous_output }
 }
 
 pub struct StageNOutput<F> {
@@ -360,9 +400,24 @@ pub struct StageNOutput<F> {
     pub opening_dependencies: ...,
     pub zk_claims: ...,
 }
+
+pub fn verify<PCS, VC, T>(
+    checked: &CheckedInputs,
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    proof: &JoltProof<PCS, VC>,
+    transcript: &mut T,
+    deps: Deps<'_, PCS::Field>,
+) -> Result<StageNOutput<PCS::Field>, VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+    T: Transcript<Challenge = PCS::Field>;
 ```
 
-Do not force a common stage trait before repeated structure justifies it.
+Do not force a common stage trait or catch-all verifier context before repeated
+structure justifies it. Dependencies should name the prior outputs a stage
+actually consumes; do not pass all prior stages by default once concrete stage
+contracts are known.
 
 Stage implementation rules:
 
@@ -395,12 +450,15 @@ Review criteria:
 - Proof validation rejects mixed clear/committed stages.
 - Compatibility bytes still match existing proof artifacts.
 
-### 2. Verifier Skeleton And Input Binding
+### 2. Verifier Skeleton And Input Resolution
 
 Objective: add the generic top-level verifier shape.
 
 Tasks:
 
+- Define the high-level `verify` API, including verifier preprocessing,
+  public I/O, trusted advice commitment, proof, transcript, PCS, and VC
+  generic bounds.
 - Add `CheckedInputs`.
 - Derive proof mode from explicit verifier inputs or proof metadata.
 - Bind public preamble fields in prover-compatible order.
@@ -413,7 +471,36 @@ Review criteria:
 - Transcript-sensitive operations are visible.
 - Generic verifier compiles with the concrete compatibility stack in tests.
 
-### 3. Typed Opening Conversion
+### 3. Claim Evaluation Pattern And Differential Test Harness
+
+Objective: establish the modular pattern for final sumcheck/MLE claim checks
+and set up the target end-to-end tests against the Step 2 API.
+
+Tasks:
+
+- Define how a stage evaluates `jolt-claims` input and output expressions
+  using explicit stage-local resolved claims, not an accumulator or catch-all
+  context.
+- Define the `jolt-sumcheck` verifier return shape needed by `jolt-verifier`,
+  including final evaluation claims, per-instance batching coefficients, and
+  per-instance evaluation points.
+- Document the standard-mode equality:
+  `sumcheck_final_claim == evaluated_output_expression`.
+- Document the ZK-mode lowering of the same output expression into BlindFold
+  final-output constraints.
+- Add ignored integration-test skeletons for standard and ZK compatibility
+  against real `jolt-core` prover output.
+- Add ignored differential-test skeletons that compare old core verifier
+  acceptance against `jolt-verifier` acceptance once implemented.
+
+Review criteria:
+
+- The MLE/final-claim pattern is explicit, typed, and local to each stage.
+- `jolt-claims` and `jolt-sumcheck` compose without a verifier accumulator.
+- E2E tests are present as clear targets but do not block the partially ported
+  verifier.
+
+### 4. Typed Opening Conversion
 
 Objective: convert compatibility opening claims into typed stage inputs.
 
@@ -430,7 +517,7 @@ Review criteria:
 - Opening points use `jolt_poly::Point<F>`.
 - No top-level opening wrapper is introduced without concrete need.
 
-### 4. Stage 1: Spartan Outer Split
+### 5. Stage 1: Spartan Outer Split
 
 Objective: port the first Spartan stage.
 
@@ -448,7 +535,7 @@ Review criteria:
 - No accumulator dependency.
 - Any missing modular API is recorded as pressure.
 
-### 5. Stage 2: Spartan Product Split
+### 6. Stage 2: Spartan Product Split
 
 Objective: port the product/remaining Spartan stage.
 
@@ -464,7 +551,7 @@ Review criteria:
 - Stage 1 and stage 2 outputs compose through typed fields.
 - Formula checks use `jolt-claims`, not copied ad hoc scalar math.
 
-### 6. Stage 3: Shift, Instruction Input, Register Claim Reduction
+### 7. Stage 3: Shift, Instruction Input, Register Claim Reduction
 
 Objective: port the stage containing Spartan shift, instruction input, and
 register claim-reduction checks.
@@ -481,7 +568,7 @@ Review criteria:
 - Batch input/output claim metadata is explicit.
 - Stage output provides named dependencies for later stages and ZK.
 
-### 7. Stage 4: Register Read/Write And RAM Val Check
+### 8. Stage 4: Register Read/Write And RAM Val Check
 
 Objective: port register read/write checking and RAM value checking.
 
@@ -490,7 +577,7 @@ Tasks:
 - Port register read/write checking.
 - Build RAM initial state from reusable preprocessing/program data.
 - Port RAM val-check formula, including advice/public decomposition.
-- Preserve `ram_val_check_gamma` transcript binding.
+- Preserve `ram_val_check_gamma` transcript absorption.
 
 Review criteria:
 
@@ -498,7 +585,7 @@ Review criteria:
 - Public values needed by ZK are represented as public inputs, not hidden in
   compatibility state.
 
-### 8. Stage 5: Instruction Read-RAF, RAM RA Reduction, Register Values
+### 9. Stage 5: Instruction Read-RAF, RAM RA Reduction, Register Values
 
 Objective: port the read-RAF and value-evaluation checks in stage 5.
 
@@ -515,7 +602,7 @@ Review criteria:
   available.
 - Stage dependencies are explicit fields.
 
-### 9. Stage 6: Bytecode, Booleanity, RA Virtualization, Increments, Advice Phase 1
+### 10. Stage 6: Bytecode, Booleanity, RA Virtualization, Increments, Advice Phase 1
 
 Objective: port the broad stage 6 batch.
 
@@ -533,7 +620,7 @@ Review criteria:
 - Advice support is first class.
 - ZK claim metadata covers every included sumcheck.
 
-### 10. Stage 7: Hamming Weight And Advice Phase 2
+### 11. Stage 7: Hamming Weight And Advice Phase 2
 
 Objective: port final claim reductions before opening verification.
 
@@ -548,7 +635,7 @@ Review criteria:
 - Optional advice phases are explicit.
 - Stage 8 can be built from typed outputs without legacy lookups.
 
-### 11. Stage 8: Joint Opening Verification
+### 12. Stage 8: Joint Opening Verification
 
 Objective: verify the final opening proof through modular opening/PCS APIs.
 
@@ -565,7 +652,7 @@ Review criteria:
 - Legacy polynomial ordering does not leak into stage 8.
 - Standard-mode opening values are checked explicitly.
 
-### 12. ZK: BlindFold Instance Construction
+### 13. ZK: BlindFold Instance Construction
 
 Objective: verify committed proofs with BlindFold.
 
@@ -582,7 +669,7 @@ Review criteria:
 - Every committed sumcheck is represented.
 - No core BlindFold type leaks outside `compat`.
 
-### 13. End-To-End Compatibility
+### 14. End-To-End Compatibility
 
 Objective: verify existing prover output.
 

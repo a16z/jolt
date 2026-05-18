@@ -31,6 +31,7 @@ jolt-dory = { path = "../jolt-dory", optional = true }
 jolt-field.workspace = true
 jolt-openings.workspace = true
 jolt-poly.workspace = true
+jolt-program.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true

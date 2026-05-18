@@ -3205,6 +3205,7 @@ dependencies = [
  "jolt-field",
  "jolt-openings",
  "jolt-poly",
+ "jolt-program",
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",

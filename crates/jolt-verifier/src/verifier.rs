@@ -1,11 +1,285 @@
 //! Top-level verifier entry point.
 
-use jolt_crypto::VectorCommitment;
+use common::jolt_device::JoltDevice;
+use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
-use jolt_openings::CommitmentScheme;
+use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_sumcheck::SumcheckProof;
+use jolt_transcript::{AppendToTranscript, Label, Transcript, U64Word};
 
-use crate::{proof::JoltProof, VerifierError};
+use crate::{
+    preprocessing::JoltVerifierPreprocessing,
+    proof::JoltProof,
+    stages::{stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8, zk},
+    VerifierError,
+};
+
+pub fn verify<F, PCS, VC, T, OpeningClaims, ZkProof>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC, OpeningClaims, ZkProof>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    zk: bool,
+) -> Result<(), VerifierError>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F>
+        + AdditivelyHomomorphic
+        + ZkOpeningScheme<HidingCommitment = VC::Output>,
+    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
+    VC: VectorCommitment<Field = F>,
+    VC::Output: HomomorphicCommitment<F>,
+    T: Transcript<Challenge = F>,
+{
+    let checked = validate_inputs(preprocessing, public_io, proof, zk)?;
+    validate_proof_consistency(proof, checked.zk)?;
+
+    let mut transcript = T::new(b"Jolt");
+    absorb_preamble(&checked, proof, &mut transcript);
+    absorb_commitments(proof, trusted_advice_commitment, &mut transcript);
+
+    let stage1 = stage1::verify(&checked, preprocessing, proof, &mut transcript)?;
+    let stage2 = stage2::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage2::deps(&stage1),
+    )?;
+    let stage3 = stage3::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage3::deps(&stage1, &stage2),
+    )?;
+    let stage4 = stage4::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage4::deps(&stage1, &stage2, &stage3),
+    )?;
+    let stage5 = stage5::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage5::deps(&stage1, &stage2, &stage3, &stage4),
+    )?;
+    let stage6 = stage6::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage6::deps(&stage1, &stage2, &stage3, &stage4, &stage5),
+    )?;
+    let stage7 = stage7::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage7::deps(&stage1, &stage2, &stage3, &stage4, &stage5, &stage6),
+    )?;
+    let stage8 = stage8::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage8::deps(
+            &stage1, &stage2, &stage3, &stage4, &stage5, &stage6, &stage7,
+        ),
+    )?;
+
+    if checked.zk {
+        zk::verify(
+            &checked,
+            preprocessing,
+            proof,
+            &mut transcript,
+            zk::deps(
+                &stage1, &stage2, &stage3, &stage4, &stage5, &stage6, &stage7, &stage8,
+            ),
+        )?;
+    }
+
+    Ok(())
+}
+
+#[expect(non_snake_case, reason = "Matches current jolt-core proof field name.")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct CheckedInputs {
+    pub public_io: JoltDevice,
+    pub zk: bool,
+    pub trace_length: usize,
+    pub ram_K: usize,
+    pub entry_address: u64,
+    pub preprocessing_digest: [u8; 32],
+}
+
+pub fn validate_inputs<PCS, VC, OpeningClaims, ZkProof>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC, OpeningClaims, ZkProof>,
+    zk: bool,
+) -> Result<CheckedInputs, VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    if public_io.memory_layout != preprocessing.program.memory_layout {
+        return Err(VerifierError::MemoryLayoutMismatch);
+    }
+
+    if zk && preprocessing.vc_setup.is_none() {
+        return Err(VerifierError::MissingVectorCommitmentSetup);
+    }
+
+    let max_input_size = preprocessing.program.memory_layout.max_input_size as usize;
+    if public_io.inputs.len() > max_input_size {
+        return Err(VerifierError::InputTooLarge {
+            got: public_io.inputs.len(),
+            max: max_input_size,
+        });
+    }
+
+    let max_output_size = preprocessing.program.memory_layout.max_output_size as usize;
+    if public_io.outputs.len() > max_output_size {
+        return Err(VerifierError::OutputTooLarge {
+            got: public_io.outputs.len(),
+            max: max_output_size,
+        });
+    }
+
+    if !proof.trace_length.is_power_of_two()
+        || proof.trace_length > preprocessing.program.max_padded_trace_length
+    {
+        return Err(VerifierError::InvalidTraceLength {
+            got: proof.trace_length,
+            max: preprocessing.program.max_padded_trace_length,
+        });
+    }
+
+    if !proof.ram_K.is_power_of_two() {
+        return Err(VerifierError::InvalidRamK { got: proof.ram_K });
+    }
+
+    let mut normalized_public_io = public_io.clone();
+    normalized_public_io.outputs.truncate(
+        normalized_public_io
+            .outputs
+            .iter()
+            .rposition(|&byte| byte != 0)
+            .map_or(0, |position| position + 1),
+    );
+
+    Ok(CheckedInputs {
+        public_io: normalized_public_io,
+        zk,
+        trace_length: proof.trace_length,
+        ram_K: proof.ram_K,
+        entry_address: preprocessing.program.bytecode.entry_address,
+        preprocessing_digest: preprocessing.preprocessing_digest,
+    })
+}
+
+fn absorb_preamble<PCS, VC, OpeningClaims, ZkProof, T>(
+    checked: &CheckedInputs,
+    proof: &JoltProof<PCS, VC, OpeningClaims, ZkProof>,
+    transcript: &mut T,
+) where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+    T: Transcript<Challenge = PCS::Field>,
+{
+    let public_io = &checked.public_io;
+    absorb_labeled_bytes(
+        transcript,
+        b"preprocessing_digest",
+        &checked.preprocessing_digest,
+    );
+    absorb_labeled_u64(
+        transcript,
+        b"max_input_size",
+        public_io.memory_layout.max_input_size,
+    );
+    absorb_labeled_u64(
+        transcript,
+        b"max_output_size",
+        public_io.memory_layout.max_output_size,
+    );
+    absorb_labeled_u64(transcript, b"heap_size", public_io.memory_layout.heap_size);
+    absorb_labeled_bytes(transcript, b"inputs", &public_io.inputs);
+    absorb_labeled_bytes(transcript, b"outputs", &public_io.outputs);
+    absorb_labeled_u64(transcript, b"panic", public_io.panic as u64);
+    absorb_labeled_u64(transcript, b"ram_K", checked.ram_K as u64);
+    absorb_labeled_u64(transcript, b"trace_length", checked.trace_length as u64);
+    absorb_labeled_u64(transcript, b"entry_address", checked.entry_address);
+    absorb_labeled_u64(
+        transcript,
+        b"ram_rw_phase1_num_rounds",
+        proof.rw_config.ram_rw_phase1_num_rounds as u64,
+    );
+    absorb_labeled_u64(
+        transcript,
+        b"ram_rw_phase2_num_rounds",
+        proof.rw_config.ram_rw_phase2_num_rounds as u64,
+    );
+    absorb_labeled_u64(
+        transcript,
+        b"registers_rw_phase1_num_rounds",
+        proof.rw_config.registers_rw_phase1_num_rounds as u64,
+    );
+    absorb_labeled_u64(
+        transcript,
+        b"registers_rw_phase2_num_rounds",
+        proof.rw_config.registers_rw_phase2_num_rounds as u64,
+    );
+    absorb_labeled_u64(
+        transcript,
+        b"log_k_chunk",
+        proof.one_hot_config.log_k_chunk as u64,
+    );
+    absorb_labeled_u64(
+        transcript,
+        b"lookups_ra_virtual_log_k_chunk",
+        proof.one_hot_config.lookups_ra_virtual_log_k_chunk as u64,
+    );
+}
+
+fn absorb_commitments<PCS, VC, OpeningClaims, ZkProof, T>(
+    proof: &JoltProof<PCS, VC, OpeningClaims, ZkProof>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    transcript: &mut T,
+) where
+    PCS: CommitmentScheme,
+    PCS::Output: AppendToTranscript,
+    VC: VectorCommitment<Field = PCS::Field>,
+    T: Transcript<Challenge = PCS::Field>,
+{
+    for commitment in &proof.commitments {
+        transcript.append(&Label(b"commitment"));
+        transcript.append(commitment);
+    }
+    if let Some(untrusted_advice_commitment) = &proof.untrusted_advice_commitment {
+        transcript.append(&Label(b"untrusted_advice"));
+        transcript.append(untrusted_advice_commitment);
+    }
+    if let Some(trusted_advice_commitment) = trusted_advice_commitment {
+        transcript.append(&Label(b"trusted_advice"));
+        transcript.append(trusted_advice_commitment);
+    }
+}
+
+fn absorb_labeled_bytes<T: Transcript>(transcript: &mut T, label: &'static [u8], bytes: &[u8]) {
+    transcript.append(&Label(label));
+    transcript.append_bytes(bytes);
+}
+
+fn absorb_labeled_u64<T: Transcript>(transcript: &mut T, label: &'static [u8], value: u64) {
+    transcript.append(&Label(label));
+    transcript.append(&U64Word(value));
+}
 
 pub fn validate_proof_consistency<PCS, VC, OpeningClaims, ZkProof>(
     proof: &JoltProof<PCS, VC, OpeningClaims, ZkProof>,
@@ -102,11 +376,15 @@ where
 mod tests {
     use super::*;
     use crate::proof::JoltStageProofs;
+    use common::jolt_device::{JoltDevice, MemoryLayout};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
     use jolt_crypto::{Commitment, VectorCommitment};
     use jolt_field::Fr;
     use jolt_openings::{CommitmentScheme, OpeningsError};
     use jolt_poly::{MultilinearPoly, Polynomial};
+    use jolt_program::preprocess::{
+        BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
+    };
     use jolt_sumcheck::{
         ClearProof, ClearSumcheckProof, CommittedSumcheckProof, CompressedSumcheckProof,
     };
@@ -291,6 +569,64 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn validate_inputs_normalizes_public_output() {
+        let preprocessing = test_preprocessing();
+        let mut public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout.clone(),
+            inputs: vec![1, 2],
+            outputs: vec![3, 0, 0],
+            ..JoltDevice::default()
+        };
+        let proof = proof_with_zk(false, Some(()), None);
+
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false);
+        assert!(checked.is_ok());
+        let Ok(checked) = checked else {
+            return;
+        };
+
+        assert_eq!(checked.public_io.inputs, vec![1, 2]);
+        assert_eq!(checked.public_io.outputs, vec![3]);
+        assert_eq!(checked.trace_length, proof.trace_length);
+        assert_eq!(checked.ram_K, proof.ram_K);
+
+        public_io.outputs = vec![0, 0];
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false);
+        assert!(checked.is_ok());
+        let Ok(checked) = checked else {
+            return;
+        };
+        assert!(checked.public_io.outputs.is_empty());
+    }
+
+    #[test]
+    fn validate_inputs_rejects_public_io_layout_mismatch() {
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice::default();
+        let proof = proof_with_zk(false, Some(()), None);
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false),
+            Err(VerifierError::MemoryLayoutMismatch)
+        ));
+    }
+
+    #[test]
+    fn validate_inputs_rejects_missing_zk_vector_commitment_setup() {
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout.clone(),
+            ..JoltDevice::default()
+        };
+        let proof = proof_with_zk(true, None, Some(()));
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, true),
+            Err(VerifierError::MissingVectorCommitmentSetup)
+        ));
+    }
+
     fn proof_with_zk(
         is_zk: bool,
         opening_claims: Option<()>,
@@ -303,7 +639,7 @@ mod tests {
             untrusted_advice_commitment: None,
             opening_claims,
             blindfold_proof,
-            trace_length: 0,
+            trace_length: 1,
             ram_K: 1,
             rw_config: JoltReadWriteConfig {
                 ram_rw_phase1_num_rounds: 0,
@@ -346,5 +682,25 @@ mod tests {
         } else {
             SumcheckProof::Clear(ClearProof::Compressed(CompressedSumcheckProof::default()))
         }
+    }
+
+    fn test_preprocessing() -> JoltVerifierPreprocessing<TestPcs, TestVectorCommitment> {
+        let memory_layout = MemoryLayout {
+            max_input_size: 8,
+            max_output_size: 8,
+            heap_size: 8,
+            ..MemoryLayout::default()
+        };
+        JoltVerifierPreprocessing::new(
+            JoltProgramPreprocessing {
+                bytecode: BytecodePreprocessing::default(),
+                ram: RAMPreprocessing::default(),
+                memory_layout,
+                max_padded_trace_length: 16,
+            },
+            [7; 32],
+            (),
+            None,
+        )
     }
 }
