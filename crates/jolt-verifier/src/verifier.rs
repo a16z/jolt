@@ -5,7 +5,7 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_sumcheck::SumcheckProof;
-use jolt_transcript::{AppendToTranscript, Label, Transcript, U64Word};
+use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
@@ -14,10 +14,10 @@ use crate::{
     VerifierError,
 };
 
-pub fn verify<F, PCS, VC, T, OpeningClaims, ZkProof>(
+pub fn verify<F, PCS, VC, T, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC, OpeningClaims, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof>,
     trusted_advice_commitment: Option<&PCS::Output>,
     zk: bool,
 ) -> Result<(), VerifierError>
@@ -117,10 +117,10 @@ pub struct CheckedInputs {
     pub preprocessing_digest: [u8; 32],
 }
 
-pub fn validate_inputs<PCS, VC, OpeningClaims, ZkProof>(
+pub fn validate_inputs<PCS, VC, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC, OpeningClaims, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof>,
     zk: bool,
 ) -> Result<CheckedInputs, VerifierError>
 where
@@ -183,9 +183,9 @@ where
     })
 }
 
-fn absorb_preamble<PCS, VC, OpeningClaims, ZkProof, T>(
+fn absorb_preamble<PCS, VC, ZkProof, T>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, OpeningClaims, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
 ) where
     PCS: CommitmentScheme,
@@ -245,10 +245,15 @@ fn absorb_preamble<PCS, VC, OpeningClaims, ZkProof, T>(
         b"lookups_ra_virtual_log_k_chunk",
         proof.one_hot_config.lookups_ra_virtual_log_k_chunk as u64,
     );
+    absorb_labeled_u64(
+        transcript,
+        b"dory_layout",
+        u8::from(proof.trace_polynomial_order) as u64,
+    );
 }
 
-fn absorb_commitments<PCS, VC, OpeningClaims, ZkProof, T>(
-    proof: &JoltProof<PCS, VC, OpeningClaims, ZkProof>,
+fn absorb_commitments<PCS, VC, ZkProof, T>(
+    proof: &JoltProof<PCS, VC, ZkProof>,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
 ) where
@@ -258,21 +263,33 @@ fn absorb_commitments<PCS, VC, OpeningClaims, ZkProof, T>(
     T: Transcript<Challenge = PCS::Field>,
 {
     for commitment in &proof.commitments {
-        transcript.append(&Label(b"commitment"));
+        append_payload_label(transcript, b"commitment", commitment);
         transcript.append(commitment);
     }
     if let Some(untrusted_advice_commitment) = &proof.untrusted_advice_commitment {
-        transcript.append(&Label(b"untrusted_advice"));
+        append_payload_label(transcript, b"untrusted_advice", untrusted_advice_commitment);
         transcript.append(untrusted_advice_commitment);
     }
     if let Some(trusted_advice_commitment) = trusted_advice_commitment {
-        transcript.append(&Label(b"trusted_advice"));
+        append_payload_label(transcript, b"trusted_advice", trusted_advice_commitment);
         transcript.append(trusted_advice_commitment);
     }
 }
 
+fn append_payload_label<T, A>(transcript: &mut T, label: &'static [u8], payload: &A)
+where
+    T: Transcript,
+    A: AppendToTranscript,
+{
+    if let Some(len) = payload.transcript_payload_len() {
+        transcript.append(&LabelWithCount(label, len));
+    } else {
+        transcript.append(&Label(label));
+    }
+}
+
 fn absorb_labeled_bytes<T: Transcript>(transcript: &mut T, label: &'static [u8], bytes: &[u8]) {
-    transcript.append(&Label(label));
+    transcript.append(&LabelWithCount(label, bytes.len() as u64));
     transcript.append_bytes(bytes);
 }
 
@@ -281,8 +298,8 @@ fn absorb_labeled_u64<T: Transcript>(transcript: &mut T, label: &'static [u8], v
     transcript.append(&U64Word(value));
 }
 
-pub fn validate_proof_consistency<PCS, VC, OpeningClaims, ZkProof>(
-    proof: &JoltProof<PCS, VC, OpeningClaims, ZkProof>,
+pub fn validate_proof_consistency<PCS, VC, ZkProof>(
+    proof: &JoltProof<PCS, VC, ZkProof>,
     zk: bool,
 ) -> Result<(), VerifierError>
 where
@@ -377,7 +394,7 @@ mod tests {
     use super::*;
     use crate::proof::JoltStageProofs;
     use common::jolt_device::{JoltDevice, MemoryLayout};
-    use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
+    use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltOpeningId, JoltReadWriteConfig};
     use jolt_crypto::{Commitment, VectorCommitment};
     use jolt_field::Fr;
     use jolt_openings::{CommitmentScheme, OpeningsError};
@@ -488,7 +505,8 @@ mod tests {
         fn append_to_transcript<T: Transcript>(&self, _transcript: &mut T) {}
     }
 
-    type TestProof = JoltProof<TestPcs, TestVectorCommitment, (), ()>;
+    type TestProof = JoltProof<TestPcs, TestVectorCommitment, ()>;
+    type TestOpeningClaims = Vec<(JoltOpeningId, Fr)>;
 
     #[test]
     fn proof_wrapper_uses_modular_trait_bounds() {
@@ -511,7 +529,7 @@ mod tests {
 
     #[test]
     fn accepts_standard_proof_consistency() {
-        let proof = proof_with_zk(false, Some(()), None);
+        let proof = proof_with_zk(false, Some(Vec::new()), None);
 
         assert!(validate_proof_consistency(&proof, false).is_ok());
     }
@@ -525,7 +543,7 @@ mod tests {
 
     #[test]
     fn rejects_wrong_stage_representation() {
-        let mut proof = proof_with_zk(false, Some(()), None);
+        let mut proof = proof_with_zk(false, Some(Vec::new()), None);
         proof.stages.stage5_sumcheck_proof =
             SumcheckProof::Committed(CommittedSumcheckProof::default());
 
@@ -539,7 +557,7 @@ mod tests {
 
     #[test]
     fn rejects_wrong_verifier_zk_flag() {
-        let proof = proof_with_zk(false, Some(()), None);
+        let proof = proof_with_zk(false, Some(Vec::new()), None);
 
         assert!(matches!(
             validate_proof_consistency(&proof, true),
@@ -556,7 +574,7 @@ mod tests {
             Err(VerifierError::MissingOpeningClaims)
         ));
         assert!(matches!(
-            validate_proof_consistency(&proof_with_zk(false, Some(()), Some(())), false),
+            validate_proof_consistency(&proof_with_zk(false, Some(Vec::new()), Some(())), false),
             Err(VerifierError::UnexpectedBlindFoldProof)
         ));
         assert!(matches!(
@@ -564,7 +582,7 @@ mod tests {
             Err(VerifierError::MissingBlindFoldProof)
         ));
         assert!(matches!(
-            validate_proof_consistency(&proof_with_zk(true, Some(()), Some(())), true),
+            validate_proof_consistency(&proof_with_zk(true, Some(Vec::new()), Some(())), true),
             Err(VerifierError::UnexpectedOpeningClaims)
         ));
     }
@@ -578,7 +596,7 @@ mod tests {
             outputs: vec![3, 0, 0],
             ..JoltDevice::default()
         };
-        let proof = proof_with_zk(false, Some(()), None);
+        let proof = proof_with_zk(false, Some(Vec::new()), None);
 
         let checked = validate_inputs(&preprocessing, &public_io, &proof, false);
         assert!(checked.is_ok());
@@ -604,7 +622,7 @@ mod tests {
     fn validate_inputs_rejects_public_io_layout_mismatch() {
         let preprocessing = test_preprocessing();
         let public_io = JoltDevice::default();
-        let proof = proof_with_zk(false, Some(()), None);
+        let proof = proof_with_zk(false, Some(Vec::new()), None);
 
         assert!(matches!(
             validate_inputs(&preprocessing, &public_io, &proof, false),
@@ -629,29 +647,31 @@ mod tests {
 
     fn proof_with_zk(
         is_zk: bool,
-        opening_claims: Option<()>,
+        opening_claims: Option<TestOpeningClaims>,
         blindfold_proof: Option<()>,
     ) -> TestProof {
-        JoltProof {
-            commitments: Vec::new(),
-            stages: stage_proofs(is_zk),
-            joint_opening_proof: (),
-            untrusted_advice_commitment: None,
-            opening_claims,
+        let mut proof = JoltProof::new(
+            Vec::new(),
+            stage_proofs(is_zk),
+            (),
+            None,
             blindfold_proof,
-            trace_length: 1,
-            ram_K: 1,
-            rw_config: JoltReadWriteConfig {
+            1,
+            1,
+            JoltReadWriteConfig {
                 ram_rw_phase1_num_rounds: 0,
                 ram_rw_phase2_num_rounds: 0,
                 registers_rw_phase1_num_rounds: 0,
                 registers_rw_phase2_num_rounds: 0,
             },
-            one_hot_config: JoltOneHotConfig {
+            JoltOneHotConfig {
                 log_k_chunk: 0,
                 lookups_ra_virtual_log_k_chunk: 0,
             },
-        }
+            crate::proof::TracePolynomialOrder::CycleMajor,
+        );
+        proof.opening_claims = opening_claims;
+        proof
     }
 
     fn stage_proofs(is_zk: bool) -> JoltStageProofs<Fr, TestVectorCommitment> {

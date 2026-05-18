@@ -14,6 +14,13 @@ pub const ZK_MULDIV_SMALL: TestCase = TestCase {
     first_checked_at: VerifierCheckpoint::Zk,
 };
 
+pub const ZK_STAGE1_PREFIX: TestCase = TestCase {
+    name: "zk_stage1_prefix",
+    zk: true,
+    fixture: FixtureId::ZkStage1Prefix,
+    first_checked_at: VerifierCheckpoint::Stage1,
+};
+
 pub const STANDARD_ADVICE_COMMITMENTS: TestCase = TestCase {
     name: "standard_advice_commitments",
     zk: false,
@@ -24,5 +31,6 @@ pub const STANDARD_ADVICE_COMMITMENTS: TestCase = TestCase {
 pub const ALL: &[TestCase] = &[
     STANDARD_MULDIV_SMALL,
     ZK_MULDIV_SMALL,
+    ZK_STAGE1_PREFIX,
     STANDARD_ADVICE_COMMITMENTS,
 ];

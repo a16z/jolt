@@ -8,6 +8,6 @@ use crate::{
 fn core_rejects_trusted_advice_commitment_mismatch() {
     assert_eq!(
         soundness_expectation(core_transitivity::TRUSTED_ADVICE_MISMATCH),
-        HarnessExpectation::FutureCheckpoint,
+        HarnessExpectation::RejectsAtOrBeforeFrontier,
     );
 }

@@ -14,12 +14,32 @@ pub enum VerifierCheckpoint {
     Full,
 }
 
-pub const CURRENT_VERIFIER_FRONTIER: VerifierCheckpoint = VerifierCheckpoint::Commitments;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VerifierFrontiers {
+    pub standard: VerifierCheckpoint,
+    pub zk: VerifierCheckpoint,
+}
+
+impl VerifierFrontiers {
+    pub const fn for_mode(self, zk: bool) -> VerifierCheckpoint {
+        if zk {
+            self.zk
+        } else {
+            self.standard
+        }
+    }
+}
+
+pub const CURRENT_VERIFIER_FRONTIERS: VerifierFrontiers = VerifierFrontiers {
+    standard: VerifierCheckpoint::Stage1,
+    zk: VerifierCheckpoint::Commitments,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FixtureId {
     MulDivSmall,
     MulDivZkSmall,
+    ZkStage1Prefix,
     AdviceCommitments,
     PublicIoMismatch,
     TrustedAdviceMismatch,
@@ -54,8 +74,12 @@ pub struct FixtureMetadata {
     pub notes: &'static str,
 }
 
+pub fn current_verifier_frontier(zk: bool) -> VerifierCheckpoint {
+    CURRENT_VERIFIER_FRONTIERS.for_mode(zk)
+}
+
 pub fn completeness_expectation(case: TestCase) -> HarnessExpectation {
-    if case.first_checked_at <= CURRENT_VERIFIER_FRONTIER {
+    if case.first_checked_at <= current_verifier_frontier(case.zk) {
         HarnessExpectation::ReachesFrontier
     } else {
         HarnessExpectation::FutureCheckpoint
@@ -63,7 +87,7 @@ pub fn completeness_expectation(case: TestCase) -> HarnessExpectation {
 }
 
 pub fn soundness_expectation(case: TestCase) -> HarnessExpectation {
-    if case.first_checked_at <= CURRENT_VERIFIER_FRONTIER {
+    if case.first_checked_at <= current_verifier_frontier(case.zk) {
         HarnessExpectation::RejectsAtOrBeforeFrontier
     } else {
         HarnessExpectation::FutureCheckpoint
@@ -83,20 +107,33 @@ pub fn assert_case_metadata_matches(case: TestCase, metadata: FixtureMetadata) {
     assert_eq!(case.zk, metadata.zk);
 }
 
-pub fn assert_reaches_current_frontier(result: Result<(), VerifierError>) {
+pub fn assert_reaches_frontier(zk: bool, result: Result<(), VerifierError>) {
+    let frontier = current_verifier_frontier(zk);
+    let result_debug = format!("{result:?}");
     let reached_frontier = match result {
-        Ok(()) => CURRENT_VERIFIER_FRONTIER == VerifierCheckpoint::Full,
-        Err(VerifierError::Unimplemented) => CURRENT_VERIFIER_FRONTIER < VerifierCheckpoint::Full,
+        Ok(()) => frontier == VerifierCheckpoint::Full,
+        Err(VerifierError::Unimplemented) => frontier < VerifierCheckpoint::Full,
         Err(_) => false,
     };
 
     assert!(
         reached_frontier,
-        "valid proof did not reach current verifier frontier"
+        "valid {} proof did not reach current verifier frontier {frontier:?}: {result_debug}",
+        if zk { "ZK" } else { "standard" }
     );
 }
 
-pub fn assert_rejects_at_or_before_current_frontier(result: Result<(), VerifierError>) {
+pub fn assert_reaches_current_frontier(result: Result<(), VerifierError>) {
+    assert_reaches_frontier(false, result);
+}
+
+pub fn assert_zk_reaches_current_frontier(result: Result<(), VerifierError>) {
+    assert_reaches_frontier(true, result);
+}
+
+pub fn assert_rejects_at_or_before_frontier(zk: bool, result: Result<(), VerifierError>) {
+    let frontier = current_verifier_frontier(zk);
+    let result_debug = format!("{result:?}");
     let rejected = match result {
         Ok(()) | Err(VerifierError::Unimplemented) => false,
         Err(_) => true,
@@ -104,8 +141,17 @@ pub fn assert_rejects_at_or_before_current_frontier(result: Result<(), VerifierE
 
     assert!(
         rejected,
-        "tampered proof was accepted or reached unimplemented verifier code"
+        "tampered {} proof was accepted or reached unimplemented verifier code before frontier {frontier:?}: {result_debug}",
+        if zk { "ZK" } else { "standard" }
     );
+}
+
+pub fn assert_rejects_at_or_before_current_frontier(result: Result<(), VerifierError>) {
+    assert_rejects_at_or_before_frontier(false, result);
+}
+
+pub fn assert_zk_rejects_at_or_before_current_frontier(result: Result<(), VerifierError>) {
+    assert_rejects_at_or_before_frontier(true, result);
 }
 #[cfg(feature = "core-fixtures")]
 pub mod core_fixtures;

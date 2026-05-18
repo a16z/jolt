@@ -39,6 +39,10 @@ impl AppendToTranscript for DoryCommitment {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         self.0.append_to_transcript(transcript);
     }
+
+    fn transcript_payload_len(&self) -> Option<u64> {
+        self.0.transcript_payload_len()
+    }
 }
 
 impl<F: jolt_field::Field> HomomorphicCommitment<F> for DoryCommitment {

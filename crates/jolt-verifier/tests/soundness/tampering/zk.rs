@@ -10,7 +10,7 @@ fn missing_zk_vector_commitment_setup_rejects_now() {
     let mut case = dory_pedersen::zk_case();
     case.preprocessing.vc_setup = None;
 
-    support::assert_rejects_at_or_before_current_frontier(case.verify());
+    support::assert_zk_rejects_at_or_before_current_frontier(case.verify());
 }
 
 #[test]

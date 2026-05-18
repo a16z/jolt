@@ -63,6 +63,35 @@ pub fn lagrange_evals<F: Field>(domain_start: i64, domain_size: usize, r: F) -> 
     result
 }
 
+/// Evaluates all Lagrange basis polynomials over the centered consecutive
+/// integer domain used by univariate-skip protocols.
+pub fn centered_lagrange_evals<F: Field>(
+    domain_size: usize,
+    r: F,
+) -> Result<Vec<F>, CenteredIntegerDomainError> {
+    Ok(lagrange_evals(
+        centered_domain_start(domain_size)?,
+        domain_size,
+        r,
+    ))
+}
+
+/// Computes `sum_i L_i(x) * L_i(y)` over the centered consecutive integer
+/// domain used by univariate-skip protocols.
+pub fn centered_lagrange_kernel<F: Field>(
+    domain_size: usize,
+    x: F,
+    y: F,
+) -> Result<F, CenteredIntegerDomainError> {
+    let x_evals = centered_lagrange_evals(domain_size, x)?;
+    let y_evals = centered_lagrange_evals(domain_size, y)?;
+    Ok(x_evals
+        .into_iter()
+        .zip(y_evals)
+        .map(|(left, right)| left * right)
+        .sum())
+}
+
 /// Computes power sums $S_k = \sum_{t=-D}^{D} t^k$ for $k = 0, 1, \ldots, \text{num\_powers}-1$
 /// over the symmetric integer domain $\{-D, \ldots, D\}$ of size $2D+1$.
 ///
@@ -241,6 +270,7 @@ pub fn interpolate_to_coeffs<F: Field>(domain_start: i64, values: &[F]) -> Vec<F
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "tests should fail loudly")]
 mod tests {
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt};
@@ -317,6 +347,22 @@ mod tests {
         assert_eq!(centered_domain_start(3), Ok(-1));
         assert_eq!(centered_domain_start(4), Ok(-1));
         assert_eq!(centered_domain_start(10), Ok(-4));
+    }
+
+    #[test]
+    fn centered_lagrange_helpers_match_centered_domain() {
+        let r = Fr::from_u64(7);
+        let evals = centered_lagrange_evals(5, r).unwrap();
+
+        assert_eq!(evals, lagrange_evals(-2, 5, r));
+        assert_eq!(
+            centered_lagrange_kernel(5, Fr::from_i64(-1), Fr::from_i64(-1)),
+            Ok(Fr::one())
+        );
+        assert_eq!(
+            centered_lagrange_kernel(5, Fr::from_i64(-1), Fr::from_i64(2)),
+            Ok(Fr::zero())
+        );
     }
 
     #[test]

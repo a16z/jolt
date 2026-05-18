@@ -35,6 +35,18 @@ pub mod mock;
 mod reduction;
 mod schemes;
 
+/// Transcript label used for scalar opening claims.
+pub const OPENING_CLAIM_TRANSCRIPT_LABEL: &[u8] = b"opening_claim";
+
+/// Absorbs an opening claim using Jolt's canonical transcript label.
+pub fn append_opening_claim<A, T>(transcript: &mut T, opening_claim: &A)
+where
+    A: jolt_transcript::AppendToTranscript,
+    T: jolt_transcript::Transcript,
+{
+    transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, opening_claim);
+}
+
 pub use claims::{
     EvaluationClaim, ProverClaim, ProverOpeningClaim, VerifierClaim, VerifierOpeningClaim,
 };

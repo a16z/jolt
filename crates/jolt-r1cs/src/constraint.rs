@@ -13,6 +13,8 @@ pub enum ConstraintMatrixEvalError {
     RowWeightsLengthMismatch { expected: usize, actual: usize },
     #[error("column weights length mismatch: expected {expected}, got {actual}")]
     ColumnWeightsLengthMismatch { expected: usize, actual: usize },
+    #[error("column {column} out of bounds for {num_vars} variables")]
+    ColumnOutOfBounds { column: usize, num_vars: usize },
     #[error("matrix column range overflow: start {start}, count {count}")]
     ColumnRangeOverflow { start: usize, count: usize },
 }
@@ -39,6 +41,13 @@ pub struct ConstraintMatrices<F: Field> {
     pub a: Vec<SparseRow<F>>,
     pub b: Vec<SparseRow<F>>,
     pub c: Vec<SparseRow<F>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WeightedMatrixColumns<F: Field> {
+    pub a: Vec<F>,
+    pub b: Vec<F>,
+    pub c: Vec<F>,
 }
 
 /// Deserialization helper; never exposed directly.
@@ -158,6 +167,46 @@ impl<F: Field> ConstraintMatrices<F> {
             matrix_column_eval(&self.b, row_weights, column)? * scalar,
             matrix_column_eval(&self.c, row_weights, column)? * scalar,
         ))
+    }
+
+    pub fn weighted_columns(
+        &self,
+        row_weights: &[F],
+        columns: &[usize],
+    ) -> Result<WeightedMatrixColumns<F>, ConstraintMatrixEvalError> {
+        if row_weights.len() < self.num_constraints {
+            return Err(ConstraintMatrixEvalError::RowWeightsLengthMismatch {
+                expected: self.num_constraints,
+                actual: row_weights.len(),
+            });
+        }
+
+        let mut weighted = WeightedMatrixColumns {
+            a: Vec::with_capacity(columns.len()),
+            b: Vec::with_capacity(columns.len()),
+            c: Vec::with_capacity(columns.len()),
+        };
+
+        for &column in columns {
+            if column >= self.num_vars {
+                return Err(ConstraintMatrixEvalError::ColumnOutOfBounds {
+                    column,
+                    num_vars: self.num_vars,
+                });
+            }
+
+            weighted
+                .a
+                .push(matrix_column_eval(&self.a, row_weights, column)?);
+            weighted
+                .b
+                .push(matrix_column_eval(&self.b, row_weights, column)?);
+            weighted
+                .c
+                .push(matrix_column_eval(&self.c, row_weights, column)?);
+        }
+
+        Ok(weighted)
     }
 
     pub fn linear_form_bilinear_eval(
@@ -341,6 +390,37 @@ mod tests {
         assert_eq!(
             contributions,
             (Fr::from_u64(237), Fr::from_u64(165), Fr::from_u64(399),)
+        );
+    }
+
+    #[test]
+    fn weighted_columns_projects_multiple_abc_columns() {
+        let m = ConstraintMatrices::new(
+            2,
+            3,
+            vec![
+                vec![(0, Fr::from_u64(2)), (1, Fr::from_u64(99))],
+                vec![(0, Fr::from_u64(3)), (2, Fr::from_u64(4))],
+            ],
+            vec![
+                vec![(0, Fr::from_u64(5)), (2, Fr::from_u64(7))],
+                vec![(2, Fr::from_u64(13))],
+            ],
+            vec![vec![(1, Fr::from_u64(17))], vec![(0, Fr::from_u64(7))]],
+        );
+        let row_weights = [Fr::from_u64(11), Fr::from_u64(19)];
+
+        let weighted = m
+            .weighted_columns(&row_weights, &[0, 2])
+            .expect("row weights cover all constraints");
+
+        assert_eq!(
+            weighted,
+            WeightedMatrixColumns {
+                a: vec![Fr::from_u64(79), Fr::from_u64(76)],
+                b: vec![Fr::from_u64(55), Fr::from_u64(324)],
+                c: vec![Fr::from_u64(133), Fr::from_u64(0)],
+            }
         );
     }
 

@@ -18,7 +18,9 @@ pub mod provider;
 
 pub use builder::{LinearCombination, R1csBuilder, R1csBuilderError, Variable};
 pub use column::R1csColumn;
-pub use constraint::{ConstraintMatrices, ConstraintMatrixEvalError, SparseRow};
+pub use constraint::{
+    ConstraintMatrices, ConstraintMatrixEvalError, SparseRow, WeightedMatrixColumns,
+};
 pub use key::R1csKey;
 pub use lowering::{
     assert_claim_expr_eq, lower_claim_expr, ClaimLoweringError, ClaimSourceTable, ClaimSources,

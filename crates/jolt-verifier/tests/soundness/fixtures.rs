@@ -50,15 +50,16 @@ pub fn metadata(id: FixtureId) -> FixtureMetadata {
             expected_core_accepts: false,
             notes: "ZK soundness target for BlindFold public inputs and proof payload.",
         },
-        FixtureId::MulDivSmall | FixtureId::MulDivZkSmall | FixtureId::AdviceCommitments => {
-            FixtureMetadata {
-                id,
-                name: "completeness-only fixture",
-                zk: matches!(id, FixtureId::MulDivZkSmall),
-                has_trusted_advice: matches!(id, FixtureId::AdviceCommitments),
-                expected_core_accepts: true,
-                notes: "Reserved for completeness tests.",
-            }
-        }
+        FixtureId::MulDivSmall
+        | FixtureId::MulDivZkSmall
+        | FixtureId::ZkStage1Prefix
+        | FixtureId::AdviceCommitments => FixtureMetadata {
+            id,
+            name: "completeness-only fixture",
+            zk: matches!(id, FixtureId::MulDivZkSmall | FixtureId::ZkStage1Prefix),
+            has_trusted_advice: matches!(id, FixtureId::AdviceCommitments),
+            expected_core_accepts: !matches!(id, FixtureId::ZkStage1Prefix),
+            notes: "Reserved for completeness tests.",
+        },
     }
 }

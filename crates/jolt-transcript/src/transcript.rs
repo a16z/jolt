@@ -3,6 +3,8 @@
 //! This module provides the [`Transcript`] trait for building Fiat-Shamir transcripts
 //! and the [`AppendToTranscript`] trait for types that can be absorbed into a transcript.
 
+use crate::domain::Label;
+
 /// Fiat-Shamir transcript for non-interactive proofs.
 ///
 /// A transcript absorbs data and produces deterministic challenges. Both prover
@@ -44,11 +46,27 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
         value.append_to_transcript(self);
     }
 
+    /// Absorbs a domain label followed by a value.
+    ///
+    /// Jolt's core proof transcript commonly absorbs scalar payloads as
+    /// `label || payload`; this method makes that pattern explicit at the
+    /// transcript API boundary.
+    fn append_labeled<A: AppendToTranscript>(&mut self, label: &'static [u8], value: &A) {
+        self.append(&Label(label));
+        self.append(value);
+    }
+
     /// Squeezes a challenge from the transcript.
     ///
     /// Each call produces a new challenge and advances the transcript state.
     #[must_use]
     fn challenge(&mut self) -> Self::Challenge;
+
+    /// Squeezes a non-optimized scalar challenge from the transcript.
+    #[must_use]
+    fn challenge_scalar(&mut self) -> Self::Challenge {
+        self.challenge()
+    }
 
     /// Squeezes multiple challenges from the transcript.
     #[must_use]
@@ -78,4 +96,13 @@ pub const MAX_LABEL_LEN: usize = 32;
 pub trait AppendToTranscript {
     /// Absorbs this value into the transcript.
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T);
+
+    /// Byte length of the payload absorbed by [`append_to_transcript`].
+    ///
+    /// Types that need to match `jolt-core`'s variable-length labeled
+    /// transcript methods should override this so callers can prepend the same
+    /// packed label/length word before absorbing the payload.
+    fn transcript_payload_len(&self) -> Option<u64> {
+        None
+    }
 }

@@ -4,6 +4,7 @@ use crate::{
     support::dory_pedersen,
     support::{soundness_expectation, HarnessExpectation},
 };
+use jolt_verifier::compat::claims::{attach_empty_opening_claims, clear_opening_claims};
 
 #[test]
 fn mixed_clear_and_committed_stage_proofs_reject_now() {
@@ -26,7 +27,7 @@ fn mixed_uniskip_stage_proof_rejects_now() {
 #[test]
 fn missing_standard_opening_claims_reject_now() {
     let mut case = dory_pedersen::standard_case();
-    case.proof.opening_claims = None;
+    clear_opening_claims(&mut case.proof);
 
     support::assert_rejects_at_or_before_current_frontier(case.verify());
 }
@@ -44,15 +45,15 @@ fn missing_zk_blindfold_proof_rejects_now() {
     let mut case = dory_pedersen::zk_case();
     case.proof.blindfold_proof = None;
 
-    support::assert_rejects_at_or_before_current_frontier(case.verify());
+    support::assert_zk_rejects_at_or_before_current_frontier(case.verify());
 }
 
 #[test]
 fn unexpected_zk_opening_claims_reject_now() {
     let mut case = dory_pedersen::zk_case();
-    case.proof.opening_claims = Some(());
+    attach_empty_opening_claims(&mut case.proof);
 
-    support::assert_rejects_at_or_before_current_frontier(case.verify());
+    support::assert_zk_rejects_at_or_before_current_frontier(case.verify());
 }
 
 #[test]
@@ -62,7 +63,7 @@ fn clear_stage_in_zk_proof_rejects_now() {
         jolt_sumcheck::ClearProof::Compressed(jolt_sumcheck::CompressedSumcheckProof::default()),
     );
 
-    support::assert_rejects_at_or_before_current_frontier(case.verify());
+    support::assert_zk_rejects_at_or_before_current_frontier(case.verify());
 }
 
 #[test]

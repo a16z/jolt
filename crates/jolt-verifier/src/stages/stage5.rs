@@ -40,10 +40,10 @@ pub struct Stage5Output<F: Field> {
     pub challenges: Vec<F>,
 }
 
-pub fn verify<PCS, VC, T, OpeningClaims, ZkProof>(
+pub fn verify<PCS, VC, T, ZkProof>(
     _checked: &CheckedInputs,
     _preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    _proof: &JoltProof<PCS, VC, OpeningClaims, ZkProof>,
+    _proof: &JoltProof<PCS, VC, ZkProof>,
     _transcript: &mut T,
     _deps: Deps<'_, PCS::Field>,
 ) -> Result<Stage5Output<PCS::Field>, VerifierError>

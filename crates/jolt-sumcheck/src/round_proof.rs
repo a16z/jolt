@@ -6,6 +6,7 @@ use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
 use crate::error::SumcheckError;
 use crate::scalar::SumcheckScalar;
+use crate::{SUMCHECK_ROUND_TRANSCRIPT_LABEL, UNISKIP_ROUND_TRANSCRIPT_LABEL};
 
 /// Common interface for one sumcheck round message.
 pub trait RoundMessage {
@@ -51,6 +52,14 @@ impl<'a, F: Field> LabeledRoundPoly<'a, F> {
     pub fn new(poly: &'a UnivariatePoly<F>, label: &'static [u8]) -> Self {
         Self { poly, label }
     }
+
+    pub fn sumcheck(poly: &'a UnivariatePoly<F>) -> Self {
+        Self::new(poly, SUMCHECK_ROUND_TRANSCRIPT_LABEL)
+    }
+
+    pub fn uniskip(poly: &'a UnivariatePoly<F>) -> Self {
+        Self::new(poly, UNISKIP_ROUND_TRANSCRIPT_LABEL)
+    }
 }
 
 impl<F: Field> RoundMessage for LabeledRoundPoly<'_, F> {
@@ -84,6 +93,14 @@ pub struct CompressedLabeledRoundPoly<'a, F: Field> {
 impl<'a, F: Field> CompressedLabeledRoundPoly<'a, F> {
     pub fn new(poly: &'a UnivariatePoly<F>, label: &'static [u8]) -> Self {
         Self { poly, label }
+    }
+
+    pub fn sumcheck(poly: &'a UnivariatePoly<F>) -> Self {
+        Self::new(poly, SUMCHECK_ROUND_TRANSCRIPT_LABEL)
+    }
+
+    pub fn uniskip(poly: &'a UnivariatePoly<F>) -> Self {
+        Self::new(poly, UNISKIP_ROUND_TRANSCRIPT_LABEL)
     }
 }
 

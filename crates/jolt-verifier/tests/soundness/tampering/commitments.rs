@@ -8,6 +8,6 @@ use crate::{
 fn tampered_commitment_order_reject() {
     assert_eq!(
         soundness_expectation(tampering::COMMITMENT_ORDER),
-        HarnessExpectation::FutureCheckpoint,
+        HarnessExpectation::RejectsAtOrBeforeFrontier,
     );
 }

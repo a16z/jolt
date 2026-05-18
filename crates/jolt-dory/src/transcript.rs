@@ -1,10 +1,8 @@
 //! Bridges the `jolt-transcript` framework into dory-pcs's `DoryTranscript` trait.
 //!
 //! Prover/verifier parity within `jolt-dory` is by construction: both sides
-//! traverse this adapter. Cross-framework parity with `jolt-core`'s adapter
-//! or with dory-pcs's reference `Blake2bTranscript` is NOT guaranteed —
-//! `jolt-transcript` prepends a per-absorb domain-tag byte and squeezes
-//! 16-byte challenges, neither of which the other frameworks do.
+//! traverse this adapter. The surrounding Jolt transcript is responsible for
+//! matching the core Fiat-Shamir byte layout before this adapter is entered.
 
 #![expect(
     clippy::expect_used,

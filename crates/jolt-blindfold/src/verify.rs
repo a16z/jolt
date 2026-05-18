@@ -2,14 +2,13 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpeni
 use jolt_field::{Field, FieldCore};
 use jolt_poly::{EqPolynomial, Point};
 use jolt_r1cs::ConstraintMatrices;
-use jolt_sumcheck::{BooleanHypercube, SumcheckClaim};
+use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 
 use crate::{BlindFoldProof, BlindFoldProtocol, RelaxedError, RelaxedInstance, VerificationError};
 
 const OUTER_SUMCHECK_DEGREE: usize = 3;
 const INNER_SUMCHECK_DEGREE: usize = 2;
-const OUTER_SUMCHECK_LABEL: &[u8] = b"sumcheck_poly";
 const INNER_SUMCHECK_LABEL: &[u8] = b"inner_sumcheck_poly";
 
 pub fn verify<F, VC, T>(
@@ -150,7 +149,12 @@ where
     let claim = SumcheckClaim::new(num_vars, OUTER_SUMCHECK_DEGREE, F::zero());
     let outer = proof
         .outer_sumcheck
-        .verify(&claim, BooleanHypercube, OUTER_SUMCHECK_LABEL, transcript)
+        .verify(
+            &claim,
+            BooleanHypercube,
+            SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+            transcript,
+        )
         .map_err(|source| VerificationError::OuterSumcheck { source })?;
 
     let (row_point, entry_point) = outer.point.split_at(row_vars);

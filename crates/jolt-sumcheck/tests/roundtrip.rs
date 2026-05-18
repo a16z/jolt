@@ -11,7 +11,9 @@ use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
 use jolt_sumcheck::proof::ClearSumcheckProof;
 use jolt_sumcheck::round_proof::{CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
-use jolt_sumcheck::{BatchedSumcheckVerifier, BooleanHypercube, SumcheckVerifier};
+use jolt_sumcheck::{
+    BatchedSumcheckVerifier, BooleanHypercube, SumcheckVerifier, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 
 type F = Fr;
@@ -359,7 +361,7 @@ fn compressed_round_verifier_roundtrip() {
     // single source of truth for the compressed wire format.
     let num_vars = 3;
     let n = 1 << num_vars;
-    let label: &[u8; 13] = b"sumcheck_poly";
+    let label = SUMCHECK_ROUND_TRANSCRIPT_LABEL;
     let degree = 2;
 
     let f: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 + 1)).collect();
@@ -446,7 +448,7 @@ fn labeled_round_verifier_roundtrip() {
     let f: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 + 1)).collect();
     let g: Vec<F> = (0..n).map(|i| F::from_u64((i + 5) as u64)).collect();
 
-    let label: &[u8; 13] = b"sumcheck_poly";
+    let label = SUMCHECK_ROUND_TRANSCRIPT_LABEL;
 
     // Prove with labeled absorption
     let mut pt = Blake2bTranscript::new(b"sumcheck-roundtrip");

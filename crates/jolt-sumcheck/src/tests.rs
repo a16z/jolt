@@ -19,7 +19,10 @@ use crate::error::SumcheckError;
 use crate::proof::{ClearSumcheckProof, CompressedSumcheckProof};
 use crate::round_proof::{ClearRound, CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
 use crate::verifier::SumcheckVerifier;
-use crate::{BatchedSumcheckVerifier, BooleanHypercube, CenteredIntegerDomain, SumcheckDomain};
+use crate::{
+    BatchedSumcheckVerifier, BooleanHypercube, CenteredIntegerDomain, SumcheckDomain,
+    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+};
 
 type F = Fr;
 
@@ -511,7 +514,7 @@ fn owned_compressed_verify_matches_borrowed_compressed_rounds() {
     let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
     let num_vars = 3;
     let sum = compute_sum(&evals);
-    let label: &[u8; 13] = b"sumcheck_poly";
+    let label = SUMCHECK_ROUND_TRANSCRIPT_LABEL;
 
     let mut prover_transcript = Blake2bTranscript::new(b"sumcheck-test");
     let (clear_proof, compressed_proof) =
@@ -556,7 +559,12 @@ fn owned_compressed_verify_rejects_wrong_round_count() {
     };
 
     let mut transcript = Blake2bTranscript::<F>::new(b"sumcheck-test");
-    let result = proof.verify(&claim, BooleanHypercube, b"sumcheck_poly", &mut transcript);
+    let result = proof.verify(
+        &claim,
+        BooleanHypercube,
+        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+        &mut transcript,
+    );
 
     assert!(matches!(
         result,
@@ -579,7 +587,12 @@ fn owned_compressed_verify_rejects_degree_bound_exceeded() {
     };
 
     let mut transcript = Blake2bTranscript::<F>::new(b"sumcheck-test");
-    let result = proof.verify(&claim, BooleanHypercube, b"sumcheck_poly", &mut transcript);
+    let result = proof.verify(
+        &claim,
+        BooleanHypercube,
+        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+        &mut transcript,
+    );
 
     assert!(matches!(
         result,
@@ -599,7 +612,12 @@ fn owned_compressed_verify_rejects_empty_round_polynomial() {
     };
 
     let mut transcript = Blake2bTranscript::<F>::new(b"sumcheck-test");
-    let result = proof.verify(&claim, BooleanHypercube, b"sumcheck_poly", &mut transcript);
+    let result = proof.verify(
+        &claim,
+        BooleanHypercube,
+        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+        &mut transcript,
+    );
 
     assert!(matches!(
         result,

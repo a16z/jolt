@@ -18,6 +18,15 @@ pub fn metadata(id: FixtureId) -> FixtureMetadata {
             expected_core_accepts: true,
             notes: "Live-generated small ZK muldiv proof once fixture generation is wired.",
         },
+        FixtureId::ZkStage1Prefix => FixtureMetadata {
+            id,
+            name: "ZK Stage 1 prefix",
+            zk: true,
+            has_trusted_advice: false,
+            expected_core_accepts: false,
+            notes:
+                "Prefix BlindFold fixture for the Stage 1 verifier frontier; not a full core proof.",
+        },
         FixtureId::AdviceCommitments => FixtureMetadata {
             id,
             name: "advice commitments standard",

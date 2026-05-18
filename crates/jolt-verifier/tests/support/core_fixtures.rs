@@ -17,8 +17,6 @@ use jolt_verifier::{
     compat::convert::ImportedCoreProof, verify, JoltVerifierPreprocessing, VerifierError,
 };
 
-#[cfg(not(feature = "zk"))]
-use jolt_verifier::compat::claims::LegacyOpeningClaims;
 #[cfg(feature = "zk")]
 use jolt_verifier::compat::convert::CoreCurveBridge;
 #[cfg(not(feature = "zk"))]
@@ -74,7 +72,7 @@ pub struct CoreVerifierCase {
 #[cfg(not(feature = "zk"))]
 impl CoreVerifierCase {
     pub fn verify(&self) -> Result<(), VerifierError> {
-        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, LegacyOpeningClaims<Fr>, ()>(
+        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, ()>(
             &self.preprocessing,
             &self.public_io,
             &self.proof,
@@ -99,7 +97,6 @@ impl CoreZkVerifierCase {
             DoryScheme,
             Pedersen<Bn254G1>,
             Blake2bTranscript,
-            (),
             LegacyBlindFoldProof<CoreField, Bn254Curve>,
         >(
             &self.preprocessing,

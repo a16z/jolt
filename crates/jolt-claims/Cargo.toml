@@ -11,5 +11,6 @@ workspace = true
 [dependencies]
 jolt-field.workspace = true
 jolt-lookup-tables.workspace = true
+jolt-poly.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }
 serde = { workspace = true, features = ["alloc", "derive"] }

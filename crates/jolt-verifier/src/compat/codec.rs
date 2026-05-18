@@ -9,8 +9,8 @@ use jolt_riscv::{CircuitFlags, InstructionFlags};
 use super::{
     config::{OneHotConfig, ReadWriteConfig},
     ids::{CommittedPolynomial, OpeningId, PolynomialId, SumcheckId, VirtualPolynomial},
-    layout::TracePolynomialOrder,
 };
+use crate::proof::TracePolynomialOrder;
 
 const OPENING_ID_UNTRUSTED_ADVICE_BASE: u8 = 0;
 const OPENING_ID_TRUSTED_ADVICE_BASE: u8 =

@@ -6,4 +6,3 @@ pub mod config;
 #[cfg(feature = "jolt-core-compat")]
 pub mod convert;
 pub mod ids;
-pub mod layout;

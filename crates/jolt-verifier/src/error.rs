@@ -22,6 +22,12 @@ pub enum VerifierError {
     #[error("committed proof unexpectedly includes opening claims")]
     UnexpectedOpeningClaims,
 
+    #[error("missing opening claim scalar {id:?}")]
+    MissingOpeningClaim { id: JoltOpeningId },
+
+    #[error("unexpected opening claim scalar {id:?}")]
+    UnexpectedOpeningClaim { id: JoltOpeningId },
+
     #[error("vector commitment setup is missing from verifier preprocessing")]
     MissingVectorCommitmentSetup,
 
@@ -67,6 +73,9 @@ pub enum VerifierError {
 
     #[error("stage {stage:?} sumcheck verification failed: {reason}")]
     StageClaimSumcheckFailed { stage: JoltStageId, reason: String },
+
+    #[error("stage {stage:?} public claim construction failed: {reason}")]
+    StageClaimPublicInputFailed { stage: JoltStageId, reason: String },
 
     #[error("stage {stage:?} sumcheck output does not match evaluated output claim")]
     StageClaimOutputMismatch { stage: JoltStageId },

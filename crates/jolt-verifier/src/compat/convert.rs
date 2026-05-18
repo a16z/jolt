@@ -1,8 +1,11 @@
 //! Conversions from imported `jolt-core` types into verifier-owned model types.
 
-use crate::proof::{JoltProof, JoltStageProofs};
 #[cfg(not(feature = "zk"))]
-use crate::{compat::claims::LegacyOpeningClaims, compat::ids as verifier_ids};
+use crate::compat::{
+    claims::{native_opening_claims_from_legacy, LegacyOpeningClaims},
+    ids as verifier_ids,
+};
+use crate::proof::{JoltProof, JoltStageProofs, TracePolynomialOrder};
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 use jolt_crypto::{
     Bn254G1, Bn254GT, Commitment as ModularCommitment, Pedersen,
@@ -22,7 +25,10 @@ use jolt_core::{
     field::JoltField,
     poly::commitment::{
         commitment_scheme::CommitmentScheme as CoreCommitmentScheme,
-        dory::{ArkGT as CoreDoryCommitment, DoryCommitmentScheme as CoreDoryCommitmentScheme},
+        dory::{
+            ArkGT as CoreDoryCommitment, DoryCommitmentScheme as CoreDoryCommitmentScheme,
+            DoryLayout as CoreDoryLayout,
+        },
     },
     subprotocols::{
         sumcheck::SumcheckInstanceProof, univariate_skip::UniSkipFirstRoundProofVariant,
@@ -120,7 +126,6 @@ impl CoreCurveBridge<ark_bn254::Fr> for CoreBn254Curve {
 pub type ImportedCoreProof<F, C, PCS> = JoltProof<
     <PCS as CorePcsBridge<F>>::VerifierPcs,
     <C as CoreCurveBridge<F>>::VerifierVectorCommitment,
-    LegacyOpeningClaims<<F as CoreFieldBridge>::VerifierField>,
     (),
 >;
 
@@ -128,7 +133,6 @@ pub type ImportedCoreProof<F, C, PCS> = JoltProof<
 pub type ImportedCoreProof<F, C, PCS> = JoltProof<
     <PCS as CorePcsBridge<F>>::VerifierPcs,
     <C as CoreCurveBridge<F>>::VerifierVectorCommitment,
-    (),
     LegacyBlindFoldProof<F, C>,
 >;
 
@@ -145,6 +149,13 @@ fn convert_one_hot_config(config: CoreOneHotConfig) -> JoltOneHotConfig {
     JoltOneHotConfig {
         log_k_chunk: config.log_k_chunk,
         lookups_ra_virtual_log_k_chunk: config.lookups_ra_virtual_log_k_chunk,
+    }
+}
+
+fn convert_trace_polynomial_order(layout: CoreDoryLayout) -> TracePolynomialOrder {
+    match layout {
+        CoreDoryLayout::CycleMajor => TracePolynomialOrder::CycleMajor,
+        CoreDoryLayout::AddressMajor => TracePolynomialOrder::AddressMajor,
     }
 }
 
@@ -190,6 +201,7 @@ where
             ram_K: proof.ram_K,
             rw_config: convert_read_write_config(proof.rw_config),
             one_hot_config: convert_one_hot_config(proof.one_hot_config),
+            trace_polynomial_order: convert_trace_polynomial_order(proof.dory_layout),
         }
     }
 }
@@ -236,6 +248,7 @@ where
             ram_K: proof.ram_K,
             rw_config: convert_read_write_config(proof.rw_config),
             one_hot_config: convert_one_hot_config(proof.one_hot_config),
+            trace_polynomial_order: convert_trace_polynomial_order(proof.dory_layout),
         }
     }
 }
@@ -405,11 +418,16 @@ where
 }
 
 #[cfg(not(feature = "zk"))]
-fn convert_opening_claims<F>(claims: CoreClaims<F>) -> LegacyOpeningClaims<F::VerifierField>
+fn convert_opening_claims<F>(
+    claims: CoreClaims<F>,
+) -> Vec<(
+    jolt_claims::protocols::jolt::JoltOpeningId,
+    F::VerifierField,
+)>
 where
     F: CoreFieldBridge,
 {
-    LegacyOpeningClaims(
+    native_opening_claims_from_legacy(LegacyOpeningClaims(
         claims
             .0
             .into_iter()
@@ -420,7 +438,7 @@ where
                 )
             })
             .collect::<std::collections::BTreeMap<_, _>>(),
-    )
+    ))
 }
 
 #[cfg(not(feature = "zk"))]

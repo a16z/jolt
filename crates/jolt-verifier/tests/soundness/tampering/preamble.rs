@@ -1,9 +1,4 @@
-use crate::{
-    soundness::tampering,
-    support,
-    support::dory_pedersen,
-    support::{soundness_expectation, HarnessExpectation},
-};
+use crate::{support, support::dory_pedersen};
 
 #[test]
 fn public_io_memory_layout_mismatch_rejects_now() {
@@ -64,10 +59,9 @@ fn oversized_public_output_rejects_now() {
 }
 
 #[test]
-#[ignore = "direct verifier-input tampering fixtures are not wired yet"]
 fn tampered_public_input_bytes_reject() {
-    assert_eq!(
-        soundness_expectation(tampering::PUBLIC_INPUT_BYTES),
-        HarnessExpectation::FutureCheckpoint,
-    );
+    let mut case = dory_pedersen::standard_case();
+    case.public_io.inputs[0] ^= 1;
+
+    support::assert_rejects_at_or_before_current_frontier(case.verify());
 }

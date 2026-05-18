@@ -82,6 +82,22 @@ pub mod verifier;
 #[cfg(test)]
 mod tests;
 
+/// Transcript label used for ordinary sumcheck round polynomials.
+pub const SUMCHECK_ROUND_TRANSCRIPT_LABEL: &[u8] = b"sumcheck_poly";
+/// Transcript label used for univariate-skip round polynomials.
+pub const UNISKIP_ROUND_TRANSCRIPT_LABEL: &[u8] = b"uniskip_poly";
+/// Transcript label used when a sumcheck claim scalar is absorbed before batching.
+pub const SUMCHECK_CLAIM_TRANSCRIPT_LABEL: &[u8] = b"sumcheck_claim";
+
+/// Absorbs a sumcheck claim scalar using Jolt's canonical transcript label.
+pub fn append_sumcheck_claim<A, T>(transcript: &mut T, claim: &A)
+where
+    A: jolt_transcript::AppendToTranscript,
+    T: jolt_transcript::Transcript,
+{
+    transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, claim);
+}
+
 pub use batched_verifier::BatchedSumcheckVerifier;
 pub use claim::{EvaluationClaim, SumcheckClaim, SumcheckShape};
 pub use committed::{

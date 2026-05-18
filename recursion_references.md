@@ -778,7 +778,7 @@ multiplication.
 
 In Sagar's branch, pure FR op cycles are not fully exclusive from the normal register path. `FieldOp` is R-format, so generic trace plumbing can still record incidental `x[rs1]`, `x[rs2]`, and zero-increment `x[rd]` accesses. Those are regular-register bookkeeping, not the field-op semantics. The actual FR semantics come from `fr_meta`, `FieldRegEvent`, FR Twist, and the FR R1CS rows. Bridge ops are the case where the normal register path is semantically important because R1CS ties an `XReg` value to a `FReg` write.
 
-### Open Questions For Sagar
+### Open Questions
 
 #### Product Virtualization Wiring
 

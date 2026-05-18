@@ -515,35 +515,51 @@ struct TestCase {
 }
 ```
 
-The harness has a single configured horizon, initially `Commitments` or
-`Stage1`. A completeness case passes when a valid core proof reaches the
-configured horizon. Before the full verifier exists, reaching the next
-unimplemented stage is success; after the full verifier exists, success means
-`Ok(())`.
+The harness has separate configured horizons for standard and ZK mode. The
+standard frontier currently reaches `Stage1`; the ZK frontier remains at
+`Commitments` until prefix BlindFold fixtures are available. A completeness case
+passes when a valid proof reaches the configured horizon for its mode. Before
+the full verifier exists, reaching the next unimplemented stage is success;
+after the full verifier exists, success means `Ok(())`.
 
 A soundness case is skipped or left ignored until
-`horizon >= first_checked_at`. Once unlocked, the modular verifier must reject
-the tampered proof at or before the configured horizon. This lets each stage add
-both positive and negative coverage without waiting for the whole verifier.
+`horizon_for_mode(case.zk) >= first_checked_at`. Once unlocked, the modular
+verifier must reject the tampered proof at or before the configured horizon for
+that mode. This lets each stage add both positive and negative coverage without
+waiting for the whole verifier.
 
 Checkpointing is test-harness metadata only. It must not leak into the public
 verifier API, production verifier structs, or production `VerifierError`
 variants. The harness owns the current frontier:
 
 ```rust
-const CURRENT_VERIFIER_FRONTIER: VerifierCheckpoint = VerifierCheckpoint::Commitments;
+struct VerifierFrontiers {
+    standard: VerifierCheckpoint,
+    zk: VerifierCheckpoint,
+}
+
+const CURRENT_VERIFIER_FRONTIERS: VerifierFrontiers = VerifierFrontiers {
+    standard: VerifierCheckpoint::Stage1,
+    zk: VerifierCheckpoint::Commitments,
+};
 ```
 
-The harness interprets results relative to this frontier:
+The harness interprets results relative to the mode-specific frontier:
 
 - valid proof + `Ok(())` passes when the full verifier is implemented;
 - valid proof + `VerifierError::Unimplemented` passes only when the configured
   frontier says the proof was expected to reach currently unimplemented code;
-- tampered proof whose `first_checked_at <= CURRENT_VERIFIER_FRONTIER` must
+- tampered proof whose `first_checked_at <= horizon_for_mode(case.zk)` must
   return a real verifier rejection, not `Ok(())` or the generic unimplemented
   sentinel;
 - tampered proof whose first observable checkpoint is after the current frontier
   remains ignored or skipped.
+
+ZK frontiers advance with prefix BlindFold fixtures. A full core ZK proof has a
+single BlindFold proof for all stages, so it is not by itself a partial frontier
+artifact. A Stage 1 ZK frontier fixture should contain the committed Stage 1
+sumcheck material and a BlindFold proof built for exactly the Stage 1 verifier
+constraints. Later fixtures extend that prefix stage by stage.
 
 If finer-grained progress is needed before production stages exist, add
 `cfg(test)` or integration-test helper code that calls explicit verifier
