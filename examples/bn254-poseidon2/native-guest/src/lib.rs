@@ -1,5 +1,8 @@
 #![cfg_attr(feature = "guest", no_std)]
-#![expect(clippy::assign_op_pattern, reason = "verbatim Poseidon2 reference port")]
+#![expect(
+    clippy::assign_op_pattern,
+    reason = "verbatim Poseidon2 reference port"
+)]
 
 extern crate alloc;
 

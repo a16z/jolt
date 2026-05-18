@@ -8,8 +8,8 @@ use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{
     field_arith_common::{
-        field_arith_match, fr_from_limbs, fr_to_limbs, trace_field_arith_cycle,
-        FIELD_ARITH_MASK, FUNCT3_FMUL,
+        field_arith_match, fr_from_limbs, fr_to_limbs, trace_field_arith_cycle, FIELD_ARITH_MASK,
+        FUNCT3_FMUL,
     },
     format::format_r::FormatR,
     Cycle, RISCVTrace,
@@ -24,7 +24,11 @@ declare_riscv_instr!(
 );
 
 impl FieldMul {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <FieldMul as crate::instruction::RISCVInstruction>::RAMAccess) {
+    fn exec(
+        &self,
+        cpu: &mut Cpu,
+        _: &mut <FieldMul as crate::instruction::RISCVInstruction>::RAMAccess,
+    ) {
         let frd = self.operands.rd as usize;
         let frs1 = self.operands.rs1 as usize;
         let frs2 = self.operands.rs2 as usize;

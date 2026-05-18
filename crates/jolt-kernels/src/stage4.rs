@@ -3560,9 +3560,7 @@ fn accumulate_sparse_field_reg_row_pair_chunk<F: Field>(
     let inc0 = frd_inc[even_row];
     let inc_delta = frd_inc[even_row + 1] - inc0;
     let [acc_const, acc_quad] = accumulators;
-    accumulate_sparse_field_reg_row_pair(
-        acc_const, acc_quad, even, odd, inc0, inc_delta, weight,
-    );
+    accumulate_sparse_field_reg_row_pair(acc_const, acc_quad, even, odd, inc0, inc_delta, weight);
 }
 
 fn accumulate_sparse_field_reg_row_pair<F: Field>(

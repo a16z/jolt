@@ -766,7 +766,10 @@ fn append_stage5_batched_sumcheck<'c, 'a>(
     Ok(state)
 }
 
-#[expect(clippy::too_many_arguments, reason = "stage5 output openings fan out by instance")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "stage5 output openings fan out by instance"
+)]
 fn append_stage5_output_openings<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,

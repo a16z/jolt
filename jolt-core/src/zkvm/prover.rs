@@ -228,7 +228,14 @@ impl<
             program_size: Some(preprocessing.shared.memory_layout.program_size),
         };
 
-        let (lazy_trace, trace, final_memory_state, program_io, _advice_tape_out, _field_reg_events) = {
+        let (
+            lazy_trace,
+            trace,
+            final_memory_state,
+            program_io,
+            _advice_tape_out,
+            _field_reg_events,
+        ) = {
             let _pprof_trace = pprof_scope!("trace");
             guest::program::trace(
                 elf_contents,
@@ -3355,7 +3362,8 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&9u8).unwrap();
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
-        let (lazy_trace, trace, final_memory_state, program_io, _) = program.trace(&inputs, &[], &[]);
+        let (lazy_trace, trace, final_memory_state, program_io, _) =
+            program.trace(&inputs, &[], &[]);
 
         let shared = JoltSharedPreprocessing::new(
             bytecode.clone(),

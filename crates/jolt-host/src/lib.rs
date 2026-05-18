@@ -456,17 +456,14 @@ struct ProveStageOutput {
 /// FINV reads only frs1; FieldMov/FieldSLL* are integer-register bridges.
 /// Audit finding C-A3 (`reads_frs2` overstatement on FINV) is fixed here
 /// because we now have a distinct `FieldInv` kind to match on.
-fn fr_bytecode_from_trace(
-    trace: &[TraceRow],
-) -> Vec<jolt_witness::field_reg::FrCycleBytecode> {
+fn fr_bytecode_from_trace(trace: &[TraceRow]) -> Vec<jolt_witness::field_reg::FrCycleBytecode> {
     use jolt_witness::field_reg::FIELD_REG_ADDR_MASK;
     let mask_u8 = FIELD_REG_ADDR_MASK as u8;
     trace
         .iter()
         .map(|row| {
             let instr = row.instruction;
-            let (reads_frs1, reads_frs2, writes_frd) =
-                instr.instruction_kind.fr_access_flags();
+            let (reads_frs1, reads_frs2, writes_frd) = instr.instruction_kind.fr_access_flags();
             jolt_witness::field_reg::FrCycleBytecode {
                 frs1: instr.operands.rs1.unwrap_or(0) & mask_u8,
                 frs2: instr.operands.rs2.unwrap_or(0) & mask_u8,
@@ -618,11 +615,22 @@ fn populate_fr_cycle_fields(
     }
     let mut current: [[u64; 4]; FIELD_REG_COUNT] = [[0; 4]; FIELD_REG_COUNT];
     let mut events = replay.events.iter().peekable();
-    let len = rv64_cycles.len().min(stage3_cycles.len()).min(replay.num_cycles);
+    let len = rv64_cycles
+        .len()
+        .min(stage3_cycles.len())
+        .min(replay.num_cycles);
     for c in 0..len {
         let bc = replay.bytecode.get(c).copied().unwrap_or_default();
-        let rs1 = if bc.reads_frs1 { current[(bc.frs1 as usize) & FIELD_REG_ADDR_MASK] } else { [0; 4] };
-        let rs2 = if bc.reads_frs2 { current[(bc.frs2 as usize) & FIELD_REG_ADDR_MASK] } else { [0; 4] };
+        let rs1 = if bc.reads_frs1 {
+            current[(bc.frs1 as usize) & FIELD_REG_ADDR_MASK]
+        } else {
+            [0; 4]
+        };
+        let rs2 = if bc.reads_frs2 {
+            current[(bc.frs2 as usize) & FIELD_REG_ADDR_MASK]
+        } else {
+            [0; 4]
+        };
         // Bytecode-anchored: write the post-state to slot bc.frd on every
         // bc.writes_frd cycle, regardless of event.rd_written. When the event
         // is absent or rd_written=false, post equals the current state (no
@@ -686,12 +694,20 @@ fn assemble_and_prove(
         num_cycles: trace_length,
         bytecode: {
             let mut bc = fr_bytecode_from_trace(trace);
-            bc.resize(trace_length, jolt_witness::field_reg::FrCycleBytecode::default());
+            bc.resize(
+                trace_length,
+                jolt_witness::field_reg::FrCycleBytecode::default(),
+            );
             bc
         },
         events: convert_fr_events(field_reg_events),
     };
-    populate_r1cs_fr_slots(&mut r1cs_witness, r1cs_key.num_vars_padded, trace, &fr_replay);
+    populate_r1cs_fr_slots(
+        &mut r1cs_witness,
+        r1cs_key.num_vars_padded,
+        trace,
+        &fr_replay,
+    );
     let mut rv64_cycles: Vec<Stage1Rv64Cycle> = stage1_rv64_cycles(trace, trace_length, bytecode);
     let product_virtual_cycles = stage2_product_virtual_cycles(trace, trace_length);
     let instruction_lookup_cycles = stage2_instruction_lookup_cycles(trace, trace_length);

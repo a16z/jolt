@@ -61,7 +61,10 @@ impl CommitmentTraceSources {
     pub fn from_cycle_inputs(cycle_inputs: &[CycleInput]) -> Self {
         Self {
             rd_inc: cycle_inputs.iter().map(|c| c.dense[DENSE_RD_INC]).collect(),
-            ram_inc: cycle_inputs.iter().map(|c| c.dense[DENSE_RAM_INC]).collect(),
+            ram_inc: cycle_inputs
+                .iter()
+                .map(|c| c.dense[DENSE_RAM_INC])
+                .collect(),
             field_reg_inc: cycle_inputs
                 .iter()
                 .map(|c| c.dense[DENSE_FIELD_REG_INC])

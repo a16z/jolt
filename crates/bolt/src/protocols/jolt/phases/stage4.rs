@@ -16,8 +16,7 @@ const STAGE4_BATCHED_DEGREE: usize = 3;
 
 const STAGE4_REGISTER_INPUTS: [&str; 3] = ["RdWriteValue", "Rs1Value", "Rs2Value"];
 const STAGE4_REGISTER_OUTPUTS: [&str; 5] = ["RegistersVal", "Rs1Ra", "Rs2Ra", "RdWa", "RdInc"];
-const STAGE4_FIELD_REG_INPUTS: [&str; 3] =
-    ["FieldRdWriteValue", "FieldRs1Value", "FieldRs2Value"];
+const STAGE4_FIELD_REG_INPUTS: [&str; 3] = ["FieldRdWriteValue", "FieldRs1Value", "FieldRs2Value"];
 const STAGE4_FIELD_REG_OUTPUTS: [&str; 5] =
     ["FieldRegVal", "FrRs1Ra", "FrRs2Ra", "FrdWa", "FrdInc"];
 const STAGE4_RAM_VAL_OUTPUTS: [&str; 2] = ["RamRa", "RamInc"];

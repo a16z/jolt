@@ -44,17 +44,12 @@ pub fn main() {
         Backend::Inline => {
             let mut program = inline_guest::compile_bn254_poseidon2_inline(target_dir);
             let prove_start = Instant::now();
-            let (output, bundle) = inline_guest::prove_bn254_poseidon2_inline(
-                &mut program,
-                s0,
-                s1,
-                s2,
-            )
-            .expect("modular prove succeeds on bn254_poseidon2_inline");
+            let (output, bundle) =
+                inline_guest::prove_bn254_poseidon2_inline(&mut program, s0, s1, s2)
+                    .expect("modular prove succeeds on bn254_poseidon2_inline");
             let prove_secs = prove_start.elapsed().as_secs_f64();
             let verify_start = Instant::now();
-            let verify_result =
-                inline_guest::verify_bn254_poseidon2_inline(&bundle, &mut program);
+            let verify_result = inline_guest::verify_bn254_poseidon2_inline(&bundle, &mut program);
             let verify_secs = verify_start.elapsed().as_secs_f64();
             (
                 output,
@@ -67,17 +62,12 @@ pub fn main() {
         Backend::Native => {
             let mut program = native_guest::compile_bn254_poseidon2_native(target_dir);
             let prove_start = Instant::now();
-            let (output, bundle) = native_guest::prove_bn254_poseidon2_native(
-                &mut program,
-                s0,
-                s1,
-                s2,
-            )
-            .expect("modular prove succeeds on bn254_poseidon2_native");
+            let (output, bundle) =
+                native_guest::prove_bn254_poseidon2_native(&mut program, s0, s1, s2)
+                    .expect("modular prove succeeds on bn254_poseidon2_native");
             let prove_secs = prove_start.elapsed().as_secs_f64();
             let verify_start = Instant::now();
-            let verify_result =
-                native_guest::verify_bn254_poseidon2_native(&bundle, &mut program);
+            let verify_result = native_guest::verify_bn254_poseidon2_native(&bundle, &mut program);
             let verify_secs = verify_start.elapsed().as_secs_f64();
             (
                 output,

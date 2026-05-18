@@ -476,19 +476,13 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
 
     // 21: IsFieldAssertEq · (V_FIELD_RS1 − V_FIELD_RS2) = 0
     a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_ASSERT_EQ, 1)]));
-    b_rows.push(row::<F>(&[
-        (V_FIELD_RS1_VALUE, 1),
-        (V_FIELD_RS2_VALUE, -1),
-    ]));
+    b_rows.push(row::<F>(&[(V_FIELD_RS1_VALUE, 1), (V_FIELD_RS2_VALUE, -1)]));
     c_rows.push(empty());
 
     // 22: IsFieldMov · (V_FIELD_RD − V_RS1_VALUE) = 0
     //     Low-limb load: V_FIELD_RD = XReg[rs1] as Fr (no shift).
     a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_MOV, 1)]));
-    b_rows.push(row::<F>(&[
-        (V_FIELD_RD_WRITE_VALUE, 1),
-        (V_RS1_VALUE, -1),
-    ]));
+    b_rows.push(row::<F>(&[(V_FIELD_RD_WRITE_VALUE, 1), (V_RS1_VALUE, -1)]));
     c_rows.push(empty());
 
     // 23: IsFieldSLL64 · (V_FIELD_RD − V_RS1_VALUE · 2^64) = 0
@@ -503,13 +497,7 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_SLL128, 1)]));
     b_rows.push(row_bigcoeff::<F>(&[
         (V_FIELD_RD_WRITE_VALUE, Coef::Small(1)),
-        (
-            V_RS1_VALUE,
-            Coef::Pow2 {
-                exp: 128,
-                sign: -1,
-            },
-        ),
+        (V_RS1_VALUE, Coef::Pow2 { exp: 128, sign: -1 }),
     ]));
     c_rows.push(empty());
 
@@ -517,13 +505,7 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_SLL192, 1)]));
     b_rows.push(row_bigcoeff::<F>(&[
         (V_FIELD_RD_WRITE_VALUE, Coef::Small(1)),
-        (
-            V_RS1_VALUE,
-            Coef::Pow2 {
-                exp: 192,
-                sign: -1,
-            },
-        ),
+        (V_RS1_VALUE, Coef::Pow2 { exp: 192, sign: -1 }),
     ]));
     c_rows.push(empty());
 
@@ -553,10 +535,7 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
 
     // 28: IsFieldMul · (V_PRODUCT − V_FIELD_RD_WRITE_VALUE) = 0
     a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_MUL, 1)]));
-    b_rows.push(row::<F>(&[
-        (V_PRODUCT, 1),
-        (V_FIELD_RD_WRITE_VALUE, -1),
-    ]));
+    b_rows.push(row::<F>(&[(V_PRODUCT, 1), (V_FIELD_RD_WRITE_VALUE, -1)]));
     c_rows.push(empty());
 
     // 29-31: FINV via V_PRODUCT reuse. Same trick — bind Left = FieldRs1,
@@ -583,10 +562,7 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
 
     // 31: IsFieldInv · (V_PRODUCT − 1) = 0
     a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_INV, 1)]));
-    b_rows.push(row::<F>(&[
-        (V_PRODUCT, 1),
-        (V_CONST, -1),
-    ]));
+    b_rows.push(row::<F>(&[(V_PRODUCT, 1), (V_CONST, -1)]));
     c_rows.push(empty());
 
     // 32: (1 − ΣFR_flags) · V_FIELD_RS1 = 0

@@ -13,8 +13,8 @@ use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{
     field_arith_common::{
-        field_arith_match, fr_from_limbs, fr_to_limbs, trace_field_arith_cycle,
-        FIELD_ARITH_MASK, FUNCT3_FINV,
+        field_arith_match, fr_from_limbs, fr_to_limbs, trace_field_arith_cycle, FIELD_ARITH_MASK,
+        FUNCT3_FINV,
     },
     format::format_r::FormatR,
     Cycle, RISCVTrace,
@@ -29,16 +29,20 @@ declare_riscv_instr!(
 );
 
 impl FieldInv {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <FieldInv as crate::instruction::RISCVInstruction>::RAMAccess) {
+    fn exec(
+        &self,
+        cpu: &mut Cpu,
+        _: &mut <FieldInv as crate::instruction::RISCVInstruction>::RAMAccess,
+    ) {
         let frd = self.operands.rd as usize;
         let frs1 = self.operands.rs1 as usize;
         debug_assert!(frd < cpu.field_regs.len(), "frd out of range");
         debug_assert!(frs1 < cpu.field_regs.len(), "frs1 out of range");
 
         let a = fr_from_limbs(&cpu.field_regs[frs1]);
-        let inv = a.inverse().expect(
-            "FieldInv on zero input; the SDK guards this via Fr::inverse() -> Option<Fr>",
-        );
+        let inv = a
+            .inverse()
+            .expect("FieldInv on zero input; the SDK guards this via Fr::inverse() -> Option<Fr>");
         cpu.field_regs[frd] = fr_to_limbs(&inv);
     }
 }

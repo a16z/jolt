@@ -49,8 +49,7 @@ const STAGE3_INSTRUCTION_INPUT_OUTPUTS: [&str; 8] = [
     "Imm",
 ];
 const STAGE3_REGISTER_INPUTS: [&str; 3] = ["RdWriteValue", "Rs1Value", "Rs2Value"];
-const STAGE3_FIELD_REG_INPUTS: [&str; 3] =
-    ["FieldRdWriteValue", "FieldRs1Value", "FieldRs2Value"];
+const STAGE3_FIELD_REG_INPUTS: [&str; 3] = ["FieldRdWriteValue", "FieldRs1Value", "FieldRs2Value"];
 
 pub fn build_stage3_protocol<'c>(
     context: &'c MeliorContext,

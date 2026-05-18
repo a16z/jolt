@@ -1225,8 +1225,6 @@ pub trait Stage67BytecodeEntry {
     fn writes_frd(&self) -> bool;
 }
 
-
-
 pub fn store_scalar(store: &ValueStore<Fr>, symbol: &'static str) -> Result<Fr, RuntimePlanError> {
     store.scalar_or(symbol, |symbol| RuntimePlanError::MissingValue { symbol })
 }

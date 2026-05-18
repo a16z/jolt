@@ -624,9 +624,7 @@ impl Stage3CpuProgram {
                 "jolt.stage3.spartan_shift" => "jolt_stage3_spartan_shift",
                 "jolt.stage3.instruction_input" => "jolt_stage3_instruction_input",
                 "jolt.stage3.registers_claim_reduction" => "jolt_stage3_registers_claim_reduction",
-                "jolt.stage3.field_reg_claim_reduction" => {
-                    "jolt_stage3_field_reg_claim_reduction"
-                }
+                "jolt.stage3.field_reg_claim_reduction" => "jolt_stage3_field_reg_claim_reduction",
                 "jolt.stage3.batched" => "jolt_stage3_batched",
                 _ => {
                     return Err(EmitError::new(format!(

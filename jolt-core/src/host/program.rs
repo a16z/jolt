@@ -341,8 +341,8 @@ impl Program {
             advice_file.read_to_end(&mut advice_contents).unwrap();
             let advice_image = jolt_program::image::decode_elf(&advice_contents)
                 .expect("compute_advice ELF decoding failed");
-            let advice_memory_config = self
-                .memory_config_with_program_size(advice_image.program_end - RAM_START_ADDRESS);
+            let advice_memory_config =
+                self.memory_config_with_program_size(advice_image.program_end - RAM_START_ADDRESS);
             let (_, _, _, _, mut advice_tape, _) = guest::program::trace(
                 &advice_contents,
                 Some(advice_elf),
@@ -358,15 +358,16 @@ impl Program {
             None
         };
 
-        let (lazy_trace, trace, memory, jolt_device, _advice_tape, field_reg_events) = guest::program::trace(
-            &elf_contents,
-            self.elf.as_ref(),
-            inputs,
-            untrusted_advice,
-            trusted_advice,
-            &memory_config,
-            advice_tape_seed,
-        );
+        let (lazy_trace, trace, memory, jolt_device, _advice_tape, field_reg_events) =
+            guest::program::trace(
+                &elf_contents,
+                self.elf.as_ref(),
+                inputs,
+                untrusted_advice,
+                trusted_advice,
+                &memory_config,
+                advice_tape_seed,
+            );
         (lazy_trace, trace, memory, jolt_device, field_reg_events)
     }
 

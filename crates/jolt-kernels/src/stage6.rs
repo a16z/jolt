@@ -2038,11 +2038,8 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
             "stage6.input.stage5.registers_val_evaluation.RdWa",
             log_t,
         )?;
-        let stage_fr_register_point = register_prefix_point(
-            store,
-            "stage6.input.stage4.field_reg_rw.FrRs1Ra",
-            log_t,
-        )?;
+        let stage_fr_register_point =
+            register_prefix_point(store, "stage6.input.stage4.field_reg_rw.FrRs1Ra", log_t)?;
 
         let mut stage_values: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT] =
             std::array::from_fn(|_| vec![F::zero(); expected_entries]);
@@ -2075,7 +2072,6 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                 stage_factors[stage][bytecode_index] += cycle_eqs[stage][cycle];
             }
         }
-
 
         let mut entry_trace = vec![F::zero(); expected_entries];
         entry_trace[bytecode_cycle_indices[0]] = F::one();
@@ -4565,11 +4561,8 @@ fn bytecode_stage_value_evals<F: Field>(
         "stage6.input.stage5.registers_val_evaluation.RdWa",
         log_t,
     )?;
-    let stage_fr_register_point = register_prefix_point(
-        store,
-        "stage6.input.stage4.field_reg_rw.FrRs1Ra",
-        log_t,
-    )?;
+    let stage_fr_register_point =
+        register_prefix_point(store, "stage6.input.stage4.field_reg_rw.FrRs1Ra", log_t)?;
 
     let mut evals = [F::zero(); BYTECODE_READ_RAF_STAGE_COUNT];
     for (index, entry) in data.entries.iter().enumerate() {
@@ -4623,11 +4616,8 @@ fn bytecode_weighted_value_factor<F: Field>(
         "stage6.input.stage5.registers_val_evaluation.RdWa",
         log_t,
     )?;
-    let stage_fr_register_point = register_prefix_point(
-        store,
-        "stage6.input.stage4.field_reg_rw.FrRs1Ra",
-        log_t,
-    )?;
+    let stage_fr_register_point =
+        register_prefix_point(store, "stage6.input.stage4.field_reg_rw.FrRs1Ra", log_t)?;
     let stage_values = data
         .entries
         .iter()
@@ -4947,18 +4937,25 @@ fn bytecode_entry_stage_values<F: Field>(
     // non-zero FR Twist evaluations on every bytecode-FR-active cycle.
     let mut stage_fr = F::zero();
     if entry.writes_frd {
-        stage_fr += register_eq(entry.frd, stage_fr_register_point, "stage6.bytecode.entry.frd")?
-            * stage_fr_gamma_powers[0];
+        stage_fr += register_eq(
+            entry.frd,
+            stage_fr_register_point,
+            "stage6.bytecode.entry.frd",
+        )? * stage_fr_gamma_powers[0];
     }
     if entry.reads_frs1 {
-        stage_fr +=
-            register_eq(entry.frs1, stage_fr_register_point, "stage6.bytecode.entry.frs1")?
-                * stage_fr_gamma_powers[1];
+        stage_fr += register_eq(
+            entry.frs1,
+            stage_fr_register_point,
+            "stage6.bytecode.entry.frs1",
+        )? * stage_fr_gamma_powers[1];
     }
     if entry.reads_frs2 {
-        stage_fr +=
-            register_eq(entry.frs2, stage_fr_register_point, "stage6.bytecode.entry.frs2")?
-                * stage_fr_gamma_powers[2];
+        stage_fr += register_eq(
+            entry.frs2,
+            stage_fr_register_point,
+            "stage6.bytecode.entry.frs2",
+        )? * stage_fr_gamma_powers[2];
     }
 
     Ok([stage1, stage2, stage3, stage4, stage5, stage_fr])

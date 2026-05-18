@@ -308,9 +308,21 @@ where
             let fr_slot = |opt: Option<u8>| {
                 opt.map(|raw| (raw as usize) & jolt_witness::field_reg::FIELD_REG_ADDR_MASK)
             };
-            let frd = if writes_frd { fr_slot(instr.operands.rd) } else { None };
-            let frs1 = if reads_frs1 { fr_slot(instr.operands.rs1) } else { None };
-            let frs2 = if reads_frs2 { fr_slot(instr.operands.rs2) } else { None };
+            let frd = if writes_frd {
+                fr_slot(instr.operands.rd)
+            } else {
+                None
+            };
+            let frs1 = if reads_frs1 {
+                fr_slot(instr.operands.rs1)
+            } else {
+                None
+            };
+            let frs2 = if reads_frs2 {
+                fr_slot(instr.operands.rs2)
+            } else {
+                None
+            };
             Stage6BytecodeEntry {
                 address: F::from_u64(instr.address as u64),
                 imm: F::from_i128(instr.operands.imm),

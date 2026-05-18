@@ -83,7 +83,10 @@ impl JoltProtocolParams {
             // and a constant `+1` for the FieldRegInc dense oracle, but only
             // when FR oracles are active. Today `field_reg_d = 0`, so the
             // formula collapses to `2 + instruction_d + bytecode_d + ram_d`.
-            num_committed: 2 + instruction_d + bytecode_d + ram_d
+            num_committed: 2
+                + instruction_d
+                + bytecode_d
+                + ram_d
                 + if field_reg_d > 0 { 1 + field_reg_d } else { 0 },
             num_r1cs_constraints: 32,
             num_r1cs_inputs: 47,
@@ -166,7 +169,10 @@ pub(crate) struct ParsedJoltProtocolParams {
     // lint while `field_reg_d = 0` (today's default — FR oracles flow
     // in-process from `FieldRegReplay` rather than through committed
     // MLIR-emitted columns).
-    #[expect(dead_code, reason = "consumed once field_reg_d > 0 enables committed FR oracles")]
+    #[expect(
+        dead_code,
+        reason = "consumed once field_reg_d > 0 enables committed FR oracles"
+    )]
     pub(crate) field_reg_log_k: usize,
     pub(crate) field_reg_d: usize,
     pub(crate) num_committed: usize,

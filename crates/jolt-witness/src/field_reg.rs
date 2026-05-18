@@ -230,14 +230,22 @@ mod tests {
         let t = 4;
         let events = vec![
             FieldRegEvent {
-                cycle: 1, frs1: 0, frs2: 0, frd: 5,
-                rs1_pre: FrLimbs::ZERO, rs2_pre: FrLimbs::ZERO,
+                cycle: 1,
+                frs1: 0,
+                frs2: 0,
+                frd: 5,
+                rs1_pre: FrLimbs::ZERO,
+                rs2_pre: FrLimbs::ZERO,
                 rd_post: FrLimbs([42, 0, 0, 0]),
                 rd_written: true,
             },
             FieldRegEvent {
-                cycle: 2, frs1: 0, frs2: 0, frd: 5,
-                rs1_pre: FrLimbs::ZERO, rs2_pre: FrLimbs::ZERO,
+                cycle: 2,
+                frs1: 0,
+                frs2: 0,
+                frd: 5,
+                rs1_pre: FrLimbs::ZERO,
+                rs2_pre: FrLimbs::ZERO,
                 rd_post: FrLimbs([99, 0, 0, 0]),
                 rd_written: true,
             },
@@ -253,7 +261,11 @@ mod tests {
                 ..FrCycleBytecode::default()
             };
         }
-        let replay = FieldRegReplay { num_cycles: t, bytecode, events };
+        let replay = FieldRegReplay {
+            num_cycles: t,
+            bytecode,
+            events,
+        };
         let inc: Vec<Fr> = replay.materialize_frd_inc();
         // inc[1] = 42 - 0 = 42; inc[2] = 99 - 42 = 57.
         assert_eq!(inc[0], Fr::from_u64(0));
@@ -271,5 +283,4 @@ mod tests {
         let two_64 = Fr::from_u128(1u128 << 64);
         assert_eq!(limbs_to_field::<Fr>([0, 1, 0, 0]), two_64);
     }
-
 }
