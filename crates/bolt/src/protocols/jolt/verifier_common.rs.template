@@ -1175,6 +1175,12 @@ pub struct Stage67RelationSymbols {
     pub inc_rd_eval: &'static str,
 }
 
+/// Number of bytecode-RAF stage groups (5 integer + 1 FR). Mirrors the
+/// prover-side `jolt_kernels::stage6::BYTECODE_READ_RAF_STAGE_COUNT` and
+/// the Bolt-emitted `STAGE6_OPENING_INPUTS` layout. Any change here
+/// requires synchronizing the prover/emit/verifier triple.
+pub const STAGE67_BYTECODE_STAGE_COUNT: usize = 6;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stage67BytecodeSymbols {
     pub point: &'static str,
@@ -1182,8 +1188,8 @@ pub struct Stage67BytecodeSymbols {
     pub bytecode_ra_eval_prefix: &'static str,
     pub entries: &'static str,
     pub entry_bytecode_index: &'static str,
-    pub stage_gammas: [&'static str; 6],
-    pub stage_cycle_points: [&'static str; 6],
+    pub stage_gammas: [&'static str; STAGE67_BYTECODE_STAGE_COUNT],
+    pub stage_cycle_points: [&'static str; STAGE67_BYTECODE_STAGE_COUNT],
     pub stage4_register_point: &'static str,
     pub stage5_register_point: &'static str,
     pub stage_fr_register_point: &'static str,
@@ -1500,7 +1506,7 @@ fn stage67_bytecode_stage_cycle_points(
     store: &ValueStore<Fr>,
     log_t: usize,
     symbols: &Stage67BytecodeSymbols,
-) -> Result<[Vec<Fr>; 6], RuntimePlanError> {
+) -> Result<[Vec<Fr>; STAGE67_BYTECODE_STAGE_COUNT], RuntimePlanError> {
     let point = |index| {
         let symbol = symbols.stage_cycle_points[index];
         suffix_point(store_point(store, symbol)?, log_t, symbol).map(|point| point.to_vec())
@@ -1523,7 +1529,7 @@ fn stage67_bytecode_stage_value_evals<E: Stage67BytecodeEntry>(
     r_address: &[Fr],
     log_t: usize,
     symbols: &Stage67BytecodeSymbols,
-) -> Result<[Fr; 6], RuntimePlanError> {
+) -> Result<[Fr; STAGE67_BYTECODE_STAGE_COUNT], RuntimePlanError> {
     let expected_len =
         1usize
             .checked_shl(r_address.len() as u32)
@@ -1564,7 +1570,7 @@ fn stage67_bytecode_stage_value_evals<E: Stage67BytecodeEntry>(
     let stage_fr_register_point =
         stage67_register_prefix_point(store, symbols.stage_fr_register_point, log_t)?;
 
-    let mut evals = [Fr::from_u64(0); 6];
+    let mut evals = [Fr::from_u64(0); STAGE67_BYTECODE_STAGE_COUNT];
     for (index, entry) in entries.iter().enumerate() {
         let eq = indexed_boolean_eq(index, r_address);
         let values = stage67_bytecode_entry_stage_values(
@@ -1602,7 +1608,7 @@ fn stage67_bytecode_entry_stage_values<E: Stage67BytecodeEntry>(
     stage5_gamma_powers: &[Fr],
     stage_fr_gamma_powers: &[Fr],
     symbols: &Stage67BytecodeSymbols,
-) -> Result<[Fr; 6], RuntimePlanError> {
+) -> Result<[Fr; STAGE67_BYTECODE_STAGE_COUNT], RuntimePlanError> {
     let flags = entry.circuit_flags();
     let mut stage1 = entry.address() + entry.imm() * stage1_gamma_powers[1];
     for (flag, gamma) in flags.iter().zip(stage1_gamma_powers.iter().skip(2)) {

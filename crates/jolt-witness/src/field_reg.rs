@@ -20,6 +20,16 @@ pub const FIELD_REG_COUNT: usize = 16;
 /// Log2 of [`FIELD_REG_COUNT`]. Used for the FR Twist one-hot polynomial domain.
 pub const LOG_K_FR: usize = 4;
 
+/// Address-bit mask for FR register indices: `FIELD_REG_COUNT - 1 = 0xF`.
+///
+/// Centralizes the canonical low-4-bit slot mask that callers apply to
+/// raw operand fields before indexing into the FR register file. Stage 4
+/// and Stage 5 derive their masks from the runtime `field_reg_count`
+/// parameter; this constant is for the call sites that work with the
+/// fixed-size representation directly (host materializers, witness
+/// helpers).
+pub const FIELD_REG_ADDR_MASK: usize = FIELD_REG_COUNT - 1;
+
 /// Natural-form 256-bit value stored as 4 little-endian u64 limbs.
 ///
 /// Identical wire shape to `tracer::emulator::cpu::FieldRegEvent::value`.
@@ -152,7 +162,7 @@ impl FieldRegReplay {
                 // event.frd (uncommitted). Gate on bc.writes_frd so a malicious
                 // event claiming rd_written on a non-writing kind is dropped.
                 if ev.rd_written && bc.writes_frd {
-                    let slot = (bc.frd as usize) & 0xF;
+                    let slot = (bc.frd as usize) & FIELD_REG_ADDR_MASK;
                     let post = limbs_to_field::<F>(ev.rd_post.into_limbs());
                     *slot_out = post - current[slot];
                     current[slot] = post;

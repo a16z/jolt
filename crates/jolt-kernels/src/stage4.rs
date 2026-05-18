@@ -451,11 +451,13 @@ pub struct Stage4RamWitness<'a, F: Field> {
     pub ram_inc: &'a [F],
 }
 
-/// Stage 4 FieldRegRW input — sparse FR replay only. The kernel materializes
-/// the `K_FR × T` and `T`-sized dense polynomials (field_reg_val, frs1_ra,
-/// frs2_ra, frd_wa, frd_inc) inside `field_reg_rw_state` for the lifetime
-/// of the Stage 4 sumcheck, keeping the host-side witness storage at
-/// `O(events + cycles)` bytes instead of `O(K_FR × T × 32)`.
+/// Stage 4 FieldRegRW input — sparse FR replay only. The kernel walks
+/// `replay.events` directly via `SparseFieldRegState`, coalescing
+/// frs1/frs2/frd contributions per active cycle and only materializing
+/// dense K_FR-vectors at the final sumcheck round (`current_trace_len == 1`).
+/// Host-side witness storage stays at `O(events + cycles)` bytes; the
+/// only T-sized buffer is `FrdInc` (one field element per cycle, zero on
+/// non-write cycles).
 #[derive(Clone, Copy)]
 pub struct Stage4FieldRegWitness<'a> {
     pub field_reg_count: usize,
@@ -2148,6 +2150,19 @@ impl<F: Field> SparseFieldRegState<F> {
                 });
             }
             let bc = &bytecode[row];
+            // Defense in depth: a tracer-emitted event must correspond to a
+            // bytecode row that exposes at least one FR access flag. A bc-
+            // all-false cycle is by definition not an FR instruction; an event
+            // landing on one indicates an event/bytecode classification drift
+            // and gets dropped silently by the sparse iterator below. Reject
+            // it loudly instead.
+            if !bc.reads_frs1 && !bc.reads_frs2 && !bc.writes_frd {
+                return Err(Stage4KernelError::InvalidInputLength {
+                    input: "stage4.field_reg.event.bytecode_mismatch",
+                    expected: 1,
+                    actual: 0,
+                });
+            }
             let start = entries.len();
             if bc.reads_frs1 {
                 let col = (bc.frs1 as usize) & address_mask;
@@ -5438,5 +5453,290 @@ mod tests {
 
     fn leak_slice<T>(values: Vec<T>) -> &'static [T] {
         Box::leak(values.into_boxed_slice())
+    }
+
+    mod field_reg {
+        use super::*;
+        use jolt_witness::field_reg::{
+            FieldRegEvent, FieldRegReplay, FrCycleBytecode, FrLimbs, FIELD_REG_COUNT,
+        };
+
+        fn bc_write(frd: u8) -> FrCycleBytecode {
+            FrCycleBytecode {
+                frd,
+                writes_frd: true,
+                ..FrCycleBytecode::default()
+            }
+        }
+
+        fn bc_read_write(frs1: u8, frs2: u8, frd: u8) -> FrCycleBytecode {
+            FrCycleBytecode {
+                frs1,
+                frs2,
+                frd,
+                reads_frs1: true,
+                reads_frs2: true,
+                writes_frd: true,
+            }
+        }
+
+        fn event(cycle: u64, frd: u8, post: u64) -> FieldRegEvent {
+            FieldRegEvent {
+                cycle,
+                frs1: 0,
+                frs2: 0,
+                frd,
+                rs1_pre: FrLimbs::ZERO,
+                rs2_pre: FrLimbs::ZERO,
+                rd_post: FrLimbs([post, 0, 0, 0]),
+                rd_written: true,
+            }
+        }
+
+        fn build_state(replay: FieldRegReplay) -> SparseFieldRegState<Fr> {
+            let trace_len = replay.num_cycles;
+            let trace_point = frs(&(0..trace_len.trailing_zeros() as u64).collect::<Vec<_>>());
+            SparseFieldRegState::<Fr>::new(
+                FIELD_REG_COUNT,
+                trace_len,
+                leak(replay),
+                &trace_point,
+                Fr::from_u64(7),
+                Fr::from_u64(11),
+                Fr::from_u64(1),
+            )
+            .expect("synthetic SparseFieldRegState builds")
+        }
+
+        fn leak(replay: FieldRegReplay) -> &'static FieldRegReplay {
+            Box::leak(Box::new(replay))
+        }
+
+        #[test]
+        fn entries_populated_from_honest_replay() {
+            let t = 4;
+            let mut bytecode = vec![FrCycleBytecode::default(); t];
+            bytecode[1] = bc_write(5);
+            bytecode[3] = bc_read_write(2, 5, 7);
+            let events = vec![event(1, 5, 42), event(3, 7, 99)];
+            let state = build_state(FieldRegReplay {
+                num_cycles: t,
+                bytecode,
+                events,
+            });
+
+            // cycle 1: write-only at frd=5 → one entry with frd_wa=1, read_ra=0
+            // cycle 3: reads frs1=2, frs2=5, writes frd=7 → three entries
+            //          (frs1 ra at col=2, frs2 ra at col=5, frd wa at col=7)
+            assert_eq!(state.entries.len(), 4);
+
+            let c1 = state
+                .entries
+                .iter()
+                .find(|e| e.row == 1)
+                .expect("cycle 1 entry");
+            assert_eq!(c1.col, 5);
+            assert_eq!(c1.frd_wa, Fr::from_u64(1));
+            assert_eq!(c1.read_ra, Fr::from_u64(0));
+            assert_eq!(c1.next_val, Fr::from_u64(42));
+
+            let c3_entries: Vec<_> = state.entries.iter().filter(|e| e.row == 3).collect();
+            assert_eq!(c3_entries.len(), 3);
+            // entries sorted by col after each cycle's push
+            assert_eq!(c3_entries[0].col, 2); // frs1
+            assert_eq!(c3_entries[0].read_ra, Fr::from_u64(7));
+            assert_eq!(c3_entries[1].col, 5); // frs2
+            assert_eq!(c3_entries[1].read_ra, Fr::from_u64(11));
+            assert_eq!(c3_entries[2].col, 7); // frd write
+            assert_eq!(c3_entries[2].frd_wa, Fr::from_u64(1));
+            assert_eq!(c3_entries[2].next_val, Fr::from_u64(99));
+        }
+
+        #[test]
+        fn entries_coalesce_when_frs1_frs2_frd_alias() {
+            // frs1 = frs2 = frd = 3: all three operands on the same slot.
+            // Expect a single entry coalescing read_ra = γ + γ² and frd_wa = 1.
+            let t = 2;
+            let mut bytecode = vec![FrCycleBytecode::default(); t];
+            bytecode[0] = bc_read_write(3, 3, 3);
+            let events = vec![event(0, 3, 7)];
+            let state = build_state(FieldRegReplay {
+                num_cycles: t,
+                bytecode,
+                events,
+            });
+
+            assert_eq!(state.entries.len(), 1);
+            let e = &state.entries[0];
+            assert_eq!(e.col, 3);
+            assert_eq!(e.read_ra, Fr::from_u64(7) + Fr::from_u64(11));
+            assert_eq!(e.frd_wa, Fr::from_u64(1));
+            assert_eq!(e.next_val, Fr::from_u64(7));
+        }
+
+        #[test]
+        fn rejects_out_of_order_events() {
+            let t = 4;
+            let mut bytecode = vec![FrCycleBytecode::default(); t];
+            bytecode[1] = bc_write(2);
+            bytecode[3] = bc_write(4);
+            // Events out of order: cycle 3 before cycle 1.
+            let events = vec![event(3, 4, 50), event(1, 2, 10)];
+            let trace_point = frs(&[0, 0]);
+            let err = SparseFieldRegState::<Fr>::new(
+                FIELD_REG_COUNT,
+                t,
+                leak(FieldRegReplay {
+                    num_cycles: t,
+                    bytecode,
+                    events,
+                }),
+                &trace_point,
+                Fr::from_u64(7),
+                Fr::from_u64(11),
+                Fr::from_u64(1),
+            )
+            .err()
+            .expect("out-of-order events rejected");
+            assert!(matches!(
+                err,
+                Stage4KernelError::InvalidInputLength {
+                    input: "stage4.field_reg.events.order",
+                    ..
+                }
+            ));
+        }
+
+        #[test]
+        fn rejects_non_power_of_two_field_reg_count() {
+            let t = 2;
+            let bytecode = vec![FrCycleBytecode::default(); t];
+            let trace_point = frs(&[0]);
+            let err = SparseFieldRegState::<Fr>::new(
+                15, // not a power of two
+                t,
+                leak(FieldRegReplay {
+                    num_cycles: t,
+                    bytecode,
+                    events: vec![],
+                }),
+                &trace_point,
+                Fr::from_u64(7),
+                Fr::from_u64(11),
+                Fr::from_u64(1),
+            )
+            .err()
+            .expect("non-pow2 field_reg_count rejected");
+            assert!(matches!(
+                err,
+                Stage4KernelError::InvalidInputLength {
+                    input: "stage4.field_reg.field_reg_count",
+                    ..
+                }
+            ));
+        }
+
+        #[test]
+        fn frd_wa_matches_bytecode_driven_view_on_honest_replay() {
+            // Stage 4's sparse FrdWa entries must agree with Stage 5's
+            // bytecode-driven FrdWa for every (slot, cycle) when the prover
+            // emits an event for every bc.writes_frd cycle (the honest case).
+            // This is a positive-side guard for the audit's MED 2.1 finding
+            // — the divergence only appears on event-dropped (malicious) replays.
+            let t = 8;
+            let writes: &[(u64, u8)] = &[(1, 5), (3, 2), (5, 7), (7, 5)];
+            let mut bytecode = vec![FrCycleBytecode::default(); t];
+            for &(cycle, frd) in writes {
+                bytecode[cycle as usize] = bc_write(frd);
+            }
+            let events: Vec<_> = writes
+                .iter()
+                .enumerate()
+                .map(|(i, &(c, frd))| event(c, frd, 1000 + i as u64))
+                .collect();
+            let state = build_state(FieldRegReplay {
+                num_cycles: t,
+                bytecode: bytecode.clone(),
+                events,
+            });
+
+            // Build bytecode-driven FrdWa as a (slot, cycle) → {0,1} map,
+            // mirroring stage5::frd_wa_at_field_reg_address gating.
+            for (cycle, bc) in bytecode.iter().enumerate() {
+                for slot in 0..FIELD_REG_COUNT {
+                    let expected = bc.writes_frd && (bc.frd as usize) == slot;
+                    let actual = state.entries.iter().any(|e| {
+                        e.row == cycle && e.col as usize == slot && e.frd_wa == Fr::from_u64(1)
+                    });
+                    assert_eq!(
+                        expected, actual,
+                        "FrdWa mismatch at (slot={slot}, cycle={cycle})"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn rejects_event_on_bytecode_all_false_cycle() {
+            // Defense-in-depth: an event with cycle=c where bytecode[c] has
+            // no FR flag set indicates tracer/preprocessing classification
+            // drift. SparseFieldRegState rejects it rather than silently
+            // dropping. Matches the audit's 2.3 LOW finding.
+            let t = 4;
+            let bytecode = vec![FrCycleBytecode::default(); t];
+            // bc[2] has no reads/writes set — but the event claims a write.
+            let events = vec![event(2, 5, 42)];
+            let trace_point = frs(&[0, 0]);
+            let err = SparseFieldRegState::<Fr>::new(
+                FIELD_REG_COUNT,
+                t,
+                leak(FieldRegReplay {
+                    num_cycles: t,
+                    bytecode,
+                    events,
+                }),
+                &trace_point,
+                Fr::from_u64(7),
+                Fr::from_u64(11),
+                Fr::from_u64(1),
+            )
+            .err()
+            .expect("bc-all-false event rejected");
+            assert!(matches!(
+                err,
+                Stage4KernelError::InvalidInputLength {
+                    input: "stage4.field_reg.event.bytecode_mismatch",
+                    ..
+                }
+            ));
+        }
+
+        #[test]
+        fn frd_wa_diverges_from_bytecode_when_event_dropped() {
+            // Documents the audit's MED 2.1 asymmetry: when a malicious prover
+            // drops an event for a bc.writes_frd=true cycle, Stage 4's sparse
+            // FrdWa has no entry there but Stage 5's bytecode-driven FrdWa does.
+            // Stage 6 bytecode-RAF anchor binds Stage 4's FrdWa against the
+            // bytecode-derived expected value, so this divergence causes the
+            // Stage 6 input-claim check to fail and the proof to be rejected.
+            let t = 4;
+            let mut bytecode = vec![FrCycleBytecode::default(); t];
+            bytecode[1] = bc_write(5);
+            bytecode[3] = bc_write(7);
+            // Malicious replay: only emit the cycle-1 event; cycle-3 dropped.
+            let events = vec![event(1, 5, 42)];
+            let state = build_state(FieldRegReplay {
+                num_cycles: t,
+                bytecode,
+                events,
+            });
+
+            // Stage 4 sees the cycle-1 write but NOT the dropped cycle-3 write.
+            assert_eq!(state.entries.len(), 1);
+            assert_eq!(state.entries[0].row, 1);
+            assert!(!state.entries.iter().any(|e| e.row == 3));
+            // Bytecode-driven (Stage 5) view at slot 7 cycle 3 would be 1 —
+            // the asymmetry Stage 6's anchor relies on to reject this proof.
+        }
     }
 }

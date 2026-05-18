@@ -460,6 +460,8 @@ fn fr_bytecode_from_trace(
     trace: &[TraceRow],
 ) -> Vec<jolt_witness::field_reg::FrCycleBytecode> {
     use jolt_riscv::JoltInstructionKind;
+    use jolt_witness::field_reg::FIELD_REG_ADDR_MASK;
+    let mask_u8 = FIELD_REG_ADDR_MASK as u8;
     trace
         .iter()
         .map(|row| {
@@ -477,9 +479,9 @@ fn fr_bytecode_from_trace(
                 _ => (false, false, false),
             };
             jolt_witness::field_reg::FrCycleBytecode {
-                frs1: instr.operands.rs1.unwrap_or(0) & 0xF,
-                frs2: instr.operands.rs2.unwrap_or(0) & 0xF,
-                frd: instr.operands.rd.unwrap_or(0) & 0xF,
+                frs1: instr.operands.rs1.unwrap_or(0) & mask_u8,
+                frs2: instr.operands.rs2.unwrap_or(0) & mask_u8,
+                frd: instr.operands.rd.unwrap_or(0) & mask_u8,
                 reads_frs1,
                 reads_frs2,
                 writes_frd,
@@ -541,7 +543,9 @@ fn populate_r1cs_fr_slots(
     replay: &jolt_witness::field_reg::FieldRegReplay,
 ) {
     use jolt_riscv::JoltInstructionKind;
-    use jolt_witness::field_reg::{limbs_to_field, FieldRegEvent, FIELD_REG_COUNT};
+    use jolt_witness::field_reg::{
+        limbs_to_field, FieldRegEvent, FIELD_REG_ADDR_MASK, FIELD_REG_COUNT,
+    };
     if replay.events.is_empty() {
         return;
     }
@@ -553,11 +557,11 @@ fn populate_r1cs_fr_slots(
         let bc = replay.bytecode.get(c).copied().unwrap_or_default();
         let kind = row.instruction.instruction_kind;
         if bc.reads_frs1 {
-            let slot = (bc.frs1 as usize) & 0xF;
+            let slot = (bc.frs1 as usize) & FIELD_REG_ADDR_MASK;
             r1cs_witness[offset + rv64::V_FIELD_RS1_VALUE] = current[slot];
         }
         if bc.reads_frs2 {
-            let slot = (bc.frs2 as usize) & 0xF;
+            let slot = (bc.frs2 as usize) & FIELD_REG_ADDR_MASK;
             r1cs_witness[offset + rv64::V_FIELD_RS2_VALUE] = current[slot];
         }
         // Populate V_FIELD_RD_WRITE_VALUE on every cycle where bytecode says
@@ -568,7 +572,7 @@ fn populate_r1cs_fr_slots(
         let event_opt = events.next_if(|ev: &&FieldRegEvent| ev.cycle as usize == c);
         let mut rd_post_opt: Option<Fr> = None;
         if bc.writes_frd {
-            let slot = (bc.frd as usize) & 0xF;
+            let slot = (bc.frd as usize) & FIELD_REG_ADDR_MASK;
             let post: Fr = match event_opt {
                 Some(ev) if ev.rd_written => limbs_to_field(ev.rd_post.into_limbs()),
                 _ => current[slot],
@@ -619,7 +623,7 @@ fn populate_fr_cycle_fields(
     stage3_cycles: &mut [Stage3Cycle],
     replay: &jolt_witness::field_reg::FieldRegReplay,
 ) {
-    use jolt_witness::field_reg::{FieldRegEvent, FIELD_REG_COUNT};
+    use jolt_witness::field_reg::{FieldRegEvent, FIELD_REG_ADDR_MASK, FIELD_REG_COUNT};
     if replay.events.is_empty() {
         return;
     }
@@ -628,8 +632,8 @@ fn populate_fr_cycle_fields(
     let len = rv64_cycles.len().min(stage3_cycles.len()).min(replay.num_cycles);
     for c in 0..len {
         let bc = replay.bytecode.get(c).copied().unwrap_or_default();
-        let rs1 = if bc.reads_frs1 { current[(bc.frs1 as usize) & 0xF] } else { [0; 4] };
-        let rs2 = if bc.reads_frs2 { current[(bc.frs2 as usize) & 0xF] } else { [0; 4] };
+        let rs1 = if bc.reads_frs1 { current[(bc.frs1 as usize) & FIELD_REG_ADDR_MASK] } else { [0; 4] };
+        let rs2 = if bc.reads_frs2 { current[(bc.frs2 as usize) & FIELD_REG_ADDR_MASK] } else { [0; 4] };
         // Bytecode-anchored: write the post-state to slot bc.frd on every
         // bc.writes_frd cycle, regardless of event.rd_written. When the event
         // is absent or rd_written=false, post equals the current state (no
@@ -637,7 +641,7 @@ fn populate_fr_cycle_fields(
         // V_FIELD_RD_WRITE_VALUE column.
         let event_opt = events.next_if(|ev: &&FieldRegEvent| ev.cycle as usize == c);
         let (rd, is_field_op) = if bc.writes_frd {
-            let slot = (bc.frd as usize) & 0xF;
+            let slot = (bc.frd as usize) & FIELD_REG_ADDR_MASK;
             let post = match event_opt {
                 Some(ev) if ev.rd_written => ev.rd_post.into_limbs(),
                 _ => current[slot],

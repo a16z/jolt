@@ -290,9 +290,11 @@ pub struct Stage5RegistersValWitness<'a, F: Field> {
 }
 
 /// Stage 5 FieldRegValEvaluation input — sparse FR replay only. The kernel
-/// materializes the `K_FR × T` `frd_wa` and `T` `frd_inc` polys kernel-
-/// locally so host-side `Stage45SparseTraceWitness` carries just the sparse
-/// replay. Matches the Stage 4 RW sparsification.
+/// builds a T-sized `frd_wa` at a single committed address (one field
+/// element per cycle, zero off the write slot) and reuses the sparse
+/// `replay.materialize_frd_inc::<F>()` T-vector. Host-side
+/// `Stage45SparseTraceWitness` carries just the sparse replay; no K_FR×T
+/// buffer is ever materialized.
 #[derive(Clone, Copy)]
 pub struct Stage5FieldRegValWitness<'a> {
     pub field_reg_count: usize,
@@ -3008,6 +3010,13 @@ fn frd_wa_at_field_reg_address<F: Field>(
     // bc.writes_frd=true, regardless of whether ev.rd_written is set —
     // mirrors Stage 4 sparse FR Twist's gating. Cycles where new==old
     // contribute FrdWa=1 but FrdInc=0, so they don't change FieldRegVal.
+    if !witness.field_reg_count.is_power_of_two() || witness.field_reg_count == 0 {
+        return Err(Stage5KernelError::InvalidInputLength {
+            input: "stage5.field_reg_val_evaluation.field_reg_count",
+            expected: witness.field_reg_count.next_power_of_two().max(1),
+            actual: witness.field_reg_count,
+        });
+    }
     let mut output = vec![F::zero(); witness.trace_len];
     let mask = witness.field_reg_count - 1;
     for (cycle, bc) in witness.replay.bytecode.iter().enumerate() {
