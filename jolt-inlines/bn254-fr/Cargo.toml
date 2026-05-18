@@ -19,9 +19,13 @@ host = ["dep:ark-bn254", "dep:ark-ff"]
 compute_advice = ["dep:ark-bn254", "dep:ark-ff"]
 
 [dependencies]
-ark-bn254 = { workspace = true, default-features = false, features = ["scalar_field"], optional = true }
+ark-bn254 = { workspace = true, default-features = false, features = [
+  "scalar_field",
+], optional = true }
 ark-ff = { workspace = true, optional = true }
 
 [dev-dependencies]
-ark-bn254 = { workspace = true, default-features = false, features = ["scalar_field"] }
+ark-bn254 = { workspace = true, default-features = false, features = [
+  "scalar_field",
+] }
 ark-ff.workspace = true
