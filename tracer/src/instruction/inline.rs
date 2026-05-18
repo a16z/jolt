@@ -12,23 +12,26 @@ use super::{
     Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 use crate::{
-    emulator::cpu::Cpu,
-    instruction::SourceInstruction,
-    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
+    emulator::cpu::Cpu, instruction::SourceInstruction,
+    utils::virtual_registers::VirtualRegisterAllocator,
 };
 use jolt_program::expand::{
-    ExpansionAllocator, ExpansionError, InlineAdmissibility, InlineExpansionProvider,
+    ExpandedInstructionSequence, ExpansionError, InlineAdmissibility, InlineExpansionBuilder,
+    InlineExpansionProvider, InlineOperands,
 };
-use jolt_riscv::{InlineExtension, JoltInstruction, JoltInstructionProfile};
+use jolt_riscv::{
+    InlineExtension, JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT_ALL_INLINES,
+};
 use serde::{Deserialize, Serialize};
 
-const FIRST_INSTRUCTION_TEMP_REGISTER: u8 = common::constants::RISCV_REGISTER_COUNT + 8;
-const LAST_INSTRUCTION_TEMP_REGISTER: u8 = FIRST_INSTRUCTION_TEMP_REGISTER + 8;
 use std::collections::VecDeque;
 
-pub type InlineSequenceFn = fn(InstrAssembler, FormatInline) -> Vec<Instruction>;
+pub type InlineSequenceFn = fn(
+    InlineExpansionBuilder,
+    InlineOperands,
+) -> Result<ExpandedInstructionSequence, ExpansionError>;
 
-pub type AdviceFn = fn(InstrAssembler, FormatInline, &mut Cpu) -> Option<VecDeque<u64>>;
+pub type AdviceFn = fn(FormatInline, &mut Cpu) -> Option<VecDeque<u64>>;
 
 /// A registered inline implementation, discovered at link time via `inventory`.
 pub struct InlineRegistration {
@@ -69,13 +72,11 @@ pub fn is_inline_registered(opcode: u32, funct3: u32, funct7: u32) -> bool {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct TracerInlineExpansionProvider {
-    allocator: VirtualRegisterAllocator,
-}
+pub struct TracerInlineExpansionProvider;
 
 impl TracerInlineExpansionProvider {
     pub fn new() -> Self {
-        Self::default()
+        Self
     }
 }
 
@@ -83,43 +84,30 @@ impl InlineExpansionProvider for TracerInlineExpansionProvider {
     fn expand_inline(
         &mut self,
         instruction: &SourceInstruction,
-        _allocator: &mut ExpansionAllocator,
         profile: JoltInstructionProfile,
-    ) -> Result<Vec<JoltInstruction>, ExpansionError> {
-        let Instruction::INLINE(inline) = Instruction::try_from_source_instruction(*instruction)
-            .map_err(|_| ExpansionError::MalformedInstruction("malformed inline instruction"))?
-        else {
-            return Err(ExpansionError::MalformedInstruction(
-                "expected inline instruction",
-            ));
-        };
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        let inline = instruction
+            .row()
+            .inline
+            .ok_or(ExpansionError::MalformedInstruction(
+                "missing inline source metadata",
+            ))?;
 
         let registration = inventory::iter::<InlineRegistration>
             .into_iter()
             .find(|r| {
-                r.opcode == inline.opcode && r.funct3 == inline.funct3 && r.funct7 == inline.funct7
+                r.opcode == inline.opcode as u32
+                    && r.funct3 == inline.funct3 as u32
+                    && r.funct7 == inline.funct7 as u32
             })
             .ok_or(ExpansionError::UnsupportedInstruction)?;
         if !profile.supports_inline(registration.extension) {
             return Err(ExpansionError::UnsupportedInstruction);
         }
 
-        let _remapped_rd_guard = instruction.row().operands.rd.and_then(|rd| {
-            (FIRST_INSTRUCTION_TEMP_REGISTER..LAST_INSTRUCTION_TEMP_REGISTER)
-                .contains(&rd)
-                .then(|| self.allocator.allocate())
-        });
-
-        let asm = InstrAssembler::new_inline(inline.address, inline.is_compressed, &self.allocator);
-        (registration.build_sequence)(asm, inline.operands)
-            .into_iter()
-            .map(|instruction| {
-                let row = instruction
-                    .try_jolt_instruction_row()
-                    .map_err(ExpansionError::IllegalSourceInstruction)?;
-                JoltInstruction::try_from(row).map_err(ExpansionError::IllegalTargetInstruction)
-            })
-            .collect::<Result<Vec<_>, _>>()
+        let source = *instruction.row();
+        let operands = InlineOperands::from_source_row(source)?;
+        (registration.build_sequence)(InlineExpansionBuilder::new(source), operands)
     }
 }
 
@@ -201,9 +189,24 @@ impl INLINE {
     }
 
     pub fn inline_sequence(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
-        let reg = find_inline(self.opcode, self.funct3, self.funct7);
-        let asm = InstrAssembler::new_inline(self.address, self.is_compressed, allocator);
-        (reg.build_sequence)(asm, self.operands)
+        let _ = allocator;
+        let source = Instruction::from(*self).source_instruction();
+        let mut expansion_allocator = jolt_program::expand::ExpansionAllocator::new();
+        let mut provider = TracerInlineExpansionProvider::new();
+        jolt_program::expand::expand_instruction_with_provider(
+            &source,
+            &mut expansion_allocator,
+            &mut provider,
+            RV64IMAC_JOLT_ALL_INLINES,
+        )
+        .expect("jolt-program inline expansion failed")
+        .into_iter()
+        .map(JoltInstructionRow::from)
+        .map(|instruction| {
+            Instruction::try_from_jolt_instruction_row(instruction)
+                .expect("jolt-program inline expansion produced an instruction unknown to tracer")
+        })
+        .collect()
     }
 }
 
@@ -220,9 +223,7 @@ impl RISCVTrace for INLINE {
         }
 
         let reg = find_inline(self.opcode, self.funct3, self.funct7);
-        let advice_allocator = VirtualRegisterAllocator::new();
-        let asm = InstrAssembler::new_inline(self.address, self.is_compressed, &advice_allocator);
-        if let Some(mut advice) = (reg.build_advice)(asm, self.operands, cpu) {
+        if let Some(mut advice) = (reg.build_advice)(self.operands, cpu) {
             let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator);
             let mut trace = trace;
             for instr in inline_sequence.iter_mut() {
@@ -259,20 +260,18 @@ impl RISCVTrace for INLINE {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instruction::addi::ADDI;
 
     const TEST_INLINE_WORD: u32 = 0xfc00_602b;
 
-    fn test_sequence(mut asm: InstrAssembler, _operands: FormatInline) -> Vec<Instruction> {
-        asm.emit_i::<ADDI>(40, 0, 0);
-        asm.finalize_inline()
+    fn test_sequence(
+        mut asm: InlineExpansionBuilder,
+        _operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        asm.emit_i::<jolt_riscv::instructions::Addi>(40, 0, 0);
+        asm.finalize()
     }
 
-    fn test_advice(
-        _asm: InstrAssembler,
-        _operands: FormatInline,
-        _cpu: &mut Cpu,
-    ) -> Option<VecDeque<u64>> {
+    fn test_advice(_operands: FormatInline, _cpu: &mut Cpu) -> Option<VecDeque<u64>> {
         None
     }
 
@@ -322,16 +321,11 @@ mod tests {
     #[test]
     fn provider_rejects_unregistered_inline() {
         let mut provider = TracerInlineExpansionProvider::new();
-        let mut allocator = ExpansionAllocator::new();
         let instruction = Instruction::from(INLINE::new(0xfe00_7fab, 0x8000_0000, false, false))
             .source_instruction();
 
         assert!(matches!(
-            provider.expand_inline(
-                &instruction,
-                &mut allocator,
-                jolt_riscv::RV64IMAC_JOLT_ALL_INLINES,
-            ),
+            provider.expand_inline(&instruction, jolt_riscv::RV64IMAC_JOLT_ALL_INLINES,),
             Err(ExpansionError::UnsupportedInstruction)
         ));
     }
@@ -339,13 +333,12 @@ mod tests {
     #[test]
     fn provider_rejects_registered_inline_disabled_by_profile() {
         let mut provider = TracerInlineExpansionProvider::new();
-        let mut allocator = ExpansionAllocator::new();
         let instruction =
             Instruction::from(INLINE::new(TEST_INLINE_WORD, 0x8000_0000, false, false))
                 .source_instruction();
 
         assert!(matches!(
-            provider.expand_inline(&instruction, &mut allocator, jolt_riscv::RV64IMAC_JOLT,),
+            provider.expand_inline(&instruction, jolt_riscv::RV64IMAC_JOLT,),
             Err(ExpansionError::UnsupportedInstruction)
         ));
     }
@@ -353,17 +346,12 @@ mod tests {
     #[test]
     fn provider_accepts_registered_inline_enabled_by_profile() {
         let mut provider = TracerInlineExpansionProvider::new();
-        let mut allocator = ExpansionAllocator::new();
         let instruction =
             Instruction::from(INLINE::new(TEST_INLINE_WORD, 0x8000_0000, false, false))
                 .source_instruction();
 
         assert!(provider
-            .expand_inline(
-                &instruction,
-                &mut allocator,
-                jolt_riscv::RV64IMAC_JOLT_ALL_INLINES,
-            )
+            .expand_inline(&instruction, jolt_riscv::RV64IMAC_JOLT_ALL_INLINES,)
             .is_ok());
     }
 }

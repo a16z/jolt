@@ -6,6 +6,11 @@ const NUM_VIRTUAL_REGISTERS: usize = VIRTUAL_REGISTER_COUNT as usize;
 pub(super) const NUM_VIRTUAL_INSTRUCTION_REGISTERS: usize = 8;
 const RISCV_REGISTER_BASE: u8 = RISCV_REGISTER_COUNT;
 const NUM_RESERVED_VIRTUAL_REGISTERS: usize = 8;
+const FIRST_INLINE_REGISTER_INDEX: usize =
+    NUM_RESERVED_VIRTUAL_REGISTERS + NUM_VIRTUAL_INSTRUCTION_REGISTERS;
+pub(super) const FIRST_INLINE_REGISTER: u8 =
+    RISCV_REGISTER_BASE + FIRST_INLINE_REGISTER_INDEX as u8;
+pub(super) const NUM_INLINE_REGISTERS: usize = NUM_VIRTUAL_REGISTERS - FIRST_INLINE_REGISTER_INDEX;
 const MAX_RECURSION_DEPTH: usize = 128;
 
 const RESERVATION_W_REGISTER: u8 = RISCV_REGISTER_BASE;
@@ -127,11 +132,8 @@ impl ExpansionAllocator {
     }
 
     pub fn allocate_for_inline(&mut self) -> Result<u8, ExpansionError> {
-        let register = self.allocate_in_range(
-            NUM_RESERVED_VIRTUAL_REGISTERS + NUM_VIRTUAL_INSTRUCTION_REGISTERS,
-            NUM_VIRTUAL_REGISTERS,
-            "inline",
-        )?;
+        let register =
+            self.allocate_in_range(FIRST_INLINE_REGISTER_INDEX, NUM_VIRTUAL_REGISTERS, "inline")?;
         self.pending_clearing_inline |= Self::register_bit(register)?;
         Ok(register)
     }
@@ -146,10 +148,7 @@ impl ExpansionAllocator {
     }
 
     pub fn take_registers_for_reset(&mut self) -> Result<Vec<u8>, ExpansionError> {
-        let inline_mask = Self::range_mask(
-            NUM_RESERVED_VIRTUAL_REGISTERS + NUM_VIRTUAL_INSTRUCTION_REGISTERS,
-            NUM_VIRTUAL_REGISTERS,
-        );
+        let inline_mask = Self::range_mask(FIRST_INLINE_REGISTER_INDEX, NUM_VIRTUAL_REGISTERS);
         if self.allocated & inline_mask != 0 {
             return Err(ExpansionError::InlineRegistersStillAllocated);
         }

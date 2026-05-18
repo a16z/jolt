@@ -1,4 +1,3 @@
-use std::array;
 use std::collections::VecDeque;
 
 use ark_ff::{BigInt, Field, PrimeField};
@@ -8,8 +7,9 @@ use jolt_inlines_sdk::host::{
         add::ADD, ld::LD, lui::LUI, mul::MUL, mulhu::MULHU, sd::SD, virtual_advice::VirtualAdvice,
         virtual_assert_eq::VirtualAssertEQ, virtual_assert_lte::VirtualAssertLTE,
     },
-    limbs_to_nbiguint, mulq_advice, Cpu, FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt,
-    Instruction, MulAccExt, MulqType, VirtualRegisterGuard,
+    limbs_to_nbiguint, mulq_advice, Cpu, ExpandedInstructionSequence, ExpansionError, FormatInline,
+    InlineBuilderExt, InlineExpansionBuilder, InlineOp, InlineOperands, InlineRegister, MulAccExt,
+    MulqType,
 };
 use num_bigint::BigInt as NBigInt;
 
@@ -63,44 +63,44 @@ const P256_NEG_N: [u64; 4] = [
 //   p[0], p[1], p[3] loaded into registers p1, p2, p3
 //   p[2] = 0 so all terms involving p[2] are skipped
 struct P256Mulq {
-    asm: InstrAssembler,
-    a: [VirtualRegisterGuard; 4],
-    b: Option<[VirtualRegisterGuard; 4]>, // only allocated if Mul or Div
-    w: [VirtualRegisterGuard; 4],
-    p1: VirtualRegisterGuard,
-    p2: VirtualRegisterGuard,
-    p3: VirtualRegisterGuard,
-    aux: VirtualRegisterGuard,
-    aux2: Option<VirtualRegisterGuard>, // only allocated if Square
-    r: [VirtualRegisterGuard; 2],
-    operands: FormatInline,
+    asm: InlineExpansionBuilder,
+    a: [InlineRegister; 4],
+    b: Option<[InlineRegister; 4]>, // only allocated if Mul or Div
+    w: [InlineRegister; 4],
+    p1: InlineRegister,
+    p2: InlineRegister,
+    p3: InlineRegister,
+    aux: InlineRegister,
+    aux2: Option<InlineRegister>, // only allocated if Square
+    r: [InlineRegister; 2],
+    operands: InlineOperands,
     op_type: MulqType,
     is_scalar_field: bool,
 }
 
 impl P256Mulq {
     fn new(
-        asm: InstrAssembler,
-        operands: FormatInline,
+        mut asm: InlineExpansionBuilder,
+        operands: InlineOperands,
         op_type: MulqType,
         is_scalar_field: bool,
-    ) -> Self {
-        let a = array::from_fn(|_| asm.allocator.allocate_for_inline());
+    ) -> Result<Self, ExpansionError> {
+        let a = asm.allocate_inline_array::<4>()?;
         let b = match op_type {
             MulqType::Square => None,
-            _ => Some(array::from_fn(|_| asm.allocator.allocate_for_inline())),
+            _ => Some(asm.allocate_inline_array::<4>()?),
         };
-        let w = array::from_fn(|_| asm.allocator.allocate_for_inline());
-        let p1 = asm.allocator.allocate_for_inline();
-        let p2 = asm.allocator.allocate_for_inline();
-        let p3 = asm.allocator.allocate_for_inline();
-        let aux = asm.allocator.allocate_for_inline();
+        let w = asm.allocate_inline_array::<4>()?;
+        let p1 = asm.allocate_for_inline()?;
+        let p2 = asm.allocate_for_inline()?;
+        let p3 = asm.allocate_for_inline()?;
+        let aux = asm.allocate_for_inline()?;
         let aux2 = match op_type {
-            MulqType::Square => Some(asm.allocator.allocate_for_inline()),
+            MulqType::Square => Some(asm.allocate_for_inline()?),
             _ => None,
         };
-        let r = array::from_fn(|_| asm.allocator.allocate_for_inline());
-        P256Mulq {
+        let r = asm.allocate_inline_array::<2>()?;
+        Ok(P256Mulq {
             asm,
             a,
             b,
@@ -114,15 +114,20 @@ impl P256Mulq {
             operands,
             op_type,
             is_scalar_field,
-        }
+        })
     }
 
-    fn advice(self, cpu: &mut Cpu) -> VecDeque<u64> {
+    fn advice(
+        operands: FormatInline,
+        cpu: &mut Cpu,
+        is_scalar_field: bool,
+        op_type: &MulqType,
+    ) -> VecDeque<u64> {
         mulq_advice(
-            &self.operands,
+            &operands,
             cpu,
-            self.is_scalar_field,
-            &self.op_type,
+            is_scalar_field,
+            op_type,
             |is_scalar| {
                 if is_scalar {
                     Fr::MODULUS.into()
@@ -132,7 +137,7 @@ impl P256Mulq {
             },
             |b, a| {
                 limbs_to_nbiguint(
-                    &if self.is_scalar_field {
+                    &if is_scalar_field {
                         (Fr::new(BigInt(*b))
                             .inverse()
                             .expect("Attempted to invert zero in P-256 scalar field")
@@ -152,7 +157,7 @@ impl P256Mulq {
     }
 
     // inline sequence function
-    fn inline_sequence(mut self) -> Vec<Instruction> {
+    fn inline_sequence(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         // load a, b, and w
         for i in 0..4 {
             match self.op_type {
@@ -558,23 +563,23 @@ impl P256Mulq {
             .emit_b::<VirtualAssertLTE>(*self.aux, *self.r[1], 0);
 
         // clean up inline
-        drop(self.a);
+        self.asm.release_many(self.a);
         match self.op_type {
             MulqType::Square => {}
             _ => {
-                drop(self.b.unwrap());
+                self.asm.release_many(self.b.unwrap());
             }
         }
-        drop(self.w);
-        drop(self.p1);
-        drop(self.p2);
-        drop(self.p3);
-        drop(self.aux);
+        self.asm.release_many(self.w);
+        self.asm.release(self.p1);
+        self.asm.release(self.p2);
+        self.asm.release(self.p3);
+        self.asm.release(self.aux);
         if let MulqType::Square = self.op_type {
-            drop(self.aux2.unwrap())
+            self.asm.release(self.aux2.unwrap())
         }
-        drop(self.r);
-        self.asm.finalize_inline()
+        self.asm.release_many(self.r);
+        self.asm.finalize()
     }
 }
 
@@ -592,16 +597,15 @@ macro_rules! p256_mulq_op {
                     reason: "field helper requires canonicality and division precondition checks",
                 };
 
-            fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-                P256Mulq::new(asm, operands, $mul_type, $is_scalar).inline_sequence()
+            fn build_sequence(
+                asm: InlineExpansionBuilder,
+                operands: InlineOperands,
+            ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+                P256Mulq::new(asm, operands, $mul_type, $is_scalar)?.inline_sequence()
             }
 
-            fn build_advice(
-                asm: InstrAssembler,
-                operands: FormatInline,
-                cpu: &mut Cpu,
-            ) -> Option<VecDeque<u64>> {
-                Some(P256Mulq::new(asm, operands, $mul_type, $is_scalar).advice(cpu))
+            fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
+                Some(P256Mulq::advice(operands, cpu, $is_scalar, &$mul_type))
             }
         }
     };
@@ -619,24 +623,27 @@ p256_mulq_op!(P256DivR,    funct3: crate::P256_DIVR_FUNCT3,    name: crate::P256
 // The guest SDK verifies correctness in-circuit.
 
 struct FakeGlvAdvBuilder {
-    asm: InstrAssembler,
-    vr: VirtualRegisterGuard,
-    operands: FormatInline,
+    asm: InlineExpansionBuilder,
+    vr: InlineRegister,
+    operands: InlineOperands,
 }
 
 impl FakeGlvAdvBuilder {
-    fn new(asm: InstrAssembler, operands: FormatInline) -> Self {
-        let vr = asm.allocator.allocate_for_inline();
-        FakeGlvAdvBuilder { asm, vr, operands }
+    fn new(
+        mut asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<Self, ExpansionError> {
+        let vr = asm.allocate_for_inline()?;
+        Ok(FakeGlvAdvBuilder { asm, vr, operands })
     }
 
     /// Advice function: runs on the host at native speed.
     /// Reads scalar s from rs1 and point P from rs2.
     /// Computes R = s*P via arkworks, then half-GCD decomposition.
     /// Returns 14 u64 values: [R.x(4), R.y(4), a_lo, a_hi, a_sign, b_lo, b_hi, b_sign]
-    fn advice(self, cpu: &mut Cpu) -> VecDeque<u64> {
+    fn advice(operands: FormatInline, cpu: &mut Cpu) -> VecDeque<u64> {
         // Read scalar s from rs1
-        let s_addr = cpu.x[self.operands.rs1 as usize] as u64;
+        let s_addr = cpu.x[operands.rs1 as usize] as u64;
         let s_limbs = [
             cpu.mmu.load_doubleword(s_addr).unwrap().0,
             cpu.mmu.load_doubleword(s_addr + 8).unwrap().0,
@@ -645,7 +652,7 @@ impl FakeGlvAdvBuilder {
         ];
 
         // Read point P from rs2 (8 u64 limbs: x then y)
-        let p_addr = cpu.x[self.operands.rs2 as usize] as u64;
+        let p_addr = cpu.x[operands.rs2 as usize] as u64;
         let px = [
             cpu.mmu.load_doubleword(p_addr).unwrap().0,
             cpu.mmu.load_doubleword(p_addr + 8).unwrap().0,
@@ -690,10 +697,10 @@ impl FakeGlvAdvBuilder {
         VecDeque::from(advice)
     }
 
-    fn inline_sequence(mut self) -> Vec<Instruction> {
+    fn inline_sequence(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         self.asm.emit_advice_stores(*self.vr, self.operands.rs3, 14);
-        drop(self.vr);
-        self.asm.finalize_inline()
+        self.asm.release(self.vr);
+        self.asm.finalize()
     }
 }
 
@@ -709,15 +716,14 @@ impl InlineOp for P256FakeGlvAdv {
             reason: "Fake GLV advice requires SDK wrapper decomposition checks",
         };
 
-    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-        FakeGlvAdvBuilder::new(asm, operands).inline_sequence()
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        FakeGlvAdvBuilder::new(asm, operands)?.inline_sequence()
     }
 
-    fn build_advice(
-        asm: InstrAssembler,
-        operands: FormatInline,
-        cpu: &mut Cpu,
-    ) -> Option<VecDeque<u64>> {
-        Some(FakeGlvAdvBuilder::new(asm, operands).advice(cpu))
+    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
+        Some(FakeGlvAdvBuilder::advice(operands, cpu))
     }
 }

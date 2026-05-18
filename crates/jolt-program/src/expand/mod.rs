@@ -17,6 +17,7 @@ mod control_flow;
 mod division;
 pub mod error;
 mod grammar;
+mod inline;
 mod materialize;
 mod memory;
 mod metadata;
@@ -27,6 +28,10 @@ mod tests;
 
 pub use allocator::ExpansionAllocator;
 pub use error::ExpansionError;
+pub use grammar::ExpandedInstructionSequence;
+pub use inline::{
+    InlineExpansionBuilder, InlineInstruction, InlineOperands, InlineRegister, Value,
+};
 
 use allocator::{
     mcause_register, mepc_register, mstatus_register, mtval_register, reservation_d_register,
@@ -35,14 +40,13 @@ use allocator::{
 use arithmetic::*;
 use control_flow::*;
 use division::*;
-use grammar::{reg, ExpandedInstructionSequence, ExpansionBuilder, RegisterOperand, TempId};
+use grammar::{reg, ExpansionBuilder, RegisterOperand, TempId};
 use jolt_riscv::{
     JoltInstruction, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow,
     NormalizedOperands, SourceInstruction, SourceInstructionKind, SourceInstructionRow,
 };
 use materialize::ExpansionState;
 use memory::*;
-use metadata::stamp_inline_sequence;
 use operands::*;
 use shifts::*;
 
@@ -66,17 +70,16 @@ pub enum InlineAdmissibility {
 }
 
 pub trait InlineExpansionProvider {
-    /// Expands a registered inline row into final Jolt instructions.
+    /// Builds a registered inline row's symbolic expansion recipe.
     ///
-    /// Provider output intentionally stays outside the provider-free builder
-    /// core. The top-level entry point remaps `rd = x0` before calling this
-    /// hook, then validates target legality and stamps sequence metadata.
+    /// The top-level entry point remaps `rd = x0` before calling this hook,
+    /// then materializes the recipe, appends inline reset rows, validates
+    /// target legality, and stamps sequence metadata.
     fn expand_inline(
         &mut self,
         instruction: &SourceInstruction,
-        allocator: &mut ExpansionAllocator,
         profile: JoltInstructionProfile,
-    ) -> Result<Vec<JoltInstruction>, ExpansionError>;
+    ) -> Result<ExpandedInstructionSequence, ExpansionError>;
 }
 
 #[derive(Debug, Default)]
@@ -86,9 +89,8 @@ impl InlineExpansionProvider for NoInlineExpansionProvider {
     fn expand_inline(
         &mut self,
         _instruction: &SourceInstruction,
-        _allocator: &mut ExpansionAllocator,
         _profile: JoltInstructionProfile,
-    ) -> Result<Vec<JoltInstruction>, ExpansionError> {
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
         Err(ExpansionError::InlineProviderRequired)
     }
 }
@@ -140,14 +142,15 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
     } else {
         instruction
     };
-    let source = *instruction.row();
-
     let result = if instruction.kind() == SourceInstructionKind::Inline {
-        inline_provider
-            .expand_inline(instruction, allocator, profile)
-            .and_then(|instructions| {
-                finalize_inline_provider_instructions(source, allocator, instructions, profile)
-            })
+        let owned_allocator = std::mem::take(allocator);
+        let mut state = ExpansionState::new(owned_allocator, profile);
+        let result = inline_provider
+            .expand_inline(instruction, profile)
+            .and_then(|sequence| state.materialize_inline(sequence))
+            .and_then(|rows| final_rows_to_instructions(rows, profile));
+        *allocator = state.into_allocator();
+        result
     } else {
         let owned_allocator = std::mem::take(allocator);
         let mut state = ExpansionState::new(owned_allocator, profile);
@@ -161,37 +164,6 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
         allocator.release(register)?;
     }
     result
-}
-
-fn finalize_inline_provider_instructions(
-    source: SourceInstructionRow,
-    allocator: &mut ExpansionAllocator,
-    instructions: Vec<JoltInstruction>,
-    profile: JoltInstructionProfile,
-) -> Result<Vec<JoltInstruction>, ExpansionError> {
-    let mut rows = instructions
-        .into_iter()
-        .map(JoltInstructionRow::from)
-        .collect::<Vec<_>>();
-    for register in allocator.take_registers_for_reset()? {
-        rows.push(JoltInstructionRow {
-            instruction_kind: JoltInstructionKind::ADDI,
-            address: source.address,
-            operands: NormalizedOperands {
-                rd: Some(register),
-                rs1: Some(0),
-                rs2: None,
-                imm: 0,
-            },
-            virtual_sequence_remaining: Some(0),
-            is_first_in_sequence: false,
-            is_compressed: false,
-        });
-    }
-    final_rows_to_instructions(
-        stamp_inline_sequence(rows, source.is_compressed, profile)?,
-        profile,
-    )
 }
 
 fn final_rows_to_instructions(

@@ -2980,6 +2980,7 @@ dependencies = [
  "inventory",
  "jolt-platform",
  "jolt-program",
+ "jolt-riscv",
  "num-bigint",
  "tracer",
 ]

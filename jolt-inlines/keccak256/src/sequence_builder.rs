@@ -13,14 +13,12 @@
 //! Keccak256 refers to the specific variant where the rate is 1088 bits and the capacity is 512 bits.
 //! Keccak256 differs from SHA3-256 (not implemented here) in the padding scheme.
 
-use core::array;
-
 use crate::NUM_LANES;
 use jolt_inlines_sdk::host::{
     instruction::{andn::ANDN, ld::LD, sd::SD},
-    FormatInline, InlineOp, InstrAssembler, Instruction,
+    ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineOp, InlineOperands,
+    InlineRegister,
     Value::{Imm, Reg},
-    VirtualRegisterGuard,
 };
 
 /// The 24 round constants for the Keccak-f[1600] permutation.
@@ -62,18 +60,18 @@ pub (crate) const ROTATION_OFFSETS: [[u32; 5]; 5] = [
 /// - `vr[55..59]`: The 5 lanes of the `D` array (theta effect) in `theta`.
 /// - `vr[60..64]`: A 5-lane temporary buffer for the current row in `chi`.
 /// - `vr[65..66]`: General-purpose scratch registers for intermediate values.
-pub(crate) const NEEDED_REGISTERS: u8 = 66;
+pub(crate) const NEEDED_REGISTERS: usize = 66;
 struct Keccak256SequenceBuilder {
-    asm: InstrAssembler,
+    asm: InlineExpansionBuilder,
     round: u32,
-    vr: [VirtualRegisterGuard; NEEDED_REGISTERS as usize],
-    operands: FormatInline,
+    vr: [InlineRegister; NEEDED_REGISTERS],
+    operands: InlineOperands,
 }
 
 /// `Keccak256SequenceBuilder` is a helper struct for constructing the virtual instruction
 /// sequence required to emulate the Keccak-256 hashing operation within the RISC-V
 /// instruction set. This builder is responsible for generating the correct sequence of
-/// `Instruction` instances that together perform the Keccak-256 permutation and
+/// `ExpandedInstructionSequence` instances that together perform the Keccak-256 permutation and
 /// hashing steps, using a set of virtual registers to hold intermediate state.
 ///
 /// # Fields
@@ -95,17 +93,20 @@ struct Keccak256SequenceBuilder {
 /// the appropriate instruction sequence. This struct is not intended for direct execution,
 /// but rather for constructing instruction traces or emulation flows.
 impl Keccak256SequenceBuilder {
-    fn new(asm: InstrAssembler, operands: FormatInline) -> Self {
-        let vr = array::from_fn(|_| asm.allocator.allocate_for_inline());
-        Keccak256SequenceBuilder {
+    fn new(
+        mut asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<Self, ExpansionError> {
+        let vr = asm.allocate_inline_array::<NEEDED_REGISTERS>()?;
+        Ok(Keccak256SequenceBuilder {
             asm,
             round: 0,
             vr,
             operands,
-        }
+        })
     }
 
-    fn build(mut self) -> Vec<Instruction> {
+    fn build(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         // 1. Load NUM_LANES lanes (64-bit words) of state from memory into registers.
         self.load_state();
 
@@ -122,8 +123,8 @@ impl Keccak256SequenceBuilder {
         self.store_state();
 
         // 4. Finalize assembler and return instruction sequence.
-        drop(self.vr);
-        self.asm.finalize_inline()
+        self.asm.release_many(self.vr);
+        self.asm.finalize()
     }
 
     /// Load the initial Keccak state from memory into virtual registers.
@@ -261,7 +262,10 @@ impl InlineOp for Keccak256Permutation {
     const ADMISSIBILITY: jolt_inlines_sdk::host::InlineAdmissibility =
         jolt_inlines_sdk::host::InlineAdmissibility::Public { requirements: &[] };
 
-    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-        Keccak256SequenceBuilder::new(asm, operands).build()
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        Keccak256SequenceBuilder::new(asm, operands)?.build()
     }
 }

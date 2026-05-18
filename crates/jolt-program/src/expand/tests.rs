@@ -52,10 +52,6 @@ fn instruction(
     )
 }
 
-fn final_instruction(row: JoltInstructionRow) -> Result<JoltInstruction, ExpansionError> {
-    JoltInstruction::try_from(row).map_err(ExpansionError::IllegalTargetInstruction)
-}
-
 fn rows(instructions: Vec<JoltInstruction>) -> Vec<JoltInstructionRow> {
     instructions
         .into_iter()
@@ -196,24 +192,16 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
         fn expand_inline(
             &mut self,
             instruction: &SourceInstruction,
-            _allocator: &mut ExpansionAllocator,
             _profile: jolt_riscv::JoltInstructionProfile,
-        ) -> Result<Vec<JoltInstruction>, ExpansionError> {
+        ) -> Result<ExpandedInstructionSequence, ExpansionError> {
             self.captured = Some(*instruction);
             let row = instruction.row();
-            Ok(vec![final_instruction(JoltInstructionRow {
-                instruction_kind: JoltInstructionKind::ADDI,
-                address: row.address,
-                operands: NormalizedOperands {
-                    rd: row.operands.rd,
-                    rs1: Some(0),
-                    rs2: None,
-                    imm: 0,
-                },
-                virtual_sequence_remaining: None,
-                is_first_in_sequence: false,
-                is_compressed: false,
-            })?])
+            let mut builder = InlineExpansionBuilder::new(*row);
+            let rd = row.operands.rd.ok_or(ExpansionError::MalformedInstruction(
+                "inline row missing rd",
+            ))?;
+            builder.emit_i::<jolt_riscv::instructions::Addi>(rd, 0, 0);
+            builder.finalize()
         }
     }
 
@@ -265,9 +253,8 @@ fn inline_provider_error_releases_rd_zero_temporary() -> Result<(), ExpansionErr
         fn expand_inline(
             &mut self,
             _instruction: &SourceInstruction,
-            _allocator: &mut ExpansionAllocator,
             _profile: jolt_riscv::JoltInstructionProfile,
-        ) -> Result<Vec<JoltInstruction>, ExpansionError> {
+        ) -> Result<ExpandedInstructionSequence, ExpansionError> {
             Err(ExpansionError::UnsupportedInstruction)
         }
     }
@@ -302,19 +289,12 @@ fn inline_provider_output_is_validated_and_stamped() {
     impl InlineExpansionProvider for BadProvider {
         fn expand_inline(
             &mut self,
-            _instruction: &SourceInstruction,
-            _allocator: &mut ExpansionAllocator,
+            instruction: &SourceInstruction,
             _profile: jolt_riscv::JoltInstructionProfile,
-        ) -> Result<Vec<JoltInstruction>, ExpansionError> {
-            final_instruction(JoltInstructionRow {
-                instruction_kind: JoltInstructionKind::MUL,
-                address: 0x8000_0000,
-                operands: Default::default(),
-                virtual_sequence_remaining: None,
-                is_first_in_sequence: false,
-                is_compressed: false,
-            })
-            .map(|instruction| vec![instruction])
+        ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+            let mut builder = InlineExpansionBuilder::new(*instruction.row());
+            builder.emit_r::<jolt_riscv::instructions::Mul>(1, 2, 3);
+            builder.finalize()
         }
     }
 
@@ -337,25 +317,14 @@ fn inline_provider_allocator_resets_are_appended() -> Result<(), ExpansionError>
         fn expand_inline(
             &mut self,
             instruction: &SourceInstruction,
-            allocator: &mut ExpansionAllocator,
             _profile: jolt_riscv::JoltInstructionProfile,
-        ) -> Result<Vec<JoltInstruction>, ExpansionError> {
+        ) -> Result<ExpandedInstructionSequence, ExpansionError> {
             let row = instruction.row();
-            let register = allocator.allocate_for_inline()?;
-            allocator.release(register)?;
-            Ok(vec![final_instruction(JoltInstructionRow {
-                instruction_kind: JoltInstructionKind::ADDI,
-                address: row.address,
-                operands: NormalizedOperands {
-                    rd: Some(register),
-                    rs1: Some(0),
-                    rs2: None,
-                    imm: 1,
-                },
-                virtual_sequence_remaining: None,
-                is_first_in_sequence: false,
-                is_compressed: false,
-            })?])
+            let mut builder = InlineExpansionBuilder::new(*row);
+            let register = builder.allocate_for_inline()?;
+            builder.emit_i::<jolt_riscv::instructions::Addi>(*register, 0, 1);
+            builder.release(register);
+            builder.finalize()
         }
     }
 
@@ -389,27 +358,14 @@ fn inline_provider_allows_sequences_larger_than_instruction_recipes() -> Result<
         fn expand_inline(
             &mut self,
             instruction: &SourceInstruction,
-            _allocator: &mut ExpansionAllocator,
             _profile: jolt_riscv::JoltInstructionProfile,
-        ) -> Result<Vec<JoltInstruction>, ExpansionError> {
+        ) -> Result<ExpandedInstructionSequence, ExpansionError> {
             let row = instruction.row();
-            (0..=materialize::MAX_FINAL_ROWS_PER_SOURCE)
-                .map(|_| {
-                    final_instruction(JoltInstructionRow {
-                        instruction_kind: JoltInstructionKind::ADDI,
-                        address: row.address,
-                        operands: NormalizedOperands {
-                            rd: Some(0),
-                            rs1: Some(0),
-                            rs2: None,
-                            imm: 0,
-                        },
-                        virtual_sequence_remaining: None,
-                        is_first_in_sequence: false,
-                        is_compressed: false,
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()
+            let mut builder = InlineExpansionBuilder::new(*row);
+            for _ in 0..=materialize::MAX_FINAL_ROWS_PER_SOURCE {
+                builder.emit_i::<jolt_riscv::instructions::Addi>(0, 0, 0);
+            }
+            builder.finalize()
         }
     }
 
