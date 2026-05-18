@@ -698,54 +698,21 @@ impl Cpu {
             // Interrupt can be maskable by xie csr register
             // where x is a new privilege mode.
 
-            match trap.trap_type {
-                TrapType::UserSoftwareInterrupt => {
-                    if usie == 0 {
-                        return false;
-                    }
-                }
-                TrapType::SupervisorSoftwareInterrupt => {
-                    if ssie == 0 {
-                        return false;
-                    }
-                }
-                TrapType::MachineSoftwareInterrupt => {
-                    if msie == 0 {
-                        return false;
-                    }
-                }
-                TrapType::UserTimerInterrupt => {
-                    if utie == 0 {
-                        return false;
-                    }
-                }
-                TrapType::SupervisorTimerInterrupt => {
-                    if stie == 0 {
-                        return false;
-                    }
-                }
-                TrapType::MachineTimerInterrupt => {
-                    if mtie == 0 {
-                        return false;
-                    }
-                }
-                TrapType::UserExternalInterrupt => {
-                    if ueie == 0 {
-                        return false;
-                    }
-                }
-                TrapType::SupervisorExternalInterrupt => {
-                    if seie == 0 {
-                        return false;
-                    }
-                }
-                TrapType::MachineExternalInterrupt => {
-                    if meie == 0 {
-                        return false;
-                    }
-                }
-                _ => {}
+            let interrupt_enabled = match trap.trap_type {
+                TrapType::UserSoftwareInterrupt => usie != 0,
+                TrapType::SupervisorSoftwareInterrupt => ssie != 0,
+                TrapType::MachineSoftwareInterrupt => msie != 0,
+                TrapType::UserTimerInterrupt => utie != 0,
+                TrapType::SupervisorTimerInterrupt => stie != 0,
+                TrapType::MachineTimerInterrupt => mtie != 0,
+                TrapType::UserExternalInterrupt => ueie != 0,
+                TrapType::SupervisorExternalInterrupt => seie != 0,
+                TrapType::MachineExternalInterrupt => meie != 0,
+                _ => true,
             };
+            if !interrupt_enabled {
+                return false;
+            }
         }
 
         // So, this trap should be taken

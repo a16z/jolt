@@ -222,6 +222,11 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         "--cfg=getrandom_backend=\"custom\"",
     ];
 
+    if args.base.mode == StdMode::Std {
+        // Rust 1.95 gates generated target specs behind this flag; zeroos-build sets RUSTC_BOOTSTRAP.
+        jolt_rustflags.push("-Zunstable-options");
+    }
+
     // Also set medany for C code (cc crate reads CFLAGS_{target}).
     let cflags_target = match args.base.mode {
         StdMode::Std => "riscv64imac_zero_linux_musl",
