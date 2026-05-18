@@ -177,7 +177,10 @@ fn decode_system(word: u32) -> Result<SourceInstructionKind, ProgramError> {
 /// (FieldSLL* family); anything else falls back to Inline dispatch.
 fn decode_field_op_or_inline(word: u32) -> Result<SourceInstructionKind, ProgramError> {
     match (funct7(word), funct3(word)) {
-        (0x40, 0x02..=0x05) => Ok(SourceInstructionKind::FieldOp),
+        (0x40, 0x02) => Ok(SourceInstructionKind::FieldMul),
+        (0x40, 0x03) => Ok(SourceInstructionKind::FieldAdd),
+        (0x40, 0x04) => Ok(SourceInstructionKind::FieldInv),
+        (0x40, 0x05) => Ok(SourceInstructionKind::FieldSub),
         (0x40, 0x06) => Ok(SourceInstructionKind::FieldAssertEq),
         (0x40, 0x07) => Ok(SourceInstructionKind::FieldMov),
         (0x41, 0x00) => Ok(SourceInstructionKind::FieldSLL64),
@@ -318,7 +321,10 @@ fn uses_r_format(instruction_kind: JoltInstructionKind) -> bool {
             | JoltInstructionKind::REMUW
             // BN254 Fr coprocessor ops — R-type with frd/frs1/frs2 (or rs1
             // for the bridge ops; rs2 is reserved/0).
-            | JoltInstructionKind::FieldOp
+            | JoltInstructionKind::FieldMul
+            | JoltInstructionKind::FieldAdd
+            | JoltInstructionKind::FieldSub
+            | JoltInstructionKind::FieldInv
             | JoltInstructionKind::FieldAssertEq
             | JoltInstructionKind::FieldMov
             | JoltInstructionKind::FieldSLL64

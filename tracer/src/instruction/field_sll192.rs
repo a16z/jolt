@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::emulator::cpu::{Cpu, FieldRegEvent};
 
 use super::{
-    field_op::FIELD_OP_OPCODE,
+    field_arith_common::FIELD_OP_OPCODE,
     field_sll64::BN254_FR_SLL_FUNCT7,
     format::{format_r::FormatR, InstructionFormat},
     Cycle, NormalizedInstruction, RISCVCycle, RISCVInstruction, RISCVTrace,

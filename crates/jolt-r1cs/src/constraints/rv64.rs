@@ -91,9 +91,9 @@ pub const V_NEXT_IS_NOOP: usize = 49;
 pub const NUM_R1CS_INPUTS: usize = 47;
 pub const NUM_PRODUCT_FACTORS: usize = 2;
 pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS; // 50
-pub const NUM_EQ_CONSTRAINTS: usize = 32;
+pub const NUM_EQ_CONSTRAINTS: usize = 36;
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 3;
-pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 35
+pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 39
 
 /// Two's complement bias for subtraction: 2^64.
 const TWOS_COMPLEMENT_BIAS: i128 = 0x1_0000_0000_0000_0000;
@@ -523,29 +523,69 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     ]));
     c_rows.push(empty());
 
-    // 26: IsFieldMul · (V_FIELD_RD − V_FIELD_RS1 − V_FIELD_RS2) = 0
-    //     PLACEHOLDER — only enforces "RD depends on operands", not the
-    //     actual product. FR Twist (Phase 4) binds RD to RS1·RS2 via the
-    //     FieldRegRW sumcheck. Trivially satisfied while flag is inert.
+    // 26-28: FMUL via V_PRODUCT reuse. The canonical product gate row 32
+    //        (`V_LEFT_INSTRUCTION_INPUT × V_RIGHT_INSTRUCTION_INPUT = V_PRODUCT`)
+    //        fires on every cycle. On FMUL cycles we route the FR operands
+    //        into Left/Right and force V_PRODUCT to equal V_FIELD_RD; this
+    //        gives `FieldRs1 · FieldRs2 = FieldRd` natively in R1CS without
+    //        any new product gate. Same shape as integer MUL row 9 — see
+    //        `feat/fr-coprocessor-v2` for the original template.
+
+    // 26: IsFieldMul · (V_LEFT_INSTRUCTION_INPUT − V_FIELD_RS1_VALUE) = 0
     a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_MUL, 1)]));
     b_rows.push(row::<F>(&[
-        (V_FIELD_RD_WRITE_VALUE, 1),
+        (V_LEFT_INSTRUCTION_INPUT, 1),
         (V_FIELD_RS1_VALUE, -1),
+    ]));
+    c_rows.push(empty());
+
+    // 27: IsFieldMul · (V_RIGHT_INSTRUCTION_INPUT − V_FIELD_RS2_VALUE) = 0
+    a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_MUL, 1)]));
+    b_rows.push(row::<F>(&[
+        (V_RIGHT_INSTRUCTION_INPUT, 1),
         (V_FIELD_RS2_VALUE, -1),
     ]));
     c_rows.push(empty());
 
-    // 27: IsFieldInv · (V_FIELD_RD − V_FIELD_RS1) = 0
-    //     PLACEHOLDER — FR Twist (Phase 4) proves the actual inverse with
-    //     the 0 → 0 carve-out. Trivially satisfied while flag is inert.
+    // 28: IsFieldMul · (V_PRODUCT − V_FIELD_RD_WRITE_VALUE) = 0
+    a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_MUL, 1)]));
+    b_rows.push(row::<F>(&[
+        (V_PRODUCT, 1),
+        (V_FIELD_RD_WRITE_VALUE, -1),
+    ]));
+    c_rows.push(empty());
+
+    // 29-31: FINV via V_PRODUCT reuse. Same trick — bind Left = FieldRs1,
+    //        Right = FieldRd_inverse (prover-supplied advice), Product = 1.
+    //        Row 32 then enforces `Rs1 · Rd = 1`, i.e., Rd = Rs1⁻¹.
+    //        Forgery-resistant because the canonical product gate cannot be
+    //        bypassed — wrong advice makes row 32 unsatisfiable.
+
+    // 29: IsFieldInv · (V_LEFT_INSTRUCTION_INPUT − V_FIELD_RS1_VALUE) = 0
     a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_INV, 1)]));
     b_rows.push(row::<F>(&[
-        (V_FIELD_RD_WRITE_VALUE, 1),
+        (V_LEFT_INSTRUCTION_INPUT, 1),
         (V_FIELD_RS1_VALUE, -1),
     ]));
     c_rows.push(empty());
 
-    // 28: (1 − ΣFR_flags) · V_FIELD_RS1 = 0
+    // 30: IsFieldInv · (V_RIGHT_INSTRUCTION_INPUT − V_FIELD_RD_WRITE_VALUE) = 0
+    a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_INV, 1)]));
+    b_rows.push(row::<F>(&[
+        (V_RIGHT_INSTRUCTION_INPUT, 1),
+        (V_FIELD_RD_WRITE_VALUE, -1),
+    ]));
+    c_rows.push(empty());
+
+    // 31: IsFieldInv · (V_PRODUCT − 1) = 0
+    a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_INV, 1)]));
+    b_rows.push(row::<F>(&[
+        (V_PRODUCT, 1),
+        (V_CONST, -1),
+    ]));
+    c_rows.push(empty());
+
+    // 32: (1 − ΣFR_flags) · V_FIELD_RS1 = 0
     //     V_FIELD_RS1 is zero on every non-Fr cycle. The guard sums all
     //     9 Fr flags; an active Fr cycle has exactly one flag set, so the
     //     guard is 0 and RS1 is unconstrained.
@@ -564,7 +604,7 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     b_rows.push(row::<F>(&[(V_FIELD_RS1_VALUE, 1)]));
     c_rows.push(empty());
 
-    // 29: (1 − Σtwo_input_flags) · V_FIELD_RS2 = 0
+    // 33: (1 − Σtwo_input_flags) · V_FIELD_RS2 = 0
     //     RS2 is zero unless the cycle is Fmul / Fadd / Fsub / FassertEq.
     a_rows.push(row::<F>(&[
         (V_CONST, 1),
@@ -576,7 +616,7 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     b_rows.push(row::<F>(&[(V_FIELD_RS2_VALUE, 1)]));
     c_rows.push(empty());
 
-    // 30: (1 − Σwrite_flags) · V_FIELD_RD = 0
+    // 34: (1 − Σwrite_flags) · V_FIELD_RD = 0
     //     RD is zero unless the cycle writes a field register (every Fr
     //     op except FieldAssertEq).
     a_rows.push(row::<F>(&[
@@ -593,31 +633,34 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     b_rows.push(row::<F>(&[(V_FIELD_RD_WRITE_VALUE, 1)]));
     c_rows.push(empty());
 
-    // 31: IsFieldMov · V_FIELD_RS2 = 0
+    // 35: IsFieldMov · V_FIELD_RS2 = 0
     //     FieldMov + FieldSLL* are 1-input ops over the integer register
     //     file; they MUST NOT read a field RS2. Pinning V_FIELD_RS2 to 0
     //     on those rows prevents the prover from smuggling extra data.
     //     One representative row (FieldMov) is enforced here; the SLL64/
-    //     128/192 cases are subsumed by row 29 (their flags are excluded
+    //     128/192 cases are subsumed by row 33 (their flags are excluded
     //     from the two-input mask).
     a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_MOV, 1)]));
     b_rows.push(row::<F>(&[(V_FIELD_RS2_VALUE, 1)]));
     c_rows.push(empty());
 
-    // --- Product constraints (32-35) ------------------------------------
+    // --- Product constraints (36-38) ------------------------------------
     // Form: left · right = output  →  A=left, B=right, C=output
 
-    // 32: Product = LeftInstructionInput × RightInstructionInput
+    // 36: Product = LeftInstructionInput × RightInstructionInput
+    //     Unconditional. On FMUL/FINV cycles the new eq-rows 26-31 route
+    //     FR operands through Left/Right and bind the resulting Product
+    //     back to FR slots — that's the load-bearing arithmetic check.
     a_rows.push(row::<F>(&[(V_LEFT_INSTRUCTION_INPUT, 1)]));
     b_rows.push(row::<F>(&[(V_RIGHT_INSTRUCTION_INPUT, 1)]));
     c_rows.push(row::<F>(&[(V_PRODUCT, 1)]));
 
-    // 33: ShouldBranch = LookupOutput × Branch
+    // 37: ShouldBranch = LookupOutput × Branch
     a_rows.push(row::<F>(&[(V_LOOKUP_OUTPUT, 1)]));
     b_rows.push(row::<F>(&[(V_BRANCH, 1)]));
     c_rows.push(row::<F>(&[(V_SHOULD_BRANCH, 1)]));
 
-    // 34: ShouldJump = Jump × (1 − NextIsNoop)
+    // 38: ShouldJump = Jump × (1 − NextIsNoop)
     a_rows.push(row::<F>(&[(V_FLAG_JUMP, 1)]));
     b_rows.push(row::<F>(&[(V_CONST, 1), (V_NEXT_IS_NOOP, -1)]));
     c_rows.push(row::<F>(&[(V_SHOULD_JUMP, 1)]));
@@ -674,8 +717,10 @@ mod tests {
     fn shape_invariants() {
         assert_eq!(NUM_R1CS_INPUTS, 47);
         assert_eq!(NUM_VARS_PER_CYCLE, 50);
-        assert_eq!(NUM_EQ_CONSTRAINTS, 32);
-        assert_eq!(NUM_CONSTRAINTS_PER_CYCLE, 35);
+        // 32 base + 4 new (FMUL × 3, FINV × 3 — but FINV row 30 reuses
+        // the FMUL slot pattern). Net +4 rows = 36 eq-constraints.
+        assert_eq!(NUM_EQ_CONSTRAINTS, 36);
+        assert_eq!(NUM_CONSTRAINTS_PER_CYCLE, 39);
         // 50 vars round up to 64 — keeps prior `num_vars_padded`.
         assert!(NUM_VARS_PER_CYCLE.next_power_of_two() == 64);
     }

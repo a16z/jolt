@@ -197,7 +197,10 @@ macro_rules! define_instruction_kind {
                         | Self::VirtualAdviceLoad
                         | Self::VirtualHostIO
                         | Self::VirtualSW
-                        | Self::FieldOp
+                        | Self::FieldMul
+                        | Self::FieldAdd
+                        | Self::FieldSub
+                        | Self::FieldInv
                         | Self::FieldAssertEq
                         | Self::FieldMov
                         | Self::FieldSLL64

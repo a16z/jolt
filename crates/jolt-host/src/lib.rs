@@ -452,10 +452,10 @@ struct ProveStageOutput {
 }
 
 /// Per-cycle FR bytecode metadata derived from `NormalizedInstruction.instruction_kind`.
-/// `FieldOp` (FMUL/FADD/FSUB/FINV) and `FieldAssertEq` are treated as both-reading
-/// for now — this overstates `reads_frs2` on FINV cycles, but Poseidon2 doesn't use
-/// FINV so the approximation is fine. Bridge ops (FieldMov/FieldSLL*) read integer
-/// registers, not FR, so both flags are false.
+/// Per-kind FR read flags. FMUL/FADD/FSUB/FAssertEq are two-input;
+/// FINV reads only frs1; FieldMov/FieldSLL* are integer-register bridges.
+/// Audit finding C-A3 (`reads_frs2` overstatement on FINV) is fixed here
+/// because we now have a distinct `FieldInv` kind to match on.
 fn fr_bytecode_from_trace(
     trace: &[TraceRow],
 ) -> Vec<jolt_witness::field_reg::FrCycleBytecode> {
@@ -465,7 +465,11 @@ fn fr_bytecode_from_trace(
         .map(|row| {
             let instr = row.instruction;
             let (reads_frs1, reads_frs2) = match instr.instruction_kind {
-                JoltInstructionKind::FieldOp | JoltInstructionKind::FieldAssertEq => (true, true),
+                JoltInstructionKind::FieldMul
+                | JoltInstructionKind::FieldAdd
+                | JoltInstructionKind::FieldSub
+                | JoltInstructionKind::FieldAssertEq => (true, true),
+                JoltInstructionKind::FieldInv => (true, false),
                 JoltInstructionKind::FieldMov
                 | JoltInstructionKind::FieldSLL64
                 | JoltInstructionKind::FieldSLL128
@@ -525,15 +529,18 @@ fn populate_r1cs_fr_slots(
     trace: &[TraceRow],
     replay: &jolt_witness::field_reg::FieldRegReplay,
 ) {
+    use jolt_riscv::JoltInstructionKind;
     use jolt_witness::field_reg::{limbs_to_field, FieldRegEvent, FIELD_REG_COUNT};
     if replay.events.is_empty() {
         return;
     }
     let mut current: [Fr; FIELD_REG_COUNT] = [Fr::from_u64(0); FIELD_REG_COUNT];
     let mut events = replay.events.iter().peekable();
-    for c in 0..replay.num_cycles.min(trace.len()) {
+    let len = replay.num_cycles.min(trace.len());
+    for (c, row) in trace.iter().take(len).enumerate() {
         let offset = c * num_vars_padded;
         let bc = replay.bytecode.get(c).copied().unwrap_or_default();
+        let kind = row.instruction.instruction_kind;
         if bc.reads_frs1 {
             let slot = (bc.frs1 as usize) & 0xF;
             r1cs_witness[offset + rv64::V_FIELD_RS1_VALUE] = current[slot];
@@ -542,13 +549,44 @@ fn populate_r1cs_fr_slots(
             let slot = (bc.frs2 as usize) & 0xF;
             r1cs_witness[offset + rv64::V_FIELD_RS2_VALUE] = current[slot];
         }
+        let mut rd_post_opt: Option<Fr> = None;
         if let Some(ev) = events.next_if(|ev: &&FieldRegEvent| ev.cycle as usize == c) {
             if ev.rd_written {
                 let slot = (ev.frd as usize) & 0xF;
                 let post: Fr = limbs_to_field(ev.rd_post.into_limbs());
                 r1cs_witness[offset + rv64::V_FIELD_RD_WRITE_VALUE] = post;
                 current[slot] = post;
+                rd_post_opt = Some(post);
             }
+        }
+        // FMUL / FINV route FR operands through the canonical product gate
+        // (R1CS row 36: `Left × Right = Product`). The eq-rows 26-31 then
+        // bind `Left = FieldRs1`, `Right = FieldRs2` (FMUL) or `FieldRd`
+        // (FINV), and `Product = FieldRd` (FMUL) or `1` (FINV) — which
+        // forces the multiplicative arithmetic to hold natively.
+        // Row 6 / row 10 additionally tie LookupOperands to Left/Right on
+        // non-Add/Sub/Mul-integer cycles, so we mirror Fr values there too.
+        match kind {
+            JoltInstructionKind::FieldMul => {
+                let rs1 = r1cs_witness[offset + rv64::V_FIELD_RS1_VALUE];
+                let rs2 = r1cs_witness[offset + rv64::V_FIELD_RS2_VALUE];
+                let product = rs1 * rs2;
+                r1cs_witness[offset + rv64::V_LEFT_INSTRUCTION_INPUT] = rs1;
+                r1cs_witness[offset + rv64::V_RIGHT_INSTRUCTION_INPUT] = rs2;
+                r1cs_witness[offset + rv64::V_PRODUCT] = product;
+                r1cs_witness[offset + rv64::V_LEFT_LOOKUP_OPERAND] = rs1;
+                r1cs_witness[offset + rv64::V_RIGHT_LOOKUP_OPERAND] = rs2;
+            }
+            JoltInstructionKind::FieldInv => {
+                let rs1 = r1cs_witness[offset + rv64::V_FIELD_RS1_VALUE];
+                let rd = rd_post_opt.unwrap_or_else(|| Fr::from_u64(0));
+                r1cs_witness[offset + rv64::V_LEFT_INSTRUCTION_INPUT] = rs1;
+                r1cs_witness[offset + rv64::V_RIGHT_INSTRUCTION_INPUT] = rd;
+                r1cs_witness[offset + rv64::V_PRODUCT] = Fr::from_u64(1);
+                r1cs_witness[offset + rv64::V_LEFT_LOOKUP_OPERAND] = rs1;
+                r1cs_witness[offset + rv64::V_RIGHT_LOOKUP_OPERAND] = rd;
+            }
+            _ => {}
         }
     }
 }
