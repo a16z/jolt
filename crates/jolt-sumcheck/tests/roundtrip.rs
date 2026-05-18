@@ -9,9 +9,9 @@
 use jolt_field::{Fr, FromPrimitiveInt, MulPow2};
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
-use jolt_sumcheck::proof::SumcheckProof;
+use jolt_sumcheck::proof::ClearSumcheckProof;
 use jolt_sumcheck::round_proof::{CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
-use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckVerifier};
+use jolt_sumcheck::{BatchedSumcheckVerifier, BooleanHypercube, SumcheckVerifier};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 
 type F = Fr;
@@ -27,7 +27,7 @@ fn prove_product(
     polys: &[Vec<F>],
     num_vars: usize,
     transcript: &mut Blake2bTranscript,
-) -> (SumcheckProof<F>, F) {
+) -> (ClearSumcheckProof<F>, F) {
     let degree = polys.len();
     let n = 1 << num_vars;
     assert!(polys.iter().all(|p| p.len() == n));
@@ -88,7 +88,7 @@ fn prove_product(
     }
 
     (
-        SumcheckProof {
+        ClearSumcheckProof {
             round_polynomials: round_polys,
         },
         claimed_sum,
@@ -114,7 +114,8 @@ fn degree2_product_roundtrip() {
     };
 
     let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
-    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt);
+    let result =
+        SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
     assert!(result.is_ok(), "degree-2 verify failed: {:?}", result.err());
 }
 
@@ -138,7 +139,8 @@ fn degree3_product_roundtrip() {
     };
 
     let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
-    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt);
+    let result =
+        SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
     assert!(result.is_ok(), "degree-3 verify failed: {:?}", result.err());
 }
 
@@ -169,7 +171,8 @@ fn degree3_final_eval_correct() {
     let EvaluationClaim {
         point: challenges,
         value: final_eval,
-    } = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt).unwrap();
+    } = SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt)
+        .unwrap();
 
     // f(r) * g(r) * h(r) should equal the final_eval
     let f_at_r = Polynomial::new(f_evals).evaluate_and_consume(&challenges);
@@ -212,7 +215,8 @@ fn eq_weighted_sumcheck() {
     };
 
     let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
-    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt);
+    let result =
+        SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
     assert!(
         result.is_ok(),
         "eq-weighted verify failed: {:?}",
@@ -306,12 +310,17 @@ fn batched_heterogeneous_degrees() {
         buf.truncate(half);
     }
 
-    let proof = SumcheckProof {
+    let proof = ClearSumcheckProof {
         round_polynomials: round_polys,
     };
 
     let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
-    let result = BatchedSumcheckVerifier::verify(&claims, &proof.round_polynomials, &mut vt);
+    let result = BatchedSumcheckVerifier::verify(
+        &claims,
+        &proof.round_polynomials,
+        BooleanHypercube,
+        &mut vt,
+    );
     assert!(
         result.is_ok(),
         "batched heterogeneous verify failed: {:?}",
@@ -338,7 +347,8 @@ fn large_num_vars_roundtrip() {
     };
 
     let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
-    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt);
+    let result =
+        SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
     assert!(result.is_ok(), "large roundtrip failed: {:?}", result.err());
 }
 
@@ -403,7 +413,7 @@ fn compressed_round_verifier_roundtrip() {
         }
     }
 
-    let proof = SumcheckProof {
+    let proof = ClearSumcheckProof {
         round_polynomials: round_polys,
     };
     let claim = SumcheckClaim {
@@ -419,7 +429,7 @@ fn compressed_round_verifier_roundtrip() {
         .collect();
 
     let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
-    let result = SumcheckVerifier::verify(&claim, &wrapped, &mut vt);
+    let result = SumcheckVerifier::verify(&claim, &wrapped, BooleanHypercube, &mut vt);
     assert!(
         result.is_ok(),
         "compressed round verifier roundtrip failed: {:?}",
@@ -485,7 +495,7 @@ fn labeled_round_verifier_roundtrip() {
         }
     }
 
-    let proof = SumcheckProof {
+    let proof = ClearSumcheckProof {
         round_polynomials: round_polys,
     };
 
@@ -502,7 +512,7 @@ fn labeled_round_verifier_roundtrip() {
         .collect();
 
     let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
-    let result = SumcheckVerifier::verify(&claim, &wrapped, &mut vt);
+    let result = SumcheckVerifier::verify(&claim, &wrapped, BooleanHypercube, &mut vt);
     assert!(
         result.is_ok(),
         "labeled round verifier roundtrip failed: {:?}",

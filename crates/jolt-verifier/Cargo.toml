@@ -23,7 +23,9 @@ transcript-poseidon = []
 ark-serialize.workspace = true
 common.workspace = true
 jolt-core = { workspace = true, features = ["minimal"], optional = true }
+jolt-field.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }
+jolt-sumcheck.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 

@@ -93,7 +93,7 @@ impl<F: Field> CommittedRoundWitness<F> {
     ) -> Result<CommittedRound<VC::Output>, SumcheckError<F>>
     where
         VC: VectorCommitment,
-        VC::Output: Copy + Default + AppendToTranscript + Serialize + for<'de> Deserialize<'de>,
+        VC::Output: Copy + AppendToTranscript + Serialize + for<'de> Deserialize<'de>,
     {
         if self.coefficients.is_empty() {
             return Err(SumcheckError::EmptyRoundCoefficients);

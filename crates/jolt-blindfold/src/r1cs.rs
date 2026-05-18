@@ -1,11 +1,11 @@
 use jolt_field::Field;
-use jolt_r1cs::{assert_claim_expr_eq, ClaimSourceResolver, R1csBuilder, Variable};
+use jolt_r1cs::{assert_claim_expr_eq, ClaimSources, R1csBuilder, Variable};
 use jolt_sumcheck::{
     allocate_sumcheck_r1cs_layout, append_sumcheck_r1cs_constraints, SumcheckR1csLayout,
     SumcheckR1csRoundLayout,
 };
 
-use crate::{Error, Inputs, Instance, LayoutError};
+use crate::{Error, Inputs, InstanceClaims, LayoutError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layout {
@@ -41,33 +41,33 @@ pub type RoundLayout = SumcheckR1csRoundLayout;
 
 pub fn build<F, O, P, Ch, C, R>(
     builder: &mut R1csBuilder<F>,
-    instance: &Instance<F, O, P, Ch>,
+    claims: &InstanceClaims<F, O, P, Ch>,
     inputs: &Inputs<F, C>,
-    resolver: &mut R,
+    claim_sources: &mut R,
 ) -> Result<Layout, Error>
 where
     F: Field,
-    R: ClaimSourceResolver<F, Opening = O, Challenge = Ch, Public = P>,
+    R: ClaimSources<F, Opening = O, Challenge = Ch, Public = P>,
 {
-    let layout = allocate_layout(builder, instance, inputs)?;
-    append(builder, instance, inputs, &layout, resolver)?;
+    let layout = allocate_layout(builder, claims, inputs)?;
+    append(builder, claims, inputs, &layout, claim_sources)?;
     Ok(layout)
 }
 
 pub fn append<F, O, P, Ch, C, R>(
     builder: &mut R1csBuilder<F>,
-    instance: &Instance<F, O, P, Ch>,
+    claims: &InstanceClaims<F, O, P, Ch>,
     inputs: &Inputs<F, C>,
     layout: &Layout,
-    resolver: &mut R,
+    claim_sources: &mut R,
 ) -> Result<(), Error>
 where
     F: Field,
-    R: ClaimSourceResolver<F, Opening = O, Challenge = Ch, Public = P>,
+    R: ClaimSources<F, Opening = O, Challenge = Ch, Public = P>,
 {
-    validate_stage_counts(instance, inputs, layout)?;
+    validate_stage_counts(claims, inputs, layout)?;
 
-    for (stage_index, ((stage, stage_input), stage_layout)) in instance
+    for (stage_index, ((stage, stage_input), stage_layout)) in claims
         .stages
         .iter()
         .zip(&inputs.stages)
@@ -78,7 +78,7 @@ where
             builder,
             &stage.input_claim,
             stage_layout.sumcheck.input_claim,
-            resolver,
+            claim_sources,
         )?;
 
         append_sumcheck_r1cs_constraints(
@@ -96,7 +96,7 @@ where
             builder,
             &stage.output_claim,
             stage_layout.sumcheck.output_claim,
-            resolver,
+            claim_sources,
         )?;
     }
 
@@ -105,20 +105,20 @@ where
 
 pub fn allocate_layout<F, O, P, Ch, C>(
     builder: &mut R1csBuilder<F>,
-    instance: &Instance<F, O, P, Ch>,
+    claims: &InstanceClaims<F, O, P, Ch>,
     inputs: &Inputs<F, C>,
 ) -> Result<Layout, LayoutError>
 where
     F: Field,
 {
-    if instance.stages.len() != inputs.stages.len() {
+    if claims.stages.len() != inputs.stages.len() {
         return Err(LayoutError::StageCountMismatch {
-            instance_stages: instance.stages.len(),
+            claim_stages: claims.stages.len(),
             input_stages: inputs.stages.len(),
         });
     }
 
-    let stages = instance
+    let stages = claims
         .stages
         .iter()
         .zip(&inputs.stages)
@@ -139,21 +139,21 @@ where
 }
 
 fn validate_stage_counts<F, O, P, Ch, C>(
-    instance: &Instance<F, O, P, Ch>,
+    claims: &InstanceClaims<F, O, P, Ch>,
     inputs: &Inputs<F, C>,
     layout: &Layout,
 ) -> Result<(), Error> {
-    if instance.stages.len() != inputs.stages.len() {
+    if claims.stages.len() != inputs.stages.len() {
         return Err(LayoutError::StageCountMismatch {
-            instance_stages: instance.stages.len(),
+            claim_stages: claims.stages.len(),
             input_stages: inputs.stages.len(),
         }
         .into());
     }
 
-    if instance.stages.len() != layout.stages.len() {
+    if claims.stages.len() != layout.stages.len() {
         return Err(Error::LayoutStageCountMismatch {
-            instance_stages: instance.stages.len(),
+            claim_stages: claims.stages.len(),
             layout_stages: layout.stages.len(),
         });
     }
@@ -165,7 +165,7 @@ fn validate_stage_counts<F, O, P, Ch, C>(
 #[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 mod tests {
     use super::*;
-    use crate::{Inputs, Instance, Stage, StageInput};
+    use crate::{Inputs, InstanceClaims, StageClaims, StageInput};
     use jolt_claims::{challenge, constant, opening, public, Expr};
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_r1cs::{ClaimLoweringError, ClaimSourceTable, R1csBuilderError};
@@ -183,9 +183,9 @@ mod tests {
         Scale,
     }
 
-    fn empty_stage(num_vars: usize, degree: usize) -> Stage<Fr, ()> {
+    fn empty_stage(num_vars: usize, degree: usize) -> StageClaims<Fr, ()> {
         let claim: Expr<Fr, ()> = constant(Fr::from_u64(0));
-        Stage::new(
+        StageClaims::new(
             "stage",
             SumcheckShape::new(num_vars, degree),
             claim.clone(),
@@ -198,8 +198,8 @@ mod tests {
         degree: usize,
         input_claim: Expr<Fr, Opening, Public>,
         output_claim: Expr<Fr, Opening, Public>,
-    ) -> Stage<Fr, Opening, Public> {
-        Stage::new(
+    ) -> StageClaims<Fr, Opening, Public> {
+        StageClaims::new(
             "stage",
             SumcheckShape::new(num_vars, degree),
             input_claim,
@@ -254,11 +254,11 @@ mod tests {
 
     #[test]
     fn allocates_claim_chain_and_coefficients() {
-        let instance = Instance::new(vec![empty_stage(2, 3)]);
+        let claims = InstanceClaims::new(vec![empty_stage(2, 3)]);
         let inputs = Inputs::new(vec![stage_input(&[1, 3])]);
         let mut builder = R1csBuilder::<Fr>::new();
 
-        let layout = allocate_layout(&mut builder, &instance, &inputs).expect("layout allocates");
+        let layout = allocate_layout(&mut builder, &claims, &inputs).expect("layout allocates");
 
         assert_eq!(layout.stage_count(), 1);
         let stage = &layout.stages[0];
@@ -281,17 +281,17 @@ mod tests {
 
     #[test]
     fn rejects_stage_count_mismatch() {
-        let instance = Instance::new(vec![empty_stage(1, 2)]);
+        let claims = InstanceClaims::new(vec![empty_stage(1, 2)]);
         let inputs = Inputs::<Fr, ()>::new(Vec::new());
         let mut builder = R1csBuilder::<Fr>::new();
 
         let error =
-            allocate_layout(&mut builder, &instance, &inputs).expect_err("stage counts differ");
+            allocate_layout(&mut builder, &claims, &inputs).expect_err("stage counts differ");
 
         assert_eq!(
             error,
             LayoutError::StageCountMismatch {
-                instance_stages: 1,
+                claim_stages: 1,
                 input_stages: 0,
             }
         );
@@ -299,12 +299,12 @@ mod tests {
 
     #[test]
     fn rejects_round_count_mismatch() {
-        let instance = Instance::new(vec![empty_stage(2, 2)]);
+        let claims = InstanceClaims::new(vec![empty_stage(2, 2)]);
         let inputs = Inputs::new(vec![stage_input(&[2])]);
         let mut builder = R1csBuilder::<Fr>::new();
 
         let error =
-            allocate_layout(&mut builder, &instance, &inputs).expect_err("round counts differ");
+            allocate_layout(&mut builder, &claims, &inputs).expect_err("round counts differ");
 
         assert_eq!(
             error,
@@ -320,12 +320,12 @@ mod tests {
 
     #[test]
     fn rejects_degree_above_stage_bound() {
-        let instance = Instance::new(vec![empty_stage(1, 2)]);
+        let claims = InstanceClaims::new(vec![empty_stage(1, 2)]);
         let inputs = Inputs::new(vec![stage_input(&[3])]);
         let mut builder = R1csBuilder::<Fr>::new();
 
         let error =
-            allocate_layout(&mut builder, &instance, &inputs).expect_err("degree exceeds bound");
+            allocate_layout(&mut builder, &claims, &inputs).expect_err("degree exceeds bound");
 
         assert_eq!(
             error,
@@ -349,7 +349,7 @@ mod tests {
         sources.insert_challenge(0, Fr::from_u64(4));
         sources.insert_public(Public::Scale, Fr::from_u64(2));
 
-        let instance = Instance::new(vec![boundary_stage(
+        let claims = InstanceClaims::new(vec![boundary_stage(
             1,
             1,
             opening(Opening::Input) * public(Public::Scale) + challenge(0),
@@ -357,8 +357,8 @@ mod tests {
         )]);
         let inputs = Inputs::new(vec![boundary_stage_input(&[(1, 2)])]);
 
-        let layout = build(&mut builder, &instance, &inputs, &mut sources)
-            .expect("constraints should build");
+        let layout =
+            build(&mut builder, &claims, &inputs, &mut sources).expect("constraints should build");
 
         let stage_layout = &layout.stages[0].sumcheck;
         assign(&mut builder, stage_layout.input_claim, 10);
@@ -370,7 +370,7 @@ mod tests {
 
     #[test]
     fn reports_missing_boundary_source() {
-        let instance = Instance::new(vec![boundary_stage(
+        let claims = InstanceClaims::new(vec![boundary_stage(
             0,
             1,
             opening(Opening::Input),
@@ -381,14 +381,14 @@ mod tests {
         let mut sources = ClaimSourceTable::<Fr, Opening, Public>::new();
 
         let error =
-            build(&mut builder, &instance, &inputs, &mut sources).expect_err("opening is missing");
+            build(&mut builder, &claims, &inputs, &mut sources).expect_err("opening is missing");
 
         assert_eq!(error, Error::Claim(ClaimLoweringError::MissingOpening));
     }
 
     #[test]
     fn reports_sumcheck_layout_errors_with_stage_index() {
-        let instance = Instance::new(vec![boundary_stage(
+        let claims = InstanceClaims::new(vec![boundary_stage(
             1,
             1,
             constant(Fr::from_u64(10)),
@@ -396,13 +396,12 @@ mod tests {
         )]);
         let inputs = Inputs::new(vec![boundary_stage_input(&[(1, 2)])]);
         let mut builder = R1csBuilder::<Fr>::new();
-        let mut layout =
-            allocate_layout(&mut builder, &instance, &inputs).expect("layout allocates");
+        let mut layout = allocate_layout(&mut builder, &claims, &inputs).expect("layout allocates");
         layout.stages[0].sumcheck.rounds[0].claim_in =
             layout.stages[0].sumcheck.rounds[0].claim_out;
         let mut sources = ClaimSourceTable::<Fr, Opening, Public>::new();
 
-        let error = append(&mut builder, &instance, &inputs, &layout, &mut sources)
+        let error = append(&mut builder, &claims, &inputs, &layout, &mut sources)
             .expect_err("layout claim chain is broken");
 
         assert_eq!(

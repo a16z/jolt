@@ -1,10 +1,10 @@
 //! Opening claim reduction via random linear combination (RLC).
 
-use jolt_claims::EvaluationClaim;
 use jolt_field::Field;
+use jolt_poly::Point;
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
-use crate::claims::{ProverClaim, VerifierClaim};
+use crate::claims::{EvaluationClaim, ProverClaim, VerifierClaim};
 use crate::error::OpeningsError;
 use crate::schemes::AdditivelyHomomorphic;
 use jolt_crypto::HomomorphicCommitment;
@@ -133,8 +133,8 @@ fn rho_powers<F: Field>(rho: F, n: usize) -> Vec<F> {
         .collect()
 }
 
-type PointGroup<F, P> = Vec<(Vec<F>, Vec<ProverClaim<F, P>>)>;
-type VerifierPointGroup<F, C> = Vec<(Vec<F>, Vec<VerifierClaim<F, C>>)>;
+type PointGroup<F, P> = Vec<(Point<F>, Vec<ProverClaim<F, P>>)>;
+type VerifierPointGroup<F, C> = Vec<(Point<F>, Vec<VerifierClaim<F, C>>)>;
 
 fn group_prover_claims_by_point<F: Field, P>(claims: Vec<ProverClaim<F, P>>) -> PointGroup<F, P> {
     let mut groups: PointGroup<F, P> = Vec::new();

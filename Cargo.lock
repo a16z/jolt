@@ -2705,8 +2705,11 @@ dependencies = [
  "jolt-claims",
  "jolt-crypto",
  "jolt-field",
+ "jolt-poly",
  "jolt-r1cs",
  "jolt-sumcheck",
+ "jolt-transcript",
+ "serde",
  "thiserror 2.0.18",
 ]
 
@@ -2715,6 +2718,7 @@ name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "jolt-lookup-tables",
  "jolt-riscv",
  "serde",
 ]
@@ -2784,6 +2788,7 @@ dependencies = [
  "bincode 2.0.1",
  "criterion",
  "jolt-field",
+ "jolt-poly",
  "jolt-transcript",
  "num-bigint",
  "num-integer",
@@ -2998,6 +3003,7 @@ dependencies = [
 name = "jolt-lookup-tables"
 version = "0.1.0"
 dependencies = [
+ "jolt-core",
  "jolt-field",
  "jolt-riscv",
  "rand 0.8.5",
@@ -3011,7 +3017,6 @@ name = "jolt-openings"
 version = "0.1.0"
 dependencies = [
  "criterion",
- "jolt-claims",
  "jolt-crypto",
  "jolt-field",
  "jolt-poly",
@@ -3156,9 +3161,9 @@ dependencies = [
 name = "jolt-sumcheck"
 version = "0.1.0"
 dependencies = [
- "jolt-claims",
  "jolt-crypto",
  "jolt-field",
+ "jolt-openings",
  "jolt-poly",
  "jolt-r1cs",
  "jolt-transcript",
@@ -3192,7 +3197,9 @@ dependencies = [
  "ark-serialize 0.5.0",
  "common",
  "jolt-core",
+ "jolt-field",
  "jolt-riscv",
+ "jolt-sumcheck",
  "serde",
  "thiserror 2.0.18",
 ]

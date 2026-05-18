@@ -21,19 +21,6 @@ pub trait ClearRound<F: SumcheckScalar>: RoundMessage {
     fn check_round_well_formed(&self, _round: usize) -> Result<(), SumcheckError<F>> {
         Ok(())
     }
-
-    fn check_round_sum(&self, running_sum: F, round: usize) -> Result<(), SumcheckError<F>> {
-        self.check_round_well_formed(round)?;
-        let actual = self.evaluate(F::zero()) + self.evaluate(F::one());
-        if actual != running_sum {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: running_sum,
-                actual,
-            });
-        }
-        Ok(())
-    }
 }
 
 impl<F: Field> RoundMessage for UnivariatePoly<F> {

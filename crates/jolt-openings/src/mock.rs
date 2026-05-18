@@ -118,6 +118,12 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
 }
 
 impl<F: Field> HomomorphicCommitment<F> for MockCommitment<F> {
+    fn identity() -> Self {
+        Self {
+            evaluations: Vec::new(),
+        }
+    }
+
     fn linear_combine(c1: &Self, c2: &Self, scalar: &F) -> Self {
         let len = c1.evaluations.len().max(c2.evaluations.len());
         let mut result = vec![F::zero(); len];
@@ -209,8 +215,7 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
 #[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 mod tests {
     use super::*;
-    use crate::{reduce_prover, reduce_verifier, ProverClaim, VerifierClaim};
-    use jolt_claims::EvaluationClaim;
+    use crate::{reduce_prover, reduce_verifier, EvaluationClaim, ProverClaim, VerifierClaim};
     use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
     use jolt_poly::Polynomial;
     use jolt_transcript::Blake2bTranscript;

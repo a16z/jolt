@@ -1,46 +1,91 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ClaimExpression, Expr, InputClaimExpression, OutputClaimExpression};
+use crate::{ClaimExpression, ConsistencyClaim, Expr, InputClaimExpression, OutputClaimExpression};
 
-use super::{JoltChallengeId, JoltOpeningId, JoltPublicId, JoltStageId};
+use super::{JoltChallengeId, JoltOpeningId, JoltPublicId, JoltStageId, JoltSumcheckSpec};
 
 pub type JoltExpr<F> = Expr<F, JoltOpeningId, JoltPublicId, JoltChallengeId>;
 pub type JoltInputClaimExpression<F> =
     InputClaimExpression<F, JoltOpeningId, JoltPublicId, JoltChallengeId>;
 pub type JoltOutputClaimExpression<F> =
     OutputClaimExpression<F, JoltOpeningId, JoltPublicId, JoltChallengeId>;
+pub type JoltConsistencyClaim<F> =
+    ConsistencyClaim<F, JoltOpeningId, JoltPublicId, JoltChallengeId>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JoltStageClaims<F> {
     pub id: JoltStageId,
+    pub sumcheck: JoltSumcheckSpec,
     pub input: JoltInputClaimExpression<F>,
     pub output: JoltOutputClaimExpression<F>,
+    pub consistency: Vec<JoltConsistencyClaim<F>>,
 }
 
 impl<F> JoltStageClaims<F> {
-    pub fn new(id: JoltStageId, input: JoltExpr<F>, output: JoltExpr<F>) -> Self {
+    pub fn new(
+        id: JoltStageId,
+        sumcheck: JoltSumcheckSpec,
+        input: JoltExpr<F>,
+        output: JoltExpr<F>,
+    ) -> Self {
         Self {
             id,
+            sumcheck,
             input: ClaimExpression::from(input),
             output: ClaimExpression::from(output),
+            consistency: Vec::new(),
         }
+    }
+
+    pub fn with_consistency<I, C>(mut self, consistency: I) -> Self
+    where
+        I: IntoIterator<Item = C>,
+        C: Into<JoltConsistencyClaim<F>>,
+    {
+        self.consistency
+            .extend(consistency.into_iter().map(Into::into));
+        self
+    }
+
+    pub fn push_consistency<C>(&mut self, consistency: C)
+    where
+        C: Into<JoltConsistencyClaim<F>>,
+    {
+        self.consistency.push(consistency.into());
+    }
+
+    pub fn with_input_challenges<I>(mut self, challenges: I) -> Self
+    where
+        I: IntoIterator<Item = JoltChallengeId>,
+    {
+        self.input.require_challenges(challenges);
+        self
     }
 
     pub fn required_openings(&self) -> Vec<JoltOpeningId> {
         let mut openings = self.input.required_openings.clone();
         extend_unique(&mut openings, &self.output.required_openings);
+        for consistency in &self.consistency {
+            extend_unique(&mut openings, &consistency.required_openings());
+        }
         openings
     }
 
     pub fn required_publics(&self) -> Vec<JoltPublicId> {
         let mut publics = self.input.required_publics.clone();
         extend_unique(&mut publics, &self.output.required_publics);
+        for consistency in &self.consistency {
+            extend_unique(&mut publics, &consistency.required_publics());
+        }
         publics
     }
 
     pub fn required_challenges(&self) -> Vec<JoltChallengeId> {
         let mut challenges = self.input.required_challenges.clone();
         extend_unique(&mut challenges, &self.output.required_challenges);
+        for consistency in &self.consistency {
+            extend_unique(&mut challenges, &consistency.required_challenges());
+        }
         challenges
     }
 
@@ -130,7 +175,7 @@ fn extend_unique<T: Copy + Eq>(target: &mut Vec<T>, values: &[T]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{challenge, constant, opening, public};
+    use crate::{challenge, constant, opening, public, SameEvaluationAs};
     use jolt_field::{Fr, FromPrimitiveInt};
 
     use super::super::{JoltCommittedPolynomial, JoltVirtualPolynomial, RamReadWriteChallenge};
@@ -145,19 +190,49 @@ mod tests {
             JoltVirtualPolynomial::RamVal,
             JoltStageId::RamReadWriteChecking,
         );
+        let rd_inc = JoltOpeningId::committed(
+            JoltCommittedPolynomial::RdInc,
+            JoltStageId::RegistersReadWriteChecking,
+        );
 
         let gamma = JoltChallengeId::from(RamReadWriteChallenge::Gamma);
+        let sumcheck = JoltSumcheckSpec::boolean(8, 3);
 
         let input = opening(ram_inc) + challenge(gamma) * public(JoltPublicId::TraceLength);
         let output = opening(ram_val) + constant(Fr::from_u64(7));
-        let stage = JoltStageClaims::new(JoltStageId::RamReadWriteChecking, input, output);
+        let stage =
+            JoltStageClaims::new(JoltStageId::RamReadWriteChecking, sumcheck, input, output)
+                .with_consistency([rd_inc.same_evaluation_as(ram_val)]);
 
         assert_eq!(stage.id, JoltStageId::RamReadWriteChecking);
-        assert_eq!(stage.required_openings(), vec![ram_inc, ram_val]);
+        assert_eq!(stage.sumcheck, sumcheck);
+        assert_eq!(stage.required_openings(), vec![ram_inc, ram_val, rd_inc]);
         assert_eq!(stage.required_publics(), vec![JoltPublicId::TraceLength]);
         assert_eq!(stage.required_challenges(), vec![gamma]);
         assert_eq!(stage.challenge_index(gamma), Some(0));
         assert_eq!(stage.num_challenges(), 1);
+        assert_eq!(
+            stage.consistency,
+            vec![JoltConsistencyClaim::same_evaluation(rd_inc, ram_val)]
+        );
+    }
+
+    #[test]
+    fn stage_claims_carry_sumcheck_metadata() {
+        let ram_inc = JoltOpeningId::committed(
+            JoltCommittedPolynomial::RamInc,
+            JoltStageId::RamReadWriteChecking,
+        );
+        let sumcheck = JoltSumcheckSpec::boolean(8, 3);
+
+        let stage: JoltStageClaims<Fr> = JoltStageClaims::new(
+            JoltStageId::RamReadWriteChecking,
+            sumcheck,
+            opening(ram_inc),
+            opening(ram_inc),
+        );
+
+        assert_eq!(stage.sumcheck, sumcheck);
     }
 
     #[test]
@@ -173,11 +248,13 @@ mod tests {
 
         let registers: JoltStageClaims<Fr> = JoltStageClaims::new(
             JoltStageId::RegistersReadWriteChecking,
+            JoltSumcheckSpec::boolean(12, 3),
             opening(rd_inc) + public(JoltPublicId::PaddedTraceLength),
             opening(rd_inc),
         );
         let ram: JoltStageClaims<Fr> = JoltStageClaims::new(
             JoltStageId::RamReadWriteChecking,
+            JoltSumcheckSpec::boolean(20, 3),
             opening(ram_inc) + public(JoltPublicId::PaddedTraceLength),
             opening(ram_inc),
         );

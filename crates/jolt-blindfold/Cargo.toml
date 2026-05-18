@@ -12,8 +12,11 @@ workspace = true
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
 jolt-field.workspace = true
+jolt-poly.workspace = true
 jolt-r1cs.workspace = true
 jolt-sumcheck = { workspace = true, features = ["r1cs"] }
+jolt-transcript.workspace = true
+serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 
 [dev-dependencies]

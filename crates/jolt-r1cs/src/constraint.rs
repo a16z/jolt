@@ -2,9 +2,20 @@
 
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
+use thiserror::Error as ThisError;
 
 /// Sparse row: `[(variable_index, coefficient)]`.
 pub type SparseRow<F> = Vec<(usize, F)>;
+
+#[derive(Clone, Debug, ThisError, PartialEq, Eq)]
+pub enum ConstraintMatrixEvalError {
+    #[error("row weights length mismatch: expected at least {expected}, got {actual}")]
+    RowWeightsLengthMismatch { expected: usize, actual: usize },
+    #[error("column weights length mismatch: expected {expected}, got {actual}")]
+    ColumnWeightsLengthMismatch { expected: usize, actual: usize },
+    #[error("matrix column range overflow: start {start}, count {count}")]
+    ColumnRangeOverflow { start: usize, count: usize },
+}
 
 /// Per-cycle sparse R1CS constraint matrices.
 ///
@@ -135,6 +146,51 @@ impl<F: Field> ConstraintMatrices<F> {
         }
         Ok(())
     }
+
+    pub fn public_column_contributions(
+        &self,
+        row_weights: &[F],
+        column: usize,
+        scalar: F,
+    ) -> Result<(F, F, F), ConstraintMatrixEvalError> {
+        Ok((
+            matrix_column_eval(&self.a, row_weights, column)? * scalar,
+            matrix_column_eval(&self.b, row_weights, column)? * scalar,
+            matrix_column_eval(&self.c, row_weights, column)? * scalar,
+        ))
+    }
+
+    pub fn linear_form_bilinear_eval(
+        &self,
+        row_weights: &[F],
+        column_weights: &[F],
+        start_col: usize,
+        col_count: usize,
+        weights: [F; 3],
+    ) -> Result<F, ConstraintMatrixEvalError> {
+        let a = matrix_bilinear_eval_columns(
+            &self.a,
+            row_weights,
+            column_weights,
+            start_col,
+            col_count,
+        )?;
+        let b = matrix_bilinear_eval_columns(
+            &self.b,
+            row_weights,
+            column_weights,
+            start_col,
+            col_count,
+        )?;
+        let c = matrix_bilinear_eval_columns(
+            &self.c,
+            row_weights,
+            column_weights,
+            start_col,
+            col_count,
+        )?;
+        Ok(weights[0] * a + weights[1] * b + weights[2] * c)
+    }
 }
 
 #[inline]
@@ -146,7 +202,69 @@ fn dot<F: Field>(row: &[(usize, F)], witness: &[F]) -> F {
     acc
 }
 
+fn matrix_column_eval<F: Field>(
+    rows: &[SparseRow<F>],
+    row_weights: &[F],
+    column: usize,
+) -> Result<F, ConstraintMatrixEvalError> {
+    if row_weights.len() < rows.len() {
+        return Err(ConstraintMatrixEvalError::RowWeightsLengthMismatch {
+            expected: rows.len(),
+            actual: row_weights.len(),
+        });
+    }
+
+    let mut acc = F::zero();
+    for (row, &row_weight) in rows.iter().zip(row_weights) {
+        for &(col, coeff) in row {
+            if col == column {
+                acc += row_weight * coeff;
+            }
+        }
+    }
+    Ok(acc)
+}
+
+fn matrix_bilinear_eval_columns<F: Field>(
+    rows: &[SparseRow<F>],
+    row_weights: &[F],
+    column_weights: &[F],
+    start_col: usize,
+    col_count: usize,
+) -> Result<F, ConstraintMatrixEvalError> {
+    if row_weights.len() < rows.len() {
+        return Err(ConstraintMatrixEvalError::RowWeightsLengthMismatch {
+            expected: rows.len(),
+            actual: row_weights.len(),
+        });
+    }
+    if column_weights.len() != col_count {
+        return Err(ConstraintMatrixEvalError::ColumnWeightsLengthMismatch {
+            expected: col_count,
+            actual: column_weights.len(),
+        });
+    }
+
+    let end_col =
+        start_col
+            .checked_add(col_count)
+            .ok_or(ConstraintMatrixEvalError::ColumnRangeOverflow {
+                start: start_col,
+                count: col_count,
+            })?;
+    let mut acc = F::zero();
+    for (row, &row_weight) in rows.iter().zip(row_weights) {
+        for &(col, coeff) in row {
+            if (start_col..end_col).contains(&col) {
+                acc += row_weight * column_weights[col - start_col] * coeff;
+            }
+        }
+    }
+    Ok(acc)
+}
+
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests should fail loudly")]
 mod tests {
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt};
@@ -199,6 +317,136 @@ mod tests {
             vec![vec![(99, Fr::from_u64(1))]],
             vec![vec![(1, Fr::from_u64(1))]],
             vec![vec![(2, Fr::from_u64(1))]],
+        );
+    }
+
+    #[test]
+    fn public_column_contributions_projects_abc_column() {
+        let m = ConstraintMatrices::new(
+            2,
+            3,
+            vec![
+                vec![(0, Fr::from_u64(2)), (1, Fr::from_u64(99))],
+                vec![(0, Fr::from_u64(3))],
+            ],
+            vec![vec![(0, Fr::from_u64(5))], vec![(2, Fr::from_u64(13))]],
+            vec![vec![(1, Fr::from_u64(17))], vec![(0, Fr::from_u64(7))]],
+        );
+        let row_weights = [Fr::from_u64(11), Fr::from_u64(19), Fr::from_u64(23)];
+
+        let contributions = m
+            .public_column_contributions(&row_weights, 0, Fr::from_u64(3))
+            .expect("row weights cover all constraints");
+
+        assert_eq!(
+            contributions,
+            (Fr::from_u64(237), Fr::from_u64(165), Fr::from_u64(399),)
+        );
+    }
+
+    #[test]
+    fn linear_form_bilinear_eval_combines_weighted_matrices() {
+        let m = ConstraintMatrices::new(
+            2,
+            4,
+            vec![
+                vec![(0, Fr::from_u64(100)), (1, Fr::from_u64(2))],
+                vec![(2, Fr::from_u64(3))],
+            ],
+            vec![
+                vec![(1, Fr::from_u64(5)), (3, Fr::from_u64(7))],
+                vec![(2, Fr::from_u64(11))],
+            ],
+            vec![vec![(3, Fr::from_u64(13))], vec![(1, Fr::from_u64(17))]],
+        );
+        let row_weights = [Fr::from_u64(2), Fr::from_u64(3)];
+        let column_weights = [Fr::from_u64(5), Fr::from_u64(7), Fr::from_u64(11)];
+
+        let value = m
+            .linear_form_bilinear_eval(
+                &row_weights,
+                &column_weights,
+                1,
+                3,
+                [Fr::from_u64(19), Fr::from_u64(23), Fr::from_u64(29)],
+            )
+            .expect("weights match the selected columns");
+
+        assert_eq!(value, Fr::from_u64(27271));
+    }
+
+    #[test]
+    fn matrix_eval_rejects_short_row_weights() {
+        let m = ConstraintMatrices::new(
+            2,
+            2,
+            vec![vec![(0, Fr::from_u64(1))], vec![(1, Fr::from_u64(2))]],
+            vec![Vec::new(), Vec::new()],
+            vec![Vec::new(), Vec::new()],
+        );
+
+        let error = m
+            .public_column_contributions(&[Fr::from_u64(1)], 0, Fr::from_u64(1))
+            .expect_err("one row weight cannot cover two constraints");
+
+        assert_eq!(
+            error,
+            ConstraintMatrixEvalError::RowWeightsLengthMismatch {
+                expected: 2,
+                actual: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn matrix_eval_rejects_column_weight_mismatch() {
+        let m = ConstraintMatrices::new(
+            1,
+            3,
+            vec![vec![(1, Fr::from_u64(1))]],
+            vec![Vec::new()],
+            vec![Vec::new()],
+        );
+
+        let error = m
+            .linear_form_bilinear_eval(
+                &[Fr::from_u64(1)],
+                &[Fr::from_u64(1)],
+                1,
+                2,
+                [Fr::from_u64(1), Fr::from_u64(1), Fr::from_u64(1)],
+            )
+            .expect_err("selected column count must match weights");
+
+        assert_eq!(
+            error,
+            ConstraintMatrixEvalError::ColumnWeightsLengthMismatch {
+                expected: 2,
+                actual: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn matrix_eval_rejects_column_range_overflow() {
+        let m = ConstraintMatrices::new(0, 1, Vec::new(), Vec::new(), Vec::new());
+
+        let error = m
+            .linear_form_bilinear_eval(
+                &[],
+                &[Fr::from_u64(1), Fr::from_u64(1)],
+                usize::MAX,
+                2,
+                [Fr::from_u64(1), Fr::from_u64(1), Fr::from_u64(1)],
+            )
+            .expect_err("column range must not overflow");
+
+        assert_eq!(
+            error,
+            ConstraintMatrixEvalError::ColumnRangeOverflow {
+                start: usize::MAX,
+                count: 2,
+            }
         );
     }
 }

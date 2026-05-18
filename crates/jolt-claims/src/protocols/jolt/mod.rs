@@ -3,11 +3,21 @@ pub mod formulas;
 mod ids;
 mod stage;
 
+pub use formulas::dimensions::{JoltSumcheckDomain, JoltSumcheckSpec};
 pub use ids::{
-    JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltPublicId,
-    JoltStageId, JoltVirtualPolynomial, RamReadWriteChallenge,
+    AdviceClaimReductionPublic, BooleanityChallenge, BooleanityPublic, BytecodeReadRafChallenge,
+    BytecodeReadRafPublic, HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic,
+    IncClaimReductionChallenge, IncClaimReductionPublic, InstructionClaimReductionChallenge,
+    InstructionInputChallenge, InstructionRaVirtualizationChallenge, InstructionReadRafChallenge,
+    JoltAdviceKind, JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId,
+    JoltPublicId, JoltStageId, JoltVirtualPolynomial, RamHammingBooleanityPublic,
+    RamOutputCheckPublic, RamRaClaimReductionChallenge, RamRaClaimReductionPublic,
+    RamRaVirtualizationPublic, RamRafEvaluationPublic, RamReadWriteChallenge, RamValCheckChallenge,
+    RegistersClaimReductionChallenge, RegistersReadWriteChallenge, RegistersValEvaluationChallenge,
+    SpartanOuterPublic, SpartanProductVirtualizationPublic, SpartanShiftChallenge,
+    SpartanShiftPublic,
 };
 pub use stage::{
-    JoltExpr, JoltInputClaimExpression, JoltOutputClaimExpression, JoltProtocolClaims,
-    JoltStageClaims,
+    JoltConsistencyClaim, JoltExpr, JoltInputClaimExpression, JoltOutputClaimExpression,
+    JoltProtocolClaims, JoltStageClaims,
 };

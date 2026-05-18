@@ -1,8 +1,23 @@
 //! Stateless claim types for PCS operations.
 
-use jolt_claims::EvaluationClaim;
 use jolt_field::Field;
-use jolt_poly::Polynomial;
+use jolt_poly::{Point, Polynomial};
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvaluationClaim<F> {
+    pub point: Point<F>,
+    pub value: F,
+}
+
+impl<F> EvaluationClaim<F> {
+    pub fn new(point: impl Into<Point<F>>, value: F) -> Self {
+        Self {
+            point: point.into(),
+            value,
+        }
+    }
+}
 
 /// Prover-side opening claim: polynomial, evaluation point, and claimed value.
 #[derive(Clone, Debug)]

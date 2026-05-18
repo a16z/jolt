@@ -43,6 +43,11 @@ impl AppendToTranscript for DoryCommitment {
 
 impl<F: jolt_field::Field> HomomorphicCommitment<F> for DoryCommitment {
     #[inline]
+    fn identity() -> Self {
+        Self(<Bn254GT as HomomorphicCommitment<F>>::identity())
+    }
+
+    #[inline]
     fn linear_combine(c1: &Self, c2: &Self, scalar: &F) -> Self {
         Self(HomomorphicCommitment::linear_combine(&c1.0, &c2.0, scalar))
     }

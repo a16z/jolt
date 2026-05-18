@@ -19,7 +19,9 @@ use jolt_field::{
     FixedBytes, FromPrimitiveInt, Invertible, MulPow2, MulPrimitiveInt, NaiveAccumulator,
     RandomSampling, ReducingBytes, RingCore, TranscriptChallenge, WithAccumulator,
 };
-use jolt_sumcheck::{ClearRound, EvaluationClaim, RoundMessage, SumcheckClaim, SumcheckVerifier};
+use jolt_sumcheck::{
+    BooleanHypercube, ClearRound, EvaluationClaim, RoundMessage, SumcheckClaim, SumcheckVerifier,
+};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, KeccakTranscript, Transcript};
 use num_traits::{One, Zero};
 
@@ -335,10 +337,7 @@ fn build_rounds() -> (
     (
         SumcheckClaim::new(4, 1, Mersenne61::from_u64(10)),
         rounds,
-        EvaluationClaim {
-            point,
-            value: running_sum,
-        },
+        EvaluationClaim::new(point, running_sum),
     )
 }
 
@@ -357,6 +356,8 @@ fn hash_transcripts_accept_mersenne61_without_bn254_field_surface() {
 fn sumcheck_verifier_accepts_mersenne61_round_proof() {
     let (claim, rounds, expected) = build_rounds();
     let mut verifier_transcript = Blake2bTranscript::<Mersenne61>::new(b"mersenne61");
-    let actual = SumcheckVerifier::verify(&claim, &rounds, &mut verifier_transcript).unwrap();
+    let actual =
+        SumcheckVerifier::verify(&claim, &rounds, BooleanHypercube, &mut verifier_transcript)
+            .unwrap();
     assert_eq!(actual, expected);
 }

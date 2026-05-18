@@ -14,7 +14,7 @@ pub enum ClaimLoweringError {
     MissingPublic,
 }
 
-pub trait ClaimSourceResolver<F> {
+pub trait ClaimSources<F> {
     type Opening;
     type Challenge;
     type Public;
@@ -53,7 +53,7 @@ impl<F, O, P, C> ClaimSourceTable<F, O, P, C> {
     }
 }
 
-impl<F: Copy, O: Eq, P: Eq, C: Eq> ClaimSourceResolver<F> for ClaimSourceTable<F, O, P, C> {
+impl<F: Copy, O: Eq, P: Eq, C: Eq> ClaimSources<F> for ClaimSourceTable<F, O, P, C> {
     type Opening = O;
     type Challenge = C;
     type Public = P;
@@ -83,11 +83,11 @@ impl<F: Copy, O: Eq, P: Eq, C: Eq> ClaimSourceResolver<F> for ClaimSourceTable<F
 pub fn lower_claim_expr<F, R>(
     builder: &mut R1csBuilder<F>,
     expression: &Expr<F, R::Opening, R::Public, R::Challenge>,
-    resolver: &mut R,
+    sources: &mut R,
 ) -> Result<LinearCombination<F>, ClaimLoweringError>
 where
     F: Field,
-    R: ClaimSourceResolver<F>,
+    R: ClaimSources<F>,
 {
     let mut result = LinearCombination::zero();
 
@@ -97,9 +97,9 @@ where
 
         for source in &term.factors {
             match source {
-                Source::Opening(id) => factors.push(resolver.opening(id)?),
-                Source::Challenge(id) => coefficient *= resolver.challenge(id)?,
-                Source::Public(id) => coefficient *= resolver.public(id)?,
+                Source::Opening(id) => factors.push(sources.opening(id)?),
+                Source::Challenge(id) => coefficient *= sources.challenge(id)?,
+                Source::Public(id) => coefficient *= sources.public(id)?,
             }
         }
 
@@ -113,14 +113,14 @@ pub fn assert_claim_expr_eq<F, R, Expected>(
     builder: &mut R1csBuilder<F>,
     expression: &Expr<F, R::Opening, R::Public, R::Challenge>,
     expected: Expected,
-    resolver: &mut R,
+    sources: &mut R,
 ) -> Result<(), ClaimLoweringError>
 where
     F: Field,
-    R: ClaimSourceResolver<F>,
+    R: ClaimSources<F>,
     Expected: Into<LinearCombination<F>>,
 {
-    let actual = lower_claim_expr(builder, expression, resolver)?;
+    let actual = lower_claim_expr(builder, expression, sources)?;
     builder.assert_equal(actual, expected);
     Ok(())
 }

@@ -13,10 +13,11 @@
     reason = "tests may panic on assertion failures"
 )]
 
-use jolt_claims::EvaluationClaim;
 use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
 use jolt_openings::mock::MockCommitmentScheme;
-use jolt_openings::{reduce_prover, reduce_verifier, CommitmentScheme, ProverClaim, VerifierClaim};
+use jolt_openings::{
+    reduce_prover, reduce_verifier, CommitmentScheme, EvaluationClaim, ProverClaim, VerifierClaim,
+};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;

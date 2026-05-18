@@ -1,1 +1,9 @@
+pub mod booleanity;
+pub mod bytecode;
+pub mod claim_reductions;
+pub mod dimensions;
+pub mod instruction;
+pub mod ra;
 pub mod ram;
+pub mod registers;
+pub mod spartan;

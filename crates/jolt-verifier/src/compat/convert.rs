@@ -2,8 +2,7 @@
 
 use crate::{
     compat::config::{OneHotConfig, ReadWriteConfig},
-    proof::{DoryLayout, JoltProof, JoltStageProofs, ProofPayload},
-    zk::ProofMode,
+    proof::{DoryLayout, JoltProof, JoltStageProofs},
 };
 
 use jolt_core::{
@@ -75,28 +74,6 @@ impl From<CoreDoryLayout> for DoryLayout {
     }
 }
 
-impl<F, C, FS> ProofMode for SumcheckInstanceProof<F, C, FS>
-where
-    F: JoltField,
-    C: JoltCurve<F = F>,
-    FS: Transcript,
-{
-    fn is_zk(&self) -> bool {
-        SumcheckInstanceProof::is_zk(self)
-    }
-}
-
-impl<F, C, FS> ProofMode for UniSkipFirstRoundProofVariant<F, C, FS>
-where
-    F: JoltField,
-    C: JoltCurve<F = F>,
-    FS: Transcript,
-{
-    fn is_zk(&self) -> bool {
-        UniSkipFirstRoundProofVariant::is_zk(self)
-    }
-}
-
 #[cfg(not(feature = "zk"))]
 impl<F, C, PCS, FS> From<JoltCoreProof<F, C, PCS, FS>> for ImportedCoreProof<F, C, PCS, FS>
 where
@@ -123,9 +100,8 @@ where
             stages,
             joint_opening_proof: proof.joint_opening_proof,
             untrusted_advice_commitment: proof.untrusted_advice_commitment,
-            payload: ProofPayload::Clear {
-                opening_claims: proof.opening_claims,
-            },
+            opening_claims: Some(proof.opening_claims),
+            blindfold_proof: None,
             trace_length: proof.trace_length,
             ram_K: proof.ram_K,
             rw_config: proof.rw_config.into(),
@@ -161,9 +137,8 @@ where
             stages,
             joint_opening_proof: proof.joint_opening_proof,
             untrusted_advice_commitment: proof.untrusted_advice_commitment,
-            payload: ProofPayload::Zk {
-                blindfold_proof: proof.blindfold_proof,
-            },
+            opening_claims: None,
+            blindfold_proof: Some(proof.blindfold_proof),
             trace_length: proof.trace_length,
             ram_K: proof.ram_K,
             rw_config: proof.rw_config.into(),

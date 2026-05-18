@@ -1,10 +1,16 @@
 //! Sumcheck verifier: checks round polynomials against the claimed sum.
 
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_field::Field;
+use jolt_poly::UnivariatePolynomial;
+use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
 use crate::claim::{EvaluationClaim, SumcheckClaim, SumcheckShape};
-use crate::committed::{CommittedRound, CommittedSumcheckCheck, VerifiedCommittedRound};
+use crate::committed::{
+    CommittedRound, CommittedSumcheckCheck, CommittedSumcheckProof, VerifiedCommittedRound,
+};
+use crate::domain::{BooleanHypercube, SumcheckDomain};
 use crate::error::SumcheckError;
+use crate::proof::CompressedSumcheckProof;
 use crate::round_proof::{ClearRound, RoundMessage};
 use crate::scalar::SumcheckScalar;
 
@@ -16,7 +22,7 @@ impl SumcheckVerifier {
     ///
     /// For each round $i = 0, \ldots, n-1$:
     /// 1. The degree bound is enforced against `claim.degree`.
-    /// 2. The round sum is checked against the running sum.
+    /// 2. The round sum is checked against the running sum in `domain`.
     /// 3. The round message is absorbed into the transcript.
     /// 4. A challenge $r_i$ is squeezed from the transcript.
     /// 5. The running sum is updated to the round polynomial at $r_i$.
@@ -34,20 +40,22 @@ impl SumcheckVerifier {
     ///
     /// When `claim.num_vars == 0`, this function performs no transcript
     /// interaction and no checks: it returns
-    /// `EvaluationClaim { point: vec![], value: claim.claimed_sum }`.
+    /// `EvaluationClaim { point: Point::default(), value: claim.claimed_sum }`.
     /// Sumcheck trivially reduces to a single oracle query at that point,
     /// so the caller MUST verify `claim.claimed_sum` against the
     /// commitment/oracle layer to retain soundness.
     #[tracing::instrument(skip_all, name = "SumcheckVerifier::verify")]
-    pub fn verify<F, T, R>(
+    pub fn verify<F, T, R, D>(
         claim: &SumcheckClaim<F>,
         round_proofs: &[R],
+        domain: D,
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
         F: SumcheckScalar,
         T: Transcript<Challenge = F>,
         R: ClearRound<F>,
+        D: SumcheckDomain<F>,
     {
         if round_proofs.len() != claim.num_vars {
             return Err(SumcheckError::WrongNumberOfRounds {
@@ -66,17 +74,61 @@ impl SumcheckVerifier {
                     max: claim.degree,
                 });
             }
-            round_proof.check_round_sum(running_sum, round)?;
+            domain.check_round_sum(round, running_sum, round_proof)?;
             round_proof.append_to_transcript(transcript);
             let r: F = transcript.challenge();
             running_sum = round_proof.evaluate(r);
             challenges.push(r);
         }
 
-        Ok(EvaluationClaim {
-            point: challenges,
-            value: running_sum,
-        })
+        Ok(EvaluationClaim::new(challenges, running_sum))
+    }
+
+    #[tracing::instrument(skip_all, name = "SumcheckVerifier::verify_compressed")]
+    pub fn verify_compressed<F, T>(
+        claim: &SumcheckClaim<F>,
+        proof: &CompressedSumcheckProof<F>,
+        domain: BooleanHypercube,
+        round_label: &'static [u8],
+        transcript: &mut T,
+    ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
+    where
+        F: Field,
+        T: Transcript<Challenge = F>,
+    {
+        if proof.round_polynomials.len() != claim.num_vars {
+            return Err(SumcheckError::WrongNumberOfRounds {
+                expected: claim.num_vars,
+                got: proof.round_polynomials.len(),
+            });
+        }
+        let BooleanHypercube = domain;
+
+        let mut running_sum = claim.claimed_sum;
+        let mut challenges = Vec::with_capacity(claim.num_vars);
+
+        for (round, round_proof) in proof.round_polynomials.iter().enumerate() {
+            if round_proof.degree() > claim.degree {
+                return Err(SumcheckError::DegreeBoundExceeded {
+                    got: round_proof.degree(),
+                    max: claim.degree,
+                });
+            }
+            let coeffs = round_proof.coeffs_except_linear_term();
+            if coeffs.is_empty() {
+                return Err(SumcheckError::CompressedPolynomialTooShort { round, got: 0 });
+            }
+
+            transcript.append(&LabelWithCount(round_label, coeffs.len() as u64));
+            for coeff in coeffs {
+                coeff.append_to_transcript(transcript);
+            }
+            let r: F = transcript.challenge();
+            running_sum = round_proof.evaluate_with_hint(running_sum, r);
+            challenges.push(r);
+        }
+
+        Ok(EvaluationClaim::new(challenges, running_sum))
     }
 
     /// Replays committed sumcheck rounds and returns the transcript-derived data.
@@ -116,5 +168,44 @@ impl SumcheckVerifier {
         }
 
         Ok(CommittedSumcheckCheck { rounds })
+    }
+}
+
+impl<F> CompressedSumcheckProof<F>
+where
+    F: Field,
+{
+    pub fn verify<T>(
+        &self,
+        claim: &SumcheckClaim<F>,
+        domain: BooleanHypercube,
+        round_label: &'static [u8],
+        transcript: &mut T,
+    ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
+    where
+        T: Transcript<Challenge = F>,
+    {
+        SumcheckVerifier::verify_compressed(claim, self, domain, round_label, transcript)
+    }
+}
+
+impl<C> CommittedSumcheckProof<C> {
+    /// Replays a committed proof through the Fiat-Shamir transcript.
+    ///
+    /// This checks the round count and degree bounds, derives the round challenges,
+    /// and absorbs the committed output claims after the round transcript.
+    pub fn verify_transcript<F, T>(
+        &self,
+        shape: SumcheckShape,
+        transcript: &mut T,
+    ) -> Result<CommittedSumcheckCheck<F, C>, SumcheckError<F>>
+    where
+        F: SumcheckScalar,
+        T: Transcript<Challenge = F>,
+        C: Clone + AppendToTranscript,
+    {
+        let check = SumcheckVerifier::verify_committed_rounds(shape, &self.rounds, transcript)?;
+        self.output_claims.append_to_transcript(transcript);
+        Ok(check)
     }
 }

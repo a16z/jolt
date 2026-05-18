@@ -42,6 +42,13 @@ pub enum SumcheckError<F: FieldCore> {
         got: usize,
     },
 
+    /// An integer-domain sumcheck round used an invalid domain size.
+    #[error("integer sumcheck domain size must be between 1 and i64::MAX, got {domain_size}")]
+    InvalidIntegerDomain {
+        /// Number of integer points in the domain.
+        domain_size: usize,
+    },
+
     /// The number of round polynomials in the proof does not match
     /// the number of variables in the claim.
     #[error("expected {expected} rounds, proof contains {got}")]

@@ -45,6 +45,13 @@ impl<P: PairingGroup> Eq for HyperKZGCommitment<P> {}
 
 impl<P: PairingGroup, F: jolt_field::Field> HomomorphicCommitment<F> for HyperKZGCommitment<P> {
     #[inline]
+    fn identity() -> Self {
+        Self {
+            point: <P::G1 as JoltGroup>::identity(),
+        }
+    }
+
+    #[inline]
     fn linear_combine(c1: &Self, c2: &Self, scalar: &F) -> Self {
         Self {
             point: HomomorphicCommitment::linear_combine(&c1.point, &c2.point, scalar),
@@ -55,7 +62,7 @@ impl<P: PairingGroup, F: jolt_field::Field> HomomorphicCommitment<F> for HyperKZ
 impl<P: PairingGroup> Default for HyperKZGCommitment<P> {
     fn default() -> Self {
         Self {
-            point: P::G1::identity(),
+            point: <P::G1 as JoltGroup>::identity(),
         }
     }
 }

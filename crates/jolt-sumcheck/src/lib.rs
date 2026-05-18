@@ -16,9 +16,10 @@
 //! | Module | Purpose |
 //! |--------|---------|
 //! | [`claim`] | [`SumcheckClaim`] (input statement) and [`EvaluationClaim`] (reduction output) |
-//! | [`proof`] | [`SumcheckProof`] — serializable proof |
+//! | [`proof`] | [`ClearSumcheckProof`], [`CompressedSumcheckProof`], and [`SumcheckProof`] — serializable proofs |
 //! | [`verifier`] | [`SumcheckVerifier`] engine |
 //! | [`batched_verifier`] | [`BatchedSumcheckVerifier`] — batched verification via RLC |
+//! | [`domain`] | [`SumcheckDomain`] implementations for round-sum checks |
 //! | `r1cs` | R1CS lowering for sumcheck verifier equations (`r1cs` feature) |
 //! | [`round_proof`] | [`RoundMessage`] and [`ClearRound`] traits |
 //! | [`committed`] | Commitment-backed round messages |
@@ -31,8 +32,12 @@
 //! - [`SumcheckShape`] — round count and degree bound without a claimed sum.
 //! - [`EvaluationClaim<F>`] — the oracle evaluation claim `g(r) = v` produced by a
 //!   successful reduction; the caller MUST discharge it against the polynomial oracle.
-//! - [`SumcheckProof<F>`] — a sequence of univariate round polynomials, one per variable.
+//! - [`ClearSumcheckProof<F>`] — a sequence of univariate round polynomials, one per variable.
+//! - [`CompressedSumcheckProof<F>`] — owned wire form omitting each linear coefficient.
+//! - [`SumcheckProof<F, C>`] — clear or committed sumcheck proof data.
 //! - [`CommittedSumcheckProof<C>`] — committed round messages and output-claim commitments.
+//! - [`BooleanHypercube`] — the standard `{0,1}` sumcheck round domain.
+//! - [`CenteredIntegerDomain`] — centered consecutive-integer sumcheck round domain.
 //! - [`SumcheckError`] — error variants: `RoundCheckFailed`, `DegreeBoundExceeded`,
 //!   `WrongNumberOfRounds`, `EmptyClaims`.
 //!
@@ -45,7 +50,7 @@
 //!
 //! ## Per-round proof types
 //! - [`RoundMessage`] — degree bound and transcript absorption.
-//! - [`ClearRound<F>`] — clear round polynomial evaluation and round-sum check.
+//! - [`ClearRound<F>`] — clear round polynomial evaluation and well-formedness.
 //! - [`UnivariatePoly<F>`](jolt_poly::UnivariatePoly) — raw, unlabelled absorb.
 //! - [`LabeledRoundPoly`] — borrowed wrapper adding a `LabelWithCount` prefix.
 //! - [`CompressedLabeledRoundPoly`] — borrowed wrapper using the compressed
@@ -64,6 +69,7 @@
 pub mod batched_verifier;
 pub mod claim;
 pub mod committed;
+pub mod domain;
 pub mod error;
 pub mod proof;
 #[cfg(feature = "r1cs")]
@@ -81,8 +87,9 @@ pub use committed::{
     CommittedOutputClaims, CommittedRound, CommittedRoundWitness, CommittedSumcheckCheck,
     CommittedSumcheckProof, VerifiedCommittedRound,
 };
+pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain};
 pub use error::SumcheckError;
-pub use proof::SumcheckProof;
+pub use proof::{ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
 #[cfg(feature = "r1cs")]
 pub use r1cs::{
     allocate_sumcheck_r1cs_layout, append_sumcheck_r1cs_constraints, SumcheckR1csError,

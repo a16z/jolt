@@ -38,8 +38,8 @@
 //!
 //! # Utility Modules
 //!
-//! - [`lagrange`]: Lagrange interpolation, symmetric power sums, polynomial multiplication,
-//!   Newton-form interpolation over integer domains
+//! - [`lagrange`]: Lagrange interpolation, integer-domain power sums, polynomial
+//!   multiplication, Newton-form interpolation over integer domains
 //! - [`math`]: Bit-manipulation utilities on `usize` via the `Math` trait (`pow2`, `log_2`)
 //! - [`thread`]: `drop_in_background_thread` (rayon) and `unsafe_allocate_zero_vec` (zero-init allocation)
 
@@ -54,6 +54,7 @@ mod lt;
 pub mod math;
 mod multilinear;
 mod one_hot;
+mod point;
 pub mod thread;
 mod univariate;
 
@@ -66,4 +67,5 @@ pub use identity::IdentityPolynomial;
 pub use lt::LtPolynomial;
 pub use multilinear::{MultilinearBinding, MultilinearEvaluation, MultilinearPoly, RlcSource};
 pub use one_hot::OneHotPolynomial;
+pub use point::Point;
 pub use univariate::{UnivariatePoly, UnivariatePolynomial};

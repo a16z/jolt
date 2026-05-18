@@ -10,6 +10,7 @@
 use jolt_transcript::{AppendToTranscript, Transcript};
 
 use crate::claim::{EvaluationClaim, SumcheckClaim};
+use crate::domain::SumcheckDomain;
 use crate::error::SumcheckError;
 use crate::round_proof::ClearRound;
 use crate::scalar::SumcheckScalar;
@@ -22,7 +23,7 @@ use crate::scalar::SumcheckScalar;
 pub struct BatchedSumcheckVerifier;
 
 impl BatchedSumcheckVerifier {
-    /// Verifies a batched sumcheck proof.
+    /// Verifies a batched sumcheck proof over `domain`.
     ///
     /// Returns an [`EvaluationClaim`] `{ point: r, value: v }` on success,
     /// where `v` is the combined final evaluation and `r` is the full
@@ -32,15 +33,17 @@ impl BatchedSumcheckVerifier {
     ///
     /// Returns [`SumcheckError`] if verification fails.
     #[tracing::instrument(skip_all, name = "BatchedSumcheckVerifier::verify")]
-    pub fn verify<F, T, P>(
+    pub fn verify<F, T, P, D>(
         claims: &[SumcheckClaim<F>],
         round_proofs: &[P],
+        domain: D,
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
         F: SumcheckScalar,
         T: Transcript<Challenge = F>,
         P: ClearRound<F>,
+        D: SumcheckDomain<F>,
     {
         let (first, rest) = claims.split_first().ok_or(SumcheckError::EmptyClaims)?;
         let max_num_vars = rest
@@ -70,6 +73,6 @@ impl BatchedSumcheckVerifier {
             claimed_sum: combined_sum,
         };
 
-        crate::verifier::SumcheckVerifier::verify(&combined_claim, round_proofs, transcript)
+        crate::verifier::SumcheckVerifier::verify(&combined_claim, round_proofs, domain, transcript)
     }
 }

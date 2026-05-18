@@ -1,19 +1,6 @@
 use jolt_field::RingCore;
 use serde::{Deserialize, Serialize};
 
-/// A claim that a polynomial evaluates to `value` at `point`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EvaluationClaim<F> {
-    pub point: Vec<F>,
-    pub value: F,
-}
-
-impl<F> EvaluationClaim<F> {
-    pub fn new(point: Vec<F>, value: F) -> Self {
-        Self { point, value }
-    }
-}
-
 /// An atomic value used inside a symbolic claim expression.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Source<O, P = (), C = usize> {
@@ -125,6 +112,25 @@ impl<F: RingCore, O, P, C> Expr<F, O, P, C> {
     }
 }
 
+impl<F: RingCore, O: Clone, P: Clone, C: Clone> Expr<F, O, P, C> {
+    pub fn pow(self, mut exponent: usize) -> Self {
+        let mut result = Self::one();
+        let mut base = self;
+
+        while exponent > 0 {
+            if exponent % 2 == 1 {
+                result = result * base.clone();
+            }
+            exponent /= 2;
+            if exponent > 0 {
+                base = base.clone() * base;
+            }
+        }
+
+        result
+    }
+}
+
 impl<F: RingCore, O, C> Expr<F, O, (), C> {
     pub fn evaluate_without_public<OpeningValue, ChallengeValue>(
         &self,
@@ -193,6 +199,24 @@ pub fn constant<F: RingCore, O, P, C>(value: F) -> Expr<F, O, P, C> {
     Expr::constant(value)
 }
 
+pub fn pow2<F: RingCore>(exponent: usize) -> F {
+    let mut result = F::one();
+    let mut base = F::one() + F::one();
+    let mut remaining = exponent;
+
+    while remaining > 0 {
+        if remaining % 2 == 1 {
+            result *= base;
+        }
+        remaining /= 2;
+        if remaining > 0 {
+            base = base.square();
+        }
+    }
+
+    result
+}
+
 /// Expression metadata used by claim-check protocols.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimExpression<F, O, P = (), C = usize> {
@@ -229,8 +253,130 @@ impl<F, O, P, C: Eq> ClaimExpression<F, O, P, C> {
     }
 }
 
+impl<F, O, P, C: Eq> ClaimExpression<F, O, P, C> {
+    pub fn require_challenge(&mut self, id: C) {
+        if !self.required_challenges.contains(&id) {
+            self.required_challenges.push(id);
+            self.num_challenges = self.required_challenges.len();
+        }
+    }
+
+    pub fn require_challenges<I>(&mut self, ids: I)
+    where
+        I: IntoIterator<Item = C>,
+    {
+        for id in ids {
+            self.require_challenge(id);
+        }
+    }
+}
+
 pub type InputClaimExpression<F, O, P = (), C = usize> = ClaimExpression<F, O, P, C>;
 pub type OutputClaimExpression<F, O, P = (), C = usize> = ClaimExpression<F, O, P, C>;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SameEvaluation<O> {
+    pub left: O,
+    pub right: O,
+}
+
+impl<O> SameEvaluation<O> {
+    pub fn new(left: O, right: O) -> Self {
+        Self { left, right }
+    }
+}
+
+pub trait SameEvaluationAs<Rhs = Self> {
+    type Output;
+
+    fn same_evaluation_as(self, rhs: Rhs) -> Self::Output;
+}
+
+impl<O> SameEvaluationAs for O {
+    type Output = SameEvaluation<O>;
+
+    fn same_evaluation_as(self, rhs: Self) -> Self::Output {
+        SameEvaluation::new(self, rhs)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConsistencyClaim<F, O, P = (), C = usize> {
+    SameEvaluation(SameEvaluation<O>),
+    EqualExpressions {
+        left: Expr<F, O, P, C>,
+        right: Expr<F, O, P, C>,
+    },
+}
+
+impl<F, O, P, C> ConsistencyClaim<F, O, P, C> {
+    pub fn same_evaluation(left: O, right: O) -> Self {
+        Self::SameEvaluation(SameEvaluation::new(left, right))
+    }
+
+    pub fn equal_expressions(left: Expr<F, O, P, C>, right: Expr<F, O, P, C>) -> Self {
+        Self::EqualExpressions { left, right }
+    }
+}
+
+impl<F, O, P, C> From<SameEvaluation<O>> for ConsistencyClaim<F, O, P, C> {
+    fn from(value: SameEvaluation<O>) -> Self {
+        Self::SameEvaluation(value)
+    }
+}
+
+impl<F, O: Clone + Eq, P, C> ConsistencyClaim<F, O, P, C> {
+    pub fn required_openings(&self) -> Vec<O> {
+        match self {
+            Self::SameEvaluation(SameEvaluation { left, right }) => {
+                let mut openings = vec![left.clone()];
+                if left != right {
+                    openings.push(right.clone());
+                }
+                openings
+            }
+            Self::EqualExpressions { left, right } => {
+                let mut openings = left.required_openings();
+                extend_unique(&mut openings, &right.required_openings());
+                openings
+            }
+        }
+    }
+}
+
+impl<F, O, P: Clone + Eq, C> ConsistencyClaim<F, O, P, C> {
+    pub fn required_publics(&self) -> Vec<P> {
+        match self {
+            Self::SameEvaluation(_) => Vec::new(),
+            Self::EqualExpressions { left, right } => {
+                let mut publics = left.required_publics();
+                extend_unique(&mut publics, &right.required_publics());
+                publics
+            }
+        }
+    }
+}
+
+impl<F, O, P, C: Clone + Eq> ConsistencyClaim<F, O, P, C> {
+    pub fn required_challenges(&self) -> Vec<C> {
+        match self {
+            Self::SameEvaluation(_) => Vec::new(),
+            Self::EqualExpressions { left, right } => {
+                let mut challenges = left.required_challenges();
+                extend_unique(&mut challenges, &right.required_challenges());
+                challenges
+            }
+        }
+    }
+}
+
+fn extend_unique<T: Clone + Eq>(target: &mut Vec<T>, values: &[T]) {
+    for value in values {
+        if !target.contains(value) {
+            target.push(value.clone());
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -295,6 +441,44 @@ mod tests {
     }
 
     #[test]
+    fn pow2_builds_field_native_powers() {
+        assert_eq!(pow2::<Fr>(0), Fr::from_u64(1));
+        assert_eq!(pow2::<Fr>(1), Fr::from_u64(2));
+        assert_eq!(pow2::<Fr>(63), Fr::from_u64(1u64 << 63));
+    }
+
+    #[test]
+    fn expression_powers_are_structural_products() {
+        let gamma: Expr<Fr, Opening, Public, Challenge> = challenge(Challenge::Alpha);
+        let expr = gamma.pow(3) * opening(Opening::A);
+
+        assert_eq!(expr.required_challenges(), vec![Challenge::Alpha]);
+        assert_eq!(expr.required_openings(), vec![Opening::A]);
+        assert_eq!(
+            expr.evaluate(
+                |_| Fr::from_u64(5),
+                |_| Fr::from_u64(7),
+                |_| Fr::from_u64(0)
+            ),
+            Fr::from_u64(1715)
+        );
+    }
+
+    #[test]
+    fn expression_zero_power_is_one() {
+        let expr: Expr<Fr, Opening, Public, Challenge> = Expr::zero().pow(0);
+
+        assert_eq!(
+            expr.evaluate(
+                |_| Fr::from_u64(0),
+                |_| Fr::from_u64(0),
+                |_| Fr::from_u64(0)
+            ),
+            Fr::from_u64(1)
+        );
+    }
+
+    #[test]
     fn claim_expression_derives_metadata() {
         let expression: Expr<Fr, Opening, Public> =
             challenge(2) * opening(Opening::B) * public(Public::Offset) + opening(Opening::A);
@@ -307,6 +491,42 @@ mod tests {
         assert_eq!(claim.num_challenges, 1);
         assert_eq!(claim.challenge_index(&2), Some(0));
         assert_eq!(claim.challenge_index(&1), None);
+    }
+
+    #[test]
+    fn same_evaluation_claim_requires_both_openings() {
+        let consistency: ConsistencyClaim<Fr, Opening, Public, Challenge> =
+            Opening::A.same_evaluation_as(Opening::B).into();
+
+        assert_eq!(
+            consistency,
+            ConsistencyClaim::same_evaluation(Opening::A, Opening::B)
+        );
+        assert_eq!(
+            consistency.required_openings(),
+            vec![Opening::A, Opening::B]
+        );
+        assert!(consistency.required_publics().is_empty());
+        assert!(consistency.required_challenges().is_empty());
+    }
+
+    #[test]
+    fn expression_consistency_claim_derives_metadata() {
+        let consistency: ConsistencyClaim<Fr, Opening, Public, Challenge> =
+            ConsistencyClaim::equal_expressions(
+                opening(Opening::A) + challenge(Challenge::Alpha) * public(Public::Offset),
+                opening(Opening::B) + challenge(Challenge::Alpha) + challenge(Challenge::Beta),
+            );
+
+        assert_eq!(
+            consistency.required_openings(),
+            vec![Opening::A, Opening::B]
+        );
+        assert_eq!(consistency.required_publics(), vec![Public::Offset]);
+        assert_eq!(
+            consistency.required_challenges(),
+            vec![Challenge::Alpha, Challenge::Beta]
+        );
     }
 
     #[test]

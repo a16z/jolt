@@ -1,6 +1,7 @@
 //! Proof structures for single and batched sumcheck protocols.
 
-use jolt_poly::UnivariatePoly;
+use crate::committed::CommittedSumcheckProof;
+use jolt_poly::{CompressedPoly, UnivariatePoly};
 use serde::{Deserialize, Serialize};
 
 /// A sumcheck proof consisting of one univariate round polynomial per variable.
@@ -15,7 +16,37 @@ use serde::{Deserialize, Serialize};
 /// $(r_1, \ldots, r_n)$.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct SumcheckProof<F: jolt_field::Field> {
+pub struct ClearSumcheckProof<F: jolt_field::Field> {
     /// Round polynomials $s_1, \ldots, s_n$ in the order they were generated.
     pub round_polynomials: Vec<UnivariatePoly<F>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct CompressedSumcheckProof<F: jolt_field::Field> {
+    /// Boolean-hypercube round polynomials with the linear coefficient omitted.
+    pub round_polynomials: Vec<CompressedPoly<F>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(serialize = "C: Serialize", deserialize = "C: Deserialize<'de>"))]
+pub enum SumcheckProof<F: jolt_field::Field, C> {
+    Clear(CompressedSumcheckProof<F>),
+    Committed(CommittedSumcheckProof<C>),
+}
+
+impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
+    pub fn as_clear(&self) -> Option<&CompressedSumcheckProof<F>> {
+        match self {
+            Self::Clear(proof) => Some(proof),
+            Self::Committed(_) => None,
+        }
+    }
+
+    pub fn as_committed(&self) -> Option<&CommittedSumcheckProof<C>> {
+        match self {
+            Self::Clear(_) => None,
+            Self::Committed(proof) => Some(proof),
+        }
+    }
 }

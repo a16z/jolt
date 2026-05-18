@@ -4,6 +4,8 @@
 //! protocols. All functions are generic over [`Field`] and operate on
 //! integer-indexed domains (symmetric or arbitrary).
 
+use std::fmt;
+
 use jolt_field::Field;
 
 /// Evaluates all Lagrange basis polynomials $L_0(r), \ldots, L_{N-1}(r)$ over
@@ -78,6 +80,90 @@ pub fn symmetric_power_sums(half_width: i64, num_powers: usize) -> Vec<i128> {
         }
     }
     sums
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CenteredIntegerDomainError {
+    EmptyDomain,
+    DomainTooLarge { domain_size: usize },
+    PowerSumOverflow { domain_size: usize, power: usize },
+}
+
+impl fmt::Display for CenteredIntegerDomainError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyDomain => write!(f, "centered integer domain must be non-empty"),
+            Self::DomainTooLarge { domain_size } => {
+                write!(
+                    f,
+                    "centered integer domain size {domain_size} exceeds i64::MAX"
+                )
+            }
+            Self::PowerSumOverflow { domain_size, power } => write!(
+                f,
+                "centered integer domain size {domain_size} overflowed i128 at power {power}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CenteredIntegerDomainError {}
+
+/// Start of the centered consecutive-integer domain used by core univariate skip.
+///
+/// The domain has `domain_size` consecutive integer points
+/// `{start, start + 1, ..., start + domain_size - 1}` where
+/// `start = -floor((domain_size - 1) / 2)`.
+pub fn centered_domain_start(domain_size: usize) -> Result<i64, CenteredIntegerDomainError> {
+    if domain_size == 0 {
+        return Err(CenteredIntegerDomainError::EmptyDomain);
+    }
+    if domain_size > i64::MAX as usize {
+        return Err(CenteredIntegerDomainError::DomainTooLarge { domain_size });
+    }
+    Ok(-(((domain_size - 1) / 2) as i64))
+}
+
+/// Computes `S_k = sum_t t^k` over the centered consecutive-integer domain.
+///
+/// This matches core's univariate-skip window convention for both odd and even
+/// domain sizes. For example, size `3` is `{-1, 0, 1}` and size `4` is
+/// `{-1, 0, 1, 2}`.
+pub fn centered_power_sums(
+    domain_size: usize,
+    num_powers: usize,
+) -> Result<Vec<i128>, CenteredIntegerDomainError> {
+    let start = centered_domain_start(domain_size)?;
+    let mut sums = vec![0i128; num_powers];
+    if num_powers == 0 {
+        return Ok(sums);
+    }
+
+    for offset in 0..domain_size {
+        let offset = i64::try_from(offset)
+            .map_err(|_| CenteredIntegerDomainError::DomainTooLarge { domain_size })?;
+        let t = i128::from(
+            start
+                .checked_add(offset)
+                .ok_or(CenteredIntegerDomainError::DomainTooLarge { domain_size })?,
+        );
+        let mut pow = 1i128;
+        for (power, sum) in sums.iter_mut().enumerate() {
+            *sum = sum
+                .checked_add(pow)
+                .ok_or(CenteredIntegerDomainError::PowerSumOverflow { domain_size, power })?;
+            if power + 1 < num_powers {
+                pow = pow
+                    .checked_mul(t)
+                    .ok_or(CenteredIntegerDomainError::PowerSumOverflow {
+                        domain_size,
+                        power: power + 1,
+                    })?;
+            }
+        }
+    }
+
+    Ok(sums)
 }
 
 /// Polynomial multiplication in coefficient form.
@@ -223,6 +309,32 @@ mod tests {
         assert_eq!(sums[0], 5);
         assert_eq!(sums[1], 0);
         assert_eq!(sums[2], 10); // 4 + 1 + 0 + 1 + 4
+    }
+
+    #[test]
+    fn centered_domain_start_matches_core_uniskip_convention() {
+        assert_eq!(centered_domain_start(1), Ok(0));
+        assert_eq!(centered_domain_start(3), Ok(-1));
+        assert_eq!(centered_domain_start(4), Ok(-1));
+        assert_eq!(centered_domain_start(10), Ok(-4));
+    }
+
+    #[test]
+    fn centered_power_sums_handle_even_and_odd_windows() {
+        assert_eq!(centered_power_sums(3, 4), Ok(vec![3, 0, 2, 0]));
+        assert_eq!(centered_power_sums(4, 4), Ok(vec![4, 2, 6, 8]));
+    }
+
+    #[test]
+    fn centered_power_sums_reject_invalid_or_overflowing_inputs() {
+        assert_eq!(
+            centered_power_sums(0, 2),
+            Err(CenteredIntegerDomainError::EmptyDomain)
+        );
+        assert!(matches!(
+            centered_power_sums(10, 100),
+            Err(CenteredIntegerDomainError::PowerSumOverflow { .. })
+        ));
     }
 
     #[test]
