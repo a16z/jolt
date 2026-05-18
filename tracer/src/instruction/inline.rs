@@ -212,16 +212,6 @@ impl INLINE {
 
 impl RISCVTrace for INLINE {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        // If rd (rs3 in FormatInline) is x0, remap to a virtual register so the
-        // constraint system never sees rd=x0.
-        if self.operands.rs3 == 0 {
-            let vr = cpu.vr_allocator.allocate();
-            let mut remapped = *self;
-            remapped.operands.rs3 = *vr;
-            remapped.trace(cpu, trace);
-            return;
-        }
-
         let reg = find_inline(self.opcode, self.funct3, self.funct7);
         if let Some(mut advice) = (reg.build_advice)(self.operands, cpu) {
             let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator);
@@ -265,9 +255,13 @@ mod tests {
 
     fn test_sequence(
         mut asm: InlineExpansionBuilder,
-        _operands: InlineOperands,
+        operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        asm.emit_i::<jolt_riscv::instructions::Addi>(40, 0, 0);
+        asm.emit_vshift_i::<jolt_riscv::instructions::VirtualRotriw>(
+            5,
+            operands.rs1,
+            0xffff_ffff_0000_0000,
+        );
         asm.finalize()
     }
 
@@ -353,5 +347,36 @@ mod tests {
         assert!(provider
             .expand_inline(&instruction, jolt_riscv::RV64IMAC_JOLT_ALL_INLINES,)
             .is_ok());
+    }
+
+    #[test]
+    fn trace_uses_program_allocator_for_rd_zero_inline() {
+        let inline = INLINE::new(TEST_INLINE_WORD, 0x8000_0000, false, false);
+        assert_eq!(inline.operands.rs3, 0);
+
+        let mut cpu = Cpu::new(Box::new(crate::emulator::terminal::DummyTerminal {}));
+        let expected_rows: Vec<JoltInstructionRow> = inline
+            .inline_sequence(&cpu.vr_allocator)
+            .into_iter()
+            .map(|instruction| {
+                instruction
+                    .try_jolt_instruction_row()
+                    .expect("test inline must expand to final Jolt rows")
+            })
+            .collect();
+
+        let mut trace = Vec::new();
+        inline.trace(&mut cpu, Some(&mut trace));
+        let actual_rows: Vec<JoltInstructionRow> = trace
+            .iter()
+            .map(|cycle| {
+                cycle
+                    .instruction()
+                    .try_jolt_instruction_row()
+                    .expect("test inline trace must contain final Jolt rows")
+            })
+            .collect();
+
+        assert_eq!(actual_rows, expected_rows);
     }
 }
