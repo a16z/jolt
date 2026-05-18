@@ -454,6 +454,10 @@ macro_rules! secp256k1_mulq_op {
             const FUNCT3: u32 = $funct3;
             const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
             const NAME: &'static str = $op_name;
+            const ADMISSIBILITY: jolt_inlines_sdk::host::InlineAdmissibility =
+                jolt_inlines_sdk::host::InlineAdmissibility::InternalOnly {
+                    reason: "field helper requires canonicality and division precondition checks",
+                };
             fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
                 MulqBuilder::new(asm, operands, $mul_type, $is_scalar).inline_sequence()
             }
@@ -481,6 +485,10 @@ impl InlineOp for Secp256k1GlvrAdv {
     const FUNCT3: u32 = crate::SECP256K1_GLVR_ADV_FUNCT3;
     const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
     const NAME: &'static str = crate::SECP256K1_GLVR_ADV_NAME;
+    const ADMISSIBILITY: jolt_inlines_sdk::host::InlineAdmissibility =
+        jolt_inlines_sdk::host::InlineAdmissibility::InternalOnly {
+            reason: "GLV advice requires SDK wrapper sign and recomposition checks",
+        };
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         GlvrAdvBuilder::new(asm, operands).inline_sequence()
     }

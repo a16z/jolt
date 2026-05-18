@@ -4,6 +4,7 @@ pub use num_bigint::BigUint as NBigUint;
 use tracer::utils::inline_sequence_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
 
 pub use inventory;
+pub use jolt_program::expand::{InlineAdmissibility, SafetyRequirement};
 pub use tracer::emulator::cpu::Cpu;
 pub use tracer::instruction;
 pub use tracer::instruction::format::format_inline::FormatInline;
@@ -113,6 +114,7 @@ pub trait InlineOp: Send + Sync {
     const FUNCT3: u32;
     const FUNCT7: u32;
     const NAME: &'static str;
+    const ADMISSIBILITY: InlineAdmissibility;
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction>;
 
@@ -383,12 +385,13 @@ macro_rules! __submit_inline_op {
             $crate::host::InlineRegistration {
                 opcode: <$op as $crate::host::InlineOp>::OPCODE,
                 funct3: <$op as $crate::host::InlineOp>::FUNCT3,
-                funct7: <$op as $crate::host::InlineOp>::FUNCT7,
-                extension: $extension,
-                name: <$op as $crate::host::InlineOp>::NAME,
-                build_sequence: <$op as $crate::host::InlineOp>::build_sequence,
-                build_advice: <$op as $crate::host::InlineOp>::build_advice,
-            }
+            funct7: <$op as $crate::host::InlineOp>::FUNCT7,
+            extension: $extension,
+            name: <$op as $crate::host::InlineOp>::NAME,
+            admissibility: <$op as $crate::host::InlineOp>::ADMISSIBILITY,
+            build_sequence: <$op as $crate::host::InlineOp>::build_sequence,
+            build_advice: <$op as $crate::host::InlineOp>::build_advice,
+        }
         }
     };
 }

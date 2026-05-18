@@ -46,6 +46,25 @@ use metadata::stamp_inline_sequence;
 use operands::*;
 use shifts::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SafetyRequirement {
+    FieldCanonicalOutput,
+    NonZeroDivisor,
+    ModularRelation,
+    GlvSignWords,
+    DecompositionRecomposition,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InlineAdmissibility {
+    Public {
+        requirements: &'static [SafetyRequirement],
+    },
+    InternalOnly {
+        reason: &'static str,
+    },
+}
+
 pub trait InlineExpansionProvider {
     /// Expands a registered inline row into final Jolt instructions.
     ///

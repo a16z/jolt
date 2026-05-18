@@ -11,7 +11,7 @@ extern crate jolt_inlines_sha2 as _;
 mod tests {
     use std::{
         error::Error,
-        fs, io,
+        fs,
         path::{Path, PathBuf},
     };
 
@@ -30,6 +30,7 @@ mod tests {
     #[serde(rename_all = "snake_case")]
     enum ExpectedAdmissibility {
         PublicNoRequirements,
+        PublicWithRequirements,
         InternalOnly,
     }
 
@@ -166,7 +167,7 @@ mod tests {
                     funct3: registration.funct3 as u8,
                     funct7: registration.funct7 as u8,
                     extension: format!("{:?}", registration.extension),
-                    expected_admissibility: expected_admissibility(registration.name)?,
+                    expected_admissibility: registration_admissibility(registration),
                     input,
                     row_count: rows.len(),
                     output_sha256,
@@ -176,25 +177,18 @@ mod tests {
         Ok(cases)
     }
 
-    fn expected_admissibility(name: &str) -> Result<ExpectedAdmissibility, Box<dyn Error>> {
-        match name {
-            "SHA256_INLINE"
-            | "SHA256_INIT_INLINE"
-            | "BLAKE2_INLINE"
-            | "BLAKE3_INLINE"
-            | "BLAKE3_KEYED64_INLINE"
-            | "KECCAK256_INLINE"
-            | "BIGINT256_MUL_INLINE" => Ok(ExpectedAdmissibility::PublicNoRequirements),
-            "SECP256K1_MULQ" | "SECP256K1_SQUAREQ" | "SECP256K1_DIVQ" | "SECP256K1_MULR"
-            | "SECP256K1_SQUARER" | "SECP256K1_DIVR" | "SECP256K1_GLVR_ADV"
-            | "GRUMPKIN_DIVQ_ADV" | "GRUMPKIN_DIVR_ADV" | "P256_MULQ" | "P256_SQUAREQ"
-            | "P256_DIVQ" | "P256_MULR" | "P256_SQUARER" | "P256_DIVR" | "P256_FAKE_GLV_ADV" => {
-                Ok(ExpectedAdmissibility::InternalOnly)
+    fn registration_admissibility(registration: &InlineRegistration) -> ExpectedAdmissibility {
+        match registration.admissibility {
+            jolt_program::expand::InlineAdmissibility::Public { requirements } => {
+                if requirements.is_empty() {
+                    ExpectedAdmissibility::PublicNoRequirements
+                } else {
+                    ExpectedAdmissibility::PublicWithRequirements
+                }
             }
-            other => Err(Box::new(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unknown inline registration {other}"),
-            ))),
+            jolt_program::expand::InlineAdmissibility::InternalOnly { .. } => {
+                ExpectedAdmissibility::InternalOnly
+            }
         }
     }
 

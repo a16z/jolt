@@ -16,7 +16,9 @@ use crate::{
     instruction::SourceInstruction,
     utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
-use jolt_program::expand::{ExpansionAllocator, ExpansionError, InlineExpansionProvider};
+use jolt_program::expand::{
+    ExpansionAllocator, ExpansionError, InlineAdmissibility, InlineExpansionProvider,
+};
 use jolt_riscv::{InlineExtension, JoltInstruction, JoltInstructionProfile};
 use serde::{Deserialize, Serialize};
 
@@ -35,6 +37,7 @@ pub struct InlineRegistration {
     pub funct7: u32,
     pub extension: InlineExtension,
     pub name: &'static str,
+    pub admissibility: InlineAdmissibility,
     pub build_sequence: InlineSequenceFn,
     pub build_advice: AdviceFn,
 }
@@ -280,6 +283,7 @@ mod tests {
             funct7: 0x7e,
             extension: InlineExtension::Sha2,
             name: "TEST_INLINE_PROFILE",
+            admissibility: InlineAdmissibility::Public { requirements: &[] },
             build_sequence: test_sequence,
             build_advice: test_advice,
         }

@@ -2979,6 +2979,7 @@ version = "0.1.0"
 dependencies = [
  "inventory",
  "jolt-platform",
+ "jolt-program",
  "num-bigint",
  "tracer",
 ]

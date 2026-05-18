@@ -260,6 +260,8 @@ impl InlineOp for Blake2bCompression {
     const FUNCT3: u32 = crate::BLAKE2_FUNCT3;
     const FUNCT7: u32 = crate::BLAKE2_FUNCT7;
     const NAME: &'static str = crate::BLAKE2_NAME;
+    const ADMISSIBILITY: jolt_inlines_sdk::host::InlineAdmissibility =
+        jolt_inlines_sdk::host::InlineAdmissibility::Public { requirements: &[] };
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         Blake2SequenceBuilder::new(asm, operands).build()
