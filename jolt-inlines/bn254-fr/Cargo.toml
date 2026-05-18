@@ -25,4 +25,3 @@ ark-ff = { workspace = true, optional = true }
 [dev-dependencies]
 ark-bn254 = { workspace = true, default-features = false, features = ["scalar_field"] }
 ark-ff.workspace = true
-tracer = { workspace = true, features = ["std", "test-utils"] }

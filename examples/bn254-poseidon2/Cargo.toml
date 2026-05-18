@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 jolt-sdk = { workspace = true, features = ["host"] }
-jolt-inlines-bn254-fr = { workspace = true, features = ["host"] }
 tracing-subscriber.workspace = true
 tracing.workspace = true
 clap = { workspace = true, features = ["derive"] }
