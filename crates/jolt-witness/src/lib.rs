@@ -401,21 +401,27 @@ pub struct Stage45SparseTraceWitness<F: Field> {
     /// Sparse FR replay: bytecode metadata + FR event stream. Empty `events`
     /// is the inert default; `with_field_reg_replay` overlays a real replay.
     pub fr_replay: field_reg::FieldRegReplay,
-    // Phantom to keep the existing `<F: Field>` API surface intact —
-    // FR materialization is generic over `F` but the replay itself is not.
-    _field: core::marker::PhantomData<F>,
+    /// Cached `FrdInc(j) = limbs_to_field(rd_post[j]) − running_pre[bc.frd[j]]`
+    /// for every cycle. Materialized once in `with_field_reg_replay` so the
+    /// Stage 4 RW and Stage 5 ValEvaluation kernels can each clone-from-slice
+    /// into their own mutable working buffers instead of paying the O(T) +
+    /// per-event Fr conversion twice. Empty Vec when no FR replay attached.
+    pub fr_frd_inc: Vec<F>,
 }
 
 impl<F: Field> Stage45SparseTraceWitness<F> {
-    /// Attach the FR Twist replay. Kernels later call
-    /// `self.fr_replay.materialize_*::<F>()` for the polys they need.
-    /// Empty `replay.events` leaves the witness in the inert shape.
+    /// Attach the FR Twist replay and eagerly cache `FrdInc` (T-sized).
+    /// The Stage 4/5 kernels read `fr_frd_inc` directly — avoids a
+    /// duplicate materialize pass (saves ~one O(T)+event scan on FR-active
+    /// proofs; significant at production trace lengths). Empty
+    /// `replay.events` leaves the witness in the inert shape.
     pub fn with_field_reg_replay(mut self, replay: field_reg::FieldRegReplay) -> Self {
         assert_eq!(
             replay.num_cycles,
             self.rd_inc.len(),
             "FieldRegReplay.num_cycles must match the trace length"
         );
+        self.fr_frd_inc = replay.materialize_frd_inc::<F>();
         self.fr_replay = replay;
         self
     }
@@ -452,7 +458,7 @@ pub fn stage4_5_sparse_trace_witness<F: Field>(
         ram_inc,
         rd_write_addresses,
         fr_replay: field_reg::FieldRegReplay::empty(trace_len),
-        _field: core::marker::PhantomData,
+        fr_frd_inc: Vec::new(),
     }
 }
 

@@ -296,10 +296,13 @@ pub struct Stage5RegistersValWitness<'a, F: Field> {
 /// `Stage45SparseTraceWitness` carries just the sparse replay; no K_FR×T
 /// buffer is ever materialized.
 #[derive(Clone, Copy)]
-pub struct Stage5FieldRegValWitness<'a> {
+pub struct Stage5FieldRegValWitness<'a, F: Field> {
     pub field_reg_count: usize,
     pub trace_len: usize,
     pub replay: &'a jolt_witness::field_reg::FieldRegReplay,
+    /// Pre-materialized FrdInc T-vector, shared with Stage 4 via
+    /// `Stage45SparseTraceWitness.fr_frd_inc`.
+    pub frd_inc: &'a [F],
 }
 
 #[derive(Clone, Copy)]
@@ -332,7 +335,7 @@ pub struct Stage5ProverInputs<'a, F: Field> {
     pub instruction_read_raf: Option<Stage5InstructionReadRafWitness<'a>>,
     pub ram_ra: Option<Stage5RamRaWitness<'a, F>>,
     pub registers_val: Option<Stage5RegistersValWitness<'a, F>>,
-    pub field_reg_val: Option<Stage5FieldRegValWitness<'a>>,
+    pub field_reg_val: Option<Stage5FieldRegValWitness<'a, F>>,
 }
 
 impl<'a, F: Field> Stage5ProverInputs<'a, F> {
@@ -374,7 +377,7 @@ impl<'a, F: Field> Stage5ProverInputs<'a, F> {
         self
     }
 
-    pub fn with_field_reg_val(mut self, field_reg_val: Stage5FieldRegValWitness<'a>) -> Self {
+    pub fn with_field_reg_val(mut self, field_reg_val: Stage5FieldRegValWitness<'a, F>) -> Self {
         self.field_reg_val = Some(field_reg_val);
         self
     }
@@ -441,6 +444,7 @@ impl<'a, F: Field> Stage5ProverInputs<'a, F> {
             field_reg_count: jolt_witness::field_reg::FIELD_REG_COUNT,
             trace_len,
             replay: &witness.fr_replay,
+            frd_inc: &witness.fr_frd_inc,
         })
     }
 }
@@ -2960,7 +2964,16 @@ fn field_reg_val_evaluation_state<F: Field>(
     let (address_point, cycle_point) = field_reg_val_point.split_at(address_rounds);
     let address_eq = EqPolynomial::<F>::evals(address_point, None);
     let frd_wa_at_address = frd_wa_at_field_reg_address(witness, &address_eq)?;
-    let frd_inc = witness.replay.materialize_frd_inc::<F>();
+    // Prefer the cached FrdInc from `Stage45SparseTraceWitness.fr_frd_inc`
+    // (shared with Stage 4) so we don't pay the materialization twice.
+    // Empty slice indicates inert (no FR replay attached) — re-materialize
+    // in that case for backwards compatibility with callers that bypass
+    // `with_field_reg_replay`.
+    let frd_inc = if witness.frd_inc.is_empty() {
+        witness.replay.materialize_frd_inc::<F>()
+    } else {
+        witness.frd_inc.to_vec()
+    };
     require_operand_count(
         "stage5.field_reg_val_evaluation.FrdInc",
         witness.trace_len,
@@ -2996,7 +3009,7 @@ fn field_reg_val_evaluation_state<F: Field>(
 }
 
 fn frd_wa_at_field_reg_address<F: Field>(
-    witness: Stage5FieldRegValWitness<'_>,
+    witness: Stage5FieldRegValWitness<'_, F>,
     address_eq: &[F],
 ) -> Result<Vec<F>, Stage5KernelError> {
     if address_eq.len() != witness.field_reg_count {

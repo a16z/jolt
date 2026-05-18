@@ -459,10 +459,14 @@ pub struct Stage4RamWitness<'a, F: Field> {
 /// only T-sized buffer is `FrdInc` (one field element per cycle, zero on
 /// non-write cycles).
 #[derive(Clone, Copy)]
-pub struct Stage4FieldRegWitness<'a> {
+pub struct Stage4FieldRegWitness<'a, F: Field> {
     pub field_reg_count: usize,
     pub trace_len: usize,
     pub replay: &'a jolt_witness::field_reg::FieldRegReplay,
+    /// Pre-materialized FrdInc T-vector borrowed from the shared
+    /// `Stage45SparseTraceWitness.fr_frd_inc`. Stage 4 clones into its own
+    /// mutable working copy; Stage 5 reads the same source.
+    pub frd_inc: &'a [F],
 }
 
 #[derive(Clone, Copy)]
@@ -470,7 +474,7 @@ pub struct Stage4ProverInputs<'a, F: Field> {
     pub opening_inputs: &'a [Stage4OpeningInputValue<F>],
     pub registers: Option<Stage4RegistersWitness<'a, F>>,
     pub ram: Option<Stage4RamWitness<'a, F>>,
-    pub field_reg: Option<Stage4FieldRegWitness<'a>>,
+    pub field_reg: Option<Stage4FieldRegWitness<'a, F>>,
 }
 
 impl<'a, F: Field> Stage4ProverInputs<'a, F> {
@@ -502,7 +506,7 @@ impl<'a, F: Field> Stage4ProverInputs<'a, F> {
         self
     }
 
-    pub fn with_field_reg(mut self, field_reg: Stage4FieldRegWitness<'a>) -> Self {
+    pub fn with_field_reg(mut self, field_reg: Stage4FieldRegWitness<'a, F>) -> Self {
         self.field_reg = Some(field_reg);
         self
     }
@@ -557,6 +561,7 @@ impl<'a, F: Field> Stage4ProverInputs<'a, F> {
             field_reg_count: jolt_witness::field_reg::FIELD_REG_COUNT,
             trace_len,
             replay: &witness.fr_replay,
+            frd_inc: &witness.fr_frd_inc,
         })
     }
 }
@@ -2073,6 +2078,7 @@ impl<F: Field> SparseFieldRegState<F> {
         field_reg_count: usize,
         trace_len: usize,
         replay: &jolt_witness::field_reg::FieldRegReplay,
+        frd_inc_source: &[F],
         trace_point: &[F],
         gamma: F,
         gamma2: F,
@@ -2237,7 +2243,21 @@ impl<F: Field> SparseFieldRegState<F> {
             entry_scratch: Vec::new(),
             frs2_reads,
             eq_cycle,
-            frd_inc: replay.materialize_frd_inc::<F>(),
+            // Clone-from-slice instead of re-materializing — `frd_inc_source`
+            // is cached in `Stage45SparseTraceWitness.fr_frd_inc` and shared
+            // with Stage 5. We still need a private mutable copy because the
+            // sumcheck rounds bind `frd_inc` in place.
+            frd_inc: {
+                debug_assert!(
+                    frd_inc_source.len() == trace_len || frd_inc_source.is_empty(),
+                    "frd_inc_source must be empty (inert) or trace_len-sized"
+                );
+                if frd_inc_source.is_empty() {
+                    replay.materialize_frd_inc::<F>()
+                } else {
+                    frd_inc_source.to_vec()
+                }
+            },
             frd_inc_scratch: Vec::new(),
             gamma,
             gamma2,
@@ -2638,6 +2658,7 @@ fn field_reg_rw_state<F: Field>(
         witness.field_reg_count,
         witness.trace_len,
         witness.replay,
+        witness.frd_inc,
         trace_point,
         gamma,
         gamma2,
@@ -5496,10 +5517,13 @@ mod tests {
         fn build_state(replay: FieldRegReplay) -> SparseFieldRegState<Fr> {
             let trace_len = replay.num_cycles;
             let trace_point = frs(&(0..trace_len.trailing_zeros() as u64).collect::<Vec<_>>());
+            // Empty `frd_inc_source` triggers the fallback re-materialize
+            // path; production callers pass `&witness.fr_frd_inc`.
             SparseFieldRegState::<Fr>::new(
                 FIELD_REG_COUNT,
                 trace_len,
                 leak(replay),
+                &[],
                 &trace_point,
                 Fr::from_u64(7),
                 Fr::from_u64(11),
@@ -5591,6 +5615,7 @@ mod tests {
                     bytecode,
                     events,
                 }),
+                &[],
                 &trace_point,
                 Fr::from_u64(7),
                 Fr::from_u64(11),
@@ -5620,6 +5645,7 @@ mod tests {
                     bytecode,
                     events: vec![],
                 }),
+                &[],
                 &trace_point,
                 Fr::from_u64(7),
                 Fr::from_u64(11),
@@ -5695,6 +5721,7 @@ mod tests {
                     bytecode,
                     events,
                 }),
+                &[],
                 &trace_point,
                 Fr::from_u64(7),
                 Fr::from_u64(11),
