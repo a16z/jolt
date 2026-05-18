@@ -188,6 +188,12 @@ mod tests {
         assert_eq!(ev.new, [7, 0, 0, 0]);
     }
 
+    // The mismatched-values check in `execute` is a `debug_assert_eq!` (R1CS
+    // row 21 enforces `V_FIELD_RS1 == V_FIELD_RS2` for proof soundness; the
+    // tracer trap is a debug-only sanity check, consistent with the
+    // `frs1`/`frs2` range checks alongside it). The release build elides the
+    // panic, so this test only runs under debug assertions.
+    #[cfg(debug_assertions)]
     #[test]
     #[should_panic(expected = "FieldAssertEq failed")]
     fn field_assert_eq_on_mismatched_values_panics() {
