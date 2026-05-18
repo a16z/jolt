@@ -27,11 +27,9 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for SignExtensionPref
             let _ = b.pop_msb();
             let (_, mut y) = b.uninterleave();
             let mut result = F::zero();
-            let mut index = 1;
-            for _ in 0..y.len() {
+            for index in 1..=y.len() {
                 let y_i = y.pop_msb() as u64;
                 result += F::from_u64((1 - y_i) << index);
-                index += 1;
             }
             return result * sign_bit;
         }
@@ -39,11 +37,9 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for SignExtensionPref
             let sign_bit = r_x.unwrap();
             let (_, mut y) = b.uninterleave();
             let mut result = F::zero();
-            let mut index = 1;
-            for _ in 0..y.len() {
+            for index in 1..=y.len() {
                 let y_i = y.pop_msb() as u64;
                 result += F::from_u64((1 - y_i) << index);
-                index += 1;
             }
             return result * sign_bit;
         }
