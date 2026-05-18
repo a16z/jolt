@@ -213,3 +213,61 @@ macro_rules! define_instruction_kind {
 }
 
 crate::for_each_instruction_kind!(define_instruction_kind);
+
+impl JoltInstructionKind {
+    /// Returns `(reads_frs1, reads_frs2, writes_frd)` for this instruction
+    /// kind. Single source of truth for FR-coprocessor access classification;
+    /// shared between the host-side `fr_bytecode_from_trace` and the
+    /// kernel-side `stage6_bytecode_entries` so the two cannot drift.
+    ///
+    /// Soundness: Stage 4's FR Twist and Stage 6's bytecode-RAF anchor both
+    /// depend on this classification. Divergence between the two consumers
+    /// would break the cycle-vs-bytecode binding that closes the C-A4
+    /// drop-event gap.
+    #[inline]
+    pub const fn fr_access_flags(self) -> (bool, bool, bool) {
+        match self {
+            Self::FieldMul | Self::FieldAdd | Self::FieldSub => (true, true, true),
+            Self::FieldInv => (true, false, true),
+            Self::FieldAssertEq => (true, true, false),
+            Self::FieldMov | Self::FieldSLL64 | Self::FieldSLL128 | Self::FieldSLL192 => {
+                (false, false, true)
+            }
+            _ => (false, false, false),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fr_access_flags_match_per_kind_contract() {
+        // Locks the FR access classification used by Stage 4 RW + Stage 6
+        // bytecode-RAF anchor. Any future change to FR instruction semantics
+        // requires updating this table — which prevents silent classifier
+        // drift between the host and kernel call sites.
+        type Kind = JoltInstructionKind;
+        let cases: &[(Kind, (bool, bool, bool))] = &[
+            (Kind::FieldMul, (true, true, true)),
+            (Kind::FieldAdd, (true, true, true)),
+            (Kind::FieldSub, (true, true, true)),
+            (Kind::FieldInv, (true, false, true)),
+            (Kind::FieldAssertEq, (true, true, false)),
+            (Kind::FieldMov, (false, false, true)),
+            (Kind::FieldSLL64, (false, false, true)),
+            (Kind::FieldSLL128, (false, false, true)),
+            (Kind::FieldSLL192, (false, false, true)),
+            (Kind::ADD, (false, false, false)),
+            (Kind::NoOp, (false, false, false)),
+        ];
+        for (kind, expected) in cases {
+            assert_eq!(
+                kind.fr_access_flags(),
+                *expected,
+                "fr_access_flags drift on {kind:?}"
+            );
+        }
+    }
+}

@@ -459,25 +459,14 @@ struct ProveStageOutput {
 fn fr_bytecode_from_trace(
     trace: &[TraceRow],
 ) -> Vec<jolt_witness::field_reg::FrCycleBytecode> {
-    use jolt_riscv::JoltInstructionKind;
     use jolt_witness::field_reg::FIELD_REG_ADDR_MASK;
     let mask_u8 = FIELD_REG_ADDR_MASK as u8;
     trace
         .iter()
         .map(|row| {
             let instr = row.instruction;
-            let (reads_frs1, reads_frs2, writes_frd) = match instr.instruction_kind {
-                JoltInstructionKind::FieldMul
-                | JoltInstructionKind::FieldAdd
-                | JoltInstructionKind::FieldSub => (true, true, true),
-                JoltInstructionKind::FieldInv => (true, false, true),
-                JoltInstructionKind::FieldAssertEq => (true, true, false),
-                JoltInstructionKind::FieldMov
-                | JoltInstructionKind::FieldSLL64
-                | JoltInstructionKind::FieldSLL128
-                | JoltInstructionKind::FieldSLL192 => (false, false, true),
-                _ => (false, false, false),
-            };
+            let (reads_frs1, reads_frs2, writes_frd) =
+                instr.instruction_kind.fr_access_flags();
             jolt_witness::field_reg::FrCycleBytecode {
                 frs1: instr.operands.rs1.unwrap_or(0) & mask_u8,
                 frs2: instr.operands.rs2.unwrap_or(0) & mask_u8,

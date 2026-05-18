@@ -299,26 +299,15 @@ where
             let instr = *instruction;
             let circuit_flags = instruction_circuit_flags(instruction);
             let instruction_flags = instruction_instruction_flags(instruction);
-            // FR slot classification: bytecode-derived flags determining
-            // which FR operands are read/written. The Stage 6 bytecode-RAF
-            // binding ties FR Twist's per-cycle Ra/Wa polynomials against
-            // these flags. Must match the host-side `fr_bytecode_from_trace`
-            // (jolt-host/src/lib.rs) classification exactly — same instruction
-            // kinds.
-            let kind = instruction.instruction_kind;
-            let (reads_frs1, reads_frs2, writes_frd) = match kind {
-                jolt_riscv::JoltInstructionKind::FieldMul
-                | jolt_riscv::JoltInstructionKind::FieldAdd
-                | jolt_riscv::JoltInstructionKind::FieldSub => (true, true, true),
-                jolt_riscv::JoltInstructionKind::FieldInv => (true, false, true),
-                jolt_riscv::JoltInstructionKind::FieldAssertEq => (true, true, false),
-                jolt_riscv::JoltInstructionKind::FieldMov
-                | jolt_riscv::JoltInstructionKind::FieldSLL64
-                | jolt_riscv::JoltInstructionKind::FieldSLL128
-                | jolt_riscv::JoltInstructionKind::FieldSLL192 => (false, false, true),
-                _ => (false, false, false),
+            // FR slot classification — see `JoltInstructionKind::fr_access_flags`.
+            // Stage 4 RW + Stage 6 bytecode-RAF anchor both depend on this
+            // classification; the helper centralizes it so the host-side
+            // `fr_bytecode_from_trace` and this kernel-side site cannot drift.
+            let (reads_frs1, reads_frs2, writes_frd) =
+                instruction.instruction_kind.fr_access_flags();
+            let fr_slot = |opt: Option<u8>| {
+                opt.map(|raw| (raw as usize) & jolt_witness::field_reg::FIELD_REG_ADDR_MASK)
             };
-            let fr_slot = |opt: Option<u8>| opt.map(|raw| (raw as usize) & 0xF);
             let frd = if writes_frd { fr_slot(instr.operands.rd) } else { None };
             let frs1 = if reads_frs1 { fr_slot(instr.operands.rs1) } else { None };
             let frs2 = if reads_frs2 { fr_slot(instr.operands.rs2) } else { None };
