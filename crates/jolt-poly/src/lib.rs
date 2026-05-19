@@ -67,7 +67,8 @@ pub use eq_plus_one::{EqPlusOnePolynomial, EqPlusOnePrefixSuffix};
 pub use identity::IdentityPolynomial;
 pub use lt::LtPolynomial;
 pub use mle::{
-    eq_index_msb, range_mask_mle_msb, sparse_mle_msb, sparse_segments_mle_msb, try_eq_mle, MleError,
+    block_selector_mle_msb, eq_index_msb, range_mask_mle_msb, sparse_mle_msb,
+    sparse_segments_mle_msb, try_eq_mle, MleError,
 };
 pub use multilinear::{MultilinearBinding, MultilinearEvaluation, MultilinearPoly, RlcSource};
 pub use one_hot::OneHotPolynomial;

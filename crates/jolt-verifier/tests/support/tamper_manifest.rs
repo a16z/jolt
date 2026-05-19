@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_verifier::{
     proof::TransparentProofClaims,
-    stages::{stage1, stage2, stage3},
+    stages::{stage1, stage2, stage3, stage4},
 };
 use serde_json::Value;
 
@@ -583,15 +583,66 @@ pub const STAGE3_TARGETS: &[TamperTarget] = &[
     ),
 ];
 
-pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
-    later_standard(
-        "stage4.sumcheck_payload",
-        "proof.stages.stage4_sumcheck_proof",
+pub const STAGE4_TARGETS: &[TamperTarget] = &[
+    checked_standard(
+        "stage4.batch.round_polynomial",
+        "proof.stages.stage4_sumcheck_proof.round_polynomials[*]",
         VerifierCheckpoint::Stage4,
         MutationStrategy::ReplaceProofPayload,
-        TamperCoverage::Deferred,
-        "stage 4 is not wired yet",
+        TamperCoverage::Active,
+        "core-fixture test mutates every compressed Stage 4 batch round polynomial",
     ),
+    checked_standard(
+        "stage4.batch.round_count.missing",
+        "proof.stages.stage4_sumcheck_proof.round_polynomials",
+        VerifierCheckpoint::Stage4,
+        MutationStrategy::TruncateVector,
+        TamperCoverage::Active,
+        "core-fixture test removes a Stage 4 batch round",
+    ),
+    checked_standard(
+        "stage4.batch.round_count.extra",
+        "proof.stages.stage4_sumcheck_proof.round_polynomials",
+        VerifierCheckpoint::Stage4,
+        MutationStrategy::ExtendVector,
+        TamperCoverage::Active,
+        "core-fixture test appends a Stage 4 batch round",
+    ),
+    checked_standard(
+        "stage4.claims.registers_read_write",
+        "claims.stage4.registers_read_write.*",
+        VerifierCheckpoint::Stage4,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets each register read-write output claim",
+    ),
+    checked_standard(
+        "stage4.claims.ram_val_check",
+        "claims.stage4.ram_val_check.*",
+        VerifierCheckpoint::Stage4,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets each RAM value-check output claim",
+    ),
+    checked_standard(
+        "stage4.claims.advice.untrusted",
+        "claims.stage4.advice.untrusted",
+        VerifierCheckpoint::Stage4,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "advice fixture test offsets the untrusted advice opening consumed by RAM value check",
+    ),
+    checked_standard(
+        "stage4.claims.advice.trusted",
+        "claims.stage4.advice.trusted",
+        VerifierCheckpoint::Stage4,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "advice fixture test offsets the trusted advice opening consumed by RAM value check",
+    ),
+];
+
+pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
     later_standard(
         "stage5.sumcheck_payload",
         "proof.stages.stage5_sumcheck_proof",
@@ -654,6 +705,7 @@ pub fn all_targets() -> Vec<TamperTarget> {
         .chain(STAGE1_TARGETS)
         .chain(STAGE2_TARGETS)
         .chain(STAGE3_TARGETS)
+        .chain(STAGE4_TARGETS)
         .chain(FUTURE_STAGE_TARGETS)
         .copied()
         .collect()
@@ -716,7 +768,7 @@ pub fn proof_field_paths() -> &'static [&'static str] {
         "proof.stages.stage2_uni_skip_first_round_proof.round_polynomials[*]",
         "proof.stages.stage2_sumcheck_proof.round_polynomials[*]",
         "proof.stages.stage3_sumcheck_proof.round_polynomials[*]",
-        "proof.stages.stage4_sumcheck_proof",
+        "proof.stages.stage4_sumcheck_proof.round_polynomials[*]",
         "proof.stages.stage5_sumcheck_proof",
         "proof.stages.stage6_sumcheck_proof",
         "proof.stages.stage7_sumcheck_proof",
@@ -835,6 +887,17 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage3.registers_claim_reduction.rs1_value",
             "claims.stage3.registers_claim_reduction.rs2_value",
         ],
+        "claims.stage4.registers_read_write.*" => vec![
+            "claims.stage4.registers_read_write.registers_val",
+            "claims.stage4.registers_read_write.rs1_ra",
+            "claims.stage4.registers_read_write.rs2_ra",
+            "claims.stage4.registers_read_write.rd_wa",
+            "claims.stage4.registers_read_write.rd_inc",
+        ],
+        "claims.stage4.ram_val_check.*" => vec![
+            "claims.stage4.ram_val_check.ram_ra",
+            "claims.stage4.ram_val_check.ram_inc",
+        ],
         path => vec![path],
     }
 }
@@ -950,6 +1013,23 @@ fn zero_transparent_claims() -> TransparentProofClaims<Fr> {
                 rd_write_value: zero,
                 rs1_value: zero,
                 rs2_value: zero,
+            },
+        },
+        stage4: stage4::inputs::Stage4Claims {
+            advice: stage4::inputs::RamValCheckAdviceOpeningClaims {
+                untrusted: Some(zero),
+                trusted: Some(zero),
+            },
+            registers_read_write: stage4::inputs::RegistersReadWriteOutputOpeningClaims {
+                registers_val: zero,
+                rs1_ra: zero,
+                rs2_ra: zero,
+                rd_wa: zero,
+                rd_inc: zero,
+            },
+            ram_val_check: stage4::inputs::RamValCheckOutputOpeningClaims {
+                ram_ra: zero,
+                ram_inc: zero,
             },
         },
     }

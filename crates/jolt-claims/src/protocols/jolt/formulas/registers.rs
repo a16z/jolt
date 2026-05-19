@@ -56,6 +56,20 @@ where
     )
 }
 
+pub fn read_write_checking_input_openings() -> [JoltOpeningId; 3] {
+    [rd_write_value_claim(), rs1_value_claim(), rs2_value_claim()]
+}
+
+pub fn read_write_checking_output_openings() -> [JoltOpeningId; 5] {
+    [
+        registers_val_read_write(),
+        rs1_ra_read_write(),
+        rs2_ra_read_write(),
+        rd_wa_read_write(),
+        rd_inc_read_write(),
+    ]
+}
+
 fn read_write_challenge<F>(id: RegistersReadWriteChallenge) -> JoltExpr<F>
 where
     F: RingCore,
@@ -164,7 +178,7 @@ mod tests {
         );
         assert_eq!(
             claims.input.required_openings,
-            vec![rd_write_value_claim(), rs1_value_claim(), rs2_value_claim()]
+            read_write_checking_input_openings().to_vec()
         );
         assert_eq!(
             claims.output.required_openings,
@@ -174,6 +188,16 @@ mod tests {
                 registers_val_read_write(),
                 rs1_ra_read_write(),
                 rs2_ra_read_write(),
+            ]
+        );
+        assert_eq!(
+            read_write_checking_output_openings(),
+            [
+                registers_val_read_write(),
+                rs1_ra_read_write(),
+                rs2_ra_read_write(),
+                rd_wa_read_write(),
+                rd_inc_read_write(),
             ]
         );
         assert_eq!(

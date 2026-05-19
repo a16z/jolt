@@ -19,7 +19,7 @@ Related architecture specs:
 
 ```text
 recursion protocol composition:
-  protocol contracts, claim formulas, verifier stages, wrapper R1CS boundaries
+  protocol contracts, claim formulas, verifier stages, wrapper R1CS interfaces
 
 jolt-prover model crate:
   orchestration, witness generation, kernels, proof assembly, compute artifacts
@@ -32,6 +32,7 @@ See also:
 
 - [`jolt-prover` model crate spec](jolt-prover-model-crate.md)
 - [`jolt-verifier` model crate spec](jolt-verifier-model-crate.md)
+- Recursion paper repo: <https://github.com/markosg04/recursion-paper>
 
 This recursion architecture extends the verifier model with three composable
 protocol features:
@@ -46,6 +47,13 @@ protocol features:
 Core invariant: protocol features compose through the verifier stage schedule.
 Dory assist, field inline, ZK mode, and wrapping are selected by protocol
 config; the wrapper receives one selected verifier computation as input.
+
+The implementation model mirrors base Jolt. New protocol work enters as new
+stage IDs, relation IDs, dimensions, claim formulas, openings, publics,
+challenges, and concrete verifier stages. Dory assist uses different algebraic
+components and workloads, but it follows the same claim/stage organization as
+Spartan, RAM, registers, bytecode, instruction lookups, and the other base Jolt
+components.
 
 ## Composition Model
 
@@ -134,7 +142,8 @@ jolt-blindfold
   BlindFold verifier logic and verifier-equation R1CS
 
 jolt-hyrax
-  Hyrax commitment/opening verification and reusable Hyrax R1CS constraints
+  Hyrax commitment/opening proof types, native verifier, and reusable R1CS
+  constraints
 
 jolt-dory
   Dory PCS proof artifacts and ordinary native Dory verification
@@ -150,6 +159,33 @@ The important split is that protocol descriptions live in `jolt-claims`,
 stage execution lives in `jolt-verifier`, reusable R1CS encodings live with
 their owning component crates, and `jolt-wrapper` ties those pieces together for
 the chosen wrapper backend.
+
+### R1CS Module Pattern
+
+Modular protocol crates expose native verifier APIs and, when the protocol must
+be wrapped, a sibling `r1cs` module that encodes the same verifier equations
+against `jolt-r1cs` builders.
+
+```text
+jolt-sumcheck
+  native sumcheck verifier
+  r1cs/ for generic sumcheck verifier equations
+
+jolt-hyrax
+  native Hyrax verifier
+  r1cs/ for Hyrax opening verification constraints
+
+jolt-blindfold
+  native BlindFold verifier
+  r1cs/ for BlindFold verifier-equation constraints
+
+jolt-claims
+  semantic claim formulas and protocol dimensions
+  helpers that lower claim expressions through jolt-r1cs
+```
+
+`jolt-wrapper` sequences these modules. It does not own the generic Hyrax,
+sumcheck, BlindFold, or claim-lowering logic.
 
 ## Dory Assist
 
@@ -169,7 +205,7 @@ The Dory assist proof treats the Dory verifier computation as a typed execution
 trace:
 
 ```text
-public boundary:
+public inputs:
   Dory proof artifact
   Dory verifier setup inputs
   Jolt evaluation claims and commitments from stage 8
@@ -179,7 +215,7 @@ private witness:
   typed Dory verifier trace:
     GT exponentiation and multiplication
     G1/G2 scalar multiplication and addition
-    Miller-loop and final-exponentiation trace rows
+    Miller-loop trace rows
     operation outputs and wiring values
 
 commitment:
@@ -195,7 +231,7 @@ local correctness:
 wiring correctness:
   outputs consumed by later operations match the producer outputs
 
-boundary correctness:
+public-input consistency:
   public Dory proof inputs and Jolt evaluation claims are the values used in
   the operation trace
 
@@ -221,7 +257,7 @@ stage 2:
     G1/G2 scalar multiplication
     G1/G2 addition
     multi-Miller-loop constraints
-    AST-derived wiring and boundary constraints
+    AST-derived wiring and public-input constraints
 
 stage 3:
   prefix packing reduction to one dense polynomial opening
@@ -230,9 +266,18 @@ PCS opening:
   Hyrax opening of the dense trace
 ```
 
-The branch currently has an external pairing boundary for final verification.
-The full Dory-assist target moves pairing and final exponentiation into the
-Dory-assist trace and stage-2 constraint layer.
+Quang's branch is a protocol reference for the Dory-assist SNARK: stage order,
+operation families, wiring shape, prefix packing, and Hyrax opening flow. The
+implementation here is new modular code. Protocol facts move into
+`jolt-claims`, selected-stage execution moves into `jolt-verifier`, Hyrax moves
+into `jolt-hyrax`, and wrapper R1CS assembly consumes those modular crates.
+
+The Dory-assist target proves the multi-Miller-loop work in the assist proof.
+The selected verifier receives the resulting public GT value, computes final
+exponentiation directly, and checks the public pairing equality. This is the
+same style as other cheap deterministic verifier work such as equality-polynomial
+evaluation: keep the expensive trace inside the assist proof, compute the cheap
+public check natively.
 
 ### `jolt-claims` Protocol Layout
 
@@ -243,78 +288,66 @@ crates/jolt-claims/src/protocols/dory_assist/
   mod.rs
   config.rs
   ids.rs
+  stage.rs
   proof_shape.rs
-  verifier_shape.rs
   public_inputs.rs
-  witness_shape.rs
-  metadata.rs
+  dimensions.rs
   transcript.rs
-  opening_boundary.rs
-  prefix_packing.rs
-  wiring_plan.rs
   constraints/
     mod.rs
-    config.rs
-    system.rs
-    sumcheck.rs
+    shape.rs
     poly_types.rs
+    sumcheck.rs
   gt/
     mod.rs
-    types.rs
-    indexing.rs
-    exponentiation.rs
-    multiplication.rs
-    shift.rs
-    base_power.rs
-    stage1_base_openings.rs
-    stage2_base_openings.rs
-    stage2_openings.rs
+    claims.rs
+    openings.rs
     wiring.rs
   g1/
     mod.rs
-    types.rs
-    indexing.rs
-    addition.rs
-    scalar_multiplication.rs
+    claims.rs
+    openings.rs
     wiring.rs
   g2/
     mod.rs
-    types.rs
-    indexing.rs
-    addition.rs
-    scalar_multiplication.rs
+    claims.rs
+    openings.rs
     wiring.rs
   pairing/
     mod.rs
-    multi_miller_loop.rs
-    final_exponentiation.rs
-    shift.rs
+    claims.rs
+    openings.rs
+    final_check.rs
+  packing/
+    mod.rs
+    prefix.rs
+    dense_opening.rs
 ```
 
-This mirrors the recursion branch structure while moving protocol facts into
-`jolt-claims`:
+This mirrors the base Jolt claim structure. Small top-level modules define the
+stage IDs, proof shape, dimensions, public inputs, transcript challenge IDs,
+opening IDs, and PIOP stage shapes. Component modules own relation-specific
+claims, openings, wiring formulas, sumcheck domains, and dense-opening metadata.
+The component split tracks the Dory verifier's algebraic domains:
 
 ```text
-recursion/constraints/*
-  -> dory_assist::constraints
+constraints:
+  shared constraint families, poly types, arity, and sumcheck shapes
 
-recursion/gt/*
-  -> dory_assist::gt
+gt:
+  GT exponentiation, GT multiplication, base powers, GT shift, GT wiring
 
-recursion/g1/*
-  -> dory_assist::g1
+g1:
+  G1 addition, G1 scalar multiplication, scalar-mul shift, G1 wiring
 
-recursion/g2/*
-  -> dory_assist::g2
+g2:
+  G2 addition, G2 scalar multiplication, scalar-mul shift, G2 wiring
 
-recursion/pairing/*
-  -> dory_assist::pairing
+pairing:
+  multi-Miller-loop claims and the public final-exponentiation check
 
-recursion/prefix_packing.rs
-  -> dory_assist::prefix_packing
-
-recursion/wiring_plan.rs
-  -> dory_assist::wiring_plan
+packing:
+  prefix-packing layout and dense-opening claim
 ```
 
 `jolt-claims::protocols::dory_assist` owns:
@@ -327,7 +360,7 @@ stage specs:
   stage 1 packed GT exp
   stage 2 batched constraints
   stage 3 prefix packing
-  dense-trace opening boundary
+  dense-trace opening claim
 
 wiring specs:
   typed copy constraints derived from the Dory verifier AST
@@ -335,7 +368,7 @@ wiring specs:
 packing specs:
   canonical dense layout, prefix codewords, opening-point normalization
 
-public boundary:
+public inputs:
   Dory proof artifact, verifier setup inputs, Jolt evaluation claims
 ```
 
@@ -344,7 +377,10 @@ Hyrax commitment/opening protocol and its R1CS encoding.
 
 ### API Shape
 
-Initial protocol surface:
+The Dory-assist API mirrors the existing `jolt-claims::protocols::jolt`
+surface. It defines IDs, dimensions, stage claims, and protocol claims. The
+verifier takes stage-specific inputs and runs the concrete selected stages in
+the same way it runs base Jolt stages.
 
 ```rust
 pub struct DoryAssistConfig {
@@ -352,31 +388,92 @@ pub struct DoryAssistConfig {
     pub pack_bits: usize,
 }
 
-pub struct DoryAssistVerifierSpec<F> {
-    pub transcript: DoryAssistTranscriptSpec,
-    pub stages: DoryAssistStageSpecs<F>,
-    pub opening_boundary: DoryAssistOpeningBoundary<F>,
-    pub public_inputs: DoryAssistPublicInputSpec,
+pub enum DoryAssistStageId {
+    PackedGtExp,
+    BatchedConstraints,
+    PrefixPacking,
 }
 
-pub struct DoryAssistStageSpecs<F> {
-    pub stage1: PackedGtExpStageSpec<F>,
-    pub stage2: BatchedDoryConstraintStageSpec<F>,
-    pub stage3: PrefixPackingStageSpec<F>,
+pub enum DoryAssistChallengeId {
+    Gt(GtChallenge),
+    G1(G1Challenge),
+    G2(G2Challenge),
+    Pairing(PairingChallenge),
+    Packing(PackingChallenge),
+}
+
+pub enum DoryAssistOpeningId {
+    Gt(GtOpening),
+    G1(G1Opening),
+    G2(G2Opening),
+    Pairing(PairingOpening),
+    DenseTrace,
+}
+
+pub enum DoryAssistPublicId {
+    DoryProofArtifact,
+    VerifierSetupDigest,
+    JoltEvaluationClaim,
+    PairingFinalCheckInput,
+}
+
+pub struct DoryAssistDimensions {
+    pub constraints: DoryAssistConstraintDimensions,
+    pub gt: GtDimensions,
+    pub g1: G1Dimensions,
+    pub g2: G2Dimensions,
+    pub pairing: PairingDimensions,
+    pub packing: PrefixPackingDimensions,
+}
+
+pub struct DoryAssistStageClaims<F> {
+    pub id: DoryAssistStageId,
+    pub sumcheck: DoryAssistSumcheckSpec,
+    pub input: DoryAssistInputClaimExpression<F>,
+    pub output: DoryAssistOutputClaimExpression<F>,
+    pub consistency: Vec<DoryAssistConsistencyClaim<F>>,
+}
+
+pub struct DoryAssistProtocolClaims<F> {
+    pub stages: Vec<DoryAssistStageClaims<F>>,
 }
 
 pub struct DoryAssistPublicInputs<F> {
     pub jolt_evaluation_claims: JoltEvaluationClaims<F>,
     pub dory_proof: DoryProofPublicInput<F>,
     pub verifier_setup_digest: F,
+    pub pairing_final_check_inputs: PairingFinalCheckInputs<F>,
 }
 
-pub struct DoryAssistOpeningBoundary<F> {
+pub struct DoryAssistDenseOpeningClaim<F> {
     pub dense_commitment: HyraxCommitment,
     pub dense_point: Vec<F>,
     pub dense_eval: F,
 }
 ```
+
+This is the same pattern as base Jolt:
+
+```text
+base Jolt:
+  JoltStageId
+  JoltOpeningId / JoltPublicId / JoltChallengeId
+  JoltFormulaDimensions
+  JoltStageClaims
+  JoltProtocolClaims
+
+Dory assist:
+  DoryAssistStageId
+  DoryAssistOpeningId / DoryAssistPublicId / DoryAssistChallengeId
+  DoryAssistDimensions
+  DoryAssistStageClaims
+  DoryAssistProtocolClaims
+```
+
+The component set changes, but the organization stays uniform. Base Jolt has
+Spartan, instruction, RAM, registers, bytecode, booleanity, and advice
+components. Dory assist has GT, G1, G2, pairing, constraints, and packing
+components.
 
 The proof shape follows the branch's `RecursionProof` structure:
 
@@ -391,32 +488,49 @@ pub struct DoryAssistProof<F, T, HyraxProof> {
 }
 ```
 
-The full pairing/final-exponentiation trace extends `ConstraintType`,
-`PolyType`, and stage-2 operation-family specs.
+Multi-Miller-loop proving extends `ConstraintType`, `PolyType`, and stage-2
+operation-family specs. Final exponentiation remains a native verifier
+computation over public values.
 
 ### `jolt-verifier` Integration
 
-`jolt-verifier` owns the selected stage schedule. Dory assist is a stage
-extension in the same style as the base verifier model:
+`jolt-verifier` owns the selected stage schedule. Dory assist adds concrete
+stages to that schedule in the same style as the base verifier model:
 
 ```text
-crates/jolt-verifier/src/dory_assist/
-  mod.rs
+crates/jolt-verifier/src/
   proof.rs
-  inputs.rs
-  outputs.rs
-  metadata.rs
-  stage1/
+  stages/
     mod.rs
-    verify.rs
-  stage2/
-    mod.rs
-    verify.rs
-  stage3/
-    mod.rs
-    verify.rs
-  pcs.rs
+    dory_assist/
+      mod.rs
+      public_inputs.rs
+      stage1/
+        mod.rs
+        inputs.rs
+        outputs.rs
+        verify.rs
+      stage2/
+        mod.rs
+        inputs.rs
+        outputs.rs
+        verify.rs
+      stage3/
+        mod.rs
+        inputs.rs
+        outputs.rs
+        verify.rs
+      hyrax_opening/
+        mod.rs
+        inputs.rs
+        outputs.rs
+        verify.rs
 ```
+
+This mirrors the existing `crates/jolt-verifier/src/stages/stage{1,2,3,4}/`
+shape. Dory-assist proof payloads live in the verifier proof model, alongside
+the other optional proof payloads selected by `ProtocolSelection`; the stage
+modules own typed inputs, typed outputs, and the concrete verification step.
 
 Verifier flow:
 
@@ -427,25 +541,25 @@ ordinary selected Jolt:
 
 selected Jolt with Dory assist:
   stages 1-7
-  -> build Dory assist public boundary from stage-8 opening data
-  -> dory_assist::stage1::verify
-  -> dory_assist::stage2::verify
-  -> dory_assist::stage3::verify
-  -> dory_assist::pcs::verify through jolt-hyrax
+  -> build Dory assist public inputs from stage-8 opening data
+  -> stages::dory_assist::stage1::verify
+  -> stages::dory_assist::stage2::verify
+  -> stages::dory_assist::stage3::verify
+  -> stages::dory_assist::hyrax_opening::verify through jolt-hyrax
 ```
 
-The branch's `api.rs` has the right high-level shape for the boundary:
+The branch's `api.rs` has the right high-level shape for the handoff:
 
 ```text
 base verifier stages 1-7
   -> stage-8 opening snapshot
   -> Dory witness/proof artifact
   -> Dory assist proof
-  -> verifier replays the same selected boundary
+  -> verifier replays the same selected public inputs
 ```
 
-In the modular architecture, `jolt-verifier`/`jolt-claims` own that typed
-boundary. Heavy witness extraction and dense trace construction remain
+In the modular architecture, `jolt-verifier`/`jolt-claims` own those typed
+public inputs. Heavy witness extraction and dense trace construction remain
 compute-side concerns in the `jolt-prover` spec.
 
 ### R1CS And Wrapper Hooks
@@ -459,11 +573,11 @@ stage 1/2 sumcheck checks
 operation-family claim equations
   -> jolt-claims formulas + jolt-r1cs lowering
 
-wiring/boundary equations
-  -> dory_assist::wiring_plan + jolt-r1cs lowering
+wiring and public-input equations
+  -> dory_assist component claims + jolt-r1cs lowering
 
 prefix packing
-  -> dory_assist::prefix_packing R1CS helper
+  -> dory_assist::packing R1CS helper
 
 dense Hyrax opening
   -> jolt-hyrax::r1cs
@@ -471,6 +585,123 @@ dense Hyrax opening
 
 The wrapper consumes these helpers through the selected verifier schedule.
 Dory-specific formulas stay in `jolt-claims`.
+
+## Hyrax
+
+`jolt-hyrax` factors Hyrax out as a reusable modular crate. The Dory-assist
+pipeline uses Hyrax to commit to and open the packed dense trace, while wrapper
+assembly uses `jolt-hyrax::r1cs` to prove the same opening verification inside
+R1CS.
+
+Target layout:
+
+```text
+crates/jolt-hyrax/
+  Cargo.toml
+  src/
+    lib.rs
+    commitment.rs
+    proof.rs
+    setup.rs
+    transcript.rs
+    verifier.rs
+    opening.rs
+    r1cs/
+      mod.rs
+      inputs.rs
+      witness.rs
+      constraints.rs
+```
+
+Native API sketch:
+
+```rust
+use jolt_crypto::{
+    HomomorphicCommitment, JoltGroup, Pedersen, PedersenSetup, VectorCommitment,
+    VectorCommitmentOpening,
+};
+use jolt_openings::EvaluationClaim;
+use jolt_poly::Point;
+use jolt_transcript::{AppendToTranscript, Transcript};
+
+pub type PedersenHyrax<G> = Hyrax<Pedersen<G>>;
+pub type PedersenHyraxSetup<G> = PedersenSetup<G>;
+
+pub struct Hyrax<VC: VectorCommitment> {
+    _marker: core::marker::PhantomData<VC>,
+}
+
+pub struct HyraxCommitment<C> {
+    pub row_commitments: Vec<C>,
+    pub row_len: usize,
+}
+
+pub struct HyraxOpeningPoint<F> {
+    pub row: Point<F>,
+    pub entry: Point<F>,
+}
+
+pub struct HyraxOpeningClaim<F, C> {
+    pub commitment: HyraxCommitment<C>,
+    pub point: HyraxOpeningPoint<F>,
+    pub evaluation: EvaluationClaim<F>,
+}
+
+pub struct HyraxOpeningProof<F> {
+    pub row_opening: VectorCommitmentOpening<F>,
+}
+
+pub fn verify_hyrax_opening<VC, T>(
+    setup: &VC::Setup,
+    claim: &HyraxOpeningClaim<VC::Field, VC::Output>,
+    proof: &HyraxOpeningProof<VC::Field>,
+    transcript: &mut T,
+) -> Result<(), HyraxError>
+where
+    VC: VectorCommitment,
+    VC::Output: HomomorphicCommitment<VC::Field> + AppendToTranscript,
+    T: Transcript<Challenge = VC::Field>;
+```
+
+The default instantiation is Pedersen over a `JoltGroup`, e.g.
+`PedersenHyrax<G>`, but the verifier is generic over `VectorCommitment`. This
+keeps Hyrax aligned with the existing `jolt-crypto` abstractions and reuses
+`VectorCommitment::verify_committed_rows` for row-combined openings. The
+commitment output must be homomorphic because the verifier combines row
+commitments with equality-polynomial weights before checking the committed row.
+
+R1CS API sketch:
+
+```rust
+pub struct HyraxR1csInputs<F> {
+    pub public_claim: HyraxOpeningClaim<F, HyraxCommitmentVar>,
+    pub proof_witness: HyraxOpeningProofVars<F>,
+}
+
+pub fn append_hyrax_verifier_constraints<F>(
+    builder: &mut R1csBuilder<F>,
+    inputs: HyraxR1csInputs<F>,
+) -> Result<(), HyraxR1csError>;
+```
+
+Ownership:
+
+```text
+jolt-hyrax
+  commitment/proof/setup types over jolt-crypto VectorCommitment
+  native verifier using Pedersen / homomorphic commitment traits
+  transcript absorption order for Hyrax messages
+  R1CS encoding of the Hyrax verifier
+
+jolt-claims::protocols::dory_assist::packing
+  dense-opening claim produced by prefix packing
+
+jolt-verifier::stages::dory_assist::hyrax_opening
+  typed stage wrapper around jolt-hyrax native verification
+
+jolt-wrapper
+  calls jolt-hyrax::r1cs while assembling the selected verifier R1CS
+```
 
 ## Field Inline
 
@@ -511,11 +742,18 @@ field-op R1CS rows:
 
 field-product relation:
   proves FieldRs1Value * FieldRs2Value for FMUL/FINV-style rows
+
+conversion R1CS rows:
+  enforce movement between ordinary x-register values and field-register values
 ```
 
 The design is additive. Enabling field inline adds FR relations to the existing
 stage schedule; downstream Dory assist and wrapper logic consume the resulting
 selected verifier computation.
+
+Field inline must support both BN254-width field values and smaller field
+targets. The protocol stays generic over field width where practical, with
+explicit support for 254-bit BN254 field elements and 128-bit field elements.
 
 ### `jolt-claims` Layout
 
@@ -526,12 +764,39 @@ crates/jolt-claims/src/protocols/field_inline/
   mod.rs
   config.rs
   ids.rs
-  openings.rs
-  stages.rs
-  stage3.rs
-  stage4.rs
-  stage5.rs
-  r1cs.rs
+  stage.rs
+  dimensions.rs
+  public_inputs.rs
+  registers/
+    mod.rs
+    claims.rs
+    openings.rs
+  product/
+    mod.rs
+    claims.rs
+    openings.rs
+  conversion/
+    mod.rs
+    claims.rs
+    openings.rs
+```
+
+This mirrors the base Jolt and Dory-assist structure. `jolt-claims` defines the
+field-inline IDs, dimensions, public inputs, and stage-claim formulas. Concrete
+stage execution stays in `jolt-verifier`; concrete guest R1CS rows stay in
+`jolt-r1cs::constraints::field_inline`.
+
+Component ownership:
+
+```text
+registers:
+  FR memory-checking claims for claim reduction, read/write, and val evaluation
+
+product:
+  explicit field-register-native product relation for FMUL/FINV
+
+conversion:
+  claims/openings needed by x-register <-> field-register movement
 ```
 
 Initial surface:
@@ -540,26 +805,66 @@ Initial surface:
 pub struct FieldInlineConfig {
     pub enabled: bool,
     pub field_register_log_k: usize, // 4 for 16 slots
+    pub field_width: FieldInlineWidth,
 }
 
-pub enum FieldInlineRelation {
+pub enum FieldInlineWidth {
+    Bits128,
+    Bits254,
+    Native,
+}
+
+pub enum FieldInlineStageId {
     FieldRegistersClaimReduction,
     FieldRegistersReadWrite,
     FieldRegistersValEvaluation,
-    FieldProduct,
+    FieldProductVirtualization,
+    FieldConversion,
 }
 
 pub enum FieldInlineOpening {
-    FieldRs1Value,
-    FieldRs2Value,
-    FieldRdValue,
-    FieldRegistersVal,
-    FieldRs1Ra,
-    FieldRs2Ra,
-    FieldRdWa,
-    FieldRdInc,
-    FieldProduct,
+    Registers(FieldRegisterOpening),
+    Product(FieldProductOpening),
+    Conversion(FieldConversionOpening),
 }
+
+pub enum FieldInlinePublicId {
+    FieldWidth,
+    FieldRegisterCount,
+}
+
+pub enum FieldInlineChallengeId {
+    Registers(FieldRegisterChallenge),
+    Product(FieldProductChallenge),
+    Conversion(FieldConversionChallenge),
+}
+
+pub struct FieldInlineDimensions {
+    pub field_register_log_k: usize,
+    pub field_width: FieldInlineWidth,
+}
+
+pub struct FieldInlineStageClaims<F> {
+    pub id: FieldInlineStageId,
+    pub sumcheck: FieldInlineSumcheckSpec,
+    pub input: FieldInlineInputClaimExpression<F>,
+    pub output: FieldInlineOutputClaimExpression<F>,
+    pub consistency: Vec<FieldInlineConsistencyClaim<F>>,
+}
+```
+
+The concrete opening enums live with their components:
+
+```text
+registers:
+  FieldRs1Value, FieldRs2Value, FieldRdValue, FieldRegistersVal,
+  FieldRs1Ra, FieldRs2Ra, FieldRdWa, FieldRdInc
+
+product:
+  FieldProduct, FieldProductLhs, FieldProductRhs
+
+conversion:
+  XRegisterValue, FieldRegisterValue, EncodedFieldValue
 ```
 
 Stage placement:
@@ -624,6 +929,29 @@ FieldProduct = FieldRdValue
 That product can batch with existing product-check machinery, but the relation
 keeps a field-specific name so the witness path stays FR-aware.
 
+### Conversion Rows
+
+Field inline also needs explicit R1CS rows for non-field-register to
+field-register movement. These rows are separate from field arithmetic: they
+prove that the value loaded into the FR register file is the same value encoded
+in ordinary Jolt data.
+
+```text
+x-register -> field-register:
+  IsFieldLoadFromX * (FieldRdValue - decode_x_register(Rs1Value, width)) = 0
+
+field-register -> x-register:
+  IsFieldStoreToX * (RdValue - encode_field_register(FieldRs1Value, width)) = 0
+
+immediate/constant -> field-register:
+  IsFieldLoadImm * (FieldRdValue - decode_immediate(imm, width)) = 0
+```
+
+The `width` parameter is part of the field-inline configuration. BN254 uses a
+254-bit representation; 128-bit field targets use the smaller conversion
+encoding. The conversion helpers are generic over width wherever the row
+formula does not depend on a concrete field size.
+
 ### Verifier And Proof Shape
 
 Field-inline proof data is config-gated data in the normal Jolt proof model:
@@ -633,6 +961,7 @@ selection.field_inline.enabled = true
   proof carries FR memory and field-product payloads
   stages 3/4/5 batch FR memory claims with existing stage work
   Spartan/product checks include field-product relations
+  field conversion rows are active for x-register/FR movement
 
 selection.field_inline.enabled = false
   selected stage schedule is ordinary Jolt
@@ -689,7 +1018,7 @@ bridge op:
 
 Field inline changes the base Jolt proof that Dory assist consumes. The selected
 verifier output already includes the field-inline stage effects, so Dory assist
-continues to consume the ordinary typed stage boundary.
+continues to consume the ordinary typed stage output.
 
 The wrapper sees field inline through:
 
@@ -697,7 +1026,7 @@ The wrapper sees field inline through:
 selected verifier stages 3/4/5
   -> field-inline claim formulas
   -> sumcheck verifier constraints
-  -> field-product and guest R1CS boundary constraints
+  -> field-product and guest R1CS constraints
 ```
 
 ## Wrapper
@@ -829,7 +1158,7 @@ Hyrax verifier checks:
   jolt-hyrax::r1cs
 
 Dory-assist prefix packing:
-  jolt-claims::protocols::dory_assist::prefix_packing R1CS helper
+  jolt-claims::protocols::dory_assist::packing R1CS helper
 ```
 
 `jolt-wrapper::r1cs::assembly` sequences these helpers according to
@@ -889,8 +1218,8 @@ ZK + field inline:
   same stage placement, primarily stages 3/4/5.
 
 ZK + Dory assist:
-  Dory assist extends the selected schedule. Its public boundary must match
-  the selected visibility mode for the base Jolt proof.
+  Dory assist extends the selected schedule. Its public inputs must match the
+  selected visibility mode for the base Jolt proof.
 
 ZK + wrapper:
   wrapper proves the selected verifier computation. If BlindFold is selected,
@@ -940,7 +1269,7 @@ guest uses native field instructions
 
 ```text
 Jolt stages 1-7 verify normally
-  -> stage-8 boundary constructs Dory assist public inputs
+  -> stage-8 data constructs Dory assist public inputs
   -> Dory assist proves the Dory verifier trace
   -> verifier checks Dory assist stages and Hyrax opening
 ```
@@ -967,7 +1296,7 @@ compile selected verifier to RV64 guest
   -> field inline/native inlines accelerate verifier hotspots
 ```
 
-## Open Questions
+## Design Decisions
 
 ### Pure FieldOp X-Register Accesses
 
@@ -986,11 +1315,6 @@ once the FR-aware witness path is present.
 BlindFold-before-wrapper and wrapper-before-ZK remain two candidate orderings.
 The choice depends on the wrapper/BlindFold cost model.
 
-### Hyrax R1CS Placement
-
-`jolt-hyrax::r1cs` is the stable home. If wrapper assembly is the first
-consumer, a wrapper adapter can bridge to the final API during bring-up.
-
 ## Testing
 
 ### `jolt-claims`
@@ -998,7 +1322,7 @@ consumer, a wrapper adapter can bridge to the final API during bring-up.
 - Field-inline claim formula tests.
 - Field-product relation tests.
 - Dory-assist operation-family formula tests.
-- Dory-assist wiring, boundary, and prefix-packing tests.
+- Dory-assist wiring, public-input, and prefix-packing tests.
 - Public-input binding tests for Jolt evaluation claims and Dory proof
   artifacts.
 
@@ -1034,7 +1358,7 @@ consumer, a wrapper adapter can bridge to the final API during bring-up.
 - Spartan + HyperKZG proves and verifies synthetic wrapper fixtures.
 - Real fixtures cover base Jolt + Dory assist once typed verifier outputs exist.
 - Mutating transcript challenges, sumcheck claims, prefix-packing values, Hyrax
-  boundary values, or public inputs causes wrapper verification failure.
+  opening values, or public inputs causes wrapper verification failure.
 
 ## Milestones
 
@@ -1048,4 +1372,4 @@ consumer, a wrapper adapter can bridge to the final API during bring-up.
 7. Wire Dory-assist as selected stages after base Jolt stages 1-7.
 8. Add wrapper R1CS assembly for the selected verifier computation.
 9. Implement `jolt-wrapper::snarks::spartan_hyperkzg`.
-10. Add `snarks/gnark` once the R1CS boundary is stable.
+10. Add `snarks/gnark` once the R1CS interface is stable.

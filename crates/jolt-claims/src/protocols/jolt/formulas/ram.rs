@@ -3,8 +3,8 @@ use jolt_field::{Field, RingCore};
 use crate::{challenge, constant, opening, pow2, public};
 
 use super::super::{
-    JoltChallengeId, JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPublicId,
-    JoltStageClaims, JoltStageId, JoltVirtualPolynomial, RamHammingBooleanityPublic,
+    JoltAdviceKind, JoltChallengeId, JoltCommittedPolynomial, JoltExpr, JoltOpeningId,
+    JoltPublicId, JoltStageClaims, JoltStageId, JoltVirtualPolynomial, RamHammingBooleanityPublic,
     RamOutputCheckPublic, RamRaClaimReductionChallenge, RamRaClaimReductionPublic,
     RamRaVirtualizationPublic, RamRafEvaluationPublic, RamReadWriteChallenge, RamValCheckChallenge,
 };
@@ -233,6 +233,21 @@ pub fn raf_evaluation_input_openings() -> [JoltOpeningId; 1] {
 
 pub fn output_check_output_openings() -> [JoltOpeningId; 1] {
     [ram_val_final()]
+}
+
+pub fn val_check_input_openings() -> [JoltOpeningId; 2] {
+    [ram_val(), ram_val_final()]
+}
+
+pub fn val_check_output_openings() -> [JoltOpeningId; 2] {
+    [ram_ra_val_check(), ram_inc_val_check()]
+}
+
+pub fn val_check_advice_opening(kind: JoltAdviceKind) -> JoltOpeningId {
+    match kind {
+        JoltAdviceKind::Trusted => JoltOpeningId::trusted_advice(JoltStageId::RamValCheck),
+        JoltAdviceKind::Untrusted => JoltOpeningId::untrusted_advice(JoltStageId::RamValCheck),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1113,11 +1128,15 @@ mod tests {
         assert_eq!(claims.sumcheck, trace_dimensions().sumcheck(3));
         assert_eq!(
             claims.input.required_openings,
-            vec![ram_val(), ram_val_final()]
+            val_check_input_openings().to_vec()
         );
         assert_eq!(
             claims.output.required_openings,
             vec![ram_inc_val_check(), ram_ra_val_check()]
+        );
+        assert_eq!(
+            val_check_output_openings(),
+            [ram_ra_val_check(), ram_inc_val_check()]
         );
         assert_eq!(
             claims.input.required_challenges,
@@ -1162,8 +1181,8 @@ mod tests {
             vec![
                 ram_val(),
                 ram_val_final(),
-                JoltOpeningId::untrusted_advice(JoltStageId::RamValCheck),
-                JoltOpeningId::trusted_advice(JoltStageId::RamValCheck),
+                val_check_advice_opening(JoltAdviceKind::Untrusted),
+                val_check_advice_opening(JoltAdviceKind::Trusted),
             ]
         );
         assert_eq!(
@@ -1171,8 +1190,8 @@ mod tests {
             vec![
                 ram_val(),
                 ram_val_final(),
-                JoltOpeningId::untrusted_advice(JoltStageId::RamValCheck),
-                JoltOpeningId::trusted_advice(JoltStageId::RamValCheck),
+                val_check_advice_opening(JoltAdviceKind::Untrusted),
+                val_check_advice_opening(JoltAdviceKind::Trusted),
                 ram_inc_val_check(),
                 ram_ra_val_check(),
             ]

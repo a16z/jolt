@@ -145,6 +145,7 @@ pub struct TransparentProofClaims<F> {
     pub stage1: stage1::inputs::Stage1Claims<F>,
     pub stage2: stage2::inputs::Stage2Claims<F>,
     pub stage3: stage3::inputs::Stage3Claims<F>,
+    pub stage4: stage4::inputs::Stage4Claims<F>,
     // Add later stages as they are wired.
 }
 ```
@@ -159,7 +160,10 @@ the Spartan outer virtual-polynomial claims, including every flag claim, and
 Stage 2 derives its RAM/read-write, instruction-reduction, and RAM-RAF input
 claims from the verified Stage 1 output rather than duplicating them in
 `Stage2Claims`. Stage 3 similarly consumes Stage 1/2 typed outputs for its
-input claims and owns only its Stage 3 output openings.
+input claims and owns only its Stage 3 output openings. Stage 4 consumes the
+prior typed outputs needed for register read/write and RAM val-check input
+claims, and owns the Stage 4 output openings plus the optional typed advice
+opening claims.
 
 Generic facts:
 
@@ -370,7 +374,11 @@ crates/jolt-verifier/src/
       inputs.rs
       outputs.rs
       verify.rs
-    stage4.rs
+    stage4/
+      mod.rs
+      inputs.rs
+      outputs.rs
+      verify.rs
     stage5.rs
     stage6.rs
     stage7.rs
@@ -666,8 +674,8 @@ struct TestCase {
 ```
 
 The harness has separate configured horizons for standard and ZK mode. The
-standard frontier currently reaches `Stage3`; the ZK frontier remains at
-`Commitments` while standard stages 4-8 are ported. A completeness case passes
+standard frontier currently reaches `Stage4`; the ZK frontier remains at
+`Commitments` while standard stages 5-8 are ported. A completeness case passes
 when a valid proof reaches the configured horizon for its mode. Before the full
 verifier exists, reaching the next unimplemented stage is success; after the
 full verifier exists, success means `Ok(())`.
@@ -697,7 +705,7 @@ struct VerifierFrontiers {
 }
 
 const CURRENT_VERIFIER_FRONTIERS: VerifierFrontiers = VerifierFrontiers {
-    standard: VerifierCheckpoint::Stage3,
+    standard: VerifierCheckpoint::Stage4,
     zk: VerifierCheckpoint::Commitments,
 };
 ```
@@ -1187,14 +1195,14 @@ Current implementation status:
   return shape and checked per-instance point slicing used by Stage 2;
 - `common` owns VM memory-layout remapping and public I/O byte-to-word packing;
 - `jolt-poly` owns generic MLE helpers used by the formula public-value code;
-- standard Stage 1/2/3 soundness tests now use the tamper manifest to mutate real
-  core proofs after compat conversion, covering every current Stage 1/2/3
+- standard Stage 1/2/3/4 soundness tests now use the tamper manifest to mutate real
+  core proofs after compat conversion, covering every current Stage 1/2/3/4
   verifier-owned proof payload and typed claim target that is checked by the
-  `Stage3` frontier;
+  `Stage4` frontier;
 - unchecked pass-through, final-opening, commitment-payload/order, advice, and
   ZK/BlindFold targets are explicitly recorded in the tamper manifest rather
   than left implicit;
-- the standard verifier frontier is now `Stage3`; Stage 4 remains the next
+- the standard verifier frontier is now `Stage4`; Stage 5 remains the next
   unimplemented standard-stage boundary.
 
 Boundary cleanup pressure:
@@ -1280,6 +1288,37 @@ Review criteria:
 - Advice accumulation is explicit and typed.
 - Public values needed by ZK are represented as public inputs, not hidden in
   compatibility state.
+
+Current implementation status:
+
+- Stage 4 is organized as `stage4/{inputs.rs, outputs.rs, verify.rs}` and uses
+  typed transparent claims for:
+  - optional untrusted and trusted advice openings;
+  - register read/write output openings;
+  - RAM val-check output openings.
+- `stage4/verify.rs` is linear and explicit: it samples the register
+  read/write gamma, derives the shared read-write address/cycle point from
+  Stage 2, materializes the public initial RAM from `jolt-program`, computes
+  typed advice contributions with `jolt-poly` block selectors, samples
+  `ram_val_check_gamma`, verifies the compressed two-instance batch with
+  `jolt-sumcheck`, evaluates the `jolt-claims` register and RAM output
+  expressions, compares the combined final claim, then appends Stage 4 opening
+  claims in core transcript order.
+- `jolt-program` now owns `PublicInitialRam`, so the verifier can evaluate the
+  bytecode/public-input contribution without reconstructing VM layout details
+  locally. `jolt-poly` owns the generic MSB block-selector MLE helper used for
+  advice contributions. `jolt-claims` exposes Stage 4 opening-order metadata
+  for register read/write, RAM val-check, and advice openings.
+- Stage 4 exposed another transcript gotcha: core appends
+  `ram_val_check_gamma` with an empty byte payload, and that empty append still
+  advances the transcript. The modular verifier keeps this behavior explicit,
+  and a regression test asserts the exact packed label plus empty-byte append
+  sequence.
+- Standard completeness reaches Stage 4 for real core fixtures, including the
+  advice fixture. Stage 4 soundness coverage is active for real core fixtures:
+  compressed batch round-polynomial tampering, missing/extra round counts, every
+  typed Stage 4 output claim, and both optional advice claim slots are tampered
+  after compat conversion and rejected before the current frontier.
 
 ### 9. Stage 5: Instruction Read-RAF, RAM RA Reduction, Register Values
 

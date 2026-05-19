@@ -20,7 +20,7 @@ use jolt_claims::protocols::jolt::{
         claim_reductions::{
             instruction as instruction_claim_reduction, registers as registers_claim_reduction,
         },
-        instruction, ram,
+        instruction, ram, registers,
         spartan::{
             outer_opening, outer_uniskip_opening, product_outer_opening,
             product_remainder_output_openings, product_should_branch_outer_opening,
@@ -28,7 +28,7 @@ use jolt_claims::protocols::jolt::{
             SpartanOuterDimensions,
         },
     },
-    JoltOpeningId, JoltStageId, JoltVirtualPolynomial,
+    JoltAdviceKind, JoltOpeningId, JoltStageId, JoltVirtualPolynomial,
 };
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use jolt_field::{Fr, FromPrimitiveInt};
@@ -141,6 +141,34 @@ fn tampered_stage3_output_claims_reject() {
     }
 }
 
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn tampered_stage4_sumcheck_payload_reject() {
+    let base = real_core_case();
+    tamper_each_stage4_batch_round(&base);
+    tamper_stage4_batch_round_counts(&base);
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn tampered_stage4_output_claims_reject() {
+    let base = real_core_case();
+
+    for (target_name, id) in stage4_formula_output_openings() {
+        offset_claim_rejects(&base, target_name, id);
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn tampered_stage4_advice_claims_reject() {
+    let base = real_advice_case();
+
+    for (target_name, id) in stage4_advice_openings() {
+        offset_claim_rejects(&base, target_name, id);
+    }
+}
+
 #[cfg(any(not(feature = "core-fixtures"), feature = "zk"))]
 #[test]
 #[ignore = "enable --features core-fixtures in a non-ZK build to live-generate, cast, and tamper real core proofs"]
@@ -181,9 +209,24 @@ fn tampered_stage3_sumcheck_payload_reject() {
     );
 }
 
+#[cfg(any(not(feature = "core-fixtures"), feature = "zk"))]
+#[test]
+#[ignore = "enable --features core-fixtures in a non-ZK build to live-generate, cast, and tamper real core proofs"]
+fn tampered_stage4_sumcheck_payload_reject() {
+    assert_eq!(
+        soundness_expectation(tampering::STAGE4_SUMCHECK_PAYLOAD),
+        HarnessExpectation::RejectsAtOrBeforeFrontier,
+    );
+}
+
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 fn real_core_case() -> CoreVerifierCase {
     crate::support::core_fixtures::standard_muldiv_case()
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn real_advice_case() -> CoreVerifierCase {
+    crate::support::core_fixtures::standard_advice_consumer_case()
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
@@ -350,6 +393,39 @@ fn tamper_stage3_batch_round_counts(base: &CoreVerifierCase) {
         base,
         |case| {
             push_compressed_round(&mut case.proof.stages.stage3_sumcheck_proof);
+        },
+    );
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn tamper_each_stage4_batch_round(base: &CoreVerifierCase) {
+    let round_count = compressed_round_count(&base.proof.stages.stage4_sumcheck_proof);
+    for round_index in 0..round_count {
+        tamper_manifest::assert_core_tamper_rejects(
+            manifest_target("stage4.batch.round_polynomial"),
+            base,
+            |case| {
+                mutate_compressed_round(&mut case.proof.stages.stage4_sumcheck_proof, round_index);
+            },
+        );
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn tamper_stage4_batch_round_counts(base: &CoreVerifierCase) {
+    tamper_manifest::assert_core_tamper_rejects(
+        manifest_target("stage4.batch.round_count.missing"),
+        base,
+        |case| {
+            pop_compressed_round(&mut case.proof.stages.stage4_sumcheck_proof);
+        },
+    );
+
+    tamper_manifest::assert_core_tamper_rejects(
+        manifest_target("stage4.batch.round_count.extra"),
+        base,
+        |case| {
+            push_compressed_round(&mut case.proof.stages.stage4_sumcheck_proof);
         },
     );
 }
@@ -603,6 +679,36 @@ fn stage3_formula_output_openings() -> Vec<(&'static str, JoltOpeningId)> {
             .map(|id| ("stage3.claims.registers_claim_reduction", id)),
     );
     openings
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn stage4_formula_output_openings() -> Vec<(&'static str, JoltOpeningId)> {
+    let mut openings = Vec::new();
+    openings.extend(
+        registers::read_write_checking_output_openings()
+            .into_iter()
+            .map(|id| ("stage4.claims.registers_read_write", id)),
+    );
+    openings.extend(
+        ram::val_check_output_openings()
+            .into_iter()
+            .map(|id| ("stage4.claims.ram_val_check", id)),
+    );
+    openings
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn stage4_advice_openings() -> Vec<(&'static str, JoltOpeningId)> {
+    vec![
+        (
+            "stage4.claims.advice.untrusted",
+            ram::val_check_advice_opening(JoltAdviceKind::Untrusted),
+        ),
+        (
+            "stage4.claims.advice.trusted",
+            ram::val_check_advice_opening(JoltAdviceKind::Trusted),
+        ),
+    ]
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]

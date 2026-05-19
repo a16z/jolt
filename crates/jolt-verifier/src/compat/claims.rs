@@ -17,6 +17,10 @@ use crate::{
             InstructionInputOutputOpeningClaims, RegistersClaimReductionOutputOpeningClaims,
             SpartanShiftOutputOpeningClaims, Stage3Claims,
         },
+        stage4::inputs::{
+            RamValCheckAdviceOpeningClaims, RamValCheckOutputOpeningClaims,
+            RegistersReadWriteOutputOpeningClaims, Stage4Claims,
+        },
     },
     VerifierError,
 };
@@ -27,13 +31,13 @@ use jolt_claims::protocols::jolt::{
     formulas::{
         claim_reductions::instruction as instruction_claim_reduction,
         claim_reductions::registers as registers_claim_reduction,
-        instruction, ram,
+        instruction, ram, registers,
         spartan::{
             outer_opening, outer_uniskip_opening, product_remainder_output_openings,
             product_uniskip_opening, shift_output_openings,
         },
     },
-    JoltVirtualPolynomial,
+    JoltAdviceKind, JoltVirtualPolynomial,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -78,6 +82,7 @@ pub(crate) fn transparent_claims_from_native<F: Field>(
         },
         stage2: stage2_claims_from_native(&claims)?,
         stage3: stage3_claims_from_native(&claims)?,
+        stage4: stage4_claims_from_native(&claims)?,
     })
 }
 
@@ -216,6 +221,32 @@ fn stage3_claims_from_native<F: Field>(
     })
 }
 
+fn stage4_claims_from_native<F: Field>(
+    claims: &NativeOpeningClaims<F>,
+) -> Result<Stage4Claims<F>, VerifierError> {
+    let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] =
+        registers::read_write_checking_output_openings();
+    let [ram_ra, ram_inc] = ram::val_check_output_openings();
+
+    Ok(Stage4Claims {
+        advice: RamValCheckAdviceOpeningClaims {
+            untrusted: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Untrusted)),
+            trusted: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Trusted)),
+        },
+        registers_read_write: RegistersReadWriteOutputOpeningClaims {
+            registers_val: claims.require(registers_val)?,
+            rs1_ra: claims.require(rs1_ra)?,
+            rs2_ra: claims.require(rs2_ra)?,
+            rd_wa: claims.require(rd_wa)?,
+            rd_inc: claims.require(rd_inc)?,
+        },
+        ram_val_check: RamValCheckOutputOpeningClaims {
+            ram_ra: claims.require(ram_ra)?,
+            ram_inc: claims.require(ram_inc)?,
+        },
+    })
+}
+
 #[derive(Clone, Debug)]
 struct NativeOpeningClaims<F: Field> {
     claims: Vec<(native::JoltOpeningId, F)>,
@@ -320,6 +351,23 @@ fn empty_transparent_claims<F: Field>(_trace_length: usize) -> TransparentProofC
                 rd_write_value: zero,
                 rs1_value: zero,
                 rs2_value: zero,
+            },
+        },
+        stage4: Stage4Claims {
+            advice: RamValCheckAdviceOpeningClaims {
+                untrusted: None,
+                trusted: None,
+            },
+            registers_read_write: RegistersReadWriteOutputOpeningClaims {
+                registers_val: zero,
+                rs1_ra: zero,
+                rs2_ra: zero,
+                rd_wa: zero,
+                rd_inc: zero,
+            },
+            ram_val_check: RamValCheckOutputOpeningClaims {
+                ram_ra: zero,
+                ram_inc: zero,
             },
         },
     }
@@ -480,6 +528,7 @@ fn claim_from_transparent<F: Field>(
 
     claim_from_stage2_batch_outputs(&claims.stage2.batch_outputs, id)
         .or_else(|| claim_from_stage3_outputs(&claims.stage3, id))
+        .or_else(|| claim_from_stage4_outputs(&claims.stage4, id))
 }
 
 #[cfg(any(feature = "jolt-core-compat", test))]
@@ -500,6 +549,7 @@ fn claim_mut_from_transparent<F: Field>(
 
     claim_mut_from_stage2_batch_outputs(&mut claims.stage2.batch_outputs, id)
         .or_else(|| claim_mut_from_stage3_outputs(&mut claims.stage3, id))
+        .or_else(|| claim_mut_from_stage4_outputs(&mut claims.stage4, id))
 }
 
 #[cfg(any(feature = "jolt-core-compat", test))]
@@ -572,6 +622,7 @@ fn set_claim_in_transparent<F: Field>(
     }
 
     set_optional_stage2_batch_output(&mut claims.stage2.batch_outputs, id, opening_claim)
+        || set_optional_stage4_output(&mut claims.stage4, id, opening_claim)
 }
 
 #[cfg(any(feature = "jolt-core-compat", test))]
@@ -722,6 +773,25 @@ fn set_optional_stage2_batch_output<F: Field>(
 }
 
 #[cfg(any(feature = "jolt-core-compat", test))]
+fn set_optional_stage4_output<F: Field>(
+    claims: &mut Stage4Claims<F>,
+    id: native::JoltOpeningId,
+    opening_claim: F,
+) -> bool {
+    match id {
+        id if id == ram::val_check_advice_opening(JoltAdviceKind::Untrusted) => {
+            claims.advice.untrusted = Some(opening_claim);
+            true
+        }
+        id if id == ram::val_check_advice_opening(JoltAdviceKind::Trusted) => {
+            claims.advice.trusted = Some(opening_claim);
+            true
+        }
+        _ => false,
+    }
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_from_stage3_outputs<F: Field>(
     claims: &Stage3Claims<F>,
     id: native::JoltOpeningId,
@@ -789,6 +859,58 @@ fn claim_mut_from_stage3_outputs<F: Field>(
         }
         id if id == rs1_value_reduced => Some(&mut claims.registers_claim_reduction.rs1_value),
         id if id == rs2_value_reduced => Some(&mut claims.registers_claim_reduction.rs2_value),
+        _ => None,
+    }
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn claim_from_stage4_outputs<F: Field>(
+    claims: &Stage4Claims<F>,
+    id: native::JoltOpeningId,
+) -> Option<F> {
+    let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] =
+        registers::read_write_checking_output_openings();
+    let [ram_ra, ram_inc] = ram::val_check_output_openings();
+
+    match id {
+        id if id == ram::val_check_advice_opening(JoltAdviceKind::Untrusted) => {
+            claims.advice.untrusted
+        }
+        id if id == ram::val_check_advice_opening(JoltAdviceKind::Trusted) => claims.advice.trusted,
+        id if id == registers_val => Some(claims.registers_read_write.registers_val),
+        id if id == rs1_ra => Some(claims.registers_read_write.rs1_ra),
+        id if id == rs2_ra => Some(claims.registers_read_write.rs2_ra),
+        id if id == rd_wa => Some(claims.registers_read_write.rd_wa),
+        id if id == rd_inc => Some(claims.registers_read_write.rd_inc),
+        id if id == ram_ra => Some(claims.ram_val_check.ram_ra),
+        id if id == ram_inc => Some(claims.ram_val_check.ram_inc),
+        _ => None,
+    }
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn claim_mut_from_stage4_outputs<F: Field>(
+    claims: &mut Stage4Claims<F>,
+    id: native::JoltOpeningId,
+) -> Option<&mut F> {
+    let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] =
+        registers::read_write_checking_output_openings();
+    let [ram_ra, ram_inc] = ram::val_check_output_openings();
+
+    match id {
+        id if id == ram::val_check_advice_opening(JoltAdviceKind::Untrusted) => {
+            claims.advice.untrusted.as_mut()
+        }
+        id if id == ram::val_check_advice_opening(JoltAdviceKind::Trusted) => {
+            claims.advice.trusted.as_mut()
+        }
+        id if id == registers_val => Some(&mut claims.registers_read_write.registers_val),
+        id if id == rs1_ra => Some(&mut claims.registers_read_write.rs1_ra),
+        id if id == rs2_ra => Some(&mut claims.registers_read_write.rs2_ra),
+        id if id == rd_wa => Some(&mut claims.registers_read_write.rd_wa),
+        id if id == rd_inc => Some(&mut claims.registers_read_write.rd_inc),
+        id if id == ram_ra => Some(&mut claims.ram_val_check.ram_ra),
+        id if id == ram_inc => Some(&mut claims.ram_val_check.ram_inc),
         _ => None,
     }
 }

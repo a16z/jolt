@@ -6,10 +6,33 @@ use crate::EqPolynomial;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MleError {
-    EqualityArityMismatch { left: usize, right: usize },
-    InvalidRange { start: u128, end: u128 },
-    DomainTooLarge { arity: usize },
-    RangeEndOutOfDomain { end: u128, domain_size: u128 },
+    EqualityArityMismatch {
+        left: usize,
+        right: usize,
+    },
+    InvalidRange {
+        start: u128,
+        end: u128,
+    },
+    DomainTooLarge {
+        arity: usize,
+    },
+    RangeEndOutOfDomain {
+        end: u128,
+        domain_size: u128,
+    },
+    BlockVariablesExceedArity {
+        block_vars: usize,
+        arity: usize,
+    },
+    BlockStartUnaligned {
+        start_index: usize,
+        block_size: u128,
+    },
+    BlockEndOutOfDomain {
+        end: u128,
+        domain_size: u128,
+    },
 }
 
 impl fmt::Display for MleError {
@@ -29,6 +52,24 @@ impl fmt::Display for MleError {
             }
             Self::RangeEndOutOfDomain { end, domain_size } => {
                 write!(f, "MLE range end {end} exceeds domain size {domain_size}")
+            }
+            Self::BlockVariablesExceedArity { block_vars, arity } => {
+                write!(
+                    f,
+                    "MLE block has {block_vars} variables but point has arity {arity}"
+                )
+            }
+            Self::BlockStartUnaligned {
+                start_index,
+                block_size,
+            } => {
+                write!(
+                    f,
+                    "MLE block start {start_index} is not aligned to block size {block_size}"
+                )
+            }
+            Self::BlockEndOutOfDomain { end, domain_size } => {
+                write!(f, "MLE block end {end} exceeds domain size {domain_size}")
             }
         }
     }
@@ -81,6 +122,47 @@ where
         .into_iter()
         .map(|(start_index, values)| sparse_mle_msb(start_index, values, point))
         .sum()
+}
+
+pub fn block_selector_mle_msb<F: Field>(
+    start_index: usize,
+    block_num_vars: usize,
+    point: &[F],
+) -> Result<F, MleError> {
+    if block_num_vars > point.len() {
+        return Err(MleError::BlockVariablesExceedArity {
+            block_vars: block_num_vars,
+            arity: point.len(),
+        });
+    }
+
+    let block_size = 1u128
+        .checked_shl(block_num_vars as u32)
+        .ok_or(MleError::DomainTooLarge {
+            arity: block_num_vars,
+        })?;
+    let domain_size = 1u128
+        .checked_shl(point.len() as u32)
+        .ok_or(MleError::DomainTooLarge { arity: point.len() })?;
+    let start = start_index as u128;
+    if !start.is_multiple_of(block_size) {
+        return Err(MleError::BlockStartUnaligned {
+            start_index,
+            block_size,
+        });
+    }
+    let end = start
+        .checked_add(block_size)
+        .ok_or(MleError::DomainTooLarge { arity: point.len() })?;
+    if end > domain_size {
+        return Err(MleError::BlockEndOutOfDomain { end, domain_size });
+    }
+
+    let selector_point_len = point.len() - block_num_vars;
+    Ok(eq_index_msb(
+        &point[..selector_point_len],
+        start_index >> block_num_vars,
+    ))
 }
 
 pub fn range_mask_mle_msb<F: Field>(
@@ -180,6 +262,47 @@ mod tests {
         assert_eq!(
             sparse_segments_mle_msb([(1, left.as_slice()), (2, right.as_slice())], &point),
             sparse_mle_msb(1, &left, &point) + sparse_mle_msb(2, &right, &point)
+        );
+    }
+
+    #[test]
+    fn block_selector_evaluates_aligned_prefix() {
+        let point = [Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
+
+        assert_eq!(
+            block_selector_mle_msb(0b100, 1, &point)
+                .unwrap_or_else(|error| panic!("selector should evaluate: {error}")),
+            eq_index_msb(&point[..2], 0b10)
+        );
+        assert_eq!(
+            block_selector_mle_msb(0, 3, &point)
+                .unwrap_or_else(|error| panic!("whole-domain selector should evaluate: {error}")),
+            Fr::one()
+        );
+    }
+
+    #[test]
+    fn block_selector_rejects_invalid_blocks() {
+        assert_eq!(
+            block_selector_mle_msb::<Fr>(0, 3, &[Fr::zero(), Fr::zero()]),
+            Err(MleError::BlockVariablesExceedArity {
+                block_vars: 3,
+                arity: 2
+            })
+        );
+        assert_eq!(
+            block_selector_mle_msb::<Fr>(1, 1, &[Fr::zero(), Fr::zero()]),
+            Err(MleError::BlockStartUnaligned {
+                start_index: 1,
+                block_size: 2
+            })
+        );
+        assert_eq!(
+            block_selector_mle_msb::<Fr>(4, 1, &[Fr::zero(), Fr::zero()]),
+            Err(MleError::BlockEndOutOfDomain {
+                end: 6,
+                domain_size: 4
+            })
         );
     }
 

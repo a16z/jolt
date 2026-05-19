@@ -8,4 +8,4 @@ pub use bytecode::{BytecodePCMapper, BytecodePreprocessing};
 pub use error::PreprocessingError;
 pub use program::JoltProgramPreprocessing;
 pub use public_io::{PublicIoMemory, PublicMemorySegment};
-pub use ram::RAMPreprocessing;
+pub use ram::{PublicInitialRam, RAMPreprocessing};

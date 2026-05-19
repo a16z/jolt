@@ -31,7 +31,13 @@ where
     VC::Output: HomomorphicCommitment<F>,
     T: Transcript<Challenge = F>,
 {
-    let checked = validate_inputs(preprocessing, public_io, proof, zk)?;
+    let checked = validate_inputs(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment.is_some(),
+        zk,
+    )?;
     validate_proof_consistency(proof, checked.zk)?;
 
     let mut transcript = T::new(b"Jolt");
@@ -115,12 +121,14 @@ pub struct CheckedInputs {
     pub ram_K: usize,
     pub entry_address: u64,
     pub preprocessing_digest: [u8; 32],
+    pub trusted_advice_commitment_present: bool,
 }
 
 pub fn validate_inputs<PCS, VC, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
     proof: &JoltProof<PCS, VC, ZkProof>,
+    trusted_advice_commitment_present: bool,
     zk: bool,
 ) -> Result<CheckedInputs, VerifierError>
 where
@@ -180,6 +188,7 @@ where
         ram_K: proof.ram_K,
         entry_address: preprocessing.program.bytecode.entry_address,
         preprocessing_digest: preprocessing.preprocessing_digest,
+        trusted_advice_commitment_present,
     })
 }
 
@@ -584,7 +593,7 @@ mod tests {
         };
         let proof = proof_with_zk(false, transparent_claims());
 
-        let checked = validate_inputs(&preprocessing, &public_io, &proof, false);
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false);
         assert!(checked.is_ok());
         let Ok(checked) = checked else {
             return;
@@ -596,7 +605,7 @@ mod tests {
         assert_eq!(checked.ram_K, proof.ram_K);
 
         public_io.outputs = vec![0, 0];
-        let checked = validate_inputs(&preprocessing, &public_io, &proof, false);
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false);
         assert!(checked.is_ok());
         let Ok(checked) = checked else {
             return;
@@ -611,7 +620,7 @@ mod tests {
         let proof = proof_with_zk(false, transparent_claims());
 
         assert!(matches!(
-            validate_inputs(&preprocessing, &public_io, &proof, false),
+            validate_inputs(&preprocessing, &public_io, &proof, false, false),
             Err(VerifierError::MemoryLayoutMismatch)
         ));
     }
@@ -626,7 +635,7 @@ mod tests {
         let proof = proof_with_zk(true, zk_claims());
 
         assert!(matches!(
-            validate_inputs(&preprocessing, &public_io, &proof, true),
+            validate_inputs(&preprocessing, &public_io, &proof, false, true),
             Err(VerifierError::MissingVectorCommitmentSetup)
         ));
     }
@@ -716,6 +725,23 @@ mod tests {
                         rs1_value: zero,
                         rs2_value: zero,
                     },
+            },
+            stage4: stage4::inputs::Stage4Claims {
+                advice: stage4::inputs::RamValCheckAdviceOpeningClaims {
+                    untrusted: None,
+                    trusted: None,
+                },
+                registers_read_write: stage4::inputs::RegistersReadWriteOutputOpeningClaims {
+                    registers_val: zero,
+                    rs1_ra: zero,
+                    rs2_ra: zero,
+                    rd_wa: zero,
+                    rd_inc: zero,
+                },
+                ram_val_check: stage4::inputs::RamValCheckOutputOpeningClaims {
+                    ram_ra: zero,
+                    ram_inc: zero,
+                },
             },
         })
     }
