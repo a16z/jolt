@@ -759,6 +759,34 @@ mod tests {
                         rd_wa: zero,
                     },
             },
+            stage6: stage6::inputs::Stage6Claims {
+                bytecode_read_raf: stage6::inputs::BytecodeReadRafOutputOpeningClaims {
+                    bytecode_ra: Vec::new(),
+                },
+                booleanity: stage6::inputs::BooleanityOutputOpeningClaims {
+                    instruction_ra: Vec::new(),
+                    bytecode_ra: Vec::new(),
+                    ram_ra: Vec::new(),
+                },
+                ram_hamming_booleanity: stage6::inputs::RamHammingBooleanityOutputOpeningClaims {
+                    ram_hamming_weight: zero,
+                },
+                ram_ra_virtualization: stage6::inputs::RamRaVirtualizationOutputOpeningClaims {
+                    ram_ra: Vec::new(),
+                },
+                instruction_ra_virtualization:
+                    stage6::inputs::InstructionRaVirtualizationOutputOpeningClaims {
+                        committed_instruction_ra: Vec::new(),
+                    },
+                inc_claim_reduction: stage6::inputs::IncClaimReductionOutputOpeningClaims {
+                    ram_inc: zero,
+                    rd_inc: zero,
+                },
+                advice_cycle_phase: stage6::inputs::Stage6AdviceCyclePhaseClaims {
+                    trusted: None,
+                    untrusted: None,
+                },
+            },
         })
     }
 

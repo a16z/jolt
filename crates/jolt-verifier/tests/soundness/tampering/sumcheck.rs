@@ -7,7 +7,10 @@
 )]
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
-use crate::support::{core_fixtures::CoreVerifierCase, tamper_manifest};
+use crate::support::{
+    core_fixtures::{CorePrecompatVerifierCase, CoreVerifierCase, LegacyProofStageTarget},
+    tamper_manifest,
+};
 #[cfg(any(not(feature = "core-fixtures"), feature = "zk"))]
 use crate::{
     soundness::tampering,
@@ -17,9 +20,12 @@ use crate::{
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use jolt_claims::protocols::jolt::{
     formulas::{
+        bytecode,
         claim_reductions::{
-            instruction as instruction_claim_reduction, registers as registers_claim_reduction,
+            advice, increments, instruction as instruction_claim_reduction,
+            registers as registers_claim_reduction,
         },
+        dimensions::{AdviceClaimReductionLayout, JoltFormulaDimensions},
         instruction, ram, registers,
         spartan::{
             outer_opening, outer_uniskip_opening, product_outer_opening,
@@ -28,7 +34,7 @@ use jolt_claims::protocols::jolt::{
             SpartanOuterDimensions,
         },
     },
-    JoltAdviceKind, JoltOpeningId, JoltStageId, JoltVirtualPolynomial,
+    JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltStageId, JoltVirtualPolynomial,
 };
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use jolt_field::{Fr, FromPrimitiveInt};
@@ -99,6 +105,21 @@ fn tampered_stage2_output_claims_reject() {
         tamper_manifest::assert_core_tamper_rejects(manifest_target(target_name), &base, |case| {
             upsert_opening_claim(&mut case.proof, id, replacement_claim);
         });
+    }
+
+    let [_, _, _, product_write_lookup_output_to_rd, _, _, _, product_virtual_instruction] =
+        product_remainder_output_openings();
+    for (target_name, id) in [
+        (
+            "stage2.claims.batch_outputs.product_remainder.write_lookup_output_to_rd",
+            product_write_lookup_output_to_rd,
+        ),
+        (
+            "stage2.claims.batch_outputs.product_remainder.virtual_instruction",
+            product_virtual_instruction,
+        ),
+    ] {
+        offset_claim_rejects(&base, target_name, id);
     }
 }
 
@@ -189,6 +210,279 @@ fn tampered_stage5_output_claims_reject() {
     }
 }
 
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn tampered_stage6_sumcheck_payload_reject() {
+    let base = real_core_case();
+    tamper_each_stage6_batch_round(&base);
+    tamper_stage6_batch_round_counts(&base);
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn tampered_stage6_output_claims_reject() {
+    let base = real_core_case();
+
+    for (target_name, id) in stage6_formula_output_openings(&base) {
+        offset_claim_rejects(&base, target_name, id);
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn tampered_stage6_advice_claims_reject() {
+    let base = real_advice_case();
+
+    for (target_name, id) in stage6_advice_output_openings(&base) {
+        offset_claim_rejects(&base, target_name, id);
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn precompat_tampered_stage1_sumcheck_payload_reject() {
+    let base = real_precompat_core_case();
+    precompat_tamper_each_round(
+        &base,
+        LegacyProofStageTarget::Stage1UniSkip,
+        "stage1.uni_skip.round_polynomial",
+    );
+    precompat_tamper_round_counts(
+        &base,
+        LegacyProofStageTarget::Stage1UniSkip,
+        "stage1.uni_skip.round_count.missing",
+        "stage1.uni_skip.round_count.extra",
+    );
+    precompat_tamper_each_round(
+        &base,
+        LegacyProofStageTarget::Stage1Batch,
+        "stage1.remainder.round_polynomial",
+    );
+    precompat_tamper_round_counts(
+        &base,
+        LegacyProofStageTarget::Stage1Batch,
+        "stage1.remainder.round_count.missing",
+        "stage1.remainder.round_count.extra",
+    );
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn precompat_tampered_stage1_opening_claims_reject() {
+    let converted = real_core_case();
+    let base = real_precompat_core_case();
+
+    for (target_name, id) in stage1_required_openings(&converted) {
+        precompat_offset_claim_rejects(&base, target_name, id);
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn precompat_tampered_stage2_uniskip_payload_reject() {
+    let base = real_precompat_core_case();
+    precompat_tamper_each_round(
+        &base,
+        LegacyProofStageTarget::Stage2UniSkip,
+        "stage2.product_uniskip.round_polynomial",
+    );
+    precompat_tamper_round_counts(
+        &base,
+        LegacyProofStageTarget::Stage2UniSkip,
+        "stage2.product_uniskip.round_count.missing",
+        "stage2.product_uniskip.round_count.extra",
+    );
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn precompat_tampered_stage2_sumcheck_payload_reject() {
+    let base = real_precompat_core_case();
+    precompat_tamper_each_round(
+        &base,
+        LegacyProofStageTarget::Stage2Batch,
+        "stage2.batch.round_polynomial",
+    );
+    precompat_tamper_round_counts(
+        &base,
+        LegacyProofStageTarget::Stage2Batch,
+        "stage2.batch.round_count.missing",
+        "stage2.batch.round_count.extra",
+    );
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn precompat_tampered_stage2_input_claims_reject() {
+    let base = real_precompat_core_case();
+
+    for id in stage2_uniskip_openings()
+        .into_iter()
+        .chain(stage2_batch_input_openings())
+    {
+        precompat_offset_claim_rejects(&base, id.0, id.1);
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn precompat_tampered_stage2_output_claims_reject() {
+    let converted = real_core_case();
+    let base = real_precompat_core_case();
+
+    for (target_name, id) in stage2_formula_output_openings() {
+        precompat_offset_claim_rejects(&base, target_name, id);
+    }
+
+    let [_, _, _, product_write_lookup_output_to_rd, _, _, _, product_virtual_instruction] =
+        product_remainder_output_openings();
+    for (target_name, id) in [
+        (
+            "stage2.claims.batch_outputs.product_remainder.write_lookup_output_to_rd",
+            product_write_lookup_output_to_rd,
+        ),
+        (
+            "stage2.claims.batch_outputs.product_remainder.virtual_instruction",
+            product_virtual_instruction,
+        ),
+    ] {
+        if opening_claim(&converted.proof, id).is_some() {
+            precompat_offset_claim_rejects(&base, target_name, id);
+        }
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn precompat_tampered_stage3_sumcheck_payload_reject() {
+    let base = real_precompat_core_case();
+    precompat_tamper_each_round(
+        &base,
+        LegacyProofStageTarget::Stage3Batch,
+        "stage3.batch.round_polynomial",
+    );
+    precompat_tamper_round_counts(
+        &base,
+        LegacyProofStageTarget::Stage3Batch,
+        "stage3.batch.round_count.missing",
+        "stage3.batch.round_count.extra",
+    );
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn precompat_tampered_stage3_output_claims_reject() {
+    let base = real_precompat_core_case();
+
+    for (target_name, id) in stage3_formula_output_openings() {
+        precompat_offset_claim_rejects(&base, target_name, id);
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn precompat_tampered_stage4_sumcheck_payload_reject() {
+    let base = real_precompat_core_case();
+    precompat_tamper_each_round(
+        &base,
+        LegacyProofStageTarget::Stage4Batch,
+        "stage4.batch.round_polynomial",
+    );
+    precompat_tamper_round_counts(
+        &base,
+        LegacyProofStageTarget::Stage4Batch,
+        "stage4.batch.round_count.missing",
+        "stage4.batch.round_count.extra",
+    );
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn precompat_tampered_stage4_output_claims_reject() {
+    let base = real_precompat_core_case();
+
+    for (target_name, id) in stage4_formula_output_openings() {
+        precompat_offset_claim_rejects(&base, target_name, id);
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn precompat_tampered_stage4_advice_claims_reject() {
+    let base = real_precompat_advice_case();
+
+    for (target_name, id) in stage4_advice_openings() {
+        precompat_offset_claim_rejects(&base, target_name, id);
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn precompat_tampered_stage5_sumcheck_payload_reject() {
+    let base = real_precompat_core_case();
+    precompat_tamper_each_round(
+        &base,
+        LegacyProofStageTarget::Stage5Batch,
+        "stage5.batch.round_polynomial",
+    );
+    precompat_tamper_round_counts(
+        &base,
+        LegacyProofStageTarget::Stage5Batch,
+        "stage5.batch.round_count.missing",
+        "stage5.batch.round_count.extra",
+    );
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn precompat_tampered_stage5_output_claims_reject() {
+    let converted = real_core_case();
+    let base = real_precompat_core_case();
+
+    for (target_name, id) in stage5_formula_output_openings(&converted) {
+        precompat_offset_claim_rejects(&base, target_name, id);
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn precompat_tampered_stage6_sumcheck_payload_reject() {
+    let base = real_precompat_core_case();
+    precompat_tamper_each_round(
+        &base,
+        LegacyProofStageTarget::Stage6Batch,
+        "stage6.batch.round_polynomial",
+    );
+    precompat_tamper_round_counts(
+        &base,
+        LegacyProofStageTarget::Stage6Batch,
+        "stage6.batch.round_count.missing",
+        "stage6.batch.round_count.extra",
+    );
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn precompat_tampered_stage6_output_claims_reject() {
+    let converted = real_core_case();
+    let base = real_precompat_core_case();
+
+    for (target_name, id) in stage6_formula_output_openings(&converted) {
+        precompat_offset_claim_rejects(&base, target_name, id);
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn precompat_tampered_stage6_advice_claims_reject() {
+    let converted = real_advice_case();
+    let base = real_precompat_advice_case();
+
+    for (target_name, id) in stage6_advice_output_openings(&converted) {
+        precompat_offset_claim_rejects(&base, target_name, id);
+    }
+}
+
 #[cfg(any(not(feature = "core-fixtures"), feature = "zk"))]
 #[test]
 #[ignore = "enable --features core-fixtures in a non-ZK build to live-generate, cast, and tamper real core proofs"]
@@ -249,6 +543,16 @@ fn tampered_stage5_sumcheck_payload_reject() {
     );
 }
 
+#[cfg(any(not(feature = "core-fixtures"), feature = "zk"))]
+#[test]
+#[ignore = "enable --features core-fixtures in a non-ZK build to live-generate, cast, and tamper real core proofs"]
+fn tampered_stage6_sumcheck_payload_reject() {
+    assert_eq!(
+        soundness_expectation(tampering::STAGE6_SUMCHECK_PAYLOAD),
+        HarnessExpectation::RejectsAtOrBeforeFrontier,
+    );
+}
+
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 fn real_core_case() -> CoreVerifierCase {
     crate::support::core_fixtures::standard_muldiv_case()
@@ -257,6 +561,16 @@ fn real_core_case() -> CoreVerifierCase {
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 fn real_advice_case() -> CoreVerifierCase {
     crate::support::core_fixtures::standard_advice_consumer_case()
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn real_precompat_core_case() -> CorePrecompatVerifierCase {
+    crate::support::core_fixtures::standard_muldiv_precompat_case()
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn real_precompat_advice_case() -> CorePrecompatVerifierCase {
+    crate::support::core_fixtures::standard_advice_consumer_precompat_case()
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
@@ -494,6 +808,39 @@ fn tamper_stage5_batch_round_counts(base: &CoreVerifierCase) {
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn tamper_each_stage6_batch_round(base: &CoreVerifierCase) {
+    let round_count = compressed_round_count(&base.proof.stages.stage6_sumcheck_proof);
+    for round_index in 0..round_count {
+        tamper_manifest::assert_core_tamper_rejects(
+            manifest_target("stage6.batch.round_polynomial"),
+            base,
+            |case| {
+                mutate_compressed_round(&mut case.proof.stages.stage6_sumcheck_proof, round_index);
+            },
+        );
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn tamper_stage6_batch_round_counts(base: &CoreVerifierCase) {
+    tamper_manifest::assert_core_tamper_rejects(
+        manifest_target("stage6.batch.round_count.missing"),
+        base,
+        |case| {
+            pop_compressed_round(&mut case.proof.stages.stage6_sumcheck_proof);
+        },
+    );
+
+    tamper_manifest::assert_core_tamper_rejects(
+        manifest_target("stage6.batch.round_count.extra"),
+        base,
+        |case| {
+            push_compressed_round(&mut case.proof.stages.stage6_sumcheck_proof);
+        },
+    );
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 fn clear_full_round_count(proof: &SumcheckProof<Fr, jolt_crypto::Bn254G1>) -> usize {
     let SumcheckProof::Clear(ClearProof::Full(proof)) = proof else {
         panic!("converted core fixture must use a clear full uni-skip proof");
@@ -586,6 +933,65 @@ fn offset_claim_rejects(base: &CoreVerifierCase, target_name: &str, id: JoltOpen
             "converted core fixture is missing opening claim {id:?}"
         );
     });
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn precompat_tamper_each_round(
+    base: &CorePrecompatVerifierCase,
+    stage: LegacyProofStageTarget,
+    target_name: &str,
+) {
+    let round_count = base.round_count(stage);
+    for round_index in 0..round_count {
+        tamper_manifest::assert_precompat_core_tamper_rejects(
+            manifest_target(target_name),
+            base,
+            |case| case.replace_round(stage, round_index),
+        );
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn precompat_tamper_round_counts(
+    base: &CorePrecompatVerifierCase,
+    stage: LegacyProofStageTarget,
+    missing_target_name: &str,
+    extra_target_name: &str,
+) {
+    tamper_manifest::assert_precompat_core_tamper_rejects(
+        manifest_target(missing_target_name),
+        base,
+        |case| case.pop_round(stage),
+    );
+
+    tamper_manifest::assert_precompat_core_tamper_rejects(
+        manifest_target(extra_target_name),
+        base,
+        |case| case.push_round(stage),
+    );
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn precompat_offset_claim_rejects(
+    base: &CorePrecompatVerifierCase,
+    target_name: &str,
+    id: JoltOpeningId,
+) {
+    tamper_manifest::assert_precompat_core_tamper_rejects(
+        manifest_target(target_name),
+        base,
+        |case| {
+            if case.offset_opening_claim(id, 1) {
+                return;
+            }
+            if let Some(alias) = precompat_opening_alias(id) {
+                if case.offset_opening_claim(alias, 1) {
+                    return;
+                }
+            }
+            panic!("legacy core fixture is missing opening claim {id:?}");
+        },
+    );
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
@@ -808,6 +1214,131 @@ fn stage5_formula_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str,
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn stage6_formula_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str, JoltOpeningId)> {
+    let dimensions = stage6_dimensions(base);
+    let mut openings = Vec::new();
+
+    openings.extend(
+        bytecode::read_raf_output_openings(dimensions.bytecode_read_raf)
+            .bytecode_ra
+            .into_iter()
+            .map(|id| ("stage6.claims.bytecode_read_raf.bytecode_ra", id)),
+    );
+    for index in 0..dimensions.ra_layout.instruction() {
+        openings.push((
+            "stage6.claims.booleanity.instruction_ra",
+            JoltOpeningId::committed(
+                JoltCommittedPolynomial::InstructionRa(index),
+                JoltStageId::Booleanity,
+            ),
+        ));
+    }
+    for index in 0..dimensions.ra_layout.bytecode() {
+        openings.push((
+            "stage6.claims.booleanity.bytecode_ra",
+            JoltOpeningId::committed(
+                JoltCommittedPolynomial::BytecodeRa(index),
+                JoltStageId::Booleanity,
+            ),
+        ));
+    }
+    for index in 0..dimensions.ra_layout.ram() {
+        openings.push((
+            "stage6.claims.booleanity.ram_ra",
+            JoltOpeningId::committed(
+                JoltCommittedPolynomial::RamRa(index),
+                JoltStageId::Booleanity,
+            ),
+        ));
+    }
+    openings.extend(
+        ram::hamming_booleanity_output_openings()
+            .into_iter()
+            .map(|id| {
+                (
+                    "stage6.claims.ram_hamming_booleanity.ram_hamming_weight",
+                    id,
+                )
+            }),
+    );
+    openings.extend(
+        ram::ra_virtualization_output_openings(dimensions.ram_ra_virtualization)
+            .into_iter()
+            .map(|id| ("stage6.claims.ram_ra_virtualization.ram_ra", id)),
+    );
+    openings.extend(
+        instruction::ra_virtualization_output_openings(dimensions.instruction_ra_virtualization)
+            .all()
+            .into_iter()
+            .map(|id| {
+                (
+                    "stage6.claims.instruction_ra_virtualization.committed_instruction_ra",
+                    id,
+                )
+            }),
+    );
+    let [ram_inc, rd_inc] = increments::claim_reduction_output_openings();
+    openings.extend([
+        ("stage6.claims.inc_claim_reduction.ram_inc", ram_inc),
+        ("stage6.claims.inc_claim_reduction.rd_inc", rd_inc),
+    ]);
+
+    openings
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn stage6_advice_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str, JoltOpeningId)> {
+    let log_t = base.proof.trace_length.ilog2() as usize;
+    let mut openings = Vec::new();
+
+    if base.trusted_advice_commitment.is_some() {
+        let layout = AdviceClaimReductionLayout::balanced(
+            base.proof.trace_polynomial_order,
+            log_t,
+            base.proof.one_hot_config.committed_chunk_bits(),
+            base.public_io.memory_layout.max_trusted_advice_size as usize,
+        );
+        openings.extend(
+            advice::cycle_phase_output_openings(JoltAdviceKind::Trusted, layout.dimensions())
+                .into_iter()
+                .map(|id| ("stage6.claims.advice_cycle_phase.trusted.opening_claim", id)),
+        );
+    }
+    if base.proof.untrusted_advice_commitment.is_some() {
+        let layout = AdviceClaimReductionLayout::balanced(
+            base.proof.trace_polynomial_order,
+            log_t,
+            base.proof.one_hot_config.committed_chunk_bits(),
+            base.public_io.memory_layout.max_untrusted_advice_size as usize,
+        );
+        openings.extend(
+            advice::cycle_phase_output_openings(JoltAdviceKind::Untrusted, layout.dimensions())
+                .into_iter()
+                .map(|id| {
+                    (
+                        "stage6.claims.advice_cycle_phase.untrusted.opening_claim",
+                        id,
+                    )
+                }),
+        );
+    }
+
+    openings
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn stage6_dimensions(base: &CoreVerifierCase) -> JoltFormulaDimensions {
+    let log_t = base.proof.trace_length.ilog2() as usize;
+    JoltFormulaDimensions::try_from(base.proof.one_hot_config.dimensions(
+        log_t,
+        2 * RISCV_XLEN,
+        base.preprocessing.program.bytecode.code_size,
+        base.proof.ram_K,
+    ))
+    .unwrap_or_else(|error| panic!("core fixture has invalid Stage 6 dimensions: {error}"))
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 fn manifest_target(name: &str) -> tamper_manifest::TamperTarget {
     tamper_manifest::required_target(name)
 }
@@ -826,20 +1357,49 @@ fn stage2_effective_output_claim(base: &CoreVerifierCase, id: JoltOpeningId) -> 
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 fn stage2_output_alias_claim(base: &CoreVerifierCase, id: JoltOpeningId) -> Option<Fr> {
+    let alias = stage2_output_alias(id)?;
+    opening_claim(&base.proof, alias)
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn precompat_opening_alias(id: JoltOpeningId) -> Option<JoltOpeningId> {
+    stage2_output_alias(id).or_else(|| stage3_output_alias(id))
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn stage2_output_alias(id: JoltOpeningId) -> Option<JoltOpeningId> {
     let [product_left_instruction_input, product_right_instruction_input, _product_jump, _product_write_lookup_output_to_rd, product_lookup_output, _product_branch, _product_next_is_noop, _product_virtual_instruction] =
         product_remainder_output_openings();
     let [instruction_lookup_output, _instruction_left_lookup_operand, _instruction_right_lookup_operand, instruction_left_instruction_input, instruction_right_instruction_input] =
         instruction_claim_reduction::claim_reduction_output_openings();
 
-    let alias = if id == instruction_lookup_output {
-        product_lookup_output
+    if id == instruction_lookup_output {
+        Some(product_lookup_output)
     } else if id == instruction_left_instruction_input {
-        product_left_instruction_input
+        Some(product_left_instruction_input)
     } else if id == instruction_right_instruction_input {
-        product_right_instruction_input
+        Some(product_right_instruction_input)
     } else {
-        return None;
-    };
+        None
+    }
+}
 
-    opening_claim(&base.proof, alias)
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn stage3_output_alias(id: JoltOpeningId) -> Option<JoltOpeningId> {
+    let [unexpanded_pc_shift, _pc_shift, _is_virtual_shift, _is_first_in_sequence_shift, _is_noop_shift] =
+        shift_output_openings();
+    let [_right_operand_is_rs2, rs2_value_input, _right_operand_is_imm, _imm_input, _left_operand_is_rs1, rs1_value_input, _left_operand_is_pc, unexpanded_pc_input] =
+        instruction::input_virtualization_output_openings();
+    let [_rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced] =
+        registers_claim_reduction::claim_reduction_output_openings();
+
+    if id == unexpanded_pc_input {
+        Some(unexpanded_pc_shift)
+    } else if id == rs1_value_reduced {
+        Some(rs1_value_input)
+    } else if id == rs2_value_reduced {
+        Some(rs2_value_input)
+    } else {
+        None
+    }
 }

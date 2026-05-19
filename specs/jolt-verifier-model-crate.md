@@ -304,9 +304,9 @@ polynomial was linearized cycle-major or address-major before commitment.
 
 The existing proof format contains a legacy ordering byte because current proofs
 need it for transcript compatibility and for reconstructing some opening points.
-Represent the verifier-owned value on the proof model with a non-Dory name such
-as `TracePolynomialOrder`. Keep only legacy conversion and canonical
-serialization shims in `compat`.
+Represent the verifier-owned value on the proof model with the non-Dory
+`TracePolynomialOrder` from `jolt-claims`. Keep only legacy conversion shims in
+`compat`.
 
 Rules:
 
@@ -315,7 +315,7 @@ Rules:
 - compatibility conversion may use the legacy order to construct typed
   `Point<F>` values;
 - `compat` may serialize/deserialize the ordering byte for core artifact
-  compatibility, but verifier logic imports the verifier-owned proof type;
+  compatibility, but verifier logic imports the `jolt-claims` protocol type;
 - stage 8 passes commitments, points, evaluations, and proof data to `jolt-dory`
   without exposing legacy ordering.
 
@@ -387,7 +387,11 @@ crates/jolt-verifier/src/
       inputs.rs
       outputs.rs
       verify.rs
-    stage6.rs
+    stage6/
+      mod.rs
+      inputs.rs
+      outputs.rs
+      verify.rs
     stage7.rs
     stage8.rs
     zk.rs
@@ -680,8 +684,8 @@ struct TestCase {
 ```
 
 The harness has separate configured horizons for standard and ZK mode. The
-standard frontier currently reaches `Stage5`; the ZK frontier remains at
-`Commitments` while standard stages 6-8 are ported. A completeness case passes
+standard frontier currently reaches `Stage6`; the ZK frontier remains at
+`Commitments` while standard stages 7-8 are ported. A completeness case passes
 when a valid proof reaches the configured horizon for its mode. Before the full
 verifier exists, reaching the next unimplemented stage is success; after the
 full verifier exists, success means `Ok(())`.
@@ -711,7 +715,7 @@ struct VerifierFrontiers {
 }
 
 const CURRENT_VERIFIER_FRONTIERS: VerifierFrontiers = VerifierFrontiers {
-    standard: VerifierCheckpoint::Stage5,
+    standard: VerifierCheckpoint::Stage6,
     zk: VerifierCheckpoint::Commitments,
 };
 ```
@@ -932,6 +936,25 @@ real jolt-core proof
   -> apply one manifest mutation
   -> verify rejection at or before the target checkpoint
 ```
+
+For active targets that also exist in the legacy core proof shape, maintain the
+pre-compat transitivity flow:
+
+```text
+real jolt-core proof
+  -> apply one legacy/core-shape mutation
+  -> assert jolt-core rejects or otherwise does not accept the artifact
+  -> compat conversion of that same tampered artifact
+  -> verify jolt-verifier rejects at or before the target checkpoint
+```
+
+This second flow is not a replacement for direct post-compat tampering. It
+specifically protects the conversion boundary: compat must not normalize away,
+drop, alias incorrectly, or repair malformed core proof data before the modular
+verifier sees it. When core intentionally omits a claim that compat aliases to a
+typed verifier field, the pre-compat test should mutate the legacy source claim
+that compat uses for that alias and keep the alias documented in the test
+helper.
 
 Do not use synthetic proofs for direct tampering while the modular prover does
 not exist. Executable verifier compatibility tests should use real `jolt-core`
@@ -1201,14 +1224,14 @@ Current implementation status:
   return shape and checked per-instance point slicing used by Stage 2;
 - `common` owns VM memory-layout remapping and public I/O byte-to-word packing;
 - `jolt-poly` owns generic MLE helpers used by the formula public-value code;
-- standard Stage 1/2/3/4/5 soundness tests now use the tamper manifest to
+- standard Stage 1/2/3/4/5/6 soundness tests now use the tamper manifest to
   mutate real core proofs after compat conversion, covering every current
-  Stage 1/2/3/4/5 verifier-owned proof payload and typed claim target that is
-  checked by the `Stage5` frontier;
+  Stage 1/2/3/4/5/6 verifier-owned proof payload and typed claim target that is
+  checked by the `Stage6` frontier;
 - unchecked pass-through, final-opening, commitment-payload/order, advice, and
   ZK/BlindFold targets are explicitly recorded in the tamper manifest rather
   than left implicit;
-- the standard verifier frontier is now `Stage5`; Stage 6 remains the next
+- the standard verifier frontier is now `Stage6`; Stage 7 remains the next
   unimplemented standard-stage boundary.
 
 Boundary cleanup pressure:
@@ -1385,21 +1408,337 @@ Current implementation status:
 
 ### 10. Stage 6: Bytecode, Booleanity, RA Virtualization, Increments, Advice Phase 1
 
-Objective: port the broad stage 6 batch.
+Objective: port the broad Stage 6 batch without making the verifier look like a
+generic opening-claim router. Stage 6 should be implemented as one batched
+sumcheck, but it should be conceptualized and audited as smaller typed
+components.
 
-Tasks:
+Core analogue:
 
-- Port bytecode read-RAF checking.
-- Port RAM hamming booleanity and generic booleanity checks.
-- Port RAM RA virtualization and instruction RA virtualization.
-- Port increment claim reduction.
-- Port advice claim reduction phase 1 for trusted and untrusted advice.
+```rust
+let bytecode_read_raf = BytecodeReadRafSumcheckVerifier::gen(...);
+let ram_hamming_booleanity =
+    HammingBooleanitySumcheckVerifier::new(&opening_accumulator);
+let booleanity = BooleanitySumcheckVerifier::new(...);
+let ram_ra_virtual = RamRaVirtualSumcheckVerifier::new(...);
+let lookups_ra_virtual = LookupsRaSumcheckVerifier::new(...);
+let inc_reduction = IncClaimReductionSumcheckVerifier::new(...);
+if trusted_advice_commitment.is_some() { push trusted advice cycle phase; }
+if proof.untrusted_advice_commitment.is_some() { push untrusted advice cycle phase; }
+
+BatchedSumcheck::verify(&proof.stage6_sumcheck_proof, instances, ...);
+```
+
+The modular verifier should preserve that instance order exactly, because the
+order determines batching coefficients, transcript challenges, and BlindFold
+constraint ordering.
+
+Target Stage 6 proof payload:
+
+```rust
+pub struct Stage6Claims<F> {
+    pub bytecode_read_raf: BytecodeReadRafOutputOpeningClaims<F>,
+    pub ram_hamming_booleanity: RamHammingBooleanityOutputOpeningClaims<F>,
+    pub booleanity: BooleanityOutputOpeningClaims<F>,
+    pub ram_ra_virtualization: RamRaVirtualizationOutputOpeningClaims<F>,
+    pub instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims<F>,
+    pub inc_claim_reduction: IncClaimReductionOutputOpeningClaims<F>,
+    pub advice_cycle_phase: Stage6AdviceCyclePhaseClaims<F>,
+}
+```
+
+`Stage6AdviceCyclePhaseClaims` should have typed `trusted` and `untrusted`
+optional fields. Each present advice side should encode whether Stage 6 outputs
+a cycle-phase intermediate claim for Stage 7 or directly outputs the final
+advice claim when no address phase remains. That decision comes from typed
+advice reduction dimensions, not from ad hoc `Option<F>` probing.
+
+Target Stage 6 output:
+
+```rust
+pub struct Stage6Output<F> {
+    pub challenges: Vec<F>,
+    pub output_claims: Stage6Claims<F>,
+    pub batch: VerifiedStage6Batch<F>,
+}
+```
+
+`VerifiedStage6Batch` should expose each component result explicitly: input
+claim, sumcheck point, opening point(s), public values used in the output
+formula, expected output claim, and the combined batched final claim. It should
+not expose a map keyed by `JoltOpeningId`.
+
+#### 10.1 Bytecode Read-RAF
+
+Core analogue:
+`jolt-core/src/zkvm/bytecode/read_raf_checking.rs`.
+
+Formula owner:
+`jolt_claims::protocols::jolt::formulas::bytecode::read_raf`.
+
+Checks:
+
+- sample the Stage 6 bytecode gamma powers in core order:
+  outer gamma powers, then stage-specific gammas for prior Stage 1, Stage 2,
+  Stage 3, Stage 4, and Stage 5 folded claims;
+- compute the input claim from typed prior-stage outputs:
+  `SpartanOuter`, `SpartanProductVirtualization`,
+  `InstructionInputVirtualization`, `SpartanShift`,
+  `RegistersReadWriteChecking`, `RegistersValEvaluation`, and
+  `InstructionReadRaf`;
+- enforce the formula consistency claim that
+  `UnexpandedPC@SpartanShift` and
+  `UnexpandedPC@InstructionInputVirtualization` are the same scalar before
+  folding the Stage 3 bytecode input;
+- include `PC@SpartanOuter`, `PC@SpartanShift`, and the public entry-point
+  term exactly as core does;
+- after sumcheck, evaluate the bytecode-row public expression at the bytecode
+  address point and compare it against the product of
+  `BytecodeRa(i)@BytecodeReadRaf` output claims.
+
+Outputs:
+
+- committed `BytecodeRa(i)` claims at the normalized bytecode read-RAF point;
+- the bytecode address and cycle point used by Stage 7 hamming-weight claim
+  reduction.
+
+Boundary/API pressure before wiring:
+
+- `jolt-claims` exposes typed opening-order helpers for bytecode read-RAF
+  input/output claims. The verifier should not recreate private
+  `JoltOpeningId` constructors from `bytecode.rs`.
+- bytecode row evaluation over an MLE point is exposed as a typed
+  `read_raf_public_values` helper. It returns the five stage values plus the
+  Spartan RAF and entry terms; verifier code should not interpret
+  `JoltInstructionRow` directly.
+- `jolt-lookup-tables` provides aggregate `JoltInstruction` lookup-table
+  dispatch, so bytecode evaluation does not duplicate instruction-kind
+  matching.
+- point normalization comes from `BytecodeReadRafDimensions`, matching core's
+  address-then-cycle reversal.
+
+#### 10.2 RAM Hamming Booleanity
+
+Core analogue:
+`jolt-core/src/zkvm/ram/hamming_booleanity.rs`.
+
+Formula owner:
+`jolt_claims::protocols::jolt::formulas::ram::hamming_booleanity`.
+
+Checks:
+
+- input claim is exactly zero;
+- derive the reference cycle point from `LookupOutput@SpartanOuter`;
+- after sumcheck, compute the public `EqCycle` value between that reference
+  cycle point and the Stage 6 hamming-booleanity point;
+- verify `EqCycle * (H^2 - H)` for
+  `RamHammingWeight@RamHammingBooleanity`.
+
+Outputs:
+
+- virtual `RamHammingWeight@RamHammingBooleanity` at the normalized cycle
+  point, consumed by Stage 7 hamming-weight claim reduction.
+
+Boundary/API pressure before wiring:
+
+- `jolt-claims` exposes `hamming_booleanity_output_openings()`.
+- use `TraceDimensions::cycle_opening_point`; do not reimplement endianness in
+  `jolt-verifier`.
+
+#### 10.3 Canonical RA Booleanity
+
+Core analogue:
+`jolt-core/src/subprotocols/booleanity.rs`.
+
+Formula owner:
+`jolt_claims::protocols::jolt::formulas::booleanity::booleanity`.
+
+Checks:
+
+- input claim is exactly zero;
+- derive the shared address/cycle reference from Stage 5
+  `InstructionRa(0)@InstructionReadRaf` in the same way core does;
+- sample the booleanity gamma once, then derive per-polynomial weights as
+  `gamma^(2i)` over the canonical RA layout:
+  `InstructionRa`, then `BytecodeRa`, then `RamRa`;
+- after sumcheck, compute the public `EqAddressCycle` and verify the weighted
+  sum of `ra_i^2 - ra_i` over every committed RA output claim at
+  `Booleanity`.
+
+Outputs:
+
+- committed RA claims for every RA polynomial in the canonical layout at
+  `Booleanity`;
+- the shared booleanity address/cycle point consumed by Stage 7
+  hamming-weight claim reduction.
+
+Boundary/API pressure before wiring:
+
+- `jolt-claims` exposes `booleanity_output_openings(layout)`. The verifier
+  should consume the canonical `JoltRaPolynomialLayout`, not assemble three
+  unrelated vectors by hand.
+- if the Stage 5-derived address point is ever shorter than `log_k_chunk`,
+  core samples extra transcript challenges. The modular API should make that
+  policy explicit before the verifier wires it.
+
+#### 10.4 RAM RA Virtualization
+
+Core analogue:
+`jolt-core/src/zkvm/ram/ra_virtual.rs`.
+
+Formula owner:
+`jolt_claims::protocols::jolt::formulas::ram::ra_virtualization`.
+
+Checks:
+
+- input claim is `RamRa@RamRaClaimReduction` from Stage 5;
+- split the Stage 5 RAM RA claim-reduction opening point into address chunks
+  using typed one-hot dimensions;
+- after sumcheck, compute the public `EqCycle` between the reduced Stage 5
+  cycle point and the Stage 6 RAM RA virtualization point;
+- compare against `EqCycle * product(RamRa(i)@RamRaVirtualization)`.
+
+Outputs:
+
+- committed `RamRa(i)@RamRaVirtualization` claims at
+  `(address_chunk_i, stage6_cycle)`.
+
+Boundary/API pressure before wiring:
+
+- `jolt-claims` exposes RAM RA virtualization input/output opening helpers.
+- address chunking should come from the one-hot/dimension abstraction, not
+  verifier-local arithmetic.
+
+#### 10.5 Instruction RA Virtualization
+
+Core analogue:
+`jolt-core/src/zkvm/instruction_lookups/ra_virtual.rs`.
+
+Formula owner:
+`jolt_claims::protocols::jolt::formulas::instruction::ra_virtualization`.
+
+Checks:
+
+- reconstruct the full instruction address point from the Stage 5 virtual
+  `InstructionRa(i)@InstructionReadRaf` openings;
+- sample the virtualization gamma and compute the weighted input claim from
+  Stage 5 virtual instruction RA claims;
+- after sumcheck, compute the cycle equality coefficient and compare against
+  the weighted products of committed `InstructionRa` chunks.
+
+Outputs:
+
+- committed `InstructionRa(i)@InstructionRaVirtualization` claims grouped by
+  virtual RA chunk.
+
+Boundary/API pressure before wiring:
+
+- `jolt-claims` exposes instruction RA virtualization input/output helpers.
+- reuse the Stage 5 multi-point read-RAF output shape rather than reconstructing
+  instruction RA chunk points from raw IDs.
+
+#### 10.6 Increment Claim Reduction
+
+Core analogue:
+`jolt-core/src/zkvm/claim_reductions/increments.rs`.
+
+Formula owner:
+`jolt_claims::protocols::jolt::formulas::claim_reductions::increments`.
+
+Checks:
+
+- sample the increment gamma;
+- input claim folds:
+  `RamInc@RamReadWriteChecking`,
+  `RamInc@RamValCheck`,
+  `RdInc@RegistersReadWriteChecking`, and
+  `RdInc@RegistersValEvaluation`;
+- after sumcheck, compute equality values from each prior cycle point to the
+  Stage 6 increment point;
+- verify the output formula for reduced `RamInc` and `RdInc`.
+
+Outputs:
+
+- committed `RamInc@IncClaimReduction` and
+  `RdInc@IncClaimReduction` at the same normalized cycle point, both consumed
+  by Stage 8 opening verification and possibly later reductions.
+
+Boundary/API pressure before wiring:
+
+- `jolt-claims` exposes increment input/output opening helpers.
+- all cycle-point construction should use `TraceDimensions`.
+
+#### 10.7 Advice Claim Reduction, Cycle Phase
+
+Core analogue:
+`jolt-core/src/zkvm/claim_reductions/advice.rs`.
+
+Formula owner:
+`jolt_claims::protocols::jolt::formulas::claim_reductions::advice`.
+
+Checks:
+
+- instantiate a trusted advice cycle-phase instance only when a trusted advice
+  commitment is supplied;
+- instantiate an untrusted advice cycle-phase instance only when
+  `proof.untrusted_advice_commitment` is present;
+- input claim is the corresponding advice opening emitted by Stage 4
+  `RamValCheck`;
+- output is either a cycle-phase intermediate claim for Stage 7 or, if no
+  address phase remains, the final advice claim scaled by the typed final-scale
+  public value.
+
+Outputs:
+
+- for each present advice side, either
+  `AdviceClaimReductionCyclePhase` intermediate output or final
+  `AdviceClaimReduction` output.
+
+Boundary/API pressure before wiring:
+
+- deriving `AdviceClaimReductionDimensions` must use
+  `AdviceClaimReductionLayout`, `CommitmentMatrixShape`, and
+  `TracePolynomialOrder` from `jolt-claims`; it must not import core
+  `DoryGlobals` into `jolt-verifier`.
+- `AdviceClaimReductionLayout` exposes cycle/address phase round counts,
+  active cycle variable extraction, final opening-point normalization, and the
+  dummy-gap final-scale factor used by core.
+- typed advice payloads should make trusted and untrusted advice independent;
+  verifier logic should not share a single untyped advice slot.
+
+#### 10.8 Stage 6 Testing Status
+
+Stage 6 is now the standard frontier. The implementation uses the stage-folder
+shape established for Stages 1-5 and verifies the whole real core Stage 6 batch
+as one compressed sumcheck while keeping every component input and output typed.
+
+Current coverage:
+
+- real-core standard completeness fixtures reach `Stage6`;
+- direct soundness tampering mutates real core proofs after compat conversion;
+- pre-compat transitivity tampering mutates legacy core proofs first, checks
+  that core does not accept them, then casts the same tampered artifacts and
+  checks modular rejection;
+- tampering covers the Stage 6 compressed batch proof payload, missing/extra
+  round counts, every scalar/vector field in `Stage6Claims`, and trusted and
+  untrusted advice-cycle output branches;
+- Stage 6 fixture and tamper cases are activated under the `Stage6` checkpoint;
+- ZK/BlindFold Stage 6 commitments remain recorded as future ZK-frontier
+  targets rather than enabled transparent checks.
 
 Review criteria:
 
-- Runtime dimensions come from typed config/dimensions, not hardcoded constants.
-- Advice support is first class.
-- ZK claim metadata covers every included sumcheck.
+- Stage 6 remains linear at the verifier level: build typed dimensions, sample
+  transcript challenges in core order, verify the batched sumcheck, evaluate
+  each component formula, compare the combined final claim, append opening
+  claims, and return typed outputs.
+- Runtime dimensions come from typed config/dimensions, not hardcoded
+  constants.
+- Bytecode VM semantics, advice layout schedules, and point normalization live
+  in their owning modular crates rather than in verifier-local helper logic.
+- Advice support is first class and covers trusted/untrusted independently.
+- ZK claim metadata covers every included sumcheck before the ZK frontier is
+  advanced.
 
 ### 11. Stage 7: Hamming Weight And Advice Phase 2
 

@@ -31,7 +31,7 @@ impl VerifierFrontiers {
 }
 
 pub const CURRENT_VERIFIER_FRONTIERS: VerifierFrontiers = VerifierFrontiers {
-    standard: VerifierCheckpoint::Stage5,
+    standard: VerifierCheckpoint::Stage6,
     zk: VerifierCheckpoint::Commitments,
 };
 

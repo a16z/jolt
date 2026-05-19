@@ -10,6 +10,7 @@ use super::{
     config::{OneHotConfig, ReadWriteConfig},
     ids::{CommittedPolynomial, OpeningId, PolynomialId, SumcheckId, VirtualPolynomial},
 };
+#[cfg(test)]
 use crate::proof::TracePolynomialOrder;
 
 const OPENING_ID_UNTRUSTED_ADVICE_BASE: u8 = 0;
@@ -141,37 +142,7 @@ impl CanonicalDeserialize for OneHotConfig {
     }
 }
 
-impl CanonicalSerialize for TracePolynomialOrder {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        trace_polynomial_order_byte(*self).serialize_with_mode(writer, compress)
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        trace_polynomial_order_byte(*self).serialized_size(compress)
-    }
-}
-
-impl Valid for TracePolynomialOrder {
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
-impl CanonicalDeserialize for TracePolynomialOrder {
-    fn deserialize_with_mode<R: Read>(
-        reader: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        let value = u8::deserialize_with_mode(reader, compress, validate)?;
-        trace_polynomial_order_from_byte(value).ok_or(SerializationError::InvalidData)
-    }
-}
-
+#[cfg(test)]
 fn trace_polynomial_order_byte(order: TracePolynomialOrder) -> u8 {
     match order {
         TracePolynomialOrder::CycleMajor => 0,
@@ -179,6 +150,7 @@ fn trace_polynomial_order_byte(order: TracePolynomialOrder) -> u8 {
     }
 }
 
+#[cfg(test)]
 fn trace_polynomial_order_from_byte(value: u8) -> Option<TracePolynomialOrder> {
     match value {
         0 => Some(TracePolynomialOrder::CycleMajor),
@@ -631,11 +603,13 @@ mod tests {
                 CoreDoryLayout::AddressMajor,
             ),
         ] {
-            round_trip(layout)?;
-            assert_eq!(bytes(&layout)?, bytes(&core_layout)?);
+            assert_eq!(
+                bytes(&trace_polynomial_order_byte(layout))?,
+                bytes(&core_layout)?
+            );
         }
 
-        assert!(TracePolynomialOrder::deserialize_compressed([2u8].as_slice()).is_err());
+        assert_eq!(trace_polynomial_order_from_byte(2), None);
         assert_eq!(
             TracePolynomialOrder::CycleMajor.address_cycle_to_index(3, 4, 10, 20),
             64

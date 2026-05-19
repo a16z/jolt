@@ -1,6 +1,10 @@
-use jolt_field::RingCore;
-use jolt_lookup_tables::LookupTableKind;
-use jolt_riscv::{CircuitFlags, InstructionFlags, NUM_CIRCUIT_FLAGS};
+use jolt_field::{Field, RingCore};
+use jolt_lookup_tables::{InstructionLookupTable, LookupTableKind};
+use jolt_poly::{EqPolynomial, IdentityPolynomial};
+use jolt_riscv::{
+    instructions::Noop, CircuitFlags, Flags, InstructionFlags, InterleavedBitsMarker,
+    JoltInstruction, JoltInstructionRow, NUM_CIRCUIT_FLAGS,
+};
 
 use crate::{challenge, opening, public, SameEvaluationAs};
 
@@ -8,7 +12,7 @@ use super::super::{
     BytecodeReadRafChallenge, BytecodeReadRafPublic, JoltChallengeId, JoltCommittedPolynomial,
     JoltExpr, JoltOpeningId, JoltPublicId, JoltStageClaims, JoltStageId, JoltVirtualPolynomial,
 };
-use super::dimensions::JoltSumcheckSpec;
+use super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
 
 const CIRCUIT_FLAGS: [CircuitFlags; NUM_CIRCUIT_FLAGS] = [
     CircuitFlags::AddOperands,
@@ -58,12 +62,43 @@ impl BytecodeReadRafDimensions {
     pub const fn sumcheck(self) -> JoltSumcheckSpec {
         JoltSumcheckSpec::boolean(self.log_t + self.log_k, self.committed_ra_polys + 1)
     }
+
+    pub fn opening_point<F: Field>(
+        self,
+        challenges: &[F],
+    ) -> Result<BytecodeReadRafOpeningPoint<F>, JoltFormulaPointError> {
+        let expected = self.log_k + self.log_t;
+        if challenges.len() != expected {
+            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+                expected,
+                got: challenges.len(),
+            });
+        }
+
+        let (r_address, r_cycle) = challenges.split_at(self.log_k);
+        let r_address = r_address.iter().rev().copied().collect::<Vec<_>>();
+        let r_cycle = r_cycle.iter().rev().copied().collect::<Vec<_>>();
+        let opening_point = [r_address.as_slice(), r_cycle.as_slice()].concat();
+
+        Ok(BytecodeReadRafOpeningPoint {
+            r_address,
+            r_cycle,
+            opening_point,
+        })
+    }
 }
 
 impl From<(usize, usize, usize)> for BytecodeReadRafDimensions {
     fn from((log_t, log_k, committed_ra_polys): (usize, usize, usize)) -> Self {
         Self::new(log_t, log_k, committed_ra_polys)
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BytecodeReadRafOpeningPoint<F: Field> {
+    pub r_address: Vec<F>,
+    pub r_cycle: Vec<F>,
+    pub opening_point: Vec<F>,
 }
 
 pub fn read_raf<const XLEN: usize, F>(dimensions: BytecodeReadRafDimensions) -> JoltStageClaims<F>
@@ -108,6 +143,350 @@ where
     .with_consistency([
         unexpanded_pc_spartan_shift().same_evaluation_as(unexpanded_pc_instruction_input())
     ])
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BytecodeReadRafInputOpenings<const XLEN: usize> {
+    pub spartan_outer: BytecodeReadRafSpartanOuterOpenings,
+    pub spartan_product: BytecodeReadRafSpartanProductOpenings,
+    pub instruction_input: BytecodeReadRafInstructionInputOpenings,
+    pub spartan_shift: BytecodeReadRafSpartanShiftOpenings,
+    pub registers_read_write: BytecodeReadRafRegistersReadWriteOpenings,
+    pub registers_val_evaluation: BytecodeReadRafRegistersValEvaluationOpenings<XLEN>,
+    pub spartan_outer_pc: JoltOpeningId,
+    pub spartan_shift_pc: JoltOpeningId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BytecodeReadRafSpartanOuterOpenings {
+    pub unexpanded_pc: JoltOpeningId,
+    pub imm: JoltOpeningId,
+    pub op_flags: Vec<(CircuitFlags, JoltOpeningId)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BytecodeReadRafSpartanProductOpenings {
+    pub jump: JoltOpeningId,
+    pub branch: JoltOpeningId,
+    pub write_lookup_output_to_rd: JoltOpeningId,
+    pub virtual_instruction: JoltOpeningId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BytecodeReadRafInstructionInputOpenings {
+    pub imm: JoltOpeningId,
+    pub unexpanded_pc_from_shift: JoltOpeningId,
+    pub left_operand_is_rs1_value: JoltOpeningId,
+    pub left_operand_is_pc: JoltOpeningId,
+    pub right_operand_is_rs2_value: JoltOpeningId,
+    pub right_operand_is_imm: JoltOpeningId,
+    pub is_noop_from_shift: JoltOpeningId,
+    pub virtual_instruction_from_shift: JoltOpeningId,
+    pub is_first_in_sequence_from_shift: JoltOpeningId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BytecodeReadRafSpartanShiftOpenings {
+    pub unexpanded_pc: JoltOpeningId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BytecodeReadRafRegistersReadWriteOpenings {
+    pub rd_wa: JoltOpeningId,
+    pub rs1_ra: JoltOpeningId,
+    pub rs2_ra: JoltOpeningId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BytecodeReadRafRegistersValEvaluationOpenings<const XLEN: usize> {
+    pub rd_wa: JoltOpeningId,
+    pub instruction_raf_flag: JoltOpeningId,
+    pub lookup_table_flags: Vec<(LookupTableKind<XLEN>, JoltOpeningId)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BytecodeReadRafOutputOpenings {
+    pub bytecode_ra: Vec<JoltOpeningId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BytecodeReadRafPublicValues<F: Field> {
+    pub stage_values: [F; 5],
+    pub spartan_outer_raf: F,
+    pub spartan_shift_raf: F,
+    pub entry: F,
+}
+
+impl<F: Field> BytecodeReadRafPublicValues<F> {
+    pub fn value(&self, id: BytecodeReadRafPublic) -> F {
+        match id {
+            BytecodeReadRafPublic::StageValue(index) => self
+                .stage_values
+                .get(index)
+                .copied()
+                .unwrap_or_else(F::zero),
+            BytecodeReadRafPublic::SpartanOuterRaf => self.spartan_outer_raf,
+            BytecodeReadRafPublic::SpartanShiftRaf => self.spartan_shift_raf,
+            BytecodeReadRafPublic::Entry => self.entry,
+        }
+    }
+}
+
+pub struct BytecodeReadRafEvaluationInputs<'a, F> {
+    pub bytecode: &'a [JoltInstructionRow],
+    pub r_address: &'a [F],
+    pub r_cycle: &'a [F],
+    pub stage_cycle_points: [&'a [F]; 5],
+    pub register_read_write_point: &'a [F],
+    pub register_val_evaluation_point: &'a [F],
+    pub entry_bytecode_index: usize,
+    pub stage1_gammas: &'a [F],
+    pub stage2_gammas: &'a [F],
+    pub stage3_gammas: &'a [F],
+    pub stage4_gammas: &'a [F],
+    pub stage5_gammas: &'a [F],
+}
+
+pub fn read_raf_public_values<const XLEN: usize, F>(
+    inputs: BytecodeReadRafEvaluationInputs<'_, F>,
+) -> Result<BytecodeReadRafPublicValues<F>, JoltFormulaPointError>
+where
+    F: Field,
+{
+    require_len(inputs.stage1_gammas, 2 + NUM_CIRCUIT_FLAGS)?;
+    require_len(inputs.stage2_gammas, 4)?;
+    require_len(inputs.stage3_gammas, 9)?;
+    require_len(inputs.stage4_gammas, 3)?;
+    require_len(inputs.stage5_gammas, 2 + LookupTableKind::<XLEN>::COUNT)?;
+
+    let expected_domain = 1usize << inputs.r_address.len();
+    if inputs.bytecode.len() != expected_domain {
+        return Err(JoltFormulaPointError::EvaluationDomainLengthMismatch {
+            expected: expected_domain,
+            got: inputs.bytecode.len(),
+        });
+    }
+
+    let address_eq_evals = EqPolynomial::<F>::evals(inputs.r_address, None);
+    let register_read_write_eq = EqPolynomial::<F>::evals(inputs.register_read_write_point, None);
+    let register_val_evaluation_eq =
+        EqPolynomial::<F>::evals(inputs.register_val_evaluation_point, None);
+
+    let mut stage_values = [F::zero(); 5];
+    for (instruction, eq_address) in inputs.bytecode.iter().zip(address_eq_evals) {
+        let row_values = read_raf_row_values::<XLEN, F>(
+            instruction,
+            &register_read_write_eq,
+            &register_val_evaluation_eq,
+            inputs.stage1_gammas,
+            inputs.stage2_gammas,
+            inputs.stage3_gammas,
+            inputs.stage4_gammas,
+            inputs.stage5_gammas,
+        );
+        for (stage_value, row_value) in stage_values.iter_mut().zip(row_values) {
+            *stage_value += row_value * eq_address;
+        }
+    }
+
+    for (stage_value, stage_cycle_point) in stage_values
+        .iter_mut()
+        .zip(inputs.stage_cycle_points.into_iter())
+    {
+        *stage_value *= EqPolynomial::<F>::mle(stage_cycle_point, inputs.r_cycle);
+    }
+
+    let identity = IdentityPolynomial::new(inputs.r_address.len()).evaluate(inputs.r_address);
+    let spartan_outer_raf =
+        identity * EqPolynomial::<F>::mle(inputs.stage_cycle_points[0], inputs.r_cycle);
+    let spartan_shift_raf =
+        identity * EqPolynomial::<F>::mle(inputs.stage_cycle_points[2], inputs.r_cycle);
+
+    let entry_bits = (0..inputs.r_address.len())
+        .map(|i| {
+            F::from_u64(
+                ((inputs.entry_bytecode_index >> (inputs.r_address.len() - 1 - i)) & 1) as u64,
+            )
+        })
+        .collect::<Vec<_>>();
+    let zero_cycle = vec![F::zero(); inputs.r_cycle.len()];
+    let entry = EqPolynomial::<F>::mle(&entry_bits, inputs.r_address)
+        * EqPolynomial::<F>::mle(&zero_cycle, inputs.r_cycle);
+
+    Ok(BytecodeReadRafPublicValues {
+        stage_values,
+        spartan_outer_raf,
+        spartan_shift_raf,
+        entry,
+    })
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each gamma slice corresponds to one protocol subexpression."
+)]
+fn read_raf_row_values<const XLEN: usize, F>(
+    instruction: &JoltInstructionRow,
+    register_read_write_eq: &[F],
+    register_val_evaluation_eq: &[F],
+    stage1_gammas: &[F],
+    stage2_gammas: &[F],
+    stage3_gammas: &[F],
+    stage4_gammas: &[F],
+    stage5_gammas: &[F],
+) -> [F; 5]
+where
+    F: Field,
+{
+    let decoded = JoltInstruction::try_from(*instruction)
+        .unwrap_or(JoltInstruction::Noop(Noop(*instruction)));
+    let circuit_flags = decoded.circuit_flags();
+    let instruction_flags = decoded.instruction_flags();
+
+    let mut stage1 = F::from_u64(instruction.address as u64);
+    stage1 += stage1_gammas[1].mul_i128(instruction.operands.imm);
+    for (index, flag) in CIRCUIT_FLAGS.into_iter().enumerate() {
+        if circuit_flags[flag] {
+            stage1 += stage1_gammas[index + 2];
+        }
+    }
+
+    let mut stage2 = F::zero();
+    if circuit_flags[CircuitFlags::Jump] {
+        stage2 += stage2_gammas[0];
+    }
+    if instruction_flags[InstructionFlags::Branch] {
+        stage2 += stage2_gammas[1];
+    }
+    if circuit_flags[CircuitFlags::WriteLookupOutputToRD] {
+        stage2 += stage2_gammas[2];
+    }
+    if circuit_flags[CircuitFlags::VirtualInstruction] {
+        stage2 += stage2_gammas[3];
+    }
+
+    let mut stage3 = F::from_i128(instruction.operands.imm);
+    stage3 += stage3_gammas[1].mul_u64(instruction.address as u64);
+    if instruction_flags[InstructionFlags::LeftOperandIsRs1Value] {
+        stage3 += stage3_gammas[2];
+    }
+    if instruction_flags[InstructionFlags::LeftOperandIsPC] {
+        stage3 += stage3_gammas[3];
+    }
+    if instruction_flags[InstructionFlags::RightOperandIsRs2Value] {
+        stage3 += stage3_gammas[4];
+    }
+    if instruction_flags[InstructionFlags::RightOperandIsImm] {
+        stage3 += stage3_gammas[5];
+    }
+    if instruction_flags[InstructionFlags::IsNoop] {
+        stage3 += stage3_gammas[6];
+    }
+    if circuit_flags[CircuitFlags::VirtualInstruction] {
+        stage3 += stage3_gammas[7];
+    }
+    if circuit_flags[CircuitFlags::IsFirstInSequence] {
+        stage3 += stage3_gammas[8];
+    }
+
+    let stage4 = register_eq(instruction.operands.rd, register_read_write_eq) * stage4_gammas[0]
+        + register_eq(instruction.operands.rs1, register_read_write_eq) * stage4_gammas[1]
+        + register_eq(instruction.operands.rs2, register_read_write_eq) * stage4_gammas[2];
+
+    let mut stage5 = register_eq(instruction.operands.rd, register_val_evaluation_eq);
+    if !circuit_flags.is_interleaved_operands() {
+        stage5 += stage5_gammas[1];
+    }
+    if let Some(table) = InstructionLookupTable::<XLEN>::lookup_table(&decoded) {
+        stage5 += stage5_gammas[2 + table.index()];
+    }
+
+    [stage1, stage2, stage3, stage4, stage5]
+}
+
+fn register_eq<F: Field>(register: Option<u8>, eq: &[F]) -> F {
+    register
+        .and_then(|register| eq.get(register as usize))
+        .copied()
+        .unwrap_or_else(F::zero)
+}
+
+fn require_len<F>(values: &[F], expected: usize) -> Result<(), JoltFormulaPointError> {
+    if values.len() < expected {
+        return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            expected,
+            got: values.len(),
+        });
+    }
+    Ok(())
+}
+
+pub fn read_raf_input_openings<const XLEN: usize>() -> BytecodeReadRafInputOpenings<XLEN> {
+    BytecodeReadRafInputOpenings {
+        spartan_outer: BytecodeReadRafSpartanOuterOpenings {
+            unexpanded_pc: unexpanded_pc_spartan_outer(),
+            imm: imm_spartan_outer(),
+            op_flags: CIRCUIT_FLAGS
+                .into_iter()
+                .map(|flag| (flag, op_flag_spartan_outer(flag)))
+                .collect(),
+        },
+        spartan_product: BytecodeReadRafSpartanProductOpenings {
+            jump: op_flag_product(CircuitFlags::Jump),
+            branch: instruction_flag_product(InstructionFlags::Branch),
+            write_lookup_output_to_rd: op_flag_product(CircuitFlags::WriteLookupOutputToRD),
+            virtual_instruction: op_flag_product(CircuitFlags::VirtualInstruction),
+        },
+        instruction_input: BytecodeReadRafInstructionInputOpenings {
+            imm: imm_instruction_input(),
+            unexpanded_pc_from_shift: unexpanded_pc_spartan_shift(),
+            left_operand_is_rs1_value: instruction_flag_input(
+                InstructionFlags::LeftOperandIsRs1Value,
+            ),
+            left_operand_is_pc: instruction_flag_input(InstructionFlags::LeftOperandIsPC),
+            right_operand_is_rs2_value: instruction_flag_input(
+                InstructionFlags::RightOperandIsRs2Value,
+            ),
+            right_operand_is_imm: instruction_flag_input(InstructionFlags::RightOperandIsImm),
+            is_noop_from_shift: instruction_flag_shift(InstructionFlags::IsNoop),
+            virtual_instruction_from_shift: op_flag_shift(CircuitFlags::VirtualInstruction),
+            is_first_in_sequence_from_shift: op_flag_shift(CircuitFlags::IsFirstInSequence),
+        },
+        spartan_shift: BytecodeReadRafSpartanShiftOpenings {
+            unexpanded_pc: unexpanded_pc_spartan_shift(),
+        },
+        registers_read_write: BytecodeReadRafRegistersReadWriteOpenings {
+            rd_wa: rd_wa_read_write(),
+            rs1_ra: rs1_ra_read_write(),
+            rs2_ra: rs2_ra_read_write(),
+        },
+        registers_val_evaluation: BytecodeReadRafRegistersValEvaluationOpenings {
+            rd_wa: rd_wa_val_evaluation(),
+            instruction_raf_flag: instruction_raf_flag(),
+            lookup_table_flags: LookupTableKind::<XLEN>::iter()
+                .map(|table| (table, lookup_table_flag(table)))
+                .collect(),
+        },
+        spartan_outer_pc: pc_spartan_outer(),
+        spartan_shift_pc: pc_spartan_shift(),
+    }
+}
+
+pub fn read_raf_output_openings(
+    dimensions: BytecodeReadRafDimensions,
+) -> BytecodeReadRafOutputOpenings {
+    BytecodeReadRafOutputOpenings {
+        bytecode_ra: (0..dimensions.num_committed_ra_polys())
+            .map(bytecode_ra)
+            .collect(),
+    }
+}
+
+pub fn read_raf_consistency_openings() -> [(JoltOpeningId, JoltOpeningId); 1] {
+    [(
+        unexpanded_pc_spartan_shift(),
+        unexpanded_pc_instruction_input(),
+    )]
 }
 
 fn stage1_claim<F>() -> JoltExpr<F>
@@ -343,10 +722,12 @@ fn bytecode_ra(index: usize) -> JoltOpeningId {
 }
 
 #[cfg(test)]
+#[expect(clippy::panic)]
 mod tests {
     use super::*;
     use crate::protocols::jolt::{JoltCommittedPolynomial, JoltConsistencyClaim, JoltPolynomialId};
     use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_riscv::{JoltInstructionKind, NormalizedOperands};
 
     const TEST_XLEN: usize = jolt_lookup_tables::XLEN;
 
@@ -372,6 +753,121 @@ mod tests {
         LookupTableKind::<TEST_XLEN>::iter()
             .map(lookup_table_flag)
             .collect()
+    }
+
+    #[test]
+    fn read_raf_opening_point_matches_core_order() {
+        let point = BytecodeReadRafDimensions::new(3, 2, 1)
+            .opening_point(&(1..=5).map(Fr::from_u64).collect::<Vec<_>>())
+            .unwrap_or_else(|error| panic!("bytecode read-raf point should normalize: {error}"));
+
+        assert_eq!(point.r_address, vec![Fr::from_u64(2), Fr::from_u64(1)]);
+        assert_eq!(
+            point.r_cycle,
+            vec![Fr::from_u64(5), Fr::from_u64(4), Fr::from_u64(3)]
+        );
+        assert_eq!(
+            point.opening_point,
+            vec![
+                Fr::from_u64(2),
+                Fr::from_u64(1),
+                Fr::from_u64(5),
+                Fr::from_u64(4),
+                Fr::from_u64(3),
+            ]
+        );
+    }
+
+    #[test]
+    fn read_raf_helpers_expose_typed_openings() {
+        let input = read_raf_input_openings::<TEST_XLEN>();
+        let output = read_raf_output_openings(dimensions(2));
+
+        assert_eq!(
+            input.spartan_outer.unexpanded_pc,
+            unexpanded_pc_spartan_outer()
+        );
+        assert_eq!(input.spartan_outer.imm, imm_spartan_outer());
+        assert_eq!(input.spartan_outer.op_flags.len(), NUM_CIRCUIT_FLAGS);
+        assert_eq!(
+            input.spartan_product.jump,
+            op_flag_product(CircuitFlags::Jump)
+        );
+        assert_eq!(
+            input.spartan_product.branch,
+            instruction_flag_product(InstructionFlags::Branch)
+        );
+        assert_eq!(
+            input.registers_val_evaluation.lookup_table_flags,
+            LookupTableKind::<TEST_XLEN>::iter()
+                .map(|table| (table, lookup_table_flag(table)))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(output.bytecode_ra, vec![bytecode_ra(0), bytecode_ra(1)]);
+        assert_eq!(
+            read_raf_consistency_openings(),
+            [(
+                unexpanded_pc_spartan_shift(),
+                unexpanded_pc_instruction_input()
+            )]
+        );
+    }
+
+    #[test]
+    fn read_raf_public_values_evaluate_bytecode_rows() {
+        let bytecode = vec![
+            JoltInstructionRow {
+                instruction_kind: JoltInstructionKind::ADD,
+                address: 9,
+                operands: NormalizedOperands {
+                    rs1: Some(0),
+                    rs2: Some(0),
+                    rd: Some(0),
+                    imm: 4,
+                },
+                virtual_sequence_remaining: None,
+                is_first_in_sequence: false,
+                is_compressed: false,
+            },
+            JoltInstructionRow::default(),
+        ];
+        let one = Fr::from_u64(1);
+        let zero = Fr::from_u64(0);
+        let r_address = [zero];
+        let r_cycle = [zero];
+        let stage_cycle_points = [&r_cycle[..]; 5];
+        let stage1_gammas = vec![one; 2 + NUM_CIRCUIT_FLAGS];
+        let stage5_gammas = vec![one; 2 + LookupTableKind::<TEST_XLEN>::COUNT];
+        let public_values =
+            read_raf_public_values::<TEST_XLEN, Fr>(BytecodeReadRafEvaluationInputs {
+                bytecode: &bytecode,
+                r_address: &r_address,
+                r_cycle: &r_cycle,
+                stage_cycle_points,
+                register_read_write_point: &[],
+                register_val_evaluation_point: &[],
+                entry_bytecode_index: 0,
+                stage1_gammas: &stage1_gammas,
+                stage2_gammas: &[one; 4],
+                stage3_gammas: &[one; 9],
+                stage4_gammas: &[one; 3],
+                stage5_gammas: &stage5_gammas,
+            })
+            .unwrap_or_else(|error| panic!("bytecode public values should evaluate: {error}"));
+
+        assert_eq!(
+            public_values.stage_values,
+            [
+                Fr::from_u64(15),
+                Fr::from_u64(1),
+                Fr::from_u64(15),
+                Fr::from_u64(3),
+                Fr::from_u64(3),
+            ]
+        );
+        assert_eq!(public_values.spartan_outer_raf, zero);
+        assert_eq!(public_values.spartan_shift_raf, zero);
+        assert_eq!(public_values.entry, one);
     }
 
     #[test]

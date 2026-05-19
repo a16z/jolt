@@ -1,4 +1,4 @@
-use jolt_field::RingCore;
+use jolt_field::{Field, RingCore};
 
 use crate::{challenge, opening, public};
 
@@ -6,7 +6,7 @@ use super::super::{
     BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId,
     JoltStageClaims, JoltStageId,
 };
-use super::dimensions::JoltSumcheckSpec;
+use super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
 use super::ra::JoltRaPolynomialLayout;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -20,6 +20,37 @@ impl BooleanityDimensions {
     pub const fn sumcheck(self) -> JoltSumcheckSpec {
         JoltSumcheckSpec::boolean(self.log_t + self.log_k_chunk, 3)
     }
+
+    pub fn opening_point<F: Field>(
+        self,
+        challenges: &[F],
+    ) -> Result<BooleanityOpeningPoint<F>, JoltFormulaPointError> {
+        let expected = self.log_t + self.log_k_chunk;
+        if challenges.len() != expected {
+            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+                expected,
+                got: challenges.len(),
+            });
+        }
+
+        let (r_address, r_cycle) = challenges.split_at(self.log_k_chunk);
+        let r_address = r_address.iter().rev().copied().collect::<Vec<_>>();
+        let r_cycle = r_cycle.iter().rev().copied().collect::<Vec<_>>();
+        let opening_point = [r_address.as_slice(), r_cycle.as_slice()].concat();
+
+        Ok(BooleanityOpeningPoint {
+            r_address,
+            r_cycle,
+            opening_point,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BooleanityOpeningPoint<F: Field> {
+    pub r_address: Vec<F>,
+    pub r_cycle: Vec<F>,
+    pub opening_point: Vec<F>,
 }
 
 impl From<(JoltRaPolynomialLayout, usize, usize)> for BooleanityDimensions {
@@ -40,7 +71,7 @@ where
     let eq_address_cycle = booleanity_public(BooleanityPublic::EqAddressCycle);
     let mut output = JoltExpr::zero();
 
-    for (i, opening_id) in booleanity_openings(dimensions.layout)
+    for (i, opening_id) in booleanity_output_openings(dimensions.layout)
         .into_iter()
         .enumerate()
     {
@@ -71,7 +102,7 @@ where
     public(JoltPublicId::from(id))
 }
 
-fn booleanity_openings(layout: JoltRaPolynomialLayout) -> Vec<JoltOpeningId> {
+pub fn booleanity_output_openings(layout: JoltRaPolynomialLayout) -> Vec<JoltOpeningId> {
     layout.openings(JoltStageId::Booleanity).collect()
 }
 
@@ -102,7 +133,10 @@ mod tests {
         assert_eq!(claims.id, JoltStageId::Booleanity);
         assert_eq!(claims.sumcheck, JoltSumcheckSpec::boolean(13, 3));
         assert!(claims.input.required_openings.is_empty());
-        assert_eq!(claims.output.required_openings, booleanity_openings(layout));
+        assert_eq!(
+            claims.output.required_openings,
+            booleanity_output_openings(layout)
+        );
         assert_eq!(
             claims.input.required_challenges,
             vec![JoltChallengeId::from(BooleanityChallenge::Gamma)]

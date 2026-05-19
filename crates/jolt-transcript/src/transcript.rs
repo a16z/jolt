@@ -4,6 +4,7 @@
 //! and the [`AppendToTranscript`] trait for types that can be absorbed into a transcript.
 
 use crate::domain::Label;
+use jolt_field::{Field, FromPrimitiveInt};
 
 /// Fiat-Shamir transcript for non-interactive proofs.
 ///
@@ -72,6 +73,20 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
     #[must_use]
     fn challenge_vector(&mut self, len: usize) -> Vec<Self::Challenge> {
         (0..len).map(|_| self.challenge()).collect()
+    }
+
+    /// Squeezes one scalar challenge and returns its powers `[1, gamma, gamma^2, ...]`.
+    #[must_use]
+    fn challenge_scalar_powers(&mut self, len: usize) -> Vec<Self::Challenge>
+    where
+        Self::Challenge: Field,
+    {
+        let gamma = self.challenge_scalar();
+        let mut powers = vec![Self::Challenge::from_u64(1); len];
+        for index in 1..len {
+            powers[index] = powers[index - 1] * gamma;
+        }
+        powers
     }
 
     /// Returns the current 256-bit transcript state.

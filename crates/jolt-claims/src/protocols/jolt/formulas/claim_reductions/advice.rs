@@ -15,13 +15,13 @@ pub fn cycle_phase<F>(
 where
     F: RingCore,
 {
-    let input = opening(ram_val_check_advice(kind));
+    let input = opening(ram_val_check_advice_opening(kind));
     let output = if dimensions.has_address_phase() {
-        opening(cycle_phase_advice(kind))
+        opening(cycle_phase_advice_opening(kind))
     } else {
         public(JoltPublicId::from(AdviceClaimReductionPublic::FinalScale(
             kind,
-        ))) * opening(final_advice(kind))
+        ))) * opening(final_advice_opening(kind))
     };
 
     JoltStageClaims::new(
@@ -39,10 +39,10 @@ pub fn address_phase<F>(
 where
     F: RingCore,
 {
-    let input = opening(cycle_phase_advice(kind));
+    let input = opening(cycle_phase_advice_opening(kind));
     let output = public(JoltPublicId::from(AdviceClaimReductionPublic::FinalScale(
         kind,
-    ))) * opening(final_advice(kind));
+    ))) * opening(final_advice_opening(kind));
 
     JoltStageClaims::new(
         JoltStageId::AdviceClaimReduction,
@@ -52,15 +52,38 @@ where
     )
 }
 
-fn ram_val_check_advice(kind: JoltAdviceKind) -> JoltOpeningId {
+pub fn cycle_phase_input_openings(kind: JoltAdviceKind) -> [JoltOpeningId; 1] {
+    [ram_val_check_advice_opening(kind)]
+}
+
+pub fn cycle_phase_output_openings(
+    kind: JoltAdviceKind,
+    dimensions: AdviceClaimReductionDimensions,
+) -> Vec<JoltOpeningId> {
+    if dimensions.has_address_phase() {
+        vec![cycle_phase_advice_opening(kind)]
+    } else {
+        vec![final_advice_opening(kind)]
+    }
+}
+
+pub fn address_phase_input_openings(kind: JoltAdviceKind) -> [JoltOpeningId; 1] {
+    [cycle_phase_advice_opening(kind)]
+}
+
+pub fn address_phase_output_openings(kind: JoltAdviceKind) -> [JoltOpeningId; 1] {
+    [final_advice_opening(kind)]
+}
+
+pub fn ram_val_check_advice_opening(kind: JoltAdviceKind) -> JoltOpeningId {
     advice_opening(kind, JoltStageId::RamValCheck)
 }
 
-fn cycle_phase_advice(kind: JoltAdviceKind) -> JoltOpeningId {
+pub fn cycle_phase_advice_opening(kind: JoltAdviceKind) -> JoltOpeningId {
     advice_opening(kind, JoltStageId::AdviceClaimReductionCyclePhase)
 }
 
-fn final_advice(kind: JoltAdviceKind) -> JoltOpeningId {
+pub fn final_advice_opening(kind: JoltAdviceKind) -> JoltOpeningId {
     advice_opening(kind, JoltStageId::AdviceClaimReduction)
 }
 
@@ -92,11 +115,11 @@ mod tests {
         assert_eq!(claims.sumcheck, with_address_phase().cycle_sumcheck());
         assert_eq!(
             claims.input.required_openings,
-            vec![ram_val_check_advice(JoltAdviceKind::Trusted)]
+            vec![ram_val_check_advice_opening(JoltAdviceKind::Trusted)]
         );
         assert_eq!(
             claims.output.required_openings,
-            vec![cycle_phase_advice(JoltAdviceKind::Trusted)]
+            vec![cycle_phase_advice_opening(JoltAdviceKind::Trusted)]
         );
         assert!(claims.required_challenges().is_empty());
         assert!(claims.required_publics().is_empty());
@@ -110,8 +133,8 @@ mod tests {
         assert_eq!(
             claims.required_openings(),
             vec![
-                ram_val_check_advice(JoltAdviceKind::Untrusted),
-                final_advice(JoltAdviceKind::Untrusted),
+                ram_val_check_advice_opening(JoltAdviceKind::Untrusted),
+                final_advice_opening(JoltAdviceKind::Untrusted),
             ]
         );
         assert_eq!(
@@ -130,11 +153,11 @@ mod tests {
         assert_eq!(claims.sumcheck, with_address_phase().address_sumcheck());
         assert_eq!(
             claims.input.required_openings,
-            vec![cycle_phase_advice(JoltAdviceKind::Trusted)]
+            vec![cycle_phase_advice_opening(JoltAdviceKind::Trusted)]
         );
         assert_eq!(
             claims.output.required_openings,
-            vec![final_advice(JoltAdviceKind::Trusted)]
+            vec![final_advice_opening(JoltAdviceKind::Trusted)]
         );
         assert_eq!(
             claims.required_publics(),
@@ -155,7 +178,7 @@ mod tests {
 
         let input = claims.input.expression.evaluate(
             |id| match *id {
-                id if id == ram_val_check_advice(JoltAdviceKind::Trusted) => input_advice,
+                id if id == ram_val_check_advice_opening(JoltAdviceKind::Trusted) => input_advice,
                 _ => zero,
             },
             |_| zero,
@@ -163,7 +186,7 @@ mod tests {
         );
         let output = claims.output.expression.evaluate(
             |id| match *id {
-                id if id == final_advice(JoltAdviceKind::Trusted) => final_advice_claim,
+                id if id == final_advice_opening(JoltAdviceKind::Trusted) => final_advice_claim,
                 _ => zero,
             },
             |_| zero,
@@ -190,7 +213,7 @@ mod tests {
 
         let input = claims.input.expression.evaluate(
             |id| match *id {
-                id if id == cycle_phase_advice(JoltAdviceKind::Untrusted) => cycle_claim,
+                id if id == cycle_phase_advice_opening(JoltAdviceKind::Untrusted) => cycle_claim,
                 _ => zero,
             },
             |_| zero,
@@ -198,7 +221,7 @@ mod tests {
         );
         let output = claims.output.expression.evaluate(
             |id| match *id {
-                id if id == final_advice(JoltAdviceKind::Untrusted) => final_advice_claim,
+                id if id == final_advice_opening(JoltAdviceKind::Untrusted) => final_advice_claim,
                 _ => zero,
             },
             |_| zero,

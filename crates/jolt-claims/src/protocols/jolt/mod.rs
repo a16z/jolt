@@ -4,9 +4,10 @@ mod ids;
 mod stage;
 
 pub use formulas::dimensions::{
-    JoltFormulaDimensions, JoltFormulaDimensionsError, JoltOneHotConfig, JoltOneHotDimensions,
-    JoltReadWriteConfig, JoltSumcheckDomain, JoltSumcheckSpec, ReadWriteDimensions,
-    TraceDimensions,
+    AdviceClaimReductionLayout, CommitmentMatrixShape, JoltFormulaDimensions,
+    JoltFormulaDimensionsError, JoltOneHotConfig, JoltOneHotDimensions, JoltReadWriteConfig,
+    JoltSumcheckDomain, JoltSumcheckSpec, ReadWriteDimensions, TraceDimensions,
+    TracePolynomialOrder,
 };
 pub use ids::{
     AdviceClaimReductionPublic, BooleanityChallenge, BooleanityPublic, BytecodeReadRafChallenge,

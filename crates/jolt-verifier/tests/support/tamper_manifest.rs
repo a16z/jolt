@@ -1,9 +1,11 @@
 use std::collections::BTreeSet;
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_verifier::{
     proof::TransparentProofClaims,
-    stages::{stage1, stage2, stage3, stage4, stage5},
+    stages::{stage1, stage2, stage3, stage4, stage5, stage6},
 };
 use serde_json::Value;
 
@@ -490,21 +492,21 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "core-fixture test offsets every product remainder output used by the Stage 2 formula",
     ),
-    later_standard(
+    checked_standard(
         "stage2.claims.batch_outputs.product_remainder.write_lookup_output_to_rd",
         "claims.stage2.batch_outputs.product_remainder.write_lookup_output_to_rd",
         VerifierCheckpoint::Stage6,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::Deferred,
-        "Stage 2 appends this pass-through claim, but later instruction stages must consume it",
+        TamperCoverage::Active,
+        "Stage 6 bytecode read-RAF consumes this Stage 2 pass-through claim",
     ),
-    later_standard(
+    checked_standard(
         "stage2.claims.batch_outputs.product_remainder.virtual_instruction",
         "claims.stage2.batch_outputs.product_remainder.virtual_instruction",
         VerifierCheckpoint::Stage6,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::Deferred,
-        "Stage 2 appends this pass-through claim, but later instruction stages must consume it",
+        TamperCoverage::Active,
+        "Stage 6 bytecode read-RAF consumes this Stage 2 pass-through claim",
     ),
     checked_standard(
         "stage2.claims.batch_outputs.instruction_claim_reduction",
@@ -709,15 +711,122 @@ pub const STAGE5_TARGETS: &[TamperTarget] = &[
     ),
 ];
 
-pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
-    later_standard(
-        "stage6.sumcheck_payload",
-        "proof.stages.stage6_sumcheck_proof",
+pub const STAGE6_TARGETS: &[TamperTarget] = &[
+    checked_standard(
+        "stage6.batch.round_polynomial",
+        "proof.stages.stage6_sumcheck_proof.round_polynomials[*]",
         VerifierCheckpoint::Stage6,
         MutationStrategy::ReplaceProofPayload,
-        TamperCoverage::Deferred,
-        "stage 6 is not wired yet",
+        TamperCoverage::Active,
+        "core-fixture test mutates every compressed Stage 6 batch round polynomial",
     ),
+    checked_standard(
+        "stage6.batch.round_count.missing",
+        "proof.stages.stage6_sumcheck_proof.round_polynomials",
+        VerifierCheckpoint::Stage6,
+        MutationStrategy::TruncateVector,
+        TamperCoverage::Active,
+        "core-fixture test removes a Stage 6 batch round",
+    ),
+    checked_standard(
+        "stage6.batch.round_count.extra",
+        "proof.stages.stage6_sumcheck_proof.round_polynomials",
+        VerifierCheckpoint::Stage6,
+        MutationStrategy::ExtendVector,
+        TamperCoverage::Active,
+        "core-fixture test appends a Stage 6 batch round",
+    ),
+    checked_standard(
+        "stage6.claims.bytecode_read_raf.bytecode_ra",
+        "claims.stage6.bytecode_read_raf.bytecode_ra",
+        VerifierCheckpoint::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets every bytecode read-RAF output claim",
+    ),
+    checked_standard(
+        "stage6.claims.booleanity.instruction_ra",
+        "claims.stage6.booleanity.instruction_ra",
+        VerifierCheckpoint::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets every Booleanity instruction RA output claim",
+    ),
+    checked_standard(
+        "stage6.claims.booleanity.bytecode_ra",
+        "claims.stage6.booleanity.bytecode_ra",
+        VerifierCheckpoint::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets every Booleanity bytecode RA output claim",
+    ),
+    checked_standard(
+        "stage6.claims.booleanity.ram_ra",
+        "claims.stage6.booleanity.ram_ra",
+        VerifierCheckpoint::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets every Booleanity RAM RA output claim",
+    ),
+    checked_standard(
+        "stage6.claims.ram_hamming_booleanity.ram_hamming_weight",
+        "claims.stage6.ram_hamming_booleanity.ram_hamming_weight",
+        VerifierCheckpoint::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets the RAM hamming Booleanity output claim",
+    ),
+    checked_standard(
+        "stage6.claims.ram_ra_virtualization.ram_ra",
+        "claims.stage6.ram_ra_virtualization.ram_ra",
+        VerifierCheckpoint::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets every RAM RA virtualization output claim",
+    ),
+    checked_standard(
+        "stage6.claims.instruction_ra_virtualization.committed_instruction_ra",
+        "claims.stage6.instruction_ra_virtualization.committed_instruction_ra",
+        VerifierCheckpoint::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets every instruction RA virtualization output claim",
+    ),
+    checked_standard(
+        "stage6.claims.inc_claim_reduction.ram_inc",
+        "claims.stage6.inc_claim_reduction.ram_inc",
+        VerifierCheckpoint::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets the RAM increment reduction output claim",
+    ),
+    checked_standard(
+        "stage6.claims.inc_claim_reduction.rd_inc",
+        "claims.stage6.inc_claim_reduction.rd_inc",
+        VerifierCheckpoint::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets the register increment reduction output claim",
+    ),
+    checked_standard(
+        "stage6.claims.advice_cycle_phase.trusted.opening_claim",
+        "claims.stage6.advice_cycle_phase.trusted.opening_claim",
+        VerifierCheckpoint::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "advice fixture test offsets the trusted advice cycle-phase output claim",
+    ),
+    checked_standard(
+        "stage6.claims.advice_cycle_phase.untrusted.opening_claim",
+        "claims.stage6.advice_cycle_phase.untrusted.opening_claim",
+        VerifierCheckpoint::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "advice fixture test offsets the untrusted advice cycle-phase output claim",
+    ),
+];
+
+pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
     later_standard(
         "stage7.sumcheck_payload",
         "proof.stages.stage7_sumcheck_proof",
@@ -766,6 +875,7 @@ pub fn all_targets() -> Vec<TamperTarget> {
         .chain(STAGE3_TARGETS)
         .chain(STAGE4_TARGETS)
         .chain(STAGE5_TARGETS)
+        .chain(STAGE6_TARGETS)
         .chain(FUTURE_STAGE_TARGETS)
         .copied()
         .collect()
@@ -830,7 +940,7 @@ pub fn proof_field_paths() -> &'static [&'static str] {
         "proof.stages.stage3_sumcheck_proof.round_polynomials[*]",
         "proof.stages.stage4_sumcheck_proof.round_polynomials[*]",
         "proof.stages.stage5_sumcheck_proof.round_polynomials[*]",
-        "proof.stages.stage6_sumcheck_proof",
+        "proof.stages.stage6_sumcheck_proof.round_polynomials[*]",
         "proof.stages.stage7_sumcheck_proof",
     ]
 }
@@ -864,6 +974,28 @@ pub fn assert_core_tamper_rejects(
     let mut case = base.clone();
     mutate(&mut case);
     crate::support::assert_rejects_at_or_before_current_frontier(case.verify());
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+pub fn assert_precompat_core_tamper_rejects(
+    target: TamperTarget,
+    base: &crate::support::core_fixtures::CorePrecompatVerifierCase,
+    mutate: impl FnOnce(&mut crate::support::core_fixtures::CorePrecompatVerifierCase),
+) {
+    assert_manifest_target_is_active(target);
+    let mut case = base.clone();
+    mutate(&mut case);
+
+    let core_result = catch_unwind(AssertUnwindSafe(|| case.verify_core()));
+    let core_rejected = match core_result {
+        Ok(result) => result.is_err(),
+        Err(_) => true,
+    };
+    assert!(
+        core_rejected,
+        "core verifier accepted pre-compat tampered target {target:?}"
+    );
+    crate::support::assert_rejects_at_or_before_current_frontier(case.verify_after_compat());
 }
 
 fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
@@ -1108,6 +1240,38 @@ fn zero_transparent_claims() -> TransparentProofClaims<Fr> {
             registers_val_evaluation: stage5::inputs::RegistersValEvaluationOutputOpeningClaims {
                 rd_inc: zero,
                 rd_wa: zero,
+            },
+        },
+        stage6: stage6::inputs::Stage6Claims {
+            bytecode_read_raf: stage6::inputs::BytecodeReadRafOutputOpeningClaims {
+                bytecode_ra: vec![zero],
+            },
+            booleanity: stage6::inputs::BooleanityOutputOpeningClaims {
+                instruction_ra: vec![zero],
+                bytecode_ra: vec![zero],
+                ram_ra: vec![zero],
+            },
+            ram_hamming_booleanity: stage6::inputs::RamHammingBooleanityOutputOpeningClaims {
+                ram_hamming_weight: zero,
+            },
+            ram_ra_virtualization: stage6::inputs::RamRaVirtualizationOutputOpeningClaims {
+                ram_ra: vec![zero],
+            },
+            instruction_ra_virtualization:
+                stage6::inputs::InstructionRaVirtualizationOutputOpeningClaims {
+                    committed_instruction_ra: vec![zero],
+                },
+            inc_claim_reduction: stage6::inputs::IncClaimReductionOutputOpeningClaims {
+                ram_inc: zero,
+                rd_inc: zero,
+            },
+            advice_cycle_phase: stage6::inputs::Stage6AdviceCyclePhaseClaims {
+                trusted: Some(stage6::inputs::AdviceCyclePhaseOutputClaim {
+                    opening_claim: zero,
+                }),
+                untrusted: Some(stage6::inputs::AdviceCyclePhaseOutputClaim {
+                    opening_claim: zero,
+                }),
             },
         },
     }

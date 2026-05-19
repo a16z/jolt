@@ -48,6 +48,43 @@ where
     public(JoltPublicId::from(id))
 }
 
+pub fn claim_reduction_input_openings() -> [JoltOpeningId; 4] {
+    [
+        ram_inc_read_write(),
+        ram_inc_val_check(),
+        rd_inc_read_write(),
+        rd_inc_val_evaluation(),
+    ]
+}
+
+pub fn claim_reduction_output_openings() -> [JoltOpeningId; 2] {
+    [ram_inc_reduced(), rd_inc_reduced()]
+}
+
+pub fn ram_inc_read_write_opening() -> JoltOpeningId {
+    ram_inc_read_write()
+}
+
+pub fn ram_inc_val_check_opening() -> JoltOpeningId {
+    ram_inc_val_check()
+}
+
+pub fn rd_inc_read_write_opening() -> JoltOpeningId {
+    rd_inc_read_write()
+}
+
+pub fn rd_inc_val_evaluation_opening() -> JoltOpeningId {
+    rd_inc_val_evaluation()
+}
+
+pub fn ram_inc_reduced_opening() -> JoltOpeningId {
+    ram_inc_reduced()
+}
+
+pub fn rd_inc_reduced_opening() -> JoltOpeningId {
+    rd_inc_reduced()
+}
+
 fn ram_inc_read_write() -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RamInc,
@@ -104,16 +141,11 @@ mod tests {
         assert_eq!(claims.sumcheck, dimensions().sumcheck(2));
         assert_eq!(
             claims.input.required_openings,
-            vec![
-                ram_inc_read_write(),
-                ram_inc_val_check(),
-                rd_inc_read_write(),
-                rd_inc_val_evaluation(),
-            ]
+            claim_reduction_input_openings()
         );
         assert_eq!(
             claims.output.required_openings,
-            vec![ram_inc_reduced(), rd_inc_reduced()]
+            claim_reduction_output_openings()
         );
         assert_eq!(
             claims.required_challenges(),

@@ -30,8 +30,9 @@ ready.
 - `jolt-prover -> jolt-verifier` is an intentional one-way dependency.
 - `JoltProof` and verifier-visible `StageNOutput` types stay in
   `jolt-verifier`.
-- `jolt-prover` should reuse verifier-owned stage outputs directly where
-  practical.
+- `jolt-prover` builds verifier-owned proof and stage-output structs directly.
+- Prover-local artifacts carry private execution state: witness handles,
+  caches, opening inputs, ZK material, recursion data, and wrapper handoff data.
 - ZK/BlindFold and advice are first-class from the first design.
 - Committed sumchecks reuse `jolt-sumcheck` and `jolt-crypto` types.
 - Witness generation is modular, namespace-generic, and consumed by
@@ -97,7 +98,7 @@ pub fn prove<F, PCS, VC, T, K, W, R>(
     kernels: &mut K,
     transcript: &mut T,
     rng: &mut R,
-) -> Result<(jolt_verifier::JoltProof<PCS, VC>, JoltProverArtifacts<F, PCS, VC>), ProverError>
+) -> Result<jolt_verifier::JoltProof<PCS, VC>, ProverError>
 where
     F: jolt_field::Field,
     PCS: jolt_openings::CommitmentScheme<Field = F>,
@@ -107,6 +108,48 @@ where
     W: WitnessBuilder<F>,
     R: rand_core::CryptoRngCore;
 ```
+
+The primary API returns the verifier-owned proof. Private prover state is
+captured by explicit sidecar sinks when a caller needs it:
+
+```rust
+pub fn prove_with_sidecars<F, PCS, VC, T, K, W, R, S>(
+    preprocessing: &JoltProverPreprocessing<PCS, VC>,
+    inputs: JoltProverInputs<'_, F>,
+    selection: ProofSelection,
+    witness_builder: &mut W,
+    kernels: &mut K,
+    transcript: &mut T,
+    rng: &mut R,
+    sidecars: &mut S,
+) -> Result<jolt_verifier::JoltProof<PCS, VC>, ProverError>
+where
+    F: jolt_field::Field,
+    PCS: jolt_openings::CommitmentScheme<Field = F>,
+    VC: jolt_crypto::VectorCommitment<Field = F>,
+    T: jolt_transcript::Transcript<Challenge = F>,
+    K: KernelSet<F>,
+    W: WitnessBuilder<F>,
+    R: rand_core::CryptoRngCore,
+    S: ProverSidecarSink<F, PCS, VC>;
+
+pub trait ProverSidecarSink<F, PCS, VC>
+where
+    PCS: jolt_openings::CommitmentScheme<Field = F>,
+    VC: jolt_crypto::VectorCommitment<Field = F>,
+{
+    fn record_stage<N>(&mut self, stage: StageArtifacts<F, VC, N>) -> Result<(), ProverError>;
+    fn record_wrapper_inputs(&mut self, inputs: WrapperWitnessInputs<F>) -> Result<(), ProverError>;
+    fn record_dory_assist_inputs(
+        &mut self,
+        inputs: DoryAssistInputs<F, PCS>,
+    ) -> Result<(), ProverError>;
+}
+```
+
+`prove` is the convenience entry point that uses a no-op sink. Wrapper,
+recursion, Dory assist, and diagnostic flows call `prove_with_sidecars` with a
+concrete sink that captures only the private data they consume.
 
 Selection-specific bounds:
 
@@ -236,32 +279,36 @@ Stage code should show:
 - opening dependencies;
 - private ZK artifacts.
 
-## Verifier Output Reuse
+## Verifier-Owned Protocol Objects
 
-Verifier-visible stage facts should be shared with `jolt-verifier`:
+`jolt-verifier` defines the final protocol objects. `jolt-prover` imports those
+types, computes their fields, and assembles them as the public proof surface.
+Stage functions return verifier-owned protocol data plus a private sidecar for
+prover-only state.
 
 ```rust
 pub struct StageArtifacts<F, VC, Private> {
     pub verifier_output: jolt_verifier::stages::stageN::StageNOutput<F>,
-    pub proof: StageProof<F, VC>,
+    pub proof: jolt_verifier::stages::stageN::StageNProof<F, VC>,
     pub openings: StageOpeningDeps<F>,
     pub zk: Option<StageZkArtifacts<F, VC>>,
     pub private: Private,
 }
 ```
 
-Use two views:
+Use two views with distinct responsibilities:
 
 ```text
 verifier_output:
-  canonical facts checked by verifier stages
+  verifier-owned protocol facts
 
 private:
-  witness handles, kernel state, coefficients, blindings, caches
+  witness handles, kernel state, coefficients, blindings, caches, handoff data
 ```
 
-If a verifier output cannot be reused, prefer fixing/generalizing the verifier
-type over creating a duplicate prover-side copy of the same facts.
+Verifier-owned types are the stable protocol target. Prover modules schedule
+generic computation around those types and use private sidecars for data that
+only the prover, BlindFold, recursion, or wrapper construction consumes.
 
 ## Witness Model
 
@@ -485,8 +532,9 @@ emitted.
 wrapper proving.
 
 ```text
-JoltProof + JoltProverArtifacts + ProtocolSelection
-  -> WrapperWitnessInputs
+prove(..., WrapperSidecarSink)
+  -> JoltProof
+  -> WrapperWitnessInputs captured by sink
   -> jolt-wrapper
 ```
 
@@ -560,14 +608,14 @@ Required coverage:
   commitments, BlindFold inputs, and Dory-assist input data.
 
 Bring-up should be top-down against `jolt-verifier`: implement the next prover
-component, assemble the partial verifier-visible artifact, and require the
-corresponding verifier stage/frontier to accept it. `jolt-core` remains useful
-for fixture generation and parity checks, but it is not the primary oracle for
-the modular prover.
+component, assemble the partial verifier-visible proof/checkpoint object, and
+require the corresponding verifier stage/frontier to accept it. `jolt-core`
+remains useful for fixture generation and parity checks, but it is not the
+primary oracle for the modular prover.
 
 ## Milestones
 
-1. Scaffold `jolt-prover`: selection, artifacts, explicit RNG, `JoltProof`
+1. Scaffold `jolt-prover`: selection, sidecar sinks, explicit RNG, `JoltProof`
    assembly.
 2. Add `jolt-witness` traits and a trace-backed VM witness provider under
    `jolt_witness::protocols::jolt_vm`.

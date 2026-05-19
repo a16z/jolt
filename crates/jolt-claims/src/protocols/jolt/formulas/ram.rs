@@ -357,6 +357,52 @@ where
     )
 }
 
+pub fn ra_virtualization_input_openings() -> [JoltOpeningId; 1] {
+    [ram_ra_claim_reduction()]
+}
+
+pub fn ra_virtualization_output_openings(
+    dimensions: RamRaVirtualizationDimensions,
+) -> Vec<JoltOpeningId> {
+    (0..dimensions.num_committed_ra_polys())
+        .map(ra_virtualization_committed_ram_ra_opening)
+        .collect()
+}
+
+pub fn ra_virtualization_committed_ram_ra_opening(index: usize) -> JoltOpeningId {
+    committed_ram_ra(index)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RamRaVirtualizationPublicValues<F: Field> {
+    pub eq_cycle: F,
+}
+
+impl<F: Field> RamRaVirtualizationPublicValues<F> {
+    pub fn value(&self, id: RamRaVirtualizationPublic) -> F {
+        match id {
+            RamRaVirtualizationPublic::EqCycle => self.eq_cycle,
+        }
+    }
+}
+
+pub fn hamming_booleanity_output_openings() -> [JoltOpeningId; 1] {
+    [ram_hamming_weight()]
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RamHammingBooleanityPublicValues<F: Field> {
+    pub eq_cycle: F,
+}
+
+impl<F: Field> RamHammingBooleanityPublicValues<F> {
+    pub fn value(&self, id: RamHammingBooleanityPublic) -> F {
+        match id {
+            RamHammingBooleanityPublic::EqCycle => self.eq_cycle,
+        }
+    }
+}
+
 fn read_write_challenge<F>(id: RamReadWriteChallenge) -> JoltExpr<F>
 where
     F: RingCore,
@@ -995,15 +1041,11 @@ mod tests {
         assert_eq!(claims.sumcheck, dimensions.sumcheck());
         assert_eq!(
             claims.input.required_openings,
-            vec![ram_ra_claim_reduction()]
+            ra_virtualization_input_openings()
         );
         assert_eq!(
             claims.output.required_openings,
-            vec![
-                committed_ram_ra(0),
-                committed_ram_ra(1),
-                committed_ram_ra(2),
-            ]
+            ra_virtualization_output_openings(dimensions)
         );
         assert!(claims.required_challenges().is_empty());
         assert_eq!(
@@ -1086,7 +1128,10 @@ mod tests {
         assert_eq!(claims.id, JoltStageId::RamHammingBooleanity);
         assert_eq!(claims.sumcheck, trace_dimensions().sumcheck(3));
         assert!(claims.input.required_openings.is_empty());
-        assert_eq!(claims.output.required_openings, vec![ram_hamming_weight()]);
+        assert_eq!(
+            claims.output.required_openings,
+            hamming_booleanity_output_openings()
+        );
         assert!(claims.required_challenges().is_empty());
         assert_eq!(
             claims.output.required_publics,

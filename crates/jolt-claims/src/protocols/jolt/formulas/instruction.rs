@@ -356,6 +356,54 @@ where
     )])
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstructionRaVirtualizationOutputOpenings {
+    pub committed_instruction_ra_by_virtual: Vec<Vec<JoltOpeningId>>,
+}
+
+impl InstructionRaVirtualizationOutputOpenings {
+    pub fn all(&self) -> Vec<JoltOpeningId> {
+        self.committed_instruction_ra_by_virtual
+            .iter()
+            .flatten()
+            .copied()
+            .collect()
+    }
+}
+
+pub fn ra_virtualization_input_openings(
+    dimensions: InstructionRaVirtualizationDimensions,
+) -> Vec<JoltOpeningId> {
+    (0..dimensions.num_virtual_ra_polys())
+        .map(ra_virtualization_instruction_ra_opening)
+        .collect()
+}
+
+pub fn ra_virtualization_output_openings(
+    dimensions: InstructionRaVirtualizationDimensions,
+) -> InstructionRaVirtualizationOutputOpenings {
+    let committed_instruction_ra_by_virtual = (0..dimensions.num_virtual_ra_polys())
+        .map(|virtual_index| {
+            let start = virtual_index * dimensions.num_committed_per_virtual();
+            (start..start + dimensions.num_committed_per_virtual())
+                .map(ra_virtualization_committed_instruction_ra_opening)
+                .collect()
+        })
+        .collect();
+
+    InstructionRaVirtualizationOutputOpenings {
+        committed_instruction_ra_by_virtual,
+    }
+}
+
+pub fn ra_virtualization_instruction_ra_opening(index: usize) -> JoltOpeningId {
+    instruction_ra(index)
+}
+
+pub fn ra_virtualization_committed_instruction_ra_opening(index: usize) -> JoltOpeningId {
+    committed_instruction_ra(index)
+}
+
 fn input_challenge<F>(id: InstructionInputChallenge) -> JoltExpr<F>
 where
     F: RingCore,
@@ -1001,17 +1049,18 @@ mod tests {
         assert_eq!(claims.sumcheck, JoltSumcheckSpec::boolean(5, 3));
         assert_eq!(
             claims.input.required_openings,
-            vec![instruction_ra(0), instruction_ra(1), instruction_ra(2)]
+            ra_virtualization_input_openings(dimensions)
         );
         assert_eq!(
             claims.output.required_openings,
+            ra_virtualization_output_openings(dimensions).all()
+        );
+        assert_eq!(
+            ra_virtualization_output_openings(dimensions).committed_instruction_ra_by_virtual,
             vec![
-                committed_instruction_ra(0),
-                committed_instruction_ra(1),
-                committed_instruction_ra(2),
-                committed_instruction_ra(3),
-                committed_instruction_ra(4),
-                committed_instruction_ra(5),
+                vec![committed_instruction_ra(0), committed_instruction_ra(1)],
+                vec![committed_instruction_ra(2), committed_instruction_ra(3)],
+                vec![committed_instruction_ra(4), committed_instruction_ra(5)],
             ]
         );
         assert!(claims.consistency.is_empty());
