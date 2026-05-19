@@ -36,7 +36,7 @@ use crate::codec::BytesMsg;
 /// Crate-wide spongefish protocol identifier (ASCII left, zero-padded to
 /// 64 bytes). Pre-bound by every factory in this module; exposed so callers
 /// who reach for [`transcript_builder`] can align on the same identifier.
-pub const PROTOCOL_ID: [u8; 64] = pad_id(b"a16z/jolt-transcript/spongefish/v1");
+pub const PROTOCOL_ID: [u8; 64] = pad_id(b"a16z/jolt-transcript/v1");
 
 const fn pad_id(src: &[u8]) -> [u8; 64] {
     assert!(src.len() <= 64, "protocol id exceeds 64 bytes");

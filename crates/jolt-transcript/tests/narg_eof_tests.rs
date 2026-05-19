@@ -97,6 +97,6 @@ fn check_eof_rejects_unread_messages() {
 
 #[test]
 fn protocol_id_byte_check() {
-    assert_eq!(&PROTOCOL_ID[..34], b"a16z/jolt-transcript/spongefish/v1");
-    assert!(PROTOCOL_ID[34..].iter().all(|&b| b == 0));
+    assert_eq!(&PROTOCOL_ID[..23], b"a16z/jolt-transcript/v1");
+    assert!(PROTOCOL_ID[23..].iter().all(|&b| b == 0));
 }
