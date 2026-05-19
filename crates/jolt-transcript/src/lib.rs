@@ -29,7 +29,7 @@ pub use codec::{BytesMsg, FieldEl};
 pub use legacy::{
     AppendToTranscript, Label, LabelWithCount, SpongeTranscript, Transcript, U64Word, MAX_LABEL_LEN,
 };
-pub use setup::{to_prover, to_verifier, EmptyInstance, PROTOCOL_ID};
+pub use setup::{prover_transcript, transcript_builder, verifier_transcript, PROTOCOL_ID};
 
 /// Source-compatible re-exports of legacy label / count / word helpers
 /// under their `jolt_transcript::domain::*` path (matches the path used

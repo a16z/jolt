@@ -7,11 +7,14 @@ use arbitrary::{Arbitrary, Unstructured};
 use jolt_field::Fr as JFr;
 use spongefish::instantiations::{Blake2b512, Keccak};
 
-use jolt_transcript::{to_prover, to_verifier, BytesMsg, FieldEl, PoseidonSponge};
+use jolt_transcript::{
+    prover_transcript, verifier_transcript, BytesMsg, FieldEl, PoseidonSponge,
+};
 
 use crate::invariant::{CheckError, Invariant, InvariantViolation};
 
 const SESSION: &[u8] = b"jolt-eval/transcript-symmetry/v1";
+const INSTANCE_DIGEST: [u8; 32] = [0u8; 32];
 
 /// One operation in the prover/verifier sequence.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -67,7 +70,7 @@ fn run_check<H>(input: &Input, build_sponge: impl Fn() -> H) -> Result<(), Check
 where
     H: spongefish::DuplexSpongeInterface<U = u8>,
 {
-    let mut prover = to_prover(build_sponge(), SESSION);
+    let mut prover = prover_transcript(SESSION, INSTANCE_DIGEST, build_sponge());
     let mut prover_challenges: Vec<JFr> = Vec::new();
 
     for op in &input.ops {
@@ -84,7 +87,7 @@ where
     }
 
     let narg: Vec<u8> = prover.narg_string().to_vec();
-    let mut verifier = to_verifier(build_sponge(), SESSION, &narg);
+    let mut verifier = verifier_transcript(SESSION, INSTANCE_DIGEST, build_sponge(), &narg);
     let mut challenge_idx = 0usize;
 
     for (op_idx, op) in input.ops.iter().enumerate() {
