@@ -231,10 +231,9 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
         RV64IMAC_JOLT,
     )?);
 
-    let expected = input.map_row(|mut row| {
-        row.operands.rd = Some(40);
-        row
-    });
+    let mut expected_row = *input.row();
+    expected_row.operands.rd = Some(40);
+    let expected = SourceInstruction::new(input.kind(), expected_row);
 
     assert_eq!(provider.captured, Some(expected));
     assert_eq!(expanded.len(), 1);

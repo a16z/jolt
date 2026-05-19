@@ -131,10 +131,9 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
         if instruction.kind().has_side_effects() {
             let virtual_register = allocator.allocate()?;
             allocated_rd_zero_register = Some(virtual_register);
-            rewritten_source = (*instruction).map_row(|mut row| {
-                row.operands.rd = Some(virtual_register);
-                row
-            });
+            let mut row = *instruction.row();
+            row.operands.rd = Some(virtual_register);
+            rewritten_source = SourceInstruction::new(instruction.kind(), row);
             &rewritten_source
         } else {
             return final_rows_to_instructions(vec![noop_for(*instruction.row())], profile);

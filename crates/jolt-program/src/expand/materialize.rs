@@ -52,10 +52,9 @@ impl ExpansionState {
         if instruction.row().operands.rd == Some(0) && !handles_rd_zero_internally(kind) {
             if kind.has_side_effects() {
                 let virtual_register = self.allocate_register()?;
-                let rewritten = (*instruction).map_row(|mut row| {
-                    row.operands.rd = Some(virtual_register);
-                    row
-                });
+                let mut row = *instruction.row();
+                row.operands.rd = Some(virtual_register);
+                let rewritten = SourceInstruction::new(kind, row);
                 let expanded = self.expand_source_recursive(&rewritten);
                 self.release_register(virtual_register)?;
                 return expanded;
