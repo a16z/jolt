@@ -28,7 +28,7 @@ pub const MAX_LABEL_LEN: usize = 32;
 /// The label passed to [`new`](Transcript::new) is mapped to the
 /// spongefish session value, so distinct labels carry distinct domain
 /// barriers.
-pub trait Transcript: Default + Clone + Sync + Send + 'static {
+pub trait Transcript: Default + Sync + Send + 'static {
     /// The challenge type produced by this transcript.
     type Challenge: TranscriptChallenge;
 
@@ -160,19 +160,6 @@ where
 {
     fn default() -> Self {
         Self::new(b"")
-    }
-}
-
-impl<H, F> Clone for SpongeTranscript<H, F>
-where
-    H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,
-    F: TranscriptChallenge,
-{
-    fn clone(&self) -> Self {
-        Self {
-            sponge: self.sponge.clone(),
-            _field: PhantomData,
-        }
     }
 }
 

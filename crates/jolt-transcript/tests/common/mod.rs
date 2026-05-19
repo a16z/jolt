@@ -138,27 +138,6 @@ macro_rules! transcript_tests {
         }
 
         #[test]
-        fn test_clone_independence() {
-            let mut original = <$transcript_type>::new(b"clone_test");
-            original.append_bytes(&1u64.to_be_bytes());
-
-            let mut cloned = original.clone();
-            cloned.append_bytes(&2u64.to_be_bytes());
-
-            let original_challenge = original.challenge();
-
-            let mut fresh = <$transcript_type>::new(b"clone_test");
-            fresh.append_bytes(&1u64.to_be_bytes());
-            fresh.append_bytes(&2u64.to_be_bytes());
-            let fresh_challenge = fresh.challenge();
-
-            assert_ne!(
-                original_challenge, fresh_challenge,
-                "Clone mutation must not affect original"
-            );
-        }
-
-        #[test]
         fn test_default_delegates_to_new() {
             let mut default_transcript = <$transcript_type>::default();
             let mut new_transcript = <$transcript_type>::new(b"");
