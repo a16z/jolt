@@ -11,11 +11,12 @@
 //! only supports RV64. RV32/ELF32 inputs are rejected before this module is
 //! called.
 
+pub mod error;
+
 pub mod allocator;
 mod arithmetic;
 mod control_flow;
 mod division;
-pub mod error;
 mod grammar;
 mod inline;
 mod materialize;
@@ -50,6 +51,13 @@ use memory::*;
 use operands::*;
 use shifts::*;
 
+/// Verifier-visible evidence a raw inline registration must provide before it
+/// can be accepted directly from decoded guest bytecode.
+///
+/// These are descriptive requirements carried by registration metadata. The
+/// expansion builder is responsible for emitting ordinary final Jolt rows that
+/// enforce them; the verifier never trusts SDK wrapper intent or tracer-only
+/// advice when classifying a raw inline opcode as public.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SafetyRequirement {
     FieldCanonicalOutput,
@@ -59,6 +67,12 @@ pub enum SafetyRequirement {
     DecompositionRecomposition,
 }
 
+/// Whether a registered inline opcode is admissible as raw guest bytecode.
+///
+/// `Public` means the static recipe contains all verifier-visible checks needed
+/// for soundness. `InternalOnly` means the opcode is a helper for SDK-generated
+/// flows or runtime advice and must not be treated as a standalone guest
+/// instruction until a future recipe adds the missing safety relation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InlineAdmissibility {
     Public {
@@ -69,6 +83,13 @@ pub enum InlineAdmissibility {
     },
 }
 
+/// Supplies symbolic recipes for registered inline source instructions.
+///
+/// Implementations are lookup/adaptation layers only. The caller owns the
+/// expansion allocator, `rd = x0` rewrite, recursive materialization, reset-row
+/// insertion, target-profile validation, and inline metadata stamping. This
+/// keeps static bytecode expansion deterministic and tracer-free while allowing
+/// the tracer crate to remain the registration and runtime-advice owner.
 pub trait InlineExpansionProvider {
     /// Builds a registered inline row's symbolic expansion recipe.
     ///
@@ -95,6 +116,12 @@ impl InlineExpansionProvider for NoInlineExpansionProvider {
     }
 }
 
+/// Expand one decoded source instruction into target-legal final Jolt
+/// instructions without supporting registered inline opcodes.
+///
+/// The supplied allocator is shared across source instructions so top-level
+/// `rd = x0` rewrites, recursive source-only helpers, and virtual-register
+/// reset bookkeeping remain consistent with whole-program expansion.
 pub fn expand_instruction(
     instruction: &SourceInstruction,
     allocator: &mut ExpansionAllocator,
@@ -108,6 +135,14 @@ pub fn expand_instruction(
     )
 }
 
+/// Expand one decoded source instruction, using `inline_provider` when the
+/// source kind is `Inline`.
+///
+/// Registered inline expansion follows the same central pipeline as built-in
+/// source-only instructions: provider recipe construction, materialization
+/// through `ExpansionState`, inline reset-row insertion, profile validation,
+/// and metadata stamping. Runtime advice values are not part of this static
+/// path; recipes may only expose advice row positions.
 pub fn expand_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
     instruction: &SourceInstruction,
     allocator: &mut ExpansionAllocator,
@@ -264,6 +299,11 @@ fn expand_source_only_instruction(
     }
 }
 
+/// Expand a decoded program into final Jolt instructions without registered
+/// inline support.
+///
+/// This is the provider-free entry point used when source bytecode is expected
+/// to contain only built-in source-only instructions and target-legal rows.
 pub fn expand_program(
     instructions: &[SourceInstruction],
     profile: JoltInstructionProfile,
@@ -271,6 +311,12 @@ pub fn expand_program(
     expand_program_with_provider(instructions, &mut NoInlineExpansionProvider, profile)
 }
 
+/// Expand a decoded program into final Jolt instructions with registered inline
+/// support.
+///
+/// The allocator is intentionally shared for the whole program. That preserves
+/// deterministic virtual-register assignment across nested expansions and makes
+/// the bytecode rows produced here match rows later observed by runtime tracing.
 pub fn expand_program_with_provider<P: InlineExpansionProvider + ?Sized>(
     instructions: &[SourceInstruction],
     inline_provider: &mut P,

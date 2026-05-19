@@ -15,10 +15,14 @@ mod tests {
         path::{Path, PathBuf},
     };
 
-    use jolt_program::expand::{expand_instruction_with_provider, ExpansionAllocator};
+    use jolt_program::expand::{
+        expand_instruction_with_provider, ExpandedInstructionSequence, ExpansionAllocator,
+        ExpansionError, InlineAdmissibility, InlineExpansionBuilder, InlineExpansionProvider,
+        InlineOperands,
+    };
     use jolt_riscv::{
-        JoltInstructionRow, NormalizedOperands, SourceInlineKey, SourceInstruction,
-        SourceInstructionKind, SourceInstructionRow, RV64IMAC_JOLT_ALL_INLINES,
+        JoltInstructionProfile, JoltInstructionRow, NormalizedOperands, SourceInlineKey,
+        SourceInstruction, SourceInstructionKind, SourceInstructionRow, RV64IMAC_JOLT_ALL_INLINES,
     };
     use serde::{Deserialize, Serialize};
     use sha2::{Digest, Sha256};
@@ -118,6 +122,43 @@ mod tests {
         registrations
     }
 
+    #[derive(Debug, Default)]
+    struct FixtureInlineExpansionProvider;
+
+    impl InlineExpansionProvider for FixtureInlineExpansionProvider {
+        fn expand_inline(
+            &mut self,
+            instruction: &SourceInstruction,
+            profile: JoltInstructionProfile,
+        ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+            let inline = instruction
+                .row()
+                .inline
+                .ok_or(ExpansionError::MalformedInstruction(
+                    "missing inline source metadata",
+                ))?;
+
+            if !profile.supports_source(SourceInstructionKind::Inline) {
+                return Err(ExpansionError::UnsupportedInstruction);
+            }
+            let registration = registrations()
+                .into_iter()
+                .find(|registration| {
+                    registration.opcode == inline.opcode as u32
+                        && registration.funct3 == inline.funct3 as u32
+                        && registration.funct7 == inline.funct7 as u32
+                })
+                .ok_or(ExpansionError::UnsupportedInstruction)?;
+            if !profile.supports_inline(registration.extension) {
+                return Err(ExpansionError::UnsupportedInstruction);
+            }
+
+            let source = *instruction.row();
+            let operands = InlineOperands::from_source_row(source)?;
+            (registration.build_sequence)(InlineExpansionBuilder::new(source), operands)
+        }
+    }
+
     fn source_instruction(
         registration: &InlineRegistration,
         scenario: FixtureScenario,
@@ -147,7 +188,7 @@ mod tests {
         for registration in registrations() {
             for scenario in SCENARIOS {
                 let input = source_instruction(registration, *scenario);
-                let mut provider = TracerInlineExpansionProvider::new();
+                let mut provider = FixtureInlineExpansionProvider;
                 let mut allocator = ExpansionAllocator::new();
                 let expanded = expand_instruction_with_provider(
                     &input,
@@ -179,16 +220,14 @@ mod tests {
 
     fn registration_admissibility(registration: &InlineRegistration) -> ExpectedAdmissibility {
         match registration.admissibility {
-            jolt_program::expand::InlineAdmissibility::Public { requirements } => {
+            InlineAdmissibility::Public { requirements } => {
                 if requirements.is_empty() {
                     ExpectedAdmissibility::PublicNoRequirements
                 } else {
                     ExpectedAdmissibility::PublicWithRequirements
                 }
             }
-            jolt_program::expand::InlineAdmissibility::InternalOnly { .. } => {
-                ExpectedAdmissibility::InternalOnly
-            }
+            InlineAdmissibility::InternalOnly { .. } => ExpectedAdmissibility::InternalOnly,
         }
     }
 
@@ -255,5 +294,92 @@ mod tests {
         assert_eq!(actual.len(), 23);
         assert_eq!(actual, expected);
         Ok(())
+    }
+
+    #[test]
+    fn linked_inline_registration_keys_are_unique() {
+        let registrations = registrations();
+        let mut keys = registrations
+            .iter()
+            .map(|registration| {
+                (
+                    registration.opcode,
+                    registration.funct3,
+                    registration.funct7,
+                    registration.name,
+                )
+            })
+            .collect::<Vec<_>>();
+        keys.sort_unstable();
+        for pair in keys.windows(2) {
+            assert_ne!(
+                (pair[0].0, pair[0].1, pair[0].2),
+                (pair[1].0, pair[1].1, pair[1].2),
+                "duplicate inline key for {} and {}",
+                pair[0].3,
+                pair[1].3
+            );
+        }
+    }
+
+    #[test]
+    fn public_registrations_expand_from_raw_guest_bytecode() -> Result<(), Box<dyn Error>> {
+        let mut public_count = 0;
+        for registration in registrations() {
+            if matches!(
+                registration.admissibility,
+                InlineAdmissibility::Public { .. }
+            ) {
+                public_count += 1;
+                let input = source_instruction(registration, SCENARIOS[0]);
+                let mut provider = TracerInlineExpansionProvider::new();
+                let mut allocator = ExpansionAllocator::new();
+                let _expanded = expand_instruction_with_provider(
+                    &input,
+                    &mut allocator,
+                    &mut provider,
+                    RV64IMAC_JOLT_ALL_INLINES,
+                )?;
+            }
+        }
+
+        assert!(public_count > 0, "expected at least one public inline");
+        Ok(())
+    }
+
+    #[test]
+    fn internal_only_registrations_reject_raw_guest_bytecode() {
+        let mut internal_count = 0;
+        for registration in registrations() {
+            if let InlineAdmissibility::InternalOnly { reason } = registration.admissibility {
+                internal_count += 1;
+                let input = source_instruction(registration, SCENARIOS[0]);
+                let mut provider = TracerInlineExpansionProvider::new();
+                let mut allocator = ExpansionAllocator::new();
+                let result = expand_instruction_with_provider(
+                    &input,
+                    &mut allocator,
+                    &mut provider,
+                    RV64IMAC_JOLT_ALL_INLINES,
+                );
+
+                assert!(
+                    matches!(
+                        result,
+                        Err(ExpansionError::InternalOnlyInline {
+                            name,
+                            reason: actual_reason,
+                        }) if name == registration.name && actual_reason == reason
+                    ),
+                    "expected internal-only rejection for {}",
+                    registration.name
+                );
+            }
+        }
+
+        assert!(
+            internal_count > 0,
+            "expected at least one internal-only inline"
+        );
     }
 }

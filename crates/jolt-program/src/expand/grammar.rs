@@ -176,7 +176,12 @@ pub(super) enum ExpansionOp {
     ReleaseInline(InlineTempId),
 }
 
-/// A complete symbolic recipe: source instruction paired with the ops to materialize it.
+/// A complete symbolic recipe for one source instruction.
+///
+/// The sequence still contains unresolved symbolic registers and possibly
+/// source-only helper rows. It is not final bytecode until `ExpansionState`
+/// binds registers, recursively expands helper rows, validates target legality,
+/// and stamps sequence metadata.
 pub struct ExpandedInstructionSequence {
     pub(super) source: SourceInstructionRow,
     pub(super) ops: Vec<ExpansionOp>,

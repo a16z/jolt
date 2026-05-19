@@ -1,19 +1,18 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, marker::PhantomData};
 
 pub use num_bigint::BigUint as NBigUint;
 use tracer::{
-    instruction::inline::INLINE,
-    utils::{
-        inline_sequence_writer::{write_inline_trace, InlineDescriptor, SequenceInputs},
-        virtual_registers::VirtualRegisterAllocator,
-    },
+    instruction::{inline::INLINE, Instruction},
+    utils::inline_sequence_writer::{write_inline_trace, InlineDescriptor, SequenceInputs},
 };
 
 pub use inventory;
 pub use jolt_program::expand::{
-    ExpandedInstructionSequence, ExpansionError, InlineAdmissibility, InlineExpansionBuilder,
-    InlineOperands, InlineRegister, SafetyRequirement, Value,
+    ExpandedInstructionSequence, ExpansionAllocator, ExpansionError, InlineAdmissibility,
+    InlineExpansionBuilder, InlineExpansionProvider, InlineOperands, InlineRegister,
+    SafetyRequirement, Value,
 };
+use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, SourceInstruction};
 pub use tracer::emulator::cpu::Cpu;
 pub use tracer::instruction::format::format_inline::FormatInline;
 pub use tracer::instruction::inline::InlineRegistration;
@@ -163,19 +162,55 @@ pub fn mulq_advice(
 /// Implement this for each sub-inline (e.g. `Sha256Compression`, `Secp256k1MulQ`),
 /// then pass the types to [`register_inlines!`] to generate registration boilerplate.
 pub trait InlineOp: Send + Sync {
+    /// RISC-V custom opcode used to identify this inline.
     const OPCODE: u32;
+    /// RISC-V funct3 selector used with `OPCODE`.
     const FUNCT3: u32;
+    /// RISC-V funct7 selector used with `OPCODE` and `FUNCT3`.
     const FUNCT7: u32;
+    /// Human-readable registration name used in diagnostics and fixtures.
     const NAME: &'static str;
+    /// Raw-bytecode admissibility classification for this registration.
     const ADMISSIBILITY: InlineAdmissibility;
 
+    /// Build the static expansion recipe for this inline.
+    ///
+    /// This method must be deterministic and tracer-free: it receives decoded
+    /// inline operands and records symbolic rows through `InlineExpansionBuilder`.
+    /// Runtime CPU state and concrete advice values belong in `build_advice`,
+    /// not in this static recipe.
     fn build_sequence(
         asm: InlineExpansionBuilder,
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError>;
 
+    /// Optionally compute runtime advice values for this inline.
+    ///
+    /// The returned values are consumed in order by `VirtualAdvice` rows emitted
+    /// by `build_sequence`. Returning `None` means the static recipe contains no
+    /// runtime-advice rows.
     fn build_advice(_operands: FormatInline, _cpu: &mut Cpu) -> Option<VecDeque<u64>> {
         None
+    }
+}
+
+struct InlineOpTraceProvider<T>(PhantomData<T>);
+
+impl<T> Default for InlineOpTraceProvider<T> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<T: InlineOp> InlineExpansionProvider for InlineOpTraceProvider<T> {
+    fn expand_inline(
+        &mut self,
+        instruction: &SourceInstruction,
+        _profile: JoltInstructionProfile,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        let source = *instruction.row();
+        let operands = InlineOperands::from_source_row(source)?;
+        T::build_sequence(InlineExpansionBuilder::new(source), operands)
     }
 }
 
@@ -193,7 +228,20 @@ pub fn store_trace<T: InlineOp>(file: &str, mode: AppendMode) -> Result<(), Stri
         is_first_in_sequence: false,
         is_compressed: inputs.is_compressed,
     };
-    let instructions = inline.inline_sequence(&VirtualRegisterAllocator::default());
+    let source = Instruction::from(inline).source_instruction();
+    let mut allocator = ExpansionAllocator::new();
+    let mut provider = InlineOpTraceProvider::<T>::default();
+    let instructions = jolt_program::expand::expand_instruction_with_provider(
+        &source,
+        &mut allocator,
+        &mut provider,
+        jolt_riscv::RV64IMAC_JOLT_ALL_INLINES,
+    )
+    .map_err(|error| error.to_string())?
+    .into_iter()
+    .map(JoltInstructionRow::from)
+    .map(|row| Instruction::try_from_jolt_instruction_row(row).map_err(|error| error.to_string()))
+    .collect::<Result<Vec<_>, _>>()?;
     write_inline_trace(file, &inline_info, &inputs, &instructions, mode).map_err(|e| e.to_string())
 }
 

@@ -262,7 +262,9 @@ also pass target legality under the active profile.
 
 Verifier-admissibility must be checked in the same preprocessing/expansion path
 as profile gating. It is not a tracer concern and not an inventory-side
-convention.
+convention. Test fixtures and trace-file writers may materialize internal
+recipes only through an explicit non-guest-bytecode path; they must not reuse
+the production raw-inline provider as a quiet bypass.
 
 Provider-free expansion continues to reject `SourceInstructionKind::Inline` with
 `ExpansionError::InlineProviderRequired`.
@@ -656,6 +658,9 @@ Add focused tests:
 - Negative raw-opcode tests for internal-only registrations, using direct
   `.insn`/decoded inline rows for advice-only or SDK-checked helper opcodes and
   asserting rejection before proving.
+- Fixture/test-only materialization tests proving internal recipes can still be
+  hashed or executed through explicitly trusted harness paths without making the
+  production raw-bytecode provider accept them.
 - Safety-evidence tests for public registrations with requirements, including a
   deliberately incomplete test provider that emits the functional rows without
   the required evidence and must fail finalization.

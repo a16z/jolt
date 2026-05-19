@@ -73,8 +73,13 @@ pub(super) const fn mscratch_register() -> u8 {
     MSCRATCH_REGISTER
 }
 
-/// Virtual register pool partitioned into reserved (CSRs), instruction (per-expansion temps),
-/// and inline (provider-allocated) ranges. Also tracks recursion depth.
+/// Owns virtual-register assignment during bytecode expansion.
+///
+/// The pool is partitioned into reserved registers for modeled machine state,
+/// short-lived instruction temps for built-in source-only recipes, and inline
+/// registers for provider-built registered inline recipes. Keeping this state in
+/// `jolt-program` is what makes static bytecode expansion and runtime tracing
+/// agree on virtual-register numbers.
 #[derive(Debug, Clone)]
 pub struct ExpansionAllocator {
     allocated: u128,
@@ -83,6 +88,8 @@ pub struct ExpansionAllocator {
 }
 
 impl ExpansionAllocator {
+    /// Create an empty allocator with no live virtual registers and no pending
+    /// inline reset rows.
     pub const fn new() -> Self {
         Self {
             allocated: 0,
@@ -123,6 +130,11 @@ impl ExpansionAllocator {
         MSTATUS_REGISTER
     }
 
+    /// Allocate a short-lived instruction temporary from registers 40..=47.
+    ///
+    /// These registers are used for built-in source-only expansions and for
+    /// top-level `rd = x0` rewrites. Callers must release the returned register
+    /// before the current recipe finishes.
     pub fn allocate(&mut self) -> Result<u8, ExpansionError> {
         self.allocate_in_range(
             NUM_RESERVED_VIRTUAL_REGISTERS,
@@ -131,6 +143,13 @@ impl ExpansionAllocator {
         )
     }
 
+    /// Allocate a registered-inline virtual register from the long-lived inline
+    /// range.
+    ///
+    /// Inline registers are explicit builder resources: the recipe must release
+    /// them, but the allocator still records that they were touched so
+    /// `materialize_inline` can append reset rows at the end of the stamped
+    /// inline sequence.
     pub fn allocate_for_inline(&mut self) -> Result<u8, ExpansionError> {
         let register =
             self.allocate_in_range(FIRST_INLINE_REGISTER_INDEX, NUM_VIRTUAL_REGISTERS, "inline")?;
@@ -138,6 +157,10 @@ impl ExpansionAllocator {
         Ok(register)
     }
 
+    /// Release a live virtual register previously returned by this allocator.
+    ///
+    /// Releasing an unknown register is an error; this catches leaked or
+    /// double-released recipe resources before final bytecode is accepted.
     pub fn release(&mut self, register: u8) -> Result<(), ExpansionError> {
         let bit = Self::register_bit(register)?;
         if self.allocated & bit == 0 {
@@ -147,6 +170,10 @@ impl ExpansionAllocator {
         Ok(())
     }
 
+    /// Return and clear the inline registers that need reset rows.
+    ///
+    /// All inline registers must already be released. The returned list is
+    /// sorted by register number so reset-row materialization is deterministic.
     pub fn take_registers_for_reset(&mut self) -> Result<Vec<u8>, ExpansionError> {
         let inline_mask = Self::range_mask(FIRST_INLINE_REGISTER_INDEX, NUM_VIRTUAL_REGISTERS);
         if self.allocated & inline_mask != 0 {
