@@ -1,7 +1,7 @@
 //! Integration tests for the opening reduction pipeline.
 //!
-//! These tests exercise the public API only — no internal imports.
-//! They verify that the full reduce → open → verify pipeline works
+//! These tests exercise the public API only -- no internal imports.
+//! They verify that the full reduce -> open -> verify pipeline works
 //! end-to-end with MockCommitmentScheme across both transcript backends.
 //!
 //! Requires: `cargo nextest run -p jolt-openings --features test-utils`
@@ -13,7 +13,7 @@
     reason = "tests may panic on assertion failures"
 )]
 
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling, ReducingBytes};
+use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
 use jolt_openings::mock::MockCommitmentScheme;
 use jolt_openings::{reduce_prover, reduce_verifier, CommitmentScheme, ProverClaim, VerifierClaim};
 use jolt_poly::Polynomial;
@@ -23,7 +23,6 @@ use rand_core::SeedableRng;
 
 type MockPCS = MockCommitmentScheme<Fr>;
 
-/// Full reduce → open → verify pipeline.
 fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
     polys: &[Polynomial<Fr>],
     points: &[Vec<Fr>],
@@ -49,7 +48,6 @@ fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
         });
     }
 
-    // Prover side
     let mut transcript_p = T::new(label);
     let reduced_p = reduce_prover(prover_claims, &mut transcript_p);
     let proofs: Vec<_> = reduced_p
@@ -66,7 +64,6 @@ fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
         })
         .collect();
 
-    // Verifier side
     let mut transcript_v = T::new(label);
     let reduced_v = reduce_verifier::<MockPCS, _>(verifier_claims, &mut transcript_v)
         .expect("reduction should succeed");
@@ -200,7 +197,7 @@ fn tampered_eval_detected() {
         VerifierClaim {
             commitment: com_b,
             point: point.clone(),
-            eval: eval_b + Fr::from_u64(1), // tampered
+            eval: eval_b + Fr::from_u64(1),
         },
     ];
 
