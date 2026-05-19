@@ -1,0 +1,13 @@
+# order	branch	title	pathspecs
+00	stack/00-stack-automation	chore: add refactor audit stack automation	.github/workflows/refactor-audit-stack.yml STACK.md stack
+01	stack/01-foundation-helpers	refactor: add modular foundation helpers	crates/jolt-field/src/arkworks/bn254.rs crates/jolt-field/src/transcript_challenge.rs crates/jolt-poly/src/identity.rs crates/jolt-poly/src/lagrange.rs crates/jolt-poly/src/lib.rs crates/jolt-poly/src/mle.rs crates/jolt-poly/src/point.rs crates/jolt-riscv/src/flags.rs crates/jolt-transcript/src/digest.rs crates/jolt-transcript/src/transcript.rs
+02	stack/02-lookup-table-core-abi	refactor: align lookup table ABI with core	crates/jolt-lookup-tables
+03	stack/03-public-io-preprocessing	refactor: add public I/O preprocessing helpers	common/src/jolt_device.rs crates/jolt-program/src/preprocess
+04	stack/04-commitment-opening-infra	refactor: add commitment and opening infrastructure	crates/jolt-crypto crates/jolt-openings crates/jolt-dory crates/jolt-hyperkzg
+05	stack/05-jolt-claims-crate	feat: add jolt-claims crate	crates/jolt-claims
+06	stack/06-jolt-r1cs-builder-lowering	refactor: add R1CS builder and lowering support	crates/jolt-r1cs
+07	stack/07-committed-sumcheck-r1cs	feat: add committed sumcheck and R1CS support	crates/jolt-sumcheck
+08	stack/08-jolt-blindfold-crate	feat: add jolt-blindfold crate	crates/jolt-blindfold
+09	stack/09-jolt-verifier-crate	feat: add jolt-verifier crate	.semgrep/jolt-verifier-boundaries.yml crates/jolt-verifier specs/jolt-verifier-model-crate.md examples/advice-consumer/guest
+10	stack/10-jolt-prover-spec	docs: add prover model crate spec	specs/jolt-prover-model-crate.md
+11	stack/11-extended-jolt-field-inline-wrapper-spec	docs: add extended Jolt field inline wrapper spec	recursion_references.md specs/extended-jolt-field-inline-wrapper.md

@@ -21,6 +21,10 @@ use crate::{
             RamValCheckAdviceOpeningClaims, RamValCheckOutputOpeningClaims,
             RegistersReadWriteOutputOpeningClaims, Stage4Claims,
         },
+        stage5::inputs::{
+            InstructionReadRafOutputOpeningClaims, RamRaClaimReductionOutputOpeningClaims,
+            RegistersValEvaluationOutputOpeningClaims, Stage5Claims,
+        },
     },
     VerifierError,
 };
@@ -41,6 +45,7 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
+use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
 use jolt_riscv::CircuitFlags;
 
@@ -83,6 +88,7 @@ pub(crate) fn transparent_claims_from_native<F: Field>(
         stage2: stage2_claims_from_native(&claims)?,
         stage3: stage3_claims_from_native(&claims)?,
         stage4: stage4_claims_from_native(&claims)?,
+        stage5: stage5_claims_from_native(&claims)?,
     })
 }
 
@@ -247,6 +253,45 @@ fn stage4_claims_from_native<F: Field>(
     })
 }
 
+fn stage5_claims_from_native<F: Field>(
+    claims: &NativeOpeningClaims<F>,
+) -> Result<Stage5Claims<F>, VerifierError> {
+    let lookup_table_flags = LookupTableKind::<RISCV_XLEN>::iter()
+        .map(|table| claims.require(instruction::read_raf_lookup_table_flag_opening(table)))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut instruction_ra = Vec::new();
+    for index in 0.. {
+        let Some(opening_claim) = claims.get(instruction::read_raf_instruction_ra_opening(index))
+        else {
+            break;
+        };
+        instruction_ra.push(opening_claim);
+    }
+    if instruction_ra.is_empty() {
+        return Err(VerifierError::MissingOpeningClaim {
+            id: instruction::read_raf_instruction_ra_opening(0),
+        });
+    }
+    let [ram_ra] = ram::ra_claim_reduction_output_openings();
+    let [rd_inc, rd_wa] = registers::val_evaluation_output_openings();
+
+    Ok(Stage5Claims {
+        instruction_read_raf: InstructionReadRafOutputOpeningClaims {
+            lookup_table_flags,
+            instruction_ra,
+            instruction_raf_flag: claims
+                .require(instruction::read_raf_instruction_raf_flag_opening())?,
+        },
+        ram_ra_claim_reduction: RamRaClaimReductionOutputOpeningClaims {
+            ram_ra: claims.require(ram_ra)?,
+        },
+        registers_val_evaluation: RegistersValEvaluationOutputOpeningClaims {
+            rd_inc: claims.require(rd_inc)?,
+            rd_wa: claims.require(rd_wa)?,
+        },
+    })
+}
+
 #[derive(Clone, Debug)]
 struct NativeOpeningClaims<F: Field> {
     claims: Vec<(native::JoltOpeningId, F)>,
@@ -368,6 +413,18 @@ fn empty_transparent_claims<F: Field>(_trace_length: usize) -> TransparentProofC
             ram_val_check: RamValCheckOutputOpeningClaims {
                 ram_ra: zero,
                 ram_inc: zero,
+            },
+        },
+        stage5: Stage5Claims {
+            instruction_read_raf: InstructionReadRafOutputOpeningClaims {
+                lookup_table_flags: vec![zero; LookupTableKind::<RISCV_XLEN>::COUNT],
+                instruction_ra: vec![zero],
+                instruction_raf_flag: zero,
+            },
+            ram_ra_claim_reduction: RamRaClaimReductionOutputOpeningClaims { ram_ra: zero },
+            registers_val_evaluation: RegistersValEvaluationOutputOpeningClaims {
+                rd_inc: zero,
+                rd_wa: zero,
             },
         },
     }
@@ -529,6 +586,7 @@ fn claim_from_transparent<F: Field>(
     claim_from_stage2_batch_outputs(&claims.stage2.batch_outputs, id)
         .or_else(|| claim_from_stage3_outputs(&claims.stage3, id))
         .or_else(|| claim_from_stage4_outputs(&claims.stage4, id))
+        .or_else(|| claim_from_stage5_outputs(&claims.stage5, id))
 }
 
 #[cfg(any(feature = "jolt-core-compat", test))]
@@ -550,6 +608,7 @@ fn claim_mut_from_transparent<F: Field>(
     claim_mut_from_stage2_batch_outputs(&mut claims.stage2.batch_outputs, id)
         .or_else(|| claim_mut_from_stage3_outputs(&mut claims.stage3, id))
         .or_else(|| claim_mut_from_stage4_outputs(&mut claims.stage4, id))
+        .or_else(|| claim_mut_from_stage5_outputs(&mut claims.stage5, id))
 }
 
 #[cfg(any(feature = "jolt-core-compat", test))]
@@ -911,6 +970,81 @@ fn claim_mut_from_stage4_outputs<F: Field>(
         id if id == rd_inc => Some(&mut claims.registers_read_write.rd_inc),
         id if id == ram_ra => Some(&mut claims.ram_val_check.ram_ra),
         id if id == ram_inc => Some(&mut claims.ram_val_check.ram_inc),
+        _ => None,
+    }
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn claim_from_stage5_outputs<F: Field>(
+    claims: &Stage5Claims<F>,
+    id: native::JoltOpeningId,
+) -> Option<F> {
+    for table in LookupTableKind::<RISCV_XLEN>::iter() {
+        if id == instruction::read_raf_lookup_table_flag_opening(table) {
+            return claims
+                .instruction_read_raf
+                .lookup_table_flags
+                .get(table.index())
+                .copied();
+        }
+    }
+    for (index, opening_claim) in claims
+        .instruction_read_raf
+        .instruction_ra
+        .iter()
+        .enumerate()
+    {
+        if id == instruction::read_raf_instruction_ra_opening(index) {
+            return Some(*opening_claim);
+        }
+    }
+
+    let [ram_ra] = ram::ra_claim_reduction_output_openings();
+    let [rd_inc, rd_wa] = registers::val_evaluation_output_openings();
+    match id {
+        id if id == instruction::read_raf_instruction_raf_flag_opening() => {
+            Some(claims.instruction_read_raf.instruction_raf_flag)
+        }
+        id if id == ram_ra => Some(claims.ram_ra_claim_reduction.ram_ra),
+        id if id == rd_inc => Some(claims.registers_val_evaluation.rd_inc),
+        id if id == rd_wa => Some(claims.registers_val_evaluation.rd_wa),
+        _ => None,
+    }
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn claim_mut_from_stage5_outputs<F: Field>(
+    claims: &mut Stage5Claims<F>,
+    id: native::JoltOpeningId,
+) -> Option<&mut F> {
+    for table in LookupTableKind::<RISCV_XLEN>::iter() {
+        if id == instruction::read_raf_lookup_table_flag_opening(table) {
+            return claims
+                .instruction_read_raf
+                .lookup_table_flags
+                .get_mut(table.index());
+        }
+    }
+    for (index, opening_claim) in claims
+        .instruction_read_raf
+        .instruction_ra
+        .iter_mut()
+        .enumerate()
+    {
+        if id == instruction::read_raf_instruction_ra_opening(index) {
+            return Some(opening_claim);
+        }
+    }
+
+    let [ram_ra] = ram::ra_claim_reduction_output_openings();
+    let [rd_inc, rd_wa] = registers::val_evaluation_output_openings();
+    match id {
+        id if id == instruction::read_raf_instruction_raf_flag_opening() => {
+            Some(&mut claims.instruction_read_raf.instruction_raf_flag)
+        }
+        id if id == ram_ra => Some(&mut claims.ram_ra_claim_reduction.ram_ra),
+        id if id == rd_inc => Some(&mut claims.registers_val_evaluation.rd_inc),
+        id if id == rd_wa => Some(&mut claims.registers_val_evaluation.rd_wa),
         _ => None,
     }
 }

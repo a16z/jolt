@@ -70,6 +70,14 @@ pub fn read_write_checking_output_openings() -> [JoltOpeningId; 5] {
     ]
 }
 
+pub fn val_evaluation_input_openings() -> [JoltOpeningId; 1] {
+    [registers_val_read_write()]
+}
+
+pub fn val_evaluation_output_openings() -> [JoltOpeningId; 2] {
+    [rd_inc_val_evaluation(), rd_wa_val_evaluation()]
+}
+
 fn read_write_challenge<F>(id: RegistersReadWriteChallenge) -> JoltExpr<F>
 where
     F: RingCore,
@@ -320,11 +328,11 @@ mod tests {
         assert_eq!(claims.sumcheck, trace_dimensions().sumcheck(3));
         assert_eq!(
             claims.input.required_openings,
-            vec![registers_val_read_write()]
+            val_evaluation_input_openings().to_vec()
         );
         assert_eq!(
             claims.output.required_openings,
-            vec![rd_inc_val_evaluation(), rd_wa_val_evaluation()]
+            val_evaluation_output_openings().to_vec()
         );
         assert_eq!(
             claims.output.required_challenges,

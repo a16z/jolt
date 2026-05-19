@@ -30,6 +30,7 @@ jolt-claims.workspace = true
 jolt-crypto.workspace = true
 jolt-dory = { path = "../jolt-dory", optional = true }
 jolt-field.workspace = true
+jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true
 jolt-poly.workspace = true
 jolt-program.workspace = true
@@ -37,6 +38,7 @@ jolt-r1cs.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
+num-traits.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 

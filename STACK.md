@@ -1,0 +1,154 @@
+# Refactor Audit Prep Stack
+
+This stack splits `refactor/audit-prep` into draft PRs that can be reviewed
+independently while the integration branch continues to move. The stack branches
+are generated from `refactor/audit-prep`; do not treat them as the source of
+truth.
+
+## Invariants
+
+- `refactor/audit-prep` is the source branch.
+- Stack branches are disposable materializations of slices from that source.
+- Each PR branch is based on the previous PR branch.
+- Root `Cargo.toml` and `Cargo.lock` are generated incrementally per PR. Do not
+  restore the whole root manifest from `refactor/audit-prep` into early branches.
+- Open every PR as draft until the verifier frontier is complete.
+
+## Stack Order
+
+| # | Branch | Base | Contents |
+|---|---|---|---|
+| 00 | `stack/00-stack-automation` | `origin/main` | stack docs, branch plan, update script, and GitHub Actions workflow |
+| 01 | `stack/01-foundation-helpers` | `stack/00-stack-automation` | small helper changes in `jolt-field`, `jolt-poly`, `jolt-transcript`, `jolt-riscv` |
+| 02 | `stack/02-lookup-table-core-abi` | `stack/01-foundation-helpers` | modular lookup-table enum ordering and core ABI parity test |
+| 03 | `stack/03-public-io-preprocessing` | `stack/02-lookup-table-core-abi` | public I/O memory helpers in `common` and `jolt-program` |
+| 04 | `stack/04-commitment-opening-infra` | `stack/03-public-io-preprocessing` | commitment, vector commitment, PCS, and opening-reduction infrastructure |
+| 05 | `stack/05-jolt-claims-crate` | `stack/04-commitment-opening-infra` | new `jolt-claims` crate |
+| 06 | `stack/06-jolt-r1cs-builder-lowering` | `stack/05-jolt-claims-crate` | `jolt-r1cs` builder/lowering/expression integration |
+| 07 | `stack/07-committed-sumcheck-r1cs` | `stack/06-jolt-r1cs-builder-lowering` | committed sumcheck messages, domains, verifier changes, R1CS feature |
+| 08 | `stack/08-jolt-blindfold-crate` | `stack/07-committed-sumcheck-r1cs` | new generic `jolt-blindfold` crate |
+| 09 | `stack/09-jolt-verifier-crate` | `stack/08-jolt-blindfold-crate` | new `jolt-verifier` crate, verifier spec, boundary checks, fixtures |
+| 10 | `stack/10-jolt-prover-spec` | `stack/09-jolt-verifier-crate` | `specs/jolt-prover-model-crate.md` |
+| 11 | `stack/11-extended-jolt-field-inline-wrapper-spec` | `stack/10-jolt-prover-spec` | extended Jolt / field inline / wrapper spec plus supporting recursion reference doc |
+
+Stage-5 WIP from the current worktree should become a later PR after it is
+complete. The committed stack currently stops at the stage-4 verifier frontier.
+
+## Automatic Updates
+
+Pushing to `origin/refactor/audit-prep` runs
+[`.github/workflows/refactor-audit-stack.yml`](.github/workflows/refactor-audit-stack.yml).
+The workflow:
+
+1. checks out the pushed `refactor/audit-prep` commit;
+2. rebuilds each `stack/*` branch from the previous stack branch;
+3. restores the owned paths from `origin/refactor/audit-prep`;
+4. applies the incremental root manifest changes for that stack point;
+5. runs `cargo metadata` to refresh `Cargo.lock`;
+6. commits and force-pushes each stack branch with lease.
+
+Once the draft PRs exist, GitHub will update them automatically when the
+workflow force-pushes their branches.
+
+## Manual Materialization
+
+Dry-run the stack:
+
+```bash
+./stack/update-stack.sh
+```
+
+Create or update one branch:
+
+```bash
+./stack/update-stack.sh --apply --only 08
+```
+
+Rebuild all stack branches from the source branch:
+
+```bash
+./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --from origin/refactor/audit-prep
+```
+
+The CI workflow runs the same command. Without `--commit`, the script leaves
+changes unstaged for local inspection.
+
+## Manifest Generation
+
+The update script applies these root manifest changes in the branch where the
+crate first appears:
+
+- PR 05: add `crates/jolt-claims` to workspace members and add
+  `jolt-claims = { path = "./crates/jolt-claims" }` to workspace dependencies.
+- PR 06: add `jolt-r1cs = { path = "./crates/jolt-r1cs" }` to workspace
+  dependencies if it is not already present.
+- PR 08: add `crates/jolt-blindfold` to workspace members and add
+  `jolt-blindfold = { path = "./crates/jolt-blindfold" }`.
+- PR 09: add `crates/jolt-verifier` and `examples/advice-consumer/guest` to
+  workspace members and add `jolt-verifier = { path = "./crates/jolt-verifier" }`.
+
+With `--cargo-metadata`, the script refreshes `Cargo.lock` after those manifest
+changes.
+
+## Validation
+
+Use focused checks per branch while the stack is draft:
+
+```bash
+cargo metadata -q >/dev/null
+cargo check -p jolt-claims -q
+cargo check -p jolt-r1cs -q
+cargo check -p jolt-sumcheck -q --features r1cs
+cargo check -p jolt-blindfold -q
+cargo check -p jolt-verifier -q
+```
+
+For the full stack tip:
+
+```bash
+cargo clippy --all --features host -q --all-targets -- -D warnings
+cargo clippy --all --features host,zk -q --all-targets -- -D warnings
+cargo fmt -q
+```
+
+Use `cargo nextest`, not `cargo test`, once the stack is ready for correctness
+checks.
+
+## Opening Draft PRs
+
+With vanilla `gh`, open each PR against the previous stack branch:
+
+```bash
+gh pr create --draft --base origin/main --head stack/00-stack-automation
+gh pr create --draft --base stack/00-stack-automation --head stack/01-foundation-helpers
+gh pr create --draft --base stack/01-foundation-helpers --head stack/02-lookup-table-core-abi
+gh pr create --draft --base stack/02-lookup-table-core-abi --head stack/03-public-io-preprocessing
+# Continue through stack/11-extended-jolt-field-inline-wrapper-spec.
+```
+
+If using a stacked-PR extension, create the same branch chain and run the
+extension's submit command from the final stack branch.
+
+## Updating From `refactor/audit-prep`
+
+1. Commit WIP on `refactor/audit-prep`. The source must be pushed as a git ref.
+2. Push:
+
+   ```bash
+   git push origin refactor/audit-prep
+   ```
+
+3. The workflow rebuilds and force-pushes all stack branches. To do the same
+   locally:
+
+   ```bash
+   ./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --from origin/refactor/audit-prep
+   ```
+
+4. Compare the stack tip to the source branch:
+
+   ```bash
+   git diff --stat refactor/audit-prep..stack/11-extended-jolt-field-inline-wrapper-spec
+   ```
+
+Only intentional WIP exclusions or branch-order differences should remain.

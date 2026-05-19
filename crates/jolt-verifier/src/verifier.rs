@@ -71,7 +71,7 @@ where
         preprocessing,
         proof,
         &mut transcript,
-        stage5::deps(&stage1, &stage2, &stage3, &stage4),
+        stage5::deps(&stage2, &stage4),
     )?;
     let stage6 = stage6::verify(
         &checked,
@@ -410,6 +410,7 @@ mod tests {
         ClearProof, ClearSumcheckProof, CommittedSumcheckProof, CompressedSumcheckProof,
     };
     use jolt_transcript::Transcript;
+    use num_traits::Zero;
 
     #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     struct TestPcs;
@@ -664,7 +665,7 @@ mod tests {
     }
 
     fn transparent_claims() -> JoltProofClaims<Fr, ()> {
-        let zero = Fr::default();
+        let zero = Fr::zero();
 
         JoltProofClaims::Transparent(TransparentProofClaims {
             stage1: stage1::inputs::Stage1Claims {
@@ -743,11 +744,26 @@ mod tests {
                     ram_inc: zero,
                 },
             },
+            stage5: stage5::inputs::Stage5Claims {
+                instruction_read_raf: stage5::inputs::InstructionReadRafOutputOpeningClaims {
+                    lookup_table_flags: Vec::new(),
+                    instruction_ra: Vec::new(),
+                    instruction_raf_flag: zero,
+                },
+                ram_ra_claim_reduction: stage5::inputs::RamRaClaimReductionOutputOpeningClaims {
+                    ram_ra: zero,
+                },
+                registers_val_evaluation:
+                    stage5::inputs::RegistersValEvaluationOutputOpeningClaims {
+                        rd_inc: zero,
+                        rd_wa: zero,
+                    },
+            },
         })
     }
 
     fn empty_spartan_outer_claims() -> stage1::inputs::SpartanOuterClaims<Fr> {
-        let zero = Fr::default();
+        let zero = Fr::zero();
 
         stage1::inputs::SpartanOuterClaims {
             left_instruction_input: zero,

@@ -300,6 +300,31 @@ where
     )
 }
 
+pub fn ra_claim_reduction_input_openings() -> [JoltOpeningId; 3] {
+    [ram_ra_raf_evaluation(), ram_ra(), ram_ra_val_check()]
+}
+
+pub fn ra_claim_reduction_output_openings() -> [JoltOpeningId; 1] {
+    [ram_ra_claim_reduction()]
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RamRaClaimReductionPublicValues<F: Field> {
+    pub eq_cycle_raf: F,
+    pub eq_cycle_read_write: F,
+    pub eq_cycle_val_check: F,
+}
+
+impl<F: Field> RamRaClaimReductionPublicValues<F> {
+    pub fn value(&self, id: RamRaClaimReductionPublic) -> F {
+        match id {
+            RamRaClaimReductionPublic::EqCycleRaf => self.eq_cycle_raf,
+            RamRaClaimReductionPublic::EqCycleReadWrite => self.eq_cycle_read_write,
+            RamRaClaimReductionPublic::EqCycleValCheck => self.eq_cycle_val_check,
+        }
+    }
+}
+
 pub fn ra_virtualization<F>(dimensions: RamRaVirtualizationDimensions) -> JoltStageClaims<F>
 where
     F: RingCore,
@@ -819,11 +844,11 @@ mod tests {
         assert_eq!(claims.sumcheck, trace_dimensions().sumcheck(2));
         assert_eq!(
             claims.input.required_openings,
-            vec![ram_ra_raf_evaluation(), ram_ra(), ram_ra_val_check()]
+            ra_claim_reduction_input_openings().to_vec()
         );
         assert_eq!(
             claims.output.required_openings,
-            vec![ram_ra_claim_reduction()]
+            ra_claim_reduction_output_openings().to_vec()
         );
         assert_eq!(
             claims.input.required_challenges,
@@ -868,6 +893,11 @@ mod tests {
         let eq_raf = Fr::from_u64(17);
         let eq_rw = Fr::from_u64(19);
         let eq_val = Fr::from_u64(23);
+        let public_values = RamRaClaimReductionPublicValues {
+            eq_cycle_raf: eq_raf,
+            eq_cycle_read_write: eq_rw,
+            eq_cycle_val_check: eq_val,
+        };
         let zero = Fr::from_u64(0);
 
         let input = claims.input.expression.evaluate(
@@ -920,13 +950,7 @@ mod tests {
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |id| match *id {
-                JoltPublicId::RamRaClaimReduction(RamRaClaimReductionPublic::EqCycleRaf) => eq_raf,
-                JoltPublicId::RamRaClaimReduction(RamRaClaimReductionPublic::EqCycleReadWrite) => {
-                    eq_rw
-                }
-                JoltPublicId::RamRaClaimReduction(RamRaClaimReductionPublic::EqCycleValCheck) => {
-                    eq_val
-                }
+                JoltPublicId::RamRaClaimReduction(id) => public_values.value(id),
                 JoltPublicId::TraceLength
                 | JoltPublicId::PaddedTraceLength
                 | JoltPublicId::BytecodeLength

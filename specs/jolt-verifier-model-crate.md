@@ -146,6 +146,7 @@ pub struct TransparentProofClaims<F> {
     pub stage2: stage2::inputs::Stage2Claims<F>,
     pub stage3: stage3::inputs::Stage3Claims<F>,
     pub stage4: stage4::inputs::Stage4Claims<F>,
+    pub stage5: stage5::inputs::Stage5Claims<F>,
     // Add later stages as they are wired.
 }
 ```
@@ -163,7 +164,9 @@ claims from the verified Stage 1 output rather than duplicating them in
 input claims and owns only its Stage 3 output openings. Stage 4 consumes the
 prior typed outputs needed for register read/write and RAM val-check input
 claims, and owns the Stage 4 output openings plus the optional typed advice
-opening claims.
+opening claims. Stage 5 consumes the verified Stage 2 and Stage 4 outputs it
+actually needs, and owns the instruction read-RAF, RAM RA reduction, and
+register value-evaluation output openings.
 
 Generic facts:
 
@@ -379,7 +382,11 @@ crates/jolt-verifier/src/
       inputs.rs
       outputs.rs
       verify.rs
-    stage5.rs
+    stage5/
+      mod.rs
+      inputs.rs
+      outputs.rs
+      verify.rs
     stage6.rs
     stage7.rs
     stage8.rs
@@ -422,8 +429,7 @@ pub fn verify<PCS, VC, T>(...) -> Result<(), VerifierError> {
         stages::stage3::deps(&stage1, &stage2),
     )?;
     let stage4 = stages::stage4::verify(..., stages::stage4::deps(&stage1, &stage2, &stage3))?;
-    let stage5 =
-        stages::stage5::verify(..., stages::stage5::deps(&stage1, &stage2, &stage3, &stage4))?;
+    let stage5 = stages::stage5::verify(..., stages::stage5::deps(&stage2, &stage4))?;
     let stage6 = stages::stage6::verify(
         ...,
         stages::stage6::deps(&stage1, &stage2, &stage3, &stage4, &stage5),
@@ -674,8 +680,8 @@ struct TestCase {
 ```
 
 The harness has separate configured horizons for standard and ZK mode. The
-standard frontier currently reaches `Stage4`; the ZK frontier remains at
-`Commitments` while standard stages 5-8 are ported. A completeness case passes
+standard frontier currently reaches `Stage5`; the ZK frontier remains at
+`Commitments` while standard stages 6-8 are ported. A completeness case passes
 when a valid proof reaches the configured horizon for its mode. Before the full
 verifier exists, reaching the next unimplemented stage is success; after the
 full verifier exists, success means `Ok(())`.
@@ -705,7 +711,7 @@ struct VerifierFrontiers {
 }
 
 const CURRENT_VERIFIER_FRONTIERS: VerifierFrontiers = VerifierFrontiers {
-    standard: VerifierCheckpoint::Stage4,
+    standard: VerifierCheckpoint::Stage5,
     zk: VerifierCheckpoint::Commitments,
 };
 ```
@@ -1195,14 +1201,14 @@ Current implementation status:
   return shape and checked per-instance point slicing used by Stage 2;
 - `common` owns VM memory-layout remapping and public I/O byte-to-word packing;
 - `jolt-poly` owns generic MLE helpers used by the formula public-value code;
-- standard Stage 1/2/3/4 soundness tests now use the tamper manifest to mutate real
-  core proofs after compat conversion, covering every current Stage 1/2/3/4
-  verifier-owned proof payload and typed claim target that is checked by the
-  `Stage4` frontier;
+- standard Stage 1/2/3/4/5 soundness tests now use the tamper manifest to
+  mutate real core proofs after compat conversion, covering every current
+  Stage 1/2/3/4/5 verifier-owned proof payload and typed claim target that is
+  checked by the `Stage5` frontier;
 - unchecked pass-through, final-opening, commitment-payload/order, advice, and
   ZK/BlindFold targets are explicitly recorded in the tamper manifest rather
   than left implicit;
-- the standard verifier frontier is now `Stage4`; Stage 5 remains the next
+- the standard verifier frontier is now `Stage5`; Stage 6 remains the next
   unimplemented standard-stage boundary.
 
 Boundary cleanup pressure:
@@ -1336,6 +1342,46 @@ Review criteria:
 - Lookup table semantics come from `jolt-lookup-tables` / `jolt-riscv` where
   available.
 - Stage dependencies are explicit fields.
+
+Current implementation status:
+
+- Stage 5 is organized as `stage5/{inputs.rs, outputs.rs, verify.rs}` and uses
+  typed transparent claims for:
+  - instruction read-RAF lookup-table flag openings;
+  - instruction read-RAF virtual RA openings;
+  - the instruction RAF flag opening;
+  - RAM RA claim-reduction output opening;
+  - register value-evaluation output openings.
+- `stage5/verify.rs` is linear and explicit: it samples the instruction
+  read-RAF gamma and RAM RA-reduction gamma, verifies the compressed
+  three-instance batch with `jolt-sumcheck`, evaluates the `jolt-claims`
+  input/output expressions, checks RAM address consistency across Stage 2 and
+  Stage 4, compares the combined final claim, then appends Stage 5 opening
+  claims in core transcript order.
+- The Stage 5 dependency contract is deliberately narrow:
+  `stage5::deps(&stage2, &stage4)`. Stage 5 consumes Stage 2 instruction/RAM
+  outputs and Stage 4 RAM/register outputs, and does not receive unrelated
+  prior stage outputs.
+- `jolt-poly` now owns `OperandPolynomial`/`OperandSide`, used by instruction
+  read-RAF to evaluate left/right interleaved operand polynomials. `jolt-claims`
+  exposes Stage 5 opening metadata and point normalization helpers for
+  instruction read-RAF, RAM RA reduction, and register value evaluation.
+  `jolt-lookup-tables` owns lookup-table MLE evaluation.
+- Stage 5 preserves the fact that instruction read-RAF publishes different
+  opening points for different outputs: lookup-table flags and the RAF flag use
+  the cycle point, while each virtual RA claim uses its address chunk plus the
+  cycle point. The typed Stage 5 output records those points explicitly for
+  final opening verification.
+- Standard completeness reaches Stage 5 for real core fixtures, including the
+  advice fixture. Stage 5 soundness coverage is active for real core fixtures:
+  compressed batch round-polynomial tampering, missing/extra round counts, all
+  read-RAF output claims, RAM RA claim-reduction output, and register
+  value-evaluation outputs are tampered after compat conversion and rejected
+  before the current frontier.
+- The Stage 2 pass-through product remainder claims
+  `write_lookup_output_to_rd` and `virtual_instruction` are not consumed by
+  Stage 5; their tamper-manifest checkpoint remains deferred to a later
+  instruction/bytecode stage.
 
 ### 10. Stage 6: Bytecode, Booleanity, RA Virtualization, Increments, Advice Phase 1
 

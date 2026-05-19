@@ -3,6 +3,68 @@
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OperandSide {
+    Left,
+    Right,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OperandPolynomial {
+    num_vars: usize,
+    side: OperandSide,
+}
+
+impl OperandPolynomial {
+    pub const fn new(num_vars: usize, side: OperandSide) -> Self {
+        Self { num_vars, side }
+    }
+
+    pub const fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    pub const fn side(&self) -> OperandSide {
+        self.side
+    }
+
+    #[inline]
+    pub fn evaluate<F: Field>(&self, point: &[F]) -> F {
+        assert_eq!(
+            point.len(),
+            self.num_vars,
+            "point dimension must match num_vars"
+        );
+        assert!(
+            self.num_vars.is_multiple_of(2),
+            "operand polynomial requires an even number of variables"
+        );
+
+        let offset = match self.side {
+            OperandSide::Left => 0,
+            OperandSide::Right => 1,
+        };
+        let bits = self.num_vars / 2;
+        (0..bits).fold(F::zero(), |acc, bit_index| {
+            acc + point[2 * bit_index + offset].mul_pow_2(bits - 1 - bit_index)
+        })
+    }
+}
+
+impl<F: Field> crate::MultilinearEvaluation<F> for OperandPolynomial {
+    fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    fn len(&self) -> usize {
+        1 << self.num_vars
+    }
+
+    fn evaluate(&self, point: &[F]) -> F {
+        OperandPolynomial::evaluate(self, point)
+    }
+}
+
 /// Identity polynomial: $\widetilde{I}(x) = \sum_{i=0}^{2^n - 1} i \cdot \widetilde{eq}(x, i)$.
 ///
 /// At each Boolean hypercube point $b \in \{0,1\}^n$, this polynomial evaluates to the
@@ -97,5 +159,26 @@ mod tests {
         let id = IdentityPolynomial::new(1);
         assert!(id.evaluate(&[Fr::zero()]).is_zero());
         assert_eq!(id.evaluate(&[Fr::one()]), Fr::one());
+    }
+
+    #[test]
+    fn operand_polynomial_splits_interleaved_left_and_right_bits() {
+        let point = [
+            Fr::from_u64(1),
+            Fr::from_u64(0),
+            Fr::from_u64(0),
+            Fr::from_u64(1),
+            Fr::from_u64(1),
+            Fr::from_u64(1),
+        ];
+
+        assert_eq!(
+            OperandPolynomial::new(6, OperandSide::Left).evaluate(&point),
+            Fr::from_u64(5)
+        );
+        assert_eq!(
+            OperandPolynomial::new(6, OperandSide::Right).evaluate(&point),
+            Fr::from_u64(3)
+        );
     }
 }

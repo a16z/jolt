@@ -9,7 +9,7 @@ use jolt_sumcheck::SumcheckProof;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    stages::{stage1, stage2, stage3, stage4},
+    stages::{stage1, stage2, stage3, stage4, stage5},
     VerifierError,
 };
 
@@ -98,6 +98,7 @@ pub struct TransparentProofClaims<F: Field> {
     pub stage2: stage2::inputs::Stage2Claims<F>,
     pub stage3: stage3::inputs::Stage3Claims<F>,
     pub stage4: stage4::inputs::Stage4Claims<F>,
+    pub stage5: stage5::inputs::Stage5Claims<F>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,6 +1,6 @@
 use std::num::NonZeroUsize;
 
-use jolt_field::RingCore;
+use jolt_field::{Field, RingCore};
 use jolt_lookup_tables::LookupTableKind;
 use jolt_riscv::InstructionFlags;
 
@@ -12,7 +12,9 @@ use super::super::{
     JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltStageClaims, JoltStageId,
     JoltVirtualPolynomial,
 };
-use super::dimensions::{JoltFormulaDimensionsError, JoltSumcheckSpec, TraceDimensions};
+use super::dimensions::{
+    JoltFormulaDimensionsError, JoltFormulaPointError, JoltSumcheckSpec, TraceDimensions,
+};
 
 const INPUT_VIRTUALIZATION_DEGREE: usize = 3;
 const READ_RAF_BASE_DEGREE: usize = 2;
@@ -55,6 +57,37 @@ impl InstructionReadRafDimensions {
             self.num_virtual_ra_polys() + READ_RAF_BASE_DEGREE,
         )
     }
+
+    pub fn opening_point<F: Field>(
+        self,
+        challenges: &[F],
+    ) -> Result<InstructionReadRafOpeningPoint<F>, JoltFormulaPointError> {
+        let expected = self.instruction_address_bits + self.log_t;
+        if challenges.len() != expected {
+            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+                expected,
+                got: challenges.len(),
+            });
+        }
+
+        let (r_address, r_cycle) = challenges.split_at(self.instruction_address_bits);
+        let r_cycle = r_cycle.iter().rev().copied().collect::<Vec<_>>();
+        let r_address = r_address.to_vec();
+        let opening_point = [r_address.as_slice(), r_cycle.as_slice()].concat();
+
+        Ok(InstructionReadRafOpeningPoint {
+            r_address,
+            r_cycle,
+            opening_point,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstructionReadRafOpeningPoint<F: Field> {
+    pub r_address: Vec<F>,
+    pub r_cycle: Vec<F>,
+    pub opening_point: Vec<F>,
 }
 
 impl TryFrom<(usize, usize, usize)> for InstructionReadRafDimensions {
@@ -247,6 +280,53 @@ where
         output,
     )
     .with_consistency([lookup_output_reduced().same_evaluation_as(lookup_output_product())])
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstructionReadRafOutputOpenings {
+    pub lookup_table_flags: Vec<JoltOpeningId>,
+    pub instruction_ra: Vec<JoltOpeningId>,
+    pub instruction_raf_flag: JoltOpeningId,
+}
+
+pub fn read_raf_input_openings() -> [JoltOpeningId; 3] {
+    [
+        lookup_output_reduced(),
+        left_lookup_operand_reduced(),
+        right_lookup_operand_reduced(),
+    ]
+}
+
+pub fn read_raf_output_openings<const XLEN: usize>(
+    dimensions: InstructionReadRafDimensions,
+) -> InstructionReadRafOutputOpenings {
+    InstructionReadRafOutputOpenings {
+        lookup_table_flags: LookupTableKind::<XLEN>::iter()
+            .map(read_raf_lookup_table_flag_opening)
+            .collect(),
+        instruction_ra: (0..dimensions.num_virtual_ra_polys())
+            .map(read_raf_instruction_ra_opening)
+            .collect(),
+        instruction_raf_flag: read_raf_instruction_raf_flag_opening(),
+    }
+}
+
+pub fn read_raf_consistency_openings() -> [(JoltOpeningId, JoltOpeningId); 1] {
+    [(lookup_output_reduced(), lookup_output_product())]
+}
+
+pub fn read_raf_lookup_table_flag_opening<const XLEN: usize>(
+    table: LookupTableKind<XLEN>,
+) -> JoltOpeningId {
+    lookup_table_flag(table)
+}
+
+pub fn read_raf_instruction_ra_opening(index: usize) -> JoltOpeningId {
+    instruction_ra(index)
+}
+
+pub fn read_raf_instruction_raf_flag_opening() -> JoltOpeningId {
+    instruction_raf_flag()
 }
 
 pub fn ra_virtualization<F>(dimensions: InstructionRaVirtualizationDimensions) -> JoltStageClaims<F>
@@ -695,22 +775,25 @@ mod tests {
         assert_eq!(claims.sumcheck, JoltSumcheckSpec::boolean(133, 4));
         assert_eq!(
             claims.input.required_openings,
-            vec![
-                lookup_output_reduced(),
-                left_lookup_operand_reduced(),
-                right_lookup_operand_reduced(),
-            ]
+            read_raf_input_openings().to_vec()
         );
         let mut expected_output_openings = vec![instruction_ra(0), instruction_ra(1)];
         expected_output_openings.extend(table_flags.iter().copied());
         expected_output_openings.push(instruction_raf_flag());
         assert_eq!(claims.output.required_openings, expected_output_openings);
+        let output_openings = read_raf_output_openings::<TEST_XLEN>(dimensions);
+        assert_eq!(
+            output_openings.instruction_ra,
+            vec![instruction_ra(0), instruction_ra(1)]
+        );
+        assert_eq!(output_openings.lookup_table_flags, lookup_table_flags());
+        assert_eq!(output_openings.instruction_raf_flag, instruction_raf_flag());
         assert_eq!(
             claims.consistency,
-            vec![JoltConsistencyClaim::same_evaluation(
-                lookup_output_reduced(),
-                lookup_output_product()
-            )]
+            read_raf_consistency_openings()
+                .into_iter()
+                .map(|(left, right)| JoltConsistencyClaim::same_evaluation(left, right))
+                .collect::<Vec<_>>()
         );
         let mut expected_required_openings = vec![
             lookup_output_reduced(),
@@ -753,6 +836,43 @@ mod tests {
         assert_eq!(
             claims.num_challenges(),
             LookupTableKind::<TEST_XLEN>::COUNT + 3
+        );
+    }
+
+    #[test]
+    fn read_raf_opening_point_matches_core_order() {
+        let dimensions = InstructionReadRafDimensions::try_from((3, 4, 1))
+            .unwrap_or_else(|err| panic!("test read-RAF dimensions should be valid: {err}"));
+        let challenges = (1..=7).map(Fr::from_u64).collect::<Vec<_>>();
+
+        let point = dimensions
+            .opening_point(&challenges)
+            .unwrap_or_else(|err| panic!("opening point should normalize: {err}"));
+
+        assert_eq!(
+            point.r_address,
+            vec![
+                Fr::from_u64(1),
+                Fr::from_u64(2),
+                Fr::from_u64(3),
+                Fr::from_u64(4),
+            ]
+        );
+        assert_eq!(
+            point.r_cycle,
+            vec![Fr::from_u64(7), Fr::from_u64(6), Fr::from_u64(5)]
+        );
+        assert_eq!(
+            point.opening_point,
+            vec![
+                Fr::from_u64(1),
+                Fr::from_u64(2),
+                Fr::from_u64(3),
+                Fr::from_u64(4),
+                Fr::from_u64(7),
+                Fr::from_u64(6),
+                Fr::from_u64(5),
+            ]
         );
     }
 

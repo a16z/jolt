@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_verifier::{
     proof::TransparentProofClaims,
-    stages::{stage1, stage2, stage3, stage4},
+    stages::{stage1, stage2, stage3, stage4, stage5},
 };
 use serde_json::Value;
 
@@ -493,7 +493,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     later_standard(
         "stage2.claims.batch_outputs.product_remainder.write_lookup_output_to_rd",
         "claims.stage2.batch_outputs.product_remainder.write_lookup_output_to_rd",
-        VerifierCheckpoint::Stage5,
+        VerifierCheckpoint::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Deferred,
         "Stage 2 appends this pass-through claim, but later instruction stages must consume it",
@@ -501,7 +501,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     later_standard(
         "stage2.claims.batch_outputs.product_remainder.virtual_instruction",
         "claims.stage2.batch_outputs.product_remainder.virtual_instruction",
-        VerifierCheckpoint::Stage5,
+        VerifierCheckpoint::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Deferred,
         "Stage 2 appends this pass-through claim, but later instruction stages must consume it",
@@ -642,15 +642,74 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
     ),
 ];
 
-pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
-    later_standard(
-        "stage5.sumcheck_payload",
-        "proof.stages.stage5_sumcheck_proof",
+pub const STAGE5_TARGETS: &[TamperTarget] = &[
+    checked_standard(
+        "stage5.batch.round_polynomial",
+        "proof.stages.stage5_sumcheck_proof.round_polynomials[*]",
         VerifierCheckpoint::Stage5,
         MutationStrategy::ReplaceProofPayload,
-        TamperCoverage::Deferred,
-        "stage 5 is not wired yet",
+        TamperCoverage::Active,
+        "core-fixture test mutates every compressed Stage 5 batch round polynomial",
     ),
+    checked_standard(
+        "stage5.batch.round_count.missing",
+        "proof.stages.stage5_sumcheck_proof.round_polynomials",
+        VerifierCheckpoint::Stage5,
+        MutationStrategy::TruncateVector,
+        TamperCoverage::Active,
+        "core-fixture test removes a Stage 5 batch round",
+    ),
+    checked_standard(
+        "stage5.batch.round_count.extra",
+        "proof.stages.stage5_sumcheck_proof.round_polynomials",
+        VerifierCheckpoint::Stage5,
+        MutationStrategy::ExtendVector,
+        TamperCoverage::Active,
+        "core-fixture test appends a Stage 5 batch round",
+    ),
+    checked_standard(
+        "stage5.claims.instruction_read_raf.lookup_table_flags",
+        "claims.stage5.instruction_read_raf.lookup_table_flags",
+        VerifierCheckpoint::Stage5,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets each instruction read-RAF lookup-table flag claim",
+    ),
+    checked_standard(
+        "stage5.claims.instruction_read_raf.instruction_ra",
+        "claims.stage5.instruction_read_raf.instruction_ra",
+        VerifierCheckpoint::Stage5,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets each instruction read-RAF virtual RA claim",
+    ),
+    checked_standard(
+        "stage5.claims.instruction_read_raf.instruction_raf_flag",
+        "claims.stage5.instruction_read_raf.instruction_raf_flag",
+        VerifierCheckpoint::Stage5,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets the instruction read-RAF flag claim",
+    ),
+    checked_standard(
+        "stage5.claims.ram_ra_claim_reduction",
+        "claims.stage5.ram_ra_claim_reduction.ram_ra",
+        VerifierCheckpoint::Stage5,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets the RAM RA claim-reduction output claim",
+    ),
+    checked_standard(
+        "stage5.claims.registers_val_evaluation",
+        "claims.stage5.registers_val_evaluation.*",
+        VerifierCheckpoint::Stage5,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets each register value-evaluation output claim",
+    ),
+];
+
+pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
     later_standard(
         "stage6.sumcheck_payload",
         "proof.stages.stage6_sumcheck_proof",
@@ -706,6 +765,7 @@ pub fn all_targets() -> Vec<TamperTarget> {
         .chain(STAGE2_TARGETS)
         .chain(STAGE3_TARGETS)
         .chain(STAGE4_TARGETS)
+        .chain(STAGE5_TARGETS)
         .chain(FUTURE_STAGE_TARGETS)
         .copied()
         .collect()
@@ -769,7 +829,7 @@ pub fn proof_field_paths() -> &'static [&'static str] {
         "proof.stages.stage2_sumcheck_proof.round_polynomials[*]",
         "proof.stages.stage3_sumcheck_proof.round_polynomials[*]",
         "proof.stages.stage4_sumcheck_proof.round_polynomials[*]",
-        "proof.stages.stage5_sumcheck_proof",
+        "proof.stages.stage5_sumcheck_proof.round_polynomials[*]",
         "proof.stages.stage6_sumcheck_proof",
         "proof.stages.stage7_sumcheck_proof",
     ]
@@ -897,6 +957,10 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
         "claims.stage4.ram_val_check.*" => vec![
             "claims.stage4.ram_val_check.ram_ra",
             "claims.stage4.ram_val_check.ram_inc",
+        ],
+        "claims.stage5.registers_val_evaluation.*" => vec![
+            "claims.stage5.registers_val_evaluation.rd_inc",
+            "claims.stage5.registers_val_evaluation.rd_wa",
         ],
         path => vec![path],
     }
@@ -1030,6 +1094,20 @@ fn zero_transparent_claims() -> TransparentProofClaims<Fr> {
             ram_val_check: stage4::inputs::RamValCheckOutputOpeningClaims {
                 ram_ra: zero,
                 ram_inc: zero,
+            },
+        },
+        stage5: stage5::inputs::Stage5Claims {
+            instruction_read_raf: stage5::inputs::InstructionReadRafOutputOpeningClaims {
+                lookup_table_flags: vec![zero],
+                instruction_ra: vec![zero],
+                instruction_raf_flag: zero,
+            },
+            ram_ra_claim_reduction: stage5::inputs::RamRaClaimReductionOutputOpeningClaims {
+                ram_ra: zero,
+            },
+            registers_val_evaluation: stage5::inputs::RegistersValEvaluationOutputOpeningClaims {
+                rd_inc: zero,
+                rd_wa: zero,
             },
         },
     }

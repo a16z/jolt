@@ -64,6 +64,20 @@ impl TraceDimensions {
     pub const fn sumcheck(self, degree: usize) -> JoltSumcheckSpec {
         JoltSumcheckSpec::boolean(self.log_t, degree)
     }
+
+    pub fn cycle_opening_point<F: Field>(
+        self,
+        challenges: &[F],
+    ) -> Result<Vec<F>, JoltFormulaPointError> {
+        if challenges.len() != self.log_t {
+            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+                expected: self.log_t,
+                got: challenges.len(),
+            });
+        }
+
+        Ok(challenges.iter().rev().copied().collect())
+    }
 }
 
 impl From<usize> for TraceDimensions {
@@ -628,6 +642,18 @@ mod tests {
         assert_eq!(dimensions.bytecode_read_raf.num_committed_ra_polys(), 0);
         assert_eq!(dimensions.ram_ra_virtualization.num_committed_ra_polys(), 0);
         Ok(())
+    }
+
+    #[test]
+    fn trace_dimensions_normalize_cycle_opening_point() {
+        let challenges = [Fr::from_u64(3), Fr::from_u64(5), Fr::from_u64(7)];
+
+        assert_eq!(
+            TraceDimensions::new(3)
+                .cycle_opening_point(&challenges)
+                .unwrap_or_else(|err| panic!("cycle point should normalize: {err}")),
+            vec![Fr::from_u64(7), Fr::from_u64(5), Fr::from_u64(3)]
+        );
     }
 
     #[test]

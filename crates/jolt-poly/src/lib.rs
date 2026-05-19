@@ -64,7 +64,7 @@ pub use compressed_univariate::CompressedPoly;
 pub use dense::Polynomial;
 pub use eq::EqPolynomial;
 pub use eq_plus_one::{EqPlusOnePolynomial, EqPlusOnePrefixSuffix};
-pub use identity::IdentityPolynomial;
+pub use identity::{IdentityPolynomial, OperandPolynomial, OperandSide};
 pub use lt::LtPolynomial;
 pub use mle::{
     block_selector_mle_msb, eq_index_msb, range_mask_mle_msb, sparse_mle_msb,

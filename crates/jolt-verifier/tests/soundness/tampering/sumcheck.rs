@@ -33,6 +33,8 @@ use jolt_claims::protocols::jolt::{
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use jolt_field::{Fr, FromPrimitiveInt};
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use jolt_poly::{CompressedPoly, UnivariatePoly};
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use jolt_sumcheck::{ClearProof, SumcheckProof};
@@ -169,6 +171,24 @@ fn tampered_stage4_advice_claims_reject() {
     }
 }
 
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn tampered_stage5_sumcheck_payload_reject() {
+    let base = real_core_case();
+    tamper_each_stage5_batch_round(&base);
+    tamper_stage5_batch_round_counts(&base);
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn tampered_stage5_output_claims_reject() {
+    let base = real_core_case();
+
+    for (target_name, id) in stage5_formula_output_openings(&base) {
+        offset_claim_rejects(&base, target_name, id);
+    }
+}
+
 #[cfg(any(not(feature = "core-fixtures"), feature = "zk"))]
 #[test]
 #[ignore = "enable --features core-fixtures in a non-ZK build to live-generate, cast, and tamper real core proofs"]
@@ -215,6 +235,16 @@ fn tampered_stage3_sumcheck_payload_reject() {
 fn tampered_stage4_sumcheck_payload_reject() {
     assert_eq!(
         soundness_expectation(tampering::STAGE4_SUMCHECK_PAYLOAD),
+        HarnessExpectation::RejectsAtOrBeforeFrontier,
+    );
+}
+
+#[cfg(any(not(feature = "core-fixtures"), feature = "zk"))]
+#[test]
+#[ignore = "enable --features core-fixtures in a non-ZK build to live-generate, cast, and tamper real core proofs"]
+fn tampered_stage5_sumcheck_payload_reject() {
+    assert_eq!(
+        soundness_expectation(tampering::STAGE5_SUMCHECK_PAYLOAD),
         HarnessExpectation::RejectsAtOrBeforeFrontier,
     );
 }
@@ -426,6 +456,39 @@ fn tamper_stage4_batch_round_counts(base: &CoreVerifierCase) {
         base,
         |case| {
             push_compressed_round(&mut case.proof.stages.stage4_sumcheck_proof);
+        },
+    );
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn tamper_each_stage5_batch_round(base: &CoreVerifierCase) {
+    let round_count = compressed_round_count(&base.proof.stages.stage5_sumcheck_proof);
+    for round_index in 0..round_count {
+        tamper_manifest::assert_core_tamper_rejects(
+            manifest_target("stage5.batch.round_polynomial"),
+            base,
+            |case| {
+                mutate_compressed_round(&mut case.proof.stages.stage5_sumcheck_proof, round_index);
+            },
+        );
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn tamper_stage5_batch_round_counts(base: &CoreVerifierCase) {
+    tamper_manifest::assert_core_tamper_rejects(
+        manifest_target("stage5.batch.round_count.missing"),
+        base,
+        |case| {
+            pop_compressed_round(&mut case.proof.stages.stage5_sumcheck_proof);
+        },
+    );
+
+    tamper_manifest::assert_core_tamper_rejects(
+        manifest_target("stage5.batch.round_count.extra"),
+        base,
+        |case| {
+            push_compressed_round(&mut case.proof.stages.stage5_sumcheck_proof);
         },
     );
 }
@@ -709,6 +772,39 @@ fn stage4_advice_openings() -> Vec<(&'static str, JoltOpeningId)> {
             ram::val_check_advice_opening(JoltAdviceKind::Trusted),
         ),
     ]
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn stage5_formula_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str, JoltOpeningId)> {
+    let mut openings = Vec::new();
+    openings.extend(LookupTableKind::<RISCV_XLEN>::iter().map(|table| {
+        (
+            "stage5.claims.instruction_read_raf.lookup_table_flags",
+            instruction::read_raf_lookup_table_flag_opening(table),
+        )
+    }));
+    for index in 0.. {
+        let id = instruction::read_raf_instruction_ra_opening(index);
+        if opening_claim(&base.proof, id).is_none() {
+            break;
+        }
+        openings.push(("stage5.claims.instruction_read_raf.instruction_ra", id));
+    }
+    openings.push((
+        "stage5.claims.instruction_read_raf.instruction_raf_flag",
+        instruction::read_raf_instruction_raf_flag_opening(),
+    ));
+    openings.extend(
+        ram::ra_claim_reduction_output_openings()
+            .into_iter()
+            .map(|id| ("stage5.claims.ram_ra_claim_reduction", id)),
+    );
+    openings.extend(
+        registers::val_evaluation_output_openings()
+            .into_iter()
+            .map(|id| ("stage5.claims.registers_val_evaluation", id)),
+    );
+    openings
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
