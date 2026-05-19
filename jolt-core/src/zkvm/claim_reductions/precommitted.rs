@@ -56,6 +56,7 @@ pub struct PrecommittedSchedulingReference {
 pub struct PrecommittedClaimReduction<F: JoltField> {
     pub scheduling_reference: PrecommittedSchedulingReference,
     pub cycle_var_challenges: Vec<F::Challenge>,
+    pub phase: PrecommittedPhase,
     poly_opening_round_permutation_be: Vec<usize>,
     cycle_phase_rounds: Vec<usize>,
     cycle_phase_total_rounds: usize,
@@ -120,6 +121,7 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
         Self {
             scheduling_reference,
             cycle_var_challenges: vec![],
+            phase: PrecommittedPhase::CycleVariables,
             poly_opening_round_permutation_be,
             cycle_phase_rounds,
             cycle_phase_total_rounds: scheduling_reference.cycle_alignment_rounds,
@@ -210,6 +212,16 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
     }
 
     #[inline]
+    pub fn is_cycle_phase(&self) -> bool {
+        self.phase == PrecommittedPhase::CycleVariables
+    }
+
+    #[inline]
+    pub fn transition_to_address_phase(&mut self) {
+        self.phase = PrecommittedPhase::AddressVariables;
+    }
+
+    #[inline]
     pub fn num_address_phase_rounds(&self) -> usize {
         self.address_phase_rounds.len()
     }
@@ -263,10 +275,6 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
         (0..cycle_gap_len).fold(F::one(), |acc, _| acc * two_inv)
     }
 
-    pub fn is_address_phase_active_round(&self, round: usize) -> bool {
-        self.address_phase_rounds.contains(&round)
-    }
-
     #[inline]
     pub fn is_address_phase_round(&self, round: usize) -> bool {
         self.address_phase_rounds.contains(&round)
@@ -283,17 +291,12 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
     }
 
     #[inline]
-    pub fn num_rounds_for_phase(&self, is_cycle_phase: bool) -> usize {
-        if is_cycle_phase {
+    pub fn num_rounds_for_current_phase(&self) -> usize {
+        if self.is_cycle_phase() {
             self.cycle_phase_total_rounds
         } else {
             self.address_phase_total_rounds
         }
-    }
-
-    pub fn round_offset(&self, is_cycle_phase: bool, max_num_rounds: usize) -> usize {
-        let _ = (is_cycle_phase, max_num_rounds);
-        0
     }
 
     fn cycle_challenge_for_round(&self, round: usize) -> F::Challenge {
@@ -318,10 +321,9 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
 
     pub fn normalize_opening_point(
         &self,
-        is_cycle_phase: bool,
         challenges: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        if is_cycle_phase {
+        if self.is_cycle_phase() {
             let local_cycle_challenges: Vec<F::Challenge> = self
                 .cycle_phase_rounds
                 .iter()
@@ -527,12 +529,12 @@ pub fn precommitted_sumcheck_inverse_index_permutation(
 pub const TWO_PHASE_DEGREE_BOUND: usize = 2;
 
 pub trait PrecommittedParams<F: JoltField>: SumcheckInstanceParams<F> {
-    fn is_cycle_phase(&self) -> bool;
-    fn is_cycle_phase_round(&self, round: usize) -> bool;
-    fn is_address_phase_round(&self, round: usize) -> bool;
-    fn cycle_alignment_rounds(&self) -> usize;
-    fn address_alignment_rounds(&self) -> usize;
-    fn record_cycle_challenge(&mut self, challenge: F::Challenge);
+    fn precommitted(&self) -> &PrecommittedClaimReduction<F>;
+    fn precommitted_mut(&mut self) -> &mut PrecommittedClaimReduction<F>;
+
+    fn is_cycle_phase(&self) -> bool {
+        self.precommitted().is_cycle_phase()
+    }
 }
 
 #[derive(Allocative)]
@@ -540,6 +542,7 @@ pub struct PrecommittedProver<F: JoltField, P: PrecommittedParams<F>> {
     params: P,
     value_poly: MultilinearPolynomial<F>,
     eq_poly: MultilinearPolynomial<F>,
+    aux_polys: Vec<MultilinearPolynomial<F>>,
     scale: F,
 }
 
@@ -548,11 +551,13 @@ impl<F: JoltField, P: PrecommittedParams<F>> PrecommittedProver<F, P> {
         params: P,
         value_poly: MultilinearPolynomial<F>,
         eq_poly: MultilinearPolynomial<F>,
+        aux_polys: Option<Vec<MultilinearPolynomial<F>>>,
     ) -> Self {
         Self {
             params,
             value_poly,
             eq_poly,
+            aux_polys: aux_polys.unwrap_or_default(),
             scale: F::one(),
         }
     }
@@ -561,12 +566,16 @@ impl<F: JoltField, P: PrecommittedParams<F>> PrecommittedProver<F, P> {
         &self.params
     }
 
-    pub fn params_mut(&mut self) -> &mut P {
-        &mut self.params
+    pub fn transition_to_address_phase(&mut self) {
+        self.params.precommitted_mut().transition_to_address_phase();
     }
 
     pub fn set_scale(&mut self, scale: F) {
         self.scale = scale;
+    }
+
+    pub fn aux_polys(&self) -> &[MultilinearPolynomial<F>] {
+        &self.aux_polys
     }
 
     fn compute_message_unscaled(&self, previous_claim_unscaled: F) -> UniPoly<F> {
@@ -598,19 +607,20 @@ impl<F: JoltField, P: PrecommittedParams<F>> PrecommittedProver<F, P> {
     }
 
     pub fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
+        let precommitted = self.params.precommitted();
         let is_active_round = if self.params.is_cycle_phase() {
-            self.params.is_cycle_phase_round(round)
+            precommitted.is_cycle_phase_round(round)
         } else {
-            self.params.is_address_phase_round(round)
+            precommitted.is_address_phase_round(round)
         };
         if !is_active_round {
             return UniPoly::from_coeff(vec![previous_claim * F::from_u64(2).inverse().unwrap()]);
         }
 
         let trailing_cap = if self.params.is_cycle_phase() {
-            self.params.cycle_alignment_rounds()
+            precommitted.cycle_alignment_rounds()
         } else {
-            self.params.address_alignment_rounds()
+            precommitted.address_alignment_rounds()
         };
         let num_trailing_variables = trailing_cap.saturating_sub(self.params.num_rounds());
         let scaling_factor = self.scale * F::one().mul_pow_2(num_trailing_variables);
@@ -621,19 +631,24 @@ impl<F: JoltField, P: PrecommittedParams<F>> PrecommittedProver<F, P> {
 
     pub fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         let is_active_round = if self.params.is_cycle_phase() {
-            self.params.is_cycle_phase_round(round)
+            let precommitted = self.params.precommitted();
+            precommitted.is_cycle_phase_round(round)
         } else {
-            self.params.is_address_phase_round(round)
+            let precommitted = self.params.precommitted();
+            precommitted.is_address_phase_round(round)
         };
         if !is_active_round {
             self.scale *= F::from_u64(2).inverse().unwrap();
             return;
         }
+        if self.params.is_cycle_phase() {
+            self.params.precommitted_mut().record_cycle_challenge(r_j);
+        }
 
         self.value_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
         self.eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-        if self.params.is_cycle_phase() {
-            self.params.record_cycle_challenge(r_j);
+        for aux_poly in self.aux_polys.iter_mut() {
+            aux_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
     }
 
@@ -693,6 +708,7 @@ mod tests {
         PrecommittedClaimReduction {
             scheduling_reference,
             cycle_var_challenges: vec![],
+            phase: PrecommittedPhase::CycleVariables,
             poly_opening_round_permutation_be,
             cycle_phase_rounds,
             cycle_phase_total_rounds,

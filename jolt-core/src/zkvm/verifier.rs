@@ -1380,7 +1380,6 @@ impl<
                 self.proof.ram_K,
                 precommitted_scheduling_reference,
                 &self.opening_accumulator,
-                &mut self.transcript,
             );
             self.program_image_reduction_verifier = Some(ProgramImageClaimReductionVerifier::new(
                 program_image_reduction_params,
@@ -1757,9 +1756,9 @@ impl<
             self.advice_reduction_verifier_trusted.as_mut()
         {
             let mut params = advice_reduction_verifier_trusted.params.borrow_mut();
-            if params.num_address_phase_rounds() > 0 {
+            if params.precommitted.num_address_phase_rounds() > 0 {
                 // Transition phase
-                params.transition_to_address_phase();
+                params.precommitted.transition_to_address_phase();
                 instances.push(advice_reduction_verifier_trusted);
             }
         }
@@ -1767,16 +1766,16 @@ impl<
             self.advice_reduction_verifier_untrusted.as_mut()
         {
             let mut params = advice_reduction_verifier_untrusted.params.borrow_mut();
-            if params.num_address_phase_rounds() > 0 {
+            if params.precommitted.num_address_phase_rounds() > 0 {
                 // Transition phase
-                params.transition_to_address_phase();
+                params.precommitted.transition_to_address_phase();
                 instances.push(advice_reduction_verifier_untrusted);
             }
         }
         if let Some(bytecode_reduction_verifier) = self.bytecode_reduction_verifier.as_mut() {
             let mut params = bytecode_reduction_verifier.params.borrow_mut();
-            if params.num_address_phase_rounds() > 0 {
-                params.transition_to_address_phase();
+            if params.precommitted.num_address_phase_rounds() > 0 {
+                params.precommitted.transition_to_address_phase();
                 instances.push(bytecode_reduction_verifier);
             }
         }
@@ -1784,8 +1783,8 @@ impl<
             self.program_image_reduction_verifier.as_mut()
         {
             let mut params = program_image_reduction_verifier.params.borrow_mut();
-            if params.num_address_phase_rounds() > 0 {
-                params.transition_to_address_phase();
+            if params.precommitted.num_address_phase_rounds() > 0 {
+                params.precommitted.transition_to_address_phase();
                 instances.push(program_image_reduction_verifier);
             }
         }

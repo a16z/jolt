@@ -1472,7 +1472,6 @@ impl<
                 self.one_hot_params.ram_k,
                 precommitted_scheduling_reference,
                 &self.opening_accumulator,
-                &mut self.transcript,
             );
             self.program_image_reduction_prover =
                 Some(ProgramImageClaimReductionProver::initialize(
@@ -2083,6 +2082,7 @@ impl<
         {
             if advice_reduction_prover_trusted
                 .params()
+                .precommitted
                 .num_address_phase_rounds()
                 > 0
             {
@@ -2096,6 +2096,7 @@ impl<
         {
             if advice_reduction_prover_untrusted
                 .params()
+                .precommitted
                 .num_address_phase_rounds()
                 > 0
             {
@@ -2107,6 +2108,7 @@ impl<
         if let Some(mut bytecode_reduction_prover) = self.bytecode_reduction_prover.take() {
             if bytecode_reduction_prover
                 .params()
+                .precommitted
                 .num_address_phase_rounds()
                 > 0
             {
@@ -2118,6 +2120,7 @@ impl<
         {
             if program_image_reduction_prover
                 .params()
+                .precommitted
                 .num_address_phase_rounds()
                 > 0
             {

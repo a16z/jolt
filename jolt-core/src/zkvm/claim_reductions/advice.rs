@@ -36,7 +36,6 @@ pub enum AdviceKind {
 #[derive(Clone, Allocative)]
 pub struct AdviceClaimReductionParams<F: JoltField> {
     pub kind: AdviceKind,
-    pub phase: PrecommittedPhase,
     pub precommitted: PrecommittedClaimReduction<F>,
     pub advice_col_vars: usize,
     pub advice_row_vars: usize,
@@ -62,33 +61,17 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
 
         Self {
             kind,
-            phase: PrecommittedPhase::CycleVariables,
             precommitted,
             advice_col_vars,
             advice_row_vars,
             r_val,
         }
     }
-
-    pub fn num_address_phase_rounds(&self) -> usize {
-        self.precommitted.num_address_phase_rounds()
-    }
-
-    pub fn transition_to_address_phase(&mut self) {
-        self.phase = PrecommittedPhase::AddressVariables;
-    }
-
-    pub fn round_offset(&self, max_num_rounds: usize) -> usize {
-        self.precommitted.round_offset(
-            self.phase == PrecommittedPhase::CycleVariables,
-            max_num_rounds,
-        )
-    }
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionParams<F> {
     fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
-        match self.phase {
+        match self.precommitted.phase {
             PrecommittedPhase::CycleVariables => {
                 accumulator
                     .get_advice_opening(self.kind, SumcheckId::RamValCheck)
@@ -109,18 +92,16 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionParams<F> {
     }
 
     fn num_rounds(&self) -> usize {
-        self.precommitted
-            .num_rounds_for_phase(self.phase == PrecommittedPhase::CycleVariables)
+        self.precommitted.num_rounds_for_current_phase()
     }
 
     fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
-        self.precommitted
-            .normalize_opening_point(self.phase == PrecommittedPhase::CycleVariables, challenges)
+        self.precommitted.normalize_opening_point(challenges)
     }
 
     #[cfg(feature = "zk")]
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        let opening = match self.phase {
+        let opening = match self.precommitted.phase {
             PrecommittedPhase::CycleVariables => match self.kind {
                 AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::RamValCheck),
                 AdviceKind::Untrusted => OpeningId::UntrustedAdvice(SumcheckId::RamValCheck),
@@ -144,9 +125,9 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionParams<F> {
 
     #[cfg(feature = "zk")]
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        match self.phase {
+        match self.precommitted.phase {
             PrecommittedPhase::CycleVariables => {
-                if self.num_address_phase_rounds() > 0 {
+                if self.precommitted.num_address_phase_rounds() > 0 {
                     let advice_opening = match self.kind {
                         AdviceKind::Trusted => {
                             OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
@@ -165,8 +146,12 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionParams<F> {
 
     #[cfg(feature = "zk")]
     fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        match self.phase {
-            PrecommittedPhase::CycleVariables if self.num_address_phase_rounds() > 0 => vec![],
+        match self.precommitted.phase {
+            PrecommittedPhase::CycleVariables
+                if self.precommitted.num_address_phase_rounds() > 0 =>
+            {
+                vec![]
+            }
             PrecommittedPhase::CycleVariables | PrecommittedPhase::AddressVariables => {
                 vec![self.final_advice_output_scale(sumcheck_challenges)]
             }
@@ -189,7 +174,7 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
 
     fn final_advice_output_scale(&self, sumcheck_challenges: &[F::Challenge]) -> F {
         let eq_eval = self.final_advice_eq_eval(sumcheck_challenges);
-        let scale = match self.phase {
+        let scale = match self.precommitted.phase {
             PrecommittedPhase::CycleVariables => self.precommitted.cycle_phase_skip_scale(),
             PrecommittedPhase::AddressVariables => {
                 precommitted_skip_round_scale(&self.precommitted)
@@ -218,7 +203,7 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
     ) -> F::Challenge {
         let cycle_rounds = self.precommitted.cycle_alignment_rounds();
         if global_round < cycle_rounds {
-            return match self.phase {
+            return match self.precommitted.phase {
                 PrecommittedPhase::CycleVariables => sumcheck_challenges[global_round],
                 PrecommittedPhase::AddressVariables => {
                     let idx = self
@@ -232,7 +217,7 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
         }
 
         assert_eq!(
-            self.phase,
+            self.precommitted.phase,
             PrecommittedPhase::AddressVariables,
             "cycle-phase final advice scale should not contain address rounds"
         );
@@ -241,28 +226,12 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
 }
 
 impl<F: JoltField> PrecommittedParams<F> for AdviceClaimReductionParams<F> {
-    fn is_cycle_phase(&self) -> bool {
-        self.phase == PrecommittedPhase::CycleVariables
+    fn precommitted(&self) -> &PrecommittedClaimReduction<F> {
+        &self.precommitted
     }
 
-    fn is_cycle_phase_round(&self, round: usize) -> bool {
-        self.precommitted.is_cycle_phase_round(round)
-    }
-
-    fn is_address_phase_round(&self, round: usize) -> bool {
-        self.precommitted.is_address_phase_round(round)
-    }
-
-    fn cycle_alignment_rounds(&self) -> usize {
-        self.precommitted.cycle_alignment_rounds()
-    }
-
-    fn address_alignment_rounds(&self) -> usize {
-        self.precommitted.address_alignment_rounds()
-    }
-
-    fn record_cycle_challenge(&mut self, challenge: F::Challenge) {
-        self.precommitted.record_cycle_challenge(challenge);
+    fn precommitted_mut(&mut self) -> &mut PrecommittedClaimReduction<F> {
+        &mut self.precommitted
     }
 }
 
@@ -277,7 +246,7 @@ impl<F: JoltField> AdviceClaimReductionProver<F> {
     }
 
     pub fn transition_to_address_phase(&mut self) {
-        self.core.params_mut().transition_to_address_phase();
+        self.core.transition_to_address_phase();
     }
 
     pub fn initialize(
@@ -300,7 +269,7 @@ impl<F: JoltField> AdviceClaimReductionProver<F> {
         };
 
         Self {
-            core: PrecommittedProver::new(params, advice_poly, eq_poly),
+            core: PrecommittedProver::new(params, advice_poly, eq_poly, None),
         }
     }
 
@@ -323,6 +292,7 @@ impl<F: JoltField> AdviceClaimReductionProver<F> {
                 params,
                 MultilinearPolynomial::from(advice_coeffs),
                 MultilinearPolynomial::from(eq_coeffs),
+                None,
             ),
         };
         prover.core.set_scale(scale);
@@ -335,8 +305,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
         self.core.params()
     }
 
-    fn round_offset(&self, max_num_rounds: usize) -> usize {
-        self.core.params().round_offset(max_num_rounds)
+    fn round_offset(&self, _max_num_rounds: usize) -> usize {
+        0
     }
 
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
@@ -354,7 +324,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
     ) {
         let params = self.core.params();
         let opening_point = params.normalize_opening_point(sumcheck_challenges);
-        if params.phase == PrecommittedPhase::CycleVariables {
+        if params.is_cycle_phase() {
             let c_mid = self.core.cycle_intermediate_claim();
 
             match params.kind {
@@ -426,8 +396,10 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
 
     fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let params = self.params.borrow();
-        match params.phase {
-            PrecommittedPhase::CycleVariables if params.num_address_phase_rounds() > 0 => {
+        match params.precommitted.phase {
+            PrecommittedPhase::CycleVariables
+                if params.precommitted.num_address_phase_rounds() > 0 =>
+            {
                 accumulator
                     .get_advice_opening(params.kind, SumcheckId::AdviceClaimReductionCyclePhase)
                     .unwrap_or_else(|| panic!("Cycle phase intermediate claim not found"))
@@ -447,7 +419,7 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
 
     fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         let mut params = self.params.borrow_mut();
-        if params.phase == PrecommittedPhase::CycleVariables {
+        if params.is_cycle_phase() {
             let opening_point = params.normalize_opening_point(sumcheck_challenges);
             match params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
@@ -465,9 +437,7 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
                 .set_cycle_var_challenges(opening_point_le.r);
         }
 
-        if params.num_address_phase_rounds() == 0
-            || params.phase == PrecommittedPhase::AddressVariables
-        {
+        if params.precommitted.num_address_phase_rounds() == 0 || !params.is_cycle_phase() {
             let opening_point = params.normalize_opening_point(sumcheck_challenges);
             match params.kind {
                 AdviceKind::Trusted => accumulator
@@ -478,9 +448,8 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
         }
     }
 
-    fn round_offset(&self, max_num_rounds: usize) -> usize {
-        let params = self.params.borrow();
-        params.round_offset(max_num_rounds)
+    fn round_offset(&self, _max_num_rounds: usize) -> usize {
+        0
     }
 }
 
@@ -507,7 +476,6 @@ mod tests {
         };
         let params = AdviceClaimReductionParams {
             kind: AdviceKind::Trusted,
-            phase: PrecommittedPhase::CycleVariables,
             precommitted: PrecommittedClaimReduction::new(1, 0, scheduling_reference),
             advice_col_vars: 0,
             advice_row_vars: 1,
@@ -537,7 +505,6 @@ mod tests {
         };
         let params = AdviceClaimReductionParams {
             kind: AdviceKind::Trusted,
-            phase: PrecommittedPhase::CycleVariables,
             precommitted: PrecommittedClaimReduction::new(1, 0, scheduling_reference),
             advice_col_vars: 0,
             advice_row_vars: 1,

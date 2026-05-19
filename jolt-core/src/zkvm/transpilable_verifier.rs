@@ -47,7 +47,7 @@ use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::subprotocols::sumcheck::{BatchedSumcheck, ClearSumcheckProof, SumcheckInstanceProof};
 use crate::zkvm::claim_reductions::{
     AdviceClaimReductionVerifier, AdviceKind, BytecodeClaimReductionParams,
-    BytecodeClaimReductionVerifier, HammingWeightClaimReductionVerifier, PrecommittedPhase,
+    BytecodeClaimReductionVerifier, HammingWeightClaimReductionVerifier,
     ProgramImageClaimReductionParams, ProgramImageClaimReductionVerifier,
     RegistersClaimReductionSumcheckVerifier,
 };
@@ -760,7 +760,6 @@ impl<
                 self.proof.ram_K,
                 precommitted_scheduling_reference,
                 &self.opening_accumulator,
-                &mut self.transcript,
             );
             self.program_image_reduction_verifier = Some(ProgramImageClaimReductionVerifier::new(
                 program_image_reduction_params,
@@ -818,8 +817,8 @@ impl<
             self.advice_reduction_verifier_trusted.as_mut()
         {
             let mut params = advice_reduction_verifier_trusted.params.borrow_mut();
-            if params.num_address_phase_rounds() > 0 {
-                params.phase = PrecommittedPhase::AddressVariables;
+            if params.precommitted.num_address_phase_rounds() > 0 {
+                params.precommitted.transition_to_address_phase();
                 instances.push(advice_reduction_verifier_trusted);
             }
         }
@@ -827,8 +826,8 @@ impl<
             self.advice_reduction_verifier_untrusted.as_mut()
         {
             let mut params = advice_reduction_verifier_untrusted.params.borrow_mut();
-            if params.num_address_phase_rounds() > 0 {
-                params.phase = PrecommittedPhase::AddressVariables;
+            if params.precommitted.num_address_phase_rounds() > 0 {
+                params.precommitted.transition_to_address_phase();
                 instances.push(advice_reduction_verifier_untrusted);
             }
         }
