@@ -59,6 +59,13 @@ pub const STAGE2_SUMCHECK_PAYLOAD: TestCase = TestCase {
     first_checked_at: VerifierCheckpoint::Stage2,
 };
 
+pub const STAGE3_SUMCHECK_PAYLOAD: TestCase = TestCase {
+    name: "tamper_stage3_sumcheck_payload",
+    zk: false,
+    fixture: FixtureId::ConfigMismatch,
+    first_checked_at: VerifierCheckpoint::Stage3,
+};
+
 pub const OPENING_VALUE: TestCase = TestCase {
     name: "tamper_opening_value",
     zk: false,
@@ -88,6 +95,7 @@ pub const ALL: &[TestCase] = &[
     STAGE1_SUMCHECK_PAYLOAD,
     STAGE2_UNISKIP_PAYLOAD,
     STAGE2_SUMCHECK_PAYLOAD,
+    STAGE3_SUMCHECK_PAYLOAD,
     OPENING_VALUE,
     OUTPUT_CLAIM,
     BLINDFOLD_PROOF,

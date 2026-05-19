@@ -51,13 +51,18 @@ pub fn metadata(id: FixtureId) -> FixtureMetadata {
             notes: "ZK soundness target for BlindFold public inputs and proof payload.",
         },
         FixtureId::MulDivSmall
+        | FixtureId::FibonacciSmall
+        | FixtureId::FibonacciMedium
+        | FixtureId::MemoryOps
+        | FixtureId::CollatzSmall
+        | FixtureId::Sha2Small
         | FixtureId::MulDivZkSmall
         | FixtureId::ZkStage1Prefix
-        | FixtureId::AdviceCommitments => FixtureMetadata {
+        | FixtureId::AdviceConsumer => FixtureMetadata {
             id,
             name: "completeness-only fixture",
             zk: matches!(id, FixtureId::MulDivZkSmall | FixtureId::ZkStage1Prefix),
-            has_trusted_advice: matches!(id, FixtureId::AdviceCommitments),
+            has_trusted_advice: matches!(id, FixtureId::AdviceConsumer),
             expected_core_accepts: !matches!(id, FixtureId::ZkStage1Prefix),
             notes: "Reserved for completeness tests.",
         },

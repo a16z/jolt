@@ -1,10 +1,17 @@
 #![expect(
     clippy::expect_used,
+    clippy::panic,
     reason = "fixture generation should fail loudly when core proof construction or serialization breaks"
 )]
 
-use std::sync::Mutex;
+use std::{
+    env, fs,
+    io::{Cursor, Read},
+    path::PathBuf,
+    sync::Mutex,
+};
 
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::JoltDevice;
 use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
 #[cfg(not(feature = "zk"))]
@@ -42,6 +49,7 @@ use jolt_core::{
 #[cfg(not(feature = "zk"))]
 use jolt_core::{
     poly::{
+        commitment::dory::ArkGT,
         commitment::dory::{DoryContext, DoryGlobals},
         multilinear_polynomial::MultilinearPolynomial,
     },
@@ -49,6 +57,8 @@ use jolt_core::{
 };
 
 static CORE_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
+const ARTIFACT_MAGIC: &[u8; 8] = b"JVCF0001";
+const REGENERATE_ARTIFACTS_ENV: &str = "JOLT_VERIFIER_REGENERATE_CORE_FIXTURES";
 
 type CoreField = jolt_core::ark_bn254::Fr;
 type CoreProof = RV64IMACProof;
@@ -115,7 +125,47 @@ pub fn standard_muldiv_case() -> CoreVerifierCase {
     let _guard = CORE_FIXTURE_LOCK
         .lock()
         .expect("core fixture lock poisoned");
-    case_from_accepted_fixture(generate_muldiv())
+    case_from_accepted_fixture(CoreFixtureKind::MulDivSmall, generate_muldiv)
+}
+
+#[cfg(not(feature = "zk"))]
+pub fn standard_fibonacci_small_case() -> CoreVerifierCase {
+    let _guard = CORE_FIXTURE_LOCK
+        .lock()
+        .expect("core fixture lock poisoned");
+    case_from_accepted_fixture(CoreFixtureKind::FibonacciSmall, generate_fibonacci_small)
+}
+
+#[cfg(not(feature = "zk"))]
+pub fn standard_fibonacci_medium_case() -> CoreVerifierCase {
+    let _guard = CORE_FIXTURE_LOCK
+        .lock()
+        .expect("core fixture lock poisoned");
+    case_from_accepted_fixture(CoreFixtureKind::FibonacciMedium, generate_fibonacci_medium)
+}
+
+#[cfg(not(feature = "zk"))]
+pub fn standard_memory_ops_case() -> CoreVerifierCase {
+    let _guard = CORE_FIXTURE_LOCK
+        .lock()
+        .expect("core fixture lock poisoned");
+    case_from_accepted_fixture(CoreFixtureKind::MemoryOps, generate_memory_ops)
+}
+
+#[cfg(not(feature = "zk"))]
+pub fn standard_collatz_small_case() -> CoreVerifierCase {
+    let _guard = CORE_FIXTURE_LOCK
+        .lock()
+        .expect("core fixture lock poisoned");
+    case_from_accepted_fixture(CoreFixtureKind::CollatzSmall, generate_collatz_small)
+}
+
+#[cfg(not(feature = "zk"))]
+pub fn standard_sha2_small_case() -> CoreVerifierCase {
+    let _guard = CORE_FIXTURE_LOCK
+        .lock()
+        .expect("core fixture lock poisoned");
+    case_from_accepted_fixture(CoreFixtureKind::Sha2Small, generate_sha2_small)
 }
 
 #[cfg(feature = "zk")]
@@ -127,11 +177,11 @@ pub fn zk_muldiv_case() -> CoreZkVerifierCase {
 }
 
 #[cfg(not(feature = "zk"))]
-pub fn standard_advice_case() -> CoreVerifierCase {
+pub fn standard_advice_consumer_case() -> CoreVerifierCase {
     let _guard = CORE_FIXTURE_LOCK
         .lock()
         .expect("core fixture lock poisoned");
-    case_from_accepted_fixture(generate_unused_advice_commitments())
+    case_from_accepted_fixture(CoreFixtureKind::AdviceConsumer, generate_advice_consumer)
 }
 
 #[cfg(not(feature = "zk"))]
@@ -179,7 +229,11 @@ pub fn invalid_ram_k_case() -> CoreVerifierCase {
 }
 
 #[cfg(not(feature = "zk"))]
-fn case_from_accepted_fixture(fixture: GeneratedCoreFixture) -> CoreVerifierCase {
+fn case_from_accepted_fixture(
+    kind: CoreFixtureKind,
+    generate: impl FnOnce() -> GeneratedCoreFixture,
+) -> CoreVerifierCase {
+    let fixture = load_or_generate_fixture(kind, generate);
     assert_core_accepts(
         &fixture,
         fixture.proof.clone_via_bytes(),
@@ -220,6 +274,167 @@ struct GeneratedCoreFixture {
     public_io: JoltDevice,
     proof: CoreProof,
     trusted_advice_commitment: Option<CoreCommitment>,
+}
+
+#[cfg(not(feature = "zk"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CoreFixtureKind {
+    MulDivSmall,
+    FibonacciSmall,
+    FibonacciMedium,
+    MemoryOps,
+    CollatzSmall,
+    Sha2Small,
+    AdviceConsumer,
+}
+
+#[cfg(not(feature = "zk"))]
+impl CoreFixtureKind {
+    const fn artifact_name(self) -> &'static str {
+        match self {
+            Self::MulDivSmall => "standard-muldiv-small",
+            Self::FibonacciSmall => "standard-fibonacci-small",
+            Self::FibonacciMedium => "standard-fibonacci-medium",
+            Self::MemoryOps => "standard-memory-ops",
+            Self::CollatzSmall => "standard-collatz-small",
+            Self::Sha2Small => "standard-sha2-small",
+            Self::AdviceConsumer => "standard-advice-consumer",
+        }
+    }
+}
+
+#[cfg(not(feature = "zk"))]
+fn load_or_generate_fixture(
+    kind: CoreFixtureKind,
+    generate: impl FnOnce() -> GeneratedCoreFixture,
+) -> GeneratedCoreFixture {
+    let path = artifact_path(kind);
+    let regenerate = env::var_os(REGENERATE_ARTIFACTS_ENV).is_some();
+    if !regenerate && path.exists() {
+        return read_fixture_artifact(&path);
+    }
+
+    let fixture = generate();
+    if regenerate {
+        write_fixture_artifact(&path, &fixture);
+    }
+    fixture
+}
+
+#[cfg(not(feature = "zk"))]
+fn artifact_path(kind: CoreFixtureKind) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("core")
+        .join(format!("{}.jvcf", kind.artifact_name()))
+}
+
+#[cfg(not(feature = "zk"))]
+fn write_fixture_artifact(path: &PathBuf, fixture: &GeneratedCoreFixture) {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create core fixture artifact directory");
+    }
+
+    let preprocessing = fixture
+        .core_preprocessing
+        .serialize_to_bytes()
+        .expect("serialize verifier preprocessing");
+    let public_io = fixture
+        .public_io
+        .serialize_to_bytes()
+        .expect("serialize public I/O");
+    let proof = fixture.proof.serialize_to_bytes().expect("serialize proof");
+    let trusted_advice_commitment = fixture
+        .trusted_advice_commitment
+        .map(serialize_core_commitment);
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(ARTIFACT_MAGIC);
+    write_section(&mut bytes, &preprocessing);
+    write_section(&mut bytes, &public_io);
+    write_section(&mut bytes, &proof);
+    match trusted_advice_commitment {
+        Some(commitment) => {
+            bytes.push(1);
+            write_section(&mut bytes, &commitment);
+        }
+        None => bytes.push(0),
+    }
+
+    fs::write(path, bytes).expect("write core fixture artifact");
+}
+
+#[cfg(not(feature = "zk"))]
+fn read_fixture_artifact(path: &PathBuf) -> GeneratedCoreFixture {
+    let bytes = fs::read(path).expect("read core fixture artifact");
+    let mut cursor = Cursor::new(bytes.as_slice());
+    let mut magic = [0; ARTIFACT_MAGIC.len()];
+    cursor
+        .read_exact(&mut magic)
+        .expect("read core fixture artifact magic");
+    assert_eq!(
+        &magic, ARTIFACT_MAGIC,
+        "invalid core fixture artifact magic"
+    );
+
+    let preprocessing = read_section(&mut cursor);
+    let public_io = read_section(&mut cursor);
+    let proof = read_section(&mut cursor);
+    let mut has_trusted_advice_commitment = [0];
+    cursor
+        .read_exact(&mut has_trusted_advice_commitment)
+        .expect("read trusted advice commitment marker");
+    let trusted_advice_commitment = match has_trusted_advice_commitment[0] {
+        0 => None,
+        1 => Some(deserialize_core_commitment(&read_section(&mut cursor))),
+        marker => panic!("invalid trusted advice commitment marker {marker}"),
+    };
+
+    GeneratedCoreFixture {
+        core_preprocessing: CoreVerifierPreprocessing::deserialize_from_bytes(&preprocessing)
+            .expect("deserialize verifier preprocessing"),
+        public_io: JoltDevice::deserialize_from_bytes(&public_io).expect("deserialize public I/O"),
+        proof: CoreProof::deserialize_from_bytes(&proof).expect("deserialize proof"),
+        trusted_advice_commitment,
+    }
+}
+
+#[cfg(not(feature = "zk"))]
+fn write_section(out: &mut Vec<u8>, section: &[u8]) {
+    out.extend_from_slice(&(section.len() as u64).to_le_bytes());
+    out.extend_from_slice(section);
+}
+
+#[cfg(not(feature = "zk"))]
+fn read_section(cursor: &mut Cursor<&[u8]>) -> Vec<u8> {
+    let mut len = [0; 8];
+    cursor
+        .read_exact(&mut len)
+        .expect("read core fixture artifact section length");
+    let mut section = vec![0; u64::from_le_bytes(len) as usize];
+    cursor
+        .read_exact(&mut section)
+        .expect("read core fixture artifact section");
+    section
+}
+
+#[cfg(not(feature = "zk"))]
+fn serialize_core_commitment(commitment: CoreCommitment) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    commitment
+        .0
+        .serialize_compressed(&mut bytes)
+        .expect("serialize trusted advice commitment");
+    bytes
+}
+
+#[cfg(not(feature = "zk"))]
+fn deserialize_core_commitment(bytes: &[u8]) -> CoreCommitment {
+    ArkGT(
+        ark_bn254::Fq12::deserialize_compressed(Cursor::new(bytes))
+            .expect("deserialize trusted advice commitment"),
+    )
 }
 
 trait CloneCoreProofViaBytes {
@@ -268,12 +483,69 @@ fn generate_muldiv() -> GeneratedCoreFixture {
 }
 
 #[cfg(not(feature = "zk"))]
-fn generate_unused_advice_commitments() -> GeneratedCoreFixture {
+fn generate_fibonacci_small() -> GeneratedCoreFixture {
     generate_core_fixture(
         host::Program::new("fibonacci-guest"),
         postcard::to_stdvec(&5u32).expect("serialize fibonacci input"),
-        vec![9u8; 64],
-        vec![7u8; 64],
+        Vec::new(),
+        Vec::new(),
+        None,
+    )
+}
+
+#[cfg(not(feature = "zk"))]
+fn generate_fibonacci_medium() -> GeneratedCoreFixture {
+    generate_core_fixture(
+        host::Program::new("fibonacci-guest"),
+        postcard::to_stdvec(&100u32).expect("serialize fibonacci input"),
+        Vec::new(),
+        Vec::new(),
+        None,
+    )
+}
+
+#[cfg(not(feature = "zk"))]
+fn generate_memory_ops() -> GeneratedCoreFixture {
+    generate_core_fixture(
+        host::Program::new("memory-ops-guest"),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        None,
+    )
+}
+
+#[cfg(not(feature = "zk"))]
+fn generate_collatz_small() -> GeneratedCoreFixture {
+    let mut program = host::Program::new("collatz-guest");
+    program.set_func("collatz_convergence");
+    generate_core_fixture(
+        program,
+        postcard::to_stdvec(&19u128).expect("serialize collatz input"),
+        Vec::new(),
+        Vec::new(),
+        None,
+    )
+}
+
+#[cfg(not(feature = "zk"))]
+fn generate_sha2_small() -> GeneratedCoreFixture {
+    generate_core_fixture(
+        host::Program::new("sha2-guest"),
+        postcard::to_stdvec(&[5u8; 32]).expect("serialize sha2 input"),
+        Vec::new(),
+        Vec::new(),
+        None,
+    )
+}
+
+#[cfg(not(feature = "zk"))]
+fn generate_advice_consumer() -> GeneratedCoreFixture {
+    generate_core_fixture(
+        host::Program::new("advice-consumer-guest"),
+        postcard::to_stdvec(&12u64).expect("serialize advice consumer public input"),
+        postcard::to_stdvec(&5u64).expect("serialize untrusted advice"),
+        postcard::to_stdvec(&7u64).expect("serialize trusted advice"),
         Some(commit_trusted_advice_preprocessing_only),
     )
 }

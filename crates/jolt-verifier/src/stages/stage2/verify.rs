@@ -94,6 +94,7 @@ where
 
     Ok(Stage2Output {
         challenges: batch.sumcheck_point.as_slice().to_vec(),
+        output_claims: claims.batch_outputs.clone(),
         product_uniskip_challenge,
         product_uniskip,
         batch,
@@ -804,14 +805,6 @@ where
         &claims
             .batch_outputs
             .instruction_claim_reduction
-            .lookup_output
-            .unwrap_or_else(|| PCS::Field::from_u64(0)),
-    );
-    transcript.append_labeled(
-        b"opening_claim",
-        &claims
-            .batch_outputs
-            .instruction_claim_reduction
             .left_lookup_operand,
     );
     transcript.append_labeled(
@@ -820,22 +813,6 @@ where
             .batch_outputs
             .instruction_claim_reduction
             .right_lookup_operand,
-    );
-    transcript.append_labeled(
-        b"opening_claim",
-        &claims
-            .batch_outputs
-            .instruction_claim_reduction
-            .left_instruction_input
-            .unwrap_or_else(|| PCS::Field::from_u64(0)),
-    );
-    transcript.append_labeled(
-        b"opening_claim",
-        &claims
-            .batch_outputs
-            .instruction_claim_reduction
-            .right_instruction_input
-            .unwrap_or_else(|| PCS::Field::from_u64(0)),
     );
     transcript.append_labeled(b"opening_claim", &claims.batch_outputs.ram_raf_evaluation);
     transcript.append_labeled(b"opening_claim", &claims.batch_outputs.ram_output_check);

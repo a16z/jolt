@@ -8,7 +8,47 @@ pub fn metadata(id: FixtureId) -> FixtureMetadata {
             zk: false,
             has_trusted_advice: false,
             expected_core_accepts: true,
-            notes: "Live-generated small muldiv proof once fixture generation is wired.",
+            notes: "Small arithmetic/division standard fixture and default exhaustive tamper base.",
+        },
+        FixtureId::FibonacciSmall => FixtureMetadata {
+            id,
+            name: "fibonacci small standard",
+            zk: false,
+            has_trusted_advice: false,
+            expected_core_accepts: true,
+            notes: "Small loop/register fixture with short trace length.",
+        },
+        FixtureId::FibonacciMedium => FixtureMetadata {
+            id,
+            name: "fibonacci medium standard",
+            zk: false,
+            has_trusted_advice: false,
+            expected_core_accepts: true,
+            notes: "Same guest as fibonacci small with a longer trace.",
+        },
+        FixtureId::MemoryOps => FixtureMetadata {
+            id,
+            name: "memory ops standard",
+            zk: false,
+            has_trusted_advice: false,
+            expected_core_accepts: true,
+            notes: "RAM fixture covering byte and halfword loads/stores.",
+        },
+        FixtureId::CollatzSmall => FixtureMetadata {
+            id,
+            name: "collatz small standard",
+            zk: false,
+            has_trusted_advice: false,
+            expected_core_accepts: true,
+            notes: "Branch-heavy variable-length loop fixture.",
+        },
+        FixtureId::Sha2Small => FixtureMetadata {
+            id,
+            name: "sha2 small standard",
+            zk: false,
+            has_trusted_advice: false,
+            expected_core_accepts: true,
+            notes: "Inline-heavy byte/hash fixture.",
         },
         FixtureId::MulDivZkSmall => FixtureMetadata {
             id,
@@ -27,13 +67,13 @@ pub fn metadata(id: FixtureId) -> FixtureMetadata {
             notes:
                 "Prefix BlindFold fixture for the Stage 1 verifier frontier; not a full core proof.",
         },
-        FixtureId::AdviceCommitments => FixtureMetadata {
+        FixtureId::AdviceConsumer => FixtureMetadata {
             id,
-            name: "advice commitments standard",
+            name: "advice consumer standard",
             zk: false,
             has_trusted_advice: true,
             expected_core_accepts: true,
-            notes: "Core-backed proof with trusted and untrusted advice commitments.",
+            notes: "Core-backed guest that consumes both trusted and untrusted advice.",
         },
         FixtureId::PublicIoMismatch
         | FixtureId::TrustedAdviceMismatch

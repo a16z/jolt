@@ -180,6 +180,39 @@ where
     ])
 }
 
+pub fn input_virtualization_input_openings() -> [JoltOpeningId; 2] {
+    [
+        right_instruction_input_product(),
+        left_instruction_input_product(),
+    ]
+}
+
+pub fn input_virtualization_output_openings() -> [JoltOpeningId; 8] {
+    [
+        right_operand_is_rs2(),
+        rs2_value(),
+        right_operand_is_imm(),
+        imm(),
+        left_operand_is_rs1(),
+        rs1_value(),
+        left_operand_is_pc(),
+        unexpanded_pc(),
+    ]
+}
+
+pub fn input_virtualization_consistency_openings() -> [(JoltOpeningId, JoltOpeningId); 2] {
+    [
+        (
+            left_instruction_input_reduced(),
+            left_instruction_input_product(),
+        ),
+        (
+            right_instruction_input_reduced(),
+            right_instruction_input_product(),
+        ),
+    ]
+}
+
 pub fn read_raf<const XLEN: usize, F>(
     dimensions: InstructionReadRafDimensions,
 ) -> JoltStageClaims<F>
@@ -498,36 +531,18 @@ mod tests {
         assert_eq!(claims.sumcheck, trace_dimensions().sumcheck(3));
         assert_eq!(
             claims.input.required_openings,
-            vec![
-                right_instruction_input_product(),
-                left_instruction_input_product(),
-            ]
+            input_virtualization_input_openings().to_vec()
         );
         assert_eq!(
             claims.output.required_openings,
-            vec![
-                right_operand_is_rs2(),
-                rs2_value(),
-                right_operand_is_imm(),
-                imm(),
-                left_operand_is_rs1(),
-                rs1_value(),
-                left_operand_is_pc(),
-                unexpanded_pc(),
-            ]
+            input_virtualization_output_openings().to_vec()
         );
         assert_eq!(
             claims.consistency,
-            vec![
-                JoltConsistencyClaim::same_evaluation(
-                    left_instruction_input_reduced(),
-                    left_instruction_input_product()
-                ),
-                JoltConsistencyClaim::same_evaluation(
-                    right_instruction_input_reduced(),
-                    right_instruction_input_product()
-                ),
-            ]
+            input_virtualization_consistency_openings()
+                .into_iter()
+                .map(|(left, right)| JoltConsistencyClaim::same_evaluation(left, right))
+                .collect::<Vec<_>>()
         );
         assert_eq!(
             claims.required_openings(),

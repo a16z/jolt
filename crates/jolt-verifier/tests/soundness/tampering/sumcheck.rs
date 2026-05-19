@@ -17,12 +17,15 @@ use crate::{
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use jolt_claims::protocols::jolt::{
     formulas::{
-        claim_reductions::instruction as instruction_claim_reduction,
-        ram,
+        claim_reductions::{
+            instruction as instruction_claim_reduction, registers as registers_claim_reduction,
+        },
+        instruction, ram,
         spartan::{
             outer_opening, outer_uniskip_opening, product_outer_opening,
             product_remainder_output_openings, product_should_branch_outer_opening,
-            product_should_jump_outer_opening, product_uniskip_opening, SpartanOuterDimensions,
+            product_should_jump_outer_opening, product_uniskip_opening, shift_output_openings,
+            SpartanOuterDimensions,
         },
     },
     JoltOpeningId, JoltStageId, JoltVirtualPolynomial,
@@ -120,6 +123,24 @@ fn tampered_stage2_ram_phase_config_reject() {
     );
 }
 
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn tampered_stage3_sumcheck_payload_reject() {
+    let base = real_core_case();
+    tamper_each_stage3_batch_round(&base);
+    tamper_stage3_batch_round_counts(&base);
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn tampered_stage3_output_claims_reject() {
+    let base = real_core_case();
+
+    for (target_name, id) in stage3_formula_output_openings() {
+        offset_claim_rejects(&base, target_name, id);
+    }
+}
+
 #[cfg(any(not(feature = "core-fixtures"), feature = "zk"))]
 #[test]
 #[ignore = "enable --features core-fixtures in a non-ZK build to live-generate, cast, and tamper real core proofs"]
@@ -146,6 +167,16 @@ fn tampered_stage2_uniskip_payload_reject() {
 fn tampered_stage2_sumcheck_payload_reject() {
     assert_eq!(
         soundness_expectation(tampering::STAGE2_SUMCHECK_PAYLOAD),
+        HarnessExpectation::RejectsAtOrBeforeFrontier,
+    );
+}
+
+#[cfg(any(not(feature = "core-fixtures"), feature = "zk"))]
+#[test]
+#[ignore = "enable --features core-fixtures in a non-ZK build to live-generate, cast, and tamper real core proofs"]
+fn tampered_stage3_sumcheck_payload_reject() {
+    assert_eq!(
+        soundness_expectation(tampering::STAGE3_SUMCHECK_PAYLOAD),
         HarnessExpectation::RejectsAtOrBeforeFrontier,
     );
 }
@@ -286,6 +317,39 @@ fn tamper_stage2_batch_round_counts(base: &CoreVerifierCase) {
         base,
         |case| {
             push_compressed_round(&mut case.proof.stages.stage2_sumcheck_proof);
+        },
+    );
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn tamper_each_stage3_batch_round(base: &CoreVerifierCase) {
+    let round_count = compressed_round_count(&base.proof.stages.stage3_sumcheck_proof);
+    for round_index in 0..round_count {
+        tamper_manifest::assert_core_tamper_rejects(
+            manifest_target("stage3.batch.round_polynomial"),
+            base,
+            |case| {
+                mutate_compressed_round(&mut case.proof.stages.stage3_sumcheck_proof, round_index);
+            },
+        );
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn tamper_stage3_batch_round_counts(base: &CoreVerifierCase) {
+    tamper_manifest::assert_core_tamper_rejects(
+        manifest_target("stage3.batch.round_count.missing"),
+        base,
+        |case| {
+            pop_compressed_round(&mut case.proof.stages.stage3_sumcheck_proof);
+        },
+    );
+
+    tamper_manifest::assert_core_tamper_rejects(
+        manifest_target("stage3.batch.round_count.extra"),
+        base,
+        |case| {
+            push_compressed_round(&mut case.proof.stages.stage3_sumcheck_proof);
         },
     );
 }
@@ -516,6 +580,27 @@ fn stage2_formula_output_openings() -> Vec<(&'static str, JoltOpeningId)> {
         ram::output_check_output_openings()
             .into_iter()
             .map(|id| ("stage2.claims.batch_outputs.ram_output_check", id)),
+    );
+    openings
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn stage3_formula_output_openings() -> Vec<(&'static str, JoltOpeningId)> {
+    let mut openings = Vec::new();
+    openings.extend(
+        shift_output_openings()
+            .into_iter()
+            .map(|id| ("stage3.claims.shift", id)),
+    );
+    openings.extend(
+        instruction::input_virtualization_output_openings()
+            .into_iter()
+            .map(|id| ("stage3.claims.instruction_input", id)),
+    );
+    openings.extend(
+        registers_claim_reduction::claim_reduction_output_openings()
+            .into_iter()
+            .map(|id| ("stage3.claims.registers_claim_reduction", id)),
     );
     openings
 }

@@ -2,9 +2,12 @@
 
 use jolt_field::Field;
 
+use super::inputs::Stage2BatchOutputOpeningClaims;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage2Output<F: Field> {
     pub challenges: Vec<F>,
+    pub output_claims: Stage2BatchOutputOpeningClaims<F>,
     pub product_uniskip_challenge: F,
     pub product_uniskip: VerifiedProductUniSkip<F>,
     pub batch: VerifiedStage2Batch<F>,

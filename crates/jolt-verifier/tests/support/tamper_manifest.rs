@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_verifier::{
     proof::TransparentProofClaims,
-    stages::{stage1, stage2},
+    stages::{stage1, stage2, stage3},
 };
 use serde_json::Value;
 
@@ -239,13 +239,13 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "stage 2 consumes RAM read-write phase lengths when slicing batched points",
     ),
-    checked_standard(
+    later_standard(
         "proof.one_hot_config",
         "proof.one_hot_config",
-        VerifierCheckpoint::Stage3,
+        VerifierCheckpoint::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Deferred,
-        "one-hot configuration is transcript-bound now but substantively checked by later instruction stages",
+        "one-hot configuration is transcript-bound now but substantively checked by later RA virtualization stages",
     ),
     checked_standard(
         "proof.trace_polynomial_order",
@@ -493,7 +493,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     later_standard(
         "stage2.claims.batch_outputs.product_remainder.write_lookup_output_to_rd",
         "claims.stage2.batch_outputs.product_remainder.write_lookup_output_to_rd",
-        VerifierCheckpoint::Stage3,
+        VerifierCheckpoint::Stage5,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Deferred,
         "Stage 2 appends this pass-through claim, but later instruction stages must consume it",
@@ -501,7 +501,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     later_standard(
         "stage2.claims.batch_outputs.product_remainder.virtual_instruction",
         "claims.stage2.batch_outputs.product_remainder.virtual_instruction",
-        VerifierCheckpoint::Stage3,
+        VerifierCheckpoint::Stage5,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Deferred,
         "Stage 2 appends this pass-through claim, but later instruction stages must consume it",
@@ -532,15 +532,58 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     ),
 ];
 
-pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
-    later_standard(
-        "stage3.sumcheck_payload",
-        "proof.stages.stage3_sumcheck_proof",
+pub const STAGE3_TARGETS: &[TamperTarget] = &[
+    checked_standard(
+        "stage3.batch.round_polynomial",
+        "proof.stages.stage3_sumcheck_proof.round_polynomials[*]",
         VerifierCheckpoint::Stage3,
         MutationStrategy::ReplaceProofPayload,
-        TamperCoverage::Deferred,
-        "stage 3 is not wired yet",
+        TamperCoverage::Active,
+        "core-fixture test mutates every compressed Stage 3 batch round polynomial",
     ),
+    checked_standard(
+        "stage3.batch.round_count.missing",
+        "proof.stages.stage3_sumcheck_proof.round_polynomials",
+        VerifierCheckpoint::Stage3,
+        MutationStrategy::TruncateVector,
+        TamperCoverage::Active,
+        "core-fixture test removes a Stage 3 batch round",
+    ),
+    checked_standard(
+        "stage3.batch.round_count.extra",
+        "proof.stages.stage3_sumcheck_proof.round_polynomials",
+        VerifierCheckpoint::Stage3,
+        MutationStrategy::ExtendVector,
+        TamperCoverage::Active,
+        "core-fixture test appends a Stage 3 batch round",
+    ),
+    checked_standard(
+        "stage3.claims.shift",
+        "claims.stage3.shift.*",
+        VerifierCheckpoint::Stage3,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets each Spartan shift output claim",
+    ),
+    checked_standard(
+        "stage3.claims.instruction_input",
+        "claims.stage3.instruction_input.*",
+        VerifierCheckpoint::Stage3,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets each instruction-input output claim",
+    ),
+    checked_standard(
+        "stage3.claims.registers_claim_reduction",
+        "claims.stage3.registers_claim_reduction.*",
+        VerifierCheckpoint::Stage3,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets each register claim-reduction output claim",
+    ),
+];
+
+pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
     later_standard(
         "stage4.sumcheck_payload",
         "proof.stages.stage4_sumcheck_proof",
@@ -610,6 +653,7 @@ pub fn all_targets() -> Vec<TamperTarget> {
         .chain(PROOF_SHAPE_TARGETS)
         .chain(STAGE1_TARGETS)
         .chain(STAGE2_TARGETS)
+        .chain(STAGE3_TARGETS)
         .chain(FUTURE_STAGE_TARGETS)
         .copied()
         .collect()
@@ -671,7 +715,7 @@ pub fn proof_field_paths() -> &'static [&'static str] {
         "proof.stages.stage1_sumcheck_proof.round_polynomials[*]",
         "proof.stages.stage2_uni_skip_first_round_proof.round_polynomials[*]",
         "proof.stages.stage2_sumcheck_proof.round_polynomials[*]",
-        "proof.stages.stage3_sumcheck_proof",
+        "proof.stages.stage3_sumcheck_proof.round_polynomials[*]",
         "proof.stages.stage4_sumcheck_proof",
         "proof.stages.stage5_sumcheck_proof",
         "proof.stages.stage6_sumcheck_proof",
@@ -696,21 +740,6 @@ pub fn assert_manifest_target_is_active(target: TamperTarget) {
         TamperCoverage::Active,
         "tamper target is not active: {target:?}"
     );
-}
-
-pub fn assert_dory_tamper_rejects(
-    target: TamperTarget,
-    mut case: crate::support::dory_pedersen::DoryPedersenVerifierCase,
-    mutate: impl FnOnce(&mut crate::support::dory_pedersen::DoryPedersenVerifierCase),
-) {
-    assert_manifest_target_is_active(target);
-    assert!(
-        target.mode.includes(case.zk),
-        "tamper target mode does not include fixture mode: {target:?}"
-    );
-    let zk = case.zk;
-    mutate(&mut case);
-    crate::support::assert_rejects_at_or_before_frontier(zk, case.verify());
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
@@ -783,6 +812,28 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage2.batch_outputs.instruction_claim_reduction.right_lookup_operand",
             "claims.stage2.batch_outputs.instruction_claim_reduction.left_instruction_input",
             "claims.stage2.batch_outputs.instruction_claim_reduction.right_instruction_input",
+        ],
+        "claims.stage3.shift.*" => vec![
+            "claims.stage3.shift.unexpanded_pc",
+            "claims.stage3.shift.pc",
+            "claims.stage3.shift.is_virtual",
+            "claims.stage3.shift.is_first_in_sequence",
+            "claims.stage3.shift.is_noop",
+        ],
+        "claims.stage3.instruction_input.*" => vec![
+            "claims.stage3.instruction_input.left_operand_is_rs1",
+            "claims.stage3.instruction_input.rs1_value",
+            "claims.stage3.instruction_input.left_operand_is_pc",
+            "claims.stage3.instruction_input.unexpanded_pc",
+            "claims.stage3.instruction_input.right_operand_is_rs2",
+            "claims.stage3.instruction_input.rs2_value",
+            "claims.stage3.instruction_input.right_operand_is_imm",
+            "claims.stage3.instruction_input.imm",
+        ],
+        "claims.stage3.registers_claim_reduction.*" => vec![
+            "claims.stage3.registers_claim_reduction.rd_write_value",
+            "claims.stage3.registers_claim_reduction.rs1_value",
+            "claims.stage3.registers_claim_reduction.rs2_value",
         ],
         path => vec![path],
     }
@@ -875,6 +926,30 @@ fn zero_transparent_claims() -> TransparentProofClaims<Fr> {
                     },
                 ram_raf_evaluation: zero,
                 ram_output_check: zero,
+            },
+        },
+        stage3: stage3::inputs::Stage3Claims {
+            shift: stage3::inputs::SpartanShiftOutputOpeningClaims {
+                unexpanded_pc: zero,
+                pc: zero,
+                is_virtual: zero,
+                is_first_in_sequence: zero,
+                is_noop: zero,
+            },
+            instruction_input: stage3::inputs::InstructionInputOutputOpeningClaims {
+                left_operand_is_rs1: zero,
+                rs1_value: zero,
+                left_operand_is_pc: zero,
+                unexpanded_pc: zero,
+                right_operand_is_rs2: zero,
+                rs2_value: zero,
+                right_operand_is_imm: zero,
+                imm: zero,
+            },
+            registers_claim_reduction: stage3::inputs::RegistersClaimReductionOutputOpeningClaims {
+                rd_write_value: zero,
+                rs1_value: zero,
+                rs2_value: zero,
             },
         },
     }

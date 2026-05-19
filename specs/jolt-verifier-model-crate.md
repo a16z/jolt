@@ -29,8 +29,8 @@ Build a standalone `jolt-verifier` crate that:
 
 - verifies existing Jolt proof artifacts;
 - is generic over modular PCS, vector-commitment, field, and transcript traits;
-- uses concrete Dory/Pedersen/Blake2b instantiations in compatibility tests and
-  convenience aliases;
+- uses concrete Dory/Pedersen/Blake2b instantiations only in compatibility tests
+  backed by real core fixtures;
 - keeps all legacy proof-format code under `compat`;
 - models stage-by-stage verifier dataflow for future `jolt-prover` /
   `jolt-verifier` splitting;
@@ -144,6 +144,7 @@ pub enum JoltProofClaims<F, ZkProof> {
 pub struct TransparentProofClaims<F> {
     pub stage1: stage1::inputs::Stage1Claims<F>,
     pub stage2: stage2::inputs::Stage2Claims<F>,
+    pub stage3: stage3::inputs::Stage3Claims<F>,
     // Add later stages as they are wired.
 }
 ```
@@ -157,7 +158,8 @@ stage data is consumed through typed stage outputs. For example, Stage 1 owns
 the Spartan outer virtual-polynomial claims, including every flag claim, and
 Stage 2 derives its RAM/read-write, instruction-reduction, and RAM-RAF input
 claims from the verified Stage 1 output rather than duplicating them in
-`Stage2Claims`.
+`Stage2Claims`. Stage 3 similarly consumes Stage 1/2 typed outputs for its
+input claims and owns only its Stage 3 output openings.
 
 Generic facts:
 
@@ -363,7 +365,11 @@ crates/jolt-verifier/src/
       inputs.rs
       outputs.rs
       verify.rs
-    stage3.rs
+    stage3/
+      mod.rs
+      inputs.rs
+      outputs.rs
+      verify.rs
     stage4.rs
     stage5.rs
     stage6.rs
@@ -540,6 +546,8 @@ semgrep --config .semgrep/jolt-verifier-boundaries.yml --error
 
 These rules are intentionally structural. They enforce that:
 
+- verifier docs/tests use precise fixture language (`baseline`, `consumer`,
+  `lightweight`, etc.) instead of vague test taxonomy;
 - `compat` imports and legacy/core-compat names stay under
   `crates/jolt-verifier/src/compat`;
 - stage `inputs.rs` files expose typed fields/deps rather than
@@ -658,8 +666,8 @@ struct TestCase {
 ```
 
 The harness has separate configured horizons for standard and ZK mode. The
-standard frontier currently reaches `Stage2`; the ZK frontier remains at
-`Commitments` while standard stages 2-8 are ported. A completeness case passes
+standard frontier currently reaches `Stage3`; the ZK frontier remains at
+`Commitments` while standard stages 4-8 are ported. A completeness case passes
 when a valid proof reaches the configured horizon for its mode. Before the full
 verifier exists, reaching the next unimplemented stage is success; after the
 full verifier exists, success means `Ok(())`.
@@ -689,7 +697,7 @@ struct VerifierFrontiers {
 }
 
 const CURRENT_VERIFIER_FRONTIERS: VerifierFrontiers = VerifierFrontiers {
-    standard: VerifierCheckpoint::Stage2,
+    standard: VerifierCheckpoint::Stage3,
     zk: VerifierCheckpoint::Commitments,
 };
 ```
@@ -744,6 +752,25 @@ The fixture matrix should cover:
 - multiple `ReadWriteConfig` and `OneHotConfig` shapes, including boundary
   values.
 
+Recommended standard fixture set:
+
+- `muldiv-guest`, inputs `[9, 5, 3]`: cheap arithmetic/division baseline fixture
+  and the default exhaustive tamper base.
+- `fibonacci-guest`, inputs `5` and `100`: same program with materially
+  different trace lengths; good loop/register pressure with cheap generation.
+- `memory-ops-guest`: explicit byte/halfword stores and signed/unsigned loads;
+  useful for RAM read/write and output-shape coverage.
+- `collatz-guest` with `collatz_convergence(19)` or a similarly small input:
+  branch-heavy variable-length loop with 128-bit arithmetic.
+- `sha2-guest` or `sha2-chain-guest` with a small iteration count: exercises
+  inline-heavy byte-oriented computation without making every test expensive.
+- `btreemap-guest` with a small `n` such as `10` or `50`: allocation/collection
+  and long-trace coverage; keep it serialized and run as completeness/parity,
+  not as the default exhaustive tamper base.
+- `advice-demo-guest` or another real advice-using guest once advice fixture
+  generation is stable: prefer actual advice consumption over an unused advice
+  commitment placeholder.
+
 Fixtures should include enough metadata to be self-describing:
 
 ```text
@@ -752,16 +779,35 @@ FixtureMetadata
 - program/case name
 - mode: standard or ZK
 - feature set used to generate it
+- artifact schema version
+- core proof/preprocessing serialization version or source revision
 - public I/O digest
 - preprocessing digest
 - trace length and RAM domain size
+- `ReadWriteConfig`, `OneHotConfig`, and trace polynomial order
 - whether trusted advice is present
 - expected core verifier result
 ```
 
-Small fixtures should be generated live by default. Expensive fixtures may be
-checked in as serialized core artifacts with regeneration commands documented
-next to the fixture. The compatibility boundary under test is always:
+Core fixtures should be loaded from serialized artifacts by default. Live
+generation is an explicit regeneration path, not the normal test path. The
+artifact should contain canonical `jolt-core` bytes for verifier preprocessing,
+proof, public I/O, and any trusted-advice commitment material needed by the
+core verifier. Tests deserialize those core bytes first, optionally re-run the
+core verifier as an oracle, then convert through `compat`.
+
+Regenerate serialized fixtures only when the metadata contract changes: core
+proof/preprocessing serialization changes, relevant verifier config changes,
+guest bytecode changes, expected public I/O changes, or the target fixture
+matrix changes. Store the regeneration command and expected metadata next to
+the artifact so a stale fixture fails loudly instead of being silently reused.
+
+Use one cheap fixture, currently `muldiv-guest`, for exhaustive field-by-field
+tampering. Use the diverse fixtures for completeness/parity and selected lightweight
+tampering. Exhaustively running every tamper mutation against every guest should
+be opt-in, not the default harness shape.
+
+The compatibility boundary under test is always:
 
 ```text
 jolt-core proof/preprocessing/public I/O
@@ -874,8 +920,9 @@ real jolt-core proof
 ```
 
 Do not use synthetic proofs for direct tampering while the modular prover does
-not exist. Synthetic helper fixtures are allowed only for cheap proof-shape unit
-tests that do not claim core equivalence.
+not exist. Executable verifier compatibility tests should use real `jolt-core`
+proofs converted through `compat`; default builds may keep these tests ignored
+until `core-fixtures` is enabled.
 
 When a new typed stage input or output struct is added, the manifest must be
 updated in the same change. A field may be deferred, but it may not be omitted.
@@ -953,7 +1000,9 @@ Tasks:
 
 - Express `JoltProof` in terms of modular proof data and generic commitment
   types.
-- Keep concrete Dory/Pedersen/Blake2b instantiation in tests and aliases.
+- Keep concrete Dory/Pedersen/Blake2b instantiation in compatibility tests that
+  use real core fixtures; do not introduce synthetic proof fixtures as a
+  substitute for prover output.
 - Represent trace polynomial ordering on the verifier-owned proof model with a
   non-Dory name; keep legacy conversion/serialization in `compat`.
 - Keep canonical serialization for legacy fields in `compat::codec`.
@@ -1138,14 +1187,14 @@ Current implementation status:
   return shape and checked per-instance point slicing used by Stage 2;
 - `common` owns VM memory-layout remapping and public I/O byte-to-word packing;
 - `jolt-poly` owns generic MLE helpers used by the formula public-value code;
-- standard Stage 1/2 soundness tests now use the tamper manifest to mutate real
-  core proofs after compat conversion, covering every current Stage 1/2
+- standard Stage 1/2/3 soundness tests now use the tamper manifest to mutate real
+  core proofs after compat conversion, covering every current Stage 1/2/3
   verifier-owned proof payload and typed claim target that is checked by the
-  `Stage2` frontier;
+  `Stage3` frontier;
 - unchecked pass-through, final-opening, commitment-payload/order, advice, and
   ZK/BlindFold targets are explicitly recorded in the tamper manifest rather
   than left implicit;
-- the standard verifier frontier is now `Stage2`; Stage 3 remains the next
+- the standard verifier frontier is now `Stage3`; Stage 4 remains the next
   unimplemented standard-stage boundary.
 
 Boundary cleanup pressure:
@@ -1175,6 +1224,45 @@ Review criteria:
 
 - Batch input/output claim metadata is explicit.
 - Stage output provides named dependencies for later stages and ZK.
+
+Current implementation status:
+
+- Stage 3 is organized as `stage3/{inputs.rs, outputs.rs, verify.rs}` and uses
+  typed transparent claims for:
+  - Spartan shift output claims;
+  - instruction-input virtualization output claims;
+  - register claim-reduction output claims.
+- `stage3/verify.rs` is linear and explicit: it samples the shift gamma,
+  derives its powers via `jolt-field`, samples the instruction-input gamma and
+  register-reduction gamma; verifies the compressed three-instance batch with
+  `jolt-sumcheck`; evaluates `jolt-claims` input and output expressions;
+  compares the batched final claim; then appends the non-aliased opening claims
+  in core transcript order.
+- `jolt-claims` now exposes Stage 3 opening-order metadata:
+  `shift_input_openings`, `shift_output_openings`,
+  `input_virtualization_input_openings`,
+  `input_virtualization_output_openings`,
+  `input_virtualization_consistency_openings`,
+  `registers::claim_reduction_input_openings`, and
+  `registers::claim_reduction_output_openings`.
+- Stage 3 exposed and fixed an important transcript rule: when a later
+  sumcheck opens the same underlying polynomial at the same point, core aliases
+  the opening and does not append a duplicate opening claim. The modular
+  verifier must still carry explicit typed values for formula evaluation, but
+  transcript appends must follow the unique non-aliased core order.
+- Standard completeness reaches Stage 3 for real core fixtures, including the
+  advice fixture. The synthetic Dory/Pedersen fixture path has been removed so
+  proof-shape and tampering checks do not accidentally rely on non-core proof
+  data.
+- Stage 3 soundness coverage is active for real core fixtures:
+  compressed batch round-polynomial tampering, missing/extra round counts, and
+  every typed Stage 3 output claim are tampered after compat conversion and
+  rejected before the current frontier.
+- Stage 3 has a dedicated append-order regression for transparent opening
+  claims. It records the transcript payload sequence and asserts that core
+  aliases (`instruction_input.unexpanded_pc`, `registers.rs1_value`,
+  `registers.rs2_value`) are carried as typed values for formula evaluation but
+  are not appended as duplicate opening claims.
 
 ### 8. Stage 4: Register Read/Write And RAM Val Check
 
@@ -1286,8 +1374,8 @@ Tasks:
 
 - Unignore or activate the full-checkpoint completeness tests for standard and
   ZK fixtures.
-- Add at least one concrete Dory/Pedersen/Blake2b test instantiation that runs
-  through the full verifier.
+- Run the concrete Dory/Pedersen/Blake2b instantiation through converted
+  `jolt-core` fixtures.
 - Add `muldiv` coverage in standard and ZK modes.
 - Activate core-transitivity tests whose checkpoints are fully implemented.
 - Activate direct tampering tests whose checkpoints are fully implemented.

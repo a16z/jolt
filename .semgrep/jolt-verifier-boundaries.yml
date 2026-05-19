@@ -1,13 +1,23 @@
 rules:
+  - id: jolt-verifier-no-vague-test-taxonomy
+    languages: [generic]
+    severity: ERROR
+    message: "Use precise test language such as baseline, consumer, fixture, or lightweight in jolt-verifier docs/tests."
+    paths:
+      include:
+        - /crates/jolt-verifier/**
+        - /specs/jolt-verifier-model-crate.md
+    pattern-regex: '(?i)\bsm[o]ke\b'
+
   - id: jolt-verifier-no-compat-outside-compat
     languages: [rust]
     severity: ERROR
     message: "Compatibility code must stay under crates/jolt-verifier/src/compat."
     paths:
       include:
-        - crates/jolt-verifier/src/**/*.rs
+        - /crates/jolt-verifier/src/**/*.rs
       exclude:
-        - crates/jolt-verifier/src/compat/**
+        - /crates/jolt-verifier/src/compat/**
     pattern-regex: '\b(crate::compat|super::compat|compat::)'
 
   - id: jolt-verifier-no-legacy-outside-compat
@@ -16,9 +26,9 @@ rules:
     message: "Legacy/core-compat concepts must not leak outside crates/jolt-verifier/src/compat."
     paths:
       include:
-        - crates/jolt-verifier/src/**/*.rs
+        - /crates/jolt-verifier/src/**/*.rs
       exclude:
-        - crates/jolt-verifier/src/compat/**
+        - /crates/jolt-verifier/src/compat/**
     pattern-regex: '\b(jolt-core-compat|Legacy[A-Za-z0-9_]*|legacy::|jolt_core::)\b'
 
   - id: jolt-verifier-stage-inputs-no-opening-id-routers
@@ -27,7 +37,7 @@ rules:
     message: "Stage input modules should expose typed fields/deps, not JoltOpeningId router logic."
     paths:
       include:
-        - crates/jolt-verifier/src/stages/**/inputs.rs
+        - /crates/jolt-verifier/src/stages/**/inputs.rs
     pattern-regex: '\bJoltOpeningId\b'
 
   - id: jolt-verifier-stage-mechanics-stay-in-verify
@@ -36,10 +46,10 @@ rules:
     message: "Sumcheck calls, formula evaluation, and transcript appends should stay visible in stage verify.rs."
     paths:
       include:
-        - crates/jolt-verifier/src/stages/**/*.rs
+        - /crates/jolt-verifier/src/stages/**/*.rs
       exclude:
-        - crates/jolt-verifier/src/stages/**/verify.rs
-        - crates/jolt-verifier/src/stages/stage8.rs
+        - /crates/jolt-verifier/src/stages/**/verify.rs
+        - /crates/jolt-verifier/src/stages/stage8.rs
     pattern-regex: '\b(SumcheckVerifier::verify|BatchedSumcheckVerifier::verify|try_evaluate\(|append_labeled\()'
 
   - id: jolt-claims-no-vm-public-io-computation
@@ -48,7 +58,7 @@ rules:
     message: "jolt-claims should declare formulas; public IO/address materialization belongs to jolt-program/common plus jolt-poly."
     paths:
       include:
-        - crates/jolt-claims/src/**/*.rs
+        - /crates/jolt-claims/src/**/*.rs
     pattern-regex: '\b(JoltDevice|MemoryLayout|public_io_mle|output_check_public_values|raf_evaluation_public_values|unmap_ram_address|sparse_mle_msb|range_mask_mle_msb|try_eq_mle)\b'
 
   - id: jolt-claims-no-spartan-product-computation
@@ -57,5 +67,5 @@ rules:
     message: "jolt-claims may name Spartan product public values, but product public-value computation belongs to the verifier via jolt-poly helpers."
     paths:
       include:
-        - crates/jolt-claims/src/**/*.rs
+        - /crates/jolt-claims/src/**/*.rs
     pattern-regex: '\b(product_lagrange_weights|product_public_values|SpartanProductPublicValueError)\b'

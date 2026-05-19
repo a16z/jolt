@@ -31,16 +31,21 @@ impl VerifierFrontiers {
 }
 
 pub const CURRENT_VERIFIER_FRONTIERS: VerifierFrontiers = VerifierFrontiers {
-    standard: VerifierCheckpoint::Stage2,
+    standard: VerifierCheckpoint::Stage3,
     zk: VerifierCheckpoint::Commitments,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FixtureId {
     MulDivSmall,
+    FibonacciSmall,
+    FibonacciMedium,
+    MemoryOps,
+    CollatzSmall,
+    Sha2Small,
     MulDivZkSmall,
     ZkStage1Prefix,
-    AdviceCommitments,
+    AdviceConsumer,
     PublicIoMismatch,
     TrustedAdviceMismatch,
     MixedProofMode,
@@ -155,7 +160,6 @@ pub fn assert_zk_rejects_at_or_before_current_frontier(result: Result<(), Verifi
 }
 #[cfg(feature = "core-fixtures")]
 pub mod core_fixtures;
-pub mod dory_pedersen;
 pub mod tamper_manifest;
 
 use jolt_verifier::VerifierError;

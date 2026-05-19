@@ -433,6 +433,26 @@ pub fn product_remainder_output_openings() -> [JoltOpeningId; 8] {
     ]
 }
 
+pub fn shift_input_openings() -> [JoltOpeningId; 5] {
+    [
+        next_unexpanded_pc_outer(),
+        next_pc_outer(),
+        next_is_virtual_outer(),
+        next_is_first_in_sequence_outer(),
+        next_is_noop_product(),
+    ]
+}
+
+pub fn shift_output_openings() -> [JoltOpeningId; 5] {
+    [
+        unexpanded_pc_shift(),
+        pc_shift(),
+        is_virtual_shift(),
+        is_first_in_sequence_shift(),
+        is_noop_shift(),
+    ]
+}
+
 pub fn shift<F>(dimensions: TraceDimensions) -> JoltStageClaims<F>
 where
     F: RingCore,
@@ -916,23 +936,11 @@ mod tests {
         assert_eq!(claims.sumcheck, dimensions.sumcheck(SHIFT_DEGREE));
         assert_eq!(
             claims.input.required_openings,
-            vec![
-                next_unexpanded_pc_outer(),
-                next_pc_outer(),
-                next_is_virtual_outer(),
-                next_is_first_in_sequence_outer(),
-                next_is_noop_product(),
-            ]
+            shift_input_openings().to_vec()
         );
         assert_eq!(
             claims.output.required_openings,
-            vec![
-                unexpanded_pc_shift(),
-                pc_shift(),
-                is_virtual_shift(),
-                is_first_in_sequence_shift(),
-                is_noop_shift(),
-            ]
+            shift_output_openings().to_vec()
         );
         assert_eq!(
             claims.required_challenges(),

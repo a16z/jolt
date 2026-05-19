@@ -1,12 +1,9 @@
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+use crate::support;
 use crate::{
     completeness::cases,
-    support::{self, completeness_expectation, dory_pedersen, HarnessExpectation},
+    support::{completeness_expectation, HarnessExpectation},
 };
-
-#[test]
-fn valid_zk_dory_pedersen_proof_reaches_current_frontier() {
-    support::assert_zk_reaches_current_frontier(dory_pedersen::zk_case().verify());
-}
 
 #[test]
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]

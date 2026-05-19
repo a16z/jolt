@@ -1,9 +1,9 @@
 //! Compatibility opening-claim conversion.
 
-#[cfg(any(feature = "jolt-core-compat", test))]
+#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 use std::collections::BTreeMap;
 
-#[cfg(any(feature = "jolt-core-compat", test))]
+#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 use crate::compat::ids as legacy;
 use crate::{
     proof::{JoltProof, JoltProofClaims, TransparentProofClaims},
@@ -12,6 +12,10 @@ use crate::{
         stage2::inputs::{
             InstructionClaimReductionOutputOpeningClaims, ProductRemainderOutputOpeningClaims,
             RamReadWriteOutputOpeningClaims, Stage2BatchOutputOpeningClaims, Stage2Claims,
+        },
+        stage3::inputs::{
+            InstructionInputOutputOpeningClaims, RegistersClaimReductionOutputOpeningClaims,
+            SpartanShiftOutputOpeningClaims, Stage3Claims,
         },
     },
     VerifierError,
@@ -22,10 +26,11 @@ use jolt_claims::protocols::jolt::{
     self as native,
     formulas::{
         claim_reductions::instruction as instruction_claim_reduction,
-        ram,
+        claim_reductions::registers as registers_claim_reduction,
+        instruction, ram,
         spartan::{
             outer_opening, outer_uniskip_opening, product_remainder_output_openings,
-            product_uniskip_opening,
+            product_uniskip_opening, shift_output_openings,
         },
     },
     JoltVirtualPolynomial,
@@ -35,12 +40,12 @@ use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_riscv::CircuitFlags;
 
-#[cfg(any(feature = "jolt-core-compat", test))]
+#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(bound = "")]
 pub struct LegacyOpeningClaims<F: Field>(pub BTreeMap<legacy::OpeningId, F>);
 
-#[cfg(any(feature = "jolt-core-compat", test))]
+#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 pub(crate) fn native_opening_claims_from_legacy<F: Field>(
     claims: LegacyOpeningClaims<F>,
 ) -> Vec<(native::JoltOpeningId, F)> {
@@ -51,14 +56,7 @@ pub(crate) fn native_opening_claims_from_legacy<F: Field>(
         .collect()
 }
 
-#[cfg(any(feature = "jolt-core-compat", test))]
-#[cfg_attr(
-    not(feature = "jolt-core-compat"),
-    expect(
-        dead_code,
-        reason = "used by the optional jolt-core compatibility conversion feature"
-    )
-)]
+#[cfg(all(feature = "jolt-core-compat", not(feature = "zk")))]
 pub(crate) fn transparent_claims_from_legacy<F: Field>(
     claims: LegacyOpeningClaims<F>,
     trace_length: usize,
@@ -79,6 +77,7 @@ pub(crate) fn transparent_claims_from_native<F: Field>(
             outer: spartan_outer_claims_from_native(&claims)?,
         },
         stage2: stage2_claims_from_native(&claims)?,
+        stage3: stage3_claims_from_native(&claims)?,
     })
 }
 
@@ -171,6 +170,52 @@ fn stage2_claims_from_native<F: Field>(
     })
 }
 
+fn stage3_claims_from_native<F: Field>(
+    claims: &NativeOpeningClaims<F>,
+) -> Result<Stage3Claims<F>, VerifierError> {
+    let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] =
+        shift_output_openings();
+    let [right_operand_is_rs2, rs2_value_input, right_operand_is_imm, imm_input, left_operand_is_rs1, rs1_value_input, left_operand_is_pc, unexpanded_pc_input] =
+        instruction::input_virtualization_output_openings();
+    let [rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced] =
+        registers_claim_reduction::claim_reduction_output_openings();
+
+    let shift = SpartanShiftOutputOpeningClaims {
+        unexpanded_pc: claims.require(unexpanded_pc_shift)?,
+        pc: claims.require(pc_shift)?,
+        is_virtual: claims.require(is_virtual_shift)?,
+        is_first_in_sequence: claims.require(is_first_in_sequence_shift)?,
+        is_noop: claims.require(is_noop_shift)?,
+    };
+    let instruction_input = InstructionInputOutputOpeningClaims {
+        left_operand_is_rs1: claims.require(left_operand_is_rs1)?,
+        rs1_value: claims.require(rs1_value_input)?,
+        left_operand_is_pc: claims.require(left_operand_is_pc)?,
+        unexpanded_pc: claims
+            .get(unexpanded_pc_input)
+            .unwrap_or(shift.unexpanded_pc),
+        right_operand_is_rs2: claims.require(right_operand_is_rs2)?,
+        rs2_value: claims.require(rs2_value_input)?,
+        right_operand_is_imm: claims.require(right_operand_is_imm)?,
+        imm: claims.require(imm_input)?,
+    };
+    let registers_claim_reduction = RegistersClaimReductionOutputOpeningClaims {
+        rd_write_value: claims.require(rd_write_value_reduced)?,
+        rs1_value: claims
+            .get(rs1_value_reduced)
+            .unwrap_or(instruction_input.rs1_value),
+        rs2_value: claims
+            .get(rs2_value_reduced)
+            .unwrap_or(instruction_input.rs2_value),
+    };
+
+    Ok(Stage3Claims {
+        shift,
+        instruction_input,
+        registers_claim_reduction,
+    })
+}
+
 #[derive(Clone, Debug)]
 struct NativeOpeningClaims<F: Field> {
     claims: Vec<(native::JoltOpeningId, F)>,
@@ -251,6 +296,30 @@ fn empty_transparent_claims<F: Field>(_trace_length: usize) -> TransparentProofC
                 },
                 ram_raf_evaluation: zero,
                 ram_output_check: zero,
+            },
+        },
+        stage3: Stage3Claims {
+            shift: SpartanShiftOutputOpeningClaims {
+                unexpanded_pc: zero,
+                pc: zero,
+                is_virtual: zero,
+                is_first_in_sequence: zero,
+                is_noop: zero,
+            },
+            instruction_input: InstructionInputOutputOpeningClaims {
+                left_operand_is_rs1: zero,
+                rs1_value: zero,
+                left_operand_is_pc: zero,
+                unexpanded_pc: zero,
+                right_operand_is_rs2: zero,
+                rs2_value: zero,
+                right_operand_is_imm: zero,
+                imm: zero,
+            },
+            registers_claim_reduction: RegistersClaimReductionOutputOpeningClaims {
+                rd_write_value: zero,
+                rs1_value: zero,
+                rs2_value: zero,
             },
         },
     }
@@ -410,6 +479,7 @@ fn claim_from_transparent<F: Field>(
     }
 
     claim_from_stage2_batch_outputs(&claims.stage2.batch_outputs, id)
+        .or_else(|| claim_from_stage3_outputs(&claims.stage3, id))
 }
 
 #[cfg(any(feature = "jolt-core-compat", test))]
@@ -429,6 +499,7 @@ fn claim_mut_from_transparent<F: Field>(
     }
 
     claim_mut_from_stage2_batch_outputs(&mut claims.stage2.batch_outputs, id)
+        .or_else(|| claim_mut_from_stage3_outputs(&mut claims.stage3, id))
 }
 
 #[cfg(any(feature = "jolt-core-compat", test))]
@@ -651,6 +722,78 @@ fn set_optional_stage2_batch_output<F: Field>(
 }
 
 #[cfg(any(feature = "jolt-core-compat", test))]
+fn claim_from_stage3_outputs<F: Field>(
+    claims: &Stage3Claims<F>,
+    id: native::JoltOpeningId,
+) -> Option<F> {
+    let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] =
+        shift_output_openings();
+    let [right_operand_is_rs2, rs2_value_input, right_operand_is_imm, imm_input, left_operand_is_rs1, rs1_value_input, left_operand_is_pc, unexpanded_pc_input] =
+        instruction::input_virtualization_output_openings();
+    let [rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced] =
+        registers_claim_reduction::claim_reduction_output_openings();
+
+    match id {
+        id if id == unexpanded_pc_shift => Some(claims.shift.unexpanded_pc),
+        id if id == pc_shift => Some(claims.shift.pc),
+        id if id == is_virtual_shift => Some(claims.shift.is_virtual),
+        id if id == is_first_in_sequence_shift => Some(claims.shift.is_first_in_sequence),
+        id if id == is_noop_shift => Some(claims.shift.is_noop),
+        id if id == left_operand_is_rs1 => Some(claims.instruction_input.left_operand_is_rs1),
+        id if id == rs1_value_input => Some(claims.instruction_input.rs1_value),
+        id if id == left_operand_is_pc => Some(claims.instruction_input.left_operand_is_pc),
+        id if id == unexpanded_pc_input => Some(claims.instruction_input.unexpanded_pc),
+        id if id == right_operand_is_rs2 => Some(claims.instruction_input.right_operand_is_rs2),
+        id if id == rs2_value_input => Some(claims.instruction_input.rs2_value),
+        id if id == right_operand_is_imm => Some(claims.instruction_input.right_operand_is_imm),
+        id if id == imm_input => Some(claims.instruction_input.imm),
+        id if id == rd_write_value_reduced => Some(claims.registers_claim_reduction.rd_write_value),
+        id if id == rs1_value_reduced => Some(claims.registers_claim_reduction.rs1_value),
+        id if id == rs2_value_reduced => Some(claims.registers_claim_reduction.rs2_value),
+        _ => None,
+    }
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn claim_mut_from_stage3_outputs<F: Field>(
+    claims: &mut Stage3Claims<F>,
+    id: native::JoltOpeningId,
+) -> Option<&mut F> {
+    let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] =
+        shift_output_openings();
+    let [right_operand_is_rs2, rs2_value_input, right_operand_is_imm, imm_input, left_operand_is_rs1, rs1_value_input, left_operand_is_pc, unexpanded_pc_input] =
+        instruction::input_virtualization_output_openings();
+    let [rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced] =
+        registers_claim_reduction::claim_reduction_output_openings();
+
+    match id {
+        id if id == unexpanded_pc_shift => Some(&mut claims.shift.unexpanded_pc),
+        id if id == pc_shift => Some(&mut claims.shift.pc),
+        id if id == is_virtual_shift => Some(&mut claims.shift.is_virtual),
+        id if id == is_first_in_sequence_shift => Some(&mut claims.shift.is_first_in_sequence),
+        id if id == is_noop_shift => Some(&mut claims.shift.is_noop),
+        id if id == left_operand_is_rs1 => Some(&mut claims.instruction_input.left_operand_is_rs1),
+        id if id == rs1_value_input => Some(&mut claims.instruction_input.rs1_value),
+        id if id == left_operand_is_pc => Some(&mut claims.instruction_input.left_operand_is_pc),
+        id if id == unexpanded_pc_input => Some(&mut claims.instruction_input.unexpanded_pc),
+        id if id == right_operand_is_rs2 => {
+            Some(&mut claims.instruction_input.right_operand_is_rs2)
+        }
+        id if id == rs2_value_input => Some(&mut claims.instruction_input.rs2_value),
+        id if id == right_operand_is_imm => {
+            Some(&mut claims.instruction_input.right_operand_is_imm)
+        }
+        id if id == imm_input => Some(&mut claims.instruction_input.imm),
+        id if id == rd_write_value_reduced => {
+            Some(&mut claims.registers_claim_reduction.rd_write_value)
+        }
+        id if id == rs1_value_reduced => Some(&mut claims.registers_claim_reduction.rs1_value),
+        id if id == rs2_value_reduced => Some(&mut claims.registers_claim_reduction.rs2_value),
+        _ => None,
+    }
+}
+
+#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 fn opening_id(id: legacy::OpeningId) -> native::JoltOpeningId {
     match id {
         legacy::OpeningId::Polynomial(polynomial, stage) => {
@@ -665,7 +808,7 @@ fn opening_id(id: legacy::OpeningId) -> native::JoltOpeningId {
     }
 }
 
-#[cfg(any(feature = "jolt-core-compat", test))]
+#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 fn polynomial_id(id: legacy::PolynomialId) -> native::JoltPolynomialId {
     match id {
         legacy::PolynomialId::Committed(polynomial) => {
@@ -677,7 +820,7 @@ fn polynomial_id(id: legacy::PolynomialId) -> native::JoltPolynomialId {
     }
 }
 
-#[cfg(any(feature = "jolt-core-compat", test))]
+#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 fn committed_polynomial(
     polynomial: legacy::CommittedPolynomial,
 ) -> native::JoltCommittedPolynomial {
@@ -700,7 +843,7 @@ fn committed_polynomial(
     }
 }
 
-#[cfg(any(feature = "jolt-core-compat", test))]
+#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 fn virtual_polynomial(polynomial: legacy::VirtualPolynomial) -> native::JoltVirtualPolynomial {
     match polynomial {
         legacy::VirtualPolynomial::PC => native::JoltVirtualPolynomial::PC,
@@ -767,7 +910,7 @@ fn virtual_polynomial(polynomial: legacy::VirtualPolynomial) -> native::JoltVirt
     }
 }
 
-#[cfg(any(feature = "jolt-core-compat", test))]
+#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 fn stage_id(id: legacy::SumcheckId) -> native::JoltStageId {
     match id {
         legacy::SumcheckId::SpartanOuter => native::JoltStageId::SpartanOuter,
@@ -810,7 +953,7 @@ fn stage_id(id: legacy::SumcheckId) -> native::JoltStageId {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt};

@@ -31,6 +31,22 @@ where
     )
 }
 
+pub fn claim_reduction_input_openings() -> [JoltOpeningId; 3] {
+    [
+        rd_write_value_spartan(),
+        rs1_value_spartan(),
+        rs2_value_spartan(),
+    ]
+}
+
+pub fn claim_reduction_output_openings() -> [JoltOpeningId; 3] {
+    [
+        rd_write_value_reduced(),
+        rs1_value_reduced(),
+        rs2_value_reduced(),
+    ]
+}
+
 fn reduction_challenge<F>(id: RegistersClaimReductionChallenge) -> JoltExpr<F>
 where
     F: RingCore,
@@ -91,19 +107,11 @@ mod tests {
         assert_eq!(claims.sumcheck, dimensions().sumcheck(2));
         assert_eq!(
             claims.input.required_openings,
-            vec![
-                rd_write_value_spartan(),
-                rs1_value_spartan(),
-                rs2_value_spartan(),
-            ]
+            claim_reduction_input_openings().to_vec()
         );
         assert_eq!(
             claims.output.required_openings,
-            vec![
-                rd_write_value_reduced(),
-                rs1_value_reduced(),
-                rs2_value_reduced(),
-            ]
+            claim_reduction_output_openings().to_vec()
         );
         assert_eq!(
             claims.input.required_challenges,
