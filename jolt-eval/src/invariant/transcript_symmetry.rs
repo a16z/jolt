@@ -3,13 +3,12 @@
 //! sequence must round-trip every prover message and produce the same
 //! verifier challenges.
 
+use ark_bn254::Fr as ArkFr;
 use arbitrary::{Arbitrary, Unstructured};
 use jolt_field::Fr as JFr;
 use spongefish::instantiations::{Blake2b512, Keccak};
 
-use jolt_transcript::{
-    prover_transcript, verifier_transcript, BytesMsg, FieldEl, PoseidonSponge,
-};
+use jolt_transcript::{prover_transcript, verifier_transcript, BytesMsg, PoseidonSponge};
 
 use crate::invariant::{CheckError, Invariant, InvariantViolation};
 
@@ -76,12 +75,12 @@ where
     for op in &input.ops {
         match op {
             Op::PublicBytes(b) => prover.public_message(&BytesMsg(b.clone())),
-            Op::PublicScalar(f) => prover.public_message(&FieldEl(*f)),
+            Op::PublicScalar(f) => prover.public_message(&ArkFr::from(*f)),
             Op::ProverBytes(b) => prover.prover_message(&BytesMsg(b.clone())),
-            Op::ProverScalar(f) => prover.prover_message(&FieldEl(*f)),
+            Op::ProverScalar(f) => prover.prover_message(&ArkFr::from(*f)),
             Op::Challenge => {
-                let FieldEl(c) = prover.verifier_message::<FieldEl<JFr>>();
-                prover_challenges.push(c);
+                let c: ArkFr = prover.verifier_message();
+                prover_challenges.push(JFr::from(c));
             }
         }
     }
@@ -93,7 +92,7 @@ where
     for (op_idx, op) in input.ops.iter().enumerate() {
         match op {
             Op::PublicBytes(b) => verifier.public_message(&BytesMsg(b.clone())),
-            Op::PublicScalar(f) => verifier.public_message(&FieldEl(*f)),
+            Op::PublicScalar(f) => verifier.public_message(&ArkFr::from(*f)),
             Op::ProverBytes(expected) => {
                 let got: BytesMsg = verifier
                     .prover_message()
@@ -103,16 +102,16 @@ where
                 }
             }
             Op::ProverScalar(expected) => {
-                let got: FieldEl<JFr> = verifier
+                let got: ArkFr = verifier
                     .prover_message()
-                    .map_err(|e| violation("prover_message<FieldEl>", op_idx, e))?;
-                if got.0 != *expected {
+                    .map_err(|e| violation("prover_message<Fr>", op_idx, e))?;
+                if JFr::from(got) != *expected {
                     return Err(mismatch("ProverScalar round-trip", op_idx));
                 }
             }
             Op::Challenge => {
-                let FieldEl(verifier_c) = verifier.verifier_message::<FieldEl<JFr>>();
-                if verifier_c != prover_challenges[challenge_idx] {
+                let verifier_c: ArkFr = verifier.verifier_message();
+                if JFr::from(verifier_c) != prover_challenges[challenge_idx] {
                     return Err(mismatch("Challenge", op_idx));
                 }
                 challenge_idx += 1;

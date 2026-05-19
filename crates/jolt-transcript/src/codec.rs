@@ -1,75 +1,16 @@
 //! Local codecs for absorbing / decoding Jolt-native messages over a
 //! byte-oriented spongefish sponge.
 //!
-//! Spongefish 0.7 ships an `ark-ff` codec feature, but enabling it pulls
-//! in `ark-ff ^0.6` which conflicts with this workspace's pinned
-//! `a16z/arkworks-algebra@dev/twist-shout` fork (still on the 0.5
-//! version line). Until the fork bumps to 0.6 we keep these local
-//! field-element codecs. Encodings are injective and prefix-free.
+//! Field-element codecs come from spongefish's `ark-ff` feature
+//! (`spongefish::Encoding<[u8]>` is implemented for every `ark_ff::Fp<C, N>`
+//! using big-endian canonical encoding per RFC8017). 128-bit-truncated
+//! challenges decode through spongefish's built-in `u128` codec directly;
+//! see [`crate::prover::OptimizedChallenge`].
 //!
-//! 128-bit-truncated challenges decode through spongefish's built-in
-//! `u128` codec directly (no wrapper needed); see
-//! [`crate::prover::OptimizedChallenge`].
+//! This module keeps only `BytesMsg`, the length-prefixed byte string
+//! framing that spongefish 0.6 does not provide.
 
-use jolt_field::{CanonicalBytes, FixedByteSize, ReducingBytes};
-use spongefish::{Decoding, Encoding, NargDeserialize, VerificationError, VerificationResult};
-
-/// Bytes drawn per full-field challenge. 64 bytes mod a ≤254-bit field
-/// modulus is within `2^{-130}` statistical distance of uniform. Tuned for
-/// BN254; safe for any field up to that width.
-const FR_UNIFORM_BYTES: usize = 64;
-
-/// Wraps a field element for absorption / decoding as little-endian bytes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FieldEl<F>(pub F);
-
-impl<F> From<F> for FieldEl<F> {
-    fn from(f: F) -> Self {
-        Self(f)
-    }
-}
-
-impl<F: CanonicalBytes> Encoding<[u8]> for FieldEl<F> {
-    fn encode(&self) -> impl AsRef<[u8]> {
-        self.0.to_bytes_le_vec()
-    }
-}
-
-/// 64-byte squeeze buffer used as the [`Decoding::Repr`] for full-field
-/// challenges. See `FR_UNIFORM_BYTES`.
-#[derive(Clone, Copy)]
-pub struct UniformFrBytes(pub [u8; FR_UNIFORM_BYTES]);
-
-impl Default for UniformFrBytes {
-    fn default() -> Self {
-        Self([0u8; FR_UNIFORM_BYTES])
-    }
-}
-
-impl AsMut<[u8]> for UniformFrBytes {
-    fn as_mut(&mut self) -> &mut [u8] {
-        &mut self.0
-    }
-}
-
-impl<F: ReducingBytes> Decoding<[u8]> for FieldEl<F> {
-    type Repr = UniformFrBytes;
-    fn decode(buf: Self::Repr) -> Self {
-        FieldEl(F::from_le_bytes_mod_order(&buf.0))
-    }
-}
-
-impl<F: FixedByteSize + ReducingBytes> NargDeserialize for FieldEl<F> {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
-        let n = F::NUM_BYTES;
-        if buf.len() < n {
-            return Err(VerificationError);
-        }
-        let (head, tail) = buf.split_at(n);
-        *buf = tail;
-        Ok(FieldEl(F::from_le_bytes_mod_order(head)))
-    }
-}
+use spongefish::{Encoding, NargDeserialize, VerificationError, VerificationResult};
 
 /// Length-prefixed byte string. 8-byte LE length keeps `BytesMsg(a) ; BytesMsg(b)`
 /// distinguishable from `BytesMsg(a||b)`.
@@ -119,16 +60,6 @@ impl NargDeserialize for BytesMsg {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Fr;
-
-    #[test]
-    fn fr_le_bytes_round_trip() {
-        for i in 0u64..32 {
-            let f = Fr::from(i.wrapping_mul(0x9E37_79B9_7F4A_7C15));
-            let bytes = f.to_bytes_le_vec();
-            assert_eq!(Fr::from_le_bytes_mod_order(&bytes), f);
-        }
-    }
 
     #[test]
     fn bytes_msg_is_length_prefixed() {

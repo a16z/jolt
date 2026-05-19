@@ -21,7 +21,7 @@ transcript-poseidon = ["dep:light-poseidon"]
 ark-bn254.workspace = true
 ark-ff.workspace = true
 light-poseidon = { workspace = true, optional = true }
-spongefish = { workspace = true }
+spongefish = { workspace = true, features = ["ark-ff"] }
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
 rand.workspace = true
 

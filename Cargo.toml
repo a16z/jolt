@@ -161,12 +161,12 @@ lto = "fat"
 strip = false
 codegen-units = 1
 
-[patch.crates-io]
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
+[replace]
+"ark-bn254:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+"ark-ff:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+"ark-ec:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+"ark-serialize:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+"allocative:0.3.4" = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
@@ -253,7 +253,7 @@ blake2 = "0.11.0-rc.6"
 blake3 = { version = "1.5.0" }
 light-poseidon = "0.4"
 digest = "0.11"
-spongefish = { version = "0.7", default-features = false, features = ["sha3"] }
+spongefish = { version = "0.6.1", default-features = false, features = ["sha3"] }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 dory = { package = "dory-pcs", version = "0.3.0", features = [
   "backends",
