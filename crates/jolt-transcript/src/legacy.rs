@@ -66,7 +66,7 @@ pub trait Transcript: Default + Sync + Send + 'static {
 
     /// Enables transcript comparison for tests; mirrors upstream's signature.
     /// Spongefish sponges have no replayable state history, so this is a
-    /// no-op on the compat facade — call sites already only use it under
+    /// no-op on the legacy facade — call sites already only use it under
     /// `#[cfg(test)]` for debugging digest-based transcripts.
     #[cfg(test)]
     fn compare_to(&mut self, _other: &Self) {}
@@ -137,7 +137,7 @@ impl AppendToTranscript for U64Word {
 
 /// Sponge-backed transcript driving a duplex sponge directly.
 ///
-/// The compat facade does not produce or consume a NARG byte string —
+/// The legacy facade does not produce or consume a NARG byte string —
 /// existing modular consumers only call `append_bytes` / `challenge` /
 /// `state`. New code should use [`crate::ProverTranscript`] /
 /// [`crate::VerifierTranscript`] instead.
@@ -204,10 +204,10 @@ where
     fn append_bytes(&mut self, bytes: &[u8]) {
         // 1-byte non-zero domain marker + 8-byte LE length + body.
         //
-        // The marker sub-domain-separates compat-facade `append_bytes` calls
+        // The marker sub-domain-separates legacy-facade `append_bytes` calls
         // from spongefish-native `public_message` / `prover_message` calls on
         // the same sponge type, so a future protocol that mixes both paths
-        // can't have a compat append collide with a spongefish-native
+        // can't have a legacy append collide with a spongefish-native
         // BytesMsg of the same body. The length prefix keeps
         // `append_bytes(a) ; append_bytes(b)` distinct from
         // `append_bytes(a || b)`.
@@ -224,7 +224,7 @@ where
         // Poseidon — even though the split-trait surface (`OptimizedChallenge`,
         // see `prover.rs:53-55`) deliberately makes 128-bit challenges a
         // compile error on Poseidon-backed states. The two surfaces
-        // disagree on purpose: the compat facade preserves the legacy
+        // disagree on purpose: the legacy facade preserves the legacy
         // jolt-core challenge width for in-flight consumers (jolt-sumcheck,
         // jolt-openings, jolt-crypto). Once those migrate to the split-trait
         // surface this facade goes away and the inconsistency with it.

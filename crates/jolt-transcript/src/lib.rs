@@ -18,7 +18,7 @@
 #![deny(missing_docs)]
 
 mod codec;
-mod compat;
+mod legacy;
 #[cfg(feature = "transcript-poseidon")]
 mod poseidon;
 mod prover;
@@ -26,7 +26,7 @@ mod setup;
 mod verifier;
 
 pub use codec::{BytesMsg, FieldEl};
-pub use compat::{
+pub use legacy::{
     AppendToTranscript, Label, LabelWithCount, SpongeTranscript, Transcript, U64Word, MAX_LABEL_LEN,
 };
 pub use setup::{to_prover, to_verifier, EmptyInstance, PROTOCOL_ID};
@@ -35,7 +35,7 @@ pub use setup::{to_prover, to_verifier, EmptyInstance, PROTOCOL_ID};
 /// under their `jolt_transcript::domain::*` path (matches the path used
 /// by jolt-dory and earlier modular consumers).
 pub mod domain {
-    pub use crate::compat::{Label, LabelWithCount, U64Word};
+    pub use crate::legacy::{Label, LabelWithCount, U64Word};
 }
 
 #[cfg(feature = "transcript-poseidon")]
