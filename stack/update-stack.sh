@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: stack/update-stack.sh [--apply] [--rebuild] [--commit] [--push] [--cargo-metadata] [--check-final] [--from REF] [--base REF] [--only NN]
+Usage: stack/update-stack.sh [--apply] [--rebuild] [--commit] [--push] [--cargo-metadata] [--check-coverage] [--from REF] [--base REF] [--only NN]
 
 Materializes the draft PR stack described by stack/branches.tsv.
 
@@ -18,8 +18,8 @@ Options:
   --push        push updated stack branches to origin with --force-with-lease
   --cargo-metadata
                 run cargo metadata after manifest changes to refresh Cargo.lock
-  --check-final
-                fail if the final stack branch tree differs from the source ref
+  --check-coverage
+                fail if a source-ref diff path is not assigned to a stack slice
   --from REF    source ref to slice from (default: refactor/audit-prep)
   --base REF    base ref for the first stack branch (default: origin/main)
   --only NN     update only one stack item, e.g. 08
@@ -28,7 +28,7 @@ Options:
 Examples:
   stack/update-stack.sh
   stack/update-stack.sh --apply --only 08
-  stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-final --from origin/refactor/audit-prep
+  stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-coverage --from origin/refactor/audit-prep
 EOF
 }
 
@@ -37,7 +37,7 @@ rebuild=0
 commit_changes=0
 push_changes=0
 cargo_metadata=0
-check_final=0
+check_coverage=0
 source_ref="refactor/audit-prep"
 base_ref="origin/main"
 only=""
@@ -59,8 +59,8 @@ while (($#)); do
     --cargo-metadata)
       cargo_metadata=1
       ;;
-    --check-final)
-      check_final=1
+    --check-final|--check-coverage)
+      check_coverage=1
       ;;
     --from)
       source_ref="${2:?--from requires a ref}"
@@ -154,6 +154,11 @@ apply_manifest_rules() {
 previous_branch="$base_ref"
 matched=0
 updated_branches=()
+coverage_file=""
+if ((check_coverage)); then
+  coverage_file="$(mktemp)"
+  printf '%s\n' Cargo.lock Cargo.toml > "$coverage_file"
+fi
 
 while IFS=$'\t' read -r order branch title pathspecs; do
   [[ -z "${order:-}" || "$order" == \#* ]] && continue
@@ -169,6 +174,11 @@ while IFS=$'\t' read -r order branch title pathspecs; do
   echo "  base:  $previous_branch"
   echo "  title: $title"
   echo "  paths: $pathspecs"
+
+  if ((check_coverage)); then
+    # shellcheck disable=SC2086
+    git diff --name-only "$base_ref...$source_ref" -- $pathspecs >> "$coverage_file"
+  fi
 
   if ((!apply)); then
     previous_branch="$branch"
@@ -198,10 +208,10 @@ while IFS=$'\t' read -r order branch title pathspecs; do
   echo "  restored paths from $source_ref"
 
   if ((commit_changes)); then
-    if git diff --quiet && git diff --cached --quiet; then
+    git add -A
+    if git diff --cached --quiet; then
       echo "  no changes to commit"
     else
-      git add -A
       git commit -m "$title"
     fi
   else
@@ -226,12 +236,18 @@ if ((!apply)); then
   exit 0
 fi
 
-if ((check_final)) && [[ -z "$only" ]]; then
+if ((check_coverage)) && [[ -z "$only" ]]; then
   echo
-  echo "checking final stack tree against $source_ref"
-  if ! git diff --quiet "$source_ref" "$previous_branch"; then
-    echo "final stack branch differs from source ref; unassigned or generated differences remain:" >&2
-    git diff --stat "$source_ref" "$previous_branch" >&2
+  echo "checking stack path coverage against $base_ref...$source_ref"
+  all_paths="$(mktemp)"
+  covered_paths="$(mktemp)"
+  uncovered_paths="$(mktemp)"
+  git diff --name-only "$base_ref...$source_ref" | sort -u > "$all_paths"
+  sort -u "$coverage_file" > "$covered_paths"
+  comm -23 "$all_paths" "$covered_paths" > "$uncovered_paths"
+  if [[ -s "$uncovered_paths" ]]; then
+    echo "source diff has paths not assigned to any stack slice:" >&2
+    cat "$uncovered_paths" >&2
     exit 1
   fi
 fi

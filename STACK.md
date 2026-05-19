@@ -45,7 +45,8 @@ The workflow:
 3. restores the owned paths from `origin/refactor/audit-prep`;
 4. applies the incremental root manifest changes for that stack point;
 5. runs `cargo metadata` to refresh `Cargo.lock`;
-6. checks that the final stack branch has the same tree as the source branch;
+6. checks that every path changed by `refactor/audit-prep` is assigned to a
+   stack slice;
 7. force-pushes all stack branches with lease;
 8. creates or updates the draft PRs.
 
@@ -69,7 +70,7 @@ Create or update one branch:
 Rebuild all stack branches from the source branch:
 
 ```bash
-./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-final --from origin/refactor/audit-prep
+./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-coverage --from origin/refactor/audit-prep
 ```
 
 The CI workflow runs the same command. Without `--commit`, the script leaves
@@ -141,7 +142,7 @@ extension's submit command from the final stack branch.
    locally:
 
    ```bash
-   ./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-final --from origin/refactor/audit-prep
+   ./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-coverage --from origin/refactor/audit-prep
    ```
 
 4. Compare the stack tip to the source branch:

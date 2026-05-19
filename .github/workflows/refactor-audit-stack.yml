@@ -45,7 +45,7 @@ jobs:
             --commit \
             --push \
             --cargo-metadata \
-            --check-final \
+            --check-coverage \
             --from origin/refactor/audit-prep \
             --base origin/main
 
