@@ -98,7 +98,7 @@ where
     transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, claim);
 }
 
-pub use batched_verifier::BatchedSumcheckVerifier;
+pub use batched_verifier::{BatchedEvaluationClaim, BatchedSumcheckVerifier};
 pub use claim::{EvaluationClaim, SumcheckClaim, SumcheckShape};
 pub use committed::{
     CommittedOutputClaims, CommittedRound, CommittedRoundWitness, CommittedSumcheckCheck,

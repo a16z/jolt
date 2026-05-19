@@ -5,12 +5,35 @@ use std::collections::BTreeMap;
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 use crate::compat::ids as legacy;
-use crate::proof::JoltProof;
-use jolt_claims::protocols::jolt as native;
-use jolt_crypto::VectorCommitment;
+use crate::{
+    proof::{JoltProof, JoltProofClaims, TransparentProofClaims},
+    stages::{
+        stage1::inputs::{SpartanOuterClaims, SpartanOuterFlagClaims, Stage1Claims},
+        stage2::inputs::{
+            InstructionClaimReductionOutputOpeningClaims, ProductRemainderOutputOpeningClaims,
+            RamReadWriteOutputOpeningClaims, Stage2BatchOutputOpeningClaims, Stage2Claims,
+        },
+    },
+    VerifierError,
+};
 #[cfg(any(feature = "jolt-core-compat", test))]
+use jolt_claims::protocols::jolt::formulas::spartan::SpartanOuterDimensions;
+use jolt_claims::protocols::jolt::{
+    self as native,
+    formulas::{
+        claim_reductions::instruction as instruction_claim_reduction,
+        ram,
+        spartan::{
+            outer_opening, outer_uniskip_opening, product_remainder_output_openings,
+            product_uniskip_opening,
+        },
+    },
+    JoltVirtualPolynomial,
+};
+use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
+use jolt_riscv::CircuitFlags;
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -28,24 +51,160 @@ pub(crate) fn native_opening_claims_from_legacy<F: Field>(
         .collect()
 }
 
+#[cfg(any(feature = "jolt-core-compat", test))]
+#[cfg_attr(
+    not(feature = "jolt-core-compat"),
+    expect(
+        dead_code,
+        reason = "used by the optional jolt-core compatibility conversion feature"
+    )
+)]
+pub(crate) fn transparent_claims_from_legacy<F: Field>(
+    claims: LegacyOpeningClaims<F>,
+    trace_length: usize,
+) -> Result<TransparentProofClaims<F>, VerifierError> {
+    transparent_claims_from_native(native_opening_claims_from_legacy(claims), trace_length)
+}
+
+pub(crate) fn transparent_claims_from_native<F: Field>(
+    claims: impl IntoIterator<Item = (native::JoltOpeningId, F)>,
+    _trace_length: usize,
+) -> Result<TransparentProofClaims<F>, VerifierError> {
+    let claims = NativeOpeningClaims {
+        claims: claims.into_iter().collect(),
+    };
+    Ok(TransparentProofClaims {
+        stage1: Stage1Claims {
+            uniskip_output_claim: claims.require(outer_uniskip_opening())?,
+            outer: spartan_outer_claims_from_native(&claims)?,
+        },
+        stage2: stage2_claims_from_native(&claims)?,
+    })
+}
+
+fn spartan_outer_claims_from_native<F: Field>(
+    claims: &NativeOpeningClaims<F>,
+) -> Result<SpartanOuterClaims<F>, VerifierError> {
+    let outer_claim = |variable| claims.require(outer_opening(variable));
+    let flag_claim = |flag| outer_claim(JoltVirtualPolynomial::OpFlags(flag));
+
+    Ok(SpartanOuterClaims {
+        left_instruction_input: outer_claim(JoltVirtualPolynomial::LeftInstructionInput)?,
+        right_instruction_input: outer_claim(JoltVirtualPolynomial::RightInstructionInput)?,
+        product: outer_claim(JoltVirtualPolynomial::Product)?,
+        should_branch: outer_claim(JoltVirtualPolynomial::ShouldBranch)?,
+        pc: outer_claim(JoltVirtualPolynomial::PC)?,
+        unexpanded_pc: outer_claim(JoltVirtualPolynomial::UnexpandedPC)?,
+        imm: outer_claim(JoltVirtualPolynomial::Imm)?,
+        ram_address: outer_claim(JoltVirtualPolynomial::RamAddress)?,
+        rs1_value: outer_claim(JoltVirtualPolynomial::Rs1Value)?,
+        rs2_value: outer_claim(JoltVirtualPolynomial::Rs2Value)?,
+        rd_write_value: outer_claim(JoltVirtualPolynomial::RdWriteValue)?,
+        ram_read_value: outer_claim(JoltVirtualPolynomial::RamReadValue)?,
+        ram_write_value: outer_claim(JoltVirtualPolynomial::RamWriteValue)?,
+        left_lookup_operand: outer_claim(JoltVirtualPolynomial::LeftLookupOperand)?,
+        right_lookup_operand: outer_claim(JoltVirtualPolynomial::RightLookupOperand)?,
+        next_unexpanded_pc: outer_claim(JoltVirtualPolynomial::NextUnexpandedPC)?,
+        next_pc: outer_claim(JoltVirtualPolynomial::NextPC)?,
+        next_is_virtual: outer_claim(JoltVirtualPolynomial::NextIsVirtual)?,
+        next_is_first_in_sequence: outer_claim(JoltVirtualPolynomial::NextIsFirstInSequence)?,
+        lookup_output: outer_claim(JoltVirtualPolynomial::LookupOutput)?,
+        should_jump: outer_claim(JoltVirtualPolynomial::ShouldJump)?,
+        flags: SpartanOuterFlagClaims {
+            add_operands: flag_claim(CircuitFlags::AddOperands)?,
+            subtract_operands: flag_claim(CircuitFlags::SubtractOperands)?,
+            multiply_operands: flag_claim(CircuitFlags::MultiplyOperands)?,
+            load: flag_claim(CircuitFlags::Load)?,
+            store: flag_claim(CircuitFlags::Store)?,
+            jump: flag_claim(CircuitFlags::Jump)?,
+            write_lookup_output_to_rd: flag_claim(CircuitFlags::WriteLookupOutputToRD)?,
+            virtual_instruction: flag_claim(CircuitFlags::VirtualInstruction)?,
+            assert: flag_claim(CircuitFlags::Assert)?,
+            do_not_update_unexpanded_pc: flag_claim(CircuitFlags::DoNotUpdateUnexpandedPC)?,
+            advice: flag_claim(CircuitFlags::Advice)?,
+            is_compressed: flag_claim(CircuitFlags::IsCompressed)?,
+            is_first_in_sequence: flag_claim(CircuitFlags::IsFirstInSequence)?,
+            is_last_in_sequence: flag_claim(CircuitFlags::IsLastInSequence)?,
+        },
+    })
+}
+
+fn stage2_claims_from_native<F: Field>(
+    claims: &NativeOpeningClaims<F>,
+) -> Result<Stage2Claims<F>, VerifierError> {
+    let [ram_val, ram_ra, ram_inc] = ram::read_write_checking_output_openings();
+    let [product_left_instruction_input, product_right_instruction_input, product_jump_flag, product_write_lookup_output_to_rd, product_lookup_output, product_branch_flag, product_next_is_noop, product_virtual_instruction] =
+        product_remainder_output_openings();
+    let [instruction_lookup_output, instruction_left_lookup_operand, instruction_right_lookup_operand, instruction_left_instruction_input, instruction_right_instruction_input] =
+        instruction_claim_reduction::claim_reduction_output_openings();
+    let [ram_ra_raf_evaluation] = ram::raf_evaluation_output_openings();
+    let [ram_val_final] = ram::output_check_output_openings();
+
+    Ok(Stage2Claims {
+        product_uniskip_output_claim: claims.require(product_uniskip_opening())?,
+        batch_outputs: Stage2BatchOutputOpeningClaims {
+            ram_read_write: RamReadWriteOutputOpeningClaims {
+                val: claims.get_or_zero(ram_val),
+                ra: claims.get_or_zero(ram_ra),
+                inc: claims.get_or_zero(ram_inc),
+            },
+            product_remainder: ProductRemainderOutputOpeningClaims {
+                left_instruction_input: claims.get_or_zero(product_left_instruction_input),
+                right_instruction_input: claims.get_or_zero(product_right_instruction_input),
+                jump_flag: claims.get_or_zero(product_jump_flag),
+                write_lookup_output_to_rd: claims.get_or_zero(product_write_lookup_output_to_rd),
+                lookup_output: claims.get_or_zero(product_lookup_output),
+                branch_flag: claims.get_or_zero(product_branch_flag),
+                next_is_noop: claims.get_or_zero(product_next_is_noop),
+                virtual_instruction: claims.get_or_zero(product_virtual_instruction),
+            },
+            instruction_claim_reduction: InstructionClaimReductionOutputOpeningClaims {
+                lookup_output: claims.get(instruction_lookup_output),
+                left_lookup_operand: claims.get_or_zero(instruction_left_lookup_operand),
+                right_lookup_operand: claims.get_or_zero(instruction_right_lookup_operand),
+                left_instruction_input: claims.get(instruction_left_instruction_input),
+                right_instruction_input: claims.get(instruction_right_instruction_input),
+            },
+            ram_raf_evaluation: claims.get_or_zero(ram_ra_raf_evaluation),
+            ram_output_check: claims.get_or_zero(ram_val_final),
+        },
+    })
+}
+
+#[derive(Clone, Debug)]
+struct NativeOpeningClaims<F: Field> {
+    claims: Vec<(native::JoltOpeningId, F)>,
+}
+
+impl<F: Field> NativeOpeningClaims<F> {
+    fn get(&self, id: native::JoltOpeningId) -> Option<F> {
+        self.claims
+            .iter()
+            .find_map(|&(claim_id, opening_claim)| (claim_id == id).then_some(opening_claim))
+    }
+
+    fn require(&self, id: native::JoltOpeningId) -> Result<F, VerifierError> {
+        self.get(id)
+            .ok_or(VerifierError::MissingOpeningClaim { id })
+    }
+
+    fn get_or_zero(&self, id: native::JoltOpeningId) -> F {
+        self.get(id).unwrap_or_else(F::zero)
+    }
+}
+
 #[doc(hidden)]
 pub fn attach_opening_claims<PCS, VC, ZkProof>(
     proof: &mut JoltProof<PCS, VC, ZkProof>,
     claims: impl IntoIterator<Item = (native::JoltOpeningId, PCS::Field)>,
-) where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
-{
-    proof.opening_claims = Some(claims.into_iter().collect());
-}
-
-#[doc(hidden)]
-pub fn clear_opening_claims<PCS, VC, ZkProof>(proof: &mut JoltProof<PCS, VC, ZkProof>)
+) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    proof.opening_claims = None;
+    proof.claims =
+        JoltProofClaims::Transparent(transparent_claims_from_native(claims, proof.trace_length)?);
+    Ok(())
 }
 
 #[doc(hidden)]
@@ -54,7 +213,441 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    proof.opening_claims = Some(Vec::new());
+    proof.claims = JoltProofClaims::Transparent(empty_transparent_claims(proof.trace_length));
+}
+
+fn empty_transparent_claims<F: Field>(_trace_length: usize) -> TransparentProofClaims<F> {
+    let zero = F::zero();
+
+    TransparentProofClaims {
+        stage1: Stage1Claims {
+            uniskip_output_claim: zero,
+            outer: empty_spartan_outer_claims(),
+        },
+        stage2: Stage2Claims {
+            product_uniskip_output_claim: zero,
+            batch_outputs: Stage2BatchOutputOpeningClaims {
+                ram_read_write: RamReadWriteOutputOpeningClaims {
+                    val: zero,
+                    ra: zero,
+                    inc: zero,
+                },
+                product_remainder: ProductRemainderOutputOpeningClaims {
+                    left_instruction_input: zero,
+                    right_instruction_input: zero,
+                    jump_flag: zero,
+                    write_lookup_output_to_rd: zero,
+                    lookup_output: zero,
+                    branch_flag: zero,
+                    next_is_noop: zero,
+                    virtual_instruction: zero,
+                },
+                instruction_claim_reduction: InstructionClaimReductionOutputOpeningClaims {
+                    lookup_output: None,
+                    left_lookup_operand: zero,
+                    right_lookup_operand: zero,
+                    left_instruction_input: None,
+                    right_instruction_input: None,
+                },
+                ram_raf_evaluation: zero,
+                ram_output_check: zero,
+            },
+        },
+    }
+}
+
+fn empty_spartan_outer_claims<F: Field>() -> SpartanOuterClaims<F> {
+    let zero = F::zero();
+
+    SpartanOuterClaims {
+        left_instruction_input: zero,
+        right_instruction_input: zero,
+        product: zero,
+        should_branch: zero,
+        pc: zero,
+        unexpanded_pc: zero,
+        imm: zero,
+        ram_address: zero,
+        rs1_value: zero,
+        rs2_value: zero,
+        rd_write_value: zero,
+        ram_read_value: zero,
+        ram_write_value: zero,
+        left_lookup_operand: zero,
+        right_lookup_operand: zero,
+        next_unexpanded_pc: zero,
+        next_pc: zero,
+        next_is_virtual: zero,
+        next_is_first_in_sequence: zero,
+        lookup_output: zero,
+        should_jump: zero,
+        flags: SpartanOuterFlagClaims {
+            add_operands: zero,
+            subtract_operands: zero,
+            multiply_operands: zero,
+            load: zero,
+            store: zero,
+            jump: zero,
+            write_lookup_output_to_rd: zero,
+            virtual_instruction: zero,
+            assert: zero,
+            do_not_update_unexpanded_pc: zero,
+            advice: zero,
+            is_compressed: zero,
+            is_first_in_sequence: zero,
+            is_last_in_sequence: zero,
+        },
+    }
+}
+
+#[doc(hidden)]
+#[cfg(any(feature = "jolt-core-compat", test))]
+pub fn offset_opening_claim<PCS, VC, ZkProof>(
+    proof: &mut JoltProof<PCS, VC, ZkProof>,
+    id: native::JoltOpeningId,
+    delta: PCS::Field,
+) -> bool
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    let Some(opening_claim) = claim_mut(proof, id) else {
+        return false;
+    };
+    *opening_claim += delta;
+    true
+}
+
+#[doc(hidden)]
+#[cfg(any(feature = "jolt-core-compat", test))]
+pub fn upsert_opening_claim<PCS, VC, ZkProof>(
+    proof: &mut JoltProof<PCS, VC, ZkProof>,
+    id: native::JoltOpeningId,
+    opening_claim: PCS::Field,
+) where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    let _ = set_claim(proof, id, opening_claim);
+}
+
+#[doc(hidden)]
+#[cfg(any(feature = "jolt-core-compat", test))]
+pub fn opening_claim<PCS, VC, ZkProof>(
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    id: native::JoltOpeningId,
+) -> Option<PCS::Field>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    claim(proof, id)
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn claim<PCS, VC, ZkProof>(
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    id: native::JoltOpeningId,
+) -> Option<PCS::Field>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    let JoltProofClaims::Transparent(claims) = &proof.claims else {
+        return None;
+    };
+
+    claim_from_transparent(claims, proof.trace_length, id)
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn claim_mut<PCS, VC, ZkProof>(
+    proof: &mut JoltProof<PCS, VC, ZkProof>,
+    id: native::JoltOpeningId,
+) -> Option<&mut PCS::Field>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    let JoltProofClaims::Transparent(claims) = &mut proof.claims else {
+        return None;
+    };
+
+    claim_mut_from_transparent(claims, proof.trace_length, id)
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn set_claim<PCS, VC, ZkProof>(
+    proof: &mut JoltProof<PCS, VC, ZkProof>,
+    id: native::JoltOpeningId,
+    opening_claim: PCS::Field,
+) -> bool
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    let JoltProofClaims::Transparent(claims) = &mut proof.claims else {
+        return false;
+    };
+
+    set_claim_in_transparent(claims, proof.trace_length, id, opening_claim)
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn claim_from_transparent<F: Field>(
+    claims: &TransparentProofClaims<F>,
+    trace_length: usize,
+    id: native::JoltOpeningId,
+) -> Option<F> {
+    if id == outer_uniskip_opening() {
+        return Some(claims.stage1.uniskip_output_claim);
+    }
+    if let Some(variable) = stage1_outer_variable(trace_length, id) {
+        return claims.stage1.outer.claim(variable);
+    }
+    if id == product_uniskip_opening() {
+        return Some(claims.stage2.product_uniskip_output_claim);
+    }
+
+    claim_from_stage2_batch_outputs(&claims.stage2.batch_outputs, id)
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn claim_mut_from_transparent<F: Field>(
+    claims: &mut TransparentProofClaims<F>,
+    trace_length: usize,
+    id: native::JoltOpeningId,
+) -> Option<&mut F> {
+    if id == outer_uniskip_opening() {
+        return Some(&mut claims.stage1.uniskip_output_claim);
+    }
+    if let Some(variable) = stage1_outer_variable(trace_length, id) {
+        return claim_mut_from_spartan_outer(&mut claims.stage1.outer, variable);
+    }
+    if id == product_uniskip_opening() {
+        return Some(&mut claims.stage2.product_uniskip_output_claim);
+    }
+
+    claim_mut_from_stage2_batch_outputs(&mut claims.stage2.batch_outputs, id)
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn claim_mut_from_spartan_outer<F: Field>(
+    claims: &mut SpartanOuterClaims<F>,
+    variable: JoltVirtualPolynomial,
+) -> Option<&mut F> {
+    match variable {
+        JoltVirtualPolynomial::LeftInstructionInput => Some(&mut claims.left_instruction_input),
+        JoltVirtualPolynomial::RightInstructionInput => Some(&mut claims.right_instruction_input),
+        JoltVirtualPolynomial::Product => Some(&mut claims.product),
+        JoltVirtualPolynomial::ShouldBranch => Some(&mut claims.should_branch),
+        JoltVirtualPolynomial::PC => Some(&mut claims.pc),
+        JoltVirtualPolynomial::UnexpandedPC => Some(&mut claims.unexpanded_pc),
+        JoltVirtualPolynomial::Imm => Some(&mut claims.imm),
+        JoltVirtualPolynomial::RamAddress => Some(&mut claims.ram_address),
+        JoltVirtualPolynomial::Rs1Value => Some(&mut claims.rs1_value),
+        JoltVirtualPolynomial::Rs2Value => Some(&mut claims.rs2_value),
+        JoltVirtualPolynomial::RdWriteValue => Some(&mut claims.rd_write_value),
+        JoltVirtualPolynomial::RamReadValue => Some(&mut claims.ram_read_value),
+        JoltVirtualPolynomial::RamWriteValue => Some(&mut claims.ram_write_value),
+        JoltVirtualPolynomial::LeftLookupOperand => Some(&mut claims.left_lookup_operand),
+        JoltVirtualPolynomial::RightLookupOperand => Some(&mut claims.right_lookup_operand),
+        JoltVirtualPolynomial::NextUnexpandedPC => Some(&mut claims.next_unexpanded_pc),
+        JoltVirtualPolynomial::NextPC => Some(&mut claims.next_pc),
+        JoltVirtualPolynomial::NextIsVirtual => Some(&mut claims.next_is_virtual),
+        JoltVirtualPolynomial::NextIsFirstInSequence => Some(&mut claims.next_is_first_in_sequence),
+        JoltVirtualPolynomial::LookupOutput => Some(&mut claims.lookup_output),
+        JoltVirtualPolynomial::ShouldJump => Some(&mut claims.should_jump),
+        JoltVirtualPolynomial::OpFlags(flag) => {
+            claim_mut_from_spartan_outer_flag(&mut claims.flags, flag)
+        }
+        _ => None,
+    }
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn claim_mut_from_spartan_outer_flag<F: Field>(
+    claims: &mut SpartanOuterFlagClaims<F>,
+    flag: CircuitFlags,
+) -> Option<&mut F> {
+    match flag {
+        CircuitFlags::AddOperands => Some(&mut claims.add_operands),
+        CircuitFlags::SubtractOperands => Some(&mut claims.subtract_operands),
+        CircuitFlags::MultiplyOperands => Some(&mut claims.multiply_operands),
+        CircuitFlags::Load => Some(&mut claims.load),
+        CircuitFlags::Store => Some(&mut claims.store),
+        CircuitFlags::Jump => Some(&mut claims.jump),
+        CircuitFlags::WriteLookupOutputToRD => Some(&mut claims.write_lookup_output_to_rd),
+        CircuitFlags::VirtualInstruction => Some(&mut claims.virtual_instruction),
+        CircuitFlags::Assert => Some(&mut claims.assert),
+        CircuitFlags::DoNotUpdateUnexpandedPC => Some(&mut claims.do_not_update_unexpanded_pc),
+        CircuitFlags::Advice => Some(&mut claims.advice),
+        CircuitFlags::IsCompressed => Some(&mut claims.is_compressed),
+        CircuitFlags::IsFirstInSequence => Some(&mut claims.is_first_in_sequence),
+        CircuitFlags::IsLastInSequence => Some(&mut claims.is_last_in_sequence),
+    }
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn set_claim_in_transparent<F: Field>(
+    claims: &mut TransparentProofClaims<F>,
+    trace_length: usize,
+    id: native::JoltOpeningId,
+    opening_claim: F,
+) -> bool {
+    if let Some(claim) = claim_mut_from_transparent(claims, trace_length, id) {
+        *claim = opening_claim;
+        return true;
+    }
+
+    set_optional_stage2_batch_output(&mut claims.stage2.batch_outputs, id, opening_claim)
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn stage1_outer_variable(
+    trace_length: usize,
+    id: native::JoltOpeningId,
+) -> Option<JoltVirtualPolynomial> {
+    let log_t = trace_length.ilog2() as usize;
+    SpartanOuterDimensions::rv64(log_t)
+        .variables()
+        .iter()
+        .copied()
+        .find(|variable| id == outer_opening(*variable))
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn claim_from_stage2_batch_outputs<F: Field>(
+    claims: &Stage2BatchOutputOpeningClaims<F>,
+    id: native::JoltOpeningId,
+) -> Option<F> {
+    let [ram_val, ram_ra, ram_inc] = ram::read_write_checking_output_openings();
+    let [product_left_instruction_input, product_right_instruction_input, product_jump_flag, product_write_lookup_output_to_rd, product_lookup_output, product_branch_flag, product_next_is_noop, product_virtual_instruction] =
+        product_remainder_output_openings();
+    let [instruction_lookup_output, instruction_left_lookup_operand, instruction_right_lookup_operand, instruction_left_instruction_input, instruction_right_instruction_input] =
+        instruction_claim_reduction::claim_reduction_output_openings();
+    let [ram_ra_raf_evaluation] = ram::raf_evaluation_output_openings();
+    let [ram_val_final] = ram::output_check_output_openings();
+
+    match id {
+        id if id == ram_val => Some(claims.ram_read_write.val),
+        id if id == ram_ra => Some(claims.ram_read_write.ra),
+        id if id == ram_inc => Some(claims.ram_read_write.inc),
+        id if id == product_left_instruction_input => {
+            Some(claims.product_remainder.left_instruction_input)
+        }
+        id if id == product_right_instruction_input => {
+            Some(claims.product_remainder.right_instruction_input)
+        }
+        id if id == product_jump_flag => Some(claims.product_remainder.jump_flag),
+        id if id == product_write_lookup_output_to_rd => {
+            Some(claims.product_remainder.write_lookup_output_to_rd)
+        }
+        id if id == product_lookup_output => Some(claims.product_remainder.lookup_output),
+        id if id == product_branch_flag => Some(claims.product_remainder.branch_flag),
+        id if id == product_next_is_noop => Some(claims.product_remainder.next_is_noop),
+        id if id == product_virtual_instruction => {
+            Some(claims.product_remainder.virtual_instruction)
+        }
+        id if id == instruction_lookup_output => claims.instruction_claim_reduction.lookup_output,
+        id if id == instruction_left_lookup_operand => {
+            Some(claims.instruction_claim_reduction.left_lookup_operand)
+        }
+        id if id == instruction_right_lookup_operand => {
+            Some(claims.instruction_claim_reduction.right_lookup_operand)
+        }
+        id if id == instruction_left_instruction_input => {
+            claims.instruction_claim_reduction.left_instruction_input
+        }
+        id if id == instruction_right_instruction_input => {
+            claims.instruction_claim_reduction.right_instruction_input
+        }
+        id if id == ram_ra_raf_evaluation => Some(claims.ram_raf_evaluation),
+        id if id == ram_val_final => Some(claims.ram_output_check),
+        _ => None,
+    }
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn claim_mut_from_stage2_batch_outputs<F: Field>(
+    claims: &mut Stage2BatchOutputOpeningClaims<F>,
+    id: native::JoltOpeningId,
+) -> Option<&mut F> {
+    let [ram_val, ram_ra, ram_inc] = ram::read_write_checking_output_openings();
+    let [product_left_instruction_input, product_right_instruction_input, product_jump_flag, product_write_lookup_output_to_rd, product_lookup_output, product_branch_flag, product_next_is_noop, product_virtual_instruction] =
+        product_remainder_output_openings();
+    let [instruction_lookup_output, instruction_left_lookup_operand, instruction_right_lookup_operand, instruction_left_instruction_input, instruction_right_instruction_input] =
+        instruction_claim_reduction::claim_reduction_output_openings();
+    let [ram_ra_raf_evaluation] = ram::raf_evaluation_output_openings();
+    let [ram_val_final] = ram::output_check_output_openings();
+
+    match id {
+        id if id == ram_val => Some(&mut claims.ram_read_write.val),
+        id if id == ram_ra => Some(&mut claims.ram_read_write.ra),
+        id if id == ram_inc => Some(&mut claims.ram_read_write.inc),
+        id if id == product_left_instruction_input => {
+            Some(&mut claims.product_remainder.left_instruction_input)
+        }
+        id if id == product_right_instruction_input => {
+            Some(&mut claims.product_remainder.right_instruction_input)
+        }
+        id if id == product_jump_flag => Some(&mut claims.product_remainder.jump_flag),
+        id if id == product_write_lookup_output_to_rd => {
+            Some(&mut claims.product_remainder.write_lookup_output_to_rd)
+        }
+        id if id == product_lookup_output => Some(&mut claims.product_remainder.lookup_output),
+        id if id == product_branch_flag => Some(&mut claims.product_remainder.branch_flag),
+        id if id == product_next_is_noop => Some(&mut claims.product_remainder.next_is_noop),
+        id if id == product_virtual_instruction => {
+            Some(&mut claims.product_remainder.virtual_instruction)
+        }
+        id if id == instruction_lookup_output => {
+            claims.instruction_claim_reduction.lookup_output.as_mut()
+        }
+        id if id == instruction_left_lookup_operand => {
+            Some(&mut claims.instruction_claim_reduction.left_lookup_operand)
+        }
+        id if id == instruction_right_lookup_operand => {
+            Some(&mut claims.instruction_claim_reduction.right_lookup_operand)
+        }
+        id if id == instruction_left_instruction_input => claims
+            .instruction_claim_reduction
+            .left_instruction_input
+            .as_mut(),
+        id if id == instruction_right_instruction_input => claims
+            .instruction_claim_reduction
+            .right_instruction_input
+            .as_mut(),
+        id if id == ram_ra_raf_evaluation => Some(&mut claims.ram_raf_evaluation),
+        id if id == ram_val_final => Some(&mut claims.ram_output_check),
+        _ => None,
+    }
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn set_optional_stage2_batch_output<F: Field>(
+    claims: &mut Stage2BatchOutputOpeningClaims<F>,
+    id: native::JoltOpeningId,
+    opening_claim: F,
+) -> bool {
+    let [instruction_lookup_output, _, _, instruction_left_instruction_input, instruction_right_instruction_input] =
+        instruction_claim_reduction::claim_reduction_output_openings();
+
+    match id {
+        id if id == instruction_lookup_output => {
+            claims.instruction_claim_reduction.lookup_output = Some(opening_claim);
+            true
+        }
+        id if id == instruction_left_instruction_input => {
+            claims.instruction_claim_reduction.left_instruction_input = Some(opening_claim);
+            true
+        }
+        id if id == instruction_right_instruction_input => {
+            claims.instruction_claim_reduction.right_instruction_input = Some(opening_claim);
+            true
+        }
+        _ => false,
+    }
 }
 
 #[cfg(any(feature = "jolt-core-compat", test))]

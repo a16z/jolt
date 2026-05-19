@@ -62,6 +62,7 @@ type TrustedAdviceCommitter = fn(
 ) -> (CoreCommitment, CoreOpeningHint);
 
 #[cfg(not(feature = "zk"))]
+#[derive(Clone)]
 pub struct CoreVerifierCase {
     pub preprocessing: ConvertedPreprocessing,
     pub public_io: JoltDevice,
@@ -83,6 +84,7 @@ impl CoreVerifierCase {
 }
 
 #[cfg(feature = "zk")]
+#[derive(Clone)]
 pub struct CoreZkVerifierCase {
     pub preprocessing: ConvertedPreprocessing,
     pub public_io: JoltDevice,

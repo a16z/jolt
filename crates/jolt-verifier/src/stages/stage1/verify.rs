@@ -1,12 +1,9 @@
-//! Stage 1 Spartan outer verifier.
-
 use jolt_claims::protocols::jolt::{
-    formulas::spartan::{outer_opening, outer_uniskip_opening, SpartanOuterDimensions},
-    JoltStageId, JoltSumcheckDomain,
+    formulas::spartan::SpartanOuterDimensions, JoltStageId, JoltSumcheckDomain,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_field::{Field, FromPrimitiveInt};
-use jolt_openings::{append_opening_claim, CommitmentScheme};
+use jolt_field::FromPrimitiveInt;
+use jolt_openings::CommitmentScheme;
 use jolt_r1cs::constraints::rv64::Rv64SpartanOuterRemainder;
 use jolt_sumcheck::{
     append_sumcheck_claim, BooleanHypercube, CenteredIntegerDomain, ClearProof, LabeledRoundPoly,
@@ -14,27 +11,11 @@ use jolt_sumcheck::{
 };
 use jolt_transcript::Transcript;
 
+use super::outputs::{Stage1Output, VerifiedSpartanOuterSumcheck};
 use crate::{
     preprocessing::JoltVerifierPreprocessing, proof::JoltProof, verifier::CheckedInputs,
     VerifierError,
 };
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage1Output<F: Field> {
-    pub uniskip_challenge: F,
-    pub remainder_batching_coefficient: F,
-    pub remainder_challenges: Vec<F>,
-    pub uniskip: VerifiedSpartanOuterSumcheck<F>,
-    pub remainder: VerifiedSpartanOuterSumcheck<F>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VerifiedSpartanOuterSumcheck<F: Field> {
-    pub input_claim: F,
-    pub sumcheck_point: jolt_poly::Point<F>,
-    pub sumcheck_final_claim: F,
-    pub expected_output_claim: F,
-}
 
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
@@ -52,29 +33,11 @@ where
     }
 
     let stage = JoltStageId::SpartanOuter;
-    let opening_claim_payload = proof
-        .opening_claims
-        .as_deref()
-        .ok_or(VerifierError::MissingOpeningClaims)?;
+    let claims = &proof.transparent_claims()?.stage1;
 
     let log_t = checked.trace_length.ilog2() as usize;
     let dimensions = SpartanOuterDimensions::rv64(log_t);
     let tau = transcript.challenge_vector(log_t + 2);
-    let opening_claim = |id| {
-        opening_claim_payload
-            .iter()
-            .find_map(|&(claim_id, opening_claim)| (claim_id == id).then_some(opening_claim))
-            .ok_or(VerifierError::MissingOpeningClaim { id })
-    };
-    let opening_claims = SpartanOuterOpeningClaims {
-        uniskip_claim: opening_claim(outer_uniskip_opening())?,
-        r1cs_input_claims: dimensions
-            .variables()
-            .iter()
-            .copied()
-            .map(|variable| opening_claim(outer_opening(variable)))
-            .collect::<Result<_, _>>()?,
-    };
 
     let uniskip_spec = dimensions.uniskip_sumcheck();
     if uniskip_spec.degree == 0 {
@@ -116,19 +79,19 @@ where
         stage,
         reason: error.to_string(),
     })?;
-    if uniskip_reduction.value != opening_claims.uniskip_claim {
+    if uniskip_reduction.value != claims.uniskip_output_claim {
         return Err(VerifierError::StageClaimOutputMismatch { stage });
     }
     let uniskip = VerifiedSpartanOuterSumcheck {
         input_claim: uniskip_input_claim,
         sumcheck_point: uniskip_reduction.point,
         sumcheck_final_claim: uniskip_reduction.value,
-        expected_output_claim: opening_claims.uniskip_claim,
+        expected_output_claim: claims.uniskip_output_claim,
     };
 
     // Core absorbs the uni-skip output as an opening claim before deriving the
     // batching challenge for the remainder sumcheck.
-    append_opening_claim(transcript, &uniskip.expected_output_claim);
+    transcript.append_labeled(b"opening_claim", &uniskip.expected_output_claim);
 
     let [uniskip_challenge] = uniskip.sumcheck_point.as_slice() else {
         return Err(VerifierError::StageClaimSumcheckFailed {
@@ -178,6 +141,7 @@ where
         stage,
         reason: error.to_string(),
     })?;
+    let r1cs_input_claims = claims.outer.r1cs_input_claims(&dimensions)?;
     let remainder_challenges = remainder_reduction.point.as_slice();
     let remainder_shape =
         Rv64SpartanOuterRemainder::new(&dimensions, &tau, uniskip_challenge, remainder_challenges)
@@ -186,7 +150,7 @@ where
                 reason: error.to_string(),
             })?;
     let expected_remainder_output_claim = remainder_shape
-        .expected_output_claim(&opening_claims.r1cs_input_claims)
+        .expected_output_claim(&r1cs_input_claims)
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
             stage,
             reason: error.to_string(),
@@ -201,8 +165,8 @@ where
         sumcheck_final_claim: remainder_reduction.value,
         expected_output_claim: expected_remainder_output_claim,
     };
-    for opening_claim in &opening_claims.r1cs_input_claims {
-        append_opening_claim(transcript, opening_claim);
+    for opening_claim in &r1cs_input_claims {
+        transcript.append_labeled(b"opening_claim", opening_claim);
     }
 
     Ok(Stage1Output {
@@ -211,11 +175,6 @@ where
         remainder_challenges: remainder.sumcheck_point.as_slice().to_vec(),
         uniskip,
         remainder,
+        outer: claims.outer.clone(),
     })
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct SpartanOuterOpeningClaims<F: Field> {
-    uniskip_claim: F,
-    r1cs_input_claims: Vec<F>,
 }

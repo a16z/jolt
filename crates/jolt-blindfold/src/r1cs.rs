@@ -1,7 +1,7 @@
 use jolt_field::Field;
 use jolt_r1cs::{assert_claim_expr_eq, ClaimSources, R1csBuilder, Variable};
 use jolt_sumcheck::{
-    allocate_sumcheck_r1cs_layout, append_sumcheck_r1cs_constraints, SumcheckR1csLayout,
+    append_sumcheck_r1cs_constraints, SumcheckR1csError, SumcheckR1csLayout,
     SumcheckR1csRoundLayout,
 };
 
@@ -118,24 +118,98 @@ where
         });
     }
 
-    let stages = claims
+    let coefficient_row_len = inputs
+        .stages
+        .iter()
+        .flat_map(|stage| &stage.check.rounds)
+        .map(|round| round.degree.saturating_add(1))
+        .max()
+        .unwrap_or(1)
+        .next_power_of_two();
+
+    let coefficients = claims
         .stages
         .iter()
         .zip(&inputs.stages)
         .enumerate()
         .map(|(stage_index, (stage, stage_input))| {
-            let sumcheck =
-                allocate_sumcheck_r1cs_layout(builder, stage.shape, &stage_input.check.rounds)
-                    .map_err(|source| LayoutError::Sumcheck {
-                        stage_index,
-                        source,
-                    })?;
-
-            Ok(StageLayout { sumcheck })
+            validate_stage_shape(stage.shape, &stage_input.check.rounds).map_err(|source| {
+                LayoutError::Sumcheck {
+                    stage_index,
+                    source,
+                }
+            })?;
+            Ok(stage_input
+                .check
+                .rounds
+                .iter()
+                .map(|round| {
+                    let coefficients = (0..=round.degree)
+                        .map(|_| builder.alloc_unknown())
+                        .collect::<Vec<_>>();
+                    for _ in coefficients.len()..coefficient_row_len {
+                        let _ = builder.alloc(F::zero());
+                    }
+                    coefficients
+                })
+                .collect::<Vec<_>>())
         })
         .collect::<Result<Vec<_>, _>>()?;
 
+    let stages = inputs
+        .stages
+        .iter()
+        .zip(coefficients)
+        .map(|(stage_input, stage_coefficients)| {
+            let input_claim = builder.alloc_unknown();
+            let mut claim_in = input_claim;
+            let mut rounds = Vec::with_capacity(stage_input.check.rounds.len());
+
+            for coefficients in stage_coefficients {
+                let claim_out = builder.alloc_unknown();
+                rounds.push(SumcheckR1csRoundLayout {
+                    claim_in,
+                    coefficients,
+                    claim_out,
+                });
+                claim_in = claim_out;
+            }
+
+            Ok(StageLayout {
+                sumcheck: SumcheckR1csLayout {
+                    input_claim,
+                    rounds,
+                    output_claim: claim_in,
+                },
+            })
+        })
+        .collect::<Result<Vec<_>, LayoutError>>()?;
+
     Ok(Layout { stages })
+}
+
+fn validate_stage_shape<F, C>(
+    shape: jolt_sumcheck::SumcheckShape,
+    rounds: &[jolt_sumcheck::VerifiedCommittedRound<F, C>],
+) -> Result<(), SumcheckR1csError> {
+    if shape.num_vars != rounds.len() {
+        return Err(SumcheckR1csError::WrongNumberOfRounds {
+            expected: shape.num_vars,
+            actual: rounds.len(),
+        });
+    }
+
+    for (round_index, round) in rounds.iter().enumerate() {
+        if round.degree > shape.degree {
+            return Err(SumcheckR1csError::DegreeBoundExceeded {
+                round_index,
+                bound: shape.degree,
+                actual: round.degree,
+            });
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_stage_counts<F, O, P, Ch, C>(
@@ -193,7 +267,7 @@ mod tests {
         )
     }
 
-    fn boundary_stage(
+    fn claim_stage(
         num_vars: usize,
         degree: usize,
         input_claim: Expr<Fr, Opening, Public>,
@@ -221,7 +295,7 @@ mod tests {
         })
     }
 
-    fn boundary_stage_input(rounds: &[(usize, u64)]) -> StageInput<Fr, ()> {
+    fn committed_stage_input(rounds: &[(usize, u64)]) -> StageInput<Fr, ()> {
         StageInput::new(CommittedSumcheckCheck {
             rounds: rounds
                 .iter()
@@ -341,7 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn lowers_boundary_claim_sources_and_sumcheck_constraints() {
+    fn lowers_claim_sources_and_sumcheck_constraints() {
         let mut builder = R1csBuilder::<Fr>::new();
         let input = builder.alloc(Fr::from_u64(3));
         let mut sources = ClaimSourceTable::<Fr, Opening, Public>::new();
@@ -349,13 +423,13 @@ mod tests {
         sources.insert_challenge(0, Fr::from_u64(4));
         sources.insert_public(Public::Scale, Fr::from_u64(2));
 
-        let claims = InstanceClaims::new(vec![boundary_stage(
+        let claims = InstanceClaims::new(vec![claim_stage(
             1,
             1,
             opening(Opening::Input) * public(Public::Scale) + challenge(0),
             constant(Fr::from_u64(11)),
         )]);
-        let inputs = Inputs::new(vec![boundary_stage_input(&[(1, 2)])]);
+        let inputs = Inputs::new(vec![committed_stage_input(&[(1, 2)])]);
 
         let layout =
             build(&mut builder, &claims, &inputs, &mut sources).expect("constraints should build");
@@ -369,14 +443,14 @@ mod tests {
     }
 
     #[test]
-    fn reports_missing_boundary_source() {
-        let claims = InstanceClaims::new(vec![boundary_stage(
+    fn reports_missing_claim_source() {
+        let claims = InstanceClaims::new(vec![claim_stage(
             0,
             1,
             opening(Opening::Input),
             constant(Fr::from_u64(0)),
         )]);
-        let inputs = Inputs::new(vec![boundary_stage_input(&[])]);
+        let inputs = Inputs::new(vec![committed_stage_input(&[])]);
         let mut builder = R1csBuilder::<Fr>::new();
         let mut sources = ClaimSourceTable::<Fr, Opening, Public>::new();
 
@@ -388,13 +462,13 @@ mod tests {
 
     #[test]
     fn reports_sumcheck_layout_errors_with_stage_index() {
-        let claims = InstanceClaims::new(vec![boundary_stage(
+        let claims = InstanceClaims::new(vec![claim_stage(
             1,
             1,
             constant(Fr::from_u64(10)),
             constant(Fr::from_u64(11)),
         )]);
-        let inputs = Inputs::new(vec![boundary_stage_input(&[(1, 2)])]);
+        let inputs = Inputs::new(vec![committed_stage_input(&[(1, 2)])]);
         let mut builder = R1csBuilder::<Fr>::new();
         let mut layout = allocate_layout(&mut builder, &claims, &inputs).expect("layout allocates");
         layout.stages[0].sumcheck.rounds[0].claim_in =

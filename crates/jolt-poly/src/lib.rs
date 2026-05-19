@@ -52,6 +52,7 @@ mod identity;
 pub mod lagrange;
 mod lt;
 pub mod math;
+mod mle;
 mod multilinear;
 mod one_hot;
 mod point;
@@ -65,6 +66,9 @@ pub use eq::EqPolynomial;
 pub use eq_plus_one::{EqPlusOnePolynomial, EqPlusOnePrefixSuffix};
 pub use identity::IdentityPolynomial;
 pub use lt::LtPolynomial;
+pub use mle::{
+    eq_index_msb, range_mask_mle_msb, sparse_mle_msb, sparse_segments_mle_msb, try_eq_mle, MleError,
+};
 pub use multilinear::{MultilinearBinding, MultilinearEvaluation, MultilinearPoly, RlcSource};
 pub use one_hot::OneHotPolynomial;
 pub use point::Point;

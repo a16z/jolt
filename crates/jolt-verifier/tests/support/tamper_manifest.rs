@@ -1,0 +1,881 @@
+use std::collections::BTreeSet;
+
+use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_verifier::{
+    proof::TransparentProofClaims,
+    stages::{stage1, stage2},
+};
+use serde_json::Value;
+
+use crate::support::{current_verifier_frontier, VerifierCheckpoint};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TamperMode {
+    Standard,
+    Zk,
+    Both,
+}
+
+impl TamperMode {
+    pub fn includes(self, zk: bool) -> bool {
+        matches!(
+            (self, zk),
+            (Self::Both, _) | (Self::Standard, false) | (Self::Zk, true)
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TamperDisposition {
+    CheckedAtStage,
+    CheckedByLaterStage(VerifierCheckpoint),
+    CheckedByFinalOpenings,
+    CheckedByZk,
+    NotVerifierOwned,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MutationStrategy {
+    OffsetScalar,
+    FlipBool,
+    ChangeEnumVariant,
+    RemoveItem,
+    AddItem,
+    DuplicateItem,
+    SwapOrder,
+    TruncateVector,
+    ExtendVector,
+    ReplaceProofPayload,
+    ReplaceModePayload,
+    ReplaceSetup,
+    None,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TamperCoverage {
+    Active,
+    IgnoredUntilFixture,
+    Deferred,
+    NotApplicable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TamperTarget {
+    pub name: &'static str,
+    pub path: &'static str,
+    pub mode: TamperMode,
+    pub first_checkpoint: VerifierCheckpoint,
+    pub disposition: TamperDisposition,
+    pub strategy: MutationStrategy,
+    pub coverage: TamperCoverage,
+    pub reason: &'static str,
+}
+
+impl TamperTarget {
+    pub fn is_unlocked(self) -> bool {
+        match self.mode {
+            TamperMode::Both => {
+                self.first_checkpoint <= current_verifier_frontier(false)
+                    || self.first_checkpoint <= current_verifier_frontier(true)
+            }
+            TamperMode::Standard => self.first_checkpoint <= current_verifier_frontier(false),
+            TamperMode::Zk => self.first_checkpoint <= current_verifier_frontier(true),
+        }
+    }
+}
+
+const fn checked_standard(
+    name: &'static str,
+    path: &'static str,
+    first_checkpoint: VerifierCheckpoint,
+    strategy: MutationStrategy,
+    coverage: TamperCoverage,
+    reason: &'static str,
+) -> TamperTarget {
+    TamperTarget {
+        name,
+        path,
+        mode: TamperMode::Standard,
+        first_checkpoint,
+        disposition: TamperDisposition::CheckedAtStage,
+        strategy,
+        coverage,
+        reason,
+    }
+}
+
+const fn checked_both(
+    name: &'static str,
+    path: &'static str,
+    first_checkpoint: VerifierCheckpoint,
+    strategy: MutationStrategy,
+    coverage: TamperCoverage,
+    reason: &'static str,
+) -> TamperTarget {
+    TamperTarget {
+        name,
+        path,
+        mode: TamperMode::Both,
+        first_checkpoint,
+        disposition: TamperDisposition::CheckedAtStage,
+        strategy,
+        coverage,
+        reason,
+    }
+}
+
+const fn later_standard(
+    name: &'static str,
+    path: &'static str,
+    later_checkpoint: VerifierCheckpoint,
+    strategy: MutationStrategy,
+    coverage: TamperCoverage,
+    reason: &'static str,
+) -> TamperTarget {
+    TamperTarget {
+        name,
+        path,
+        mode: TamperMode::Standard,
+        first_checkpoint: later_checkpoint,
+        disposition: TamperDisposition::CheckedByLaterStage(later_checkpoint),
+        strategy,
+        coverage,
+        reason,
+    }
+}
+
+const fn final_opening_standard(
+    name: &'static str,
+    path: &'static str,
+    strategy: MutationStrategy,
+    coverage: TamperCoverage,
+    reason: &'static str,
+) -> TamperTarget {
+    TamperTarget {
+        name,
+        path,
+        mode: TamperMode::Standard,
+        first_checkpoint: VerifierCheckpoint::Stage8Openings,
+        disposition: TamperDisposition::CheckedByFinalOpenings,
+        strategy,
+        coverage,
+        reason,
+    }
+}
+
+const fn zk_target(
+    name: &'static str,
+    path: &'static str,
+    strategy: MutationStrategy,
+    coverage: TamperCoverage,
+    reason: &'static str,
+) -> TamperTarget {
+    TamperTarget {
+        name,
+        path,
+        mode: TamperMode::Zk,
+        first_checkpoint: VerifierCheckpoint::Zk,
+        disposition: TamperDisposition::CheckedByZk,
+        strategy,
+        coverage,
+        reason,
+    }
+}
+
+pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
+    checked_standard(
+        "public_io.inputs",
+        "public_io.inputs",
+        VerifierCheckpoint::Stage1,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "absorbed into the transcript; the first concrete rejection is a stage sumcheck mismatch",
+    ),
+    checked_standard(
+        "public_io.outputs",
+        "public_io.outputs",
+        VerifierCheckpoint::Stage2,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "value-level output mutation should be run on real core fixtures and rejects at RAM output check",
+    ),
+    checked_standard(
+        "public_io.panic",
+        "public_io.panic",
+        VerifierCheckpoint::Stage2,
+        MutationStrategy::FlipBool,
+        TamperCoverage::IgnoredUntilFixture,
+        "panic materializes as public memory for the RAM output check",
+    ),
+    checked_both(
+        "public_io.memory_layout",
+        "public_io.memory_layout",
+        VerifierCheckpoint::Preamble,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "validate_inputs rejects layout mismatch before transcript use",
+    ),
+    checked_standard(
+        "proof.trace_length",
+        "proof.trace_length",
+        VerifierCheckpoint::Preamble,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "invalid and excessive trace lengths are checked during input validation",
+    ),
+    checked_standard(
+        "proof.ram_K",
+        "proof.ram_K",
+        VerifierCheckpoint::Preamble,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "invalid RAM domains are checked during input validation",
+    ),
+    checked_standard(
+        "proof.rw_config",
+        "proof.rw_config",
+        VerifierCheckpoint::Stage2,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "stage 2 consumes RAM read-write phase lengths when slicing batched points",
+    ),
+    checked_standard(
+        "proof.one_hot_config",
+        "proof.one_hot_config",
+        VerifierCheckpoint::Stage3,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Deferred,
+        "one-hot configuration is transcript-bound now but substantively checked by later instruction stages",
+    ),
+    checked_standard(
+        "proof.trace_polynomial_order",
+        "proof.trace_polynomial_order",
+        VerifierCheckpoint::Stage1,
+        MutationStrategy::ChangeEnumVariant,
+        TamperCoverage::IgnoredUntilFixture,
+        "layout order is transcript-bound; add a real fixture mutation before relying on it",
+    ),
+    checked_standard(
+        "preprocessing.preprocessing_digest",
+        "preprocessing.preprocessing_digest",
+        VerifierCheckpoint::Stage1,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "digest is transcript-bound; real fixture mutation should reject at the first stage",
+    ),
+    checked_standard(
+        "preprocessing.program.bytecode.entry_address",
+        "preprocessing.program.bytecode.entry_address",
+        VerifierCheckpoint::Stage1,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Deferred,
+        "entry address is transcript-bound but needs a real bytecode fixture mutation",
+    ),
+];
+
+pub const COMMITMENT_TARGETS: &[TamperTarget] = &[
+    checked_standard(
+        "proof.commitments.value",
+        "proof.commitments[*]",
+        VerifierCheckpoint::Stage1,
+        MutationStrategy::ReplaceProofPayload,
+        TamperCoverage::IgnoredUntilFixture,
+        "commitment value mutations should use real core commitments and reject via transcript divergence",
+    ),
+    checked_standard(
+        "proof.commitments.missing",
+        "proof.commitments",
+        VerifierCheckpoint::Stage1,
+        MutationStrategy::RemoveItem,
+        TamperCoverage::IgnoredUntilFixture,
+        "missing commitment changes transcript arity; activate with a multi-commitment real fixture",
+    ),
+    checked_standard(
+        "proof.commitments.extra",
+        "proof.commitments",
+        VerifierCheckpoint::Stage1,
+        MutationStrategy::DuplicateItem,
+        TamperCoverage::IgnoredUntilFixture,
+        "extra commitment changes transcript arity; activate with a real fixture",
+    ),
+    checked_standard(
+        "proof.commitments.order",
+        "proof.commitments",
+        VerifierCheckpoint::Stage1,
+        MutationStrategy::SwapOrder,
+        TamperCoverage::IgnoredUntilFixture,
+        "ordering requires at least two commitments from a real core fixture",
+    ),
+    checked_standard(
+        "proof.untrusted_advice_commitment",
+        "proof.untrusted_advice_commitment",
+        VerifierCheckpoint::Stage1,
+        MutationStrategy::ReplaceProofPayload,
+        TamperCoverage::Deferred,
+        "advice commitment coverage belongs with advice fixtures",
+    ),
+    checked_standard(
+        "trusted_advice_commitment",
+        "trusted_advice_commitment",
+        VerifierCheckpoint::Stage1,
+        MutationStrategy::ReplaceProofPayload,
+        TamperCoverage::Deferred,
+        "trusted advice commitment coverage belongs with advice fixtures",
+    ),
+    final_opening_standard(
+        "proof.joint_opening_proof",
+        "proof.joint_opening_proof",
+        MutationStrategy::ReplaceProofPayload,
+        TamperCoverage::Deferred,
+        "joint opening proof is not checked until final opening verification",
+    ),
+];
+
+pub const PROOF_SHAPE_TARGETS: &[TamperTarget] = &[
+    checked_both(
+        "proof.stages.clear_vs_committed",
+        "proof.stages.*",
+        VerifierCheckpoint::Preamble,
+        MutationStrategy::ReplaceModePayload,
+        TamperCoverage::Active,
+        "validate_proof_consistency rejects mixed clear/committed mode",
+    ),
+    checked_both(
+        "proof.claims.mode_payload",
+        "proof.claims",
+        VerifierCheckpoint::Preamble,
+        MutationStrategy::ReplaceModePayload,
+        TamperCoverage::Active,
+        "validate_proof_consistency rejects transparent/ZK payload mismatches",
+    ),
+];
+
+pub const STAGE1_TARGETS: &[TamperTarget] = &[
+    checked_standard(
+        "stage1.uni_skip.round_polynomial",
+        "proof.stages.stage1_uni_skip_first_round_proof.round_polynomials[*]",
+        VerifierCheckpoint::Stage1,
+        MutationStrategy::ReplaceProofPayload,
+        TamperCoverage::Active,
+        "core-fixture test mutates every full uni-skip round polynomial",
+    ),
+    checked_standard(
+        "stage1.uni_skip.round_count.missing",
+        "proof.stages.stage1_uni_skip_first_round_proof.round_polynomials",
+        VerifierCheckpoint::Stage1,
+        MutationStrategy::TruncateVector,
+        TamperCoverage::Active,
+        "core-fixture test removes a uni-skip round",
+    ),
+    checked_standard(
+        "stage1.uni_skip.round_count.extra",
+        "proof.stages.stage1_uni_skip_first_round_proof.round_polynomials",
+        VerifierCheckpoint::Stage1,
+        MutationStrategy::ExtendVector,
+        TamperCoverage::Active,
+        "core-fixture test appends a uni-skip round",
+    ),
+    checked_standard(
+        "stage1.remainder.round_polynomial",
+        "proof.stages.stage1_sumcheck_proof.round_polynomials[*]",
+        VerifierCheckpoint::Stage1,
+        MutationStrategy::ReplaceProofPayload,
+        TamperCoverage::Active,
+        "core-fixture test mutates every compressed remainder round polynomial",
+    ),
+    checked_standard(
+        "stage1.remainder.round_count.missing",
+        "proof.stages.stage1_sumcheck_proof.round_polynomials",
+        VerifierCheckpoint::Stage1,
+        MutationStrategy::TruncateVector,
+        TamperCoverage::Active,
+        "core-fixture test removes a remainder round",
+    ),
+    checked_standard(
+        "stage1.remainder.round_count.extra",
+        "proof.stages.stage1_sumcheck_proof.round_polynomials",
+        VerifierCheckpoint::Stage1,
+        MutationStrategy::ExtendVector,
+        TamperCoverage::Active,
+        "core-fixture test appends a remainder round",
+    ),
+    checked_standard(
+        "stage1.claims.uniskip_output_claim",
+        "claims.stage1.uniskip_output_claim",
+        VerifierCheckpoint::Stage1,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets the Spartan outer uni-skip opening claim",
+    ),
+    checked_standard(
+        "stage1.claims.outer",
+        "claims.stage1.outer.*",
+        VerifierCheckpoint::Stage1,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets every Spartan outer variable opening claim",
+    ),
+];
+
+pub const STAGE2_TARGETS: &[TamperTarget] = &[
+    checked_standard(
+        "stage2.product_uniskip.round_polynomial",
+        "proof.stages.stage2_uni_skip_first_round_proof.round_polynomials[*]",
+        VerifierCheckpoint::Stage2,
+        MutationStrategy::ReplaceProofPayload,
+        TamperCoverage::Active,
+        "core-fixture test mutates every product uni-skip round polynomial",
+    ),
+    checked_standard(
+        "stage2.product_uniskip.round_count.missing",
+        "proof.stages.stage2_uni_skip_first_round_proof.round_polynomials",
+        VerifierCheckpoint::Stage2,
+        MutationStrategy::TruncateVector,
+        TamperCoverage::Active,
+        "core-fixture test removes a product uni-skip round",
+    ),
+    checked_standard(
+        "stage2.product_uniskip.round_count.extra",
+        "proof.stages.stage2_uni_skip_first_round_proof.round_polynomials",
+        VerifierCheckpoint::Stage2,
+        MutationStrategy::ExtendVector,
+        TamperCoverage::Active,
+        "core-fixture test appends a product uni-skip round",
+    ),
+    checked_standard(
+        "stage2.batch.round_polynomial",
+        "proof.stages.stage2_sumcheck_proof.round_polynomials[*]",
+        VerifierCheckpoint::Stage2,
+        MutationStrategy::ReplaceProofPayload,
+        TamperCoverage::Active,
+        "core-fixture test mutates every compressed Stage 2 batch round polynomial",
+    ),
+    checked_standard(
+        "stage2.batch.round_count.missing",
+        "proof.stages.stage2_sumcheck_proof.round_polynomials",
+        VerifierCheckpoint::Stage2,
+        MutationStrategy::TruncateVector,
+        TamperCoverage::Active,
+        "core-fixture test removes a Stage 2 batch round",
+    ),
+    checked_standard(
+        "stage2.batch.round_count.extra",
+        "proof.stages.stage2_sumcheck_proof.round_polynomials",
+        VerifierCheckpoint::Stage2,
+        MutationStrategy::ExtendVector,
+        TamperCoverage::Active,
+        "core-fixture test appends a Stage 2 batch round",
+    ),
+    checked_standard(
+        "stage2.claims.product_uniskip_output_claim",
+        "claims.stage2.product_uniskip_output_claim",
+        VerifierCheckpoint::Stage2,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets the product uni-skip opening claim",
+    ),
+    checked_standard(
+        "stage2.claims.batch_outputs.ram_read_write",
+        "claims.stage2.batch_outputs.ram_read_write.*",
+        VerifierCheckpoint::Stage2,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets each RAM read-write output claim",
+    ),
+    checked_standard(
+        "stage2.claims.batch_outputs.product_remainder.checked",
+        "claims.stage2.batch_outputs.product_remainder.{left_instruction_input,right_instruction_input,jump_flag,lookup_output,branch_flag,next_is_noop}",
+        VerifierCheckpoint::Stage2,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets every product remainder output used by the Stage 2 formula",
+    ),
+    later_standard(
+        "stage2.claims.batch_outputs.product_remainder.write_lookup_output_to_rd",
+        "claims.stage2.batch_outputs.product_remainder.write_lookup_output_to_rd",
+        VerifierCheckpoint::Stage3,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Deferred,
+        "Stage 2 appends this pass-through claim, but later instruction stages must consume it",
+    ),
+    later_standard(
+        "stage2.claims.batch_outputs.product_remainder.virtual_instruction",
+        "claims.stage2.batch_outputs.product_remainder.virtual_instruction",
+        VerifierCheckpoint::Stage3,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Deferred,
+        "Stage 2 appends this pass-through claim, but later instruction stages must consume it",
+    ),
+    checked_standard(
+        "stage2.claims.batch_outputs.instruction_claim_reduction",
+        "claims.stage2.batch_outputs.instruction_claim_reduction.*",
+        VerifierCheckpoint::Stage2,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets each instruction claim-reduction output or its product alias",
+    ),
+    checked_standard(
+        "stage2.claims.batch_outputs.ram_raf_evaluation",
+        "claims.stage2.batch_outputs.ram_raf_evaluation",
+        VerifierCheckpoint::Stage2,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets the RAM RAF evaluation output claim",
+    ),
+    checked_standard(
+        "stage2.claims.batch_outputs.ram_output_check",
+        "claims.stage2.batch_outputs.ram_output_check",
+        VerifierCheckpoint::Stage2,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets the RAM output-check claim",
+    ),
+];
+
+pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
+    later_standard(
+        "stage3.sumcheck_payload",
+        "proof.stages.stage3_sumcheck_proof",
+        VerifierCheckpoint::Stage3,
+        MutationStrategy::ReplaceProofPayload,
+        TamperCoverage::Deferred,
+        "stage 3 is not wired yet",
+    ),
+    later_standard(
+        "stage4.sumcheck_payload",
+        "proof.stages.stage4_sumcheck_proof",
+        VerifierCheckpoint::Stage4,
+        MutationStrategy::ReplaceProofPayload,
+        TamperCoverage::Deferred,
+        "stage 4 is not wired yet",
+    ),
+    later_standard(
+        "stage5.sumcheck_payload",
+        "proof.stages.stage5_sumcheck_proof",
+        VerifierCheckpoint::Stage5,
+        MutationStrategy::ReplaceProofPayload,
+        TamperCoverage::Deferred,
+        "stage 5 is not wired yet",
+    ),
+    later_standard(
+        "stage6.sumcheck_payload",
+        "proof.stages.stage6_sumcheck_proof",
+        VerifierCheckpoint::Stage6,
+        MutationStrategy::ReplaceProofPayload,
+        TamperCoverage::Deferred,
+        "stage 6 is not wired yet",
+    ),
+    later_standard(
+        "stage7.sumcheck_payload",
+        "proof.stages.stage7_sumcheck_proof",
+        VerifierCheckpoint::Stage7,
+        MutationStrategy::ReplaceProofPayload,
+        TamperCoverage::Deferred,
+        "stage 7 is not wired yet",
+    ),
+    final_opening_standard(
+        "stage8.opening_claim_values",
+        "stage8.opening_claim_values",
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Deferred,
+        "final opening verification is not wired yet",
+    ),
+    final_opening_standard(
+        "stage8.opening_claim_points",
+        "stage8.opening_claim_points",
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Deferred,
+        "final opening verification is not wired yet",
+    ),
+    zk_target(
+        "zk.blindfold_proof",
+        "proof.claims.Zk.blindfold_proof",
+        MutationStrategy::ReplaceProofPayload,
+        TamperCoverage::Deferred,
+        "BlindFold verification is not wired yet",
+    ),
+    zk_target(
+        "zk.vector_commitment_setup",
+        "preprocessing.vc_setup",
+        MutationStrategy::ReplaceSetup,
+        TamperCoverage::Active,
+        "validate_inputs rejects missing VC setup in ZK mode",
+    ),
+];
+
+pub fn all_targets() -> Vec<TamperTarget> {
+    PREAMBLE_TARGETS
+        .iter()
+        .chain(COMMITMENT_TARGETS)
+        .chain(PROOF_SHAPE_TARGETS)
+        .chain(STAGE1_TARGETS)
+        .chain(STAGE2_TARGETS)
+        .chain(FUTURE_STAGE_TARGETS)
+        .copied()
+        .collect()
+}
+
+pub fn target(name: &str) -> Option<TamperTarget> {
+    all_targets().into_iter().find(|target| target.name == name)
+}
+
+#[expect(
+    clippy::panic,
+    reason = "tamper tests should fail loudly when they reference a missing manifest entry"
+)]
+pub fn required_target(name: &str) -> TamperTarget {
+    match target(name) {
+        Some(target) => target,
+        None => panic!("missing tamper manifest target {name}"),
+    }
+}
+
+pub fn target_names_are_unique() -> bool {
+    let mut names = BTreeSet::new();
+    all_targets()
+        .into_iter()
+        .all(|target| names.insert(target.name))
+}
+
+pub fn manifest_paths() -> BTreeSet<&'static str> {
+    all_targets()
+        .into_iter()
+        .flat_map(expand_manifest_path)
+        .collect()
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "manifest structural tests should fail loudly if claim serialization breaks"
+)]
+pub fn transparent_claim_leaf_paths() -> BTreeSet<String> {
+    let claims = zero_transparent_claims();
+    let value = serde_json::to_value(claims).expect("transparent claims should serialize");
+    let mut paths = BTreeSet::new();
+    collect_leaf_paths("claims", &value, &mut paths);
+    paths
+}
+
+pub fn proof_field_paths() -> &'static [&'static str] {
+    &[
+        "proof.commitments[*]",
+        "proof.joint_opening_proof",
+        "proof.untrusted_advice_commitment",
+        "proof.claims",
+        "proof.trace_length",
+        "proof.ram_K",
+        "proof.rw_config",
+        "proof.one_hot_config",
+        "proof.trace_polynomial_order",
+        "proof.stages.stage1_uni_skip_first_round_proof.round_polynomials[*]",
+        "proof.stages.stage1_sumcheck_proof.round_polynomials[*]",
+        "proof.stages.stage2_uni_skip_first_round_proof.round_polynomials[*]",
+        "proof.stages.stage2_sumcheck_proof.round_polynomials[*]",
+        "proof.stages.stage3_sumcheck_proof",
+        "proof.stages.stage4_sumcheck_proof",
+        "proof.stages.stage5_sumcheck_proof",
+        "proof.stages.stage6_sumcheck_proof",
+        "proof.stages.stage7_sumcheck_proof",
+    ]
+}
+
+pub fn checked_now_without_active_coverage() -> Vec<TamperTarget> {
+    all_targets()
+        .into_iter()
+        .filter(|target| {
+            target.is_unlocked()
+                && target.disposition == TamperDisposition::CheckedAtStage
+                && target.coverage != TamperCoverage::Active
+        })
+        .collect()
+}
+
+pub fn assert_manifest_target_is_active(target: TamperTarget) {
+    assert_eq!(
+        target.coverage,
+        TamperCoverage::Active,
+        "tamper target is not active: {target:?}"
+    );
+}
+
+pub fn assert_dory_tamper_rejects(
+    target: TamperTarget,
+    mut case: crate::support::dory_pedersen::DoryPedersenVerifierCase,
+    mutate: impl FnOnce(&mut crate::support::dory_pedersen::DoryPedersenVerifierCase),
+) {
+    assert_manifest_target_is_active(target);
+    assert!(
+        target.mode.includes(case.zk),
+        "tamper target mode does not include fixture mode: {target:?}"
+    );
+    let zk = case.zk;
+    mutate(&mut case);
+    crate::support::assert_rejects_at_or_before_frontier(zk, case.verify());
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+pub fn assert_core_tamper_rejects(
+    target: TamperTarget,
+    base: &crate::support::core_fixtures::CoreVerifierCase,
+    mutate: impl FnOnce(&mut crate::support::core_fixtures::CoreVerifierCase),
+) {
+    assert_manifest_target_is_active(target);
+    let mut case = base.clone();
+    mutate(&mut case);
+    crate::support::assert_rejects_at_or_before_current_frontier(case.verify());
+}
+
+fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
+    match target.path {
+        "claims.stage1.outer.*" => vec![
+            "claims.stage1.outer.left_instruction_input",
+            "claims.stage1.outer.right_instruction_input",
+            "claims.stage1.outer.product",
+            "claims.stage1.outer.should_branch",
+            "claims.stage1.outer.pc",
+            "claims.stage1.outer.unexpanded_pc",
+            "claims.stage1.outer.imm",
+            "claims.stage1.outer.ram_address",
+            "claims.stage1.outer.rs1_value",
+            "claims.stage1.outer.rs2_value",
+            "claims.stage1.outer.rd_write_value",
+            "claims.stage1.outer.ram_read_value",
+            "claims.stage1.outer.ram_write_value",
+            "claims.stage1.outer.left_lookup_operand",
+            "claims.stage1.outer.right_lookup_operand",
+            "claims.stage1.outer.next_unexpanded_pc",
+            "claims.stage1.outer.next_pc",
+            "claims.stage1.outer.next_is_virtual",
+            "claims.stage1.outer.next_is_first_in_sequence",
+            "claims.stage1.outer.lookup_output",
+            "claims.stage1.outer.should_jump",
+            "claims.stage1.outer.flags.add_operands",
+            "claims.stage1.outer.flags.subtract_operands",
+            "claims.stage1.outer.flags.multiply_operands",
+            "claims.stage1.outer.flags.load",
+            "claims.stage1.outer.flags.store",
+            "claims.stage1.outer.flags.jump",
+            "claims.stage1.outer.flags.write_lookup_output_to_rd",
+            "claims.stage1.outer.flags.virtual_instruction",
+            "claims.stage1.outer.flags.assert",
+            "claims.stage1.outer.flags.do_not_update_unexpanded_pc",
+            "claims.stage1.outer.flags.advice",
+            "claims.stage1.outer.flags.is_compressed",
+            "claims.stage1.outer.flags.is_first_in_sequence",
+            "claims.stage1.outer.flags.is_last_in_sequence",
+        ],
+        "claims.stage2.batch_outputs.ram_read_write.*" => vec![
+            "claims.stage2.batch_outputs.ram_read_write.val",
+            "claims.stage2.batch_outputs.ram_read_write.ra",
+            "claims.stage2.batch_outputs.ram_read_write.inc",
+        ],
+        "claims.stage2.batch_outputs.product_remainder.{left_instruction_input,right_instruction_input,jump_flag,lookup_output,branch_flag,next_is_noop}" => vec![
+            "claims.stage2.batch_outputs.product_remainder.left_instruction_input",
+            "claims.stage2.batch_outputs.product_remainder.right_instruction_input",
+            "claims.stage2.batch_outputs.product_remainder.jump_flag",
+            "claims.stage2.batch_outputs.product_remainder.lookup_output",
+            "claims.stage2.batch_outputs.product_remainder.branch_flag",
+            "claims.stage2.batch_outputs.product_remainder.next_is_noop",
+        ],
+        "claims.stage2.batch_outputs.instruction_claim_reduction.*" => vec![
+            "claims.stage2.batch_outputs.instruction_claim_reduction.lookup_output",
+            "claims.stage2.batch_outputs.instruction_claim_reduction.left_lookup_operand",
+            "claims.stage2.batch_outputs.instruction_claim_reduction.right_lookup_operand",
+            "claims.stage2.batch_outputs.instruction_claim_reduction.left_instruction_input",
+            "claims.stage2.batch_outputs.instruction_claim_reduction.right_instruction_input",
+        ],
+        path => vec![path],
+    }
+}
+
+fn collect_leaf_paths(prefix: &str, value: &Value, paths: &mut BTreeSet<String>) {
+    match value {
+        Value::Object(map) => {
+            for (key, value) in map {
+                collect_leaf_paths(&format!("{prefix}.{key}"), value, paths);
+            }
+        }
+        _ => {
+            let _ = paths.insert(prefix.to_string());
+        }
+    }
+}
+
+fn zero_transparent_claims() -> TransparentProofClaims<Fr> {
+    let zero = Fr::from_u64(0);
+
+    TransparentProofClaims {
+        stage1: stage1::inputs::Stage1Claims {
+            uniskip_output_claim: zero,
+            outer: stage1::inputs::SpartanOuterClaims {
+                left_instruction_input: zero,
+                right_instruction_input: zero,
+                product: zero,
+                should_branch: zero,
+                pc: zero,
+                unexpanded_pc: zero,
+                imm: zero,
+                ram_address: zero,
+                rs1_value: zero,
+                rs2_value: zero,
+                rd_write_value: zero,
+                ram_read_value: zero,
+                ram_write_value: zero,
+                left_lookup_operand: zero,
+                right_lookup_operand: zero,
+                next_unexpanded_pc: zero,
+                next_pc: zero,
+                next_is_virtual: zero,
+                next_is_first_in_sequence: zero,
+                lookup_output: zero,
+                should_jump: zero,
+                flags: stage1::inputs::SpartanOuterFlagClaims {
+                    add_operands: zero,
+                    subtract_operands: zero,
+                    multiply_operands: zero,
+                    load: zero,
+                    store: zero,
+                    jump: zero,
+                    write_lookup_output_to_rd: zero,
+                    virtual_instruction: zero,
+                    assert: zero,
+                    do_not_update_unexpanded_pc: zero,
+                    advice: zero,
+                    is_compressed: zero,
+                    is_first_in_sequence: zero,
+                    is_last_in_sequence: zero,
+                },
+            },
+        },
+        stage2: stage2::inputs::Stage2Claims {
+            product_uniskip_output_claim: zero,
+            batch_outputs: stage2::inputs::Stage2BatchOutputOpeningClaims {
+                ram_read_write: stage2::inputs::RamReadWriteOutputOpeningClaims {
+                    val: zero,
+                    ra: zero,
+                    inc: zero,
+                },
+                product_remainder: stage2::inputs::ProductRemainderOutputOpeningClaims {
+                    left_instruction_input: zero,
+                    right_instruction_input: zero,
+                    jump_flag: zero,
+                    write_lookup_output_to_rd: zero,
+                    lookup_output: zero,
+                    branch_flag: zero,
+                    next_is_noop: zero,
+                    virtual_instruction: zero,
+                },
+                instruction_claim_reduction:
+                    stage2::inputs::InstructionClaimReductionOutputOpeningClaims {
+                        lookup_output: Some(zero),
+                        left_lookup_operand: zero,
+                        right_lookup_operand: zero,
+                        left_instruction_input: Some(zero),
+                        right_instruction_input: Some(zero),
+                    },
+                ram_raf_evaluation: zero,
+                ram_output_check: zero,
+            },
+        },
+    }
+}

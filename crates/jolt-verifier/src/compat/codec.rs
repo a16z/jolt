@@ -147,11 +147,11 @@ impl CanonicalSerialize for TracePolynomialOrder {
         writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        u8::from(*self).serialize_with_mode(writer, compress)
+        trace_polynomial_order_byte(*self).serialize_with_mode(writer, compress)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        u8::from(*self).serialized_size(compress)
+        trace_polynomial_order_byte(*self).serialized_size(compress)
     }
 }
 
@@ -168,7 +168,22 @@ impl CanonicalDeserialize for TracePolynomialOrder {
         validate: Validate,
     ) -> Result<Self, SerializationError> {
         let value = u8::deserialize_with_mode(reader, compress, validate)?;
-        Self::try_from(value).map_err(|()| SerializationError::InvalidData)
+        trace_polynomial_order_from_byte(value).ok_or(SerializationError::InvalidData)
+    }
+}
+
+fn trace_polynomial_order_byte(order: TracePolynomialOrder) -> u8 {
+    match order {
+        TracePolynomialOrder::CycleMajor => 0,
+        TracePolynomialOrder::AddressMajor => 1,
+    }
+}
+
+fn trace_polynomial_order_from_byte(value: u8) -> Option<TracePolynomialOrder> {
+    match value {
+        0 => Some(TracePolynomialOrder::CycleMajor),
+        1 => Some(TracePolynomialOrder::AddressMajor),
+        _ => None,
     }
 }
 

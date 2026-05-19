@@ -110,6 +110,32 @@ impl<F: RingCore, O, P, C> Expr<F, O, P, C> {
         }
         result
     }
+
+    pub fn try_evaluate<OpeningValue, ChallengeValue, PublicValue, Error>(
+        &self,
+        mut opening_value: OpeningValue,
+        mut challenge_value: ChallengeValue,
+        mut public_value: PublicValue,
+    ) -> Result<F, Error>
+    where
+        OpeningValue: FnMut(&O) -> Result<F, Error>,
+        ChallengeValue: FnMut(&C) -> Result<F, Error>,
+        PublicValue: FnMut(&P) -> Result<F, Error>,
+    {
+        let mut result = F::zero();
+        for term in &self.terms {
+            let mut value = term.coefficient;
+            for factor in &term.factors {
+                value *= match factor {
+                    Source::Opening(id) => opening_value(id)?,
+                    Source::Challenge(id) => challenge_value(id)?,
+                    Source::Public(id) => public_value(id)?,
+                };
+            }
+            result += value;
+        }
+        Ok(result)
+    }
 }
 
 impl<F: RingCore, O: Clone, P: Clone, C: Clone> Expr<F, O, P, C> {

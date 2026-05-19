@@ -76,6 +76,17 @@ pub fn centered_lagrange_evals<F: Field>(
     ))
 }
 
+pub fn centered_lagrange_evals_array<F: Field, const N: usize>(
+    r: F,
+) -> Result<[F; N], CenteredIntegerDomainError> {
+    let evals = centered_lagrange_evals(N, r)?;
+    let mut result = [F::zero(); N];
+    for (dst, src) in result.iter_mut().zip(evals) {
+        *dst = src;
+    }
+    Ok(result)
+}
+
 /// Computes `sum_i L_i(x) * L_i(y)` over the centered consecutive integer
 /// domain used by univariate-skip protocols.
 pub fn centered_lagrange_kernel<F: Field>(
@@ -353,8 +364,10 @@ mod tests {
     fn centered_lagrange_helpers_match_centered_domain() {
         let r = Fr::from_u64(7);
         let evals = centered_lagrange_evals(5, r).unwrap();
+        let evals_array = centered_lagrange_evals_array::<_, 5>(r).unwrap();
 
         assert_eq!(evals, lagrange_evals(-2, 5, r));
+        assert_eq!(evals_array.as_slice(), evals.as_slice());
         assert_eq!(
             centered_lagrange_kernel(5, Fr::from_i64(-1), Fr::from_i64(-1)),
             Ok(Fr::one())

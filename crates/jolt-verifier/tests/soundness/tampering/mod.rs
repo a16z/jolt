@@ -1,5 +1,6 @@
 pub mod commitments;
 pub mod configs;
+pub mod manifest;
 pub mod openings;
 pub mod output_claims;
 pub mod preamble;
@@ -44,6 +45,20 @@ pub const STAGE1_SUMCHECK_PAYLOAD: TestCase = TestCase {
     first_checked_at: VerifierCheckpoint::Stage1,
 };
 
+pub const STAGE2_UNISKIP_PAYLOAD: TestCase = TestCase {
+    name: "tamper_stage2_uniskip_payload",
+    zk: false,
+    fixture: FixtureId::ConfigMismatch,
+    first_checked_at: VerifierCheckpoint::Stage2,
+};
+
+pub const STAGE2_SUMCHECK_PAYLOAD: TestCase = TestCase {
+    name: "tamper_stage2_sumcheck_payload",
+    zk: false,
+    fixture: FixtureId::ConfigMismatch,
+    first_checked_at: VerifierCheckpoint::Stage2,
+};
+
 pub const OPENING_VALUE: TestCase = TestCase {
     name: "tamper_opening_value",
     zk: false,
@@ -71,6 +86,8 @@ pub const ALL: &[TestCase] = &[
     MIXED_PROOF_SHAPE,
     CONFIG_TRACE_LENGTH,
     STAGE1_SUMCHECK_PAYLOAD,
+    STAGE2_UNISKIP_PAYLOAD,
+    STAGE2_SUMCHECK_PAYLOAD,
     OPENING_VALUE,
     OUTPUT_CLAIM,
     BLINDFOLD_PROOF,

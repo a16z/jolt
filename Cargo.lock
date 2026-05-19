@@ -2709,6 +2709,8 @@ dependencies = [
  "jolt-r1cs",
  "jolt-sumcheck",
  "jolt-transcript",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -3213,6 +3215,7 @@ dependencies = [
  "jolt-transcript",
  "postcard",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 

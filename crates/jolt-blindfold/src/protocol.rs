@@ -110,6 +110,13 @@ where
             "coefficient row commitments",
         )?;
 
+        witness_row_commitments.extend_from_slice(auxiliary_row_commitments);
+        pad_rows::<F, C>(
+            &mut witness_row_commitments,
+            self.dimensions.witness_rows.auxiliary.end,
+            "auxiliary row commitments",
+        )?;
+
         witness_row_commitments.extend(
             self.output_claims
                 .iter()
@@ -119,13 +126,6 @@ where
             &mut witness_row_commitments,
             self.dimensions.witness_rows.output_claims.end,
             "output claim row commitments",
-        )?;
-
-        witness_row_commitments.extend_from_slice(auxiliary_row_commitments);
-        pad_rows::<F, C>(
-            &mut witness_row_commitments,
-            self.dimensions.witness_rows.auxiliary.end,
-            "auxiliary row commitments",
         )?;
         pad_rows::<F, C>(
             &mut witness_row_commitments,
@@ -274,10 +274,16 @@ fn compute_dimensions<F: Field, C>(
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let coefficient_values = checked_sum("coefficient values", round_coefficients.iter().copied())?;
     let max_round_coefficients = round_coefficients.iter().copied().max().unwrap_or(1);
     let witness_row_len = checked_next_power_of_two("witness row length", max_round_coefficients)?;
-    let coefficient_rows = checked_next_power_of_two("coefficient rows", total_rounds.max(1))?;
+    let coefficient_values =
+        total_rounds
+            .checked_mul(witness_row_len)
+            .ok_or(RelaxedError::DimensionOverflow {
+                name: "coefficient values",
+                value: total_rounds,
+            })?;
+    let coefficient_rows = total_rounds;
 
     let output_claim_rows = checked_sum(
         "output claim rows",
@@ -335,11 +341,11 @@ fn witness_row_layout(
     auxiliary_rows: usize,
     witness_row_count: usize,
 ) -> Result<WitnessRowLayout, RelaxedError> {
-    let output_claim_start = coefficient_rows;
-    let auxiliary_start = checked_sum("witness row layout", [coefficient_rows, output_claim_rows])?;
+    let auxiliary_start = coefficient_rows;
+    let output_claim_start = checked_sum("witness row layout", [coefficient_rows, auxiliary_rows])?;
     let padding_start = checked_sum(
         "witness row layout",
-        [coefficient_rows, output_claim_rows, auxiliary_rows],
+        [coefficient_rows, auxiliary_rows, output_claim_rows],
     )?;
     if padding_start > witness_row_count {
         return Err(RelaxedError::InconsistentDimensions {
@@ -350,9 +356,9 @@ fn witness_row_layout(
     }
 
     Ok(WitnessRowLayout {
-        coefficients: 0..output_claim_start,
-        output_claims: output_claim_start..auxiliary_start,
-        auxiliary: auxiliary_start..padding_start,
+        coefficients: 0..coefficient_rows,
+        auxiliary: auxiliary_start..output_claim_start,
+        output_claims: output_claim_start..padding_start,
         padding: padding_start..witness_row_count,
     })
 }
@@ -595,8 +601,8 @@ mod tests {
                 },
                 witness_rows: WitnessRowLayout {
                     coefficients: 0..1,
-                    output_claims: 1..2,
-                    auxiliary: 2..3,
+                    auxiliary: 1..2,
+                    output_claims: 2..3,
                     padding: 3..4,
                 },
                 coefficient_rows: 1,
@@ -639,15 +645,15 @@ mod tests {
                     row_count: 4,
                 },
                 witness_rows: WitnessRowLayout {
-                    coefficients: 0..4,
-                    output_claims: 4..9,
-                    auxiliary: 9..11,
-                    padding: 11..16,
+                    coefficients: 0..3,
+                    auxiliary: 3..5,
+                    output_claims: 5..10,
+                    padding: 10..16,
                 },
-                coefficient_rows: 4,
+                coefficient_rows: 3,
                 output_claim_rows: 5,
                 auxiliary_rows: 2,
-                coefficient_values: 7,
+                coefficient_values: 12,
                 auxiliary_values: 5,
             }
         );
@@ -686,10 +692,10 @@ mod tests {
         assert_eq!(
             protocol.dimensions.witness_rows,
             WitnessRowLayout {
-                coefficients: 0..4,
-                output_claims: 4..7,
-                auxiliary: 7..9,
-                padding: 9..16,
+                coefficients: 0..3,
+                auxiliary: 3..5,
+                output_claims: 5..8,
+                padding: 8..8,
             }
         );
         let identity = <Bn254G1 as HomomorphicCommitment<Fr>>::identity();
@@ -699,19 +705,11 @@ mod tests {
                 pedersen_commitment(&setup, 11),
                 pedersen_commitment(&setup, 12),
                 pedersen_commitment(&setup, 13),
-                identity,
+                pedersen_commitment(&setup, 41),
+                pedersen_commitment(&setup, 42),
                 pedersen_commitment(&setup, 21),
                 pedersen_commitment(&setup, 22),
                 pedersen_commitment(&setup, 34),
-                pedersen_commitment(&setup, 41),
-                pedersen_commitment(&setup, 42),
-                identity,
-                identity,
-                identity,
-                identity,
-                identity,
-                identity,
-                identity,
             ]
         );
         assert_eq!(

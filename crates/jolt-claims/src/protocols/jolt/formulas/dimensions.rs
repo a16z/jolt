@@ -1,5 +1,6 @@
 use std::{error::Error, fmt};
 
+use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -125,6 +126,78 @@ impl ReadWriteDimensions {
     pub const fn output_check_sumcheck(self) -> JoltSumcheckSpec {
         JoltSumcheckSpec::boolean(self.log_t + self.log_k - self.phase1_num_rounds, 3)
     }
+
+    pub fn read_write_opening_point<F: Field>(
+        self,
+        challenges: &[F],
+    ) -> Result<ReadWriteOpeningPoint<F>, JoltFormulaPointError> {
+        self.validate_phase_split()?;
+        let expected = self.log_t + self.log_k;
+        if challenges.len() != expected {
+            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+                expected,
+                got: challenges.len(),
+            });
+        }
+
+        let (phase1, rest) = challenges.split_at(self.phase1_num_rounds);
+        let (phase2, rest) = rest.split_at(self.phase2_num_rounds);
+        let (phase3_cycle, phase3_address) = rest.split_at(self.log_t - self.phase1_num_rounds);
+
+        let r_cycle = phase3_cycle
+            .iter()
+            .rev()
+            .copied()
+            .chain(phase1.iter().rev().copied())
+            .collect::<Vec<_>>();
+        let r_address = phase3_address
+            .iter()
+            .rev()
+            .copied()
+            .chain(phase2.iter().rev().copied())
+            .collect::<Vec<_>>();
+        let opening_point = [r_address.as_slice(), r_cycle.as_slice()].concat();
+
+        Ok(ReadWriteOpeningPoint {
+            r_address,
+            r_cycle,
+            opening_point,
+        })
+    }
+
+    pub fn address_opening_point<F: Field>(
+        self,
+        challenges: &[F],
+    ) -> Result<Vec<F>, JoltFormulaPointError> {
+        self.validate_phase_split()?;
+        let cycle_gap_rounds = self.phase3_cycle_rounds();
+        let expected = self.log_k + cycle_gap_rounds;
+        if challenges.len() != expected {
+            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+                expected,
+                got: challenges.len(),
+            });
+        }
+
+        let phase3_address_start = self.phase2_num_rounds + cycle_gap_rounds;
+        let mut address = Vec::with_capacity(self.log_k);
+        address.extend_from_slice(&challenges[..self.phase2_num_rounds]);
+        address.extend_from_slice(&challenges[phase3_address_start..]);
+        address.reverse();
+        Ok(address)
+    }
+
+    const fn validate_phase_split(self) -> Result<(), JoltFormulaPointError> {
+        if self.phase1_num_rounds > self.log_t || self.phase2_num_rounds > self.log_k {
+            return Err(JoltFormulaPointError::InvalidReadWritePhaseSplit {
+                phase1_num_rounds: self.phase1_num_rounds,
+                log_t: self.log_t,
+                phase2_num_rounds: self.phase2_num_rounds,
+                log_k: self.log_k,
+            });
+        }
+        Ok(())
+    }
 }
 
 impl From<(usize, usize, usize, usize)> for ReadWriteDimensions {
@@ -134,6 +207,51 @@ impl From<(usize, usize, usize, usize)> for ReadWriteDimensions {
         Self::new(log_t, log_k, phase1_num_rounds, phase2_num_rounds)
     }
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReadWriteOpeningPoint<F: Field> {
+    pub r_address: Vec<F>,
+    pub r_cycle: Vec<F>,
+    pub opening_point: Vec<F>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum JoltFormulaPointError {
+    InvalidReadWritePhaseSplit {
+        phase1_num_rounds: usize,
+        log_t: usize,
+        phase2_num_rounds: usize,
+        log_k: usize,
+    },
+    ChallengeLengthMismatch {
+        expected: usize,
+        got: usize,
+    },
+}
+
+impl fmt::Display for JoltFormulaPointError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidReadWritePhaseSplit {
+                phase1_num_rounds,
+                log_t,
+                phase2_num_rounds,
+                log_k,
+            } => write!(
+                f,
+                "invalid read-write phase split: phase1 {phase1_num_rounds}/{log_t}, phase2 {phase2_num_rounds}/{log_k}"
+            ),
+            Self::ChallengeLengthMismatch { expected, got } => {
+                write!(
+                    f,
+                    "challenge length mismatch: expected {expected}, got {got}"
+                )
+            }
+        }
+    }
+}
+
+impl Error for JoltFormulaPointError {}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JoltReadWriteConfig {
@@ -449,7 +567,10 @@ fn ceil_log_2(value: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
+
     use super::*;
+    use jolt_field::{Fr, FromPrimitiveInt};
 
     fn dimensions() -> JoltOneHotDimensions {
         JoltOneHotDimensions {
@@ -563,6 +684,78 @@ mod tests {
                 "lookup_virtual_chunk_bits",
                 48,
             ))
+        );
+    }
+
+    #[test]
+    fn read_write_dimensions_normalize_full_opening_point() {
+        let dimensions = ReadWriteDimensions::new(4, 3, 1, 2);
+        let challenges = (1..=7).map(Fr::from_u64).collect::<Vec<_>>();
+
+        let point = dimensions
+            .read_write_opening_point(&challenges)
+            .unwrap_or_else(|error| panic!("read-write opening point should evaluate: {error}"));
+
+        assert_eq!(
+            point.r_cycle,
+            vec![
+                Fr::from_u64(6),
+                Fr::from_u64(5),
+                Fr::from_u64(4),
+                Fr::from_u64(1)
+            ]
+        );
+        assert_eq!(
+            point.r_address,
+            vec![Fr::from_u64(7), Fr::from_u64(3), Fr::from_u64(2)]
+        );
+        assert_eq!(
+            point.opening_point,
+            vec![
+                Fr::from_u64(7),
+                Fr::from_u64(3),
+                Fr::from_u64(2),
+                Fr::from_u64(6),
+                Fr::from_u64(5),
+                Fr::from_u64(4),
+                Fr::from_u64(1),
+            ]
+        );
+    }
+
+    #[test]
+    fn read_write_dimensions_extract_address_opening_point() {
+        let dimensions = ReadWriteDimensions::new(4, 3, 1, 2);
+        let challenges = (10..=15).map(Fr::from_u64).collect::<Vec<_>>();
+
+        assert_eq!(
+            dimensions
+                .address_opening_point(&challenges)
+                .unwrap_or_else(|error| panic!("address opening point should evaluate: {error}")),
+            vec![Fr::from_u64(15), Fr::from_u64(11), Fr::from_u64(10)]
+        );
+    }
+
+    #[test]
+    fn read_write_point_helpers_reject_bad_shapes() {
+        let dimensions = ReadWriteDimensions::new(4, 3, 5, 2);
+        assert_eq!(
+            dimensions.read_write_opening_point::<Fr>(&[]),
+            Err(JoltFormulaPointError::InvalidReadWritePhaseSplit {
+                phase1_num_rounds: 5,
+                log_t: 4,
+                phase2_num_rounds: 2,
+                log_k: 3,
+            })
+        );
+
+        let dimensions = ReadWriteDimensions::new(4, 3, 1, 2);
+        assert_eq!(
+            dimensions.address_opening_point::<Fr>(&[Fr::from_u64(0)]),
+            Err(JoltFormulaPointError::ChallengeLengthMismatch {
+                expected: 6,
+                got: 1,
+            })
         );
     }
 }

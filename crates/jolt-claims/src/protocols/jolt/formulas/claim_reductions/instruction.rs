@@ -37,6 +37,26 @@ where
     )
 }
 
+pub fn claim_reduction_output_openings() -> [JoltOpeningId; 5] {
+    [
+        lookup_output_reduced(),
+        left_lookup_operand_reduced(),
+        right_lookup_operand_reduced(),
+        left_instruction_input_reduced(),
+        right_instruction_input_reduced(),
+    ]
+}
+
+pub fn claim_reduction_input_openings() -> [JoltOpeningId; 5] {
+    [
+        lookup_output_spartan(),
+        left_lookup_operand_spartan(),
+        right_lookup_operand_spartan(),
+        left_instruction_input_spartan(),
+        right_instruction_input_spartan(),
+    ]
+}
+
 fn weighted_claims<F>(
     lookup_output: JoltOpeningId,
     left_lookup_operand: JoltOpeningId,
@@ -150,23 +170,11 @@ mod tests {
         assert_eq!(claims.sumcheck, dimensions().sumcheck(2));
         assert_eq!(
             claims.input.required_openings,
-            vec![
-                lookup_output_spartan(),
-                left_lookup_operand_spartan(),
-                right_lookup_operand_spartan(),
-                left_instruction_input_spartan(),
-                right_instruction_input_spartan(),
-            ]
+            claim_reduction_input_openings().to_vec()
         );
         assert_eq!(
             claims.output.required_openings,
-            vec![
-                lookup_output_reduced(),
-                left_lookup_operand_reduced(),
-                right_lookup_operand_reduced(),
-                left_instruction_input_reduced(),
-                right_instruction_input_reduced(),
-            ]
+            claim_reduction_output_openings().to_vec()
         );
         assert_eq!(
             claims.input.required_challenges,

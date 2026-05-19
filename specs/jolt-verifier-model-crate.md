@@ -115,7 +115,7 @@ Allowed in `compat`:
 - legacy IDs;
 - canonical serialization shims;
 - legacy config structs;
-- legacy polynomial-order enum;
+- canonical serialization and conversion for legacy polynomial-order metadata;
 - conversion into verifier-owned model types.
 
 Forbidden outside `compat`:
@@ -131,6 +131,33 @@ Forbidden outside `compat`:
 Legacy standard-mode proofs may arrive as `OpeningId -> claim` maps. That is a
 wire compatibility detail. Convert once near the boundary into typed data, then
 pass named fields to stages.
+
+`JoltProof` must not retain an ID-keyed opening-claim payload. The native proof
+model carries either typed transparent claims or a ZK proof payload:
+
+```rust
+pub enum JoltProofClaims<F, ZkProof> {
+    Transparent(TransparentProofClaims<F>),
+    Zk { blindfold_proof: ZkProof },
+}
+
+pub struct TransparentProofClaims<F> {
+    pub stage1: stage1::inputs::Stage1Claims<F>,
+    pub stage2: stage2::inputs::Stage2Claims<F>,
+    // Add later stages as they are wired.
+}
+```
+
+`compat/` is the only layer allowed to translate a legacy/core
+`OpeningId -> claim` map into this explicit structure.
+
+Transparent proof claims are not a generic claim store. Each stage owns the
+claims that are actually present in that stage's proof payload, while prior
+stage data is consumed through typed stage outputs. For example, Stage 1 owns
+the Spartan outer virtual-polynomial claims, including every flag claim, and
+Stage 2 derives its RAM/read-write, instruction-reduction, and RAM-RAF input
+claims from the verified Stage 1 output rather than duplicating them in
+`Stage2Claims`.
 
 Generic facts:
 
@@ -161,14 +188,36 @@ for the final opening plan.
 Jolt-specific claim math belongs in `jolt-claims`, not in `jolt-openings`,
 `jolt-sumcheck`, or ad hoc verifier helper code.
 
-The formula layer should provide:
+The formula layer should describe the protocol equations. It should provide:
 
 - symbolic expressions over openings, public values, and challenges;
 - required-opening and required-challenge metadata;
 - consistency claims such as same-evaluation constraints;
-- native scalar evaluation for verifier checks;
-- R1CS lowering for BlindFold;
+- named stage claim expressions for standard verification and for later
+  BlindFold lowering;
+- protocol-significant ordering metadata, such as the order of claim outputs in
+  a batched stage;
 - a shape Bolt can emit later.
+
+`jolt-claims` should not become a computation crate. Formula evaluation in the
+verifier means evaluating a symbolic expression against values computed by the
+owning abstractions:
+
+- `jolt-poly` owns generic MLE, equality, sparse/range, and Lagrange kernels;
+- `jolt-sumcheck` owns sumcheck proof verification, reduction return shapes,
+  batching coefficients, and batched-instance point slicing;
+- `common` / `jolt-riscv` own VM memory layout, public I/O packing, and address
+  remapping;
+- `jolt-r1cs` owns R1CS matrix and linear-form computation;
+- `jolt-blindfold` owns ZK verifier-equation construction from formula
+  metadata;
+- `jolt-transcript` owns generic transcript append/label mechanics;
+- `jolt-verifier` owns transcript sequencing and final equality checks.
+
+The generic `Expr::try_evaluate` API is acceptable because it only interprets a
+formula against caller-supplied opening/challenge/public values. Any nontrivial
+work needed to produce those values belongs to the abstraction that owns that
+work, not to `jolt-claims`.
 
 The intended organization is:
 
@@ -191,6 +240,13 @@ jolt-claims/src/protocols/jolt/
 The same formula metadata should drive standard verifier checks and ZK
 BlindFold construction. Do not duplicate the same formula in separate standard
 and ZK implementations.
+
+Stage-specific formulas may name public values such as RAM `UnmapAddress`,
+RAM output-check masks, Spartan product `TauKernel`, or Lagrange weights. The
+computation of those values still belongs to the relevant lower abstraction:
+polynomial kernels in `jolt-poly`, VM layout/IO materialization in
+`common`/`jolt-riscv`, sumcheck point slicing in `jolt-sumcheck`, and R1CS
+linear algebra in `jolt-r1cs`.
 
 ### Sumcheck Model
 
@@ -239,8 +295,9 @@ polynomial was linearized cycle-major or address-major before commitment.
 
 The existing proof format contains a legacy ordering byte because current proofs
 need it for transcript compatibility and for reconstructing some opening points.
-Represent that under `compat` with a non-Dory name such as
-`LegacyCoreLayout` or `TracePolynomialOrder`.
+Represent the verifier-owned value on the proof model with a non-Dory name such
+as `TracePolynomialOrder`. Keep only legacy conversion and canonical
+serialization shims in `compat`.
 
 Rules:
 
@@ -248,6 +305,8 @@ Rules:
 - no Dory layout type in `jolt-dory`;
 - compatibility conversion may use the legacy order to construct typed
   `Point<F>` values;
+- `compat` may serialize/deserialize the ordering byte for core artifact
+  compatibility, but verifier logic imports the verifier-owned proof type;
 - stage 8 passes commitments, points, evaluations, and proof data to `jolt-dory`
   without exposing legacy ordering.
 
@@ -290,13 +349,20 @@ crates/jolt-verifier/src/
     config.rs
     convert.rs
     ids.rs
-    layout.rs
     preprocessing.rs
 
   stages/
     mod.rs
-    stage1.rs
-    stage2.rs
+    stage1/
+      mod.rs
+      inputs.rs
+      outputs.rs
+      verify.rs
+    stage2/
+      mod.rs
+      inputs.rs
+      outputs.rs
+      verify.rs
     stage3.rs
     stage4.rs
     stage5.rs
@@ -380,6 +446,35 @@ pub fn verify<PCS, VC, T>(...) -> Result<(), VerifierError> {
 Small helpers are fine for validation and repeated mechanics. Avoid helpers that
 hide protocol checks or Fiat-Shamir ordering.
 
+The Stage 1 port established the preferred style for stage code: direct,
+linear calls into modular crates with local equality checks and transcript
+absorbs visible in protocol order. Verbosity is acceptable when it exposes the
+verification argument. Avoid verifier-local helper modules that merely dispatch
+between sumcheck domains, wrap one equality check, or hide a transcript append;
+move reusable behavior only when a concrete modular crate owns the concept.
+Stage folders make the contract explicit: `inputs.rs` contains typed
+transparent proof claims and dependency structs, `outputs.rs` contains verified
+stage outputs, and `verify.rs` contains the protocol flow.
+
+The most important invariant is that `stage*/verify.rs` stays explicit and
+linear. A stage verifier should read in protocol order:
+
+1. load typed proof payload and typed dependencies;
+2. derive dimensions;
+3. sample transcript challenges;
+4. fetch the relevant `jolt-claims` formula specs;
+5. compute any required opening, challenge, and public values through the
+   abstractions that own those computations;
+6. evaluate the `jolt-claims` expressions against those named values;
+7. call `jolt-sumcheck`;
+8. compare the sumcheck reduction against the expected claim;
+9. append opening claims in transcript order;
+10. return typed outputs for later stages.
+
+Do not hide transcript sampling, sumcheck calls, equality checks, or claim
+appends behind stage-local helper abstractions. Helpers may prepare typed
+values, but the verification argument must remain visible in `verify.rs`.
+
 ## Stage Contract
 
 Each stage should be a free function with explicit verifier inputs,
@@ -421,11 +516,58 @@ contracts are known.
 
 Stage implementation rules:
 
-- use `jolt-sumcheck` for sumcheck verification;
-- use `jolt-claims` for Jolt-specific formulas and consistency checks;
+- use `jolt-sumcheck` directly for sumcheck verification; each stage should make
+  the expected proof form and domain visible at the call site;
+- use `jolt-claims` for Jolt-specific formula declarations, required symbol
+  metadata, and consistency-check expressions;
+- compute values referenced by those formulas in the crate that owns the
+  underlying abstraction; do not place MLE, layout, public-IO materialization,
+  sumcheck point slicing, transcript, or R1CS computation in `jolt-claims`;
 - use `jolt-openings` for opening facts and final opening reduction;
 - use `jolt-r1cs` and `jolt-blindfold` for ZK verifier-equation constraints;
 - return named values needed by later stages instead of writing into a map.
+- keep local structs only when they name real stage data. Do not add stage-wide
+  traits, accumulators, or generic claim-state objects before concrete stages
+  prove they remove meaningful complexity.
+
+## Static Boundary Gate
+
+Run the verifier boundary semgrep rules after each stage is wired:
+
+```bash
+semgrep --config .semgrep/jolt-verifier-boundaries.yml --error
+```
+
+These rules are intentionally structural. They enforce that:
+
+- `compat` imports and legacy/core-compat names stay under
+  `crates/jolt-verifier/src/compat`;
+- stage `inputs.rs` files expose typed fields/deps rather than
+  `JoltOpeningId` router logic;
+- sumcheck calls, formula evaluation, and transcript appends stay visible in
+  stage `verify.rs` files;
+- `jolt-claims` does not regain VM public-IO/address materialization helpers;
+- `jolt-claims` names Spartan product public values but does not compute them.
+
+If a future stage legitimately needs an exception, prefer moving the repeated
+operation to the crate that owns the abstraction over weakening the rule.
+
+Before implementing a new stage, do a short boundary investigation for that
+stage and update the semgrep gate first when a predictable leak exists. The
+investigation should identify:
+
+- which formulas belong in `jolt-claims`;
+- which value computations belong to `jolt-poly`, `jolt-sumcheck`,
+  `jolt-program`, `jolt-riscv`, `common`, `jolt-r1cs`, or another owning crate;
+- which data must be explicit typed proof payload versus prior-stage deps;
+- which transcript operations must remain visible in `stage*/verify.rs`;
+- any imports, helper names, or router patterns that should be forbidden before
+  the implementation starts.
+
+If the investigation reveals a concrete hazard, add or tighten a semgrep rule
+in `.semgrep/jolt-verifier-boundaries.yml` before wiring the stage. This makes
+the desired boundary fail fast during implementation rather than relying on a
+review cleanup afterwards.
 
 ## Incremental Testing Strategy
 
@@ -516,11 +658,19 @@ struct TestCase {
 ```
 
 The harness has separate configured horizons for standard and ZK mode. The
-standard frontier currently reaches `Stage1`; the ZK frontier remains at
-`Commitments` until prefix BlindFold fixtures are available. A completeness case
-passes when a valid proof reaches the configured horizon for its mode. Before
-the full verifier exists, reaching the next unimplemented stage is success;
-after the full verifier exists, success means `Ok(())`.
+standard frontier currently reaches `Stage2`; the ZK frontier remains at
+`Commitments` while standard stages 2-8 are ported. A completeness case passes
+when a valid proof reaches the configured horizon for its mode. Before the full
+verifier exists, reaching the next unimplemented stage is success; after the
+full verifier exists, success means `Ok(())`.
+
+`Stage2` means the full core stage 2 boundary, not only the Spartan product
+component. Do not advance the production frontier to `Stage2` until both the
+product uni-skip prelude and the following five-instance batched sumcheck are
+verified. The production verifier may validate an early Stage 2 substep before
+returning `VerifierError::Unimplemented`, but that is only pre-frontier
+hardening. Do not encode partial product-only progress as the production
+`Stage2` checkpoint.
 
 A soundness case is skipped or left ignored until
 `horizon_for_mode(case.zk) >= first_checked_at`. Once unlocked, the modular
@@ -539,7 +689,7 @@ struct VerifierFrontiers {
 }
 
 const CURRENT_VERIFIER_FRONTIERS: VerifierFrontiers = VerifierFrontiers {
-    standard: VerifierCheckpoint::Stage1,
+    standard: VerifierCheckpoint::Stage2,
     zk: VerifierCheckpoint::Commitments,
 };
 ```
@@ -555,11 +705,15 @@ The harness interprets results relative to the mode-specific frontier:
 - tampered proof whose first observable checkpoint is after the current frontier
   remains ignored or skipped.
 
-ZK frontiers advance with prefix BlindFold fixtures. A full core ZK proof has a
-single BlindFold proof for all stages, so it is not by itself a partial frontier
-artifact. A Stage 1 ZK frontier fixture should contain the committed Stage 1
-sumcheck material and a BlindFold proof built for exactly the Stage 1 verifier
-constraints. Later fixtures extend that prefix stage by stage.
+ZK/BlindFold can be wired after the standard stages and standard opening
+verification are complete. Prefix BlindFold fixtures are optional, not required
+for standard-stage progress. A full core ZK proof has a single BlindFold proof
+for all stages, so it is not by itself a partial frontier artifact. While ZK is
+deferred, every standard stage output must still preserve the data BlindFold
+will need later: input claims, output claims, sumcheck points, batching
+coefficients, public/advice decompositions, and opening claims used in final
+expressions. Once stages 1-8 are complete, wire `stages/zk.rs` against the full
+stage-output data and activate full-verifier ZK tests.
 
 If finer-grained progress is needed before production stages exist, add
 `cfg(test)` or integration-test helper code that calls explicit verifier
@@ -673,6 +827,61 @@ observable. For example, a proof-shape mutation is checked at `Preamble` or
 the final claim expression or at `Stage8Openings`; a BlindFold mutation is
 checked at `Zk`.
 
+### Tamper Manifest
+
+Direct tampering should be driven by an explicit manifest, not by ad hoc test
+functions alone. For each stage, enumerate every verifier-owned field and every
+typed claim value introduced by that stage. Each entry must classify the target
+as exactly one of:
+
+- checked at this stage;
+- checked by a later named stage;
+- checked by final opening verification;
+- checked only by ZK/BlindFold verification;
+- not verifier-owned, with the reason documented.
+
+The manifest is test-only infrastructure. It must live under
+`crates/jolt-verifier/tests/` or behind `cfg(test)`, and it must operate on the
+native verifier proof/preprocessing objects after compat conversion. Do not add
+manifest metadata, checkpoint fields, or tamper hooks to the production
+verifier API.
+
+Each manifest entry should include:
+
+```text
+TamperTarget
+- stable name
+- mode: standard, ZK, or both
+- first checkpoint where rejection is required
+- field path or typed claim path
+- mutation strategy
+- expected verifier behavior
+- reason if the target is deferred or intentionally not verifier-owned
+```
+
+Mutation strategies should be simple and deterministic: offset a field element,
+flip a boolean, change an enum variant, remove an item, add an extra item,
+duplicate an item, swap ordering, truncate a vector, extend a vector, or replace
+a proof payload with another well-typed invalid payload. The default fixture
+flow is:
+
+```text
+real jolt-core proof
+  -> compat conversion
+  -> native JoltProof/JoltVerifierPreprocessing/public IO
+  -> apply one manifest mutation
+  -> verify rejection at or before the target checkpoint
+```
+
+Do not use synthetic proofs for direct tampering while the modular prover does
+not exist. Synthetic helper fixtures are allowed only for cheap proof-shape unit
+tests that do not claim core equivalence.
+
+When a new typed stage input or output struct is added, the manifest must be
+updated in the same change. A field may be deferred, but it may not be omitted.
+This keeps the test suite honest about pass-through values such as claims that
+are carried by one stage and checked by a later stage.
+
 ### Running
 
 The default package test run should keep long-running or future-stage tests
@@ -698,6 +907,44 @@ active once the verifier can reach their checkpoint.
 
 Each step should be reviewed before the next step begins.
 
+### Per-Stage Implementation Workflow
+
+Use this workflow for every new verifier stage:
+
+1. Identify the protocol checks the stage must perform. Write down the input
+   claims, output claims, consistency checks, transcript challenges, public
+   values, and opening claims the verifier must consume or produce.
+2. Define the explicit typed proof payload and typed prior-stage dependencies
+   first. Add or update `inputs.rs` and `outputs.rs` before writing the main
+   verifier logic.
+3. Investigate modular crate boundaries before implementation. Formulas and
+   Jolt-specific claim declarations belong in `jolt-claims`; generic MLE,
+   equality, Lagrange, range-mask, and point utilities belong in `jolt-poly`;
+   sumcheck verification belongs in `jolt-sumcheck`; VM/public-IO material
+   belongs in `jolt-program`, `jolt-riscv`, or `common`; R1CS/BlindFold
+   constraints belong in `jolt-r1cs` or `jolt-blindfold`.
+4. Resolve modular API pressure before adding verifier-local workarounds when
+   practical. If a short local workaround is temporarily necessary, record it
+   in the API pressure log with the proposed owning-crate fix.
+5. Add or tighten semgrep checks before wiring the stage when the boundary
+   investigation reveals a predictable leak.
+6. Set up completeness and soundness tests before implementing `verify.rs`.
+   Completeness should include the real core fixture shape expected to reach
+   the new frontier. Soundness should update the tamper manifest for every new
+   field and claim, including deferred targets.
+7. Leave future-frontier tests ignored or checkpoint-gated while they cannot
+   pass, but make the intended coverage visible in the same change that adds
+   the stage surface.
+8. Implement `stage*/verify.rs` as explicit linear protocol logic: sample
+   transcript challenges, call `jolt-sumcheck`, evaluate `jolt-claims`
+   expressions with typed local values, compare claims, append transcript
+   values, and return typed outputs.
+9. Unignore or activate tests whose checkpoint is now implemented. Debug by
+   fixing verifier logic first, then compat translation if the native typed
+   payload is wrong.
+10. Run the boundary semgrep gate, focused verifier tests, and affected modular
+    crate tests before advancing the production frontier.
+
 ### 1. Generic Proof Model And Compat Boundary
 
 Objective: make model proof data generic and isolate legacy fields.
@@ -707,13 +954,14 @@ Tasks:
 - Express `JoltProof` in terms of modular proof data and generic commitment
   types.
 - Keep concrete Dory/Pedersen/Blake2b instantiation in tests and aliases.
-- Move the legacy layout/order enum under `compat::layout`.
+- Represent trace polynomial ordering on the verifier-owned proof model with a
+  non-Dory name; keep legacy conversion/serialization in `compat`.
 - Keep canonical serialization for legacy fields in `compat::codec`.
 - Validate proof mode structurally: all clear or all committed.
 
 Review criteria:
 
-- No Dory layout type appears outside `compat`.
+- No Dory layout type appears in verifier stage code or modular Dory APIs.
 - Proof validation rejects mixed clear/committed stages.
 - Compatibility bytes still match existing proof artifacts.
 
@@ -752,6 +1000,9 @@ Tasks:
 - Define the `jolt-sumcheck` verifier return shape needed by `jolt-verifier`,
   including final evaluation claims, per-instance batching coefficients, and
   per-instance evaluation points.
+- Include compressed batched verification support for core-compatible clear
+  proofs, since stages such as core stage 2 provide one compressed proof for
+  several instances rather than separate uncompressed proofs.
 - Document the standard-mode equality:
   `sumcheck_final_claim == evaluated_output_expression`.
 - Document the ZK-mode lowering of the same output expression into BlindFold
@@ -814,29 +1065,99 @@ Tasks:
 - Verify the boolean-hypercube remainder sumcheck.
 - Check the handoff between first-round output and remainder input.
 - Use `jolt-claims::protocols::jolt::formulas::spartan`.
-- Return challenges, opening dependencies, and ZK claim metadata.
+- Return challenges, opening dependencies, sumcheck input/output claims, and
+  the values ZK will later lower into BlindFold constraints.
 
 Review criteria:
 
 - Uni-skip is represented as ordinary sumchecks plus explicit consistency.
 - No accumulator dependency.
+- No verifier-local sumcheck-dispatch or claim-state helper module.
+- Spartan outer claims are named fields, including all circuit flag claims,
+  instead of an ID-keyed map or generic claim-state object.
+- Proof shape, domain, equality checks, and transcript absorbs are visible in
+  `stage1/verify.rs`.
 - Any missing modular API is recorded as pressure.
 
-### 6. Stage 2: Spartan Product Split
+### 6. Stage 2: Product Uni-Skip And Five-Instance Batch
 
-Objective: port the product/remaining Spartan stage.
+Objective: port core stage 2 faithfully: the Spartan product uni-skip prelude
+followed by the compressed batched sumcheck that core verifies in the same
+stage.
 
 Tasks:
 
-- Verify the centered-domain first-round product sumcheck.
-- Verify the boolean-hypercube product remainder.
-- Use `jolt-r1cs` helpers where they fit.
-- Return data needed by later stages and ZK.
+- Verify the centered-domain first-round product uni-skip proof.
+- Derive the product uni-skip input from the stage 1 product output claims and
+  the transcript-sampled product high challenge.
+- Verify `stage2_sumcheck_proof` as the core-compatible compressed batched
+  sumcheck over these five instances:
+  - RAM read/write checking;
+  - Spartan product virtual remainder;
+  - instruction lookup claim reduction;
+  - RAM RAF evaluation;
+  - public-output check.
+- Add or extend `jolt-sumcheck` APIs so batched compressed verification returns
+  the common challenge point, per-instance batching coefficients, and any round
+  offsets needed to evaluate each instance's final expression explicitly.
+- Use `jolt-claims` formulas and owning modular helpers for each instance's
+  input and output expressions. Add helpers to the owning crate when verifier
+  code would otherwise need to copy protocol math from `jolt-core`.
+- Check the product uni-skip handoff into the product remainder instance
+  explicitly.
+- Return data needed by later stages, stage 8 openings, and eventual BlindFold
+  construction: product uni-skip challenge, stage 2 challenge vector, batching
+  coefficients, per-instance input claims, per-instance output claims, and
+  opening dependencies.
 
 Review criteria:
 
 - Stage 1 and stage 2 outputs compose through typed fields.
-- Formula checks use `jolt-claims`, not copied ad hoc scalar math.
+- Stage 2 proof claims contain only Stage 2 payload claims; Stage 1-derived
+  input claims flow through `Deps`.
+- Product-only verification is not considered a complete `Stage2` checkpoint.
+- The compressed batch shape and the five instance order are visible in
+  `stage2/verify.rs`.
+- Batching coefficients and per-instance final-claim checks are explicit and
+  typed.
+- Formula checks use `jolt-claims` expressions, not copied ad hoc scalar math.
+- `stage2/verify.rs` shows transcript challenge sampling, sumcheck calls,
+  expression evaluation, equality checks, and opening-claim appends in protocol
+  order.
+- Formula-value computation is delegated to the owning abstraction rather than
+  hidden inside `Stage2Claims`/`Deps` ID routers.
+
+Current implementation status:
+
+- standard Stage 2 is wired through the full core boundary: product uni-skip,
+  the five-instance compressed batch, per-instance output expression checks,
+  and the combined final-claim check;
+- `jolt-claims` exposes the Stage 2 formula helpers and opening-order metadata
+  needed by the verifier;
+- `jolt-sumcheck` exposes the core-compatible compressed batched verifier
+  return shape and checked per-instance point slicing used by Stage 2;
+- `common` owns VM memory-layout remapping and public I/O byte-to-word packing;
+- `jolt-poly` owns generic MLE helpers used by the formula public-value code;
+- standard Stage 1/2 soundness tests now use the tamper manifest to mutate real
+  core proofs after compat conversion, covering every current Stage 1/2
+  verifier-owned proof payload and typed claim target that is checked by the
+  `Stage2` frontier;
+- unchecked pass-through, final-opening, commitment-payload/order, advice, and
+  ZK/BlindFold targets are explicitly recorded in the tamper manifest rather
+  than left implicit;
+- the standard verifier frontier is now `Stage2`; Stage 3 remains the next
+  unimplemented standard-stage boundary.
+
+Boundary cleanup pressure:
+
+- move any remaining non-formula computation currently exposed from
+  `jolt-claims` to its owning abstraction;
+- keep tightening the tamper manifest as new typed stage inputs/outputs are
+  introduced so no verifier-owned field is added without a checked, deferred,
+  final-opening, ZK-only, or non-verifier-owned classification;
+- keep the stage verifier linear after this cleanup: it should still visibly
+  sample challenges, verify sumchecks, evaluate formula expressions, compare,
+  and append claims.
 
 ### 7. Stage 3: Shift, Instruction Input, Register Claim Reduction
 

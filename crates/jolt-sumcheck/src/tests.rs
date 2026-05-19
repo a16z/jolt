@@ -20,8 +20,8 @@ use crate::proof::{ClearSumcheckProof, CompressedSumcheckProof};
 use crate::round_proof::{ClearRound, CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
 use crate::verifier::SumcheckVerifier;
 use crate::{
-    BatchedSumcheckVerifier, BooleanHypercube, CenteredIntegerDomain, SumcheckDomain,
-    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+    append_sumcheck_claim, BatchedSumcheckVerifier, BooleanHypercube, CenteredIntegerDomain,
+    SumcheckDomain, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
 
 type F = Fr;
@@ -773,6 +773,87 @@ fn batched_empty_claims_returns_error() {
     let mut vt = Blake2bTranscript::new(b"sumcheck-test");
     let result = BatchedSumcheckVerifier::verify(claims, round_proofs, BooleanHypercube, &mut vt);
     assert!(matches!(result, Err(SumcheckError::EmptyClaims)));
+}
+
+#[test]
+fn batched_compressed_verify_uses_core_batching_shape() {
+    let evals_a: Vec<F> = (1..=8).map(F::from_u64).collect();
+    let evals_b: Vec<F> = (1..=4).map(F::from_u64).collect();
+    let sum_a = compute_sum(&evals_a);
+    let sum_b = compute_sum(&evals_b);
+
+    let claims = vec![
+        SumcheckClaim {
+            num_vars: 3,
+            degree: 1,
+            claimed_sum: sum_a,
+        },
+        SumcheckClaim {
+            num_vars: 2,
+            degree: 1,
+            claimed_sum: sum_b,
+        },
+    ];
+
+    let mut prover_transcript = Blake2bTranscript::new(b"sumcheck-test");
+    for claim in &claims {
+        append_sumcheck_claim(&mut prover_transcript, &claim.claimed_sum);
+    }
+    let batching_coefficients = (0..claims.len())
+        .map(|_| prover_transcript.challenge_scalar())
+        .collect::<Vec<_>>();
+
+    let evals_b_extended: Vec<F> = evals_b.iter().flat_map(|&value| [value, value]).collect();
+    let combined: Vec<F> = evals_a
+        .iter()
+        .zip(&evals_b_extended)
+        .map(|(&a, &b)| batching_coefficients[0] * a + batching_coefficients[1] * b)
+        .collect();
+    let (_full_proof, compressed_proof) = honest_prove_compressed_labeled(
+        &combined,
+        3,
+        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+        &mut prover_transcript,
+    );
+
+    let mut verifier_transcript = Blake2bTranscript::new(b"sumcheck-test");
+    let result = BatchedSumcheckVerifier::verify_compressed(
+        &claims,
+        &compressed_proof,
+        &mut verifier_transcript,
+    )
+    .unwrap();
+
+    assert_eq!(result.batching_coefficients, batching_coefficients);
+    assert_eq!(result.max_num_vars, 3);
+    assert_eq!(result.max_degree, 1);
+    assert_eq!(
+        result.instance_point(2),
+        &result.reduction.point.as_slice()[1..]
+    );
+    assert_eq!(
+        result.try_instance_point(2).unwrap(),
+        &result.reduction.point.as_slice()[1..]
+    );
+    assert_eq!(
+        result.try_instance_point_at(0, 3).unwrap(),
+        result.reduction.point.as_slice()
+    );
+    assert!(matches!(
+        result.try_instance_point(4),
+        Err(SumcheckError::BatchedPointOutOfRange {
+            offset: 0,
+            num_vars: 4,
+            total: 3
+        })
+    ));
+    assert!(matches!(
+        result.try_instance_point_at(usize::MAX, 1),
+        Err(SumcheckError::BatchedPointRangeOverflow {
+            offset: usize::MAX,
+            num_vars: 1
+        })
+    ));
 }
 
 #[test]

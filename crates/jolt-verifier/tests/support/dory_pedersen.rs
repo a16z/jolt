@@ -3,34 +3,43 @@
     reason = "test fixture construction should fail loudly if the synthetic proof is malformed"
 )]
 
-use common::jolt_device::{JoltDevice, MemoryLayout};
+use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 use jolt_claims::protocols::jolt::{
-    formulas::spartan::{
-        SpartanOuterDimensions, SpartanOuterLinearForms, SpartanOuterRemainderPlan,
+    formulas::{
+        ram,
+        spartan::{
+            product_uniskip_opening, SpartanOuterDimensions, SpartanOuterLinearForms,
+            SpartanOuterRemainderPlan,
+        },
     },
     JoltOneHotConfig, JoltReadWriteConfig, JoltStageId, JoltVirtualPolynomial,
 };
 use jolt_crypto::{Bn254G1, DeriveSetup, Pedersen, PedersenSetup, VectorCommitment};
 use jolt_dory::{DoryCommitment, DoryProof, DoryScheme, DoryVerifierSetup};
 use jolt_field::{Fr, FromPrimitiveInt, Invertible};
-use jolt_openings::{append_opening_claim, CommitmentScheme, ZkOpeningScheme};
-use jolt_poly::{CompressedPoly, Polynomial, UnivariatePoly};
-use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
+use jolt_openings::{CommitmentScheme, ZkOpeningScheme};
+use jolt_poly::{sparse_segments_mle_msb, CompressedPoly, Polynomial, UnivariatePoly};
+use jolt_program::preprocess::{
+    BytecodePreprocessing, JoltProgramPreprocessing, PublicIoMemory, RAMPreprocessing,
+};
 use jolt_r1cs::constraints::rv64::{const_column, input_column, rv64_eq_constraints};
 use jolt_sumcheck::{
-    append_sumcheck_claim, ClearProof, ClearSumcheckProof, CommittedOutputClaims, CommittedRound,
-    CommittedSumcheckProof, CompressedSumcheckProof, LabeledRoundPoly, SumcheckClaim,
-    SumcheckProof, SumcheckVerifier, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+    append_sumcheck_claim, BatchedSumcheckVerifier, ClearProof, ClearSumcheckProof,
+    CommittedOutputClaims, CommittedRound, CommittedSumcheckProof, CompressedSumcheckProof,
+    LabeledRoundPoly, SumcheckClaim, SumcheckProof, SumcheckVerifier,
+    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript, U64Word};
 use jolt_verifier::{
     compat::claims::attach_opening_claims,
-    proof::{JoltStageProofs, TracePolynomialOrder},
+    proof::{JoltProofClaims, JoltStageProofs, TracePolynomialOrder, TransparentProofClaims},
+    stages::{stage1, stage2},
     verify, JoltProof, JoltVerifierPreprocessing, VerifierError,
 };
 
 const DORY_NUM_VARS: usize = 4;
 const VC_CAPACITY: usize = 4;
+const SYNTHETIC_RAM_K: usize = 32;
 
 pub type TestVectorCommitment = Pedersen<Bn254G1>;
 pub type TestProof = JoltProof<DoryScheme, TestVectorCommitment, ()>;
@@ -61,8 +70,8 @@ pub fn standard_case() -> DoryPedersenVerifierCase {
     let preprocessing = preprocessing(artifacts.pcs_setup.clone(), None);
     let public_io = public_io();
     let mut proof = proof_with_payload(false, None, &artifacts);
-    let opening_claims = stage1_opening_claims(&preprocessing, &public_io, &proof);
-    attach_opening_claims(&mut proof, opening_claims);
+    let opening_claims = standard_opening_claims(&preprocessing, &public_io, &proof);
+    assert!(attach_opening_claims(&mut proof, opening_claims).is_ok());
 
     DoryPedersenVerifierCase {
         preprocessing,
@@ -124,9 +133,9 @@ pub fn proof_with_payload(
         stage_proofs(is_zk, &artifacts.vc_setup),
         artifacts.opening_proof.clone(),
         None,
-        blindfold_proof,
+        proof_claims(is_zk, blindfold_proof),
         1,
-        1,
+        SYNTHETIC_RAM_K,
         JoltReadWriteConfig {
             ram_rw_phase1_num_rounds: 0,
             ram_rw_phase2_num_rounds: 0,
@@ -139,6 +148,101 @@ pub fn proof_with_payload(
         },
         TracePolynomialOrder::CycleMajor,
     )
+}
+
+fn proof_claims(is_zk: bool, blindfold_proof: Option<()>) -> JoltProofClaims<Fr, ()> {
+    if is_zk {
+        return JoltProofClaims::Zk {
+            blindfold_proof: blindfold_proof.unwrap_or(()),
+        };
+    }
+
+    JoltProofClaims::Transparent(empty_transparent_claims())
+}
+
+fn empty_transparent_claims() -> TransparentProofClaims<Fr> {
+    let zero = Fr::default();
+
+    TransparentProofClaims {
+        stage1: stage1::inputs::Stage1Claims {
+            uniskip_output_claim: zero,
+            outer: empty_spartan_outer_claims(),
+        },
+        stage2: stage2::inputs::Stage2Claims {
+            product_uniskip_output_claim: zero,
+            batch_outputs: stage2::inputs::Stage2BatchOutputOpeningClaims {
+                ram_read_write: stage2::inputs::RamReadWriteOutputOpeningClaims {
+                    val: zero,
+                    ra: zero,
+                    inc: zero,
+                },
+                product_remainder: stage2::inputs::ProductRemainderOutputOpeningClaims {
+                    left_instruction_input: zero,
+                    right_instruction_input: zero,
+                    jump_flag: zero,
+                    write_lookup_output_to_rd: zero,
+                    lookup_output: zero,
+                    branch_flag: zero,
+                    next_is_noop: zero,
+                    virtual_instruction: zero,
+                },
+                instruction_claim_reduction:
+                    stage2::inputs::InstructionClaimReductionOutputOpeningClaims {
+                        lookup_output: None,
+                        left_lookup_operand: zero,
+                        right_lookup_operand: zero,
+                        left_instruction_input: None,
+                        right_instruction_input: None,
+                    },
+                ram_raf_evaluation: zero,
+                ram_output_check: zero,
+            },
+        },
+    }
+}
+
+fn empty_spartan_outer_claims() -> stage1::inputs::SpartanOuterClaims<Fr> {
+    let zero = Fr::default();
+
+    stage1::inputs::SpartanOuterClaims {
+        left_instruction_input: zero,
+        right_instruction_input: zero,
+        product: zero,
+        should_branch: zero,
+        pc: zero,
+        unexpanded_pc: zero,
+        imm: zero,
+        ram_address: zero,
+        rs1_value: zero,
+        rs2_value: zero,
+        rd_write_value: zero,
+        ram_read_value: zero,
+        ram_write_value: zero,
+        left_lookup_operand: zero,
+        right_lookup_operand: zero,
+        next_unexpanded_pc: zero,
+        next_pc: zero,
+        next_is_virtual: zero,
+        next_is_first_in_sequence: zero,
+        lookup_output: zero,
+        should_jump: zero,
+        flags: stage1::inputs::SpartanOuterFlagClaims {
+            add_operands: zero,
+            subtract_operands: zero,
+            multiply_operands: zero,
+            load: zero,
+            store: zero,
+            jump: zero,
+            write_lookup_output_to_rd: zero,
+            virtual_instruction: zero,
+            assert: zero,
+            do_not_update_unexpanded_pc: zero,
+            advice: zero,
+            is_compressed: zero,
+            is_first_in_sequence: zero,
+            is_last_in_sequence: zero,
+        },
+    }
 }
 
 #[derive(Clone)]
@@ -185,12 +289,15 @@ fn dory_artifacts(is_zk: bool) -> DoryArtifacts {
 }
 
 fn memory_layout() -> MemoryLayout {
-    MemoryLayout {
+    MemoryLayout::new(&MemoryConfig {
+        program_size: Some(8),
+        max_trusted_advice_size: 0,
+        max_untrusted_advice_size: 0,
         max_input_size: 8,
         max_output_size: 8,
+        stack_size: 0,
         heap_size: 8,
-        ..MemoryLayout::default()
-    }
+    })
 }
 
 fn stage_proofs(
@@ -199,14 +306,18 @@ fn stage_proofs(
 ) -> JoltStageProofs<Fr, TestVectorCommitment> {
     JoltStageProofs {
         stage1_uni_skip_first_round_proof: uniskip_proof(is_zk, vc_setup),
-        stage1_sumcheck_proof: sumcheck_proof(is_zk, vc_setup),
+        stage1_sumcheck_proof: sumcheck_proof_with_rounds(is_zk, vc_setup, 1),
         stage2_uni_skip_first_round_proof: uniskip_proof(is_zk, vc_setup),
-        stage2_sumcheck_proof: sumcheck_proof(is_zk, vc_setup),
-        stage3_sumcheck_proof: sumcheck_proof(is_zk, vc_setup),
-        stage4_sumcheck_proof: sumcheck_proof(is_zk, vc_setup),
-        stage5_sumcheck_proof: sumcheck_proof(is_zk, vc_setup),
-        stage6_sumcheck_proof: sumcheck_proof(is_zk, vc_setup),
-        stage7_sumcheck_proof: sumcheck_proof(is_zk, vc_setup),
+        stage2_sumcheck_proof: sumcheck_proof_with_rounds(
+            is_zk,
+            vc_setup,
+            SYNTHETIC_RAM_K.ilog2() as usize,
+        ),
+        stage3_sumcheck_proof: sumcheck_proof_with_rounds(is_zk, vc_setup, 1),
+        stage4_sumcheck_proof: sumcheck_proof_with_rounds(is_zk, vc_setup, 1),
+        stage5_sumcheck_proof: sumcheck_proof_with_rounds(is_zk, vc_setup, 1),
+        stage6_sumcheck_proof: sumcheck_proof_with_rounds(is_zk, vc_setup, 1),
+        stage7_sumcheck_proof: sumcheck_proof_with_rounds(is_zk, vc_setup, 1),
     }
 }
 
@@ -220,12 +331,18 @@ fn uniskip_proof(is_zk: bool, vc_setup: &PedersenSetup<Bn254G1>) -> SumcheckProo
     }
 }
 
-fn sumcheck_proof(is_zk: bool, vc_setup: &PedersenSetup<Bn254G1>) -> SumcheckProof<Fr, Bn254G1> {
+fn sumcheck_proof_with_rounds(
+    is_zk: bool,
+    vc_setup: &PedersenSetup<Bn254G1>,
+    rounds: usize,
+) -> SumcheckProof<Fr, Bn254G1> {
     if is_zk {
         SumcheckProof::Committed(committed_sumcheck_proof(vc_setup))
     } else {
         SumcheckProof::Clear(ClearProof::Compressed(CompressedSumcheckProof {
-            round_polynomials: vec![CompressedPoly::new(vec![Fr::from_u64(0)])],
+            round_polynomials: (0..rounds)
+                .map(|_| CompressedPoly::new(vec![Fr::from_u64(0)]))
+                .collect(),
         }))
     }
 }
@@ -247,7 +364,7 @@ fn pedersen_commit(setup: &PedersenSetup<Bn254G1>, values: &[u64], blinding: u64
     Pedersen::commit(setup, &values, &Fr::from_u64(blinding))
 }
 
-fn stage1_opening_claims(
+fn standard_opening_claims(
     preprocessing: &TestPreprocessing,
     public_io: &JoltDevice,
     proof: &TestProof,
@@ -258,7 +375,7 @@ fn stage1_opening_claims(
     let _tau = transcript.challenge_vector(log_t + 2);
 
     let uniskip_challenge = verify_fixture_uniskip(proof, &mut transcript);
-    append_opening_claim(&mut transcript, &Fr::from_u64(0));
+    transcript.append_labeled(b"opening_claim", &Fr::from_u64(0));
     append_sumcheck_claim(&mut transcript, &Fr::from_u64(0));
     let _batching_coefficient = transcript.challenge_scalar();
     let remainder_challenges = verify_fixture_remainder(log_t, proof, &mut transcript);
@@ -276,9 +393,91 @@ fn stage1_opening_claims(
         .zip(variable_openings)
     {
         claims.push((spartan_outer_opening(variable), opening_claim));
+        transcript.append_labeled(b"opening_claim", &opening_claim);
     }
+    claims.push((product_uniskip_opening(), Fr::from_u64(0)));
+    let ram_output_check_claim =
+        zeroing_stage2_output_check_claim(proof, public_io, &mut transcript);
+    claims.push((
+        ram::output_check_output_openings()[0],
+        ram_output_check_claim,
+    ));
 
     claims
+}
+
+fn zeroing_stage2_output_check_claim(
+    proof: &TestProof,
+    public_io: &JoltDevice,
+    transcript: &mut Blake2bTranscript,
+) -> Fr {
+    let log_t = proof.trace_length.ilog2() as usize;
+    let log_k = proof.ram_K.ilog2() as usize;
+    let _tau_high = transcript.challenge();
+    let _product_uniskip_challenge = verify_fixture_stage2_uniskip(proof, transcript);
+    transcript.append_labeled(b"opening_claim", &Fr::from_u64(0));
+    let _ram_read_write_gamma = transcript.challenge_scalar();
+    let _instruction_gamma = transcript.challenge_scalar();
+    let _output_address_challenges = (0..log_k)
+        .map(|_| transcript.challenge())
+        .collect::<Vec<_>>();
+
+    let SumcheckProof::Clear(ClearProof::Compressed(proof)) = &proof.stages.stage2_sumcheck_proof
+    else {
+        panic!("standard fixture must use a clear compressed Stage 2 proof");
+    };
+    let reduction = BatchedSumcheckVerifier::verify_compressed(
+        &[
+            SumcheckClaim::new(log_t + log_k, 3, Fr::from_u64(0)),
+            SumcheckClaim::new(log_t, 3, Fr::from_u64(0)),
+            SumcheckClaim::new(log_t, 2, Fr::from_u64(0)),
+            SumcheckClaim::new(log_t + log_k, 2, Fr::from_u64(0)),
+            SumcheckClaim::new(log_t + log_k, 3, Fr::from_u64(0)),
+        ],
+        proof,
+        transcript,
+    )
+    .unwrap_or_else(|error| panic!("fixture Stage 2 batch proof must verify: {error}"));
+
+    let mut r_address = reduction.reduction.point.as_slice().to_vec();
+    r_address.reverse();
+    let public_memory = PublicIoMemory::new(public_io)
+        .unwrap_or_else(|error| panic!("fixture public IO memory should materialize: {error}"));
+    let io_num_vars = public_memory.io_num_vars();
+    let (r_hi, r_lo) = r_address.split_at(log_k - io_num_vars);
+    let hi_scale = r_hi.iter().fold(Fr::from_u64(1), |acc, challenge| {
+        acc * (Fr::from_u64(1) - *challenge)
+    });
+    hi_scale
+        * sparse_segments_mle_msb(
+            public_memory
+                .segments
+                .iter()
+                .map(|segment| (segment.start_index, segment.words.as_slice())),
+            r_lo,
+        )
+}
+
+fn verify_fixture_stage2_uniskip(proof: &TestProof, transcript: &mut Blake2bTranscript) -> Fr {
+    let SumcheckProof::Clear(ClearProof::Full(proof)) =
+        &proof.stages.stage2_uni_skip_first_round_proof
+    else {
+        panic!("standard fixture must use a clear full Stage 2 uni-skip proof");
+    };
+
+    let reduction = SumcheckVerifier::verify(
+        &SumcheckClaim::new(1, 6, Fr::from_u64(0)),
+        &proof
+            .round_polynomials
+            .iter()
+            .map(LabeledRoundPoly::uniskip)
+            .collect::<Vec<_>>(),
+        jolt_sumcheck::CenteredIntegerDomain::new(3),
+        transcript,
+    )
+    .unwrap_or_else(|error| panic!("fixture Stage 2 uni-skip proof must verify: {error}"));
+
+    reduction.point[0]
 }
 
 fn verify_fixture_uniskip(proof: &TestProof, transcript: &mut Blake2bTranscript) -> Fr {
@@ -354,9 +553,19 @@ fn zeroing_spartan_outer_openings(
 
     let mut openings = vec![Fr::from_u64(0); dimensions.variables().len()];
     if az_constant != Fr::from_u64(0) {
-        set_opening_to_cancel_linear_form(&mut openings, az_constant, &weighted.a);
+        set_opening_to_cancel_linear_form(
+            &mut openings,
+            az_constant,
+            &weighted.a,
+            dimensions.variables(),
+        );
     } else if bz_constant != Fr::from_u64(0) {
-        set_opening_to_cancel_linear_form(&mut openings, bz_constant, &weighted.b);
+        set_opening_to_cancel_linear_form(
+            &mut openings,
+            bz_constant,
+            &weighted.b,
+            dimensions.variables(),
+        );
     }
 
     let linear_forms = SpartanOuterLinearForms {
@@ -383,8 +592,29 @@ fn zeroing_spartan_outer_openings(
     openings
 }
 
-fn set_opening_to_cancel_linear_form(openings: &mut [Fr], constant: Fr, coefficients: &[Fr]) {
-    for (index, &coefficient) in coefficients.iter().enumerate() {
+fn set_opening_to_cancel_linear_form(
+    openings: &mut [Fr],
+    constant: Fr,
+    coefficients: &[Fr],
+    variables: &[JoltVirtualPolynomial],
+) {
+    for (index, (&coefficient, &variable)) in coefficients.iter().zip(variables).enumerate() {
+        if matches!(
+            variable,
+            JoltVirtualPolynomial::Product
+                | JoltVirtualPolynomial::ShouldBranch
+                | JoltVirtualPolynomial::ShouldJump
+                | JoltVirtualPolynomial::RamReadValue
+                | JoltVirtualPolynomial::RamWriteValue
+                | JoltVirtualPolynomial::RamAddress
+                | JoltVirtualPolynomial::LookupOutput
+                | JoltVirtualPolynomial::LeftLookupOperand
+                | JoltVirtualPolynomial::RightLookupOperand
+                | JoltVirtualPolynomial::LeftInstructionInput
+                | JoltVirtualPolynomial::RightInstructionInput
+        ) {
+            continue;
+        }
         if coefficient == Fr::from_u64(0) {
             continue;
         }
@@ -485,7 +715,7 @@ fn transcript_after_commitments(
     append_labeled_u64(
         &mut transcript,
         b"dory_layout",
-        u8::from(proof.trace_polynomial_order) as u64,
+        proof.trace_polynomial_order.transcript_scalar(),
     );
 
     for commitment in &proof.commitments {

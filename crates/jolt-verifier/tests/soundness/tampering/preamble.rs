@@ -1,43 +1,58 @@
-use crate::{support, support::dory_pedersen};
+use crate::support::{self, dory_pedersen, tamper_manifest};
 
 #[test]
 fn public_io_memory_layout_mismatch_rejects_now() {
-    let mut case = dory_pedersen::standard_case();
-    case.public_io.memory_layout.heap_size += 1;
-
-    support::assert_rejects_at_or_before_current_frontier(case.verify());
+    tamper_manifest::assert_dory_tamper_rejects(
+        tamper_manifest::required_target("public_io.memory_layout"),
+        dory_pedersen::standard_case(),
+        |case| {
+            case.public_io.memory_layout.heap_size += 1;
+        },
+    );
 }
 
 #[test]
 fn invalid_trace_length_rejects_now() {
-    let mut case = dory_pedersen::standard_case();
-    case.proof.trace_length = 3;
-
-    support::assert_rejects_at_or_before_current_frontier(case.verify());
+    tamper_manifest::assert_dory_tamper_rejects(
+        tamper_manifest::required_target("proof.trace_length"),
+        dory_pedersen::standard_case(),
+        |case| {
+            case.proof.trace_length = 3;
+        },
+    );
 }
 
 #[test]
 fn excessive_trace_length_rejects_now() {
-    let mut case = dory_pedersen::standard_case();
-    case.proof.trace_length = case.preprocessing.program.max_padded_trace_length * 2;
-
-    support::assert_rejects_at_or_before_current_frontier(case.verify());
+    tamper_manifest::assert_dory_tamper_rejects(
+        tamper_manifest::required_target("proof.trace_length"),
+        dory_pedersen::standard_case(),
+        |case| {
+            case.proof.trace_length = case.preprocessing.program.max_padded_trace_length * 2;
+        },
+    );
 }
 
 #[test]
 fn invalid_ram_domain_rejects_now() {
-    let mut case = dory_pedersen::standard_case();
-    case.proof.ram_K = 3;
-
-    support::assert_rejects_at_or_before_current_frontier(case.verify());
+    tamper_manifest::assert_dory_tamper_rejects(
+        tamper_manifest::required_target("proof.ram_K"),
+        dory_pedersen::standard_case(),
+        |case| {
+            case.proof.ram_K = 3;
+        },
+    );
 }
 
 #[test]
 fn zero_ram_domain_rejects_now() {
-    let mut case = dory_pedersen::standard_case();
-    case.proof.ram_K = 0;
-
-    support::assert_rejects_at_or_before_current_frontier(case.verify());
+    tamper_manifest::assert_dory_tamper_rejects(
+        tamper_manifest::required_target("proof.ram_K"),
+        dory_pedersen::standard_case(),
+        |case| {
+            case.proof.ram_K = 0;
+        },
+    );
 }
 
 #[test]
@@ -60,8 +75,11 @@ fn oversized_public_output_rejects_now() {
 
 #[test]
 fn tampered_public_input_bytes_reject() {
-    let mut case = dory_pedersen::standard_case();
-    case.public_io.inputs[0] ^= 1;
-
-    support::assert_rejects_at_or_before_current_frontier(case.verify());
+    tamper_manifest::assert_dory_tamper_rejects(
+        tamper_manifest::required_target("public_io.inputs"),
+        dory_pedersen::standard_case(),
+        |case| {
+            case.public_io.inputs[0] ^= 1;
+        },
+    );
 }

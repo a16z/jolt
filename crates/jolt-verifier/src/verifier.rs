@@ -248,7 +248,7 @@ fn absorb_preamble<PCS, VC, ZkProof, T>(
     absorb_labeled_u64(
         transcript,
         b"dory_layout",
-        u8::from(proof.trace_polynomial_order) as u64,
+        proof.trace_polynomial_order.transcript_scalar(),
     );
 }
 
@@ -352,18 +352,13 @@ where
         zk,
     )?;
 
-    if zk {
-        if proof.opening_claims.is_some() {
+    match (&proof.claims, zk) {
+        (crate::proof::JoltProofClaims::Transparent(_), false)
+        | (crate::proof::JoltProofClaims::Zk { .. }, true) => {}
+        (crate::proof::JoltProofClaims::Transparent(_), true) => {
             return Err(VerifierError::UnexpectedOpeningClaims);
         }
-        if proof.blindfold_proof.is_none() {
-            return Err(VerifierError::MissingBlindFoldProof);
-        }
-    } else {
-        if proof.opening_claims.is_none() {
-            return Err(VerifierError::MissingOpeningClaims);
-        }
-        if proof.blindfold_proof.is_some() {
+        (crate::proof::JoltProofClaims::Zk { .. }, false) => {
             return Err(VerifierError::UnexpectedBlindFoldProof);
         }
     }
@@ -392,9 +387,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proof::JoltStageProofs;
+    use crate::proof::{JoltProofClaims, JoltStageProofs, TransparentProofClaims};
     use common::jolt_device::{JoltDevice, MemoryLayout};
-    use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltOpeningId, JoltReadWriteConfig};
+    use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
     use jolt_crypto::{Commitment, VectorCommitment};
     use jolt_field::Fr;
     use jolt_openings::{CommitmentScheme, OpeningsError};
@@ -506,7 +501,6 @@ mod tests {
     }
 
     type TestProof = JoltProof<TestPcs, TestVectorCommitment, ()>;
-    type TestOpeningClaims = Vec<(JoltOpeningId, Fr)>;
 
     #[test]
     fn proof_wrapper_uses_modular_trait_bounds() {
@@ -529,21 +523,21 @@ mod tests {
 
     #[test]
     fn accepts_standard_proof_consistency() {
-        let proof = proof_with_zk(false, Some(Vec::new()), None);
+        let proof = proof_with_zk(false, transparent_claims());
 
         assert!(validate_proof_consistency(&proof, false).is_ok());
     }
 
     #[test]
     fn accepts_zk_proof_consistency() {
-        let proof = proof_with_zk(true, None, Some(()));
+        let proof = proof_with_zk(true, zk_claims());
 
         assert!(validate_proof_consistency(&proof, true).is_ok());
     }
 
     #[test]
     fn rejects_wrong_stage_representation() {
-        let mut proof = proof_with_zk(false, Some(Vec::new()), None);
+        let mut proof = proof_with_zk(false, transparent_claims());
         proof.stages.stage5_sumcheck_proof =
             SumcheckProof::Committed(CommittedSumcheckProof::default());
 
@@ -557,7 +551,7 @@ mod tests {
 
     #[test]
     fn rejects_wrong_verifier_zk_flag() {
-        let proof = proof_with_zk(false, Some(Vec::new()), None);
+        let proof = proof_with_zk(false, transparent_claims());
 
         assert!(matches!(
             validate_proof_consistency(&proof, true),
@@ -570,19 +564,11 @@ mod tests {
     #[test]
     fn checks_payload_for_selected_zk_flag() {
         assert!(matches!(
-            validate_proof_consistency(&proof_with_zk(false, None, None), false),
-            Err(VerifierError::MissingOpeningClaims)
-        ));
-        assert!(matches!(
-            validate_proof_consistency(&proof_with_zk(false, Some(Vec::new()), Some(())), false),
+            validate_proof_consistency(&proof_with_zk(false, zk_claims()), false),
             Err(VerifierError::UnexpectedBlindFoldProof)
         ));
         assert!(matches!(
-            validate_proof_consistency(&proof_with_zk(true, None, None), true),
-            Err(VerifierError::MissingBlindFoldProof)
-        ));
-        assert!(matches!(
-            validate_proof_consistency(&proof_with_zk(true, Some(Vec::new()), Some(())), true),
+            validate_proof_consistency(&proof_with_zk(true, transparent_claims()), true),
             Err(VerifierError::UnexpectedOpeningClaims)
         ));
     }
@@ -596,7 +582,7 @@ mod tests {
             outputs: vec![3, 0, 0],
             ..JoltDevice::default()
         };
-        let proof = proof_with_zk(false, Some(Vec::new()), None);
+        let proof = proof_with_zk(false, transparent_claims());
 
         let checked = validate_inputs(&preprocessing, &public_io, &proof, false);
         assert!(checked.is_ok());
@@ -622,7 +608,7 @@ mod tests {
     fn validate_inputs_rejects_public_io_layout_mismatch() {
         let preprocessing = test_preprocessing();
         let public_io = JoltDevice::default();
-        let proof = proof_with_zk(false, Some(Vec::new()), None);
+        let proof = proof_with_zk(false, transparent_claims());
 
         assert!(matches!(
             validate_inputs(&preprocessing, &public_io, &proof, false),
@@ -637,7 +623,7 @@ mod tests {
             memory_layout: preprocessing.program.memory_layout.clone(),
             ..JoltDevice::default()
         };
-        let proof = proof_with_zk(true, None, Some(()));
+        let proof = proof_with_zk(true, zk_claims());
 
         assert!(matches!(
             validate_inputs(&preprocessing, &public_io, &proof, true),
@@ -645,17 +631,13 @@ mod tests {
         ));
     }
 
-    fn proof_with_zk(
-        is_zk: bool,
-        opening_claims: Option<TestOpeningClaims>,
-        blindfold_proof: Option<()>,
-    ) -> TestProof {
-        let mut proof = JoltProof::new(
+    fn proof_with_zk(is_zk: bool, claims: JoltProofClaims<Fr, ()>) -> TestProof {
+        JoltProof::new(
             Vec::new(),
             stage_proofs(is_zk),
             (),
             None,
-            blindfold_proof,
+            claims,
             1,
             1,
             JoltReadWriteConfig {
@@ -669,9 +651,98 @@ mod tests {
                 lookups_ra_virtual_log_k_chunk: 0,
             },
             crate::proof::TracePolynomialOrder::CycleMajor,
-        );
-        proof.opening_claims = opening_claims;
-        proof
+        )
+    }
+
+    fn transparent_claims() -> JoltProofClaims<Fr, ()> {
+        let zero = Fr::default();
+
+        JoltProofClaims::Transparent(TransparentProofClaims {
+            stage1: stage1::inputs::Stage1Claims {
+                uniskip_output_claim: zero,
+                outer: empty_spartan_outer_claims(),
+            },
+            stage2: stage2::inputs::Stage2Claims {
+                product_uniskip_output_claim: zero,
+                batch_outputs: stage2::inputs::Stage2BatchOutputOpeningClaims {
+                    ram_read_write: stage2::inputs::RamReadWriteOutputOpeningClaims {
+                        val: zero,
+                        ra: zero,
+                        inc: zero,
+                    },
+                    product_remainder: stage2::inputs::ProductRemainderOutputOpeningClaims {
+                        left_instruction_input: zero,
+                        right_instruction_input: zero,
+                        jump_flag: zero,
+                        write_lookup_output_to_rd: zero,
+                        lookup_output: zero,
+                        branch_flag: zero,
+                        next_is_noop: zero,
+                        virtual_instruction: zero,
+                    },
+                    instruction_claim_reduction:
+                        stage2::inputs::InstructionClaimReductionOutputOpeningClaims {
+                            lookup_output: None,
+                            left_lookup_operand: zero,
+                            right_lookup_operand: zero,
+                            left_instruction_input: None,
+                            right_instruction_input: None,
+                        },
+                    ram_raf_evaluation: zero,
+                    ram_output_check: zero,
+                },
+            },
+        })
+    }
+
+    fn empty_spartan_outer_claims() -> stage1::inputs::SpartanOuterClaims<Fr> {
+        let zero = Fr::default();
+
+        stage1::inputs::SpartanOuterClaims {
+            left_instruction_input: zero,
+            right_instruction_input: zero,
+            product: zero,
+            should_branch: zero,
+            pc: zero,
+            unexpanded_pc: zero,
+            imm: zero,
+            ram_address: zero,
+            rs1_value: zero,
+            rs2_value: zero,
+            rd_write_value: zero,
+            ram_read_value: zero,
+            ram_write_value: zero,
+            left_lookup_operand: zero,
+            right_lookup_operand: zero,
+            next_unexpanded_pc: zero,
+            next_pc: zero,
+            next_is_virtual: zero,
+            next_is_first_in_sequence: zero,
+            lookup_output: zero,
+            should_jump: zero,
+            flags: stage1::inputs::SpartanOuterFlagClaims {
+                add_operands: zero,
+                subtract_operands: zero,
+                multiply_operands: zero,
+                load: zero,
+                store: zero,
+                jump: zero,
+                write_lookup_output_to_rd: zero,
+                virtual_instruction: zero,
+                assert: zero,
+                do_not_update_unexpanded_pc: zero,
+                advice: zero,
+                is_compressed: zero,
+                is_first_in_sequence: zero,
+                is_last_in_sequence: zero,
+            },
+        }
+    }
+
+    fn zk_claims() -> JoltProofClaims<Fr, ()> {
+        JoltProofClaims::Zk {
+            blindfold_proof: (),
+        }
     }
 
     fn stage_proofs(is_zk: bool) -> JoltStageProofs<Fr, TestVectorCommitment> {

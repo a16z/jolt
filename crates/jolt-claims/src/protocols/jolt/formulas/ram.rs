@@ -1,4 +1,4 @@
-use jolt_field::RingCore;
+use jolt_field::{Field, RingCore};
 
 use crate::{challenge, constant, opening, pow2, public};
 
@@ -213,6 +213,54 @@ where
         JoltExpr::zero(),
         output,
     )
+}
+
+pub fn read_write_checking_output_openings() -> [JoltOpeningId; 3] {
+    [ram_val(), ram_ra(), ram_inc()]
+}
+
+pub fn read_write_checking_input_openings() -> [JoltOpeningId; 2] {
+    [ram_read_value(), ram_write_value()]
+}
+
+pub fn raf_evaluation_output_openings() -> [JoltOpeningId; 1] {
+    [ram_ra_raf_evaluation()]
+}
+
+pub fn raf_evaluation_input_openings() -> [JoltOpeningId; 1] {
+    [ram_address_spartan()]
+}
+
+pub fn output_check_output_openings() -> [JoltOpeningId; 1] {
+    [ram_val_final()]
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RamRafEvaluationPublicValues<F: Field> {
+    pub unmap_address: F,
+}
+
+impl<F: Field> RamRafEvaluationPublicValues<F> {
+    pub fn value(&self, id: RamRafEvaluationPublic) -> F {
+        match id {
+            RamRafEvaluationPublic::UnmapAddress => self.unmap_address,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RamOutputCheckPublicValues<F: Field> {
+    pub eq_io_mask: F,
+    pub neg_eq_io_mask_val_io: F,
+}
+
+impl<F: Field> RamOutputCheckPublicValues<F> {
+    pub fn value(&self, id: RamOutputCheckPublic) -> F {
+        match id {
+            RamOutputCheckPublic::EqIoMask => self.eq_io_mask,
+            RamOutputCheckPublic::NegEqIoMaskValIo => self.neg_eq_io_mask_val_io,
+        }
+    }
 }
 
 pub fn ra_claim_reduction<F>(dimensions: TraceDimensions) -> JoltStageClaims<F>
@@ -461,7 +509,7 @@ mod tests {
         );
         assert_eq!(
             claims.input.required_openings,
-            vec![ram_read_value(), ram_write_value()]
+            read_write_checking_input_openings().to_vec()
         );
         assert_eq!(
             claims.output.required_openings,
@@ -589,10 +637,13 @@ mod tests {
 
         assert_eq!(claims.id, JoltStageId::RamRafEvaluation);
         assert_eq!(claims.sumcheck, dimensions.sumcheck());
-        assert_eq!(claims.input.required_openings, vec![ram_address_spartan()]);
+        assert_eq!(
+            claims.input.required_openings,
+            raf_evaluation_input_openings().to_vec()
+        );
         assert_eq!(
             claims.output.required_openings,
-            vec![ram_ra_raf_evaluation()]
+            raf_evaluation_output_openings().to_vec()
         );
         assert!(claims.input.required_challenges.is_empty());
         assert!(claims.output.required_challenges.is_empty());
@@ -670,7 +721,10 @@ mod tests {
             read_write_dimensions().output_check_sumcheck()
         );
         assert!(claims.input.required_openings.is_empty());
-        assert_eq!(claims.output.required_openings, vec![ram_val_final()]);
+        assert_eq!(
+            claims.output.required_openings,
+            output_check_output_openings().to_vec()
+        );
         assert!(claims.input.required_challenges.is_empty());
         assert!(claims.output.required_challenges.is_empty());
         assert!(claims.required_challenges().is_empty());

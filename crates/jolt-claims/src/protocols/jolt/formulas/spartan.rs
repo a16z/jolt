@@ -389,15 +389,15 @@ pub fn product_uniskip<F>(dimensions: SpartanProductDimensions) -> JoltStageClai
 where
     F: RingCore,
 {
-    let input = product_weight(0) * opening(product_outer())
-        + product_weight(1) * opening(should_branch_outer())
-        + product_weight(2) * opening(should_jump_outer());
+    let input = product_weight(0) * opening(product_outer_opening())
+        + product_weight(1) * opening(product_should_branch_outer_opening())
+        + product_weight(2) * opening(product_should_jump_outer_opening());
 
     JoltStageClaims::new(
         JoltStageId::SpartanProductVirtualization,
         dimensions.uniskip_sumcheck(),
         input,
-        opening(product_uniskip_claim()),
+        opening(product_uniskip_opening()),
     )
 }
 
@@ -415,9 +415,22 @@ where
     JoltStageClaims::new(
         JoltStageId::SpartanProductVirtualization,
         dimensions.remainder_sumcheck(),
-        opening(product_uniskip_claim()),
+        opening(product_uniskip_opening()),
         product_tau_kernel() * left * right,
     )
+}
+
+pub fn product_remainder_output_openings() -> [JoltOpeningId; 8] {
+    [
+        left_instruction_input_product(),
+        right_instruction_input_product(),
+        jump_flag_product(),
+        write_lookup_output_to_rd_product(),
+        lookup_output_product(),
+        branch_flag_product(),
+        next_is_noop_product(),
+        virtual_instruction_product(),
+    ]
 }
 
 pub fn shift<F>(dimensions: TraceDimensions) -> JoltStageClaims<F>
@@ -497,22 +510,39 @@ where
     ))
 }
 
-fn product_uniskip_claim() -> JoltOpeningId {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpartanProductPublicValues<F: Field> {
+    pub lagrange_weights: [F; PRODUCT_UNISKIP_DOMAIN_SIZE],
+    pub tau_kernel: F,
+}
+
+impl<F: Field> SpartanProductPublicValues<F> {
+    pub fn value(&self, id: SpartanProductVirtualizationPublic) -> Option<F> {
+        match id {
+            SpartanProductVirtualizationPublic::LagrangeWeight(index) => {
+                self.lagrange_weights.get(index).copied()
+            }
+            SpartanProductVirtualizationPublic::TauKernel => Some(self.tau_kernel),
+        }
+    }
+}
+
+pub fn product_uniskip_opening() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::UnivariateSkip,
         JoltStageId::SpartanProductVirtualization,
     )
 }
 
-fn product_outer() -> JoltOpeningId {
+pub fn product_outer_opening() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::Product)
 }
 
-fn should_branch_outer() -> JoltOpeningId {
+pub fn product_should_branch_outer_opening() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::ShouldBranch)
 }
 
-fn should_jump_outer() -> JoltOpeningId {
+pub fn product_should_jump_outer_opening() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::ShouldJump)
 }
 
@@ -544,6 +574,13 @@ fn jump_flag_product() -> JoltOpeningId {
     )
 }
 
+fn write_lookup_output_to_rd_product() -> JoltOpeningId {
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
+        JoltStageId::SpartanProductVirtualization,
+    )
+}
+
 fn branch_flag_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
@@ -554,6 +591,13 @@ fn branch_flag_product() -> JoltOpeningId {
 fn next_is_noop_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::NextIsNoop,
+        JoltStageId::SpartanProductVirtualization,
+    )
+}
+
+fn virtual_instruction_product() -> JoltOpeningId {
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
         JoltStageId::SpartanProductVirtualization,
     )
 }
@@ -787,11 +831,15 @@ mod tests {
         assert_eq!(claims.sumcheck, dimensions.uniskip_sumcheck());
         assert_eq!(
             claims.input.required_openings,
-            vec![product_outer(), should_branch_outer(), should_jump_outer()]
+            vec![
+                product_outer_opening(),
+                product_should_branch_outer_opening(),
+                product_should_jump_outer_opening()
+            ]
         );
         assert_eq!(
             claims.output.required_openings,
-            vec![product_uniskip_claim()]
+            vec![product_uniskip_opening()]
         );
         assert_eq!(
             claims.required_publics(),

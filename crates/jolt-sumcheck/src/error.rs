@@ -66,4 +66,26 @@ pub enum SumcheckError<F: FieldCore> {
     /// Batched verification received an empty claims slice.
     #[error("batched verification requires at least one claim")]
     EmptyClaims,
+
+    /// A batched evaluation claim was asked for an impossible point slice.
+    #[error("batched point range overflow: offset {offset}, num_vars {num_vars}")]
+    BatchedPointRangeOverflow {
+        /// Starting index into the batched challenge vector.
+        offset: usize,
+        /// Number of variables in the requested instance.
+        num_vars: usize,
+    },
+
+    /// A batched evaluation claim did not contain enough challenges for the requested instance.
+    #[error(
+        "batched point out of range: offset {offset}, num_vars {num_vars}, total challenges {total}"
+    )]
+    BatchedPointOutOfRange {
+        /// Starting index into the batched challenge vector.
+        offset: usize,
+        /// Number of variables in the requested instance.
+        num_vars: usize,
+        /// Total number of available batched challenges.
+        total: usize,
+    },
 }

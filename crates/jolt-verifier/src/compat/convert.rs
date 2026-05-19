@@ -2,10 +2,10 @@
 
 #[cfg(not(feature = "zk"))]
 use crate::compat::{
-    claims::{native_opening_claims_from_legacy, LegacyOpeningClaims},
+    claims::{transparent_claims_from_legacy, LegacyOpeningClaims},
     ids as verifier_ids,
 };
-use crate::proof::{JoltProof, JoltStageProofs, TracePolynomialOrder};
+use crate::proof::{JoltProof, JoltProofClaims, JoltStageProofs, TracePolynomialOrder};
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 use jolt_crypto::{
     Bn254G1, Bn254GT, Commitment as ModularCommitment, Pedersen,
@@ -195,8 +195,10 @@ where
             untrusted_advice_commitment: proof
                 .untrusted_advice_commitment
                 .map(PCS::commitment_into_verifier),
-            opening_claims: Some(convert_opening_claims(proof.opening_claims)),
-            blindfold_proof: None,
+            claims: JoltProofClaims::Transparent(convert_opening_claims(
+                proof.opening_claims,
+                proof.trace_length,
+            )),
             trace_length: proof.trace_length,
             ram_K: proof.ram_K,
             rw_config: convert_read_write_config(proof.rw_config),
@@ -242,8 +244,9 @@ where
             untrusted_advice_commitment: proof
                 .untrusted_advice_commitment
                 .map(PCS::commitment_into_verifier),
-            opening_claims: None,
-            blindfold_proof: Some(LegacyBlindFoldProof(proof.blindfold_proof)),
+            claims: JoltProofClaims::Zk {
+                blindfold_proof: LegacyBlindFoldProof(proof.blindfold_proof),
+            },
             trace_length: proof.trace_length,
             ram_K: proof.ram_K,
             rw_config: convert_read_write_config(proof.rw_config),
@@ -418,27 +421,33 @@ where
 }
 
 #[cfg(not(feature = "zk"))]
+#[expect(
+    clippy::expect_used,
+    reason = "imported core standard proofs are expected to carry a complete clear-claim payload"
+)]
 fn convert_opening_claims<F>(
     claims: CoreClaims<F>,
-) -> Vec<(
-    jolt_claims::protocols::jolt::JoltOpeningId,
-    F::VerifierField,
-)>
+    trace_length: usize,
+) -> crate::proof::TransparentProofClaims<F::VerifierField>
 where
     F: CoreFieldBridge,
 {
-    native_opening_claims_from_legacy(LegacyOpeningClaims(
-        claims
-            .0
-            .into_iter()
-            .map(|(id, (_point, claim))| {
-                (
-                    convert_opening_id(id),
-                    CoreFieldBridge::into_verifier_field(claim),
-                )
-            })
-            .collect::<std::collections::BTreeMap<_, _>>(),
-    ))
+    transparent_claims_from_legacy(
+        LegacyOpeningClaims(
+            claims
+                .0
+                .into_iter()
+                .map(|(id, (_point, claim))| {
+                    (
+                        convert_opening_id(id),
+                        CoreFieldBridge::into_verifier_field(claim),
+                    )
+                })
+                .collect::<std::collections::BTreeMap<_, _>>(),
+        ),
+        trace_length,
+    )
+    .expect("core standard proof must contain all typed transparent opening claims")
 }
 
 #[cfg(not(feature = "zk"))]

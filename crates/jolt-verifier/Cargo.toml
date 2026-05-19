@@ -44,3 +44,4 @@ thiserror.workspace = true
 jolt-core = { workspace = true, features = ["minimal"] }
 jolt-dory = { path = "../jolt-dory" }
 postcard = { workspace = true, features = ["use-std"] }
+serde_json = { workspace = true, features = ["std"] }

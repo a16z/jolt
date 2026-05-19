@@ -1,16 +1,21 @@
 //! Verifier-owned proof model types.
 
 use jolt_blindfold::BlindFoldProof;
-use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltOpeningId, JoltReadWriteConfig};
+use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 use jolt_crypto::{Commitment, VectorCommitment};
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::SumcheckProof;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    stages::{stage1, stage2},
+    VerifierError,
+};
 
 #[expect(non_snake_case, reason = "Matches current jolt-core proof field name.")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "ZkProof: Serialize + DeserializeOwned")]
+#[serde(bound = "ZkProof: Serialize + serde::de::DeserializeOwned")]
 pub struct JoltProof<
     PCS,
     VC,
@@ -23,8 +28,7 @@ pub struct JoltProof<
     pub stages: JoltStageProofs<PCS::Field, VC>,
     pub joint_opening_proof: PCS::Proof,
     pub untrusted_advice_commitment: Option<PCS::Output>,
-    pub(crate) opening_claims: Option<Vec<(JoltOpeningId, PCS::Field)>>,
-    pub blindfold_proof: Option<ZkProof>,
+    pub claims: JoltProofClaims<PCS::Field, ZkProof>,
     pub trace_length: usize,
     pub ram_K: usize,
     pub rw_config: JoltReadWriteConfig,
@@ -46,7 +50,7 @@ where
         stages: JoltStageProofs<PCS::Field, VC>,
         joint_opening_proof: PCS::Proof,
         untrusted_advice_commitment: Option<PCS::Output>,
-        blindfold_proof: Option<ZkProof>,
+        claims: JoltProofClaims<PCS::Field, ZkProof>,
         trace_length: usize,
         ram_k: usize,
         rw_config: JoltReadWriteConfig,
@@ -58,8 +62,7 @@ where
             stages,
             joint_opening_proof,
             untrusted_advice_commitment,
-            opening_claims: None,
-            blindfold_proof,
+            claims,
             trace_length,
             ram_K: ram_k,
             rw_config,
@@ -67,6 +70,32 @@ where
             trace_polynomial_order,
         }
     }
+
+    pub(crate) fn transparent_claims(
+        &self,
+    ) -> Result<&TransparentProofClaims<PCS::Field>, VerifierError> {
+        match &self.claims {
+            JoltProofClaims::Transparent(claims) => Ok(claims),
+            JoltProofClaims::Zk { .. } => Err(VerifierError::UnexpectedBlindFoldProof),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "ZkProof: Serialize + serde::de::DeserializeOwned")]
+pub enum JoltProofClaims<F, ZkProof>
+where
+    F: Field,
+{
+    Transparent(TransparentProofClaims<F>),
+    Zk { blindfold_proof: ZkProof },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct TransparentProofClaims<F: Field> {
+    pub stage1: stage1::inputs::Stage1Claims<F>,
+    pub stage2: stage2::inputs::Stage2Claims<F>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +106,13 @@ pub enum TracePolynomialOrder {
 }
 
 impl TracePolynomialOrder {
+    pub fn transcript_scalar(self) -> u64 {
+        match self {
+            Self::CycleMajor => 0,
+            Self::AddressMajor => 1,
+        }
+    }
+
     pub fn address_cycle_to_index(
         self,
         address: usize,
@@ -99,27 +135,6 @@ impl TracePolynomialOrder {
         match self {
             Self::CycleMajor => (index / num_cycles, index % num_cycles),
             Self::AddressMajor => (index % num_addresses, index / num_addresses),
-        }
-    }
-}
-
-impl From<TracePolynomialOrder> for u8 {
-    fn from(order: TracePolynomialOrder) -> Self {
-        match order {
-            TracePolynomialOrder::CycleMajor => 0,
-            TracePolynomialOrder::AddressMajor => 1,
-        }
-    }
-}
-
-impl TryFrom<u8> for TracePolynomialOrder {
-    type Error = ();
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(Self::CycleMajor),
-            1 => Ok(Self::AddressMajor),
-            _ => Err(()),
         }
     }
 }
