@@ -19,6 +19,19 @@ pub trait VerifierTranscript<H: DuplexSpongeInterface> {
     fn verifier_message<T: Decoding<[H::U]>>(&mut self) -> T;
 
     /// Asserts the NARG was fully consumed.
+    ///
+    /// Soundness-critical: without this check, `valid_proof || garbage`
+    /// verifies as if the trailing bytes were absent, making the top-level
+    /// proof bytes malleable. Call once at the end of the top-level verify
+    /// function on the success path; error paths skip it (the proof is
+    /// already rejected). Composite verifiers follow the same rule at
+    /// their own finalize boundary.
+    ///
+    /// Takes `self` by value to prevent reuse.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the NARG has unread bytes.
     fn check_eof(self) -> VerificationResult<()>;
 }
 
