@@ -8,8 +8,6 @@ use jolt_field::Fr;
 use rand::{CryptoRng, RngCore};
 use spongefish::{Decoding, DuplexSpongeInterface, Encoding, NargSerialize, ProverState};
 
-use crate::codec::FieldElOptimized;
-
 /// Prover-side spongefish transcript.
 ///
 /// `H::U` is the sponge alphabet (`u8` for every sponge in this crate).
@@ -64,7 +62,7 @@ where
     R: RngCore + CryptoRng,
 {
     fn challenge_128(&mut self) -> Fr {
-        ProverState::verifier_message::<FieldElOptimized<Fr>>(self).0
+        Fr::from(ProverState::verifier_message::<u128>(self))
     }
 }
 
@@ -74,6 +72,6 @@ where
     R: RngCore + CryptoRng,
 {
     fn challenge_128(&mut self) -> Fr {
-        ProverState::verifier_message::<FieldElOptimized<Fr>>(self).0
+        Fr::from(ProverState::verifier_message::<u128>(self))
     }
 }
