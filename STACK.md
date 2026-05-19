@@ -31,8 +31,8 @@ truth.
 | 10 | `stack/10-jolt-prover-spec` | `stack/09-jolt-verifier-crate` | `specs/jolt-prover-model-crate.md` |
 | 11 | `stack/11-extended-jolt-field-inline-wrapper-spec` | `stack/10-jolt-prover-spec` | extended Jolt / field inline / wrapper spec plus supporting recursion reference doc |
 
-Stage-5 WIP from the current worktree should become a later PR after it is
-complete. The committed stack currently stops at the stage-4 verifier frontier.
+The `jolt-verifier` PR carries the current verifier frontier from
+`refactor/audit-prep`.
 
 ## Automatic Updates
 
@@ -45,10 +45,12 @@ The workflow:
 3. restores the owned paths from `origin/refactor/audit-prep`;
 4. applies the incremental root manifest changes for that stack point;
 5. runs `cargo metadata` to refresh `Cargo.lock`;
-6. commits and force-pushes each stack branch with lease.
+6. checks that the final stack branch has the same tree as the source branch;
+7. force-pushes all stack branches with lease;
+8. creates or updates the draft PRs.
 
-Once the draft PRs exist, GitHub will update them automatically when the
-workflow force-pushes their branches.
+Once the PRs exist, GitHub will update them automatically when the workflow
+force-pushes their branches.
 
 ## Manual Materialization
 
@@ -67,7 +69,7 @@ Create or update one branch:
 Rebuild all stack branches from the source branch:
 
 ```bash
-./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --from origin/refactor/audit-prep
+./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-final --from origin/refactor/audit-prep
 ```
 
 The CI workflow runs the same command. Without `--commit`, the script leaves
@@ -116,14 +118,11 @@ checks.
 
 ## Opening Draft PRs
 
-With vanilla `gh`, open each PR against the previous stack branch:
+The workflow opens or updates draft PRs automatically. To do the same locally
+after materializing and pushing the branches:
 
 ```bash
-gh pr create --draft --base origin/main --head stack/00-stack-automation
-gh pr create --draft --base stack/00-stack-automation --head stack/01-foundation-helpers
-gh pr create --draft --base stack/01-foundation-helpers --head stack/02-lookup-table-core-abi
-gh pr create --draft --base stack/02-lookup-table-core-abi --head stack/03-public-io-preprocessing
-# Continue through stack/11-extended-jolt-field-inline-wrapper-spec.
+./stack/open-prs.sh --apply --base main --source refactor/audit-prep
 ```
 
 If using a stacked-PR extension, create the same branch chain and run the
@@ -142,7 +141,7 @@ extension's submit command from the final stack branch.
    locally:
 
    ```bash
-   ./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --from origin/refactor/audit-prep
+   ./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-final --from origin/refactor/audit-prep
    ```
 
 4. Compare the stack tip to the source branch:

@@ -45,5 +45,15 @@ jobs:
             --commit \
             --push \
             --cargo-metadata \
+            --check-final \
             --from origin/refactor/audit-prep \
             --base origin/main
+
+      - name: Create or update draft PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash stack/open-prs.sh \
+            --apply \
+            --base main \
+            --source refactor/audit-prep

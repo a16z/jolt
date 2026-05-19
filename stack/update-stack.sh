@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: stack/update-stack.sh [--apply] [--rebuild] [--commit] [--push] [--cargo-metadata] [--from REF] [--base REF] [--only NN]
+Usage: stack/update-stack.sh [--apply] [--rebuild] [--commit] [--push] [--cargo-metadata] [--check-final] [--from REF] [--base REF] [--only NN]
 
 Materializes the draft PR stack described by stack/branches.tsv.
 
@@ -18,6 +18,8 @@ Options:
   --push        push updated stack branches to origin with --force-with-lease
   --cargo-metadata
                 run cargo metadata after manifest changes to refresh Cargo.lock
+  --check-final
+                fail if the final stack branch tree differs from the source ref
   --from REF    source ref to slice from (default: refactor/audit-prep)
   --base REF    base ref for the first stack branch (default: origin/main)
   --only NN     update only one stack item, e.g. 08
@@ -26,7 +28,7 @@ Options:
 Examples:
   stack/update-stack.sh
   stack/update-stack.sh --apply --only 08
-  stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --from origin/refactor/audit-prep
+  stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-final --from origin/refactor/audit-prep
 EOF
 }
 
@@ -35,6 +37,7 @@ rebuild=0
 commit_changes=0
 push_changes=0
 cargo_metadata=0
+check_final=0
 source_ref="refactor/audit-prep"
 base_ref="origin/main"
 only=""
@@ -55,6 +58,9 @@ while (($#)); do
       ;;
     --cargo-metadata)
       cargo_metadata=1
+      ;;
+    --check-final)
+      check_final=1
       ;;
     --from)
       source_ref="${2:?--from requires a ref}"
@@ -135,7 +141,7 @@ apply_manifest_rules() {
       ;;
     08)
       ensure_after Cargo.toml '  "crates/jolt-claims",' '  "crates/jolt-blindfold",'
-      ensure_after Cargo.toml 'jolt-claims = { path = "./crates/jolt-claims" }' 'jolt-blindfold = { path = "./crates/jolt-blindfold" }'
+      ensure_after Cargo.toml 'jolt-core = { path = "./jolt-core", default-features = false }' 'jolt-blindfold = { path = "./crates/jolt-blindfold" }'
       ;;
     09)
       ensure_after Cargo.toml '  "crates/jolt-openings",' '  "crates/jolt-verifier",'
@@ -147,6 +153,7 @@ apply_manifest_rules() {
 
 previous_branch="$base_ref"
 matched=0
+updated_branches=()
 
 while IFS=$'\t' read -r order branch title pathspecs; do
   [[ -z "${order:-}" || "$order" == \#* ]] && continue
@@ -203,9 +210,7 @@ while IFS=$'\t' read -r order branch title pathspecs; do
     echo "    git commit -m \"$title\""
   fi
 
-  if ((push_changes)); then
-    git push --force-with-lease origin "$branch"
-  fi
+  updated_branches+=("$branch")
 
   previous_branch="$branch"
 done < "$plan_file"
@@ -218,4 +223,28 @@ fi
 if ((!apply)); then
   echo
   echo "dry run only; pass --apply to create/update branches"
+  exit 0
+fi
+
+if ((check_final)) && [[ -z "$only" ]]; then
+  echo
+  echo "checking final stack tree against $source_ref"
+  if ! git diff --quiet "$source_ref" "$previous_branch"; then
+    echo "final stack branch differs from source ref; unassigned or generated differences remain:" >&2
+    git diff --stat "$source_ref" "$previous_branch" >&2
+    exit 1
+  fi
+fi
+
+if ((push_changes)); then
+  echo
+  echo "pushing ${#updated_branches[@]} stack branches"
+  for branch in "${updated_branches[@]}"; do
+    remote_sha="$(git ls-remote --heads origin "$branch" | awk '{print $1}')"
+    if [[ -n "$remote_sha" ]]; then
+      git push --force-with-lease="refs/heads/$branch:$remote_sha" origin "$branch:refs/heads/$branch"
+    else
+      git push origin "$branch:refs/heads/$branch"
+    fi
+  done
 fi
