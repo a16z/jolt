@@ -24,7 +24,7 @@ mod tests {
     use sha2::{Digest, Sha256};
     use tracer::{InlineRegistration, TracerInlineExpansionProvider};
 
-    const FIXTURE_PATH: &str = "fixtures/registered_inline_expand_parity_hashes.json";
+    const FIXTURE_PATH: &str = "fixtures/registered_inline_expand_parity_hashes.jsonl";
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     struct RegisteredInlineExpansionParityCase {
@@ -34,7 +34,6 @@ mod tests {
         funct3: u8,
         funct7: u8,
         extension: String,
-        input: SourceInstruction,
         row_count: usize,
         output_sha256: String,
     }
@@ -157,7 +156,6 @@ mod tests {
                     funct3: registration.funct3 as u8,
                     funct7: registration.funct7 as u8,
                     extension: format!("{:?}", registration.extension),
-                    input,
                     row_count: rows.len(),
                     output_sha256,
                 });
@@ -201,27 +199,47 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURE_PATH)
     }
 
+    fn encode_cases(
+        cases: &[RegisteredInlineExpansionParityCase],
+    ) -> Result<String, serde_json::Error> {
+        let mut lines = Vec::with_capacity(cases.len());
+        for case in cases {
+            lines.push(serde_json::to_string(case)?);
+        }
+        Ok(format!("{}\n", lines.join("\n")))
+    }
+
+    fn parse_cases(
+        contents: &str,
+    ) -> Result<Vec<RegisteredInlineExpansionParityCase>, serde_json::Error> {
+        contents
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(serde_json::from_str)
+            .collect()
+    }
+
     #[test]
     fn registered_inline_expansions_match_golden_fixture() -> Result<(), Box<dyn Error>> {
         let actual = compute_cases()?;
 
         if std::env::var_os("JOLT_UPDATE_INLINE_EXPANSION_FIXTURES").is_some() {
-            fs::write(fixture_path(), serde_json::to_string_pretty(&actual)?)?;
+            fs::write(fixture_path(), encode_cases(&actual)?)?;
             return Ok(());
         }
 
-        let expected: Vec<RegisteredInlineExpansionParityCase> = serde_json::from_str(
-            include_str!("../fixtures/registered_inline_expand_parity_hashes.json"),
-        )?;
+        let expected = parse_cases(include_str!(
+            "../fixtures/registered_inline_expand_parity_hashes.jsonl"
+        ))?;
         assert_eq!(actual, expected);
         Ok(())
     }
 
     #[test]
     fn linked_inline_registration_inventory_matches_fixture() -> Result<(), Box<dyn Error>> {
-        let expected_cases: Vec<RegisteredInlineExpansionParityCase> = serde_json::from_str(
-            include_str!("../fixtures/registered_inline_expand_parity_hashes.json"),
-        )?;
+        let expected_cases = parse_cases(include_str!(
+            "../fixtures/registered_inline_expand_parity_hashes.jsonl"
+        ))?;
         let expected = unique_summaries(&expected_cases);
         let actual = unique_summaries(&compute_cases()?);
 
