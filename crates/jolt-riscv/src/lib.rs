@@ -8,9 +8,10 @@
 
 mod flags;
 pub mod instructions;
-mod jolt_instruction;
 mod kind;
-mod normalized;
+mod profile;
+mod row;
+mod row_data;
 pub mod trace;
 mod uncompress;
 
@@ -19,31 +20,218 @@ macro_rules! for_each_instruction_kind {
     ($callback:ident) => {
         $callback! {
             instructions: [
-                ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
-                CSRRS, CSRRW, DIV, DIVU,
-                EBREAK, ECALL, FENCE, JAL, JALR, LB, LBU, LD, LH, LHU, LUI, LW, MRET, MUL,
-                MULH, MULHSU, MULHU, OR, ORI, REM, REMU, SB, SD, SH, SLL, SLLI, SLT,
-                SLTI, SLTIU, SLTU, SRA, SRAI, SRL, SRLI, SUB, SW, XOR, XORI,
-                ADDIW, SLLIW, SRLIW, SRAIW, ADDW, SUBW, SLLW, SRLW, SRAW, LWU,
-                DIVUW, DIVW, MULW, REMUW, REMW,
-                LRW, SCW, AMOSWAPW, AMOADDW, AMOANDW, AMOORW, AMOXORW, AMOMINW,
-                AMOMAXW, AMOMINUW, AMOMAXUW,
-                LRD, SCD, AMOSWAPD, AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOMIND,
-                AMOMAXD, AMOMINUD, AMOMAXUD,
-                AdviceLB, AdviceLD, AdviceLH, AdviceLW,
-                VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad,
-                VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment,
-                VirtualAssertLTE, VirtualHostIO,
-                VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
-                VirtualAssertMulUNoOverflow,
-                VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW, VirtualSW,
-                VirtualZeroExtendWord, VirtualSignExtendWord, VirtualPow2W, VirtualPow2IW,
-                VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualRev8W,
-                VirtualROTRI, VirtualROTRIW,
-                VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
-                VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
-                VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
-                VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
+                ADD => Add => "rv64.add",
+                ADDI => Addi => "rv64.addi",
+                AND => And => "rv64.and",
+                ANDI => AndI => "rv64.andi",
+                ANDN => Andn => "rv64.andn",
+                AUIPC => Auipc => "rv64.auipc",
+                BEQ => Beq => "rv64.beq",
+                BGE => Bge => "rv64.bge",
+                BGEU => BgeU => "rv64.bgeu",
+                BLT => Blt => "rv64.blt",
+                BLTU => BltU => "rv64.bltu",
+                BNE => Bne => "rv64.bne",
+                CSRRS => Csrrs => "rv64.csrrs",
+                CSRRW => Csrrw => "rv64.csrrw",
+                DIV => Div => "rv64.div",
+                DIVU => DivU => "rv64.divu",
+                EBREAK => Ebreak => "rv64.ebreak",
+                ECALL => Ecall => "rv64.ecall",
+                FENCE => Fence => "rv64.fence",
+                JAL => Jal => "rv64.jal",
+                JALR => Jalr => "rv64.jalr",
+                LB => Lb => "rv64.lb",
+                LBU => Lbu => "rv64.lbu",
+                LD => Ld => "rv64.ld",
+                LH => Lh => "rv64.lh",
+                LHU => Lhu => "rv64.lhu",
+                LUI => Lui => "rv64.lui",
+                LW => Lw => "rv64.lw",
+                MRET => Mret => "rv64.mret",
+                MUL => Mul => "rv64.mul",
+                MULH => MulH => "rv64.mulh",
+                MULHSU => MulHSU => "rv64.mulhsu",
+                MULHU => MulHU => "rv64.mulhu",
+                OR => Or => "rv64.or",
+                ORI => OrI => "rv64.ori",
+                REM => Rem => "rv64.rem",
+                REMU => RemU => "rv64.remu",
+                SB => Sb => "rv64.sb",
+                SD => Sd => "rv64.sd",
+                SH => Sh => "rv64.sh",
+                SLL => Sll => "rv64.sll",
+                SLLI => SllI => "rv64.slli",
+                SLT => Slt => "rv64.slt",
+                SLTI => SltI => "rv64.slti",
+                SLTIU => SltIU => "rv64.sltiu",
+                SLTU => SltU => "rv64.sltu",
+                SRA => Sra => "rv64.sra",
+                SRAI => SraI => "rv64.srai",
+                SRL => Srl => "rv64.srl",
+                SRLI => SrlI => "rv64.srli",
+                SUB => Sub => "rv64.sub",
+                SW => Sw => "rv64.sw",
+                XOR => Xor => "rv64.xor",
+                XORI => XorI => "rv64.xori",
+                ADDIW => AddiW => "rv64.addiw",
+                SLLIW => SllIW => "rv64.slliw",
+                SRLIW => SrlIW => "rv64.srliw",
+                SRAIW => SraIW => "rv64.sraiw",
+                ADDW => AddW => "rv64.addw",
+                SUBW => SubW => "rv64.subw",
+                SLLW => SllW => "rv64.sllw",
+                SRLW => SrlW => "rv64.srlw",
+                SRAW => SraW => "rv64.sraw",
+                LWU => Lwu => "rv64.lwu",
+                DIVUW => DivUW => "rv64.divuw",
+                DIVW => DivW => "rv64.divw",
+                MULW => MulW => "rv64.mulw",
+                REMUW => RemUW => "rv64.remuw",
+                REMW => RemW => "rv64.remw",
+                LRW => LrW => "rv64.lrw",
+                SCW => ScW => "rv64.scw",
+                AMOSWAPW => AmoSwapW => "rv64.amoswapw",
+                AMOADDW => AmoAddW => "rv64.amoaddw",
+                AMOANDW => AmoAndW => "rv64.amoandw",
+                AMOORW => AmoOrW => "rv64.amoorw",
+                AMOXORW => AmoXorW => "rv64.amoxorw",
+                AMOMINW => AmoMinW => "rv64.amominw",
+                AMOMAXW => AmoMaxW => "rv64.amomaxw",
+                AMOMINUW => AmoMinUW => "rv64.amominuw",
+                AMOMAXUW => AmoMaxUW => "rv64.amomaxuw",
+                LRD => LrD => "rv64.lrd",
+                SCD => ScD => "rv64.scd",
+                AMOSWAPD => AmoSwapD => "rv64.amoswapd",
+                AMOADDD => AmoAddD => "rv64.amoaddd",
+                AMOANDD => AmoAndD => "rv64.amoandd",
+                AMOORD => AmoOrD => "rv64.amoord",
+                AMOXORD => AmoXorD => "rv64.amoxord",
+                AMOMIND => AmoMinD => "rv64.amomind",
+                AMOMAXD => AmoMaxD => "rv64.amomaxd",
+                AMOMINUD => AmoMinUD => "rv64.amominud",
+                AMOMAXUD => AmoMaxUD => "rv64.amomaxud",
+                AdviceLB => AdviceLb => "jolt.advice.lb",
+                AdviceLD => AdviceLd => "jolt.advice.ld",
+                AdviceLH => AdviceLh => "jolt.advice.lh",
+                AdviceLW => AdviceLw => "jolt.advice.lw",
+                VirtualAdvice => VirtualAdvice => "jolt.virtual.advice",
+                VirtualAdviceLen => VirtualAdviceLen => "jolt.virtual.advice_len",
+                VirtualAdviceLoad => VirtualAdviceLoad => "jolt.virtual.advice_load",
+                VirtualAssertEQ => AssertEq => "jolt.virtual.assert_eq",
+                VirtualAssertHalfwordAlignment => AssertHalfwordAlignment => "jolt.virtual.assert_halfword_alignment",
+                VirtualAssertWordAlignment => AssertWordAlignment => "jolt.virtual.assert_word_alignment",
+                VirtualAssertLTE => AssertLte => "jolt.virtual.assert_lte",
+                VirtualHostIO => VirtualHostIO => "jolt.virtual.host_io",
+                VirtualAssertValidDiv0 => AssertValidDiv0 => "jolt.virtual.assert_valid_div0",
+                VirtualAssertValidUnsignedRemainder => AssertValidUnsignedRemainder => "jolt.virtual.assert_valid_unsigned_remainder",
+                VirtualAssertMulUNoOverflow => AssertMulUNoOverflow => "jolt.virtual.assert_mul_u_no_overflow",
+                VirtualChangeDivisor => VirtualChangeDivisor => "jolt.virtual.change_divisor",
+                VirtualChangeDivisorW => VirtualChangeDivisorW => "jolt.virtual.change_divisor_w",
+                VirtualLW => VirtualLw => "jolt.virtual.lw",
+                VirtualSW => VirtualSw => "jolt.virtual.sw",
+                VirtualZeroExtendWord => VirtualZeroExtendWord => "jolt.virtual.zero_extend_word",
+                VirtualSignExtendWord => VirtualSignExtendWord => "jolt.virtual.sign_extend_word",
+                VirtualPow2W => Pow2W => "jolt.virtual.pow2_w",
+                VirtualPow2IW => Pow2IW => "jolt.virtual.pow2_iw",
+                VirtualMovsign => MovSign => "jolt.virtual.movsign",
+                VirtualMULI => MulI => "jolt.virtual.muli",
+                VirtualPow2 => Pow2 => "jolt.virtual.pow2",
+                VirtualPow2I => Pow2I => "jolt.virtual.pow2_i",
+                VirtualRev8W => VirtualRev8W => "jolt.virtual.rev8_w",
+                VirtualROTRI => VirtualRotri => "jolt.virtual.rotri",
+                VirtualROTRIW => VirtualRotriw => "jolt.virtual.rotriw",
+                VirtualShiftRightBitmask => VirtualShiftRightBitmask => "jolt.virtual.shift_right_bitmask",
+                VirtualShiftRightBitmaskI => VirtualShiftRightBitmaski => "jolt.virtual.shift_right_bitmask_i",
+                VirtualSRA => VirtualSra => "jolt.virtual.sra",
+                VirtualSRAI => VirtualSrai => "jolt.virtual.srai",
+                VirtualSRL => VirtualSrl => "jolt.virtual.srl",
+                VirtualSRLI => VirtualSrli => "jolt.virtual.srli",
+                VirtualXORROT32 => VirtualXorRot32 => "jolt.virtual.xorrot32",
+                VirtualXORROT24 => VirtualXorRot24 => "jolt.virtual.xorrot24",
+                VirtualXORROT16 => VirtualXorRot16 => "jolt.virtual.xorrot16",
+                VirtualXORROT63 => VirtualXorRot63 => "jolt.virtual.xorrot63",
+                VirtualXORROTW16 => VirtualXorRotW16 => "jolt.virtual.xorrotw16",
+                VirtualXORROTW12 => VirtualXorRotW12 => "jolt.virtual.xorrotw12",
+                VirtualXORROTW8 => VirtualXorRotW8 => "jolt.virtual.xorrotw8",
+                VirtualXORROTW7 => VirtualXorRotW7 => "jolt.virtual.xorrotw7",
+            ]
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! for_each_jolt_instruction_kind {
+    ($callback:ident) => {
+        $callback! {
+            instructions: [
+                ADD => Add => (0x0002, "rv64.add"),
+                ADDI => Addi => (0x0003, "rv64.addi"),
+                AND => And => (0x0004, "rv64.and"),
+                ANDI => AndI => (0x0005, "rv64.andi"),
+                ANDN => Andn => (0x0006, "rv64.andn"),
+                AUIPC => Auipc => (0x0007, "rv64.auipc"),
+                BEQ => Beq => (0x0008, "rv64.beq"),
+                BGE => Bge => (0x0009, "rv64.bge"),
+                BGEU => BgeU => (0x000a, "rv64.bgeu"),
+                BLT => Blt => (0x000b, "rv64.blt"),
+                BLTU => BltU => (0x000c, "rv64.bltu"),
+                BNE => Bne => (0x000d, "rv64.bne"),
+                FENCE => Fence => (0x0014, "rv64.fence"),
+                JAL => Jal => (0x0015, "rv64.jal"),
+                JALR => Jalr => (0x0016, "rv64.jalr"),
+                LD => Ld => (0x0019, "rv64.ld"),
+                LUI => Lui => (0x001c, "rv64.lui"),
+                MUL => Mul => (0x001f, "rv64.mul"),
+                MULHU => MulHU => (0x0022, "rv64.mulhu"),
+                OR => Or => (0x0023, "rv64.or"),
+                ORI => OrI => (0x0024, "rv64.ori"),
+                SD => Sd => (0x0028, "rv64.sd"),
+                SLT => Slt => (0x002c, "rv64.slt"),
+                SLTI => SltI => (0x002d, "rv64.slti"),
+                SLTIU => SltIU => (0x002e, "rv64.sltiu"),
+                SLTU => SltU => (0x002f, "rv64.sltu"),
+                SUB => Sub => (0x0034, "rv64.sub"),
+                XOR => Xor => (0x0036, "rv64.xor"),
+                XORI => XorI => (0x0037, "rv64.xori"),
+                VirtualAdvice => VirtualAdvice => (0x0061, "jolt.virtual.advice"),
+                VirtualAdviceLen => VirtualAdviceLen => (0x0062, "jolt.virtual.advice_len"),
+                VirtualAdviceLoad => VirtualAdviceLoad => (0x0063, "jolt.virtual.advice_load"),
+                VirtualAssertEQ => AssertEq => (0x0064, "jolt.virtual.assert_eq"),
+                VirtualAssertHalfwordAlignment => AssertHalfwordAlignment => (0x0065, "jolt.virtual.assert_halfword_alignment"),
+                VirtualAssertWordAlignment => AssertWordAlignment => (0x0066, "jolt.virtual.assert_word_alignment"),
+                VirtualAssertLTE => AssertLte => (0x0067, "jolt.virtual.assert_lte"),
+                VirtualHostIO => VirtualHostIO => (0x0068, "jolt.virtual.host_io"),
+                VirtualAssertValidDiv0 => AssertValidDiv0 => (0x0069, "jolt.virtual.assert_valid_div0"),
+                VirtualAssertValidUnsignedRemainder => AssertValidUnsignedRemainder => (0x006a, "jolt.virtual.assert_valid_unsigned_remainder"),
+                VirtualAssertMulUNoOverflow => AssertMulUNoOverflow => (0x006b, "jolt.virtual.assert_mul_u_no_overflow"),
+                VirtualChangeDivisor => VirtualChangeDivisor => (0x006c, "jolt.virtual.change_divisor"),
+                VirtualChangeDivisorW => VirtualChangeDivisorW => (0x006d, "jolt.virtual.change_divisor_w"),
+                VirtualZeroExtendWord => VirtualZeroExtendWord => (0x0070, "jolt.virtual.zero_extend_word"),
+                VirtualSignExtendWord => VirtualSignExtendWord => (0x0071, "jolt.virtual.sign_extend_word"),
+                VirtualPow2W => Pow2W => (0x0072, "jolt.virtual.pow2_w"),
+                VirtualPow2IW => Pow2IW => (0x0073, "jolt.virtual.pow2_iw"),
+                VirtualMovsign => MovSign => (0x0074, "jolt.virtual.movsign"),
+                VirtualMULI => MulI => (0x0075, "jolt.virtual.muli"),
+                VirtualPow2 => Pow2 => (0x0076, "jolt.virtual.pow2"),
+                VirtualPow2I => Pow2I => (0x0077, "jolt.virtual.pow2_i"),
+                VirtualRev8W => VirtualRev8W => (0x0078, "jolt.virtual.rev8_w"),
+                VirtualROTRI => VirtualRotri => (0x0079, "jolt.virtual.rotri"),
+                VirtualROTRIW => VirtualRotriw => (0x007a, "jolt.virtual.rotriw"),
+                VirtualShiftRightBitmask => VirtualShiftRightBitmask => (0x007b, "jolt.virtual.shift_right_bitmask"),
+                VirtualShiftRightBitmaskI => VirtualShiftRightBitmaski => (0x007c, "jolt.virtual.shift_right_bitmask_i"),
+                VirtualSRA => VirtualSra => (0x007d, "jolt.virtual.sra"),
+                VirtualSRAI => VirtualSrai => (0x007e, "jolt.virtual.srai"),
+                VirtualSRL => VirtualSrl => (0x007f, "jolt.virtual.srl"),
+                VirtualSRLI => VirtualSrli => (0x0080, "jolt.virtual.srli"),
+                VirtualXORROT32 => VirtualXorRot32 => (0x0081, "jolt.virtual.xorrot32"),
+                VirtualXORROT24 => VirtualXorRot24 => (0x0082, "jolt.virtual.xorrot24"),
+                VirtualXORROT16 => VirtualXorRot16 => (0x0083, "jolt.virtual.xorrot16"),
+                VirtualXORROT63 => VirtualXorRot63 => (0x0084, "jolt.virtual.xorrot63"),
+                VirtualXORROTW16 => VirtualXorRotW16 => (0x0085, "jolt.virtual.xorrotw16"),
+                VirtualXORROTW12 => VirtualXorRotW12 => (0x0086, "jolt.virtual.xorrotw12"),
+                VirtualXORROTW8 => VirtualXorRotW8 => (0x0087, "jolt.virtual.xorrotw8"),
+                VirtualXORROTW7 => VirtualXorRotW7 => (0x0088, "jolt.virtual.xorrotw7"),
             ]
         }
     };
@@ -53,10 +241,18 @@ pub use flags::{
     CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags,
     InterleavedBitsMarker, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
-pub use instructions::JoltInstructions;
-pub use jolt_instruction::JoltInstruction;
-pub use kind::InstructionKind;
-pub use normalized::{NormalizedInstruction, NormalizedOperands};
+pub use instructions::{JoltInstruction, SourceInstruction};
+pub use kind::{
+    JoltInstructionKind, JoltInstructionMeta, JoltInstructionTag, SourceInstructionKind,
+    SourceInstructionMeta,
+};
+pub use profile::{
+    jolt_target_extension, source_extension, InlineExtension, JoltInstructionProfile,
+    JoltTargetExtension, ProfileInstructionIndex, SourceExtension, RV64IMAC_JOLT,
+    RV64IMAC_JOLT_ALL_INLINES, RV64IM_JOLT,
+};
+pub use row::{JoltInstructionRow, NormalizedOperands, SourceInlineKey, SourceInstructionRow};
+pub use row_data::JoltInstructionRowData;
 pub use trace::JoltCycle;
 pub use uncompress::uncompress_rv64_instruction;
 
@@ -75,7 +271,7 @@ pub use uncompress::uncompress_rv64_instruction;
 ///
 /// // No flag config — struct only, no `Flags` impl:
 /// jolt_instruction!(
-///     /// RV32I (Zicsr) CSRRS: atomic CSR read+set bits.
+///     /// Zicsr CSRRS: atomic CSR read+set bits.
 ///     Csrrs
 /// );
 /// ```
@@ -89,10 +285,10 @@ macro_rules! jolt_instruction {
     ) => {
         $crate::jolt_instruction!(@struct $(#[$attr])* $name);
 
-        impl<T: $crate::JoltInstruction> $crate::Flags for $name<T> {
+        impl<T: $crate::JoltInstructionRowData> $crate::Flags for $name<T> {
             #[inline]
             fn circuit_flags(&self) -> $crate::CircuitFlagSet {
-                let instruction: $crate::NormalizedInstruction = self.0.into();
+                let instruction: $crate::JoltInstructionRow = self.0.into();
                 let mut flags = $crate::CircuitFlagSet::default()
                     $(.set($crate::CircuitFlags::$circuit))*;
                 if let Some(virtual_sequence_remaining) = instruction.virtual_sequence_remaining {
@@ -129,10 +325,10 @@ macro_rules! jolt_instruction {
     ) => {
         $crate::jolt_instruction!(@struct $(#[$attr])* $name);
 
-        impl<T: $crate::JoltInstruction> $crate::Flags for $name<T> {
+        impl<T: $crate::JoltInstructionRowData> $crate::Flags for $name<T> {
             #[inline]
             fn circuit_flags(&self) -> $crate::CircuitFlagSet {
-                let instruction: $crate::NormalizedInstruction = self.0.into();
+                let instruction: $crate::JoltInstructionRow = self.0.into();
                 let mut flags = $crate::CircuitFlagSet::default();
                 if let Some(virtual_sequence_remaining) = instruction.virtual_sequence_remaining {
                     flags = flags.set($crate::CircuitFlags::VirtualInstruction);
@@ -172,32 +368,34 @@ macro_rules! jolt_instruction {
             PartialEq,
             Eq,
             Hash,
-            ::serde::Serialize,
-            ::serde::Deserialize,
+        )]
+        #[cfg_attr(
+            feature = "serialization",
+            derive(::serde::Serialize, ::serde::Deserialize)
         )]
         pub struct $name<T = ()>(pub T);
     };
 
-    // Internal: make the wrapper newtype participate in the normalized-row
+    // Internal: make the wrapper newtype participate in Jolt instruction-row
     // conversion marker by delegating through its payload.
     (@jolt_instruction_impl $name:ident) => {
-        impl<T: $crate::JoltInstruction> From<$name<T>> for $crate::NormalizedInstruction {
+        impl<T: $crate::JoltInstructionRowData> From<$name<T>> for $crate::JoltInstructionRow {
             #[inline]
             fn from(instruction: $name<T>) -> Self {
                 instruction.0.into()
             }
         }
 
-        impl<T: $crate::JoltInstruction> TryFrom<$crate::NormalizedInstruction> for $name<T> {
-            type Error = <T as TryFrom<$crate::NormalizedInstruction>>::Error;
+        impl<T: $crate::JoltInstructionRowData> TryFrom<$crate::JoltInstructionRow> for $name<T> {
+            type Error = <T as TryFrom<$crate::JoltInstructionRow>>::Error;
 
             #[inline]
-            fn try_from(instruction: $crate::NormalizedInstruction) -> Result<Self, Self::Error> {
+            fn try_from(instruction: $crate::JoltInstructionRow) -> Result<Self, Self::Error> {
                 T::try_from(instruction).map($name)
             }
         }
 
-        impl<T: $crate::JoltInstruction> $crate::JoltInstruction for $name<T> {
+        impl<T: $crate::JoltInstructionRowData> $crate::JoltInstructionRowData for $name<T> {
         }
     };
 }

@@ -43,7 +43,9 @@ use crate::{
     },
     zkvm::{
         config::{self, OneHotParams},
-        instruction::{Flags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
+        instruction::{
+            Flags, InstructionLookup, InterleavedBitsMarker, JoltTraceCycle, LookupQuery,
+        },
         lookup_table::{
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
             suffixes::Suffixes,
@@ -404,12 +406,12 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
             .par_iter()
             .enumerate()
             .map(|(idx, cycle)| {
-                let bits = LookupBits::new(LookupQuery::<XLEN>::to_lookup_index(cycle), LOG_K);
-                let is_interleaved = cycle
-                    .instruction()
-                    .circuit_flags()
-                    .is_interleaved_operands();
-                let table = cycle.lookup_table();
+                let jolt_cycle = JoltTraceCycle::try_new(cycle)
+                    .expect("trace cycle must be backed by a final Jolt instruction row");
+                let bits =
+                    LookupBits::new(LookupQuery::<XLEN>::to_lookup_index(&jolt_cycle), LOG_K);
+                let is_interleaved = jolt_cycle.circuit_flags().is_interleaved_operands();
+                let table = jolt_cycle.lookup_table();
 
                 CycleData {
                     idx,
@@ -809,7 +811,9 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                 .zip(std::mem::take(&mut self.is_interleaved_operands))
                 .for_each(|((val, cycle), is_interleaved_operands)| {
                     // Add lookup table value (Val_j(k)) - derive table from trace
-                    if let Some(table) = cycle.lookup_table() {
+                    let jolt_cycle = JoltTraceCycle::try_new(cycle)
+                        .expect("trace cycle must be backed by a final Jolt instruction row");
+                    if let Some(table) = jolt_cycle.lookup_table() {
                         let t_idx = LookupTables::<XLEN>::enum_index(&table);
                         *val += table_values_at_r_addr[t_idx];
                     }
@@ -1246,17 +1250,15 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                         let e_lo_unreduced = E_lo[c_lo].to_unreduced();
 
                         // Accumulate table flag
-                        if let Some(table) = cycle.lookup_table() {
+                        let jolt_cycle = JoltTraceCycle::try_new(cycle)
+                            .expect("trace cycle must be backed by a final Jolt instruction row");
+                        if let Some(table) = jolt_cycle.lookup_table() {
                             let t_idx = LookupTables::<XLEN>::enum_index(&table);
                             local_flags[t_idx] += e_lo_unreduced;
                         }
 
                         // Accumulate RAF flag (identity = not interleaved)
-                        if !cycle
-                            .instruction()
-                            .circuit_flags()
-                            .is_interleaved_operands()
-                        {
+                        if !jolt_cycle.circuit_flags().is_interleaved_operands() {
                             local_raf += e_lo_unreduced;
                         }
                     }
@@ -1539,8 +1541,10 @@ mod tests {
         let mut right_operand_claim = Fr::zero();
 
         for (i, cycle) in trace.iter().enumerate() {
-            let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-            let table: Option<LookupTables<XLEN>> = cycle.lookup_table();
+            let jolt_cycle = JoltTraceCycle::try_new(cycle)
+                .expect("trace cycle must be backed by a final Jolt instruction row");
+            let lookup_index = LookupQuery::<XLEN>::to_lookup_index(&jolt_cycle);
+            let table: Option<LookupTables<XLEN>> = jolt_cycle.lookup_table();
             if let Some(table) = table {
                 rv_claim +=
                     JoltField::mul_u64(&eq_r_cycle[i], table.materialize_entry(lookup_index));

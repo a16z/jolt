@@ -1,5 +1,5 @@
 use common::constants::RAM_START_ADDRESS;
-use jolt_riscv::{uncompress_rv64_instruction, NormalizedInstruction};
+use jolt_riscv::{uncompress_rv64_instruction, JoltInstructionProfile, SourceInstruction};
 use object::{Object, ObjectSection, SectionKind};
 use std::collections::BTreeMap;
 
@@ -10,10 +10,14 @@ use crate::ProgramError;
 /// The instruction rows here match the executable text after RV64 decoding and
 /// compressed-instruction normalization. They have not been expanded into Jolt
 /// bytecode yet.
-#[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Debug, Clone)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct Rv64ProgramImage {
-    /// Source instruction rows decoded from executable text sections.
-    pub instructions: Vec<NormalizedInstruction>,
+    /// Source instructions decoded from executable text sections.
+    pub instructions: Vec<SourceInstruction>,
     /// Initial byte values for memory-backed ELF sections.
     pub memory_init: Vec<(u64, u8)>,
     /// End address of the loaded program image.
@@ -22,7 +26,10 @@ pub struct Rv64ProgramImage {
     pub entry_address: u64,
 }
 
-pub fn decode_elf(elf: &[u8]) -> Result<Rv64ProgramImage, ProgramError> {
+pub fn decode_elf(
+    elf: &[u8],
+    profile: JoltInstructionProfile,
+) -> Result<Rv64ProgramImage, ProgramError> {
     let obj =
         object::File::parse(elf).map_err(|_| ProgramError::MalformedImage("invalid ELF object"))?;
     if let object::File::Elf32(_) = &obj {
@@ -71,7 +78,7 @@ pub fn decode_elf(elf: &[u8]) -> Result<Rv64ProgramImage, ProgramError> {
         let raw_data: Vec<_> = (start..end)
             .map(|address| memory_image.get(&address).copied().unwrap_or(0))
             .collect();
-        decode_text_section(start, &raw_data, &mut instructions)?;
+        decode_text_section(start, &raw_data, &mut instructions, profile)?;
     }
 
     Ok(Rv64ProgramImage {
@@ -100,7 +107,8 @@ fn merge_ranges(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
 fn decode_text_section(
     section_address: u64,
     raw_data: &[u8],
-    instructions: &mut Vec<NormalizedInstruction>,
+    instructions: &mut Vec<SourceInstruction>,
+    profile: JoltInstructionProfile,
 ) -> Result<(), ProgramError> {
     let mut offset = 0;
     while offset < raw_data.len() {
@@ -115,7 +123,7 @@ fn decode_text_section(
         if (first_halfword & 0b11) != 0b11 {
             if first_halfword != 0 {
                 let word = uncompress_rv64_instruction(first_halfword);
-                let instruction = super::decode::decode_instruction(word, address, true)?;
+                let instruction = super::decode::decode_instruction(word, address, true, profile)?;
                 instructions.push(instruction);
             }
             offset += 2;
@@ -134,7 +142,7 @@ fn decode_text_section(
             raw_data[offset + 2],
             raw_data[offset + 3],
         ]);
-        let instruction = super::decode::decode_instruction(word, address, false)?;
+        let instruction = super::decode::decode_instruction(word, address, false, profile)?;
         instructions.push(instruction);
         offset += 4;
     }

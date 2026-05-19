@@ -2,6 +2,7 @@ pub mod field_mul_scalar;
 #[cfg(test)]
 mod macro_tests;
 pub mod soundness;
+pub mod source_to_jolt_expansion_equivalence;
 pub mod split_eq_bind;
 pub mod synthesis;
 pub mod transcript_symmetry;
@@ -140,6 +141,9 @@ pub enum JoltInvariants {
     TranscriptConsistencyBlake2b(transcript_symmetry::TranscriptConsistencyBlake2bInvariant),
     TranscriptConsistencyKeccak(transcript_symmetry::TranscriptConsistencyKeccakInvariant),
     TranscriptConsistencyPoseidon(transcript_symmetry::TranscriptConsistencyPoseidonInvariant),
+    SourceToJoltExpansionEquivalence(
+        source_to_jolt_expansion_equivalence::SourceToJoltExpansionEquivalenceInvariant,
+    ),
 }
 
 macro_rules! dispatch {
@@ -152,6 +156,7 @@ macro_rules! dispatch {
             JoltInvariants::TranscriptConsistencyBlake2b($inv) => $body,
             JoltInvariants::TranscriptConsistencyKeccak($inv) => $body,
             JoltInvariants::TranscriptConsistencyPoseidon($inv) => $body,
+            JoltInvariants::SourceToJoltExpansionEquivalence($inv) => $body,
         }
     };
 }
@@ -171,6 +176,9 @@ impl JoltInvariants {
             ),
             Self::TranscriptConsistencyPoseidon(
                 transcript_symmetry::TranscriptConsistencyPoseidonInvariant,
+            ),
+            Self::SourceToJoltExpansionEquivalence(
+                source_to_jolt_expansion_equivalence::SourceToJoltExpansionEquivalenceInvariant,
             ),
         ]
     }

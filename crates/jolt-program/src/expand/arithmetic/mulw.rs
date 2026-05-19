@@ -1,22 +1,28 @@
 use super::*;
 
+/// Lowers `MULW` by multiplying at XLEN and then imposing the RV64 word result.
+///
+/// RISC-V defines `MULW` as the low 32 bits of the product sign-extended to
+/// 64 bits. The final virtual row is what discards any higher product bits.
 pub(in crate::expand) fn expand_mulw(
-    instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let mut asm =
-        assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
+    instruction: &SourceInstructionRow,
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+
     asm.emit_r(
-        InstructionKind::MUL,
-        rd(instruction)?,
-        rs1(instruction)?,
-        rs2(instruction)?,
-    )?;
+        JoltInstructionKind::MUL,
+        reg(rd(instruction)?),
+        reg(rs1(instruction)?),
+        reg(rs2(instruction)?),
+    );
     asm.emit_i(
-        InstructionKind::VirtualSignExtendWord,
-        rd(instruction)?,
-        rd(instruction)?,
+        JoltInstructionKind::VirtualSignExtendWord(
+            jolt_riscv::instructions::VirtualSignExtendWord(()),
+        ),
+        reg(rd(instruction)?),
+        reg(rd(instruction)?),
         0,
-    )?;
+    );
+
     asm.finalize()
 }

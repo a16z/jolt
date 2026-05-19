@@ -6,7 +6,6 @@ mod p256_tests {
     };
     use crate::{P256_CURVE_B, P256_GENERATOR_X, P256_GENERATOR_Y, P256_MODULUS, P256_ORDER};
     use num_bigint::BigUint;
-    use tracer::emulator::cpu::Xlen;
     use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
     // Helper: convert [u64; 4] little-endian limbs to BigUint
@@ -55,7 +54,7 @@ mod p256_tests {
     fn assert_mulq_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
         let expected = bigint_mulmod(a, b, &P256_MODULUS);
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
-        let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
+        let mut harness = InlineTestHarness::new(layout);
         harness.setup_registers();
         harness.load_input64(a);
         harness.load_input2_64(b);
@@ -73,7 +72,7 @@ mod p256_tests {
     fn assert_squareq_trace_equiv(a: &[u64; 4]) {
         let expected = bigint_mulmod(a, a, &P256_MODULUS);
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
-        let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
+        let mut harness = InlineTestHarness::new(layout);
         harness.setup_registers();
         harness.load_input64(a);
         harness.execute_inline(InlineTestHarness::create_default_instruction(
@@ -90,7 +89,7 @@ mod p256_tests {
     fn assert_divq_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
         let expected = bigint_divmod(a, b, &P256_MODULUS);
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
-        let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
+        let mut harness = InlineTestHarness::new(layout);
         harness.setup_registers();
         harness.load_input64(a);
         harness.load_input2_64(b);
@@ -108,7 +107,7 @@ mod p256_tests {
     fn assert_mulr_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
         let expected = bigint_mulmod(a, b, &P256_ORDER);
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
-        let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
+        let mut harness = InlineTestHarness::new(layout);
         harness.setup_registers();
         harness.load_input64(a);
         harness.load_input2_64(b);
@@ -126,7 +125,7 @@ mod p256_tests {
     fn assert_squarer_trace_equiv(a: &[u64; 4]) {
         let expected = bigint_mulmod(a, a, &P256_ORDER);
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
-        let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
+        let mut harness = InlineTestHarness::new(layout);
         harness.setup_registers();
         harness.load_input64(a);
         harness.execute_inline(InlineTestHarness::create_default_instruction(
@@ -143,7 +142,7 @@ mod p256_tests {
     fn assert_divr_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
         let expected = bigint_divmod(a, b, &P256_ORDER);
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
-        let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
+        let mut harness = InlineTestHarness::new(layout);
         harness.setup_registers();
         harness.load_input64(a);
         harness.load_input2_64(b);

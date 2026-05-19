@@ -152,12 +152,13 @@ use virtual_zero_extend_word::VirtualZeroExtendWord;
 
 use self::inline::INLINE;
 
-use crate::emulator::cpu::{Cpu, Xlen};
+use crate::emulator::cpu::Cpu;
 use crate::utils::virtual_registers::{is_supported_csr, VirtualRegisterAllocator};
 use derive_more::From;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
-use jolt_riscv::InstructionKind;
-pub use jolt_riscv::NormalizedInstruction;
+pub use jolt_riscv::JoltInstructionRow;
+use jolt_riscv::{JoltInstructionKind, SourceInlineKey, SourceInstructionKind, RV64IMAC_JOLT};
+pub use jolt_riscv::{SourceInstruction, SourceInstructionRow};
 
 pub mod format;
 
@@ -360,14 +361,7 @@ impl From<()> for RAMAccess {
     }
 }
 
-pub trait RISCVInstruction:
-    std::fmt::Debug
-    + Sized
-    + Copy
-    + Into<Instruction>
-    + From<NormalizedInstruction>
-    + Into<NormalizedInstruction>
-{
+pub trait RISCVInstruction: std::fmt::Debug + Sized + Copy + Into<Instruction> {
     const MASK: u32;
     const MATCH: u32;
 
@@ -375,6 +369,7 @@ pub trait RISCVInstruction:
     type RAMAccess: Default + Into<RAMAccess> + Copy + std::fmt::Debug;
 
     fn operands(&self) -> &Self::Format;
+    fn source_kind(&self) -> SourceInstructionKind;
     fn new(word: u32, address: u64, validate: bool, compressed: bool) -> Self;
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
@@ -385,8 +380,7 @@ pub trait RISCVInstruction:
     fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess);
 
     fn has_side_effects(&self) -> bool {
-        let instruction: NormalizedInstruction = (*self).into();
-        instruction.instruction_kind.has_side_effects()
+        self.source_kind().has_side_effects()
     }
 }
 
@@ -411,9 +405,9 @@ where
     }
 }
 
-macro_rules! define_rv32im_enums {
+macro_rules! define_rv64imac_enums {
     (
-        instructions: [$($instr:ident),* $(,)?]
+        instructions: [$($instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
     ) => {
         #[derive(Debug, IntoStaticStr, From, Clone, Serialize, Deserialize, EnumIter)]
         pub enum Instruction {
@@ -563,10 +557,10 @@ macro_rules! define_rv32im_enums {
 
         impl Instruction {
             pub fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-                let normalized = self.normalize();
+                let source = self.source_instruction();
                 // Rewrite instructions with rd=x0 via inline_sequence so the
                 // constraint system never sees rd=x0.
-                if normalized.operands.rd == Some(0)
+                if source.row().operands.rd == Some(0)
                     && !matches!(
                         self,
                         Instruction::SCW(_)
@@ -576,7 +570,7 @@ macro_rules! define_rv32im_enums {
                             | Instruction::INLINE(_)
                     )
                 {
-                    let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+                    let inline_sequence = self.inline_sequence(&cpu.vr_allocator);
                     let mut trace = trace;
                     for instr in inline_sequence {
                         instr.trace_raw(cpu, trace.as_deref_mut());
@@ -629,8 +623,73 @@ macro_rules! define_rv32im_enums {
                 }
             }
 
-            pub fn normalize(&self) -> NormalizedInstruction {
-                self.into()
+            pub fn try_jolt_instruction_row(&self) -> Result<JoltInstructionRow, SourceInstructionKind> {
+                match self {
+                    Instruction::NoOp => Ok(Default::default()),
+                    Instruction::UNIMPL => Err(SourceInstructionKind::Unimpl),
+                    $(
+                        Instruction::$instr(instr) => {
+                            let source_kind =
+                                jolt_riscv::SourceInstruction::$marker(
+                                    jolt_riscv::instructions::$marker(())
+                                );
+                            let Some(instruction_kind) = source_kind.jolt_kind() else {
+                                return Err(source_kind);
+                            };
+                            Ok(JoltInstructionRow {
+                                instruction_kind,
+                                address: instr.address as usize,
+                                operands: instr.operands.into(),
+                                virtual_sequence_remaining: instr.virtual_sequence_remaining,
+                                is_first_in_sequence: instr.is_first_in_sequence,
+                                is_compressed: instr.is_compressed,
+                            })
+                        },
+                    )*
+                    Instruction::INLINE(_) => Err(SourceInstructionKind::Inline),
+                }
+            }
+
+            pub fn source_instruction(&self) -> SourceInstruction {
+                if let Instruction::INLINE(inline) = self {
+                    return SourceInstruction::new(
+                        SourceInstructionKind::Inline,
+                        SourceInstructionRow {
+                            address: inline.address as usize,
+                            operands: inline.operands.into(),
+                            inline: Some(SourceInlineKey {
+                                opcode: inline.opcode as u8,
+                                funct3: inline.funct3 as u8,
+                                funct7: inline.funct7 as u8,
+                            }),
+                            is_compressed: inline.is_compressed,
+                        },
+                    );
+                }
+                match self {
+                    Instruction::NoOp => SourceInstruction::new(
+                        SourceInstructionKind::NoOp,
+                        SourceInstructionRow::default(),
+                    ),
+                    Instruction::UNIMPL => SourceInstruction::new(
+                        SourceInstructionKind::Unimpl,
+                        SourceInstructionRow::default(),
+                    ),
+                    $(
+                        Instruction::$instr(instr) => SourceInstruction::new(
+                            jolt_riscv::SourceInstruction::$marker(
+                                jolt_riscv::instructions::$marker(())
+                            ),
+                            SourceInstructionRow {
+                                address: instr.address as usize,
+                                operands: instr.operands.into(),
+                                inline: None,
+                                is_compressed: instr.is_compressed,
+                            },
+                        ),
+                    )*
+                    Instruction::INLINE(_) => unreachable!("inline source returned above"),
+                }
             }
 
             pub fn has_side_effects(&self) -> bool {
@@ -644,45 +703,60 @@ macro_rules! define_rv32im_enums {
                 }
             }
 
-            pub fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
+            pub fn inline_sequence(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
                 if let Instruction::INLINE(inline) = self {
-                    return inline.inline_sequence(allocator, xlen);
+                    return inline.inline_sequence(allocator);
                 }
                 let mut expansion_allocator = jolt_program::expand::ExpansionAllocator::new();
                 jolt_program::expand::expand_instruction(
-                    &self.normalize(),
+                    &self.source_instruction(),
                     &mut expansion_allocator,
+                    RV64IMAC_JOLT,
                 )
                 .expect("jolt-program bytecode expansion failed")
                 .into_iter()
+                .map(JoltInstructionRow::from)
                 .map(|instruction| {
-                    Instruction::try_from_normalized(instruction)
+                    Instruction::try_from_jolt_instruction_row(instruction)
                         .expect("jolt-program expansion produced an instruction unknown to tracer")
                 })
                 .collect()
             }
 
-            pub fn try_from_normalized(instruction: NormalizedInstruction) -> Result<Self, &'static str> {
-                match instruction.instruction_kind {
-                    InstructionKind::NoOp => Ok(Instruction::NoOp),
-                    InstructionKind::Unimpl => Ok(Instruction::UNIMPL),
-                    $(
-                        InstructionKind::$instr => Ok(<$instr as From<NormalizedInstruction>>::from(instruction).into()),
-                    )*
-                    InstructionKind::Inline => {
-                        let metadata = instruction.operands.imm as u32;
-                        let inline = INLINE {
-                            opcode: metadata & 0x7f,
-                            funct3: (metadata >> 7) & 0x7,
-                            funct7: (metadata >> 10) & 0x7f,
-                            address: instruction.address as u64,
-                            operands: instruction.operands.into(),
-                            virtual_sequence_remaining: instruction.virtual_sequence_remaining,
-                            is_first_in_sequence: instruction.is_first_in_sequence,
-                            is_compressed: instruction.is_compressed,
-                        };
-                        Ok(inline.into())
+            pub fn try_from_jolt_instruction_row(instruction: JoltInstructionRow) -> Result<Self, &'static str> {
+                instruction_from_final_jolt_row(instruction)
+            }
+
+            pub fn try_from_source_instruction(instruction: SourceInstruction) -> Result<Self, &'static str> {
+                let kind = instruction.kind();
+                let row = instruction.into_row();
+                if kind == SourceInstructionKind::Inline {
+                    let inline = row
+                        .inline
+                        .ok_or("missing inline source metadata")?;
+                    return Ok(INLINE {
+                        opcode: inline.opcode as u32,
+                        funct3: inline.funct3 as u32,
+                        funct7: inline.funct7 as u32,
+                        address: row.address as u64,
+                        operands: row.operands.into(),
+                        virtual_sequence_remaining: None,
+                        is_first_in_sequence: false,
+                        is_compressed: row.is_compressed,
                     }
+                    .into());
+                }
+                match kind {
+                    jolt_riscv::SourceInstruction::Noop(_) => Ok(Instruction::NoOp),
+                    jolt_riscv::SourceInstruction::Unimplemented(_) => Ok(Instruction::UNIMPL),
+                    $(
+                        jolt_riscv::SourceInstruction::$marker(_) => Ok(
+                            <$instr as From<SourceInstructionRow>>::from(row).into()
+                        ),
+                    )*
+                    jolt_riscv::SourceInstruction::InlineDispatch(_) => {
+                        unreachable!("inline source returned above")
+                    },
                 }
             }
 
@@ -718,46 +792,88 @@ macro_rules! define_rv32im_enums {
                     Instruction::INLINE(instr) => {instr.is_compressed = is_compressed;}
                 }
             }
+
+            pub fn virtual_sequence_remaining(&self) -> Option<u16> {
+                match self {
+                    Instruction::NoOp | Instruction::UNIMPL => None,
+                    $(
+                        Instruction::$instr(instr) => instr.virtual_sequence_remaining,
+                    )*
+                    Instruction::INLINE(instr) => instr.virtual_sequence_remaining,
+                }
+            }
         }
 
-        impl From<&Instruction> for NormalizedInstruction {
-            fn from(instr: &Instruction) -> Self {
-                match instr {
-                    Instruction::NoOp => Default::default(),
-                    Instruction::UNIMPL => Default::default(),
-                    $(
-                        Instruction::$instr(instr) => NormalizedInstruction {
-                            instruction_kind: InstructionKind::$instr,
-                            address: instr.address as usize,
-                            operands: instr.operands.into(),
-                            virtual_sequence_remaining: instr.virtual_sequence_remaining,
-                            is_first_in_sequence: instr.is_first_in_sequence,
-                            is_compressed: instr.is_compressed,
-                        },
-                    )*
-                    Instruction::INLINE(instr) => NormalizedInstruction {
-                        instruction_kind: InstructionKind::Inline,
+    };
+}
+
+jolt_riscv::for_each_instruction_kind!(define_rv64imac_enums);
+
+macro_rules! define_final_jolt_row_conversion {
+    (
+        instructions: [$($instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+    ) => {
+        fn instruction_from_final_jolt_row(
+            instruction: JoltInstructionRow,
+        ) -> Result<Instruction, &'static str> {
+            match instruction.instruction_kind {
+                JoltInstructionKind::NoOp => Ok(Instruction::NoOp),
+                $(
+                    jolt_riscv::JoltInstruction::$marker(_) => {
+                        Ok(<$instr as From<JoltInstructionRow>>::from(instruction).into())
+                    }
+                )*
+            }
+        }
+    };
+}
+
+jolt_riscv::for_each_jolt_instruction_kind!(define_final_jolt_row_conversion);
+
+macro_rules! impl_final_jolt_row_data {
+    (
+        instructions: [$($instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+    ) => {
+        $(
+            impl jolt_riscv::JoltInstructionRowData for $instr {}
+
+            impl_final_jolt_row_data!(@from_row $instr);
+
+            impl From<$instr> for JoltInstructionRow {
+                fn from(instr: $instr) -> JoltInstructionRow {
+                    JoltInstructionRow {
+                        instruction_kind: jolt_riscv::JoltInstruction::$marker(
+                            jolt_riscv::instructions::$marker(())
+                        ),
                         address: instr.address as usize,
-                        operands: {
-                            let mut operands: NormalizedOperands = instr.operands.into();
-                            operands.imm = inline_metadata(instr.opcode, instr.funct3, instr.funct7);
-                            operands
-                        },
+                        operands: instr.operands.into(),
+                        is_compressed: instr.is_compressed,
                         virtual_sequence_remaining: instr.virtual_sequence_remaining,
                         is_first_in_sequence: instr.is_first_in_sequence,
-                        is_compressed: instr.is_compressed,
-                    },
+                    }
+                }
+            }
+        )*
+    };
+
+    (@from_row VirtualAdvice) => {};
+
+    (@from_row $instr:ident) => {
+        impl From<JoltInstructionRow> for $instr {
+            fn from(row: JoltInstructionRow) -> Self {
+                Self {
+                    address: row.address as u64,
+                    operands: row.operands.into(),
+                    virtual_sequence_remaining: row.virtual_sequence_remaining,
+                    is_first_in_sequence: row.is_first_in_sequence,
+                    is_compressed: row.is_compressed,
                 }
             }
         }
     };
 }
 
-jolt_riscv::for_each_instruction_kind!(define_rv32im_enums);
-
-fn inline_metadata(opcode: u32, funct3: u32, funct7: u32) -> i128 {
-    (opcode | (funct3 << 7) | (funct7 << 10)) as i128
-}
+jolt_riscv::for_each_jolt_instruction_kind!(impl_final_jolt_row_data);
 
 impl CanonicalSerialize for Instruction {
     fn serialize_with_mode<W: ark_serialize::Write>(
@@ -811,7 +927,7 @@ impl Instruction {
             return false;
         }
 
-        match self.normalize().virtual_sequence_remaining {
+        match self.virtual_sequence_remaining() {
             None => true,     // ordinary instruction
             Some(0) => true,  // "anchor" of a inline sequence
             Some(_) => false, // helper within the sequence
@@ -936,7 +1052,7 @@ impl Instruction {
                     (0b110, 0b0000000) => Ok(OR::new(instr, address, true, compressed).into()),
                     (0b111, 0b0000000) => Ok(AND::new(instr, address, true, compressed).into()),
 
-                    // RV32M extension
+                    // M extension
                     (0b000, 0b0000001) => Ok(MUL::new(instr, address, true, compressed).into()),
                     (0b001, 0b0000001) => Ok(MULH::new(instr, address, true, compressed).into()),
                     (0b010, 0b0000001) => Ok(MULHSU::new(instr, address, true, compressed).into()),
@@ -1107,7 +1223,7 @@ impl Instruction {
 }
 
 // @TODO: Optimize
-pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
+pub fn uncompress_instruction(halfword: u32) -> u32 {
     let op = halfword & 0x3; // [1:0]
     let funct3 = (halfword >> 13) & 0x7; // [15:13]
 
@@ -1147,8 +1263,7 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                 return (offset << 20) | ((rs1 + 8) << 15) | (2 << 12) | ((rd + 8) << 7) | 0x3;
             }
             3 => {
-                // @TODO: Support C.FLW in 32-bit mode
-                // C.LD in 64-bit mode
+                // C.LD
                 // ld rd+8, offset(rs1+8)
                 let rs1 = (halfword >> 7) & 0x7; // [9:7]
                 let rd = (halfword >> 2) & 0x7; // [4:2]
@@ -1193,7 +1308,6 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                     | 0x23;
             }
             7 => {
-                // @TODO: Support C.FSW in 32-bit mode
                 // C.SD
                 // sd rs2+8, offset(rs1+8)
                 let rs1 = (halfword >> 7) & 0x7; // [9:7]
@@ -1242,47 +1356,22 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                     }
                 }
                 1 => {
-                    match xlen {
-                        Xlen::Bit32 => {
-                            // C.JAL (RV32C only)
-                            // jal x1, offset
-                            let offset = match halfword & 0x1000 {
-                                    0x1000 => 0xfffff000,
-                                    _ => 0
-                                } | // offset[31:12] <= [12]
-                                ((halfword >> 1) & 0x800) | // offset[11] <= [12]
-                                ((halfword >> 7) & 0x10) | // offset[4] <= [11]
-                                ((halfword >> 1) & 0x300) | // offset[9:8] <= [10:9]
-                                ((halfword << 2) & 0x400) | // offset[10] <= [8]
-                                ((halfword >> 1) & 0x40) | // offset[6] <= [7]
-                                ((halfword << 1) & 0x80) | // offset[7] <= [6]
-                                ((halfword >> 2) & 0xe) | // offset[3:1] <= [5:3]
-                                ((halfword << 3) & 0x20); // offset[5] <= [2]
-                            let imm = ((offset >> 1) & 0x80000) | // imm[19] <= offset[20]
-                                    ((offset << 8) & 0x7fe00) | // imm[18:9] <= offset[10:1]
-                                    ((offset >> 3) & 0x100) | // imm[8] <= offset[11]
-                                    ((offset >> 12) & 0xff); // imm[7:0] <= offset[19:12]
-                            return (imm << 12) | (1 << 7) | 0x6f;
-                        }
-                        Xlen::Bit64 => {
-                            // C.ADDIW (RV64C only)
-                            let r = (halfword >> 7) & 0x1f;
-                            let imm = match halfword & 0x1000 {
+                    // C.ADDIW
+                    let r = (halfword >> 7) & 0x1f;
+                    let imm = match halfword & 0x1000 {
                             0x1000 => 0xffffffc0,
                             _ => 0
                         } | // imm[31:6] <= [12]
                         ((halfword >> 7) & 0x20) | // imm[5] <= [12]
                         ((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
-                            if r == 0 {
-                                // Reserved
-                            } else if imm == 0 {
-                                // sext.w rd
-                                return (r << 15) | (r << 7) | 0x1b;
-                            } else {
-                                // addiw r, r, imm
-                                return (imm << 20) | (r << 15) | (r << 7) | 0x1b;
-                            }
-                        }
+                    if r == 0 {
+                        // Reserved
+                    } else if imm == 0 {
+                        // sext.w rd
+                        return (r << 15) | (r << 7) | 0x1b;
+                    } else {
+                        // addiw r, r, imm
+                        return (imm << 20) | (r << 15) | (r << 7) | 0x1b;
                     }
                 }
                 2 => {
@@ -1558,7 +1647,6 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                     // r == 0 is reserved instruction
                 }
                 3 => {
-                    // @TODO: Support C.FLWSP in 32-bit mode
                     // C.LDSP
                     // ld rd, offset(x2)
                     let rd = (halfword >> 7) & 0x1f;
@@ -1654,7 +1742,6 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                         | 0x23;
                 }
                 7 => {
-                    // @TODO: Support C.FSWSP in 32-bit mode
                     // C.SDSP
                     // sd rs, offset(x2)
                     let rs2 = (halfword >> 2) & 0x1f; // [6:2]
@@ -1688,10 +1775,12 @@ impl<T: RISCVInstruction> RISCVCycle<T> {
     #[cfg(any(feature = "test-utils", test))]
     pub fn random(&self, rng: &mut rand::rngs::StdRng) -> Self {
         let instruction = T::random(rng);
+        let concrete: Instruction = instruction.into();
+        let source_instruction = concrete.source_instruction();
         let register_state =
             <<T::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
                 rng,
-                &Into::<NormalizedInstruction>::into(instruction).operands,
+                &source_instruction.row().operands,
             );
         Self {
             instruction,
@@ -1706,8 +1795,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn source_only_tracer_conversion_does_not_fabricate_final_kind() {
+        let source = SourceInstruction::new(
+            SourceInstructionKind::ADDW,
+            SourceInstructionRow {
+                address: 0x1234,
+                operands: NormalizedOperands {
+                    rd: Some(7),
+                    rs1: Some(5),
+                    rs2: Some(6),
+                    imm: 0,
+                },
+                inline: None,
+                is_compressed: true,
+            },
+        );
+
+        let instruction = Instruction::try_from_source_instruction(source).unwrap();
+        assert!(instruction.try_jolt_instruction_row().is_err());
+        let Instruction::ADDW(addw) = instruction else {
+            panic!("expected ADDW tracer instruction");
+        };
+        assert_eq!(addw.address, 0x1234);
+        assert_eq!(addw.virtual_sequence_remaining, None);
+        assert!(!addw.is_first_in_sequence);
+        assert!(addw.is_compressed);
+    }
+
+    #[test]
     // Check that the size of Cycle is as expected.
-    fn rv32im_cycle_size() {
+    fn rv64imac_cycle_size() {
         let size = size_of::<Cycle>();
         let expected = 96;
         assert_eq!(

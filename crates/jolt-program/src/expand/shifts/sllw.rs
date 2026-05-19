@@ -1,26 +1,37 @@
 use super::*;
 
+/// Lowers variable `SLLW` through the word-sized power-of-two helper.
+///
+/// `VirtualPow2W` uses `rs2 & 0x1f`, matching the RV64 word shift rule. The
+/// product is then sign-extended from 32 bits so the final row sequence has the
+/// same result as the source `SLLW`.
 pub(in crate::expand) fn expand_sllw(
-    instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v_pow2 = allocator.allocate()?;
-    let mut asm =
-        assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
-    asm.emit_i(InstructionKind::VirtualPow2W, v_pow2, rs2(instruction)?, 0)?;
-    asm.emit_r(
-        InstructionKind::MUL,
-        rd(instruction)?,
-        rs1(instruction)?,
-        v_pow2,
-    )?;
+    instruction: &SourceInstructionRow,
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let v_pow2 = asm.allocate()?;
+
     asm.emit_i(
-        InstructionKind::VirtualSignExtendWord,
-        rd(instruction)?,
-        rd(instruction)?,
+        JoltInstructionKind::VirtualPow2W,
+        v_pow2.operand(),
+        reg(rs2(instruction)?),
         0,
-    )?;
-    let sequence = asm.finalize()?;
-    allocator.release(v_pow2)?;
-    Ok(sequence)
+    );
+    asm.emit_r(
+        JoltInstructionKind::MUL,
+        reg(rd(instruction)?),
+        reg(rs1(instruction)?),
+        v_pow2.operand(),
+    );
+    asm.emit_i(
+        JoltInstructionKind::VirtualSignExtendWord(
+            jolt_riscv::instructions::VirtualSignExtendWord(()),
+        ),
+        reg(rd(instruction)?),
+        reg(rd(instruction)?),
+        0,
+    );
+    asm.release(v_pow2);
+
+    asm.finalize()
 }

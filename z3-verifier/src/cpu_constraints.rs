@@ -26,7 +26,6 @@ use tracer::instruction::{
     blt::BLT,
     bltu::BLTU,
     bne::BNE,
-    ecall::ECALL,
     fence::FENCE,
     format::{
         format_assert_align::FormatAssert, format_b::FormatB, format_fence::FormatFence,
@@ -275,8 +274,11 @@ impl JoltState {
     }
 
     fn assert_input_matches(&self, solver: &mut Solver, instr: &Instruction, other: &Self) {
-        let flags = instr.circuit_flags();
-        let instruction_flags = instr.instruction_flags();
+        let row = instr
+            .try_jolt_instruction_row()
+            .expect("Z3 instruction constraints require a final Jolt row");
+        let flags = row.circuit_flags();
+        let instruction_flags = row.instruction_flags();
 
         self.flags
             .iter()
@@ -480,7 +482,6 @@ test_instruction_constraints!(BGEU, FormatB);
 test_instruction_constraints!(BLT, FormatB);
 test_instruction_constraints!(BLTU, FormatB);
 test_instruction_constraints!(BNE, FormatB);
-test_instruction_constraints!(ECALL, FormatI);
 test_instruction_constraints!(FENCE, FormatFence);
 test_instruction_constraints!(JAL, FormatJ);
 test_instruction_constraints!(JALR, FormatI);

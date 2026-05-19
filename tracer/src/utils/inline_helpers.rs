@@ -29,7 +29,6 @@ use crate::instruction::add::ADD;
 use crate::instruction::addi::ADDI;
 use crate::instruction::and::AND;
 use crate::instruction::andi::ANDI;
-use crate::instruction::srli::SRLI;
 use crate::instruction::srliw::SRLIW;
 
 use crate::instruction::format::format_assert_align::FormatAssert;
@@ -44,17 +43,16 @@ use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRight
 use crate::instruction::format::format_virtual_right_shift_r::FormatVirtualRightShiftR;
 use crate::instruction::format::NormalizedOperands;
 
-use crate::emulator::cpu::Xlen;
 use crate::instruction::virtual_rotri::VirtualROTRI;
 use crate::instruction::virtual_rotriw::VirtualROTRIW;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
 use crate::instruction::Cycle;
 use crate::instruction::Instruction;
-use crate::instruction::NormalizedInstruction;
 use crate::instruction::RISCVCycle;
 use crate::instruction::RISCVInstruction;
 use crate::instruction::RISCVTrace;
+use crate::instruction::SourceInstructionRow;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
 use common::constants::RISCV_REGISTER_COUNT;
@@ -79,8 +77,6 @@ pub struct InstrAssembler {
     pub address: u64,
     /// Whether to use RVC encodings.
     pub is_compressed: bool,
-    /// Xlen of the CPU.
-    pub xlen: Xlen,
     /// Accumulated instruction buffer.
     sequence: Vec<Instruction>,
     /// Whether the instruction uses the the FormatInline instruction format.
@@ -94,13 +90,11 @@ impl InstrAssembler {
     pub fn new_inline(
         address: u64,
         is_compressed: bool,
-        xlen: Xlen,
         allocator: &VirtualRegisterAllocator,
     ) -> Self {
         Self {
             address,
             is_compressed,
-            xlen,
             sequence: Vec::new(),
             has_inline_instr_format: true,
             allocator: allocator.clone(),
@@ -143,12 +137,23 @@ impl InstrAssembler {
     }
 
     #[inline]
+    fn source_row(&self, operands: NormalizedOperands) -> SourceInstructionRow {
+        SourceInstructionRow {
+            address: self.address as usize,
+            operands,
+            inline: None,
+            is_compressed: false,
+        }
+    }
+
+    #[inline]
     fn add_to_sequence<I: RISCVInstruction + RISCVTrace>(&mut self, inst: I)
     where
         RISCVCycle<I>: Into<Cycle>,
     {
+        let instruction: Instruction = inst.into();
         if self.has_inline_instr_format {
-            let normalized: NormalizedInstruction = inst.into();
+            let normalized = instruction.source_instruction().into_row();
             if !Self::is_valid_virtual_rd(normalized.operands.rd) {
                 const MIN_INLINE_REG: u8 =
                     RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
@@ -158,15 +163,16 @@ impl InstrAssembler {
                 );
             }
         }
-        let instruction: Instruction = inst.into();
         self.sequence
-            .extend(instruction.inline_sequence(&self.allocator, self.xlen));
+            .extend(instruction.inline_sequence(&self.allocator));
     }
 
     /// Emit any R-type instruction (rd, rs1, rs2).
     #[track_caller]
     #[inline]
-    pub fn emit_r<Op: RISCVInstruction<Format = FormatR> + RISCVTrace>(
+    pub fn emit_r<
+        Op: RISCVInstruction<Format = FormatR> + RISCVTrace + From<SourceInstructionRow>,
+    >(
         &mut self,
         rd: u8,
         rs1: u8,
@@ -174,25 +180,20 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
-            address: self.address as usize,
-            operands: NormalizedOperands {
-                rd: Some(rd),
-                rs1: Some(rs1),
-                rs2: Some(rs2),
-                imm: 0,
-            },
-            is_compressed: false,
-            is_first_in_sequence: false,
-            virtual_sequence_remaining: Some(0),
-        }));
+        self.add_to_sequence(Op::from(self.source_row(NormalizedOperands {
+            rd: Some(rd),
+            rs1: Some(rs1),
+            rs2: Some(rs2),
+            imm: 0,
+        })));
     }
 
     /// Emit any I-type instruction (rd, rs1, imm).
     #[track_caller]
     #[inline]
-    pub fn emit_i<Op: RISCVInstruction<Format = FormatI> + RISCVTrace>(
+    pub fn emit_i<
+        Op: RISCVInstruction<Format = FormatI> + RISCVTrace + From<SourceInstructionRow>,
+    >(
         &mut self,
         rd: u8,
         rs1: u8,
@@ -200,25 +201,20 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
-            address: self.address as usize,
-            operands: NormalizedOperands {
-                rd: Some(rd),
-                rs1: Some(rs1),
-                rs2: None,
-                imm: imm as i128,
-            },
-            is_compressed: false,
-            is_first_in_sequence: false,
-            virtual_sequence_remaining: Some(0),
-        }));
+        self.add_to_sequence(Op::from(self.source_row(NormalizedOperands {
+            rd: Some(rd),
+            rs1: Some(rs1),
+            rs2: None,
+            imm: imm as i128,
+        })));
     }
 
     /// Emit any S-type instruction (rs1, rs2, imm).
     #[track_caller]
     #[inline]
-    pub fn emit_s<Op: RISCVInstruction<Format = FormatS> + RISCVTrace>(
+    pub fn emit_s<
+        Op: RISCVInstruction<Format = FormatS> + RISCVTrace + From<SourceInstructionRow>,
+    >(
         &mut self,
         rs1: u8,
         rs2: u8,
@@ -226,25 +222,20 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
-            address: self.address as usize,
-            operands: NormalizedOperands {
-                rd: None,
-                rs1: Some(rs1),
-                rs2: Some(rs2),
-                imm: imm as i128,
-            },
-            is_compressed: false,
-            is_first_in_sequence: false,
-            virtual_sequence_remaining: Some(0),
-        }));
+        self.add_to_sequence(Op::from(self.source_row(NormalizedOperands {
+            rd: None,
+            rs1: Some(rs1),
+            rs2: Some(rs2),
+            imm: imm as i128,
+        })));
     }
 
     /// Emit any Load-type instruction (rd, rs1, imm) - like FormatI but with signed imm.
     #[track_caller]
     #[inline]
-    pub fn emit_ld<Op: RISCVInstruction<Format = FormatLoad> + RISCVTrace>(
+    pub fn emit_ld<
+        Op: RISCVInstruction<Format = FormatLoad> + RISCVTrace + From<SourceInstructionRow>,
+    >(
         &mut self,
         rd: u8,
         rs1: u8,
@@ -252,25 +243,20 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
-            address: self.address as usize,
-            operands: NormalizedOperands {
-                rd: Some(rd),
-                rs1: Some(rs1),
-                rs2: None,
-                imm: imm as i128,
-            },
-            is_compressed: false,
-            is_first_in_sequence: false,
-            virtual_sequence_remaining: Some(0),
-        }));
+        self.add_to_sequence(Op::from(self.source_row(NormalizedOperands {
+            rd: Some(rd),
+            rs1: Some(rs1),
+            rs2: None,
+            imm: imm as i128,
+        })));
     }
 
     /// Emit any B-type instruction (rs1, rs2, imm) - branch instructions.
     #[track_caller]
     #[inline]
-    pub fn emit_b<Op: RISCVInstruction<Format = FormatB> + RISCVTrace>(
+    pub fn emit_b<
+        Op: RISCVInstruction<Format = FormatB> + RISCVTrace + From<SourceInstructionRow>,
+    >(
         &mut self,
         rs1: u8,
         rs2: u8,
@@ -278,69 +264,62 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
-            address: self.address as usize,
-            operands: NormalizedOperands {
-                rd: None,
-                rs1: Some(rs1),
-                rs2: Some(rs2),
-                imm: imm as i128,
-            },
-            is_compressed: false,
-            is_first_in_sequence: false,
-            virtual_sequence_remaining: Some(0),
-        }));
+        self.add_to_sequence(Op::from(self.source_row(NormalizedOperands {
+            rd: None,
+            rs1: Some(rs1),
+            rs2: Some(rs2),
+            imm: imm as i128,
+        })));
     }
 
     /// Emit any J-type instruction (rd, imm) - jump instructions.
     #[track_caller]
     #[inline]
-    pub fn emit_j<Op: RISCVInstruction<Format = FormatJ> + RISCVTrace>(&mut self, rd: u8, imm: u64)
-    where
+    pub fn emit_j<
+        Op: RISCVInstruction<Format = FormatJ> + RISCVTrace + From<SourceInstructionRow>,
+    >(
+        &mut self,
+        rd: u8,
+        imm: u64,
+    ) where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
-            address: self.address as usize,
-            operands: NormalizedOperands {
-                rd: Some(rd),
-                rs1: None,
-                rs2: None,
-                imm: imm as i128,
-            },
-            is_compressed: false,
-            is_first_in_sequence: false,
-            virtual_sequence_remaining: Some(0),
-        }));
+        self.add_to_sequence(Op::from(self.source_row(NormalizedOperands {
+            rd: Some(rd),
+            rs1: None,
+            rs2: None,
+            imm: imm as i128,
+        })));
     }
 
     /// Emit any U-type instruction (rd, imm) - upper immediate instructions.
     #[track_caller]
     #[inline]
-    pub fn emit_u<Op: RISCVInstruction<Format = FormatU> + RISCVTrace>(&mut self, rd: u8, imm: u64)
-    where
+    pub fn emit_u<
+        Op: RISCVInstruction<Format = FormatU> + RISCVTrace + From<SourceInstructionRow>,
+    >(
+        &mut self,
+        rd: u8,
+        imm: u64,
+    ) where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
-            address: self.address as usize,
-            operands: NormalizedOperands {
-                rd: Some(rd),
-                rs1: None,
-                rs2: None,
-                imm: imm as i128,
-            },
-            is_compressed: false,
-            is_first_in_sequence: false,
-            virtual_sequence_remaining: Some(0),
-        }));
+        self.add_to_sequence(Op::from(self.source_row(NormalizedOperands {
+            rd: Some(rd),
+            rs1: None,
+            rs2: None,
+            imm: imm as i128,
+        })));
     }
 
     /// Emit any virtual right shift I-type instruction (rd, rs1, imm).
     #[track_caller]
     #[inline]
-    pub fn emit_vshift_i<Op: RISCVInstruction<Format = FormatVirtualRightShiftI> + RISCVTrace>(
+    pub fn emit_vshift_i<
+        Op: RISCVInstruction<Format = FormatVirtualRightShiftI>
+            + RISCVTrace
+            + From<SourceInstructionRow>,
+    >(
         &mut self,
         rd: u8,
         rs1: u8,
@@ -348,25 +327,22 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
-            address: self.address as usize,
-            operands: NormalizedOperands {
-                rd: Some(rd),
-                rs1: Some(rs1),
-                rs2: None,
-                imm: imm as i128,
-            },
-            is_compressed: false,
-            is_first_in_sequence: false,
-            virtual_sequence_remaining: Some(0),
-        }));
+        self.add_to_sequence(Op::from(self.source_row(NormalizedOperands {
+            rd: Some(rd),
+            rs1: Some(rs1),
+            rs2: None,
+            imm: imm as i128,
+        })));
     }
 
     /// Emit any virtual right shift R-type instruction (rd, rs1, rs2).
     #[track_caller]
     #[inline]
-    pub fn emit_vshift_r<Op: RISCVInstruction<Format = FormatVirtualRightShiftR> + RISCVTrace>(
+    pub fn emit_vshift_r<
+        Op: RISCVInstruction<Format = FormatVirtualRightShiftR>
+            + RISCVTrace
+            + From<SourceInstructionRow>,
+    >(
         &mut self,
         rd: u8,
         rs1: u8,
@@ -374,51 +350,39 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
-            address: self.address as usize,
-            operands: NormalizedOperands {
-                rd: Some(rd),
-                rs1: Some(rs1),
-                rs2: Some(rs2),
-                imm: 0,
-            },
-            is_compressed: false,
-            is_first_in_sequence: false,
-            virtual_sequence_remaining: Some(0),
-        }));
+        self.add_to_sequence(Op::from(self.source_row(NormalizedOperands {
+            rd: Some(rd),
+            rs1: Some(rs1),
+            rs2: Some(rs2),
+            imm: 0,
+        })));
     }
 
     /// Emit an alignment assertion instruction (rs1, imm).
     #[track_caller]
     #[inline]
-    pub fn emit_align<Op: RISCVInstruction<Format = FormatAssert> + RISCVTrace>(
+    pub fn emit_align<
+        Op: RISCVInstruction<Format = FormatAssert> + RISCVTrace + From<SourceInstructionRow>,
+    >(
         &mut self,
         rs1: u8,
         imm: i64,
     ) where
         RISCVCycle<Op>: Into<Cycle>,
     {
-        self.add_to_sequence(Op::from(NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::Unimpl,
-            address: self.address as usize,
-            operands: NormalizedOperands {
-                rd: None,
-                rs1: Some(rs1),
-                rs2: None,
-                imm: imm as i128,
-            },
-            is_compressed: false,
-            is_first_in_sequence: false,
-            virtual_sequence_remaining: Some(0),
-        }));
+        self.add_to_sequence(Op::from(self.source_row(NormalizedOperands {
+            rd: None,
+            rs1: Some(rs1),
+            rs2: None,
+            imm: imm as i128,
+        })));
     }
 
     /// Generic binary operation with constant folding.
     /// Automatically selects R-type vs I-type encoding based on operand types.
     pub fn bin<
-        OR: RISCVInstruction<Format = FormatR> + RISCVTrace,
-        OI: RISCVInstruction<Format = FormatI> + RISCVTrace,
+        OR: RISCVInstruction<Format = FormatR> + RISCVTrace + From<SourceInstructionRow>,
+        OI: RISCVInstruction<Format = FormatI> + RISCVTrace + From<SourceInstructionRow>,
     >(
         &mut self,
         rs1: Value,
@@ -455,10 +419,7 @@ impl InstrAssembler {
         }
         match rs1 {
             Reg(rs1) => {
-                match self.xlen {
-                    Xlen::Bit32 => self.emit_i::<SRLI>(rd, rs1, shamt as u64),
-                    Xlen::Bit64 => self.emit_i::<SRLIW>(rd, rs1, (shamt & 0x1f) as u64),
-                }
+                self.emit_i::<SRLIW>(rd, rs1, (shamt & 0x1f) as u64);
                 Reg(rd)
             }
             Imm(val) => Imm(((val as u32) >> shamt) as u64),
@@ -475,10 +436,7 @@ impl InstrAssembler {
         let mask = ones << shamt;
         match rs1 {
             Reg(rs1_reg) => {
-                match self.xlen {
-                    Xlen::Bit32 => self.emit_vshift_i::<VirtualROTRI>(rd, rs1_reg, mask),
-                    Xlen::Bit64 => self.emit_vshift_i::<VirtualROTRIW>(rd, rs1_reg, mask),
-                }
+                self.emit_vshift_i::<VirtualROTRIW>(rd, rs1_reg, mask);
                 Reg(rd)
             }
             Imm(val) => Imm(((val as u32).rotate_right(shamt)) as u64),
@@ -560,7 +518,7 @@ mod tests {
     #[test]
     fn test_rotl64_immediate_paths() {
         let allocator = VirtualRegisterAllocator::new();
-        let mut asm = InstrAssembler::new_inline(0, false, Xlen::Bit64, &allocator);
+        let mut asm = InstrAssembler::new_inline(0, false, &allocator);
         let dest = 0;
         let vectors: &[(u64, u32, u64)] = &[
             (0x0000000000000001, 1, 0x0000000000000002),

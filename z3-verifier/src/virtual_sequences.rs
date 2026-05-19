@@ -4,7 +4,6 @@ use common::constants::{REGISTER_COUNT, RISCV_REGISTER_COUNT};
 use std::env;
 use std::fmt::Write;
 use tracer::{
-    emulator::cpu::Xlen,
     instruction::{
         add::ADD,
         addi::ADDI,
@@ -127,13 +126,12 @@ struct SymbolicCpu {
     x: [BV; REGISTER_COUNT as usize],
     advice_vars: Vec<BV>,
     asserts: Vec<Bool>,
-    xlen: Xlen,
     bv_bits: u32,
     word_bits: u32,
 }
 
 impl SymbolicCpu {
-    fn new(var_prefix: &str, xlen: Xlen, bv_bits: u32) -> Self {
+    fn new(var_prefix: &str, bv_bits: u32) -> Self {
         assert!(bv_bits.is_power_of_two() && (8..=64).contains(&bv_bits));
         assert!(bv_bits.is_multiple_of(2));
         let word_bits = bv_bits / 2;
@@ -148,7 +146,6 @@ impl SymbolicCpu {
             x: regs,
             advice_vars: Vec::new(),
             asserts, // x0 is always 0
-            xlen,
             bv_bits,
             word_bits,
         }
@@ -188,21 +185,11 @@ impl SymbolicCpu {
     }
 
     fn sign_extend(&self, bv: &BV) -> BV {
-        match self.xlen {
-            Xlen::Bit32 => bv
-                .extract(self.word_bits - 1, 0)
-                .sign_ext(self.bv_bits - self.word_bits),
-            Xlen::Bit64 => bv.clone(),
-        }
+        bv.clone()
     }
 
     fn unsigned_data(&self, bv: &BV) -> BV {
-        match self.xlen {
-            Xlen::Bit32 => bv
-                .extract(self.word_bits - 1, 0)
-                .zero_ext(self.bv_bits - self.word_bits),
-            Xlen::Bit64 => bv.clone(),
-        }
+        bv.clone()
     }
 }
 
@@ -233,7 +220,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
         }
         Instruction::ADDI(ADDI { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
-            let imm = normalize_imm(operands.imm, &cpu.xlen);
+            let imm = normalize_imm(operands.imm);
             cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 + imm));
         }
         Instruction::AND(AND { operands, .. }) => {
@@ -243,7 +230,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
         }
         Instruction::ANDI(ANDI { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
-            let imm = normalize_imm(scale_imm_u64(operands.imm, cpu), &cpu.xlen);
+            let imm = normalize_imm(scale_imm_u64(operands.imm, cpu));
             cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 & imm));
         }
         Instruction::ANDN(ANDN { operands, .. }) => {
@@ -252,7 +239,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 & rs2.bvnot()));
         }
         Instruction::LUI(LUI { operands, .. }) => {
-            let imm = normalize_imm(operands.imm, &cpu.xlen);
+            let imm = normalize_imm(operands.imm);
             cpu.x[operands.rd as usize] = BV::from_i64(imm, cpu.bv_bits);
         }
         Instruction::MUL(MUL { operands, .. }) => {
@@ -263,22 +250,12 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
         Instruction::MULHU(MULHU { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             let rs2 = cpu.x[operands.rs2 as usize].clone();
-            cpu.x[operands.rd as usize] = match cpu.xlen {
-                Xlen::Bit32 => {
-                    let lhs = rs1.extract(cpu.word_bits - 1, 0);
-                    let rhs = rs2.extract(cpu.word_bits - 1, 0);
-                    let product = lhs.zero_ext(cpu.word_bits) * rhs.zero_ext(cpu.word_bits);
-                    cpu.sign_extend(&product.extract(cpu.word_bits * 2 - 1, cpu.word_bits))
-                }
-                Xlen::Bit64 => {
-                    let product = rs1.zero_ext(cpu.bv_bits) * rs2.zero_ext(cpu.bv_bits);
-                    product.extract(cpu.bv_bits * 2 - 1, cpu.bv_bits)
-                }
-            }
+            let product = rs1.zero_ext(cpu.bv_bits) * rs2.zero_ext(cpu.bv_bits);
+            cpu.x[operands.rd as usize] = product.extract(cpu.bv_bits * 2 - 1, cpu.bv_bits)
         }
         Instruction::ORI(ORI { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
-            let imm = normalize_imm(scale_imm_u64(operands.imm, cpu), &cpu.xlen);
+            let imm = normalize_imm(scale_imm_u64(operands.imm, cpu));
             cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 | imm));
         }
         Instruction::SUB(SUB { operands, .. }) => {
@@ -314,11 +291,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let divisor = cpu.x[operands.rs1 as usize].clone();
             let quotient = cpu.x[operands.rs2 as usize].clone();
             let ones = cpu.bv_ones();
-            let word_ones = BV::from_u64(u64::MAX, cpu.word_bits);
-            cpu.asserts.push(divisor.eq(0).implies(match cpu.xlen {
-                Xlen::Bit32 => quotient.extract(cpu.word_bits - 1, 0).eq(&word_ones),
-                Xlen::Bit64 => quotient.eq(&ones),
-            }));
+            cpu.asserts.push(divisor.eq(0).implies(quotient.eq(&ones)));
         }
         Instruction::VirtualAssertValidUnsignedRemainder(VirtualAssertValidUnsignedRemainder {
             operands,
@@ -326,18 +299,9 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
         }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             let rs2 = cpu.x[operands.rs2 as usize].clone();
-            cpu.asserts.push(match cpu.xlen {
-                Xlen::Bit32 => {
-                    let remainder = rs1.extract(cpu.word_bits - 1, 0);
-                    let divisor = rs2.extract(cpu.word_bits - 1, 0);
-                    divisor.eq(0) | remainder.bvult(&divisor)
-                }
-                Xlen::Bit64 => {
-                    let remainder = rs1;
-                    let divisor = rs2;
-                    divisor.eq(0) | remainder.bvult(&divisor)
-                }
-            });
+            let remainder = rs1;
+            let divisor = rs2;
+            cpu.asserts.push(divisor.eq(0) | remainder.bvult(&divisor));
         }
 
         Instruction::VirtualAssertWordAlignment(VirtualAssertWordAlignment {
@@ -349,60 +313,31 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
         Instruction::VirtualChangeDivisor(VirtualChangeDivisor { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             let rs2 = cpu.x[operands.rs2 as usize].clone();
-            cpu.x[operands.rd as usize] = match cpu.xlen {
-                Xlen::Bit32 => {
-                    let dividend = rs1.extract(cpu.word_bits - 1, 0);
-                    let divisor = rs2.extract(cpu.word_bits - 1, 0);
-                    let word_min = SymbolicCpu::signed_min(cpu.word_bits);
-                    let word_ones = BV::from_u64(u64::MAX, cpu.word_bits);
-                    (dividend.eq(&word_min) & divisor.eq(&word_ones)).ite(
-                        &BV::from_u64(1, cpu.bv_bits),
-                        &divisor.sign_ext(cpu.bv_bits - cpu.word_bits),
-                    )
-                }
-                Xlen::Bit64 => {
-                    let dividend = rs1;
-                    let divisor = rs2;
-                    let min = SymbolicCpu::signed_min(cpu.bv_bits);
-                    let ones = cpu.bv_ones();
-                    (dividend.eq(&min) & divisor.eq(&ones))
-                        .ite(&BV::from_u64(1, cpu.bv_bits), &divisor)
-                }
-            }
+            let dividend = rs1;
+            let divisor = rs2;
+            let min = SymbolicCpu::signed_min(cpu.bv_bits);
+            let ones = cpu.bv_ones();
+            cpu.x[operands.rd as usize] =
+                (dividend.eq(&min) & divisor.eq(&ones)).ite(&BV::from_u64(1, cpu.bv_bits), &divisor)
         }
         Instruction::VirtualChangeDivisorW(VirtualChangeDivisorW { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             let rs2 = cpu.x[operands.rs2 as usize].clone();
-            cpu.x[operands.rd as usize] = match cpu.xlen {
-                Xlen::Bit32 => {
-                    panic!("VirtualChangeDivisorW is invalid in 32b mode");
-                }
-                Xlen::Bit64 => {
-                    let dividend = rs1.extract(cpu.word_bits - 1, 0);
-                    let divisor = rs2.extract(cpu.word_bits - 1, 0);
-                    let word_min = SymbolicCpu::signed_min(cpu.word_bits);
-                    let word_ones = BV::from_u64(u64::MAX, cpu.word_bits);
-                    (dividend.eq(&word_min) & divisor.eq(&word_ones)).ite(
-                        &BV::from_u64(1, cpu.bv_bits),
-                        &divisor.sign_ext(cpu.bv_bits - cpu.word_bits),
-                    )
-                }
-            }
+            let dividend = rs1.extract(cpu.word_bits - 1, 0);
+            let divisor = rs2.extract(cpu.word_bits - 1, 0);
+            let word_min = SymbolicCpu::signed_min(cpu.word_bits);
+            let word_ones = BV::from_u64(u64::MAX, cpu.word_bits);
+            cpu.x[operands.rd as usize] = (dividend.eq(&word_min) & divisor.eq(&word_ones)).ite(
+                &BV::from_u64(1, cpu.bv_bits),
+                &divisor.sign_ext(cpu.bv_bits - cpu.word_bits),
+            )
         }
         Instruction::VirtualMovsign(VirtualMovsign { operands, .. }) => {
             let val = cpu.x[operands.rs1 as usize].clone();
             let ones = cpu.bv_ones();
             let zero = cpu.bv_zero();
-            cpu.x[operands.rd as usize] = match cpu.xlen {
-                Xlen::Bit32 => {
-                    let sign_bit = val.extract(cpu.word_bits - 1, cpu.word_bits - 1);
-                    sign_bit.eq(1).ite(&ones, &zero)
-                }
-                Xlen::Bit64 => {
-                    let sign_bit = val.extract(cpu.bv_bits - 1, cpu.bv_bits - 1);
-                    sign_bit.eq(1).ite(&ones, &zero)
-                }
-            };
+            let sign_bit = val.extract(cpu.bv_bits - 1, cpu.bv_bits - 1);
+            cpu.x[operands.rd as usize] = sign_bit.eq(1).ite(&ones, &zero);
         }
         Instruction::VirtualAdvice(VirtualAdvice { operands, .. }) => {
             let advice_var = BV::new_const(
@@ -414,23 +349,15 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
         }
         Instruction::VirtualPow2(VirtualPow2 { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
-            cpu.x[operands.rd as usize] = match cpu.xlen {
-                Xlen::Bit32 => cpu
-                    .bv_u64(1)
-                    .bvshl(rs1 & cpu.bv_u64((cpu.word_bits - 1) as u64)),
-                Xlen::Bit64 => cpu
-                    .bv_u64(1)
-                    .bvshl(rs1 & cpu.bv_u64((cpu.bv_bits - 1) as u64)),
-            };
+            cpu.x[operands.rd as usize] = cpu
+                .bv_u64(1)
+                .bvshl(rs1 & cpu.bv_u64((cpu.bv_bits - 1) as u64));
         }
         Instruction::VirtualPow2W(VirtualPow2W { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
-            cpu.x[operands.rd as usize] = match cpu.xlen {
-                Xlen::Bit32 => panic!("VirtualPow2W is invalid in 32b mode"),
-                Xlen::Bit64 => cpu
-                    .bv_u64(1)
-                    .bvshl(rs1 & cpu.bv_u64((cpu.word_bits - 1) as u64)),
-            };
+            cpu.x[operands.rd as usize] = cpu
+                .bv_u64(1)
+                .bvshl(rs1 & cpu.bv_u64((cpu.word_bits - 1) as u64));
         }
         Instruction::VirtualSRA(VirtualSRA { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
@@ -445,45 +372,25 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             cpu.x[operands.rd as usize] = rs1.bvlshr(&shift);
         }
         Instruction::VirtualShiftRightBitmask(VirtualShiftRightBitmask { operands, .. }) => {
-            cpu.x[operands.rd as usize] = match cpu.xlen {
-                Xlen::Bit32 => {
-                    let shift = cpu.x[operands.rs1 as usize].clone()
-                        & cpu.bv_u64((cpu.word_bits - 1) as u64);
-                    let inv_shift: BV = cpu.bv_u64(cpu.word_bits as u64) - &shift;
-                    let ones = (cpu.bv_u64(1).bvshl(&inv_shift)) - 1;
-                    ones.bvshl(&shift)
-                }
-                Xlen::Bit64 => {
-                    let shift =
-                        cpu.x[operands.rs1 as usize].clone() & cpu.bv_u64((cpu.bv_bits - 1) as u64);
-                    let inv_shift: BV = cpu.bv_u64(cpu.bv_bits as u64) - &shift;
-                    let ones = (BV::from_u64(1, cpu.bv_bits * 2)
-                        .bvshl(inv_shift.zero_ext(cpu.bv_bits)))
-                        - 1;
-                    ones.bvshl(shift.zero_ext(cpu.bv_bits))
-                        .extract(cpu.bv_bits - 1, 0)
-                }
-            }
+            let shift = cpu.x[operands.rs1 as usize].clone() & cpu.bv_u64((cpu.bv_bits - 1) as u64);
+            let inv_shift: BV = cpu.bv_u64(cpu.bv_bits as u64) - &shift;
+            let ones =
+                (BV::from_u64(1, cpu.bv_bits * 2).bvshl(inv_shift.zero_ext(cpu.bv_bits))) - 1;
+            cpu.x[operands.rd as usize] = ones
+                .bvshl(shift.zero_ext(cpu.bv_bits))
+                .extract(cpu.bv_bits - 1, 0)
         }
         Instruction::VirtualSignExtendWord(VirtualSignExtendWord { operands, .. }) => {
-            cpu.x[operands.rd as usize] = match cpu.xlen {
-                Xlen::Bit32 => panic!("VirtualSignExtendWord is not supported for 32-bit mode"),
-                Xlen::Bit64 => {
-                    let val = cpu.x[operands.rs1 as usize].clone();
-                    val.extract(cpu.word_bits - 1, 0)
-                        .sign_ext(cpu.bv_bits - cpu.word_bits)
-                }
-            }
+            let val = cpu.x[operands.rs1 as usize].clone();
+            cpu.x[operands.rd as usize] = val
+                .extract(cpu.word_bits - 1, 0)
+                .sign_ext(cpu.bv_bits - cpu.word_bits)
         }
         Instruction::VirtualZeroExtendWord(VirtualZeroExtendWord { operands, .. }) => {
-            cpu.x[operands.rd as usize] = match cpu.xlen {
-                Xlen::Bit32 => panic!("VirtualExtend is not supported for 32-bit mode"),
-                Xlen::Bit64 => {
-                    let val = cpu.x[operands.rs1 as usize].clone();
-                    val.extract(cpu.word_bits - 1, 0)
-                        .zero_ext(cpu.bv_bits - cpu.word_bits)
-                }
-            }
+            let val = cpu.x[operands.rs1 as usize].clone();
+            cpu.x[operands.rd as usize] = val
+                .extract(cpu.word_bits - 1, 0)
+                .zero_ext(cpu.bv_bits - cpu.word_bits)
         }
         Instruction::VirtualMULI(VirtualMULI { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
@@ -553,16 +460,15 @@ fn test_correctness<I: RISCVInstruction + RISCVTrace>(
     let mut solver = Solver::new();
     solver.set_params(&solver_params);
     let allocator = VirtualRegisterAllocator::default();
-    let xlen = Xlen::Bit64;
     let bv_bits = verifier_bv_bits();
-    let mut cpu = SymbolicCpu::new("cpu1", xlen, bv_bits);
+    let mut cpu = SymbolicCpu::new("cpu1", bv_bits);
 
     let cpu_initial = cpu.clone();
     let mut cpu_expected = cpu.clone();
     expected(instr, &mut cpu_expected);
 
     let instruction: Instruction = (*instr).into();
-    let seq = instruction.inline_sequence(&allocator, xlen);
+    let seq = instruction.inline_sequence(&allocator);
     for instr in seq {
         symbolic_exec(&instr, &mut cpu);
     }
@@ -619,11 +525,10 @@ fn test_consistency(instr: &Instruction) {
     let mut solver = Solver::new();
     solver.set_params(&solver_params);
     let allocator = VirtualRegisterAllocator::default();
-    let xlen = Xlen::Bit64;
     let bv_bits = verifier_bv_bits();
     let (mut cpu1, mut cpu2) = (
-        SymbolicCpu::new("cpu1", xlen, bv_bits),
-        SymbolicCpu::new("cpu2", xlen, bv_bits),
+        SymbolicCpu::new("cpu1", bv_bits),
+        SymbolicCpu::new("cpu2", bv_bits),
     );
     let cpu1_initial = cpu1.clone();
 
@@ -631,7 +536,7 @@ fn test_consistency(instr: &Instruction) {
         solver += &x1.eq(x2);
     }
 
-    let seq = instr.inline_sequence(&allocator, xlen);
+    let seq = instr.inline_sequence(&allocator);
     for instr in &seq {
         symbolic_exec(instr, &mut cpu1);
         symbolic_exec(instr, &mut cpu2);
@@ -653,7 +558,10 @@ fn test_consistency(instr: &Instruction) {
         SatResult::Unsat => {}
         SatResult::Sat => {
             let mut msg = "Found differing outputs:\n".to_string();
-            let operands = instr.normalize().operands;
+            let operands = instr
+                .try_jolt_instruction_row()
+                .expect("virtual sequence verifier only formats final Jolt instructions")
+                .operands;
             let model = solver.get_model().unwrap();
             let eval = |bv: &BV| model.eval(bv, true).unwrap().as_u64().unwrap();
             for i in 0..RISCV_REGISTER_COUNT as usize {
@@ -745,7 +653,7 @@ macro_rules! test_sequence {
 
 test_sequence!(ADDIW, FormatI, |instr: &ADDIW, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let imm = normalize_imm(instr.operands.imm, &cpu.xlen);
+    let imm = normalize_imm(instr.operands.imm);
     cpu.x[instr.operands.rd as usize] =
         cpu.sign_ext_word(&(rs1 + imm).extract(cpu.word_bits - 1, 0));
 });
@@ -758,74 +666,46 @@ test_sequence!(ADDW, FormatR, |instr: &ADDW, cpu| {
 test_sequence!(DIV, FormatR, |instr: &DIV, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
-        Xlen::Bit32 => {
-            todo!()
-        }
-        Xlen::Bit64 => {
-            let dividend = rs1;
-            let divisor = rs2;
-            let ones = cpu.bv_ones();
-            let min = SymbolicCpu::signed_min(cpu.bv_bits);
-            divisor.eq(0).ite(
-                &ones,
-                &(dividend.eq(&min) & divisor.eq(&ones)).ite(dividend, &(dividend.bvsdiv(divisor))),
-            )
-        }
-    };
+    let dividend = rs1;
+    let divisor = rs2;
+    let ones = cpu.bv_ones();
+    let min = SymbolicCpu::signed_min(cpu.bv_bits);
+    cpu.x[instr.operands.rd as usize] = divisor.eq(0).ite(
+        &ones,
+        &(dividend.eq(&min) & divisor.eq(&ones)).ite(dividend, &(dividend.bvsdiv(divisor))),
+    );
 });
 test_sequence!(DIVU, FormatR, |instr: &DIVU, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
-        Xlen::Bit32 => {
-            todo!()
-        }
-        Xlen::Bit64 => {
-            let dividend = rs1;
-            let divisor = rs2;
-            let ones = cpu.bv_ones();
-            divisor.eq(0).ite(&ones, &(dividend.bvudiv(divisor)))
-        }
-    };
+    let dividend = rs1;
+    let divisor = rs2;
+    let ones = cpu.bv_ones();
+    cpu.x[instr.operands.rd as usize] = divisor.eq(0).ite(&ones, &(dividend.bvudiv(divisor)));
 });
 test_sequence!(DIVUW, FormatR, |instr: &DIVUW, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
-        Xlen::Bit32 => {
-            panic!("DIVUW is invalid in 32b mode");
-        }
-        Xlen::Bit64 => {
-            let dividend = cpu.word_extract(rs1);
-            let divisor = cpu.word_extract(rs2);
-            let q = divisor
-                .eq(0)
-                .ite(&cpu.word_ones(), &(dividend.bvudiv(&divisor)));
-            cpu.sign_ext_word(&q)
-        }
-    };
+    let dividend = cpu.word_extract(rs1);
+    let divisor = cpu.word_extract(rs2);
+    let q = divisor
+        .eq(0)
+        .ite(&cpu.word_ones(), &(dividend.bvudiv(&divisor)));
+    cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&q);
 });
 test_sequence!(DIVW, FormatR, |instr: &DIVW, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
-        Xlen::Bit32 => {
-            panic!("DIVW is invalid in 32b mode");
-        }
-        Xlen::Bit64 => {
-            let dividend = cpu.word_extract(rs1);
-            let divisor = cpu.word_extract(rs2);
-            let word_min = SymbolicCpu::signed_min(cpu.word_bits);
-            let word_ones = cpu.word_ones();
-            let q = divisor.eq(0).ite(
-                &word_ones,
-                &(dividend.eq(&word_min) & divisor.eq(&word_ones))
-                    .ite(&dividend, &(dividend.bvsdiv(&divisor))),
-            );
-            cpu.sign_ext_word(&q)
-        }
-    };
+    let dividend = cpu.word_extract(rs1);
+    let divisor = cpu.word_extract(rs2);
+    let word_min = SymbolicCpu::signed_min(cpu.word_bits);
+    let word_ones = cpu.word_ones();
+    let q = divisor.eq(0).ite(
+        &word_ones,
+        &(dividend.eq(&word_min) & divisor.eq(&word_ones))
+            .ite(&dividend, &(dividend.bvsdiv(&divisor))),
+    );
+    cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&q);
 });
 // Memory operations are not tested at the moment
 // test_sequence!(LB, FormatLoad);
@@ -837,38 +717,18 @@ test_sequence!(DIVW, FormatR, |instr: &DIVW, cpu| {
 test_sequence!(MULH, FormatR, |instr: &MULH, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
-        Xlen::Bit32 => {
-            let lhs = cpu.word_extract(rs1);
-            let rhs = cpu.word_extract(rs2);
-            let product = lhs.sign_ext(cpu.word_bits) * rhs.sign_ext(cpu.word_bits);
-            cpu.sign_extend(&product.extract(cpu.word_bits * 2 - 1, cpu.word_bits))
-        }
-        Xlen::Bit64 => {
-            let lhs = rs1;
-            let rhs = rs2;
-            let product = lhs.sign_ext(cpu.bv_bits) * rhs.sign_ext(cpu.bv_bits);
-            product.extract(cpu.bv_bits * 2 - 1, cpu.bv_bits)
-        }
-    };
+    let lhs = rs1;
+    let rhs = rs2;
+    let product = lhs.sign_ext(cpu.bv_bits) * rhs.sign_ext(cpu.bv_bits);
+    cpu.x[instr.operands.rd as usize] = product.extract(cpu.bv_bits * 2 - 1, cpu.bv_bits);
 });
 test_sequence!(MULHSU, FormatR, |instr: &MULHSU, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
-        Xlen::Bit32 => {
-            let lhs = cpu.word_extract(rs1);
-            let rhs = cpu.word_extract(rs2);
-            let product = lhs.sign_ext(cpu.word_bits) * rhs.zero_ext(cpu.word_bits);
-            cpu.sign_extend(&product.extract(cpu.word_bits * 2 - 1, cpu.word_bits))
-        }
-        Xlen::Bit64 => {
-            let lhs = rs1;
-            let rhs = rs2;
-            let product = lhs.sign_ext(cpu.bv_bits) * rhs.zero_ext(cpu.bv_bits);
-            product.extract(cpu.bv_bits * 2 - 1, cpu.bv_bits)
-        }
-    };
+    let lhs = rs1;
+    let rhs = rs2;
+    let product = lhs.sign_ext(cpu.bv_bits) * rhs.zero_ext(cpu.bv_bits);
+    cpu.x[instr.operands.rd as usize] = product.extract(cpu.bv_bits * 2 - 1, cpu.bv_bits);
 });
 test_sequence!(MULW, FormatR, |instr: &MULW, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
@@ -879,92 +739,57 @@ test_sequence!(MULW, FormatR, |instr: &MULW, cpu| {
 test_sequence!(REM, FormatR, |instr: &REM, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
-        Xlen::Bit32 => {
-            todo!()
-        }
-        Xlen::Bit64 => {
-            let dividend = rs1;
-            let divisor = rs2;
-            let min = SymbolicCpu::signed_min(cpu.bv_bits);
-            let ones = cpu.bv_ones();
-            let zero = cpu.bv_zero();
-            divisor.eq(0).ite(
-                dividend,
-                &(dividend.eq(&min) & divisor.eq(&ones)).ite(&zero, &(dividend.bvsrem(divisor))),
-            )
-        }
-    };
+    let dividend = rs1;
+    let divisor = rs2;
+    let min = SymbolicCpu::signed_min(cpu.bv_bits);
+    let ones = cpu.bv_ones();
+    let zero = cpu.bv_zero();
+    cpu.x[instr.operands.rd as usize] = divisor.eq(0).ite(
+        dividend,
+        &(dividend.eq(&min) & divisor.eq(&ones)).ite(&zero, &(dividend.bvsrem(divisor))),
+    );
 });
 test_sequence!(REMU, FormatR, |instr: &REMU, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
-        Xlen::Bit32 => {
-            todo!()
-        }
-        Xlen::Bit64 => {
-            let dividend = rs1;
-            let divisor = rs2;
-            divisor.eq(0).ite(dividend, &(dividend.bvurem(divisor)))
-        }
-    };
+    let dividend = rs1;
+    let divisor = rs2;
+    cpu.x[instr.operands.rd as usize] = divisor.eq(0).ite(dividend, &(dividend.bvurem(divisor)));
 });
 test_sequence!(REMUW, FormatR, |instr: &REMUW, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
-        Xlen::Bit32 => {
-            panic!("REMUW is invalid in 32b mode");
-        }
-        Xlen::Bit64 => {
-            let dividend = cpu.word_extract(rs1);
-            let divisor = cpu.word_extract(rs2);
-            let r = divisor.eq(0).ite(&dividend, &(dividend.bvurem(&divisor)));
-            cpu.sign_ext_word(&r)
-        }
-    };
+    let dividend = cpu.word_extract(rs1);
+    let divisor = cpu.word_extract(rs2);
+    let r = divisor.eq(0).ite(&dividend, &(dividend.bvurem(&divisor)));
+    cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&r);
 });
 test_sequence!(REMW, FormatR, |instr: &REMW, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    cpu.x[instr.operands.rd as usize] = match cpu.xlen {
-        Xlen::Bit32 => {
-            panic!("REMW is invalid in 32b mode");
-        }
-        Xlen::Bit64 => {
-            let dividend = cpu.word_extract(rs1);
-            let divisor = cpu.word_extract(rs2);
-            let word_min = SymbolicCpu::signed_min(cpu.word_bits);
-            let word_ones = cpu.word_ones();
-            let word_zero = cpu.word_u64(0);
-            let r = divisor.eq(0).ite(
-                &dividend,
-                &(dividend.eq(&word_min) & divisor.eq(&word_ones))
-                    .ite(&word_zero, &(dividend.bvsrem(&divisor))),
-            );
-            cpu.sign_ext_word(&r)
-        }
-    };
+    let dividend = cpu.word_extract(rs1);
+    let divisor = cpu.word_extract(rs2);
+    let word_min = SymbolicCpu::signed_min(cpu.word_bits);
+    let word_ones = cpu.word_ones();
+    let word_zero = cpu.word_u64(0);
+    let r = divisor.eq(0).ite(
+        &dividend,
+        &(dividend.eq(&word_min) & divisor.eq(&word_ones))
+            .ite(&word_zero, &(dividend.bvsrem(&divisor))),
+    );
+    cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&r);
 });
 // test_sequence!(SB, FormatS);
 // test_sequence!(SH, FormatS);
 test_sequence!(SLL, FormatR, |instr: &SLL, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    let shift = rs2
-        & match cpu.xlen {
-            Xlen::Bit32 => cpu.bv_u64((cpu.word_bits - 1) as u64),
-            Xlen::Bit64 => cpu.bv_u64((cpu.bv_bits - 1) as u64),
-        };
+    let shift = rs2 & cpu.bv_u64((cpu.bv_bits - 1) as u64);
     cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&rs1.bvshl(&shift));
 });
 test_sequence!(SLLI, FormatI, |instr: &SLLI, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let mask = match cpu.xlen {
-        Xlen::Bit32 => cpu.word_bits - 1,
-        Xlen::Bit64 => cpu.bv_bits - 1,
-    };
+    let mask = cpu.bv_bits - 1;
     let shift = BV::from_u64(instr.operands.imm & mask as u64, cpu.bv_bits);
     cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&rs1.bvshl(&shift));
 });
@@ -985,19 +810,12 @@ test_sequence!(SLLW, FormatR, |instr: &SLLW, cpu| {
 test_sequence!(SRA, FormatR, |instr: &SRA, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    let shift = rs2
-        & match cpu.xlen {
-            Xlen::Bit32 => cpu.bv_u64((cpu.word_bits - 1) as u64),
-            Xlen::Bit64 => cpu.bv_u64((cpu.bv_bits - 1) as u64),
-        };
+    let shift = rs2 & cpu.bv_u64((cpu.bv_bits - 1) as u64);
     cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&rs1.bvashr(&shift));
 });
 test_sequence!(SRAI, FormatI, |instr: &SRAI, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let mask = match cpu.xlen {
-        Xlen::Bit32 => cpu.word_bits - 1,
-        Xlen::Bit64 => cpu.bv_bits - 1,
-    };
+    let mask = cpu.bv_bits - 1;
     let shift = BV::from_u64(instr.operands.imm & mask as u64, cpu.bv_bits);
     cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&rs1.bvashr(&shift));
 });
@@ -1018,19 +836,12 @@ test_sequence!(SRAW, FormatR, |instr: &SRAW, cpu| {
 test_sequence!(SRL, FormatR, |instr: &SRL, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    let shift = rs2
-        & match cpu.xlen {
-            Xlen::Bit32 => cpu.bv_u64((cpu.word_bits - 1) as u64),
-            Xlen::Bit64 => cpu.bv_u64((cpu.bv_bits - 1) as u64),
-        };
+    let shift = rs2 & cpu.bv_u64((cpu.bv_bits - 1) as u64);
     cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&cpu.unsigned_data(rs1).bvlshr(&shift));
 });
 test_sequence!(SRLI, FormatI, |instr: &SRLI, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let mask = match cpu.xlen {
-        Xlen::Bit32 => cpu.word_bits - 1,
-        Xlen::Bit64 => cpu.bv_bits - 1,
-    };
+    let mask = cpu.bv_bits - 1;
     let shift = BV::from_u64(instr.operands.imm & mask as u64, cpu.bv_bits);
     cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&cpu.unsigned_data(rs1).bvlshr(&shift));
 });

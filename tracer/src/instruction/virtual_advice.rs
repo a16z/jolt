@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{emulator::cpu::Cpu, instruction::NormalizedInstruction};
+use crate::{
+    emulator::cpu::Cpu,
+    instruction::{JoltInstructionRow, SourceInstructionRow},
+};
 
 use super::{format::format_j::FormatJ, RISCVInstruction, RISCVTrace};
 
@@ -31,6 +34,12 @@ impl RISCVInstruction for VirtualAdvice {
         &self.operands
     }
 
+    fn source_kind(&self) -> jolt_riscv::SourceInstructionKind {
+        jolt_riscv::SourceInstructionKind::VirtualAdvice(
+            jolt_riscv::instructions::VirtualAdvice(()),
+        )
+    }
+
     fn new(_: u32, _: u64, _: bool, _: bool) -> Self {
         panic!("virtual instruction `VirtualAdvice` cannot be built from a machine word");
     }
@@ -54,8 +63,8 @@ impl RISCVInstruction for VirtualAdvice {
     }
 }
 
-impl From<NormalizedInstruction> for VirtualAdvice {
-    fn from(ni: NormalizedInstruction) -> Self {
+impl From<JoltInstructionRow> for VirtualAdvice {
+    fn from(ni: JoltInstructionRow) -> Self {
         Self {
             address: ni.address as u64,
             operands: ni.operands.into(),
@@ -67,17 +76,15 @@ impl From<NormalizedInstruction> for VirtualAdvice {
     }
 }
 
-impl jolt_riscv::JoltInstruction for VirtualAdvice {}
-
-impl From<VirtualAdvice> for NormalizedInstruction {
-    fn from(val: VirtualAdvice) -> Self {
-        NormalizedInstruction {
-            instruction_kind: jolt_riscv::InstructionKind::VirtualAdvice,
-            address: val.address as usize,
-            operands: val.operands.into(),
-            is_compressed: val.is_compressed,
-            is_first_in_sequence: val.is_first_in_sequence,
-            virtual_sequence_remaining: val.virtual_sequence_remaining,
+impl From<SourceInstructionRow> for VirtualAdvice {
+    fn from(row: SourceInstructionRow) -> Self {
+        Self {
+            address: row.address as u64,
+            operands: row.operands.into(),
+            advice: 0,
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: row.is_compressed,
         }
     }
 }

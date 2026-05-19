@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{format::format_r::FormatR, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
@@ -19,18 +16,9 @@ impl MULHSU {
     fn exec(&self, cpu: &mut Cpu, _: &mut <MULHSU as RISCVInstruction>::RAMAccess) {
         cpu.write_register(
             self.operands.rd as usize,
-            match cpu.xlen {
-                Xlen::Bit32 => cpu.sign_extend(
-                    cpu.x[self.operands.rs1 as usize]
-                        .wrapping_mul(cpu.x[self.operands.rs2 as usize] as u32 as i64)
-                        >> 32,
-                ),
-                Xlen::Bit64 => {
-                    ((cpu.x[self.operands.rs1 as usize] as i128 as u128)
-                        .wrapping_mul(cpu.x[self.operands.rs2 as usize] as u64 as u128)
-                        >> 64) as i64
-                }
-            },
+            ((cpu.x[self.operands.rs1 as usize] as i128 as u128)
+                .wrapping_mul(cpu.x[self.operands.rs2 as usize] as u64 as u128)
+                >> 64) as i64,
         );
     }
 }
@@ -47,7 +35,7 @@ impl MULHSU {
 
 impl RISCVTrace for MULHSU {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
         let mut trace = trace;
         for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
@@ -69,7 +57,6 @@ mod tests {
     #[test]
     fn test_mulhsu_negative_rs1() {
         let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
-        cpu.update_xlen(Xlen::Bit64);
 
         // MULHSU rd=x1, rs1=x2, rs2=x3
         let instr = MULHSU::with_regs(1, 2, 3);

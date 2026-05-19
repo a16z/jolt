@@ -47,7 +47,7 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use common::constants::{REGISTER_COUNT, XLEN};
 use itertools::{zip_eq, Itertools};
-use jolt_riscv::NormalizedInstruction;
+use jolt_riscv::JoltInstructionRow;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::Cycle;
@@ -1009,7 +1009,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
     /// and formula for Val(k).
     #[allow(clippy::too_many_arguments)]
     fn compute_val_polys(
-        bytecode: &[NormalizedInstruction],
+        bytecode: &[JoltInstructionRow],
         eq_r_register_4: &[F],
         eq_r_register_5: &[F],
         stage1_gammas: &[F],

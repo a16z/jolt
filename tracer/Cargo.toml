@@ -35,8 +35,8 @@ std = [
 test-utils = ["dep:rand", "jolt-riscv/test-utils"]
 
 [dependencies]
-jolt-program = { workspace = true, features = ["image"] }
-jolt-riscv.workspace = true
+jolt-program = { workspace = true, features = ["image", "serialization"] }
+jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-platform.workspace = true
 fnv.workspace = true
 object.workspace = true

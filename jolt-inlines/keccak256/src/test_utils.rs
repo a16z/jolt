@@ -1,7 +1,6 @@
 use crate::exec::execute_keccak_f;
 use crate::test_constants::{self, TestVectors};
 use crate::Keccak256State;
-use tracer::emulator::cpu::Xlen;
 use tracer::instruction::inline::INLINE;
 use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
@@ -12,9 +11,9 @@ pub struct KeccakTestCase {
     pub description: &'static str,
 }
 
-pub fn create_keccak_harness(xlen: Xlen) -> InlineTestHarness {
+pub fn create_keccak_harness() -> InlineTestHarness {
     let layout = InlineMemoryLayout::single_input(136, 200);
-    InlineTestHarness::new(layout, xlen)
+    InlineTestHarness::new(layout)
 }
 
 pub fn instruction() -> INLINE {

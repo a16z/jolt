@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{
     fill_virtual_advice, format::format_r::FormatR, Cycle, Instruction, RISCVInstruction,
@@ -34,13 +31,9 @@ impl REMU {
 
 impl RISCVTrace for REMU {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let mut inline_sequence =
-            Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let mut inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
         let quotient = if cpu.unsigned_data(cpu.x[self.operands.rs2 as usize]) == 0 {
-            match cpu.xlen {
-                Xlen::Bit32 => u32::MAX as u64,
-                Xlen::Bit64 => u64::MAX,
-            }
+            u64::MAX
         } else {
             cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])
                 / cpu.unsigned_data(cpu.x[self.operands.rs2 as usize])

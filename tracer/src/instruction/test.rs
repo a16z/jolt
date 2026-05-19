@@ -3,7 +3,8 @@ use std::panic;
 
 use crate::emulator::cpu::Cpu;
 use crate::instruction::format::{InstructionFormat, InstructionRegisterState};
-use crate::instruction::NormalizedInstruction;
+#[cfg(test)]
+use jolt_riscv::RV64IMAC_JOLT;
 
 #[cfg(test)]
 use super::{
@@ -18,7 +19,7 @@ use super::{
     subw::SUBW, sw::SW,
 };
 
-use super::{RISCVInstruction, RISCVTrace};
+use super::{Instruction, RISCVInstruction, RISCVTrace};
 
 use crate::emulator::terminal::DummyTerminal;
 
@@ -58,10 +59,7 @@ fn test_rng() -> StdRng {
 
 #[test]
 fn jolt_program_rv64_decode_matches_tracer_normalization() {
-    use crate::{
-        emulator::cpu::Xlen,
-        instruction::{uncompress_instruction, Instruction},
-    };
+    use crate::instruction::{uncompress_instruction, Instruction};
 
     let address = DRAM_BASE;
     let cases = [
@@ -84,15 +82,20 @@ fn jolt_program_rv64_decode_matches_tracer_normalization() {
         (0x3001_10f3, false),
         (0x0000_50db, false),
         (0x0020_802b, false),
-        (uncompress_instruction(0x107a, Xlen::Bit64), true),
+        (uncompress_instruction(0x107a), true),
     ];
 
     for (word, compressed) in cases {
         let expected = Instruction::decode(word, address, compressed)
             .unwrap()
-            .normalize();
-        let actual =
-            jolt_program::image::decode::decode_instruction(word, address, compressed).unwrap();
+            .source_instruction();
+        let actual = jolt_program::image::decode::decode_instruction(
+            word,
+            address,
+            compressed,
+            RV64IMAC_JOLT,
+        )
+        .unwrap();
         assert_eq!(actual, expected, "word={word:08x} compressed={compressed}");
     }
 }
@@ -106,11 +109,12 @@ where
 
     for _ in 0..1000 {
         let instruction = I::random(&mut rng);
-        let instr: NormalizedInstruction = instruction.into();
+        let concrete: Instruction = instruction.into();
+        let source = concrete.source_instruction();
         let register_state =
             <<I::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
                 &mut rng,
-                &instr.operands,
+                &source.row().operands,
             );
 
         let mut original_cpu = Cpu::new(Box::new(DummyTerminal::default()));
@@ -147,12 +151,12 @@ where
             }
         }
 
-        let rs1 = instr.operands.rs1.unwrap_or(0) as usize;
+        let rs1 = source.row().operands.rs1.unwrap_or(0) as usize;
         if let Some(rs1_val) = register_state.rs1_value() {
             original_cpu.write_register(rs1, rs1_val as i64);
             virtual_cpu.write_register(rs1, rs1_val as i64);
         }
-        let rs2 = instr.operands.rs2.unwrap_or(0) as usize;
+        let rs2 = source.row().operands.rs2.unwrap_or(0) as usize;
         if let Some(rs2_val) = register_state.rs2_value() {
             original_cpu.write_register(rs2, rs2_val as i64);
             virtual_cpu.write_register(rs2, rs2_val as i64);

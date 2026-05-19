@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{
     fill_virtual_advice, format::format_r::FormatR, Cycle, Instruction, RISCVInstruction,
@@ -44,25 +41,17 @@ impl RISCVTrace for DIVW {
         let x = cpu.x[self.operands.rs1 as usize] as i32;
         let y = cpu.x[self.operands.rs2 as usize] as i32;
 
-        let (quotient, remainder) = match cpu.xlen {
-            Xlen::Bit32 => {
-                panic!("DIVW is invalid in 32b mode");
-            }
-            Xlen::Bit64 => {
-                if y == 0 {
-                    (-1i32, x.unsigned_abs())
-                } else if y == -1 && x == i32::MIN {
-                    (i32::MIN, 0) //overflow
-                } else {
-                    let quotient = x / y;
-                    let remainder = x % y;
-                    (quotient, remainder.unsigned_abs())
-                }
-            }
+        let (quotient, remainder) = if y == 0 {
+            (-1i32, x.unsigned_abs())
+        } else if y == -1 && x == i32::MIN {
+            (i32::MIN, 0) //overflow
+        } else {
+            let quotient = x / y;
+            let remainder = x % y;
+            (quotient, remainder.unsigned_abs())
         };
 
-        let mut inline_sequence =
-            Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let mut inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
         fill_virtual_advice(&mut inline_sequence, &[quotient as u64, remainder as u64]);
 
         let mut trace = trace;
