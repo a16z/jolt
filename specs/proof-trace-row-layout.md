@@ -45,8 +45,11 @@ The follow-up should introduce or clarify these boundaries:
 
 - `JoltTraceRow`: a compact, copyable row used by prover-side witness and
   sumcheck code after source tracing has been converted to final Jolt rows.
-- `JoltTraceRows` or an equivalent builder: constructs rows once from
-  `Vec<Cycle>`, final bytecode preprocessing, and selected profile metadata.
+- `JoltTraceRows` or an equivalent builder/sink: constructs rows once from
+  final trace events, final bytecode preprocessing, and selected profile
+  metadata. The first implementation may adapt the existing `Vec<Cycle>`
+  boundary, but the API should not require materializing a full `Vec<Cycle>` as
+  the permanent producer contract.
 - logical accessors: methods such as `rs1_value()`, `rs2_value()`,
   `rd_pre_value()`, `rd_write_value()`, `ram_address()`, `ram_read_value()`,
   `ram_write_value()`, `bytecode_pc()`, `unexpanded_pc()`, `circuit_flags()`,
@@ -351,9 +354,9 @@ R1CS / RAM / registers / instruction lookups
 Target path:
 
 ```text
-Vec<tracer::Cycle>
+final trace events
   |
-  | one construction pass
+  | one checked construction pass
   v
 Vec<JoltTraceRow>
   |
@@ -362,6 +365,13 @@ Vec<JoltTraceRow>
   v
 R1CS / RAM / registers / instruction lookups
 ```
+
+For a scoped first implementation, "final trace events" can be the current
+materialized `Vec<tracer::Cycle>`. That keeps the cutover small and gives parity
+tests a direct reference path. The longer-term target is a trace-row sink or
+builder that the tracer can populate directly once final bytecode metadata is
+available, avoiding simultaneous materialization of both `Vec<Cycle>` and
+`Vec<JoltTraceRow>`.
 
 The important API shape is:
 
@@ -948,7 +958,8 @@ bytecode storage should choose explicit widths.
 
 `JoltTraceRow` should be produced after:
 
-1. guest execution produces raw `Cycle` data;
+1. guest execution produces final trace events, initially exposed as raw
+   `Cycle` data;
 2. source-only rows have been expanded to final Jolt rows;
 3. bytecode preprocessing can map each final row to a local `bytecode_pc`;
 4. final-row metadata is available from `JoltInstructionRow`.
@@ -961,13 +972,19 @@ ELF/source bytes
   -> expansion
   -> JoltInstructionRow bytecode
   -> tracer execution
-  -> raw Cycle values
-  -> JoltTraceRow construction
+  -> final trace events
+  -> JoltTraceRow construction or direct trace-row sink
   -> prover witness/sumcheck phases
 ```
 
 The construction pass is where invariants should be checked once. Hot loops
 should not repeatedly rediscover that a cycle is final-row backed.
+
+The implementation should avoid making `Vec<Cycle>` a new architectural
+dependency. It is acceptable as an initial adapter source because current tracer
+and prover APIs already expose it, but the row builder should be shaped so a
+future tracer path can emit `JoltTraceRow` directly without changing proof-phase
+call sites.
 
 ## Alternatives Considered
 
@@ -1046,7 +1063,8 @@ Suggested implementation slices:
 2. Add explicit checked newtypes or construction helpers for narrowed fields
    such as `BytecodePc(u32)` and any compact PC offsets.
 3. Add a construction pass that builds `Vec<JoltTraceRow>` once in the prover
-   setup path.
+   setup path from the current `Vec<Cycle>` source, while keeping the builder
+   API compatible with a future direct tracer sink.
 4. Choose and land one production layout. Benchmark-only alternatives can exist
    during development, but the merged implementation should expose a single
    default representation behind the accessor API.
