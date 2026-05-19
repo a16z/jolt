@@ -5,8 +5,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::{DoryContext, DoryGlobals};
 use crate::utils::math::Math;
 use crate::zkvm::bytecode::chunks::{
-    build_committed_bytecode_chunk_polynomials, committed_bytecode_chunk_cycle_len,
-    committed_lanes, validate_committed_bytecode_chunking_for_len,
+    build_committed_bytecode_chunk_polynomials, committed_bytecode_chunk_cycle_len, committed_lanes,
 };
 
 pub mod chunks;
@@ -38,7 +37,6 @@ impl<PCS: CommitmentScheme> TrustedBytecodeCommitments<PCS> {
         bytecode_chunk_count: usize,
     ) -> (Self, TrustedBytecodeHints<PCS>) {
         let bytecode_len = bytecode.code_size;
-        validate_committed_bytecode_chunking_for_len(bytecode_len, bytecode_chunk_count);
         let bytecode_T = committed_bytecode_chunk_cycle_len(bytecode_len, bytecode_chunk_count);
 
         let total_vars = bytecode_T.log_2() + committed_lanes().log_2();

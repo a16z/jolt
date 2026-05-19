@@ -25,8 +25,10 @@
 //! ## Stages Implemented
 //!
 //! This verifier implements stages 1-7 (all sumcheck stages):
-//! - Stages 1-6: Standard sumcheck verifications
-//! - Stage 7: HammingWeight claim reduction sumcheck
+//! - Stages 1-5: Standard sumcheck verifications
+//! - Stage 6a: Address-phase bytecode read-RAF and booleanity sumchecks
+//! - Stage 6b: Cycle-phase sumchecks and precommitted claim reductions
+//! - Stage 7: HammingWeight claim reduction and address-phase advice reductions
 //!
 //! Stage 8 (PCS verification) is NOT transpiled by this module. It requires
 //! native elliptic curve operations that are handled separately by the target
@@ -35,8 +37,8 @@
 //! ## Advice Verifiers
 //!
 //! `AdviceClaimReduction` verifiers are included when advice commitments are present.
-//! They span stages 6 and 7 with a phase transition between them:
-//! - Stage 6: CycleVariables phase (bind cycle-derived coordinates)
+//! They span stages 6b and 7 with a phase transition between them:
+//! - Stage 6b: CycleVariables phase (bind cycle-derived coordinates)
 //! - Stage 7: AddressVariables phase (bind address-derived coordinates)
 
 use crate::curve::JoltCurve;

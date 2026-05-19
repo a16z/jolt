@@ -22,7 +22,9 @@ use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
 #[cfg(feature = "zk")]
 use crate::subprotocols::univariate_skip::UniSkipFirstRoundProofVariant;
 use crate::zkvm::bytecode::chunks::DEFAULT_COMMITTED_BYTECODE_CHUNK_COUNT;
-use crate::zkvm::bytecode::chunks::{committed_lanes, validate_committed_bytecode_chunk_count};
+use crate::zkvm::bytecode::chunks::{
+    committed_lanes, is_valid_committed_bytecode_chunking_for_len,
+};
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
 use crate::zkvm::config::{OneHotParams, ProgramMode};
 use crate::zkvm::program::{ProgramMetadata, ProgramPreprocessing};
@@ -2203,13 +2205,17 @@ where
         let max_padded_trace_length =
             usize::deserialize_with_mode(&mut reader, compress, validate)?;
         let bytecode_chunk_count = usize::deserialize_with_mode(&mut reader, compress, validate)?;
-        Ok(Self {
+        let shared = Self {
             program,
             program_meta,
             memory_layout,
             max_padded_trace_length,
             bytecode_chunk_count,
-        })
+        };
+        if matches!(validate, ark_serialize::Validate::Yes) {
+            ark_serialize::Valid::check(&shared)?;
+        }
+        Ok(shared)
     }
 }
 
@@ -2221,6 +2227,14 @@ where
         self.program.check()?;
         self.program_meta.check()?;
         self.memory_layout.check()?;
+        if self.program.is_committed()
+            && !is_valid_committed_bytecode_chunking_for_len(
+                self.program.bytecode_len(),
+                self.bytecode_chunk_count,
+            )
+        {
+            return Err(ark_serialize::SerializationError::InvalidData);
+        }
         Ok(())
     }
 }
@@ -2248,11 +2262,12 @@ impl<PCS: CommitmentScheme> JoltSharedPreprocessing<PCS> {
         max_padded_trace_length: usize,
         bytecode_chunk_count: usize,
     ) -> JoltSharedPreprocessing<PCS> {
-        validate_committed_bytecode_chunk_count(bytecode_chunk_count);
+        let bytecode_len = program.bytecode_len();
         assert!(
-            program.bytecode_len().is_multiple_of(bytecode_chunk_count),
-            "bytecode chunk count ({bytecode_chunk_count}) must divide bytecode size ({})",
-            program.bytecode_len()
+            is_valid_committed_bytecode_chunking_for_len(bytecode_len, bytecode_chunk_count),
+            "bytecode chunk count ({bytecode_chunk_count}) must be non-zero, a power of two, at \
+             most {}, and divide bytecode size ({bytecode_len})",
+            crate::zkvm::bytecode::chunks::MAX_COMMITTED_BYTECODE_CHUNK_COUNT,
         );
         let mut shared = Self {
             program_meta: program.meta(),

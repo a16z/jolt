@@ -30,31 +30,24 @@ pub const fn committed_lanes() -> usize {
 pub const DEFAULT_COMMITTED_BYTECODE_CHUNK_COUNT: usize = 1;
 pub const MAX_COMMITTED_BYTECODE_CHUNK_COUNT: usize = 256;
 
-#[inline]
-pub fn validate_committed_bytecode_chunk_count(chunk_count: usize) {
-    assert!(chunk_count > 0, "bytecode chunk count must be non-zero");
-    assert!(
-        chunk_count <= MAX_COMMITTED_BYTECODE_CHUNK_COUNT,
-        "bytecode chunk count must be at most {MAX_COMMITTED_BYTECODE_CHUNK_COUNT}"
-    );
-    assert!(
-        chunk_count.is_power_of_two(),
-        "bytecode chunk count must be a power of two"
-    );
-}
-
 #[inline(always)]
-pub fn validate_committed_bytecode_chunking_for_len(bytecode_len: usize, chunk_count: usize) {
-    validate_committed_bytecode_chunk_count(chunk_count);
-    assert!(
-        bytecode_len.is_multiple_of(chunk_count),
-        "bytecode length ({bytecode_len}) must be divisible by chunk count ({chunk_count})"
-    );
+pub fn is_valid_committed_bytecode_chunking_for_len(
+    bytecode_len: usize,
+    chunk_count: usize,
+) -> bool {
+    chunk_count > 0
+        && chunk_count <= MAX_COMMITTED_BYTECODE_CHUNK_COUNT
+        && chunk_count.is_power_of_two()
+        && bytecode_len.is_multiple_of(chunk_count)
 }
 
 #[inline(always)]
 pub fn committed_bytecode_chunk_cycle_len(bytecode_len: usize, chunk_count: usize) -> usize {
-    validate_committed_bytecode_chunking_for_len(bytecode_len, chunk_count);
+    assert!(
+        is_valid_committed_bytecode_chunking_for_len(bytecode_len, chunk_count),
+        "bytecode chunk count ({chunk_count}) must be non-zero, a power of two, at most \
+         {MAX_COMMITTED_BYTECODE_CHUNK_COUNT}, and divide bytecode length ({bytecode_len})"
+    );
     bytecode_len / chunk_count
 }
 
@@ -161,8 +154,6 @@ pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
     chunk_count: usize,
 ) -> Vec<Vec<F>> {
     let bytecode_len = instructions.len();
-    validate_committed_bytecode_chunking_for_len(bytecode_len, chunk_count);
-
     let chunk_cycle_len = committed_bytecode_chunk_cycle_len(bytecode_len, chunk_count);
     let lane_capacity = committed_lanes();
     let mut chunk_coeffs: Vec<Vec<F>> = (0..chunk_count)
