@@ -468,8 +468,6 @@ impl InlineOp for Blake3Compression {
     const FUNCT3: u32 = crate::BLAKE3_FUNCT3;
     const FUNCT7: u32 = crate::BLAKE3_FUNCT7;
     const NAME: &'static str = crate::BLAKE3_NAME;
-    const ADMISSIBILITY: jolt_inlines_sdk::host::InlineAdmissibility =
-        jolt_inlines_sdk::host::InlineAdmissibility::Public { requirements: &[] };
 
     fn build_sequence(
         asm: InlineExpansionBuilder,
@@ -486,8 +484,6 @@ impl InlineOp for Blake3Keyed64Compression {
     const FUNCT3: u32 = crate::BLAKE3_KEYED64_FUNCT3;
     const FUNCT7: u32 = crate::BLAKE3_FUNCT7;
     const NAME: &'static str = crate::BLAKE3_KEYED64_NAME;
-    const ADMISSIBILITY: jolt_inlines_sdk::host::InlineAdmissibility =
-        jolt_inlines_sdk::host::InlineAdmissibility::Public { requirements: &[] };
 
     fn build_sequence(
         asm: InlineExpansionBuilder,

@@ -152,8 +152,6 @@ impl InlineOp for BigintMul256 {
     const FUNCT3: u32 = crate::BIGINT256_MUL_FUNCT3;
     const FUNCT7: u32 = crate::BIGINT256_MUL_FUNCT7;
     const NAME: &'static str = crate::BIGINT256_MUL_NAME;
-    const ADMISSIBILITY: jolt_inlines_sdk::host::InlineAdmissibility =
-        jolt_inlines_sdk::host::InlineAdmissibility::Public { requirements: &[] };
 
     fn build_sequence(
         asm: InlineExpansionBuilder,

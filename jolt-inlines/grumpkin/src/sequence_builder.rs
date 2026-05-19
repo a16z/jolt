@@ -75,10 +75,6 @@ impl InlineOp for GrumpkinDivQAdv {
     const FUNCT3: u32 = crate::GRUMPKIN_DIVQ_ADV_FUNCT3;
     const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;
     const NAME: &'static str = crate::GRUMPKIN_DIVQ_ADV_NAME;
-    const ADMISSIBILITY: jolt_inlines_sdk::host::InlineAdmissibility =
-        jolt_inlines_sdk::host::InlineAdmissibility::InternalOnly {
-            reason: "division advice requires SDK wrapper relation checks",
-        };
 
     fn build_sequence(
         asm: InlineExpansionBuilder,
@@ -99,10 +95,6 @@ impl InlineOp for GrumpkinDivRAdv {
     const FUNCT3: u32 = crate::GRUMPKIN_DIVR_ADV_FUNCT3;
     const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;
     const NAME: &'static str = crate::GRUMPKIN_DIVR_ADV_NAME;
-    const ADMISSIBILITY: jolt_inlines_sdk::host::InlineAdmissibility =
-        jolt_inlines_sdk::host::InlineAdmissibility::InternalOnly {
-            reason: "division advice requires SDK wrapper relation checks",
-        };
 
     fn build_sequence(
         asm: InlineExpansionBuilder,

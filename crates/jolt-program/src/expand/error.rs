@@ -34,11 +34,6 @@ pub enum ExpansionError {
     UnsupportedCsr(u16),
     #[error("unsupported instruction expansion")]
     UnsupportedInstruction,
-    #[error("registered inline {name} is internal-only and cannot be used as raw guest bytecode: {reason}")]
-    InternalOnlyInline {
-        name: &'static str,
-        reason: &'static str,
-    },
     #[error("registered inline expansion requires an InlineExpansionProvider")]
     InlineProviderRequired,
 }

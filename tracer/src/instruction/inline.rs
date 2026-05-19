@@ -16,8 +16,8 @@ use crate::{
     utils::virtual_registers::VirtualRegisterAllocator,
 };
 use jolt_program::expand::{
-    ExpandedInstructionSequence, ExpansionError, InlineAdmissibility, InlineExpansionBuilder,
-    InlineExpansionProvider, InlineOperands,
+    ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineExpansionProvider,
+    InlineOperands,
 };
 use jolt_riscv::{
     InlineExtension, JoltInstructionProfile, JoltInstructionRow, SourceInlineKey,
@@ -46,7 +46,6 @@ pub struct InlineRegistration {
     pub funct7: u32,
     pub extension: InlineExtension,
     pub name: &'static str,
-    pub admissibility: InlineAdmissibility,
     pub build_sequence: InlineSequenceFn,
     pub build_advice: AdviceFn,
 }
@@ -118,42 +117,6 @@ impl TracerInlineExpansionProvider {
 }
 
 impl InlineExpansionProvider for TracerInlineExpansionProvider {
-    fn expand_inline(
-        &mut self,
-        instruction: &SourceInstruction,
-        profile: JoltInstructionProfile,
-    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        let inline = instruction
-            .row()
-            .inline
-            .ok_or(ExpansionError::MalformedInstruction(
-                "missing inline source metadata",
-            ))?;
-
-        if !profile.supports_source(SourceInstructionKind::Inline) {
-            return Err(ExpansionError::UnsupportedInstruction);
-        }
-        let registration = lookup_inline(inline)?;
-        if !profile.supports_inline(registration.extension) {
-            return Err(ExpansionError::UnsupportedInstruction);
-        }
-        if let InlineAdmissibility::InternalOnly { reason } = registration.admissibility {
-            return Err(ExpansionError::InternalOnlyInline {
-                name: registration.name,
-                reason,
-            });
-        }
-
-        build_registered_sequence(registration, instruction)
-    }
-}
-
-#[cfg(any(feature = "test-utils", test))]
-#[derive(Debug, Clone, Default)]
-struct TestInlineExpansionProvider;
-
-#[cfg(any(feature = "test-utils", test))]
-impl InlineExpansionProvider for TestInlineExpansionProvider {
     fn expand_inline(
         &mut self,
         instruction: &SourceInstruction,
@@ -291,28 +254,6 @@ impl INLINE {
         .collect()
     }
 
-    #[cfg(any(feature = "test-utils", test))]
-    fn inline_sequence_for_test(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
-        let _ = allocator;
-        let source = Instruction::from(*self).source_instruction();
-        let mut expansion_allocator = jolt_program::expand::ExpansionAllocator::new();
-        let mut provider = TestInlineExpansionProvider;
-        jolt_program::expand::expand_instruction_with_provider(
-            &source,
-            &mut expansion_allocator,
-            &mut provider,
-            RV64IMAC_JOLT_ALL_INLINES,
-        )
-        .expect("jolt-program inline expansion failed")
-        .into_iter()
-        .map(JoltInstructionRow::from)
-        .map(|instruction| {
-            Instruction::try_from_jolt_instruction_row(instruction)
-                .expect("jolt-program inline expansion produced an instruction unknown to tracer")
-        })
-        .collect()
-    }
-
     fn trace_sequence(
         &self,
         cpu: &mut Cpu,
@@ -350,12 +291,6 @@ impl INLINE {
             }
         }
     }
-
-    #[cfg(any(feature = "test-utils", test))]
-    pub fn trace_for_test(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let sequence = self.inline_sequence_for_test(&cpu.vr_allocator);
-        self.trace_sequence(cpu, trace, sequence);
-    }
 }
 
 impl RISCVTrace for INLINE {
@@ -376,8 +311,6 @@ mod tests {
     use super::*;
 
     const TEST_INLINE_WORD: u32 = 0xfc00_602b;
-    const TEST_INTERNAL_INLINE_WORD: u32 = 0xfa00_602b;
-
     fn test_sequence(
         mut asm: InlineExpansionBuilder,
         operands: InlineOperands,
@@ -401,22 +334,6 @@ mod tests {
             funct7: 0x7e,
             extension: InlineExtension::Sha2,
             name: "TEST_INLINE_PROFILE",
-            admissibility: InlineAdmissibility::Public { requirements: &[] },
-            build_sequence: test_sequence,
-            build_advice: test_advice,
-        }
-    }
-
-    inventory::submit! {
-        InlineRegistration {
-            opcode: 0x2b,
-            funct3: 0x6,
-            funct7: 0x7d,
-            extension: InlineExtension::Sha2,
-            name: "TEST_INTERNAL_ONLY_INLINE",
-            admissibility: InlineAdmissibility::InternalOnly {
-                reason: "test registration lacks verifier-visible public safety contract",
-            },
             build_sequence: test_sequence,
             build_advice: test_advice,
         }
@@ -491,26 +408,6 @@ mod tests {
         assert!(matches!(
             provider.expand_inline(&instruction, profile),
             Err(ExpansionError::UnsupportedInstruction)
-        ));
-    }
-
-    #[test]
-    fn provider_rejects_internal_only_inline() {
-        let mut provider = TracerInlineExpansionProvider::new();
-        let instruction = Instruction::from(INLINE::new(
-            TEST_INTERNAL_INLINE_WORD,
-            0x8000_0000,
-            false,
-            false,
-        ))
-        .source_instruction();
-
-        assert!(matches!(
-            provider.expand_inline(&instruction, jolt_riscv::RV64IMAC_JOLT_ALL_INLINES,),
-            Err(ExpansionError::InternalOnlyInline {
-                name: "TEST_INTERNAL_ONLY_INLINE",
-                reason: "test registration lacks verifier-visible public safety contract",
-            })
         ));
     }
 

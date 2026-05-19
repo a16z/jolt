@@ -1,18 +1,19 @@
-use std::{collections::VecDeque, marker::PhantomData};
+use std::collections::VecDeque;
 
 pub use num_bigint::BigUint as NBigUint;
 use tracer::{
-    instruction::{inline::INLINE, Instruction},
-    utils::inline_sequence_writer::{write_inline_trace, InlineDescriptor, SequenceInputs},
+    instruction::inline::INLINE,
+    utils::{
+        inline_sequence_writer::{write_inline_trace, InlineDescriptor, SequenceInputs},
+        virtual_registers::VirtualRegisterAllocator,
+    },
 };
 
 pub use inventory;
 pub use jolt_program::expand::{
-    ExpandedInstructionSequence, ExpansionAllocator, ExpansionError, InlineAdmissibility,
-    InlineExpansionBuilder, InlineExpansionProvider, InlineOperands, InlineRegister,
-    SafetyRequirement, Value,
+    ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineOperands,
+    InlineRegister, Value,
 };
-use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, SourceInstruction};
 pub use tracer::emulator::cpu::Cpu;
 pub use tracer::instruction::format::format_inline::FormatInline;
 pub use tracer::instruction::inline::InlineRegistration;
@@ -170,8 +171,6 @@ pub trait InlineOp: Send + Sync {
     const FUNCT7: u32;
     /// Human-readable registration name used in diagnostics and fixtures.
     const NAME: &'static str;
-    /// Raw-bytecode admissibility classification for this registration.
-    const ADMISSIBILITY: InlineAdmissibility;
 
     /// Build the static expansion recipe for this inline.
     ///
@@ -194,26 +193,6 @@ pub trait InlineOp: Send + Sync {
     }
 }
 
-struct InlineOpTraceProvider<T>(PhantomData<T>);
-
-impl<T> Default for InlineOpTraceProvider<T> {
-    fn default() -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<T: InlineOp> InlineExpansionProvider for InlineOpTraceProvider<T> {
-    fn expand_inline(
-        &mut self,
-        instruction: &SourceInstruction,
-        _profile: JoltInstructionProfile,
-    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        let source = *instruction.row();
-        let operands = InlineOperands::from_source_row(source)?;
-        T::build_sequence(InlineExpansionBuilder::new(source), operands)
-    }
-}
-
 /// Write the default inline trace for a single `InlineOp` to `file` with the given `mode`.
 pub fn store_trace<T: InlineOp>(file: &str, mode: AppendMode) -> Result<(), String> {
     let inline_info = InlineDescriptor::new(T::NAME.to_string(), T::OPCODE, T::FUNCT3, T::FUNCT7);
@@ -228,20 +207,7 @@ pub fn store_trace<T: InlineOp>(file: &str, mode: AppendMode) -> Result<(), Stri
         is_first_in_sequence: false,
         is_compressed: inputs.is_compressed,
     };
-    let source = Instruction::from(inline).source_instruction();
-    let mut allocator = ExpansionAllocator::new();
-    let mut provider = InlineOpTraceProvider::<T>::default();
-    let instructions = jolt_program::expand::expand_instruction_with_provider(
-        &source,
-        &mut allocator,
-        &mut provider,
-        jolt_riscv::RV64IMAC_JOLT_ALL_INLINES,
-    )
-    .map_err(|error| error.to_string())?
-    .into_iter()
-    .map(JoltInstructionRow::from)
-    .map(|row| Instruction::try_from_jolt_instruction_row(row).map_err(|error| error.to_string()))
-    .collect::<Result<Vec<_>, _>>()?;
+    let instructions = inline.inline_sequence(&VirtualRegisterAllocator::default());
     write_inline_trace(file, &inline_info, &inputs, &instructions, mode).map_err(|e| e.to_string())
 }
 
@@ -498,7 +464,6 @@ macro_rules! __submit_inline_op {
             funct7: <$op as $crate::host::InlineOp>::FUNCT7,
             extension: $extension,
             name: <$op as $crate::host::InlineOp>::NAME,
-            admissibility: <$op as $crate::host::InlineOp>::ADMISSIBILITY,
             build_sequence: <$op as $crate::host::InlineOp>::build_sequence,
             build_advice: <$op as $crate::host::InlineOp>::build_advice,
         }

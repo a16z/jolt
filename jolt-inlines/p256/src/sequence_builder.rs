@@ -592,10 +592,6 @@ macro_rules! p256_mulq_op {
             const FUNCT3: u32 = $funct3;
             const FUNCT7: u32 = crate::P256_FUNCT7;
             const NAME: &'static str = $op_name;
-            const ADMISSIBILITY: jolt_inlines_sdk::host::InlineAdmissibility =
-                jolt_inlines_sdk::host::InlineAdmissibility::InternalOnly {
-                    reason: "field helper requires canonicality and division precondition checks",
-                };
 
             fn build_sequence(
                 asm: InlineExpansionBuilder,
@@ -711,10 +707,6 @@ impl InlineOp for P256FakeGlvAdv {
     const FUNCT3: u32 = crate::P256_FAKE_GLV_ADV_FUNCT3;
     const FUNCT7: u32 = crate::P256_FUNCT7;
     const NAME: &'static str = crate::P256_FAKE_GLV_ADV_NAME;
-    const ADMISSIBILITY: jolt_inlines_sdk::host::InlineAdmissibility =
-        jolt_inlines_sdk::host::InlineAdmissibility::InternalOnly {
-            reason: "Fake GLV advice requires SDK wrapper decomposition checks",
-        };
 
     fn build_sequence(
         asm: InlineExpansionBuilder,

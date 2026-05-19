@@ -6,7 +6,6 @@
     "funct3": 0,
     "funct7": 0,
     "extension": "Sha2",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -33,7 +32,6 @@
     "funct3": 0,
     "funct7": 0,
     "extension": "Sha2",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -60,7 +58,6 @@
     "funct3": 0,
     "funct7": 0,
     "extension": "Sha2",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -87,7 +84,6 @@
     "funct3": 0,
     "funct7": 0,
     "extension": "Sha2",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -114,7 +110,6 @@
     "funct3": 1,
     "funct7": 0,
     "extension": "Sha2",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -141,7 +136,6 @@
     "funct3": 1,
     "funct7": 0,
     "extension": "Sha2",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -168,7 +162,6 @@
     "funct3": 1,
     "funct7": 0,
     "extension": "Sha2",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -195,7 +188,6 @@
     "funct3": 1,
     "funct7": 0,
     "extension": "Sha2",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -222,7 +214,6 @@
     "funct3": 0,
     "funct7": 1,
     "extension": "Keccak256",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -249,7 +240,6 @@
     "funct3": 0,
     "funct7": 1,
     "extension": "Keccak256",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -276,7 +266,6 @@
     "funct3": 0,
     "funct7": 1,
     "extension": "Keccak256",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -303,7 +292,6 @@
     "funct3": 0,
     "funct7": 1,
     "extension": "Keccak256",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -330,7 +318,6 @@
     "funct3": 0,
     "funct7": 2,
     "extension": "Blake2",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -357,7 +344,6 @@
     "funct3": 0,
     "funct7": 2,
     "extension": "Blake2",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -384,7 +370,6 @@
     "funct3": 0,
     "funct7": 2,
     "extension": "Blake2",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -411,7 +396,6 @@
     "funct3": 0,
     "funct7": 2,
     "extension": "Blake2",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -438,7 +422,6 @@
     "funct3": 0,
     "funct7": 3,
     "extension": "Blake3",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -465,7 +448,6 @@
     "funct3": 0,
     "funct7": 3,
     "extension": "Blake3",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -492,7 +474,6 @@
     "funct3": 0,
     "funct7": 3,
     "extension": "Blake3",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -519,7 +500,6 @@
     "funct3": 0,
     "funct7": 3,
     "extension": "Blake3",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -546,7 +526,6 @@
     "funct3": 1,
     "funct7": 3,
     "extension": "Blake3",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -573,7 +552,6 @@
     "funct3": 1,
     "funct7": 3,
     "extension": "Blake3",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -600,7 +578,6 @@
     "funct3": 1,
     "funct7": 3,
     "extension": "Blake3",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -627,7 +604,6 @@
     "funct3": 1,
     "funct7": 3,
     "extension": "Blake3",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -654,7 +630,6 @@
     "funct3": 0,
     "funct7": 4,
     "extension": "BigInt256",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -681,7 +656,6 @@
     "funct3": 0,
     "funct7": 4,
     "extension": "BigInt256",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -708,7 +682,6 @@
     "funct3": 0,
     "funct7": 4,
     "extension": "BigInt256",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -735,7 +708,6 @@
     "funct3": 0,
     "funct7": 4,
     "extension": "BigInt256",
-    "expected_admissibility": "public_no_requirements",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -762,7 +734,6 @@
     "funct3": 0,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -789,7 +760,6 @@
     "funct3": 0,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -816,7 +786,6 @@
     "funct3": 0,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -843,7 +812,6 @@
     "funct3": 0,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -870,7 +838,6 @@
     "funct3": 1,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -897,7 +864,6 @@
     "funct3": 1,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -924,7 +890,6 @@
     "funct3": 1,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -951,7 +916,6 @@
     "funct3": 1,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -978,7 +942,6 @@
     "funct3": 2,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -1005,7 +968,6 @@
     "funct3": 2,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -1032,7 +994,6 @@
     "funct3": 2,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -1059,7 +1020,6 @@
     "funct3": 2,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -1086,7 +1046,6 @@
     "funct3": 4,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -1113,7 +1072,6 @@
     "funct3": 4,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -1140,7 +1098,6 @@
     "funct3": 4,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -1167,7 +1124,6 @@
     "funct3": 4,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -1194,7 +1150,6 @@
     "funct3": 5,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -1221,7 +1176,6 @@
     "funct3": 5,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -1248,7 +1202,6 @@
     "funct3": 5,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -1275,7 +1228,6 @@
     "funct3": 5,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -1302,7 +1254,6 @@
     "funct3": 6,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -1329,7 +1280,6 @@
     "funct3": 6,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -1356,7 +1306,6 @@
     "funct3": 6,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -1383,7 +1332,6 @@
     "funct3": 6,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -1410,7 +1358,6 @@
     "funct3": 7,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -1437,7 +1384,6 @@
     "funct3": 7,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -1464,7 +1410,6 @@
     "funct3": 7,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -1491,7 +1436,6 @@
     "funct3": 7,
     "funct7": 5,
     "extension": "Secp256k1",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -1518,7 +1462,6 @@
     "funct3": 0,
     "funct7": 6,
     "extension": "Grumpkin",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -1545,7 +1488,6 @@
     "funct3": 0,
     "funct7": 6,
     "extension": "Grumpkin",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -1572,7 +1514,6 @@
     "funct3": 0,
     "funct7": 6,
     "extension": "Grumpkin",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -1599,7 +1540,6 @@
     "funct3": 0,
     "funct7": 6,
     "extension": "Grumpkin",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -1626,7 +1566,6 @@
     "funct3": 1,
     "funct7": 6,
     "extension": "Grumpkin",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -1653,7 +1592,6 @@
     "funct3": 1,
     "funct7": 6,
     "extension": "Grumpkin",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -1680,7 +1618,6 @@
     "funct3": 1,
     "funct7": 6,
     "extension": "Grumpkin",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -1707,7 +1644,6 @@
     "funct3": 1,
     "funct7": 6,
     "extension": "Grumpkin",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -1734,7 +1670,6 @@
     "funct3": 0,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -1761,7 +1696,6 @@
     "funct3": 0,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -1788,7 +1722,6 @@
     "funct3": 0,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -1815,7 +1748,6 @@
     "funct3": 0,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -1842,7 +1774,6 @@
     "funct3": 1,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -1869,7 +1800,6 @@
     "funct3": 1,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -1896,7 +1826,6 @@
     "funct3": 1,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -1923,7 +1852,6 @@
     "funct3": 1,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -1950,7 +1878,6 @@
     "funct3": 2,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -1977,7 +1904,6 @@
     "funct3": 2,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -2004,7 +1930,6 @@
     "funct3": 2,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -2031,7 +1956,6 @@
     "funct3": 2,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -2058,7 +1982,6 @@
     "funct3": 4,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -2085,7 +2008,6 @@
     "funct3": 4,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -2112,7 +2034,6 @@
     "funct3": 4,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -2139,7 +2060,6 @@
     "funct3": 4,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -2166,7 +2086,6 @@
     "funct3": 5,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -2193,7 +2112,6 @@
     "funct3": 5,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -2220,7 +2138,6 @@
     "funct3": 5,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -2247,7 +2164,6 @@
     "funct3": 5,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -2274,7 +2190,6 @@
     "funct3": 6,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -2301,7 +2216,6 @@
     "funct3": 6,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -2328,7 +2242,6 @@
     "funct3": 6,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -2355,7 +2268,6 @@
     "funct3": 6,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,
@@ -2382,7 +2294,6 @@
     "funct3": 7,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483648,
@@ -2409,7 +2320,6 @@
     "funct3": 7,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483664,
@@ -2436,7 +2346,6 @@
     "funct3": 7,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483680,
@@ -2463,7 +2372,6 @@
     "funct3": 7,
     "funct7": 7,
     "extension": "P256",
-    "expected_admissibility": "internal_only",
     "input": {
       "instruction_kind": "jolt.inline.dispatch",
       "address": 2147483696,

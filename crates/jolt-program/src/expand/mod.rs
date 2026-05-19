@@ -51,38 +51,6 @@ use memory::*;
 use operands::*;
 use shifts::*;
 
-/// Verifier-visible evidence a raw inline registration must provide before it
-/// can be accepted directly from decoded guest bytecode.
-///
-/// These are descriptive requirements carried by registration metadata. The
-/// expansion builder is responsible for emitting ordinary final Jolt rows that
-/// enforce them; the verifier never trusts SDK wrapper intent or tracer-only
-/// advice when classifying a raw inline opcode as public.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SafetyRequirement {
-    FieldCanonicalOutput,
-    NonZeroDivisor,
-    ModularRelation,
-    GlvSignWords,
-    DecompositionRecomposition,
-}
-
-/// Whether a registered inline opcode is admissible as raw guest bytecode.
-///
-/// `Public` means the static recipe contains all verifier-visible checks needed
-/// for soundness. `InternalOnly` means the opcode is a helper for SDK-generated
-/// flows or runtime advice and must not be treated as a standalone guest
-/// instruction until a future recipe adds the missing safety relation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InlineAdmissibility {
-    Public {
-        requirements: &'static [SafetyRequirement],
-    },
-    InternalOnly {
-        reason: &'static str,
-    },
-}
-
 /// Supplies symbolic recipes for registered inline source instructions.
 ///
 /// Implementations are lookup/adaptation layers only. The caller owns the

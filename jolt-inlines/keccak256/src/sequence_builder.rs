@@ -259,8 +259,6 @@ impl InlineOp for Keccak256Permutation {
     const FUNCT3: u32 = crate::KECCAK256_FUNCT3;
     const FUNCT7: u32 = crate::KECCAK256_FUNCT7;
     const NAME: &'static str = crate::KECCAK256_NAME;
-    const ADMISSIBILITY: jolt_inlines_sdk::host::InlineAdmissibility =
-        jolt_inlines_sdk::host::InlineAdmissibility::Public { requirements: &[] };
 
     fn build_sequence(
         asm: InlineExpansionBuilder,
