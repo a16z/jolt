@@ -239,7 +239,12 @@ jobs:
         run: |
           set -euo pipefail
           for pkg in ${{ steps.discover.outputs.pkgs }}; do
-            cargo nextest run -p "$pkg" --no-tests=pass
+            features=()
+            if cargo metadata --format-version=1 --no-deps \
+                 | jq -e --arg pkg "$pkg" '.packages[] | select(.name == $pkg) | .features | has("test-utils")' >/dev/null; then
+              features=(--features test-utils)
+            fi
+            cargo nextest run -p "$pkg" "${features[@]}" --no-tests=pass
           done
 
   test-inlines:
@@ -297,7 +302,7 @@ jobs:
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run tracer tests
-        run: cargo nextest run --release -p tracer
+        run: cargo nextest run --release -p tracer --features test-utils
 
   zklean-extractor-tests:
     name: ZkLean extractor tests
