@@ -49,8 +49,8 @@ use crate::{
     pprof_scope,
     subprotocols::{
         booleanity::{
-            BooleanityAddressSumcheckProver, BooleanityCycleSumcheckProver,
-            BooleanitySumcheckParams,
+            BooleanityAddressSumcheckProver, BooleanityCyclePhaseParams,
+            BooleanityCycleSumcheckProver, BooleanitySumcheckParams,
         },
         streaming_schedule::LinearOnlySchedule,
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
@@ -1313,12 +1313,12 @@ impl<
             &mut self.transcript,
         );
         let mut bytecode_read_raf = BytecodeReadRafAddressSumcheckProver::initialize(
-            bytecode_read_raf_params.clone(),
+            bytecode_read_raf_params,
             Arc::clone(&self.trace),
             Arc::new(self.preprocessing.materialized_program().bytecode.clone()),
         );
         let mut booleanity = BooleanityAddressSumcheckProver::initialize(
-            booleanity_params.clone(),
+            booleanity_params,
             &self.trace,
             &self.preprocessing.materialized_program().bytecode,
             &self.program_io.memory_layout,
@@ -1345,8 +1345,13 @@ impl<
 
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage6a_end_flamechart.svg");
+        drop(instances);
 
-        (sumcheck_proof, bytecode_read_raf_params, booleanity_params)
+        (
+            sumcheck_proof,
+            bytecode_read_raf.into_params(),
+            booleanity.into_params(),
+        )
     }
 
     #[tracing::instrument(skip_all)]
@@ -1486,12 +1491,13 @@ impl<
             Arc::new(self.preprocessing.materialized_program().bytecode.clone()),
             &self.opening_accumulator,
         );
+        let booleanity_cycle_params =
+            BooleanityCyclePhaseParams::new(booleanity_params, &self.opening_accumulator);
         let mut booleanity = BooleanityCycleSumcheckProver::initialize(
-            booleanity_params,
+            booleanity_cycle_params,
             &self.trace,
             &self.preprocessing.materialized_program().bytecode,
             &self.program_io.memory_layout,
-            &self.opening_accumulator,
         );
         let mut ram_hamming_booleanity =
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
