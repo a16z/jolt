@@ -105,6 +105,7 @@ pub enum LegacyProofStageTarget {
     Stage4Batch,
     Stage5Batch,
     Stage6Batch,
+    Stage7Batch,
 }
 
 #[cfg(not(feature = "zk"))]
@@ -203,6 +204,9 @@ impl CorePrecompatVerifierCase {
             LegacyProofStageTarget::Stage6Batch => {
                 core_sumcheck_round_count(&self.proof.stage6_sumcheck_proof)
             }
+            LegacyProofStageTarget::Stage7Batch => {
+                core_sumcheck_round_count(&self.proof.stage7_sumcheck_proof)
+            }
         }
     }
 
@@ -234,6 +238,9 @@ impl CorePrecompatVerifierCase {
             LegacyProofStageTarget::Stage6Batch => {
                 core_mutate_sumcheck_round(&mut self.proof.stage6_sumcheck_proof, round_index);
             }
+            LegacyProofStageTarget::Stage7Batch => {
+                core_mutate_sumcheck_round(&mut self.proof.stage7_sumcheck_proof, round_index);
+            }
         }
     }
 
@@ -263,6 +270,9 @@ impl CorePrecompatVerifierCase {
             LegacyProofStageTarget::Stage6Batch => {
                 core_pop_sumcheck_round(&mut self.proof.stage6_sumcheck_proof);
             }
+            LegacyProofStageTarget::Stage7Batch => {
+                core_pop_sumcheck_round(&mut self.proof.stage7_sumcheck_proof);
+            }
         }
     }
 
@@ -291,6 +301,9 @@ impl CorePrecompatVerifierCase {
             }
             LegacyProofStageTarget::Stage6Batch => {
                 core_push_sumcheck_round(&mut self.proof.stage6_sumcheck_proof);
+            }
+            LegacyProofStageTarget::Stage7Batch => {
+                core_push_sumcheck_round(&mut self.proof.stage7_sumcheck_proof);
             }
         }
     }

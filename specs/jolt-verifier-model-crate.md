@@ -147,7 +147,9 @@ pub struct TransparentProofClaims<F> {
     pub stage3: stage3::inputs::Stage3Claims<F>,
     pub stage4: stage4::inputs::Stage4Claims<F>,
     pub stage5: stage5::inputs::Stage5Claims<F>,
-    // Add later stages as they are wired.
+    pub stage6: stage6::inputs::Stage6Claims<F>,
+    pub stage7: stage7::inputs::Stage7Claims<F>,
+    // Add Stage 8 opening payloads only if the final opening verifier needs them.
 }
 ```
 
@@ -392,7 +394,11 @@ crates/jolt-verifier/src/
       inputs.rs
       outputs.rs
       verify.rs
-    stage7.rs
+    stage7/
+      mod.rs
+      inputs.rs
+      outputs.rs
+      verify.rs
     stage8.rs
     zk.rs
 ```
@@ -684,8 +690,8 @@ struct TestCase {
 ```
 
 The harness has separate configured horizons for standard and ZK mode. The
-standard frontier currently reaches `Stage6`; the ZK frontier remains at
-`Commitments` while standard stages 7-8 are ported. A completeness case passes
+standard frontier currently reaches `Stage7`; the ZK frontier remains at
+`Commitments` while standard stage 8 is ported. A completeness case passes
 when a valid proof reaches the configured horizon for its mode. Before the full
 verifier exists, reaching the next unimplemented stage is success; after the
 full verifier exists, success means `Ok(())`.
@@ -715,7 +721,7 @@ struct VerifierFrontiers {
 }
 
 const CURRENT_VERIFIER_FRONTIERS: VerifierFrontiers = VerifierFrontiers {
-    standard: VerifierCheckpoint::Stage6,
+    standard: VerifierCheckpoint::Stage7,
     zk: VerifierCheckpoint::Commitments,
 };
 ```
@@ -1224,15 +1230,15 @@ Current implementation status:
   return shape and checked per-instance point slicing used by Stage 2;
 - `common` owns VM memory-layout remapping and public I/O byte-to-word packing;
 - `jolt-poly` owns generic MLE helpers used by the formula public-value code;
-- standard Stage 1/2/3/4/5/6 soundness tests now use the tamper manifest to
+- standard Stage 1/2/3/4/5/6/7 soundness tests now use the tamper manifest to
   mutate real core proofs after compat conversion, covering every current
-  Stage 1/2/3/4/5/6 verifier-owned proof payload and typed claim target that is
-  checked by the `Stage6` frontier;
+  Stage 1/2/3/4/5/6/7 verifier-owned proof payload and typed claim target that is
+  checked by the `Stage7` frontier;
 - unchecked pass-through, final-opening, commitment-payload/order, advice, and
   ZK/BlindFold targets are explicitly recorded in the tamper manifest rather
   than left implicit;
-- the standard verifier frontier is now `Stage6`; Stage 7 remains the next
-  unimplemented standard-stage boundary.
+- the standard verifier frontier is now `Stage7`; Stage 8 opening verification
+  remains the next unimplemented standard-stage boundary.
 
 Boundary cleanup pressure:
 
@@ -1708,7 +1714,7 @@ Boundary/API pressure before wiring:
 
 #### 10.8 Stage 6 Testing Status
 
-Stage 6 is now the standard frontier. The implementation uses the stage-folder
+Stage 6 is implemented and now feeds the Stage 7 frontier. The implementation uses the stage-folder
 shape established for Stages 1-5 and verifies the whole real core Stage 6 batch
 as one compressed sumcheck while keeping every component input and output typed.
 
@@ -1744,16 +1750,94 @@ Review criteria:
 
 Objective: port final claim reductions before opening verification.
 
+Core analogue:
+
+```rust
+let hamming_weight = HammingWeightClaimReductionVerifier::new(...);
+if trusted_advice_has_address_phase { push trusted AdviceClaimReductionVerifier; }
+if untrusted_advice_has_address_phase { push untrusted AdviceClaimReductionVerifier; }
+
+BatchedSumcheck::verify(&proof.stage7_sumcheck_proof, instances, ...);
+```
+
 Tasks:
 
 - Port hamming-weight claim reduction.
 - Port advice address-phase continuation when present.
 - Return opening dependencies used by stage 8.
 
+Target Stage 7 proof payload:
+
+```rust
+pub struct Stage7Claims<F> {
+    pub hamming_weight_claim_reduction: HammingWeightClaimReductionOutputOpeningClaims<F>,
+    pub advice_address_phase: Stage7AdviceAddressPhaseClaims<F>,
+}
+```
+
+The hamming-weight payload should follow canonical RA layout:
+`InstructionRa`, then `BytecodeRa`, then `RamRa`. Optional advice fields are
+only present for commitments whose `AdviceClaimReductionLayout` still has an
+address phase after Stage 6.
+
+Verifier flow:
+
+- derive `JoltFormulaDimensions` and `HammingWeightClaimReductionDimensions`
+  from typed verifier config;
+- sample the hamming-weight batching gamma before the batched sumcheck, exactly
+  as core does;
+- compute hamming-weight input from Stage 6 typed outputs:
+  RAM hamming-weight, Booleanity RA claims, and virtualization/read-RAF RA
+  claims;
+- add trusted and untrusted advice address-phase instances only when the
+  corresponding advice commitment exists and `address_phase_rounds > 0`;
+- verify the Stage 7 compressed batched sumcheck;
+- evaluate hamming output using `EqBooleanity` against the Stage 6 Booleanity
+  address point and per-polynomial `EqVirtualization` against the Stage 6
+  virtualization/read-RAF address points;
+- evaluate advice final output with
+  `AdviceClaimReductionLayout::address_phase_final_output_scale`, using the
+  Stage 4 RAM-val advice opening point and Stage 6 cycle-phase variables;
+- append Stage 7 opening claims in core order: all hamming-weight RA outputs,
+  then trusted final advice if present, then untrusted final advice if present.
+
+Important offset rule:
+
+The hamming-weight instance uses the standard suffix point from batched
+sumcheck verification. Advice address-phase instances use offset `0` in core.
+The modular verifier must therefore extract advice address-phase points with
+`try_instance_point_at(0, rounds)` rather than treating all instances as suffix
+instances. Keep this visible in `stage7/verify.rs`.
+
 Review criteria:
 
 - Optional advice phases are explicit.
 - Stage 8 can be built from typed outputs without legacy lookups.
+- No generic opening-claim map or compat/core ID router appears in production
+  Stage 7 code.
+
+#### 11.1 Stage 7 Testing Status
+
+Stage 7 is now the standard frontier. The verifier uses the same explicit
+stage-folder pattern as prior stages and verifies the real core hamming-weight
+claim reduction plus optional trusted/untrusted advice address-phase instances
+as one compressed batch.
+
+Current coverage:
+
+- real-core standard completeness fixtures reach `Stage7`, including the advice
+  consumer fixture;
+- direct soundness tampering mutates converted native `JoltProof` values after
+  compat conversion;
+- pre-compat transitivity tampering mutates legacy core proofs first, checks
+  that core does not accept them, then casts the same tampered artifacts and
+  checks modular rejection;
+- tampering covers the Stage 7 compressed batch proof payload, missing/extra
+  round counts, every hamming-weight RA output vector, and trusted/untrusted
+  advice address-phase final claims when those phases are present;
+- Stage 7 fixture and tamper cases are activated under the `Stage7` checkpoint;
+- ZK/BlindFold Stage 7 commitments remain deferred until the transparent Stage
+  8 opening path is wired.
 
 ### 12. Stage 8: Joint Opening Verification
 

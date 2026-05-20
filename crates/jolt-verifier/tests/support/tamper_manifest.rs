@@ -5,7 +5,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_verifier::{
     proof::TransparentProofClaims,
-    stages::{stage1, stage2, stage3, stage4, stage5, stage6},
+    stages::{stage1, stage2, stage3, stage4, stage5, stage6, stage7},
 };
 use serde_json::Value;
 
@@ -826,15 +826,74 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
 ];
 
-pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
-    later_standard(
-        "stage7.sumcheck_payload",
-        "proof.stages.stage7_sumcheck_proof",
+pub const STAGE7_TARGETS: &[TamperTarget] = &[
+    checked_standard(
+        "stage7.batch.round_polynomial",
+        "proof.stages.stage7_sumcheck_proof.round_polynomials[*]",
         VerifierCheckpoint::Stage7,
         MutationStrategy::ReplaceProofPayload,
-        TamperCoverage::Deferred,
-        "stage 7 is not wired yet",
+        TamperCoverage::Active,
+        "core-fixture test mutates every compressed Stage 7 batch round polynomial",
     ),
+    checked_standard(
+        "stage7.batch.round_count.missing",
+        "proof.stages.stage7_sumcheck_proof.round_polynomials",
+        VerifierCheckpoint::Stage7,
+        MutationStrategy::TruncateVector,
+        TamperCoverage::Active,
+        "core-fixture test removes a Stage 7 batch round",
+    ),
+    checked_standard(
+        "stage7.batch.round_count.extra",
+        "proof.stages.stage7_sumcheck_proof.round_polynomials",
+        VerifierCheckpoint::Stage7,
+        MutationStrategy::ExtendVector,
+        TamperCoverage::Active,
+        "core-fixture test appends a Stage 7 batch round",
+    ),
+    checked_standard(
+        "stage7.claims.hamming_weight_claim_reduction.instruction_ra",
+        "claims.stage7.hamming_weight_claim_reduction.instruction_ra",
+        VerifierCheckpoint::Stage7,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets every HammingWeight instruction RA output claim",
+    ),
+    checked_standard(
+        "stage7.claims.hamming_weight_claim_reduction.bytecode_ra",
+        "claims.stage7.hamming_weight_claim_reduction.bytecode_ra",
+        VerifierCheckpoint::Stage7,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets every HammingWeight bytecode RA output claim",
+    ),
+    checked_standard(
+        "stage7.claims.hamming_weight_claim_reduction.ram_ra",
+        "claims.stage7.hamming_weight_claim_reduction.ram_ra",
+        VerifierCheckpoint::Stage7,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "core-fixture test offsets every HammingWeight RAM RA output claim",
+    ),
+    checked_standard(
+        "stage7.claims.advice_address_phase.trusted.opening_claim",
+        "claims.stage7.advice_address_phase.trusted.opening_claim",
+        VerifierCheckpoint::Stage7,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "advice fixture test offsets the trusted advice address-phase output claim",
+    ),
+    checked_standard(
+        "stage7.claims.advice_address_phase.untrusted.opening_claim",
+        "claims.stage7.advice_address_phase.untrusted.opening_claim",
+        VerifierCheckpoint::Stage7,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "advice fixture test offsets the untrusted advice address-phase output claim",
+    ),
+];
+
+pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
     final_opening_standard(
         "stage8.opening_claim_values",
         "stage8.opening_claim_values",
@@ -876,6 +935,7 @@ pub fn all_targets() -> Vec<TamperTarget> {
         .chain(STAGE4_TARGETS)
         .chain(STAGE5_TARGETS)
         .chain(STAGE6_TARGETS)
+        .chain(STAGE7_TARGETS)
         .chain(FUTURE_STAGE_TARGETS)
         .copied()
         .collect()
@@ -941,7 +1001,7 @@ pub fn proof_field_paths() -> &'static [&'static str] {
         "proof.stages.stage4_sumcheck_proof.round_polynomials[*]",
         "proof.stages.stage5_sumcheck_proof.round_polynomials[*]",
         "proof.stages.stage6_sumcheck_proof.round_polynomials[*]",
-        "proof.stages.stage7_sumcheck_proof",
+        "proof.stages.stage7_sumcheck_proof.round_polynomials[*]",
     ]
 }
 
@@ -1270,6 +1330,22 @@ fn zero_transparent_claims() -> TransparentProofClaims<Fr> {
                     opening_claim: zero,
                 }),
                 untrusted: Some(stage6::inputs::AdviceCyclePhaseOutputClaim {
+                    opening_claim: zero,
+                }),
+            },
+        },
+        stage7: stage7::inputs::Stage7Claims {
+            hamming_weight_claim_reduction:
+                stage7::inputs::HammingWeightClaimReductionOutputOpeningClaims {
+                    instruction_ra: vec![zero],
+                    bytecode_ra: vec![zero],
+                    ram_ra: vec![zero],
+                },
+            advice_address_phase: stage7::inputs::Stage7AdviceAddressPhaseClaims {
+                trusted: Some(stage7::inputs::AdviceAddressPhaseOutputClaim {
+                    opening_claim: zero,
+                }),
+                untrusted: Some(stage7::inputs::AdviceAddressPhaseOutputClaim {
                     opening_claim: zero,
                 }),
             },

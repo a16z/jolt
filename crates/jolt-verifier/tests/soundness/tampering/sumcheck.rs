@@ -22,7 +22,7 @@ use jolt_claims::protocols::jolt::{
     formulas::{
         bytecode,
         claim_reductions::{
-            advice, increments, instruction as instruction_claim_reduction,
+            advice, hamming_weight, increments, instruction as instruction_claim_reduction,
             registers as registers_claim_reduction,
         },
         dimensions::{AdviceClaimReductionLayout, JoltFormulaDimensions},
@@ -234,6 +234,34 @@ fn tampered_stage6_advice_claims_reject() {
     let base = real_advice_case();
 
     for (target_name, id) in stage6_advice_output_openings(&base) {
+        offset_claim_rejects(&base, target_name, id);
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn tampered_stage7_sumcheck_payload_reject() {
+    let base = real_core_case();
+    tamper_each_stage7_batch_round(&base);
+    tamper_stage7_batch_round_counts(&base);
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn tampered_stage7_output_claims_reject() {
+    let base = real_core_case();
+
+    for (target_name, id) in stage7_formula_output_openings(&base) {
+        offset_claim_rejects(&base, target_name, id);
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn tampered_stage7_advice_claims_reject() {
+    let base = real_advice_case();
+
+    for (target_name, id) in stage7_advice_output_openings(&base) {
         offset_claim_rejects(&base, target_name, id);
     }
 }
@@ -483,6 +511,45 @@ fn precompat_tampered_stage6_advice_claims_reject() {
     }
 }
 
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn precompat_tampered_stage7_sumcheck_payload_reject() {
+    let base = real_precompat_core_case();
+    precompat_tamper_each_round(
+        &base,
+        LegacyProofStageTarget::Stage7Batch,
+        "stage7.batch.round_polynomial",
+    );
+    precompat_tamper_round_counts(
+        &base,
+        LegacyProofStageTarget::Stage7Batch,
+        "stage7.batch.round_count.missing",
+        "stage7.batch.round_count.extra",
+    );
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn precompat_tampered_stage7_output_claims_reject() {
+    let converted = real_core_case();
+    let base = real_precompat_core_case();
+
+    for (target_name, id) in stage7_formula_output_openings(&converted) {
+        precompat_offset_claim_rejects(&base, target_name, id);
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[test]
+fn precompat_tampered_stage7_advice_claims_reject() {
+    let converted = real_advice_case();
+    let base = real_precompat_advice_case();
+
+    for (target_name, id) in stage7_advice_output_openings(&converted) {
+        precompat_offset_claim_rejects(&base, target_name, id);
+    }
+}
+
 #[cfg(any(not(feature = "core-fixtures"), feature = "zk"))]
 #[test]
 #[ignore = "enable --features core-fixtures in a non-ZK build to live-generate, cast, and tamper real core proofs"]
@@ -549,6 +616,16 @@ fn tampered_stage5_sumcheck_payload_reject() {
 fn tampered_stage6_sumcheck_payload_reject() {
     assert_eq!(
         soundness_expectation(tampering::STAGE6_SUMCHECK_PAYLOAD),
+        HarnessExpectation::RejectsAtOrBeforeFrontier,
+    );
+}
+
+#[cfg(any(not(feature = "core-fixtures"), feature = "zk"))]
+#[test]
+#[ignore = "enable --features core-fixtures in a non-ZK build to live-generate, cast, and tamper real core proofs"]
+fn tampered_stage7_sumcheck_payload_reject() {
+    assert_eq!(
+        soundness_expectation(tampering::STAGE7_SUMCHECK_PAYLOAD),
         HarnessExpectation::RejectsAtOrBeforeFrontier,
     );
 }
@@ -836,6 +913,39 @@ fn tamper_stage6_batch_round_counts(base: &CoreVerifierCase) {
         base,
         |case| {
             push_compressed_round(&mut case.proof.stages.stage6_sumcheck_proof);
+        },
+    );
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn tamper_each_stage7_batch_round(base: &CoreVerifierCase) {
+    let round_count = compressed_round_count(&base.proof.stages.stage7_sumcheck_proof);
+    for round_index in 0..round_count {
+        tamper_manifest::assert_core_tamper_rejects(
+            manifest_target("stage7.batch.round_polynomial"),
+            base,
+            |case| {
+                mutate_compressed_round(&mut case.proof.stages.stage7_sumcheck_proof, round_index);
+            },
+        );
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn tamper_stage7_batch_round_counts(base: &CoreVerifierCase) {
+    tamper_manifest::assert_core_tamper_rejects(
+        manifest_target("stage7.batch.round_count.missing"),
+        base,
+        |case| {
+            pop_compressed_round(&mut case.proof.stages.stage7_sumcheck_proof);
+        },
+    );
+
+    tamper_manifest::assert_core_tamper_rejects(
+        manifest_target("stage7.batch.round_count.extra"),
+        base,
+        |case| {
+            push_compressed_round(&mut case.proof.stages.stage7_sumcheck_proof);
         },
     );
 }
@@ -1321,6 +1431,74 @@ fn stage6_advice_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str, 
                     )
                 }),
         );
+    }
+
+    openings
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn stage7_formula_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str, JoltOpeningId)> {
+    let dimensions = stage6_dimensions(base);
+    let output_openings = hamming_weight::claim_reduction_output_openings(
+        hamming_weight::HammingWeightClaimReductionDimensions::from((
+            dimensions.ra_layout,
+            base.proof.one_hot_config.committed_chunk_bits(),
+        )),
+    );
+    let mut openings = Vec::new();
+    openings.extend(output_openings.instruction_ra.into_iter().map(|id| {
+        (
+            "stage7.claims.hamming_weight_claim_reduction.instruction_ra",
+            id,
+        )
+    }));
+    openings.extend(output_openings.bytecode_ra.into_iter().map(|id| {
+        (
+            "stage7.claims.hamming_weight_claim_reduction.bytecode_ra",
+            id,
+        )
+    }));
+    openings.extend(
+        output_openings
+            .ram_ra
+            .into_iter()
+            .map(|id| ("stage7.claims.hamming_weight_claim_reduction.ram_ra", id)),
+    );
+    openings
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn stage7_advice_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str, JoltOpeningId)> {
+    let log_t = base.proof.trace_length.ilog2() as usize;
+    let mut openings = Vec::new();
+
+    if base.trusted_advice_commitment.is_some() {
+        let layout = AdviceClaimReductionLayout::balanced(
+            base.proof.trace_polynomial_order,
+            log_t,
+            base.proof.one_hot_config.committed_chunk_bits(),
+            base.public_io.memory_layout.max_trusted_advice_size as usize,
+        );
+        if layout.dimensions().has_address_phase() {
+            openings.push((
+                "stage7.claims.advice_address_phase.trusted.opening_claim",
+                advice::final_advice_opening(JoltAdviceKind::Trusted),
+            ));
+        }
+    }
+    if base.proof.untrusted_advice_commitment.is_some() {
+        let layout = AdviceClaimReductionLayout::balanced(
+            base.proof.trace_polynomial_order,
+            log_t,
+            base.proof.one_hot_config.committed_chunk_bits(),
+            base.public_io.memory_layout.max_untrusted_advice_size as usize,
+        );
+        if layout.dimensions().has_address_phase() {
+            openings.push((
+                "stage7.claims.advice_address_phase.untrusted.opening_claim",
+                advice::final_advice_opening(JoltAdviceKind::Untrusted),
+            ));
+        }
     }
 
     openings

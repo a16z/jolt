@@ -10,7 +10,7 @@ use jolt_sumcheck::SumcheckProof;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    stages::{stage1, stage2, stage3, stage4, stage5, stage6},
+    stages::{stage1, stage2, stage3, stage4, stage5, stage6, stage7},
     VerifierError,
 };
 
@@ -83,6 +83,10 @@ where
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Transparent claims are the verifier-owned standard proof payload; keeping them inline avoids heap indirection in the common transparent path."
+)]
 #[serde(bound = "ZkProof: Serialize + serde::de::DeserializeOwned")]
 pub enum JoltProofClaims<F, ZkProof>
 where
@@ -101,6 +105,7 @@ pub struct TransparentProofClaims<F: Field> {
     pub stage4: stage4::inputs::Stage4Claims<F>,
     pub stage5: stage5::inputs::Stage5Claims<F>,
     pub stage6: stage6::inputs::Stage6Claims<F>,
+    pub stage7: stage7::inputs::Stage7Claims<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

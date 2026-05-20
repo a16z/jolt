@@ -32,6 +32,10 @@ use crate::{
             RamHammingBooleanityOutputOpeningClaims, RamRaVirtualizationOutputOpeningClaims,
             Stage6AdviceCyclePhaseClaims, Stage6Claims,
         },
+        stage7::inputs::{
+            AdviceAddressPhaseOutputClaim, HammingWeightClaimReductionOutputOpeningClaims,
+            Stage7AdviceAddressPhaseClaims, Stage7Claims,
+        },
     },
     VerifierError,
 };
@@ -97,6 +101,7 @@ pub(crate) fn transparent_claims_from_native<F: Field>(
         stage4: stage4_claims_from_native(&claims)?,
         stage5: stage5_claims_from_native(&claims)?,
         stage6: stage6_claims_from_native(&claims)?,
+        stage7: stage7_claims_from_native(&claims)?,
     })
 }
 
@@ -429,6 +434,74 @@ fn advice_cycle_phase_claim_from_native<F: Field>(
         .map(|opening_claim| AdviceCyclePhaseOutputClaim { opening_claim })
 }
 
+fn stage7_claims_from_native<F: Field>(
+    claims: &NativeOpeningClaims<F>,
+) -> Result<Stage7Claims<F>, VerifierError> {
+    let mut instruction_ra = Vec::new();
+    for index in 0.. {
+        let id = JoltOpeningId::committed(
+            JoltCommittedPolynomial::InstructionRa(index),
+            JoltStageId::HammingWeightClaimReduction,
+        );
+        let Some(opening_claim) = claims.get(id) else {
+            break;
+        };
+        instruction_ra.push(opening_claim);
+    }
+    let mut bytecode_ra = Vec::new();
+    for index in 0.. {
+        let id = JoltOpeningId::committed(
+            JoltCommittedPolynomial::BytecodeRa(index),
+            JoltStageId::HammingWeightClaimReduction,
+        );
+        let Some(opening_claim) = claims.get(id) else {
+            break;
+        };
+        bytecode_ra.push(opening_claim);
+    }
+    let mut ram_ra = Vec::new();
+    for index in 0.. {
+        let id = JoltOpeningId::committed(
+            JoltCommittedPolynomial::RamRa(index),
+            JoltStageId::HammingWeightClaimReduction,
+        );
+        let Some(opening_claim) = claims.get(id) else {
+            break;
+        };
+        ram_ra.push(opening_claim);
+    }
+    if instruction_ra.is_empty() && bytecode_ra.is_empty() && ram_ra.is_empty() {
+        return Err(VerifierError::MissingOpeningClaim {
+            id: JoltOpeningId::committed(
+                JoltCommittedPolynomial::InstructionRa(0),
+                JoltStageId::HammingWeightClaimReduction,
+            ),
+        });
+    }
+
+    Ok(Stage7Claims {
+        hamming_weight_claim_reduction: HammingWeightClaimReductionOutputOpeningClaims {
+            instruction_ra,
+            bytecode_ra,
+            ram_ra,
+        },
+        advice_address_phase: Stage7AdviceAddressPhaseClaims {
+            trusted: advice_address_phase_claim_from_native(claims, JoltAdviceKind::Trusted),
+            untrusted: advice_address_phase_claim_from_native(claims, JoltAdviceKind::Untrusted),
+        },
+    })
+}
+
+fn advice_address_phase_claim_from_native<F: Field>(
+    claims: &NativeOpeningClaims<F>,
+    kind: JoltAdviceKind,
+) -> Option<AdviceAddressPhaseOutputClaim<F>> {
+    let _ = claims.get(advice::cycle_phase_advice_opening(kind))?;
+    claims
+        .get(advice::final_advice_opening(kind))
+        .map(|opening_claim| AdviceAddressPhaseOutputClaim { opening_claim })
+}
+
 #[derive(Clone, Debug)]
 struct NativeOpeningClaims<F: Field> {
     claims: Vec<(native::JoltOpeningId, F)>,
@@ -585,6 +658,17 @@ fn empty_transparent_claims<F: Field>(_trace_length: usize) -> TransparentProofC
                 rd_inc: zero,
             },
             advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
+                trusted: None,
+                untrusted: None,
+            },
+        },
+        stage7: Stage7Claims {
+            hamming_weight_claim_reduction: HammingWeightClaimReductionOutputOpeningClaims {
+                instruction_ra: vec![zero],
+                bytecode_ra: vec![zero],
+                ram_ra: vec![zero],
+            },
+            advice_address_phase: Stage7AdviceAddressPhaseClaims {
                 trusted: None,
                 untrusted: None,
             },
@@ -749,6 +833,7 @@ fn claim_from_transparent<F: Field>(
         .or_else(|| claim_from_stage3_outputs(&claims.stage3, id))
         .or_else(|| claim_from_stage4_outputs(&claims.stage4, id))
         .or_else(|| claim_from_stage5_outputs(&claims.stage5, id))
+        .or_else(|| claim_from_stage7_outputs(&claims.stage7, id))
         .or_else(|| claim_from_stage6_outputs(&claims.stage6, id))
 }
 
@@ -772,6 +857,7 @@ fn claim_mut_from_transparent<F: Field>(
         .or_else(|| claim_mut_from_stage3_outputs(&mut claims.stage3, id))
         .or_else(|| claim_mut_from_stage4_outputs(&mut claims.stage4, id))
         .or_else(|| claim_mut_from_stage5_outputs(&mut claims.stage5, id))
+        .or_else(|| claim_mut_from_stage7_outputs(&mut claims.stage7, id))
         .or_else(|| claim_mut_from_stage6_outputs(&mut claims.stage6, id))
 }
 
@@ -1414,6 +1500,138 @@ fn claim_mut_from_stage6_outputs<F: Field>(
                 .as_mut()
                 .map(|claim| &mut claim.opening_claim)
         }
+        _ => None,
+    }
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn claim_from_stage7_outputs<F: Field>(
+    claims: &Stage7Claims<F>,
+    id: native::JoltOpeningId,
+) -> Option<F> {
+    for (index, opening) in claims
+        .hamming_weight_claim_reduction
+        .instruction_ra
+        .iter()
+        .enumerate()
+    {
+        if id
+            == JoltOpeningId::committed(
+                JoltCommittedPolynomial::InstructionRa(index),
+                JoltStageId::HammingWeightClaimReduction,
+            )
+        {
+            return Some(*opening);
+        }
+    }
+    for (index, opening) in claims
+        .hamming_weight_claim_reduction
+        .bytecode_ra
+        .iter()
+        .enumerate()
+    {
+        if id
+            == JoltOpeningId::committed(
+                JoltCommittedPolynomial::BytecodeRa(index),
+                JoltStageId::HammingWeightClaimReduction,
+            )
+        {
+            return Some(*opening);
+        }
+    }
+    for (index, opening) in claims
+        .hamming_weight_claim_reduction
+        .ram_ra
+        .iter()
+        .enumerate()
+    {
+        if id
+            == JoltOpeningId::committed(
+                JoltCommittedPolynomial::RamRa(index),
+                JoltStageId::HammingWeightClaimReduction,
+            )
+        {
+            return Some(*opening);
+        }
+    }
+
+    match id {
+        id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => claims
+            .advice_address_phase
+            .trusted
+            .as_ref()
+            .map(|claim| claim.opening_claim),
+        id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => claims
+            .advice_address_phase
+            .untrusted
+            .as_ref()
+            .map(|claim| claim.opening_claim),
+        _ => None,
+    }
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn claim_mut_from_stage7_outputs<F: Field>(
+    claims: &mut Stage7Claims<F>,
+    id: native::JoltOpeningId,
+) -> Option<&mut F> {
+    for (index, opening) in claims
+        .hamming_weight_claim_reduction
+        .instruction_ra
+        .iter_mut()
+        .enumerate()
+    {
+        if id
+            == JoltOpeningId::committed(
+                JoltCommittedPolynomial::InstructionRa(index),
+                JoltStageId::HammingWeightClaimReduction,
+            )
+        {
+            return Some(opening);
+        }
+    }
+    for (index, opening) in claims
+        .hamming_weight_claim_reduction
+        .bytecode_ra
+        .iter_mut()
+        .enumerate()
+    {
+        if id
+            == JoltOpeningId::committed(
+                JoltCommittedPolynomial::BytecodeRa(index),
+                JoltStageId::HammingWeightClaimReduction,
+            )
+        {
+            return Some(opening);
+        }
+    }
+    for (index, opening) in claims
+        .hamming_weight_claim_reduction
+        .ram_ra
+        .iter_mut()
+        .enumerate()
+    {
+        if id
+            == JoltOpeningId::committed(
+                JoltCommittedPolynomial::RamRa(index),
+                JoltStageId::HammingWeightClaimReduction,
+            )
+        {
+            return Some(opening);
+        }
+    }
+
+    match id {
+        id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => claims
+            .advice_address_phase
+            .trusted
+            .as_mut()
+            .map(|claim| &mut claim.opening_claim),
+        id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => claims
+            .advice_address_phase
+            .untrusted
+            .as_mut()
+            .map(|claim| &mut claim.opening_claim),
         _ => None,
     }
 }

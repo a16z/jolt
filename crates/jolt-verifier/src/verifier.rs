@@ -787,6 +787,18 @@ mod tests {
                     untrusted: None,
                 },
             },
+            stage7: stage7::inputs::Stage7Claims {
+                hamming_weight_claim_reduction:
+                    stage7::inputs::HammingWeightClaimReductionOutputOpeningClaims {
+                        instruction_ra: Vec::new(),
+                        bytecode_ra: Vec::new(),
+                        ram_ra: Vec::new(),
+                    },
+                advice_address_phase: stage7::inputs::Stage7AdviceAddressPhaseClaims {
+                    trusted: None,
+                    untrusted: None,
+                },
+            },
         })
     }
 
