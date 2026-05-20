@@ -7,9 +7,9 @@ use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
-use crate::zkvm::bytecode::BytecodePreprocessing;
-use crate::zkvm::config::OneHotParams;
+use crate::zkvm::config::{OneHotParams, ProgramMode};
 use crate::zkvm::instruction::InstructionFlags;
+use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::{
     field::JoltField,
@@ -62,12 +62,29 @@ pub fn all_committed_polynomials(one_hot_params: &OneHotParams) -> Vec<Committed
     polynomials
 }
 
+/// Returns all committed polynomials expected in the proof commitments vector.
+pub fn all_proof_commitment_polynomials(
+    one_hot_params: &OneHotParams,
+    program_mode: ProgramMode,
+    bytecode_chunk_count: usize,
+) -> Vec<CommittedPolynomial> {
+    let mut polynomials = all_committed_polynomials(one_hot_params);
+    if program_mode == ProgramMode::Committed {
+        for i in 0..bytecode_chunk_count {
+            polynomials.push(CommittedPolynomial::BytecodeChunk(i));
+        }
+        polynomials.push(CommittedPolynomial::ProgramImageInit);
+    }
+    polynomials
+}
+
 impl CommittedPolynomial {
     /// Generate witness data and compute tier 1 commitment for a single row
     pub fn stream_witness_and_commit_rows<F, PCS>(
         &self,
         setup: &PCS::ProverSetup,
         preprocessing: &JoltSharedPreprocessing,
+        program: &ProgramPreprocessing,
         row_cycles: &[tracer::instruction::Cycle],
         one_hot_params: &OneHotParams,
     ) -> <PCS as StreamingCommitmentScheme>::ChunkState
@@ -112,8 +129,7 @@ impl CommittedPolynomial {
                 let row: Vec<Option<usize>> = row_cycles
                     .iter()
                     .map(|cycle| {
-                        let pc =
-                            crate::zkvm::bytecode::get_pc_for_cycle(&preprocessing.bytecode, cycle);
+                        let pc = program.get_pc(cycle);
                         Some(one_hot_params.bytecode_pc_chunk(pc, *idx) as usize)
                     })
                     .collect();
@@ -144,7 +160,7 @@ impl CommittedPolynomial {
     #[tracing::instrument(skip_all, name = "CommittedPolynomial::generate_witness")]
     pub fn generate_witness<F>(
         &self,
-        bytecode_preprocessing: &BytecodePreprocessing,
+        bytecode_preprocessing: &crate::zkvm::bytecode::BytecodePreprocessing,
         memory_layout: &MemoryLayout,
         trace: &[Cycle],
         one_hot_params: Option<&OneHotParams>,
@@ -286,4 +302,5 @@ pub enum VirtualPolynomial {
     BooleanityAddrClaim,
     BytecodeClaimReductionIntermediate,
     ProgramImageInitContributionRw,
+    ProgramImageInitContributionRaf,
 }

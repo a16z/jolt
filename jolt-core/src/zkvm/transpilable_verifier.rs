@@ -25,8 +25,10 @@
 //! ## Stages Implemented
 //!
 //! This verifier implements stages 1-7 (all sumcheck stages):
-//! - Stages 1-6: Standard sumcheck verifications
-//! - Stage 7: HammingWeight claim reduction sumcheck
+//! - Stages 1-5: Standard sumcheck verifications
+//! - Stage 6a: Address-phase bytecode read-RAF and booleanity sumchecks
+//! - Stage 6b: Cycle-phase sumchecks and precommitted claim reductions
+//! - Stage 7: HammingWeight claim reduction and address-phase advice reductions
 //!
 //! Stage 8 (PCS verification) is NOT transpiled by this module. It requires
 //! native elliptic curve operations that are handled separately by the target
@@ -35,8 +37,8 @@
 //! ## Advice Verifiers
 //!
 //! `AdviceClaimReduction` verifiers are included when advice commitments are present.
-//! They span stages 6 and 7 with a phase transition between them:
-//! - Stage 6: CycleVariables phase (bind cycle-derived coordinates)
+//! They span stages 6b and 7 with a phase transition between them:
+//! - Stage 6b: CycleVariables phase (bind cycle-derived coordinates)
 //! - Stage 7: AddressVariables phase (bind address-derived coordinates)
 
 use crate::curve::JoltCurve;
@@ -46,8 +48,10 @@ use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::subprotocols::sumcheck::{BatchedSumcheck, ClearSumcheckProof, SumcheckInstanceProof};
 use crate::zkvm::claim_reductions::{
-    AdviceClaimReductionVerifier, AdviceKind, HammingWeightClaimReductionVerifier,
-    PrecommittedClaimReduction, PrecommittedParams, RegistersClaimReductionSumcheckVerifier,
+    AdviceClaimReductionVerifier, AdviceKind, BytecodeClaimReductionParams,
+    BytecodeClaimReductionVerifier, HammingWeightClaimReductionVerifier,
+    PrecommittedClaimReduction, PrecommittedParams, ProgramImageClaimReductionParams,
+    ProgramImageClaimReductionVerifier, RegistersClaimReductionSumcheckVerifier,
 };
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::{
@@ -283,9 +287,9 @@ impl<
             .map_err(ProofVerifyError::InvalidReadWriteConfig)?;
 
         // Construct full params from the validated config
-        let bytecode_len = preprocessing.shared.bytecode.code_size;
+        let bytecode_K = preprocessing.shared.bytecode.code_size;
         let one_hot_params =
-            OneHotParams::from_config(&proof.one_hot_config, bytecode_len, proof.ram_K);
+            OneHotParams::from_config(&proof.one_hot_config, bytecode_K, proof.ram_K);
 
         Ok(TranspilableVerifier {
             trusted_advice_commitment,
@@ -314,9 +318,9 @@ impl<
         opening_accumulator: A,
     ) -> Self {
         let spartan_key = UniformSpartanKey::new(proof.trace_length.next_power_of_two());
-        let bytecode_len = preprocessing.shared.bytecode.code_size;
+        let bytecode_K = preprocessing.shared.bytecode.code_size;
         let one_hot_params =
-            OneHotParams::from_config(&proof.one_hot_config, bytecode_len, proof.ram_K);
+            OneHotParams::from_config(&proof.one_hot_config, bytecode_K, proof.ram_K);
 
         Self {
             trusted_advice_commitment,
@@ -691,6 +695,38 @@ impl<
                 self.program_io.memory_layout.max_untrusted_advice_size as usize,
                 precommitted_scheduling_reference,
                 &self.opening_accumulator,
+            ));
+        }
+
+        if self.preprocessing.shared.program.is_committed() {
+            let bytecode_chunk_count = self.preprocessing.shared.bytecode_chunk_count;
+            let bytecode_reduction_params = BytecodeClaimReductionParams::new(
+                &bytecode_reduction_seed_params,
+                self.preprocessing.shared.bytecode_size(),
+                bytecode_chunk_count,
+                precommitted_scheduling_reference,
+                &self.opening_accumulator,
+                &mut self.transcript,
+            );
+            self.bytecode_reduction_verifier = Some(BytecodeClaimReductionVerifier::new(
+                bytecode_reduction_params,
+            ));
+
+            let padded_len_words = self
+                .preprocessing
+                .shared
+                .program_meta
+                .committed_program_image_num_words(&self.program_io.memory_layout);
+            let program_image_reduction_params = ProgramImageClaimReductionParams::new(
+                &self.program_io,
+                self.preprocessing.shared.program_meta.min_bytecode_address,
+                padded_len_words,
+                self.proof.ram_K,
+                precommitted_scheduling_reference,
+                &self.opening_accumulator,
+            );
+            self.program_image_reduction_verifier = Some(ProgramImageClaimReductionVerifier::new(
+                program_image_reduction_params,
             ));
         }
 
