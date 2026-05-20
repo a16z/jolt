@@ -44,17 +44,6 @@ impl DoryOpeningProofHint {
         }
     }
 
-    pub fn empty() -> Self {
-        Self {
-            row_commitments: Vec::new(),
-            commit_blind: <ArkFr as DoryField>::zero(),
-        }
-    }
-
-    pub fn rows(&self) -> &[ArkG1] {
-        &self.row_commitments
-    }
-
     fn into_parts(self) -> (Vec<ArkG1>, ArkFr) {
         (self.row_commitments, self.commit_blind)
     }
