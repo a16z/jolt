@@ -202,13 +202,14 @@ fn prove_example(
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
-    let (bytecode, init_memory_state, _, _) = program.decode();
+    let (bytecode, init_memory_state, _, e_entry) = program.decode();
     let (_lazy_trace, trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
     let padded_trace_len = (trace.len() + 1).next_power_of_two();
     drop(trace);
 
     let task = move || {
-        let program_data = ProgramPreprocessing::preprocess(bytecode, init_memory_state).unwrap();
+        let program_data =
+            ProgramPreprocessing::preprocess(bytecode, init_memory_state, e_entry).unwrap();
         let shared_preprocessing = JoltSharedPreprocessing::new(
             program_data,
             program_io.memory_layout.clone(),
@@ -254,7 +255,7 @@ fn prove_example_with_trace(
     _scale: usize,
 ) -> (std::time::Duration, usize, usize, usize) {
     let mut program = host::Program::new(example_name);
-    let (bytecode, init_memory_state, _, _) = program.decode();
+    let (bytecode, init_memory_state, _, e_entry) = program.decode();
     let (_, trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
 
     assert!(
@@ -262,7 +263,8 @@ fn prove_example_with_trace(
         "Trace is longer than expected"
     );
 
-    let program_data = ProgramPreprocessing::preprocess(bytecode, init_memory_state).unwrap();
+    let program_data =
+        ProgramPreprocessing::preprocess(bytecode, init_memory_state, e_entry).unwrap();
     let shared_preprocessing = JoltSharedPreprocessing::new(
         program_data,
         program_io.memory_layout.clone(),

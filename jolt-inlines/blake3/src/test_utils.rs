@@ -1,5 +1,4 @@
 use crate::{BLAKE3_FUNCT3, BLAKE3_FUNCT7, BLAKE3_KEYED64_FUNCT3, INLINE_OPCODE};
-use tracer::emulator::cpu::Xlen;
 use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
 pub type ChainingValue = [u32; crate::CHAINING_VALUE_LEN];
@@ -9,7 +8,7 @@ pub fn create_blake3_harness() -> InlineTestHarness {
     // Blake3 needs message block (64 bytes) + params (16 bytes) contiguous at rs2
     // and state (32 bytes) at rs1
     let layout = InlineMemoryLayout::single_input(80, 32); // 80 bytes for message+params, 32-byte state
-    InlineTestHarness::new(layout, Xlen::Bit64)
+    InlineTestHarness::new(layout)
 }
 
 /// Create harness for Keyed64 instruction (Merkle tree merge)
@@ -20,7 +19,7 @@ pub fn create_blake3_keyed64_harness() -> InlineTestHarness {
     // - rs2: right CV (32 bytes) -> input2
     // - rd: IV (32 bytes, in/out) -> output
     let layout = InlineMemoryLayout::two_inputs(32, 32, 32); // left, right, iv
-    InlineTestHarness::new(layout, Xlen::Bit64)
+    InlineTestHarness::new(layout)
 }
 
 pub fn load_blake3_keyed64_data(

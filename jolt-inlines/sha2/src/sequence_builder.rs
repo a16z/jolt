@@ -1,10 +1,10 @@
 use core::array;
 
 use jolt_inlines_sdk::host::{
-    instruction::{andn::ANDN, lw::LW, sw::SW},
+    instruction::andn::ANDN,
     FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
     Value::{self, Imm, Reg},
-    VirtualRegisterGuard, Xlen,
+    VirtualRegisterGuard,
 };
 
 /// SHA-256 initial hash values
@@ -72,60 +72,37 @@ impl Sha256SequenceBuilder {
         if !self.initial {
             // Load initial hash values from memory when using custom IV
             // Load all A-H into initial_state registers (used both for initial values and final addition)
-            if self.asm.xlen == Xlen::Bit32 {
-                (0..8).for_each(|i| {
-                    self.asm
-                        .emit_ld::<LW>(*self.iv[i], self.operands.rs1, (i * 4) as i64)
-                });
-            } else {
-                (0..4).for_each(|i| {
-                    self.asm.load_paired_u32_dirty(
-                        self.operands.rs1,
-                        (i as i64) * 8,
-                        *self.iv[i * 2],
-                        *self.iv[i * 2 + 1],
-                    );
-                });
-            }
-        }
-        // Load input words into message registers
-        if self.asm.xlen == Xlen::Bit32 {
-            (0..16).for_each(|i| {
-                self.asm
-                    .emit_ld::<LW>(*self.message[i], self.operands.rs2, (i * 4) as i64)
-            });
-        } else {
-            (0..8).for_each(|i| {
+            (0..4).for_each(|i| {
                 self.asm.load_paired_u32_dirty(
-                    self.operands.rs2,
+                    self.operands.rs1,
                     (i as i64) * 8,
-                    *self.message[i * 2],
-                    *self.message[i * 2 + 1],
+                    *self.iv[i * 2],
+                    *self.iv[i * 2 + 1],
                 );
             });
         }
+        // Load input words into message registers
+        (0..8).for_each(|i| {
+            self.asm.load_paired_u32_dirty(
+                self.operands.rs2,
+                (i as i64) * 8,
+                *self.message[i * 2],
+                *self.message[i * 2 + 1],
+            );
+        });
         // Run 64 rounds
         (0..64).for_each(|_| self.round());
         self.final_add_iv();
         // Store output values to rs1 location
         // Store output A..H in-order using the current VR mapping after all rotations
-        if self.asm.xlen == Xlen::Bit32 {
-            let outs = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-            for (i, ch) in outs.iter().enumerate() {
-                let src = self.vr(*ch);
-                self.asm
-                    .emit_s::<SW>(self.operands.rs1, src, (i as i64) * 4);
-            }
-        } else {
-            let outs = [('A', 'B'), ('C', 'D'), ('E', 'F'), ('G', 'H')];
-            for (i, (ch1, ch2)) in outs.iter().enumerate() {
-                self.asm.store_paired_u32(
-                    self.operands.rs1,
-                    (i as i64) * 8,
-                    self.vr(*ch1),
-                    self.vr(*ch2),
-                );
-            }
+        let outs = [('A', 'B'), ('C', 'D'), ('E', 'F'), ('G', 'H')];
+        for (i, (ch1, ch2)) in outs.iter().enumerate() {
+            self.asm.store_paired_u32(
+                self.operands.rs1,
+                (i as i64) * 8,
+                self.vr(*ch1),
+                self.vr(*ch2),
+            );
         }
         // Total allocated: 8 (state) + 16 (message) + 8 (initial_state) + 4 (temps per round) = 36
         // The temps are allocated/deallocated per round, but we need to reserve space for them

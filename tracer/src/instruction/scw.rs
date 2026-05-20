@@ -49,8 +49,7 @@ impl RISCVTrace for SCW {
         // doubleword) whose set covers the 4 bytes being written.
         let success = cpu.reservation_covers(address, ReservationWidth::Word);
 
-        let mut inline_sequence =
-            Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let mut inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
 
         // Patch v_success (1=success, 0=failure) into the first VirtualAdvice
         // in the sequence. Locating it by type avoids fragility against

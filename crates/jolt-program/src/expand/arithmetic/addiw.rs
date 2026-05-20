@@ -1,22 +1,30 @@
 use super::*;
 
+/// Lowers `ADDIW` by doing the addition in the final row universe and then
+/// forcing the architectural RV64 word result.
+///
+/// RISC-V word arithmetic keeps only the low 32 bits and sign-extends bit 31
+/// back to XLEN. The final `VirtualSignExtendWord` row is therefore part of
+/// the source instruction's semantics, not a cleanup step.
 pub(in crate::expand) fn expand_addiw(
-    instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let mut asm =
-        assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
+    instruction: &SourceInstructionRow,
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+
     asm.emit_i(
-        InstructionKind::ADDI,
-        rd(instruction)?,
-        rs1(instruction)?,
+        JoltInstructionKind::ADDI,
+        reg(rd(instruction)?),
+        reg(rs1(instruction)?),
         instruction.operands.imm,
-    )?;
+    );
     asm.emit_i(
-        InstructionKind::VirtualSignExtendWord,
-        rd(instruction)?,
-        rd(instruction)?,
+        JoltInstructionKind::VirtualSignExtendWord(
+            jolt_riscv::instructions::VirtualSignExtendWord(()),
+        ),
+        reg(rd(instruction)?),
+        reg(rd(instruction)?),
         0,
-    )?;
+    );
+
     asm.finalize()
 }

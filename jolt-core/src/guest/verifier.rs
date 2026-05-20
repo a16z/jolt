@@ -38,12 +38,12 @@ fn preprocess_shared(
     guest: &Program,
     max_trace_length: usize,
 ) -> Result<JoltSharedPreprocessing, PreprocessingError> {
-    let (bytecode, memory_init, program_size, _e_entry) = guest.decode();
+    let (bytecode, memory_init, program_size, e_entry) = guest.decode();
 
     let mut memory_config = guest.memory_config;
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
-    let program = ProgramPreprocessing::preprocess(bytecode, memory_init)?;
+    let program = ProgramPreprocessing::preprocess(bytecode, memory_init, e_entry)?;
     Ok(JoltSharedPreprocessing::new(
         program,
         memory_layout,

@@ -57,7 +57,7 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use common::constants::{REGISTER_COUNT, XLEN};
 use itertools::{zip_eq, Itertools};
-use jolt_riscv::NormalizedInstruction;
+use jolt_riscv::JoltInstructionRow;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::Cycle;
@@ -330,7 +330,10 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
     }
 
     pub fn into_params(self) -> BytecodeReadRafSumcheckParams<F> {
-        self.params.into_inner()
+        let mut params = self.params.into_inner();
+        params.cycle_initial_round_claims = Some(self.prev_round_claims);
+        params.cycle_initial_entry_claim = Some(self.prev_entry_claim);
+        params
     }
 }
 
@@ -612,14 +615,17 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
             .bound_f_entry
             .take()
             .expect("address phase must cache bound entry claim before cycle phase");
+        params.bound_val_polys = Some(bound_val_evals);
+        params.bound_f_entry = Some(bound_f_entry);
+        let prev_round_claims = params
+            .cycle_initial_round_claims
+            .take()
+            .expect("address phase must transfer cycle initial round claims before cycle phase");
+        let prev_entry_claim = params
+            .cycle_initial_entry_claim
+            .take()
+            .expect("address phase must transfer cycle initial entry claim before cycle phase");
 
-        let (prev_round_claims, prev_entry_claim) = Self::initial_cycle_claims(
-            &ra,
-            &gruen_eq_polys,
-            &gruen_eq_entry,
-            &bound_val_evals,
-            bound_f_entry,
-        );
         Self {
             ra,
             gruen_eq_polys,
@@ -632,50 +638,6 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
             prev_entry_poly: None,
             params: BytecodeReadRafCyclePhaseParams::new(params, r_address_low_to_high),
         }
-    }
-
-    fn initial_cycle_claims(
-        ra: &[RaPolynomial<u8, F>],
-        gruen_eq_polys: &[GruenSplitEqPolynomial<F>; N_STAGES],
-        gruen_eq_entry: &GruenSplitEqPolynomial<F>,
-        bound_val_evals: &[F; N_STAGES],
-        bound_f_entry: F,
-    ) -> ([F; N_STAGES], F) {
-        let out_len = gruen_eq_polys[0].E_out_current().len();
-        let in_len = gruen_eq_polys[0].E_in_current().len();
-        let in_n_vars = in_len.log_2();
-
-        (0..out_len)
-            .into_par_iter()
-            .map(|j_hi| {
-                let mut stage_claims = [F::zero(); N_STAGES];
-                let mut entry_claim = F::zero();
-                for j_lo in 0..in_len {
-                    let j = j_lo + (j_hi << in_n_vars);
-                    let ra_prod = ra.iter().map(|ra_i| ra_i.get_bound_coeff(j)).product::<F>();
-
-                    for stage in 0..N_STAGES {
-                        let eq_eval = gruen_eq_polys[stage].E_out_current()[j_hi]
-                            * gruen_eq_polys[stage].E_in_current()[j_lo];
-                        stage_claims[stage] += ra_prod * eq_eval * bound_val_evals[stage];
-                    }
-
-                    let entry_eq_eval =
-                        gruen_eq_entry.E_out_current()[j_hi] * gruen_eq_entry.E_in_current()[j_lo];
-                    entry_claim += ra_prod * entry_eq_eval * bound_f_entry;
-                }
-
-                (stage_claims, entry_claim)
-            })
-            .reduce(
-                || ([F::zero(); N_STAGES], F::zero()),
-                |(a_stages, a_entry), (b_stages, b_entry)| {
-                    (
-                        array::from_fn(|stage| a_stages[stage] + b_stages[stage]),
-                        a_entry + b_entry,
-                    )
-                },
-            )
     }
 }
 
@@ -1676,6 +1638,10 @@ pub struct BytecodeReadRafSumcheckParams<F: JoltField> {
     pub entry_bytecode_index: usize,
     /// Prover-cached f_entry(r_addr) after address phase (None in verifier params).
     pub bound_f_entry: Option<F>,
+    /// Prover-cached per-stage cycle claims after address binding.
+    pub cycle_initial_round_claims: Option<[F; N_STAGES]>,
+    /// Prover-cached entry cycle claim after address binding.
+    pub cycle_initial_entry_claim: Option<F>,
 }
 
 impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
@@ -1830,6 +1796,8 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             bound_val_polys: None,
             staged_val_claims: None,
             bound_f_entry: None,
+            cycle_initial_round_claims: None,
+            cycle_initial_entry_claim: None,
         }
     }
 
@@ -1840,7 +1808,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
     /// and formula for Val(k).
     #[allow(clippy::too_many_arguments)]
     fn compute_val_polys(
-        bytecode: &[NormalizedInstruction],
+        bytecode: &[JoltInstructionRow],
         eq_r_register_4: &[F],
         eq_r_register_5: &[F],
         stage1_gammas: &[F],

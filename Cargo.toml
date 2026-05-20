@@ -32,6 +32,7 @@ members = [
   "crates/jolt-sumcheck",
   "crates/jolt-openings",
   "crates/jolt-dory",
+  "crates/jolt-hyperkzg",
   "crates/jolt-riscv",
   "crates/jolt-transcript",
   "crates/jolt-profiling",
@@ -250,7 +251,7 @@ ark-std = { version = "0.5.0", default-features = false }
 sha2 = "0.11"
 sha3 = "0.11"
 blake2 = "0.11.0-rc.6"
-blake3 = { version = "1.5.0" }
+blake3 = { version = "1.8.5" }
 light-poseidon = "0.4"
 digest = "0.11"
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
@@ -302,7 +303,7 @@ num-derive = "0.4.2"
 num-traits = { version = "0.2.19", default-features = false }
 
 # System and Platform
-sysinfo = "0.38"
+sysinfo = "0.39"
 memory-stats = { version = "1.0.0", features = ["always_use_statm"] }
 
 # Parallel Processing
@@ -381,7 +382,7 @@ jolt-openings = { path = "./crates/jolt-openings" }
 jolt-poly = { path = "./crates/jolt-poly" }
 jolt-transcript = { path = "./crates/jolt-transcript" }
 jolt-sumcheck = { path = "./crates/jolt-sumcheck" }
-jolt-riscv = { path = "./crates/jolt-riscv" }
+jolt-riscv = { path = "./crates/jolt-riscv", default-features = false }
 jolt-program = { path = "./crates/jolt-program", default-features = false }
 jolt-lookup-tables = { path = "./crates/jolt-lookup-tables" }
 jolt-platform = { path = "./jolt-platform", default-features = false }

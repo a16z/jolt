@@ -87,7 +87,7 @@ For faster incremental builds, use the `build-fast` profile:
 
 Unit and end-to-end tests for `jolt-core` can be run using the following command:
 
-```cargo test -p jolt-core```
+```cargo nextest run -p jolt-core --features host```
 
 Examples in the [`examples`](./examples/) directory can be run using e.g.
 

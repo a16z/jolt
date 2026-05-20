@@ -1,33 +1,39 @@
 use super::*;
 
+/// Lowers `SRLIW` by shifting the source word through the high half first.
+///
+/// Multiplying by `2^32` moves the low 32 bits into bits 63:32. A logical
+/// right shift by `32 + shamt` then yields the zero-filled word result, after
+/// which `VirtualSignExtendWord` applies RV64's required word sign extension.
 pub(in crate::expand) fn expand_srliw(
-    instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v_rs1 = allocator.allocate()?;
+    instruction: &SourceInstructionRow,
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let v_rs1 = asm.allocate()?;
     let shift = (instruction.operands.imm & 0x1f) + 32;
     let bitmask = super::shared::right_shift_bitmask(shift as u32, 64);
-    let mut asm =
-        assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
+
     asm.emit_i(
-        InstructionKind::VirtualMULI,
-        v_rs1,
-        rs1(instruction)?,
+        JoltInstructionKind::VirtualMULI,
+        v_rs1.operand(),
+        reg(rs1(instruction)?),
         1i128 << 32,
-    )?;
+    );
     asm.emit_i(
-        InstructionKind::VirtualSRLI,
-        rd(instruction)?,
-        v_rs1,
+        JoltInstructionKind::VirtualSRLI,
+        reg(rd(instruction)?),
+        v_rs1.operand(),
         bitmask as i128,
-    )?;
+    );
     asm.emit_i(
-        InstructionKind::VirtualSignExtendWord,
-        rd(instruction)?,
-        rd(instruction)?,
+        JoltInstructionKind::VirtualSignExtendWord(
+            jolt_riscv::instructions::VirtualSignExtendWord(()),
+        ),
+        reg(rd(instruction)?),
+        reg(rd(instruction)?),
         0,
-    )?;
-    let sequence = asm.finalize()?;
-    allocator.release(v_rs1)?;
-    Ok(sequence)
+    );
+    asm.release(v_rs1);
+
+    asm.finalize()
 }

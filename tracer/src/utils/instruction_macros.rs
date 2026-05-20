@@ -31,6 +31,13 @@ macro_rules! declare_riscv_instr {
                 &self.operands
             }
 
+            fn source_kind(&self) -> ::jolt_riscv::SourceInstructionKind {
+                match ::jolt_riscv::SourceInstructionKind::from_name(stringify!($name)) {
+                    Some(kind) => kind,
+                    None => unreachable!("unknown tracer instruction source kind"),
+                }
+            }
+
             fn new(word: u32, address: u64, validate: bool, compressed: bool) -> Self {
                 if validate {
                     debug_assert_eq!(
@@ -72,31 +79,17 @@ macro_rules! declare_riscv_instr {
             }
         }
 
-        impl From<$crate::instruction::NormalizedInstruction> for $name {
-            fn from(ni: $crate::instruction::NormalizedInstruction) -> Self {
+        impl From<$crate::instruction::SourceInstructionRow> for $name {
+            fn from(row: $crate::instruction::SourceInstructionRow) -> Self {
                 Self {
-                    address: ni.address as u64,
-                    operands: ni.operands.into(),
-                    virtual_sequence_remaining: ni.virtual_sequence_remaining,
-                    is_first_in_sequence: ni.is_first_in_sequence,
-                    is_compressed: ni.is_compressed,
+                    address: row.address as u64,
+                    operands: row.operands.into(),
+                    virtual_sequence_remaining: None,
+                    is_first_in_sequence: false,
+                    is_compressed: row.is_compressed,
                 }
             }
         }
 
-        impl ::jolt_riscv::JoltInstruction for $name {}
-
-        impl From<$name> for $crate::instruction::NormalizedInstruction {
-            fn from(instr: $name) -> $crate::instruction::NormalizedInstruction {
-                $crate::instruction::NormalizedInstruction {
-                    instruction_kind: ::jolt_riscv::InstructionKind::$name,
-                    address: instr.address as usize,
-                    operands: instr.operands.into(),
-                    is_compressed: instr.is_compressed,
-                    virtual_sequence_remaining: instr.virtual_sequence_remaining,
-                    is_first_in_sequence: instr.is_first_in_sequence,
-                }
-            }
-        }
     };
 }

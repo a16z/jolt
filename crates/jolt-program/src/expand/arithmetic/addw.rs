@@ -1,22 +1,30 @@
 use super::*;
 
+/// Lowers `ADDW` by emitting a full-width `ADD` followed by word sign
+/// extension.
+///
+/// The full-width sum may contain arbitrary high bits. `VirtualSignExtendWord`
+/// enforces the RV64 word-arithmetic contract that only the low 32-bit result
+/// is kept and then sign-extended into the destination register.
 pub(in crate::expand) fn expand_addw(
-    instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let mut asm =
-        assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
+    instruction: &SourceInstructionRow,
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+
     asm.emit_r(
-        InstructionKind::ADD,
-        rd(instruction)?,
-        rs1(instruction)?,
-        rs2(instruction)?,
-    )?;
+        JoltInstructionKind::ADD,
+        reg(rd(instruction)?),
+        reg(rs1(instruction)?),
+        reg(rs2(instruction)?),
+    );
     asm.emit_i(
-        InstructionKind::VirtualSignExtendWord,
-        rd(instruction)?,
-        rd(instruction)?,
+        JoltInstructionKind::VirtualSignExtendWord(
+            jolt_riscv::instructions::VirtualSignExtendWord(()),
+        ),
+        reg(rd(instruction)?),
+        reg(rd(instruction)?),
         0,
-    )?;
+    );
+
     asm.finalize()
 }

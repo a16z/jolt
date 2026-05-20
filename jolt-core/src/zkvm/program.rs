@@ -14,7 +14,7 @@ use crate::zkvm::bytecode::{
 };
 use crate::zkvm::ram::RAMPreprocessing;
 use common::jolt_device::MemoryLayout;
-use jolt_riscv::NormalizedInstruction;
+use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT};
 use tracer::instruction::Cycle;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -36,17 +36,18 @@ impl Default for FullProgramPreprocessing {
 }
 
 impl FullProgramPreprocessing {
-    #[tracing::instrument(skip_all, name = "ProgramPreprocessing::preprocess")]
+    #[tracing::instrument(skip_all, name = "FullProgramPreprocessing::preprocess")]
     pub fn preprocess(
-        instructions: Vec<NormalizedInstruction>,
+        instructions: Vec<JoltInstructionRow>,
         memory_init: Vec<(u64, u8)>,
+        entry_address: u64,
     ) -> Result<Self, PreprocessingError> {
-        let entry_address = instructions
-            .first()
-            .map(|instr| instr.address as u64)
-            .unwrap_or(0);
         Ok(Self {
-            bytecode: BytecodePreprocessing::preprocess(instructions, entry_address)?,
+            bytecode: BytecodePreprocessing::preprocess(
+                instructions,
+                entry_address,
+                RV64IMAC_JOLT,
+            )?,
             ram: RAMPreprocessing::preprocess(memory_init),
         })
     }
@@ -214,12 +215,14 @@ impl<PCS: CommitmentScheme> Default for ProgramPreprocessing<PCS> {
 impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     #[tracing::instrument(skip_all, name = "ProgramPreprocessing::preprocess")]
     pub fn preprocess(
-        instructions: Vec<NormalizedInstruction>,
+        instructions: Vec<JoltInstructionRow>,
         memory_init: Vec<(u64, u8)>,
+        entry_address: u64,
     ) -> Result<Self, PreprocessingError> {
         Ok(Self::Full(FullProgramPreprocessing::preprocess(
             instructions,
             memory_init,
+            entry_address,
         )?))
     }
 

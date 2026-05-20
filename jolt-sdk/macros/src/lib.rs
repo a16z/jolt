@@ -547,7 +547,7 @@ impl MacroBuilder {
             {
                 #imports
 
-                let (bytecode, memory_init, program_size, _e_entry) = program.decode();
+                let (bytecode, memory_init, program_size, e_entry) = program.decode();
                 let memory_config = MemoryConfig {
                     max_input_size: #max_input_size,
                     max_output_size: #max_output_size,
@@ -559,7 +559,8 @@ impl MacroBuilder {
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
 
-                let program_data = jolt::ProgramPreprocessing::preprocess(bytecode, memory_init)?;
+                let program_data =
+                    jolt::ProgramPreprocessing::preprocess(bytecode, memory_init, e_entry)?;
                 Ok(JoltSharedPreprocessing::new(
                     program_data,
                     memory_layout,
@@ -596,7 +597,7 @@ impl MacroBuilder {
             {
                 #imports
 
-                let (bytecode, memory_init, program_size, _e_entry) = program.decode();
+                let (bytecode, memory_init, program_size, e_entry) = program.decode();
                 let memory_config = MemoryConfig {
                     max_input_size: #max_input_size,
                     max_output_size: #max_output_size,
@@ -608,7 +609,8 @@ impl MacroBuilder {
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
 
-                let program_data = jolt::ProgramPreprocessing::preprocess(bytecode, memory_init)?;
+                let program_data =
+                    jolt::ProgramPreprocessing::preprocess(bytecode, memory_init, e_entry)?;
                 let shared_preprocessing = JoltSharedPreprocessing::new_committed(
                     program_data,
                     memory_layout,

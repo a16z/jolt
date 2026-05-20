@@ -1017,16 +1017,15 @@ mod tests {
         // Dense coefficients occupy evenly-spaced columns (every K-th column).
         // Coefficient i maps to: row = i / cycles_per_row, col = (i % cycles_per_row) * K
         for (i, &coeff) in rlc_dense.iter().enumerate() {
-            if cycles_per_row == 0 {
-                let scaled_index = i * dense_stride;
-                let row = scaled_index / num_columns;
-                let col = scaled_index % num_columns;
+            if let Some(row) = i.checked_div(cycles_per_row) {
+                let col = (i % cycles_per_row) * K;
                 if row < num_rows && col < num_columns {
                     expected[col] += left_vec[row] * coeff;
                 }
             } else {
-                let row = i / cycles_per_row;
-                let col = (i % cycles_per_row) * K;
+                let scaled_index = i * dense_stride;
+                let row = scaled_index / num_columns;
+                let col = scaled_index % num_columns;
                 if row < num_rows && col < num_columns {
                     expected[col] += left_vec[row] * coeff;
                 }

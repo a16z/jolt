@@ -1,23 +1,23 @@
+#[cfg(feature = "serialization")]
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
-use jolt_riscv::{InstructionKind, NormalizedInstruction};
+use jolt_riscv::{JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow};
 
 use crate::preprocess::PreprocessingError;
 
-#[derive(
-    Default,
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    CanonicalSerialize,
-    CanonicalDeserialize,
-    serde::Serialize,
-    serde::Deserialize,
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(
+        CanonicalSerialize,
+        CanonicalDeserialize,
+        serde::Serialize,
+        serde::Deserialize
+    )
 )]
 pub struct BytecodePreprocessing {
     pub code_size: usize,
-    pub bytecode: Vec<NormalizedInstruction>,
+    pub bytecode: Vec<JoltInstructionRow>,
     /// Maps each unexpanded instruction address to its virtual bytecode index.
     pub pc_map: BytecodePCMapper,
     pub entry_address: u64,
@@ -25,9 +25,17 @@ pub struct BytecodePreprocessing {
 
 impl BytecodePreprocessing {
     pub fn preprocess(
-        mut bytecode: Vec<NormalizedInstruction>,
+        mut bytecode: Vec<JoltInstructionRow>,
         entry_address: u64,
+        profile: JoltInstructionProfile,
     ) -> Result<Self, PreprocessingError> {
+        for instruction in &bytecode {
+            if !profile.supports_jolt(instruction.instruction_kind) {
+                return Err(PreprocessingError::IllegalTargetInstruction(
+                    instruction.instruction_kind,
+                ));
+            }
+        }
         bytecode.insert(0, noop_instruction());
         let pc_map = BytecodePCMapper::try_new(&bytecode)?;
 
@@ -43,11 +51,11 @@ impl BytecodePreprocessing {
     }
 
     pub fn entry_bytecode_index(&self) -> Option<usize> {
-        self.pc_map.get_pc(self.entry_address as usize, 0)
+        self.pc_map.get_first_pc(self.entry_address as usize)
     }
 
-    pub fn get_pc(&self, instruction: &NormalizedInstruction) -> Option<usize> {
-        if instruction.instruction_kind == InstructionKind::NoOp {
+    pub fn get_pc(&self, instruction: &JoltInstructionRow) -> Option<usize> {
+        if instruction.instruction_kind == JoltInstructionKind::NoOp {
             return Some(0);
         }
         self.pc_map.get_pc(
@@ -57,24 +65,23 @@ impl BytecodePreprocessing {
     }
 }
 
-#[derive(
-    Default,
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    CanonicalSerialize,
-    CanonicalDeserialize,
-    serde::Serialize,
-    serde::Deserialize,
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(
+        CanonicalSerialize,
+        CanonicalDeserialize,
+        serde::Serialize,
+        serde::Deserialize
+    )
 )]
 pub struct BytecodePCMapper {
     indices: Vec<Vec<(u16, usize)>>,
 }
 
 impl BytecodePCMapper {
-    pub fn try_new(bytecode: &[NormalizedInstruction]) -> Result<Self, PreprocessingError> {
-        let mut indices = vec![Vec::new(); Self::index_count(bytecode)];
+    pub fn try_new(bytecode: &[JoltInstructionRow]) -> Result<Self, PreprocessingError> {
+        let mut indices = vec![Vec::new(); Self::index_count(bytecode)?];
         let mut last_pc = 0;
         indices[0].push((0, last_pc));
 
@@ -84,7 +91,7 @@ impl BytecodePCMapper {
             }
 
             last_pc += 1;
-            let bytecode_index = Self::get_index(instruction.address);
+            let bytecode_index = Self::try_get_index(instruction.address)?;
             indices[bytecode_index]
                 .push((instruction.virtual_sequence_remaining.unwrap_or(0), last_pc));
         }
@@ -97,11 +104,29 @@ impl BytecodePCMapper {
     }
 
     pub fn get_pc(&self, address: usize, virtual_sequence_remaining: u16) -> Option<usize> {
-        let index = Self::get_index(address);
+        let index = Self::try_get_index(address).ok()?;
         self.indices
             .get(index)?
             .iter()
             .find_map(|(sequence, pc)| (*sequence == virtual_sequence_remaining).then_some(*pc))
+    }
+
+    pub fn get_first_pc(&self, address: usize) -> Option<usize> {
+        let index = if address == 0 {
+            0
+        } else {
+            Self::try_get_index(address).ok()?
+        };
+        self.indices.get(index)?.first().map(|(_sequence, pc)| *pc)
+    }
+
+    fn try_get_index(address: usize) -> Result<usize, PreprocessingError> {
+        if address < RAM_START_ADDRESS as usize
+            || !address.is_multiple_of(ALIGNMENT_FACTOR_BYTECODE)
+        {
+            return Err(PreprocessingError::InvalidBytecodeAddress(address));
+        }
+        Ok(Self::get_index(address))
     }
 
     pub const fn get_index(address: usize) -> usize {
@@ -148,23 +173,23 @@ impl BytecodePCMapper {
         Ok(())
     }
 
-    fn index_count(bytecode: &[NormalizedInstruction]) -> usize {
+    fn index_count(bytecode: &[JoltInstructionRow]) -> Result<usize, PreprocessingError> {
         let max_address = bytecode
             .iter()
             .map(|instruction| instruction.address)
             .max()
             .unwrap_or(0);
         if max_address == 0 {
-            1
+            Ok(1)
         } else {
-            Self::get_index(max_address) + 1
+            Ok(Self::try_get_index(max_address)? + 1)
         }
     }
 }
 
-const fn noop_instruction() -> NormalizedInstruction {
-    NormalizedInstruction {
-        instruction_kind: InstructionKind::NoOp,
+const fn noop_instruction() -> JoltInstructionRow {
+    JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::NoOp,
         address: 0,
         operands: jolt_riscv::NormalizedOperands {
             rs1: None,
@@ -181,7 +206,10 @@ const fn noop_instruction() -> NormalizedInstruction {
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
-    use jolt_riscv::{InstructionKind, NormalizedInstruction, NormalizedOperands};
+    use jolt_riscv::{
+        JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, NormalizedOperands,
+        SourceExtension, RV64IMAC_JOLT,
+    };
 
     use super::{BytecodePCMapper, BytecodePreprocessing, PreprocessingError};
 
@@ -189,12 +217,13 @@ mod tests {
     fn preprocess_prepends_and_pads_bytecode() {
         let bytecode = vec![instruction(0x8000_0000, None)];
 
-        let preprocessing = BytecodePreprocessing::preprocess(bytecode, 0x8000_0000).unwrap();
+        let preprocessing =
+            BytecodePreprocessing::preprocess(bytecode, 0x8000_0000, RV64IMAC_JOLT).unwrap();
 
         assert_eq!(preprocessing.code_size, 2);
         assert_eq!(
             preprocessing.bytecode[0].instruction_kind,
-            InstructionKind::NoOp
+            JoltInstructionKind::NoOp
         );
         assert_eq!(preprocessing.entry_bytecode_index(), Some(1));
     }
@@ -207,9 +236,10 @@ mod tests {
             instruction(0x8000_0004, Some(0)),
         ];
 
-        let preprocessing = BytecodePreprocessing::preprocess(bytecode, 0x8000_0004).unwrap();
+        let preprocessing =
+            BytecodePreprocessing::preprocess(bytecode, 0x8000_0004, RV64IMAC_JOLT).unwrap();
 
-        assert_eq!(preprocessing.entry_bytecode_index(), Some(3));
+        assert_eq!(preprocessing.entry_bytecode_index(), Some(1));
         assert_eq!(
             preprocessing.get_pc(&instruction(0x8000_0004, Some(2))),
             Some(1)
@@ -264,12 +294,17 @@ mod tests {
         );
     }
 
-    fn instruction(
-        address: usize,
-        virtual_sequence_remaining: Option<u16>,
-    ) -> NormalizedInstruction {
-        NormalizedInstruction {
-            instruction_kind: InstructionKind::ADDI,
+    #[test]
+    fn rejects_invalid_bytecode_addresses() {
+        let bytecode = vec![instruction(0x7fff_fffc, None)];
+
+        let err = BytecodePCMapper::try_new(&bytecode).unwrap_err();
+        assert_eq!(err, PreprocessingError::InvalidBytecodeAddress(0x7fff_fffc));
+    }
+
+    fn instruction(address: usize, virtual_sequence_remaining: Option<u16>) -> JoltInstructionRow {
+        JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::ADDI,
             address,
             operands: NormalizedOperands {
                 rd: Some(1),
@@ -281,5 +316,23 @@ mod tests {
             is_first_in_sequence: virtual_sequence_remaining == Some(2),
             is_compressed: false,
         }
+    }
+
+    #[test]
+    fn rejects_profile_illegal_target_rows() {
+        const RV64I_ONLY: JoltInstructionProfile = JoltInstructionProfile {
+            source_extensions: &[SourceExtension::Rv64I],
+            inline_extensions: &[],
+        };
+
+        let mut row = instruction(0x8000_0000, None);
+        row.instruction_kind = JoltInstructionKind::MUL;
+
+        let err =
+            BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64I_ONLY).unwrap_err();
+        assert_eq!(
+            err,
+            PreprocessingError::IllegalTargetInstruction(JoltInstructionKind::MUL)
+        );
     }
 }

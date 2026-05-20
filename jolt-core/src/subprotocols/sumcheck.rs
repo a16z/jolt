@@ -124,11 +124,6 @@ impl BatchedSumcheck {
             let r_j = transcript.challenge_scalar_optimized::<F>();
             r_sumcheck.push(r_j);
 
-            individual_claims
-                .iter_mut()
-                .zip(univariate_polys.into_iter())
-                .for_each(|(claim, poly)| *claim = poly.evaluate(&r_j));
-
             #[cfg(test)]
             {
                 // Sanity check
@@ -141,6 +136,11 @@ impl BatchedSumcheck {
                 );
                 batched_claim = batched_univariate_poly.evaluate(&r_j);
             }
+
+            individual_claims
+                .iter_mut()
+                .zip(univariate_polys)
+                .for_each(|(claim, poly)| *claim = poly.evaluate(&r_j));
 
             for sumcheck in sumcheck_instances.iter_mut() {
                 let num_rounds = sumcheck.num_rounds();
@@ -292,7 +292,7 @@ impl BatchedSumcheck {
 
             individual_claims
                 .iter_mut()
-                .zip(univariate_polys.into_iter())
+                .zip(univariate_polys)
                 .for_each(|(claim, poly)| *claim = poly.evaluate(&r_j));
 
             for sumcheck in sumcheck_instances.iter_mut() {

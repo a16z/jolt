@@ -1,16 +1,16 @@
+#[cfg(feature = "serialization")]
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::BYTES_PER_INSTRUCTION;
 
-#[derive(
-    Default,
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    CanonicalSerialize,
-    CanonicalDeserialize,
-    serde::Serialize,
-    serde::Deserialize,
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(
+        CanonicalSerialize,
+        CanonicalDeserialize,
+        serde::Serialize,
+        serde::Deserialize
+    )
 )]
 pub struct RAMPreprocessing {
     pub min_bytecode_address: u64,

@@ -47,8 +47,7 @@ impl RISCVTrace for SCD {
         // See SCD::exec — SC.D needs an 8-byte reservation set.
         let success = cpu.reservation_covers(address, ReservationWidth::Doubleword);
 
-        let mut inline_sequence =
-            Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let mut inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
 
         // Patch v_success (1=success, 0=failure) into the first VirtualAdvice
         // in the sequence. Locating it by type avoids fragility against

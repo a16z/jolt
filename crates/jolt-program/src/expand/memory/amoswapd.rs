@@ -1,16 +1,35 @@
 use super::*;
 
+/// Lowers `AMOSWAP.D` to load-old, store-new, return-old.
+///
+/// The old doubleword is copied to `rd` after `rs2` has been written to memory,
+/// matching the atomic swap's read-modify-write result in Jolt's sequential
+/// trace model.
 pub(in crate::expand) fn expand_amoswapd(
-    instruction: &NormalizedInstruction,
-    allocator: &mut ExpansionAllocator,
-) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
-    let v_rd = allocator.allocate()?;
-    let mut asm =
-        assembler::InstrAssembler::new(instruction.address, instruction.is_compressed, allocator);
-    asm.emit_i(InstructionKind::LD, v_rd, rs1(instruction)?, 0)?;
-    asm.emit_s(InstructionKind::SD, rs1(instruction)?, rs2(instruction)?, 0)?;
-    asm.emit_i(InstructionKind::ADDI, rd(instruction)?, v_rd, 0)?;
-    let sequence = asm.finalize()?;
-    allocator.release(v_rd)?;
-    Ok(sequence)
+    instruction: &SourceInstructionRow,
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let v_rd = asm.allocate()?;
+
+    asm.expand_i(
+        SourceInstructionKind::LD,
+        v_rd.operand(),
+        reg(rs1(instruction)?),
+        0,
+    );
+    asm.expand_s(
+        SourceInstructionKind::SD,
+        reg(rs1(instruction)?),
+        reg(rs2(instruction)?),
+        0,
+    );
+    asm.expand_i(
+        SourceInstructionKind::ADDI,
+        reg(rd(instruction)?),
+        v_rd.operand(),
+        0,
+    );
+    asm.release(v_rd);
+
+    asm.finalize()
 }

@@ -59,7 +59,7 @@ impl RISCVTrace for CSRRW {
         // Generate and execute inline sequence
         // The inline sequence reads from virtual register and writes to rd,
         // then writes rs1 to virtual register.
-        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
 
         let mut trace = trace;
         for instr in inline_sequence {

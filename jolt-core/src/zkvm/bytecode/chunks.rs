@@ -7,7 +7,7 @@ use crate::zkvm::instruction::{
 };
 use crate::zkvm::lookup_table::LookupTables;
 use common::constants::{REGISTER_COUNT, XLEN};
-use jolt_riscv::NormalizedInstruction;
+use jolt_riscv::JoltInstructionRow;
 
 /// Total number of lanes encoded by committed-bytecode rows.
 pub const fn total_lanes() -> usize {
@@ -100,7 +100,7 @@ pub enum ActiveLaneValue<F: JoltField> {
 
 #[inline(always)]
 pub fn for_each_active_lane_value<F: JoltField>(
-    instruction: &NormalizedInstruction,
+    instruction: &JoltInstructionRow,
     mut visit: impl FnMut(usize, ActiveLaneValue<F>),
 ) {
     let l = BYTECODE_LANE_LAYOUT;
@@ -150,7 +150,7 @@ pub fn for_each_active_lane_value<F: JoltField>(
 
 #[tracing::instrument(skip_all, name = "bytecode::build_committed_bytecode_chunk_coeffs")]
 pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
-    instructions: &[NormalizedInstruction],
+    instructions: &[JoltInstructionRow],
     chunk_count: usize,
 ) -> Vec<Vec<F>> {
     let bytecode_len = instructions.len();
@@ -188,7 +188,7 @@ pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
     name = "bytecode::build_committed_bytecode_chunk_polynomials"
 )]
 pub fn build_committed_bytecode_chunk_polynomials<F: JoltField>(
-    instructions: &[NormalizedInstruction],
+    instructions: &[JoltInstructionRow],
     chunk_count: usize,
 ) -> Vec<MultilinearPolynomial<F>> {
     build_committed_bytecode_chunk_coeffs::<F>(instructions, chunk_count)
