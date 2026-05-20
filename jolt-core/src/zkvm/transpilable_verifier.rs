@@ -50,7 +50,10 @@ use crate::zkvm::claim_reductions::{
 };
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::{
-    bytecode::read_raf_checking::BytecodeReadRafSumcheckVerifier,
+    bytecode::read_raf_checking::{
+        BytecodeReadRafAddressSumcheckVerifier, BytecodeReadRafCycleSumcheckVerifier,
+        BytecodeReadRafSumcheckParams,
+    },
     claim_reductions::{
         IncClaimReductionSumcheckVerifier, InstructionLookupsClaimReductionSumcheckVerifier,
         RamRaClaimReductionSumcheckVerifier,
@@ -87,7 +90,10 @@ use crate::{
     poly::opening_proof::{AbstractVerifierOpeningAccumulator, VerifierOpeningAccumulator},
     pprof_scope,
     subprotocols::{
-        booleanity::{BooleanitySumcheckParams, BooleanitySumcheckVerifier},
+        booleanity::{
+            BooleanityAddressSumcheckVerifier, BooleanityCycleSumcheckVerifier,
+            BooleanitySumcheckParams,
+        },
         sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
@@ -554,25 +560,60 @@ impl<
     }
 
     fn verify_stage6(&mut self) -> Result<(), ProofVerifyError> {
+        let (bytecode_read_raf_params, booleanity_params) = self.verify_stage6a()?;
+        self.verify_stage6b(bytecode_read_raf_params, booleanity_params)
+    }
+
+    fn verify_stage6a(
+        &mut self,
+    ) -> Result<
+        (
+            BytecodeReadRafSumcheckParams<F>,
+            BooleanitySumcheckParams<F>,
+        ),
+        ProofVerifyError,
+    > {
         let n_cycle_vars = self.proof.trace_length.log_2();
-        let bytecode_read_raf = BytecodeReadRafSumcheckVerifier::gen(
+        let bytecode_read_raf = BytecodeReadRafAddressSumcheckVerifier::new(
             &self.preprocessing.shared.bytecode,
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
-
-        let ram_hamming_booleanity =
-            HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
-        let booleanity_params = BooleanitySumcheckParams::new(
+        let booleanity = BooleanityAddressSumcheckVerifier::new(BooleanitySumcheckParams::new(
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
-        );
+        ));
 
-        let booleanity = BooleanitySumcheckVerifier::new(booleanity_params);
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>> =
+            vec![&bytecode_read_raf, &booleanity];
+
+        let _r_stage6a = BatchedSumcheck::verify_standard::<F, ProofTranscript, A>(
+            extract_clear_proof(&self.proof.stage6a_sumcheck_proof),
+            instances,
+            &mut self.opening_accumulator,
+            &mut self.transcript,
+        )?;
+
+        Ok((bytecode_read_raf.into_params(), booleanity.into_params()))
+    }
+
+    fn verify_stage6b(
+        &mut self,
+        bytecode_read_raf_params: BytecodeReadRafSumcheckParams<F>,
+        booleanity_params: BooleanitySumcheckParams<F>,
+    ) -> Result<(), ProofVerifyError> {
+        let bytecode_read_raf = BytecodeReadRafCycleSumcheckVerifier::new(
+            bytecode_read_raf_params,
+            &self.opening_accumulator,
+        );
+        let ram_hamming_booleanity =
+            HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
+        let booleanity =
+            BooleanityCycleSumcheckVerifier::new(booleanity_params, &self.opening_accumulator);
         let ram_ra_virtual = RamRaVirtualSumcheckVerifier::new(
             self.proof.trace_length,
             &self.one_hot_params,
@@ -590,7 +631,7 @@ impl<
             &mut self.transcript,
         );
 
-        // Advice claim reduction (Phase 1 in Stage 6): trusted and untrusted are separate instances.
+        // Advice claim reduction (Phase 1 in Stage 6b): trusted and untrusted are separate instances.
         if self.trusted_advice_commitment.is_some() {
             self.advice_reduction_verifier_trusted = Some(AdviceClaimReductionVerifier::new(
                 AdviceKind::Trusted,
@@ -623,8 +664,8 @@ impl<
             instances.push(advice);
         }
 
-        let _r_stage6 = BatchedSumcheck::verify_standard::<F, ProofTranscript, A>(
-            extract_clear_proof(&self.proof.stage6_sumcheck_proof),
+        let _r_stage6b = BatchedSumcheck::verify_standard::<F, ProofTranscript, A>(
+            extract_clear_proof(&self.proof.stage6b_sumcheck_proof),
             instances,
             &mut self.opening_accumulator,
             &mut self.transcript,

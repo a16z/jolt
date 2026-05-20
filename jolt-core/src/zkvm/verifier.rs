@@ -1055,8 +1055,9 @@ impl<
             &mut self.transcript,
         ));
 
-        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> =
-            vec![&bytecode_read_raf, &booleanity];
+        let instances: Vec<
+            &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
+        > = vec![&bytecode_read_raf, &booleanity];
         BatchedSumcheck::verify(
             &self.proof.stage6a_sumcheck_proof,
             instances,
