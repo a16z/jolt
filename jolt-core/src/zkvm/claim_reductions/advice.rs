@@ -427,7 +427,7 @@ impl<F: JoltField> AdviceClaimReductionVerifier<F> {
         advice_size_bytes: usize,
         trace_len: usize,
         scheduling_reference: PrecommittedSchedulingReference,
-        accumulator: &VerifierOpeningAccumulator<F>,
+        accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
         let params = AdviceClaimReductionParams::new(
             kind,
@@ -547,7 +547,8 @@ mod tests {
         let params = AdviceClaimReductionParams {
             kind: AdviceKind::Trusted,
             phase: PrecommittedPhase::CycleVariables,
-            precommitted: PrecommittedClaimReduction::new(1, 0, scheduling_reference),
+            precommitted: PrecommittedClaimReduction::new(1, 1, 0, scheduling_reference),
+            log_t: 0,
             advice_col_vars: 0,
             advice_row_vars: 1,
             r_val: active_opening_point,
@@ -577,7 +578,8 @@ mod tests {
         let params = AdviceClaimReductionParams {
             kind: AdviceKind::Trusted,
             phase: PrecommittedPhase::CycleVariables,
-            precommitted: PrecommittedClaimReduction::new(1, 0, scheduling_reference),
+            precommitted: PrecommittedClaimReduction::new(1, 1, 0, scheduling_reference),
+            log_t: 0,
             advice_col_vars: 0,
             advice_row_vars: 1,
             r_val,
