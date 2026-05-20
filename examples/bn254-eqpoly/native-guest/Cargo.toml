@@ -1,5 +1,5 @@
 [package]
-name = "bn254-poseidon2-native-guest"
+name = "bn254-eqpoly-native-guest"
 version = "0.1.0"
 edition = "2021"
 

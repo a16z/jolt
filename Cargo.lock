@@ -1096,11 +1096,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "bn254-poseidon2"
+name = "bn254-eqpoly"
 version = "0.1.0"
 dependencies = [
- "bn254-poseidon2-inline-guest",
- "bn254-poseidon2-native-guest",
+ "bn254-eqpoly-inline-guest",
+ "bn254-eqpoly-native-guest",
  "clap",
  "jolt-sdk",
  "tracing",
@@ -1108,7 +1108,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "bn254-poseidon2-inline-guest"
+name = "bn254-eqpoly-inline-guest"
 version = "0.1.0"
 dependencies = [
  "jolt-inlines-bn254-fr",
@@ -1116,7 +1116,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "bn254-poseidon2-native-guest"
+name = "bn254-eqpoly-native-guest"
 version = "0.1.0"
 dependencies = [
  "ark-bn254",

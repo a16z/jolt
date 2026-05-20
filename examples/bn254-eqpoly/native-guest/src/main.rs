@@ -2,4 +2,4 @@
 #![no_main]
 
 #[allow(unused_imports)]
-use bn254_poseidon2_native_guest::*;
+use bn254_eqpoly_native_guest::*;

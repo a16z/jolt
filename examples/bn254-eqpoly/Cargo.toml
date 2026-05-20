@@ -1,5 +1,5 @@
 [package]
-name = "bn254-poseidon2"
+name = "bn254-eqpoly"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,5 +8,5 @@ jolt-sdk = { workspace = true, features = ["host"] }
 tracing-subscriber.workspace = true
 tracing.workspace = true
 clap = { workspace = true, features = ["derive"] }
-inline-guest = { package = "bn254-poseidon2-inline-guest", path = "./inline-guest" }
-native-guest = { package = "bn254-poseidon2-native-guest", path = "./native-guest" }
+inline-guest = { package = "bn254-eqpoly-inline-guest", path = "./inline-guest" }
+native-guest = { package = "bn254-eqpoly-native-guest", path = "./native-guest" }
