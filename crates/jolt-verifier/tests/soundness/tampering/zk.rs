@@ -7,12 +7,60 @@ use crate::{
 
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 #[test]
-#[ignore = "real ZK core fixture tampering is deferred until the ZK verifier frontier"]
 fn missing_zk_vector_commitment_setup_rejects_now() {
     let mut case = crate::support::core_fixtures::zk_muldiv_case();
     case.preprocessing.vc_setup = None;
 
     support::assert_zk_rejects_at_or_before_current_frontier(case.verify());
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[test]
+fn tampered_zk_stage1_remainder_round_count_rejects_now() {
+    let mut case = crate::support::core_fixtures::zk_muldiv_case();
+    pop_committed_round(&mut case.proof.stages.stage1_sumcheck_proof);
+
+    support::assert_zk_rejects_at_or_before_current_frontier(case.verify());
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[test]
+fn tampered_zk_stage2_uniskip_round_count_rejects_now() {
+    let mut case = crate::support::core_fixtures::zk_muldiv_case();
+    pop_committed_round(&mut case.proof.stages.stage2_uni_skip_first_round_proof);
+
+    support::assert_zk_rejects_at_or_before_current_frontier(case.verify());
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[test]
+fn tampered_zk_stage2_batch_output_commitment_count_rejects_now() {
+    let mut case = crate::support::core_fixtures::zk_muldiv_case();
+    pop_committed_output_claim_row(&mut case.proof.stages.stage2_sumcheck_proof);
+
+    support::assert_zk_rejects_at_or_before_current_frontier(case.verify());
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+fn pop_committed_round<F, C>(proof: &mut jolt_sumcheck::SumcheckProof<F, C>)
+where
+    F: jolt_field::Field,
+{
+    let jolt_sumcheck::SumcheckProof::Committed(proof) = proof else {
+        panic!("ZK fixture must use committed sumcheck proofs");
+    };
+    let _ = proof.rounds.pop();
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+fn pop_committed_output_claim_row<F, C>(proof: &mut jolt_sumcheck::SumcheckProof<F, C>)
+where
+    F: jolt_field::Field,
+{
+    let jolt_sumcheck::SumcheckProof::Committed(proof) = proof else {
+        panic!("ZK fixture must use committed sumcheck proofs");
+    };
+    let _ = proof.output_claims.commitments.pop();
 }
 
 #[cfg(any(not(feature = "core-fixtures"), not(feature = "zk")))]

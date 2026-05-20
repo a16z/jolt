@@ -1,16 +1,45 @@
 //! Typed outputs produced by stage 2 verification.
 
 use jolt_field::Field;
+use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
 
 use super::inputs::Stage2BatchOutputOpeningClaims;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2Output<F: Field> {
+pub struct Stage2PublicOutput<F: Field> {
     pub challenges: Vec<F>,
-    pub output_claims: Stage2BatchOutputOpeningClaims<F>,
+    pub batching_coefficients: Vec<F>,
     pub product_uniskip_challenge: F,
+    pub product_tau_low: Vec<F>,
+    pub product_tau_high: F,
+    pub ram_read_write_gamma: F,
+    pub instruction_gamma: F,
+    pub output_address_challenges: Vec<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage2ClearOutput<F: Field> {
+    pub public: Stage2PublicOutput<F>,
+    pub output_claims: Stage2BatchOutputOpeningClaims<F>,
     pub product_uniskip: VerifiedProductUniSkip<F>,
     pub batch: VerifiedStage2Batch<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage2ZkOutput<F: Field, C> {
+    pub public: Stage2PublicOutput<F>,
+    pub product_uniskip_consistency: CommittedSumcheckConsistency<F, C>,
+    pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Stage outputs are short-lived verifier state; boxing would obscure the explicit clear/ZK data flow."
+)]
+pub enum Stage2Output<F: Field, C> {
+    Clear(Stage2ClearOutput<F>),
+    Zk(Stage2ZkOutput<F, C>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,6 +58,9 @@ pub struct VerifiedStage2Batch<F: Field> {
     pub sumcheck_point: jolt_poly::Point<F>,
     pub sumcheck_final_claim: F,
     pub expected_final_claim: F,
+    pub ram_read_write_gamma: F,
+    pub instruction_gamma: F,
+    pub output_address_challenges: Vec<F>,
     pub ram_read_write: VerifiedStage2Sumcheck<F>,
     pub product_remainder: VerifiedStage2Sumcheck<F>,
     pub instruction_claim_reduction: VerifiedStage2Sumcheck<F>,

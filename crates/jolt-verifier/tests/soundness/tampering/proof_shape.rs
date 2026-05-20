@@ -60,7 +60,6 @@ fn zk_claim_payload_in_clear_mode_rejects_now() {
 
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 #[test]
-#[ignore = "real ZK core fixture tampering is deferred until the ZK verifier frontier"]
 fn unexpected_zk_opening_claims_reject_now() {
     assert_zk_target_active("proof.claims.mode_payload");
     let mut case = crate::support::core_fixtures::zk_muldiv_case();
@@ -71,7 +70,6 @@ fn unexpected_zk_opening_claims_reject_now() {
 
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 #[test]
-#[ignore = "real ZK core fixture tampering is deferred until the ZK verifier frontier"]
 fn clear_stage_in_zk_proof_rejects_now() {
     assert_zk_target_active("proof.stages.clear_vs_committed");
     let mut case = crate::support::core_fixtures::zk_muldiv_case();

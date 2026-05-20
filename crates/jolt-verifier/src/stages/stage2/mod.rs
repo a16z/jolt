@@ -6,6 +6,7 @@ mod verify;
 
 pub use inputs::{deps, Deps};
 pub use outputs::{
-    Stage2Output, VerifiedProductUniSkip, VerifiedStage2Batch, VerifiedStage2Sumcheck,
+    Stage2ClearOutput, Stage2Output, Stage2PublicOutput, Stage2ZkOutput, VerifiedProductUniSkip,
+    VerifiedStage2Batch, VerifiedStage2Sumcheck,
 };
 pub use verify::verify;

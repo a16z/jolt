@@ -12,7 +12,7 @@ use jolt_sumcheck::{
 use jolt_transcript::Transcript;
 
 use super::outputs::{
-    SpartanOuterClaimSlots, Stage1ClearOutput, Stage1Output, Stage1PublicOutput, Stage1ZkOutput,
+    Stage1ClearOutput, Stage1Output, Stage1PublicOutput, Stage1ZkOutput,
     VerifiedSpartanOuterSumcheck,
 };
 use crate::{
@@ -263,7 +263,6 @@ where
             public,
             uniskip_consistency,
             remainder_consistency,
-            outer: SpartanOuterClaimSlots::from_dimensions(&dimensions),
         }));
     }
 

@@ -18,7 +18,7 @@ use crate::{
 
 pub struct Deps<'a, F: Field, VcCommitment, PcsCommitment> {
     pub stage1: &'a Stage1Output<F, VcCommitment>,
-    pub stage2: &'a Stage2Output<F>,
+    pub stage2: &'a Stage2Output<F, VcCommitment>,
     pub stage3: &'a Stage3Output<F>,
     pub stage4: &'a Stage4Output<F>,
     pub stage5: &'a Stage5Output<F>,
@@ -33,7 +33,7 @@ pub struct Deps<'a, F: Field, VcCommitment, PcsCommitment> {
 )]
 pub fn deps<'a, F: Field, VcCommitment, PcsCommitment>(
     stage1: &'a Stage1Output<F, VcCommitment>,
-    stage2: &'a Stage2Output<F>,
+    stage2: &'a Stage2Output<F, VcCommitment>,
     stage3: &'a Stage3Output<F>,
     stage4: &'a Stage4Output<F>,
     stage5: &'a Stage5Output<F>,

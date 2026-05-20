@@ -45,18 +45,6 @@ where
     absorb_commitments(proof, trusted_advice_commitment, &mut transcript);
 
     let stage1 = stage1::verify(&checked, preprocessing, proof, &mut transcript)?;
-    if checked.zk {
-        let stage1::Stage1Output::Zk(_stage1) = stage1 else {
-            return Err(VerifierError::ExpectedCommittedProof { field: "stage1" });
-        };
-        return Err(VerifierError::Unimplemented);
-    }
-    let stage1 = match stage1 {
-        stage1::Stage1Output::Clear(stage1) => stage1,
-        stage1::Stage1Output::Zk(_) => {
-            return Err(VerifierError::ExpectedClearProof { field: "stage1" });
-        }
-    };
     let stage2 = stage2::verify(
         &checked,
         preprocessing,
@@ -64,6 +52,17 @@ where
         &mut transcript,
         stage2::deps(&stage1),
     )?;
+
+    if checked.zk {
+        return Err(VerifierError::Unimplemented);
+    }
+
+    let stage1::Stage1Output::Clear(stage1) = stage1 else {
+        return Err(VerifierError::ExpectedClearProof { field: "stage1" });
+    };
+    let stage2::Stage2Output::Clear(stage2) = stage2 else {
+        return Err(VerifierError::ExpectedClearProof { field: "stage2" });
+    };
     let stage3 = stage3::verify(
         &checked,
         preprocessing,

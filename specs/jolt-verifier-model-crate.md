@@ -344,7 +344,13 @@ Per-stage committed consistency should stay visible in the same linear
 may live in `stages/zk.rs`.
 
 The ZK verifier should use the same explicit sequencing discipline as the
-clear verifier, but as three tracks:
+clear verifier. The production top-level verifier must remain one linear
+stage sequence; mode-specific behavior belongs inside typed stage outputs,
+typed stage dependencies, and the stage verifier body, not in separate
+clear/ZK orchestration paths. Do not add placeholder output structs for hidden
+claims just to reserve later BlindFold work; carry committed consistency now
+and add typed BlindFold inputs when the lowering consumes them. The ZK work
+proceeds in three tracks:
 
 - committed sumcheck track: consume committed sumcheck proofs, check
   Fiat-Shamir transcript consistency, check committed proof statement/order/round
@@ -563,6 +569,14 @@ Stage folders make the contract explicit: `inputs.rs` contains typed
 clear proof claims and dependency structs, `outputs.rs` contains verified
 stage outputs, and `verify.rs` contains the protocol flow.
 
+Be conservative when adding new verifier-local structs or helper layers. A new
+type should represent data that a later verifier step actually consumes, a
+proof artifact that must be preserved, or a named protocol concept owned by the
+stage. Do not add structs whose only purpose is to mirror `jolt-claims` opening
+IDs, reserve future BlindFold lowering, or make clear/ZK branching look uniform.
+When the existing modular APIs already encode the statement, domain, or opening
+metadata, use those APIs directly.
+
 The most important invariant is that `stage*/verify.rs` stays explicit and
 linear. A stage verifier should read in protocol order:
 
@@ -581,6 +595,8 @@ linear. A stage verifier should read in protocol order:
 Do not hide transcript sampling, sumcheck calls, equality checks, or claim
 appends behind stage-local helper abstractions. Helpers may prepare typed
 values, but the verification argument must remain visible in `verify.rs`.
+Prefer one linear stage verifier with narrow `match` blocks at the actual proof
+representation boundary over separate clear and ZK helper codepaths.
 
 ## Stage Contract
 
@@ -776,21 +792,18 @@ struct TestCase {
 ```
 
 The harness has separate configured horizons for standard and ZK mode. The
-standard frontier currently reaches `Full`; the ZK frontier remains at
-`Commitments` while committed-stage consistency and BlindFold instance construction
-are still unwired. A completeness case passes when a valid proof reaches the
-configured horizon for its mode. Before the full verifier exists, reaching the
-next unimplemented stage is success; after the full verifier exists, success
-means `Ok(())`.
+standard frontier currently reaches `Full`; the ZK test frontier currently
+reaches `Stage2` committed consistency while BlindFold instance construction and
+final ZK verification remain unwired. A completeness case passes when a valid
+proof reaches the configured horizon for its mode. Before the full verifier
+exists, reaching the next unimplemented stage is success; after the full
+verifier exists, success means `Ok(())`.
 
-For ZK mode, the production `VerifierCheckpoint` does not advance from
-`Commitments` to `Stage1`, `Stage2`, and so on just because committed consistency for
-those stages works. Stages 1-7 are meaningful ZK verifier work, but the logical
-production checkpoint is `Zk`: all committed sumchecks have checked, Stage 8
-has used the PCS ZK opening path, the full BlindFold R1CS instance is built, and
-`jolt_blindfold::verify` has accepted. Per-stage ZK consistency progress should be
-tracked as test-only/internal milestone metadata, not as production verifier
-frontier.
+For ZK mode, the final production checkpoint remains `Zk`: all committed
+sumchecks have checked, Stage 8 has used the PCS ZK opening path, the full
+BlindFold R1CS instance is built, and `jolt_blindfold::verify` has accepted.
+Per-stage ZK consistency progress is still useful as test-harness frontier
+metadata, but it must not be mistaken for complete ZK verification.
 
 `Stage2` means the full core stage 2 boundary, not only the Spartan product
 component. Do not advance the production frontier to `Stage2` until both the
@@ -818,7 +831,7 @@ struct VerifierFrontiers {
 
 const CURRENT_VERIFIER_FRONTIERS: VerifierFrontiers = VerifierFrontiers {
     standard: VerifierCheckpoint::Full,
-    zk: VerifierCheckpoint::Commitments,
+    zk: VerifierCheckpoint::Stage2,
 };
 ```
 
@@ -1179,10 +1192,14 @@ Use this workflow for every new verifier stage:
    transcript challenges, call `jolt-sumcheck`, evaluate `jolt-claims`
    expressions with typed local values, compare claims, append transcript
    values, and return typed outputs.
-9. Unignore or activate tests whose checkpoint is now implemented. Debug by
+9. Before adding a helper, wrapper struct, enum, or separate branch, check
+   whether it carries real verifier state or only mirrors existing modular
+   metadata. Prefer direct calls to the owning modular API and a small local
+   `match` at the proof-representation boundary.
+10. Unignore or activate tests whose checkpoint is now implemented. Debug by
    fixing verifier logic first, then compat translation if the native typed
    payload is wrong.
-10. Run the boundary semgrep gate, focused verifier tests, and affected modular
+11. Run the boundary semgrep gate, focused verifier tests, and affected modular
     crate tests before advancing the production frontier.
 
 ### 1. Generic Proof Model And Compat Boundary
@@ -1503,7 +1520,7 @@ Current implementation status:
 - Standard completeness reaches Stage 4 for real core fixtures, including the
   advice fixture. Stage 4 soundness coverage is active for real core fixtures:
   compressed batch round-polynomial tampering, missing/extra round counts, every
-  typed Stage 4 output claim, and both optional advice claim slots are tampered
+  typed Stage 4 output claim, and both optional advice claim fields are tampered
   after compat conversion and rejected before the current frontier.
 
 ### 9. Stage 5: Instruction Read-RAF, RAM RA Reduction, Register Values
@@ -1861,7 +1878,7 @@ Boundary/API pressure before wiring:
   active cycle variable extraction, final opening-point normalization, and the
   dummy-gap final-scale factor used by core.
 - typed advice payloads should make trusted and untrusted advice independent;
-  verifier logic should not share a single untyped advice slot.
+  verifier logic should not share a single untyped advice field.
 
 #### 10.8 Stage 6 Testing Status
 
@@ -2055,9 +2072,10 @@ Current status:
 - Clear stages 1-7 already call the clear-only claim-taking sumcheck APIs
   from `jolt-sumcheck`. ZK branches use statement-only committed consistency
   APIs so hidden scalar claims are never represented as placeholder values.
-- Stage 1 committed consistency is wired directly in `stage1/verify.rs`: it
-  consumes statement-only committed sumchecks, validates output-claim commitment
-  row counts, derives transcript challenges, and stops before BlindFold.
+- Stage 1 and Stage 2 committed consistency are wired directly in their
+  `stage*/verify.rs` files. They consume statement-only committed sumchecks,
+  validate output-claim commitment row counts, derive transcript challenges,
+  return typed public/consistency outputs, and stop before BlindFold.
 - `JoltVerifierPreprocessing` carries the vector-commitment setup needed by
   BlindFold.
 - `compat` can preserve legacy core BlindFold artifacts, but it does not yet
@@ -2072,8 +2090,8 @@ Tasks:
   transcript consistency checks, BlindFold stage configs, Pedersen/vector-commitment setup,
   `commit_zk`, `open_zk`, `verify_zk`, Dory evaluation commitments, and
   `bind_opening_inputs_zk` transcript effects.
-- Next implementation step: wire Stage 2 committed consistency using the same
-  statement-only pattern established in Stage 1.
+- Next implementation step: wire Stage 3 committed consistency using the same
+  statement-only pattern established in Stages 1 and 2.
 - For each stage, add a committed sumcheck consistency branch directly beside
   the clear branch. It should consume the committed proof(s), check the
   committed transcript consistency, derive the same challenges as core, validate

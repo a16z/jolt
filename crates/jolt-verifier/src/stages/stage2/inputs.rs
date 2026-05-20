@@ -1,17 +1,21 @@
-//! Typed clear-mode inputs consumed by stage 2.
+//! Typed inputs consumed by stage 2.
 
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
-use crate::stages::stage1::Stage1ClearOutput;
+use crate::stages::stage1::{Stage1ClearOutput, Stage1Output, Stage1ZkOutput};
 
 #[derive(Clone, Copy)]
-pub struct Deps<'a, F: Field> {
-    pub stage1: &'a Stage1ClearOutput<F>,
+pub enum Deps<'a, F: Field, C> {
+    Clear { stage1: &'a Stage1ClearOutput<F> },
+    Zk { stage1: &'a Stage1ZkOutput<F, C> },
 }
 
-pub fn deps<F: Field>(stage1: &Stage1ClearOutput<F>) -> Deps<'_, F> {
-    Deps { stage1 }
+pub fn deps<F: Field, C>(stage1: &Stage1Output<F, C>) -> Deps<'_, F, C> {
+    match stage1 {
+        Stage1Output::Clear(stage1) => Deps::Clear { stage1 },
+        Stage1Output::Zk(stage1) => Deps::Zk { stage1 },
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

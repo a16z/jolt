@@ -5,7 +5,7 @@ pub mod outputs;
 mod verify;
 
 pub use outputs::{
-    SpartanOuterClaimSlots, Stage1ClearOutput, Stage1Output, Stage1PublicOutput, Stage1ZkOutput,
+    Stage1ClearOutput, Stage1Output, Stage1PublicOutput, Stage1ZkOutput,
     VerifiedSpartanOuterSumcheck,
 };
 pub use verify::verify;
