@@ -18,7 +18,7 @@ use crate::{
         },
         opening_proof::{
             AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint,
-            ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
+            ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
