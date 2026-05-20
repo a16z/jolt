@@ -228,8 +228,30 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
         &self.cycle_phase_rounds
     }
 
+    pub fn cycle_phase_rounds(&self) -> &[usize] {
+        &self.cycle_phase_rounds
+    }
+
     pub fn address_phase_rounds_debug(&self) -> &[usize] {
         &self.address_phase_rounds
+    }
+
+    pub fn address_phase_rounds(&self) -> &[usize] {
+        &self.address_phase_rounds
+    }
+
+    pub fn poly_opening_round_permutation_be(&self) -> &[usize] {
+        &self.poly_opening_round_permutation_be
+    }
+
+    #[inline]
+    pub fn cycle_phase_skip_scale(&self) -> F {
+        let cycle_gap_len = self.cycle_phase_total_rounds - self.cycle_phase_rounds.len();
+        if cycle_gap_len == 0 {
+            return F::one();
+        }
+        let two_inv = F::from_u64(2).inverse().unwrap();
+        (0..cycle_gap_len).fold(F::one(), |acc, _| acc * two_inv)
     }
 
     pub fn is_address_phase_active_round(&self, round: usize) -> bool {
