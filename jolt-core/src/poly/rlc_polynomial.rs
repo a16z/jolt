@@ -208,9 +208,6 @@ impl<F: JoltField> RLCPolynomial<F> {
                             .push((*coeff, precommitted_poly_map.remove(poly_id).unwrap()));
                     }
                 }
-                CommittedPolynomial::BytecodeChunk(_) | CommittedPolynomial::ProgramImageInit => {
-                    panic!("committed program polynomials require precommitted opening integration")
-                }
             }
         }
 
