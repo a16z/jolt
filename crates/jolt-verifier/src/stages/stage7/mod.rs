@@ -5,5 +5,5 @@ pub mod outputs;
 pub mod verify;
 
 pub use inputs::{deps, Deps};
-pub use outputs::Stage7Output;
+pub use outputs::{Stage7ClearOutput, Stage7Output, Stage7ZkOutput};
 pub use verify::verify;

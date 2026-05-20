@@ -158,6 +158,33 @@ fn tampered_zk_stage6_batch_output_commitment_count_rejects_now() {
 }
 
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[test]
+fn tampered_zk_stage7_batch_round_count_rejects_now() {
+    let mut case = crate::support::core_fixtures::zk_muldiv_case();
+    pop_committed_round(&mut case.proof.stages.stage7_sumcheck_proof);
+
+    support::assert_zk_rejects_at_or_before_current_frontier(case.verify());
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[test]
+fn tampered_zk_stage7_batch_round_degree_rejects_now() {
+    let mut case = crate::support::core_fixtures::zk_muldiv_case();
+    exceed_first_committed_round_degree_bound(&mut case.proof.stages.stage7_sumcheck_proof);
+
+    support::assert_zk_rejects_at_or_before_current_frontier(case.verify());
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[test]
+fn tampered_zk_stage7_batch_output_commitment_count_rejects_now() {
+    let mut case = crate::support::core_fixtures::zk_muldiv_case();
+    pop_committed_output_claim_row(&mut case.proof.stages.stage7_sumcheck_proof);
+
+    support::assert_zk_rejects_at_or_before_current_frontier(case.verify());
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
 fn pop_committed_round<F, C>(proof: &mut jolt_sumcheck::SumcheckProof<F, C>)
 where
     F: jolt_field::Field,

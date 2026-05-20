@@ -80,36 +80,24 @@ where
         &mut transcript,
         stage6::deps(&stage1, &stage2, &stage3, &stage4, &stage5)?,
     )?;
-
-    if checked.zk {
-        return Err(VerifierError::Unimplemented);
-    }
-
-    let stage1::Stage1Output::Clear(stage1) = stage1 else {
-        return Err(VerifierError::ExpectedClearProof { field: "stage1" });
-    };
-    let stage2::Stage2Output::Clear(stage2) = stage2 else {
-        return Err(VerifierError::ExpectedClearProof { field: "stage2" });
-    };
-    let stage3::Stage3Output::Clear(stage3) = stage3 else {
-        return Err(VerifierError::ExpectedClearProof { field: "stage3" });
-    };
-    let stage4::Stage4Output::Clear(stage4) = stage4 else {
-        return Err(VerifierError::ExpectedClearProof { field: "stage4" });
-    };
-    let stage5::Stage5Output::Clear(stage5) = stage5 else {
-        return Err(VerifierError::ExpectedClearProof { field: "stage5" });
-    };
-    let stage6::Stage6Output::Clear(stage6) = stage6 else {
-        return Err(VerifierError::ExpectedClearProof { field: "stage6" });
-    };
     let stage7 = stage7::verify(
         &checked,
         preprocessing,
         proof,
         &mut transcript,
-        stage7::deps(&stage1, &stage2, &stage3, &stage4, &stage5, &stage6),
+        stage7::deps(&stage4, &stage6)?,
     )?;
+
+    if checked.zk {
+        return Err(VerifierError::Unimplemented);
+    }
+
+    let stage6::Stage6Output::Clear(stage6) = stage6 else {
+        return Err(VerifierError::ExpectedClearProof { field: "stage6" });
+    };
+    let stage7::Stage7Output::Clear(stage7) = stage7 else {
+        return Err(VerifierError::ExpectedClearProof { field: "stage7" });
+    };
     let _stage8 = stage8::verify(
         &checked,
         preprocessing,

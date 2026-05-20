@@ -1,28 +1,40 @@
-//! Typed clear-mode inputs consumed by stage 7.
+//! Typed inputs consumed by stage 7.
 
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
 use crate::stages::{
-    stage1::Stage1ClearOutput, stage2::Stage2ClearOutput, stage3::Stage3ClearOutput,
-    stage4::Stage4ClearOutput, stage5::Stage5ClearOutput, stage6::Stage6ClearOutput,
+    stage4::{Stage4ClearOutput, Stage4Output},
+    stage6::{Stage6ClearOutput, Stage6Output, Stage6ZkOutput},
 };
 
 #[derive(Clone, Copy)]
-pub struct Deps<'a, F: Field> {
-    pub stage4: &'a Stage4ClearOutput<F>,
-    pub stage6: &'a Stage6ClearOutput<F>,
+pub enum Deps<'a, F: Field, C> {
+    Clear {
+        stage4: &'a Stage4ClearOutput<F>,
+        stage6: &'a Stage6ClearOutput<F>,
+    },
+    Zk {
+        stage6: &'a Stage6ZkOutput<F, C>,
+    },
 }
 
-pub fn deps<'a, F: Field>(
-    _stage1: &'a Stage1ClearOutput<F>,
-    _stage2: &'a Stage2ClearOutput<F>,
-    _stage3: &'a Stage3ClearOutput<F>,
-    stage4: &'a Stage4ClearOutput<F>,
-    _stage5: &'a Stage5ClearOutput<F>,
-    stage6: &'a Stage6ClearOutput<F>,
-) -> Deps<'a, F> {
-    Deps { stage4, stage6 }
+pub fn deps<'a, F: Field, C>(
+    stage4: &'a Stage4Output<F, C>,
+    stage6: &'a Stage6Output<F, C>,
+) -> Result<Deps<'a, F, C>, crate::VerifierError> {
+    match (stage4, stage6) {
+        (Stage4Output::Clear(stage4), Stage6Output::Clear(stage6)) => {
+            Ok(Deps::Clear { stage4, stage6 })
+        }
+        (Stage4Output::Zk(_), Stage6Output::Zk(stage6)) => Ok(Deps::Zk { stage6 }),
+        (Stage4Output::Clear(_), Stage6Output::Zk(_)) => {
+            Err(crate::VerifierError::ExpectedClearProof { field: "stage6" })
+        }
+        (Stage4Output::Zk(_), Stage6Output::Clear(_)) => {
+            Err(crate::VerifierError::ExpectedCommittedProof { field: "stage6" })
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
