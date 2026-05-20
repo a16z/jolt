@@ -18,20 +18,26 @@ use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::try_eq_mle;
 use jolt_riscv::NUM_CIRCUIT_FLAGS;
-use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim};
+use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
 use num_traits::{One, Zero};
 
 use super::{
     inputs::{AdviceCyclePhaseOutputClaim, Deps, Stage6Claims},
     outputs::{
-        Stage6Output, VerifiedAdviceCyclePhaseSumcheck, VerifiedBooleanitySumcheck,
+        AdviceCyclePhasePublicOutput, BooleanityPublicOutput, BytecodeReadRafPublicOutput,
+        InstructionRaVirtualizationPublicOutput, RamRaVirtualizationPublicOutput,
+        Stage6ClearOutput, Stage6Output, Stage6PublicOutput, Stage6SumcheckPublicOutput,
+        Stage6ZkOutput, VerifiedAdviceCyclePhaseSumcheck, VerifiedBooleanitySumcheck,
         VerifiedBytecodeReadRafSumcheck, VerifiedInstructionRaVirtualizationSumcheck,
         VerifiedRamRaVirtualizationSumcheck, VerifiedStage6Batch, VerifiedStage6Sumcheck,
     },
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, verifier::CheckedInputs,
+    preprocessing::JoltVerifierPreprocessing,
+    proof::JoltProof,
+    stages::{committed, stage4::Stage4ClearOutput},
+    verifier::CheckedInputs,
     VerifierError,
 };
 
@@ -64,18 +70,23 @@ pub fn verify<PCS, VC, T, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
-    deps: Deps<'_, PCS::Field>,
-) -> Result<Stage6Output<PCS::Field>, VerifierError>
+    deps: Deps<'_, PCS::Field, VC::Output>,
+) -> Result<Stage6Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    if checked.zk {
-        return Err(VerifierError::Unimplemented);
+    match (checked.zk, deps) {
+        (true, Deps::Clear { .. }) => {
+            return Err(VerifierError::ExpectedCommittedProof { field: "stage5" });
+        }
+        (false, Deps::Zk { .. }) => {
+            return Err(VerifierError::ExpectedClearProof { field: "stage5" });
+        }
+        _ => {}
     }
 
-    let claims = &proof.clear_claims()?.stage6;
     let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;
     let trace_dimensions =
@@ -156,7 +167,17 @@ where
     let stage5_gammas =
         transcript.challenge_scalar_powers(2 + LookupTableKind::<RISCV_XLEN>::COUNT);
 
-    let mut booleanity_reference_address = deps.stage5.batch.instruction_read_raf.r_address.clone();
+    let (stage5_instruction_address, stage5_instruction_cycle) = match deps {
+        Deps::Clear { stage5, .. } => (
+            &stage5.batch.instruction_read_raf.r_address,
+            &stage5.batch.instruction_read_raf.r_cycle,
+        ),
+        Deps::Zk { stage5 } => (
+            &stage5.instruction_read_raf.r_address,
+            &stage5.instruction_read_raf.r_cycle,
+        ),
+    };
+    let mut booleanity_reference_address = stage5_instruction_address.clone();
     booleanity_reference_address.reverse();
     if booleanity_reference_address.len() < proof.one_hot_config.committed_chunk_bits() {
         let missing =
@@ -167,7 +188,7 @@ where
             [booleanity_reference_address.len() - proof.one_hot_config.committed_chunk_bits()..]
             .to_vec();
     }
-    let mut booleanity_reference_cycle = deps.stage5.batch.instruction_read_raf.r_cycle.clone();
+    let mut booleanity_reference_cycle = stage5_instruction_cycle.clone();
     booleanity_reference_cycle.reverse();
     let mut booleanity_gamma = transcript.challenge();
     if booleanity_gamma.is_zero() {
@@ -185,11 +206,307 @@ where
         .unwrap_or_else(PCS::Field::one);
     let inc_gamma = transcript.challenge_scalar();
 
+    let public =
+        |challenges: Vec<PCS::Field>, batching_coefficients: Vec<PCS::Field>| Stage6PublicOutput {
+            challenges,
+            batching_coefficients,
+            bytecode_gamma_powers: bytecode_gamma_powers.clone(),
+            stage1_gammas: stage1_gammas.clone(),
+            stage2_gammas: stage2_gammas.clone(),
+            stage3_gammas: stage3_gammas.clone(),
+            stage4_gammas: stage4_gammas.clone(),
+            stage5_gammas: stage5_gammas.clone(),
+            booleanity_reference_address: booleanity_reference_address.clone(),
+            booleanity_reference_cycle: booleanity_reference_cycle.clone(),
+            booleanity_gamma,
+            instruction_ra_gamma_powers: instruction_ra_gamma_powers.clone(),
+            inc_gamma,
+        };
+
+    if checked.zk {
+        let Deps::Zk { stage5 } = deps else {
+            return Err(VerifierError::ExpectedCommittedProof { field: "stage5" });
+        };
+        let mut statements = vec![
+            SumcheckStatement::new(
+                bytecode_claims.sumcheck.rounds,
+                bytecode_claims.sumcheck.degree,
+            ),
+            SumcheckStatement::new(
+                booleanity_claims.sumcheck.rounds,
+                booleanity_claims.sumcheck.degree,
+            ),
+            SumcheckStatement::new(
+                ram_hamming_claims.sumcheck.rounds,
+                ram_hamming_claims.sumcheck.degree,
+            ),
+            SumcheckStatement::new(ram_ra_claims.sumcheck.rounds, ram_ra_claims.sumcheck.degree),
+            SumcheckStatement::new(
+                instruction_ra_claims.sumcheck.rounds,
+                instruction_ra_claims.sumcheck.degree,
+            ),
+            SumcheckStatement::new(inc_claims.sumcheck.rounds, inc_claims.sumcheck.degree),
+        ];
+        if let Some(claim) = &trusted_advice_claims {
+            statements.push(SumcheckStatement::new(
+                claim.sumcheck.rounds,
+                claim.sumcheck.degree,
+            ));
+        }
+        if let Some(claim) = &untrusted_advice_claims {
+            statements.push(SumcheckStatement::new(
+                claim.sumcheck.rounds,
+                claim.sumcheck.degree,
+            ));
+        }
+        let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
+            &statements,
+            &proof.stages.stage6_sumcheck_proof,
+            transcript,
+        )
+        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+            stage: JoltStageId::BytecodeReadRaf,
+            reason: error.to_string(),
+        })?;
+
+        let bytecode_output_openings =
+            bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf);
+        let booleanity_output_openings =
+            booleanity::booleanity_output_openings(formula_dimensions.ra_layout);
+        let ram_ra_output_openings =
+            ram::ra_virtualization_output_openings(formula_dimensions.ram_ra_virtualization);
+        let instruction_ra_output_openings = instruction::ra_virtualization_output_openings(
+            formula_dimensions.instruction_ra_virtualization,
+        );
+        let flat_instruction_ra_output_openings = instruction_ra_output_openings.all();
+        let committed_output_claims = bytecode_output_openings.bytecode_ra.len()
+            + booleanity_output_openings.len()
+            + 1
+            + ram_ra_output_openings.len()
+            + flat_instruction_ra_output_openings.len()
+            + 2
+            + usize::from(trusted_advice_claims.is_some())
+            + usize::from(untrusted_advice_claims.is_some());
+        committed::require_output_claim_commitments(
+            checked,
+            &proof.stages.stage6_sumcheck_proof,
+            "stage6_sumcheck_proof",
+            committed_output_claims,
+            JoltStageId::BytecodeReadRaf,
+        )?;
+
+        let bytecode_point = consistency
+            .try_instance_point(bytecode_claims.sumcheck.rounds)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltStageId::BytecodeReadRaf,
+                reason: error.to_string(),
+            })?;
+        let bytecode_opening_point = formula_dimensions
+            .bytecode_read_raf
+            .opening_point(&bytecode_point)
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltStageId::BytecodeReadRaf,
+                reason: error.to_string(),
+            })?;
+        let bytecode_ra_opening_points = proof
+            .one_hot_config
+            .committed_address_chunks(&bytecode_opening_point.r_address)
+            .into_iter()
+            .map(|r_address_chunk| {
+                [
+                    r_address_chunk.as_slice(),
+                    bytecode_opening_point.r_cycle.as_slice(),
+                ]
+                .concat()
+            })
+            .collect::<Vec<_>>();
+
+        let booleanity_point = consistency
+            .try_instance_point(booleanity_claims.sumcheck.rounds)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltStageId::Booleanity,
+                reason: error.to_string(),
+            })?;
+        let booleanity_opening_point = booleanity_dimensions
+            .opening_point(&booleanity_point)
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltStageId::Booleanity,
+                reason: error.to_string(),
+            })?;
+
+        let ram_hamming_point = consistency
+            .try_instance_point(ram_hamming_claims.sumcheck.rounds)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltStageId::RamHammingBooleanity,
+                reason: error.to_string(),
+            })?;
+        let ram_hamming_opening_point = trace_dimensions
+            .cycle_opening_point(&ram_hamming_point)
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltStageId::RamHammingBooleanity,
+                reason: error.to_string(),
+            })?;
+
+        let ram_ra_point = consistency
+            .try_instance_point(ram_ra_claims.sumcheck.rounds)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltStageId::RamRaVirtualization,
+                reason: error.to_string(),
+            })?;
+        let ram_ra_cycle = trace_dimensions
+            .cycle_opening_point(&ram_ra_point)
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltStageId::RamRaVirtualization,
+                reason: error.to_string(),
+            })?;
+        let ram_reduced_opening_point = &stage5.ram_ra_claim_reduction.opening_point;
+        if ram_reduced_opening_point.len() != log_k + log_t {
+            return Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltStageId::RamRaVirtualization,
+                reason: format!(
+                    "RAM RA reduction opening point length mismatch: expected {}, got {}",
+                    log_k + log_t,
+                    ram_reduced_opening_point.len()
+                ),
+            });
+        }
+        let (ram_reduced_address, _) = ram_reduced_opening_point.split_at(log_k);
+        let ram_ra_opening_point = [ram_reduced_address, ram_ra_cycle.as_slice()].concat();
+        let ram_ra_opening_points = proof
+            .one_hot_config
+            .committed_address_chunks(ram_reduced_address)
+            .into_iter()
+            .map(|r_address_chunk| [r_address_chunk.as_slice(), ram_ra_cycle.as_slice()].concat())
+            .collect::<Vec<_>>();
+
+        let instruction_ra_point = consistency
+            .try_instance_point(instruction_ra_claims.sumcheck.rounds)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltStageId::InstructionRaVirtualization,
+                reason: error.to_string(),
+            })?;
+        let instruction_ra_cycle = trace_dimensions
+            .cycle_opening_point(&instruction_ra_point)
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltStageId::InstructionRaVirtualization,
+                reason: error.to_string(),
+            })?;
+        let instruction_ra_opening_points = proof
+            .one_hot_config
+            .committed_address_chunks(&stage5.instruction_read_raf.r_address)
+            .into_iter()
+            .map(|r_address_chunk| {
+                [r_address_chunk.as_slice(), instruction_ra_cycle.as_slice()].concat()
+            })
+            .collect::<Vec<_>>();
+        let instruction_ra_opening_point = [
+            stage5.instruction_read_raf.r_address.as_slice(),
+            instruction_ra_cycle.as_slice(),
+        ]
+        .concat();
+
+        let inc_point = consistency
+            .try_instance_point(inc_claims.sumcheck.rounds)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltStageId::IncClaimReduction,
+                reason: error.to_string(),
+            })?;
+        let inc_opening_point =
+            trace_dimensions
+                .cycle_opening_point(&inc_point)
+                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltStageId::IncClaimReduction,
+                    reason: error.to_string(),
+                })?;
+
+        let trusted_advice = if let (Some(layout), Some(claim)) = (
+            trusted_advice_layout.as_ref(),
+            trusted_advice_claims.as_ref(),
+        ) {
+            Some(advice_cycle_phase_public(
+                &consistency,
+                claim,
+                layout,
+                JoltAdviceKind::Trusted,
+            )?)
+        } else {
+            None
+        };
+        let untrusted_advice = if let (Some(layout), Some(claim)) = (
+            untrusted_advice_layout.as_ref(),
+            untrusted_advice_claims.as_ref(),
+        ) {
+            Some(advice_cycle_phase_public(
+                &consistency,
+                claim,
+                layout,
+                JoltAdviceKind::Untrusted,
+            )?)
+        } else {
+            None
+        };
+
+        return Ok(Stage6Output::Zk(Stage6ZkOutput {
+            public: public(
+                consistency.challenges(),
+                consistency.batching_coefficients.clone(),
+            ),
+            batch_consistency: consistency,
+            bytecode_read_raf: BytecodeReadRafPublicOutput {
+                sumcheck_point: bytecode_point,
+                r_address: bytecode_opening_point.r_address,
+                r_cycle: bytecode_opening_point.r_cycle,
+                full_opening_point: bytecode_opening_point.opening_point,
+                bytecode_ra_opening_points,
+            },
+            booleanity: BooleanityPublicOutput {
+                sumcheck_point: booleanity_point,
+                r_address: booleanity_opening_point.r_address,
+                r_cycle: booleanity_opening_point.r_cycle,
+                opening_point: booleanity_opening_point.opening_point,
+                reference_address: booleanity_reference_address,
+                reference_cycle: booleanity_reference_cycle,
+            },
+            ram_hamming_booleanity: Stage6SumcheckPublicOutput {
+                sumcheck_point: ram_hamming_point,
+                opening_point: ram_hamming_opening_point,
+            },
+            ram_ra_virtualization: RamRaVirtualizationPublicOutput {
+                sumcheck_point: ram_ra_point,
+                opening_point: ram_ra_opening_point,
+                ram_ra_opening_points,
+            },
+            instruction_ra_virtualization: InstructionRaVirtualizationPublicOutput {
+                sumcheck_point: instruction_ra_point,
+                opening_point: instruction_ra_opening_point,
+                instruction_ra_opening_points,
+            },
+            inc_claim_reduction: Stage6SumcheckPublicOutput {
+                sumcheck_point: inc_point,
+                opening_point: inc_opening_point,
+            },
+            trusted_advice_cycle_phase: trusted_advice,
+            untrusted_advice_cycle_phase: untrusted_advice,
+        }));
+    }
+
+    let Deps::Clear {
+        stage1,
+        stage2,
+        stage3,
+        stage4,
+        stage5,
+    } = deps
+    else {
+        return Err(VerifierError::ExpectedClearProof { field: "stage5" });
+    };
+    let claims = &proof.clear_claims()?.stage6;
+
     let bytecode_input_openings = bytecode::read_raf_input_openings::<RISCV_XLEN>();
     let [(spartan_shift_unexpanded_pc, instruction_input_unexpanded_pc)] =
         bytecode::read_raf_consistency_openings();
-    if deps.stage3.output_claims.shift.unexpanded_pc
-        != deps.stage3.output_claims.instruction_input.unexpanded_pc
+    if stage3.output_claims.shift.unexpanded_pc
+        != stage3.output_claims.instruction_input.unexpanded_pc
     {
         return Err(VerifierError::StageClaimOpeningMismatch {
             stage: JoltStageId::BytecodeReadRaf,
@@ -209,130 +526,107 @@ where
         bytecode_read_raf: bytecode_claims.input.expression.try_evaluate(
             |id| {
                 if *id == bytecode_input_openings.spartan_outer.unexpanded_pc {
-                    return Ok(deps.stage1.outer.unexpanded_pc);
+                    return Ok(stage1.outer.unexpanded_pc);
                 }
                 if *id == bytecode_input_openings.spartan_outer.imm {
-                    return Ok(deps.stage1.outer.imm);
+                    return Ok(stage1.outer.imm);
                 }
                 for (flag, opening) in &bytecode_input_openings.spartan_outer.op_flags {
                     if *id == *opening {
-                        return deps
-                            .stage1
+                        return stage1
                             .outer
                             .claim(JoltVirtualPolynomial::OpFlags(*flag))
                             .ok_or(VerifierError::MissingOpeningClaim { id: *id });
                     }
                 }
                 if *id == bytecode_input_openings.spartan_product.jump {
-                    return Ok(deps.stage2.output_claims.product_remainder.jump_flag);
+                    return Ok(stage2.output_claims.product_remainder.jump_flag);
                 }
                 if *id == bytecode_input_openings.spartan_product.branch {
-                    return Ok(deps.stage2.output_claims.product_remainder.branch_flag);
+                    return Ok(stage2.output_claims.product_remainder.branch_flag);
                 }
                 if *id
                     == bytecode_input_openings
                         .spartan_product
                         .write_lookup_output_to_rd
                 {
-                    return Ok(deps
-                        .stage2
+                    return Ok(stage2
                         .output_claims
                         .product_remainder
                         .write_lookup_output_to_rd);
                 }
                 if *id == bytecode_input_openings.spartan_product.virtual_instruction {
-                    return Ok(deps
-                        .stage2
-                        .output_claims
-                        .product_remainder
-                        .virtual_instruction);
+                    return Ok(stage2.output_claims.product_remainder.virtual_instruction);
                 }
                 if *id == bytecode_input_openings.instruction_input.imm {
-                    return Ok(deps.stage3.output_claims.instruction_input.imm);
+                    return Ok(stage3.output_claims.instruction_input.imm);
                 }
                 if *id
                     == bytecode_input_openings
                         .instruction_input
                         .unexpanded_pc_from_shift
                 {
-                    return Ok(deps.stage3.output_claims.shift.unexpanded_pc);
+                    return Ok(stage3.output_claims.shift.unexpanded_pc);
                 }
                 if *id
                     == bytecode_input_openings
                         .instruction_input
                         .left_operand_is_rs1_value
                 {
-                    return Ok(deps
-                        .stage3
-                        .output_claims
-                        .instruction_input
-                        .left_operand_is_rs1);
+                    return Ok(stage3.output_claims.instruction_input.left_operand_is_rs1);
                 }
                 if *id == bytecode_input_openings.instruction_input.left_operand_is_pc {
-                    return Ok(deps
-                        .stage3
-                        .output_claims
-                        .instruction_input
-                        .left_operand_is_pc);
+                    return Ok(stage3.output_claims.instruction_input.left_operand_is_pc);
                 }
                 if *id
                     == bytecode_input_openings
                         .instruction_input
                         .right_operand_is_rs2_value
                 {
-                    return Ok(deps
-                        .stage3
-                        .output_claims
-                        .instruction_input
-                        .right_operand_is_rs2);
+                    return Ok(stage3.output_claims.instruction_input.right_operand_is_rs2);
                 }
                 if *id
                     == bytecode_input_openings
                         .instruction_input
                         .right_operand_is_imm
                 {
-                    return Ok(deps
-                        .stage3
-                        .output_claims
-                        .instruction_input
-                        .right_operand_is_imm);
+                    return Ok(stage3.output_claims.instruction_input.right_operand_is_imm);
                 }
                 if *id == bytecode_input_openings.instruction_input.is_noop_from_shift {
-                    return Ok(deps.stage3.output_claims.shift.is_noop);
+                    return Ok(stage3.output_claims.shift.is_noop);
                 }
                 if *id
                     == bytecode_input_openings
                         .instruction_input
                         .virtual_instruction_from_shift
                 {
-                    return Ok(deps.stage3.output_claims.shift.is_virtual);
+                    return Ok(stage3.output_claims.shift.is_virtual);
                 }
                 if *id
                     == bytecode_input_openings
                         .instruction_input
                         .is_first_in_sequence_from_shift
                 {
-                    return Ok(deps.stage3.output_claims.shift.is_first_in_sequence);
+                    return Ok(stage3.output_claims.shift.is_first_in_sequence);
                 }
                 if *id == bytecode_input_openings.registers_read_write.rd_wa {
-                    return Ok(deps.stage4.output_claims.registers_read_write.rd_wa);
+                    return Ok(stage4.output_claims.registers_read_write.rd_wa);
                 }
                 if *id == bytecode_input_openings.registers_read_write.rs1_ra {
-                    return Ok(deps.stage4.output_claims.registers_read_write.rs1_ra);
+                    return Ok(stage4.output_claims.registers_read_write.rs1_ra);
                 }
                 if *id == bytecode_input_openings.registers_read_write.rs2_ra {
-                    return Ok(deps.stage4.output_claims.registers_read_write.rs2_ra);
+                    return Ok(stage4.output_claims.registers_read_write.rs2_ra);
                 }
                 if *id == bytecode_input_openings.registers_val_evaluation.rd_wa {
-                    return Ok(deps.stage5.output_claims.registers_val_evaluation.rd_wa);
+                    return Ok(stage5.output_claims.registers_val_evaluation.rd_wa);
                 }
                 if *id
                     == bytecode_input_openings
                         .registers_val_evaluation
                         .instruction_raf_flag
                 {
-                    return Ok(deps
-                        .stage5
+                    return Ok(stage5
                         .output_claims
                         .instruction_read_raf
                         .instruction_raf_flag);
@@ -342,8 +636,7 @@ where
                     .lookup_table_flags
                 {
                     if *id == *opening {
-                        return deps
-                            .stage5
+                        return stage5
                             .output_claims
                             .instruction_read_raf
                             .lookup_table_flags
@@ -353,10 +646,10 @@ where
                     }
                 }
                 if *id == bytecode_input_openings.spartan_outer_pc {
-                    return Ok(deps.stage1.outer.pc);
+                    return Ok(stage1.outer.pc);
                 }
                 if *id == bytecode_input_openings.spartan_shift_pc {
-                    return Ok(deps.stage3.output_claims.shift.pc);
+                    return Ok(stage3.output_claims.shift.pc);
                 }
                 Err(VerifierError::MissingOpeningClaim { id: *id })
             },
@@ -388,7 +681,7 @@ where
         ram_ra_virtualization: ram_ra_claims.input.expression.try_evaluate(
             |id| match *id {
                 id if id == ram_ra_reduced => {
-                    Ok(deps.stage5.output_claims.ram_ra_claim_reduction.ram_ra)
+                    Ok(stage5.output_claims.ram_ra_claim_reduction.ram_ra)
                 }
                 id => Err(VerifierError::MissingOpeningClaim { id }),
             },
@@ -399,8 +692,7 @@ where
             |id| {
                 for (index, opening) in instruction_ra_input_openings.iter().enumerate() {
                     if *id == *opening {
-                        return deps
-                            .stage5
+                        return stage5
                             .output_claims
                             .instruction_read_raf
                             .instruction_ra
@@ -421,15 +713,13 @@ where
         )?,
         inc_claim_reduction: inc_claims.input.expression.try_evaluate(
             |id| match *id {
-                id if id == ram_inc_read_write => Ok(deps.stage2.output_claims.ram_read_write.inc),
-                id if id == ram_inc_val_check => {
-                    Ok(deps.stage4.output_claims.ram_val_check.ram_inc)
-                }
+                id if id == ram_inc_read_write => Ok(stage2.output_claims.ram_read_write.inc),
+                id if id == ram_inc_val_check => Ok(stage4.output_claims.ram_val_check.ram_inc),
                 id if id == rd_inc_read_write => {
-                    Ok(deps.stage4.output_claims.registers_read_write.rd_inc)
+                    Ok(stage4.output_claims.registers_read_write.rd_inc)
                 }
                 id if id == rd_inc_val_evaluation => {
-                    Ok(deps.stage5.output_claims.registers_val_evaluation.rd_inc)
+                    Ok(stage5.output_claims.registers_val_evaluation.rd_inc)
                 }
                 id => Err(VerifierError::MissingOpeningClaim { id }),
             },
@@ -444,13 +734,13 @@ where
         trusted_advice_cycle_phase: trusted_advice_claims
             .as_ref()
             .map(|claim| {
-                advice_cycle_phase_input::<PCS::Field>(claim, deps, JoltAdviceKind::Trusted)
+                advice_cycle_phase_input::<PCS::Field>(claim, stage4, JoltAdviceKind::Trusted)
             })
             .transpose()?,
         untrusted_advice_cycle_phase: untrusted_advice_claims
             .as_ref()
             .map(|claim| {
-                advice_cycle_phase_input::<PCS::Field>(claim, deps, JoltAdviceKind::Untrusted)
+                advice_cycle_phase_input::<PCS::Field>(claim, stage4, JoltAdviceKind::Untrusted)
             })
             .transpose()?,
     };
@@ -555,7 +845,7 @@ where
         });
     }
 
-    let stage1_point = deps.stage1.remainder.sumcheck_point.as_slice();
+    let stage1_point = stage1.remainder.sumcheck_point.as_slice();
     let (_, stage1_cycle_binding) =
         stage1_point
             .split_first()
@@ -568,16 +858,14 @@ where
         .rev()
         .copied()
         .collect::<Vec<_>>();
-    let stage2_cycle = deps.stage2.batch.product_remainder.opening_point.clone();
-    let stage3_cycle = deps.stage3.batch.shift.opening_point.clone();
-    let (stage4_register_address, stage4_cycle) = deps
-        .stage4
+    let stage2_cycle = stage2.batch.product_remainder.opening_point.clone();
+    let stage3_cycle = stage3.batch.shift.opening_point.clone();
+    let (stage4_register_address, stage4_cycle) = stage4
         .batch
         .registers_read_write
         .opening_point
         .split_at(REGISTER_ADDRESS_BITS);
-    let (stage5_register_address, stage5_cycle) = deps
-        .stage5
+    let (stage5_register_address, stage5_cycle) = stage5
         .batch
         .registers_val_evaluation
         .opening_point
@@ -777,7 +1065,7 @@ where
             ),
         });
     }
-    let ram_reduced_opening_point = &deps.stage5.batch.ram_ra_claim_reduction.opening_point;
+    let ram_reduced_opening_point = &stage5.batch.ram_ra_claim_reduction.opening_point;
     if ram_reduced_opening_point.len() != log_k + log_t {
         return Err(VerifierError::StageClaimPublicInputFailed {
             stage: JoltStageId::RamRaVirtualization,
@@ -855,7 +1143,7 @@ where
         });
     }
     let eq_instruction_ra_cycle = try_eq_mle(
-        &deps.stage5.batch.instruction_read_raf.r_cycle,
+        &stage5.batch.instruction_read_raf.r_cycle,
         &instruction_ra_cycle,
     )
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
@@ -886,14 +1174,14 @@ where
     )?;
     let instruction_ra_opening_points = proof
         .one_hot_config
-        .committed_address_chunks(&deps.stage5.batch.instruction_read_raf.r_address)
+        .committed_address_chunks(&stage5.batch.instruction_read_raf.r_address)
         .into_iter()
         .map(|r_address_chunk| {
             [r_address_chunk.as_slice(), instruction_ra_cycle.as_slice()].concat()
         })
         .collect::<Vec<_>>();
     let instruction_ra_opening_point = [
-        deps.stage5.batch.instruction_read_raf.r_address.as_slice(),
+        stage5.batch.instruction_read_raf.r_address.as_slice(),
         instruction_ra_cycle.as_slice(),
     ]
     .concat();
@@ -910,26 +1198,14 @@ where
             stage: JoltStageId::IncClaimReduction,
             reason: error.to_string(),
         })?;
-    let (_, ram_read_write_cycle) = deps
-        .stage2
-        .batch
-        .ram_read_write
-        .opening_point
-        .split_at(log_k);
-    let (_, ram_val_check_cycle) = deps
-        .stage4
-        .batch
-        .ram_val_check
-        .opening_point
-        .split_at(log_k);
-    let (_, registers_read_write_cycle) = deps
-        .stage4
+    let (_, ram_read_write_cycle) = stage2.batch.ram_read_write.opening_point.split_at(log_k);
+    let (_, ram_val_check_cycle) = stage4.batch.ram_val_check.opening_point.split_at(log_k);
+    let (_, registers_read_write_cycle) = stage4
         .batch
         .registers_read_write
         .opening_point
         .split_at(REGISTER_ADDRESS_BITS);
-    let (_, registers_val_evaluation_cycle) = deps
-        .stage5
+    let (_, registers_val_evaluation_cycle) = stage5
         .batch
         .registers_val_evaluation
         .opening_point
@@ -999,7 +1275,7 @@ where
             layout,
             JoltAdviceKind::Trusted,
             opening_claim,
-            deps,
+            stage4,
         )?)
     } else {
         None
@@ -1015,7 +1291,7 @@ where
             layout,
             JoltAdviceKind::Untrusted,
             opening_claim,
-            deps,
+            stage4,
         )?)
     } else {
         None
@@ -1100,8 +1376,11 @@ where
 
     append_stage6_opening_claims(transcript, claims);
 
-    Ok(Stage6Output {
-        challenges: batch.reduction.point.as_slice().to_vec(),
+    Ok(Stage6Output::Clear(Stage6ClearOutput {
+        public: public(
+            batch.reduction.point.as_slice().to_vec(),
+            batch.batching_coefficients.clone(),
+        ),
         output_claims: claims.clone(),
         batch: VerifiedStage6Batch {
             batching_coefficients: batch.batching_coefficients.clone(),
@@ -1156,7 +1435,7 @@ where
             trusted_advice_cycle_phase: trusted_advice,
             untrusted_advice_cycle_phase: untrusted_advice,
         },
-    })
+    }))
 }
 
 fn validate_compressed_stage_claim<F: Field>(
@@ -1176,14 +1455,13 @@ fn validate_compressed_stage_claim<F: Field>(
 
 fn advice_cycle_phase_input<F: Field>(
     claim: &JoltStageClaims<F>,
-    deps: Deps<'_, F>,
+    stage4: &Stage4ClearOutput<F>,
     kind: JoltAdviceKind,
 ) -> Result<F, VerifierError> {
     let [advice_input] = advice::cycle_phase_input_openings(kind);
     claim.input.expression.try_evaluate(
         |id| match *id {
-            id if id == advice_input => deps
-                .stage4
+            id if id == advice_input => stage4
                 .ram_val_check_init
                 .advice_contributions
                 .iter()
@@ -1203,7 +1481,7 @@ fn verify_advice_cycle_phase<F: Field>(
     layout: &AdviceClaimReductionLayout,
     kind: JoltAdviceKind,
     opening_claim: &AdviceCyclePhaseOutputClaim<F>,
-    deps: Deps<'_, F>,
+    stage4: &Stage4ClearOutput<F>,
 ) -> Result<VerifiedAdviceCyclePhaseSumcheck<F>, VerifierError> {
     let booleanity_rounds = layout.log_k_chunk() + layout.log_t();
     let booleanity_offset = batch
@@ -1232,8 +1510,7 @@ fn verify_advice_cycle_phase<F: Field>(
             stage: JoltStageId::AdviceClaimReductionCyclePhase,
             reason: error.to_string(),
         })?;
-    let contribution = deps
-        .stage4
+    let contribution = stage4
         .ram_val_check_init
         .advice_contributions
         .iter()
@@ -1271,6 +1548,48 @@ fn verify_advice_cycle_phase<F: Field>(
         opening_point,
         cycle_phase_variables,
         expected_output_claim,
+    })
+}
+
+fn advice_cycle_phase_public<F: Field, C>(
+    batch: &jolt_sumcheck::BatchedCommittedSumcheckConsistency<F, C>,
+    claim: &JoltStageClaims<F>,
+    layout: &AdviceClaimReductionLayout,
+    kind: JoltAdviceKind,
+) -> Result<AdviceCyclePhasePublicOutput<F>, VerifierError> {
+    let booleanity_rounds = layout.log_k_chunk() + layout.log_t();
+    let booleanity_offset = batch
+        .max_num_vars
+        .checked_sub(booleanity_rounds)
+        .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
+            stage: JoltStageId::AdviceClaimReductionCyclePhase,
+            reason: "Stage 6 advice cycle phase offset underflow".to_string(),
+        })?;
+    let offset = booleanity_offset + layout.log_k_chunk();
+    let advice_point = batch
+        .try_instance_point_at(offset, claim.sumcheck.rounds)
+        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+            stage: JoltStageId::AdviceClaimReductionCyclePhase,
+            reason: error.to_string(),
+        })?;
+    let opening_point = layout
+        .cycle_phase_opening_point(&advice_point)
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltStageId::AdviceClaimReductionCyclePhase,
+            reason: error.to_string(),
+        })?;
+    let cycle_phase_variables = layout
+        .cycle_phase_variable_challenges(&advice_point)
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltStageId::AdviceClaimReductionCyclePhase,
+            reason: error.to_string(),
+        })?;
+
+    Ok(AdviceCyclePhasePublicOutput {
+        kind,
+        sumcheck_point: advice_point,
+        opening_point,
+        cycle_phase_variables,
     })
 }
 

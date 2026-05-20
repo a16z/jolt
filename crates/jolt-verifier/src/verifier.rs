@@ -73,6 +73,13 @@ where
         &mut transcript,
         stage5::deps(&stage2, &stage4)?,
     )?;
+    let stage6 = stage6::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage6::deps(&stage1, &stage2, &stage3, &stage4, &stage5)?,
+    )?;
 
     if checked.zk {
         return Err(VerifierError::Unimplemented);
@@ -93,13 +100,9 @@ where
     let stage5::Stage5Output::Clear(stage5) = stage5 else {
         return Err(VerifierError::ExpectedClearProof { field: "stage5" });
     };
-    let stage6 = stage6::verify(
-        &checked,
-        preprocessing,
-        proof,
-        &mut transcript,
-        stage6::deps(&stage1, &stage2, &stage3, &stage4, &stage5),
-    )?;
+    let stage6::Stage6Output::Clear(stage6) = stage6 else {
+        return Err(VerifierError::ExpectedClearProof { field: "stage6" });
+    };
     let stage7 = stage7::verify(
         &checked,
         preprocessing,
