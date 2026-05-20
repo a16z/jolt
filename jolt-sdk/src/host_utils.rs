@@ -19,7 +19,8 @@ pub use jolt_core::field::JoltField;
 pub use jolt_core::guest;
 pub use jolt_core::poly::commitment::dory::DoryCommitmentScheme as PCS;
 pub use jolt_core::zkvm::{
-    bytecode::PreprocessingError, proof_serialization::JoltProof,
+    bytecode::TrustedBytecodeCommitments, program::ProgramPreprocessing,
+    program::TrustedProgramCommitments, proof_serialization::JoltProof,
     verifier::JoltSharedPreprocessing, verifier::JoltVerifierPreprocessing, RV64IMACProof,
     RV64IMACVerifier, Serializable,
 };

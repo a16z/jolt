@@ -2,6 +2,7 @@
 use crate::poly::opening_proof::OpeningId;
 #[cfg(feature = "zk")]
 use crate::zkvm::stage8_opening_ids;
+use crate::zkvm::stage8_program_openings_from_env;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 use std::{
@@ -19,7 +20,8 @@ use crate::poly::commitment::dory::bind_opening_inputs_zk;
 use crate::poly::commitment::dory::DoryContext;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use crate::zkvm::config::ReadWriteConfig;
+use crate::zkvm::config::{ProgramMode, ReadWriteConfig};
+use crate::zkvm::program::{ProgramPreprocessing, TrustedProgramCommitments, TrustedProgramHints};
 use crate::zkvm::ram::remap_address;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::Serializable;
@@ -36,7 +38,7 @@ use crate::{
             commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment},
             dory::{DoryGlobals, DoryLayout},
         },
-        multilinear_polynomial::MultilinearPolynomial,
+        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
         opening_proof::{
             compute_lagrange_factor, DoryOpeningState, OpeningAccumulator,
             ProverOpeningAccumulator, SumcheckId,
@@ -52,20 +54,27 @@ use crate::{
         streaming_schedule::LinearOnlySchedule,
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
         sumcheck_prover::SumcheckInstanceProver,
+        sumcheck_verifier::SumcheckInstanceParams,
         univariate_skip::UniSkipFirstRoundProofVariant,
     },
     transcripts::Transcript,
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
-        bytecode::read_raf_checking::BytecodeReadRafSumcheckParams,
+        bytecode::{
+            chunks::{build_committed_bytecode_chunk_polynomials, committed_lanes},
+            read_raf_checking::BytecodeReadRafSumcheckParams,
+            TrustedBytecodeCommitments,
+        },
         claim_reductions::{
             AdviceClaimReductionParams, AdviceClaimReductionProver, AdviceKind,
+            BytecodeClaimReductionParams, BytecodeClaimReductionProver,
             HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
             IncClaimReductionSumcheckParams, IncClaimReductionSumcheckProver,
             InstructionLookupsClaimReductionSumcheckParams,
             InstructionLookupsClaimReductionSumcheckProver, PrecommittedClaimReduction,
-            RaReductionParams, RamRaClaimReductionSumcheckProver,
-            RegistersClaimReductionSumcheckParams, RegistersClaimReductionSumcheckProver,
+            ProgramImageClaimReductionParams, ProgramImageClaimReductionProver, RaReductionParams,
+            RamRaClaimReductionSumcheckProver, RegistersClaimReductionSumcheckParams,
+            RegistersClaimReductionSumcheckProver,
         },
         config::OneHotParams,
         instruction_lookups::{
@@ -75,7 +84,7 @@ use crate::{
         ram::{
             hamming_booleanity::HammingBooleanitySumcheckParams,
             output_check::OutputSumcheckParams,
-            populate_memory_states,
+            populate_memory_states, prover_accumulate_program_image,
             ra_virtual::RamRaVirtualParams,
             raf_evaluation::RafEvaluationSumcheckParams,
             read_write_checking::RamReadWriteCheckingParams,
@@ -166,6 +175,50 @@ use crate::zkvm::r1cs::constraints::{
 #[cfg(feature = "zk")]
 use crate::zkvm::verifier::BlindfoldSetup;
 
+pub(crate) fn derive_poly_source_point_from_matrix_dims<F: JoltField>(
+    stage8_opening_point: &OpeningPoint<BIG_ENDIAN, F>,
+    poly_num_rows: usize,
+    poly_num_columns: usize,
+) -> OpeningPoint<BIG_ENDIAN, F> {
+    assert!(
+        poly_num_rows.is_power_of_two() && poly_num_columns.is_power_of_two(),
+        "polynomial matrix dimensions must be powers of two (rows={poly_num_rows}, cols={poly_num_columns})"
+    );
+    let nu_poly = poly_num_rows.log_2();
+    let sigma_poly = poly_num_columns.log_2();
+    let nu_full = DoryGlobals::get_max_num_rows().log_2();
+    let sigma_full = DoryGlobals::get_num_columns().log_2();
+    assert!(
+        sigma_poly <= sigma_full && nu_poly <= nu_full,
+        "top-left projection requires poly dims <= full dims (poly sigma/nu={sigma_poly}/{nu_poly}, full sigma/nu={sigma_full}/{nu_full})"
+    );
+
+    // Dimension-only projection:
+    // - Treat full point as [row_variables || column_variables]
+    // - For target dims (nu_poly rows, sigma_poly cols), take tails:
+    //   [last nu_poly row vars || last sigma_poly col vars]
+    let row_be = &stage8_opening_point.r[..nu_full];
+    let col_be = &stage8_opening_point.r[nu_full..nu_full + sigma_full];
+    let row_tail = &row_be[nu_full - nu_poly..];
+    let col_tail = &col_be[sigma_full - sigma_poly..];
+
+    let mut projected = Vec::with_capacity(nu_poly + sigma_poly);
+    projected.extend_from_slice(row_tail);
+    projected.extend_from_slice(col_tail);
+    OpeningPoint::<BIG_ENDIAN, F>::new(projected)
+}
+
+#[inline]
+pub(crate) fn derive_poly_source_point_from_dory_dims<F: JoltField>(
+    stage8_opening_point: &OpeningPoint<BIG_ENDIAN, F>,
+    poly_num_vars: usize,
+) -> OpeningPoint<BIG_ENDIAN, F> {
+    let (sigma_poly, nu_poly) = DoryGlobals::balanced_sigma_nu(poly_num_vars);
+    let poly_num_rows = 1usize << nu_poly;
+    let poly_num_columns = 1usize << sigma_poly;
+    derive_poly_source_point_from_matrix_dims(stage8_opening_point, poly_num_rows, poly_num_columns)
+}
+
 /// Jolt CPU prover for RV64IMAC.
 pub struct JoltCpuProver<
     'a,
@@ -185,6 +238,10 @@ pub struct JoltCpuProver<
     /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
     /// Cache the prover state here between stages.
     advice_reduction_prover_untrusted: Option<AdviceClaimReductionProver<F>>,
+    /// Bytecode claim reduction spans stages 6b and 7 in committed mode.
+    bytecode_reduction_prover: Option<BytecodeClaimReductionProver<F>>,
+    /// Program-image claim reduction spans stages 6b and 7 in committed mode.
+    program_image_reduction_prover: Option<ProgramImageClaimReductionProver<F>>,
     pub unpadded_trace_len: usize,
     pub padded_trace_len: usize,
     pub transcript: ProofTranscript,
@@ -294,6 +351,14 @@ impl<
     #[inline]
     fn precommitted_candidate_total_vars(&self) -> Vec<usize> {
         let mut candidates = Vec::new();
+        if self.preprocessing.is_committed_mode() {
+            let bytecode_t_full = self.preprocessing.shared.bytecode_size().log_2();
+            let chunk_log = self.preprocessing.shared.bytecode_chunk_count.log_2();
+            let chunk_cycle_log_t = bytecode_t_full.saturating_sub(chunk_log);
+            candidates.push(committed_lanes().log_2() + chunk_cycle_log_t);
+            let program_image_words = self.preprocessing.shared.program_image_len_words().max(1);
+            candidates.push(program_image_words.next_power_of_two().log_2());
+        }
         if !self.program_io.trusted_advice.is_empty() {
             let (sigma, nu) = DoryGlobals::advice_sigma_nu_from_max_bytes(
                 self.program_io.memory_layout.max_trusted_advice_size as usize,
@@ -308,6 +373,18 @@ impl<
             candidates.push(sigma + nu);
         }
         candidates
+    }
+
+    #[inline]
+    fn include_bytecode_in_stage8(&self) -> bool {
+        self.preprocessing.is_committed_mode()
+            && stage8_program_openings_from_env().includes_bytecode()
+    }
+
+    #[inline]
+    fn include_program_image_in_stage8(&self) -> bool {
+        self.preprocessing.is_committed_mode()
+            && stage8_program_openings_from_env().includes_program_image()
     }
 
     pub fn gen_from_trace(
@@ -360,11 +437,11 @@ impl<
             .unwrap_or(0)
             .max(
                 remap_address(
-                    preprocessing.shared.ram.min_bytecode_address,
+                    preprocessing.shared.program_meta.min_bytecode_address,
                     &preprocessing.shared.memory_layout,
                 )
                 .unwrap_or(0)
-                    + preprocessing.shared.ram.bytecode_words.len() as u64
+                    + preprocessing.shared.program_meta.program_image_len_words as u64
                     + 1,
             )
             .next_power_of_two() as usize;
@@ -376,7 +453,7 @@ impl<
 
         let (initial_ram_state, final_ram_state) = gen_ram_memory_states::<F>(
             ram_K,
-            &preprocessing.shared.ram,
+            &preprocessing.program.ram,
             &program_io,
             &final_memory_state,
         );
@@ -384,8 +461,7 @@ impl<
         let log_T = trace.len().log_2();
         let ram_log_K = ram_K.log_2();
         let rw_config = ReadWriteConfig::new(log_T, ram_log_K);
-        let one_hot_params =
-            OneHotParams::new(log_T, preprocessing.shared.bytecode.code_size, ram_K);
+        let one_hot_params = OneHotParams::new(log_T, preprocessing.shared.bytecode_size(), ram_K);
 
         #[cfg(feature = "zk")]
         let pedersen_generators = {
@@ -407,6 +483,8 @@ impl<
             },
             advice_reduction_prover_trusted: None,
             advice_reduction_prover_untrusted: None,
+            bytecode_reduction_prover: None,
+            program_image_reduction_prover: None,
             unpadded_trace_len,
             padded_trace_len,
             transcript,
@@ -442,17 +520,13 @@ impl<
             &self.program_io,
             self.one_hot_params.ram_k,
             self.trace.len(),
-            self.preprocessing.shared.bytecode.entry_address,
-            &self.rw_config,
-            &self.one_hot_params.to_config(),
-            DoryGlobals::get_layout(),
-            &preprocessing_digest,
+            self.preprocessing.shared.program_meta.entry_address,
             &mut self.transcript,
         );
 
         tracing::info!(
             "bytecode size: {}",
-            self.preprocessing.shared.bytecode.code_size
+            self.preprocessing.shared.bytecode_size()
         );
 
         let (commitments, mut opening_proof_hints) = self.generate_and_commit_witness_polynomials();
@@ -465,6 +539,29 @@ impl<
         }
         if let Some(hint) = self.advice.untrusted_advice_hint.take() {
             opening_proof_hints.insert(CommittedPolynomial::UntrustedAdvice, hint);
+        }
+        if let Some(bytecode_hints) = &self.preprocessing.bytecode_hints {
+            for (idx, hint) in bytecode_hints.iter().cloned().enumerate() {
+                opening_proof_hints.insert(CommittedPolynomial::BytecodeChunk(idx), hint);
+            }
+        }
+        if let Some(program_hints) = &self.preprocessing.program_hints {
+            opening_proof_hints.insert(
+                CommittedPolynomial::ProgramImageInit,
+                program_hints.program_image_hint.clone(),
+            );
+        }
+        if let Some(bytecode_commitments) = &self.preprocessing.bytecode_commitments {
+            for commitment in &bytecode_commitments.commitments {
+                self.transcript
+                    .append_serializable(b"bytecode_chunk_commit", commitment);
+            }
+        }
+        if let Some(program_commitments) = &self.preprocessing.program_commitments {
+            self.transcript.append_serializable(
+                b"program_image_commitment",
+                &program_commitments.program_image_commitment,
+            );
         }
 
         let (stage1_uni_skip_first_round_proof, stage1_sumcheck_proof, r_stage1) =
@@ -484,7 +581,11 @@ impl<
             r_stage1, r_stage2, r_stage3, r_stage4, r_stage5, r_stage6, r_stage7,
         ];
 
-        let joint_opening_proof = self.prove_stage8(opening_proof_hints);
+        let joint_opening_proof = self.prove_stage8(
+            opening_proof_hints,
+            &commitments,
+            untrusted_advice_commitment.as_ref(),
+        );
         #[cfg(feature = "zk")]
         let blindfold_proof = self.prove_blindfold(&joint_opening_proof);
 
@@ -646,7 +747,7 @@ impl<
                 .par_iter()
                 .map(|poly_id| {
                     let witness: MultilinearPolynomial<F> = poly_id.generate_witness(
-                        &self.preprocessing.shared.bytecode,
+                        &self.preprocessing.program.bytecode,
                         &self.preprocessing.shared.memory_layout,
                         &trace,
                         Some(&self.one_hot_params),
@@ -686,6 +787,7 @@ impl<
                             poly.stream_witness_and_commit_rows::<_, PCS>(
                                 &self.preprocessing.generators,
                                 &self.preprocessing.shared,
+                                &self.preprocessing.program,
                                 &chunk,
                                 &self.one_hot_params,
                             )
@@ -807,14 +909,14 @@ impl<
         let mut uni_skip = OuterUniSkipProver::initialize(
             uni_skip_params.clone(),
             &self.trace,
-            &self.preprocessing.shared.bytecode,
+            &self.preprocessing.program.bytecode,
         );
         let first_round_proof = self.prove_uniskip(&mut uni_skip);
 
         let schedule = LinearOnlySchedule::new(uni_skip_params.tau.len() - 1);
         let shared = OuterSharedState::new(
             Arc::clone(&self.trace),
-            &self.preprocessing.shared.bytecode,
+            &self.preprocessing.program.bytecode,
             &uni_skip_params,
             &self.opening_accumulator,
         );
@@ -882,7 +984,7 @@ impl<
         let ram_read_write_checking = RamReadWriteCheckingProver::initialize(
             ram_read_write_checking_params,
             &self.trace,
-            &self.preprocessing.shared.bytecode,
+            &self.preprocessing.program.bytecode,
             &self.program_io.memory_layout,
             &self.initial_ram_state,
         );
@@ -971,7 +1073,7 @@ impl<
         let spartan_shift = ShiftSumcheckProver::initialize(
             spartan_shift_params,
             Arc::clone(&self.trace),
-            &self.preprocessing.shared.bytecode,
+            &self.preprocessing.program.bytecode,
         );
         let spartan_instruction_input = InstructionInputSumcheckProver::initialize(
             spartan_instruction_input_params,
@@ -1037,6 +1139,14 @@ impl<
             &self.one_hot_params,
             &mut self.opening_accumulator,
         );
+        if self.preprocessing.is_committed_mode() {
+            prover_accumulate_program_image(
+                self.one_hot_params.ram_k,
+                &self.preprocessing.program.ram,
+                &self.program_io,
+                &mut self.opening_accumulator,
+            );
+        }
         // Domain-separate the batching challenge.
         self.transcript.append_bytes(b"ram_val_check_gamma", &[]);
         let ram_val_check_gamma: F = self.transcript.challenge_scalar::<F>();
@@ -1046,20 +1156,22 @@ impl<
             &self.initial_ram_state,
             self.trace.len(),
             ram_val_check_gamma,
-            &self.preprocessing.shared.ram,
+            &self.preprocessing.program.ram,
             &self.program_io,
+            &self.rw_config,
+            self.preprocessing.is_committed_mode(),
         );
 
         let registers_read_write_checking = RegistersReadWriteCheckingProver::initialize(
             registers_read_write_checking_params,
             self.trace.clone(),
-            &self.preprocessing.shared.bytecode,
+            &self.preprocessing.program.bytecode,
             &self.program_io.memory_layout,
         );
         let ram_val_check = RamValCheckSumcheckProver::initialize(
             ram_val_check_params,
             &self.trace,
-            &self.preprocessing.shared.bytecode,
+            &self.preprocessing.program.bytecode,
             &self.program_io.memory_layout,
         );
 
@@ -1128,7 +1240,7 @@ impl<
         let registers_val_evaluation = RegistersValEvaluationSumcheckProver::initialize(
             registers_val_evaluation_params,
             &self.trace,
-            &self.preprocessing.shared.bytecode,
+            &self.preprocessing.program.bytecode,
             &self.program_io.memory_layout,
         );
 
@@ -1173,9 +1285,10 @@ impl<
         print_current_memory_usage("Stage 6a baseline");
 
         let bytecode_read_raf_params = BytecodeReadRafSumcheckParams::gen(
-            &self.preprocessing.shared.bytecode,
+            &self.preprocessing.program,
             self.trace.len().log_2(),
             &self.one_hot_params,
+            self.preprocessing.is_committed_mode(),
             &self.opening_accumulator,
             &mut self.transcript,
         );
@@ -1186,16 +1299,21 @@ impl<
             &self.opening_accumulator,
             &mut self.transcript,
         );
+        tracing::info!(
+            "Stage 6a prover input claims: bytecode_read_raf={} booleanity={}",
+            bytecode_read_raf_params.input_claim(&self.opening_accumulator),
+            booleanity_params.input_claim(&self.opening_accumulator),
+        );
 
         let mut bytecode_read_raf = BytecodeReadRafAddressSumcheckProver::initialize(
             bytecode_read_raf_params.clone(),
             Arc::clone(&self.trace),
-            Arc::clone(&self.preprocessing.shared.bytecode),
+            Arc::new(self.preprocessing.program.bytecode.clone()),
         );
         let mut booleanity = BooleanityAddressSumcheckProver::initialize(
             booleanity_params.clone(),
             &self.trace,
-            &self.preprocessing.shared.bytecode,
+            &self.preprocessing.program.bytecode,
             &self.program_io.memory_layout,
         );
 
@@ -1315,10 +1433,52 @@ impl<
             };
         }
 
+        if self.preprocessing.is_committed_mode() {
+            let bytecode_chunk_count = self.preprocessing.shared.bytecode_chunk_count;
+            let bytecode_reduction_params = BytecodeClaimReductionParams::new(
+                &bytecode_read_raf_params,
+                self.preprocessing.shared.bytecode_size(),
+                bytecode_chunk_count,
+                precommitted_scheduling_reference,
+                &self.opening_accumulator,
+                &mut self.transcript,
+            );
+            let bytecode_chunk_polys = build_committed_bytecode_chunk_polynomials(
+                &self.preprocessing.program.bytecode.bytecode,
+                bytecode_chunk_count,
+            );
+            self.bytecode_reduction_prover = Some(BytecodeClaimReductionProver::initialize(
+                bytecode_reduction_params,
+                &bytecode_chunk_polys,
+            ));
+
+            let padded_len_words = self
+                .preprocessing
+                .program
+                .committed_program_image_num_words(&self.program_io.memory_layout);
+            let program_image_words = build_program_image_words_padded(
+                self.preprocessing.materialized_program(),
+                padded_len_words,
+            );
+            let program_image_reduction_params = ProgramImageClaimReductionParams::new(
+                &self.program_io,
+                self.preprocessing.shared.program_meta.min_bytecode_address,
+                padded_len_words,
+                self.one_hot_params.ram_k,
+                precommitted_scheduling_reference,
+                &self.opening_accumulator,
+            );
+            self.program_image_reduction_prover =
+                Some(ProgramImageClaimReductionProver::initialize(
+                    program_image_reduction_params,
+                    program_image_words,
+                ));
+        }
+
         let mut bytecode_read_raf = BytecodeReadRafCycleSumcheckProver::initialize(
             bytecode_read_raf_params,
             Arc::clone(&self.trace),
-            Arc::clone(&self.preprocessing.shared.bytecode),
+            Arc::new(self.preprocessing.program.bytecode.clone()),
             &self.opening_accumulator,
         );
         let mut booleanity = BooleanityCycleSumcheckProver::initialize(
@@ -1363,6 +1523,8 @@ impl<
 
         let mut advice_trusted = self.advice_reduction_prover_trusted.take();
         let mut advice_untrusted = self.advice_reduction_prover_untrusted.take();
+        let mut bytecode_reduction = self.bytecode_reduction_prover.take();
+        let mut program_image_reduction = self.program_image_reduction_prover.take();
 
         let mut instances: Vec<&mut dyn SumcheckInstanceProver<_, _>> = vec![
             &mut bytecode_read_raf,
@@ -1377,6 +1539,12 @@ impl<
         }
         if let Some(ref mut advice) = advice_untrusted {
             instances.push(advice);
+        }
+        if let Some(ref mut reduction) = bytecode_reduction {
+            instances.push(reduction);
+        }
+        if let Some(ref mut reduction) = program_image_reduction {
+            instances.push(reduction);
         }
 
         #[cfg(feature = "allocative")]
@@ -1396,6 +1564,8 @@ impl<
 
         self.advice_reduction_prover_trusted = advice_trusted;
         self.advice_reduction_prover_untrusted = advice_untrusted;
+        self.bytecode_reduction_prover = bytecode_reduction;
+        self.program_image_reduction_prover = program_image_reduction;
 
         (sumcheck_proof, r_stage6b)
     }
@@ -1862,6 +2032,7 @@ impl<
             hw_params,
             &self.trace,
             &self.preprocessing.shared,
+            &self.preprocessing.program,
             &self.one_hot_params,
         );
 
@@ -1901,6 +2072,29 @@ impl<
                 instances.push(Box::new(advice_reduction_prover_untrusted));
             }
         }
+        if let Some(mut bytecode_reduction_prover) = self.bytecode_reduction_prover.take() {
+            if bytecode_reduction_prover
+                .params()
+                .precommitted
+                .num_address_phase_rounds()
+                > 0
+            {
+                bytecode_reduction_prover.transition_to_address_phase();
+                instances.push(Box::new(bytecode_reduction_prover));
+            }
+        }
+        if let Some(mut program_image_reduction_prover) = self.program_image_reduction_prover.take()
+        {
+            if program_image_reduction_prover
+                .params()
+                .precommitted
+                .num_address_phase_rounds()
+                > 0
+            {
+                program_image_reduction_prover.transition_to_address_phase();
+                instances.push(Box::new(program_image_reduction_prover));
+            }
+        }
 
         #[cfg(feature = "allocative")]
         write_boxed_instance_flamegraph_svg(&instances, "stage7_start_flamechart.svg");
@@ -1921,6 +2115,8 @@ impl<
     fn prove_stage8(
         &mut self,
         opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+        commitments: &[PCS::Commitment],
+        untrusted_advice_commitment: Option<&PCS::Commitment>,
     ) -> PCS::Proof {
         tracing::info!("Stage 8 proving (Dory batch opening)");
 
@@ -1930,11 +2126,20 @@ impl<
             native_main_vars,
             self.one_hot_params.log_k_chunk,
             DoryGlobals::get_layout(),
+            if self.preprocessing.is_committed_mode() {
+                ProgramMode::Committed
+            } else {
+                ProgramMode::Full
+            },
+            self.preprocessing.shared.bytecode_chunk_count,
+            stage8_program_openings_from_env(),
         )
         .expect("invalid prover Stage-8 opening point");
 
         let mut polynomial_claims = Vec::new();
         let mut scaling_factors = Vec::new();
+        let mut extra_dense_polys: HashMap<CommittedPolynomial, MultilinearPolynomial<F>> =
+            HashMap::new();
 
         let (ram_inc_point, ram_inc_claim) =
             self.opening_accumulator.get_committed_polynomial_opening(
@@ -2027,6 +2232,61 @@ impl<
             }
         }
 
+        if self.include_bytecode_in_stage8() {
+            let chunk_count = self.preprocessing.shared.bytecode_chunk_count;
+            let bytecode_chunks = build_committed_bytecode_chunk_polynomials::<F>(
+                &self.preprocessing.program.bytecode.bytecode,
+                chunk_count,
+            );
+            for (chunk_idx, poly) in bytecode_chunks.into_iter().enumerate() {
+                let (chunk_point, chunk_claim) =
+                    self.opening_accumulator.get_committed_polynomial_opening(
+                        CommittedPolynomial::BytecodeChunk(chunk_idx),
+                        SumcheckId::BytecodeClaimReduction,
+                    );
+                let lagrange_factor =
+                    compute_lagrange_factor::<F>(&opening_point.r, &chunk_point.r);
+                polynomial_claims.push((
+                    CommittedPolynomial::BytecodeChunk(chunk_idx),
+                    chunk_claim * lagrange_factor,
+                ));
+                scaling_factors.push(lagrange_factor);
+                extra_dense_polys.insert(CommittedPolynomial::BytecodeChunk(chunk_idx), poly);
+            }
+        }
+
+        if self.preprocessing.is_committed_mode() {
+            let padded_len = self
+                .preprocessing
+                .shared
+                .program
+                .committed_program_image_num_words(&self.program_io.memory_layout);
+            let (program_point, program_claim) =
+                self.opening_accumulator.get_committed_polynomial_opening(
+                    CommittedPolynomial::ProgramImageInit,
+                    SumcheckId::ProgramImageClaimReduction,
+                );
+            let lagrange_factor = compute_lagrange_factor::<F>(&opening_point.r, &program_point.r);
+            polynomial_claims.push((
+                CommittedPolynomial::ProgramImageInit,
+                program_claim * lagrange_factor,
+            ));
+            scaling_factors.push(lagrange_factor);
+            precommitted_polys.insert(
+                CommittedPolynomial::ProgramImageInit,
+                PrecommittedPolynomial::ProgramImage {
+                    words: Arc::new(
+                        self.preprocessing
+                            .materialized_program()
+                            .ram
+                            .bytecode_words
+                            .clone(),
+                    ),
+                    padded_len,
+                },
+            );
+        }
+
         // 2. Sample gamma and compute powers for RLC
         let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
         // In non-ZK mode, absorb claims before sampling gamma for Fiat-Shamir binding.
@@ -2045,12 +2305,22 @@ impl<
             .zip(claims.iter())
             .map(|(gamma, claim)| *gamma * claim)
             .sum();
+        if Self::stage8_debug_enabled() {
+            tracing::info!("Stage8 final Dory claim (joint_claim): {}", joint_claim);
+        }
 
         #[cfg(feature = "zk")]
         let opening_ids = stage8_opening_ids(
             &self.one_hot_params,
             include_trusted_advice,
             include_untrusted_advice,
+            if self.preprocessing.is_committed_mode() {
+                ProgramMode::Committed
+            } else {
+                ProgramMode::Full
+            },
+            self.preprocessing.shared.bytecode_chunk_count,
+            stage8_program_openings_from_env(),
         );
 
         // Build DoryOpeningState
@@ -2061,18 +2331,26 @@ impl<
         };
 
         let streaming_data = Arc::new(RLCStreamingData {
-            bytecode: Arc::clone(&self.preprocessing.shared.bytecode),
+            bytecode: Arc::new(self.preprocessing.program.bytecode.clone()),
             memory_layout: self.preprocessing.shared.memory_layout.clone(),
         });
 
-        // Build advice polynomials map for RLC
-        let mut advice_polys = HashMap::new();
+        // Build precommitted polynomials map for RLC
+        let mut precommitted_polys = HashMap::new();
         if let Some(poly) = self.advice.trusted_advice_polynomial.take() {
-            advice_polys.insert(CommittedPolynomial::TrustedAdvice, poly);
+            precommitted_polys.insert(CommittedPolynomial::TrustedAdvice, poly);
         }
         if let Some(poly) = self.advice.untrusted_advice_polynomial.take() {
-            advice_polys.insert(CommittedPolynomial::UntrustedAdvice, poly);
+            precommitted_polys.insert(CommittedPolynomial::UntrustedAdvice, poly);
         }
+        precommitted_polys.extend(extra_dense_polys);
+        let debug_stage8_polys = if Self::stage8_debug_enabled() {
+            Some(precommitted_polys.clone())
+        } else {
+            None
+        };
+        let mut debug_stage8_verify_transcript =
+            debug_stage8_polys.as_ref().map(|_| self.transcript.clone());
 
         // Build streaming RLC polynomial directly (no witness poly regeneration!)
         // Use materialized trace (default, single pass) instead of lazy trace
@@ -2081,9 +2359,8 @@ impl<
             TraceSource::Materialized(Arc::clone(&self.trace)),
             streaming_data,
             opening_proof_hints,
-            advice_polys,
+            precommitted_polys,
         );
-
         let (proof, _y_blinding) = PCS::prove(
             &self.preprocessing.generators,
             &joint_poly,
@@ -2108,6 +2385,26 @@ impl<
         #[cfg(not(feature = "zk"))]
         {
             bind_opening_inputs::<F, _>(&mut self.transcript, &opening_point.r, &joint_claim);
+        }
+        if let Some(ref direct_polys) = debug_stage8_polys {
+            self.debug_verify_stage8_polynomial_claims(
+                &opening_point,
+                &state.polynomial_claims,
+                direct_polys,
+            );
+            self.debug_verify_omitted_program_openings();
+            let verify_transcript = debug_stage8_verify_transcript
+                .take()
+                .expect("Stage8 debug transcript clone should exist");
+            self.debug_verify_stage8_dory_self(
+                &proof,
+                &opening_point,
+                &state,
+                joint_claim,
+                commitments,
+                untrusted_advice_commitment,
+                verify_transcript,
+            );
         }
 
         proof
@@ -2148,7 +2445,7 @@ fn write_instance_flamegraph_svg(
     write_flamegraph_svg(flamegraph, path);
 }
 
-#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone)]
 pub struct JoltProverPreprocessing<
     F: JoltField,
     C: JoltCurve<F = F>,
@@ -2156,7 +2453,117 @@ pub struct JoltProverPreprocessing<
 > {
     pub generators: PCS::ProverSetup,
     pub shared: JoltSharedPreprocessing,
+    pub program: Arc<ProgramPreprocessing>,
+    pub bytecode_commitments: Option<TrustedBytecodeCommitments<PCS>>,
+    pub bytecode_hints: Option<Vec<PCS::OpeningProofHint>>,
+    pub program_commitments: Option<TrustedProgramCommitments<PCS>>,
+    pub program_hints: Option<TrustedProgramHints<PCS>>,
     _curve: std::marker::PhantomData<C>,
+}
+
+impl<F, C, PCS> CanonicalSerialize for JoltProverPreprocessing<F, C, PCS>
+where
+    F: JoltField,
+    C: JoltCurve<F = F>,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::OpeningProofHint: CanonicalSerialize,
+{
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        self.generators.serialize_with_mode(&mut writer, compress)?;
+        self.shared.serialize_with_mode(&mut writer, compress)?;
+        self.program.serialize_with_mode(&mut writer, compress)?;
+        self.bytecode_commitments
+            .serialize_with_mode(&mut writer, compress)?;
+        self.bytecode_hints
+            .serialize_with_mode(&mut writer, compress)?;
+        self.program_commitments
+            .serialize_with_mode(&mut writer, compress)?;
+        self.program_hints
+            .serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        self.generators.serialized_size(compress)
+            + self.shared.serialized_size(compress)
+            + self.program.serialized_size(compress)
+            + self.bytecode_commitments.serialized_size(compress)
+            + self.bytecode_hints.serialized_size(compress)
+            + self.program_commitments.serialized_size(compress)
+            + self.program_hints.serialized_size(compress)
+    }
+}
+
+impl<F, C, PCS> ark_serialize::Valid for JoltProverPreprocessing<F, C, PCS>
+where
+    F: JoltField,
+    C: JoltCurve<F = F>,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::OpeningProofHint: ark_serialize::Valid,
+{
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        self.generators.check()?;
+        self.shared.check()?;
+        self.program.check()?;
+        self.bytecode_commitments.check()?;
+        self.bytecode_hints.check()?;
+        self.program_commitments.check()?;
+        self.program_hints.check()?;
+        Ok(())
+    }
+}
+
+impl<F, C, PCS> CanonicalDeserialize for JoltProverPreprocessing<F, C, PCS>
+where
+    F: JoltField,
+    C: JoltCurve<F = F>,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::OpeningProofHint: CanonicalDeserialize,
+{
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        Ok(Self {
+            generators: PCS::ProverSetup::deserialize_with_mode(&mut reader, compress, validate)?,
+            shared: JoltSharedPreprocessing::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            program: Arc::new(ProgramPreprocessing::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?),
+            bytecode_commitments: Option::<TrustedBytecodeCommitments<PCS>>::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            bytecode_hints: Option::<Vec<PCS::OpeningProofHint>>::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            program_commitments: Option::<TrustedProgramCommitments<PCS>>::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            program_hints: Option::<TrustedProgramHints<PCS>>::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            _curve: std::marker::PhantomData,
+        })
+    }
 }
 
 impl<F, C, PCS> JoltProverPreprocessing<F, C, PCS>
@@ -2165,8 +2572,8 @@ where
     C: JoltCurve<F = F>,
     PCS: CommitmentScheme<Field = F>,
 {
-    #[tracing::instrument(skip_all, name = "JoltProverPreprocessing::gen")]
-    pub fn new(shared: JoltSharedPreprocessing) -> Self {
+    #[tracing::instrument(skip_all, name = "JoltProverPreprocessing::new")]
+    pub fn new(shared: JoltSharedPreprocessing, program: Arc<ProgramPreprocessing>) -> Self {
         use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
         let max_T: usize = shared.max_padded_trace_length.next_power_of_two();
         let max_log_T = max_T.log_2();
@@ -2175,11 +2582,78 @@ where
         } else {
             8
         };
-        let generators = PCS::setup_prover(max_log_k_chunk + max_log_T);
+        let mut max_total_vars = max_log_k_chunk + max_log_T;
+        let (trusted_sigma, trusted_nu) = DoryGlobals::advice_sigma_nu_from_max_bytes(
+            shared.memory_layout.max_trusted_advice_size as usize,
+        );
+        max_total_vars = max_total_vars.max(trusted_sigma + trusted_nu);
+        let (untrusted_sigma, untrusted_nu) = DoryGlobals::advice_sigma_nu_from_max_bytes(
+            shared.memory_layout.max_untrusted_advice_size as usize,
+        );
+        max_total_vars = max_total_vars.max(untrusted_sigma + untrusted_nu);
+        let generators = PCS::setup_prover(max_total_vars);
 
         JoltProverPreprocessing {
             generators,
             shared,
+            program,
+            bytecode_commitments: None,
+            bytecode_hints: None,
+            program_commitments: None,
+            program_hints: None,
+            _curve: std::marker::PhantomData,
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "JoltProverPreprocessing::new_committed")]
+    pub fn new_committed(
+        shared: JoltSharedPreprocessing,
+        program: Arc<ProgramPreprocessing>,
+    ) -> Self {
+        use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
+        let max_t_any = shared
+            .max_padded_trace_length
+            .max(shared.bytecode_size())
+            .max(program.program_image_len_words_padded())
+            .next_power_of_two();
+        let max_log_t = max_t_any.log_2();
+        let max_log_k_chunk = if max_log_t < ONEHOT_CHUNK_THRESHOLD_LOG_T {
+            4
+        } else {
+            8
+        };
+        let mut max_total_vars = max_log_k_chunk + max_log_t;
+        let (trusted_sigma, trusted_nu) = DoryGlobals::advice_sigma_nu_from_max_bytes(
+            shared.memory_layout.max_trusted_advice_size as usize,
+        );
+        max_total_vars = max_total_vars.max(trusted_sigma + trusted_nu);
+        let (untrusted_sigma, untrusted_nu) = DoryGlobals::advice_sigma_nu_from_max_bytes(
+            shared.memory_layout.max_untrusted_advice_size as usize,
+        );
+        max_total_vars = max_total_vars.max(untrusted_sigma + untrusted_nu);
+        let chunk_cycle_log_t = (shared.bytecode_size() / shared.bytecode_chunk_count)
+            .next_power_of_two()
+            .log_2();
+        max_total_vars = max_total_vars.max(committed_lanes().log_2() + chunk_cycle_log_t);
+        max_total_vars = max_total_vars.max(program.program_image_len_words_padded().log_2());
+        let generators = PCS::setup_prover(max_total_vars);
+        let (bytecode_commitments, bytecode_hints) = TrustedBytecodeCommitments::derive(
+            &program.bytecode,
+            &generators,
+            max_log_k_chunk,
+            shared.bytecode_chunk_count,
+        );
+        let (program_commitments, program_hints) =
+            TrustedProgramCommitments::derive(&program, &generators);
+
+        JoltProverPreprocessing {
+            generators,
+            shared,
+            program,
+            bytecode_commitments: Some(bytecode_commitments),
+            bytecode_hints: Some(bytecode_hints.hints),
+            program_commitments: Some(program_commitments),
+            program_hints: Some(program_hints),
             _curve: std::marker::PhantomData,
         }
     }
@@ -2208,7 +2682,14 @@ where
         )
     }
 
-    pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
+    pub fn is_committed_mode(&self) -> bool {
+        self.bytecode_commitments.is_some() && self.program_commitments.is_some()
+    }
+
+    pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()>
+    where
+        PCS::OpeningProofHint: CanonicalSerialize,
+    {
         let filename = Path::new(target_dir).join("jolt_prover_preprocessing.dat");
         let mut file = File::create(filename.as_path())?;
         let mut data = Vec::new();
@@ -2217,7 +2698,10 @@ where
         Ok(())
     }
 
-    pub fn read_from_target_dir(target_dir: &str) -> std::io::Result<Self> {
+    pub fn read_from_target_dir(target_dir: &str) -> std::io::Result<Self>
+    where
+        PCS::OpeningProofHint: CanonicalDeserialize,
+    {
         let filename = Path::new(target_dir).join("jolt_prover_preprocessing.dat");
         let mut file = File::open(filename.as_path())?;
         let mut data = Vec::new();
@@ -2228,6 +2712,8 @@ where
 
 impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>> Serializable
     for JoltProverPreprocessing<F, C, PCS>
+where
+    PCS::OpeningProofHint: CanonicalSerialize + CanonicalDeserialize,
 {
 }
 
@@ -2256,6 +2742,7 @@ mod tests {
         opening_proof::{OpeningAccumulator, SumcheckId},
     };
     use crate::zkvm::claim_reductions::AdviceKind;
+    use crate::zkvm::program::ProgramPreprocessing;
     use crate::zkvm::verifier::JoltSharedPreprocessing;
     use crate::zkvm::witness::CommittedPolynomial;
     use crate::zkvm::{
@@ -2316,24 +2803,55 @@ mod tests {
         (commitment, hint)
     }
 
+    fn test_shared_preprocessing(
+        bytecode: Vec<tracer::instruction::Instruction>,
+        init_memory_state: Vec<(u64, u8)>,
+        memory_layout: common::jolt_device::MemoryLayout,
+        max_trace_len: usize,
+    ) -> (JoltSharedPreprocessing, Arc<ProgramPreprocessing>) {
+        let program = Arc::new(ProgramPreprocessing::preprocess(
+            bytecode,
+            init_memory_state,
+        ));
+        let shared = JoltSharedPreprocessing::new(program.meta(), memory_layout, max_trace_len);
+        (shared, program)
+    }
+
+    fn test_shared_preprocessing_committed(
+        bytecode: Vec<tracer::instruction::Instruction>,
+        init_memory_state: Vec<(u64, u8)>,
+        memory_layout: common::jolt_device::MemoryLayout,
+        max_trace_len: usize,
+        bytecode_chunk_count: usize,
+    ) -> (JoltSharedPreprocessing, Arc<ProgramPreprocessing>) {
+        let program = Arc::new(ProgramPreprocessing::preprocess(
+            bytecode,
+            init_memory_state,
+        ));
+        let shared = JoltSharedPreprocessing::new_committed(
+            program.meta(),
+            memory_layout,
+            max_trace_len,
+            bytecode_chunk_count,
+        );
+        (shared, program)
+    }
+
     #[test]
     #[serial]
     fn fib_e2e_dory() {
         DoryGlobals::reset();
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&100u32).unwrap();
-        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (bytecode, init_memory_state, _, _) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
+        let (shared_preprocessing, program_data) = test_shared_preprocessing(
+            bytecode,
             init_memory_state,
+            io_device.memory_layout.clone(),
             1 << 16,
-            e_entry,
-        )
-        .unwrap();
-
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
+        );
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing, program_data);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover = RV64IMACProver::gen_from_elf(
@@ -2367,19 +2885,16 @@ mod tests {
         DoryGlobals::reset();
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&5u32).unwrap();
-        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (bytecode, init_memory_state, _, _) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
-
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
+        let (shared_preprocessing, program_data) = test_shared_preprocessing(
+            bytecode,
             init_memory_state,
+            io_device.memory_layout.clone(),
             8192,
-            e_entry,
-        )
-        .unwrap();
-
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        );
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), program_data);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let log_chunk = 13; // Use default log_chunk for tests
@@ -2422,20 +2937,18 @@ mod tests {
         DoryGlobals::reset();
 
         let mut program = host::Program::new("sha3-guest");
-        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (bytecode, init_memory_state, _, _) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
+        let (shared_preprocessing, program_data) = test_shared_preprocessing(
+            bytecode,
             init_memory_state,
+            io_device.memory_layout.clone(),
             1 << 16,
-            e_entry,
-        )
-        .unwrap();
-
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        );
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), program_data);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover = RV64IMACProver::gen_from_elf(
@@ -2480,20 +2993,18 @@ mod tests {
         DoryGlobals::reset();
 
         let mut program = host::Program::new("sha2-guest");
-        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (bytecode, init_memory_state, _, _) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
+        let (shared_preprocessing, program_data) = test_shared_preprocessing(
+            bytecode,
             init_memory_state,
+            io_device.memory_layout.clone(),
             1 << 16,
-            e_entry,
-        )
-        .unwrap();
-
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        );
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), program_data);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover = RV64IMACProver::gen_from_elf(
@@ -2541,22 +3052,21 @@ mod tests {
         // - Trusted: commit in preprocessing-only context, reduce in Stage 6, batch in Stage 8
         // - Untrusted: commit at prove time, reduce in Stage 6, batch in Stage 8
         let mut program = host::Program::new("sha2-guest");
-        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (bytecode, init_memory_state, _, _) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let trusted_advice = postcard::to_stdvec(&[7u8; 32]).unwrap();
         let untrusted_advice = postcard::to_stdvec(&[9u8; 32]).unwrap();
 
         let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
 
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
+        let (shared_preprocessing, program_data) = test_shared_preprocessing(
+            bytecode,
             init_memory_state,
+            io_device.memory_layout.clone(),
             1 << 16,
-            e_entry,
-        )
-        .unwrap();
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        );
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), program_data);
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
 
         let (trusted_commitment, trusted_hint) =
@@ -2608,19 +3118,18 @@ mod tests {
         let trusted_advice = vec![7u8; 4096];
         let untrusted_advice = vec![9u8; 4096];
 
-        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (bytecode, init_memory_state, _, _) = program.decode();
         let (lazy_trace, trace, final_memory_state, io_device) =
             program.trace(&inputs, &untrusted_advice, &trusted_advice);
 
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
+        let (shared_preprocessing, program_data) = test_shared_preprocessing(
+            bytecode,
             init_memory_state,
+            io_device.memory_layout.clone(),
             4096,
-            e_entry,
-        )
-        .unwrap();
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        );
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), program_data);
         tracing::info!(
             "preprocessing.memory_layout.max_trusted_advice_size: {}",
             shared_preprocessing.memory_layout.max_trusted_advice_size
@@ -2666,7 +3175,7 @@ mod tests {
 
         // Tests a guest (merkle-tree) that actually consumes both trusted and untrusted advice.
         let mut program = host::Program::new("merkle-tree-guest");
-        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (bytecode, init_memory_state, _, _) = program.decode();
 
         // Merkle tree with 4 leaves: input=leaf1, trusted=[leaf2, leaf3], untrusted=leaf4
         let inputs = postcard::to_stdvec(&[5u8; 32].as_slice()).unwrap();
@@ -2675,15 +3184,14 @@ mod tests {
         trusted_advice.extend(postcard::to_stdvec(&[7u8; 32]).unwrap());
 
         let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
+        let (shared_preprocessing, program_data) = test_shared_preprocessing(
+            bytecode,
             init_memory_state,
+            io_device.memory_layout.clone(),
             1 << 16,
-            e_entry,
-        )
-        .unwrap();
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        );
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), program_data);
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
 
         let (trusted_commitment, trusted_hint) =
@@ -2737,19 +3245,18 @@ mod tests {
         let trusted_advice = postcard::to_stdvec(&[7u8; 32]).unwrap();
         let untrusted_advice = postcard::to_stdvec(&[9u8; 32]).unwrap();
 
-        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (bytecode, init_memory_state, _, _) = program.decode();
         let (lazy_trace, trace, final_memory_state, io_device) =
             program.trace(&inputs, &untrusted_advice, &trusted_advice);
 
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
+        let (shared_preprocessing, program_data) = test_shared_preprocessing(
+            bytecode,
             init_memory_state,
+            io_device.memory_layout.clone(),
             1 << 16,
-            e_entry,
-        )
-        .unwrap();
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        );
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), program_data);
         let (trusted_commitment, trusted_hint) =
             commit_trusted_advice_preprocessing_only(&prover_preprocessing, &trusted_advice);
 
@@ -2829,19 +3336,17 @@ mod tests {
     fn memory_ops_e2e_dory() {
         DoryGlobals::reset();
         let mut program = host::Program::new("memory-ops-guest");
-        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (bytecode, init_memory_state, _, _) = program.decode();
         let (_, _, _, io_device) = program.trace(&[], &[], &[]);
 
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
+        let (shared_preprocessing, program_data) = test_shared_preprocessing(
+            bytecode,
             init_memory_state,
+            io_device.memory_layout.clone(),
             1 << 16,
-            e_entry,
-        )
-        .unwrap();
-
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        );
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), program_data);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover = RV64IMACProver::gen_from_elf(
@@ -2874,20 +3379,18 @@ mod tests {
     fn btreemap_e2e_dory() {
         DoryGlobals::reset();
         let mut program = host::Program::new("btreemap-guest");
-        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (bytecode, init_memory_state, _, _) = program.decode();
         let inputs = postcard::to_stdvec(&50u32).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
+        let (shared_preprocessing, program_data) = test_shared_preprocessing(
+            bytecode,
             init_memory_state,
+            io_device.memory_layout.clone(),
             1 << 16,
-            e_entry,
-        )
-        .unwrap();
-
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        );
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), program_data);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover = RV64IMACProver::gen_from_elf(
@@ -2920,20 +3423,62 @@ mod tests {
     fn muldiv_e2e_dory() {
         DoryGlobals::reset();
         let mut program = host::Program::new("muldiv-guest");
-        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (bytecode, init_memory_state, _, _) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
+        let (shared_preprocessing, program_data) = test_shared_preprocessing(
+            bytecode,
             init_memory_state,
+            io_device.memory_layout.clone(),
             1 << 16,
-            e_entry,
-        )
-        .unwrap();
+        );
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), program_data);
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, debug_info) = prover.prove();
 
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
+        let verifier = RV64IMACVerifier::new(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device,
+            None,
+            debug_info,
+        )
+        .expect("Failed to create verifier");
+        verifier.verify().expect("Failed to verify proof");
+    }
+
+    #[test]
+    #[serial]
+    fn muldiv_e2e_dory_committed_program_commitments() {
+        DoryGlobals::reset();
+        let mut program = host::Program::new("muldiv-guest");
+        let (bytecode, init_memory_state, _, _) = program.decode();
+        let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let (shared_preprocessing, program_data) = test_shared_preprocessing_committed(
+            bytecode,
+            init_memory_state,
+            io_device.memory_layout.clone(),
+            1 << 16,
+            1,
+        );
+        let prover_preprocessing =
+            JoltProverPreprocessing::new_committed(shared_preprocessing.clone(), program_data);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover = RV64IMACProver::gen_from_elf(
@@ -2971,19 +3516,17 @@ mod tests {
         program.set_std(true);
         program.set_func("int_to_string");
         let inputs = postcard::to_stdvec(&81i32).unwrap();
-        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (bytecode, init_memory_state, _, _) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
+        let (shared_preprocessing, program_data) = test_shared_preprocessing(
+            bytecode,
             init_memory_state,
+            io_device.memory_layout.clone(),
             1 << 16,
-            e_entry,
-        )
-        .unwrap();
-
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        );
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), program_data);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover = RV64IMACProver::gen_from_elf(
@@ -3125,19 +3668,16 @@ mod tests {
 
         // Run muldiv prover to get a real proof
         let mut program = host::Program::new("muldiv-guest");
-        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (bytecode, init_memory_state, _, _) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
-
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
+        let (shared_preprocessing, program_data) = test_shared_preprocessing(
+            bytecode,
             init_memory_state,
+            io_device.memory_layout.clone(),
             1 << 16,
-            e_entry,
-        )
-        .unwrap();
-        let preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
+        );
+        let preprocessing = JoltProverPreprocessing::new(shared_preprocessing, program_data);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover = RV64IMACProver::gen_from_elf(
@@ -3246,23 +3786,21 @@ mod tests {
     #[should_panic]
     fn truncated_trace() {
         let mut program = host::Program::new("fibonacci-guest");
-        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (bytecode, init_memory_state, _, _) = program.decode();
         let inputs = postcard::to_stdvec(&9u8).unwrap();
         let (lazy_trace, mut trace, final_memory_state, mut program_io) =
             program.trace(&inputs, &[], &[]);
         trace.truncate(100);
         program_io.outputs[0] = 0; // change the output to 0
 
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            program_io.memory_layout.clone(),
+        let (shared_preprocessing, program_data) = test_shared_preprocessing(
+            bytecode,
             init_memory_state,
+            program_io.memory_layout.clone(),
             1 << 16,
-            e_entry,
-        )
-        .unwrap();
-
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        );
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), program_data);
 
         let prover = RV64IMACProver::gen_from_trace(
             &prover_preprocessing,
@@ -3288,20 +3826,19 @@ mod tests {
     fn malicious_trace() {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&1u8).unwrap();
-        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (bytecode, init_memory_state, _, _) = program.decode();
         let (lazy_trace, trace, final_memory_state, mut program_io) =
             program.trace(&inputs, &[], &[]);
 
         // Since the preprocessing is done with the original memory layout, the verifier should fail
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            program_io.memory_layout.clone(),
+        let (shared_preprocessing, program_data) = test_shared_preprocessing(
+            bytecode,
             init_memory_state,
+            program_io.memory_layout.clone(),
             1 << 16,
-            e_entry,
-        )
-        .unwrap();
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        );
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), program_data);
 
         // change memory address of output & termination bit to the same address as input
         // changes here should not be able to spoof the verifier result
@@ -3340,16 +3877,17 @@ mod tests {
         let inputs = postcard::to_stdvec(&9u8).unwrap();
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let (lazy_trace, trace, final_memory_state, program_io) = program.trace(&inputs, &[], &[]);
-
-        let shared = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            program_io.memory_layout.clone(),
+        let original_program = Arc::new(ProgramPreprocessing::preprocess(
+            bytecode,
             init_memory_state,
+        ));
+        let shared = JoltSharedPreprocessing::new(
+            original_program.meta(),
+            program_io.memory_layout.clone(),
             1 << 16,
-            e_entry,
-        )
-        .unwrap();
-        let prover_preprocessing = JoltProverPreprocessing::new(shared.clone());
+        );
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared.clone(), Arc::clone(&original_program));
         let prover = RV64IMACProver::gen_from_trace(
             &prover_preprocessing,
             lazy_trace,
@@ -3361,20 +3899,19 @@ mod tests {
         );
         let (proof, _) = prover.prove();
 
-        let original_entry_index = crate::zkvm::bytecode::entry_bytecode_index(&shared.bytecode);
+        let original_entry_index = original_program.entry_bytecode_index();
         // Tamper: give verifier a wrong entry_address so it computes a different
         // entry_bytecode_index and thus a different input_claim expectation.
         let mut tampered_shared = shared.clone();
-        let mut tampered_bytecode = (*tampered_shared.bytecode).clone();
-        tampered_bytecode.entry_address = e_entry.wrapping_add(4);
-        tampered_shared.bytecode = Arc::new(tampered_bytecode);
-        let tampered_entry_index =
-            crate::zkvm::bytecode::entry_bytecode_index(&tampered_shared.bytecode);
+        tampered_shared.program_meta.entry_address = e_entry.wrapping_add(4);
+        let tampered_entry_index = tampered_shared.program_meta.entry_address as usize
+            / common::constants::BYTES_PER_INSTRUCTION;
         assert_ne!(
             original_entry_index, tampered_entry_index,
             "tamper did not change entry_bytecode_index — test scenario is invalid"
         );
-        let tampered_prover_preprocessing = JoltProverPreprocessing::new(tampered_shared);
+        let tampered_prover_preprocessing =
+            JoltProverPreprocessing::new(tampered_shared, original_program);
         let verifier_preprocessing =
             JoltVerifierPreprocessing::from(&tampered_prover_preprocessing);
         let verifier =
@@ -3513,18 +4050,16 @@ mod tests {
 
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&50u32).unwrap();
-        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (bytecode, init_memory_state, _, _) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
+        let (shared_preprocessing, program_data) = test_shared_preprocessing(
+            bytecode,
             init_memory_state,
+            io_device.memory_layout.clone(),
             1 << 16,
-            e_entry,
-        )
-        .unwrap();
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
+        );
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing, program_data);
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
         let prover = RV64IMACProver::gen_from_elf(
             &prover_preprocessing,
@@ -3556,7 +4091,7 @@ mod tests {
 
         // Tests a guest (merkle-tree) that actually consumes both trusted and untrusted advice.
         let mut program = host::Program::new("merkle-tree-guest");
-        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (bytecode, init_memory_state, _, _) = program.decode();
 
         // Merkle tree with 4 leaves: input=leaf1, trusted=[leaf2, leaf3], untrusted=leaf4
         let inputs = postcard::to_stdvec(&[5u8; 32].as_slice()).unwrap();
@@ -3565,15 +4100,14 @@ mod tests {
         trusted_advice.extend(postcard::to_stdvec(&[7u8; 32]).unwrap());
 
         let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
+        let (shared_preprocessing, program_data) = test_shared_preprocessing(
+            bytecode,
             init_memory_state,
+            io_device.memory_layout.clone(),
             1 << 16,
-            e_entry,
-        )
-        .unwrap();
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        );
+        let prover_preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), program_data);
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
 
         let (trusted_commitment, trusted_hint) =
