@@ -846,7 +846,7 @@ pub struct BooleanityCycleSumcheckVerifier<F: JoltField> {
 impl<F: JoltField> BooleanityCycleSumcheckVerifier<F> {
     pub fn new(
         params: BooleanitySumcheckParams<F>,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
         let (r_address_point, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::BooleanityAddrClaim,

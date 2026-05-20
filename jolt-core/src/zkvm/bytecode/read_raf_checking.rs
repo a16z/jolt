@@ -1020,7 +1020,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
         bytecode_preprocessing: &BytecodePreprocessing,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
         let params = BytecodeReadRafSumcheckParams::gen(
@@ -1101,7 +1101,7 @@ pub struct BytecodeReadRafCycleSumcheckVerifier<F: JoltField> {
 impl<F: JoltField> BytecodeReadRafCycleSumcheckVerifier<F> {
     pub fn new(
         params: BytecodeReadRafSumcheckParams<F>,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
         let (r_address_point, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::BytecodeReadRafAddrClaim,
