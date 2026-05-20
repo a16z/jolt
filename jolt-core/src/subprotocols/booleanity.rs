@@ -40,7 +40,7 @@ use crate::{
         multilinear_polynomial::BindingOrder,
         opening_proof::{
             AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint,
-            ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
+            ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
         shared_ra_polys::{compute_all_G_and_ra_indices, RaIndices, SharedRaPolynomials},
         split_eq_poly::GruenSplitEqPolynomial,
