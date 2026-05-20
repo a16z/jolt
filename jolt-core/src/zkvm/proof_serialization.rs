@@ -78,7 +78,8 @@ impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>, FS: Tr
             && self.stage3_sumcheck_proof.is_zk() == zk_mode
             && self.stage4_sumcheck_proof.is_zk() == zk_mode
             && self.stage5_sumcheck_proof.is_zk() == zk_mode
-            && self.stage6_sumcheck_proof.is_zk() == zk_mode
+            && self.stage6a_sumcheck_proof.is_zk() == zk_mode
+            && self.stage6b_sumcheck_proof.is_zk() == zk_mode
             && self.stage7_sumcheck_proof.is_zk() == zk_mode;
 
         if !consistent {
