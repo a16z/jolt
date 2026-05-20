@@ -1310,7 +1310,7 @@ impl<
 
         (
             sumcheck_proof,
-            bytecode_read_raf_params,
+            bytecode_read_raf.into_params(),
             booleanity_cycle_params,
         )
     }
