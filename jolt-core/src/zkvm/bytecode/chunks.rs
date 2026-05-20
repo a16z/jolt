@@ -7,7 +7,7 @@ use crate::zkvm::instruction::{
 };
 use crate::zkvm::lookup_table::LookupTables;
 use common::constants::{REGISTER_COUNT, XLEN};
-use tracer::instruction::Instruction;
+use jolt_riscv::JoltInstructionRow;
 
 /// Total number of lanes encoded by committed-bytecode rows.
 pub const fn total_lanes() -> usize {
@@ -28,28 +28,26 @@ pub const fn committed_lanes() -> usize {
 }
 
 pub const DEFAULT_COMMITTED_BYTECODE_CHUNK_COUNT: usize = 1;
-
-#[inline]
-pub fn validate_committed_bytecode_chunk_count(chunk_count: usize) {
-    assert!(chunk_count > 0, "bytecode chunk count must be non-zero");
-    assert!(
-        chunk_count.is_power_of_two(),
-        "bytecode chunk count must be a power of two"
-    );
-}
+pub const MAX_COMMITTED_BYTECODE_CHUNK_COUNT: usize = 256;
 
 #[inline(always)]
-pub fn validate_committed_bytecode_chunking_for_len(bytecode_len: usize, chunk_count: usize) {
-    validate_committed_bytecode_chunk_count(chunk_count);
-    assert!(
-        bytecode_len.is_multiple_of(chunk_count),
-        "bytecode length ({bytecode_len}) must be divisible by chunk count ({chunk_count})"
-    );
+pub fn is_valid_committed_bytecode_chunking_for_len(
+    bytecode_len: usize,
+    chunk_count: usize,
+) -> bool {
+    chunk_count > 0
+        && chunk_count <= MAX_COMMITTED_BYTECODE_CHUNK_COUNT
+        && chunk_count.is_power_of_two()
+        && bytecode_len.is_multiple_of(chunk_count)
 }
 
 #[inline(always)]
 pub fn committed_bytecode_chunk_cycle_len(bytecode_len: usize, chunk_count: usize) -> usize {
-    validate_committed_bytecode_chunking_for_len(bytecode_len, chunk_count);
+    assert!(
+        is_valid_committed_bytecode_chunking_for_len(bytecode_len, chunk_count),
+        "bytecode chunk count ({chunk_count}) must be non-zero, a power of two, at most \
+         {MAX_COMMITTED_BYTECODE_CHUNK_COUNT}, and divide bytecode length ({bytecode_len})"
+    );
     bytecode_len / chunk_count
 }
 
@@ -102,33 +100,32 @@ pub enum ActiveLaneValue<F: JoltField> {
 
 #[inline(always)]
 pub fn for_each_active_lane_value<F: JoltField>(
-    instr: &Instruction,
+    instruction: &JoltInstructionRow,
     mut visit: impl FnMut(usize, ActiveLaneValue<F>),
 ) {
     let l = BYTECODE_LANE_LAYOUT;
 
-    let normalized = instr.normalize();
-    let circuit_flags = <Instruction as Flags>::circuit_flags(instr);
-    let instr_flags = <Instruction as Flags>::instruction_flags(instr);
-    let lookup_idx = <Instruction as InstructionLookup<XLEN>>::lookup_table(instr)
+    let circuit_flags = instruction.circuit_flags();
+    let instr_flags = instruction.instruction_flags();
+    let lookup_idx = InstructionLookup::<XLEN>::lookup_table(instruction)
         .map(|t| LookupTables::<XLEN>::enum_index(&t));
     let raf_flag = !InterleavedBitsMarker::is_interleaved_operands(&circuit_flags);
 
-    if let Some(r) = normalized.operands.rs1 {
+    if let Some(r) = instruction.operands.rs1 {
         visit(l.rs1_start + (r as usize), ActiveLaneValue::One);
     }
-    if let Some(r) = normalized.operands.rs2 {
+    if let Some(r) = instruction.operands.rs2 {
         visit(l.rs2_start + (r as usize), ActiveLaneValue::One);
     }
-    if let Some(r) = normalized.operands.rd {
+    if let Some(r) = instruction.operands.rd {
         visit(l.rd_start + (r as usize), ActiveLaneValue::One);
     }
 
-    let unexpanded_pc = F::from_u64(normalized.address as u64);
+    let unexpanded_pc = F::from_u64(instruction.address as u64);
     if !unexpanded_pc.is_zero() {
         visit(l.unexp_pc_idx, ActiveLaneValue::Scalar(unexpanded_pc));
     }
-    let imm = F::from_i128(normalized.operands.imm);
+    let imm = F::from_i128(instruction.operands.imm);
     if !imm.is_zero() {
         visit(l.imm_idx, ActiveLaneValue::Scalar(imm));
     }
@@ -151,17 +148,12 @@ pub fn for_each_active_lane_value<F: JoltField>(
     }
 }
 
-#[tracing::instrument(
-    skip_all,
-    name = "bytecode::build_committed_bytecode_chunk_polynomials"
-)]
-pub fn build_committed_bytecode_chunk_polynomials<F: JoltField>(
-    instructions: &[Instruction],
+#[tracing::instrument(skip_all, name = "bytecode::build_committed_bytecode_chunk_coeffs")]
+pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
+    instructions: &[JoltInstructionRow],
     chunk_count: usize,
-) -> Vec<MultilinearPolynomial<F>> {
+) -> Vec<Vec<F>> {
     let bytecode_len = instructions.len();
-    validate_committed_bytecode_chunking_for_len(bytecode_len, chunk_count);
-
     let chunk_cycle_len = committed_bytecode_chunk_cycle_len(bytecode_len, chunk_count);
     let lane_capacity = committed_lanes();
     let mut chunk_coeffs: Vec<Vec<F>> = (0..chunk_count)
@@ -189,6 +181,17 @@ pub fn build_committed_bytecode_chunk_polynomials<F: JoltField>(
     }
 
     chunk_coeffs
+}
+
+#[tracing::instrument(
+    skip_all,
+    name = "bytecode::build_committed_bytecode_chunk_polynomials"
+)]
+pub fn build_committed_bytecode_chunk_polynomials<F: JoltField>(
+    instructions: &[JoltInstructionRow],
+    chunk_count: usize,
+) -> Vec<MultilinearPolynomial<F>> {
+    build_committed_bytecode_chunk_coeffs::<F>(instructions, chunk_count)
         .into_iter()
         .map(MultilinearPolynomial::from)
         .collect()
