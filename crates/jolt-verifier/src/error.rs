@@ -33,6 +33,9 @@ pub enum VerifierError {
     #[error("vector commitment setup is missing from verifier preprocessing")]
     MissingVectorCommitmentSetup,
 
+    #[error("vector commitment setup capacity {got} is too small; expected at least {required}")]
+    InvalidVectorCommitmentCapacity { required: usize, got: usize },
+
     #[error("program I/O memory layout does not match verifier preprocessing")]
     MemoryLayoutMismatch,
 

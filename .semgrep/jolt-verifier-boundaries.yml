@@ -55,19 +55,19 @@ rules:
   - id: jolt-verifier-zk-modules-use-statements-not-claims
     languages: [rust]
     severity: ERROR
-    message: "ZK stage code must use SumcheckStatement/consistency APIs, not construct scalar SumcheckClaim values."
+    message: "Committed stage helpers must use SumcheckStatement/consistency APIs, not construct scalar SumcheckClaim values."
     paths:
       include:
-        - /crates/jolt-verifier/src/stages/**/zk.rs
+        - /crates/jolt-verifier/src/stages/committed.rs
     pattern-regex: '\bSumcheckClaim::new\b'
 
   - id: jolt-verifier-zk-modules-no-clear-claims
     languages: [rust]
     severity: ERROR
-    message: "ZK stage code must not read clear scalar claims."
+    message: "Committed stage helpers must not read clear scalar claims."
     paths:
       include:
-        - /crates/jolt-verifier/src/stages/**/zk.rs
+        - /crates/jolt-verifier/src/stages/committed.rs
     pattern-regex: '\bclear_claims\s*\('
 
   - id: jolt-verifier-zk-branches-use-statements-not-claims

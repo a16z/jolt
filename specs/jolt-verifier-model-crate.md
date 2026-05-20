@@ -340,8 +340,9 @@ Uni-skip is protocol structure, not a special sumcheck primitive. Model it as:
 
 `jolt-verifier` owns the Jolt-specific construction of the BlindFold instance.
 Per-stage committed consistency should stay visible in the same linear
-`stage*/verify.rs` flow as the clear checks. Shared final BlindFold glue
-may live in `stages/zk.rs`.
+`stage*/verify.rs` flow as the clear checks. Shared committed-stage boundary
+helpers live in `stages/committed.rs`; do not keep a placeholder `zk.rs`
+module before there is concrete final BlindFold verifier logic to put there.
 
 The ZK verifier should use the same explicit sequencing discipline as the
 clear verifier. The production top-level verifier must remain one linear
@@ -482,13 +483,14 @@ crates/jolt-verifier/src/
       inputs.rs
       outputs.rs
       verify.rs
-    zk.rs
+    committed.rs
 ```
 
 Keep verifier preprocessing in top-level `preprocessing.rs`. Do not add a
 top-level `openings.rs` unless there is substantial verifier-owned logic to put
-there. Do not add `stages/blindfold.rs`; Jolt-specific BlindFold instance
-construction is `stages/zk.rs`.
+there. Do not add `stages/blindfold.rs` or a placeholder `stages/zk.rs`;
+Jolt-specific committed and BlindFold boundary helpers should stay in
+`stages/committed.rs` until the final verifier logic has a concrete shape.
 
 ## Verification Flow
 
@@ -540,17 +542,9 @@ pub fn verify<PCS, VC, T>(...) -> Result<(), VerifierError> {
         stages::stage8::deps(&stage6, &stage7),
     )?;
 
-    if checked.zk {
-        stages::zk::verify(
-            &checked,
-            preprocessing,
-            &proof,
-            &mut transcript,
-            stages::zk::deps(
-                &stage1, &stage2, &stage3, &stage4, &stage5, &stage6, &stage7, &stage8,
-            ),
-        )?;
-    }
+    // When full ZK is implemented, verify the concrete BlindFold/PCS-ZK
+    // boundary here using typed stage outputs. Do not route through a
+    // placeholder ZK orchestration module.
 
     Ok(())
 }
@@ -793,7 +787,7 @@ struct TestCase {
 
 The harness has separate configured horizons for standard and ZK mode. The
 standard frontier currently reaches `Full`; the ZK test frontier currently
-reaches `Stage2` committed consistency while BlindFold instance construction and
+reaches `Stage3` committed consistency while BlindFold instance construction and
 final ZK verification remain unwired. A completeness case passes when a valid
 proof reaches the configured horizon for its mode. Before the full verifier
 exists, reaching the next unimplemented stage is success; after the full
@@ -831,7 +825,7 @@ struct VerifierFrontiers {
 
 const CURRENT_VERIFIER_FRONTIERS: VerifierFrontiers = VerifierFrontiers {
     standard: VerifierCheckpoint::Full,
-    zk: VerifierCheckpoint::Stage2,
+    zk: VerifierCheckpoint::Stage3,
 };
 ```
 
@@ -1048,7 +1042,7 @@ that is present in the fixture:
 
 - hiding PCS commitments produced by `commit_zk`;
 - committed sumcheck round commitments;
-- committed output-claim rows;
+- committed output-claim commitments;
 - BlindFold proof commitments and auxiliary row commitments;
 - PCS ZK evaluation commitment or equivalent hiding commitment exposed by the
   final opening proof.
@@ -1469,6 +1463,11 @@ Current implementation status:
   compressed batch round-polynomial tampering, missing/extra round counts, and
   every typed Stage 3 output claim are tampered after compat conversion and
   rejected before the current frontier.
+- Stage 3 ZK committed consistency is wired as an internal frontier: it checks
+  the three committed sumcheck statements, derives transcript challenges, checks
+  the committed output-claim commitment shape under the prevalidated VC setup,
+  and returns typed public/consistency output before the top-level verifier
+  stops at `VerifierError::Unimplemented`.
 - Stage 3 has a dedicated append-order regression for clear opening
   claims. It records the transcript payload sequence and asserts that core
   aliases (`instruction_input.unexpanded_pc`, `registers.rs1_value`,
@@ -2049,13 +2048,13 @@ Current implementation status:
   final opening claim values are tampered after compat conversion and rejected.
   Final opening values are also tampered before compat conversion to guard the
   core-to-modular conversion boundary.
-- ZK/BlindFold remains at the `Commitments` frontier. The verifier already
-  rejects mixed proof shapes and requires committed stage proofs plus a ZK claim
-  payload in ZK mode. Stage 1 now checks committed sumcheck consistency from a
-  real core ZK fixture and then stops at `VerifierError::Unimplemented` because
-  the production ZK checkpoint is still BlindFold/full ZK verification. Later
-  stage outputs preserve the data needed to construct BlindFold public inputs as
-  internal ZK consistency milestones are wired.
+- ZK/BlindFold remains a consistency frontier, not full ZK verification. The
+  verifier rejects mixed proof shapes, requires committed stage proofs plus a ZK
+  claim payload in ZK mode, validates the vector-commitment setup once against
+  the BlindFold generator capacity used by core, checks committed
+  consistency through Stage 3 on real core ZK fixtures, and then stops at
+  `VerifierError::Unimplemented`. Later stage outputs preserve the data needed
+  to construct BlindFold public inputs as internal ZK milestones are wired.
 
 ### 13. ZK: Committed Consistency, BlindFold R1CS, And Final Verification
 
@@ -2065,19 +2064,25 @@ verification once the whole protocol instance is available.
 
 Current status:
 
-- `stages/zk.rs` exists as the future final ZK entry point, but returns
-  `VerifierError::Unimplemented`.
+- There is no placeholder `stages/zk.rs`. The concrete ZK frontier code lives
+  either inline in the relevant stage verifier or in `stages/committed.rs` when
+  it is shared committed-boundary logic.
 - The top-level verifier enforces committed proof shape in ZK mode and rejects
   clear claims in ZK proofs.
 - Clear stages 1-7 already call the clear-only claim-taking sumcheck APIs
   from `jolt-sumcheck`. ZK branches use statement-only committed consistency
   APIs so hidden scalar claims are never represented as placeholder values.
-- Stage 1 and Stage 2 committed consistency are wired directly in their
+- Stage 1, Stage 2, and Stage 3 committed consistency are wired directly in their
   `stage*/verify.rs` files. They consume statement-only committed sumchecks,
-  validate output-claim commitment row counts, derive transcript challenges,
-  return typed public/consistency outputs, and stop before BlindFold.
+  derive transcript challenges, require the committed output claims to have the
+  chunk count implied by the prevalidated VC capacity and typed hidden-claim
+  count, return typed public/consistency outputs, and stop before BlindFold.
 - `JoltVerifierPreprocessing` carries the vector-commitment setup needed by
-  BlindFold.
+  BlindFold. `validate_inputs` checks that setup once against the shared
+  BlindFold generator capacity (`MAX_BLINDFOLD_GENERATORS`), and the verifier's
+  committed-stage boundary checks use the resulting capacity to validate
+  output-claim commitment chunk counts. `jolt-sumcheck` does not know about this
+  Jolt-specific VC sizing.
 - `compat` can preserve legacy core BlindFold artifacts, but it does not yet
   convert them into the modular `jolt_blindfold::BlindFoldProof` type.
 - The modular crates already provide most generic pieces: committed sumcheck
@@ -2090,8 +2095,8 @@ Tasks:
   transcript consistency checks, BlindFold stage configs, Pedersen/vector-commitment setup,
   `commit_zk`, `open_zk`, `verify_zk`, Dory evaluation commitments, and
   `bind_opening_inputs_zk` transcript effects.
-- Next implementation step: wire Stage 3 committed consistency using the same
-  statement-only pattern established in Stages 1 and 2.
+- Next implementation step: wire Stage 4 committed consistency using the same
+  statement-only pattern established in Stages 1-3.
 - For each stage, add a committed sumcheck consistency branch directly beside
   the clear branch. It should consume the committed proof(s), check the
   committed transcript consistency, derive the same challenges as core, validate

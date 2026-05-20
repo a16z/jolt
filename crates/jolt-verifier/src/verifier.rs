@@ -10,7 +10,7 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
-    stages::{stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8},
+    stages::{committed, stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8},
     VerifierError,
 };
 
@@ -52,6 +52,13 @@ where
         &mut transcript,
         stage2::deps(&stage1),
     )?;
+    let stage3 = stage3::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage3::deps(&stage1, &stage2)?,
+    )?;
 
     if checked.zk {
         return Err(VerifierError::Unimplemented);
@@ -63,13 +70,9 @@ where
     let stage2::Stage2Output::Clear(stage2) = stage2 else {
         return Err(VerifierError::ExpectedClearProof { field: "stage2" });
     };
-    let stage3 = stage3::verify(
-        &checked,
-        preprocessing,
-        proof,
-        &mut transcript,
-        stage3::deps(&stage1, &stage2),
-    )?;
+    let stage3::Stage3Output::Clear(stage3) = stage3 else {
+        return Err(VerifierError::ExpectedClearProof { field: "stage3" });
+    };
     let stage4 = stage4::verify(
         &checked,
         preprocessing,
@@ -120,6 +123,7 @@ pub struct CheckedInputs {
     pub entry_address: u64,
     pub preprocessing_digest: [u8; 32],
     pub trusted_advice_commitment_present: bool,
+    pub vc_capacity: Option<usize>,
 }
 
 pub fn validate_inputs<PCS, VC, ZkProof>(
@@ -135,10 +139,6 @@ where
 {
     if public_io.memory_layout != preprocessing.program.memory_layout {
         return Err(VerifierError::MemoryLayoutMismatch);
-    }
-
-    if zk && preprocessing.vc_setup.is_none() {
-        return Err(VerifierError::MissingVectorCommitmentSetup);
     }
 
     let max_input_size = preprocessing.program.memory_layout.max_input_size as usize;
@@ -170,6 +170,14 @@ where
         return Err(VerifierError::InvalidRamK { got: proof.ram_K });
     }
 
+    let vc_capacity = if zk {
+        Some(validate_zk_vector_commitment_setup::<PCS, VC>(
+            preprocessing,
+        )?)
+    } else {
+        None
+    };
+
     let mut normalized_public_io = public_io.clone();
     normalized_public_io.outputs.truncate(
         normalized_public_io
@@ -187,7 +195,28 @@ where
         entry_address: preprocessing.program.bytecode.entry_address,
         preprocessing_digest: preprocessing.preprocessing_digest,
         trusted_advice_commitment_present,
+        vc_capacity,
     })
+}
+
+fn validate_zk_vector_commitment_setup<PCS, VC>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+) -> Result<usize, VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    let setup = preprocessing
+        .vc_setup
+        .as_ref()
+        .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
+    let required = committed::zk_vector_commitment_capacity_requirement();
+    let got = VC::capacity(setup);
+    if got < required {
+        return Err(VerifierError::InvalidVectorCommitmentCapacity { required, got });
+    }
+
+    Ok(got)
 }
 
 fn absorb_preamble<PCS, VC, ZkProof, T>(
@@ -408,7 +437,7 @@ mod tests {
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
     use common::jolt_device::{JoltDevice, MemoryLayout};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
-    use jolt_crypto::{Bn254G1, Commitment, Pedersen};
+    use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup};
     use jolt_field::Fr;
     use jolt_openings::{CommitmentScheme, OpeningsError};
     use jolt_poly::{MultilinearPoly, Polynomial};
@@ -614,6 +643,25 @@ mod tests {
         assert!(matches!(
             validate_inputs(&preprocessing, &public_io, &proof, false, true),
             Err(VerifierError::MissingVectorCommitmentSetup)
+        ));
+    }
+
+    #[test]
+    fn validate_inputs_rejects_small_zk_vector_commitment_setup() {
+        let mut preprocessing = test_preprocessing();
+        preprocessing.vc_setup = Some(PedersenSetup::new(
+            vec![Bn254G1::default()],
+            Bn254G1::default(),
+        ));
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout.clone(),
+            ..JoltDevice::default()
+        };
+        let proof = proof_with_zk(true, zk_claims());
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false, true),
+            Err(VerifierError::InvalidVectorCommitmentCapacity { got: 1, .. })
         ));
     }
 

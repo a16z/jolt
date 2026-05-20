@@ -16,13 +16,13 @@ use super::outputs::{
     VerifiedSpartanOuterSumcheck,
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, verifier::CheckedInputs,
-    VerifierError,
+    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::committed,
+    verifier::CheckedInputs, VerifierError,
 };
 
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
-    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    _preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
 ) -> Result<Stage1Output<PCS::Field, VC::Output>, VerifierError>
@@ -60,8 +60,8 @@ where
                 stage,
                 reason: error.to_string(),
             })?;
-        require_output_claim_commitment_rows::<PCS, VC>(
-            preprocessing,
+        committed::require_output_claim_commitments(
+            checked,
             &proof.stages.stage1_uni_skip_first_round_proof,
             "stage1_uni_skip_first_round_proof",
             1,
@@ -146,8 +146,8 @@ where
             stage,
             reason: error.to_string(),
         })?;
-        require_output_claim_commitment_rows::<PCS, VC>(
-            preprocessing,
+        committed::require_output_claim_commitments(
+            checked,
             &proof.stages.stage1_sumcheck_proof,
             "stage1_sumcheck_proof",
             dimensions.variables().len(),
@@ -282,43 +282,4 @@ where
         remainder,
         outer: claims.outer.clone(),
     }))
-}
-
-fn require_output_claim_commitment_rows<PCS, VC>(
-    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &jolt_sumcheck::SumcheckProof<PCS::Field, VC::Output>,
-    proof_name: &'static str,
-    expected_values: usize,
-    stage: JoltStageId,
-) -> Result<(), VerifierError>
-where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
-{
-    let setup = preprocessing
-        .vc_setup
-        .as_ref()
-        .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
-    let capacity = VC::capacity(setup);
-    if capacity == 0 {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage,
-            reason: "vector commitment setup has zero capacity".to_string(),
-        });
-    }
-    let expected = expected_values.div_ceil(capacity);
-    let committed = proof
-        .as_committed()
-        .ok_or(VerifierError::ExpectedCommittedProof { field: proof_name })?;
-    let got = committed.output_claims.commitments.len();
-    if got != expected {
-        return Err(VerifierError::StageClaimSumcheckFailed {
-            stage,
-            reason: format!(
-                "{proof_name} output claim commitment count mismatch: expected {expected}, got {got}"
-            ),
-        });
-    }
-
-    Ok(())
 }

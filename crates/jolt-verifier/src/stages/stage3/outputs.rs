@@ -1,14 +1,36 @@
 //! Typed outputs produced by stage 3 verification.
 
 use jolt_field::Field;
+use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
 use super::inputs::Stage3Claims;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3Output<F: Field> {
+pub struct Stage3PublicOutput<F: Field> {
     pub challenges: Vec<F>,
+    pub batching_coefficients: Vec<F>,
+    pub shift_gamma: F,
+    pub instruction_gamma: F,
+    pub registers_gamma: F,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage3ClearOutput<F: Field> {
+    pub public: Stage3PublicOutput<F>,
     pub output_claims: Stage3Claims<F>,
     pub batch: VerifiedStage3Batch<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage3ZkOutput<F: Field, C> {
+    pub public: Stage3PublicOutput<F>,
+    pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Stage3Output<F: Field, C> {
+    Clear(Stage3ClearOutput<F>),
+    Zk(Stage3ZkOutput<F, C>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -38,8 +38,8 @@ use super::{
     },
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, verifier::CheckedInputs,
-    VerifierError,
+    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::committed,
+    verifier::CheckedInputs, VerifierError,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,12 +89,12 @@ enum Stage2Batch<F: Field, C> {
     Zk(Stage2ZkBatch<F, C>),
 }
 
-const PRODUCT_UNISKIP_OUTPUT_CLAIM_COUNT: usize = 1;
-const STAGE2_BATCH_OUTPUT_CLAIM_COUNT: usize = 15;
+const PRODUCT_UNISKIP_OUTPUT_CLAIMS: usize = 1;
+const STAGE2_BATCH_OUTPUT_CLAIMS: usize = 15;
 
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
-    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    _preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
     deps: Deps<'_, PCS::Field, VC::Output>,
@@ -114,16 +114,10 @@ where
         _ => {}
     }
 
-    let product_uniskip = verify_product_uniskip::<PCS, VC, T, ZkProof>(
-        checked,
-        preprocessing,
-        proof,
-        transcript,
-        deps,
-    )?;
+    let product_uniskip =
+        verify_product_uniskip::<PCS, VC, T, ZkProof>(checked, proof, transcript, deps)?;
     let batch = verify_regular_batch::<PCS, VC, T, ZkProof>(
         checked,
-        preprocessing,
         proof,
         transcript,
         &product_uniskip,
@@ -195,7 +189,6 @@ where
 
 fn verify_product_uniskip<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
-    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
     deps: Deps<'_, PCS::Field, VC::Output>,
@@ -324,11 +317,11 @@ where
                     stage,
                     reason: error.to_string(),
                 })?;
-            require_output_claim_commitment_rows::<PCS, VC>(
-                preprocessing,
+            committed::require_output_claim_commitments(
+                checked,
                 &proof.stages.stage2_uni_skip_first_round_proof,
                 "stage2_uni_skip_first_round_proof",
-                PRODUCT_UNISKIP_OUTPUT_CLAIM_COUNT,
+                PRODUCT_UNISKIP_OUTPUT_CLAIMS,
                 stage,
             )?;
             let [round] = consistency.rounds.as_slice() else {
@@ -351,7 +344,6 @@ where
 
 fn verify_regular_batch<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
-    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
     product_uniskip: &Stage2ProductUniSkip<PCS::Field, VC::Output>,
@@ -1034,11 +1026,11 @@ where
                 stage: JoltStageId::RamReadWriteChecking,
                 reason: error.to_string(),
             })?;
-            require_output_claim_commitment_rows::<PCS, VC>(
-                preprocessing,
+            committed::require_output_claim_commitments(
+                checked,
                 &proof.stages.stage2_sumcheck_proof,
                 "stage2_sumcheck_proof",
-                STAGE2_BATCH_OUTPUT_CLAIM_COUNT,
+                STAGE2_BATCH_OUTPUT_CLAIMS,
                 JoltStageId::RamReadWriteChecking,
             )?;
 
@@ -1062,42 +1054,4 @@ where
             })
         }
     }
-}
-fn require_output_claim_commitment_rows<PCS, VC>(
-    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &jolt_sumcheck::SumcheckProof<PCS::Field, VC::Output>,
-    proof_name: &'static str,
-    expected_values: usize,
-    stage: JoltStageId,
-) -> Result<(), VerifierError>
-where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
-{
-    let setup = preprocessing
-        .vc_setup
-        .as_ref()
-        .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
-    let capacity = VC::capacity(setup);
-    if capacity == 0 {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage,
-            reason: "vector commitment setup has zero capacity".to_string(),
-        });
-    }
-    let expected = expected_values.div_ceil(capacity);
-    let committed = proof
-        .as_committed()
-        .ok_or(VerifierError::ExpectedCommittedProof { field: proof_name })?;
-    let got = committed.output_claims.commitments.len();
-    if got != expected {
-        return Err(VerifierError::StageClaimSumcheckFailed {
-            stage,
-            reason: format!(
-                "{proof_name} output claim commitment count mismatch: expected {expected}, got {got}"
-            ),
-        });
-    }
-
-    Ok(())
 }

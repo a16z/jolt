@@ -4,7 +4,7 @@ use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
 use crate::stages::{
-    stage1::Stage1ClearOutput, stage2::Stage2ClearOutput, stage3::Stage3Output,
+    stage1::Stage1ClearOutput, stage2::Stage2ClearOutput, stage3::Stage3ClearOutput,
     stage4::Stage4Output, stage5::Stage5Output, stage6::Stage6Output,
 };
 
@@ -17,7 +17,7 @@ pub struct Deps<'a, F: Field> {
 pub fn deps<'a, F: Field>(
     _stage1: &'a Stage1ClearOutput<F>,
     _stage2: &'a Stage2ClearOutput<F>,
-    _stage3: &'a Stage3Output<F>,
+    _stage3: &'a Stage3ClearOutput<F>,
     stage4: &'a Stage4Output<F>,
     _stage5: &'a Stage5Output<F>,
     stage6: &'a Stage6Output<F>,

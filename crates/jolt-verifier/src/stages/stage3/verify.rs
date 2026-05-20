@@ -11,16 +11,19 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{try_eq_mle, EqPlusOnePolynomial};
-use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim};
+use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
 
 use super::{
     inputs::{Deps, Stage3Claims},
-    outputs::{Stage3Output, VerifiedStage3Batch, VerifiedStage3Sumcheck},
+    outputs::{
+        Stage3ClearOutput, Stage3Output, Stage3PublicOutput, Stage3ZkOutput, VerifiedStage3Batch,
+        VerifiedStage3Sumcheck,
+    },
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, verifier::CheckedInputs,
-    VerifierError,
+    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::committed,
+    verifier::CheckedInputs, VerifierError,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,23 +40,30 @@ struct Stage3BatchExpectedOutputClaims<F: Field> {
     registers_claim_reduction: F,
 }
 
+const STAGE3_BATCH_OUTPUT_CLAIMS: usize = 13;
+
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     _preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
-    deps: Deps<'_, PCS::Field>,
-) -> Result<Stage3Output<PCS::Field>, VerifierError>
+    deps: Deps<'_, PCS::Field, VC::Output>,
+) -> Result<Stage3Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    if checked.zk {
-        return Err(VerifierError::Unimplemented);
+    match (checked.zk, deps) {
+        (true, Deps::Clear { .. }) => {
+            return Err(VerifierError::ExpectedCommittedProof { field: "stage2" });
+        }
+        (false, Deps::Zk { .. }) => {
+            return Err(VerifierError::ExpectedClearProof { field: "stage2" });
+        }
+        _ => {}
     }
 
-    let claims = &proof.clear_claims()?.stage3;
     let log_t = checked.trace_length.ilog2() as usize;
     let dimensions = TraceDimensions::new(log_t);
 
@@ -79,10 +89,62 @@ where
     let instruction_gamma = transcript.challenge_scalar();
     let registers_gamma = transcript.challenge_scalar();
 
+    let public =
+        |challenges: Vec<PCS::Field>, batching_coefficients: Vec<PCS::Field>| Stage3PublicOutput {
+            challenges,
+            batching_coefficients,
+            shift_gamma,
+            instruction_gamma,
+            registers_gamma,
+        };
+
+    if checked.zk {
+        let statements = [
+            SumcheckStatement::new(shift_claims.sumcheck.rounds, shift_claims.sumcheck.degree),
+            SumcheckStatement::new(
+                instruction_claims.sumcheck.rounds,
+                instruction_claims.sumcheck.degree,
+            ),
+            SumcheckStatement::new(
+                registers_claims.sumcheck.rounds,
+                registers_claims.sumcheck.degree,
+            ),
+        ];
+        let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
+            &statements,
+            &proof.stages.stage3_sumcheck_proof,
+            transcript,
+        )
+        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+            stage: JoltStageId::SpartanShift,
+            reason: error.to_string(),
+        })?;
+        committed::require_output_claim_commitments(
+            checked,
+            &proof.stages.stage3_sumcheck_proof,
+            "stage3_sumcheck_proof",
+            STAGE3_BATCH_OUTPUT_CLAIMS,
+            JoltStageId::SpartanShift,
+        )?;
+
+        return Ok(Stage3Output::Zk(Stage3ZkOutput {
+            public: public(
+                consistency.consistency.challenges(),
+                consistency.batching_coefficients.clone(),
+            ),
+            batch_consistency: consistency,
+        }));
+    }
+
+    let Deps::Clear { stage1, stage2 } = deps else {
+        return Err(VerifierError::ExpectedClearProof { field: "stage2" });
+    };
+    let claims = &proof.clear_claims()?.stage3;
+
     let [(left_reduced, left_product), (right_reduced, right_product)] =
         instruction::input_virtualization_consistency_openings();
-    if deps.stage2.batch.product_remainder.opening_point
-        != deps.stage2.batch.instruction_claim_reduction.opening_point
+    if stage2.batch.product_remainder.opening_point
+        != stage2.batch.instruction_claim_reduction.opening_point
     {
         return Err(VerifierError::StageClaimOpeningMismatch {
             stage: JoltStageId::InstructionInputVirtualization,
@@ -90,24 +152,20 @@ where
             right: left_product,
         });
     }
-    let product_left = deps
-        .stage2
+    let product_left = stage2
         .output_claims
         .product_remainder
         .left_instruction_input;
-    let product_right = deps
-        .stage2
+    let product_right = stage2
         .output_claims
         .product_remainder
         .right_instruction_input;
-    let reduced_left = deps
-        .stage2
+    let reduced_left = stage2
         .output_claims
         .instruction_claim_reduction
         .left_instruction_input
         .unwrap_or(product_left);
-    let reduced_right = deps
-        .stage2
+    let reduced_right = stage2
         .output_claims
         .instruction_claim_reduction
         .right_instruction_input
@@ -137,15 +195,11 @@ where
     let input_claims = Stage3BatchInputClaims {
         shift: shift_claims.input.expression.try_evaluate(
             |id| match *id {
-                id if id == next_unexpanded_pc => Ok(deps.stage1.outer.next_unexpanded_pc),
-                id if id == next_pc => Ok(deps.stage1.outer.next_pc),
-                id if id == next_is_virtual => Ok(deps.stage1.outer.next_is_virtual),
-                id if id == next_is_first_in_sequence => {
-                    Ok(deps.stage1.outer.next_is_first_in_sequence)
-                }
-                id if id == next_is_noop => {
-                    Ok(deps.stage2.output_claims.product_remainder.next_is_noop)
-                }
+                id if id == next_unexpanded_pc => Ok(stage1.outer.next_unexpanded_pc),
+                id if id == next_pc => Ok(stage1.outer.next_pc),
+                id if id == next_is_virtual => Ok(stage1.outer.next_is_virtual),
+                id if id == next_is_first_in_sequence => Ok(stage1.outer.next_is_first_in_sequence),
+                id if id == next_is_noop => Ok(stage2.output_claims.product_remainder.next_is_noop),
                 id => Err(VerifierError::MissingOpeningClaim { id }),
             },
             |id| match id {
@@ -170,9 +224,9 @@ where
         )?,
         registers_claim_reduction: registers_claims.input.expression.try_evaluate(
             |id| match *id {
-                id if id == rd_write_value_spartan => Ok(deps.stage1.outer.rd_write_value),
-                id if id == rs1_value_spartan => Ok(deps.stage1.outer.rs1_value),
-                id if id == rs2_value_spartan => Ok(deps.stage1.outer.rs2_value),
+                id if id == rd_write_value_spartan => Ok(stage1.outer.rd_write_value),
+                id if id == rs1_value_spartan => Ok(stage1.outer.rs1_value),
+                id if id == rs2_value_spartan => Ok(stage1.outer.rs2_value),
                 id => Err(VerifierError::MissingOpeningClaim { id }),
             },
             |id| match id {
@@ -219,10 +273,10 @@ where
             reason: error.to_string(),
         })?;
     let shift_opening_point = shift_point.iter().rev().copied().collect::<Vec<_>>();
-    let eq_plus_one_outer = EqPlusOnePolynomial::new(deps.stage2.product_uniskip.tau_low.clone())
+    let eq_plus_one_outer = EqPlusOnePolynomial::new(stage2.product_uniskip.tau_low.clone())
         .evaluate(&shift_opening_point);
     let eq_plus_one_product =
-        EqPlusOnePolynomial::new(deps.stage2.batch.product_remainder.opening_point.clone())
+        EqPlusOnePolynomial::new(stage2.batch.product_remainder.opening_point.clone())
             .evaluate(&shift_opening_point);
     let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] =
         shift_output_openings();
@@ -257,7 +311,7 @@ where
     let instruction_opening_point = instruction_point.iter().rev().copied().collect::<Vec<_>>();
     let eq_product = try_eq_mle(
         &instruction_opening_point,
-        &deps.stage2.batch.product_remainder.opening_point,
+        &stage2.batch.product_remainder.opening_point,
     )
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
         stage: JoltStageId::InstructionInputVirtualization,
@@ -296,14 +350,11 @@ where
             reason: error.to_string(),
         })?;
     let registers_opening_point = registers_point.iter().rev().copied().collect::<Vec<_>>();
-    let eq_spartan = try_eq_mle(
-        &registers_opening_point,
-        &deps.stage2.product_uniskip.tau_low,
-    )
-    .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltStageId::RegistersClaimReduction,
-        reason: error.to_string(),
-    })?;
+    let eq_spartan = try_eq_mle(&registers_opening_point, &stage2.product_uniskip.tau_low)
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltStageId::RegistersClaimReduction,
+            reason: error.to_string(),
+        })?;
     let [rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced] =
         registers_claim_reduction::claim_reduction_output_openings();
     let registers_output = registers_claims.output.expression.try_evaluate(
@@ -351,8 +402,11 @@ where
 
     append_stage3_opening_claims(transcript, claims);
 
-    Ok(Stage3Output {
-        challenges: batch.reduction.point.as_slice().to_vec(),
+    Ok(Stage3Output::Clear(Stage3ClearOutput {
+        public: public(
+            batch.reduction.point.as_slice().to_vec(),
+            batch.batching_coefficients.clone(),
+        ),
         output_claims: claims.clone(),
         batch: VerifiedStage3Batch {
             batching_coefficients: batch.batching_coefficients.clone(),
@@ -378,7 +432,7 @@ where
                 expected_output_claim: expected_outputs.registers_claim_reduction,
             },
         },
-    })
+    }))
 }
 
 fn append_stage3_opening_claims<F, T>(transcript: &mut T, claims: &Stage3Claims<F>)
