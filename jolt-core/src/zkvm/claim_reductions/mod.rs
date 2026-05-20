@@ -33,10 +33,6 @@ pub use precommitted::{
     PrecommittedParams, PrecommittedPhase, PrecommittedPolynomial, PrecommittedSchedulingReference,
     TWO_PHASE_DEGREE_BOUND,
 };
-pub use program_image::{
-    ProgramImageClaimReductionParams, ProgramImageClaimReductionProver,
-    ProgramImageClaimReductionVerifier,
-};
 pub use ram_ra::{
     RaReductionParams, RamRaClaimReductionSumcheckProver, RamRaClaimReductionSumcheckVerifier,
 };
