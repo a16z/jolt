@@ -48,8 +48,8 @@ use crate::{
     pprof_scope,
     subprotocols::{
         booleanity::{
-            BooleanityAddressSumcheckProver, BooleanityCycleSumcheckProver,
-            BooleanitySumcheckParams,
+            BooleanityAddressSumcheckProver, BooleanityCyclePhaseParams,
+            BooleanityCycleSumcheckProver, BooleanitySumcheckParams,
         },
         streaming_schedule::LinearOnlySchedule,
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
@@ -1232,7 +1232,7 @@ impl<
     ) -> (
         SumcheckInstanceProof<F, C, ProofTranscript>,
         BytecodeReadRafSumcheckParams<F>,
-        BooleanitySumcheckParams<F>,
+        BooleanityCyclePhaseParams<F>,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 6a baseline");
@@ -1305,14 +1305,21 @@ impl<
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage6a_end_flamechart.svg");
 
-        (sumcheck_proof, bytecode_read_raf_params, booleanity_params)
+        let booleanity_cycle_params =
+            BooleanityCyclePhaseParams::new(booleanity.into_params(), &self.opening_accumulator);
+
+        (
+            sumcheck_proof,
+            bytecode_read_raf_params,
+            booleanity_cycle_params,
+        )
     }
 
     #[tracing::instrument(skip_all)]
     fn prove_stage6b(
         &mut self,
         bytecode_read_raf_params: BytecodeReadRafSumcheckParams<F>,
-        booleanity_params: BooleanitySumcheckParams<F>,
+        booleanity_params: BooleanityCyclePhaseParams<F>,
     ) -> (
         SumcheckInstanceProof<F, C, ProofTranscript>,
         Vec<F::Challenge>,
@@ -1395,7 +1402,6 @@ impl<
             &self.trace,
             &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
-            &self.opening_accumulator,
         );
         let mut ram_hamming_booleanity =
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);

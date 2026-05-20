@@ -12,5 +12,6 @@ pub mod sumcheck_verifier;
 pub mod univariate_skip;
 
 pub use booleanity::{
-    BooleanitySumcheckParams, BooleanitySumcheckProver, BooleanitySumcheckVerifier,
+    BooleanityAddressSumcheckProver, BooleanityAddressSumcheckVerifier, BooleanityCyclePhaseParams,
+    BooleanityCycleSumcheckProver, BooleanityCycleSumcheckVerifier, BooleanitySumcheckParams,
 };
