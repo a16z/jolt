@@ -222,7 +222,7 @@ where
     let mut output_claims = Vec::with_capacity(claims.stages.len());
     for (stage_index, (stage, proof)) in claims.stages.iter().zip(proofs).enumerate() {
         let check = proof
-            .verify_transcript(stage.shape, transcript)
+            .verify_committed(stage.shape, transcript)
             .map_err(|source| VerificationError::Sumcheck {
                 stage_index,
                 source,
@@ -497,7 +497,7 @@ mod tests {
         let mut manual = Blake2bTranscript::<Fr>::new(b"blindfold");
         for (stage, proof) in claims.stages.iter().zip(&proofs) {
             let _ = proof
-                .verify_transcript(stage.shape, &mut manual)
+                .verify_committed(stage.shape, &mut manual)
                 .expect("manual replay succeeds");
         }
 

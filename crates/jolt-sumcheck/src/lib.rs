@@ -98,7 +98,10 @@ where
     transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, claim);
 }
 
-pub use batched_verifier::{BatchedEvaluationClaim, BatchedSumcheckVerifier};
+pub use batched_verifier::{
+    BatchedCommittedSumcheckCheck, BatchedEvaluationClaim, BatchedSumcheckVerification,
+    BatchedSumcheckVerifier,
+};
 pub use claim::{EvaluationClaim, SumcheckClaim, SumcheckShape};
 pub use committed::{
     CommittedOutputClaims, CommittedRound, CommittedRoundWitness, CommittedSumcheckCheck,
@@ -106,7 +109,9 @@ pub use committed::{
 };
 pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain};
 pub use error::SumcheckError;
-pub use proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
+pub use proof::{
+    ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof, SumcheckVerification,
+};
 #[cfg(feature = "r1cs")]
 pub use r1cs::{
     allocate_sumcheck_r1cs_layout, append_sumcheck_r1cs_constraints, SumcheckR1csError,

@@ -11,7 +11,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{try_eq_mle, EqPlusOnePolynomial};
-use jolt_sumcheck::{BatchedSumcheckVerifier, ClearProof, SumcheckClaim, SumcheckProof};
+use jolt_sumcheck::{BatchedSumcheckVerification, BatchedSumcheckVerifier, SumcheckClaim};
 use jolt_transcript::Transcript;
 
 use super::{
@@ -202,19 +202,22 @@ where
             input_claims.registers_claim_reduction,
         ),
     ];
-    let SumcheckProof::Clear(ClearProof::Compressed(batch_proof)) =
-        &proof.stages.stage3_sumcheck_proof
-    else {
-        return Err(VerifierError::ExpectedClearProof {
-            field: "stage3_sumcheck_proof",
-        });
+    let batch = match BatchedSumcheckVerifier::verify_compressed_boolean(
+        &sumcheck_claims,
+        &proof.stages.stage3_sumcheck_proof,
+        transcript,
+    )
+    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+        stage: JoltStageId::SpartanShift,
+        reason: error.to_string(),
+    })? {
+        BatchedSumcheckVerification::Clear(batch) => batch,
+        BatchedSumcheckVerification::Committed(_) => {
+            return Err(VerifierError::ExpectedClearProof {
+                field: "stage3_sumcheck_proof",
+            });
+        }
     };
-    let batch =
-        BatchedSumcheckVerifier::verify_compressed(&sumcheck_claims, batch_proof, transcript)
-            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltStageId::SpartanShift,
-                reason: error.to_string(),
-            })?;
 
     let shift_point = batch
         .try_instance_point(shift_claims.sumcheck.rounds)

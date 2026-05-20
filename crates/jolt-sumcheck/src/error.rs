@@ -63,6 +63,16 @@ pub enum SumcheckError<F: FieldCore> {
     #[error("round polynomial must contain at least one coefficient")]
     EmptyRoundCoefficients,
 
+    /// The caller selected a verifier path that is incompatible with the proof
+    /// wire encoding.
+    #[error("wrong sumcheck proof encoding: expected {expected}, got {got}")]
+    WrongProofEncoding {
+        /// Expected proof encoding.
+        expected: &'static str,
+        /// Actual proof encoding.
+        got: &'static str,
+    },
+
     /// Batched verification received an empty claims slice.
     #[error("batched verification requires at least one claim")]
     EmptyClaims,

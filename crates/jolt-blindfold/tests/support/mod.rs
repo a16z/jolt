@@ -459,7 +459,7 @@ pub fn stage_input(
 ) -> StageInput<F, Bn254G1> {
     let mut transcript = Blake2bTranscript::<F>::new(b"blindfold-r1cs-e2e");
     let check = proof
-        .verify_transcript(shape, &mut transcript)
+        .verify_committed(shape, &mut transcript)
         .expect("committed proof transcript verifies");
     StageInput::new(check)
 }
@@ -478,7 +478,7 @@ pub fn stage_inputs_for_transcript_label(
         .map(|stage| {
             let check = stage
                 .proof
-                .verify_transcript(stage.shape, &mut transcript)
+                .verify_committed(stage.shape, &mut transcript)
                 .expect("committed proof transcript verifies");
             StageInput::new(check)
         })

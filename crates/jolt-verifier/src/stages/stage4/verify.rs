@@ -14,7 +14,7 @@ use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{block_selector_mle_msb, sparse_segments_mle_msb, try_eq_mle, LtPolynomial};
 use jolt_program::preprocess::PublicInitialRam;
-use jolt_sumcheck::{BatchedSumcheckVerifier, ClearProof, SumcheckClaim, SumcheckProof};
+use jolt_sumcheck::{BatchedSumcheckVerification, BatchedSumcheckVerifier, SumcheckClaim};
 use jolt_transcript::{LabelWithCount, Transcript};
 
 use super::{
@@ -240,19 +240,22 @@ where
             input_claims.ram_val_check,
         ),
     ];
-    let SumcheckProof::Clear(ClearProof::Compressed(batch_proof)) =
-        &proof.stages.stage4_sumcheck_proof
-    else {
-        return Err(VerifierError::ExpectedClearProof {
-            field: "stage4_sumcheck_proof",
-        });
+    let batch = match BatchedSumcheckVerifier::verify_compressed_boolean(
+        &sumcheck_claims,
+        &proof.stages.stage4_sumcheck_proof,
+        transcript,
+    )
+    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+        stage: JoltStageId::RegistersReadWriteChecking,
+        reason: error.to_string(),
+    })? {
+        BatchedSumcheckVerification::Clear(batch) => batch,
+        BatchedSumcheckVerification::Committed(_) => {
+            return Err(VerifierError::ExpectedClearProof {
+                field: "stage4_sumcheck_proof",
+            });
+        }
     };
-    let batch =
-        BatchedSumcheckVerifier::verify_compressed(&sumcheck_claims, batch_proof, transcript)
-            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltStageId::RegistersReadWriteChecking,
-                reason: error.to_string(),
-            })?;
 
     let registers_point = batch
         .try_instance_point(registers_claims.sumcheck.rounds)

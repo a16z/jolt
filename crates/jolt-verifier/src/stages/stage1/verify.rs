@@ -6,8 +6,8 @@ use jolt_field::FromPrimitiveInt;
 use jolt_openings::CommitmentScheme;
 use jolt_r1cs::constraints::rv64::Rv64SpartanOuterRemainder;
 use jolt_sumcheck::{
-    append_sumcheck_claim, BooleanHypercube, CenteredIntegerDomain, ClearProof, LabeledRoundPoly,
-    SumcheckClaim, SumcheckProof, SumcheckVerifier, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+    append_sumcheck_claim, CenteredIntegerDomain, SumcheckClaim, SumcheckVerification,
+    UNISKIP_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::Transcript;
 
@@ -53,32 +53,30 @@ where
         });
     };
     let uniskip_input_claim = PCS::Field::from_u64(0);
-    let SumcheckProof::Clear(ClearProof::Full(uniskip_proof)) =
-        &proof.stages.stage1_uni_skip_first_round_proof
-    else {
-        return Err(VerifierError::ExpectedClearProof {
-            field: "stage1_uni_skip_first_round_proof",
-        });
+    let uniskip_reduction = match proof
+        .stages
+        .stage1_uni_skip_first_round_proof
+        .verify(
+            &SumcheckClaim::new(
+                uniskip_spec.rounds,
+                uniskip_spec.degree,
+                uniskip_input_claim,
+            ),
+            CenteredIntegerDomain::new(domain_size),
+            UNISKIP_ROUND_TRANSCRIPT_LABEL,
+            transcript,
+        )
+        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+            stage,
+            reason: error.to_string(),
+        })? {
+        SumcheckVerification::Clear(reduction) => reduction,
+        SumcheckVerification::Committed(_) => {
+            return Err(VerifierError::ExpectedClearProof {
+                field: "stage1_uni_skip_first_round_proof",
+            });
+        }
     };
-    let uniskip_round_polynomials = uniskip_proof
-        .round_polynomials
-        .iter()
-        .map(LabeledRoundPoly::uniskip)
-        .collect::<Vec<_>>();
-    let uniskip_reduction = SumcheckVerifier::verify(
-        &SumcheckClaim::new(
-            uniskip_spec.rounds,
-            uniskip_spec.degree,
-            uniskip_input_claim,
-        ),
-        &uniskip_round_polynomials,
-        CenteredIntegerDomain::new(domain_size),
-        transcript,
-    )
-    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage,
-        reason: error.to_string(),
-    })?;
     if uniskip_reduction.value != claims.uniskip_output_claim {
         return Err(VerifierError::StageClaimOutputMismatch { stage });
     }
@@ -119,28 +117,28 @@ where
             reason: "Stage 1 remainder sumcheck must use the Boolean hypercube".to_string(),
         });
     }
-    let SumcheckProof::Clear(ClearProof::Compressed(remainder_proof)) =
-        &proof.stages.stage1_sumcheck_proof
-    else {
-        return Err(VerifierError::ExpectedClearProof {
-            field: "stage1_sumcheck_proof",
-        });
+    let remainder_reduction = match proof
+        .stages
+        .stage1_sumcheck_proof
+        .verify_compressed_boolean(
+            &SumcheckClaim::new(
+                remainder_spec.rounds,
+                remainder_spec.degree,
+                batched_remainder_input_claim,
+            ),
+            transcript,
+        )
+        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+            stage,
+            reason: error.to_string(),
+        })? {
+        SumcheckVerification::Clear(reduction) => reduction,
+        SumcheckVerification::Committed(_) => {
+            return Err(VerifierError::ExpectedClearProof {
+                field: "stage1_sumcheck_proof",
+            });
+        }
     };
-    let remainder_reduction = SumcheckVerifier::verify_compressed(
-        &SumcheckClaim::new(
-            remainder_spec.rounds,
-            remainder_spec.degree,
-            batched_remainder_input_claim,
-        ),
-        remainder_proof,
-        BooleanHypercube,
-        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-        transcript,
-    )
-    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage,
-        reason: error.to_string(),
-    })?;
     let r1cs_input_claims = claims.outer.r1cs_input_claims(&dimensions)?;
     let remainder_challenges = remainder_reduction.point.as_slice();
     let remainder_shape =

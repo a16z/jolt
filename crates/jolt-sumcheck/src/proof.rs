@@ -1,7 +1,17 @@
 //! Proof structures for single and batched sumcheck protocols.
 
-use crate::committed::CommittedSumcheckProof;
+use crate::{
+    claim::{EvaluationClaim, SumcheckClaim, SumcheckShape},
+    committed::{CommittedSumcheckCheck, CommittedSumcheckProof},
+    domain::{BooleanHypercube, SumcheckDomain},
+    error::SumcheckError,
+    round_proof::LabeledRoundPoly,
+    verifier::SumcheckVerifier,
+    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+};
+use jolt_field::Field;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
+use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{Deserialize, Serialize};
 
 /// A sumcheck proof consisting of one univariate round polynomial per variable.
@@ -48,6 +58,12 @@ pub enum SumcheckProof<F: jolt_field::Field, C> {
     Committed(CommittedSumcheckProof<C>),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SumcheckVerification<F: Field, C> {
+    Clear(EvaluationClaim<F>),
+    Committed(CommittedSumcheckCheck<F, C>),
+}
+
 impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
     pub fn is_committed(&self) -> bool {
         matches!(self, Self::Committed(_))
@@ -68,6 +84,76 @@ impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
         match self {
             Self::Clear(_) => None,
             Self::Committed(proof) => Some(proof),
+        }
+    }
+
+    /// Verifies a full-round sumcheck proof over `domain`.
+    ///
+    /// Clear proofs check the round equations and return the scalar reduction.
+    /// Committed proofs check public committed-proof structure and transcript
+    /// effects; hidden claim relations are deferred to BlindFold.
+    pub fn verify<T, D>(
+        &self,
+        claim: &SumcheckClaim<F>,
+        domain: D,
+        round_label: &'static [u8],
+        transcript: &mut T,
+    ) -> Result<SumcheckVerification<F, C>, SumcheckError<F>>
+    where
+        T: Transcript<Challenge = F>,
+        D: SumcheckDomain<F>,
+        C: Clone + AppendToTranscript,
+    {
+        match self {
+            Self::Clear(ClearProof::Full(proof)) => {
+                let rounds = proof
+                    .round_polynomials
+                    .iter()
+                    .map(|poly| LabeledRoundPoly::new(poly, round_label))
+                    .collect::<Vec<_>>();
+                SumcheckVerifier::verify(claim, &rounds, domain, transcript)
+                    .map(SumcheckVerification::Clear)
+            }
+            Self::Clear(ClearProof::Compressed(_)) => Err(SumcheckError::WrongProofEncoding {
+                expected: "full clear or committed",
+                got: "compressed clear",
+            }),
+            Self::Committed(proof) => proof
+                .verify_committed(SumcheckShape::from(claim), transcript)
+                .map(SumcheckVerification::Committed),
+        }
+    }
+
+    /// Verifies a compressed Boolean-hypercube sumcheck proof.
+    ///
+    /// Clear proofs check the compressed round encoding and return the scalar
+    /// reduction. Committed proofs check public committed-proof structure and
+    /// transcript effects; hidden claim relations are deferred to BlindFold.
+    pub fn verify_compressed_boolean<T>(
+        &self,
+        claim: &SumcheckClaim<F>,
+        transcript: &mut T,
+    ) -> Result<SumcheckVerification<F, C>, SumcheckError<F>>
+    where
+        T: Transcript<Challenge = F>,
+        C: Clone + AppendToTranscript,
+    {
+        match self {
+            Self::Clear(ClearProof::Compressed(proof)) => SumcheckVerifier::verify_compressed(
+                claim,
+                proof,
+                BooleanHypercube,
+                SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+                transcript,
+            )
+            .map(SumcheckVerification::Clear),
+            Self::Clear(ClearProof::Full(_)) => Err(SumcheckError::WrongProofEncoding {
+                expected: "compressed clear or committed",
+                got: "full clear",
+            }),
+            Self::Committed(proof) => proof
+                .verify_committed(SumcheckShape::from(claim), transcript)
+                .map(SumcheckVerification::Committed),
         }
     }
 }

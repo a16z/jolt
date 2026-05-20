@@ -25,8 +25,8 @@ use jolt_poly::{
 };
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_sumcheck::{
-    BatchedSumcheckVerifier, CenteredIntegerDomain, ClearProof, LabeledRoundPoly, SumcheckClaim,
-    SumcheckProof, SumcheckVerifier,
+    BatchedSumcheckVerification, BatchedSumcheckVerifier, CenteredIntegerDomain, SumcheckClaim,
+    SumcheckVerification, UNISKIP_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::Transcript;
 
@@ -182,32 +182,30 @@ where
                 .to_string(),
         });
     };
-    let SumcheckProof::Clear(ClearProof::Full(uniskip_proof)) =
-        &proof.stages.stage2_uni_skip_first_round_proof
-    else {
-        return Err(VerifierError::ExpectedClearProof {
-            field: "stage2_uni_skip_first_round_proof",
-        });
+    let uniskip_reduction = match proof
+        .stages
+        .stage2_uni_skip_first_round_proof
+        .verify(
+            &SumcheckClaim::new(
+                uniskip_spec.rounds,
+                uniskip_spec.degree,
+                uniskip_input_claim,
+            ),
+            CenteredIntegerDomain::new(domain_size),
+            UNISKIP_ROUND_TRANSCRIPT_LABEL,
+            transcript,
+        )
+        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+            stage,
+            reason: error.to_string(),
+        })? {
+        SumcheckVerification::Clear(reduction) => reduction,
+        SumcheckVerification::Committed(_) => {
+            return Err(VerifierError::ExpectedClearProof {
+                field: "stage2_uni_skip_first_round_proof",
+            });
+        }
     };
-    let uniskip_round_polynomials = uniskip_proof
-        .round_polynomials
-        .iter()
-        .map(LabeledRoundPoly::uniskip)
-        .collect::<Vec<_>>();
-    let uniskip_reduction = SumcheckVerifier::verify(
-        &SumcheckClaim::new(
-            uniskip_spec.rounds,
-            uniskip_spec.degree,
-            uniskip_input_claim,
-        ),
-        &uniskip_round_polynomials,
-        CenteredIntegerDomain::new(domain_size),
-        transcript,
-    )
-    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage,
-        reason: error.to_string(),
-    })?;
     if uniskip_reduction.value != uniskip_claim {
         return Err(VerifierError::StageClaimOutputMismatch { stage });
     }
@@ -388,19 +386,22 @@ where
             input_claims.ram_output_check,
         ),
     ];
-    let SumcheckProof::Clear(ClearProof::Compressed(batch_proof)) =
-        &proof.stages.stage2_sumcheck_proof
-    else {
-        return Err(VerifierError::ExpectedClearProof {
-            field: "stage2_sumcheck_proof",
-        });
+    let batch = match BatchedSumcheckVerifier::verify_compressed_boolean(
+        &sumcheck_claims,
+        &proof.stages.stage2_sumcheck_proof,
+        transcript,
+    )
+    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+        stage: JoltStageId::RamReadWriteChecking,
+        reason: error.to_string(),
+    })? {
+        BatchedSumcheckVerification::Clear(batch) => batch,
+        BatchedSumcheckVerification::Committed(_) => {
+            return Err(VerifierError::ExpectedClearProof {
+                field: "stage2_sumcheck_proof",
+            });
+        }
     };
-    let batch =
-        BatchedSumcheckVerifier::verify_compressed(&sumcheck_claims, batch_proof, transcript)
-            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltStageId::RamReadWriteChecking,
-                reason: error.to_string(),
-            })?;
 
     let ram_read_write_point = batch
         .try_instance_point(ram_read_write_claims.sumcheck.rounds)

@@ -194,7 +194,7 @@ impl<C> CommittedSumcheckProof<C> {
     ///
     /// This checks the round count and degree bounds, derives the round challenges,
     /// and absorbs the committed output claims after the round transcript.
-    pub fn verify_transcript<F, T>(
+    pub fn verify_committed<F, T>(
         &self,
         shape: SumcheckShape,
         transcript: &mut T,
