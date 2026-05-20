@@ -8,7 +8,7 @@ use crate::curve::JoltCurve;
 use crate::poly::commitment::commitment_scheme::{CommitmentScheme, ZkEvalCommitment};
 #[cfg(feature = "zk")]
 use crate::poly::commitment::dory::bind_opening_inputs_zk;
-use crate::poly::commitment::dory::{bind_opening_inputs, DoryContext, DoryGlobals};
+use crate::poly::commitment::dory::{bind_opening_inputs, DoryContext, DoryGlobals, DoryLayout};
 use crate::poly::commitment::pedersen::PedersenGenerators;
 #[cfg(feature = "zk")]
 use crate::poly::lagrange_poly::LagrangeHelper;
@@ -328,13 +328,48 @@ impl<
             }
             Ok(OpeningPoint::<BIG_ENDIAN, F>::new(dominant.1.r.clone()))
         } else {
-            Ok(self
+            let (hamming_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::InstructionRa(0),
+                SumcheckId::HammingWeightClaimReduction,
+            );
+            let r_address_stage7 = hamming_point.r[..self.one_hot_params.log_k_chunk].to_vec();
+            let r_cycle_stage6 = self
                 .opening_accumulator
                 .get_committed_polynomial_opening(
-                    CommittedPolynomial::InstructionRa(0),
-                    SumcheckId::HammingWeightClaimReduction,
+                    CommittedPolynomial::RamInc,
+                    SumcheckId::IncClaimReduction,
                 )
-                .0)
+                .0
+                .r;
+
+            match self.proof.dory_layout {
+                DoryLayout::AddressMajor => Ok(OpeningPoint::<BIG_ENDIAN, F>::new(
+                    [r_cycle_stage6.as_slice(), r_address_stage7.as_slice()].concat(),
+                )),
+                DoryLayout::CycleMajor => {
+                    let native_cycle = &hamming_point.r[self.one_hot_params.log_k_chunk..];
+                    if r_cycle_stage6.len() < native_cycle.len() {
+                        return Err(ProofVerifyError::DoryError(format!(
+                            "stage6 cycle challenges shorter than native cycle vars \
+                             (cycle_full_len={}, native_len={})",
+                            r_cycle_stage6.len(),
+                            native_cycle.len()
+                        )));
+                    }
+                    if r_cycle_stage6[..native_cycle.len()] != *native_cycle {
+                        return Err(ProofVerifyError::DoryError(format!(
+                            "cycle-major Stage-8 expects stage6 cycle prefix to equal native cycle vars \
+                             (cycle_full_len={}, native_len={})",
+                            r_cycle_stage6.len(),
+                            native_cycle.len()
+                        )));
+                    }
+                    let cycle_extra = &r_cycle_stage6[native_cycle.len()..];
+                    let cycle_extra_and_anchor =
+                        [cycle_extra, r_address_stage7.as_slice(), native_cycle].concat();
+                    Ok(OpeningPoint::<BIG_ENDIAN, F>::new(cycle_extra_and_anchor))
+                }
+            }
         }
     }
 
