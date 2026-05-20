@@ -46,6 +46,24 @@ pub enum CircuitFlags {
     IsFirstInSequence,
     /// Last instruction in a virtual sequence.
     IsLastInSequence,
+    /// BN254 Fr field multiplication (FMUL): FReg[frd] = FReg[frs1] · FReg[frs2].
+    IsFieldMul,
+    /// BN254 Fr field addition (FADD): FReg[frd] = FReg[frs1] + FReg[frs2].
+    IsFieldAdd,
+    /// BN254 Fr field subtraction (FSUB): FReg[frd] = FReg[frs1] − FReg[frs2].
+    IsFieldSub,
+    /// BN254 Fr field inversion (FINV): FReg[frd] = FReg[frs1]⁻¹.
+    IsFieldInv,
+    /// BN254 Fr assert-equal (FASSERTEQ): assert FReg[frs1] == FReg[frs2]; no write.
+    IsFieldAssertEq,
+    /// Integer→field move (FMOV): FReg[frd] = XReg[rs1] as Fr.
+    IsFieldMov,
+    /// Integer→field shift-left-64 (FSLL64): FReg[frd] = XReg[rs1] · 2⁶⁴.
+    IsFieldSLL64,
+    /// Integer→field shift-left-128 (FSLL128): FReg[frd] = XReg[rs1] · 2¹²⁸.
+    IsFieldSLL128,
+    /// Integer→field shift-left-192 (FSLL192): FReg[frd] = XReg[rs1] · 2¹⁹².
+    IsFieldSLL192,
 }
 
 /// Number of circuit flags.
@@ -76,21 +94,21 @@ pub const NUM_INSTRUCTION_FLAGS: usize = InstructionFlags::COUNT;
 
 /// Packed bitfield of [`CircuitFlags`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct CircuitFlagSet(u16);
+pub struct CircuitFlagSet(u32);
 
 impl CircuitFlagSet {
     #[inline]
     pub fn set(self, flag: CircuitFlags) -> Self {
-        Self(self.0 | (1 << flag as u16))
+        Self(self.0 | (1 << flag as u32))
     }
 
     #[inline]
     pub fn get(self, flag: CircuitFlags) -> bool {
-        self.0 & (1 << flag as u16) != 0
+        self.0 & (1 << flag as u32) != 0
     }
 
     #[inline]
-    pub fn bits(self) -> u16 {
+    pub fn bits(self) -> u32 {
         self.0
     }
 }

@@ -14,9 +14,13 @@ pub const ADVICE_FAMILY_SYMBOL: &str = "jolt.advice_polys";
 
 pub fn main_witness_oracles(params: &JoltProtocolParams) -> Vec<String> {
     let mut oracles = vec!["RdInc".to_owned(), "RamInc".to_owned()];
+    if params.field_reg_d > 0 {
+        oracles.push("FieldRegInc".to_owned());
+    }
     oracles.extend((0..params.instruction_d).map(|index| format!("InstructionRa_{index}")));
     oracles.extend((0..params.ram_d).map(|index| format!("RamRa_{index}")));
     oracles.extend((0..params.bytecode_d).map(|index| format!("BytecodeRa_{index}")));
+    oracles.extend((0..params.field_reg_d).map(|index| format!("FieldRegRa_{index}")));
     oracles
 }
 
@@ -106,6 +110,20 @@ pub fn append_committed_oracles<'c>(
             extra_attrs: Vec::new(),
         },
     )?;
+    if params.field_reg_d > 0 {
+        append_oracle(
+            context,
+            module,
+            OracleSpec {
+                symbol: "FieldRegInc".to_owned(),
+                domain: "@jolt.trace_domain",
+                commit_domain: "@jolt.main_witness_commit_domain",
+                layout: "dense_trace",
+                visibility: "committed",
+                extra_attrs: Vec::new(),
+            },
+        )?;
+    }
     for index in 0..params.instruction_d {
         append_indexed_oracle(
             context,
@@ -129,6 +147,15 @@ pub fn append_committed_oracles<'c>(
             context,
             module,
             "BytecodeRa",
+            index,
+            "@jolt.main_witness_commit_domain",
+        )?;
+    }
+    for index in 0..params.field_reg_d {
+        append_indexed_oracle(
+            context,
+            module,
+            "FieldRegRa",
             index,
             "@jolt.main_witness_commit_domain",
         )?;

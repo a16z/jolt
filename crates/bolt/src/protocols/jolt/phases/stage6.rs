@@ -22,6 +22,7 @@ enum BytecodeStageGamma {
     Stage3,
     Stage4,
     Stage5,
+    StageFr,
 }
 
 pub fn build_stage6_protocol<'c>(
@@ -127,6 +128,15 @@ pub fn build_stage6_protocol<'c>(
         "challenge_scalar",
         1,
     )?;
+    let (state, bc_stage_fr_gamma) = append_transcript_squeeze(
+        context,
+        &module,
+        state,
+        "stage6.bytecode_read_raf.stage_fr_gamma",
+        "bc_raf_stage_fr_gamma",
+        "challenge_scalar",
+        1,
+    )?;
     let (state, booleanity_gamma) = append_transcript_squeeze(
         context,
         &module,
@@ -170,6 +180,7 @@ pub fn build_stage6_protocol<'c>(
             bc_stage3_gamma,
             bc_stage4_gamma,
             bc_stage5_gamma,
+            bc_stage_fr_gamma,
             inst_ra_gamma,
             inc_gamma,
         },
@@ -203,6 +214,12 @@ fn append_stage6_domains<'c>(
         module,
         "jolt.stage4_registers_rw_domain",
         params.register_log_k + params.log_t,
+    )?;
+    append_domain(
+        context,
+        module,
+        "jolt.stage4_field_reg_rw_domain",
+        params.field_reg_log_k + params.log_t,
     )?;
     append_domain(
         context,
@@ -635,6 +652,32 @@ fn append_stage6_opening_inputs<'c, 'a>(
                 },
                 gamma_power: 3,
                 stage_gamma: Some(BytecodeStageGamma::Stage4),
+                stage_gamma_power,
+            },
+        )?;
+    }
+    // FR Twist Ra/Wa openings, batched under stage_fr_gamma with outer weight
+    // gamma^5. Mirrors the integer Stage 4 group but uses the FR Twist's own
+    // r_cycle_fr point so the verifier formula's eq(stage_cycle_fr, j) factor
+    // aligns with FR Twist's bound cycle binding.
+    for (oracle, stage_gamma_power) in [("FrdWa", 0), ("FrRs1Ra", 1), ("FrRs2Ra", 2)] {
+        append_bytecode_term(
+            context,
+            module,
+            params,
+            &mut bytecode_terms,
+            BytecodeTermSpec {
+                input: StageOpeningInputSpec {
+                    symbol: &format!("stage6.input.stage4.field_reg_rw.{oracle}"),
+                    source_stage: "stage4",
+                    source_claim: &format!("stage4.field_reg_rw.opening.{oracle}"),
+                    oracle,
+                    domain: "jolt.stage4_field_reg_rw_domain",
+                    point_arity: params.field_reg_log_k + params.log_t,
+                    claim_kind: "virtual",
+                },
+                gamma_power: 5,
+                stage_gamma: Some(BytecodeStageGamma::StageFr),
                 stage_gamma_power,
             },
         )?;
@@ -1378,6 +1421,7 @@ fn stage_gamma_value<'c, 'a>(
         BytecodeStageGamma::Stage3 => spec.bc_stage3_gamma,
         BytecodeStageGamma::Stage4 => spec.bc_stage4_gamma,
         BytecodeStageGamma::Stage5 => spec.bc_stage5_gamma,
+        BytecodeStageGamma::StageFr => spec.bc_stage_fr_gamma,
     }
 }
 
@@ -2212,6 +2256,7 @@ struct Stage6BatchedSumcheckInputs<'c, 'a, 'b> {
     bc_stage3_gamma: Value<'c, 'a>,
     bc_stage4_gamma: Value<'c, 'a>,
     bc_stage5_gamma: Value<'c, 'a>,
+    bc_stage_fr_gamma: Value<'c, 'a>,
     inst_ra_gamma: Value<'c, 'a>,
     inc_gamma: Value<'c, 'a>,
 }

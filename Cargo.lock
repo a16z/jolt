@@ -1096,6 +1096,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "bn254-eqpoly"
+version = "0.1.0"
+dependencies = [
+ "bn254-eqpoly-inline-guest",
+ "bn254-eqpoly-native-guest",
+ "clap",
+ "jolt-sdk",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "bn254-eqpoly-inline-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-bn254-fr",
+ "jolt-sdk",
+]
+
+[[package]]
+name = "bn254-eqpoly-native-guest"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff 0.5.0",
+ "jolt-sdk",
+]
+
+[[package]]
 name = "bolt"
 version = "0.1.0"
 dependencies = [
@@ -3051,6 +3080,14 @@ dependencies = [
  "jolt-inlines-sdk",
  "rand 0.8.5",
  "tracer",
+]
+
+[[package]]
+name = "jolt-inlines-bn254-fr"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff 0.5.0",
 ]
 
 [[package]]
@@ -6063,6 +6100,8 @@ name = "tracer"
 version = "0.2.0"
 dependencies = [
  "addr2line 0.26.1",
+ "ark-bn254",
+ "ark-ff 0.5.0",
  "ark-serialize 0.5.0",
  "clap",
  "common",

@@ -351,7 +351,7 @@ pub fn prove_program(
     // discards info that gen_ram_memory_states reads via
     // `get_doubleword`, producing a different RAM state vs the verifier.
     let (bytecode_raw, init_mem, _program_size, entry_address) = program.decode();
-    let (_lazy, cycles, final_memory, io_device) =
+    let (_lazy, cycles, final_memory, io_device, field_reg_events) =
         program.trace(inputs, untrusted_advice, trusted_advice);
     let trace: Vec<TraceRow> = cycles.into_iter().map(trace_row_from_cycle).collect();
 
@@ -368,6 +368,7 @@ pub fn prove_program(
         &params,
         shape.trace_length,
         shape.ram_k,
+        field_reg_events,
     )?;
 
     Ok(ProofBundle {
@@ -450,6 +451,215 @@ struct ProveStageOutput {
     pcs_setup: DoryProverSetup,
 }
 
+/// Per-cycle FR bytecode metadata derived from `NormalizedInstruction.instruction_kind`.
+/// Per-kind FR read flags. FMUL/FADD/FSUB/FAssertEq are two-input;
+/// FINV reads only frs1; FieldMov/FieldSLL* are integer-register bridges.
+/// Audit finding C-A3 (`reads_frs2` overstatement on FINV) is fixed here
+/// because we now have a distinct `FieldInv` kind to match on.
+fn fr_bytecode_from_trace(trace: &[TraceRow]) -> Vec<jolt_witness::field_reg::FrCycleBytecode> {
+    use jolt_witness::field_reg::FIELD_REG_ADDR_MASK;
+    let mask_u8 = FIELD_REG_ADDR_MASK as u8;
+    trace
+        .iter()
+        .map(|row| {
+            let instr = row.instruction;
+            let (reads_frs1, reads_frs2, writes_frd) = instr.instruction_kind.fr_access_flags();
+            jolt_witness::field_reg::FrCycleBytecode {
+                frs1: instr.operands.rs1.unwrap_or(0) & mask_u8,
+                frs2: instr.operands.rs2.unwrap_or(0) & mask_u8,
+                frd: instr.operands.rd.unwrap_or(0) & mask_u8,
+                reads_frs1,
+                reads_frs2,
+                writes_frd,
+            }
+        })
+        .collect()
+}
+
+/// Convert the tracer's `FieldRegEvent` stream to `jolt-witness` events.
+///
+/// `rd_written` is derived from `new != old` rather than hardcoded to `true`:
+///   - FieldMul/Add/Sub/Inv almost always change `field_regs[frd]`.
+///   - FieldAssertEq emits an event with `slot = frs1` (see
+///     `tracer/src/instruction/field_assert_eq.rs`) and the value is
+///     unchanged, so `new == old` and `rd_written = false` — keeping
+///     FieldAssertEq out of the FR Twist's write-side accounting.
+///   - FieldMov / FieldSLL* always change `field_regs[frd]` because they
+///     write the (zero-extended) integer rs1.
+///
+/// Only `cycle`, `frd`, `rd_post`, and `rd_written` flow into the
+/// materializer; `frs1/frs2/rs1_pre/rs2_pre` are populated separately by
+/// `populate_r1cs_fr_slots` (which walks the trace + running state).
+fn convert_fr_events(
+    events: Vec<tracer::emulator::cpu::FieldRegEvent>,
+) -> Vec<jolt_witness::field_reg::FieldRegEvent> {
+    events
+        .into_iter()
+        .map(|ev| jolt_witness::field_reg::FieldRegEvent {
+            cycle: ev.cycle_index as u64,
+            frs1: 0,
+            frs2: 0,
+            frd: ev.slot,
+            rs1_pre: jolt_witness::field_reg::FrLimbs::ZERO,
+            rs2_pre: jolt_witness::field_reg::FrLimbs::ZERO,
+            rd_post: jolt_witness::field_reg::FrLimbs::from_limbs(ev.new),
+            rd_written: ev.new != ev.old,
+        })
+        .collect()
+}
+
+/// Post-process R1CS witness to populate FR slots (V_FIELD_RS1_VALUE,
+/// V_FIELD_RS2_VALUE, V_FIELD_RD_WRITE_VALUE) on FR-active cycles.
+///
+/// `extract_trace_rows` leaves these slots at zero — the R1CS witness
+/// generator doesn't know about FR events. Stage 3 FieldRegClaimReduction
+/// reads these slots via the oracle plumbing and publishes the claim that
+/// Stage 4 FieldRegRW must reconcile against materialized FR polynomials.
+/// Without this pass the two sides disagree and Stage 4 fails with an
+/// input-claim mismatch.
+///
+/// Walks the FR replay's running state to derive pre-values for each event
+/// (rs1_pre = state[frs1] at cycle c, rs2_pre = state[frs2], rd_post = the
+/// post-event new value). Encodes via `limbs_to_field` (natural-form
+/// `a0 + a1·2^64 + a2·2^128 + a3·2^192`) to match the materializer.
+fn populate_r1cs_fr_slots(
+    r1cs_witness: &mut [Fr],
+    num_vars_padded: usize,
+    trace: &[TraceRow],
+    replay: &jolt_witness::field_reg::FieldRegReplay,
+) {
+    use jolt_riscv::JoltInstructionKind;
+    use jolt_witness::field_reg::{
+        limbs_to_field, FieldRegEvent, FIELD_REG_ADDR_MASK, FIELD_REG_COUNT,
+    };
+    if replay.events.is_empty() {
+        return;
+    }
+    let mut current: [Fr; FIELD_REG_COUNT] = [Fr::from_u64(0); FIELD_REG_COUNT];
+    let mut events = replay.events.iter().peekable();
+    let len = replay.num_cycles.min(trace.len());
+    for (c, row) in trace.iter().take(len).enumerate() {
+        let offset = c * num_vars_padded;
+        let bc = replay.bytecode.get(c).copied().unwrap_or_default();
+        let kind = row.instruction.instruction_kind;
+        if bc.reads_frs1 {
+            let slot = (bc.frs1 as usize) & FIELD_REG_ADDR_MASK;
+            r1cs_witness[offset + rv64::V_FIELD_RS1_VALUE] = current[slot];
+        }
+        if bc.reads_frs2 {
+            let slot = (bc.frs2 as usize) & FIELD_REG_ADDR_MASK;
+            r1cs_witness[offset + rv64::V_FIELD_RS2_VALUE] = current[slot];
+        }
+        // Populate V_FIELD_RD_WRITE_VALUE on every cycle where bytecode says
+        // writes_frd=true. When the event lacks rd_written=true (rare new==old
+        // case), the post value equals the current state — consistent with
+        // Stage 4 RW's bytecode-anchored `frd_wa` polynomial (always 1 when
+        // bc.writes_frd) and Stage 5 ValEvaluation.
+        let event_opt = events.next_if(|ev: &&FieldRegEvent| ev.cycle as usize == c);
+        let mut rd_post_opt: Option<Fr> = None;
+        if bc.writes_frd {
+            let slot = (bc.frd as usize) & FIELD_REG_ADDR_MASK;
+            let post: Fr = match event_opt {
+                Some(ev) if ev.rd_written => limbs_to_field(ev.rd_post.into_limbs()),
+                _ => current[slot],
+            };
+            r1cs_witness[offset + rv64::V_FIELD_RD_WRITE_VALUE] = post;
+            current[slot] = post;
+            rd_post_opt = Some(post);
+        }
+        // FMUL / FINV route FR operands through the canonical product gate
+        // (R1CS row 36: `Left × Right = Product`). The eq-rows 26-31 then
+        // bind `Left = FieldRs1`, `Right = FieldRs2` (FMUL) or `FieldRd`
+        // (FINV), and `Product = FieldRd` (FMUL) or `1` (FINV) — which
+        // forces the multiplicative arithmetic to hold natively.
+        // Row 6 / row 10 additionally tie LookupOperands to Left/Right on
+        // non-Add/Sub/Mul-integer cycles, so we mirror Fr values there too.
+        match kind {
+            JoltInstructionKind::FieldMul => {
+                let rs1 = r1cs_witness[offset + rv64::V_FIELD_RS1_VALUE];
+                let rs2 = r1cs_witness[offset + rv64::V_FIELD_RS2_VALUE];
+                let product = rs1 * rs2;
+                r1cs_witness[offset + rv64::V_LEFT_INSTRUCTION_INPUT] = rs1;
+                r1cs_witness[offset + rv64::V_RIGHT_INSTRUCTION_INPUT] = rs2;
+                r1cs_witness[offset + rv64::V_PRODUCT] = product;
+                r1cs_witness[offset + rv64::V_LEFT_LOOKUP_OPERAND] = rs1;
+                r1cs_witness[offset + rv64::V_RIGHT_LOOKUP_OPERAND] = rs2;
+            }
+            JoltInstructionKind::FieldInv => {
+                let rs1 = r1cs_witness[offset + rv64::V_FIELD_RS1_VALUE];
+                let rd = rd_post_opt.unwrap_or_else(|| Fr::from_u64(0));
+                r1cs_witness[offset + rv64::V_LEFT_INSTRUCTION_INPUT] = rs1;
+                r1cs_witness[offset + rv64::V_RIGHT_INSTRUCTION_INPUT] = rd;
+                r1cs_witness[offset + rv64::V_PRODUCT] = Fr::from_u64(1);
+                r1cs_witness[offset + rv64::V_LEFT_LOOKUP_OPERAND] = rs1;
+                r1cs_witness[offset + rv64::V_RIGHT_LOOKUP_OPERAND] = rd;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Walks the FR replay running state in lockstep with the materializer/R1CS
+/// post-pass and stamps the FR fields on both `Stage1Rv64Cycle` (for the Stage 1
+/// outer Spartan sumcheck's virtual oracle reads) and `Stage3Cycle` (for the
+/// Stage 3 FieldRegClaimReduction sumcheck's factor population). Mutates the
+/// vectors in place — non-FR cycles keep their `[0; 4]` defaults.
+fn populate_fr_cycle_fields(
+    rv64_cycles: &mut [Stage1Rv64Cycle],
+    stage3_cycles: &mut [Stage3Cycle],
+    replay: &jolt_witness::field_reg::FieldRegReplay,
+) {
+    use jolt_witness::field_reg::{FieldRegEvent, FIELD_REG_ADDR_MASK, FIELD_REG_COUNT};
+    if replay.events.is_empty() {
+        return;
+    }
+    let mut current: [[u64; 4]; FIELD_REG_COUNT] = [[0; 4]; FIELD_REG_COUNT];
+    let mut events = replay.events.iter().peekable();
+    let len = rv64_cycles
+        .len()
+        .min(stage3_cycles.len())
+        .min(replay.num_cycles);
+    for c in 0..len {
+        let bc = replay.bytecode.get(c).copied().unwrap_or_default();
+        let rs1 = if bc.reads_frs1 {
+            current[(bc.frs1 as usize) & FIELD_REG_ADDR_MASK]
+        } else {
+            [0; 4]
+        };
+        let rs2 = if bc.reads_frs2 {
+            current[(bc.frs2 as usize) & FIELD_REG_ADDR_MASK]
+        } else {
+            [0; 4]
+        };
+        // Bytecode-anchored: write the post-state to slot bc.frd on every
+        // bc.writes_frd cycle, regardless of event.rd_written. When the event
+        // is absent or rd_written=false, post equals the current state (no
+        // change). Keeps field_rd in sync with the bytecode-anchored
+        // V_FIELD_RD_WRITE_VALUE column.
+        let event_opt = events.next_if(|ev: &&FieldRegEvent| ev.cycle as usize == c);
+        let (rd, is_field_op) = if bc.writes_frd {
+            let slot = (bc.frd as usize) & FIELD_REG_ADDR_MASK;
+            let post = match event_opt {
+                Some(ev) if ev.rd_written => ev.rd_post.into_limbs(),
+                _ => current[slot],
+            };
+            current[slot] = post;
+            (post, true)
+        } else if event_opt.is_some() || bc.reads_frs1 || bc.reads_frs2 {
+            ([0; 4], true)
+        } else {
+            ([0; 4], false)
+        };
+        rv64_cycles[c].field_rs1 = rs1;
+        rv64_cycles[c].field_rs2 = rs2;
+        rv64_cycles[c].field_rd = rd;
+        stage3_cycles[c].field_rs1 = rs1;
+        stage3_cycles[c].field_rs2 = rs2;
+        stage3_cycles[c].field_rd = rd;
+        stage3_cycles[c].is_field_op = is_field_op;
+    }
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "thin internal helper; arguments are derived state from prove_program"
@@ -464,18 +674,41 @@ fn assemble_and_prove(
     params: &ModularJoltParams,
     trace_length: usize,
     ram_k: usize,
+    field_reg_events: Vec<tracer::emulator::cpu::FieldRegEvent>,
 ) -> Result<ProveStageOutput, ProveProgramError> {
     let memory_layout = io_device.memory_layout.clone();
 
     let r1cs_key = R1csKey::new(rv64::rv64_constraints::<Fr>(), trace_length);
-    let (cycle_inputs, r1cs_witness) = extract_trace_rows::<Fr>(
+    let (cycle_inputs, mut r1cs_witness) = extract_trace_rows::<Fr>(
         trace,
         trace_length,
         bytecode,
         &memory_layout,
         r1cs_key.num_vars_padded,
     );
-    let rv64_cycles: Vec<Stage1Rv64Cycle> = stage1_rv64_cycles(trace, trace_length, bytecode);
+
+    // Build the FR replay early so it can populate both the R1CS witness's
+    // FR slots (V_FIELD_RS1/RS2/RD_WRITE_VALUE) and Stage 4/5 materializers
+    // off the same event stream + bytecode metadata.
+    let fr_replay = jolt_witness::field_reg::FieldRegReplay {
+        num_cycles: trace_length,
+        bytecode: {
+            let mut bc = fr_bytecode_from_trace(trace);
+            bc.resize(
+                trace_length,
+                jolt_witness::field_reg::FrCycleBytecode::default(),
+            );
+            bc
+        },
+        events: convert_fr_events(field_reg_events),
+    };
+    populate_r1cs_fr_slots(
+        &mut r1cs_witness,
+        r1cs_key.num_vars_padded,
+        trace,
+        &fr_replay,
+    );
+    let mut rv64_cycles: Vec<Stage1Rv64Cycle> = stage1_rv64_cycles(trace, trace_length, bytecode);
     let product_virtual_cycles = stage2_product_virtual_cycles(trace, trace_length);
     let instruction_lookup_cycles = stage2_instruction_lookup_cycles(trace, trace_length);
     let lowest_addr = memory_layout.get_lowest_address();
@@ -487,7 +720,8 @@ fn assemble_and_prove(
         }
     };
     let ram_accesses: Vec<Stage2RamAccess> = stage2_ram_accesses(trace, trace_length, remap_addr);
-    let stage3_cycles_vec: Vec<Stage3Cycle> = stage3_cycles(trace, trace_length, bytecode);
+    let mut stage3_cycles_vec: Vec<Stage3Cycle> = stage3_cycles(trace, trace_length, bytecode);
+    populate_fr_cycle_fields(&mut rv64_cycles, &mut stage3_cycles_vec, &fr_replay);
     let stage4_register_accesses_vec: Vec<Stage4RegisterAccess> =
         stage4_register_accesses(trace, trace_length);
     let lookup_trace: Stage5LookupTrace = stage5_lookup_trace(trace, trace_length, |cycle| {
@@ -589,14 +823,20 @@ fn assemble_and_prove(
         &stage2_artifacts,
         &stage3_artifacts,
     )?;
-    let stage4_artifacts = jolt_prover::prove_stage4_with_trace_witness_inputs(
+    let mut stage45_witness = jolt_kernels::stage4::stage4_5_sparse_trace_witness_from_accesses::<Fr>(
+        &stage4_register_accesses_vec,
+        &ram_accesses,
+    );
+    stage45_witness = stage45_witness.with_field_reg_replay(fr_replay.clone());
+
+    let stage4_artifacts = jolt_prover::prove_stage4_with_witness_inputs(
         programs.stage4,
         &stage4_openings,
         1usize << params.register_log_k,
         params.trace_length,
         params.ram_k,
         &stage4_register_accesses_vec,
-        &ram_accesses,
+        &stage45_witness,
         &mut transcript,
     )
     .map_err(JoltProveError::Stage4)?;
@@ -606,7 +846,7 @@ fn assemble_and_prove(
         &stage2_artifacts,
         &stage4_artifacts,
     )?;
-    let stage5_artifacts = jolt_prover::prove_stage5_with_trace_witness_inputs(
+    let stage5_artifacts = jolt_prover::prove_stage5_with_witness_inputs(
         programs.stage5,
         &stage5_openings,
         params.trace_length,
@@ -616,8 +856,7 @@ fn assemble_and_prove(
         &lookup_trace.lookup_table_indices,
         &lookup_trace.is_interleaved_operands,
         params.lookups_ra_virtual_log_k_chunk,
-        &stage4_register_accesses_vec,
-        &ram_accesses,
+        &stage45_witness,
         &mut transcript,
     )
     .map_err(JoltProveError::Stage5)?;

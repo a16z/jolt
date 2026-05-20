@@ -11,6 +11,7 @@ use super::lowering::{lower_party_to_compute, transcript_squeeze_protocol_result
 
 const RAM_RA_CLAIM_REDUCTION_DEGREE: usize = 2;
 const REGISTERS_VAL_EVALUATION_DEGREE: usize = 3;
+const FIELD_REG_VAL_EVALUATION_DEGREE: usize = 3;
 
 pub fn build_stage5_protocol<'c>(
     context: &'c MeliorContext,
@@ -267,6 +268,18 @@ fn append_stage5_relations<'c>(
         context,
         module,
         RelationSpec {
+            symbol: "jolt.stage5.field_reg_val_evaluation",
+            kind: "sumcheck",
+            domain: "jolt.trace_domain",
+            num_rounds: params.log_t,
+            degree: FIELD_REG_VAL_EVALUATION_DEGREE,
+            output_count: 2,
+        },
+    )?;
+    append_relation(
+        context,
+        module,
+        RelationSpec {
             symbol: "jolt.stage5.batched",
             kind: "batched_sumcheck",
             domain: "jolt.stage5_instruction_read_raf_domain",
@@ -397,6 +410,18 @@ fn append_stage5_opening_inputs<'c, 'a>(
                 oracle: "RegistersVal",
                 domain: "jolt.stage4_registers_rw_domain",
                 point_arity: params.register_log_k + params.log_t,
+            },
+        )?,
+        field_reg_val: append_stage_input(
+            context,
+            module,
+            StageOpeningInputSpec {
+                symbol: "stage5.input.stage4.field_reg.FieldRegVal",
+                source_stage: "stage4",
+                source_claim: "stage4.field_reg_rw.opening.FieldRegVal",
+                oracle: "FieldRegVal",
+                domain: "jolt.stage4_field_reg_rw_domain",
+                point_arity: params.field_reg_log_k + params.log_t,
             },
         )?,
     })
@@ -600,6 +625,21 @@ fn append_stage5_batched_sumcheck<'c, 'a>(
             inputs.registers_val.eval,
             &[inputs.registers_val.claim],
         )?,
+        append_sumcheck_claim(
+            context,
+            module,
+            SumcheckClaimSpec {
+                symbol: "stage5.field_reg_val_evaluation.input",
+                stage: "stage5",
+                domain: "jolt.trace_domain",
+                num_rounds: params.log_t,
+                degree: FIELD_REG_VAL_EVALUATION_DEGREE,
+                claim: "stage5.field_reg_val_evaluation.field_reg_val",
+                relation: "jolt.stage5.field_reg_val_evaluation",
+            },
+            inputs.field_reg_val.eval,
+            &[inputs.field_reg_val.claim],
+        )?,
     ];
     let round_schedule = format!("[{}, {}]", params.instruction_log_k, params.log_t);
     let batch = append_sumcheck_batch(
@@ -616,6 +656,7 @@ fn append_stage5_batched_sumcheck<'c, 'a>(
                 "stage5.instruction_read_raf.input",
                 "stage5.ram_ra_claim_reduction.input",
                 "stage5.registers_val_evaluation.input",
+                "stage5.field_reg_val_evaluation.input",
             ],
             claim_label: "sumcheck_claim",
             round_label: "sumcheck_poly",
@@ -694,10 +735,41 @@ fn append_stage5_batched_sumcheck<'c, 'a>(
         point,
         result_value,
     )?;
-    append_stage5_output_openings(context, module, params, inputs, instruction, ram, registers)?;
+    let field_reg = append_sumcheck_instance_result(
+        context,
+        module,
+        SumcheckInstanceResultSpec {
+            symbol: "stage5.field_reg_val_evaluation.instance",
+            source: "stage5.sumcheck",
+            claim: "stage5.field_reg_val_evaluation.input",
+            relation: "jolt.stage5.field_reg_val_evaluation",
+            index: 3,
+            point_arity: params.log_t,
+            num_rounds: params.log_t,
+            round_offset: params.instruction_log_k,
+            point_order: "reverse",
+            degree: FIELD_REG_VAL_EVALUATION_DEGREE,
+        },
+        point,
+        result_value,
+    )?;
+    append_stage5_output_openings(
+        context,
+        module,
+        params,
+        inputs,
+        instruction,
+        ram,
+        registers,
+        field_reg,
+    )?;
     Ok(state)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "stage5 output openings fan out by instance"
+)]
 fn append_stage5_output_openings<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
@@ -706,6 +778,7 @@ fn append_stage5_output_openings<'c, 'a>(
     instruction: (Value<'c, 'a>, Value<'c, 'a>),
     ram: (Value<'c, 'a>, Value<'c, 'a>),
     registers: (Value<'c, 'a>, Value<'c, 'a>),
+    field_reg: (Value<'c, 'a>, Value<'c, 'a>),
 ) -> Result<(), MlirError> {
     let mut claims = Vec::new();
     let mut claim_symbols = Vec::new();
@@ -921,6 +994,71 @@ fn append_stage5_output_openings<'c, 'a>(
             oracle: "RdWa",
             domain: "jolt.stage4_registers_rw_domain",
             point_arity: params.register_log_k + params.log_t,
+            claim_kind: "virtual",
+        },
+    )?);
+
+    let frd_inc_eval = append_sumcheck_eval(
+        context,
+        module,
+        "stage5.field_reg_val_evaluation.eval.FrdInc",
+        "stage5.sumcheck",
+        "FrdInc",
+        0,
+        field_reg.1,
+    )?;
+    claim_symbols.push("stage5.field_reg_val_evaluation.opening.FrdInc".to_owned());
+    claims.push(append_opening_claim(
+        context,
+        module,
+        field_reg.0,
+        frd_inc_eval,
+        OpeningClaimSpec {
+            symbol: "stage5.field_reg_val_evaluation.opening.FrdInc",
+            oracle: "FrdInc",
+            domain: "jolt.trace_domain",
+            point_arity: params.log_t,
+            claim_kind: "committed",
+        },
+    )?);
+
+    let field_reg_address = append_point_slice(
+        context,
+        module,
+        "stage5.field_reg_val_evaluation.point.FieldRegAddress",
+        "stage5.input.stage4.field_reg.FieldRegVal",
+        0,
+        params.field_reg_log_k,
+        inputs.field_reg_val.point,
+    )?;
+    let frd_wa_point = append_point_concat(
+        context,
+        module,
+        "stage5.field_reg_val_evaluation.point.FrdWa",
+        "field_reg_address_then_cycle",
+        params.field_reg_log_k + params.log_t,
+        &[field_reg_address, field_reg.0],
+    )?;
+    let frd_wa_eval = append_sumcheck_eval(
+        context,
+        module,
+        "stage5.field_reg_val_evaluation.eval.FrdWa",
+        "stage5.sumcheck",
+        "FrdWa",
+        1,
+        field_reg.1,
+    )?;
+    claim_symbols.push("stage5.field_reg_val_evaluation.opening.FrdWa".to_owned());
+    claims.push(append_opening_claim(
+        context,
+        module,
+        frd_wa_point,
+        frd_wa_eval,
+        OpeningClaimSpec {
+            symbol: "stage5.field_reg_val_evaluation.opening.FrdWa",
+            oracle: "FrdWa",
+            domain: "jolt.stage4_field_reg_rw_domain",
+            point_arity: params.field_reg_log_k + params.log_t,
             claim_kind: "virtual",
         },
     )?);
@@ -1251,7 +1389,7 @@ fn instruction_read_raf_output_count(params: &JoltProtocolParams) -> usize {
 }
 
 fn stage5_output_count(params: &JoltProtocolParams) -> usize {
-    instruction_read_raf_output_count(params) + 3
+    instruction_read_raf_output_count(params) + 5
 }
 
 fn int_attr(value: usize) -> String {
@@ -1303,6 +1441,7 @@ struct Stage5OpeningInputs<'c, 'a> {
     ram_ra_rw: Stage5OpeningInput<'c, 'a>,
     ram_ra_val: Stage5OpeningInput<'c, 'a>,
     registers_val: Stage5OpeningInput<'c, 'a>,
+    field_reg_val: Stage5OpeningInput<'c, 'a>,
 }
 
 struct StageOpeningInputSpec<'a> {

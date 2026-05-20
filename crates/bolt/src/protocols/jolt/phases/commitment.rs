@@ -1041,6 +1041,7 @@ struct ParamsAst {
     instruction_d: usize,
     bytecode_d: usize,
     ram_d: usize,
+    field_reg_d: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -1141,6 +1142,7 @@ where
                     instruction_d: int_attr(op, "instruction_d")?,
                     bytecode_d: int_attr(op, "bytecode_d")?,
                     ram_d: int_attr(op, "ram_d")?,
+                    field_reg_d: int_attr(op, "field_reg_d")?,
                 });
             }
             "poly.domain" => {
@@ -1441,6 +1443,11 @@ fn oracle_recipe(oracle: &str, params: &ParamsAst) -> Result<OracleRecipe, MlirE
             source: "trace.ram_inc",
         });
     }
+    if oracle == "FieldRegInc" {
+        return Ok(OracleRecipe::DenseTrace {
+            source: "trace.field_reg_inc",
+        });
+    }
     if let Some(index) = parse_indexed_oracle(oracle, "InstructionRa") {
         return Ok(OracleRecipe::OneHotChunk {
             source: "trace.instruction_keys",
@@ -1462,6 +1469,14 @@ fn oracle_recipe(oracle: &str, params: &ParamsAst) -> Result<OracleRecipe, MlirE
             source: "trace.bytecode_indices",
             chunk: index,
             num_chunks: params.bytecode_d,
+            padding: "zero",
+        });
+    }
+    if let Some(index) = parse_indexed_oracle(oracle, "FieldRegRa") {
+        return Ok(OracleRecipe::OneHotChunk {
+            source: "trace.field_reg_indices",
+            chunk: index,
+            num_chunks: params.field_reg_d,
             padding: "zero",
         });
     }

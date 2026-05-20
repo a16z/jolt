@@ -1833,6 +1833,18 @@ fn r1cs_oracle_variable(oracle: &str) -> Option<usize> {
         "OpFlagIsCompressed" => Some(rv64::V_FLAG_IS_COMPRESSED),
         "OpFlagIsFirstInSequence" => Some(rv64::V_FLAG_IS_FIRST_IN_SEQUENCE),
         "OpFlagIsLastInSequence" => Some(rv64::V_FLAG_IS_LAST_IN_SEQUENCE),
+        "OpFlagIsFieldMul" => Some(rv64::V_FLAG_IS_FIELD_MUL),
+        "OpFlagIsFieldAdd" => Some(rv64::V_FLAG_IS_FIELD_ADD),
+        "OpFlagIsFieldSub" => Some(rv64::V_FLAG_IS_FIELD_SUB),
+        "OpFlagIsFieldInv" => Some(rv64::V_FLAG_IS_FIELD_INV),
+        "OpFlagIsFieldAssertEq" => Some(rv64::V_FLAG_IS_FIELD_ASSERT_EQ),
+        "OpFlagIsFieldMov" => Some(rv64::V_FLAG_IS_FIELD_MOV),
+        "OpFlagIsFieldSLL64" => Some(rv64::V_FLAG_IS_FIELD_SLL64),
+        "OpFlagIsFieldSLL128" => Some(rv64::V_FLAG_IS_FIELD_SLL128),
+        "OpFlagIsFieldSLL192" => Some(rv64::V_FLAG_IS_FIELD_SLL192),
+        "FieldRs1Value" => Some(rv64::V_FIELD_RS1_VALUE),
+        "FieldRs2Value" => Some(rv64::V_FIELD_RS2_VALUE),
+        "FieldRdWriteValue" => Some(rv64::V_FIELD_RD_WRITE_VALUE),
         _ => None,
     }
 }

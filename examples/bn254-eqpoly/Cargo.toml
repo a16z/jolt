@@ -1,0 +1,12 @@
+[package]
+name = "bn254-eqpoly"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-sdk = { workspace = true, features = ["host"] }
+tracing-subscriber.workspace = true
+tracing.workspace = true
+clap = { workspace = true, features = ["derive"] }
+inline-guest = { package = "bn254-eqpoly-inline-guest", path = "./inline-guest" }
+native-guest = { package = "bn254-eqpoly-native-guest", path = "./native-guest" }

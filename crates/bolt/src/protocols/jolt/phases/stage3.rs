@@ -22,6 +22,7 @@ use super::lowering::{
 const SPARTAN_SHIFT_DEGREE: usize = 2;
 const INSTRUCTION_INPUT_DEGREE: usize = 3;
 const REGISTERS_CLAIM_REDUCTION_DEGREE: usize = 2;
+const FIELD_REG_CLAIM_REDUCTION_DEGREE: usize = 2;
 const STAGE3_BATCHED_DEGREE: usize = 3;
 
 const STAGE3_SHIFT_INPUTS: [&str; 4] = [
@@ -48,6 +49,7 @@ const STAGE3_INSTRUCTION_INPUT_OUTPUTS: [&str; 8] = [
     "Imm",
 ];
 const STAGE3_REGISTER_INPUTS: [&str; 3] = ["RdWriteValue", "Rs1Value", "Rs2Value"];
+const STAGE3_FIELD_REG_INPUTS: [&str; 3] = ["FieldRdWriteValue", "FieldRs1Value", "FieldRs2Value"];
 
 pub fn build_stage3_protocol<'c>(
     context: &'c MeliorContext,
@@ -121,6 +123,15 @@ pub fn build_stage3_protocol<'c>(
         "challenge_scalar",
         1,
     )?;
+    let (state, field_reg_gamma) = append_transcript_squeeze(
+        context,
+        &module,
+        state,
+        "stage3.field_reg.gamma",
+        "field_reg_gamma",
+        "challenge_scalar",
+        1,
+    )?;
     let _state = append_stage3_batched_sumcheck(
         context,
         &module,
@@ -132,6 +143,7 @@ pub fn build_stage3_protocol<'c>(
             shift_gamma,
             instruction_gamma,
             registers_gamma,
+            field_reg_gamma,
         },
     )?;
 
@@ -535,6 +547,7 @@ fn append_stage3_oracles<'c>(
     trace_oracles.extend(STAGE3_SHIFT_OUTPUTS);
     trace_oracles.extend(STAGE3_INSTRUCTION_INPUT_OUTPUTS);
     trace_oracles.extend(STAGE3_REGISTER_INPUTS);
+    trace_oracles.extend(STAGE3_FIELD_REG_INPUTS);
     trace_oracles.extend([
         "LeftInstructionInput",
         "RightInstructionInput",
@@ -605,6 +618,18 @@ fn append_stage3_relations<'c>(
             num_rounds: params.log_t,
             degree: REGISTERS_CLAIM_REDUCTION_DEGREE,
             output_count: STAGE3_REGISTER_INPUTS.len(),
+        },
+    )?;
+    append_relation(
+        context,
+        module,
+        RelationSpec {
+            symbol: "jolt.stage3.field_reg_claim_reduction",
+            kind: "sumcheck",
+            domain: "jolt.trace_domain",
+            num_rounds: params.log_t,
+            degree: FIELD_REG_CLAIM_REDUCTION_DEGREE,
+            output_count: STAGE3_FIELD_REG_INPUTS.len(),
         },
     )?;
     append_relation(
@@ -778,6 +803,39 @@ fn append_stage3_opening_inputs<'c, 'a>(
                 source_stage: "stage1",
                 source_claim: "stage1.outer_remaining.opening.Rs2Value",
                 oracle: "Rs2Value",
+            },
+        )?,
+        field_rd_write_value: append_stage_input(
+            context,
+            module,
+            params,
+            StageOpeningInputSpec {
+                symbol: "stage3.input.stage1.FieldRdWriteValue",
+                source_stage: "stage1",
+                source_claim: "stage1.outer_remaining.opening.FieldRdWriteValue",
+                oracle: "FieldRdWriteValue",
+            },
+        )?,
+        field_rs1_value: append_stage_input(
+            context,
+            module,
+            params,
+            StageOpeningInputSpec {
+                symbol: "stage3.input.stage1.FieldRs1Value",
+                source_stage: "stage1",
+                source_claim: "stage1.outer_remaining.opening.FieldRs1Value",
+                oracle: "FieldRs1Value",
+            },
+        )?,
+        field_rs2_value: append_stage_input(
+            context,
+            module,
+            params,
+            StageOpeningInputSpec {
+                symbol: "stage3.input.stage1.FieldRs2Value",
+                source_stage: "stage1",
+                source_claim: "stage1.outer_remaining.opening.FieldRs2Value",
+                oracle: "FieldRs2Value",
             },
         )?,
     })
@@ -1096,6 +1154,41 @@ fn append_stage3_batched_sumcheck<'c, 'a>(
         registers_sum,
         rs2_term,
     )?;
+    let field_reg_gamma2 = append_field_pow(
+        context,
+        module,
+        "stage3.field_reg.gamma2",
+        spec.field_reg_gamma,
+        2,
+    )?;
+    let field_rs1_term = append_field_mul(
+        context,
+        module,
+        "stage3.field_reg.term.FieldRs1Value",
+        spec.field_reg_gamma,
+        inputs.field_rs1_value.eval,
+    )?;
+    let field_rs2_term = append_field_mul(
+        context,
+        module,
+        "stage3.field_reg.term.FieldRs2Value",
+        field_reg_gamma2,
+        inputs.field_rs2_value.eval,
+    )?;
+    let field_reg_sum = append_field_add(
+        context,
+        module,
+        "stage3.field_reg.partial.FieldRdWriteValueFieldRs1Value",
+        inputs.field_rd_write_value.eval,
+        field_rs1_term,
+    )?;
+    let field_reg_claim = append_field_add(
+        context,
+        module,
+        "stage3.field_reg.claim_expr",
+        field_reg_sum,
+        field_rs2_term,
+    )?;
 
     let claims = [
         append_sumcheck_claim(
@@ -1156,6 +1249,25 @@ fn append_stage3_batched_sumcheck<'c, 'a>(
                 inputs.rs2_value.claim,
             ],
         )?,
+        append_sumcheck_claim(
+            context,
+            module,
+            SumcheckClaimSpec {
+                symbol: "stage3.field_reg_claim_reduction.input",
+                stage: "stage3",
+                domain: "jolt.trace_domain",
+                num_rounds: params.log_t,
+                degree: FIELD_REG_CLAIM_REDUCTION_DEGREE,
+                claim: "stage3.field_reg.weighted_field_reg_values",
+                relation: "jolt.stage3.field_reg_claim_reduction",
+            },
+            field_reg_claim,
+            &[
+                inputs.field_rd_write_value.claim,
+                inputs.field_rs1_value.claim,
+                inputs.field_rs2_value.claim,
+            ],
+        )?,
     ];
     let batch = append_sumcheck_batch(
         context,
@@ -1171,6 +1283,7 @@ fn append_stage3_batched_sumcheck<'c, 'a>(
                 "stage3.spartan_shift.input",
                 "stage3.instruction_input.input",
                 "stage3.registers_claim_reduction.input",
+                "stage3.field_reg_claim_reduction.input",
             ],
             claim_label: "sumcheck_claim",
             round_label: "sumcheck_poly",
@@ -1250,6 +1363,24 @@ fn append_stage3_batched_sumcheck<'c, 'a>(
         point,
         result_value,
     )?;
+    let field_reg = append_sumcheck_instance_result(
+        context,
+        module,
+        SumcheckInstanceResultSpec {
+            symbol: "stage3.field_reg_claim_reduction.instance",
+            source: "stage3.sumcheck",
+            claim: "stage3.field_reg_claim_reduction.input",
+            relation: "jolt.stage3.field_reg_claim_reduction",
+            index: 3,
+            point_arity: params.log_t,
+            num_rounds: params.log_t,
+            round_offset: 0,
+            point_order: "reverse",
+            degree: FIELD_REG_CLAIM_REDUCTION_DEGREE,
+        },
+        point,
+        result_value,
+    )?;
     append_stage3_output_openings(
         context,
         module,
@@ -1271,6 +1402,14 @@ fn append_stage3_batched_sumcheck<'c, 'a>(
                 instance: registers,
                 outputs: &STAGE3_REGISTER_INPUTS,
                 degree_offset: STAGE3_SHIFT_OUTPUTS.len() + STAGE3_INSTRUCTION_INPUT_OUTPUTS.len(),
+            },
+            InstanceOutput {
+                prefix: "stage3.field_reg_claim_reduction",
+                instance: field_reg,
+                outputs: &STAGE3_FIELD_REG_INPUTS,
+                degree_offset: STAGE3_SHIFT_OUTPUTS.len()
+                    + STAGE3_INSTRUCTION_INPUT_OUTPUTS.len()
+                    + STAGE3_REGISTER_INPUTS.len(),
             },
         ],
         params.log_t,
@@ -1634,6 +1773,7 @@ fn stage3_output_count() -> usize {
     STAGE3_SHIFT_OUTPUTS.len()
         + STAGE3_INSTRUCTION_INPUT_OUTPUTS.len()
         + STAGE3_REGISTER_INPUTS.len()
+        + STAGE3_FIELD_REG_INPUTS.len()
 }
 
 fn int_attr(value: usize) -> String {
@@ -1672,6 +1812,9 @@ struct Stage3OpeningInputs<'c, 'a> {
     rd_write_value: Stage3OpeningInput<'c, 'a>,
     rs1_value: Stage3OpeningInput<'c, 'a>,
     rs2_value: Stage3OpeningInput<'c, 'a>,
+    field_rd_write_value: Stage3OpeningInput<'c, 'a>,
+    field_rs1_value: Stage3OpeningInput<'c, 'a>,
+    field_rs2_value: Stage3OpeningInput<'c, 'a>,
 }
 
 struct StageOpeningInputSpec<'a> {
@@ -1688,6 +1831,7 @@ struct Stage3BatchedSumcheckInputs<'c, 'a, 'b> {
     shift_gamma: Value<'c, 'a>,
     instruction_gamma: Value<'c, 'a>,
     registers_gamma: Value<'c, 'a>,
+    field_reg_gamma: Value<'c, 'a>,
 }
 
 struct RelationSpec<'a> {

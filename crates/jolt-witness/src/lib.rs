@@ -7,8 +7,21 @@
 use jolt_field::Field;
 use jolt_poly::EqPolynomial;
 
-pub const NUM_DENSE_TRACE_COLUMNS: usize = 2;
-pub const NUM_ONE_HOT_TRACE_SOURCES: usize = 3;
+pub mod field_reg;
+
+pub const NUM_DENSE_TRACE_COLUMNS: usize = 3;
+pub const NUM_ONE_HOT_TRACE_SOURCES: usize = 4;
+
+/// Dense column slots inside [`CycleInput::dense`].
+pub const DENSE_RD_INC: usize = 0;
+pub const DENSE_RAM_INC: usize = 1;
+pub const DENSE_FIELD_REG_INC: usize = 2;
+
+/// One-hot source slots inside [`CycleInput::one_hot`].
+pub const ONE_HOT_INSTRUCTION_KEYS: usize = 0;
+pub const ONE_HOT_BYTECODE_INDICES: usize = 1;
+pub const ONE_HOT_RAM_ADDRESSES: usize = 2;
+pub const ONE_HOT_FIELD_REG_INDICES: usize = 3;
 
 /// Per-cycle primitive inputs consumed by Bolt oracle generation.
 #[derive(Clone, Copy, Debug)]
@@ -20,7 +33,10 @@ pub struct CycleInput {
 impl CycleInput {
     pub const PADDING: Self = Self {
         dense: [0; NUM_DENSE_TRACE_COLUMNS],
-        one_hot: [Some(0), Some(0), None],
+        // FieldReg access defaults to register 0 on non-FR cycles (matches
+        // the all-zero initial FR register file; FieldReg flags are also
+        // zero, so the FR R1CS rows are trivially satisfied).
+        one_hot: [Some(0), Some(0), None, Some(0)],
     };
 }
 
@@ -34,19 +50,29 @@ impl Default for CycleInput {
 pub struct CommitmentTraceSources {
     pub rd_inc: Vec<i128>,
     pub ram_inc: Vec<i128>,
+    pub field_reg_inc: Vec<i128>,
     pub instruction_keys: Vec<Option<u128>>,
     pub ram_addresses: Vec<Option<u128>>,
     pub bytecode_indices: Vec<Option<u128>>,
+    pub field_reg_indices: Vec<Option<u128>>,
 }
 
 impl CommitmentTraceSources {
     pub fn from_cycle_inputs(cycle_inputs: &[CycleInput]) -> Self {
         Self {
-            rd_inc: cycle_inputs.iter().map(|cycle| cycle.dense[0]).collect(),
-            ram_inc: cycle_inputs.iter().map(|cycle| cycle.dense[1]).collect(),
-            instruction_keys: one_hot_cycle_column(cycle_inputs, 0),
-            ram_addresses: one_hot_cycle_column(cycle_inputs, 2),
-            bytecode_indices: one_hot_cycle_column(cycle_inputs, 1),
+            rd_inc: cycle_inputs.iter().map(|c| c.dense[DENSE_RD_INC]).collect(),
+            ram_inc: cycle_inputs
+                .iter()
+                .map(|c| c.dense[DENSE_RAM_INC])
+                .collect(),
+            field_reg_inc: cycle_inputs
+                .iter()
+                .map(|c| c.dense[DENSE_FIELD_REG_INC])
+                .collect(),
+            instruction_keys: one_hot_cycle_column(cycle_inputs, ONE_HOT_INSTRUCTION_KEYS),
+            ram_addresses: one_hot_cycle_column(cycle_inputs, ONE_HOT_RAM_ADDRESSES),
+            bytecode_indices: one_hot_cycle_column(cycle_inputs, ONE_HOT_BYTECODE_INDICES),
+            field_reg_indices: one_hot_cycle_column(cycle_inputs, ONE_HOT_FIELD_REG_INDICES),
         }
     }
 }
@@ -58,8 +84,9 @@ pub fn commitment_trace_sources(cycle_inputs: &[CycleInput]) -> CommitmentTraceS
 /// Returns a dense trace source by its generated oracle source name.
 pub fn dense_cycle_source(cycle_inputs: &[CycleInput], source: &str) -> Vec<i128> {
     let slot = match source {
-        "trace.rd_inc" => 0,
-        "trace.ram_inc" => 1,
+        "trace.rd_inc" => DENSE_RD_INC,
+        "trace.ram_inc" => DENSE_RAM_INC,
+        "trace.field_reg_inc" => DENSE_FIELD_REG_INC,
         _ => unreachable!("unsupported dense source `{source}`"),
     };
     cycle_inputs.iter().map(|cycle| cycle.dense[slot]).collect()
@@ -68,9 +95,10 @@ pub fn dense_cycle_source(cycle_inputs: &[CycleInput], source: &str) -> Vec<i128
 /// Returns a one-hot trace source by its generated oracle source name.
 pub fn one_hot_cycle_source(cycle_inputs: &[CycleInput], source: &str) -> Vec<Option<u128>> {
     let slot = match source {
-        "trace.instruction_keys" => 0,
-        "trace.bytecode_indices" => 1,
-        "trace.ram_addresses" => 2,
+        "trace.instruction_keys" => ONE_HOT_INSTRUCTION_KEYS,
+        "trace.bytecode_indices" => ONE_HOT_BYTECODE_INDICES,
+        "trace.ram_addresses" => ONE_HOT_RAM_ADDRESSES,
+        "trace.field_reg_indices" => ONE_HOT_FIELD_REG_INDICES,
         _ => unreachable!("unsupported one-hot source `{source}`"),
     };
     one_hot_cycle_column(cycle_inputs, slot)
@@ -358,12 +386,48 @@ pub fn optional_usize_column(
     values.into_iter().collect()
 }
 
+/// Stage 4/5 sparse trace witness.
+///
+/// FR Twist witness data is stored as a sparse [`field_reg::FieldRegReplay`]
+/// (bytecode + event stream) rather than as 5 pre-materialized `K_FR × T`
+/// dense vectors. Stage 4/5 kernels call `replay.materialize_*` to expand
+/// only the polys they need, kernel-scoped — host RSS stays ~10 MB
+/// regardless of trace length instead of paying the ~500 MB the dense
+/// materialization would cost. Empty `replay` (no FR events) is the inert
+/// default — kernels short-circuit to zero-claim states.
 #[derive(Clone, Debug)]
 pub struct Stage45SparseTraceWitness<F: Field> {
     pub rd_inc: Vec<F>,
     pub ram_addresses: Vec<Option<usize>>,
     pub ram_inc: Vec<F>,
     pub rd_write_addresses: Vec<Option<usize>>,
+    /// Sparse FR replay: bytecode metadata + FR event stream. Empty `events`
+    /// is the inert default; `with_field_reg_replay` overlays a real replay.
+    pub fr_replay: field_reg::FieldRegReplay,
+    /// Cached `FrdInc(j) = limbs_to_field(rd_post[j]) − running_pre[bc.frd[j]]`
+    /// for every cycle. Materialized once in `with_field_reg_replay` so the
+    /// Stage 4 RW and Stage 5 ValEvaluation kernels can each clone-from-slice
+    /// into their own mutable working buffers instead of paying the O(T) +
+    /// per-event Fr conversion twice. Empty Vec when no FR replay attached.
+    pub fr_frd_inc: Vec<F>,
+}
+
+impl<F: Field> Stage45SparseTraceWitness<F> {
+    /// Attach the FR Twist replay and eagerly cache `FrdInc` (T-sized).
+    /// The Stage 4/5 kernels read `fr_frd_inc` directly — avoids a
+    /// duplicate materialize pass (saves ~one O(T)+event scan on FR-active
+    /// proofs; significant at production trace lengths). Empty
+    /// `replay.events` leaves the witness in the inert shape.
+    pub fn with_field_reg_replay(mut self, replay: field_reg::FieldRegReplay) -> Self {
+        assert_eq!(
+            replay.num_cycles,
+            self.rd_inc.len(),
+            "FieldRegReplay.num_cycles must match the trace length"
+        );
+        self.fr_frd_inc = replay.materialize_frd_inc::<F>();
+        self.fr_replay = replay;
+        self
+    }
 }
 
 pub fn stage4_5_sparse_trace_witness<F: Field>(
@@ -389,11 +453,15 @@ pub fn stage4_5_sparse_trace_witness<F: Field>(
         ram_inc.push(u64_increment(read_value, write_value));
     }
 
+    let trace_len = rd_inc.len();
+
     Stage45SparseTraceWitness {
         rd_inc,
         ram_addresses,
         ram_inc,
         rd_write_addresses,
+        fr_replay: field_reg::FieldRegReplay::empty(trace_len),
+        fr_frd_inc: Vec::new(),
     }
 }
 
@@ -542,7 +610,7 @@ pub struct Stage6WitnessParams {
 pub struct Stage6BytecodeEntry<F: Field> {
     pub address: F,
     pub imm: F,
-    pub circuit_flags: [bool; 14],
+    pub circuit_flags: [bool; 23],
     pub rd: Option<usize>,
     pub rs1: Option<usize>,
     pub rs2: Option<usize>,
@@ -554,6 +622,17 @@ pub struct Stage6BytecodeEntry<F: Field> {
     pub right_is_rs2: bool,
     pub right_is_imm: bool,
     pub is_noop: bool,
+    // FR-coprocessor slots: the bytecode-RAF entries expose these so the
+    // Stage 6 bytecode-RAF binding can prove FR Twist's `FrRs1Ra / FrRs2Ra
+    // / FrdWa` openings agree with per-cycle bytecode-derived one-hots —
+    // preventing a malicious prover from smuggling an FR-active R1CS row
+    // with zero operands by dropping the FR event entirely.
+    pub frd: Option<usize>,
+    pub frs1: Option<usize>,
+    pub frs2: Option<usize>,
+    pub reads_frs1: bool,
+    pub reads_frs2: bool,
+    pub writes_frd: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -842,20 +921,22 @@ mod tests {
     fn cycle_sources_select_generated_trace_columns() {
         let cycle_inputs = [
             CycleInput {
-                dense: [3, -2],
-                one_hot: [Some(7), Some(5), None],
+                dense: [3, -2, 100],
+                one_hot: [Some(7), Some(5), None, Some(2)],
             },
             CycleInput {
-                dense: [8, 11],
-                one_hot: [Some(1), Some(4), Some(9)],
+                dense: [8, 11, 200],
+                one_hot: [Some(1), Some(4), Some(9), Some(6)],
             },
         ];
         let sources = commitment_trace_sources(&cycle_inputs);
         assert_eq!(sources.rd_inc, vec![3, 8]);
         assert_eq!(sources.ram_inc, vec![-2, 11]);
+        assert_eq!(sources.field_reg_inc, vec![100, 200]);
         assert_eq!(sources.instruction_keys, vec![Some(7), Some(1)]);
         assert_eq!(sources.ram_addresses, vec![None, Some(9)]);
         assert_eq!(sources.bytecode_indices, vec![Some(5), Some(4)]);
+        assert_eq!(sources.field_reg_indices, vec![Some(2), Some(6)]);
         assert_eq!(
             dense_cycle_source(&cycle_inputs, "trace.rd_inc"),
             vec![3, 8]
@@ -863,6 +944,10 @@ mod tests {
         assert_eq!(
             dense_cycle_source(&cycle_inputs, "trace.ram_inc"),
             vec![-2, 11]
+        );
+        assert_eq!(
+            dense_cycle_source(&cycle_inputs, "trace.field_reg_inc"),
+            vec![100, 200]
         );
         assert_eq!(
             one_hot_cycle_source(&cycle_inputs, "trace.instruction_keys"),
@@ -875,6 +960,10 @@ mod tests {
         assert_eq!(
             one_hot_cycle_source(&cycle_inputs, "trace.ram_addresses"),
             vec![None, Some(9)]
+        );
+        assert_eq!(
+            one_hot_cycle_source(&cycle_inputs, "trace.field_reg_indices"),
+            vec![Some(2), Some(6)]
         );
     }
 

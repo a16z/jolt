@@ -1,0 +1,41 @@
+# Jolt protocol chain fixture
+params:
+  log_t: 18
+  log_k_bytecode: 14
+  log_k_ram: 14
+  trace_length: 262144
+phases:
+  - name: commitment
+    protocol_fixture: tests/fixtures/commitment_protocol.mlir
+    concrete_fixture: tests/fixtures/commitment_concrete.mlir
+    prover_cpu_fixture: tests/fixtures/commitment_prover_cpu.mlir
+    verifier_cpu_fixture: tests/fixtures/commitment_verifier_cpu.mlir
+    prover_rust_fixture: tests/fixtures/prove_commitment_phase.rs
+    verifier_rust_fixture: tests/fixtures/verify_commitment_phase.rs
+    prover_batches: 1
+    verifier_batches: 1
+    optional_commitments: 2
+    transcript_steps: 3
+  - name: stage1_outer
+    consumes_transcript_from: commitment
+    protocol_fixture: tests/fixtures/stage1_outer_protocol.mlir
+    prover_compute_fixture: tests/fixtures/stage1_outer_prover_compute.mlir
+    verifier_compute_fixture: tests/fixtures/stage1_outer_verifier_compute.mlir
+    prover_kernel_compute_fixture: tests/fixtures/stage1_outer_prover_kernel_compute.mlir
+    verifier_kernel_compute_fixture: tests/fixtures/stage1_outer_verifier_kernel_compute.mlir
+    prover_cpu_fixture: tests/fixtures/stage1_outer_prover_cpu.mlir
+    verifier_cpu_fixture: tests/fixtures/stage1_outer_verifier_cpu.mlir
+    prover_rust_fixture: tests/fixtures/prove_stage1_outer.rs
+    verifier_rust_fixture: tests/fixtures/verify_stage1_outer.rs
+    transcript_squeezes: 1
+    prover_sumcheck_drivers: 2
+    verifier_sumcheck_drivers: 2
+    opening_claims: 48
+    opening_batches: 1
+    drivers:
+      - stage1.uniskip.sumcheck: kernel=jolt.cpu.stage1.outer.uniskip rounds=1 degree=27 proof_slot=stage1.uni_skip_first_round
+      - stage1.outer_remaining.sumcheck: kernel=jolt.cpu.stage1.outer.remaining rounds=19 degree=3 proof_slot=stage1.sumcheck
+parity_gates:
+  - pipeline_generated_commitment_prover_verifier_self_parity_runs
+  - generated_stage1_real_executor_self_verifies_synthetic_remaining
+  - generated_jolt_chain_commitment_then_stage1_self_parity_runs

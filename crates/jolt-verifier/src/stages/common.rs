@@ -1175,6 +1175,12 @@ pub struct Stage67RelationSymbols {
     pub inc_rd_eval: &'static str,
 }
 
+/// Number of bytecode-RAF stage groups (5 integer + 1 FR). Mirrors the
+/// prover-side stage 6 `BYTECODE_READ_RAF_STAGE_COUNT` and
+/// the Bolt-emitted `STAGE6_OPENING_INPUTS` layout. Any change here
+/// requires synchronizing the prover/emit/verifier triple.
+pub const STAGE67_BYTECODE_STAGE_COUNT: usize = 6;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stage67BytecodeSymbols {
     pub point: &'static str,
@@ -1182,20 +1188,24 @@ pub struct Stage67BytecodeSymbols {
     pub bytecode_ra_eval_prefix: &'static str,
     pub entries: &'static str,
     pub entry_bytecode_index: &'static str,
-    pub stage_gammas: [&'static str; 5],
-    pub stage_cycle_points: [&'static str; 5],
+    pub stage_gammas: [&'static str; STAGE67_BYTECODE_STAGE_COUNT],
+    pub stage_cycle_points: [&'static str; STAGE67_BYTECODE_STAGE_COUNT],
     pub stage4_register_point: &'static str,
     pub stage5_register_point: &'static str,
+    pub stage_fr_register_point: &'static str,
     pub entry_rd: &'static str,
     pub entry_rs1: &'static str,
     pub entry_rs2: &'static str,
     pub entry_lookup_table: &'static str,
+    pub entry_frd: &'static str,
+    pub entry_frs1: &'static str,
+    pub entry_frs2: &'static str,
 }
 
 pub trait Stage67BytecodeEntry {
     fn address(&self) -> Fr;
     fn imm(&self) -> Fr;
-    fn circuit_flags(&self) -> &[bool; 14];
+    fn circuit_flags(&self) -> &[bool; 23];
     fn rd(&self) -> Option<usize>;
     fn rs1(&self) -> Option<usize>;
     fn rs2(&self) -> Option<usize>;
@@ -1207,6 +1217,12 @@ pub trait Stage67BytecodeEntry {
     fn right_is_rs2(&self) -> bool;
     fn right_is_imm(&self) -> bool;
     fn is_noop(&self) -> bool;
+    fn frd(&self) -> Option<usize>;
+    fn frs1(&self) -> Option<usize>;
+    fn frs2(&self) -> Option<usize>;
+    fn reads_frs1(&self) -> bool;
+    fn reads_frs2(&self) -> bool;
+    fn writes_frd(&self) -> bool;
 }
 
 pub fn store_scalar(store: &ValueStore<Fr>, symbol: &'static str) -> Result<Fr, RuntimePlanError> {
@@ -1265,6 +1281,7 @@ pub fn expected_stage67_bytecode_read_raf<E: Stage67BytecodeEntry>(
         gamma_powers[5] * int_eval,
         Fr::from_u64(0),
         gamma_powers[4] * int_eval,
+        Fr::from_u64(0),
         Fr::from_u64(0),
         Fr::from_u64(0),
     ];
@@ -1487,12 +1504,19 @@ fn stage67_bytecode_stage_cycle_points(
     store: &ValueStore<Fr>,
     log_t: usize,
     symbols: &Stage67BytecodeSymbols,
-) -> Result<[Vec<Fr>; 5], RuntimePlanError> {
+) -> Result<[Vec<Fr>; STAGE67_BYTECODE_STAGE_COUNT], RuntimePlanError> {
     let point = |index| {
         let symbol = symbols.stage_cycle_points[index];
         suffix_point(store_point(store, symbol)?, log_t, symbol).map(|point| point.to_vec())
     };
-    Ok([point(0)?, point(1)?, point(2)?, point(3)?, point(4)?])
+    Ok([
+        point(0)?,
+        point(1)?,
+        point(2)?,
+        point(3)?,
+        point(4)?,
+        point(5)?,
+    ])
 }
 
 fn stage67_bytecode_stage_value_evals<E: Stage67BytecodeEntry>(
@@ -1503,7 +1527,7 @@ fn stage67_bytecode_stage_value_evals<E: Stage67BytecodeEntry>(
     r_address: &[Fr],
     log_t: usize,
     symbols: &Stage67BytecodeSymbols,
-) -> Result<[Fr; 5], RuntimePlanError> {
+) -> Result<[Fr; STAGE67_BYTECODE_STAGE_COUNT], RuntimePlanError> {
     let expected_len =
         1usize
             .checked_shl(r_address.len() as u32)
@@ -1535,13 +1559,16 @@ fn stage67_bytecode_stage_value_evals<E: Stage67BytecodeEntry>(
         store_scalar(store, symbols.stage_gammas[4])?,
         num_lookup_tables + 2,
     );
+    let stage_fr_gamma_powers = field_powers(store_scalar(store, symbols.stage_gammas[5])?, 3);
 
     let stage4_register_point =
         stage67_register_prefix_point(store, symbols.stage4_register_point, log_t)?;
     let stage5_register_point =
         stage67_register_prefix_point(store, symbols.stage5_register_point, log_t)?;
+    let stage_fr_register_point =
+        stage67_register_prefix_point(store, symbols.stage_fr_register_point, log_t)?;
 
-    let mut evals = [Fr::from_u64(0); 5];
+    let mut evals = [Fr::from_u64(0); STAGE67_BYTECODE_STAGE_COUNT];
     for (index, entry) in entries.iter().enumerate() {
         let eq = indexed_boolean_eq(index, r_address);
         let values = stage67_bytecode_entry_stage_values(
@@ -1549,11 +1576,13 @@ fn stage67_bytecode_stage_value_evals<E: Stage67BytecodeEntry>(
             num_lookup_tables,
             stage4_register_point,
             stage5_register_point,
+            stage_fr_register_point,
             &stage1_gamma_powers,
             &stage2_gamma_powers,
             &stage3_gamma_powers,
             &stage4_gamma_powers,
             &stage5_gamma_powers,
+            &stage_fr_gamma_powers,
             symbols,
         )?;
         for stage in 0..evals.len() {
@@ -1563,18 +1592,21 @@ fn stage67_bytecode_stage_value_evals<E: Stage67BytecodeEntry>(
     Ok(evals)
 }
 
+#[expect(clippy::too_many_arguments)]
 fn stage67_bytecode_entry_stage_values<E: Stage67BytecodeEntry>(
     entry: &E,
     num_lookup_tables: usize,
     stage4_register_point: &[Fr],
     stage5_register_point: &[Fr],
+    stage_fr_register_point: &[Fr],
     stage1_gamma_powers: &[Fr],
     stage2_gamma_powers: &[Fr],
     stage3_gamma_powers: &[Fr],
     stage4_gamma_powers: &[Fr],
     stage5_gamma_powers: &[Fr],
+    stage_fr_gamma_powers: &[Fr],
     symbols: &Stage67BytecodeSymbols,
-) -> Result<[Fr; 5], RuntimePlanError> {
+) -> Result<[Fr; STAGE67_BYTECODE_STAGE_COUNT], RuntimePlanError> {
     let flags = entry.circuit_flags();
     let mut stage1 = entry.address() + entry.imm() * stage1_gamma_powers[1];
     for (flag, gamma) in flags.iter().zip(stage1_gamma_powers.iter().skip(2)) {
@@ -1643,7 +1675,21 @@ fn stage67_bytecode_entry_stage_values<E: Stage67BytecodeEntry>(
         stage5 += stage5_gamma_powers[2 + table];
     }
 
-    Ok([stage1, stage2, stage3, stage4, stage5])
+    let mut stage_fr = Fr::from_u64(0);
+    if entry.writes_frd() {
+        stage_fr += stage67_register_eq(entry.frd(), stage_fr_register_point, symbols.entry_frd)?
+            * stage_fr_gamma_powers[0];
+    }
+    if entry.reads_frs1() {
+        stage_fr += stage67_register_eq(entry.frs1(), stage_fr_register_point, symbols.entry_frs1)?
+            * stage_fr_gamma_powers[1];
+    }
+    if entry.reads_frs2() {
+        stage_fr += stage67_register_eq(entry.frs2(), stage_fr_register_point, symbols.entry_frs2)?
+            * stage_fr_gamma_powers[2];
+    }
+
+    Ok([stage1, stage2, stage3, stage4, stage5, stage_fr])
 }
 
 fn stage67_register_eq(

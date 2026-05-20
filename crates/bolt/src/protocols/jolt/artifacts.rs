@@ -740,6 +740,7 @@ pub struct JoltProverWitnessInputs<'a, CommitmentInputs> {{
     pub instruction_ra_virtual_d: usize,
     pub stage7_openings: &'a [stage7::Stage7OpeningInputValue<{field_type}>],
     pub evaluation_openings: Option<&'a [stage7::Stage7OpeningInputValue<{field_type}>]>,
+    pub field_reg_replay: Option<&'a jolt_witness::field_reg::FieldRegReplay>,
 }}
 
 pub fn prove_jolt_with_witness_inputs<CommitmentInputs, T>(
@@ -768,10 +769,13 @@ where
     let stage3 = stage3_prover_inputs(inputs.stage3_openings, inputs.stage3_cycles);
     drop(_stage3_input_span);
     let _stage45_witness_span = tracing::info_span!("bolt.prove.inputs.stage45_witness").entered();
-    let stage45_witness = stage4::stage4_5_sparse_trace_witness_from_accesses(
+    let mut stage45_witness = stage4::stage4_5_sparse_trace_witness_from_accesses(
         inputs.register_accesses,
         inputs.ram.accesses,
     );
+    if let Some(replay) = inputs.field_reg_replay {{
+        stage45_witness = stage45_witness.with_field_reg_replay(replay.clone());
+    }}
     drop(_stage45_witness_span);
     let _stage4_input_span = tracing::info_span!("bolt.prove.inputs.stage4").entered();
     let stage4 = stage4_prover_inputs(
@@ -1551,6 +1555,12 @@ pub fn stage6_verifier_data_from_witness_entries(
                     right_is_rs2: entry.right_is_rs2,
                     right_is_imm: entry.right_is_imm,
                     is_noop: entry.is_noop,
+                    frd: entry.frd,
+                    frs1: entry.frs1,
+                    frs2: entry.frs2,
+                    reads_frs1: entry.reads_frs1,
+                    reads_frs2: entry.reads_frs2,
+                    writes_frd: entry.writes_frd,
                 }})
                 .collect(),
             entry_bytecode_index,

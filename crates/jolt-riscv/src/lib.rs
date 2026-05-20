@@ -44,6 +44,15 @@ macro_rules! for_each_instruction_kind {
                 VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
                 VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
                 VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
+                FieldMul,
+                FieldAdd,
+                FieldSub,
+                FieldInv,
+                FieldAssertEq,
+                FieldMov,
+                FieldSLL64,
+                FieldSLL128,
+                FieldSLL192,
             ]
         }
     };

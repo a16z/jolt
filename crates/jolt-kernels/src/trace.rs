@@ -299,6 +299,30 @@ where
             let instr = *instruction;
             let circuit_flags = instruction_circuit_flags(instruction);
             let instruction_flags = instruction_instruction_flags(instruction);
+            // FR slot classification — see `JoltInstructionKind::fr_access_flags`.
+            // Stage 4 RW + Stage 6 bytecode-RAF anchor both depend on this
+            // classification; the helper centralizes it so the host-side
+            // `fr_bytecode_from_trace` and this kernel-side site cannot drift.
+            let (reads_frs1, reads_frs2, writes_frd) =
+                instruction.instruction_kind.fr_access_flags();
+            let fr_slot = |opt: Option<u8>| {
+                opt.map(|raw| (raw as usize) & jolt_witness::field_reg::FIELD_REG_ADDR_MASK)
+            };
+            let frd = if writes_frd {
+                fr_slot(instr.operands.rd)
+            } else {
+                None
+            };
+            let frs1 = if reads_frs1 {
+                fr_slot(instr.operands.rs1)
+            } else {
+                None
+            };
+            let frs2 = if reads_frs2 {
+                fr_slot(instr.operands.rs2)
+            } else {
+                None
+            };
             Stage6BytecodeEntry {
                 address: F::from_u64(instr.address as u64),
                 imm: F::from_i128(instr.operands.imm),
@@ -314,6 +338,12 @@ where
                 right_is_rs2: instruction_flags[InstructionFlags::RightOperandIsRs2Value],
                 right_is_imm: instruction_flags[InstructionFlags::RightOperandIsImm],
                 is_noop: instruction_flags[InstructionFlags::IsNoop],
+                frd,
+                frs1,
+                frs2,
+                reads_frs1,
+                reads_frs2,
+                writes_frd,
             }
         })
         .collect()
@@ -407,6 +437,13 @@ fn stage3_cycle<C: CycleRow>(cycle: Option<C>, bytecode: &BytecodePreprocessing)
         right_operand_is_imm: instruction_flags[InstructionFlags::RightOperandIsImm],
         imm: cycle.imm(),
         rd_write_value: cycle.rd_write().map_or(0, |(_, _, post)| post),
+        // FR coprocessor stays inert here — Stage 1's per-cycle row format
+        // never carries the FR operand snapshot. FR events live in the
+        // separate `FieldRegReplay` consumed by Stages 4/5.
+        is_field_op: false,
+        field_rs1: [0; 4],
+        field_rs2: [0; 4],
+        field_rd: [0; 4],
     }
 }
 
@@ -459,6 +496,11 @@ fn stage1_rv64_cycle<C: CycleRow>(
         should_branch: instruction_flags[InstructionFlags::Branch] && lookup_output == 1,
         next_is_virtual: false,
         next_is_first_in_sequence: false,
+        // FR coprocessor: zero defaults; the host overlays real values
+        // from `FieldRegReplay` via `populate_stage1_rv64_fr_fields`.
+        field_rs1: [0; 4],
+        field_rs2: [0; 4],
+        field_rd: [0; 4],
     };
     fill_next_rv64_fields(&mut row, next, bytecode);
     row
@@ -552,6 +594,15 @@ fn stage1_rv64_flags(flags: CircuitFlagSet) -> [bool; NUM_CIRCUIT_FLAGS] {
         flags[CircuitFlags::IsCompressed],
         flags[CircuitFlags::IsFirstInSequence],
         flags[CircuitFlags::IsLastInSequence],
+        flags[CircuitFlags::IsFieldMul],
+        flags[CircuitFlags::IsFieldAdd],
+        flags[CircuitFlags::IsFieldSub],
+        flags[CircuitFlags::IsFieldInv],
+        flags[CircuitFlags::IsFieldAssertEq],
+        flags[CircuitFlags::IsFieldMov],
+        flags[CircuitFlags::IsFieldSLL64],
+        flags[CircuitFlags::IsFieldSLL128],
+        flags[CircuitFlags::IsFieldSLL192],
     ]
 }
 
@@ -680,11 +731,14 @@ pub fn cycle_input(
     });
 
     CycleInput {
-        dense: [rd_inc, ram_inc],
+        // FieldRegInc is 0 on every non-FR cycle.
+        dense: [rd_inc, ram_inc, 0],
         one_hot: [
             Some(cycle.lookup_index()),
             Some(bytecode_pc(bytecode, &cycle.instruction()) as u128),
             ram_address,
+            // FieldReg accesses default to register 0 on non-FR cycles.
+            Some(0),
         ],
     }
 }

@@ -310,7 +310,13 @@ impl Program {
         inputs: &[u8],
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
-    ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
+    ) -> (
+        LazyTraceIterator,
+        Vec<Cycle>,
+        Memory,
+        JoltDevice,
+        Vec<tracer::emulator::cpu::FieldRegEvent>,
+    ) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
@@ -322,16 +328,47 @@ impl Program {
         let memory_config =
             self.memory_config_with_program_size(image.program_end - RAM_START_ADDRESS);
 
-        let (lazy_trace, trace, memory, jolt_device, _advice_tape) = guest::program::trace(
-            &elf_contents,
-            self.elf.as_ref(),
-            inputs,
-            untrusted_advice,
-            trusted_advice,
-            &memory_config,
-            None,
-        );
-        (lazy_trace, trace, memory, jolt_device)
+        // Two-pass advice setup: if a `compute_advice` ELF was built (e.g. when
+        // the guest carries `jolt-inlines-bn254-fr` with the `compute_advice`
+        // feature forwarded), run Pass 1 first to populate the advice tape via
+        // `VirtualHostIO`, then thread that tape into the Pass-2 trace so
+        // `ADVICE_LD` reads land the precomputed limbs. Programs without an
+        // advice ELF just get a single-pass trace with `None`.
+        let advice_tape_seed = if let Some(advice_elf) = self.elf_compute_advice.as_ref() {
+            let mut advice_file = File::open(advice_elf)
+                .unwrap_or_else(|_| panic!("could not open compute_advice elf: {advice_elf:?}"));
+            let mut advice_contents = Vec::new();
+            advice_file.read_to_end(&mut advice_contents).unwrap();
+            let advice_image = jolt_program::image::decode_elf(&advice_contents)
+                .expect("compute_advice ELF decoding failed");
+            let advice_memory_config =
+                self.memory_config_with_program_size(advice_image.program_end - RAM_START_ADDRESS);
+            let (_, _, _, _, mut advice_tape, _) = guest::program::trace(
+                &advice_contents,
+                Some(advice_elf),
+                inputs,
+                untrusted_advice,
+                trusted_advice,
+                &advice_memory_config,
+                None,
+            );
+            advice_tape.reset_read_position();
+            Some(advice_tape)
+        } else {
+            None
+        };
+
+        let (lazy_trace, trace, memory, jolt_device, _advice_tape, field_reg_events) =
+            guest::program::trace(
+                &elf_contents,
+                self.elf.as_ref(),
+                inputs,
+                untrusted_advice,
+                trusted_advice,
+                &memory_config,
+                advice_tape_seed,
+            );
+        (lazy_trace, trace, memory, jolt_device, field_reg_events)
     }
 
     #[tracing::instrument(skip_all, name = "Program::trace_to_file")]

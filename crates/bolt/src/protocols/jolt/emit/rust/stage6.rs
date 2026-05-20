@@ -1243,7 +1243,7 @@ pub type Stage6VerifierProgramPlan = Stage6CpuProgramPlan;
 pub struct Stage6BytecodeEntry {
     pub address: Fr,
     pub imm: Fr,
-    pub circuit_flags: [bool; 14],
+    pub circuit_flags: [bool; 23],
     pub rd: Option<usize>,
     pub rs1: Option<usize>,
     pub rs2: Option<usize>,
@@ -1255,12 +1255,18 @@ pub struct Stage6BytecodeEntry {
     pub right_is_rs2: bool,
     pub right_is_imm: bool,
     pub is_noop: bool,
+    pub frd: Option<usize>,
+    pub frs1: Option<usize>,
+    pub frs2: Option<usize>,
+    pub reads_frs1: bool,
+    pub reads_frs2: bool,
+    pub writes_frd: bool,
 }
 
 impl Stage67BytecodeEntry for Stage6BytecodeEntry {
     fn address(&self) -> Fr { self.address }
     fn imm(&self) -> Fr { self.imm }
-    fn circuit_flags(&self) -> &[bool; 14] { &self.circuit_flags }
+    fn circuit_flags(&self) -> &[bool; 23] { &self.circuit_flags }
     fn rd(&self) -> Option<usize> { self.rd }
     fn rs1(&self) -> Option<usize> { self.rs1 }
     fn rs2(&self) -> Option<usize> { self.rs2 }
@@ -1272,6 +1278,12 @@ impl Stage67BytecodeEntry for Stage6BytecodeEntry {
     fn right_is_rs2(&self) -> bool { self.right_is_rs2 }
     fn right_is_imm(&self) -> bool { self.right_is_imm }
     fn is_noop(&self) -> bool { self.is_noop }
+    fn frd(&self) -> Option<usize> { self.frd }
+    fn frs1(&self) -> Option<usize> { self.frs1 }
+    fn frs2(&self) -> Option<usize> { self.frs2 }
+    fn reads_frs1(&self) -> bool { self.reads_frs1 }
+    fn reads_frs2(&self) -> bool { self.reads_frs2 }
+    fn writes_frd(&self) -> bool { self.writes_frd }
 }
 
 
@@ -1326,6 +1338,7 @@ const STAGE6_BYTECODE_SYMBOLS: Stage67BytecodeSymbols = Stage67BytecodeSymbols {
         "stage6.bytecode_read_raf.stage3_gamma",
         "stage6.bytecode_read_raf.stage4_gamma",
         "stage6.bytecode_read_raf.stage5_gamma",
+        "stage6.bytecode_read_raf.stage_fr_gamma",
     ],
     stage_cycle_points: [
         "stage6.input.stage1.Imm",
@@ -1333,13 +1346,18 @@ const STAGE6_BYTECODE_SYMBOLS: Stage67BytecodeSymbols = Stage67BytecodeSymbols {
         "stage6.input.stage3.spartan_shift.UnexpandedPC",
         "stage6.input.stage4.Rs1Ra",
         "stage6.input.stage5.registers_val_evaluation.RdWa",
+        "stage6.input.stage4.field_reg_rw.FrRs1Ra",
     ],
     stage4_register_point: "stage6.input.stage4.Rs1Ra",
     stage5_register_point: "stage6.input.stage5.registers_val_evaluation.RdWa",
+    stage_fr_register_point: "stage6.input.stage4.field_reg_rw.FrRs1Ra",
     entry_rd: "stage6.bytecode.entry.rd",
     entry_rs1: "stage6.bytecode.entry.rs1",
     entry_rs2: "stage6.bytecode.entry.rs2",
     entry_lookup_table: "stage6.bytecode.entry.lookup_table",
+    entry_frd: "stage6.bytecode.entry.frd",
+    entry_frs1: "stage6.bytecode.entry.frs1",
+    entry_frs2: "stage6.bytecode.entry.frs2",
 };
 
 #[derive(Debug)]

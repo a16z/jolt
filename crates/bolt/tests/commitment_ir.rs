@@ -447,7 +447,7 @@ fn jolt_stage1_outer_protocol_defines_virtual_claim_flow() {
     assert!(text.contains("\"piop.sumcheck_eval\"(%"));
     assert!(text.contains("\"piop.opening_claim\"(%"));
     assert!(text.contains("\"piop.opening_batch\"(%"));
-    assert!(text.contains("count = 35 : i64"));
+    assert!(text.contains("count = 47 : i64"));
     assert!(text.contains("ordered_claims = [@stage1.outer_remaining.opening.LeftInstructionInput"));
     assert!(text.contains("oracle = @OpFlagIsLastInSequence"));
     assert!(!text.contains("\"pcs.opening_claim\""));
@@ -586,13 +586,14 @@ fn jolt_stage3_protocol_defines_shift_instruction_register_flow() {
     assert!(text.contains("sym_name = \"stage3.spartan_shift.input\""));
     assert!(text.contains("sym_name = \"stage3.instruction_input.input\""));
     assert!(text.contains("sym_name = \"stage3.registers_claim_reduction.input\""));
+    assert!(text.contains("sym_name = \"stage3.field_reg_claim_reduction.input\""));
     assert!(text.contains("\"piop.opening_claim_equal\"(%"));
     assert!(text.contains("\"field.add\"(%"));
     assert!(text.contains("\"field.mul\"(%"));
     assert!(text.contains("\"field.sub\"(%"));
     assert!(text.contains("policy = \"jolt_core_stage3_aligned\""));
     assert!(text.contains("point_order = \"reverse\""));
-    assert!(text.contains("ordered_claims = [@stage3.spartan_shift.input, @stage3.instruction_input.input, @stage3.registers_claim_reduction.input]"));
+    assert!(text.contains("ordered_claims = [@stage3.spartan_shift.input, @stage3.instruction_input.input, @stage3.registers_claim_reduction.input, @stage3.field_reg_claim_reduction.input]"));
     assert!(text.contains("ordered_claims = [@stage3.spartan_shift.opening.UnexpandedPC, @stage3.spartan_shift.opening.PC"));
     assert!(!text.contains("kernel = @"));
     assert!(!text.contains("\"compute."));
@@ -703,7 +704,7 @@ fn jolt_stage4_protocol_defines_registers_and_ram_val_flow() {
     assert!(text.contains("sym_name = \"stage4.registers.rs1_claim_consistency\""));
     assert!(text.contains("sym_name = \"stage4.registers.rs2_claim_consistency\""));
     assert!(text.contains(
-        "ordered_claims = [@stage4.registers_read_write.input, @stage4.ram_val_check.input]"
+        "ordered_claims = [@stage4.registers_read_write.input, @stage4.field_reg_rw.input, @stage4.ram_val_check.input]"
     ));
     assert!(text.contains("ordered_claims = [@stage4.registers_read_write.opening.RegistersVal"));
     assert!(text.contains("@stage4.ram_val_check.opening.RamRa"));
@@ -809,7 +810,7 @@ fn jolt_stage5_protocol_defines_value_lookup_reduction_flow() {
     assert!(text.contains("sym_name = \"stage5.ram_ra_claim_reduction.gamma\""));
     assert!(text.contains("sym_name = \"stage5.instruction.lookup_output_claim_consistency\""));
     assert!(text.contains("round_schedule = [128, 18]"));
-    assert!(text.contains("ordered_claims = [@stage5.instruction_read_raf.input, @stage5.ram_ra_claim_reduction.input, @stage5.registers_val_evaluation.input]"));
+    assert!(text.contains("ordered_claims = [@stage5.instruction_read_raf.input, @stage5.ram_ra_claim_reduction.input, @stage5.registers_val_evaluation.input, @stage5.field_reg_val_evaluation.input]"));
     assert!(text.contains("@stage5.instruction_read_raf.opening.LookupTableFlag_0"));
     assert!(text.contains("@stage5.instruction_read_raf.opening.InstructionRa_0"));
     assert!(text.contains("@stage5.instruction_read_raf.opening.InstructionRafFlag"));
@@ -1193,15 +1194,15 @@ fn stage3_rust_targets_extract_and_compile() {
 
     assert_eq!(prover_program.role, Role::Prover);
     assert_eq!(verifier_program.role, Role::Verifier);
-    assert_eq!(prover_program.kernels.len(), 4);
+    assert_eq!(prover_program.kernels.len(), 5);
     assert!(verifier_program.kernels.is_empty());
-    assert_eq!(prover_program.opening_inputs.len(), 12);
-    assert_eq!(prover_program.field_exprs.len(), 19);
+    assert_eq!(prover_program.opening_inputs.len(), 15);
+    assert_eq!(prover_program.field_exprs.len(), 24);
     assert_eq!(prover_program.field_constants.len(), 1);
     assert_eq!(prover_program.opening_equalities.len(), 2);
-    assert_eq!(prover_program.claims.len(), 3);
+    assert_eq!(prover_program.claims.len(), 4);
     assert_eq!(prover_program.drivers.len(), 1);
-    assert_eq!(prover_program.opening_claims.len(), 16);
+    assert_eq!(prover_program.opening_claims.len(), 19);
     assert!(prover_program
         .drivers
         .iter()
@@ -1250,22 +1251,22 @@ fn stage4_rust_targets_extract_and_compile() {
 
     assert_eq!(prover_program.role, Role::Prover);
     assert_eq!(verifier_program.role, Role::Verifier);
-    assert_eq!(prover_program.kernels.len(), 3);
+    assert_eq!(prover_program.kernels.len(), 4);
     assert!(verifier_program.kernels.is_empty());
-    assert_eq!(prover_program.steps.len(), 4);
-    assert_eq!(prover_program.transcript_squeezes.len(), 2);
+    assert_eq!(prover_program.steps.len(), 5);
+    assert_eq!(prover_program.transcript_squeezes.len(), 3);
     assert_eq!(prover_program.transcript_absorb_bytes.len(), 1);
-    assert_eq!(prover_program.opening_inputs.len(), 8);
-    assert_eq!(prover_program.field_exprs.len(), 9);
+    assert_eq!(prover_program.opening_inputs.len(), 11);
+    assert_eq!(prover_program.field_exprs.len(), 14);
     assert!(prover_program.field_constants.is_empty());
     assert_eq!(prover_program.opening_equalities.len(), 2);
-    assert_eq!(prover_program.claims.len(), 2);
+    assert_eq!(prover_program.claims.len(), 3);
     assert_eq!(prover_program.drivers.len(), 1);
-    assert_eq!(prover_program.instance_results.len(), 2);
-    assert_eq!(prover_program.evals.len(), 7);
-    assert_eq!(prover_program.point_slices.len(), 2);
+    assert_eq!(prover_program.instance_results.len(), 3);
+    assert_eq!(prover_program.evals.len(), 12);
+    assert_eq!(prover_program.point_slices.len(), 3);
     assert_eq!(prover_program.point_concats.len(), 1);
-    assert_eq!(prover_program.opening_claims.len(), 7);
+    assert_eq!(prover_program.opening_claims.len(), 12);
     assert_eq!(prover_program.opening_batches.len(), 1);
     assert!(prover_program
         .transcript_absorb_bytes
@@ -1333,33 +1334,33 @@ fn stage5_rust_targets_extract_and_compile() {
 
     assert_eq!(prover_program.role, Role::Prover);
     assert_eq!(verifier_program.role, Role::Verifier);
-    assert_eq!(prover_program.kernels.len(), 4);
+    assert_eq!(prover_program.kernels.len(), 5);
     assert!(verifier_program.kernels.is_empty());
     assert_eq!(prover_program.steps.len(), 3);
     assert_eq!(prover_program.transcript_squeezes.len(), 2);
     assert!(prover_program.transcript_absorb_bytes.is_empty());
-    assert_eq!(prover_program.opening_inputs.len(), 8);
+    assert_eq!(prover_program.opening_inputs.len(), 9);
     assert_eq!(prover_program.field_exprs.len(), 10);
     assert!(prover_program.field_constants.is_empty());
     assert_eq!(prover_program.opening_equalities.len(), 1);
-    assert_eq!(prover_program.claims.len(), 3);
+    assert_eq!(prover_program.claims.len(), 4);
     assert_eq!(prover_program.drivers.len(), 1);
-    assert_eq!(prover_program.instance_results.len(), 3);
+    assert_eq!(prover_program.instance_results.len(), 4);
     assert_eq!(
         prover_program.evals.len(),
-        params.lookup_table_count + params.instruction_ra_virtual_d + 4
+        params.lookup_table_count + params.instruction_ra_virtual_d + 6
     );
     assert_eq!(
         prover_program.point_slices.len(),
-        params.instruction_ra_virtual_d + 3
+        params.instruction_ra_virtual_d + 4
     );
     assert_eq!(
         prover_program.point_concats.len(),
-        params.instruction_ra_virtual_d + 2
+        params.instruction_ra_virtual_d + 3
     );
     assert_eq!(
         prover_program.opening_claims.len(),
-        params.lookup_table_count + params.instruction_ra_virtual_d + 4
+        params.lookup_table_count + params.instruction_ra_virtual_d + 6
     );
     assert_eq!(prover_program.opening_batches.len(), 1);
     assert!(prover_program
@@ -1452,10 +1453,10 @@ fn stage6_rust_targets_extract_and_compile() {
     assert_eq!(verifier_program.role, Role::Verifier);
     assert_eq!(prover_program.kernels.len(), 7);
     assert!(verifier_program.kernels.is_empty());
-    assert_eq!(prover_program.steps.len(), 10);
-    assert_eq!(prover_program.transcript_squeezes.len(), 9);
+    assert_eq!(prover_program.steps.len(), 11);
+    assert_eq!(prover_program.transcript_squeezes.len(), 10);
     assert!(prover_program.transcript_absorb_bytes.is_empty());
-    assert_eq!(prover_program.opening_inputs.len(), 91);
+    assert_eq!(prover_program.opening_inputs.len(), 94);
     assert!(prover_program.field_exprs.len() > 150);
     assert_eq!(prover_program.field_constants.len(), 1);
     assert!(prover_program.opening_equalities.is_empty());
@@ -2100,7 +2101,7 @@ fn jolt_stage1_outer_lowers_to_compute_and_cpu_kernel_ir() {
     assert!(cpu_text.contains("\"cpu.opening_claim\"(%"));
     assert!(cpu_text.contains("\"cpu.opening_batch\"(%"));
     assert!(cpu_text.contains("\"cpu.sumcheck_claim\"(%"));
-    assert!(cpu_text.contains("count = 35 : i64"));
+    assert!(cpu_text.contains("count = 47 : i64"));
     assert!(!cpu_text.contains("\"cpu.pcs_opening_claim\""));
     assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify_claim\""));
     assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify\""));
@@ -2121,7 +2122,7 @@ fn jolt_stage1_outer_lowers_to_compute_and_cpu_kernel_ir() {
     assert_eq!(program.claims.len(), 2);
     assert_eq!(program.batches.len(), 2);
     assert_eq!(program.drivers.len(), 2);
-    assert_eq!(program.opening_claims.len(), 36);
+    assert_eq!(program.opening_claims.len(), 48);
     assert_eq!(program.opening_batches.len(), 1);
     let uniskip = program
         .drivers
@@ -2153,9 +2154,9 @@ fn jolt_stage1_outer_lowers_to_compute_and_cpu_kernel_ir() {
             .iter()
             .filter(|eval| eval.source == "stage1.outer_remaining.sumcheck")
             .count(),
-        35
+        47
     );
-    assert_eq!(program.opening_batches[0].count, 35);
+    assert_eq!(program.opening_batches[0].count, 47);
     assert_eq!(
         program.opening_batches[0].ordered_claims,
         program.opening_batches[0].claim_operands

@@ -27,6 +27,7 @@ pub enum Stage3Relation {
     SpartanShift,
     InstructionInput,
     RegistersClaimReduction,
+    FieldRegClaimReduction,
     Batched,
 }
 
@@ -36,6 +37,7 @@ impl Stage3Relation {
             "jolt.stage3.spartan_shift" => Some(Self::SpartanShift),
             "jolt.stage3.instruction_input" => Some(Self::InstructionInput),
             "jolt.stage3.registers_claim_reduction" => Some(Self::RegistersClaimReduction),
+            "jolt.stage3.field_reg_claim_reduction" => Some(Self::FieldRegClaimReduction),
             "jolt.stage3.batched" => Some(Self::Batched),
             _ => None,
         }
@@ -46,6 +48,7 @@ impl Stage3Relation {
             Self::SpartanShift => "jolt.stage3.spartan_shift",
             Self::InstructionInput => "jolt.stage3.instruction_input",
             Self::RegistersClaimReduction => "jolt.stage3.registers_claim_reduction",
+            Self::FieldRegClaimReduction => "jolt.stage3.field_reg_claim_reduction",
             Self::Batched => "jolt.stage3.batched",
         }
     }
@@ -56,6 +59,7 @@ pub enum Stage3KernelAbi {
     SpartanShift,
     InstructionInput,
     RegistersClaimReduction,
+    FieldRegClaimReduction,
     Batched,
 }
 
@@ -65,6 +69,7 @@ impl Stage3KernelAbi {
             "jolt_stage3_spartan_shift" => Some(Self::SpartanShift),
             "jolt_stage3_instruction_input" => Some(Self::InstructionInput),
             "jolt_stage3_registers_claim_reduction" => Some(Self::RegistersClaimReduction),
+            "jolt_stage3_field_reg_claim_reduction" => Some(Self::FieldRegClaimReduction),
             "jolt_stage3_batched" => Some(Self::Batched),
             _ => None,
         }
@@ -75,6 +80,7 @@ impl Stage3KernelAbi {
             Self::SpartanShift => "jolt_stage3_spartan_shift",
             Self::InstructionInput => "jolt_stage3_instruction_input",
             Self::RegistersClaimReduction => "jolt_stage3_registers_claim_reduction",
+            Self::FieldRegClaimReduction => "jolt_stage3_field_reg_claim_reduction",
             Self::Batched => "jolt_stage3_batched",
         }
     }
@@ -413,6 +419,10 @@ pub struct Stage3Cycle {
     pub right_operand_is_imm: bool,
     pub imm: i128,
     pub rd_write_value: u64,
+    pub is_field_op: bool,
+    pub field_rs1: [u64; 4],
+    pub field_rs2: [u64; 4],
+    pub field_rd: [u64; 4],
 }
 
 impl Stage3Cycle {
@@ -431,6 +441,10 @@ impl Stage3Cycle {
             right_operand_is_imm: false,
             imm: 0,
             rd_write_value: 0,
+            is_field_op: false,
+            field_rs1: [0; 4],
+            field_rs2: [0; 4],
+            field_rd: [0; 4],
         }
     }
 }
@@ -1527,6 +1541,7 @@ impl<F: Field> Stage3ProverInstanceState<F> {
             }
             Stage3Relation::InstructionInput => instruction_input_state(claim, inputs, store),
             Stage3Relation::RegistersClaimReduction => registers_state(claim, inputs, store),
+            Stage3Relation::FieldRegClaimReduction => field_reg_state(claim, inputs, store),
             relation @ Stage3Relation::Batched => Err(Stage3KernelError::KernelNotImplemented {
                 abi: relation.symbol(),
             }),
@@ -2402,6 +2417,80 @@ fn register_factors<F: Field>(cycles: &[Stage3Cycle]) -> RegisterFactors<F> {
     (rd_write_value, rs1_value, rs2_value)
 }
 
+fn field_reg_state<F: Field>(
+    claim: &Stage3SumcheckClaimPlan,
+    inputs: &Stage3ProverInputs<'_, F>,
+    store: &Stage3ValueStore<F>,
+) -> Result<SumOfProductsState<F>, Stage3KernelError> {
+    let cycles = stage3_cycles(inputs, claim.num_rounds)?;
+    let eq_point = store.point("stage3.input.stage1.FieldRdWriteValue")?;
+    let gamma = store.scalar("stage3.field_reg.gamma")?;
+    let gamma2 = store.scalar("stage3.field_reg.gamma2")?;
+    let (rd_write_value, rs1_value, rs2_value) = field_reg_factors(cycles);
+    let factors = vec![rd_write_value, rs1_value, rs2_value];
+    Ok(SumOfProductsState::new(
+        // FR claim reduction has the same γ-batched-eq shape as Registers,
+        // so we reuse the Registers round-poly kernel.
+        SumOfProductsKind::Registers,
+        factors,
+        Some(SplitEqState::new_low_to_high(eq_point, None)),
+        vec![
+            ProductTerm {
+                coefficient: F::one(),
+            },
+            ProductTerm { coefficient: gamma },
+            ProductTerm {
+                coefficient: gamma2,
+            },
+        ],
+        vec![
+            FactorOutput {
+                name: "stage3.field_reg_claim_reduction.eval.FieldRdWriteValue",
+                oracle: "FieldRdWriteValue",
+                factor: 0,
+            },
+            FactorOutput {
+                name: "stage3.field_reg_claim_reduction.eval.FieldRs1Value",
+                oracle: "FieldRs1Value",
+                factor: 1,
+            },
+            FactorOutput {
+                name: "stage3.field_reg_claim_reduction.eval.FieldRs2Value",
+                oracle: "FieldRs2Value",
+                factor: 2,
+            },
+        ],
+        Vec::new(),
+    ))
+}
+
+#[inline]
+fn fr_limbs_to_field<F: Field>(limbs: [u64; 4]) -> F {
+    // Same pattern as tracer::instruction::field_op::fr_from_limbs — pack the
+    // four LE u64 limbs into a 32-byte LE buffer and reduce.
+    let mut bytes = [0u8; 32];
+    for (i, &limb) in limbs.iter().enumerate() {
+        bytes[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
+    }
+    F::from_le_bytes_mod_order(&bytes)
+}
+
+fn field_reg_factors<F: Field>(cycles: &[Stage3Cycle]) -> RegisterFactors<F> {
+    let mut rd_write_value = vec![F::zero(); cycles.len()];
+    let mut rs1_value = vec![F::zero(); cycles.len()];
+    let mut rs2_value = vec![F::zero(); cycles.len()];
+    (&mut rd_write_value, &mut rs1_value, &mut rs2_value, cycles)
+        .into_par_iter()
+        .for_each(|(rd_write_value, rs1_value, rs2_value, cycle)| {
+            if cycle.is_field_op {
+                *rd_write_value = fr_limbs_to_field::<F>(cycle.field_rd);
+                *rs1_value = fr_limbs_to_field::<F>(cycle.field_rs1);
+                *rs2_value = fr_limbs_to_field::<F>(cycle.field_rs2);
+            }
+        });
+    (rd_write_value, rs1_value, rs2_value)
+}
+
 fn expected_batched_output_claim<F: Field>(
     context: Stage3KernelContext<'_>,
     store: &Stage3ValueStore<F>,
@@ -2440,6 +2529,9 @@ fn expected_batched_output_claim<F: Field>(
             }
             Stage3Relation::RegistersClaimReduction => {
                 expected_registers(store, evals, local_point)?
+            }
+            Stage3Relation::FieldRegClaimReduction => {
+                expected_field_regs(store, evals, local_point)?
             }
             relation @ Stage3Relation::Batched => {
                 return Err(Stage3KernelError::KernelNotImplemented {
@@ -2526,6 +2618,26 @@ fn expected_registers<F: Field>(
                 * eval_by_name(evals, "stage3.registers_claim_reduction.eval.Rs1Value")?
             + store.scalar("stage3.registers.gamma2")?
                 * eval_by_name(evals, "stage3.registers_claim_reduction.eval.Rs2Value")?))
+}
+
+fn expected_field_regs<F: Field>(
+    store: &Stage3ValueStore<F>,
+    evals: &[Stage3NamedEval<F>],
+    local_point: &[F],
+) -> Result<F, Stage3KernelError> {
+    let opening_point = reverse_slice(local_point);
+    let eq_eval = EqPolynomial::<F>::mle(
+        &opening_point,
+        store.point("stage3.input.stage1.FieldRdWriteValue")?,
+    );
+    Ok(eq_eval
+        * (eval_by_name(
+            evals,
+            "stage3.field_reg_claim_reduction.eval.FieldRdWriteValue",
+        )? + store.scalar("stage3.field_reg.gamma")?
+            * eval_by_name(evals, "stage3.field_reg_claim_reduction.eval.FieldRs1Value")?
+            + store.scalar("stage3.field_reg.gamma2")?
+                * eval_by_name(evals, "stage3.field_reg_claim_reduction.eval.FieldRs2Value")?))
 }
 
 fn eval_by_name<F: Field>(
@@ -3381,6 +3493,7 @@ mod tests {
             Stage3Relation::SpartanShift,
             Stage3Relation::InstructionInput,
             Stage3Relation::RegistersClaimReduction,
+            Stage3Relation::FieldRegClaimReduction,
             Stage3Relation::Batched,
         ];
         for relation in relations {
@@ -3394,6 +3507,7 @@ mod tests {
             Stage3KernelAbi::SpartanShift,
             Stage3KernelAbi::InstructionInput,
             Stage3KernelAbi::RegistersClaimReduction,
+            Stage3KernelAbi::FieldRegClaimReduction,
             Stage3KernelAbi::Batched,
         ];
         for abi in abis {
@@ -3825,6 +3939,10 @@ mod tests {
                 right_operand_is_imm: false,
                 imm: 0,
                 rd_write_value: 8,
+                is_field_op: false,
+                field_rs1: [0; 4],
+                field_rs2: [0; 4],
+                field_rd: [0; 4],
             },
             Stage3Cycle {
                 unexpanded_pc: 14,
@@ -3840,6 +3958,10 @@ mod tests {
                 right_operand_is_imm: true,
                 imm: -7,
                 rd_write_value: 21,
+                is_field_op: false,
+                field_rs1: [0; 4],
+                field_rs2: [0; 4],
+                field_rd: [0; 4],
             },
             Stage3Cycle {
                 unexpanded_pc: 18,
@@ -3855,6 +3977,10 @@ mod tests {
                 right_operand_is_imm: false,
                 imm: 0,
                 rd_write_value: 0,
+                is_field_op: false,
+                field_rs1: [0; 4],
+                field_rs2: [0; 4],
+                field_rd: [0; 4],
             },
             Stage3Cycle {
                 unexpanded_pc: 22,
@@ -3870,6 +3996,10 @@ mod tests {
                 right_operand_is_imm: true,
                 imm: 11,
                 rd_write_value: 20,
+                is_field_op: false,
+                field_rs1: [0; 4],
+                field_rs2: [0; 4],
+                field_rd: [0; 4],
             },
         ]
     }

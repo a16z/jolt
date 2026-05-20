@@ -228,7 +228,14 @@ impl<
             program_size: Some(preprocessing.shared.memory_layout.program_size),
         };
 
-        let (lazy_trace, trace, final_memory_state, program_io, _advice_tape_out) = {
+        let (
+            lazy_trace,
+            trace,
+            final_memory_state,
+            program_io,
+            _advice_tape_out,
+            _field_reg_events,
+        ) = {
             let _pprof_trace = pprof_scope!("trace");
             guest::program::trace(
                 elf_contents,
@@ -2339,7 +2346,7 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&100u32).unwrap();
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
-        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let (_, _, _, io_device, _) = program.trace(&inputs, &[], &[]);
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
@@ -2384,7 +2391,7 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&5u32).unwrap();
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
-        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let (_, _, _, io_device, _) = program.trace(&inputs, &[], &[]);
 
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
@@ -2440,7 +2447,7 @@ mod tests {
         let mut program = host::Program::new("sha3-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
-        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let (_, _, _, io_device, _) = program.trace(&inputs, &[], &[]);
 
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
@@ -2498,7 +2505,7 @@ mod tests {
         let mut program = host::Program::new("sha2-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
-        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let (_, _, _, io_device, _) = program.trace(&inputs, &[], &[]);
 
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
@@ -2562,7 +2569,7 @@ mod tests {
         let trusted_advice = postcard::to_stdvec(&[7u8; 32]).unwrap();
         let untrusted_advice = postcard::to_stdvec(&[9u8; 32]).unwrap();
 
-        let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
+        let (_, _, _, io_device, _) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
 
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
@@ -2625,7 +2632,7 @@ mod tests {
         let untrusted_advice = vec![9u8; 4096];
 
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
-        let (lazy_trace, trace, final_memory_state, io_device) =
+        let (lazy_trace, trace, final_memory_state, io_device, _) =
             program.trace(&inputs, &untrusted_advice, &trusted_advice);
 
         let shared_preprocessing = JoltSharedPreprocessing::new(
@@ -2690,7 +2697,7 @@ mod tests {
         let mut trusted_advice = postcard::to_stdvec(&[6u8; 32]).unwrap();
         trusted_advice.extend(postcard::to_stdvec(&[7u8; 32]).unwrap());
 
-        let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
+        let (_, _, _, io_device, _) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
@@ -2754,7 +2761,7 @@ mod tests {
         let untrusted_advice = postcard::to_stdvec(&[9u8; 32]).unwrap();
 
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
-        let (lazy_trace, trace, final_memory_state, io_device) =
+        let (lazy_trace, trace, final_memory_state, io_device, _) =
             program.trace(&inputs, &untrusted_advice, &trusted_advice);
 
         let shared_preprocessing = JoltSharedPreprocessing::new(
@@ -2846,7 +2853,7 @@ mod tests {
         DoryGlobals::reset();
         let mut program = host::Program::new("memory-ops-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
-        let (_, _, _, io_device) = program.trace(&[], &[], &[]);
+        let (_, _, _, io_device, _) = program.trace(&[], &[], &[]);
 
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
@@ -2892,7 +2899,7 @@ mod tests {
         let mut program = host::Program::new("btreemap-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&50u32).unwrap();
-        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let (_, _, _, io_device, _) = program.trace(&inputs, &[], &[]);
 
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
@@ -2938,7 +2945,7 @@ mod tests {
         let mut program = host::Program::new("muldiv-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
-        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let (_, _, _, io_device, _) = program.trace(&inputs, &[], &[]);
 
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
@@ -2988,7 +2995,7 @@ mod tests {
         program.set_func("int_to_string");
         let inputs = postcard::to_stdvec(&81i32).unwrap();
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
-        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let (_, _, _, io_device, _) = program.trace(&inputs, &[], &[]);
 
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
@@ -3143,7 +3150,7 @@ mod tests {
         let mut program = host::Program::new("muldiv-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
-        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let (_, _, _, io_device, _) = program.trace(&inputs, &[], &[]);
 
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
@@ -3264,7 +3271,7 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&9u8).unwrap();
-        let (lazy_trace, mut trace, final_memory_state, mut program_io) =
+        let (lazy_trace, mut trace, final_memory_state, mut program_io, _) =
             program.trace(&inputs, &[], &[]);
         trace.truncate(100);
         program_io.outputs[0] = 0; // change the output to 0
@@ -3305,7 +3312,7 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&1u8).unwrap();
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
-        let (lazy_trace, trace, final_memory_state, mut program_io) =
+        let (lazy_trace, trace, final_memory_state, mut program_io, _) =
             program.trace(&inputs, &[], &[]);
 
         // Since the preprocessing is done with the original memory layout, the verifier should fail
@@ -3355,7 +3362,8 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&9u8).unwrap();
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
-        let (lazy_trace, trace, final_memory_state, program_io) = program.trace(&inputs, &[], &[]);
+        let (lazy_trace, trace, final_memory_state, program_io, _) =
+            program.trace(&inputs, &[], &[]);
 
         let shared = JoltSharedPreprocessing::new(
             bytecode.clone(),
@@ -3530,7 +3538,7 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&50u32).unwrap();
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
-        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let (_, _, _, io_device, _) = program.trace(&inputs, &[], &[]);
 
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
@@ -3580,7 +3588,7 @@ mod tests {
         let mut trusted_advice = postcard::to_stdvec(&[6u8; 32]).unwrap();
         trusted_advice.extend(postcard::to_stdvec(&[7u8; 32]).unwrap());
 
-        let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
+        let (_, _, _, io_device, _) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),

@@ -624,6 +624,7 @@ impl Stage3CpuProgram {
                 "jolt.stage3.spartan_shift" => "jolt_stage3_spartan_shift",
                 "jolt.stage3.instruction_input" => "jolt_stage3_instruction_input",
                 "jolt.stage3.registers_claim_reduction" => "jolt_stage3_registers_claim_reduction",
+                "jolt.stage3.field_reg_claim_reduction" => "jolt_stage3_field_reg_claim_reduction",
                 "jolt.stage3.batched" => "jolt_stage3_batched",
                 _ => {
                     return Err(EmitError::new(format!(
@@ -1946,6 +1947,9 @@ fn expected_batched_output_claim(
             "jolt.stage3.registers_claim_reduction" => {
                 expected_registers(store, evals, local_point)?
             }
+            "jolt.stage3.field_reg_claim_reduction" => {
+                expected_field_regs(store, evals, local_point)?
+            }
             _ => {
                 return Err(VerifyStage3Error::UnsupportedRelation {
                     relation: instance.relation,
@@ -2030,6 +2034,24 @@ fn expected_registers(
                 * eval_by_name(evals, "stage3.registers_claim_reduction.eval.Rs1Value")?
             + super::common::store_scalar(store, "stage3.registers.gamma2")?
                 * eval_by_name(evals, "stage3.registers_claim_reduction.eval.Rs2Value")?))
+}
+
+fn expected_field_regs(
+    store: &super::common::ValueStore<Fr>,
+    evals: &[Stage3NamedEval<Fr>],
+    local_point: &[Fr],
+) -> Result<Fr, VerifyStage3Error> {
+    let opening_point = reverse_slice(local_point);
+    let eq_eval = EqPolynomial::<Fr>::mle(
+        &opening_point,
+        super::common::store_point(store, "stage3.input.stage1.FieldRdWriteValue")?,
+    );
+    Ok(eq_eval
+        * (eval_by_name(evals, "stage3.field_reg_claim_reduction.eval.FieldRdWriteValue")?
+            + super::common::store_scalar(store, "stage3.field_reg.gamma")?
+                * eval_by_name(evals, "stage3.field_reg_claim_reduction.eval.FieldRs1Value")?
+            + super::common::store_scalar(store, "stage3.field_reg.gamma2")?
+                * eval_by_name(evals, "stage3.field_reg_claim_reduction.eval.FieldRs2Value")?))
 }
 
 "#

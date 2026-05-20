@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod a;
 pub mod assert;
+pub mod field;
 pub mod i;
 pub mod m;
 pub mod virt;
@@ -159,6 +160,16 @@ pub use virt::AdviceLw;
 pub use virt::VirtualLw;
 pub use virt::VirtualSw;
 
+pub use field::FieldAdd;
+pub use field::FieldAssertEq;
+pub use field::FieldInv;
+pub use field::FieldMov;
+pub use field::FieldMul;
+pub use field::FieldSLL128;
+pub use field::FieldSLL192;
+pub use field::FieldSLL64;
+pub use field::FieldSub;
+
 /// Typed view over expanded rows that have static lookup/circuit metadata.
 ///
 /// Each variant wraps an instruction newtype parameterized by the canonical
@@ -281,6 +292,15 @@ pub enum LookupInstruction {
     VirtualAdviceLen(VirtualAdviceLen<NormalizedInstruction>),
     VirtualAdviceLoad(VirtualAdviceLoad<NormalizedInstruction>),
     VirtualHostIO(VirtualHostIO<NormalizedInstruction>),
+    FieldMul(FieldMul<NormalizedInstruction>),
+    FieldAdd(FieldAdd<NormalizedInstruction>),
+    FieldSub(FieldSub<NormalizedInstruction>),
+    FieldInv(FieldInv<NormalizedInstruction>),
+    FieldAssertEq(FieldAssertEq<NormalizedInstruction>),
+    FieldMov(FieldMov<NormalizedInstruction>),
+    FieldSLL64(FieldSLL64<NormalizedInstruction>),
+    FieldSLL128(FieldSLL128<NormalizedInstruction>),
+    FieldSLL192(FieldSLL192<NormalizedInstruction>),
 }
 
 impl TryFrom<NormalizedInstruction> for LookupInstruction {
@@ -435,6 +455,15 @@ impl TryFrom<NormalizedInstruction> for LookupInstruction {
                 Self::VirtualAdviceLoad(VirtualAdviceLoad(instruction))
             }
             JoltInstructionKind::VirtualHostIO => Self::VirtualHostIO(VirtualHostIO(instruction)),
+            JoltInstructionKind::FieldMul => Self::FieldMul(FieldMul(instruction)),
+            JoltInstructionKind::FieldAdd => Self::FieldAdd(FieldAdd(instruction)),
+            JoltInstructionKind::FieldSub => Self::FieldSub(FieldSub(instruction)),
+            JoltInstructionKind::FieldInv => Self::FieldInv(FieldInv(instruction)),
+            JoltInstructionKind::FieldAssertEq => Self::FieldAssertEq(FieldAssertEq(instruction)),
+            JoltInstructionKind::FieldMov => Self::FieldMov(FieldMov(instruction)),
+            JoltInstructionKind::FieldSLL64 => Self::FieldSLL64(FieldSLL64(instruction)),
+            JoltInstructionKind::FieldSLL128 => Self::FieldSLL128(FieldSLL128(instruction)),
+            JoltInstructionKind::FieldSLL192 => Self::FieldSLL192(FieldSLL192(instruction)),
             unsupported => return Err(unsupported),
         })
     }
@@ -491,6 +520,8 @@ impl_jolt_instructions_flags! {
     VirtualXorRot32, VirtualXorRot24, VirtualXorRot16, VirtualXorRot63,
     VirtualXorRotW16, VirtualXorRotW12, VirtualXorRotW8, VirtualXorRotW7,
     VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad, VirtualHostIO,
+    FieldMul, FieldAdd, FieldSub, FieldInv,
+    FieldAssertEq, FieldMov, FieldSLL64, FieldSLL128, FieldSLL192,
 }
 
 #[cfg(test)]

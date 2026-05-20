@@ -644,6 +644,7 @@ impl Stage5CpuProgram {
                 "jolt.stage5.instruction_read_raf" => "jolt_stage5_instruction_read_raf",
                 "jolt.stage5.ram_ra_claim_reduction" => "jolt_stage5_ram_ra_claim_reduction",
                 "jolt.stage5.registers_val_evaluation" => "jolt_stage5_registers_val_evaluation",
+                "jolt.stage5.field_reg_val_evaluation" => "jolt_stage5_field_reg_val_evaluation",
                 "jolt.stage5.batched" => "jolt_stage5_batched",
                 _ => {
                     return Err(EmitError::new(format!(
@@ -2162,6 +2163,9 @@ fn expected_batched_output_claim(
             "jolt.stage5.registers_val_evaluation" => {
                 expected_registers_val_evaluation(store, evals, local_point)?
             }
+            "jolt.stage5.field_reg_val_evaluation" => {
+                expected_field_reg_val_evaluation(store, evals, local_point)?
+            }
             _ => return Err(VerifyStage5Error::UnsupportedRelation { relation }),
         };
         expected += *coefficient * value;
@@ -2272,6 +2276,24 @@ fn expected_registers_val_evaluation(
     let rd_inc = eval_by_name(evals, "stage5.registers_val_evaluation.eval.RdInc")?;
     let rd_wa = eval_by_name(evals, "stage5.registers_val_evaluation.eval.RdWa")?;
     Ok(rd_inc * rd_wa * lt_eval)
+}
+
+fn expected_field_reg_val_evaluation(
+    store: &super::common::ValueStore<Fr>,
+    evals: &[Stage5NamedEval<Fr>],
+    local_point: &[Fr],
+) -> Result<Fr, VerifyStage5Error> {
+    let field_reg_val_point = super::common::store_point(store, "stage5.input.stage4.field_reg.FieldRegVal")?;
+    let r_cycle = suffix_point(
+        field_reg_val_point,
+        local_point.len(),
+        "stage5.input.stage4.field_reg.FieldRegVal",
+    )?;
+    let r_reduced = reverse_slice(local_point);
+    let lt_eval = lt_polynomial_eval(&r_reduced, r_cycle);
+    let frd_inc = eval_by_name(evals, "stage5.field_reg_val_evaluation.eval.FrdInc")?;
+    let frd_wa = eval_by_name(evals, "stage5.field_reg_val_evaluation.eval.FrdWa")?;
+    Ok(frd_inc * frd_wa * lt_eval)
 }
 
 "#

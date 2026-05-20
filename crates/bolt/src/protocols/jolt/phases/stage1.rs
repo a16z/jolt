@@ -19,7 +19,7 @@ use super::lowering::{
     transcript_squeeze_compute_result_types,
 };
 
-const R1CS_INPUT_ORACLES: [&str; 35] = [
+const R1CS_INPUT_ORACLES: [&str; 47] = [
     "LeftInstructionInput",
     "RightInstructionInput",
     "Product",
@@ -55,6 +55,18 @@ const R1CS_INPUT_ORACLES: [&str; 35] = [
     "OpFlagIsCompressed",
     "OpFlagIsFirstInSequence",
     "OpFlagIsLastInSequence",
+    "OpFlagIsFieldMul",
+    "OpFlagIsFieldAdd",
+    "OpFlagIsFieldSub",
+    "OpFlagIsFieldInv",
+    "OpFlagIsFieldAssertEq",
+    "OpFlagIsFieldMov",
+    "OpFlagIsFieldSLL64",
+    "OpFlagIsFieldSLL128",
+    "OpFlagIsFieldSLL192",
+    "FieldRs1Value",
+    "FieldRs2Value",
+    "FieldRdWriteValue",
 ];
 const OUTER_UNISKIP_FIRST_ROUND_DEGREE_BOUND: usize = 27;
 
@@ -1590,6 +1602,11 @@ fn kernel_spec(relation: &str) -> Result<KernelSpec, MlirError> {
             kind: "sumcheck",
             abi: "jolt_stage3_registers_claim_reduction",
         }),
+        "jolt.stage3.field_reg_claim_reduction" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage3.field_reg_claim_reduction",
+            kind: "sumcheck",
+            abi: "jolt_stage3_field_reg_claim_reduction",
+        }),
         "jolt.stage3.batched" => Ok(KernelSpec {
             symbol: "jolt.cpu.stage3.batched",
             kind: "sumcheck",
@@ -1599,6 +1616,11 @@ fn kernel_spec(relation: &str) -> Result<KernelSpec, MlirError> {
             symbol: "jolt.cpu.stage4.registers_read_write",
             kind: "sumcheck",
             abi: "jolt_stage4_registers_read_write",
+        }),
+        "jolt.stage4.field_reg_rw" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage4.field_reg_rw",
+            kind: "sumcheck",
+            abi: "jolt_stage4_field_reg_rw",
         }),
         "jolt.stage4.ram_val_check" => Ok(KernelSpec {
             symbol: "jolt.cpu.stage4.ram_val_check",
@@ -1624,6 +1646,11 @@ fn kernel_spec(relation: &str) -> Result<KernelSpec, MlirError> {
             symbol: "jolt.cpu.stage5.registers_val_evaluation",
             kind: "sumcheck",
             abi: "jolt_stage5_registers_val_evaluation",
+        }),
+        "jolt.stage5.field_reg_val_evaluation" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage5.field_reg_val_evaluation",
+            kind: "sumcheck",
+            abi: "jolt_stage5_field_reg_val_evaluation",
         }),
         "jolt.stage5.batched" => Ok(KernelSpec {
             symbol: "jolt.cpu.stage5.batched",
