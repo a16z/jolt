@@ -787,8 +787,7 @@ impl<F: JoltField> BooleanityAddressSumcheckVerifier<F> {
     }
 }
 
-impl<F, T, A> SumcheckInstanceVerifier<F, T, A>
-    for BooleanityAddressSumcheckVerifier<F>
+impl<F, T, A> SumcheckInstanceVerifier<F, T, A> for BooleanityAddressSumcheckVerifier<F>
 where
     F: JoltField,
     T: Transcript,
@@ -810,11 +809,7 @@ where
         self.params.input_claim(accumulator)
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &A,
-        _sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, _sumcheck_challenges: &[F::Challenge]) -> F {
         accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::BooleanityAddrClaim,
@@ -823,11 +818,7 @@ where
             .1
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut A,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         let mut r_address = sumcheck_challenges.to_vec();
         r_address.reverse();
         accumulator.append_virtual(
@@ -862,8 +853,7 @@ impl<F: JoltField> BooleanityCycleSumcheckVerifier<F> {
     }
 }
 
-impl<F, T, A> SumcheckInstanceVerifier<F, T, A>
-    for BooleanityCycleSumcheckVerifier<F>
+impl<F, T, A> SumcheckInstanceVerifier<F, T, A> for BooleanityCycleSumcheckVerifier<F>
 where
     F: JoltField,
     T: Transcript,
@@ -890,11 +880,7 @@ where
             .1
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &A,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let mut full_challenges = self.cycle_params.r_address_low_to_high.clone();
         full_challenges.extend_from_slice(sumcheck_challenges);
 
@@ -908,11 +894,7 @@ where
         )
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut A,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         let mut full_challenges = self.cycle_params.r_address_low_to_high.clone();
         full_challenges.extend_from_slice(sumcheck_challenges);
 
