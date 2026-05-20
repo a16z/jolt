@@ -4,10 +4,17 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::accumulation::MedAccumS;
 use crate::utils::math::{s64_from_diff_u64s, Math};
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use crate::zkvm::claim_reductions::PrecommittedPolynomial;
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::instruction::LookupQuery;
 use crate::zkvm::ram::remap_address;
-use crate::zkvm::{bytecode::BytecodePreprocessing, witness::CommittedPolynomial};
+use crate::zkvm::{
+    bytecode::{
+        chunks::{committed_lanes, for_each_active_lane_value, ActiveLaneValue},
+        get_pc_for_cycle, BytecodePreprocessing,
+    },
+    witness::CommittedPolynomial,
+};
 use allocative::Allocative;
 use common::constants::XLEN;
 use common::jolt_device::MemoryLayout;
@@ -58,7 +65,7 @@ pub struct StreamingRLCContext<F: JoltField> {
     pub onehot_polys: Vec<(CommittedPolynomial, F)>,
     /// Precommitted polynomials with their RLC coefficients.
     /// These are NOT streamed from trace - they're passed in directly.
-    pub precommitted_polys: Vec<(F, MultilinearPolynomial<F>)>,
+    pub precommitted_polys: Vec<(F, PrecommittedPolynomial<F>)>,
     pub trace_source: TraceSource,
     pub preprocessing: Arc<RLCStreamingData>,
     pub one_hot_params: OneHotParams,
@@ -173,7 +180,7 @@ impl<F: JoltField> RLCPolynomial<F> {
         trace_source: TraceSource,
         poly_ids: Vec<CommittedPolynomial>,
         coefficients: &[F],
-        mut precommitted_poly_map: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        mut precommitted_poly_map: HashMap<CommittedPolynomial, PrecommittedPolynomial<F>>,
     ) -> Self {
         debug_assert_eq!(poly_ids.len(), coefficients.len());
 
@@ -636,9 +643,8 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
         let num_rows = T / num_columns;
         let trace_len = trace.len();
 
-        let has_onehot = !ctx.onehot_polys.is_empty();
-        let exact_onehot_prefix_mode =
-            DoryGlobals::get_layout() == DoryLayout::CycleMajor && has_onehot && trace_len < T;
+        let main_embedding_mode =
+            DoryGlobals::get_layout() == DoryLayout::CycleMajor && trace_len < T;
 
         // When the dominant Stage-8 matrix is larger than the trace-backed prefix, one-hot
         // witnesses still live on the exact trace prefix rather than the expanded matrix T.
@@ -675,14 +681,14 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
 
                     // Process valid trace elements.
                     for (col_idx, cycle) in row_cycles.iter().enumerate() {
-                        if exact_onehot_prefix_mode {
+                        if main_embedding_mode {
                             setup.process_cycle_dense(
                                 cycle,
                                 scaled_rd_inc,
                                 scaled_ram_inc,
                                 &mut dense_accs[col_idx],
                             );
-                            setup.process_cycle_onehot_prefix_exact(
+                            setup.process_cycle_onehot_prefix(
                                 cycle,
                                 chunk_start + col_idx,
                                 trace_len,
@@ -731,9 +737,8 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
     ) -> Vec<F> {
         let num_rows = T / num_columns;
         let trace_len = DoryGlobals::main_t();
-        let has_onehot = !ctx.onehot_polys.is_empty();
-        let exact_onehot_prefix_mode =
-            DoryGlobals::get_layout() == DoryLayout::CycleMajor && has_onehot && trace_len < T;
+        let main_embedding_mode =
+            DoryGlobals::get_layout() == DoryLayout::CycleMajor && trace_len < T;
 
         // Setup: precompute coefficients, row factors, and folded one-hot tables.
         let onehot_rows_per_k = trace_len.div_ceil(num_columns).min(num_rows);
@@ -754,14 +759,14 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                     // Process columns within chunk sequentially.
                     for (col_idx, cycle) in chunk.iter().enumerate() {
                         let cycle_idx = row_idx * num_columns + col_idx;
-                        if exact_onehot_prefix_mode && cycle_idx < trace_len {
+                        if main_embedding_mode && cycle_idx < trace_len {
                             setup.process_cycle_dense(
                                 cycle,
                                 scaled_rd_inc,
                                 scaled_ram_inc,
                                 &mut dense_accs[col_idx],
                             );
-                            setup.process_cycle_onehot_prefix_exact(
+                            setup.process_cycle_onehot_prefix(
                                 cycle,
                                 cycle_idx,
                                 trace_len,
@@ -922,7 +927,7 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
 
     #[allow(clippy::too_many_arguments)]
     #[inline(always)]
-    fn process_cycle_onehot_prefix_exact(
+    fn process_cycle_onehot_prefix(
         &self,
         cycle: &Cycle,
         cycle_idx: usize,
@@ -933,7 +938,7 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
         onehot_accs: &mut [F::UnreducedProductAccum],
     ) {
         let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-        let pc = self.bytecode.get_pc(cycle);
+        let pc = get_pc_for_cycle(self.bytecode, cycle);
         let remapped_address =
             remap_address(cycle.ram_access().address() as u64, self.memory_layout);
 

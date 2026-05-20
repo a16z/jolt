@@ -27,6 +27,15 @@ use rayon::prelude::*;
 use std::borrow::Borrow;
 use tracing::trace_span;
 
+fn debug_disable_dory_setup_cache() -> bool {
+    std::env::var("JOLT_DEBUG_DISABLE_DORY_SETUP_CACHE")
+        .map(|v| {
+            let value = v.trim().to_ascii_lowercase();
+            !matches!(value.as_str(), "" | "0" | "false" | "off")
+        })
+        .unwrap_or(false)
+}
+
 #[derive(Clone)]
 pub struct DoryCommitmentScheme;
 
@@ -443,7 +452,11 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
             }
 
             let g2_bases = &setup.g2_vec[..num_rows];
-            let tier_2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
+            let tier_2 = if debug_disable_dory_setup_cache() {
+                <BN254 as PairingCurve>::multi_pair(&row_commitments, g2_bases)
+            } else {
+                <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases)
+            };
             let (tier_2, commit_blind) = maybe_blind_commitment(setup, tier_2);
 
             (
@@ -455,7 +468,11 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
                 chunks.iter().flat_map(|chunk| chunk.clone()).collect();
 
             let g2_bases = &setup.g2_vec[..row_commitments.len()];
-            let tier_2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
+            let tier_2 = if debug_disable_dory_setup_cache() {
+                <BN254 as PairingCurve>::multi_pair(&row_commitments, g2_bases)
+            } else {
+                <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases)
+            };
             let (tier_2, commit_blind) = maybe_blind_commitment(setup, tier_2);
 
             (

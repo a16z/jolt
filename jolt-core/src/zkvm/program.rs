@@ -1,5 +1,4 @@
 use std::io::{Read, Write};
-use std::sync::Arc;
 
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
@@ -15,15 +14,16 @@ use crate::zkvm::bytecode::{
 };
 use crate::zkvm::ram::RAMPreprocessing;
 use common::jolt_device::MemoryLayout;
-use tracer::instruction::{Cycle, Instruction};
+use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT};
+use tracer::instruction::Cycle;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct ProgramPreprocessing {
+pub struct FullProgramPreprocessing {
     pub bytecode: BytecodePreprocessing,
     pub ram: RAMPreprocessing,
 }
 
-impl Default for ProgramPreprocessing {
+impl Default for FullProgramPreprocessing {
     fn default() -> Self {
         Self {
             bytecode: BytecodePreprocessing::default(),
@@ -35,17 +35,21 @@ impl Default for ProgramPreprocessing {
     }
 }
 
-impl ProgramPreprocessing {
-    #[tracing::instrument(skip_all, name = "ProgramPreprocessing::preprocess")]
-    pub fn preprocess(instructions: Vec<Instruction>, memory_init: Vec<(u64, u8)>) -> Self {
-        let entry_address = instructions
-            .first()
-            .map(|instr| instr.normalize().address as u64)
-            .unwrap_or(0);
-        Self {
-            bytecode: BytecodePreprocessing::preprocess(instructions, entry_address),
+impl FullProgramPreprocessing {
+    #[tracing::instrument(skip_all, name = "FullProgramPreprocessing::preprocess")]
+    pub fn preprocess(
+        instructions: Vec<JoltInstructionRow>,
+        memory_init: Vec<(u64, u8)>,
+        entry_address: u64,
+    ) -> Result<Self, PreprocessingError> {
+        Ok(Self {
+            bytecode: BytecodePreprocessing::preprocess(
+                instructions,
+                entry_address,
+                RV64IMAC_JOLT,
+            )?,
             ram: RAMPreprocessing::preprocess(memory_init),
-        }
+        })
     }
 
     pub fn bytecode_len(&self) -> usize {
@@ -75,12 +79,12 @@ impl ProgramPreprocessing {
 
     #[inline(always)]
     pub fn get_pc(&self, cycle: &Cycle) -> usize {
-        self.bytecode.get_pc(cycle)
+        crate::zkvm::bytecode::get_pc_for_cycle(&self.bytecode, cycle)
     }
 
     #[inline(always)]
     pub fn entry_bytecode_index(&self) -> usize {
-        self.bytecode.entry_bytecode_index()
+        crate::zkvm::bytecode::entry_bytecode_index(&self.bytecode)
     }
 }
 
@@ -211,12 +215,14 @@ impl<PCS: CommitmentScheme> Default for ProgramPreprocessing<PCS> {
 impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     #[tracing::instrument(skip_all, name = "ProgramPreprocessing::preprocess")]
     pub fn preprocess(
-        instructions: Vec<Instruction>,
+        instructions: Vec<JoltInstructionRow>,
         memory_init: Vec<(u64, u8)>,
+        entry_address: u64,
     ) -> Result<Self, PreprocessingError> {
         Ok(Self::Full(FullProgramPreprocessing::preprocess(
             instructions,
             memory_init,
+            entry_address,
         )?))
     }
 
@@ -227,21 +233,8 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
         bytecode_chunk_count: usize,
         max_log_k_chunk: usize,
     ) -> Self {
-        let full = match self {
-            Self::Full(full) => full,
-            Self::Committed(_committed) => {
-                #[cfg(feature = "prover")]
-                {
-                    _committed
-                        .prover_data
-                        .expect("committed prover data missing during recommit")
-                        .full
-                }
-                #[cfg(not(feature = "prover"))]
-                {
-                    panic!("cannot commit already-committed verifier preprocessing")
-                }
-            }
+        let Self::Full(full) = self else {
+            panic!("cannot commit already-committed program preprocessing");
         };
         let meta = full.meta();
         #[cfg(feature = "prover")]
@@ -437,65 +430,19 @@ pub struct TrustedProgramCommitments<PCS: CommitmentScheme> {
     pub program_image_num_words: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TrustedProgramHints<PCS: CommitmentScheme> {
     pub program_image_hint: PCS::OpeningProofHint,
-}
-
-impl<PCS: CommitmentScheme> CanonicalSerialize for TrustedProgramHints<PCS>
-where
-    PCS::OpeningProofHint: CanonicalSerialize,
-{
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.program_image_hint
-            .serialize_with_mode(&mut writer, compress)?;
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.program_image_hint.serialized_size(compress)
-    }
-}
-
-impl<PCS: CommitmentScheme> Valid for TrustedProgramHints<PCS>
-where
-    PCS::OpeningProofHint: Valid,
-{
-    fn check(&self) -> Result<(), SerializationError> {
-        self.program_image_hint.check()
-    }
-}
-
-impl<PCS: CommitmentScheme> CanonicalDeserialize for TrustedProgramHints<PCS>
-where
-    PCS::OpeningProofHint: CanonicalDeserialize,
-{
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        Ok(Self {
-            program_image_hint: PCS::OpeningProofHint::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-            )?,
-        })
-    }
 }
 
 impl<PCS: CommitmentScheme> TrustedProgramCommitments<PCS> {
     #[tracing::instrument(skip_all, name = "TrustedProgramCommitments::derive")]
     pub fn derive(
-        program: &ProgramPreprocessing,
+        program: &FullProgramPreprocessing,
+        memory_layout: &MemoryLayout,
         generators: &PCS::ProverSetup,
     ) -> (Self, TrustedProgramHints<PCS>) {
-        let program_image_num_words = program.program_image_len_words_padded();
+        let program_image_num_words = program.committed_program_image_num_words(memory_layout);
         let (program_image_sigma, _) =
             crate::poly::commitment::dory::DoryGlobals::balanced_sigma_nu(
                 program_image_num_words.log_2(),

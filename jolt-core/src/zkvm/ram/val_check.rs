@@ -170,7 +170,7 @@ impl<F: JoltField> RamValCheckSumcheckParams<F> {
         ram_K: usize,
         _rw_config: &ReadWriteConfig,
         gamma: F,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
         include_program_image_claims: bool,
     ) -> Self {
         // (r_address, r_cycle) from RamVal/RamReadWriteChecking.
@@ -519,7 +519,7 @@ impl<F: JoltField> RamValCheckSumcheckVerifier<F> {
         ram_K: usize,
         rw_config: &ReadWriteConfig,
         gamma: F,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
         include_program_image_claims: bool,
     ) -> Self {
         let params = RamValCheckSumcheckParams::new_from_verifier(

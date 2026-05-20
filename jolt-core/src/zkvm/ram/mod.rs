@@ -305,6 +305,7 @@ pub fn verifier_accumulate_advice<F: JoltField, A: AbstractVerifierOpeningAccumu
 ///
 /// These are scalar inner products:
 /// - `C_rw  = Σ_j ProgramWord[j] * eq(r_address_rw, start_index + j)`
+///
 /// This is stored as a virtual opening under `SumcheckId::RamValCheck`.
 pub fn prover_accumulate_program_image<F: JoltField>(
     ram_K: usize,
@@ -324,7 +325,7 @@ pub fn prover_accumulate_program_image<F: JoltField>(
         SumcheckId::RamReadWriteChecking,
     );
     let (r_address_rw, _) = r_rw.split_at(total_vars);
-    let c_rw = sparse_eval_u64_block::<F>(
+    let c_rw = sparse_eval_block::<F, _>(
         bytecode_start,
         &ram_preprocessing.bytecode_words,
         &r_address_rw.r,
@@ -340,7 +341,7 @@ pub fn prover_accumulate_program_image<F: JoltField>(
 /// Mirrors [`prover_accumulate_program_image`] on verifier side by caching opening points.
 pub fn verifier_accumulate_program_image<F: JoltField>(
     ram_K: usize,
-    opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+    opening_accumulator: &mut impl AbstractVerifierOpeningAccumulator<F>,
 ) {
     let total_vars = ram_K.log_2();
     let (r_rw, _) = opening_accumulator.get_virtual_polynomial_opening(
@@ -536,10 +537,40 @@ pub fn eval_inputs_mle<F: JoltField>(program_io: &JoltDevice, r_address: &[F::Ch
             u64::from_le_bytes(word)
         })
         .collect();
-    sparse_eval_u64_block::<F>(input_start, &input_words, r_address)
+    sparse_eval_block::<F, _>(input_start, &input_words, r_address)
 }
 
-/// Evaluate a shifted slice of `u64` coefficients as a multilinear polynomial at `r`.
+/// Trait for coefficient types usable in sparse MLE evaluation.
+///
+/// `u64` uses Barrett-reduced accumulation (`MedAccumU`) for performance.
+/// Any `JoltField` type uses direct field multiplication (needed for symbolic `MleAst`).
+trait SparseEvalCoeff<F: JoltField>: Sized {
+    fn block_weighted_sum(block_evals: &[F], values: &[Self], off: usize, len: usize) -> F;
+}
+
+impl<F: JoltField> SparseEvalCoeff<F> for u64 {
+    #[inline]
+    fn block_weighted_sum(block_evals: &[F], values: &[Self], off: usize, len: usize) -> F {
+        let mut block_acc: MedAccumU<F> = MedAccumU::default();
+        for j in 0..len {
+            block_acc.fmadd(&block_evals[j], &values[off + j]);
+        }
+        block_acc.barrett_reduce()
+    }
+}
+
+impl<F: JoltField> SparseEvalCoeff<F> for F {
+    #[inline]
+    fn block_weighted_sum(block_evals: &[F], values: &[Self], off: usize, len: usize) -> F {
+        let mut acc = F::zero();
+        for j in 0..len {
+            acc += values[off + j] * block_evals[j];
+        }
+        acc
+    }
+}
+
+/// Evaluate a shifted slice of coefficients as a multilinear polynomial at `r`.
 ///
 /// Conceptually computes:
 /// \[
@@ -619,7 +650,6 @@ pub fn eval_initial_ram_mle<F: JoltField + 'static>(
     let mut acc =
         sparse_eval_block::<F, _>(bytecode_start, &ram_preprocessing.bytecode_words, r_address);
 
-    // Inputs region (packed into u64 words in little-endian)
     acc += eval_inputs_mle::<F>(program_io, r_address);
 
     acc

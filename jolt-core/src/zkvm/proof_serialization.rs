@@ -432,9 +432,6 @@ impl CanonicalSerialize for VirtualPolynomial {
                 42u8.serialize_with_mode(&mut writer, compress)
             }
             Self::ProgramImageInitContributionRw => 43u8.serialize_with_mode(&mut writer, compress),
-            Self::ProgramImageInitContributionRaf => {
-                44u8.serialize_with_mode(&mut writer, compress)
-            }
         }
     }
 
@@ -478,8 +475,7 @@ impl CanonicalSerialize for VirtualPolynomial {
             | Self::BytecodeReadRafAddrClaim
             | Self::BooleanityAddrClaim
             | Self::BytecodeClaimReductionIntermediate
-            | Self::ProgramImageInitContributionRw
-            | Self::ProgramImageInitContributionRaf => 1,
+            | Self::ProgramImageInitContributionRw => 1,
             Self::InstructionRa(_)
             | Self::OpFlags(_)
             | Self::InstructionFlags(_)
@@ -566,7 +562,6 @@ impl CanonicalDeserialize for VirtualPolynomial {
                 }
                 42 => Self::BytecodeClaimReductionIntermediate,
                 43 => Self::ProgramImageInitContributionRw,
-                44 => Self::ProgramImageInitContributionRaf,
                 _ => return Err(SerializationError::InvalidData),
             },
         )
