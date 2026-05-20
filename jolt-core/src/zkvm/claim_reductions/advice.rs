@@ -443,8 +443,7 @@ impl<F: JoltField> AdviceClaimReductionVerifier<F> {
     }
 }
 
-impl<F, T, A> SumcheckInstanceVerifier<F, T, A>
-    for AdviceClaimReductionVerifier<F>
+impl<F, T, A> SumcheckInstanceVerifier<F, T, A> for AdviceClaimReductionVerifier<F>
 where
     F: JoltField,
     T: Transcript,
@@ -454,11 +453,7 @@ where
         unsafe { &*self.params.as_ptr() }
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &A,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let params = self.params.borrow();
         match params.phase {
             PrecommittedPhase::CycleVariables => {
@@ -480,11 +475,7 @@ where
         }
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut A,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         let mut params = self.params.borrow_mut();
         if params.phase == PrecommittedPhase::CycleVariables {
             let opening_point = params.normalize_opening_point(sumcheck_challenges);
