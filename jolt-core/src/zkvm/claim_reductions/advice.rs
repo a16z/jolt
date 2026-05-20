@@ -199,18 +199,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionParams<F> {
 }
 
 impl<F: JoltField> AdviceClaimReductionParams<F> {
-    #[cfg(feature = "zk")]
-    fn final_advice_output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        let advice_opening = match self.kind {
-            AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReduction),
-            AdviceKind::Untrusted => OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReduction),
-        };
-        Some(OutputClaimConstraint::linear(vec![(
-            ValueSource::Challenge(0),
-            ValueSource::Opening(advice_opening),
-        )]))
-    }
-
     #[cfg(test)]
     fn final_advice_output_scale(&self, sumcheck_challenges: &[F::Challenge]) -> F {
         let eq_eval = self.final_advice_eq_eval(sumcheck_challenges);
