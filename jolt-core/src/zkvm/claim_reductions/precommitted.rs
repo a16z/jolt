@@ -560,7 +560,6 @@ impl<F: JoltField, P: PrecommittedParams<F>> PrecommittedProver<F, P> {
         self.scale = scale;
     }
 
-    #[expect(dead_code)]
     pub fn aux_polys(&self) -> &[MultilinearPolynomial<F>] {
         &self.aux_polys
     }

@@ -1,5 +1,6 @@
 use tracer::instruction::Cycle;
 
+pub mod chunks;
 pub mod read_raf_checking;
 
 pub use jolt_program::preprocess::{BytecodePCMapper, BytecodePreprocessing, PreprocessingError};
