@@ -10,7 +10,7 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
     AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator,
-    SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+    SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
 #[cfg(feature = "zk")]

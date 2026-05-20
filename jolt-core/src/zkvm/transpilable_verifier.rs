@@ -742,7 +742,7 @@ impl<
         {
             let mut params = advice_reduction_verifier_trusted.params.borrow_mut();
             if params.num_address_phase_rounds() > 0 {
-                params.phase = ReductionPhase::AddressVariables;
+                params.transition_to_address_phase();
                 instances.push(advice_reduction_verifier_trusted);
             }
         }
@@ -751,7 +751,7 @@ impl<
         {
             let mut params = advice_reduction_verifier_untrusted.params.borrow_mut();
             if params.num_address_phase_rounds() > 0 {
-                params.phase = ReductionPhase::AddressVariables;
+                params.transition_to_address_phase();
                 instances.push(advice_reduction_verifier_untrusted);
             }
         }
