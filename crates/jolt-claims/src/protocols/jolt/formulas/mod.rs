@@ -1,6 +1,7 @@
 pub mod booleanity;
 pub mod bytecode;
 pub mod claim_reductions;
+pub mod committed_openings;
 pub mod dimensions;
 pub mod instruction;
 pub mod ra;

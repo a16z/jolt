@@ -63,7 +63,7 @@ impl<T: Transcript<Challenge = Fr>> DoryTranscript for JoltToDoryTranscript<'_, 
     }
 
     fn challenge_scalar(&mut self, _label: &[u8]) -> ArkFr {
-        let challenge: Fr = self.transcript.challenge();
+        let challenge: Fr = self.transcript.challenge_scalar();
         jolt_fr_to_ark(&challenge)
     }
 

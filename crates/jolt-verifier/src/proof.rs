@@ -25,7 +25,7 @@ pub struct JoltProof<
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    pub commitments: Vec<PCS::Output>,
+    pub commitments: JoltCommitments<PCS::Output>,
     pub stages: JoltStageProofs<PCS::Field, VC>,
     pub joint_opening_proof: PCS::Proof,
     pub untrusted_advice_commitment: Option<PCS::Output>,
@@ -47,7 +47,7 @@ where
         reason = "Constructor mirrors the proof payload while keeping internal verifier claims private."
     )]
     pub fn new(
-        commitments: Vec<PCS::Output>,
+        commitments: JoltCommitments<PCS::Output>,
         stages: JoltStageProofs<PCS::Field, VC>,
         joint_opening_proof: PCS::Proof,
         untrusted_advice_commitment: Option<PCS::Output>,
@@ -78,6 +78,40 @@ where
         match &self.claims {
             JoltProofClaims::Transparent(claims) => Ok(claims),
             JoltProofClaims::Zk { .. } => Err(VerifierError::UnexpectedBlindFoldProof),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoltCommitments<C> {
+    pub rd_inc: C,
+    pub ram_inc: C,
+    pub ra: JoltRaCommitments<C>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoltRaCommitments<C> {
+    pub instruction: Vec<C>,
+    pub ram: Vec<C>,
+    pub bytecode: Vec<C>,
+}
+
+impl<C> JoltRaCommitments<C> {
+    pub fn new(instruction: Vec<C>, ram: Vec<C>, bytecode: Vec<C>) -> Self {
+        Self {
+            instruction,
+            ram,
+            bytecode,
+        }
+    }
+}
+
+impl<C> JoltCommitments<C> {
+    pub fn new(rd_inc: C, ram_inc: C, ra: JoltRaCommitments<C>) -> Self {
+        Self {
+            rd_inc,
+            ram_inc,
+            ra,
         }
     }
 }

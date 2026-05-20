@@ -63,6 +63,27 @@ impl TracePolynomialOrder {
         }
     }
 
+    pub fn commitment_opening_point<F: Field>(
+        self,
+        opening_point: &[F],
+        log_t: usize,
+    ) -> Result<Vec<F>, JoltFormulaPointError> {
+        match self {
+            Self::CycleMajor => Ok(opening_point.to_vec()),
+            Self::AddressMajor => {
+                if opening_point.len() < log_t {
+                    return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+                        expected: log_t,
+                        got: opening_point.len(),
+                    });
+                }
+                let log_k = opening_point.len() - log_t;
+                let (r_address, r_cycle) = opening_point.split_at(log_k);
+                Ok([r_cycle, r_address].concat())
+            }
+        }
+    }
+
     pub const fn address_cycle_to_index(
         self,
         address: usize,

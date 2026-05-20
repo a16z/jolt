@@ -1,6 +1,8 @@
 //! Verifier error types.
 
-use jolt_claims::protocols::jolt::{JoltChallengeId, JoltOpeningId, JoltPublicId, JoltStageId};
+use jolt_claims::protocols::jolt::{
+    JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPublicId, JoltStageId,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum VerifierError {
@@ -79,6 +81,18 @@ pub enum VerifierError {
 
     #[error("stage {stage:?} sumcheck output does not match evaluated output claim")]
     StageClaimOutputMismatch { stage: JoltStageId },
+
+    #[error("invalid final opening commitment count {got}; expected {expected}")]
+    InvalidCommitmentCount { expected: usize, got: usize },
+
+    #[error("missing final opening commitment for {polynomial:?}")]
+    MissingFinalOpeningCommitment { polynomial: JoltCommittedPolynomial },
+
+    #[error("final opening batch construction failed: {reason}")]
+    FinalOpeningBatchFailed { reason: String },
+
+    #[error("final opening proof verification failed: {reason}")]
+    FinalOpeningVerificationFailed { reason: String },
 
     #[error("verifier functionality has not been implemented yet")]
     Unimplemented,

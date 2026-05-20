@@ -168,7 +168,7 @@ impl CorePrecompatVerifierCase {
     }
 
     pub fn verify_after_compat(&self) -> Result<(), VerifierError> {
-        let proof = self.proof.clone_via_bytes().into();
+        let proof = self.proof.clone_via_bytes().try_into()?;
         verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, ()>(
             &self.preprocessing,
             &self.public_io,
@@ -509,7 +509,7 @@ fn zk_case_from_accepted_fixture(fixture: GeneratedCoreFixture) -> CoreZkVerifie
     CoreZkVerifierCase {
         preprocessing: convert_preprocessing(&fixture.core_preprocessing),
         public_io: fixture.public_io,
-        proof: fixture.proof.into(),
+        proof: fixture.proof.try_into().expect("convert ZK core proof"),
     }
 }
 
@@ -518,7 +518,10 @@ fn case_from_parts(fixture: GeneratedCoreFixture, public_io: JoltDevice) -> Core
     CoreVerifierCase {
         preprocessing: convert_preprocessing(&fixture.core_preprocessing),
         public_io,
-        proof: fixture.proof.into(),
+        proof: fixture
+            .proof
+            .try_into()
+            .expect("convert standard core proof"),
         trusted_advice_commitment: fixture
             .trusted_advice_commitment
             .map(<DoryCommitmentScheme as CorePcsBridge<CoreField>>::commitment_into_verifier),

@@ -99,7 +99,7 @@ Use small structs for coherent concepts:
 - `StageNInputs`;
 - `StageNOutput`;
 - stage-specific opening views;
-- stage-8 opening plan;
+- stage-8 final opening claims;
 - ZK/BlindFold inputs.
 
 ### Compatibility Quarantine
@@ -149,12 +149,40 @@ pub struct TransparentProofClaims<F> {
     pub stage5: stage5::inputs::Stage5Claims<F>,
     pub stage6: stage6::inputs::Stage6Claims<F>,
     pub stage7: stage7::inputs::Stage7Claims<F>,
-    // Add Stage 8 opening payloads only if the final opening verifier needs them.
 }
 ```
 
 `compat/` is the only layer allowed to translate a legacy/core
 `OpeningId -> claim` map into this explicit structure.
+
+The same rule applies to committed polynomial commitments. Legacy/core proofs
+carry commitments as a vector in proof payload order. `compat/` decodes that
+vector once into the native typed proof shape:
+
+```rust
+pub struct JoltCommitments<C> {
+    pub rd_inc: C,
+    pub ram_inc: C,
+    pub ra: JoltRaCommitments<C>,
+}
+
+pub struct JoltRaCommitments<C> {
+    pub instruction: Vec<C>,
+    pub ram: Vec<C>,
+    pub bytecode: Vec<C>,
+}
+```
+
+`proof.rs` should not own commitment ordering helpers. The proof payload model
+only stores the native shape. `compat/` owns legacy vector decoding, the
+transcript preamble owns proof-payload commitment absorption, and Stage 8 owns
+the final PCS batch order because it is part of the final opening check.
+
+The final PCS batch order is not proof payload order: core transcript-binds
+`RdInc`, `RamInc`, `InstructionRa*`, `RamRa*`, `BytecodeRa*`, but folds final
+openings as `RamInc`, `RdInc`, `InstructionRa*`, `BytecodeRa*`, `RamRa*`,
+advice. Stage code should not rebuild a `JoltCommittedPolynomial -> C` map or
+zip independent ID and commitment vectors.
 
 Transparent proof claims are not a generic claim store. Each stage owns the
 claims that are actually present in that stage's proof payload, while prior
@@ -191,8 +219,8 @@ boundary with constructors such as `high_to_low`, `low_to_high`, and `concat`.
 
 Jolt-specific opening views should live where they are used. Do not add a
 top-level `openings.rs` module unless repeated concrete code justifies it. Good
-initial homes are `compat::convert` for legacy decoding and `stages/stage8.rs`
-for the final opening plan.
+initial homes are `compat::convert` for legacy decoding and
+`stages/stage8/{inputs.rs, outputs.rs, verify.rs}` for the final opening plan.
 
 ### Jolt Formulas In `jolt-claims`
 
@@ -399,7 +427,11 @@ crates/jolt-verifier/src/
       inputs.rs
       outputs.rs
       verify.rs
-    stage8.rs
+    stage8/
+      mod.rs
+      inputs.rs
+      outputs.rs
+      verify.rs
     zk.rs
 ```
 
@@ -453,8 +485,9 @@ pub fn verify<PCS, VC, T>(...) -> Result<(), VerifierError> {
         &checked,
         preprocessing,
         &proof,
+        trusted_advice_commitment,
         &mut transcript,
-        stages::stage8::deps(&stage1, &stage2, &stage3, &stage4, &stage5, &stage6, &stage7),
+        stages::stage8::deps(&stage6, &stage7),
     )?;
 
     if checked.zk {
@@ -690,10 +723,11 @@ struct TestCase {
 ```
 
 The harness has separate configured horizons for standard and ZK mode. The
-standard frontier currently reaches `Stage7`; the ZK frontier remains at
-`Commitments` while standard stage 8 is ported. A completeness case passes
-when a valid proof reaches the configured horizon for its mode. Before the full
-verifier exists, reaching the next unimplemented stage is success; after the
+standard frontier currently reaches `Full`; the ZK frontier remains at
+`Commitments` while BlindFold instance construction is deferred. A completeness
+case passes when a valid proof reaches the configured horizon for its mode.
+Before the full verifier exists, reaching the next unimplemented stage is
+success; after the
 full verifier exists, success means `Ok(())`.
 
 `Stage2` means the full core stage 2 boundary, not only the Spartan product
@@ -721,7 +755,7 @@ struct VerifierFrontiers {
 }
 
 const CURRENT_VERIFIER_FRONTIERS: VerifierFrontiers = VerifierFrontiers {
-    standard: VerifierCheckpoint::Stage7,
+    standard: VerifierCheckpoint::Full,
     zk: VerifierCheckpoint::Commitments,
 };
 ```
@@ -1134,9 +1168,9 @@ Tasks:
   named opening scalars with stage-derived `jolt_poly::Point<F>` values only
   when the stage has the information needed to choose the point order.
 - Add missing/extra checks for selected proof mode and shape.
-- Add an `OpeningPlan` skeleton in or near `stage8.rs` that assembles full
-  `jolt_openings::EvaluationClaim<F>` / verifier opening claims from typed
-  commitments, stage-derived points, and named opening scalars.
+- In Stage 8, assemble full `jolt_openings::VerifierOpeningClaim<F, C>` values
+  directly from typed commitments, stage-derived points, and named opening
+  scalars.
 
 Review criteria:
 
@@ -1230,15 +1264,16 @@ Current implementation status:
   return shape and checked per-instance point slicing used by Stage 2;
 - `common` owns VM memory-layout remapping and public I/O byte-to-word packing;
 - `jolt-poly` owns generic MLE helpers used by the formula public-value code;
-- standard Stage 1/2/3/4/5/6/7 soundness tests now use the tamper manifest to
+- standard Stage 1/2/3/4/5/6/7/8 soundness tests now use the tamper manifest to
   mutate real core proofs after compat conversion, covering every current
   Stage 1/2/3/4/5/6/7 verifier-owned proof payload and typed claim target that is
-  checked by the `Stage7` frontier;
-- unchecked pass-through, final-opening, commitment-payload/order, advice, and
+  checked by the full transparent frontier, plus Stage 8 commitments and final
+  opening proof data;
+- unchecked pass-through, advice, and
   ZK/BlindFold targets are explicitly recorded in the tamper manifest rather
   than left implicit;
-- the standard verifier frontier is now `Stage7`; Stage 8 opening verification
-  remains the next unimplemented standard-stage boundary.
+- the standard verifier frontier is now `Full`; ZK/BlindFold verification
+  remains the next unimplemented verifier boundary.
 
 Boundary cleanup pressure:
 
@@ -1818,15 +1853,15 @@ Review criteria:
 
 #### 11.1 Stage 7 Testing Status
 
-Stage 7 is now the standard frontier. The verifier uses the same explicit
-stage-folder pattern as prior stages and verifies the real core hamming-weight
-claim reduction plus optional trusted/untrusted advice address-phase instances
-as one compressed batch.
+Stage 7 is implemented and now feeds Stage 8 opening verification. The verifier
+uses the same explicit stage-folder pattern as prior stages and verifies the
+real core hamming-weight claim reduction plus optional trusted/untrusted advice
+address-phase instances as one compressed batch.
 
 Current coverage:
 
-- real-core standard completeness fixtures reach `Stage7`, including the advice
-  consumer fixture;
+- real-core standard completeness fixtures reach Stage 7 and continue through
+  Stage 8, including the advice consumer fixture;
 - direct soundness tampering mutates converted native `JoltProof` values after
   compat conversion;
 - pre-compat transitivity tampering mutates legacy core proofs first, checks
@@ -1836,8 +1871,8 @@ Current coverage:
   round counts, every hamming-weight RA output vector, and trusted/untrusted
   advice address-phase final claims when those phases are present;
 - Stage 7 fixture and tamper cases are activated under the `Stage7` checkpoint;
-- ZK/BlindFold Stage 7 commitments remain deferred until the transparent Stage
-  8 opening path is wired.
+- ZK/BlindFold Stage 7 commitments remain deferred until the ZK frontier is
+  wired.
 
 ### 12. Stage 8: Joint Opening Verification
 
@@ -1845,7 +1880,7 @@ Objective: verify the final opening proof through modular opening/PCS APIs.
 
 Tasks:
 
-- Build `OpeningPlan` from stage outputs.
+- Build final `VerifierOpeningClaim` values from stage outputs.
 - Reduce opening claims with `jolt-openings`.
 - Verify the PCS opening proof with the generic `PCS`.
 - Instantiate Dory only in compatibility tests or aliases.
@@ -1855,6 +1890,35 @@ Review criteria:
 - Dory receives only commitments, points, values, and proof data.
 - Legacy polynomial ordering does not leak into stage 8.
 - Standard-mode opening values are checked explicitly.
+
+Current implementation status:
+
+- Stage 8 is organized as `stage8/{inputs.rs, outputs.rs, verify.rs}`. Its
+  dependency contract is narrow: `stage8::deps(&stage6, &stage7)`.
+- The verifier derives the final opening claims from typed Stage 6 and Stage 7
+  outputs, plus optional trusted/untrusted advice final openings. There is no
+  Stage 8 transparent claim payload and no ID-keyed opening map in production
+  verifier code.
+- `compat/convert.rs` owns decoding the legacy proof commitment vector into
+  the typed `JoltCommitments` payload. `proof.rs` does not own proof-payload or
+  final-opening ordering helpers.
+- `stage8/verify.rs` validates the typed commitment layout, explicitly walks
+  the core PCS-batch order, appends `rlc_claims` in core transcript order,
+  samples gamma powers, combines the commitments with the generic additive PCS
+  API, calls `PCS::verify`, and then binds opening inputs through the PCS API.
+- The Dory compatibility adapter uses scalar transcript challenges for opening
+  verification, matching the core Dory transcript.
+- The standard frontier is `Full`: real core standard completeness fixtures,
+  including the advice consumer fixture, are accepted through final opening
+  verification.
+- Stage 8 soundness coverage is active for real core fixtures: commitment
+  order, commitment values, missing/extra commitments, joint opening proof, and
+  final opening claim values are tampered after compat conversion and rejected.
+  Final opening values are also tampered before compat conversion to guard the
+  core-to-modular conversion boundary.
+- ZK/BlindFold remains deferred. Stage outputs preserve the data needed to
+  construct BlindFold public inputs later, but Stage 8 currently verifies the
+  transparent opening path.
 
 ### 13. ZK: BlindFold Instance Construction
 

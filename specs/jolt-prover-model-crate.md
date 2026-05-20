@@ -31,8 +31,8 @@ ready.
 - `JoltProof` and verifier-visible `StageNOutput` types stay in
   `jolt-verifier`.
 - `jolt-prover` builds verifier-owned proof and stage-output structs directly.
-- Prover-local artifacts carry private execution state: witness handles,
-  caches, opening inputs, ZK material, recursion data, and wrapper handoff data.
+- Specialized proving entry points return typed auxiliary outputs for wrapper,
+  recursion, Dory assist, and diagnostics.
 - ZK/BlindFold and advice are first-class from the first design.
 - Committed sumchecks reuse `jolt-sumcheck` and `jolt-crypto` types.
 - Witness generation is modular, namespace-generic, and consumed by
@@ -57,7 +57,7 @@ ready.
 | Crate | Owns |
 |-------|------|
 | `jolt-verifier` | Proof model, verifier stage outputs, selected verifier schedule |
-| `jolt-prover` | Prover orchestration, transcript order, proof assembly, artifacts |
+| `jolt-prover` | Prover orchestration, transcript order, proof assembly, scoped prover state |
 | `jolt-witness` | Generic witness traits plus protocol-specific witness providers |
 | `jolt-kernels` | Optimized prover compute and map-reduce kernels |
 | `jolt-claims` | Protocol IDs, formulas, opening/public/challenge metadata |
@@ -109,11 +109,20 @@ where
     R: rand_core::CryptoRngCore;
 ```
 
-The primary API returns the verifier-owned proof. Private prover state is
-captured by explicit sidecar sinks when a caller needs it:
+The primary API returns the verifier-owned proof. Flows that need auxiliary
+private data use explicit entry points with typed outputs:
 
 ```rust
-pub fn prove_with_sidecars<F, PCS, VC, T, K, W, R, S>(
+pub struct WrapperProveOutput<F, PCS, VC>
+where
+    PCS: jolt_openings::CommitmentScheme<Field = F>,
+    VC: jolt_crypto::VectorCommitment<Field = F>,
+{
+    pub proof: jolt_verifier::JoltProof<PCS, VC>,
+    pub wrapper_inputs: WrapperWitnessInputs<F>,
+}
+
+pub fn prove_for_wrapper<F, PCS, VC, T, K, W, R>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     inputs: JoltProverInputs<'_, F>,
     selection: ProofSelection,
@@ -121,8 +130,7 @@ pub fn prove_with_sidecars<F, PCS, VC, T, K, W, R, S>(
     kernels: &mut K,
     transcript: &mut T,
     rng: &mut R,
-    sidecars: &mut S,
-) -> Result<jolt_verifier::JoltProof<PCS, VC>, ProverError>
+) -> Result<WrapperProveOutput<F, PCS, VC>, ProverError>
 where
     F: jolt_field::Field,
     PCS: jolt_openings::CommitmentScheme<Field = F>,
@@ -130,26 +138,12 @@ where
     T: jolt_transcript::Transcript<Challenge = F>,
     K: KernelSet<F>,
     W: WitnessBuilder<F>,
-    R: rand_core::CryptoRngCore,
-    S: ProverSidecarSink<F, PCS, VC>;
-
-pub trait ProverSidecarSink<F, PCS, VC>
-where
-    PCS: jolt_openings::CommitmentScheme<Field = F>,
-    VC: jolt_crypto::VectorCommitment<Field = F>,
-{
-    fn record_stage<N>(&mut self, stage: StageArtifacts<F, VC, N>) -> Result<(), ProverError>;
-    fn record_wrapper_inputs(&mut self, inputs: WrapperWitnessInputs<F>) -> Result<(), ProverError>;
-    fn record_dory_assist_inputs(
-        &mut self,
-        inputs: DoryAssistInputs<F, PCS>,
-    ) -> Result<(), ProverError>;
-}
+    R: rand_core::CryptoRngCore;
 ```
 
-`prove` is the convenience entry point that uses a no-op sink. Wrapper,
-recursion, Dory assist, and diagnostic flows call `prove_with_sidecars` with a
-concrete sink that captures only the private data they consume.
+Use the same pattern for `prove_for_dory_assist`, `prove_for_recursion`, and
+diagnostic entry points. Each entry point owns a named return type with only the
+data that flow consumes.
 
 Selection-specific bounds:
 
@@ -266,7 +260,7 @@ pub fn prove<F, PCS, VC, T, K, W, R>(
     kernels: &mut K,
     transcript: &mut T,
     rng: &mut R,
-) -> Result<StageNArtifacts<F, PCS, VC>, ProverError>;
+) -> Result<StageNProverOutput<F, VC, StageNPrivate<F, PCS, VC>>, ProverError>;
 ```
 
 Stage code should show:
@@ -277,21 +271,21 @@ Stage code should show:
 - batching order;
 - output claims;
 - opening dependencies;
-- private ZK artifacts.
+- private ZK material.
 
 ## Verifier-Owned Protocol Objects
 
 `jolt-verifier` defines the final protocol objects. `jolt-prover` imports those
 types, computes their fields, and assembles them as the public proof surface.
-Stage functions return verifier-owned protocol data plus a private sidecar for
-prover-only state.
+Stage functions return verifier-owned protocol data plus scoped prover state
+needed by later stages.
 
 ```rust
-pub struct StageArtifacts<F, VC, Private> {
+pub struct StageNProverOutput<F, VC, Private> {
     pub verifier_output: jolt_verifier::stages::stageN::StageNOutput<F>,
     pub proof: jolt_verifier::stages::stageN::StageNProof<F, VC>,
     pub openings: StageOpeningDeps<F>,
-    pub zk: Option<StageZkArtifacts<F, VC>>,
+    pub zk: Option<StageZkMaterial<F, VC>>,
     pub private: Private,
 }
 ```
@@ -307,8 +301,8 @@ private:
 ```
 
 Verifier-owned types are the stable protocol target. Prover modules schedule
-generic computation around those types and use private sidecars for data that
-only the prover, BlindFold, recursion, or wrapper construction consumes.
+generic computation around those types. Prover-only state stays scoped to stage
+outputs and specialized proving entry points.
 
 ## Witness Model
 
@@ -458,7 +452,7 @@ untrusted:
   commitment included in JoltProof
 ```
 
-Artifacts retain padded words, commitment, opening hint, dimensions,
+Advice state retains padded words, commitment, opening hint, dimensions,
 address-phase choice, advice openings, stage-8 selector factors, and BlindFold
 claim constraints.
 
@@ -467,7 +461,7 @@ claim constraints.
 Stage 8 is typed opening assembly:
 
 ```text
-stage artifacts
+stage outputs
   -> OpeningPlan
   -> RLC reduction
   -> joint polynomial / hint
@@ -532,9 +526,9 @@ emitted.
 wrapper proving.
 
 ```text
-prove(..., WrapperSidecarSink)
+prove_for_wrapper(...)
   -> JoltProof
-  -> WrapperWitnessInputs captured by sink
+  -> WrapperWitnessInputs
   -> jolt-wrapper
 ```
 
@@ -549,7 +543,7 @@ crates/jolt-prover/src/
   lib.rs
   inputs.rs
   preprocessing.rs
-  artifacts.rs
+  state.rs
   prover.rs
   selection.rs
   commitment/
@@ -601,7 +595,7 @@ Required coverage:
 - transparent and BlindFold modes;
 - no advice, trusted-only, untrusted-only, both-advice;
 - real advice-consuming guests;
-- committed sumcheck and BlindFold artifact shape;
+- committed sumcheck and BlindFold output shape;
 - witness provider reference checks for committed and virtual polynomial evals;
 - stage-8 opening plan, ZK opening data, and Dory-assist inputs;
 - tampering of transcript, dependencies, openings, committed claims, advice
@@ -615,12 +609,12 @@ primary oracle for the modular prover.
 
 ## Milestones
 
-1. Scaffold `jolt-prover`: selection, sidecar sinks, explicit RNG, `JoltProof`
-   assembly.
+1. Scaffold `jolt-prover`: selection, explicit RNG, `JoltProof` assembly, and
+   specialized proving outputs.
 2. Add `jolt-witness` traits and a trace-backed VM witness provider under
    `jolt_witness::protocols::jolt_vm`.
 3. Add kernel boundaries and a slow/reference kernel path.
-4. Implement commitments, including trusted/untrusted advice artifacts.
+4. Implement commitments, including trusted/untrusted advice state.
 5. Implement stages 1-2 in transparent and BlindFold mode.
 6. Port stages 3-7 with verifier-output sharing.
 7. Implement advice reductions and optional address phase.

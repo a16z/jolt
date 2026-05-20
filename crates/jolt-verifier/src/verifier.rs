@@ -91,10 +91,9 @@ where
         &checked,
         preprocessing,
         proof,
+        trusted_advice_commitment,
         &mut transcript,
-        stage8::deps(
-            &stage1, &stage2, &stage3, &stage4, &stage5, &stage6, &stage7,
-        ),
+        stage8::deps(&stage6, &stage7),
     )?;
 
     if checked.zk {
@@ -271,9 +270,20 @@ fn absorb_commitments<PCS, VC, ZkProof, T>(
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    for commitment in &proof.commitments {
+    let mut absorb_commitment = |commitment: &PCS::Output| {
         append_payload_label(transcript, b"commitment", commitment);
         transcript.append(commitment);
+    };
+    absorb_commitment(&proof.commitments.rd_inc);
+    absorb_commitment(&proof.commitments.ram_inc);
+    for commitment in &proof.commitments.ra.instruction {
+        absorb_commitment(commitment);
+    }
+    for commitment in &proof.commitments.ra.ram {
+        absorb_commitment(commitment);
+    }
+    for commitment in &proof.commitments.ra.bytecode {
+        absorb_commitment(commitment);
     }
     if let Some(untrusted_advice_commitment) = &proof.untrusted_advice_commitment {
         append_payload_label(transcript, b"untrusted_advice", untrusted_advice_commitment);
@@ -399,7 +409,7 @@ mod tests {
     use crate::proof::{JoltProofClaims, JoltStageProofs, TransparentProofClaims};
     use common::jolt_device::{JoltDevice, MemoryLayout};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
-    use jolt_crypto::{Commitment, VectorCommitment};
+    use jolt_crypto::{Bn254G1, Commitment, Pedersen};
     use jolt_field::Fr;
     use jolt_openings::{CommitmentScheme, OpeningsError};
     use jolt_poly::{MultilinearPoly, Polynomial};
@@ -414,9 +424,6 @@ mod tests {
 
     #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     struct TestPcs;
-
-    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-    struct TestVectorCommitment;
 
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     struct TestCommitment;
@@ -476,41 +483,11 @@ mod tests {
         }
     }
 
-    impl Commitment for TestVectorCommitment {
-        type Output = TestCommitment;
-    }
-
-    impl VectorCommitment for TestVectorCommitment {
-        type Field = Fr;
-        type Setup = ();
-
-        fn capacity(_setup: &Self::Setup) -> usize {
-            usize::MAX
-        }
-
-        fn commit(
-            _setup: &Self::Setup,
-            _values: &[Self::Field],
-            _blinding: &Self::Field,
-        ) -> Self::Output {
-            TestCommitment
-        }
-
-        fn verify(
-            _setup: &Self::Setup,
-            _commitment: &Self::Output,
-            _values: &[Self::Field],
-            _blinding: &Self::Field,
-        ) -> bool {
-            true
-        }
-    }
-
     impl jolt_transcript::AppendToTranscript for TestCommitment {
         fn append_to_transcript<T: Transcript>(&self, _transcript: &mut T) {}
     }
 
-    type TestProof = JoltProof<TestPcs, TestVectorCommitment, ()>;
+    type TestProof = JoltProof<TestPcs, Pedersen<Bn254G1>, ()>;
 
     #[test]
     fn proof_wrapper_uses_modular_trait_bounds() {
@@ -643,7 +620,15 @@ mod tests {
 
     fn proof_with_zk(is_zk: bool, claims: JoltProofClaims<Fr, ()>) -> TestProof {
         JoltProof::new(
-            Vec::new(),
+            crate::proof::JoltCommitments::new(
+                TestCommitment,
+                TestCommitment,
+                crate::proof::JoltRaCommitments::new(
+                    Vec::<TestCommitment>::new(),
+                    Vec::<TestCommitment>::new(),
+                    Vec::<TestCommitment>::new(),
+                ),
+            ),
             stage_proofs(is_zk),
             (),
             None,
@@ -852,7 +837,7 @@ mod tests {
         }
     }
 
-    fn stage_proofs(is_zk: bool) -> JoltStageProofs<Fr, TestVectorCommitment> {
+    fn stage_proofs(is_zk: bool) -> JoltStageProofs<Fr, Pedersen<Bn254G1>> {
         JoltStageProofs {
             stage1_uni_skip_first_round_proof: uniskip_proof(is_zk),
             stage1_sumcheck_proof: sumcheck_proof(is_zk),
@@ -866,7 +851,7 @@ mod tests {
         }
     }
 
-    fn uniskip_proof(is_zk: bool) -> SumcheckProof<Fr, TestCommitment> {
+    fn uniskip_proof(is_zk: bool) -> SumcheckProof<Fr, Bn254G1> {
         if is_zk {
             SumcheckProof::Committed(CommittedSumcheckProof::default())
         } else {
@@ -874,7 +859,7 @@ mod tests {
         }
     }
 
-    fn sumcheck_proof(is_zk: bool) -> SumcheckProof<Fr, TestCommitment> {
+    fn sumcheck_proof(is_zk: bool) -> SumcheckProof<Fr, Bn254G1> {
         if is_zk {
             SumcheckProof::Committed(CommittedSumcheckProof::default())
         } else {
@@ -882,7 +867,7 @@ mod tests {
         }
     }
 
-    fn test_preprocessing() -> JoltVerifierPreprocessing<TestPcs, TestVectorCommitment> {
+    fn test_preprocessing() -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
         let memory_layout = MemoryLayout {
             max_input_size: 8,
             max_output_size: 8,

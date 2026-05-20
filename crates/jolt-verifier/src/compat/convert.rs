@@ -5,7 +5,13 @@ use crate::compat::{
     claims::{transparent_claims_from_legacy, LegacyOpeningClaims},
     ids as verifier_ids,
 };
-use crate::proof::{JoltProof, JoltProofClaims, JoltStageProofs, TracePolynomialOrder};
+use crate::{
+    proof::{
+        JoltCommitments, JoltProof, JoltProofClaims, JoltRaCommitments, JoltStageProofs,
+        TracePolynomialOrder,
+    },
+    VerifierError,
+};
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 use jolt_crypto::{
     Bn254G1, Bn254GT, Commitment as ModularCommitment, Pedersen,
@@ -13,6 +19,7 @@ use jolt_crypto::{
 };
 use jolt_dory::{DoryCommitment, DoryProof, DoryScheme};
 use jolt_field::{Field as ModularField, Fr as ModularFr};
+use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme as ModularCommitmentScheme;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_sumcheck::{
@@ -159,15 +166,94 @@ fn convert_trace_polynomial_order(layout: CoreDoryLayout) -> TracePolynomialOrde
     }
 }
 
+fn convert_proof_commitments<F, PCS>(
+    commitments: Vec<PCS::Commitment>,
+    one_hot_config: JoltOneHotConfig,
+    ram_k: usize,
+) -> Result<JoltCommitments<<PCS::VerifierPcs as ModularCommitment>::Output>, VerifierError>
+where
+    F: CoreFieldBridge,
+    PCS: CorePcsBridge<F>,
+{
+    let committed_chunk_bits = one_hot_config.committed_chunk_bits();
+    if committed_chunk_bits == 0 {
+        return Err(VerifierError::InvalidCommitmentCount {
+            expected: 2,
+            got: commitments.len(),
+        });
+    }
+    let instruction_ra_count = (2 * RISCV_XLEN).div_ceil(committed_chunk_bits);
+    let ram_ra_count = ceil_log_2(ram_k).div_ceil(committed_chunk_bits);
+    let commitments = commitments
+        .into_iter()
+        .map(PCS::commitment_into_verifier)
+        .collect::<Vec<_>>();
+
+    commitments_from_proof_payload_order(commitments, instruction_ra_count, ram_ra_count)
+}
+
+fn ceil_log_2(value: usize) -> usize {
+    if value <= 1 {
+        0
+    } else {
+        usize::BITS as usize - (value - 1).leading_zeros() as usize
+    }
+}
+
+fn commitments_from_proof_payload_order<C>(
+    commitments: Vec<C>,
+    instruction_ra_count: usize,
+    ram_ra_count: usize,
+) -> Result<JoltCommitments<C>, VerifierError> {
+    let minimum = 2 + instruction_ra_count + ram_ra_count;
+    if commitments.len() < minimum {
+        return Err(VerifierError::InvalidCommitmentCount {
+            expected: minimum,
+            got: commitments.len(),
+        });
+    }
+
+    let mut commitments = commitments.into_iter();
+    let Some(rd_inc) = commitments.next() else {
+        return Err(VerifierError::InvalidCommitmentCount {
+            expected: minimum,
+            got: 0,
+        });
+    };
+    let Some(ram_inc) = commitments.next() else {
+        return Err(VerifierError::InvalidCommitmentCount {
+            expected: minimum,
+            got: 1,
+        });
+    };
+    let instruction_ra = commitments
+        .by_ref()
+        .take(instruction_ra_count)
+        .collect::<Vec<_>>();
+    let ram_ra = commitments.by_ref().take(ram_ra_count).collect::<Vec<_>>();
+    let bytecode_ra = commitments.collect::<Vec<_>>();
+
+    Ok(JoltCommitments::new(
+        rd_inc,
+        ram_inc,
+        JoltRaCommitments::new(instruction_ra, ram_ra, bytecode_ra),
+    ))
+}
+
 #[cfg(not(feature = "zk"))]
-impl<F, C, PCS, FS> From<JoltCoreProof<F, C, PCS, FS>> for ImportedCoreProof<F, C, PCS>
+impl<F, C, PCS, FS> TryFrom<JoltCoreProof<F, C, PCS, FS>> for ImportedCoreProof<F, C, PCS>
 where
     F: CoreFieldBridge,
     C: CoreCurveBridge<F>,
     PCS: CorePcsBridge<F>,
     FS: Transcript,
 {
-    fn from(proof: JoltCoreProof<F, C, PCS, FS>) -> Self {
+    type Error = VerifierError;
+
+    fn try_from(proof: JoltCoreProof<F, C, PCS, FS>) -> Result<Self, Self::Error> {
+        let one_hot_config = convert_one_hot_config(proof.one_hot_config);
+        let commitments =
+            convert_proof_commitments::<F, PCS>(proof.commitments, one_hot_config, proof.ram_K)?;
         let stages = JoltStageProofs {
             stage1_uni_skip_first_round_proof: convert_uniskip(
                 proof.stage1_uni_skip_first_round_proof,
@@ -184,12 +270,8 @@ where
             stage7_sumcheck_proof: convert_sumcheck(proof.stage7_sumcheck_proof),
         };
 
-        Self {
-            commitments: proof
-                .commitments
-                .into_iter()
-                .map(PCS::commitment_into_verifier)
-                .collect(),
+        Ok(Self {
+            commitments,
             stages,
             joint_opening_proof: PCS::proof_into_verifier(proof.joint_opening_proof),
             untrusted_advice_commitment: proof
@@ -202,21 +284,26 @@ where
             trace_length: proof.trace_length,
             ram_K: proof.ram_K,
             rw_config: convert_read_write_config(proof.rw_config),
-            one_hot_config: convert_one_hot_config(proof.one_hot_config),
+            one_hot_config,
             trace_polynomial_order: convert_trace_polynomial_order(proof.dory_layout),
-        }
+        })
     }
 }
 
 #[cfg(feature = "zk")]
-impl<F, C, PCS, FS> From<JoltCoreProof<F, C, PCS, FS>> for ImportedCoreProof<F, C, PCS>
+impl<F, C, PCS, FS> TryFrom<JoltCoreProof<F, C, PCS, FS>> for ImportedCoreProof<F, C, PCS>
 where
     F: CoreFieldBridge,
     C: CoreCurveBridge<F>,
     PCS: CorePcsBridge<F>,
     FS: Transcript,
 {
-    fn from(proof: JoltCoreProof<F, C, PCS, FS>) -> Self {
+    type Error = VerifierError;
+
+    fn try_from(proof: JoltCoreProof<F, C, PCS, FS>) -> Result<Self, Self::Error> {
+        let one_hot_config = convert_one_hot_config(proof.one_hot_config);
+        let commitments =
+            convert_proof_commitments::<F, PCS>(proof.commitments, one_hot_config, proof.ram_K)?;
         let stages = JoltStageProofs {
             stage1_uni_skip_first_round_proof: convert_uniskip(
                 proof.stage1_uni_skip_first_round_proof,
@@ -233,12 +320,8 @@ where
             stage7_sumcheck_proof: convert_sumcheck(proof.stage7_sumcheck_proof),
         };
 
-        Self {
-            commitments: proof
-                .commitments
-                .into_iter()
-                .map(PCS::commitment_into_verifier)
-                .collect(),
+        Ok(Self {
+            commitments,
             stages,
             joint_opening_proof: PCS::proof_into_verifier(proof.joint_opening_proof),
             untrusted_advice_commitment: proof
@@ -250,9 +333,9 @@ where
             trace_length: proof.trace_length,
             ram_K: proof.ram_K,
             rw_config: convert_read_write_config(proof.rw_config),
-            one_hot_config: convert_one_hot_config(proof.one_hot_config),
+            one_hot_config,
             trace_polynomial_order: convert_trace_polynomial_order(proof.dory_layout),
-        }
+        })
     }
 }
 
