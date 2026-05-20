@@ -3,8 +3,8 @@
 //! sequence must round-trip every prover message and produce the same
 //! verifier challenges.
 
-use ark_bn254::Fr as ArkFr;
 use arbitrary::{Arbitrary, Unstructured};
+use ark_bn254::Fr as ArkFr;
 use jolt_field::Fr as JFr;
 use spongefish::instantiations::{Blake2b512, Keccak};
 

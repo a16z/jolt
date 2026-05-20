@@ -102,11 +102,7 @@ impl Encoding<[u8]> for InstanceDigest {
 /// VerifierTranscript::<Blake2b512>::check_eof(verifier).unwrap();
 /// ```
 #[must_use]
-pub fn prover_transcript<H>(
-    session: &[u8],
-    instance: [u8; 32],
-    sponge: H,
-) -> ProverState<H, StdRng>
+pub fn prover_transcript<H>(session: &[u8], instance: [u8; 32], sponge: H) -> ProverState<H, StdRng>
 where
     H: DuplexSpongeInterface<U = u8>,
 {
