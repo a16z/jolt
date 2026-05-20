@@ -76,6 +76,9 @@ impl BatchedSumcheck {
             .map(|(claim, coeff)| *claim * coeff)
             .sum();
 
+        #[cfg(test)]
+        let mut batched_claim: F = initial_batched_claim;
+
         let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(max_num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(max_num_rounds);
         let two_inv = F::from_u64(2).inverse().unwrap();
@@ -125,6 +128,19 @@ impl BatchedSumcheck {
                 .iter_mut()
                 .zip(univariate_polys)
                 .for_each(|(claim, poly)| *claim = poly.evaluate(&r_j));
+
+            #[cfg(test)]
+            {
+                // Sanity check
+                let h0 = batched_univariate_poly.evaluate::<F>(&F::zero());
+                let h1 = batched_univariate_poly.evaluate::<F>(&F::one());
+                assert_eq!(
+                    h0 + h1,
+                    batched_claim,
+                    "round {round}: H(0) + H(1) = {h0} + {h1} != {batched_claim}"
+                );
+                batched_claim = batched_univariate_poly.evaluate(&r_j);
+            }
 
             for sumcheck in sumcheck_instances.iter_mut() {
                 let num_rounds = sumcheck.num_rounds();
