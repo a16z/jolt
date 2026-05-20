@@ -10,29 +10,59 @@ pub enum Error {
     Layout(#[from] LayoutError),
     #[error(transparent)]
     Claim(#[from] ClaimLoweringError),
+    #[error("stage {stage}: missing {component}")]
+    MissingStageComponent {
+        stage: String,
+        component: &'static str,
+    },
+    #[error("{name} must be non-zero when committed rows are present")]
+    MissingRowLength { name: &'static str },
+    #[error("{name} has {ids} opening ids but only {slots} committed row slots")]
+    OpeningRowCapacityExceeded {
+        name: &'static str,
+        ids: usize,
+        slots: usize,
+    },
+    #[error("final opening binding must reference at least one opening")]
+    EmptyFinalOpeningBinding,
+    #[error("{name} row count mismatch: expected {expected}, got {actual}")]
+    CommittedRowCountMismatch {
+        name: &'static str,
+        expected: usize,
+        actual: usize,
+    },
+    #[error("opening id appears more than once")]
+    DuplicateOpeningSource,
+    #[error("opening alias refers to an unknown source")]
+    MissingOpeningAliasSource,
     #[error("stage {stage_index}: {source}")]
     Sumcheck {
         stage_index: usize,
         source: SumcheckR1csError,
     },
-    #[error("layout has {layout_stages} stages but claims have {claim_stages}")]
+    #[error("layout has {layout_stages} stages but statement has {statement_stages}")]
     LayoutStageCountMismatch {
-        claim_stages: usize,
+        statement_stages: usize,
         layout_stages: usize,
     },
 }
 
 #[derive(Clone, Debug, ThisError, PartialEq, Eq)]
 pub enum LayoutError {
-    #[error("claims have {claim_stages} stages but committed inputs have {input_stages}")]
-    StageCountMismatch {
-        claim_stages: usize,
-        input_stages: usize,
-    },
     #[error("stage {stage_index}: {source}")]
     Sumcheck {
         stage_index: usize,
         source: SumcheckR1csError,
+    },
+    #[error("{name} dimension {value} cannot be represented as a power-of-two size")]
+    DimensionOverflow { name: &'static str, value: usize },
+    #[error("{name} must be non-zero when committed rows are present")]
+    MissingRowLength { name: &'static str },
+    #[error("{name} has {ids} opening ids but only {slots} committed row slots")]
+    OpeningRowCapacityExceeded {
+        name: &'static str,
+        ids: usize,
+        slots: usize,
     },
 }
 
@@ -82,6 +112,10 @@ pub enum VerificationError<F: FieldCore> {
     InvalidPowerOfTwo { name: &'static str, value: usize },
     #[error("folded eval commitment {index} does not match opened value and blinding")]
     EvalCommitmentMismatch { index: usize },
+    #[error("folded eval witness {kind} {index} does not match opened witness coordinate")]
+    EvalWitnessMismatch { kind: &'static str, index: usize },
+    #[error("folded eval witness {kind} {index} opening has a non-zero value outside the dedicated slot")]
+    EvalWitnessRowNotDedicated { kind: &'static str, index: usize },
     #[error("outer final claim mismatch: expected {expected}, got {actual}")]
     OuterFinalClaimMismatch { expected: F, actual: F },
     #[error("inner final claim mismatch: expected {expected}, got {actual}")]

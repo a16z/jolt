@@ -5,7 +5,10 @@ use jolt_r1cs::ConstraintMatrices;
 use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 
-use crate::{BlindFoldProof, BlindFoldProtocol, RelaxedError, RelaxedInstance, VerificationError};
+use crate::{
+    BlindFoldProof, BlindFoldProtocol, RelaxedError, RelaxedInstance, VerificationError,
+    WitnessCoordinate,
+};
 
 const OUTER_SUMCHECK_DEGREE: usize = 3;
 const INNER_SUMCHECK_DEGREE: usize = 2;
@@ -35,6 +38,9 @@ where
         proof.folded_eval_blindings.len(),
     )?;
     verify_folded_eval_commitments::<F, VC>(proof, vc_setup, &folded)?;
+    verify_folded_eval_witness_bindings::<F, VC, T>(
+        protocol, proof, vc_setup, &folded, transcript,
+    )?;
     let outer =
         verify_outer_folded_r1cs::<F, VC, T>(protocol, proof, vc_setup, &folded, transcript)?;
     verify_inner_folded_r1cs::<F, VC, T>(protocol, proof, vc_setup, &folded, &outer, transcript)?;
@@ -62,7 +68,9 @@ where
     );
 
     let random = protocol.random_relaxed_instance(
-        &proof.random_witness_row_commitments,
+        &proof.random_round_commitments,
+        &proof.random_output_claim_row_commitments,
+        &proof.random_auxiliary_row_commitments,
         &proof.random_error_row_commitments,
         &proof.random_eval_commitments,
         proof.random_u,
@@ -215,6 +223,137 @@ where
     Ok(())
 }
 
+fn verify_folded_eval_witness_bindings<F, VC, T>(
+    protocol: &BlindFoldProtocol<F, VC::Output>,
+    proof: &BlindFoldProof<F, VC::Output>,
+    vc_setup: &VC::Setup,
+    folded: &RelaxedInstance<F, VC::Output>,
+    transcript: &mut T,
+) -> Result<(), VerificationError<F>>
+where
+    F: Field + AppendToTranscript,
+    VC: VectorCommitment<Field = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
+    T: Transcript,
+{
+    let coordinates = protocol.final_opening_witness_coordinates()?;
+    ensure_len(
+        "final opening bindings",
+        coordinates.len(),
+        folded.eval_commitments.len(),
+    )?;
+
+    let expected_outputs = coordinates
+        .iter()
+        .filter(|coordinates| coordinates.evaluation.is_some())
+        .count();
+    ensure_len(
+        "folded eval output witness openings",
+        expected_outputs,
+        proof.folded_eval_output_openings.len(),
+    )?;
+    let expected_blindings = coordinates
+        .iter()
+        .filter(|coordinates| coordinates.blinding.is_some())
+        .count();
+    ensure_len(
+        "folded eval blinding witness openings",
+        expected_blindings,
+        proof.folded_eval_blinding_openings.len(),
+    )?;
+
+    let mut output_openings = proof.folded_eval_output_openings.iter();
+    let mut blinding_openings = proof.folded_eval_blinding_openings.iter();
+    for (index, coordinates) in coordinates.iter().enumerate() {
+        if let Some(coordinate) = coordinates.evaluation {
+            let opening = output_openings.next().ok_or(RelaxedError::LengthMismatch {
+                name: "folded eval output witness openings",
+                expected: expected_outputs,
+                actual: proof.folded_eval_output_openings.len(),
+            })?;
+            let opened = verify_witness_coordinate::<F, VC>(vc_setup, folded, coordinate, opening)?;
+            if opened != proof.folded_eval_outputs[index] {
+                return Err(VerificationError::EvalWitnessMismatch {
+                    kind: "output",
+                    index,
+                });
+            }
+            require_dedicated_witness_row(opening, coordinate, "output", index)?;
+            append_vector_opening(
+                transcript,
+                b"bf_eval_out_open",
+                b"bf_eval_out_blind",
+                opening,
+            );
+        }
+
+        if let Some(coordinate) = coordinates.blinding {
+            let opening = blinding_openings
+                .next()
+                .ok_or(RelaxedError::LengthMismatch {
+                    name: "folded eval blinding witness openings",
+                    expected: expected_blindings,
+                    actual: proof.folded_eval_blinding_openings.len(),
+                })?;
+            let opened = verify_witness_coordinate::<F, VC>(vc_setup, folded, coordinate, opening)?;
+            if opened != proof.folded_eval_blindings[index] {
+                return Err(VerificationError::EvalWitnessMismatch {
+                    kind: "blinding",
+                    index,
+                });
+            }
+            require_dedicated_witness_row(opening, coordinate, "blinding", index)?;
+            append_vector_opening(
+                transcript,
+                b"bf_eval_blind_open",
+                b"bf_eval_blind_bl",
+                opening,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn require_dedicated_witness_row<F: Field>(
+    opening: &VectorCommitmentOpening<F>,
+    coordinate: WitnessCoordinate,
+    kind: &'static str,
+    index: usize,
+) -> Result<(), VerificationError<F>> {
+    for (slot, value) in opening.combined_vector.iter().enumerate() {
+        if slot != coordinate.column && !value.is_zero() {
+            return Err(VerificationError::EvalWitnessRowNotDedicated { kind, index });
+        }
+    }
+    Ok(())
+}
+
+fn verify_witness_coordinate<F, VC>(
+    vc_setup: &VC::Setup,
+    folded: &RelaxedInstance<F, VC::Output>,
+    coordinate: WitnessCoordinate,
+    opening: &VectorCommitmentOpening<F>,
+) -> Result<F, VerificationError<F>>
+where
+    F: Field,
+    VC: VectorCommitment<Field = F>,
+    VC::Output: Copy + HomomorphicCommitment<F>,
+{
+    let row_vars =
+        log2_power_of_two::<F>("witness row count", folded.witness_row_commitments.len())?;
+    let entry_vars = log2_power_of_two::<F>("witness row length", opening.combined_vector.len())?;
+    let row_point = boolean_point::<F>(coordinate.row, row_vars)?;
+    let entry_point = boolean_point::<F>(coordinate.column, entry_vars)?;
+    Ok(VC::verify_committed_rows(
+        vc_setup,
+        &folded.witness_row_commitments,
+        &row_point,
+        &entry_point,
+        opening,
+    )?)
+}
+
 fn verify_inner_folded_r1cs<F, VC, T>(
     protocol: &BlindFoldProtocol<F, VC::Output>,
     proof: &BlindFoldProof<F, VC::Output>,
@@ -357,6 +496,29 @@ where
     Ok(1usize << num_vars)
 }
 
+fn boolean_point<F>(index: usize, num_vars: usize) -> Result<Vec<F>, VerificationError<F>>
+where
+    F: Field,
+{
+    let len = power_of_two_len::<F>("boolean point dimension", num_vars)?;
+    if index >= len {
+        return Err(VerificationError::InvalidPowerOfTwo {
+            name: "boolean point index",
+            value: index,
+        });
+    }
+    Ok((0..num_vars)
+        .map(|bit| {
+            let shift = num_vars - bit - 1;
+            if ((index >> shift) & 1) == 1 {
+                F::one()
+            } else {
+                F::zero()
+            }
+        })
+        .collect())
+}
+
 fn ensure_len(name: &'static str, expected: usize, actual: usize) -> Result<(), RelaxedError> {
     if expected != actual {
         return Err(RelaxedError::LengthMismatch {
@@ -372,7 +534,10 @@ fn ensure_len(name: &'static str, expected: usize, actual: usize) -> Result<(), 
 #[expect(clippy::expect_used, reason = "tests should fail loudly")]
 mod tests {
     use super::*;
-    use crate::{BlindFoldDimensions, Inputs, Layout, RowDimensions, WitnessRowLayout};
+    use crate::{
+        r1cs::{FinalOpeningLayout, Layout},
+        BlindFoldDimensions, RowDimensions, WitnessRowLayout,
+    };
     use jolt_crypto::{
         Bn254, Bn254G1, HomomorphicCommitment, JoltGroup, Pedersen, PedersenSetup,
         VectorCommitment, VectorOpeningError,
@@ -416,10 +581,20 @@ mod tests {
 
     fn empty_protocol(eval_commitments: Vec<Bn254G1>) -> BlindFoldProtocol<Fr, Bn254G1> {
         BlindFoldProtocol {
-            sumcheck_inputs: Inputs::new(Vec::new()),
-            output_claims: Vec::new(),
+            sumcheck_consistency: Vec::new(),
+            committed_output_claims: Vec::new(),
             r1cs: ConstraintMatrices::new(0, 1, Vec::new(), Vec::new(), Vec::new()),
-            layout: Layout { stages: Vec::new() },
+            layout: Layout {
+                witness_row_len: 1,
+                stages: Vec::new(),
+                final_openings: vec![
+                    FinalOpeningLayout {
+                        evaluation: None,
+                        blinding: None,
+                    };
+                    eval_commitments.len()
+                ],
+            },
             dimensions: BlindFoldDimensions {
                 witness: RowDimensions {
                     row_len: 1,
@@ -447,8 +622,8 @@ mod tests {
 
     fn witness_protocol() -> BlindFoldProtocol<Fr, Bn254G1> {
         BlindFoldProtocol {
-            sumcheck_inputs: Inputs::new(Vec::new()),
-            output_claims: Vec::new(),
+            sumcheck_consistency: Vec::new(),
+            committed_output_claims: Vec::new(),
             r1cs: ConstraintMatrices::new(
                 1,
                 2,
@@ -456,7 +631,11 @@ mod tests {
                 vec![Vec::new()],
                 vec![Vec::new()],
             ),
-            layout: Layout { stages: Vec::new() },
+            layout: Layout {
+                witness_row_len: 1,
+                stages: Vec::new(),
+                final_openings: Vec::new(),
+            },
             dimensions: BlindFoldDimensions {
                 witness: RowDimensions {
                     row_len: 1,
@@ -468,8 +647,8 @@ mod tests {
                 },
                 witness_rows: WitnessRowLayout {
                     coefficients: 0..0,
+                    output_claims: 0..0,
                     auxiliary: 0..1,
-                    output_claims: 1..1,
                     padding: 1..1,
                 },
                 coefficient_rows: 0,
@@ -488,6 +667,19 @@ mod tests {
             row_len: 1,
             row_count: 2,
         };
+        protocol
+    }
+
+    fn coefficient_row_protocol() -> BlindFoldProtocol<Fr, Bn254G1> {
+        let mut protocol = empty_protocol(Vec::new());
+        protocol.dimensions.witness_rows = WitnessRowLayout {
+            coefficients: 0..1,
+            output_claims: 1..1,
+            auxiliary: 1..1,
+            padding: 1..1,
+        };
+        protocol.dimensions.coefficient_rows = 1;
+        protocol.dimensions.coefficient_values = 1;
         protocol
     }
 
@@ -517,7 +709,12 @@ mod tests {
                 commitment(setup, 41);
                 protocol.dimensions.auxiliary_rows
             ],
-            random_witness_row_commitments: vec![identity(); protocol.dimensions.witness.row_count],
+            random_round_commitments: vec![identity(); protocol.dimensions.coefficient_rows],
+            random_output_claim_row_commitments: vec![
+                identity();
+                protocol.dimensions.output_claim_rows
+            ],
+            random_auxiliary_row_commitments: vec![identity(); protocol.dimensions.auxiliary_rows],
             random_error_row_commitments: vec![identity(); protocol.dimensions.error.row_count],
             random_eval_commitments: vec![
                 commit_value(setup, f(11), f(110));
@@ -534,6 +731,8 @@ mod tests {
             error_opening: opening(protocol.dimensions.error.row_len),
             folded_eval_outputs: vec![f(0); protocol.eval_commitments.len()],
             folded_eval_blindings: vec![f(0); protocol.eval_commitments.len()],
+            folded_eval_output_openings: Vec::new(),
+            folded_eval_blinding_openings: Vec::new(),
         }
     }
 
@@ -546,7 +745,9 @@ mod tests {
             .expect("committed instance builds");
         let random = protocol
             .random_relaxed_instance(
-                &proof.random_witness_row_commitments,
+                &proof.random_round_commitments,
+                &proof.random_output_claim_row_commitments,
+                &proof.random_auxiliary_row_commitments,
                 &proof.random_error_row_commitments,
                 &proof.random_eval_commitments,
                 proof.random_u,
@@ -614,7 +815,9 @@ mod tests {
             .expect("committed instance builds");
         let random = protocol
             .random_relaxed_instance(
-                &proof.random_witness_row_commitments,
+                &proof.random_round_commitments,
+                &proof.random_output_claim_row_commitments,
+                &proof.random_auxiliary_row_commitments,
                 &proof.random_error_row_commitments,
                 &proof.random_eval_commitments,
                 proof.random_u,
@@ -656,11 +859,11 @@ mod tests {
     }
 
     #[test]
-    fn verify_rejects_random_witness_row_count_mismatch() {
+    fn verify_rejects_random_round_count_mismatch() {
         let setup = setup();
-        let protocol = protocol(&setup);
+        let protocol = coefficient_row_protocol();
         let mut proof = proof(&setup, &protocol);
-        let _ = proof.random_witness_row_commitments.pop();
+        let _ = proof.random_round_commitments.pop();
         let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
 
         let error = verify::<Fr, Pedersen<Bn254G1>, _>(&protocol, &proof, &setup, &mut transcript)
@@ -669,7 +872,7 @@ mod tests {
         assert!(matches!(
             error,
             VerificationError::Relaxed(RelaxedError::LengthMismatch {
-                name: "random witness row commitments",
+                name: "random round commitments",
                 ..
             })
         ));

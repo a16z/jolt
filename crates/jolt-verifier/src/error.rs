@@ -97,6 +97,12 @@ pub enum VerifierError {
     #[error("final opening proof verification failed: {reason}")]
     FinalOpeningVerificationFailed { reason: String },
 
+    #[error("BlindFold protocol construction failed: {reason}")]
+    BlindFoldConstructionFailed { reason: String },
+
+    #[error("BlindFold proof verification failed: {reason}")]
+    BlindFoldVerificationFailed { reason: String },
+
     #[error("verifier functionality has not been implemented yet")]
     Unimplemented,
 }

@@ -10,15 +10,15 @@ use jolt_field::FieldCore;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SumcheckError<F: FieldCore> {
-    /// Round check failed: the sum $s_i(0) + s_i(1)$ did not match the
-    /// expected value carried forward from the previous round.
+    /// Round check failed: the domain sum did not match the expected value
+    /// carried forward from the previous round.
     #[error("round {round}: expected sum {expected}, got {actual}")]
     RoundCheckFailed {
         /// Zero-indexed round number where the check failed.
         round: usize,
         /// The expected sum.
         expected: F,
-        /// The computed sum $s_i(0) + s_i(1)$.
+        /// The computed domain sum.
         actual: F,
     },
 
@@ -39,6 +39,18 @@ pub enum SumcheckError<F: FieldCore> {
         /// Zero-indexed round number where the malformed polynomial appeared.
         round: usize,
         /// Actual number of coefficients received.
+        got: usize,
+    },
+
+    /// The domain-sum coefficient vector must have exactly one scalar per
+    /// round-polynomial coefficient.
+    #[error("round {round}: expected {expected} round-sum coefficients, got {got}")]
+    RoundSumCoefficientCountMismatch {
+        /// Zero-indexed round number where the mismatch appeared.
+        round: usize,
+        /// Expected number of coefficients, equal to `degree + 1`.
+        expected: usize,
+        /// Actual number of coefficients supplied by the domain.
         got: usize,
     },
 

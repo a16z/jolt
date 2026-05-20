@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use jolt_crypto::Commitment;
 use jolt_field::Field;
 use jolt_poly::Polynomial;
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 use serde::{Deserialize, Serialize};
 
 use jolt_crypto::HomomorphicCommitment;
@@ -197,18 +197,37 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
 
     fn verify_zk(
         commitment: &Self::Output,
-        _point: &[Self::Field],
+        point: &[Self::Field],
         proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Result<(), OpeningsError> {
+    ) -> Result<Self::HidingCommitment, OpeningsError> {
         if commitment.evaluations != proof.evaluations {
             return Err(OpeningsError::CommitmentMismatch {
                 expected: format!("len={}", commitment.evaluations.len()),
                 actual: format!("len={}", proof.evaluations.len()),
             });
         }
-        Ok(())
+        let poly = Polynomial::new(proof.evaluations.clone());
+        Ok(MockHidingCommitment {
+            eval: poly.evaluate(point),
+        })
+    }
+
+    fn bind_zk_opening_inputs(
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        point: &[Self::Field],
+        hiding_commitment: &Self::HidingCommitment,
+    ) {
+        transcript.append(&LabelWithCount(
+            b"mock_zk_opening_point",
+            point.len() as u64,
+        ));
+        for p in point {
+            p.append_to_transcript(transcript);
+        }
+        transcript.append(&Label(b"mock_zk_eval_commitment"));
+        hiding_commitment.append_to_transcript(transcript);
     }
 }
 
@@ -474,9 +493,10 @@ mod tests {
         let (proof, eval_com, _blinding) =
             MockPCS::open_zk(&poly, &point, eval, &(), (), &mut transcript_p);
 
-        let _ = eval_com;
         let mut transcript_v = Blake2bTranscript::new(b"zk-test");
-        MockPCS::verify_zk(&commitment, &point, &proof, &(), &mut transcript_v)
-            .expect("valid ZK proof should verify");
+        let verified_eval_com =
+            MockPCS::verify_zk(&commitment, &point, &proof, &(), &mut transcript_v)
+                .expect("valid ZK proof should verify");
+        assert_eq!(verified_eval_com, eval_com);
     }
 }

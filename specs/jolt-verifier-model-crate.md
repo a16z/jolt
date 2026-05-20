@@ -304,7 +304,8 @@ linear algebra in `jolt-r1cs`.
   clear boolean-hypercube proofs;
 - `verify_committed_consistency` APIs for committed proof consistency without a
   clear scalar claim;
-- `SumcheckDomain`;
+- `SumcheckDomain`, including `round_sum_coefficients(degree)`, the canonical
+  coefficient vector for summing a round polynomial over that domain;
 - `BooleanHypercube`;
 - `CenteredIntegerDomain`.
 
@@ -314,6 +315,11 @@ instead of `SumcheckClaim`, check public committed-proof consistency, derive
 transcript challenges, and return committed consistency data without absorbing
 hidden scalar claims. BlindFold is responsible for the hidden claim relations.
 ZK stage code must not manufacture placeholder `SumcheckClaim` values.
+
+R1CS lowering for sumcheck round-sum checks must use the same
+`SumcheckDomain::round_sum_coefficients` surface as native verification. This is
+the shared hook for Boolean-hypercube and centered-domain uni-skip constraints;
+do not reintroduce Boolean-only `s(0) + s(1)` logic in BlindFold lowering.
 
 The verifier owns the Jolt policy:
 
@@ -332,17 +338,54 @@ Uni-skip is protocol structure, not a special sumcheck primitive. Model it as:
 
 `jolt-blindfold` owns the generic BlindFold protocol:
 
-- committed sumcheck transcript checks;
+- the `BlindFoldProtocol::builder()` construction API that consumes
+  already-verified committed sumcheck consistency, explicit committed
+  output-claim row ids plus `jolt-sumcheck::CommittedOutputClaims`, explicit
+  `jolt-sumcheck::SumcheckDomainSpec` values, public/challenge scalars, and
+  final-opening bindings;
 - verifier-equation R1CS layout;
 - relaxed instance/witness folding;
 - vector-commitment openings;
 - `jolt_blindfold::verify`.
 
+The native modular BlindFold proof shape is compact and structured. It carries
+only non-padding row commitments for the random relaxed witness:
+round-coefficient rows, committed output-claim rows, and auxiliary rows. The
+verifier reconstructs the full padded witness commitment vector internally by
+inserting identity commitments for implicit padding rows. Do not reintroduce a
+full padded `random_witness_row_commitments` proof field.
+
+Committed output-claim rows are not anonymous capacity. The builder must reject
+extra committed output rows unless they are accounted for by typed opening ids:
+`row_count == ceil(opening_ids.len() / row_len)` for non-empty rows, and
+`row_count == 0` for empty rows. This keeps the R1CS witness layout and the
+committed proof artifact in one-to-one typed correspondence.
+
+Final PCS evaluation bindings are explicit. A final-opening binding allocates
+both the hidden evaluation variable and the hidden evaluation-commitment
+blinding variable in dedicated padded BlindFold witness rows. Empty final
+bindings are rejected. The proof carries fixed-coordinate folded-W openings for
+those variables, and the verifier checks both that the opened coordinates match
+`folded_eval_outputs` / `folded_eval_blindings` and that the rest of each
+dedicated row is zero before the Spartan checks. This directly links the scalar
+opened by the PCS hiding evaluation commitment to the value constrained inside
+the folded BlindFold witness without revealing unrelated auxiliary witness
+material.
+
+`jolt-blindfold` should not re-export `jolt-r1cs` primitives or duplicate
+sumcheck statement/input wrappers. Callers import `R1csBuilder`,
+`ClaimSourceTable`, and `ClaimSources` from `jolt-r1cs` only when they are
+working directly in test or low-level R1CS code. Production construction should
+not pass a source table around. Sumcheck commitments, domains, and statements
+come from `jolt-sumcheck`; BlindFold owns the source-variable linkage while
+building the protocol.
+
 `jolt-verifier` owns the Jolt-specific construction of the BlindFold instance.
 Per-stage committed consistency should stay visible in the same linear
 `stage*/verify.rs` flow as the clear checks. Shared committed-stage boundary
-helpers live in `stages/committed.rs`; do not keep a placeholder `zk.rs`
-module before there is concrete final BlindFold verifier logic to put there.
+helpers live under `stages/zk/`, with explicit `inputs.rs` and `outputs.rs`
+contracts just like the numbered stages. Do not add a top-level `zk` module or
+untyped helper bags for BlindFold wiring.
 
 The ZK verifier should use the same explicit sequencing discipline as the
 clear verifier. The production top-level verifier must remain one linear
@@ -367,7 +410,10 @@ proceeds in three tracks:
   sources before attempting the full proof.
 - final ZK verification track: once the full BlindFold R1CS instance exists,
   convert the BlindFold proof artifact, wire the vector-commitment verifier,
-  wire the PCS ZK opening path, and call `jolt_blindfold::verify`.
+  wire the PCS ZK opening path, and call `jolt_blindfold::verify` with a
+  dedicated `BlindFold` transcript. This call is only a production checkpoint
+  once the modular BlindFold R1CS shape is equivalent to the proof artifact
+  being verified.
 
 A full core ZK proof contains one BlindFold proof for the whole Jolt protocol.
 It cannot prove only a Stage 1 or Stage 2 prefix unless the fixture generator
@@ -483,14 +529,19 @@ crates/jolt-verifier/src/
       inputs.rs
       outputs.rs
       verify.rs
-    committed.rs
+    zk/
+      mod.rs
+      inputs.rs
+      outputs.rs
+      committed.rs
+      blindfold.rs
 ```
 
 Keep verifier preprocessing in top-level `preprocessing.rs`. Do not add a
 top-level `openings.rs` unless there is substantial verifier-owned logic to put
-there. Do not add `stages/blindfold.rs` or a placeholder `stages/zk.rs`;
-Jolt-specific committed and BlindFold boundary helpers should stay in
-`stages/committed.rs` until the final verifier logic has a concrete shape.
+there. Do not add `stages/blindfold.rs` or a top-level `zk` module;
+Jolt-specific committed and BlindFold boundary helpers should stay under
+`stages/zk/` and preserve explicit typed inputs/outputs.
 
 ## Verification Flow
 
@@ -542,9 +593,28 @@ pub fn verify<PCS, VC, T>(...) -> Result<(), VerifierError> {
         stages::stage8::deps(&stage6, &stage7),
     )?;
 
-    // When full ZK is implemented, verify the concrete BlindFold/PCS-ZK
-    // boundary here using typed stage outputs. Do not route through a
-    // placeholder ZK orchestration module.
+    if checked.zk {
+        let blindfold = stages::zk::blindfold::build(stages::zk::inputs::BlindFoldInputs {
+            checked: &checked,
+            preprocessing,
+            proof: &proof,
+            stage1: ...,
+            stage2: ...,
+            stage3: ...,
+            stage4: ...,
+            stage5: ...,
+            stage6: ...,
+            stage7: ...,
+            stage8: ...,
+        })?;
+        let mut blindfold_transcript = T::new(b"BlindFold");
+        proof.blindfold_proof()?.verify_blindfold::<T>(
+            &blindfold.protocol,
+            vc_setup,
+            &mut blindfold_transcript,
+        )?;
+        return Ok(());
+    }
 
     Ok(())
 }
@@ -787,8 +857,14 @@ struct TestCase {
 
 The harness has separate configured horizons for standard and ZK mode. The
 standard frontier currently reaches `Full`; the ZK test frontier currently
-reaches `Stage7` committed consistency while BlindFold instance construction and
-final ZK verification remain unwired. A completeness case passes when a valid
+reaches committed consistency through Stage 8 plus typed BlindFold protocol/R1CS
+construction. The modular BlindFold verifier call is wired for the native
+compact BlindFold proof shape, including structured random rows and explicit
+final-eval witness bindings. Real legacy core ZK fixtures still stop at
+`VerifierError::Unimplemented` until the modular BlindFold R1CS layout is
+audited against core and the imported proof artifact can be translated without
+changing its semantics.
+A completeness case passes when a valid
 proof reaches the configured horizon for its mode. Before the full verifier
 exists, reaching the next unimplemented stage is success; after the full
 verifier exists, success means `Ok(())`.
@@ -825,7 +901,7 @@ struct VerifierFrontiers {
 
 const CURRENT_VERIFIER_FRONTIERS: VerifierFrontiers = VerifierFrontiers {
     standard: VerifierCheckpoint::Full,
-    zk: VerifierCheckpoint::Stage7,
+    zk: VerifierCheckpoint::Stage8Openings,
 };
 ```
 
@@ -848,13 +924,15 @@ BlindFold proof verification as the production frontier:
   committed proof statement/order/round counts, and returns typed outputs. The
   verifier still returns `VerifierError::Unimplemented` after the consistency
   milestone until the full `Zk` checkpoint is implemented;
-- second, wire the BlindFold R1CS lowering track incrementally. Each stage adds
-  typed claim sources and constraints to the lowered instance using
-  `jolt-claims` formula metadata. Tests should inspect the constructed R1CS
-  shape and source coverage before the full proof is verified;
-- third, once the full BlindFold R1CS instance exists, wire final ZK
-  verification: convert the proof, verify vector-commitment openings, verify
-  the PCS ZK opening path, and call `jolt_blindfold::verify`.
+- second, wire the BlindFold R1CS lowering track from the typed stage outputs.
+  Each stage contributes committed consistency, output-claim row ids, aliases
+  for reused claims, public/challenge values, and `jolt-claims` formula
+  metadata to `BlindFoldProtocol::builder()`. Tests should inspect the
+  constructed R1CS shape and source coverage before the full proof is verified;
+- third, once the full BlindFold R1CS instance is equivalent to the proof
+  artifact, wire final ZK verification: convert the proof, verify
+  vector-commitment openings, verify the PCS ZK opening path, and call
+  `jolt_blindfold::verify`.
 
 Full BlindFold proof verification is a separate unlock. A full core ZK proof
 has a single BlindFold proof for all stages, so it is not by itself a partial
@@ -2090,6 +2168,19 @@ Current implementation status:
   API, calls `PCS::verify`, and then binds opening inputs through the PCS API.
 - The Dory compatibility adapter uses scalar transcript challenges for opening
   verification, matching the core Dory transcript.
+- `jolt-openings::ZkOpeningScheme::verify_zk` returns the hidden evaluation
+  commitment from the PCS proof, and `bind_zk_opening_inputs` is owned by the
+  PCS trait. This keeps Stage 8 generic: it should not reach into Dory proof
+  internals to extract `y_com` or know Dory transcript labels.
+- Stage 8 ZK opening verification is wired through the generic PCS ZK API. The
+  ZK branch builds the same final opening order as clear Stage 8, skips
+  `rlc_claims`, combines commitments with the sampled gamma powers, calls
+  `PCS::verify_zk`, binds the hidden evaluation commitment, and then returns a
+  typed `Stage8Output::Zk` for the future BlindFold lowering.
+- Pedersen/vector-commitment transcript payloads must use core's compressed
+  curve-point encoding. This is owned by `jolt-crypto`'s BN254 G1/G2
+  `AppendToTranscript` implementation; stages should not hand-roll commitment
+  serialization.
 - The standard frontier is `Full`: real core standard completeness fixtures,
   including the advice consumer fixture, are accepted through final opening
   verification.
@@ -2102,9 +2193,12 @@ Current implementation status:
   verifier rejects mixed proof shapes, requires committed stage proofs plus a ZK
   claim payload in ZK mode, validates the vector-commitment setup once against
   the BlindFold generator capacity used by core, checks committed
-  consistency through Stage 7 on real core ZK fixtures, and then stops at
-  `VerifierError::Unimplemented`. Later stage outputs preserve the data needed
-  to construct BlindFold public inputs as internal ZK milestones are wired.
+  consistency through Stage 8's PCS ZK opening path on real core ZK fixtures,
+  builds the typed `BlindFoldProtocol`/R1CS instance from Stage 1-8 ZK outputs,
+  and wires the modular BlindFold verification call. Legacy core fixtures still
+  stop at `VerifierError::Unimplemented` at that boundary because core's current
+  BlindFold proof artifact has a different R1CS row layout than the modular
+  protocol being built.
 
 ### 13. ZK: Committed Consistency, BlindFold R1CS, And Final Verification
 
@@ -2114,67 +2208,133 @@ verification once the whole protocol instance is available.
 
 Current status:
 
-- There is no placeholder `stages/zk.rs`. The concrete ZK frontier code lives
-  either inline in the relevant stage verifier or in `stages/committed.rs` when
-  it is shared committed-boundary logic.
+- The concrete ZK frontier code lives either inline in the relevant stage
+  verifier or under `stages/zk/` when it is shared committed-boundary logic.
+  That module mirrors the stage folder pattern with `inputs.rs`, `outputs.rs`,
+  and concrete helpers; there is no top-level `zk` module.
 - The top-level verifier enforces committed proof shape in ZK mode and rejects
   clear claims in ZK proofs.
 - Clear stages 1-7 already call the clear-only claim-taking sumcheck APIs
   from `jolt-sumcheck`. ZK branches use statement-only committed consistency
   APIs so hidden scalar claims are never represented as placeholder values.
-- Stage 1 through Stage 7 committed consistency is wired directly in the
+- Stage 1 through Stage 8 committed/ZK consistency is wired directly in the
   corresponding `stage*/verify.rs` files. These branches consume statement-only
   committed sumchecks,
   derive transcript challenges, require the committed output claims to have the
   chunk count implied by the prevalidated VC capacity and typed hidden-claim
-  count, return typed public/consistency outputs, and stop before BlindFold.
-- ZK tampering tests now cover the committed frontier through Stage 7: missing
+  count, and return typed public/consistency outputs for BlindFold construction.
+  Stage 8 additionally verifies the final PCS opening in ZK mode and returns
+  the hidden evaluation commitment for BlindFold.
+- `stages/zk/blindfold.rs` builds the full Jolt BlindFold protocol from typed
+  Stage 1-8 ZK outputs. It passes committed consistency, committed output-claim
+  rows, explicit opening ids, alias links for reused hidden claims, domain
+  specs, public/challenge scalars, and the Stage 8 final-opening binding into
+  `BlindFoldProtocol::builder()`. It does not pass maps or source tables through
+  `jolt-verifier`; source-variable linkage remains internal to
+  `jolt-blindfold`.
+- ZK tampering tests now cover the committed frontier through Stage 8: missing
   VC setup, Stage 1 committed round count, Stage 2 uni-skip and batch output
   commitment count, Stage 3 batch round count/degree/output commitments, and
   Stage 4, Stage 5, Stage 6, and Stage 7 batch round count/degree/output
-  commitments.
+  commitments, plus malformed/missing Dory ZK evaluation commitment in the
+  joint opening proof.
 - `JoltVerifierPreprocessing` carries the vector-commitment setup needed by
   BlindFold. `validate_inputs` checks that setup once against the shared
   BlindFold generator capacity (`MAX_BLINDFOLD_GENERATORS`), and the verifier's
   committed-stage boundary checks use the resulting capacity to validate
   output-claim commitment chunk counts. `jolt-sumcheck` does not know about this
   Jolt-specific VC sizing.
-- `compat` can preserve legacy core BlindFold artifacts, but it does not yet
-  convert them into the modular `jolt_blindfold::BlindFoldProof` type.
+- `compat` preserves legacy core BlindFold artifacts. The adapter attempts to
+  convert them into the modular `jolt_blindfold::BlindFoldProof` shape and use
+  the top-level `jolt_blindfold::verify` call when dimensions match. Today the
+  real core fixtures expose the remaining R1CS parity gap and therefore return
+  the configured ZK frontier sentinel.
 - The modular crates already provide most generic pieces: committed sumcheck
-  proof consistency checks, BlindFold protocol construction, vector-commitment
-  traits, and PCS ZK opening verification hooks.
+  proof consistency checks, statement-based BlindFold protocol construction,
+  vector-commitment traits, and PCS ZK opening verification hooks.
+- `jolt-blindfold` now uses the modular compact proof layout: random relaxed
+  witness rows are encoded as separate round/output-claim/auxiliary row
+  commitments, with identity padding reconstructed internally. It also binds
+  final PCS evaluation outputs and blindings to concrete folded-W witness
+  coordinates via additional vector-commitment openings before Spartan
+  verification. Those final eval/blinding variables occupy dedicated padded
+  witness rows; the verifier rejects non-zero material outside the opened slot
+  in those rows.
+
+Stage 8 ZK implementation status:
+
+- `stage8::Deps` and `Stage8Output` are split into clear/ZK variants, mirroring
+  Stage 6 and Stage 7. The clear variant keeps scalar opening claims and calls
+  `PCS::verify`; the ZK variant carries only public/committed data:
+  `opening_ids`, `constraint_coefficients`, final opening points,
+  `joint_commitment`, and the PCS hiding evaluation commitment.
+- The final opening order is derived from typed Stage 6/7 ZK outputs using the same
+  order as clear Stage 8: `RamInc`, `RdInc`, `InstructionRa*`, `BytecodeRa*`,
+  `RamRa*`, then optional trusted/untrusted advice.
+- In ZK mode, Stage 8 does not append `rlc_claims` and does not construct scalar
+  `VerifierOpeningClaim` values. Sample RLC gamma powers directly after the
+  final opening list is known, matching core.
+- It computes `constraint_coefficients = gamma_i * embedding_scale_i`. Dense
+  increment commitments use `Eq(r_address, 0)`. Advice commitments use
+  `advice_commitment_embedding_scale` against the advice final opening point.
+- It combines commitments with `PCS::combine`, calls `PCS::verify_zk`, then calls
+  `PCS::bind_zk_opening_inputs` with the returned hiding evaluation commitment.
+- It returns the ZK Stage 8 output to the top-level verifier, which consumes it
+  as the final-opening binding when constructing the BlindFold protocol. The
+  top-level verifier now calls the BlindFold payload verifier with a dedicated
+  `BlindFold` transcript; legacy core fixtures continue to stop at the
+  configured frontier until modular/core BlindFold R1CS parity is closed.
+
+BlindFold public-input preparation status:
+
+- The verifier builds the `BlindFoldProtocol` directly with `BlindFoldProtocol::builder()`
+  from the explicit `jolt-verifier` stage outputs. The builder consumes
+  already-verified committed consistency, committed output-claim row ids,
+  committed output-claim row commitments, sumcheck domain specs, public/challenge
+  scalars, and final-opening bindings; it does not re-verify committed proofs or
+  own transcript replay.
+- The builder input includes all seven committed stage proofs and the two
+  uni-skip first-round proofs in the same chain order as core. Stage 8 is
+  represented as a
+  `FinalOpeningBinding`: the protocol relation
+  `sum_i constraint_coefficients[i] * opening(opening_ids[i]) == joint_claim`,
+  with `joint_claim` hidden behind the PCS evaluation commitment and
+  BlindFold folded eval commitments. The final binding also carries the
+  evaluation-commitment blinding as a witness variable, and the verifier checks
+  fixed-coordinate folded-W openings for both the evaluation and blinding
+  variables. These variables are isolated in dedicated witness rows so the
+  coordinate openings do not reveal unrelated auxiliary witness values.
+- It uses the Stage 8 ZK output's hiding evaluation commitment as the
+  final-opening evaluation commitment when constructing `BlindFoldProtocol`.
+- It does not introduce generic opening maps in production verifier code. Any
+  source table needed for R1CS lowering is internal to `jolt-blindfold` and is
+  populated from the builder's explicit output-claim row ids. The verifier only
+  supplies typed ids, row lengths, commitments, and formulas.
 
 Tasks:
 
-- Inventory core ZK one-offs before wiring verifier code: committed sumcheck
-  transcript consistency checks, BlindFold stage configs, Pedersen/vector-commitment setup,
-  `commit_zk`, `open_zk`, `verify_zk`, Dory evaluation commitments, and
-  `bind_opening_inputs_zk` transcript effects.
-- Next implementation step: wire the Stage 8 ZK opening path and BlindFold
-  public-input preparation using the typed outputs established by Stages 1-7.
-- For each stage, add a committed sumcheck consistency branch directly beside
-  the clear branch. It should consume the committed proof(s), check the
-  committed transcript consistency, derive the same challenges as core, validate
-  public statement and ordering, and return typed outputs for later stages. This
-  branch is an internal milestone; it must still stop with
-  `VerifierError::Unimplemented` until the full `Zk` checkpoint is implemented.
-- For each stage, extend the BlindFold R1CS lowering using `jolt-claims`
-  formula metadata and typed claim sources. Do not add ID-keyed maps or generic
-  claim bags to the production verifier API.
+- Audit the constructed `BlindFoldProtocol` against core's BlindFold stage
+  config ordering, transcript prefix, and R1CS row dimensions before advancing
+  the ZK production frontier.
+- Keep the legacy core BlindFold proof adapter isolated under `compat`, with no
+  core BlindFold type leaking into production verifier modules.
+- Harden final proof verification by adding native modular fixtures once a
+  modular prover exists, and by closing the core/modular R1CS parity gap for
+  imported core ZK proofs.
 - Add missing modular support before papering over it in `jolt-verifier`:
-  uni-skip/centered-domain BlindFold stage metadata, transcript labels,
-  challenge-power helpers, claim-expression lowering, and final opening
-  commitments should live in their owning crates.
+  transcript labels, challenge-power helpers, claim-expression lowering, and
+  final opening commitments should live in their owning crates. Uni-skip and
+  centered-domain R1CS round sums now use `jolt-sumcheck::SumcheckDomainSpec`
+  plus `round_sum_coefficients`.
 - Decide whether to add prefix BlindFold fixtures. If yes, unlock per-stage
   BlindFold proof verification. If no, use each consistency milestone for
   committed consistency and R1CS-construction tests, and call
   `jolt_blindfold::verify` only at the full ZK frontier.
-- Convert existing core BlindFold proof artifacts under `compat`, with no core
-  BlindFold type leaking into production verifier modules.
-- Wire the full ZK opening path: committed final-opening reductions, PCS ZK
-  opening verification, Dory evaluation commitment extraction/binding, and the
-  BlindFold link to hidden opening claims.
+- Continue closing the imported-core ZK gap: committed final-opening reductions
+  and PCS ZK opening verification are wired, and the native BlindFold proof now
+  links hidden opening claims to folded-W coordinates. Remaining work is the
+  core/modular BlindFold R1CS parity gap and any adapter support needed to
+  translate legacy core artifacts without changing proof semantics.
 - Activate ZK completeness and soundness tests incrementally as each consistency
   milestone is wired; only update the production ZK frontier when the full
   BlindFold and PCS ZK opening path is implemented.

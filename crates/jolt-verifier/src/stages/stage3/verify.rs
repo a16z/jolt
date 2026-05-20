@@ -22,7 +22,7 @@ use super::{
     },
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::committed,
+    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::zk::committed,
     verifier::CheckedInputs, VerifierError,
 };
 
@@ -119,13 +119,14 @@ where
             stage: JoltStageId::SpartanShift,
             reason: error.to_string(),
         })?;
-        committed::require_output_claim_commitments(
-            checked,
-            &proof.stages.stage3_sumcheck_proof,
-            "stage3_sumcheck_proof",
-            STAGE3_BATCH_OUTPUT_CLAIMS,
-            JoltStageId::SpartanShift,
-        )?;
+        let batch_output_claims =
+            committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
+                checked,
+                proof: &proof.stages.stage3_sumcheck_proof,
+                proof_label: "stage3_sumcheck_proof",
+                output_claim_count: STAGE3_BATCH_OUTPUT_CLAIMS,
+                stage: JoltStageId::SpartanShift,
+            })?;
 
         return Ok(Stage3Output::Zk(Stage3ZkOutput {
             public: public(
@@ -133,6 +134,7 @@ where
                 consistency.batching_coefficients.clone(),
             ),
             batch_consistency: consistency,
+            batch_output_claims,
         }));
     }
 

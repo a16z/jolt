@@ -53,7 +53,9 @@ impl<F, O, P, C> ClaimSourceTable<F, O, P, C> {
     }
 }
 
-impl<F: Copy, O: Eq, P: Eq, C: Eq> ClaimSources<F> for ClaimSourceTable<F, O, P, C> {
+impl<F: Copy, O: PartialEq, P: PartialEq, C: PartialEq> ClaimSources<F>
+    for ClaimSourceTable<F, O, P, C>
+{
     type Opening = O;
     type Challenge = C;
     type Public = P;

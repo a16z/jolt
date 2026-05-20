@@ -36,7 +36,7 @@ use super::{
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
-    stages::{committed, stage4::Stage4ClearOutput},
+    stages::{stage4::Stage4ClearOutput, zk::committed},
     verifier::CheckedInputs,
     VerifierError,
 };
@@ -287,13 +287,14 @@ where
             + 2
             + usize::from(trusted_advice_claims.is_some())
             + usize::from(untrusted_advice_claims.is_some());
-        committed::require_output_claim_commitments(
-            checked,
-            &proof.stages.stage6_sumcheck_proof,
-            "stage6_sumcheck_proof",
-            committed_output_claims,
-            JoltStageId::BytecodeReadRaf,
-        )?;
+        let batch_output_claims =
+            committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
+                checked,
+                proof: &proof.stages.stage6_sumcheck_proof,
+                proof_label: "stage6_sumcheck_proof",
+                output_claim_count: committed_output_claims,
+                stage: JoltStageId::BytecodeReadRaf,
+            })?;
 
         let bytecode_point = consistency
             .try_instance_point(bytecode_claims.sumcheck.rounds)
@@ -452,6 +453,7 @@ where
                 consistency.batching_coefficients.clone(),
             ),
             batch_consistency: consistency,
+            batch_output_claims,
             bytecode_read_raf: BytecodeReadRafPublicOutput {
                 sumcheck_point: bytecode_point,
                 r_address: bytecode_opening_point.r_address,

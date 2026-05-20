@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 #[serde(bound(serialize = "C: Serialize", deserialize = "C: DeserializeOwned"))]
 pub struct BlindFoldProof<F: Field, C> {
     pub auxiliary_row_commitments: Vec<C>,
-    pub random_witness_row_commitments: Vec<C>,
+    pub random_round_commitments: Vec<C>,
+    pub random_output_claim_row_commitments: Vec<C>,
+    pub random_auxiliary_row_commitments: Vec<C>,
     pub random_error_row_commitments: Vec<C>,
     pub random_eval_commitments: Vec<C>,
     pub random_u: F,
@@ -22,4 +24,6 @@ pub struct BlindFoldProof<F: Field, C> {
     pub error_opening: VectorCommitmentOpening<F>,
     pub folded_eval_outputs: Vec<F>,
     pub folded_eval_blindings: Vec<F>,
+    pub folded_eval_output_openings: Vec<VectorCommitmentOpening<F>>,
+    pub folded_eval_blinding_openings: Vec<VectorCommitmentOpening<F>>,
 }

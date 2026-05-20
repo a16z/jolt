@@ -10,12 +10,13 @@ use crate::{
         JoltCommitments, JoltProof, JoltProofClaims, JoltRaCommitments, JoltStageProofs,
         TracePolynomialOrder,
     },
+    verifier::BlindFoldProofVerifier,
     VerifierError,
 };
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 use jolt_crypto::{
-    Bn254G1, Bn254GT, Commitment as ModularCommitment, Pedersen,
-    VectorCommitment as ModularVectorCommitment,
+    Bn254G1, Bn254GT, Commitment as ModularCommitment, HomomorphicCommitment, Pedersen,
+    VectorCommitment as ModularVectorCommitment, VectorCommitmentOpening,
 };
 use jolt_dory::{DoryCommitment, DoryProof, DoryScheme};
 use jolt_field::{Field as ModularField, Fr as ModularFr};
@@ -57,9 +58,16 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 
 #[cfg(feature = "zk")]
-use jolt_core::subprotocols::blindfold::BlindFoldProof;
+use jolt_blindfold::{
+    BlindFoldProof as ModularBlindFoldProof, BlindFoldProtocol as ModularBlindFoldProtocol,
+};
 #[cfg(not(feature = "zk"))]
 use jolt_core::zkvm::proof_serialization::Claims as CoreClaims;
+#[cfg(feature = "zk")]
+use jolt_core::{
+    poly::commitment::hyrax::HyraxOpeningProof, poly::unipoly::CompressedUniPoly,
+    subprotocols::blindfold::BlindFoldProof as CoreBlindFoldProof,
+};
 
 pub type JoltCoreProof<F, C, PCS, FS> = CoreJoltProof<F, C, PCS, FS>;
 
@@ -113,6 +121,7 @@ where
         Output = Self::VerifierRoundCommitment,
     >;
     type VerifierRoundCommitment: Copy
+        + HomomorphicCommitment<F::VerifierField>
         + jolt_transcript::AppendToTranscript
         + serde::Serialize
         + serde::de::DeserializeOwned;
@@ -456,7 +465,38 @@ fn core_dory_commitment_into_verifier(commitment: &CoreDoryCommitment) -> Bn254G
 
 #[cfg(feature = "zk")]
 #[derive(Clone)]
-pub struct LegacyBlindFoldProof<F: JoltField, C: JoltCurve<F = F>>(pub BlindFoldProof<F, C>);
+pub struct LegacyBlindFoldProof<F: JoltField, C: JoltCurve<F = F>>(pub CoreBlindFoldProof<F, C>);
+
+#[cfg(feature = "zk")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LegacyBlindFoldProofShape {
+    pub auxiliary_rows: usize,
+    pub random_round_commitment_rows: usize,
+    pub random_output_claim_rows: usize,
+    pub random_auxiliary_rows: usize,
+    pub random_error_rows: usize,
+    pub random_eval_commitments: usize,
+    pub cross_term_error_rows: usize,
+}
+
+#[cfg(feature = "zk")]
+impl<F, C> LegacyBlindFoldProof<F, C>
+where
+    F: JoltField,
+    C: JoltCurve<F = F>,
+{
+    pub fn shape(&self) -> LegacyBlindFoldProofShape {
+        LegacyBlindFoldProofShape {
+            auxiliary_rows: self.0.noncoeff_row_commitments.len(),
+            random_round_commitment_rows: self.0.random_instance.round_commitments.len(),
+            random_output_claim_rows: self.0.random_instance.output_claims_row_commitments.len(),
+            random_auxiliary_rows: self.0.random_instance.noncoeff_row_commitments.len(),
+            random_error_rows: self.0.random_instance.e_row_commitments.len(),
+            random_eval_commitments: self.0.random_instance.eval_commitments.len(),
+            cross_term_error_rows: self.0.cross_term_row_commitments.len(),
+        }
+    }
+}
 
 #[cfg(feature = "zk")]
 impl<F, C> Debug for LegacyBlindFoldProof<F, C>
@@ -497,10 +537,158 @@ where
         use ark_serialize::CanonicalDeserialize;
 
         let bytes = <Vec<u8> as Deserialize>::deserialize(deserializer)?;
-        BlindFoldProof::deserialize_compressed(&bytes[..])
+        CoreBlindFoldProof::deserialize_compressed(&bytes[..])
             .map(Self)
             .map_err(serde::de::Error::custom)
     }
+}
+
+#[cfg(feature = "zk")]
+impl<F, C> BlindFoldProofVerifier<F::VerifierField, C::VerifierVectorCommitment>
+    for LegacyBlindFoldProof<F, C>
+where
+    F: CoreFieldBridge,
+    F::VerifierField: jolt_transcript::AppendToTranscript,
+    C: CoreCurveBridge<F>,
+{
+    fn verify_blindfold<T>(
+        &self,
+        protocol: &ModularBlindFoldProtocol<F::VerifierField, C::VerifierRoundCommitment>,
+        vc_setup: &<C::VerifierVectorCommitment as ModularVectorCommitment>::Setup,
+        transcript: &mut T,
+    ) -> Result<(), VerifierError>
+    where
+        T: jolt_transcript::Transcript<Challenge = F::VerifierField>,
+    {
+        // Core fixtures were generated against core's BlindFold R1CS layout.
+        // The modular verifier call is wired, but imported proofs should only
+        // enter it once the modular protocol has the same row shape.
+        if legacy_blindfold_requires_core_r1cs::<F, C>(&self.0, protocol) {
+            return Err(VerifierError::Unimplemented);
+        }
+        let proof = legacy_blindfold_proof_into_modular::<F, C>(&self.0);
+        jolt_blindfold::verify::<F::VerifierField, C::VerifierVectorCommitment, T>(
+            protocol, &proof, vc_setup, transcript,
+        )
+        .map_err(|error| VerifierError::BlindFoldVerificationFailed {
+            reason: error.to_string(),
+        })
+    }
+}
+
+#[cfg(feature = "zk")]
+fn legacy_blindfold_proof_into_modular<F, C>(
+    proof: &CoreBlindFoldProof<F, C>,
+) -> ModularBlindFoldProof<F::VerifierField, C::VerifierRoundCommitment>
+where
+    F: CoreFieldBridge,
+    C: CoreCurveBridge<F>,
+{
+    ModularBlindFoldProof {
+        auxiliary_row_commitments: convert_g1_slice::<F, C>(&proof.noncoeff_row_commitments),
+        random_round_commitments: convert_g1_slice::<F, C>(
+            &proof.random_instance.round_commitments,
+        ),
+        random_output_claim_row_commitments: convert_g1_slice::<F, C>(
+            &proof.random_instance.output_claims_row_commitments,
+        ),
+        random_auxiliary_row_commitments: convert_g1_slice::<F, C>(
+            &proof.random_instance.noncoeff_row_commitments,
+        ),
+        random_error_row_commitments: convert_g1_slice::<F, C>(
+            &proof.random_instance.e_row_commitments,
+        ),
+        random_eval_commitments: convert_g1_slice::<F, C>(&proof.random_instance.eval_commitments),
+        random_u: proof.random_instance.u.into_verifier_field(),
+        cross_term_error_row_commitments: convert_g1_slice::<F, C>(
+            &proof.cross_term_row_commitments,
+        ),
+        outer_sumcheck: convert_compressed_sumcheck::<F>(&proof.spartan_proof),
+        az_rx: proof.az_r.into_verifier_field(),
+        bz_rx: proof.bz_r.into_verifier_field(),
+        cz_rx: proof.cz_r.into_verifier_field(),
+        inner_sumcheck: convert_compressed_sumcheck::<F>(&proof.inner_sumcheck_proof),
+        witness_opening: convert_hyrax_opening::<F>(&proof.w_opening),
+        error_opening: convert_hyrax_opening::<F>(&proof.e_opening),
+        folded_eval_outputs: convert_field_slice(&proof.folded_eval_outputs),
+        folded_eval_blindings: convert_field_slice(&proof.folded_eval_blindings),
+        folded_eval_output_openings: Vec::new(),
+        folded_eval_blinding_openings: Vec::new(),
+    }
+}
+
+#[cfg(feature = "zk")]
+fn legacy_blindfold_requires_core_r1cs<F, C>(
+    proof: &CoreBlindFoldProof<F, C>,
+    protocol: &ModularBlindFoldProtocol<F::VerifierField, C::VerifierRoundCommitment>,
+) -> bool
+where
+    F: CoreFieldBridge,
+    C: CoreCurveBridge<F>,
+{
+    proof.noncoeff_row_commitments.len() != protocol.dimensions.auxiliary_rows
+        || proof.random_instance.noncoeff_row_commitments.len()
+            != protocol.dimensions.auxiliary_rows
+        || proof.random_instance.e_row_commitments.len() != protocol.dimensions.error.row_count
+        || proof.cross_term_row_commitments.len() != protocol.dimensions.error.row_count
+}
+
+#[cfg(feature = "zk")]
+fn convert_g1_slice<F, C>(commitments: &[C::G1]) -> Vec<C::VerifierRoundCommitment>
+where
+    F: CoreFieldBridge,
+    C: CoreCurveBridge<F>,
+{
+    commitments
+        .iter()
+        .copied()
+        .map(C::g1_into_verifier)
+        .collect()
+}
+
+#[cfg(feature = "zk")]
+fn convert_compressed_sumcheck<F>(
+    proof: &[CompressedUniPoly<F>],
+) -> CompressedSumcheckProof<F::VerifierField>
+where
+    F: CoreFieldBridge,
+{
+    CompressedSumcheckProof {
+        round_polynomials: proof.iter().map(convert_compressed_poly_ref).collect(),
+    }
+}
+
+#[cfg(feature = "zk")]
+fn convert_compressed_poly_ref<F>(poly: &CompressedUniPoly<F>) -> CompressedPoly<F::VerifierField>
+where
+    F: CoreFieldBridge,
+{
+    CompressedPoly::new(convert_field_slice(&poly.coeffs_except_linear_term))
+}
+
+#[cfg(feature = "zk")]
+fn convert_hyrax_opening<F>(
+    proof: &HyraxOpeningProof<F>,
+) -> VectorCommitmentOpening<F::VerifierField>
+where
+    F: CoreFieldBridge,
+{
+    VectorCommitmentOpening {
+        combined_vector: convert_field_slice(&proof.combined_row),
+        combined_blinding: proof.combined_blinding.into_verifier_field(),
+    }
+}
+
+#[cfg(feature = "zk")]
+fn convert_field_slice<F>(values: &[F]) -> Vec<F::VerifierField>
+where
+    F: CoreFieldBridge,
+{
+    values
+        .iter()
+        .copied()
+        .map(CoreFieldBridge::into_verifier_field)
+        .collect()
 }
 
 #[cfg(not(feature = "zk"))]

@@ -84,9 +84,12 @@ pub const fn input_column(input_index: usize) -> Option<usize> {
 const TWOS_COMPLEMENT_BIAS: i128 = 0x1_0000_0000_0000_0000;
 
 use crate::constraint::{ConstraintMatrixEvalError, SparseRow};
-use jolt_claims::protocols::jolt::formulas::spartan::{
-    SpartanOuterClaimError, SpartanOuterDimensions, SpartanOuterLinearForms,
-    SpartanOuterRemainderPlan,
+use jolt_claims::protocols::jolt::{
+    formulas::spartan::{
+        SpartanOuterClaimError, SpartanOuterDimensions, SpartanOuterLinearForms,
+        SpartanOuterRemainderPlan,
+    },
+    SpartanOuterPublic,
 };
 use jolt_field::Field;
 use thiserror::Error as ThisError;
@@ -192,6 +195,15 @@ impl<F: Field> Rv64SpartanOuterRemainder<F> {
                 self.linear_forms.bz_constant,
                 r1cs_input_openings,
             ))
+    }
+
+    pub fn public_claims(
+        &self,
+        dimensions: &SpartanOuterDimensions,
+    ) -> Result<Vec<(SpartanOuterPublic, F)>, Rv64SpartanOuterRemainderError> {
+        SpartanOuterRemainderPlan::from_dimensions(dimensions)
+            .public_claims(self.tau_kernel, &self.linear_forms)
+            .map_err(Into::into)
     }
 }
 

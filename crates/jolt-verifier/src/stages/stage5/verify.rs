@@ -24,7 +24,7 @@ use super::{
     },
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::committed,
+    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::zk::committed,
     verifier::CheckedInputs, VerifierError,
 };
 
@@ -143,13 +143,14 @@ where
             stage: JoltStageId::InstructionReadRaf,
             reason: error.to_string(),
         })?;
-        committed::require_output_claim_commitments(
-            checked,
-            &proof.stages.stage5_sumcheck_proof,
-            "stage5_sumcheck_proof",
-            committed_output_claims,
-            JoltStageId::InstructionReadRaf,
-        )?;
+        let batch_output_claims =
+            committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
+                checked,
+                proof: &proof.stages.stage5_sumcheck_proof,
+                proof_label: "stage5_sumcheck_proof",
+                output_claim_count: committed_output_claims,
+                stage: JoltStageId::InstructionReadRaf,
+            })?;
 
         let instruction_point = consistency
             .try_instance_point(instruction_claims.sumcheck.rounds)
@@ -288,6 +289,7 @@ where
                 consistency.batching_coefficients.clone(),
             ),
             batch_consistency: consistency,
+            batch_output_claims,
             instruction_read_raf: InstructionReadRafPublicOutput {
                 sumcheck_point: instruction_point,
                 r_address: instruction_opening_point.r_address.clone(),

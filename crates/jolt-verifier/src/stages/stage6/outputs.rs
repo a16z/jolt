@@ -4,6 +4,8 @@ use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_field::Field;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
+use crate::stages::zk::outputs::CommittedOutputClaimOutput;
+
 use super::inputs::Stage6Claims;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,6 +36,7 @@ pub struct Stage6ClearOutput<F: Field> {
 pub struct Stage6ZkOutput<F: Field, C> {
     pub public: Stage6PublicOutput<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
+    pub batch_output_claims: CommittedOutputClaimOutput<C>,
     pub bytecode_read_raf: BytecodeReadRafPublicOutput<F>,
     pub booleanity: BooleanityPublicOutput<F>,
     pub ram_hamming_booleanity: Stage6SumcheckPublicOutput<F>,

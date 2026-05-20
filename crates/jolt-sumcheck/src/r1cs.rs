@@ -2,7 +2,7 @@ use jolt_field::Field;
 use jolt_r1cs::{LinearCombination, R1csBuilder, Variable};
 use thiserror::Error;
 
-use crate::{SumcheckStatement, VerifiedCommittedRound};
+use crate::{BooleanHypercube, SumcheckDomain, SumcheckStatement, VerifiedCommittedRound};
 
 pub trait SumcheckR1csRound<F> {
     fn degree(&self) -> usize;
@@ -56,6 +56,14 @@ pub enum SumcheckR1csError {
     },
     #[error("layout references variable {variable:?} but builder has {num_vars} variables")]
     LayoutVariableOutOfBounds { variable: Variable, num_vars: usize },
+    #[error("round {round_index}: failed to derive round-sum coefficients: {reason}")]
+    RoundSumCoefficientsUnavailable { round_index: usize, reason: String },
+    #[error("round {round_index}: expected {expected} round-sum coefficients, got {actual}")]
+    RoundSumCoefficientCountMismatch {
+        round_index: usize,
+        expected: usize,
+        actual: usize,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,10 +138,46 @@ where
     F: Field,
     R: SumcheckR1csRound<F>,
 {
+    append_sumcheck_r1cs_constraints_for_domain(
+        builder,
+        statement,
+        rounds,
+        layout,
+        BooleanHypercube,
+    )
+}
+
+pub fn append_sumcheck_r1cs_constraints_for_domain<F, R, D>(
+    builder: &mut R1csBuilder<F>,
+    statement: SumcheckStatement,
+    rounds: &[R],
+    layout: &SumcheckR1csLayout,
+    domain: D,
+) -> Result<(), SumcheckR1csError>
+where
+    F: Field,
+    R: SumcheckR1csRound<F>,
+    D: SumcheckDomain<F>,
+{
     validate_layout(builder.num_vars(), statement, rounds, layout)?;
 
-    for (round_layout, round) in layout.rounds.iter().zip(rounds) {
-        append_round_constraints(builder, round_layout, round.challenge());
+    for (round_index, (round_layout, round)) in layout.rounds.iter().zip(rounds).enumerate() {
+        let round_sum_coefficients =
+            domain
+                .round_sum_coefficients(round.degree())
+                .map_err(
+                    |source| SumcheckR1csError::RoundSumCoefficientsUnavailable {
+                        round_index,
+                        reason: source.to_string(),
+                    },
+                )?;
+        append_round_constraints(
+            builder,
+            round_index,
+            round_layout,
+            round.challenge(),
+            &round_sum_coefficients,
+        )?;
     }
 
     Ok(())
@@ -238,19 +282,39 @@ fn validate_variable(variable: Variable, num_vars: usize) -> Result<(), Sumcheck
 
 fn append_round_constraints<F: Field>(
     builder: &mut R1csBuilder<F>,
+    round_index: usize,
     round: &SumcheckR1csRoundLayout,
     challenge: F,
-) {
-    builder.assert_equal(check_round_sum_lc(round), round.claim_in);
+    round_sum_coefficients: &[F],
+) -> Result<(), SumcheckR1csError> {
+    let round_sum = round_sum_lc(round_index, round, round_sum_coefficients)?;
+    builder.assert_equal(round_sum, round.claim_in);
     builder.assert_equal(
         polynomial_eval_lc(&round.coefficients, challenge),
         round.claim_out,
     );
+    Ok(())
 }
 
-fn check_round_sum_lc<F: Field>(round: &SumcheckR1csRoundLayout) -> LinearCombination<F> {
-    LinearCombination::variable(round.coefficients[0])
-        + polynomial_eval_lc(&round.coefficients, F::one())
+fn round_sum_lc<F: Field>(
+    round_index: usize,
+    round: &SumcheckR1csRoundLayout,
+    round_sum_coefficients: &[F],
+) -> Result<LinearCombination<F>, SumcheckR1csError> {
+    if round_sum_coefficients.len() != round.coefficients.len() {
+        return Err(SumcheckR1csError::RoundSumCoefficientCountMismatch {
+            round_index,
+            expected: round.coefficients.len(),
+            actual: round_sum_coefficients.len(),
+        });
+    }
+
+    Ok(round.coefficients.iter().zip(round_sum_coefficients).fold(
+        LinearCombination::zero(),
+        |sum, (&variable, &coefficient)| {
+            sum + LinearCombination::variable(variable).scale(coefficient)
+        },
+    ))
 }
 
 fn polynomial_eval_lc<F: Field>(coefficients: &[Variable], point: F) -> LinearCombination<F> {
@@ -380,6 +444,30 @@ mod tests {
 
         assign(&mut builder, layout.input_claim, 14);
         assign_round(&mut builder, &layout.rounds[0], &[7], 7);
+
+        let witness = builder.witness().expect("witness is assigned");
+        assert!(builder.into_matrices().check_witness(&witness).is_ok());
+    }
+
+    #[test]
+    fn emits_centered_integer_domain_round_sum_constraints() {
+        let statement = SumcheckStatement::new(1, 2);
+        let rounds = [round(2, 5)];
+        let mut builder = R1csBuilder::<Fr>::new();
+
+        let layout = allocate_sumcheck_r1cs_layout(&mut builder, statement, &rounds)
+            .expect("layout should allocate");
+        append_sumcheck_r1cs_constraints_for_domain(
+            &mut builder,
+            statement,
+            &rounds,
+            &layout,
+            crate::CenteredIntegerDomain::new(4),
+        )
+        .expect("constraints should build");
+
+        assign(&mut builder, layout.input_claim, 26);
+        assign_round(&mut builder, &layout.rounds[0], &[1, 2, 3], 86);
 
         let witness = builder.witness().expect("witness is assigned");
         assert!(builder.into_matrices().check_witness(&witness).is_ok());

@@ -106,13 +106,14 @@ pub use committed::{
     CommittedOutputClaims, CommittedRound, CommittedRoundWitness, CommittedSumcheckConsistency,
     CommittedSumcheckProof, VerifiedCommittedRound,
 };
-pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain};
+pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain, SumcheckDomainSpec};
 pub use error::SumcheckError;
 pub use proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
 #[cfg(feature = "r1cs")]
 pub use r1cs::{
-    allocate_sumcheck_r1cs_layout, append_sumcheck_r1cs_constraints, SumcheckR1csError,
-    SumcheckR1csLayout, SumcheckR1csRound, SumcheckR1csRoundLayout,
+    allocate_sumcheck_r1cs_layout, append_sumcheck_r1cs_constraints,
+    append_sumcheck_r1cs_constraints_for_domain, SumcheckR1csError, SumcheckR1csLayout,
+    SumcheckR1csRound, SumcheckR1csRoundLayout,
 };
 pub use round_proof::{ClearRound, CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
 pub use scalar::SumcheckScalar;

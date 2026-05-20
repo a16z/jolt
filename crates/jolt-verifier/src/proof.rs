@@ -78,6 +78,13 @@ where
             JoltProofClaims::Zk { .. } => Err(VerifierError::UnexpectedBlindFoldProof),
         }
     }
+
+    pub(crate) fn blindfold_proof(&self) -> Result<&ZkProof, VerifierError> {
+        match &self.claims {
+            JoltProofClaims::Clear(_) => Err(VerifierError::MissingBlindFoldProof),
+            JoltProofClaims::Zk { blindfold_proof } => Ok(blindfold_proof),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

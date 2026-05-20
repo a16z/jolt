@@ -165,6 +165,25 @@ const fn final_opening_standard(
     }
 }
 
+const fn final_opening_zk(
+    name: &'static str,
+    path: &'static str,
+    strategy: MutationStrategy,
+    coverage: TamperCoverage,
+    reason: &'static str,
+) -> TamperTarget {
+    TamperTarget {
+        name,
+        path,
+        mode: TamperMode::Zk,
+        first_checkpoint: VerifierCheckpoint::Stage8Openings,
+        disposition: TamperDisposition::CheckedByFinalOpenings,
+        strategy,
+        coverage,
+        reason,
+    }
+}
+
 const fn zk_target(
     name: &'static str,
     path: &'static str,
@@ -907,6 +926,13 @@ pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::Deferred,
         "final opening points are transcript-derived; stage sumcheck payload tampering covers point changes",
+    ),
+    final_opening_zk(
+        "zk.joint_opening_proof.eval_commitment",
+        "proof.joint_opening_proof.y_com",
+        MutationStrategy::RemoveItem,
+        TamperCoverage::Active,
+        "Stage 8 ZK opening verification rejects a missing Dory evaluation commitment",
     ),
     zk_target(
         "zk.blindfold_proof",

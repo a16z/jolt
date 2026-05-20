@@ -124,11 +124,19 @@ pub trait ZkOpeningScheme: CommitmentScheme {
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> (Self::Proof, Self::HidingCommitment, Self::Blind);
 
+    /// Verify a ZK opening proof and return the hiding commitment to the
+    /// evaluation that the proof binds internally.
     fn verify_zk(
         commitment: &Self::Output,
         point: &[Self::Field],
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Result<(), OpeningsError>;
+    ) -> Result<Self::HidingCommitment, OpeningsError>;
+
+    fn bind_zk_opening_inputs(
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        point: &[Self::Field],
+        hiding_commitment: &Self::HidingCommitment,
+    );
 }

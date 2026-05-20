@@ -8,6 +8,8 @@
 
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 use crate::support;
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+use crate::support::tamper_manifest;
 use crate::{
     soundness::tampering,
     support::{soundness_expectation, HarnessExpectation},
@@ -185,6 +187,16 @@ fn tampered_zk_stage7_batch_output_commitment_count_rejects_now() {
 }
 
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[test]
+fn tampered_zk_joint_opening_eval_commitment_rejects_now() {
+    assert_zk_target_active("zk.joint_opening_proof.eval_commitment");
+    let mut case = crate::support::core_fixtures::zk_muldiv_case();
+    case.proof.joint_opening_proof.0.y_com = None;
+
+    support::assert_zk_rejects_at_or_before_current_frontier(case.verify());
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
 fn pop_committed_round<F, C>(proof: &mut jolt_sumcheck::SumcheckProof<F, C>)
 where
     F: jolt_field::Field,
@@ -218,6 +230,16 @@ where
         panic!("ZK fixture must use committed sumcheck proofs");
     };
     let _ = proof.output_claims.commitments.pop();
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+fn assert_zk_target_active(name: &str) {
+    let target = tamper_manifest::required_target(name);
+    tamper_manifest::assert_manifest_target_is_active(target);
+    assert!(
+        target.mode.includes(true),
+        "tamper target mode does not include ZK: {target:?}"
+    );
 }
 
 #[cfg(any(not(feature = "core-fixtures"), not(feature = "zk")))]

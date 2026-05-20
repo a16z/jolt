@@ -311,6 +311,14 @@ impl ClearRound<Mersenne61> for LinearRound {
     fn evaluate(&self, challenge: Mersenne61) -> Mersenne61 {
         self.coeffs[0] + self.coeffs[1] * challenge
     }
+
+    fn coefficient_linear_combination(&self, coefficients: &[Mersenne61]) -> Mersenne61 {
+        self.coeffs
+            .iter()
+            .zip(coefficients)
+            .map(|(&coefficient, &scale)| coefficient * scale)
+            .sum()
+    }
 }
 
 fn build_rounds() -> (

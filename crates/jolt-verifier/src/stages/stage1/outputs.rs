@@ -3,10 +3,13 @@
 use jolt_field::Field;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
 
+use crate::stages::zk::outputs::CommittedOutputClaimOutput;
+
 use super::inputs::SpartanOuterClaims;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage1PublicOutput<F: Field> {
+    pub tau: Vec<F>,
     pub uniskip_challenge: F,
     pub remainder_batching_coefficient: F,
     pub remainder_challenges: Vec<F>,
@@ -24,7 +27,9 @@ pub struct Stage1ClearOutput<F: Field> {
 pub struct Stage1ZkOutput<F: Field, C> {
     pub public: Stage1PublicOutput<F>,
     pub uniskip_consistency: CommittedSumcheckConsistency<F, C>,
+    pub uniskip_output_claims: CommittedOutputClaimOutput<C>,
     pub remainder_consistency: BatchedCommittedSumcheckConsistency<F, C>,
+    pub remainder_output_claims: CommittedOutputClaimOutput<C>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

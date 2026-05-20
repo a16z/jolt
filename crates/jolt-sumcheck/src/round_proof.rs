@@ -19,6 +19,8 @@ pub trait RoundMessage {
 pub trait ClearRound<F: SumcheckScalar>: RoundMessage {
     fn evaluate(&self, challenge: F) -> F;
 
+    fn coefficient_linear_combination(&self, coefficients: &[F]) -> F;
+
     fn check_round_well_formed(&self, _round: usize) -> Result<(), SumcheckError<F>> {
         Ok(())
     }
@@ -39,6 +41,14 @@ impl<F: Field> RoundMessage for UnivariatePoly<F> {
 impl<F: Field> ClearRound<F> for UnivariatePoly<F> {
     fn evaluate(&self, challenge: F) -> F {
         UnivariatePoly::evaluate(self, challenge)
+    }
+
+    fn coefficient_linear_combination(&self, coefficients: &[F]) -> F {
+        self.coefficients()
+            .iter()
+            .zip(coefficients)
+            .map(|(&coefficient, &scale)| coefficient * scale)
+            .sum()
     }
 }
 
@@ -79,6 +89,13 @@ impl<F: Field> RoundMessage for LabeledRoundPoly<'_, F> {
 impl<F: Field> ClearRound<F> for LabeledRoundPoly<'_, F> {
     fn evaluate(&self, challenge: F) -> F {
         <UnivariatePoly<F> as ClearRound<F>>::evaluate(self.poly, challenge)
+    }
+
+    fn coefficient_linear_combination(&self, coefficients: &[F]) -> F {
+        <UnivariatePoly<F> as ClearRound<F>>::coefficient_linear_combination(
+            self.poly,
+            coefficients,
+        )
     }
 }
 
@@ -122,6 +139,13 @@ impl<F: Field> RoundMessage for CompressedLabeledRoundPoly<'_, F> {
 impl<F: Field> ClearRound<F> for CompressedLabeledRoundPoly<'_, F> {
     fn evaluate(&self, challenge: F) -> F {
         <UnivariatePoly<F> as ClearRound<F>>::evaluate(self.poly, challenge)
+    }
+
+    fn coefficient_linear_combination(&self, coefficients: &[F]) -> F {
+        <UnivariatePoly<F> as ClearRound<F>>::coefficient_linear_combination(
+            self.poly,
+            coefficients,
+        )
     }
 
     fn check_round_well_formed(&self, round: usize) -> Result<(), SumcheckError<F>> {

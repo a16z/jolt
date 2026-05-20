@@ -10,4 +10,6 @@ pub mod verifier;
 pub use error::VerifierError;
 pub use preprocessing::JoltVerifierPreprocessing;
 pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
-pub use verifier::{verify, CheckedInputs};
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+pub use verifier::{audit_zk_blindfold_protocol_shape, ZkBlindFoldProtocolShape};
+pub use verifier::{verify, BlindFoldProofVerifier, CheckedInputs};

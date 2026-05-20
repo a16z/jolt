@@ -2,7 +2,7 @@
 
 mod support;
 
-use jolt_blindfold::{r1cs, ClaimSourceTable, Inputs, InstanceClaims, R1csBuilder, StageClaims};
+use jolt_blindfold::{r1cs, BlindFoldStage, BlindFoldStatement, CommittedClaimRows};
 use jolt_claims::protocols::jolt::{
     formulas::{
         booleanity::{booleanity, BooleanityDimensions},
@@ -14,7 +14,8 @@ use jolt_claims::protocols::jolt::{
     JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltStageClaims, ReadWriteDimensions,
     TraceDimensions,
 };
-use jolt_sumcheck::SumcheckStatement;
+use jolt_r1cs::{ClaimSourceTable, R1csBuilder};
+use jolt_sumcheck::{SumcheckDomainSpec, SumcheckStatement};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use support::*;
@@ -129,13 +130,22 @@ fn build_jolt_stage_relation(
     values: &JoltSourceValues,
 ) -> Result<(), usize> {
     let statement = generated.statement;
-    let claims = InstanceClaims::new(vec![StageClaims::new(
-        "jolt-stage",
-        statement,
-        stage.input.expression.clone(),
-        stage.output.expression.clone(),
-    )]);
-    let inputs = Inputs::new(vec![stage_input(statement, &generated.proof)]);
+    let statement = BlindFoldStatement::new(
+        vec![BlindFoldStage::new(
+            "jolt-stage",
+            statement,
+            SumcheckDomainSpec::BooleanHypercube,
+            stage_consistency(statement, &generated.proof),
+            CommittedClaimRows::new(
+                Vec::new(),
+                statement.degree + 1,
+                generated.proof.output_claims.clone(),
+            ),
+            stage.input.expression.clone(),
+            stage.output.expression.clone(),
+        )],
+        Vec::new(),
+    );
 
     let mut builder = R1csBuilder::<F>::new();
     let mut sources = ClaimSourceTable::<F, JoltOpeningId, JoltPublicId, JoltChallengeId>::new();
@@ -149,9 +159,8 @@ fn build_jolt_stage_relation(
         sources.insert_public(id, value);
     }
 
-    let layout = r1cs::allocate_layout(&mut builder, &claims, &inputs).expect("layout allocates");
-    r1cs::append(&mut builder, &claims, &inputs, &layout, &mut sources)
-        .expect("constraints append");
+    let layout = r1cs::allocate_layout(&mut builder, &statement).expect("layout allocates");
+    r1cs::append(&mut builder, &statement, &layout, &mut sources).expect("constraints append");
     assign_generated_stage(&mut builder, &layout.stages[0].sumcheck, generated);
 
     let witness = builder.witness().expect("all witnesses assigned");
@@ -241,13 +250,22 @@ fn jolt_claims_pipeline_lowers_booleanity_relation() {
     });
     let statement = SumcheckStatement::new(jolt_stage.sumcheck.rounds, jolt_stage.sumcheck.degree);
     let generated = generate_zero_stage(&setup, statement.num_vars);
-    let claims = InstanceClaims::new(vec![StageClaims::new(
-        "jolt-booleanity",
-        statement,
-        jolt_stage.input.expression.clone(),
-        jolt_stage.output.expression.clone(),
-    )]);
-    let inputs = Inputs::new(vec![stage_input(statement, &generated.proof)]);
+    let statement = BlindFoldStatement::new(
+        vec![BlindFoldStage::new(
+            "jolt-booleanity",
+            statement,
+            SumcheckDomainSpec::BooleanHypercube,
+            stage_consistency(statement, &generated.proof),
+            CommittedClaimRows::new(
+                Vec::new(),
+                statement.degree + 1,
+                generated.proof.output_claims.clone(),
+            ),
+            jolt_stage.input.expression.clone(),
+            jolt_stage.output.expression.clone(),
+        )],
+        Vec::new(),
+    );
 
     let mut builder = R1csBuilder::<F>::new();
     let mut sources = ClaimSourceTable::<F, JoltOpeningId, JoltPublicId, JoltChallengeId>::new();
@@ -261,10 +279,8 @@ fn jolt_claims_pipeline_lowers_booleanity_relation() {
         sources.insert_public(public_id, f(11));
     }
 
-    let r1cs_layout =
-        r1cs::allocate_layout(&mut builder, &claims, &inputs).expect("layout allocates");
-    r1cs::append(&mut builder, &claims, &inputs, &r1cs_layout, &mut sources)
-        .expect("constraints append");
+    let r1cs_layout = r1cs::allocate_layout(&mut builder, &statement).expect("layout allocates");
+    r1cs::append(&mut builder, &statement, &r1cs_layout, &mut sources).expect("constraints append");
     assign_generated_stage(&mut builder, &r1cs_layout.stages[0].sumcheck, &generated);
 
     let witness = builder.witness().expect("all witnesses assigned");

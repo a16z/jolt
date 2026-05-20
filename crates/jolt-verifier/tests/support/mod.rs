@@ -32,7 +32,7 @@ impl VerifierFrontiers {
 
 pub const CURRENT_VERIFIER_FRONTIERS: VerifierFrontiers = VerifierFrontiers {
     standard: VerifierCheckpoint::Full,
-    zk: VerifierCheckpoint::Stage7,
+    zk: VerifierCheckpoint::Stage8Openings,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

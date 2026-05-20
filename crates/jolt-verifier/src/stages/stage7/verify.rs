@@ -29,12 +29,12 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        committed,
         stage4::Stage4ClearOutput,
         stage6::{
             outputs::{AdviceCyclePhasePublicOutput, VerifiedAdviceCyclePhaseSumcheck},
             Stage6ClearOutput, Stage6ZkOutput,
         },
+        zk::committed,
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -183,13 +183,14 @@ where
             + output_openings.ram_ra.len()
             + usize::from(trusted_advice_claims.is_some())
             + usize::from(untrusted_advice_claims.is_some());
-        committed::require_output_claim_commitments(
-            checked,
-            &proof.stages.stage7_sumcheck_proof,
-            "stage7_sumcheck_proof",
-            committed_output_claims,
-            JoltStageId::HammingWeightClaimReduction,
-        )?;
+        let batch_output_claims =
+            committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
+                checked,
+                proof: &proof.stages.stage7_sumcheck_proof,
+                proof_label: "stage7_sumcheck_proof",
+                output_claim_count: committed_output_claims,
+                stage: JoltStageId::HammingWeightClaimReduction,
+            })?;
 
         let hamming_point = batch_consistency
             .try_instance_point(hamming_claims.sumcheck.rounds)
@@ -241,6 +242,7 @@ where
                 batch_consistency.batching_coefficients.clone(),
             ),
             batch_consistency,
+            batch_output_claims,
             hamming_weight_claim_reduction: HammingWeightClaimReductionPublicOutput {
                 sumcheck_point: hamming_point,
                 opening_point: hamming_opening_point,

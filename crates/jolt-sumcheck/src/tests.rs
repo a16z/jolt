@@ -292,6 +292,15 @@ fn centered_integer_domain_exposes_power_sums() {
 
     assert_eq!(domain.start().unwrap(), -1);
     assert_eq!(domain.power_sums(4).unwrap(), vec![4, 2, 6, 8]);
+    assert_eq!(
+        <CenteredIntegerDomain as SumcheckDomain<F>>::round_sum_coefficients(&domain, 3).unwrap(),
+        vec![
+            F::from_u64(4),
+            F::from_u64(2),
+            F::from_u64(6),
+            F::from_u64(8)
+        ]
+    );
 }
 
 #[test]
@@ -1322,6 +1331,10 @@ impl RoundMessage for MockClearRound {
 impl ClearRound<F> for MockClearRound {
     fn evaluate(&self, _challenge: F) -> F {
         self.fixed_sum
+    }
+
+    fn coefficient_linear_combination(&self, coefficients: &[F]) -> F {
+        self.fixed_sum * coefficients[0]
     }
 }
 

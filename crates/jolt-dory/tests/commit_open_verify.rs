@@ -147,12 +147,14 @@ fn streaming_zk_commitment_is_blinded_and_verifies() {
     );
 
     let mut pt = Blake2bTranscript::new(b"stream-zk");
-    let (proof, _eval_com, _blind) =
+    let (proof, eval_com, _blind) =
         DoryScheme::open_zk(&poly, &point, eval, &prover_setup, hint, &mut pt);
 
     let mut vt = Blake2bTranscript::new(b"stream-zk");
-    DoryScheme::verify_zk(&commitment, &point, &proof, &verifier_setup, &mut vt)
-        .expect("streaming ZK commitment must verify");
+    let verified_eval_com =
+        DoryScheme::verify_zk(&commitment, &point, &proof, &verifier_setup, &mut vt)
+            .expect("streaming ZK commitment must verify");
+    assert_eq!(verified_eval_com, eval_com);
 }
 
 #[test]
@@ -354,12 +356,14 @@ fn zk_round_trip<T: Transcript<Challenge = Fr>>(num_vars: usize, seed: u64, labe
         <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup);
 
     let mut pt = T::new(label);
-    let (proof, _eval_com, _blind) =
+    let (proof, eval_com, _blind) =
         DoryScheme::open_zk(&poly, &point, eval, &prover_setup, hint, &mut pt);
 
     let mut vt = T::new(label);
-    DoryScheme::verify_zk(&commitment, &point, &proof, &verifier_setup, &mut vt)
-        .expect("ZK round-trip verification must succeed");
+    let verified_eval_com =
+        DoryScheme::verify_zk(&commitment, &point, &proof, &verifier_setup, &mut vt)
+            .expect("ZK round-trip verification must succeed");
+    assert_eq!(verified_eval_com, eval_com);
 }
 
 #[test]
@@ -474,7 +478,7 @@ fn zk_combined_commitment_and_hint_verify() {
     let eval = weighted_poly.evaluate(&point);
 
     let mut pt = Blake2bTranscript::new(b"zk-combined");
-    let (proof, _eval_com, _blind) = DoryScheme::open_zk(
+    let (proof, eval_com, _blind) = DoryScheme::open_zk(
         &weighted_poly,
         &point,
         eval,
@@ -484,7 +488,7 @@ fn zk_combined_commitment_and_hint_verify() {
     );
 
     let mut vt = Blake2bTranscript::new(b"zk-combined");
-    DoryScheme::verify_zk(
+    let verified_eval_com = DoryScheme::verify_zk(
         &combined_commitment,
         &point,
         &proof,
@@ -492,6 +496,7 @@ fn zk_combined_commitment_and_hint_verify() {
         &mut vt,
     )
     .expect("combined ZK commitment and hint must verify");
+    assert_eq!(verified_eval_com, eval_com);
 }
 
 #[test]

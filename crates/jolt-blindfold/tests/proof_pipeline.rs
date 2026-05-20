@@ -36,7 +36,7 @@ fn blindfold_protocol_pipeline_randomness_is_empirically_independent() {
     let mut projections = [
         StatisticalProjection::new("random_u", SAMPLES),
         StatisticalProjection::new("auxiliary_commitment", SAMPLES),
-        StatisticalProjection::new("random_witness_commitment", SAMPLES),
+        StatisticalProjection::new("random_round_commitment", SAMPLES),
         StatisticalProjection::new("random_error_commitment", SAMPLES),
         StatisticalProjection::new("cross_term_commitment", SAMPLES),
         StatisticalProjection::new("outer_sumcheck", SAMPLES),
@@ -57,8 +57,8 @@ fn blindfold_protocol_pipeline_randomness_is_empirically_independent() {
                 &full.proof.auxiliary_row_commitments[0],
             ),
             transcript_projection(
-                b"random_witness_commitment",
-                &full.proof.random_witness_row_commitments[0],
+                b"random_round_commitment",
+                &full.proof.random_round_commitments[0],
             ),
             transcript_projection(
                 b"random_error_commitment",
@@ -153,7 +153,7 @@ fn blindfold_protocol_pipeline_rejects_wrong_transcript() {
 fn blindfold_protocol_pipeline_rejects_tampered_random_commitment_row() {
     let mut rng = ChaCha20Rng::from_seed([77; 32]);
     let mut full = prove_blindfold_protocol_pipeline(&mut rng);
-    full.proof.random_witness_row_commitments.swap(0, 1);
+    full.proof.random_round_commitments.swap(0, 1);
 
     assert!(verify_blindfold_protocol_pipeline(&full).is_err());
 }
@@ -190,10 +190,75 @@ fn blindfold_protocol_pipeline_rejects_tampered_folded_eval_opening() {
 }
 
 #[test]
+fn blindfold_protocol_pipeline_rejects_tampered_folded_eval_blinding() {
+    let mut rng = ChaCha20Rng::from_seed([87; 32]);
+    let mut full = prove_blindfold_protocol_pipeline(&mut rng);
+    full.proof.folded_eval_blindings[0] += f(1);
+
+    assert!(verify_blindfold_protocol_pipeline(&full).is_err());
+}
+
+#[test]
+fn blindfold_protocol_pipeline_rejects_tampered_folded_eval_witness_opening() {
+    let mut rng = ChaCha20Rng::from_seed([85; 32]);
+    let mut full = prove_blindfold_protocol_pipeline(&mut rng);
+    full.proof.folded_eval_output_openings[0].combined_vector[0] += f(1);
+
+    assert!(verify_blindfold_protocol_pipeline(&full).is_err());
+}
+
+#[test]
+fn blindfold_protocol_pipeline_rejects_tampered_folded_eval_blinding_witness_opening() {
+    let mut rng = ChaCha20Rng::from_seed([86; 32]);
+    let mut full = prove_blindfold_protocol_pipeline(&mut rng);
+    full.proof.folded_eval_blinding_openings[0].combined_vector[0] += f(1);
+
+    assert!(verify_blindfold_protocol_pipeline(&full).is_err());
+}
+
+#[test]
+fn blindfold_protocol_pipeline_final_eval_openings_use_dedicated_rows() {
+    let mut rng = ChaCha20Rng::from_seed([88; 32]);
+    let full = prove_blindfold_protocol_pipeline(&mut rng);
+    let coordinates = full
+        .protocol
+        .final_opening_witness_coordinates()
+        .expect("final opening coordinates are valid");
+    let eval = coordinates[0]
+        .evaluation
+        .expect("final opening has an evaluation coordinate");
+    let blinding = coordinates[0]
+        .blinding
+        .expect("final opening has a blinding coordinate");
+
+    assert_eq!(eval.column, 0);
+    assert_eq!(blinding.column, 0);
+    assert_ne!(eval.row, blinding.row);
+    assert_eq!(
+        full.proof.folded_eval_output_openings[0].combined_vector[0],
+        full.proof.folded_eval_outputs[0]
+    );
+    assert_eq!(
+        full.proof.folded_eval_blinding_openings[0].combined_vector[0],
+        full.proof.folded_eval_blindings[0]
+    );
+    assert!(
+        full.proof.folded_eval_output_openings[0].combined_vector[1..]
+            .iter()
+            .all(|value| *value == f(0))
+    );
+    assert!(
+        full.proof.folded_eval_blinding_openings[0].combined_vector[1..]
+            .iter()
+            .all(|value| *value == f(0))
+    );
+}
+
+#[test]
 fn blindfold_protocol_pipeline_rejects_tampered_auxiliary_commitment() {
     let mut rng = ChaCha20Rng::from_seed([83; 32]);
     let mut full = prove_blindfold_protocol_pipeline(&mut rng);
-    full.proof.auxiliary_row_commitments[0] = full.proof.random_witness_row_commitments[0];
+    full.proof.auxiliary_row_commitments[0] = full.proof.random_round_commitments[0];
 
     assert!(verify_blindfold_protocol_pipeline(&full).is_err());
 }
@@ -202,7 +267,8 @@ fn blindfold_protocol_pipeline_rejects_tampered_auxiliary_commitment() {
 fn blindfold_protocol_pipeline_rejects_tampered_output_claim_row_commitment() {
     let mut rng = ChaCha20Rng::from_seed([84; 32]);
     let mut full = prove_blindfold_protocol_pipeline(&mut rng);
-    full.protocol.output_claims[0].commitments[0] = full.proof.random_witness_row_commitments[0];
+    full.protocol.committed_output_claims[0].commitments[0] =
+        full.proof.random_round_commitments[0];
 
     assert!(verify_blindfold_protocol_pipeline(&full).is_err());
 }

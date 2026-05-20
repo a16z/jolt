@@ -26,7 +26,7 @@ use super::{
     },
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::committed,
+    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::zk::committed,
     verifier::CheckedInputs, VerifierError,
 };
 
@@ -161,13 +161,14 @@ where
             stage: JoltStageId::RegistersReadWriteChecking,
             reason: error.to_string(),
         })?;
-        committed::require_output_claim_commitments(
-            checked,
-            &proof.stages.stage4_sumcheck_proof,
-            "stage4_sumcheck_proof",
-            stage4_committed_output_claims(checked, proof),
-            JoltStageId::RegistersReadWriteChecking,
-        )?;
+        let batch_output_claims =
+            committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
+                checked,
+                proof: &proof.stages.stage4_sumcheck_proof,
+                proof_label: "stage4_sumcheck_proof",
+                output_claim_count: stage4_committed_output_claims(checked, proof),
+                stage: JoltStageId::RegistersReadWriteChecking,
+            })?;
 
         let registers_point = consistency
             .try_instance_point(registers_claims.sumcheck.rounds)
@@ -206,6 +207,7 @@ where
                 consistency.batching_coefficients.clone(),
             ),
             batch_consistency: consistency,
+            batch_output_claims,
             ram_val_check_public_eval,
             registers_read_write_opening_point: registers_opening_point.opening_point,
             ram_val_check_opening_point: ram_val_opening_point,

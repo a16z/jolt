@@ -4,6 +4,8 @@ use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_field::Field;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
+use crate::stages::zk::outputs::CommittedOutputClaimOutput;
+
 use super::inputs::Stage7Claims;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,6 +26,7 @@ pub struct Stage7ClearOutput<F: Field> {
 pub struct Stage7ZkOutput<F: Field, C> {
     pub public: Stage7PublicOutput<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
+    pub batch_output_claims: CommittedOutputClaimOutput<C>,
     pub hamming_weight_claim_reduction: HammingWeightClaimReductionPublicOutput<F>,
     pub trusted_advice_address_phase: Option<AdviceAddressPhasePublicOutput<F>>,
     pub untrusted_advice_address_phase: Option<AdviceAddressPhasePublicOutput<F>>,

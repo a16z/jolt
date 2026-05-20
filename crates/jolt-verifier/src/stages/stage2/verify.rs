@@ -39,7 +39,7 @@ use super::{
     },
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::committed,
+    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::zk::committed,
     verifier::CheckedInputs, VerifierError,
 };
 
@@ -66,6 +66,7 @@ struct Stage2ZkProductUniSkip<F: Field, C> {
     tau_high: F,
     product_uniskip_challenge: F,
     consistency: jolt_sumcheck::CommittedSumcheckConsistency<F, C>,
+    output_claims: committed::CommittedOutputClaimOutput<C>,
 }
 
 enum Stage2ProductUniSkip<F: Field, C> {
@@ -80,6 +81,7 @@ struct Stage2ZkBatch<F: Field, C> {
     instruction_gamma: F,
     output_address_challenges: Vec<F>,
     consistency: jolt_sumcheck::BatchedCommittedSumcheckConsistency<F, C>,
+    output_claims: committed::CommittedOutputClaimOutput<C>,
     ram_val_check_inputs: Stage2RamValCheckInputs<F>,
     ram_ra_claim_reduction_inputs: Stage2RamRaClaimReductionInputs<F>,
 }
@@ -174,7 +176,9 @@ where
             Ok(Stage2Output::Zk(Stage2ZkOutput {
                 public,
                 product_uniskip_consistency: product_uniskip.consistency,
+                product_uniskip_output_claims: product_uniskip.output_claims,
                 batch_consistency: batch.consistency,
+                batch_output_claims: batch.output_claims,
                 ram_val_check_inputs: batch.ram_val_check_inputs,
                 ram_ra_claim_reduction_inputs: batch.ram_ra_claim_reduction_inputs,
             }))
@@ -322,12 +326,14 @@ where
                     stage,
                     reason: error.to_string(),
                 })?;
-            committed::require_output_claim_commitments(
-                checked,
-                &proof.stages.stage2_uni_skip_first_round_proof,
-                "stage2_uni_skip_first_round_proof",
-                PRODUCT_UNISKIP_OUTPUT_CLAIMS,
-                stage,
+            let output_claims = committed::verify_output_claim_commitments(
+                committed::CommittedOutputClaimInputs {
+                    checked,
+                    proof: &proof.stages.stage2_uni_skip_first_round_proof,
+                    proof_label: "stage2_uni_skip_first_round_proof",
+                    output_claim_count: PRODUCT_UNISKIP_OUTPUT_CLAIMS,
+                    stage,
+                },
             )?;
             let [round] = consistency.rounds.as_slice() else {
                 return Err(VerifierError::StageClaimSumcheckFailed {
@@ -342,6 +348,7 @@ where
                 tau_high,
                 product_uniskip_challenge: round.challenge,
                 consistency,
+                output_claims,
             }))
         }
     }
@@ -1031,12 +1038,14 @@ where
                 stage: JoltStageId::RamReadWriteChecking,
                 reason: error.to_string(),
             })?;
-            committed::require_output_claim_commitments(
-                checked,
-                &proof.stages.stage2_sumcheck_proof,
-                "stage2_sumcheck_proof",
-                STAGE2_BATCH_OUTPUT_CLAIMS,
-                JoltStageId::RamReadWriteChecking,
+            let output_claims = committed::verify_output_claim_commitments(
+                committed::CommittedOutputClaimInputs {
+                    checked,
+                    proof: &proof.stages.stage2_sumcheck_proof,
+                    proof_label: "stage2_sumcheck_proof",
+                    output_claim_count: STAGE2_BATCH_OUTPUT_CLAIMS,
+                    stage: JoltStageId::RamReadWriteChecking,
+                },
             )?;
             let ram_read_write_point = consistency
                 .try_instance_point(ram_read_write_claims.sumcheck.rounds)
@@ -1115,6 +1124,7 @@ where
                     ram_read_write_opening_point: ram_read_write_opening_point.opening_point,
                 },
                 consistency,
+                output_claims,
             }))
         }
         (Deps::Clear { .. }, Stage2ProductUniSkip::Zk(_)) => {

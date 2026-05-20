@@ -16,7 +16,7 @@ use super::outputs::{
     VerifiedSpartanOuterSumcheck,
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::committed,
+    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::zk::committed,
     verifier::CheckedInputs, VerifierError,
 };
 
@@ -60,20 +60,25 @@ where
                 stage,
                 reason: error.to_string(),
             })?;
-        committed::require_output_claim_commitments(
-            checked,
-            &proof.stages.stage1_uni_skip_first_round_proof,
-            "stage1_uni_skip_first_round_proof",
-            1,
-            stage,
-        )?;
+        let uniskip_output_claims =
+            committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
+                checked,
+                proof: &proof.stages.stage1_uni_skip_first_round_proof,
+                proof_label: "stage1_uni_skip_first_round_proof",
+                output_claim_count: 1,
+                stage,
+            })?;
         let [round] = consistency.rounds.as_slice() else {
             return Err(VerifierError::StageClaimSumcheckFailed {
                 stage,
                 reason: "uni-skip committed consistency did not produce one challenge".to_string(),
             });
         };
-        (round.challenge, None, Some(consistency))
+        (
+            round.challenge,
+            None,
+            Some((consistency, uniskip_output_claims)),
+        )
     } else {
         let claims = &proof.clear_claims()?.stage1;
         let uniskip_input_claim = PCS::Field::from_u64(0);
@@ -146,13 +151,14 @@ where
             stage,
             reason: error.to_string(),
         })?;
-        committed::require_output_claim_commitments(
-            checked,
-            &proof.stages.stage1_sumcheck_proof,
-            "stage1_sumcheck_proof",
-            dimensions.variables().len(),
-            stage,
-        )?;
+        let remainder_output_claims =
+            committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
+                checked,
+                proof: &proof.stages.stage1_sumcheck_proof,
+                proof_label: "stage1_sumcheck_proof",
+                output_claim_count: dimensions.variables().len(),
+                stage,
+            })?;
         let [remainder_batching_coefficient] = consistency.batching_coefficients.as_slice() else {
             return Err(VerifierError::StageClaimSumcheckFailed {
                 stage,
@@ -166,7 +172,7 @@ where
             *remainder_batching_coefficient,
             remainder_challenges,
             None,
-            Some(consistency),
+            Some((consistency, remainder_output_claims)),
         )
     } else {
         let claims = &proof.clear_claims()?.stage1;
@@ -242,18 +248,19 @@ where
     };
 
     let public = Stage1PublicOutput {
+        tau,
         uniskip_challenge,
         remainder_batching_coefficient,
         remainder_challenges,
     };
 
     if checked.zk {
-        let uniskip_consistency =
+        let (uniskip_consistency, uniskip_output_claims) =
             zk_uniskip_consistency.ok_or(VerifierError::StageClaimSumcheckFailed {
                 stage,
                 reason: "ZK Stage 1 uni-skip consistency is missing".to_string(),
             })?;
-        let remainder_consistency =
+        let (remainder_consistency, remainder_output_claims) =
             zk_remainder_consistency.ok_or(VerifierError::StageClaimSumcheckFailed {
                 stage,
                 reason: "ZK Stage 1 remainder consistency is missing".to_string(),
@@ -262,7 +269,9 @@ where
         return Ok(Stage1Output::Zk(Stage1ZkOutput {
             public,
             uniskip_consistency,
+            uniskip_output_claims,
             remainder_consistency,
+            remainder_output_claims,
         }));
     }
 
