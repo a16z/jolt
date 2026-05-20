@@ -161,7 +161,7 @@ where
                         .to_string(),
             });
         };
-        let remainder_challenges = consistency.consistency.challenges();
+        let remainder_challenges = consistency.challenges();
         (
             *remainder_batching_coefficient,
             remainder_challenges,

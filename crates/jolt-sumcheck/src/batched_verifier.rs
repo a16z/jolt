@@ -90,6 +90,74 @@ impl<F: Field> BatchedEvaluationClaim<F> {
     }
 }
 
+impl<F: Field, C> BatchedCommittedSumcheckConsistency<F, C> {
+    #[must_use]
+    pub const fn round_offset(&self, num_vars: usize) -> usize {
+        self.max_num_vars - num_vars
+    }
+
+    /// Returns the front-padding offset for an instance with `num_vars`.
+    ///
+    /// Batched committed verification uses the same front-loaded dummy-round
+    /// layout as clear batched verification, but it exposes only transcript
+    /// challenges and commitments, not scalar evaluation claims.
+    pub fn try_round_offset(&self, num_vars: usize) -> Result<usize, SumcheckError<F>> {
+        self.max_num_vars
+            .checked_sub(num_vars)
+            .ok_or(SumcheckError::BatchedPointOutOfRange {
+                offset: 0,
+                num_vars,
+                total: self.consistency.rounds.len(),
+            })
+    }
+
+    pub fn challenges(&self) -> Vec<F>
+    where
+        F: Copy,
+    {
+        self.consistency
+            .rounds
+            .iter()
+            .map(|round| round.challenge)
+            .collect()
+    }
+
+    /// Returns the suffix challenge vector for an instance with `num_vars`.
+    pub fn try_instance_point(&self, num_vars: usize) -> Result<Vec<F>, SumcheckError<F>>
+    where
+        F: Copy,
+    {
+        self.try_instance_point_at(self.try_round_offset(num_vars)?, num_vars)
+    }
+
+    /// Returns a challenge vector starting at `offset`.
+    ///
+    /// This is useful for protocols whose instance point is embedded inside the
+    /// batched challenge vector but not necessarily at the canonical suffix
+    /// offset.
+    pub fn try_instance_point_at(
+        &self,
+        offset: usize,
+        num_vars: usize,
+    ) -> Result<Vec<F>, SumcheckError<F>>
+    where
+        F: Copy,
+    {
+        let end = offset
+            .checked_add(num_vars)
+            .ok_or(SumcheckError::BatchedPointRangeOverflow { offset, num_vars })?;
+        self.consistency
+            .rounds
+            .get(offset..end)
+            .ok_or(SumcheckError::BatchedPointOutOfRange {
+                offset,
+                num_vars,
+                total: self.consistency.rounds.len(),
+            })
+            .map(|rounds| rounds.iter().map(|round| round.challenge).collect())
+    }
+}
+
 /// Batched sumcheck verifier.
 ///
 /// Recomputes the combined claim with the same scaling and batching

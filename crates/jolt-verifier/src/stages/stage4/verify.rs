@@ -14,19 +14,20 @@ use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{block_selector_mle_msb, sparse_segments_mle_msb, try_eq_mle, LtPolynomial};
 use jolt_program::preprocess::PublicInitialRam;
-use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim};
+use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::{LabelWithCount, Transcript};
 
 use super::{
     inputs::{Deps, Stage4Claims},
     outputs::{
-        RamValCheckInitialEvaluation, Stage4Output, VerifiedRamValCheckAdviceContribution,
-        VerifiedStage4Batch, VerifiedStage4Sumcheck,
+        RamValCheckInitialEvaluation, Stage4ClearOutput, Stage4Output, Stage4PublicOutput,
+        Stage4ZkOutput, VerifiedRamValCheckAdviceContribution, VerifiedStage4Batch,
+        VerifiedStage4Sumcheck,
     },
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, verifier::CheckedInputs,
-    VerifierError,
+    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::committed,
+    verifier::CheckedInputs, VerifierError,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,23 +42,20 @@ struct Stage4BatchExpectedOutputClaims<F: Field> {
     ram_val_check: F,
 }
 
+const STAGE4_BATCH_BASE_OUTPUT_CLAIMS: usize = 7;
+
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
-    deps: Deps<'_, PCS::Field>,
-) -> Result<Stage4Output<PCS::Field>, VerifierError>
+    deps: Deps<'_, PCS::Field, VC::Output>,
+) -> Result<Stage4Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    if checked.zk {
-        return Err(VerifierError::Unimplemented);
-    }
-
-    let claims = &proof.clear_claims()?.stage4;
     let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;
     let trace_dimensions = TraceDimensions::new(log_t);
@@ -83,7 +81,16 @@ where
 
     let registers_gamma = transcript.challenge_scalar();
 
-    let ram_read_write_opening_point = &deps.stage2.batch.ram_read_write.opening_point;
+    let (ram_read_write_opening_point, ram_output_check_opening_point) = match deps {
+        Deps::Clear { stage2, .. } => (
+            &stage2.batch.ram_read_write.opening_point,
+            &stage2.batch.ram_output_check.opening_point,
+        ),
+        Deps::Zk { stage2, .. } => (
+            &stage2.ram_val_check_inputs.ram_read_write_opening_point,
+            &stage2.ram_val_check_inputs.ram_output_check_opening_point,
+        ),
+    };
     if ram_read_write_opening_point.len() != log_k + log_t {
         return Err(VerifierError::StageClaimPublicInputFailed {
             stage: JoltStageId::RamValCheck,
@@ -95,7 +102,7 @@ where
         });
     }
     let (r_address, r_cycle) = ram_read_write_opening_point.split_at(log_k);
-    if deps.stage2.batch.ram_output_check.opening_point != r_address {
+    if ram_output_check_opening_point != r_address {
         let [ram_val, ram_val_final] = ram::val_check_input_openings();
         return Err(VerifierError::StageClaimOpeningMismatch {
             stage: JoltStageId::RamValCheck,
@@ -104,11 +111,85 @@ where
         });
     }
 
-    let ram_val_check_init =
-        ram_val_check_initial_evaluation(checked, preprocessing, proof, claims, r_address)?;
+    let ram_val_check_public_eval =
+        public_initial_ram_evaluation(checked, preprocessing, r_address)?;
 
     append_ram_val_check_gamma_domain_separator(transcript);
     let ram_val_check_gamma = transcript.challenge_scalar();
+
+    let ram_val_check_sumcheck = ram::val_check_sumcheck(trace_dimensions);
+    if ram_val_check_sumcheck.degree == 0 {
+        return Err(VerifierError::InvalidStageSumcheckDegree {
+            stage: JoltStageId::RamValCheck,
+            degree: ram_val_check_sumcheck.degree,
+        });
+    }
+    if !matches!(
+        ram_val_check_sumcheck.domain,
+        JoltSumcheckDomain::BooleanHypercube
+    ) {
+        return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain {
+            stage: JoltStageId::RamValCheck,
+        });
+    }
+
+    let public =
+        |challenges: Vec<PCS::Field>, batching_coefficients: Vec<PCS::Field>| Stage4PublicOutput {
+            challenges,
+            batching_coefficients,
+            registers_gamma,
+            ram_val_check_gamma,
+        };
+
+    if checked.zk {
+        let Deps::Zk { .. } = deps else {
+            return Err(VerifierError::ExpectedCommittedProof { field: "stage3" });
+        };
+        let statements = [
+            SumcheckStatement::new(
+                registers_claims.sumcheck.rounds,
+                registers_claims.sumcheck.degree,
+            ),
+            SumcheckStatement::new(ram_val_check_sumcheck.rounds, ram_val_check_sumcheck.degree),
+        ];
+        let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
+            &statements,
+            &proof.stages.stage4_sumcheck_proof,
+            transcript,
+        )
+        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+            stage: JoltStageId::RegistersReadWriteChecking,
+            reason: error.to_string(),
+        })?;
+        committed::require_output_claim_commitments(
+            checked,
+            &proof.stages.stage4_sumcheck_proof,
+            "stage4_sumcheck_proof",
+            stage4_committed_output_claims(checked, proof),
+            JoltStageId::RegistersReadWriteChecking,
+        )?;
+
+        return Ok(Stage4Output::Zk(Stage4ZkOutput {
+            public: public(
+                consistency.challenges(),
+                consistency.batching_coefficients.clone(),
+            ),
+            batch_consistency: consistency,
+            ram_val_check_public_eval,
+        }));
+    }
+
+    let Deps::Clear { stage2, stage3, .. } = deps else {
+        return Err(VerifierError::ExpectedClearProof { field: "stage3" });
+    };
+    let claims = &proof.clear_claims()?.stage4;
+    let ram_val_check_init = ram_val_check_initial_evaluation(
+        checked,
+        proof,
+        claims,
+        r_address,
+        ram_val_check_public_eval,
+    )?;
 
     let ram_val_check_claims = ram::val_check::<PCS::Field>(
         trace_dimensions,
@@ -128,31 +209,13 @@ where
                 }),
         ),
     );
-    if ram_val_check_claims.sumcheck.degree == 0 {
-        return Err(VerifierError::InvalidStageSumcheckDegree {
-            stage: ram_val_check_claims.id,
-            degree: ram_val_check_claims.sumcheck.degree,
-        });
-    }
-    if !matches!(
-        ram_val_check_claims.sumcheck.domain,
-        JoltSumcheckDomain::BooleanHypercube
-    ) {
-        return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain {
-            stage: ram_val_check_claims.id,
-        });
-    }
 
     let [_right_operand_is_rs2, rs2_value_instruction, _right_operand_is_imm, _imm, _left_operand_is_rs1, rs1_value_instruction, _left_operand_is_pc, _unexpanded_pc] =
         instruction::input_virtualization_output_openings();
     let [_rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced] =
         registers_claim_reduction::claim_reduction_output_openings();
-    if deps
-        .stage3
-        .output_claims
-        .registers_claim_reduction
-        .rs1_value
-        != deps.stage3.output_claims.instruction_input.rs1_value
+    if stage3.output_claims.registers_claim_reduction.rs1_value
+        != stage3.output_claims.instruction_input.rs1_value
     {
         return Err(VerifierError::StageClaimOpeningMismatch {
             stage: JoltStageId::RegistersReadWriteChecking,
@@ -160,12 +223,8 @@ where
             right: rs1_value_instruction,
         });
     }
-    if deps
-        .stage3
-        .output_claims
-        .registers_claim_reduction
-        .rs2_value
-        != deps.stage3.output_claims.instruction_input.rs2_value
+    if stage3.output_claims.registers_claim_reduction.rs2_value
+        != stage3.output_claims.instruction_input.rs2_value
     {
         return Err(VerifierError::StageClaimOpeningMismatch {
             stage: JoltStageId::RegistersReadWriteChecking,
@@ -179,21 +238,16 @@ where
     let input_claims = Stage4BatchInputClaims {
         registers_read_write: registers_claims.input.expression.try_evaluate(
             |id| match *id {
-                id if id == rd_write_value => Ok(deps
-                    .stage3
+                id if id == rd_write_value => Ok(stage3
                     .output_claims
                     .registers_claim_reduction
                     .rd_write_value),
-                id if id == rs1_value => Ok(deps
-                    .stage3
-                    .output_claims
-                    .registers_claim_reduction
-                    .rs1_value),
-                id if id == rs2_value => Ok(deps
-                    .stage3
-                    .output_claims
-                    .registers_claim_reduction
-                    .rs2_value),
+                id if id == rs1_value => {
+                    Ok(stage3.output_claims.registers_claim_reduction.rs1_value)
+                }
+                id if id == rs2_value => {
+                    Ok(stage3.output_claims.registers_claim_reduction.rs2_value)
+                }
                 id => Err(VerifierError::MissingOpeningClaim { id }),
             },
             |id| match id {
@@ -206,8 +260,8 @@ where
         )?,
         ram_val_check: ram_val_check_claims.input.expression.try_evaluate(
             |id| match *id {
-                id if id == ram_val => Ok(deps.stage2.output_claims.ram_read_write.val),
-                id if id == ram_val_final => Ok(deps.stage2.output_claims.ram_output_check),
+                id if id == ram_val => Ok(stage2.output_claims.ram_read_write.val),
+                id if id == ram_val_final => Ok(stage2.output_claims.ram_output_check),
                 id if id == ram::val_check_advice_opening(JoltAdviceKind::Untrusted) => claims
                     .advice
                     .untrusted
@@ -263,7 +317,7 @@ where
             reason: error.to_string(),
         })?;
     let eq_cycle = try_eq_mle(
-        &deps.stage3.batch.registers_claim_reduction.opening_point,
+        &stage3.batch.registers_claim_reduction.opening_point,
         &registers_opening_point.r_cycle,
     )
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
@@ -354,8 +408,11 @@ where
         claims,
     )?;
 
-    Ok(Stage4Output {
-        challenges: batch.reduction.point.as_slice().to_vec(),
+    Ok(Stage4Output::Clear(Stage4ClearOutput {
+        public: public(
+            batch.reduction.point.as_slice().to_vec(),
+            batch.batching_coefficients.clone(),
+        ),
         output_claims: claims.clone(),
         ram_val_check_init,
         batch: VerifiedStage4Batch {
@@ -376,46 +433,20 @@ where
                 expected_output_claim: expected_outputs.ram_val_check,
             },
         },
-    })
+    }))
 }
 
 fn ram_val_check_initial_evaluation<PCS, VC, ZkProof>(
     checked: &CheckedInputs,
-    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     claims: &Stage4Claims<PCS::Field>,
     r_address: &[PCS::Field],
+    public_eval: PCS::Field,
 ) -> Result<RamValCheckInitialEvaluation<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    let public_initial_ram = PublicInitialRam::new(&preprocessing.program.ram, &checked.public_io)
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::RamValCheck,
-            reason: error.to_string(),
-        })?;
-    for segment in &public_initial_ram.segments {
-        let end = segment.start_index + segment.words.len();
-        if end > checked.ram_K {
-            return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RamValCheck,
-                reason: format!(
-                    "public initial RAM segment [{}, {}) exceeds RAM domain {}",
-                    segment.start_index, end, checked.ram_K
-                ),
-            });
-        }
-    }
-
-    let public_eval = sparse_segments_mle_msb(
-        public_initial_ram
-            .segments
-            .iter()
-            .map(|segment| (segment.start_index, segment.words.as_slice())),
-        r_address,
-    );
-
     let mut full_eval = public_eval;
     let mut advice_contributions = Vec::new();
     let untrusted_present = proof.untrusted_advice_commitment.is_some();
@@ -443,6 +474,55 @@ where
         advice_contributions,
         full_eval,
     })
+}
+
+fn public_initial_ram_evaluation<PCS, VC>(
+    checked: &CheckedInputs,
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    r_address: &[PCS::Field],
+) -> Result<PCS::Field, VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    let public_initial_ram = PublicInitialRam::new(&preprocessing.program.ram, &checked.public_io)
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltStageId::RamValCheck,
+            reason: error.to_string(),
+        })?;
+    for segment in &public_initial_ram.segments {
+        let end = segment.start_index + segment.words.len();
+        if end > checked.ram_K {
+            return Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltStageId::RamValCheck,
+                reason: format!(
+                    "public initial RAM segment [{}, {}) exceeds RAM domain {}",
+                    segment.start_index, end, checked.ram_K
+                ),
+            });
+        }
+    }
+
+    Ok(sparse_segments_mle_msb(
+        public_initial_ram
+            .segments
+            .iter()
+            .map(|segment| (segment.start_index, segment.words.as_slice())),
+        r_address,
+    ))
+}
+
+fn stage4_committed_output_claims<PCS, VC, ZkProof>(
+    checked: &CheckedInputs,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+) -> usize
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    STAGE4_BATCH_BASE_OUTPUT_CLAIMS
+        + usize::from(proof.untrusted_advice_commitment.is_some())
+        + usize::from(checked.trusted_advice_commitment_present)
 }
 
 fn collect_advice_contribution<F: Field>(

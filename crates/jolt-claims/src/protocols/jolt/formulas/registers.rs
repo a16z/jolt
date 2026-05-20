@@ -7,7 +7,11 @@ use super::super::{
     JoltStageId, JoltVirtualPolynomial, RegistersReadWriteChallenge,
     RegistersValEvaluationChallenge,
 };
-use super::dimensions::{ReadWriteDimensions, TraceDimensions};
+use super::dimensions::{JoltSumcheckSpec, ReadWriteDimensions, TraceDimensions};
+
+pub const fn read_write_checking_sumcheck(dimensions: ReadWriteDimensions) -> JoltSumcheckSpec {
+    dimensions.read_write_sumcheck()
+}
 
 pub fn read_write_checking<F>(dimensions: ReadWriteDimensions) -> JoltStageClaims<F>
 where
@@ -33,7 +37,7 @@ where
 
     JoltStageClaims::new(
         JoltStageId::RegistersReadWriteChecking,
-        dimensions.read_write_sumcheck(),
+        read_write_checking_sumcheck(dimensions),
         input,
         output,
     )
@@ -182,7 +186,7 @@ mod tests {
         assert_eq!(claims.id, JoltStageId::RegistersReadWriteChecking);
         assert_eq!(
             claims.sumcheck,
-            read_write_dimensions().read_write_sumcheck()
+            read_write_checking_sumcheck(read_write_dimensions())
         );
         assert_eq!(
             claims.input.required_openings,

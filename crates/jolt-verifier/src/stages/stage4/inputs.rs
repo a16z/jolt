@@ -1,28 +1,40 @@
-//! Typed clear-mode inputs consumed by stage 4.
+//! Typed inputs consumed by stage 4.
 
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
 use crate::stages::{
-    stage1::Stage1ClearOutput, stage2::Stage2ClearOutput, stage3::Stage3ClearOutput,
+    stage2::{Stage2ClearOutput, Stage2Output, Stage2ZkOutput},
+    stage3::{Stage3ClearOutput, Stage3Output, Stage3ZkOutput},
 };
 
 #[derive(Clone, Copy)]
-pub struct Deps<'a, F: Field> {
-    pub stage1: &'a Stage1ClearOutput<F>,
-    pub stage2: &'a Stage2ClearOutput<F>,
-    pub stage3: &'a Stage3ClearOutput<F>,
+pub enum Deps<'a, F: Field, C> {
+    Clear {
+        stage2: &'a Stage2ClearOutput<F>,
+        stage3: &'a Stage3ClearOutput<F>,
+    },
+    Zk {
+        stage2: &'a Stage2ZkOutput<F, C>,
+        stage3: &'a Stage3ZkOutput<F, C>,
+    },
 }
 
-pub fn deps<'a, F: Field>(
-    stage1: &'a Stage1ClearOutput<F>,
-    stage2: &'a Stage2ClearOutput<F>,
-    stage3: &'a Stage3ClearOutput<F>,
-) -> Deps<'a, F> {
-    Deps {
-        stage1,
-        stage2,
-        stage3,
+pub fn deps<'a, F: Field, C>(
+    stage2: &'a Stage2Output<F, C>,
+    stage3: &'a Stage3Output<F, C>,
+) -> Result<Deps<'a, F, C>, crate::VerifierError> {
+    match (stage2, stage3) {
+        (Stage2Output::Clear(stage2), Stage3Output::Clear(stage3)) => {
+            Ok(Deps::Clear { stage2, stage3 })
+        }
+        (Stage2Output::Zk(stage2), Stage3Output::Zk(stage3)) => Ok(Deps::Zk { stage2, stage3 }),
+        (Stage2Output::Clear(_), Stage3Output::Zk(_)) => {
+            Err(crate::VerifierError::ExpectedClearProof { field: "stage3" })
+        }
+        (Stage2Output::Zk(_), Stage3Output::Clear(_)) => {
+            Err(crate::VerifierError::ExpectedCommittedProof { field: "stage3" })
+        }
     }
 }
 

@@ -161,6 +161,10 @@ where
     )
 }
 
+pub const fn val_check_sumcheck(dimensions: TraceDimensions) -> JoltSumcheckSpec {
+    dimensions.sumcheck(3)
+}
+
 pub fn val_check<F>(dimensions: TraceDimensions, init: RamValCheckInit<F>) -> JoltStageClaims<F>
 where
     F: RingCore,
@@ -177,7 +181,7 @@ where
 
     JoltStageClaims::new(
         JoltStageId::RamValCheck,
-        dimensions.sumcheck(3),
+        val_check_sumcheck(dimensions),
         input,
         output,
     )
@@ -1194,7 +1198,7 @@ mod tests {
         let claims = val_check::<Fr>(trace_dimensions(), Fr::from_u64(3).into());
 
         assert_eq!(claims.id, JoltStageId::RamValCheck);
-        assert_eq!(claims.sumcheck, trace_dimensions().sumcheck(3));
+        assert_eq!(claims.sumcheck, val_check_sumcheck(trace_dimensions()));
         assert_eq!(
             claims.input.required_openings,
             val_check_input_openings().to_vec()

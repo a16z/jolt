@@ -1028,7 +1028,31 @@ fn batched_committed_consistency_uses_statements_without_clear_claims() {
     assert_eq!(consistency.batching_coefficients, batching_coefficients);
     assert_eq!(consistency.max_num_vars, 3);
     assert_eq!(consistency.max_degree, 2);
-    assert_eq!(consistency.consistency.challenges(), expected_challenges);
+    assert_eq!(consistency.challenges(), expected_challenges);
+    assert_eq!(consistency.try_round_offset(1).unwrap(), 2);
+    assert_eq!(
+        consistency.try_instance_point(1).unwrap(),
+        expected_challenges[2..].to_vec()
+    );
+    assert_eq!(
+        consistency.try_instance_point_at(0, 3).unwrap(),
+        expected_challenges
+    );
+    assert!(matches!(
+        consistency.try_instance_point(4),
+        Err(SumcheckError::BatchedPointOutOfRange {
+            offset: 0,
+            num_vars: 4,
+            total: 3
+        })
+    ));
+    assert!(matches!(
+        consistency.try_instance_point_at(usize::MAX, 1),
+        Err(SumcheckError::BatchedPointRangeOverflow {
+            offset: usize::MAX,
+            num_vars: 1
+        })
+    ));
     assert_eq!(verifier.state(), manual.state());
 }
 

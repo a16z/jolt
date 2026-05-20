@@ -129,7 +129,7 @@ where
 
         return Ok(Stage3Output::Zk(Stage3ZkOutput {
             public: public(
-                consistency.consistency.challenges(),
+                consistency.challenges(),
                 consistency.batching_coefficients.clone(),
             ),
             batch_consistency: consistency,

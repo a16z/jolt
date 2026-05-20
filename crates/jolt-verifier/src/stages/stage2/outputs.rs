@@ -30,6 +30,13 @@ pub struct Stage2ZkOutput<F: Field, C> {
     pub public: Stage2PublicOutput<F>,
     pub product_uniskip_consistency: CommittedSumcheckConsistency<F, C>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
+    pub ram_val_check_inputs: Stage2RamValCheckInputs<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage2RamValCheckInputs<F: Field> {
+    pub ram_read_write_opening_point: Vec<F>,
+    pub ram_output_check_opening_point: Vec<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

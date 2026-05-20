@@ -33,8 +33,8 @@ use jolt_transcript::Transcript;
 use super::{
     inputs::{Deps, Stage2BatchOutputOpeningClaims},
     outputs::{
-        Stage2ClearOutput, Stage2Output, Stage2PublicOutput, Stage2ZkOutput,
-        VerifiedProductUniSkip, VerifiedStage2Batch, VerifiedStage2Sumcheck,
+        Stage2ClearOutput, Stage2Output, Stage2PublicOutput, Stage2RamValCheckInputs,
+        Stage2ZkOutput, VerifiedProductUniSkip, VerifiedStage2Batch, VerifiedStage2Sumcheck,
     },
 };
 use crate::{
@@ -79,6 +79,7 @@ struct Stage2ZkBatch<F: Field, C> {
     instruction_gamma: F,
     output_address_challenges: Vec<F>,
     consistency: jolt_sumcheck::BatchedCommittedSumcheckConsistency<F, C>,
+    ram_val_check_inputs: Stage2RamValCheckInputs<F>,
 }
 
 enum Stage2Batch<F: Field, C> {
@@ -172,6 +173,7 @@ where
                 public,
                 product_uniskip_consistency: product_uniskip.consistency,
                 batch_consistency: batch.consistency,
+                ram_val_check_inputs: batch.ram_val_check_inputs,
             }))
         }
         (Stage2ProductUniSkip::Clear(_), Stage2Batch::Zk(_)) => {
@@ -1033,13 +1035,50 @@ where
                 STAGE2_BATCH_OUTPUT_CLAIMS,
                 JoltStageId::RamReadWriteChecking,
             )?;
+            let ram_read_write_point = consistency
+                .try_instance_point(ram_read_write_claims.sumcheck.rounds)
+                .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                    stage: JoltStageId::RamReadWriteChecking,
+                    reason: error.to_string(),
+                })?;
+            let ram_read_write_opening_point = read_write_dimensions
+                .read_write_opening_point(&ram_read_write_point)
+                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltStageId::RamReadWriteChecking,
+                    reason: error.to_string(),
+                })?;
+            let active_stage2_rounds = log_t + log_k;
+            let phase1_offset =
+                consistency
+                    .try_round_offset(active_stage2_rounds)
+                    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                        stage: JoltStageId::RamOutputCheck,
+                        reason: error.to_string(),
+                    })?
+                    + read_write_dimensions.phase1_num_rounds();
+            let ram_output_check_point = consistency
+                .try_instance_point_at(phase1_offset, ram_output_check_claims.sumcheck.rounds)
+                .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                    stage: JoltStageId::RamOutputCheck,
+                    reason: error.to_string(),
+                })?;
+            let ram_output_check_opening_point = read_write_dimensions
+                .address_opening_point(&ram_output_check_point)
+                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltStageId::RamOutputCheck,
+                    reason: error.to_string(),
+                })?;
 
             Ok(Stage2Batch::Zk(Stage2ZkBatch {
-                challenges: consistency.consistency.challenges(),
+                challenges: consistency.challenges(),
                 batching_coefficients: consistency.batching_coefficients.clone(),
                 ram_read_write_gamma,
                 instruction_gamma,
                 output_address_challenges,
+                ram_val_check_inputs: Stage2RamValCheckInputs {
+                    ram_read_write_opening_point: ram_read_write_opening_point.opening_point,
+                    ram_output_check_opening_point,
+                },
                 consistency,
             }))
         }

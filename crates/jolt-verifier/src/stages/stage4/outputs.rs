@@ -2,15 +2,37 @@
 
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_field::Field;
+use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
 use super::inputs::Stage4Claims;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage4Output<F: Field> {
+pub struct Stage4PublicOutput<F: Field> {
     pub challenges: Vec<F>,
+    pub batching_coefficients: Vec<F>,
+    pub registers_gamma: F,
+    pub ram_val_check_gamma: F,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage4ClearOutput<F: Field> {
+    pub public: Stage4PublicOutput<F>,
     pub output_claims: Stage4Claims<F>,
     pub batch: VerifiedStage4Batch<F>,
     pub ram_val_check_init: RamValCheckInitialEvaluation<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage4ZkOutput<F: Field, C> {
+    pub public: Stage4PublicOutput<F>,
+    pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
+    pub ram_val_check_public_eval: F,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Stage4Output<F: Field, C> {
+    Clear(Stage4ClearOutput<F>),
+    Zk(Stage4ZkOutput<F, C>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

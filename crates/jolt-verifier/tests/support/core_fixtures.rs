@@ -13,10 +13,13 @@
 
 use std::{
     env, fs,
-    io::{Cursor, Read},
+    io::{self, Cursor, Read},
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
 };
+
+#[cfg(unix)]
+use std::{os::fd::AsRawFd, os::raw::c_int};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::JoltDevice;
@@ -75,10 +78,11 @@ use jolt_core::{
     },
 };
 
+use jolt_core::poly::commitment::dory::ArkGT;
+
 #[cfg(not(feature = "zk"))]
 use jolt_core::{
     poly::{
-        commitment::dory::ArkGT,
         commitment::dory::{DoryContext, DoryGlobals},
         multilinear_polynomial::MultilinearPolynomial,
     },
@@ -88,6 +92,86 @@ use jolt_core::{
 static CORE_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
 const ARTIFACT_MAGIC: &[u8; 8] = b"JVCF0001";
 const REGENERATE_ARTIFACTS_ENV: &str = "JOLT_VERIFIER_REGENERATE_CORE_FIXTURES";
+const CORE_FIXTURE_LOCK_FILE: &str = "jolt-verifier-core-fixtures.lock";
+
+#[cfg(unix)]
+const LOCK_EX: c_int = 2;
+#[cfg(unix)]
+const LOCK_UN: c_int = 8;
+
+#[cfg(unix)]
+unsafe extern "C" {
+    fn flock(fd: c_int, operation: c_int) -> c_int;
+}
+
+#[cfg(unix)]
+struct CoreFixtureLock {
+    _guard: MutexGuard<'static, ()>,
+    file: fs::File,
+}
+
+#[cfg(not(unix))]
+struct CoreFixtureLock {
+    _guard: MutexGuard<'static, ()>,
+}
+
+#[cfg(unix)]
+impl Drop for CoreFixtureLock {
+    fn drop(&mut self) {
+        // SAFETY: `self.file` owns a live file descriptor for the lifetime of
+        // the guard. Unlocking in Drop mirrors the successful lock operation.
+        let _ = unsafe { flock(self.file.as_raw_fd(), LOCK_UN) };
+    }
+}
+
+#[cfg(unix)]
+fn core_fixture_lock() -> CoreFixtureLock {
+    let guard = CORE_FIXTURE_LOCK
+        .lock()
+        .expect("core fixture mutex poisoned");
+    let lock_path = env::temp_dir().join(CORE_FIXTURE_LOCK_FILE);
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .expect("open core fixture file lock");
+    lock_exclusive(&file);
+
+    CoreFixtureLock {
+        _guard: guard,
+        file,
+    }
+}
+
+#[cfg(not(unix))]
+fn core_fixture_lock() -> CoreFixtureLock {
+    CoreFixtureLock {
+        _guard: CORE_FIXTURE_LOCK
+            .lock()
+            .expect("core fixture mutex poisoned"),
+    }
+}
+
+#[cfg(unix)]
+fn lock_exclusive(file: &fs::File) {
+    loop {
+        // SAFETY: `file` owns a live file descriptor, and `LOCK_EX` is a valid
+        // `flock(2)` operation. The call blocks until the process-wide fixture
+        // lock is available.
+        let result = unsafe { flock(file.as_raw_fd(), LOCK_EX) };
+        if result == 0 {
+            return;
+        }
+        let error = io::Error::last_os_error();
+        assert_eq!(
+            error.kind(),
+            io::ErrorKind::Interrupted,
+            "lock core fixture file: {error}"
+        );
+    }
+}
 
 type CoreField = jolt_core::ark_bn254::Fr;
 type CoreProof = RV64IMACProof;
@@ -354,89 +438,76 @@ impl CoreZkVerifierCase {
 
 #[cfg(not(feature = "zk"))]
 pub fn standard_muldiv_case() -> CoreVerifierCase {
-    let _guard = CORE_FIXTURE_LOCK
-        .lock()
-        .expect("core fixture lock poisoned");
+    let _guard = core_fixture_lock();
     case_from_accepted_fixture(CoreFixtureKind::MulDivSmall, generate_muldiv)
 }
 
 #[cfg(not(feature = "zk"))]
 pub fn standard_muldiv_precompat_case() -> CorePrecompatVerifierCase {
-    let _guard = CORE_FIXTURE_LOCK
-        .lock()
-        .expect("core fixture lock poisoned");
+    let _guard = core_fixture_lock();
     precompat_case_from_accepted_fixture(CoreFixtureKind::MulDivSmall, generate_muldiv)
 }
 
 #[cfg(not(feature = "zk"))]
 pub fn standard_fibonacci_small_case() -> CoreVerifierCase {
-    let _guard = CORE_FIXTURE_LOCK
-        .lock()
-        .expect("core fixture lock poisoned");
+    let _guard = core_fixture_lock();
     case_from_accepted_fixture(CoreFixtureKind::FibonacciSmall, generate_fibonacci_small)
 }
 
 #[cfg(not(feature = "zk"))]
 pub fn standard_fibonacci_medium_case() -> CoreVerifierCase {
-    let _guard = CORE_FIXTURE_LOCK
-        .lock()
-        .expect("core fixture lock poisoned");
+    let _guard = core_fixture_lock();
     case_from_accepted_fixture(CoreFixtureKind::FibonacciMedium, generate_fibonacci_medium)
 }
 
 #[cfg(not(feature = "zk"))]
 pub fn standard_memory_ops_case() -> CoreVerifierCase {
-    let _guard = CORE_FIXTURE_LOCK
-        .lock()
-        .expect("core fixture lock poisoned");
+    let _guard = core_fixture_lock();
     case_from_accepted_fixture(CoreFixtureKind::MemoryOps, generate_memory_ops)
 }
 
 #[cfg(not(feature = "zk"))]
 pub fn standard_collatz_small_case() -> CoreVerifierCase {
-    let _guard = CORE_FIXTURE_LOCK
-        .lock()
-        .expect("core fixture lock poisoned");
+    let _guard = core_fixture_lock();
     case_from_accepted_fixture(CoreFixtureKind::CollatzSmall, generate_collatz_small)
 }
 
 #[cfg(not(feature = "zk"))]
 pub fn standard_sha2_small_case() -> CoreVerifierCase {
-    let _guard = CORE_FIXTURE_LOCK
-        .lock()
-        .expect("core fixture lock poisoned");
+    let _guard = core_fixture_lock();
     case_from_accepted_fixture(CoreFixtureKind::Sha2Small, generate_sha2_small)
 }
 
 #[cfg(feature = "zk")]
 pub fn zk_muldiv_case() -> CoreZkVerifierCase {
-    let _guard = CORE_FIXTURE_LOCK
-        .lock()
-        .expect("core fixture lock poisoned");
-    zk_case_from_accepted_fixture(generate_muldiv())
+    let _guard = core_fixture_lock();
+    let fixture = load_or_generate_fixture(CoreFixtureKind::ZkMulDivSmall, || {
+        let fixture = generate_muldiv();
+        assert_core_accepts(
+            &fixture,
+            fixture.proof.clone_via_bytes(),
+            fixture.public_io.clone(),
+        );
+        fixture
+    });
+    zk_case_from_parts(fixture)
 }
 
 #[cfg(not(feature = "zk"))]
 pub fn standard_advice_consumer_case() -> CoreVerifierCase {
-    let _guard = CORE_FIXTURE_LOCK
-        .lock()
-        .expect("core fixture lock poisoned");
+    let _guard = core_fixture_lock();
     case_from_accepted_fixture(CoreFixtureKind::AdviceConsumer, generate_advice_consumer)
 }
 
 #[cfg(not(feature = "zk"))]
 pub fn standard_advice_consumer_precompat_case() -> CorePrecompatVerifierCase {
-    let _guard = CORE_FIXTURE_LOCK
-        .lock()
-        .expect("core fixture lock poisoned");
+    let _guard = core_fixture_lock();
     precompat_case_from_accepted_fixture(CoreFixtureKind::AdviceConsumer, generate_advice_consumer)
 }
 
 #[cfg(not(feature = "zk"))]
 pub fn public_io_memory_layout_mismatch_case() -> CoreVerifierCase {
-    let _guard = CORE_FIXTURE_LOCK
-        .lock()
-        .expect("core fixture lock poisoned");
+    let _guard = core_fixture_lock();
     let fixture = generate_muldiv();
     let mut public_io = fixture.public_io.clone();
     public_io.memory_layout.heap_size += 1;
@@ -446,9 +517,7 @@ pub fn public_io_memory_layout_mismatch_case() -> CoreVerifierCase {
 
 #[cfg(not(feature = "zk"))]
 pub fn invalid_trace_length_case() -> CoreVerifierCase {
-    let _guard = CORE_FIXTURE_LOCK
-        .lock()
-        .expect("core fixture lock poisoned");
+    let _guard = core_fixture_lock();
     let mut fixture = generate_muldiv();
     fixture.proof.trace_length = 3;
     assert_core_rejects(
@@ -462,9 +531,7 @@ pub fn invalid_trace_length_case() -> CoreVerifierCase {
 
 #[cfg(not(feature = "zk"))]
 pub fn invalid_ram_k_case() -> CoreVerifierCase {
-    let _guard = CORE_FIXTURE_LOCK
-        .lock()
-        .expect("core fixture lock poisoned");
+    let _guard = core_fixture_lock();
     let mut fixture = generate_muldiv();
     fixture.proof.ram_K = 3;
     assert_core_rejects(
@@ -507,12 +574,7 @@ fn precompat_case_from_accepted_fixture(
 }
 
 #[cfg(feature = "zk")]
-fn zk_case_from_accepted_fixture(fixture: GeneratedCoreFixture) -> CoreZkVerifierCase {
-    assert_core_accepts(
-        &fixture,
-        fixture.proof.clone_via_bytes(),
-        fixture.public_io.clone(),
-    );
+fn zk_case_from_parts(fixture: GeneratedCoreFixture) -> CoreZkVerifierCase {
     CoreZkVerifierCase {
         preprocessing: convert_preprocessing(&fixture.core_preprocessing),
         public_io: fixture.public_io,
@@ -561,34 +623,49 @@ struct GeneratedCoreFixture {
     trusted_advice_commitment: Option<CoreCommitment>,
 }
 
-#[cfg(not(feature = "zk"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CoreFixtureKind {
+    #[cfg(not(feature = "zk"))]
     MulDivSmall,
+    #[cfg(not(feature = "zk"))]
     FibonacciSmall,
+    #[cfg(not(feature = "zk"))]
     FibonacciMedium,
+    #[cfg(not(feature = "zk"))]
     MemoryOps,
+    #[cfg(not(feature = "zk"))]
     CollatzSmall,
+    #[cfg(not(feature = "zk"))]
     Sha2Small,
+    #[cfg(not(feature = "zk"))]
     AdviceConsumer,
+    #[cfg(feature = "zk")]
+    ZkMulDivSmall,
 }
 
-#[cfg(not(feature = "zk"))]
 impl CoreFixtureKind {
     const fn artifact_name(self) -> &'static str {
         match self {
+            #[cfg(not(feature = "zk"))]
             Self::MulDivSmall => "standard-muldiv-small",
+            #[cfg(not(feature = "zk"))]
             Self::FibonacciSmall => "standard-fibonacci-small",
+            #[cfg(not(feature = "zk"))]
             Self::FibonacciMedium => "standard-fibonacci-medium",
+            #[cfg(not(feature = "zk"))]
             Self::MemoryOps => "standard-memory-ops",
+            #[cfg(not(feature = "zk"))]
             Self::CollatzSmall => "standard-collatz-small",
+            #[cfg(not(feature = "zk"))]
             Self::Sha2Small => "standard-sha2-small",
+            #[cfg(not(feature = "zk"))]
             Self::AdviceConsumer => "standard-advice-consumer",
+            #[cfg(feature = "zk")]
+            Self::ZkMulDivSmall => "zk-muldiv-small",
         }
     }
 }
 
-#[cfg(not(feature = "zk"))]
 fn load_or_generate_fixture(
     kind: CoreFixtureKind,
     generate: impl FnOnce() -> GeneratedCoreFixture,
@@ -600,22 +677,27 @@ fn load_or_generate_fixture(
     }
 
     let fixture = generate();
-    if regenerate {
+    if regenerate || cfg!(feature = "zk") {
         write_fixture_artifact(&path, &fixture);
     }
     fixture
 }
 
-#[cfg(not(feature = "zk"))]
 fn artifact_path(kind: CoreFixtureKind) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join("core")
-        .join(format!("{}.jvcf", kind.artifact_name()))
+    let filename = format!("{}.jvcf", kind.artifact_name());
+    if cfg!(feature = "zk") {
+        env::temp_dir()
+            .join("jolt-verifier-core-fixtures")
+            .join(filename)
+    } else {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("core")
+            .join(filename)
+    }
 }
 
-#[cfg(not(feature = "zk"))]
 fn write_fixture_artifact(path: &PathBuf, fixture: &GeneratedCoreFixture) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("create core fixture artifact directory");
@@ -650,7 +732,6 @@ fn write_fixture_artifact(path: &PathBuf, fixture: &GeneratedCoreFixture) {
     fs::write(path, bytes).expect("write core fixture artifact");
 }
 
-#[cfg(not(feature = "zk"))]
 fn read_fixture_artifact(path: &PathBuf) -> GeneratedCoreFixture {
     let bytes = fs::read(path).expect("read core fixture artifact");
     let mut cursor = Cursor::new(bytes.as_slice());
@@ -685,13 +766,11 @@ fn read_fixture_artifact(path: &PathBuf) -> GeneratedCoreFixture {
     }
 }
 
-#[cfg(not(feature = "zk"))]
 fn write_section(out: &mut Vec<u8>, section: &[u8]) {
     out.extend_from_slice(&(section.len() as u64).to_le_bytes());
     out.extend_from_slice(section);
 }
 
-#[cfg(not(feature = "zk"))]
 fn read_section(cursor: &mut Cursor<&[u8]>) -> Vec<u8> {
     let mut len = [0; 8];
     cursor
@@ -704,7 +783,6 @@ fn read_section(cursor: &mut Cursor<&[u8]>) -> Vec<u8> {
     section
 }
 
-#[cfg(not(feature = "zk"))]
 fn serialize_core_commitment(commitment: CoreCommitment) -> Vec<u8> {
     let mut bytes = Vec::new();
     commitment
@@ -714,7 +792,6 @@ fn serialize_core_commitment(commitment: CoreCommitment) -> Vec<u8> {
     bytes
 }
 
-#[cfg(not(feature = "zk"))]
 fn deserialize_core_commitment(bytes: &[u8]) -> CoreCommitment {
     ArkGT(
         ark_bn254::Fq12::deserialize_compressed(Cursor::new(bytes))

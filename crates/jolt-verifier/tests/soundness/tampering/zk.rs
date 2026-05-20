@@ -1,3 +1,11 @@
+#![cfg_attr(
+    all(feature = "core-fixtures", feature = "zk"),
+    expect(
+        clippy::panic,
+        reason = "ZK tampering helpers assert fixture shape before mutating real core proofs"
+    )
+)]
+
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 use crate::support;
 use crate::{
@@ -64,6 +72,33 @@ fn tampered_zk_stage3_batch_round_degree_rejects_now() {
 fn tampered_zk_stage3_batch_output_commitment_count_rejects_now() {
     let mut case = crate::support::core_fixtures::zk_muldiv_case();
     pop_committed_output_claim_row(&mut case.proof.stages.stage3_sumcheck_proof);
+
+    support::assert_zk_rejects_at_or_before_current_frontier(case.verify());
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[test]
+fn tampered_zk_stage4_batch_round_count_rejects_now() {
+    let mut case = crate::support::core_fixtures::zk_muldiv_case();
+    pop_committed_round(&mut case.proof.stages.stage4_sumcheck_proof);
+
+    support::assert_zk_rejects_at_or_before_current_frontier(case.verify());
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[test]
+fn tampered_zk_stage4_batch_round_degree_rejects_now() {
+    let mut case = crate::support::core_fixtures::zk_muldiv_case();
+    increase_first_committed_round_degree(&mut case.proof.stages.stage4_sumcheck_proof);
+
+    support::assert_zk_rejects_at_or_before_current_frontier(case.verify());
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[test]
+fn tampered_zk_stage4_batch_output_commitment_count_rejects_now() {
+    let mut case = crate::support::core_fixtures::zk_muldiv_case();
+    pop_committed_output_claim_row(&mut case.proof.stages.stage4_sumcheck_proof);
 
     support::assert_zk_rejects_at_or_before_current_frontier(case.verify());
 }
