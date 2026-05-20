@@ -154,11 +154,12 @@ jobs:
 
       - name: Pin jolt-sdk to current commit in Cargo.toml files
         run: |
-          COMMIT_HASH=$(git rev-parse HEAD)
+          COMMIT_HASH="${{ github.event.pull_request.head.sha || github.sha }}"
+          JOLT_REPO_URL="${{ github.event.pull_request.head.repo.clone_url || format('https://github.com/{0}', github.repository) }}"
           # Pin jolt-sdk in the host Cargo.toml
-          sed -i 's|jolt-sdk = { git = "https://github.com/a16z/jolt", features = \["host"\] }|jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'", features = ["host"] }|' sample_project/Cargo.toml
+          sed -i 's|jolt-sdk = { git = "https://github.com/a16z/jolt", features = \["host"\] }|jolt-sdk = { git = "'$JOLT_REPO_URL'", rev = "'$COMMIT_HASH'", features = ["host"] }|' sample_project/Cargo.toml
           # Pin jolt-sdk in the guest Cargo.toml
-          sed -i 's|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'" }|' sample_project/guest/Cargo.toml
+          sed -i 's|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }|jolt = { package = "jolt-sdk", git = "'$JOLT_REPO_URL'", rev = "'$COMMIT_HASH'" }|' sample_project/guest/Cargo.toml
 
       - name: Make sure the generated code runs
         working-directory: ./sample_project
@@ -195,9 +196,10 @@ jobs:
 
       - name: Pin jolt-sdk to current commit
         run: |
-          COMMIT_HASH=$(git rev-parse HEAD)
-          sed -i 's|jolt-sdk = { git = "https://github.com/a16z/jolt", features = \["host"\] }|jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'", features = ["host"] }|' sample_project/Cargo.toml
-          sed -i 's|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'" }|' sample_project/guest/Cargo.toml
+          COMMIT_HASH="${{ github.event.pull_request.head.sha || github.sha }}"
+          JOLT_REPO_URL="${{ github.event.pull_request.head.repo.clone_url || format('https://github.com/{0}', github.repository) }}"
+          sed -i 's|jolt-sdk = { git = "https://github.com/a16z/jolt", features = \["host"\] }|jolt-sdk = { git = "'$JOLT_REPO_URL'", rev = "'$COMMIT_HASH'", features = ["host"] }|' sample_project/Cargo.toml
+          sed -i 's|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }|jolt = { package = "jolt-sdk", git = "'$JOLT_REPO_URL'", rev = "'$COMMIT_HASH'" }|' sample_project/guest/Cargo.toml
 
       - name: Set up prover and verifier scripts
         run: |
