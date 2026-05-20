@@ -133,15 +133,15 @@ wire compatibility detail. Convert once near the boundary into typed data, then
 pass named fields to stages.
 
 `JoltProof` must not retain an ID-keyed opening-claim payload. The native proof
-model carries either typed transparent claims or a ZK proof payload:
+model carries either typed clear claims or a ZK proof payload:
 
 ```rust
 pub enum JoltProofClaims<F, ZkProof> {
-    Transparent(TransparentProofClaims<F>),
+    Clear(ClearProofClaims<F>),
     Zk { blindfold_proof: ZkProof },
 }
 
-pub struct TransparentProofClaims<F> {
+pub struct ClearProofClaims<F> {
     pub stage1: stage1::inputs::Stage1Claims<F>,
     pub stage2: stage2::inputs::Stage2Claims<F>,
     pub stage3: stage3::inputs::Stage3Claims<F>,
@@ -184,7 +184,7 @@ openings as `RamInc`, `RdInc`, `InstructionRa*`, `BytecodeRa*`, `RamRa*`,
 advice. Stage code should not rebuild a `JoltCommittedPolynomial -> C` map or
 zip independent ID and commitment vectors.
 
-Transparent proof claims are not a generic claim store. Each stage owns the
+Clear proof claims are not a generic claim store. Each stage owns the
 claims that are actually present in that stage's proof payload, while prior
 stage data is consumed through typed stage outputs. For example, Stage 1 owns
 the Spartan outer virtual-polynomial claims, including every flag claim, and
@@ -295,20 +295,25 @@ linear algebra in `jolt-r1cs`.
 - `CompressedSumcheckProof<F>`;
 - `CommittedSumcheckProof<C>`;
 - `SumcheckProof<F, C>`;
-- `SumcheckProof::verify` for full-round proofs over an explicit domain;
-- `SumcheckProof::verify_compressed_boolean` for single compressed
+- `SumcheckStatement`, the round-count and degree statement used when scalar
+  claims are hidden;
+- `SumcheckProof::verify` for clear full-round proofs over an explicit domain;
+- `SumcheckProof::verify_compressed_boolean` for single clear compressed
   boolean-hypercube proofs;
 - `BatchedSumcheckVerifier::verify_compressed_boolean` for compressed batched
-  boolean-hypercube proofs;
+  clear boolean-hypercube proofs;
+- `verify_committed_consistency` APIs for committed proof consistency without a
+  clear scalar claim;
 - `SumcheckDomain`;
 - `BooleanHypercube`;
 - `CenteredIntegerDomain`.
 
-These verifier APIs dispatch on clear vs committed proof encoding. The clear
-branch performs scalar round checks and returns evaluation claims. The committed
-branch replays public committed-proof structure, derives transcript challenges,
-and returns committed checks without absorbing hidden scalar claims; BlindFold is
-responsible for the hidden claim relations.
+Claim-taking verifier APIs are clear-only: they perform scalar round checks and
+return evaluation claims. Committed verifier APIs take `SumcheckStatement`
+instead of `SumcheckClaim`, check public committed-proof consistency, derive
+transcript challenges, and return committed consistency data without absorbing
+hidden scalar claims. BlindFold is responsible for the hidden claim relations.
+ZK stage code must not manufacture placeholder `SumcheckClaim` values.
 
 The verifier owns the Jolt policy:
 
@@ -334,18 +339,20 @@ Uni-skip is protocol structure, not a special sumcheck primitive. Model it as:
 - `jolt_blindfold::verify`.
 
 `jolt-verifier` owns the Jolt-specific construction of the BlindFold instance.
-That construction should live in `stages/zk.rs` and in per-stage ZK modules
-that mirror the transparent stage layout.
+Per-stage committed consistency should stay visible in the same linear
+`stage*/verify.rs` flow as the clear checks. Shared final BlindFold glue
+may live in `stages/zk.rs`.
 
 The ZK verifier should use the same explicit sequencing discipline as the
-transparent verifier, but as three tracks:
+clear verifier, but as three tracks:
 
-- committed sumcheck track: consume committed sumcheck proofs, replay the
-  Fiat-Shamir transcript, check committed proof shape/order/round counts, derive
-  challenges, and return typed outputs. These are internal replay milestones,
-  not production verifier checkpoints. Validity at this layer means the public
-  committed transcript is well formed; hidden polynomial-evaluation checks are
-  intentionally out of scope until BlindFold is wired.
+- committed sumcheck track: consume committed sumcheck proofs, check
+  Fiat-Shamir transcript consistency, check committed proof statement/order/round
+  counts, derive challenges, and return typed outputs. These are internal
+  consistency milestones, not production verifier checkpoints. Validity at this
+  layer means the public committed transcript is well formed; hidden
+  polynomial-evaluation checks are intentionally out of scope until BlindFold is
+  wired.
 - BlindFold R1CS lowering track: lower the same typed stage claims and
   `jolt-claims` formula metadata into the BlindFold verifier R1CS. This should
   be incremental: add the R1CS inputs and constraints stage by stage, with tests
@@ -358,9 +365,9 @@ transparent verifier, but as three tracks:
 A full core ZK proof contains one BlindFold proof for the whole Jolt protocol.
 It cannot prove only a Stage 1 or Stage 2 prefix unless the fixture generator
 also emits prefix BlindFold proofs. Prefix fixtures are useful, but not required
-to start wiring ZK replay milestones. Without prefix fixtures, a replay
-milestone may validate committed replay and BlindFold R1CS construction, then
-stop before calling `jolt_blindfold::verify`.
+to start wiring ZK consistency milestones. Without prefix fixtures, a consistency
+milestone may validate committed consistency and BlindFold R1CS construction,
+then stop before calling `jolt_blindfold::verify`.
 
 ### Dory And Legacy Polynomial Ordering
 
@@ -553,7 +560,7 @@ verification argument. Avoid verifier-local helper modules that merely dispatch
 between sumcheck domains, wrap one equality check, or hide a transcript append;
 move reusable behavior only when a concrete modular crate owns the concept.
 Stage folders make the contract explicit: `inputs.rs` contains typed
-transparent proof claims and dependency structs, `outputs.rs` contains verified
+clear proof claims and dependency structs, `outputs.rs` contains verified
 stage outputs, and `verify.rs` contains the protocol flow.
 
 The most important invariant is that `stage*/verify.rs` stays explicit and
@@ -770,18 +777,18 @@ struct TestCase {
 
 The harness has separate configured horizons for standard and ZK mode. The
 standard frontier currently reaches `Full`; the ZK frontier remains at
-`Commitments` while committed-stage replay and BlindFold instance construction
+`Commitments` while committed-stage consistency and BlindFold instance construction
 are still unwired. A completeness case passes when a valid proof reaches the
 configured horizon for its mode. Before the full verifier exists, reaching the
 next unimplemented stage is success; after the full verifier exists, success
 means `Ok(())`.
 
 For ZK mode, the production `VerifierCheckpoint` does not advance from
-`Commitments` to `Stage1`, `Stage2`, and so on just because committed replay for
+`Commitments` to `Stage1`, `Stage2`, and so on just because committed consistency for
 those stages works. Stages 1-7 are meaningful ZK verifier work, but the logical
-production checkpoint is `Zk`: all committed sumchecks have replayed, Stage 8
+production checkpoint is `Zk`: all committed sumchecks have checked, Stage 8
 has used the PCS ZK opening path, the full BlindFold R1CS instance is built, and
-`jolt_blindfold::verify` has accepted. Per-stage ZK replay progress should be
+`jolt_blindfold::verify` has accepted. Per-stage ZK consistency progress should be
 tracked as test-only/internal milestone metadata, not as production verifier
 frontier.
 
@@ -826,13 +833,13 @@ The harness interprets results relative to the mode-specific frontier:
 - tampered proof whose first observable checkpoint is after the current frontier
   remains ignored or skipped.
 
-ZK should now be wired with transparent-style stage organization, while keeping
+ZK should now be wired with clear-style stage organization, while keeping
 BlindFold proof verification as the production frontier:
 
-- first, implement the committed sumcheck track stage by stage. Each ZK replay
+- first, implement the committed sumcheck track stage by stage. Each ZK consistency
   path consumes committed sumcheck proofs, derives transcript challenges, checks
-  committed proof shape/order/round counts, and returns typed outputs. The
-  verifier still returns `VerifierError::Unimplemented` after the replay
+  committed proof statement/order/round counts, and returns typed outputs. The
+  verifier still returns `VerifierError::Unimplemented` after the consistency
   milestone until the full `Zk` checkpoint is implemented;
 - second, wire the BlindFold R1CS lowering track incrementally. Each stage adds
   typed claim sources and constraints to the lowered instance using
@@ -846,11 +853,11 @@ Full BlindFold proof verification is a separate unlock. A full core ZK proof
 has a single BlindFold proof for all stages, so it is not by itself a partial
 frontier artifact. If we want per-stage BlindFold proof verification, the core
 fixture generator must emit prefix BlindFold proofs. If we do not add prefix
-fixtures, each ZK replay milestone still validates committed replay and R1CS
+fixtures, each ZK consistency milestone still validates committed consistency and R1CS
 construction, and the `Zk`/`Full` checkpoint activates once the full protocol
 instance can be built and checked against the full BlindFold proof.
 
-While ZK is in progress, every transparent stage output must keep the data
+While ZK is in progress, every clear stage output must keep the data
 BlindFold needs: input claims, output claims, sumcheck points, batching
 coefficients, public/advice decompositions, and opening claims used in final
 expressions.
@@ -1017,7 +1024,7 @@ The default flow is:
 same guest, same public input, same preprocessing
   -> generate or load at least two independently randomized ZK core proofs
   -> compat conversion
-  -> verify both proofs through the current production ZK checkpoint or replay milestone
+  -> verify both proofs through the current production ZK checkpoint or consistency milestone
   -> compare only the fields that should be blinded
 ```
 
@@ -1033,11 +1040,11 @@ that is present in the fixture:
 - PCS ZK evaluation commitment or equivalent hiding commitment exposed by the
   final opening proof.
 
-The track should also assert that ZK proofs do not carry transparent opening
+The track should also assert that ZK proofs do not carry clear opening
 claim payloads. Once the modular verifier reaches the full ZK frontier, both
 proofs must verify successfully before comparing their blinded components.
 Before full ZK verification exists, the track may verify only through the
-current committed-sumcheck replay milestone and leave the BlindFold-specific
+current committed-sumcheck consistency milestone and leave the BlindFold-specific
 assertions ignored with an explicit checkpoint reason.
 
 ### Tamper Manifest
@@ -1376,7 +1383,7 @@ Current implementation status:
 - standard Stage 1/2/3/4/5/6/7/8 soundness tests now use the tamper manifest to
   mutate real core proofs after compat conversion, covering every current
   Stage 1/2/3/4/5/6/7 verifier-owned proof payload and typed claim target that is
-  checked by the full transparent frontier, plus Stage 8 commitments and final
+  checked by the full clear frontier, plus Stage 8 commitments and final
   opening proof data;
 - unchecked pass-through, advice, and
   ZK/BlindFold targets are explicitly recorded in the tamper manifest rather
@@ -1415,7 +1422,7 @@ Review criteria:
 Current implementation status:
 
 - Stage 3 is organized as `stage3/{inputs.rs, outputs.rs, verify.rs}` and uses
-  typed transparent claims for:
+  typed clear claims for:
   - Spartan shift output claims;
   - instruction-input virtualization output claims;
   - register claim-reduction output claims.
@@ -1445,7 +1452,7 @@ Current implementation status:
   compressed batch round-polynomial tampering, missing/extra round counts, and
   every typed Stage 3 output claim are tampered after compat conversion and
   rejected before the current frontier.
-- Stage 3 has a dedicated append-order regression for transparent opening
+- Stage 3 has a dedicated append-order regression for clear opening
   claims. It records the transcript payload sequence and asserts that core
   aliases (`instruction_input.unexpanded_pc`, `registers.rs1_value`,
   `registers.rs2_value`) are carried as typed values for formula evaluation but
@@ -1471,7 +1478,7 @@ Review criteria:
 Current implementation status:
 
 - Stage 4 is organized as `stage4/{inputs.rs, outputs.rs, verify.rs}` and uses
-  typed transparent claims for:
+  typed clear claims for:
   - optional untrusted and trusted advice openings;
   - register read/write output openings;
   - RAM val-check output openings.
@@ -1519,7 +1526,7 @@ Review criteria:
 Current implementation status:
 
 - Stage 5 is organized as `stage5/{inputs.rs, outputs.rs, verify.rs}` and uses
-  typed transparent claims for:
+  typed clear claims for:
   - instruction read-RAF lookup-table flag openings;
   - instruction read-RAF virtual RA openings;
   - the instruction RAF flag opening;
@@ -1874,7 +1881,7 @@ Current coverage:
   untrusted advice-cycle output branches;
 - Stage 6 fixture and tamper cases are activated under the `Stage6` checkpoint;
 - ZK/BlindFold Stage 6 commitments remain recorded as future ZK-frontier
-  targets rather than enabled transparent checks.
+  targets rather than enabled clear checks.
 
 Review criteria:
 
@@ -2006,7 +2013,7 @@ Current implementation status:
   dependency contract is narrow: `stage8::deps(&stage6, &stage7)`.
 - The verifier derives the final opening claims from typed Stage 6 and Stage 7
   outputs, plus optional trusted/untrusted advice final openings. There is no
-  Stage 8 transparent claim payload and no ID-keyed opening map in production
+  Stage 8 clear claim payload and no ID-keyed opening map in production
   verifier code.
 - `compat/convert.rs` owns decoding the legacy proof commitment vector into
   the typed `JoltCommitments` payload. `proof.rs` does not own proof-payload or
@@ -2027,52 +2034,52 @@ Current implementation status:
   core-to-modular conversion boundary.
 - ZK/BlindFold remains at the `Commitments` frontier. The verifier already
   rejects mixed proof shapes and requires committed stage proofs plus a ZK claim
-  payload in ZK mode, but the stage replay paths currently stop before
-  committed sumcheck verification. Stage outputs preserve the data needed to
-  construct BlindFold public inputs as internal ZK replay milestones are wired.
+  payload in ZK mode. Stage 1 now checks committed sumcheck consistency from a
+  real core ZK fixture and then stops at `VerifierError::Unimplemented` because
+  the production ZK checkpoint is still BlindFold/full ZK verification. Later
+  stage outputs preserve the data needed to construct BlindFold public inputs as
+  internal ZK consistency milestones are wired.
 
-### 13. ZK: Committed Replay, BlindFold R1CS, And Final Verification
+### 13. ZK: Committed Consistency, BlindFold R1CS, And Final Verification
 
-Objective: advance ZK verification in three tracks: committed sumcheck replay,
+Objective: advance ZK verification in three tracks: committed sumcheck consistency,
 incremental BlindFold R1CS lowering, and final BlindFold plus PCS ZK opening
 verification once the whole protocol instance is available.
 
 Current status:
 
-- `stages/zk.rs` exists as the future ZK entry point, but returns
+- `stages/zk.rs` exists as the future final ZK entry point, but returns
   `VerifierError::Unimplemented`.
 - The top-level verifier enforces committed proof shape in ZK mode and rejects
-  transparent claims in ZK proofs.
-- Transparent stages 1-7 already call the enum-dispatch sumcheck APIs from
-  `jolt-sumcheck` and reject the committed branch locally. This keeps the
-  production transparent path unchanged while removing proof-encoding
-  destructuring from stage code.
+  clear claims in ZK proofs.
+- Clear stages 1-7 already call the clear-only claim-taking sumcheck APIs
+  from `jolt-sumcheck`. ZK branches use statement-only committed consistency
+  APIs so hidden scalar claims are never represented as placeholder values.
+- Stage 1 committed consistency is wired directly in `stage1/verify.rs`: it
+  consumes statement-only committed sumchecks, validates output-claim commitment
+  row counts, derives transcript challenges, and stops before BlindFold.
 - `JoltVerifierPreprocessing` carries the vector-commitment setup needed by
   BlindFold.
 - `compat` can preserve legacy core BlindFold artifacts, but it does not yet
   convert them into the modular `jolt_blindfold::BlindFoldProof` type.
 - The modular crates already provide most generic pieces: committed sumcheck
-  proof replay, BlindFold protocol construction, vector-commitment traits, and
-  PCS ZK opening verification hooks.
+  proof consistency checks, BlindFold protocol construction, vector-commitment
+  traits, and PCS ZK opening verification hooks.
 
 Tasks:
 
 - Inventory core ZK one-offs before wiring verifier code: committed sumcheck
-  transcript replay, BlindFold stage configs, Pedersen/vector-commitment setup,
+  transcript consistency checks, BlindFold stage configs, Pedersen/vector-commitment setup,
   `commit_zk`, `open_zk`, `verify_zk`, Dory evaluation commitments, and
   `bind_opening_inputs_zk` transcript effects.
-- First implementation step: wire Stage 1 committed replay only. It should
-  consume the converted committed Stage 1 proof from a real core ZK fixture,
-  replay transcript commitments, derive the typed Stage 1 challenges/output
-  metadata, add tampering coverage for public committed proof material, and then
-  return `VerifierError::Unimplemented` because the production ZK checkpoint is
-  still BlindFold/full ZK verification.
-- For each stage, add a committed sumcheck replay path beside the transparent
-  path. It should consume the committed proof(s), replay the committed
-  transcript checks, derive the same challenges as core, validate public shape
-  and ordering, and return typed outputs for later stages. This path is an
-  internal milestone; it must still stop with `VerifierError::Unimplemented`
-  until the full `Zk` checkpoint is implemented.
+- Next implementation step: wire Stage 2 committed consistency using the same
+  statement-only pattern established in Stage 1.
+- For each stage, add a committed sumcheck consistency branch directly beside
+  the clear branch. It should consume the committed proof(s), check the
+  committed transcript consistency, derive the same challenges as core, validate
+  public statement and ordering, and return typed outputs for later stages. This
+  branch is an internal milestone; it must still stop with
+  `VerifierError::Unimplemented` until the full `Zk` checkpoint is implemented.
 - For each stage, extend the BlindFold R1CS lowering using `jolt-claims`
   formula metadata and typed claim sources. Do not add ID-keyed maps or generic
   claim bags to the production verifier API.
@@ -2081,15 +2088,15 @@ Tasks:
   challenge-power helpers, claim-expression lowering, and final opening
   commitments should live in their owning crates.
 - Decide whether to add prefix BlindFold fixtures. If yes, unlock per-stage
-  BlindFold proof verification. If no, use each replay milestone for committed
-  replay and R1CS-construction tests, and call `jolt_blindfold::verify` only at
-  the full ZK frontier.
+  BlindFold proof verification. If no, use each consistency milestone for
+  committed consistency and R1CS-construction tests, and call
+  `jolt_blindfold::verify` only at the full ZK frontier.
 - Convert existing core BlindFold proof artifacts under `compat`, with no core
   BlindFold type leaking into production verifier modules.
 - Wire the full ZK opening path: committed final-opening reductions, PCS ZK
   opening verification, Dory evaluation commitment extraction/binding, and the
   BlindFold link to hidden opening claims.
-- Activate ZK completeness and soundness tests incrementally as each replay
+- Activate ZK completeness and soundness tests incrementally as each consistency
   milestone is wired; only update the production ZK frontier when the full
   BlindFold and PCS ZK opening path is implemented.
 - Add the `statistical_independence/` integration-test track for repeated ZK
@@ -2098,13 +2105,13 @@ Tasks:
 
 Review criteria:
 
-- The same formula metadata drives transparent checks and BlindFold lowering.
-- Every committed sumcheck through the configured internal replay milestone is
-  replayed and represented in the BlindFold instance.
+- The same formula metadata drives clear checks and BlindFold lowering.
+- Every committed sumcheck through the configured internal consistency milestone is
+  checked and represented in the BlindFold instance.
 - Stage inputs and outputs remain typed and explicit; no compatibility-only map
   or checkpoint infrastructure leaks into the verifier API.
 - No core BlindFold type leaks outside `compat`.
-- ZK tests cover both verifier validity and hiding regressions: committed replay
+- ZK tests cover both verifier validity and hiding regressions: committed consistency
   soundness, BlindFold proof tampering, PCS ZK opening tampering, and
   statistical independence of randomized proof components.
 - Full ZK mode accepts real core ZK fixtures only after the modular BlindFold

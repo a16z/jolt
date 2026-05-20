@@ -52,6 +52,84 @@ rules:
         - /crates/jolt-verifier/src/stages/stage8.rs
     pattern-regex: '\b(SumcheckVerifier::verify|BatchedSumcheckVerifier::verify|try_evaluate\(|append_labeled\()'
 
+  - id: jolt-verifier-zk-modules-use-statements-not-claims
+    languages: [rust]
+    severity: ERROR
+    message: "ZK stage code must use SumcheckStatement/consistency APIs, not construct scalar SumcheckClaim values."
+    paths:
+      include:
+        - /crates/jolt-verifier/src/stages/**/zk.rs
+    pattern-regex: '\bSumcheckClaim::new\b'
+
+  - id: jolt-verifier-zk-modules-no-clear-claims
+    languages: [rust]
+    severity: ERROR
+    message: "ZK stage code must not read clear scalar claims."
+    paths:
+      include:
+        - /crates/jolt-verifier/src/stages/**/zk.rs
+    pattern-regex: '\bclear_claims\s*\('
+
+  - id: jolt-verifier-zk-branches-use-statements-not-claims
+    languages: [rust]
+    severity: ERROR
+    message: "ZK stage branches must use SumcheckStatement/consistency APIs, not scalar SumcheckClaim values."
+    paths:
+      include:
+        - /crates/jolt-verifier/src/stages/**/verify.rs
+    pattern: |
+      if $CHECKED.zk {
+        ...
+        SumcheckClaim::new(...)
+        ...
+      }
+
+  - id: jolt-verifier-zk-branches-no-clear-claims
+    languages: [rust]
+    severity: ERROR
+    message: "ZK stage branches must not read clear scalar claims."
+    paths:
+      include:
+        - /crates/jolt-verifier/src/stages/**/verify.rs
+    pattern: |
+      if $CHECKED.zk {
+        ...
+        $PROOF.clear_claims()
+        ...
+      }
+
+  - id: jolt-verifier-no-transparent-mode-terminology
+    languages: [generic]
+    severity: ERROR
+    message: "Use clear/non-ZK terminology instead of transparent in jolt-verifier code and spec."
+    paths:
+      include:
+        - /crates/jolt-verifier/**
+        - /specs/jolt-verifier-model-crate.md
+    pattern-regex: '(?i)\btransparent\b'
+
+  - id: jolt-sumcheck-no-shape-terminology
+    languages: [rust]
+    severity: ERROR
+    message: "Use SumcheckStatement terminology instead of SumcheckShape."
+    paths:
+      include:
+        - /crates/jolt-sumcheck/**
+        - /crates/jolt-blindfold/**
+        - /crates/jolt-verifier/**
+    pattern-regex: '\bSumcheckShape\b'
+
+  - id: jolt-sumcheck-no-committed-check-terminology
+    languages: [rust]
+    severity: ERROR
+    message: "Use committed consistency terminology instead of committed check terminology."
+    paths:
+      include:
+        - /crates/jolt-sumcheck/**
+        - /crates/jolt-blindfold/**
+        - /crates/jolt-verifier/**
+    pattern-regex: '\b(CommittedSumcheckCheck|BatchedCommittedSumcheckCheck|verify_committed\s*\()'
+
   - id: jolt-claims-no-vm-public-io-computation
     languages: [rust]
     severity: ERROR

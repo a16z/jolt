@@ -6,13 +6,13 @@ pub use jolt_openings::EvaluationClaim;
 
 /// Round count and degree bound for a sumcheck instance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SumcheckShape {
+pub struct SumcheckStatement {
     pub num_vars: usize,
     pub degree: usize,
 }
 
-impl SumcheckShape {
-    /// Construct a sumcheck shape.
+impl SumcheckStatement {
+    /// Construct a sumcheck statement.
     ///
     /// # Panics
     ///
@@ -26,7 +26,7 @@ impl SumcheckShape {
     }
 }
 
-impl<F: FieldCore> From<&SumcheckClaim<F>> for SumcheckShape {
+impl<F: FieldCore> From<&SumcheckClaim<F>> for SumcheckStatement {
     fn from(claim: &SumcheckClaim<F>) -> Self {
         Self {
             num_vars: claim.num_vars,
@@ -72,5 +72,9 @@ impl<F: FieldCore> SumcheckClaim<F> {
             degree,
             claimed_sum,
         }
+    }
+
+    pub fn statement(&self) -> SumcheckStatement {
+        SumcheckStatement::from(self)
     }
 }

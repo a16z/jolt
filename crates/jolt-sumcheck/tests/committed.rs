@@ -4,7 +4,7 @@ use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup};
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_sumcheck::round_proof::RoundMessage;
 use jolt_sumcheck::{
-    CommittedOutputClaims, CommittedRound, CommittedRoundWitness, SumcheckError, SumcheckShape,
+    CommittedOutputClaims, CommittedRound, CommittedRoundWitness, SumcheckError, SumcheckStatement,
     SumcheckVerifier,
 };
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
@@ -58,15 +58,15 @@ fn committed_rounds_complete_with_pedersen_commitments() {
     }
 
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"committed-roundtrip");
-    let check = SumcheckVerifier::verify_committed_rounds(
-        SumcheckShape::new(rounds.len(), 2),
+    let consistency = SumcheckVerifier::verify_committed_round_consistency(
+        SumcheckStatement::new(rounds.len(), 2),
         &rounds,
         &mut verifier_transcript,
     )
     .unwrap();
 
-    assert_eq!(check.challenges(), expected_challenges);
-    assert_eq!(check.round_degrees(), vec![2, 1, 2]);
+    assert_eq!(consistency.challenges(), expected_challenges);
+    assert_eq!(consistency.round_degrees(), vec![2, 1, 2]);
     assert_eq!(verifier_transcript.state(), prover_transcript.state());
 }
 
@@ -82,8 +82,8 @@ fn committed_rounds_reject_wrong_count_and_degree() {
     );
 
     let mut wrong_count_transcript = Blake2bTranscript::<F>::new(b"committed-roundtrip");
-    let wrong_count = SumcheckVerifier::verify_committed_rounds(
-        SumcheckShape::new(3, 2),
+    let wrong_count = SumcheckVerifier::verify_committed_round_consistency(
+        SumcheckStatement::new(3, 2),
         &rounds,
         &mut wrong_count_transcript,
     );
@@ -96,8 +96,8 @@ fn committed_rounds_reject_wrong_count_and_degree() {
     ));
 
     let mut degree_transcript = Blake2bTranscript::<F>::new(b"committed-roundtrip");
-    let degree = SumcheckVerifier::verify_committed_rounds(
-        SumcheckShape::new(2, 1),
+    let degree = SumcheckVerifier::verify_committed_round_consistency(
+        SumcheckStatement::new(2, 1),
         &rounds,
         &mut degree_transcript,
     );
@@ -125,16 +125,16 @@ fn tampered_committed_round_changes_challenges() {
     .remove(0);
 
     let mut original_transcript = Blake2bTranscript::<F>::new(b"committed-roundtrip");
-    let original = SumcheckVerifier::verify_committed_rounds(
-        SumcheckShape::new(2, 2),
+    let original = SumcheckVerifier::verify_committed_round_consistency(
+        SumcheckStatement::new(2, 2),
         &rounds,
         &mut original_transcript,
     )
     .unwrap();
 
     let mut tampered_transcript = Blake2bTranscript::<F>::new(b"committed-roundtrip");
-    let tampered = SumcheckVerifier::verify_committed_rounds(
-        SumcheckShape::new(2, 2),
+    let tampered = SumcheckVerifier::verify_committed_round_consistency(
+        SumcheckStatement::new(2, 2),
         &tampered,
         &mut tampered_transcript,
     )

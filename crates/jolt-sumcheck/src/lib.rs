@@ -29,7 +29,7 @@
 //!
 //! ## Types
 //! - [`SumcheckClaim<F>`] — the public statement: `num_vars`, `degree`, and `claimed_sum`.
-//! - [`SumcheckShape`] — round count and degree bound without a claimed sum.
+//! - [`SumcheckStatement`] — round count and degree bound without a claimed sum.
 //! - [`EvaluationClaim<F>`] — the oracle evaluation claim `g(r) = v` produced by a
 //!   successful reduction; the caller MUST discharge it against the polynomial oracle.
 //! - [`ClearProof<F>`] — clear proof wire representation, either full or compressed.
@@ -99,19 +99,16 @@ where
 }
 
 pub use batched_verifier::{
-    BatchedCommittedSumcheckCheck, BatchedEvaluationClaim, BatchedSumcheckVerification,
-    BatchedSumcheckVerifier,
+    BatchedCommittedSumcheckConsistency, BatchedEvaluationClaim, BatchedSumcheckVerifier,
 };
-pub use claim::{EvaluationClaim, SumcheckClaim, SumcheckShape};
+pub use claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
 pub use committed::{
-    CommittedOutputClaims, CommittedRound, CommittedRoundWitness, CommittedSumcheckCheck,
+    CommittedOutputClaims, CommittedRound, CommittedRoundWitness, CommittedSumcheckConsistency,
     CommittedSumcheckProof, VerifiedCommittedRound,
 };
 pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain};
 pub use error::SumcheckError;
-pub use proof::{
-    ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof, SumcheckVerification,
-};
+pub use proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
 #[cfg(feature = "r1cs")]
 pub use r1cs::{
     allocate_sumcheck_r1cs_layout, append_sumcheck_r1cs_constraints, SumcheckR1csError,

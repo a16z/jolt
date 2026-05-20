@@ -1,6 +1,6 @@
 use crate::support::tamper_manifest::{
-    all_targets, checked_now_without_active_coverage, manifest_paths, proof_field_paths,
-    target_names_are_unique, transparent_claim_leaf_paths, TamperCoverage,
+    all_targets, checked_now_without_active_coverage, clear_claim_leaf_paths, manifest_paths,
+    proof_field_paths, target_names_are_unique, TamperCoverage,
 };
 
 #[test]
@@ -9,16 +9,16 @@ fn tamper_manifest_target_names_are_unique() {
 }
 
 #[test]
-fn tamper_manifest_covers_transparent_claim_fields() {
+fn tamper_manifest_covers_clear_claim_fields() {
     let manifest_paths = manifest_paths();
-    let missing = transparent_claim_leaf_paths()
+    let missing = clear_claim_leaf_paths()
         .into_iter()
         .filter(|path| !manifest_paths.contains(path.as_str()))
         .collect::<Vec<_>>();
 
     assert!(
         missing.is_empty(),
-        "transparent claim fields missing from tamper manifest: {missing:?}"
+        "clear claim fields missing from tamper manifest: {missing:?}"
     );
 }
 

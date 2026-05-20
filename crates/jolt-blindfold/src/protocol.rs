@@ -101,7 +101,7 @@ where
             self.sumcheck_inputs
                 .stages
                 .iter()
-                .flat_map(|stage| stage.check.rounds.iter())
+                .flat_map(|stage| stage.consistency.rounds.iter())
                 .map(|round| round.commitment.clone()),
         );
         pad_rows::<F, C>(
@@ -221,13 +221,13 @@ where
     let mut inputs = Vec::with_capacity(claims.stages.len());
     let mut output_claims = Vec::with_capacity(claims.stages.len());
     for (stage_index, (stage, proof)) in claims.stages.iter().zip(proofs).enumerate() {
-        let check = proof
-            .verify_committed(stage.shape, transcript)
+        let consistency = proof
+            .verify_committed_consistency(stage.statement, transcript)
             .map_err(|source| VerificationError::Sumcheck {
                 stage_index,
                 source,
             })?;
-        inputs.push(StageInput::new(check));
+        inputs.push(StageInput::new(consistency));
         output_claims.push(proof.output_claims.clone());
     }
 
@@ -258,12 +258,15 @@ fn compute_dimensions<F: Field, C>(
 ) -> Result<BlindFoldDimensions, RelaxedError> {
     let total_rounds = checked_sum(
         "total rounds",
-        inputs.stages.iter().map(|stage| stage.check.rounds.len()),
+        inputs
+            .stages
+            .iter()
+            .map(|stage| stage.consistency.rounds.len()),
     )?;
     let round_coefficients = inputs
         .stages
         .iter()
-        .flat_map(|stage| &stage.check.rounds)
+        .flat_map(|stage| &stage.consistency.rounds)
         .map(|round| {
             round
                 .degree
@@ -421,14 +424,14 @@ mod tests {
     };
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_r1cs::ClaimSourceTable;
-    use jolt_sumcheck::{CommittedOutputClaims, CommittedRound, SumcheckError, SumcheckShape};
+    use jolt_sumcheck::{CommittedOutputClaims, CommittedRound, SumcheckError, SumcheckStatement};
     use jolt_transcript::{Blake2bTranscript, Transcript};
 
     fn stage(num_vars: usize, degree: usize) -> StageClaims<Fr, ()> {
         let claim: Expr<Fr, ()> = constant(Fr::from_u64(0));
         StageClaims::new(
             "stage",
-            SumcheckShape::new(num_vars, degree),
+            SumcheckStatement::new(num_vars, degree),
             claim.clone(),
             claim,
         )
@@ -497,8 +500,8 @@ mod tests {
         let mut manual = Blake2bTranscript::<Fr>::new(b"blindfold");
         for (stage, proof) in claims.stages.iter().zip(&proofs) {
             let _ = proof
-                .verify_committed(stage.shape, &mut manual)
-                .expect("manual replay succeeds");
+                .verify_committed_consistency(stage.statement, &mut manual)
+                .expect("manual consistency check succeeds");
         }
 
         let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold");
@@ -506,13 +509,19 @@ mod tests {
             verify_committed_stages(&claims, &proofs, &mut transcript).expect("proofs verify");
 
         assert_eq!(verified.inputs.stage_count(), 2);
-        assert_eq!(verified.inputs.stages[0].check.rounds.len(), 2);
-        assert_eq!(verified.inputs.stages[1].check.rounds.len(), 1);
+        assert_eq!(verified.inputs.stages[0].consistency.rounds.len(), 2);
+        assert_eq!(verified.inputs.stages[1].consistency.rounds.len(), 1);
         let round_commitments = verified
             .inputs
             .stages
             .iter()
-            .flat_map(|input| input.check.rounds.iter().map(|round| round.commitment))
+            .flat_map(|input| {
+                input
+                    .consistency
+                    .rounds
+                    .iter()
+                    .map(|round| round.commitment)
+            })
             .collect::<Vec<_>>();
         let output_claim_commitments = verified
             .output_claims

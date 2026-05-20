@@ -16,31 +16,31 @@ use crate::{
     VerifierError,
 };
 
-pub struct Deps<'a, F: Field, C> {
-    pub stage1: &'a Stage1Output<F>,
+pub struct Deps<'a, F: Field, VcCommitment, PcsCommitment> {
+    pub stage1: &'a Stage1Output<F, VcCommitment>,
     pub stage2: &'a Stage2Output<F>,
     pub stage3: &'a Stage3Output<F>,
     pub stage4: &'a Stage4Output<F>,
     pub stage5: &'a Stage5Output<F>,
     pub stage6: &'a Stage6Output<F>,
     pub stage7: &'a Stage7Output<F>,
-    pub stage8: &'a Stage8Output<F, C>,
+    pub stage8: &'a Stage8Output<F, PcsCommitment>,
 }
 
 #[expect(
     clippy::too_many_arguments,
     reason = "ZK verification explicitly consumes every verified stage output."
 )]
-pub fn deps<'a, F: Field, C>(
-    stage1: &'a Stage1Output<F>,
+pub fn deps<'a, F: Field, VcCommitment, PcsCommitment>(
+    stage1: &'a Stage1Output<F, VcCommitment>,
     stage2: &'a Stage2Output<F>,
     stage3: &'a Stage3Output<F>,
     stage4: &'a Stage4Output<F>,
     stage5: &'a Stage5Output<F>,
     stage6: &'a Stage6Output<F>,
     stage7: &'a Stage7Output<F>,
-    stage8: &'a Stage8Output<F, C>,
-) -> Deps<'a, F, C> {
+    stage8: &'a Stage8Output<F, PcsCommitment>,
+) -> Deps<'a, F, VcCommitment, PcsCommitment> {
     Deps {
         stage1,
         stage2,
@@ -58,7 +58,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
     _preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     _proof: &JoltProof<PCS, VC, ZkProof>,
     _transcript: &mut T,
-    _deps: Deps<'_, PCS::Field, PCS::Output>,
+    _deps: Deps<'_, PCS::Field, VC::Output, PCS::Output>,
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,

@@ -2,7 +2,7 @@
 
 #[cfg(not(feature = "zk"))]
 use crate::compat::{
-    claims::{transparent_claims_from_legacy, LegacyOpeningClaims},
+    claims::{clear_claims_from_legacy, LegacyOpeningClaims},
     ids as verifier_ids,
 };
 use crate::{
@@ -277,7 +277,7 @@ where
             untrusted_advice_commitment: proof
                 .untrusted_advice_commitment
                 .map(PCS::commitment_into_verifier),
-            claims: JoltProofClaims::Transparent(convert_opening_claims(
+            claims: JoltProofClaims::Clear(convert_opening_claims(
                 proof.opening_claims,
                 proof.trace_length,
             )),
@@ -449,7 +449,7 @@ where
 }
 
 fn core_dory_commitment_into_verifier(commitment: &CoreDoryCommitment) -> Bn254GT {
-    // SAFETY: `jolt-core` Dory and modular `jolt-dory` use transparent wrappers
+    // SAFETY: `jolt-core` Dory and modular `jolt-dory` use thin wrappers
     // over the same arkworks `Fq12` target-group element.
     unsafe { std::mem::transmute_copy(commitment) }
 }
@@ -511,11 +511,11 @@ where
 fn convert_opening_claims<F>(
     claims: CoreClaims<F>,
     trace_length: usize,
-) -> crate::proof::TransparentProofClaims<F::VerifierField>
+) -> crate::proof::ClearProofClaims<F::VerifierField>
 where
     F: CoreFieldBridge,
 {
-    transparent_claims_from_legacy(
+    clear_claims_from_legacy(
         LegacyOpeningClaims(
             claims
                 .0
@@ -530,7 +530,7 @@ where
         ),
         trace_length,
     )
-    .expect("core standard proof must contain all typed transparent opening claims")
+    .expect("core standard proof must contain all typed clear opening claims")
 }
 
 #[cfg(not(feature = "zk"))]

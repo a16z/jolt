@@ -7,7 +7,6 @@ use crate::{
 
 #[test]
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
-#[ignore = "ZK core fixture is wired, but enabling it is deferred until the ZK verifier frontier"]
 fn zk_muldiv_core_proof_reaches_frontier() {
     support::assert_zk_reaches_current_frontier(
         crate::support::core_fixtures::zk_muldiv_case().verify(),

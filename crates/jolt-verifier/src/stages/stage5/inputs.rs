@@ -1,4 +1,4 @@
-//! Typed transparent-mode inputs consumed by stage 5.
+//! Typed clear-mode inputs consumed by stage 5.
 
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};

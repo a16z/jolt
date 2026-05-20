@@ -4,7 +4,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_verifier::{
-    proof::TransparentProofClaims,
+    proof::ClearProofClaims,
     stages::{stage1, stage2, stage3, stage4, stage5, stage6, stage7},
 };
 use serde_json::Value;
@@ -348,7 +348,7 @@ pub const PROOF_SHAPE_TARGETS: &[TamperTarget] = &[
         VerifierCheckpoint::Preamble,
         MutationStrategy::ReplaceModePayload,
         TamperCoverage::Active,
-        "validate_proof_consistency rejects transparent/ZK payload mismatches",
+        "validate_proof_consistency rejects clear/ZK payload mismatches",
     ),
 ];
 
@@ -974,9 +974,9 @@ pub fn manifest_paths() -> BTreeSet<&'static str> {
     clippy::expect_used,
     reason = "manifest structural tests should fail loudly if claim serialization breaks"
 )]
-pub fn transparent_claim_leaf_paths() -> BTreeSet<String> {
-    let claims = zero_transparent_claims();
-    let value = serde_json::to_value(claims).expect("transparent claims should serialize");
+pub fn clear_claim_leaf_paths() -> BTreeSet<String> {
+    let claims = zero_clear_claims();
+    let value = serde_json::to_value(claims).expect("clear claims should serialize");
     let mut paths = BTreeSet::new();
     collect_leaf_paths("claims", &value, &mut paths);
     paths
@@ -1171,10 +1171,10 @@ fn collect_leaf_paths(prefix: &str, value: &Value, paths: &mut BTreeSet<String>)
     }
 }
 
-fn zero_transparent_claims() -> TransparentProofClaims<Fr> {
+fn zero_clear_claims() -> ClearProofClaims<Fr> {
     let zero = Fr::from_u64(0);
 
-    TransparentProofClaims {
+    ClearProofClaims {
         stage1: stage1::inputs::Stage1Claims {
             uniskip_output_claim: zero,
             outer: stage1::inputs::SpartanOuterClaims {

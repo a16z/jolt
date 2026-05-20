@@ -12,7 +12,7 @@ use jolt_field::Field;
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::try_eq_mle;
-use jolt_sumcheck::{BatchedSumcheckVerification, BatchedSumcheckVerifier, SumcheckClaim};
+use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim};
 use jolt_transcript::Transcript;
 
 use super::{
@@ -58,7 +58,7 @@ where
         return Err(VerifierError::Unimplemented);
     }
 
-    let claims = &proof.transparent_claims()?.stage7;
+    let claims = &proof.clear_claims()?.stage7;
     let log_t = checked.trace_length.ilog2() as usize;
     let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
         log_t,
@@ -184,7 +184,7 @@ where
         ));
     }
 
-    let batch = match BatchedSumcheckVerifier::verify_compressed_boolean(
+    let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
         &sumcheck_claims,
         &proof.stages.stage7_sumcheck_proof,
         transcript,
@@ -192,14 +192,7 @@ where
     .map_err(|error| VerifierError::StageClaimSumcheckFailed {
         stage: JoltStageId::HammingWeightClaimReduction,
         reason: error.to_string(),
-    })? {
-        BatchedSumcheckVerification::Clear(batch) => batch,
-        BatchedSumcheckVerification::Committed(_) => {
-            return Err(VerifierError::ExpectedClearProof {
-                field: "stage7_sumcheck_proof",
-            });
-        }
-    };
+    })?;
 
     let hamming_point = batch
         .try_instance_point(hamming_claims.sumcheck.rounds)

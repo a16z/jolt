@@ -1,5 +1,5 @@
 use jolt_claims::Expr;
-use jolt_sumcheck::SumcheckShape;
+use jolt_sumcheck::SumcheckStatement;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InstanceClaims<F, O, P = (), Ch = usize> {
@@ -19,7 +19,7 @@ impl<F, O, P, Ch> InstanceClaims<F, O, P, Ch> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StageClaims<F, O, P = (), Ch = usize> {
     pub name: String,
-    pub shape: SumcheckShape,
+    pub statement: SumcheckStatement,
     pub input_claim: Expr<F, O, P, Ch>,
     pub output_claim: Expr<F, O, P, Ch>,
 }
@@ -27,13 +27,13 @@ pub struct StageClaims<F, O, P = (), Ch = usize> {
 impl<F, O, P, Ch> StageClaims<F, O, P, Ch> {
     pub fn new(
         name: impl Into<String>,
-        shape: SumcheckShape,
+        statement: SumcheckStatement,
         input_claim: Expr<F, O, P, Ch>,
         output_claim: Expr<F, O, P, Ch>,
     ) -> Self {
         Self {
             name: name.into(),
-            shape,
+            statement,
             input_claim,
             output_claim,
         }
@@ -54,12 +54,12 @@ mod tests {
     #[test]
     fn instance_claims_group_stages() {
         let claim: Expr<Fr, Opening> = opening(Opening::A);
-        let stage = StageClaims::new("stage", SumcheckShape::new(2, 2), claim.clone(), claim);
+        let stage = StageClaims::new("stage", SumcheckStatement::new(2, 2), claim.clone(), claim);
         let claims = InstanceClaims::new(vec![stage]);
 
         assert_eq!(claims.stages.len(), 1);
         assert_eq!(claims.stage_count(), 1);
         assert_eq!(claims.stages[0].name, "stage");
-        assert_eq!(claims.stages[0].shape, SumcheckShape::new(2, 2));
+        assert_eq!(claims.stages[0].statement, SumcheckStatement::new(2, 2));
     }
 }

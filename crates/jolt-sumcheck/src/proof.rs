@@ -1,15 +1,14 @@
 //! Proof structures for single and batched sumcheck protocols.
 
 use crate::{
-    claim::{EvaluationClaim, SumcheckClaim, SumcheckShape},
-    committed::{CommittedSumcheckCheck, CommittedSumcheckProof},
+    claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement},
+    committed::{CommittedSumcheckConsistency, CommittedSumcheckProof},
     domain::{BooleanHypercube, SumcheckDomain},
     error::SumcheckError,
     round_proof::LabeledRoundPoly,
     verifier::SumcheckVerifier,
     SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_field::Field;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{Deserialize, Serialize};
@@ -58,12 +57,6 @@ pub enum SumcheckProof<F: jolt_field::Field, C> {
     Committed(CommittedSumcheckProof<C>),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SumcheckVerification<F: Field, C> {
-    Clear(EvaluationClaim<F>),
-    Committed(CommittedSumcheckCheck<F, C>),
-}
-
 impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
     pub fn is_committed(&self) -> bool {
         matches!(self, Self::Committed(_))
@@ -87,18 +80,14 @@ impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
         }
     }
 
-    /// Verifies a full-round sumcheck proof over `domain`.
-    ///
-    /// Clear proofs check the round equations and return the scalar reduction.
-    /// Committed proofs check public committed-proof structure and transcript
-    /// effects; hidden claim relations are deferred to BlindFold.
+    /// Verifies a full-round clear sumcheck proof over `domain`.
     pub fn verify<T, D>(
         &self,
         claim: &SumcheckClaim<F>,
         domain: D,
         round_label: &'static [u8],
         transcript: &mut T,
-    ) -> Result<SumcheckVerification<F, C>, SumcheckError<F>>
+    ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
         T: Transcript<Challenge = F>,
         D: SumcheckDomain<F>,
@@ -112,28 +101,24 @@ impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
                     .map(|poly| LabeledRoundPoly::new(poly, round_label))
                     .collect::<Vec<_>>();
                 SumcheckVerifier::verify(claim, &rounds, domain, transcript)
-                    .map(SumcheckVerification::Clear)
             }
             Self::Clear(ClearProof::Compressed(_)) => Err(SumcheckError::WrongProofEncoding {
-                expected: "full clear or committed",
+                expected: "full clear",
                 got: "compressed clear",
             }),
-            Self::Committed(proof) => proof
-                .verify_committed(SumcheckShape::from(claim), transcript)
-                .map(SumcheckVerification::Committed),
+            Self::Committed(_) => Err(SumcheckError::WrongProofEncoding {
+                expected: "full clear",
+                got: "committed",
+            }),
         }
     }
 
-    /// Verifies a compressed Boolean-hypercube sumcheck proof.
-    ///
-    /// Clear proofs check the compressed round encoding and return the scalar
-    /// reduction. Committed proofs check public committed-proof structure and
-    /// transcript effects; hidden claim relations are deferred to BlindFold.
+    /// Verifies a compressed clear Boolean-hypercube sumcheck proof.
     pub fn verify_compressed_boolean<T>(
         &self,
         claim: &SumcheckClaim<F>,
         transcript: &mut T,
-    ) -> Result<SumcheckVerification<F, C>, SumcheckError<F>>
+    ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
         T: Transcript<Challenge = F>,
         C: Clone + AppendToTranscript,
@@ -145,15 +130,43 @@ impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
                 BooleanHypercube,
                 SUMCHECK_ROUND_TRANSCRIPT_LABEL,
                 transcript,
-            )
-            .map(SumcheckVerification::Clear),
+            ),
             Self::Clear(ClearProof::Full(_)) => Err(SumcheckError::WrongProofEncoding {
-                expected: "compressed clear or committed",
+                expected: "compressed clear",
                 got: "full clear",
             }),
-            Self::Committed(proof) => proof
-                .verify_committed(SumcheckShape::from(claim), transcript)
-                .map(SumcheckVerification::Committed),
+            Self::Committed(_) => Err(SumcheckError::WrongProofEncoding {
+                expected: "compressed clear",
+                got: "committed",
+            }),
+        }
+    }
+
+    /// Checks public consistency for a committed sumcheck proof.
+    ///
+    /// This path intentionally takes only a [`SumcheckStatement`]. Committed
+    /// proofs do not reveal the scalar claim, so claim relations are deferred
+    /// to the BlindFold verifier rather than represented with placeholder
+    /// values.
+    pub fn verify_committed_consistency<T>(
+        &self,
+        statement: SumcheckStatement,
+        transcript: &mut T,
+    ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
+    where
+        T: Transcript<Challenge = F>,
+        C: Clone + AppendToTranscript,
+    {
+        match self {
+            Self::Committed(proof) => proof.verify_committed_consistency(statement, transcript),
+            Self::Clear(ClearProof::Full(_)) => Err(SumcheckError::WrongProofEncoding {
+                expected: "committed",
+                got: "full clear",
+            }),
+            Self::Clear(ClearProof::Compressed(_)) => Err(SumcheckError::WrongProofEncoding {
+                expected: "committed",
+                got: "compressed clear",
+            }),
         }
     }
 }

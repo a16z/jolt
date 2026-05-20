@@ -72,11 +72,9 @@ where
         }
     }
 
-    pub(crate) fn transparent_claims(
-        &self,
-    ) -> Result<&TransparentProofClaims<PCS::Field>, VerifierError> {
+    pub(crate) fn clear_claims(&self) -> Result<&ClearProofClaims<PCS::Field>, VerifierError> {
         match &self.claims {
-            JoltProofClaims::Transparent(claims) => Ok(claims),
+            JoltProofClaims::Clear(claims) => Ok(claims),
             JoltProofClaims::Zk { .. } => Err(VerifierError::UnexpectedBlindFoldProof),
         }
     }
@@ -119,20 +117,20 @@ impl<C> JoltCommitments<C> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[expect(
     clippy::large_enum_variant,
-    reason = "Transparent claims are the verifier-owned standard proof payload; keeping them inline avoids heap indirection in the common transparent path."
+    reason = "Clear claims are the verifier-owned standard proof payload; keeping them inline avoids heap indirection in the common clear path."
 )]
 #[serde(bound = "ZkProof: Serialize + serde::de::DeserializeOwned")]
 pub enum JoltProofClaims<F, ZkProof>
 where
     F: Field,
 {
-    Transparent(TransparentProofClaims<F>),
+    Clear(ClearProofClaims<F>),
     Zk { blindfold_proof: ZkProof },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct TransparentProofClaims<F: Field> {
+pub struct ClearProofClaims<F: Field> {
     pub stage1: stage1::inputs::Stage1Claims<F>,
     pub stage2: stage2::inputs::Stage2Claims<F>,
     pub stage3: stage3::inputs::Stage3Claims<F>,

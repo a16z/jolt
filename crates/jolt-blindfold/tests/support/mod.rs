@@ -15,7 +15,7 @@ use jolt_poly::{CompressedPoly, EqPolynomial};
 use jolt_r1cs::ConstraintMatrices;
 use jolt_sumcheck::{
     CommittedOutputClaims, CommittedRound, CommittedRoundWitness, CommittedSumcheckProof,
-    CompressedSumcheckProof, RoundMessage, SumcheckR1csLayout, SumcheckShape,
+    CompressedSumcheckProof, RoundMessage, SumcheckR1csLayout, SumcheckStatement,
     SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Label, LabelWithCount, Transcript};
@@ -49,7 +49,7 @@ pub enum Challenge {
 
 #[derive(Clone, Debug)]
 pub struct GeneratedStage {
-    pub shape: SumcheckShape,
+    pub statement: SumcheckStatement,
     pub proof: CommittedSumcheckProof<Bn254G1>,
     pub coefficients: Vec<Vec<F>>,
     pub blindings: Vec<F>,
@@ -356,29 +356,29 @@ impl<R: RngCore> SumcheckTestProver<R> {
         &mut self,
         setup: &PedersenSetup<Bn254G1>,
         transcript: &mut Blake2bTranscript<F>,
-        shape: SumcheckShape,
+        statement: SumcheckStatement,
         input_claim: F,
     ) -> GeneratedStage {
-        self.prove_stage_with_output_claims(setup, transcript, shape, input_claim, 0)
+        self.prove_stage_with_output_claims(setup, transcript, statement, input_claim, 0)
     }
 
     pub fn prove_stage_with_output_claims(
         &mut self,
         setup: &PedersenSetup<Bn254G1>,
         transcript: &mut Blake2bTranscript<F>,
-        shape: SumcheckShape,
+        statement: SumcheckStatement,
         input_claim: F,
         output_claim_count: usize,
     ) -> GeneratedStage {
         let mut claim = input_claim;
-        let mut rounds = Vec::with_capacity(shape.num_vars);
-        let mut coefficients = Vec::with_capacity(shape.num_vars);
-        let mut blindings = Vec::with_capacity(shape.num_vars);
-        let mut claim_outs = Vec::with_capacity(shape.num_vars);
+        let mut rounds = Vec::with_capacity(statement.num_vars);
+        let mut coefficients = Vec::with_capacity(statement.num_vars);
+        let mut blindings = Vec::with_capacity(statement.num_vars);
+        let mut claim_outs = Vec::with_capacity(statement.num_vars);
 
-        for _ in 0..shape.num_vars {
+        for _ in 0..statement.num_vars {
             let round_coefficients =
-                coefficients_for_claim_with_rng(claim, shape.degree, &mut self.rng);
+                coefficients_for_claim_with_rng(claim, statement.degree, &mut self.rng);
             let blinding = rng_field(&mut self.rng);
             let round = commit_round_with_blinding(setup, round_coefficients.clone(), blinding);
             round.append_to_transcript(transcript);
@@ -394,7 +394,7 @@ impl<R: RngCore> SumcheckTestProver<R> {
         let mut output_claim_blindings = Vec::with_capacity(output_claim_count);
         let mut output_commitments = Vec::with_capacity(output_claim_count);
         for _ in 0..output_claim_count {
-            let row = (0..=shape.degree)
+            let row = (0..=statement.degree)
                 .map(|_| rng_field(&mut self.rng))
                 .collect::<Vec<_>>();
             let blinding = rng_field(&mut self.rng);
@@ -408,7 +408,7 @@ impl<R: RngCore> SumcheckTestProver<R> {
         output_claims.append_to_transcript(transcript);
 
         GeneratedStage {
-            shape,
+            statement,
             proof: CommittedSumcheckProof {
                 rounds,
                 output_claims,
@@ -426,11 +426,11 @@ impl<R: RngCore> SumcheckTestProver<R> {
         &mut self,
         setup: &PedersenSetup<Bn254G1>,
         transcript_label: &'static [u8],
-        shape: SumcheckShape,
+        statement: SumcheckStatement,
         input_claim: F,
     ) -> GeneratedStage {
         let mut transcript = Blake2bTranscript::<F>::new(transcript_label);
-        self.prove_stage(setup, &mut transcript, shape, input_claim)
+        self.prove_stage(setup, &mut transcript, statement, input_claim)
     }
 }
 
@@ -439,7 +439,7 @@ pub fn generate_zero_stage(setup: &PedersenSetup<Bn254G1>, num_vars: usize) -> G
         .map(|round| commit_round(setup, vec![f(0)], round))
         .collect();
     GeneratedStage {
-        shape: SumcheckShape::new(num_vars, 1),
+        statement: SumcheckStatement::new(num_vars, 1),
         proof: CommittedSumcheckProof {
             rounds,
             output_claims: CommittedOutputClaims::default(),
@@ -454,14 +454,14 @@ pub fn generate_zero_stage(setup: &PedersenSetup<Bn254G1>, num_vars: usize) -> G
 }
 
 pub fn stage_input(
-    shape: SumcheckShape,
+    statement: SumcheckStatement,
     proof: &CommittedSumcheckProof<Bn254G1>,
 ) -> StageInput<F, Bn254G1> {
     let mut transcript = Blake2bTranscript::<F>::new(b"blindfold-r1cs-e2e");
-    let check = proof
-        .verify_committed(shape, &mut transcript)
+    let consistency = proof
+        .verify_committed_consistency(statement, &mut transcript)
         .expect("committed proof transcript verifies");
-    StageInput::new(check)
+    StageInput::new(consistency)
 }
 
 pub fn stage_inputs_for_transcript(stages: &[&GeneratedStage]) -> Inputs<F, Bn254G1> {
@@ -476,11 +476,11 @@ pub fn stage_inputs_for_transcript_label(
     let inputs = stages
         .iter()
         .map(|stage| {
-            let check = stage
+            let consistency = stage
                 .proof
-                .verify_committed(stage.shape, &mut transcript)
+                .verify_committed_consistency(stage.statement, &mut transcript)
                 .expect("committed proof transcript verifies");
-            StageInput::new(check)
+            StageInput::new(consistency)
         })
         .collect();
     Inputs::new(inputs)
@@ -583,9 +583,24 @@ pub fn build_deep_relation(
     let (stage1_input, stage1_output, stage2_input, stage2_output, stage3_input, stage3_output) =
         deep_claims();
     let claims = InstanceClaims::new(vec![
-        StageClaims::new("deep-stage-1", stage1.shape, stage1_input, stage1_output),
-        StageClaims::new("deep-stage-2", stage2.shape, stage2_input, stage2_output),
-        StageClaims::new("deep-stage-3", stage3.shape, stage3_input, stage3_output),
+        StageClaims::new(
+            "deep-stage-1",
+            stage1.statement,
+            stage1_input,
+            stage1_output,
+        ),
+        StageClaims::new(
+            "deep-stage-2",
+            stage2.statement,
+            stage2_input,
+            stage2_output,
+        ),
+        StageClaims::new(
+            "deep-stage-3",
+            stage3.statement,
+            stage3_input,
+            stage3_output,
+        ),
     ]);
     let inputs = stage_inputs_for_transcript(&[stage1, stage2, stage3]);
 
@@ -617,21 +632,36 @@ pub fn generated_deep_triple<R: RngCore>(
     prover: &mut SumcheckTestProver<R>,
 ) -> (GeneratedStage, GeneratedStage, GeneratedStage, DeepValues) {
     let setup = pedersen_setup(4);
-    let shape = SumcheckShape::new(4, 3);
+    let statement = SumcheckStatement::new(4, 3);
     let mut values = deep_values_without_links();
     let mut transcript = Blake2bTranscript::<F>::new(b"blindfold-r1cs-e2e");
-    let stage1 = prover.prove_stage(&setup, &mut transcript, shape, deep_stage1_input(&values));
+    let stage1 = prover.prove_stage(
+        &setup,
+        &mut transcript,
+        statement,
+        deep_stage1_input(&values),
+    );
     values.link = *stage1
         .claim_outs
         .last()
         .expect("stage has at least one round");
-    let stage2 = prover.prove_stage(&setup, &mut transcript, shape, deep_stage2_input(&values));
+    let stage2 = prover.prove_stage(
+        &setup,
+        &mut transcript,
+        statement,
+        deep_stage2_input(&values),
+    );
     let stage2_final_claim = *stage2
         .claim_outs
         .last()
         .expect("stage has at least one round");
     values.mid = (stage2_final_claim - values.bias) * inverse(values.aux);
-    let stage3 = prover.prove_stage(&setup, &mut transcript, shape, deep_stage3_input(&values));
+    let stage3 = prover.prove_stage(
+        &setup,
+        &mut transcript,
+        statement,
+        deep_stage3_input(&values),
+    );
     let stage3_final_claim = *stage3
         .claim_outs
         .last()
@@ -656,8 +686,8 @@ struct SumcheckTrace {
 pub fn prove_blindfold_protocol_pipeline<R: RngCore>(rng: &mut R) -> BlindFoldTestProof {
     let setup = pedersen_setup(4);
     let transcript_label = b"protocol-backed-blindfold-proof";
-    let shape1 = SumcheckShape::new(3, 3);
-    let shape2 = SumcheckShape::new(2, 3);
+    let statement1 = SumcheckStatement::new(3, 3);
+    let statement2 = SumcheckStatement::new(2, 3);
     let input1 = f(37);
     let input2 = f(89);
 
@@ -665,9 +695,9 @@ pub fn prove_blindfold_protocol_pipeline<R: RngCore>(rng: &mut R) -> BlindFoldTe
         let mut prover = SumcheckTestProver::new(&mut *rng);
         let mut transcript = Blake2bTranscript::<F>::new(transcript_label);
         let stage1 =
-            prover.prove_stage_with_output_claims(&setup, &mut transcript, shape1, input1, 2);
+            prover.prove_stage_with_output_claims(&setup, &mut transcript, statement1, input1, 2);
         let stage2 =
-            prover.prove_stage_with_output_claims(&setup, &mut transcript, shape2, input2, 1);
+            prover.prove_stage_with_output_claims(&setup, &mut transcript, statement2, input2, 1);
         (stage1, stage2)
     };
     let stage1_output = *stage1
@@ -681,13 +711,13 @@ pub fn prove_blindfold_protocol_pipeline<R: RngCore>(rng: &mut R) -> BlindFoldTe
     let claims = InstanceClaims::new(vec![
         StageClaims::new(
             "protocol-backed-stage-1",
-            shape1,
+            statement1,
             constant(input1),
             constant(stage1_output),
         ),
         StageClaims::new(
             "protocol-backed-stage-2",
-            shape2,
+            statement2,
             constant(input2),
             constant(stage2_output),
         ),
@@ -743,7 +773,7 @@ pub fn append_protocol_transcript_prefix(
         .iter()
         .zip(&protocol.output_claims)
     {
-        for round in &stage.check.rounds {
+        for round in &stage.consistency.rounds {
             CommittedRound {
                 commitment: round.commitment,
                 degree: round.degree,

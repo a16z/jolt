@@ -2,7 +2,7 @@ use jolt_field::Field;
 use jolt_r1cs::{LinearCombination, R1csBuilder, Variable};
 use thiserror::Error;
 
-use crate::{SumcheckShape, VerifiedCommittedRound};
+use crate::{SumcheckStatement, VerifiedCommittedRound};
 
 pub trait SumcheckR1csRound<F> {
     fn degree(&self) -> usize;
@@ -86,14 +86,14 @@ impl SumcheckR1csRoundLayout {
 
 pub fn allocate_sumcheck_r1cs_layout<F, R>(
     builder: &mut R1csBuilder<F>,
-    shape: SumcheckShape,
+    statement: SumcheckStatement,
     rounds: &[R],
 ) -> Result<SumcheckR1csLayout, SumcheckR1csError>
 where
     F: Field,
     R: SumcheckR1csRound<F>,
 {
-    validate_rounds_shape(shape, rounds)?;
+    validate_rounds_statement(statement, rounds)?;
 
     let input_claim = builder.alloc_unknown();
     let mut claim_in = input_claim;
@@ -122,7 +122,7 @@ where
 
 pub fn append_sumcheck_r1cs_constraints<F, R>(
     builder: &mut R1csBuilder<F>,
-    shape: SumcheckShape,
+    statement: SumcheckStatement,
     rounds: &[R],
     layout: &SumcheckR1csLayout,
 ) -> Result<(), SumcheckR1csError>
@@ -130,7 +130,7 @@ where
     F: Field,
     R: SumcheckR1csRound<F>,
 {
-    validate_layout(builder.num_vars(), shape, rounds, layout)?;
+    validate_layout(builder.num_vars(), statement, rounds, layout)?;
 
     for (round_layout, round) in layout.rounds.iter().zip(rounds) {
         append_round_constraints(builder, round_layout, round.challenge());
@@ -141,7 +141,7 @@ where
 
 fn validate_layout<F, R>(
     num_vars: usize,
-    shape: SumcheckShape,
+    statement: SumcheckStatement,
     rounds: &[R],
     layout: &SumcheckR1csLayout,
 ) -> Result<(), SumcheckR1csError>
@@ -149,7 +149,7 @@ where
     F: Field,
     R: SumcheckR1csRound<F>,
 {
-    validate_rounds_shape(shape, rounds)?;
+    validate_rounds_statement(statement, rounds)?;
     validate_variable(layout.input_claim, num_vars)?;
     validate_variable(layout.output_claim, num_vars)?;
 
@@ -201,22 +201,25 @@ where
     Ok(())
 }
 
-fn validate_rounds_shape<F, R>(shape: SumcheckShape, rounds: &[R]) -> Result<(), SumcheckR1csError>
+fn validate_rounds_statement<F, R>(
+    statement: SumcheckStatement,
+    rounds: &[R],
+) -> Result<(), SumcheckR1csError>
 where
     R: SumcheckR1csRound<F>,
 {
-    if shape.num_vars != rounds.len() {
+    if statement.num_vars != rounds.len() {
         return Err(SumcheckR1csError::WrongNumberOfRounds {
-            expected: shape.num_vars,
+            expected: statement.num_vars,
             actual: rounds.len(),
         });
     }
 
     for (round_index, round) in rounds.iter().enumerate() {
-        if round.degree() > shape.degree {
+        if round.degree() > statement.degree {
             return Err(SumcheckR1csError::DegreeBoundExceeded {
                 round_index,
-                bound: shape.degree,
+                bound: statement.degree,
                 actual: round.degree(),
             });
         }
@@ -311,13 +314,13 @@ mod tests {
 
     #[test]
     fn emits_satisfied_round_constraints() {
-        let shape = SumcheckShape::new(2, 1);
+        let statement = SumcheckStatement::new(2, 1);
         let rounds = [round(1, 2), round(1, 3)];
         let mut builder = R1csBuilder::<Fr>::new();
 
-        let layout = allocate_sumcheck_r1cs_layout(&mut builder, shape, &rounds)
+        let layout = allocate_sumcheck_r1cs_layout(&mut builder, statement, &rounds)
             .expect("layout should allocate");
-        append_sumcheck_r1cs_constraints(&mut builder, shape, &rounds, &layout)
+        append_sumcheck_r1cs_constraints(&mut builder, statement, &rounds, &layout)
             .expect("constraints should build");
 
         assign(&mut builder, layout.input_claim, 10);
@@ -330,13 +333,13 @@ mod tests {
 
     #[test]
     fn rejects_bad_round_sum() {
-        let shape = SumcheckShape::new(1, 1);
+        let statement = SumcheckStatement::new(1, 1);
         let rounds = [round(1, 2)];
         let mut builder = R1csBuilder::<Fr>::new();
 
-        let layout = allocate_sumcheck_r1cs_layout(&mut builder, shape, &rounds)
+        let layout = allocate_sumcheck_r1cs_layout(&mut builder, statement, &rounds)
             .expect("layout should allocate");
-        append_sumcheck_r1cs_constraints(&mut builder, shape, &rounds, &layout)
+        append_sumcheck_r1cs_constraints(&mut builder, statement, &rounds, &layout)
             .expect("constraints should build");
 
         assign(&mut builder, layout.input_claim, 10);
@@ -348,13 +351,13 @@ mod tests {
 
     #[test]
     fn rejects_bad_challenge_transition() {
-        let shape = SumcheckShape::new(1, 1);
+        let statement = SumcheckStatement::new(1, 1);
         let rounds = [round(1, 2)];
         let mut builder = R1csBuilder::<Fr>::new();
 
-        let layout = allocate_sumcheck_r1cs_layout(&mut builder, shape, &rounds)
+        let layout = allocate_sumcheck_r1cs_layout(&mut builder, statement, &rounds)
             .expect("layout should allocate");
-        append_sumcheck_r1cs_constraints(&mut builder, shape, &rounds, &layout)
+        append_sumcheck_r1cs_constraints(&mut builder, statement, &rounds, &layout)
             .expect("constraints should build");
 
         assign(&mut builder, layout.input_claim, 10);
@@ -366,13 +369,13 @@ mod tests {
 
     #[test]
     fn supports_constant_rounds_under_degree_bound() {
-        let shape = SumcheckShape::new(1, 1);
+        let statement = SumcheckStatement::new(1, 1);
         let rounds = [round(0, 99)];
         let mut builder = R1csBuilder::<Fr>::new();
 
-        let layout = allocate_sumcheck_r1cs_layout(&mut builder, shape, &rounds)
+        let layout = allocate_sumcheck_r1cs_layout(&mut builder, statement, &rounds)
             .expect("layout should allocate");
-        append_sumcheck_r1cs_constraints(&mut builder, shape, &rounds, &layout)
+        append_sumcheck_r1cs_constraints(&mut builder, statement, &rounds, &layout)
             .expect("constraints should build");
 
         assign(&mut builder, layout.input_claim, 14);
@@ -384,11 +387,11 @@ mod tests {
 
     #[test]
     fn rejects_wrong_number_of_rounds() {
-        let shape = SumcheckShape::new(2, 1);
+        let statement = SumcheckStatement::new(2, 1);
         let rounds = [round(1, 2)];
         let mut builder = R1csBuilder::<Fr>::new();
 
-        let error = allocate_sumcheck_r1cs_layout(&mut builder, shape, &rounds)
+        let error = allocate_sumcheck_r1cs_layout(&mut builder, statement, &rounds)
             .expect_err("round count differs");
 
         assert_eq!(
@@ -401,12 +404,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_degree_above_shape_bound() {
-        let shape = SumcheckShape::new(1, 1);
+    fn rejects_degree_above_statement_bound() {
+        let statement = SumcheckStatement::new(1, 1);
         let rounds = [round(2, 2)];
         let mut builder = R1csBuilder::<Fr>::new();
 
-        let error = allocate_sumcheck_r1cs_layout(&mut builder, shape, &rounds)
+        let error = allocate_sumcheck_r1cs_layout(&mut builder, statement, &rounds)
             .expect_err("degree exceeds bound");
 
         assert_eq!(
@@ -421,15 +424,15 @@ mod tests {
 
     #[test]
     fn append_rejects_broken_claim_chain() {
-        let shape = SumcheckShape::new(1, 1);
+        let statement = SumcheckStatement::new(1, 1);
         let rounds = [round(1, 2)];
         let mut builder = R1csBuilder::<Fr>::new();
 
-        let mut layout = allocate_sumcheck_r1cs_layout(&mut builder, shape, &rounds)
+        let mut layout = allocate_sumcheck_r1cs_layout(&mut builder, statement, &rounds)
             .expect("layout should allocate");
         layout.rounds[0].claim_in = layout.rounds[0].claim_out;
 
-        let error = append_sumcheck_r1cs_constraints(&mut builder, shape, &rounds, &layout)
+        let error = append_sumcheck_r1cs_constraints(&mut builder, statement, &rounds, &layout)
             .expect_err("claim chain is broken");
 
         assert_eq!(
@@ -444,16 +447,16 @@ mod tests {
 
     #[test]
     fn append_rejects_out_of_bounds_layout_variable() {
-        let shape = SumcheckShape::new(1, 1);
+        let statement = SumcheckStatement::new(1, 1);
         let rounds = [round(1, 2)];
         let mut builder = R1csBuilder::<Fr>::new();
 
-        let mut layout = allocate_sumcheck_r1cs_layout(&mut builder, shape, &rounds)
+        let mut layout = allocate_sumcheck_r1cs_layout(&mut builder, statement, &rounds)
             .expect("layout should allocate");
         let num_vars = builder.num_vars();
         layout.rounds[0].coefficients[0] = Variable(num_vars);
 
-        let error = append_sumcheck_r1cs_constraints(&mut builder, shape, &rounds, &layout)
+        let error = append_sumcheck_r1cs_constraints(&mut builder, statement, &rounds, &layout)
             .expect_err("layout references an unknown variable");
 
         assert_eq!(

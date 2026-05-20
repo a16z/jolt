@@ -83,8 +83,8 @@ where
 
         append_sumcheck_r1cs_constraints(
             builder,
-            stage.shape,
-            &stage_input.check.rounds,
+            stage.statement,
+            &stage_input.consistency.rounds,
             &stage_layout.sumcheck,
         )
         .map_err(|source| Error::Sumcheck {
@@ -121,7 +121,7 @@ where
     let coefficient_row_len = inputs
         .stages
         .iter()
-        .flat_map(|stage| &stage.check.rounds)
+        .flat_map(|stage| &stage.consistency.rounds)
         .map(|round| round.degree.saturating_add(1))
         .max()
         .unwrap_or(1)
@@ -133,14 +133,14 @@ where
         .zip(&inputs.stages)
         .enumerate()
         .map(|(stage_index, (stage, stage_input))| {
-            validate_stage_shape(stage.shape, &stage_input.check.rounds).map_err(|source| {
-                LayoutError::Sumcheck {
+            validate_stage_statement(stage.statement, &stage_input.consistency.rounds).map_err(
+                |source| LayoutError::Sumcheck {
                     stage_index,
                     source,
-                }
-            })?;
+                },
+            )?;
             Ok(stage_input
-                .check
+                .consistency
                 .rounds
                 .iter()
                 .map(|round| {
@@ -163,7 +163,7 @@ where
         .map(|(stage_input, stage_coefficients)| {
             let input_claim = builder.alloc_unknown();
             let mut claim_in = input_claim;
-            let mut rounds = Vec::with_capacity(stage_input.check.rounds.len());
+            let mut rounds = Vec::with_capacity(stage_input.consistency.rounds.len());
 
             for coefficients in stage_coefficients {
                 let claim_out = builder.alloc_unknown();
@@ -188,22 +188,22 @@ where
     Ok(Layout { stages })
 }
 
-fn validate_stage_shape<F, C>(
-    shape: jolt_sumcheck::SumcheckShape,
+fn validate_stage_statement<F, C>(
+    statement: jolt_sumcheck::SumcheckStatement,
     rounds: &[jolt_sumcheck::VerifiedCommittedRound<F, C>],
 ) -> Result<(), SumcheckR1csError> {
-    if shape.num_vars != rounds.len() {
+    if statement.num_vars != rounds.len() {
         return Err(SumcheckR1csError::WrongNumberOfRounds {
-            expected: shape.num_vars,
+            expected: statement.num_vars,
             actual: rounds.len(),
         });
     }
 
     for (round_index, round) in rounds.iter().enumerate() {
-        if round.degree > shape.degree {
+        if round.degree > statement.degree {
             return Err(SumcheckR1csError::DegreeBoundExceeded {
                 round_index,
-                bound: shape.degree,
+                bound: statement.degree,
                 actual: round.degree,
             });
         }
@@ -244,7 +244,7 @@ mod tests {
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_r1cs::{ClaimLoweringError, ClaimSourceTable, R1csBuilderError};
     use jolt_sumcheck::{
-        CommittedSumcheckCheck, SumcheckR1csError, SumcheckShape, VerifiedCommittedRound,
+        CommittedSumcheckConsistency, SumcheckR1csError, SumcheckStatement, VerifiedCommittedRound,
     };
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -261,7 +261,7 @@ mod tests {
         let claim: Expr<Fr, ()> = constant(Fr::from_u64(0));
         StageClaims::new(
             "stage",
-            SumcheckShape::new(num_vars, degree),
+            SumcheckStatement::new(num_vars, degree),
             claim.clone(),
             claim,
         )
@@ -275,14 +275,14 @@ mod tests {
     ) -> StageClaims<Fr, Opening, Public> {
         StageClaims::new(
             "stage",
-            SumcheckShape::new(num_vars, degree),
+            SumcheckStatement::new(num_vars, degree),
             input_claim,
             output_claim,
         )
     }
 
     fn stage_input(degrees: &[usize]) -> StageInput<Fr, ()> {
-        StageInput::new(CommittedSumcheckCheck {
+        StageInput::new(CommittedSumcheckConsistency {
             rounds: degrees
                 .iter()
                 .enumerate()
@@ -296,7 +296,7 @@ mod tests {
     }
 
     fn committed_stage_input(rounds: &[(usize, u64)]) -> StageInput<Fr, ()> {
-        StageInput::new(CommittedSumcheckCheck {
+        StageInput::new(CommittedSumcheckConsistency {
             rounds: rounds
                 .iter()
                 .map(|&(degree, challenge)| VerifiedCommittedRound {

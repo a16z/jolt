@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 #[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 use crate::compat::ids as legacy;
 use crate::{
-    proof::{JoltProof, JoltProofClaims, TransparentProofClaims},
+    proof::{ClearProofClaims, JoltProof, JoltProofClaims},
     stages::{
         stage1::inputs::{SpartanOuterClaims, SpartanOuterFlagClaims, Stage1Claims},
         stage2::inputs::{
@@ -77,21 +77,21 @@ pub(crate) fn native_opening_claims_from_legacy<F: Field>(
 }
 
 #[cfg(all(feature = "jolt-core-compat", not(feature = "zk")))]
-pub(crate) fn transparent_claims_from_legacy<F: Field>(
+pub(crate) fn clear_claims_from_legacy<F: Field>(
     claims: LegacyOpeningClaims<F>,
     trace_length: usize,
-) -> Result<TransparentProofClaims<F>, VerifierError> {
-    transparent_claims_from_native(native_opening_claims_from_legacy(claims), trace_length)
+) -> Result<ClearProofClaims<F>, VerifierError> {
+    clear_claims_from_native(native_opening_claims_from_legacy(claims), trace_length)
 }
 
-pub(crate) fn transparent_claims_from_native<F: Field>(
+pub(crate) fn clear_claims_from_native<F: Field>(
     claims: impl IntoIterator<Item = (native::JoltOpeningId, F)>,
     _trace_length: usize,
-) -> Result<TransparentProofClaims<F>, VerifierError> {
+) -> Result<ClearProofClaims<F>, VerifierError> {
     let claims = NativeOpeningClaims {
         claims: claims.into_iter().collect(),
     };
-    Ok(TransparentProofClaims {
+    Ok(ClearProofClaims {
         stage1: Stage1Claims {
             uniskip_output_claim: claims.require(outer_uniskip_opening())?,
             outer: spartan_outer_claims_from_native(&claims)?,
@@ -533,8 +533,7 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    proof.claims =
-        JoltProofClaims::Transparent(transparent_claims_from_native(claims, proof.trace_length)?);
+    proof.claims = JoltProofClaims::Clear(clear_claims_from_native(claims, proof.trace_length)?);
     Ok(())
 }
 
@@ -544,13 +543,13 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    proof.claims = JoltProofClaims::Transparent(empty_transparent_claims(proof.trace_length));
+    proof.claims = JoltProofClaims::Clear(empty_clear_claims(proof.trace_length));
 }
 
-fn empty_transparent_claims<F: Field>(_trace_length: usize) -> TransparentProofClaims<F> {
+fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
     let zero = F::zero();
 
-    TransparentProofClaims {
+    ClearProofClaims {
         stage1: Stage1Claims {
             uniskip_output_claim: zero,
             outer: empty_spartan_outer_claims(),
@@ -773,11 +772,11 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    let JoltProofClaims::Transparent(claims) = &proof.claims else {
+    let JoltProofClaims::Clear(claims) = &proof.claims else {
         return None;
     };
 
-    claim_from_transparent(claims, proof.trace_length, id)
+    claim_from_clear(claims, proof.trace_length, id)
 }
 
 #[cfg(any(feature = "jolt-core-compat", test))]
@@ -789,11 +788,11 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    let JoltProofClaims::Transparent(claims) = &mut proof.claims else {
+    let JoltProofClaims::Clear(claims) = &mut proof.claims else {
         return None;
     };
 
-    claim_mut_from_transparent(claims, proof.trace_length, id)
+    claim_mut_from_clear(claims, proof.trace_length, id)
 }
 
 #[cfg(any(feature = "jolt-core-compat", test))]
@@ -806,16 +805,16 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    let JoltProofClaims::Transparent(claims) = &mut proof.claims else {
+    let JoltProofClaims::Clear(claims) = &mut proof.claims else {
         return false;
     };
 
-    set_claim_in_transparent(claims, proof.trace_length, id, opening_claim)
+    set_claim_in_clear(claims, proof.trace_length, id, opening_claim)
 }
 
 #[cfg(any(feature = "jolt-core-compat", test))]
-fn claim_from_transparent<F: Field>(
-    claims: &TransparentProofClaims<F>,
+fn claim_from_clear<F: Field>(
+    claims: &ClearProofClaims<F>,
     trace_length: usize,
     id: native::JoltOpeningId,
 ) -> Option<F> {
@@ -838,8 +837,8 @@ fn claim_from_transparent<F: Field>(
 }
 
 #[cfg(any(feature = "jolt-core-compat", test))]
-fn claim_mut_from_transparent<F: Field>(
-    claims: &mut TransparentProofClaims<F>,
+fn claim_mut_from_clear<F: Field>(
+    claims: &mut ClearProofClaims<F>,
     trace_length: usize,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
@@ -919,13 +918,13 @@ fn claim_mut_from_spartan_outer_flag<F: Field>(
 }
 
 #[cfg(any(feature = "jolt-core-compat", test))]
-fn set_claim_in_transparent<F: Field>(
-    claims: &mut TransparentProofClaims<F>,
+fn set_claim_in_clear<F: Field>(
+    claims: &mut ClearProofClaims<F>,
     trace_length: usize,
     id: native::JoltOpeningId,
     opening_claim: F,
 ) -> bool {
-    if let Some(claim) = claim_mut_from_transparent(claims, trace_length, id) {
+    if let Some(claim) = claim_mut_from_clear(claims, trace_length, id) {
         *claim = opening_claim;
         return true;
     }

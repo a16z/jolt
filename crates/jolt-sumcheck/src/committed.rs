@@ -59,11 +59,11 @@ pub struct VerifiedCommittedRound<F, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CommittedSumcheckCheck<F, C> {
+pub struct CommittedSumcheckConsistency<F, C> {
     pub rounds: Vec<VerifiedCommittedRound<F, C>>,
 }
 
-impl<F: Copy, C: Clone> CommittedSumcheckCheck<F, C> {
+impl<F: Copy, C: Clone> CommittedSumcheckConsistency<F, C> {
     pub fn challenges(&self) -> Vec<F> {
         self.rounds.iter().map(|round| round.challenge).collect()
     }

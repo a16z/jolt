@@ -1,4 +1,4 @@
-//! Typed transparent-mode inputs consumed by stage 1.
+//! Typed clear-mode inputs consumed by stage 1.
 
 use jolt_claims::protocols::jolt::{
     formulas::spartan::{outer_opening, SpartanOuterDimensions},

@@ -4,9 +4,9 @@ use jolt_field::Field;
 use jolt_poly::UnivariatePolynomial;
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
-use crate::claim::{EvaluationClaim, SumcheckClaim, SumcheckShape};
+use crate::claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
 use crate::committed::{
-    CommittedRound, CommittedSumcheckCheck, CommittedSumcheckProof, VerifiedCommittedRound,
+    CommittedRound, CommittedSumcheckConsistency, CommittedSumcheckProof, VerifiedCommittedRound,
 };
 use crate::domain::{BooleanHypercube, SumcheckDomain};
 use crate::error::SumcheckError;
@@ -131,31 +131,34 @@ impl SumcheckVerifier {
         Ok(EvaluationClaim::new(challenges, running_sum))
     }
 
-    /// Replays committed sumcheck rounds and returns the transcript-derived data.
-    #[tracing::instrument(skip_all, name = "SumcheckVerifier::verify_committed_rounds")]
-    pub fn verify_committed_rounds<F, T, C>(
-        shape: SumcheckShape,
+    /// Checks committed sumcheck rounds and returns the transcript-derived data.
+    #[tracing::instrument(
+        skip_all,
+        name = "SumcheckVerifier::verify_committed_round_consistency"
+    )]
+    pub fn verify_committed_round_consistency<F, T, C>(
+        statement: SumcheckStatement,
         round_proofs: &[CommittedRound<C>],
         transcript: &mut T,
-    ) -> Result<CommittedSumcheckCheck<F, C>, SumcheckError<F>>
+    ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
     where
         F: SumcheckScalar,
         T: Transcript<Challenge = F>,
         C: Clone + AppendToTranscript,
     {
-        if round_proofs.len() != shape.num_vars {
+        if round_proofs.len() != statement.num_vars {
             return Err(SumcheckError::WrongNumberOfRounds {
-                expected: shape.num_vars,
+                expected: statement.num_vars,
                 got: round_proofs.len(),
             });
         }
 
-        let mut rounds = Vec::with_capacity(shape.num_vars);
+        let mut rounds = Vec::with_capacity(statement.num_vars);
         for round_proof in round_proofs {
-            if round_proof.degree() > shape.degree {
+            if round_proof.degree() > statement.degree {
                 return Err(SumcheckError::DegreeBoundExceeded {
                     got: round_proof.degree(),
-                    max: shape.degree,
+                    max: statement.degree,
                 });
             }
 
@@ -167,7 +170,7 @@ impl SumcheckVerifier {
             });
         }
 
-        Ok(CommittedSumcheckCheck { rounds })
+        Ok(CommittedSumcheckConsistency { rounds })
     }
 }
 
@@ -190,22 +193,26 @@ where
 }
 
 impl<C> CommittedSumcheckProof<C> {
-    /// Replays a committed proof through the Fiat-Shamir transcript.
+    /// Checks committed-proof consistency through the Fiat-Shamir transcript.
     ///
     /// This checks the round count and degree bounds, derives the round challenges,
     /// and absorbs the committed output claims after the round transcript.
-    pub fn verify_committed<F, T>(
+    pub fn verify_committed_consistency<F, T>(
         &self,
-        shape: SumcheckShape,
+        statement: SumcheckStatement,
         transcript: &mut T,
-    ) -> Result<CommittedSumcheckCheck<F, C>, SumcheckError<F>>
+    ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
     where
         F: SumcheckScalar,
         T: Transcript<Challenge = F>,
         C: Clone + AppendToTranscript,
     {
-        let check = SumcheckVerifier::verify_committed_rounds(shape, &self.rounds, transcript)?;
+        let consistency = SumcheckVerifier::verify_committed_round_consistency(
+            statement,
+            &self.rounds,
+            transcript,
+        )?;
         self.output_claims.append_to_transcript(transcript);
-        Ok(check)
+        Ok(consistency)
     }
 }

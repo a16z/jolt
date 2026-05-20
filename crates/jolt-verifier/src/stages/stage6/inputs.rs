@@ -1,16 +1,16 @@
-//! Typed transparent-mode inputs consumed by stage 6.
+//! Typed clear-mode inputs consumed by stage 6.
 
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
 use crate::stages::{
-    stage1::Stage1Output, stage2::Stage2Output, stage3::Stage3Output, stage4::Stage4Output,
+    stage1::Stage1ClearOutput, stage2::Stage2Output, stage3::Stage3Output, stage4::Stage4Output,
     stage5::Stage5Output,
 };
 
 #[derive(Clone, Copy)]
 pub struct Deps<'a, F: Field> {
-    pub stage1: &'a Stage1Output<F>,
+    pub stage1: &'a Stage1ClearOutput<F>,
     pub stage2: &'a Stage2Output<F>,
     pub stage3: &'a Stage3Output<F>,
     pub stage4: &'a Stage4Output<F>,
@@ -18,7 +18,7 @@ pub struct Deps<'a, F: Field> {
 }
 
 pub fn deps<'a, F: Field>(
-    stage1: &'a Stage1Output<F>,
+    stage1: &'a Stage1ClearOutput<F>,
     stage2: &'a Stage2Output<F>,
     stage3: &'a Stage3Output<F>,
     stage4: &'a Stage4Output<F>,

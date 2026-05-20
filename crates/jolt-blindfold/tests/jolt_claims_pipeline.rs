@@ -14,7 +14,7 @@ use jolt_claims::protocols::jolt::{
     JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltStageClaims, ReadWriteDimensions,
     TraceDimensions,
 };
-use jolt_sumcheck::SumcheckShape;
+use jolt_sumcheck::SumcheckStatement;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use support::*;
@@ -128,14 +128,14 @@ fn build_jolt_stage_relation(
     generated: &GeneratedStage,
     values: &JoltSourceValues,
 ) -> Result<(), usize> {
-    let shape = generated.shape;
+    let statement = generated.statement;
     let claims = InstanceClaims::new(vec![StageClaims::new(
         "jolt-stage",
-        shape,
+        statement,
         stage.input.expression.clone(),
         stage.output.expression.clone(),
     )]);
-    let inputs = Inputs::new(vec![stage_input(shape, &generated.proof)]);
+    let inputs = Inputs::new(vec![stage_input(statement, &generated.proof)]);
 
     let mut builder = R1csBuilder::<F>::new();
     let mut sources = ClaimSourceTable::<F, JoltOpeningId, JoltPublicId, JoltChallengeId>::new();
@@ -163,12 +163,16 @@ fn generated_jolt_stage(
     seed: u64,
 ) -> (GeneratedStage, JoltSourceValues, JoltOpeningId) {
     let setup = pedersen_setup(stage.sumcheck.degree + 1);
-    let shape = SumcheckShape::new(stage.sumcheck.rounds, stage.sumcheck.degree);
+    let statement = SumcheckStatement::new(stage.sumcheck.rounds, stage.sumcheck.degree);
     let mut values = JoltSourceValues::seeded(stage, seed);
     let input_claim = values.evaluate(&stage.input.expression);
     let mut prover = SumcheckTestProver::new(ChaCha20Rng::from_seed([seed as u8; 32]));
-    let generated =
-        prover.prove_stage_with_fresh_transcript(&setup, b"blindfold-r1cs-e2e", shape, input_claim);
+    let generated = prover.prove_stage_with_fresh_transcript(
+        &setup,
+        b"blindfold-r1cs-e2e",
+        statement,
+        input_claim,
+    );
     let final_claim = *generated
         .claim_outs
         .last()
@@ -235,15 +239,15 @@ fn jolt_claims_pipeline_lowers_booleanity_relation() {
         log_t: 1,
         log_k_chunk: 1,
     });
-    let shape = SumcheckShape::new(jolt_stage.sumcheck.rounds, jolt_stage.sumcheck.degree);
-    let generated = generate_zero_stage(&setup, shape.num_vars);
+    let statement = SumcheckStatement::new(jolt_stage.sumcheck.rounds, jolt_stage.sumcheck.degree);
+    let generated = generate_zero_stage(&setup, statement.num_vars);
     let claims = InstanceClaims::new(vec![StageClaims::new(
         "jolt-booleanity",
-        shape,
+        statement,
         jolt_stage.input.expression.clone(),
         jolt_stage.output.expression.clone(),
     )]);
-    let inputs = Inputs::new(vec![stage_input(shape, &generated.proof)]);
+    let inputs = Inputs::new(vec![stage_input(statement, &generated.proof)]);
 
     let mut builder = R1csBuilder::<F>::new();
     let mut sources = ClaimSourceTable::<F, JoltOpeningId, JoltPublicId, JoltChallengeId>::new();

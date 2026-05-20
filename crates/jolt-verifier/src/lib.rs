@@ -9,5 +9,5 @@ pub mod verifier;
 
 pub use error::VerifierError;
 pub use preprocessing::JoltVerifierPreprocessing;
-pub use proof::{JoltProof, JoltProofClaims, TransparentProofClaims};
+pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
 pub use verifier::{verify, CheckedInputs};

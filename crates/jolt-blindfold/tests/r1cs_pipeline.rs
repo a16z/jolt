@@ -13,7 +13,7 @@ fn r1cs_pipeline_satisfies_three_stage_claim_chain() {
 }
 
 #[test]
-fn r1cs_pipeline_rejects_late_stage_replay() {
+fn r1cs_pipeline_rejects_late_stage_mismatch() {
     let mut prover = SumcheckTestProver::new(ChaCha20Rng::from_seed([6; 32]));
     let (stage1, stage2, stage3, values) = generated_deep_triple(&mut prover);
     let mut tampered_stage3 = stage3.clone();

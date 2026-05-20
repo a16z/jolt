@@ -10,7 +10,7 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
-    stages::{stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8, zk},
+    stages::{stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8},
     VerifierError,
 };
 
@@ -45,6 +45,18 @@ where
     absorb_commitments(proof, trusted_advice_commitment, &mut transcript);
 
     let stage1 = stage1::verify(&checked, preprocessing, proof, &mut transcript)?;
+    if checked.zk {
+        let stage1::Stage1Output::Zk(_stage1) = stage1 else {
+            return Err(VerifierError::ExpectedCommittedProof { field: "stage1" });
+        };
+        return Err(VerifierError::Unimplemented);
+    }
+    let stage1 = match stage1 {
+        stage1::Stage1Output::Clear(stage1) => stage1,
+        stage1::Stage1Output::Zk(_) => {
+            return Err(VerifierError::ExpectedClearProof { field: "stage1" });
+        }
+    };
     let stage2 = stage2::verify(
         &checked,
         preprocessing,
@@ -87,7 +99,7 @@ where
         &mut transcript,
         stage7::deps(&stage1, &stage2, &stage3, &stage4, &stage5, &stage6),
     )?;
-    let stage8 = stage8::verify(
+    let _stage8 = stage8::verify(
         &checked,
         preprocessing,
         proof,
@@ -95,18 +107,6 @@ where
         &mut transcript,
         stage8::deps(&stage6, &stage7),
     )?;
-
-    if checked.zk {
-        zk::verify(
-            &checked,
-            preprocessing,
-            proof,
-            &mut transcript,
-            zk::deps(
-                &stage1, &stage2, &stage3, &stage4, &stage5, &stage6, &stage7, &stage8,
-            ),
-        )?;
-    }
 
     Ok(())
 }
@@ -372,9 +372,9 @@ where
     )?;
 
     match (&proof.claims, zk) {
-        (crate::proof::JoltProofClaims::Transparent(_), false)
+        (crate::proof::JoltProofClaims::Clear(_), false)
         | (crate::proof::JoltProofClaims::Zk { .. }, true) => {}
-        (crate::proof::JoltProofClaims::Transparent(_), true) => {
+        (crate::proof::JoltProofClaims::Clear(_), true) => {
             return Err(VerifierError::UnexpectedOpeningClaims);
         }
         (crate::proof::JoltProofClaims::Zk { .. }, false) => {
@@ -406,7 +406,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proof::{JoltProofClaims, JoltStageProofs, TransparentProofClaims};
+    use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
     use common::jolt_device::{JoltDevice, MemoryLayout};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
     use jolt_crypto::{Bn254G1, Commitment, Pedersen};
@@ -510,7 +510,7 @@ mod tests {
 
     #[test]
     fn accepts_standard_proof_consistency() {
-        let proof = proof_with_zk(false, transparent_claims());
+        let proof = proof_with_zk(false, clear_claims());
 
         assert!(validate_proof_consistency(&proof, false).is_ok());
     }
@@ -524,7 +524,7 @@ mod tests {
 
     #[test]
     fn rejects_wrong_stage_representation() {
-        let mut proof = proof_with_zk(false, transparent_claims());
+        let mut proof = proof_with_zk(false, clear_claims());
         proof.stages.stage5_sumcheck_proof =
             SumcheckProof::Committed(CommittedSumcheckProof::default());
 
@@ -538,7 +538,7 @@ mod tests {
 
     #[test]
     fn rejects_wrong_verifier_zk_flag() {
-        let proof = proof_with_zk(false, transparent_claims());
+        let proof = proof_with_zk(false, clear_claims());
 
         assert!(matches!(
             validate_proof_consistency(&proof, true),
@@ -555,7 +555,7 @@ mod tests {
             Err(VerifierError::UnexpectedBlindFoldProof)
         ));
         assert!(matches!(
-            validate_proof_consistency(&proof_with_zk(true, transparent_claims()), true),
+            validate_proof_consistency(&proof_with_zk(true, clear_claims()), true),
             Err(VerifierError::UnexpectedOpeningClaims)
         ));
     }
@@ -569,7 +569,7 @@ mod tests {
             outputs: vec![3, 0, 0],
             ..JoltDevice::default()
         };
-        let proof = proof_with_zk(false, transparent_claims());
+        let proof = proof_with_zk(false, clear_claims());
 
         let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false);
         assert!(checked.is_ok());
@@ -595,7 +595,7 @@ mod tests {
     fn validate_inputs_rejects_public_io_layout_mismatch() {
         let preprocessing = test_preprocessing();
         let public_io = JoltDevice::default();
-        let proof = proof_with_zk(false, transparent_claims());
+        let proof = proof_with_zk(false, clear_claims());
 
         assert!(matches!(
             validate_inputs(&preprocessing, &public_io, &proof, false, false),
@@ -649,10 +649,10 @@ mod tests {
         )
     }
 
-    fn transparent_claims() -> JoltProofClaims<Fr, ()> {
+    fn clear_claims() -> JoltProofClaims<Fr, ()> {
         let zero = Fr::zero();
 
-        JoltProofClaims::Transparent(TransparentProofClaims {
+        JoltProofClaims::Clear(ClearProofClaims {
             stage1: stage1::inputs::Stage1Claims {
                 uniskip_output_claim: zero,
                 outer: empty_spartan_outer_claims(),

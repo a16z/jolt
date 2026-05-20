@@ -11,19 +11,17 @@ use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Label, LabelWithCount, Transcript};
 
-use crate::claim::{EvaluationClaim, SumcheckClaim, SumcheckShape};
+use crate::claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
 use crate::committed::{
     CommittedOutputClaims, CommittedRound, CommittedRoundWitness, CommittedSumcheckProof,
 };
 use crate::error::SumcheckError;
-use crate::proof::{
-    ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof, SumcheckVerification,
-};
+use crate::proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
 use crate::round_proof::{ClearRound, CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
 use crate::verifier::SumcheckVerifier;
 use crate::{
-    append_sumcheck_claim, BatchedSumcheckVerification, BatchedSumcheckVerifier, BooleanHypercube,
-    CenteredIntegerDomain, SumcheckDomain, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+    append_sumcheck_claim, BatchedSumcheckVerifier, BooleanHypercube, CenteredIntegerDomain,
+    SumcheckDomain, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
 
 type F = Fr;
@@ -635,7 +633,7 @@ fn sumcheck_proof_verify_dispatches_full_clear() {
     let claim = SumcheckClaim::new(1, 1, F::from_u64(7));
 
     let mut transcript = Blake2bTranscript::<F>::new(b"sumcheck-proof-dispatch");
-    let result = proof
+    let reduction = proof
         .verify(
             &claim,
             BooleanHypercube,
@@ -644,9 +642,6 @@ fn sumcheck_proof_verify_dispatches_full_clear() {
         )
         .unwrap();
 
-    let SumcheckVerification::Clear(reduction) = result else {
-        panic!("full clear proof must produce a clear reduction");
-    };
     assert_eq!(reduction.point.len(), 1);
 }
 
@@ -668,14 +663,14 @@ fn sumcheck_proof_verify_rejects_wrong_clear_encoding() {
     assert!(matches!(
         result,
         Err(SumcheckError::WrongProofEncoding {
-            expected: "full clear or committed",
+            expected: "full clear",
             got: "compressed clear",
         })
     ));
 }
 
 #[test]
-fn sumcheck_proof_verify_dispatches_committed() {
+fn sumcheck_proof_verify_rejects_committed_encoding() {
     let proof = SumcheckProof::<F, F>::Committed(CommittedSumcheckProof {
         rounds: vec![CommittedRound {
             commitment: F::from_u64(11),
@@ -688,20 +683,20 @@ fn sumcheck_proof_verify_dispatches_committed() {
     let claim = SumcheckClaim::new(1, 1, F::from_u64(0));
 
     let mut transcript = Blake2bTranscript::<F>::new(b"sumcheck-proof-dispatch");
-    let result = proof
-        .verify(
-            &claim,
-            BooleanHypercube,
-            SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-            &mut transcript,
-        )
-        .unwrap();
+    let result = proof.verify(
+        &claim,
+        BooleanHypercube,
+        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+        &mut transcript,
+    );
 
-    let SumcheckVerification::Committed(check) = result else {
-        panic!("committed proof must produce a committed check");
-    };
-    assert_eq!(check.round_degrees(), vec![1]);
-    assert_eq!(check.round_commitments(), vec![F::from_u64(11)]);
+    assert!(matches!(
+        result,
+        Err(SumcheckError::WrongProofEncoding {
+            expected: "full clear",
+            got: "committed",
+        })
+    ));
 }
 
 #[test]
@@ -855,7 +850,7 @@ fn batched_empty_claims_returns_error() {
 }
 
 #[test]
-fn batched_compressed_verify_uses_core_batching_shape() {
+fn batched_compressed_verify_uses_core_batching_statement() {
     let evals_a: Vec<F> = (1..=8).map(F::from_u64).collect();
     let evals_b: Vec<F> = (1..=4).map(F::from_u64).collect();
     let sum_a = compute_sum(&evals_a);
@@ -952,16 +947,13 @@ fn batched_sumcheck_proof_verify_dispatches_compressed_clear() {
     let proof = SumcheckProof::<F, F>::Clear(ClearProof::Compressed(compressed_proof));
 
     let mut verifier_transcript = Blake2bTranscript::new(b"batched-proof-dispatch");
-    let result = BatchedSumcheckVerifier::verify_compressed_boolean(
+    let reduction = BatchedSumcheckVerifier::verify_compressed_boolean(
         &[claim],
         &proof,
         &mut verifier_transcript,
     )
     .unwrap();
 
-    let BatchedSumcheckVerification::Clear(reduction) = result else {
-        panic!("compressed clear proof must produce a clear batched reduction");
-    };
     assert_eq!(reduction.max_num_vars, 2);
     assert_eq!(reduction.max_degree, 1);
     assert_eq!(reduction.batching_coefficients.len(), 1);
@@ -981,18 +973,15 @@ fn batched_sumcheck_proof_verify_rejects_full_clear_encoding() {
     assert!(matches!(
         result,
         Err(SumcheckError::WrongProofEncoding {
-            expected: "compressed clear or committed",
+            expected: "compressed clear",
             got: "full clear",
         })
     ));
 }
 
 #[test]
-fn batched_sumcheck_proof_verify_dispatches_committed_without_absorbing_clear_claims() {
-    let claims = [
-        SumcheckClaim::new(3, 2, F::from_u64(101)),
-        SumcheckClaim::new(1, 1, F::from_u64(202)),
-    ];
+fn batched_committed_consistency_uses_statements_without_clear_claims() {
+    let statements = [SumcheckStatement::new(3, 2), SumcheckStatement::new(1, 1)];
     let proof = SumcheckProof::<F, F>::Committed(CommittedSumcheckProof {
         rounds: vec![
             CommittedRound {
@@ -1014,7 +1003,7 @@ fn batched_sumcheck_proof_verify_dispatches_committed_without_absorbing_clear_cl
     });
 
     let mut manual = Blake2bTranscript::<F>::new(b"batched-proof-dispatch");
-    let batching_coefficients = (0..claims.len())
+    let batching_coefficients = (0..statements.len())
         .map(|_| manual.challenge_scalar())
         .collect::<Vec<_>>();
     let mut expected_challenges = Vec::new();
@@ -1032,21 +1021,43 @@ fn batched_sumcheck_proof_verify_dispatches_committed_without_absorbing_clear_cl
     }
 
     let mut verifier = Blake2bTranscript::<F>::new(b"batched-proof-dispatch");
-    let result =
-        BatchedSumcheckVerifier::verify_compressed_boolean(&claims, &proof, &mut verifier).unwrap();
+    let consistency =
+        BatchedSumcheckVerifier::verify_committed_consistency(&statements, &proof, &mut verifier)
+            .unwrap();
 
-    let BatchedSumcheckVerification::Committed(check) = result else {
-        panic!("committed proof must produce committed batched check");
-    };
-    assert_eq!(check.batching_coefficients, batching_coefficients);
-    assert_eq!(check.max_num_vars, 3);
-    assert_eq!(check.max_degree, 2);
-    assert_eq!(check.check.challenges(), expected_challenges);
+    assert_eq!(consistency.batching_coefficients, batching_coefficients);
+    assert_eq!(consistency.max_num_vars, 3);
+    assert_eq!(consistency.max_degree, 2);
+    assert_eq!(consistency.consistency.challenges(), expected_challenges);
     assert_eq!(verifier.state(), manual.state());
 }
 
 #[test]
-fn committed_rounds_replay_transcript_and_return_public_data() {
+fn batched_claim_verifier_rejects_committed_encoding() {
+    let claim = SumcheckClaim::new(1, 1, F::from_u64(0));
+    let proof = SumcheckProof::<F, F>::Committed(CommittedSumcheckProof {
+        rounds: vec![CommittedRound {
+            commitment: F::from_u64(11),
+            degree: 1,
+        }],
+        output_claims: CommittedOutputClaims::default(),
+    });
+
+    let mut transcript = Blake2bTranscript::<F>::new(b"batched-proof-dispatch");
+    let result =
+        BatchedSumcheckVerifier::verify_compressed_boolean(&[claim], &proof, &mut transcript);
+
+    assert!(matches!(
+        result,
+        Err(SumcheckError::WrongProofEncoding {
+            expected: "compressed clear",
+            got: "committed",
+        })
+    ));
+}
+
+#[test]
+fn committed_rounds_check_transcript_and_return_public_data() {
     let rounds = vec![
         CommittedRound {
             commitment: F::from_u64(11),
@@ -1071,14 +1082,17 @@ fn committed_rounds_replay_transcript_and_return_public_data() {
     }
 
     let mut verifier = Blake2bTranscript::<F>::new(b"committed-sumcheck");
-    let check =
-        SumcheckVerifier::verify_committed_rounds(SumcheckShape::new(3, 2), &rounds, &mut verifier)
-            .unwrap();
+    let consistency = SumcheckVerifier::verify_committed_round_consistency(
+        SumcheckStatement::new(3, 2),
+        &rounds,
+        &mut verifier,
+    )
+    .unwrap();
 
-    assert_eq!(check.challenges(), expected_challenges);
-    assert_eq!(check.round_degrees(), vec![1, 2, 0]);
+    assert_eq!(consistency.challenges(), expected_challenges);
+    assert_eq!(consistency.round_degrees(), vec![1, 2, 0]);
     assert_eq!(
-        check.round_commitments(),
+        consistency.round_commitments(),
         rounds
             .iter()
             .map(|round| round.commitment)
@@ -1095,8 +1109,8 @@ fn committed_rounds_reject_wrong_round_count() {
     }];
     let mut transcript = Blake2bTranscript::<F>::new(b"committed-sumcheck");
 
-    let result = SumcheckVerifier::verify_committed_rounds(
-        SumcheckShape::new(2, 1),
+    let result = SumcheckVerifier::verify_committed_round_consistency(
+        SumcheckStatement::new(2, 1),
         &rounds,
         &mut transcript,
     );
@@ -1119,8 +1133,8 @@ fn committed_rounds_reject_degree_bound_before_absorbing() {
     let mut transcript = Blake2bTranscript::<F>::new(b"committed-sumcheck");
     let before = *transcript.state();
 
-    let result = SumcheckVerifier::verify_committed_rounds(
-        SumcheckShape::new(1, 2),
+    let result = SumcheckVerifier::verify_committed_round_consistency(
+        SumcheckStatement::new(1, 2),
         &rounds,
         &mut transcript,
     );
@@ -1152,7 +1166,7 @@ fn committed_output_claims_absorb_length_and_order() {
 }
 
 #[test]
-fn committed_proof_replays_rounds_then_output_claims() {
+fn committed_proof_checks_rounds_then_output_claims() {
     let proof = CommittedSumcheckProof {
         rounds: vec![
             CommittedRound {
@@ -1182,12 +1196,12 @@ fn committed_proof_replays_rounds_then_output_claims() {
     }
 
     let mut verifier = Blake2bTranscript::<F>::new(b"committed-proof");
-    let check = proof
-        .verify_committed(SumcheckShape::new(2, 2), &mut verifier)
+    let consistency = proof
+        .verify_committed_consistency(SumcheckStatement::new(2, 2), &mut verifier)
         .unwrap();
 
-    assert_eq!(check.challenges(), expected_challenges);
-    assert_eq!(check.round_degrees(), vec![1, 2]);
+    assert_eq!(consistency.challenges(), expected_challenges);
+    assert_eq!(consistency.round_degrees(), vec![1, 2]);
     assert_eq!(verifier.state(), manual.state());
 }
 
@@ -1205,7 +1219,7 @@ fn committed_proof_rejects_bad_round_before_output_claims() {
     let mut transcript = Blake2bTranscript::<F>::new(b"committed-proof");
     let before = *transcript.state();
 
-    let result = proof.verify_committed(SumcheckShape::new(1, 2), &mut transcript);
+    let result = proof.verify_committed_consistency(SumcheckStatement::new(1, 2), &mut transcript);
 
     assert!(matches!(
         result,
@@ -1327,6 +1341,6 @@ fn sumcheck_claim_new_rejects_degree_zero() {
 
 #[test]
 #[should_panic(expected = "degree >= 1")]
-fn sumcheck_shape_new_rejects_degree_zero() {
-    let _ = SumcheckShape::new(3, 0);
+fn sumcheck_statement_new_rejects_degree_zero() {
+    let _ = SumcheckStatement::new(3, 0);
 }

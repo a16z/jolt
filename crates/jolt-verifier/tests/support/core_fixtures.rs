@@ -3,6 +3,13 @@
     clippy::panic,
     reason = "fixture generation should fail loudly when core proof construction or serialization breaks"
 )]
+#![cfg_attr(
+    feature = "zk",
+    expect(
+        unused_imports,
+        reason = "ZK fixtures share this support module with standard fixture generation and tampering helpers"
+    )
+)]
 
 use std::{
     env, fs,

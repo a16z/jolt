@@ -10,8 +10,8 @@
 use jolt_field::Field;
 use jolt_transcript::{AppendToTranscript, Transcript};
 
-use crate::claim::{EvaluationClaim, SumcheckClaim, SumcheckShape};
-use crate::committed::CommittedSumcheckCheck;
+use crate::claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
+use crate::committed::{CommittedSumcheckConsistency, CommittedSumcheckProof};
 use crate::domain::{BooleanHypercube, SumcheckDomain};
 use crate::error::SumcheckError;
 use crate::proof::{ClearProof, CompressedSumcheckProof, SumcheckProof};
@@ -28,17 +28,11 @@ pub struct BatchedEvaluationClaim<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BatchedCommittedSumcheckCheck<F: Field, C> {
-    pub check: CommittedSumcheckCheck<F, C>,
+pub struct BatchedCommittedSumcheckConsistency<F: Field, C> {
+    pub consistency: CommittedSumcheckConsistency<F, C>,
     pub batching_coefficients: Vec<F>,
     pub max_num_vars: usize,
     pub max_degree: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum BatchedSumcheckVerification<F: Field, C> {
-    Clear(BatchedEvaluationClaim<F>),
-    Committed(BatchedCommittedSumcheckCheck<F, C>),
 }
 
 impl<F: Field> BatchedEvaluationClaim<F> {
@@ -167,7 +161,9 @@ impl BatchedSumcheckVerifier {
         F: Field,
         T: Transcript<Challenge = F>,
     {
-        let (max_num_vars, max_degree) = Self::batch_shape(claims)?;
+        let statement = Self::batch_claim_statement(claims)?;
+        let max_num_vars = statement.num_vars;
+        let max_degree = statement.degree;
 
         for claim in claims {
             append_sumcheck_claim(transcript, &claim.claimed_sum);
@@ -208,7 +204,7 @@ impl BatchedSumcheckVerifier {
         claims: &[SumcheckClaim<F>],
         proof: &SumcheckProof<F, C>,
         transcript: &mut T,
-    ) -> Result<BatchedSumcheckVerification<F, C>, SumcheckError<F>>
+    ) -> Result<BatchedEvaluationClaim<F>, SumcheckError<F>>
     where
         F: Field,
         C: Clone + AppendToTranscript,
@@ -217,42 +213,89 @@ impl BatchedSumcheckVerifier {
         match proof {
             SumcheckProof::Clear(ClearProof::Compressed(proof)) => {
                 Self::verify_compressed(claims, proof, transcript)
-                    .map(BatchedSumcheckVerification::Clear)
             }
             SumcheckProof::Clear(ClearProof::Full(_)) => Err(SumcheckError::WrongProofEncoding {
-                expected: "compressed clear or committed",
+                expected: "compressed clear",
                 got: "full clear",
             }),
-            SumcheckProof::Committed(proof) => {
-                let (max_num_vars, max_degree) = Self::batch_shape(claims)?;
-                let batching_coefficients = Self::batching_coefficients(claims.len(), transcript);
-                let check = proof
-                    .verify_committed(SumcheckShape::new(max_num_vars, max_degree), transcript)?;
+            SumcheckProof::Committed(_) => Err(SumcheckError::WrongProofEncoding {
+                expected: "compressed clear",
+                got: "committed",
+            }),
+        }
+    }
 
-                Ok(BatchedSumcheckVerification::Committed(
-                    BatchedCommittedSumcheckCheck {
-                        check,
-                        batching_coefficients,
-                        max_num_vars,
-                        max_degree,
-                    },
-                ))
+    pub fn verify_committed_consistency<F, C, T>(
+        statements: &[SumcheckStatement],
+        proof: &SumcheckProof<F, C>,
+        transcript: &mut T,
+    ) -> Result<BatchedCommittedSumcheckConsistency<F, C>, SumcheckError<F>>
+    where
+        F: Field,
+        C: Clone + AppendToTranscript,
+        T: Transcript<Challenge = F>,
+    {
+        match proof {
+            SumcheckProof::Committed(proof) => {
+                Self::verify_committed_consistency_for_proof(statements, proof, transcript)
+            }
+            SumcheckProof::Clear(ClearProof::Full(_)) => Err(SumcheckError::WrongProofEncoding {
+                expected: "committed",
+                got: "full clear",
+            }),
+            SumcheckProof::Clear(ClearProof::Compressed(_)) => {
+                Err(SumcheckError::WrongProofEncoding {
+                    expected: "committed",
+                    got: "compressed clear",
+                })
             }
         }
     }
 
-    fn batch_shape<F: Field>(
+    fn verify_committed_consistency_for_proof<F, C, T>(
+        statements: &[SumcheckStatement],
+        proof: &CommittedSumcheckProof<C>,
+        transcript: &mut T,
+    ) -> Result<BatchedCommittedSumcheckConsistency<F, C>, SumcheckError<F>>
+    where
+        F: Field,
+        C: Clone + AppendToTranscript,
+        T: Transcript<Challenge = F>,
+    {
+        let statement = Self::batch_statement(statements)?;
+        let batching_coefficients = Self::batching_coefficients(statements.len(), transcript);
+        let consistency = proof.verify_committed_consistency(statement, transcript)?;
+
+        Ok(BatchedCommittedSumcheckConsistency {
+            consistency,
+            batching_coefficients,
+            max_num_vars: statement.num_vars,
+            max_degree: statement.degree,
+        })
+    }
+
+    fn batch_claim_statement<F: Field>(
         claims: &[SumcheckClaim<F>],
-    ) -> Result<(usize, usize), SumcheckError<F>> {
-        let (first, rest) = claims.split_first().ok_or(SumcheckError::EmptyClaims)?;
+    ) -> Result<SumcheckStatement, SumcheckError<F>> {
+        let statements = claims
+            .iter()
+            .map(SumcheckClaim::statement)
+            .collect::<Vec<_>>();
+        Self::batch_statement(&statements)
+    }
+
+    fn batch_statement<F: Field>(
+        statements: &[SumcheckStatement],
+    ) -> Result<SumcheckStatement, SumcheckError<F>> {
+        let (first, rest) = statements.split_first().ok_or(SumcheckError::EmptyClaims)?;
         let max_num_vars = rest
             .iter()
-            .fold(first.num_vars, |acc, claim| acc.max(claim.num_vars));
+            .fold(first.num_vars, |acc, statement| acc.max(statement.num_vars));
         let max_degree = rest
             .iter()
-            .fold(first.degree, |acc, claim| acc.max(claim.degree));
+            .fold(first.degree, |acc, statement| acc.max(statement.degree));
 
-        Ok((max_num_vars, max_degree))
+        Ok(SumcheckStatement::new(max_num_vars, max_degree))
     }
 
     fn batching_coefficients<F, T>(count: usize, transcript: &mut T) -> Vec<F>

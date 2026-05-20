@@ -45,7 +45,7 @@ fn mixed_uniskip_stage_proof_rejects_now() {
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 #[test]
-fn zk_claim_payload_in_transparent_mode_rejects_now() {
+fn zk_claim_payload_in_clear_mode_rejects_now() {
     let base = real_core_case();
     tamper_manifest::assert_core_tamper_rejects(
         tamper_manifest::required_target("proof.claims.mode_payload"),

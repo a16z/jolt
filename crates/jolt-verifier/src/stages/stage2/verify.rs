@@ -25,8 +25,7 @@ use jolt_poly::{
 };
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_sumcheck::{
-    BatchedSumcheckVerification, BatchedSumcheckVerifier, CenteredIntegerDomain, SumcheckClaim,
-    SumcheckVerification, UNISKIP_ROUND_TRANSCRIPT_LABEL,
+    BatchedSumcheckVerifier, CenteredIntegerDomain, SumcheckClaim, UNISKIP_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::Transcript;
 
@@ -73,7 +72,7 @@ where
         return Err(VerifierError::Unimplemented);
     }
 
-    let claims = &proof.transparent_claims()?.stage2;
+    let claims = &proof.clear_claims()?.stage2;
     let product_uniskip = verify_product_uniskip(checked, proof, transcript, deps, claims)?;
     let [product_uniskip_challenge] = product_uniskip.sumcheck_point.as_slice() else {
         return Err(VerifierError::StageClaimSumcheckFailed {
@@ -118,6 +117,7 @@ where
     let dimensions = SpartanProductDimensions::from(log_t);
     let mut tau_low = deps
         .stage1
+        .public
         .remainder_challenges
         .get(1..)
         .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
@@ -182,7 +182,7 @@ where
                 .to_string(),
         });
     };
-    let uniskip_reduction = match proof
+    let uniskip_reduction = proof
         .stages
         .stage2_uni_skip_first_round_proof
         .verify(
@@ -198,14 +198,7 @@ where
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage,
             reason: error.to_string(),
-        })? {
-        SumcheckVerification::Clear(reduction) => reduction,
-        SumcheckVerification::Committed(_) => {
-            return Err(VerifierError::ExpectedClearProof {
-                field: "stage2_uni_skip_first_round_proof",
-            });
-        }
-    };
+        })?;
     if uniskip_reduction.value != uniskip_claim {
         return Err(VerifierError::StageClaimOutputMismatch { stage });
     }
@@ -386,7 +379,7 @@ where
             input_claims.ram_output_check,
         ),
     ];
-    let batch = match BatchedSumcheckVerifier::verify_compressed_boolean(
+    let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
         &sumcheck_claims,
         &proof.stages.stage2_sumcheck_proof,
         transcript,
@@ -394,14 +387,7 @@ where
     .map_err(|error| VerifierError::StageClaimSumcheckFailed {
         stage: JoltStageId::RamReadWriteChecking,
         reason: error.to_string(),
-    })? {
-        BatchedSumcheckVerification::Clear(batch) => batch,
-        BatchedSumcheckVerification::Committed(_) => {
-            return Err(VerifierError::ExpectedClearProof {
-                field: "stage2_sumcheck_proof",
-            });
-        }
-    };
+    })?;
 
     let ram_read_write_point = batch
         .try_instance_point(ram_read_write_claims.sumcheck.rounds)

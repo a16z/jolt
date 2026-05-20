@@ -1,5 +1,5 @@
 use jolt_crypto::Commitment;
-use jolt_sumcheck::CommittedSumcheckCheck;
+use jolt_sumcheck::CommittedSumcheckConsistency;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Inputs<F, C> {
@@ -18,12 +18,12 @@ impl<F, C> Inputs<F, C> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StageInput<F, C> {
-    pub check: CommittedSumcheckCheck<F, C>,
+    pub consistency: CommittedSumcheckConsistency<F, C>,
 }
 
 impl<F, C> StageInput<F, C> {
-    pub fn new(check: CommittedSumcheckCheck<F, C>) -> Self {
-        Self { check }
+    pub fn new(consistency: CommittedSumcheckConsistency<F, C>) -> Self {
+        Self { consistency }
     }
 }
 
