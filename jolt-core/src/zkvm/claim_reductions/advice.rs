@@ -211,6 +211,7 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
         )]))
     }
 
+    #[cfg(test)]
     fn final_advice_output_scale(&self, sumcheck_challenges: &[F::Challenge]) -> F {
         let eq_eval = self.final_advice_eq_eval(sumcheck_challenges);
         let scale = match self.phase {
@@ -222,6 +223,7 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
         eq_eval * scale
     }
 
+    #[cfg(test)]
     fn final_advice_eq_eval(&self, sumcheck_challenges: &[F::Challenge]) -> F {
         let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(
             self.precommitted
@@ -235,6 +237,7 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
         EqPolynomial::mle(&opening_point.r, &self.r_val.r)
     }
 
+    #[cfg(test)]
     fn challenge_for_global_round(
         &self,
         global_round: usize,
