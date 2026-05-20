@@ -349,12 +349,9 @@ impl<
                 DoryLayout::CycleMajor => {
                     let native_cycle = &hamming_point.r[self.one_hot_params.log_k_chunk..];
                     if r_cycle_stage6.len() < native_cycle.len() {
-                        return Err(ProofVerifyError::DoryError(format!(
-                            "stage6 cycle challenges shorter than native cycle vars \
-                             (cycle_full_len={}, native_len={})",
-                            r_cycle_stage6.len(),
-                            native_cycle.len()
-                        )));
+                        return Err(ProofVerifyError::DoryError(
+                            "stage6 cycle challenges shorter than native cycle vars".to_string(),
+                        ));
                     }
                     if r_cycle_stage6[..native_cycle.len()] != *native_cycle {
                         return Err(ProofVerifyError::DoryError(format!(
