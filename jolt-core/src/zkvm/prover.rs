@@ -1322,7 +1322,6 @@ impl<
             let trusted_advice_params = AdviceClaimReductionParams::new(
                 AdviceKind::Trusted,
                 self.program_io.memory_layout.max_trusted_advice_size as usize,
-                self.trace.len(),
                 precommitted_scheduling_reference,
                 &self.opening_accumulator,
             );
@@ -1345,7 +1344,6 @@ impl<
             let untrusted_advice_params = AdviceClaimReductionParams::new(
                 AdviceKind::Untrusted,
                 self.program_io.memory_layout.max_untrusted_advice_size as usize,
-                self.trace.len(),
                 precommitted_scheduling_reference,
                 &self.opening_accumulator,
             );
@@ -1953,6 +1951,7 @@ impl<
         {
             if advice_reduction_prover_trusted
                 .params()
+                .precommitted
                 .num_address_phase_rounds()
                 > 0
             {
@@ -1966,6 +1965,7 @@ impl<
         {
             if advice_reduction_prover_untrusted
                 .params()
+                .precommitted
                 .num_address_phase_rounds()
                 > 0
             {

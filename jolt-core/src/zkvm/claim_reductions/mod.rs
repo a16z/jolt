@@ -24,8 +24,8 @@ pub use instruction_lookups::{
 };
 pub use precommitted::{
     permute_precommitted_polys, precommitted_eq_evals_with_scaling, precommitted_skip_round_scale,
-    PrecomittedParams, PrecomittedProver, PrecommittedClaimReduction, PrecommittedEmbeddingMode,
-    PrecommittedPhase, PrecommittedSchedulingReference, TWO_PHASE_DEGREE_BOUND,
+    precommitted_sumcheck_inverse_index_permutation, PrecommittedClaimReduction, PrecommittedPhase,
+    PrecommittedSchedulingReference, TWO_PHASE_DEGREE_BOUND,
 };
 pub use ram_ra::{
     RaReductionParams, RamRaClaimReductionSumcheckProver, RamRaClaimReductionSumcheckVerifier,

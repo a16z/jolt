@@ -1251,7 +1251,6 @@ impl<
             self.advice_reduction_verifier_trusted = Some(AdviceClaimReductionVerifier::new(
                 AdviceKind::Trusted,
                 self.program_io.memory_layout.max_trusted_advice_size as usize,
-                self.proof.trace_length,
                 precommitted_scheduling_reference,
                 &self.opening_accumulator,
             ));
@@ -1260,7 +1259,6 @@ impl<
             self.advice_reduction_verifier_untrusted = Some(AdviceClaimReductionVerifier::new(
                 AdviceKind::Untrusted,
                 self.program_io.memory_layout.max_untrusted_advice_size as usize,
-                self.proof.trace_length,
                 precommitted_scheduling_reference,
                 &self.opening_accumulator,
             ));
@@ -1629,9 +1627,9 @@ impl<
             self.advice_reduction_verifier_trusted.as_mut()
         {
             let mut params = advice_reduction_verifier_trusted.params.borrow_mut();
-            if params.num_address_phase_rounds() > 0 {
+            if params.precommitted.num_address_phase_rounds() > 0 {
                 // Transition phase
-                params.transition_to_address_phase();
+                params.precommitted.transition_to_address_phase();
                 instances.push(advice_reduction_verifier_trusted);
             }
         }
@@ -1639,9 +1637,9 @@ impl<
             self.advice_reduction_verifier_untrusted.as_mut()
         {
             let mut params = advice_reduction_verifier_untrusted.params.borrow_mut();
-            if params.num_address_phase_rounds() > 0 {
+            if params.precommitted.num_address_phase_rounds() > 0 {
                 // Transition phase
-                params.transition_to_address_phase();
+                params.precommitted.transition_to_address_phase();
                 instances.push(advice_reduction_verifier_untrusted);
             }
         }

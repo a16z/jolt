@@ -11,12 +11,6 @@ use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
 use crate::utils::math::Math;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Allocative)]
-pub enum PrecommittedEmbeddingMode {
-    DominantPrecommitted,
-    EmbeddedPrecommitted,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Allocative)]
 pub enum PrecommittedPhase {
     CycleVariables,
     AddressVariables,
@@ -34,9 +28,8 @@ pub struct PrecommittedSchedulingReference {
 #[derive(Debug, Clone, Allocative)]
 pub struct PrecommittedClaimReduction<F: JoltField> {
     pub scheduling_reference: PrecommittedSchedulingReference,
-    pub embedding_mode: PrecommittedEmbeddingMode,
     pub cycle_var_challenges: Vec<F::Challenge>,
-    dory_opening_round_permutation_be: Vec<usize>,
+    pub phase: PrecommittedPhase,
     poly_opening_round_permutation_be: Vec<usize>,
     cycle_phase_rounds: Vec<usize>,
     cycle_phase_total_rounds: usize,
@@ -72,14 +65,12 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
 
     #[inline]
     pub fn new(
-        poly_total_vars: usize,
         poly_row_vars: usize,
         poly_col_vars: usize,
         scheduling_reference: PrecommittedSchedulingReference,
     ) -> Self {
         let has_precommitted_dominance =
             scheduling_reference.reference_total_vars > scheduling_reference.main_total_vars;
-        let embedding_mode = Self::embedding_mode_for_poly(poly_total_vars, &scheduling_reference);
         let dense_cycle_prefix_rounds = if has_precommitted_dominance {
             DoryGlobals::main_t().log_2()
         } else {
@@ -102,33 +93,14 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
         );
         Self {
             scheduling_reference,
-            embedding_mode,
             cycle_var_challenges: vec![],
-            dory_opening_round_permutation_be,
+            phase: PrecommittedPhase::CycleVariables,
             poly_opening_round_permutation_be,
             cycle_phase_rounds,
             cycle_phase_total_rounds: scheduling_reference.cycle_alignment_rounds,
             address_phase_rounds,
             address_phase_total_rounds: scheduling_reference.address_rounds,
         }
-    }
-
-    #[inline]
-    fn embedding_mode_for_poly(
-        poly_total_vars: usize,
-        reference: &PrecommittedSchedulingReference,
-    ) -> PrecommittedEmbeddingMode {
-        let has_precommitted_dominance = reference.reference_total_vars > reference.main_total_vars;
-        let embedding_mode =
-            if has_precommitted_dominance && poly_total_vars == reference.reference_total_vars {
-                PrecommittedEmbeddingMode::DominantPrecommitted
-            } else {
-                PrecommittedEmbeddingMode::EmbeddedPrecommitted
-            };
-        if embedding_mode == PrecommittedEmbeddingMode::DominantPrecommitted {
-            assert_eq!(poly_total_vars, reference.reference_total_vars);
-        }
-        embedding_mode
     }
 
     fn reference_dory_opening_round_permutation_be(
@@ -213,6 +185,16 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
     }
 
     #[inline]
+    pub fn is_cycle_phase(&self) -> bool {
+        self.phase == PrecommittedPhase::CycleVariables
+    }
+
+    #[inline]
+    pub fn transition_to_address_phase(&mut self) {
+        self.phase = PrecommittedPhase::AddressVariables;
+    }
+
+    #[inline]
     pub fn num_address_phase_rounds(&self) -> usize {
         self.address_phase_rounds.len()
     }
@@ -222,26 +204,40 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
         self.cycle_phase_rounds.contains(&round)
     }
 
-    pub fn cycle_phase_rounds_debug(&self) -> &[usize] {
-        &self.cycle_phase_rounds
-    }
-
+    /// Indices of the cycle-phase rounds that this poly actively participates
+    /// in (i.e. rounds where the verifier evaluates the poly rather than
+    /// scaling by 1/2). The vector is sorted ascending and deduplicated.
     pub fn cycle_phase_rounds(&self) -> &[usize] {
         &self.cycle_phase_rounds
     }
 
-    pub fn address_phase_rounds_debug(&self) -> &[usize] {
-        &self.address_phase_rounds
-    }
-
+    /// Indices of the address-phase rounds that this poly actively
+    /// participates in. Same conventions as [`Self::cycle_phase_rounds`].
     pub fn address_phase_rounds(&self) -> &[usize] {
         &self.address_phase_rounds
     }
 
+    /// Big-endian round-permutation projected onto this poly's
+    /// `(poly_row_vars, poly_col_vars)` rectangle.
+    ///
+    /// The slice is `poly_row_vars + poly_col_vars` long: the first
+    /// `poly_row_vars` entries describe the row-side rounds, the rest the
+    /// column-side rounds. Pair this with
+    /// [`precommitted_sumcheck_inverse_index_permutation`] to permute a
+    /// length-`2^len` coefficient vector into opening order, instead of
+    /// re-deriving it from `scheduling_reference`.
     pub fn poly_opening_round_permutation_be(&self) -> &[usize] {
         &self.poly_opening_round_permutation_be
     }
 
+    /// The `(1/2)^cycle_gap` factor that "non-active" cycle-phase rounds
+    /// contribute to the running scale. Returns `F::one()` when there are
+    /// no inactive cycle-phase rounds.
+    ///
+    /// This is the cycle-only counterpart of
+    /// [`precommitted_skip_round_scale`], intended for callers that need
+    /// the scale strictly at the cycle-to-address handoff (e.g. when
+    /// constructing the address-phase prover).
     #[inline]
     pub fn cycle_phase_skip_scale(&self) -> F {
         let cycle_gap_len = self.cycle_phase_total_rounds - self.cycle_phase_rounds.len();
@@ -250,10 +246,6 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
         }
         let two_inv = F::from_u64(2).inverse().unwrap();
         (0..cycle_gap_len).fold(F::one(), |acc, _| acc * two_inv)
-    }
-
-    pub fn is_address_phase_active_round(&self, round: usize) -> bool {
-        self.address_phase_rounds.contains(&round)
     }
 
     #[inline]
@@ -272,17 +264,12 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
     }
 
     #[inline]
-    pub fn num_rounds_for_phase(&self, is_cycle_phase: bool) -> usize {
-        if is_cycle_phase {
+    pub fn num_rounds_for_current_phase(&self) -> usize {
+        if self.is_cycle_phase() {
             self.cycle_phase_total_rounds
         } else {
             self.address_phase_total_rounds
         }
-    }
-
-    pub fn round_offset(&self, is_cycle_phase: bool, max_num_rounds: usize) -> usize {
-        let _ = (is_cycle_phase, max_num_rounds);
-        0
     }
 
     fn cycle_challenge_for_round(&self, round: usize) -> F::Challenge {
@@ -307,12 +294,9 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
 
     pub fn normalize_opening_point(
         &self,
-        is_cycle_phase: bool,
         challenges: &[F::Challenge],
-        dense_cycle_prefix_rounds: usize,
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        let _ = dense_cycle_prefix_rounds;
-        if is_cycle_phase {
+        if self.is_cycle_phase() {
             let local_cycle_challenges: Vec<F::Challenge> = self
                 .cycle_phase_rounds
                 .iter()
@@ -330,10 +314,6 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
                 .match_endianness();
         }
 
-        debug_assert_eq!(
-            self.dory_opening_round_permutation_be.len(),
-            self.scheduling_reference.reference_total_vars
-        );
         let cycle_round_limit = self.cycle_alignment_rounds();
         let opening_rounds = &self.poly_opening_round_permutation_be;
         let mut opening_point_be = Vec::with_capacity(opening_rounds.len());
@@ -409,13 +389,14 @@ where
         .collect()
 }
 
-pub fn precommitted_eq_evals_with_scaling<F>(
-    challenges_be: &[F::Challenge],
+pub fn precommitted_eq_evals_with_scaling<F, C>(
+    challenges_be: &[C],
     scaling_factor: Option<F>,
     precommitted: &PrecommittedClaimReduction<F>,
 ) -> Vec<F>
 where
-    F: JoltField + std::ops::Mul<F::Challenge, Output = F> + std::ops::SubAssign<F>,
+    C: Copy + Send + Sync + Into<F>,
+    F: JoltField + std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
 {
     let permuted_challenges = precommitted_permute_eq_challenges(
         challenges_be,
@@ -473,7 +454,17 @@ fn precommitted_sumcheck_lsb_permutation(
     Some(old_lsb_to_new_lsb)
 }
 
-fn precommitted_sumcheck_inverse_index_permutation(
+/// Inverse index permutation for permuting a precommitted polynomial's
+/// coefficient vector into the order implied by `poly_opening_round_permutation_be`.
+///
+/// Returns `Some(perm)` such that `perm[new_idx] = old_idx`, suitable for
+/// driving an out-of-place permute of a length-`coeffs_len` vector. Returns
+/// `None` when the requested permutation is the identity, so callers can
+/// short-circuit and skip the permute entirely.
+///
+/// `coeffs_len` must equal `1 << poly_opening_round_permutation_be.len()`;
+/// asserts otherwise.
+pub fn precommitted_sumcheck_inverse_index_permutation(
     coeffs_len: usize,
     poly_opening_round_permutation_be: &[usize],
 ) -> Option<Vec<usize>> {
@@ -510,33 +501,36 @@ fn precommitted_sumcheck_inverse_index_permutation(
 
 pub const TWO_PHASE_DEGREE_BOUND: usize = 2;
 
-pub trait PrecomittedParams<F: JoltField>: SumcheckInstanceParams<F> {
-    fn is_cycle_phase(&self) -> bool;
-    fn is_cycle_phase_round(&self, round: usize) -> bool;
-    fn is_address_phase_round(&self, round: usize) -> bool;
-    fn cycle_alignment_rounds(&self) -> usize;
-    fn address_alignment_rounds(&self) -> usize;
-    fn record_cycle_challenge(&mut self, challenge: F::Challenge);
+pub trait PrecommittedParams<F: JoltField>: SumcheckInstanceParams<F> {
+    fn precommitted(&self) -> &PrecommittedClaimReduction<F>;
+    fn precommitted_mut(&mut self) -> &mut PrecommittedClaimReduction<F>;
+
+    fn is_cycle_phase(&self) -> bool {
+        self.precommitted().is_cycle_phase()
+    }
 }
 
 #[derive(Allocative)]
-pub struct PrecomittedProver<F: JoltField, P: PrecomittedParams<F>> {
+pub struct PrecommittedProver<F: JoltField, P: PrecommittedParams<F>> {
     params: P,
     value_poly: MultilinearPolynomial<F>,
     eq_poly: MultilinearPolynomial<F>,
+    aux_polys: Vec<MultilinearPolynomial<F>>,
     scale: F,
 }
 
-impl<F: JoltField, P: PrecomittedParams<F>> PrecomittedProver<F, P> {
+impl<F: JoltField, P: PrecommittedParams<F>> PrecommittedProver<F, P> {
     pub fn new(
         params: P,
         value_poly: MultilinearPolynomial<F>,
         eq_poly: MultilinearPolynomial<F>,
+        aux_polys: Option<Vec<MultilinearPolynomial<F>>>,
     ) -> Self {
         Self {
             params,
             value_poly,
             eq_poly,
+            aux_polys: aux_polys.unwrap_or_default(),
             scale: F::one(),
         }
     }
@@ -545,16 +539,17 @@ impl<F: JoltField, P: PrecomittedParams<F>> PrecomittedProver<F, P> {
         &self.params
     }
 
-    pub fn params_mut(&mut self) -> &mut P {
-        &mut self.params
+    pub fn transition_to_address_phase(&mut self) {
+        self.params.precommitted_mut().transition_to_address_phase();
     }
 
     pub fn set_scale(&mut self, scale: F) {
         self.scale = scale;
     }
 
-    pub fn scale(&self) -> F {
-        self.scale
+    #[expect(dead_code)]
+    pub fn aux_polys(&self) -> &[MultilinearPolynomial<F>] {
+        &self.aux_polys
     }
 
     fn compute_message_unscaled(&self, previous_claim_unscaled: F) -> UniPoly<F> {
@@ -586,19 +581,20 @@ impl<F: JoltField, P: PrecomittedParams<F>> PrecomittedProver<F, P> {
     }
 
     pub fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
+        let precommitted = self.params.precommitted();
         let is_active_round = if self.params.is_cycle_phase() {
-            self.params.is_cycle_phase_round(round)
+            precommitted.is_cycle_phase_round(round)
         } else {
-            self.params.is_address_phase_round(round)
+            precommitted.is_address_phase_round(round)
         };
         if !is_active_round {
             return UniPoly::from_coeff(vec![previous_claim * F::from_u64(2).inverse().unwrap()]);
         }
 
         let trailing_cap = if self.params.is_cycle_phase() {
-            self.params.cycle_alignment_rounds()
+            precommitted.cycle_alignment_rounds()
         } else {
-            self.params.address_alignment_rounds()
+            precommitted.address_alignment_rounds()
         };
         let num_trailing_variables = trailing_cap.saturating_sub(self.params.num_rounds());
         let scaling_factor = self.scale * F::one().mul_pow_2(num_trailing_variables);
@@ -609,19 +605,24 @@ impl<F: JoltField, P: PrecomittedParams<F>> PrecomittedProver<F, P> {
 
     pub fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         let is_active_round = if self.params.is_cycle_phase() {
-            self.params.is_cycle_phase_round(round)
+            let precommitted = self.params.precommitted();
+            precommitted.is_cycle_phase_round(round)
         } else {
-            self.params.is_address_phase_round(round)
+            let precommitted = self.params.precommitted();
+            precommitted.is_address_phase_round(round)
         };
         if !is_active_round {
             self.scale *= F::from_u64(2).inverse().unwrap();
             return;
         }
+        if self.params.is_cycle_phase() {
+            self.params.precommitted_mut().record_cycle_challenge(r_j);
+        }
 
         self.value_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
         self.eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-        if self.params.is_cycle_phase() {
-            self.params.record_cycle_challenge(r_j);
+        for aux_poly in self.aux_polys.iter_mut() {
+            aux_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
     }
 
@@ -655,4 +656,117 @@ pub fn precommitted_skip_round_scale<F: JoltField>(
     let gap_len = cycle_gap_len + address_gap_len;
     let two_inv = F::from_u64(2).inverse().unwrap();
     (0..gap_len).fold(F::one(), |acc, _| acc * two_inv)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::field::JoltField;
+    use ark_bn254::Fr;
+    use num_traits::One;
+
+    fn make_reduction(
+        poly_opening_round_permutation_be: Vec<usize>,
+        cycle_phase_rounds: Vec<usize>,
+        cycle_phase_total_rounds: usize,
+        address_phase_rounds: Vec<usize>,
+        address_phase_total_rounds: usize,
+    ) -> PrecommittedClaimReduction<Fr> {
+        let scheduling_reference = PrecommittedSchedulingReference {
+            main_total_vars: cycle_phase_total_rounds + address_phase_total_rounds,
+            reference_total_vars: cycle_phase_total_rounds + address_phase_total_rounds,
+            cycle_alignment_rounds: cycle_phase_total_rounds,
+            address_rounds: address_phase_total_rounds,
+            joint_col_vars: 0,
+        };
+        PrecommittedClaimReduction {
+            scheduling_reference,
+            cycle_var_challenges: vec![],
+            phase: PrecommittedPhase::CycleVariables,
+            poly_opening_round_permutation_be,
+            cycle_phase_rounds,
+            cycle_phase_total_rounds,
+            address_phase_rounds,
+            address_phase_total_rounds,
+        }
+    }
+
+    #[test]
+    fn poly_opening_round_permutation_be_returns_stored_field() {
+        let perm = vec![3usize, 0, 1, 2];
+        let r = make_reduction(perm.clone(), vec![0, 1], 2, vec![0, 1], 2);
+        assert_eq!(r.poly_opening_round_permutation_be(), perm.as_slice());
+    }
+
+    #[test]
+    fn cycle_and_address_phase_rounds_accessors_match_internal_storage() {
+        let cycle = vec![0usize, 2, 3];
+        let address = vec![1usize];
+        let r = make_reduction(vec![0, 1, 2, 3], cycle.clone(), 4, address.clone(), 2);
+        assert_eq!(r.cycle_phase_rounds(), cycle.as_slice());
+        assert_eq!(r.address_phase_rounds(), address.as_slice());
+    }
+
+    #[test]
+    fn cycle_phase_skip_scale_is_one_when_no_gap() {
+        let r = make_reduction(vec![0, 1], vec![0, 1], 2, vec![], 0);
+        assert_eq!(r.cycle_phase_skip_scale(), Fr::one());
+    }
+
+    #[test]
+    fn cycle_phase_skip_scale_is_two_inverse_per_inactive_round() {
+        let two_inv = Fr::from_u64(2).inverse().unwrap();
+        // 1 inactive cycle round
+        let r1 = make_reduction(vec![0], vec![0], 2, vec![], 0);
+        assert_eq!(r1.cycle_phase_skip_scale(), two_inv);
+        // 3 inactive cycle rounds
+        let r3 = make_reduction(vec![0], vec![0], 4, vec![], 0);
+        assert_eq!(r3.cycle_phase_skip_scale(), two_inv * two_inv * two_inv);
+        // address-phase gap must NOT contribute (this is the cycle-only flavour)
+        let r_ignore = make_reduction(vec![0], vec![0], 1, vec![], 5);
+        assert_eq!(r_ignore.cycle_phase_skip_scale(), Fr::one());
+    }
+
+    #[test]
+    fn cycle_phase_skip_scale_agrees_with_full_skip_when_address_gap_is_zero() {
+        let r = make_reduction(vec![0, 1], vec![0], 3, vec![0, 1], 2);
+        // cycle_gap = 3 - 1 = 2, address_gap = 2 - 2 = 0
+        // full = (1/2)^2; cycle_only = (1/2)^2; they should agree.
+        let full = precommitted_skip_round_scale(&r);
+        assert_eq!(r.cycle_phase_skip_scale(), full);
+    }
+
+    #[test]
+    fn inverse_index_permutation_returns_none_for_identity() {
+        // BE descending = identity LSB permutation (no reordering).
+        let identity_be: Vec<usize> = (0..4).rev().collect();
+        let perm = precommitted_sumcheck_inverse_index_permutation(1 << 4, &identity_be);
+        assert!(
+            perm.is_none(),
+            "identity permutation should be reported as None, got Some(len={})",
+            perm.map(|p| p.len()).unwrap_or(0),
+        );
+    }
+
+    #[test]
+    fn inverse_index_permutation_is_a_genuine_permutation_when_nontrivial() {
+        // Swap the two LSBs by reversing the BE round order partially.
+        let poly_perm_be: Vec<usize> = vec![0, 1, 3, 2];
+        let coeffs_len = 1usize << poly_perm_be.len();
+        let perm = precommitted_sumcheck_inverse_index_permutation(coeffs_len, &poly_perm_be)
+            .expect("non-identity permutation expected for this input");
+        assert_eq!(perm.len(), coeffs_len);
+        let mut seen = vec![false; coeffs_len];
+        for (new_idx, &old_idx) in perm.iter().enumerate() {
+            assert!(
+                old_idx < coeffs_len,
+                "perm[{new_idx}] = {old_idx} is out of bounds for coeffs_len={coeffs_len}",
+            );
+            assert!(
+                !seen[old_idx],
+                "perm contains duplicate old_idx={old_idx} (at new_idx={new_idx})",
+            );
+            seen[old_idx] = true;
+        }
+    }
 }
