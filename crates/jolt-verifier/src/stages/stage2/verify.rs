@@ -33,8 +33,9 @@ use jolt_transcript::Transcript;
 use super::{
     inputs::{Deps, Stage2BatchOutputOpeningClaims},
     outputs::{
-        Stage2ClearOutput, Stage2Output, Stage2PublicOutput, Stage2RamValCheckInputs,
-        Stage2ZkOutput, VerifiedProductUniSkip, VerifiedStage2Batch, VerifiedStage2Sumcheck,
+        Stage2ClearOutput, Stage2Output, Stage2PublicOutput, Stage2RamRaClaimReductionInputs,
+        Stage2RamValCheckInputs, Stage2ZkOutput, VerifiedProductUniSkip, VerifiedStage2Batch,
+        VerifiedStage2Sumcheck,
     },
 };
 use crate::{
@@ -80,6 +81,7 @@ struct Stage2ZkBatch<F: Field, C> {
     output_address_challenges: Vec<F>,
     consistency: jolt_sumcheck::BatchedCommittedSumcheckConsistency<F, C>,
     ram_val_check_inputs: Stage2RamValCheckInputs<F>,
+    ram_ra_claim_reduction_inputs: Stage2RamRaClaimReductionInputs<F>,
 }
 
 enum Stage2Batch<F: Field, C> {
@@ -174,6 +176,7 @@ where
                 product_uniskip_consistency: product_uniskip.consistency,
                 batch_consistency: batch.consistency,
                 ram_val_check_inputs: batch.ram_val_check_inputs,
+                ram_ra_claim_reduction_inputs: batch.ram_ra_claim_reduction_inputs,
             }))
         }
         (Stage2ProductUniSkip::Clear(_), Stage2Batch::Zk(_)) => {
@@ -996,7 +999,7 @@ where
                 output_claims: claims.batch_outputs.clone(),
             })
         }
-        (Deps::Zk { .. }, Stage2ProductUniSkip::Zk(_)) => {
+        (Deps::Zk { .. }, Stage2ProductUniSkip::Zk(product_uniskip)) => {
             let statements = [
                 SumcheckStatement::new(
                     ram_read_write_claims.sumcheck.rounds,
@@ -1056,6 +1059,32 @@ where
                         reason: error.to_string(),
                     })?
                     + read_write_dimensions.phase1_num_rounds();
+            let ram_raf_evaluation_point = consistency
+                .try_instance_point_at(phase1_offset, ram_raf_evaluation_claims.sumcheck.rounds)
+                .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                    stage: JoltStageId::RamRafEvaluation,
+                    reason: error.to_string(),
+                })?;
+            let ram_raf_address_point = read_write_dimensions
+                .address_opening_point(&ram_raf_evaluation_point)
+                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltStageId::RamRafEvaluation,
+                    reason: error.to_string(),
+                })?;
+            if ram_raf_address_point.len() != log_k {
+                return Err(VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltStageId::RamRafEvaluation,
+                    reason: format!(
+                        "RAM RAF address point length mismatch: expected {log_k}, got {}",
+                        ram_raf_address_point.len()
+                    ),
+                });
+            }
+            let ram_raf_opening_point = [
+                ram_raf_address_point.as_slice(),
+                product_uniskip.tau_low.as_slice(),
+            ]
+            .concat();
             let ram_output_check_point = consistency
                 .try_instance_point_at(phase1_offset, ram_output_check_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -1076,8 +1105,14 @@ where
                 instruction_gamma,
                 output_address_challenges,
                 ram_val_check_inputs: Stage2RamValCheckInputs {
-                    ram_read_write_opening_point: ram_read_write_opening_point.opening_point,
+                    ram_read_write_opening_point: ram_read_write_opening_point
+                        .opening_point
+                        .clone(),
                     ram_output_check_opening_point,
+                },
+                ram_ra_claim_reduction_inputs: Stage2RamRaClaimReductionInputs {
+                    ram_raf_evaluation_opening_point: ram_raf_opening_point,
+                    ram_read_write_opening_point: ram_read_write_opening_point.opening_point,
                 },
                 consistency,
             }))

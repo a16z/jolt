@@ -169,6 +169,37 @@ where
             JoltStageId::RegistersReadWriteChecking,
         )?;
 
+        let registers_point = consistency
+            .try_instance_point(registers_claims.sumcheck.rounds)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltStageId::RegistersReadWriteChecking,
+                reason: error.to_string(),
+            })?;
+        let registers_opening_point = register_dimensions
+            .read_write_opening_point(&registers_point)
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltStageId::RegistersReadWriteChecking,
+                reason: error.to_string(),
+            })?;
+        let ram_val_point = consistency
+            .try_instance_point(ram_val_check_sumcheck.rounds)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltStageId::RamValCheck,
+                reason: error.to_string(),
+            })?;
+        let r_cycle_prime = ram_val_point.iter().rev().copied().collect::<Vec<_>>();
+        if r_cycle_prime.len() != r_cycle.len() {
+            return Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltStageId::RamValCheck,
+                reason: format!(
+                    "RAM value cycle point length mismatch: expected {}, got {}",
+                    r_cycle.len(),
+                    r_cycle_prime.len()
+                ),
+            });
+        }
+        let ram_val_opening_point = [r_address, r_cycle_prime.as_slice()].concat();
+
         return Ok(Stage4Output::Zk(Stage4ZkOutput {
             public: public(
                 consistency.challenges(),
@@ -176,6 +207,8 @@ where
             ),
             batch_consistency: consistency,
             ram_val_check_public_eval,
+            registers_read_write_opening_point: registers_opening_point.opening_point,
+            ram_val_check_opening_point: ram_val_opening_point,
         }));
     }
 

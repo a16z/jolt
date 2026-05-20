@@ -787,7 +787,7 @@ struct TestCase {
 
 The harness has separate configured horizons for standard and ZK mode. The
 standard frontier currently reaches `Full`; the ZK test frontier currently
-reaches `Stage4` committed consistency while BlindFold instance construction and
+reaches `Stage5` committed consistency while BlindFold instance construction and
 final ZK verification remain unwired. A completeness case passes when a valid
 proof reaches the configured horizon for its mode. Before the full verifier
 exists, reaching the next unimplemented stage is success; after the full
@@ -825,7 +825,7 @@ struct VerifierFrontiers {
 
 const CURRENT_VERIFIER_FRONTIERS: VerifierFrontiers = VerifierFrontiers {
     standard: VerifierCheckpoint::Full,
-    zk: VerifierCheckpoint::Stage4,
+    zk: VerifierCheckpoint::Stage5,
 };
 ```
 
@@ -1583,6 +1583,17 @@ Current implementation status:
   the cycle point, while each virtual RA claim uses its address chunk plus the
   cycle point. The typed Stage 5 output records those points explicitly for
   final opening verification.
+- Stage 5 ZK committed consistency is wired as an internal frontier. It checks
+  the three-instance committed batch statement, validates the committed output
+  claim chunk count against the hidden Stage 5 output-claim count, and records
+  only public transcript/point data plus committed consistency. It does not
+  manufacture hidden scalar claims; those relations remain deferred to
+  BlindFold.
+- Stage 2 and Stage 4 ZK outputs now expose the typed opening points Stage 5
+  needs: Stage 2 provides the RAM RAF and RAM read-write opening points, and
+  Stage 4 provides the RAM value-check and register read-write opening points.
+  This keeps Stage 5 from reaching through generic batch consistency internals
+  to recover protocol dependencies.
 - Standard completeness reaches Stage 5 for real core fixtures, including the
   advice fixture. Stage 5 soundness coverage is active for real core fixtures:
   compressed batch round-polynomial tampering, missing/extra round counts, all
@@ -2067,7 +2078,7 @@ Current implementation status:
   verifier rejects mixed proof shapes, requires committed stage proofs plus a ZK
   claim payload in ZK mode, validates the vector-commitment setup once against
   the BlindFold generator capacity used by core, checks committed
-  consistency through Stage 4 on real core ZK fixtures, and then stops at
+  consistency through Stage 5 on real core ZK fixtures, and then stops at
   `VerifierError::Unimplemented`. Later stage outputs preserve the data needed
   to construct BlindFold public inputs as internal ZK milestones are wired.
 
@@ -2087,16 +2098,16 @@ Current status:
 - Clear stages 1-7 already call the clear-only claim-taking sumcheck APIs
   from `jolt-sumcheck`. ZK branches use statement-only committed consistency
   APIs so hidden scalar claims are never represented as placeholder values.
-- Stage 1 through Stage 4 committed consistency is wired directly in the
+- Stage 1 through Stage 5 committed consistency is wired directly in the
   corresponding `stage*/verify.rs` files. These branches consume statement-only
   committed sumchecks,
   derive transcript challenges, require the committed output claims to have the
   chunk count implied by the prevalidated VC capacity and typed hidden-claim
   count, return typed public/consistency outputs, and stop before BlindFold.
-- ZK tampering tests now cover the committed frontier through Stage 4: missing
+- ZK tampering tests now cover the committed frontier through Stage 5: missing
   VC setup, Stage 1 committed round count, Stage 2 uni-skip and batch output
   commitment count, Stage 3 batch round count/degree/output commitments, and
-  Stage 4 batch round count/degree/output commitments.
+  Stage 4 and Stage 5 batch round count/degree/output commitments.
 - `JoltVerifierPreprocessing` carries the vector-commitment setup needed by
   BlindFold. `validate_inputs` checks that setup once against the shared
   BlindFold generator capacity (`MAX_BLINDFOLD_GENERATORS`), and the verifier's
@@ -2115,8 +2126,8 @@ Tasks:
   transcript consistency checks, BlindFold stage configs, Pedersen/vector-commitment setup,
   `commit_zk`, `open_zk`, `verify_zk`, Dory evaluation commitments, and
   `bind_opening_inputs_zk` transcript effects.
-- Next implementation step: wire Stage 5 committed consistency using the same
-  statement-only pattern established in Stages 1-4.
+- Next implementation step: wire Stage 6 committed consistency using the same
+  statement-only pattern established in Stages 1-5.
 - For each stage, add a committed sumcheck consistency branch directly beside
   the clear branch. It should consume the committed proof(s), check the
   committed transcript consistency, derive the same challenges as core, validate

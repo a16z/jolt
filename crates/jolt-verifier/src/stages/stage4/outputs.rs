@@ -27,6 +27,8 @@ pub struct Stage4ZkOutput<F: Field, C> {
     pub public: Stage4PublicOutput<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub ram_val_check_public_eval: F,
+    pub registers_read_write_opening_point: Vec<F>,
+    pub ram_val_check_opening_point: Vec<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

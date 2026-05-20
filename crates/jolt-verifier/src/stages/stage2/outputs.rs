@@ -31,6 +31,7 @@ pub struct Stage2ZkOutput<F: Field, C> {
     pub product_uniskip_consistency: CommittedSumcheckConsistency<F, C>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub ram_val_check_inputs: Stage2RamValCheckInputs<F>,
+    pub ram_ra_claim_reduction_inputs: Stage2RamRaClaimReductionInputs<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,10 +41,12 @@ pub struct Stage2RamValCheckInputs<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "Stage outputs are short-lived verifier state; boxing would obscure the explicit clear/ZK data flow."
-)]
+pub struct Stage2RamRaClaimReductionInputs<F: Field> {
+    pub ram_raf_evaluation_opening_point: Vec<F>,
+    pub ram_read_write_opening_point: Vec<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage2Output<F: Field, C> {
     Clear(Stage2ClearOutput<F>),
     Zk(Stage2ZkOutput<F, C>),

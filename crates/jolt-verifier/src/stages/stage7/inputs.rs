@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::stages::{
     stage1::Stage1ClearOutput, stage2::Stage2ClearOutput, stage3::Stage3ClearOutput,
-    stage4::Stage4ClearOutput, stage5::Stage5Output, stage6::Stage6Output,
+    stage4::Stage4ClearOutput, stage5::Stage5ClearOutput, stage6::Stage6Output,
 };
 
 #[derive(Clone, Copy)]
@@ -19,7 +19,7 @@ pub fn deps<'a, F: Field>(
     _stage2: &'a Stage2ClearOutput<F>,
     _stage3: &'a Stage3ClearOutput<F>,
     stage4: &'a Stage4ClearOutput<F>,
-    _stage5: &'a Stage5Output<F>,
+    _stage5: &'a Stage5ClearOutput<F>,
     stage6: &'a Stage6Output<F>,
 ) -> Deps<'a, F> {
     Deps { stage4, stage6 }
