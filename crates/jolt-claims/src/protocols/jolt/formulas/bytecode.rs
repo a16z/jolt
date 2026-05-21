@@ -1,6 +1,6 @@
 use jolt_field::{Field, RingCore};
 use jolt_lookup_tables::{InstructionLookupTable, LookupTableKind};
-use jolt_poly::{EqPolynomial, IdentityPolynomial};
+use jolt_poly::{EqPolynomial, IdentityPolynomial, MultilinearEvaluation};
 use jolt_riscv::{
     instructions::Noop, CircuitFlags, Flags, InstructionFlags, InterleavedBitsMarker,
     JoltInstruction, JoltInstructionRow, NUM_CIRCUIT_FLAGS,
@@ -968,7 +968,7 @@ mod tests {
         let stage5_gamma = Fr::from_u64(17);
         let zero = Fr::from_u64(0);
 
-        let input = claims.input.expression.evaluate(
+        let input = claims.input.expression().evaluate(
             |id| match *id {
                 id if id == unexpanded_pc_spartan_outer() => Fr::from_u64(19),
                 id if id == imm_spartan_outer() => Fr::from_u64(23),
@@ -1087,7 +1087,7 @@ mod tests {
         let bytecode_ra_0 = Fr::from_u64(23);
         let bytecode_ra_1 = Fr::from_u64(29);
 
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == bytecode_ra(0) => bytecode_ra_0,
                 id if id == bytecode_ra(1) => bytecode_ra_1,

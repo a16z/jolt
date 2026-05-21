@@ -8,9 +8,9 @@ use jolt_claims::protocols::jolt::{
     },
     AdviceClaimReductionPublic, BooleanityChallenge, BooleanityPublic, BytecodeReadRafChallenge,
     IncClaimReductionChallenge, IncClaimReductionPublic, InstructionRaVirtualizationChallenge,
-    JoltAdviceKind, JoltChallengeId, JoltPublicId, JoltStageClaims, JoltStageId,
-    JoltSumcheckDomain, JoltVirtualPolynomial, RamHammingBooleanityPublic,
-    RamRaVirtualizationPublic,
+    InstructionRaVirtualizationPublic, JoltAdviceKind, JoltChallengeId, JoltPublicId,
+    JoltStageClaims, JoltStageId, JoltSumcheckDomain, JoltVirtualPolynomial,
+    RamHammingBooleanityPublic, RamRaVirtualizationPublic,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -525,7 +525,7 @@ where
         increments::claim_reduction_input_openings();
 
     let input_claims = Stage6BatchInputClaims {
-        bytecode_read_raf: bytecode_claims.input.expression.try_evaluate(
+        bytecode_read_raf: bytecode_claims.input.expression().try_evaluate(
             |id| {
                 if *id == bytecode_input_openings.spartan_outer.unexpanded_pc {
                     return Ok(stage1.outer.unexpanded_pc);
@@ -680,7 +680,7 @@ where
         )?,
         booleanity: PCS::Field::zero(),
         ram_hamming_booleanity: PCS::Field::zero(),
-        ram_ra_virtualization: ram_ra_claims.input.expression.try_evaluate(
+        ram_ra_virtualization: ram_ra_claims.input.expression().try_evaluate(
             |id| match *id {
                 id if id == ram_ra_reduced => {
                     Ok(stage5.output_claims.ram_ra_claim_reduction.ram_ra)
@@ -690,7 +690,7 @@ where
             |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
             |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
         )?,
-        instruction_ra_virtualization: instruction_ra_claims.input.expression.try_evaluate(
+        instruction_ra_virtualization: instruction_ra_claims.input.expression().try_evaluate(
             |id| {
                 for (index, opening) in instruction_ra_input_openings.iter().enumerate() {
                     if *id == *opening {
@@ -713,7 +713,7 @@ where
             },
             |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
         )?,
-        inc_claim_reduction: inc_claims.input.expression.try_evaluate(
+        inc_claim_reduction: inc_claims.input.expression().try_evaluate(
             |id| match *id {
                 id if id == ram_inc_read_write => Ok(stage2.output_claims.ram_read_write.inc),
                 id if id == ram_inc_val_check => Ok(stage4.output_claims.ram_val_check.ram_inc),
@@ -906,7 +906,7 @@ where
         stage: JoltStageId::BytecodeReadRaf,
         reason: error.to_string(),
     })?;
-    let bytecode_output = bytecode_claims.output.expression.try_evaluate(
+    let bytecode_output = bytecode_claims.output.expression().try_evaluate(
         |id| {
             for (index, opening) in bytecode_output_openings.bytecode_ra.iter().enumerate() {
                 if *id == *opening {
@@ -983,7 +983,7 @@ where
         })?;
     let booleanity_output_openings =
         booleanity::booleanity_output_openings(formula_dimensions.ra_layout);
-    let booleanity_output = booleanity_claims.output.expression.try_evaluate(
+    let booleanity_output = booleanity_claims.output.expression().try_evaluate(
         |id| {
             for (index, opening) in booleanity_output_openings.iter().enumerate() {
                 if *id == *opening {
@@ -1029,7 +1029,7 @@ where
             }
         })?;
     let [ram_hamming_weight] = ram::hamming_booleanity_output_openings();
-    let ram_hamming_output = ram_hamming_claims.output.expression.try_evaluate(
+    let ram_hamming_output = ram_hamming_claims.output.expression().try_evaluate(
         |id| match *id {
             id if id == ram_hamming_weight => Ok(claims.ram_hamming_booleanity.ram_hamming_weight),
             id => Err(VerifierError::MissingOpeningClaim { id }),
@@ -1085,7 +1085,7 @@ where
             reason: error.to_string(),
         }
     })?;
-    let ram_ra_output = ram_ra_claims.output.expression.try_evaluate(
+    let ram_ra_output = ram_ra_claims.output.expression().try_evaluate(
         |id| {
             for (index, opening) in ram_ra_output_openings.iter().enumerate() {
                 if *id == *opening {
@@ -1152,7 +1152,7 @@ where
         stage: JoltStageId::InstructionRaVirtualization,
         reason: error.to_string(),
     })?;
-    let instruction_ra_output = instruction_ra_claims.output.expression.try_evaluate(
+    let instruction_ra_output = instruction_ra_claims.output.expression().try_evaluate(
         |id| {
             for (index, opening) in flat_instruction_ra_output_openings.iter().enumerate() {
                 if *id == *opening {
@@ -1167,12 +1167,14 @@ where
             JoltChallengeId::InstructionRaVirtualization(
                 InstructionRaVirtualizationChallenge::Gamma,
             ) => Ok(instruction_ra_gamma),
-            JoltChallengeId::InstructionRaVirtualization(
-                InstructionRaVirtualizationChallenge::EqCycle,
-            ) => Ok(eq_instruction_ra_cycle),
             _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
         },
-        |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        |id| match id {
+            JoltPublicId::InstructionRaVirtualization(
+                InstructionRaVirtualizationPublic::EqCycle,
+            ) => Ok(eq_instruction_ra_cycle),
+            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        },
     )?;
     let instruction_ra_opening_points = proof
         .one_hot_config
@@ -1239,7 +1241,7 @@ where
             }
         })?;
     let [ram_inc, rd_inc] = increments::claim_reduction_output_openings();
-    let inc_output = inc_claims.output.expression.try_evaluate(
+    let inc_output = inc_claims.output.expression().try_evaluate(
         |id| match *id {
             id if id == ram_inc => Ok(claims.inc_claim_reduction.ram_inc),
             id if id == rd_inc => Ok(claims.inc_claim_reduction.rd_inc),
@@ -1461,7 +1463,7 @@ fn advice_cycle_phase_input<F: Field>(
     kind: JoltAdviceKind,
 ) -> Result<F, VerifierError> {
     let [advice_input] = advice::cycle_phase_input_openings(kind);
-    claim.input.expression.try_evaluate(
+    claim.input.expression().try_evaluate(
         |id| match *id {
             id if id == advice_input => stage4
                 .ram_val_check_init
@@ -1521,7 +1523,7 @@ fn verify_advice_cycle_phase<F: Field>(
             id: advice::ram_val_check_advice_opening(kind),
         })?;
     let output_openings = advice::cycle_phase_output_openings(kind, layout.dimensions());
-    let expected_output_claim = claim.output.expression.try_evaluate(
+    let expected_output_claim = claim.output.expression().try_evaluate(
         |id| {
             if output_openings.contains(id) {
                 Ok(opening_claim.opening_claim)

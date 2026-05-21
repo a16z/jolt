@@ -163,7 +163,7 @@ where
         Ok(RelaxedInstance::new(
             F::one(),
             witness_row_commitments,
-            vec![C::identity(); self.dimensions.error.row_count],
+            vec![C::default(); self.dimensions.error.row_count],
             self.eval_commitments.clone(),
         ))
     }
@@ -208,7 +208,7 @@ where
     fn witness_coordinate(&self, variable: Variable) -> Result<WitnessCoordinate, RelaxedError> {
         let witness_index =
             variable
-                .0
+                .index()
                 .checked_sub(1)
                 .ok_or(RelaxedError::InconsistentDimensions {
                     name: "witness variable",
@@ -599,7 +599,7 @@ where
             used: rows.len(),
         });
     }
-    rows.resize_with(target_len, C::identity);
+    rows.resize_with(target_len, C::default);
     Ok(())
 }
 
@@ -638,9 +638,7 @@ mod tests {
         BlindFoldStage, BlindFoldStatement, CommittedClaimRows, FinalOpeningBinding, OpeningAlias,
     };
     use jolt_claims::{constant, opening, Expr};
-    use jolt_crypto::{
-        Bn254, Bn254G1, HomomorphicCommitment, JoltGroup, Pedersen, PedersenSetup, VectorCommitment,
-    };
+    use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_sumcheck::{
         CommittedOutputClaims, CommittedRound, CommittedSumcheckProof, SumcheckDomainSpec,
@@ -1165,7 +1163,7 @@ mod tests {
                 padding: 8..8,
             }
         );
-        let identity = <Bn254G1 as HomomorphicCommitment<Fr>>::identity();
+        let identity = <Bn254G1 as JoltGroup>::identity();
         assert_eq!(
             relaxed.witness_row_commitments,
             vec![
@@ -1233,7 +1231,7 @@ mod tests {
             .expect("random instance dimensions match");
 
         assert_eq!(random.u, Fr::from_u64(3));
-        let identity = <Bn254G1 as HomomorphicCommitment<Fr>>::identity();
+        let identity = <Bn254G1 as JoltGroup>::identity();
         let mut expected_witness_rows = Vec::new();
         expected_witness_rows.extend_from_slice(&round_rows);
         expected_witness_rows.resize(protocol.dimensions.witness_rows.coefficients.end, identity);

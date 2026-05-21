@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ops::{Add, Neg, Sub};
 
 use jolt_field::Field;
@@ -7,10 +8,18 @@ use crate::constraint::SparseRow;
 use crate::ConstraintMatrices;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct Variable(pub usize);
+pub struct Variable(usize);
 
 impl Variable {
     pub const ONE: Self = Self(0);
+
+    pub const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub const fn index(self) -> usize {
+        self.0
+    }
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -71,7 +80,7 @@ impl<F: Field> LinearCombination<F> {
         let mut result = F::zero();
         for &(variable, coefficient) in &self.terms {
             let value = witness
-                .get(variable.0)
+                .get(variable.index())
                 .copied()
                 .flatten()
                 .ok_or(R1csBuilderError::MissingWitnessValue { variable })?;
@@ -81,11 +90,19 @@ impl<F: Field> LinearCombination<F> {
     }
 
     pub fn into_sparse_row(self) -> SparseRow<F> {
-        self.terms
+        let mut terms = BTreeMap::<usize, F>::new();
+        for (variable, coefficient) in self.terms {
+            if coefficient.is_zero() {
+                continue;
+            }
+            let _ = terms
+                .entry(variable.index())
+                .and_modify(|existing| *existing += coefficient)
+                .or_insert(coefficient);
+        }
+        terms
             .into_iter()
-            .filter_map(|(variable, coefficient)| {
-                (!coefficient.is_zero()).then_some((variable.0, coefficient))
-            })
+            .filter(|(_, coefficient)| !coefficient.is_zero())
             .collect()
     }
 }
@@ -157,7 +174,7 @@ impl<F: Field> R1csBuilder<F> {
     }
 
     pub fn alloc_witness(&mut self, value: Option<F>) -> Variable {
-        let variable = Variable(self.witness.len());
+        let variable = Variable::new(self.witness.len());
         self.witness.push(value);
         variable
     }
@@ -174,7 +191,7 @@ impl<F: Field> R1csBuilder<F> {
         let num_vars = self.witness.len();
         let slot = self
             .witness
-            .get_mut(variable.0)
+            .get_mut(variable.index())
             .ok_or(R1csBuilderError::VariableOutOfBounds { variable, num_vars })?;
         if slot.is_some() {
             return Err(R1csBuilderError::WitnessAlreadyAssigned { variable });
@@ -190,7 +207,7 @@ impl<F: Field> R1csBuilder<F> {
             .enumerate()
             .map(|(index, value)| {
                 value.ok_or(R1csBuilderError::MissingWitnessValue {
-                    variable: Variable(index),
+                    variable: Variable::new(index),
                 })
             })
             .collect()
@@ -205,6 +222,9 @@ impl<F: Field> R1csBuilder<F> {
         let lhs = lhs.into();
         let rhs = rhs.into();
         let output = output.into();
+        self.assert_known_variables(&lhs);
+        self.assert_known_variables(&rhs);
+        self.assert_known_variables(&output);
         self.a.push(lhs.into_sparse_row());
         self.b.push(rhs.into_sparse_row());
         self.c.push(output.into_sparse_row());
@@ -227,7 +247,7 @@ impl<F: Field> R1csBuilder<F> {
         self.assert_zero(lhs - rhs);
     }
 
-    pub fn multiply<Lhs, Rhs>(&mut self, lhs: Lhs, rhs: Rhs) -> Variable
+    pub fn multiply<Lhs, Rhs>(&mut self, lhs: Lhs, rhs: Rhs) -> LinearCombination<F>
     where
         Lhs: Into<LinearCombination<F>>,
         Rhs: Into<LinearCombination<F>>,
@@ -240,12 +260,24 @@ impl<F: Field> R1csBuilder<F> {
             .zip(rhs.evaluate(&self.witness).ok())
             .map(|(lhs, rhs)| lhs * rhs);
         let output = self.alloc_witness(value);
-        self.assert_product(lhs, rhs, LinearCombination::variable(output));
+        let output = LinearCombination::variable(output);
+        self.assert_product(lhs, rhs, output.clone());
         output
     }
 
     pub fn into_matrices(self) -> ConstraintMatrices<F> {
         ConstraintMatrices::new(self.a.len(), self.witness.len(), self.a, self.b, self.c)
+    }
+
+    fn assert_known_variables(&self, linear_combination: &LinearCombination<F>) {
+        for &(variable, _) in &linear_combination.terms {
+            assert!(
+                variable.index() < self.witness.len(),
+                "R1CS linear combination references variable {} but builder has {} variables",
+                variable.index(),
+                self.witness.len()
+            );
+        }
     }
 }
 
@@ -269,6 +301,28 @@ mod tests {
     }
 
     #[test]
+    fn linear_combination_dedupes_sparse_row_terms() {
+        let variable = Variable::new(4);
+        let row = (LinearCombination::<Fr>::variable(variable)
+            + LinearCombination::variable(variable).scale(Fr::from_u64(3))
+            - LinearCombination::variable(variable).scale(Fr::from_u64(4)))
+        .into_sparse_row();
+
+        assert!(row.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "R1CS linear combination references variable 99")]
+    fn assert_product_rejects_out_of_bounds_variable_before_matrix_conversion() {
+        let mut builder = R1csBuilder::<Fr>::new();
+        builder.assert_product(
+            Variable::new(99),
+            LinearCombination::one(),
+            LinearCombination::zero(),
+        );
+    }
+
+    #[test]
     fn multiply_allocates_intermediate_witness() {
         let mut builder = R1csBuilder::<Fr>::new();
         let x = builder.alloc(Fr::from_u64(4));
@@ -277,7 +331,10 @@ mod tests {
         let product = builder.multiply(x, y);
 
         let witness = builder.witness().expect("witness is assigned");
-        assert_eq!(witness[product.0], Fr::from_u64(20));
+        assert_eq!(
+            product.evaluate(&witness.iter().copied().map(Some).collect::<Vec<_>>()),
+            Ok(Fr::from_u64(20))
+        );
         assert!(builder.into_matrices().check_witness(&witness).is_ok());
     }
 
@@ -294,8 +351,10 @@ mod tests {
             Err(R1csBuilderError::MissingWitnessValue { variable: y })
         );
         assert_eq!(
-            LinearCombination::<Fr>::variable(product).evaluate(&builder.witness),
-            Err(R1csBuilderError::MissingWitnessValue { variable: product })
+            product.evaluate(&builder.witness),
+            Err(R1csBuilderError::MissingWitnessValue {
+                variable: Variable::new(3)
+            })
         );
     }
 
@@ -309,7 +368,7 @@ mod tests {
             .expect("assignment succeeds");
 
         let witness = builder.witness().expect("witness is assigned");
-        assert_eq!(witness[variable.0], Fr::from_u64(17));
+        assert_eq!(witness[variable.index()], Fr::from_u64(17));
     }
 
     #[test]
@@ -338,7 +397,7 @@ mod tests {
     #[test]
     fn assign_rejects_out_of_bounds_variable() {
         let mut builder = R1csBuilder::<Fr>::new();
-        let variable = Variable(7);
+        let variable = Variable::new(7);
 
         let error = builder
             .assign(variable, Fr::from_u64(10))

@@ -32,6 +32,3 @@ pub struct VerifierOpeningClaim<F: Field, C> {
     pub commitment: C,
     pub evaluation: EvaluationClaim<F>,
 }
-
-pub type ProverClaim<F, P = Polynomial<F>> = ProverOpeningClaim<F, P>;
-pub type VerifierClaim<F, C> = VerifierOpeningClaim<F, C>;

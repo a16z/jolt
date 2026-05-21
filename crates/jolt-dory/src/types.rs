@@ -20,6 +20,13 @@ pub const MAX_SERIALIZED_PROOF_ROUNDS: usize = 64;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DoryCommitment(pub Bn254GT);
 
+impl Default for DoryCommitment {
+    #[inline]
+    fn default() -> Self {
+        Self(Bn254GT::default())
+    }
+}
+
 impl Serialize for DoryCommitment {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         self.0.serialize(serializer)
@@ -47,8 +54,8 @@ impl AppendToTranscript for DoryCommitment {
 
 impl<F: jolt_field::Field> HomomorphicCommitment<F> for DoryCommitment {
     #[inline]
-    fn identity() -> Self {
-        Self(<Bn254GT as HomomorphicCommitment<F>>::identity())
+    fn add(c1: &Self, c2: &Self) -> Self {
+        Self(<Bn254GT as HomomorphicCommitment<F>>::add(&c1.0, &c2.0))
     }
 
     #[inline]
@@ -57,14 +64,8 @@ impl<F: jolt_field::Field> HomomorphicCommitment<F> for DoryCommitment {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DoryProof(pub ArkDoryProof);
-
-impl PartialEq for DoryProof {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
 
 impl Eq for DoryProof {}
 

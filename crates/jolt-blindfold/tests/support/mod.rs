@@ -1339,11 +1339,11 @@ fn prove_from_protocol_witness<R: RngCore>(
     let inner_num_vars =
         log2(protocol.dimensions.witness.row_count) + log2(protocol.dimensions.witness.row_len);
     let row_weights = EqPolynomial::<F>::evals(&outer_trace.point, None);
-    let (pub_az, pub_bz, pub_cz) = protocol
+    let public = protocol
         .r1cs
         .public_column_contributions(&row_weights, 0, folded_u)
         .expect("public column contributions evaluate");
-    let inner_claim = ra * (az_rx - pub_az) + rb * (bz_rx - pub_bz) + rc * (cz_rx - pub_cz);
+    let inner_claim = ra * (az_rx - public.a) + rb * (bz_rx - public.b) + rc * (cz_rx - public.c);
     let inner_trace = prove_slow_sumcheck(
         inner_num_vars,
         2,

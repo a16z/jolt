@@ -45,9 +45,9 @@ impl<P: PairingGroup> Eq for HyperKZGCommitment<P> {}
 
 impl<P: PairingGroup, F: jolt_field::Field> HomomorphicCommitment<F> for HyperKZGCommitment<P> {
     #[inline]
-    fn identity() -> Self {
+    fn add(c1: &Self, c2: &Self) -> Self {
         Self {
-            point: <P::G1 as JoltGroup>::identity(),
+            point: <P::G1 as HomomorphicCommitment<F>>::add(&c1.point, &c2.point),
         }
     }
 

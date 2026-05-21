@@ -374,6 +374,8 @@ impl TranscriptChallenge for Fr {
     #[inline]
     fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
         let mut buf = bytes.to_vec();
+        // Scalar challenges match the legacy transcript convention: digest bytes
+        // are interpreted as a big-endian integer before reduction.
         buf.reverse();
         Fr::from_le_bytes_mod_order(&buf)
     }

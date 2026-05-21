@@ -246,11 +246,17 @@ pub fn pow2<F: RingCore>(exponent: usize) -> F {
 /// Expression metadata used by claim-check protocols.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimExpression<F, O, P = (), C = usize> {
-    pub expression: Expr<F, O, P, C>,
+    expression: Expr<F, O, P, C>,
     pub required_openings: Vec<O>,
     pub required_publics: Vec<P>,
     pub required_challenges: Vec<C>,
     pub num_challenges: usize,
+}
+
+impl<F, O, P, C> ClaimExpression<F, O, P, C> {
+    pub fn expression(&self) -> &Expr<F, O, P, C> {
+        &self.expression
+    }
 }
 
 impl<F, O: Clone + Eq, P: Clone + Eq, C: Clone + Eq> From<Expr<F, O, P, C>>
@@ -505,12 +511,30 @@ mod tests {
     }
 
     #[test]
+    fn zero_coefficient_terms_keep_non_constant_metadata() {
+        let expr: Expr<Fr, Opening, Public, Challenge> = Term {
+            coefficient: Fr::from_u64(0),
+            factors: vec![Source::Opening(Opening::A)],
+        }
+        .into();
+
+        assert_eq!(expr.required_openings(), vec![Opening::A]);
+        assert!(
+            expr.evaluate(
+                |_| Fr::from_u64(9),
+                |_| Fr::from_u64(0),
+                |_| Fr::from_u64(0)
+            ) == Fr::from_u64(0)
+        );
+    }
+
+    #[test]
     fn claim_expression_derives_metadata() {
         let expression: Expr<Fr, Opening, Public> =
             challenge(2) * opening(Opening::B) * public(Public::Offset) + opening(Opening::A);
         let claim = ClaimExpression::from(expression.clone());
 
-        assert_eq!(claim.expression, expression);
+        assert_eq!(claim.expression(), &expression);
         assert_eq!(claim.required_openings, vec![Opening::B, Opening::A]);
         assert_eq!(claim.required_publics, vec![Public::Offset]);
         assert_eq!(claim.required_challenges, vec![2]);

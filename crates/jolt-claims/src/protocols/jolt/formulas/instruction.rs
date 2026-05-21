@@ -4,14 +4,14 @@ use jolt_field::{Field, RingCore};
 use jolt_lookup_tables::LookupTableKind;
 use jolt_riscv::InstructionFlags;
 
-use crate::{challenge, opening, SameEvaluationAs};
+use crate::{challenge, opening, public, SameEvaluationAs};
 
-use super::super::InstructionRaVirtualizationChallenge;
 use super::super::{
     InstructionInputChallenge, InstructionReadRafChallenge, JoltChallengeId,
-    JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltStageClaims, JoltStageId,
+    JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPublicId, JoltStageClaims, JoltStageId,
     JoltVirtualPolynomial,
 };
+use super::super::{InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic};
 use super::dimensions::{
     JoltFormulaDimensionsError, JoltFormulaPointError, JoltSumcheckSpec, TraceDimensions,
 };
@@ -336,7 +336,7 @@ where
     let gamma = ra_virtualization_challenge(InstructionRaVirtualizationChallenge::Gamma);
     let input = weighted_instruction_ra_sum(dimensions, gamma.clone());
 
-    let eq_cycle = ra_virtualization_challenge(InstructionRaVirtualizationChallenge::EqCycle);
+    let eq_cycle = ra_virtualization_public(InstructionRaVirtualizationPublic::EqCycle);
     let mut output = JoltExpr::zero();
     for virtual_index in 0..dimensions.num_virtual_ra_polys() {
         output = output
@@ -423,6 +423,13 @@ where
     F: RingCore,
 {
     challenge(JoltChallengeId::from(id))
+}
+
+fn ra_virtualization_public<F>(id: InstructionRaVirtualizationPublic) -> JoltExpr<F>
+where
+    F: RingCore,
+{
+    public(JoltPublicId::from(id))
 }
 
 fn eq_table_value<const XLEN: usize>(table: LookupTableKind<XLEN>) -> InstructionReadRafChallenge {
@@ -733,7 +740,7 @@ mod tests {
         let eq_product = Fr::from_u64(41);
         let zero = Fr::from_u64(0);
 
-        let input = claims.input.expression.evaluate(
+        let input = claims.input.expression().evaluate(
             |id| match *id {
                 id if id == right_instruction_input_product() => right_input,
                 id if id == left_instruction_input_product() => left_input,
@@ -760,7 +767,7 @@ mod tests {
             |_| zero,
         );
 
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == right_operand_is_rs2() => right_is_rs2,
                 id if id == rs2_value() => rs2,
@@ -946,7 +953,7 @@ mod tests {
         let raf_flag = Fr::from_u64(31);
         let zero = Fr::from_u64(0);
 
-        let input = claims.input.expression.evaluate(
+        let input = claims.input.expression().evaluate(
             |id| match *id {
                 id if id == lookup_output_reduced() => lookup_output,
                 id if id == left_lookup_operand_reduced() => left_lookup_operand,
@@ -978,7 +985,7 @@ mod tests {
             |_| zero,
         );
 
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == instruction_ra(0) => ra_0,
                 id if id == instruction_ra(1) => ra_1,
@@ -1086,26 +1093,29 @@ mod tests {
         );
         assert_eq!(
             claims.output.required_challenges,
-            vec![
-                JoltChallengeId::from(InstructionRaVirtualizationChallenge::EqCycle),
-                JoltChallengeId::from(InstructionRaVirtualizationChallenge::Gamma),
-            ]
+            vec![JoltChallengeId::from(
+                InstructionRaVirtualizationChallenge::Gamma
+            )]
         );
         assert_eq!(
             claims.required_challenges(),
-            vec![
-                JoltChallengeId::from(InstructionRaVirtualizationChallenge::Gamma),
-                JoltChallengeId::from(InstructionRaVirtualizationChallenge::EqCycle),
-            ]
+            vec![JoltChallengeId::from(
+                InstructionRaVirtualizationChallenge::Gamma
+            )]
         );
         assert_eq!(
             claims.challenge_index(JoltChallengeId::from(
-                InstructionRaVirtualizationChallenge::EqCycle
+                InstructionRaVirtualizationChallenge::Gamma
             )),
-            Some(1)
+            Some(0)
         );
-        assert!(claims.required_publics().is_empty());
-        assert_eq!(claims.num_challenges(), 2);
+        assert_eq!(
+            claims.required_publics(),
+            vec![JoltPublicId::from(
+                InstructionRaVirtualizationPublic::EqCycle
+            )]
+        );
+        assert_eq!(claims.num_challenges(), 1);
     }
 
     #[test]
@@ -1119,18 +1129,12 @@ mod tests {
                 InstructionRaVirtualizationChallenge::Gamma
             )]
         );
-        assert_eq!(
-            claims.output.required_challenges,
-            vec![JoltChallengeId::from(
-                InstructionRaVirtualizationChallenge::EqCycle
-            )]
-        );
+        assert!(claims.output.required_challenges.is_empty());
         assert_eq!(
             claims.required_challenges(),
-            vec![
-                JoltChallengeId::from(InstructionRaVirtualizationChallenge::Gamma),
-                JoltChallengeId::from(InstructionRaVirtualizationChallenge::EqCycle),
-            ]
+            vec![JoltChallengeId::from(
+                InstructionRaVirtualizationChallenge::Gamma
+            )]
         );
     }
 
@@ -1152,7 +1156,7 @@ mod tests {
         let eq_cycle = Fr::from_u64(37);
         let zero = Fr::from_u64(0);
 
-        let input = claims.input.expression.evaluate(
+        let input = claims.input.expression().evaluate(
             |id| match *id {
                 JoltOpeningId::Polynomial {
                     polynomial: JoltPolynomialId::Virtual(JoltVirtualPolynomial::InstructionRa(i)),
@@ -1164,10 +1168,7 @@ mod tests {
                 JoltChallengeId::InstructionRaVirtualization(
                     InstructionRaVirtualizationChallenge::Gamma,
                 ) => gamma,
-                JoltChallengeId::InstructionRaVirtualization(
-                    InstructionRaVirtualizationChallenge::EqCycle,
-                )
-                | JoltChallengeId::RamReadWrite(_)
+                JoltChallengeId::RamReadWrite(_)
                 | JoltChallengeId::RamValCheck(_)
                 | JoltChallengeId::RamRaClaimReduction(_)
                 | JoltChallengeId::RegistersReadWrite(_)
@@ -1185,7 +1186,7 @@ mod tests {
             |_| zero,
         );
 
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 JoltOpeningId::Polynomial {
                     polynomial:
@@ -1198,9 +1199,6 @@ mod tests {
                 JoltChallengeId::InstructionRaVirtualization(
                     InstructionRaVirtualizationChallenge::Gamma,
                 ) => gamma,
-                JoltChallengeId::InstructionRaVirtualization(
-                    InstructionRaVirtualizationChallenge::EqCycle,
-                ) => eq_cycle,
                 JoltChallengeId::RamReadWrite(_)
                 | JoltChallengeId::RamValCheck(_)
                 | JoltChallengeId::RamRaClaimReduction(_)
@@ -1216,7 +1214,12 @@ mod tests {
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
-            |_| zero,
+            |id| match *id {
+                JoltPublicId::InstructionRaVirtualization(
+                    InstructionRaVirtualizationPublic::EqCycle,
+                ) => eq_cycle,
+                _ => zero,
+            },
         );
 
         assert_eq!(

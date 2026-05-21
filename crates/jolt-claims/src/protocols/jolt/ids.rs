@@ -201,6 +201,10 @@ pub enum InstructionReadRafChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum InstructionRaVirtualizationChallenge {
     Gamma,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum InstructionRaVirtualizationPublic {
     EqCycle,
 }
 
@@ -443,6 +447,7 @@ pub enum JoltPublicId {
     SpartanShift(SpartanShiftPublic),
     SpartanProductVirtualization(SpartanProductVirtualizationPublic),
     SpartanOuter(SpartanOuterPublic),
+    InstructionRaVirtualization(InstructionRaVirtualizationPublic),
     PublicInput(usize),
     PublicOutput(usize),
 }
@@ -522,6 +527,12 @@ impl From<SpartanProductVirtualizationPublic> for JoltPublicId {
 impl From<SpartanOuterPublic> for JoltPublicId {
     fn from(value: SpartanOuterPublic) -> Self {
         Self::SpartanOuter(value)
+    }
+}
+
+impl From<InstructionRaVirtualizationPublic> for JoltPublicId {
+    fn from(value: InstructionRaVirtualizationPublic) -> Self {
+        Self::InstructionRaVirtualization(value)
     }
 }
 

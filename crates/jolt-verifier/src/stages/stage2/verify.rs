@@ -22,6 +22,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_poly::{
     lagrange::{centered_lagrange_evals_array, centered_lagrange_kernel},
     range_mask_mle_msb, sparse_segments_mle_msb, try_eq_mle, IdentityPolynomial,
+    MultilinearEvaluation,
 };
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_sumcheck::{
@@ -263,7 +264,7 @@ where
             let product_outer = product_outer_opening();
             let product_should_branch = product_should_branch_outer_opening();
             let product_should_jump = product_should_jump_outer_opening();
-            let uniskip_input_claim = product_claims.input.expression.try_evaluate(
+            let uniskip_input_claim = product_claims.input.expression().try_evaluate(
                 |id| match *id {
                     id if id == product_outer => Ok(stage1.outer.product),
                     id if id == product_should_branch => Ok(stage1.outer.should_branch),
@@ -431,7 +432,7 @@ where
             let [ram_address_spartan] = ram::raf_evaluation_input_openings();
 
             let input_claims = Stage2BatchSumcheckInputClaims {
-                ram_read_write: ram_read_write_claims.input.expression.try_evaluate(
+                ram_read_write: ram_read_write_claims.input.expression().try_evaluate(
                     |id| match *id {
                         id if id == ram_read_value => Ok(stage1.outer.ram_read_value),
                         id if id == ram_write_value => Ok(stage1.outer.ram_write_value),
@@ -445,7 +446,7 @@ where
                     },
                     |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
                 )?,
-                product_remainder: product_remainder_claims.input.expression.try_evaluate(
+                product_remainder: product_remainder_claims.input.expression().try_evaluate(
                     |id| match *id {
                         id if id == product_uniskip_opening_id => {
                             Ok(claims.product_uniskip_output_claim)
@@ -457,7 +458,7 @@ where
                 )?,
                 instruction_claim_reduction: instruction_claim_reduction_claims
                     .input
-                    .expression
+                    .expression()
                     .try_evaluate(
                         |id| match *id {
                             id if id == instruction_lookup_output_spartan => {
@@ -485,7 +486,7 @@ where
                         },
                         |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
                     )?,
-                ram_raf_evaluation: ram_raf_evaluation_claims.input.expression.try_evaluate(
+                ram_raf_evaluation: ram_raf_evaluation_claims.input.expression().try_evaluate(
                     |id| match *id {
                         id if id == ram_address_spartan => Ok(stage1.outer.ram_address),
                         id => Err(VerifierError::MissingOpeningClaim { id }),
@@ -493,7 +494,7 @@ where
                     |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
                     |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
                 )?,
-                ram_output_check: ram_output_check_claims.input.expression.try_evaluate(
+                ram_output_check: ram_output_check_claims.input.expression().try_evaluate(
                     |id| Err(VerifierError::MissingOpeningClaim { id: *id }),
                     |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
                     |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
@@ -560,7 +561,7 @@ where
                 reason: error.to_string(),
             })?;
             let [ram_val, ram_ra, ram_inc] = ram::read_write_checking_output_openings();
-            let ram_read_write_output = ram_read_write_claims.output.expression.try_evaluate(
+            let ram_read_write_output = ram_read_write_claims.output.expression().try_evaluate(
                 |id| match *id {
                     id if id == ram_val => Ok(claims.batch_outputs.ram_read_write.val),
                     id if id == ram_ra => Ok(claims.batch_outputs.ram_read_write.ra),
@@ -615,7 +616,7 @@ where
             let [product_left_instruction_input, product_right_instruction_input, product_jump_flag, product_write_lookup_output_to_rd, product_lookup_output, product_branch_flag, product_next_is_noop, product_virtual_instruction] =
                 product_remainder_output_openings();
             let product_remainder_output =
-                product_remainder_claims.output.expression.try_evaluate(
+                product_remainder_claims.output.expression().try_evaluate(
                     |id| match *id {
                         id if id == product_left_instruction_input => Ok(claims
                             .batch_outputs
@@ -674,7 +675,7 @@ where
                 instruction_claim_reduction::claim_reduction_output_openings();
             let instruction_claim_reduction_output = instruction_claim_reduction_claims
                 .output
-                .expression
+                .expression()
                 .try_evaluate(
                     |id| match *id {
                         id if id == instruction_lookup_output => Ok(claims
@@ -781,7 +782,7 @@ where
             };
             let [ram_ra_raf_evaluation] = ram::raf_evaluation_output_openings();
             let ram_raf_evaluation_output =
-                ram_raf_evaluation_claims.output.expression.try_evaluate(
+                ram_raf_evaluation_claims.output.expression().try_evaluate(
                     |id| match *id {
                         id if id == ram_ra_raf_evaluation => {
                             Ok(claims.batch_outputs.ram_raf_evaluation)
@@ -858,19 +859,20 @@ where
                 neg_eq_io_mask_val_io: -eq_io_mask * val_io,
             };
             let [ram_val_final] = ram::output_check_output_openings();
-            let ram_output_check_output = ram_output_check_claims.output.expression.try_evaluate(
-                |id| match *id {
-                    id if id == ram_val_final => Ok(claims.batch_outputs.ram_output_check),
-                    _ => Ok(PCS::Field::from_u64(0)),
-                },
-                |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-                |id| match id {
-                    JoltPublicId::RamOutputCheck(public_id) => {
-                        Ok(ram_output_public_values.value(*public_id))
-                    }
-                    _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
-                },
-            )?;
+            let ram_output_check_output =
+                ram_output_check_claims.output.expression().try_evaluate(
+                    |id| match *id {
+                        id if id == ram_val_final => Ok(claims.batch_outputs.ram_output_check),
+                        _ => Ok(PCS::Field::from_u64(0)),
+                    },
+                    |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+                    |id| match id {
+                        JoltPublicId::RamOutputCheck(public_id) => {
+                            Ok(ram_output_public_values.value(*public_id))
+                        }
+                        _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+                    },
+                )?;
             let expected_outputs = Stage2BatchExpectedOutputClaims {
                 ram_read_write: ram_read_write_output,
                 product_remainder: product_remainder_output,

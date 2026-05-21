@@ -260,7 +260,7 @@ where
     };
     let claims = &proof.clear_claims()?.stage7;
     let input_claims = Stage7BatchInputClaims {
-        hamming_weight_claim_reduction: hamming_claims.input.expression.try_evaluate(
+        hamming_weight_claim_reduction: hamming_claims.input.expression().try_evaluate(
             |id| hamming_input_opening_claim(*id, hamming_dimensions, stage6),
             |id| match id {
                 JoltChallengeId::HammingWeightClaimReduction(
@@ -542,7 +542,7 @@ fn hamming_output_claim<F: Field>(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    claim.output.expression.try_evaluate(
+    claim.output.expression().try_evaluate(
         |id| {
             for (index, opening) in output_openings.instruction_ra.iter().enumerate() {
                 if *id == *opening {
@@ -779,7 +779,7 @@ fn advice_address_phase_input<F: Field>(
     kind: JoltAdviceKind,
 ) -> Result<F, VerifierError> {
     let [advice_input] = advice::address_phase_input_openings(kind);
-    claim.input.expression.try_evaluate(
+    claim.input.expression().try_evaluate(
         |id| match *id {
             id if id == advice_input => stage6_advice_cycle_phase_claim(stage6, kind),
             id => Err(VerifierError::MissingOpeningClaim { id }),
@@ -820,7 +820,7 @@ fn verify_advice_address_phase<F: Field>(
             id: advice::ram_val_check_advice_opening(kind),
         })?;
     let [final_advice_opening] = advice::address_phase_output_openings(kind);
-    let expected_output_claim = claim.output.expression.try_evaluate(
+    let expected_output_claim = claim.output.expression().try_evaluate(
         |id| match *id {
             id if id == final_advice_opening => Ok(opening_claim.opening_claim),
             id => Err(VerifierError::MissingOpeningClaim { id }),

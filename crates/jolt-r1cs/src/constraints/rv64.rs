@@ -10,8 +10,8 @@
 //! | Range | Description |
 //! |-------|-------------|
 //! | `[0]` | Constant 1 |
-//! | `[1..=34]` | R1CS inputs (registers, flags, PC, lookups) |
-//! | `[35..=36]` | Product factor variables (`Branch`, `NextIsNoop`) |
+//! | `[1..=35]` | R1CS inputs (registers, flags, PC, lookups) |
+//! | `[36..=37]` | Product factor variables (`Branch`, `NextIsNoop`) |
 //!
 //! # Constraint forms
 //!
@@ -122,6 +122,9 @@ pub enum Rv64SpartanOuterRemainderError {
         /// Actual number of input openings.
         got: usize,
     },
+    /// RV64 equality rows should not contribute to the C linear form.
+    #[error("RV64 equality rows unexpectedly contribute to the C linear form")]
+    UnexpectedCContribution,
 }
 
 /// Coefficients needed to evaluate the RV64 Spartan outer remainder claim.
@@ -131,20 +134,26 @@ pub struct Rv64SpartanOuterRemainder<F: Field> {
     linear_forms: SpartanOuterLinearForms<F>,
 }
 
+/// Fiat-Shamir challenges used to derive the RV64 Spartan outer remainder claim.
+#[derive(Clone, Copy, Debug)]
+pub struct Rv64SpartanOuterRemainderChallenges<'a, F> {
+    pub tau: &'a [F],
+    pub uniskip: F,
+    pub remainder: &'a [F],
+}
+
 impl<F: Field> Rv64SpartanOuterRemainder<F> {
     /// Derives the verifier-side remainder claim coefficients for RV64.
     pub fn new(
         dimensions: &SpartanOuterDimensions,
-        tau: &[F],
-        uniskip_challenge: F,
-        remainder_challenges: &[F],
+        challenges: Rv64SpartanOuterRemainderChallenges<'_, F>,
     ) -> Result<Self, Rv64SpartanOuterRemainderError> {
         let plan = SpartanOuterRemainderPlan::from_dimensions(dimensions);
-        let Some((&r_stream, _)) = remainder_challenges.split_first() else {
+        let Some((&r_stream, _)) = challenges.remainder.split_first() else {
             return Err(Rv64SpartanOuterRemainderError::MissingStreamChallenge);
         };
 
-        let row_weights = plan.row_weights(uniskip_challenge, r_stream)?;
+        let row_weights = plan.row_weights(challenges.uniskip, r_stream)?;
         let input_indices = plan.r1cs_input_indices()?;
         let columns: Vec<_> = input_indices
             .into_iter()
@@ -156,17 +165,21 @@ impl<F: Field> Rv64SpartanOuterRemainder<F> {
 
         let matrices = rv64_eq_constraints::<F>();
         let weighted = matrices.weighted_columns(&row_weights, &columns)?;
-        let (az_constant, bz_constant, _) =
+        let constant_contributions =
             matrices.public_column_contributions(&row_weights, const_column(), F::one())?;
-        let tau_kernel = plan.tau_kernel(tau, uniskip_challenge, remainder_challenges)?;
+        if !constant_contributions.c.is_zero() {
+            return Err(Rv64SpartanOuterRemainderError::UnexpectedCContribution);
+        }
+        let tau_kernel =
+            plan.tau_kernel(challenges.tau, challenges.uniskip, challenges.remainder)?;
 
         Ok(Self {
             tau_kernel,
             linear_forms: SpartanOuterLinearForms {
                 az_coefficients: weighted.a,
                 bz_coefficients: weighted.b,
-                az_constant,
-                bz_constant,
+                az_constant: constant_contributions.a,
+                bz_constant: constant_contributions.b,
             },
         })
     }
@@ -596,6 +609,66 @@ mod tests {
         assert_eq!(matrices.a.len(), 22);
         assert_eq!(matrices.b.len(), 22);
         assert_eq!(matrices.c.len(), 22);
+    }
+
+    #[test]
+    fn eq_constraints_plus_product_constraints_match_full_constraints() {
+        let (mut a_rows, mut b_rows, mut c_rows) = rv64_eq_constraint_rows::<Fr>();
+        append_product_constraints(&mut a_rows, &mut b_rows, &mut c_rows);
+        let matrices = rv64_constraints::<Fr>();
+
+        assert_eq!(matrices.a, a_rows);
+        assert_eq!(matrices.b, b_rows);
+        assert_eq!(matrices.c, c_rows);
+    }
+
+    #[test]
+    fn eq_constraint_public_column_has_no_c_contribution() {
+        let matrices = rv64_eq_constraints::<Fr>();
+        let row_weights = vec![Fr::from_u64(1); NUM_EQ_CONSTRAINTS];
+        let contributions = matrices
+            .public_column_contributions(&row_weights, const_column(), Fr::from_u64(1))
+            .expect("const column evaluates");
+
+        assert!(contributions.c.is_zero());
+    }
+
+    #[test]
+    fn outer_remainder_expected_claim_matches_public_coefficients() {
+        let dimensions = SpartanOuterDimensions::rv64(1);
+        let tau = [Fr::from_u64(0), Fr::from_u64(0), Fr::from_i64(-4)];
+        let remainder_challenges = [Fr::from_u64(0), Fr::from_u64(0)];
+        let formula = Rv64SpartanOuterRemainder::new(
+            &dimensions,
+            Rv64SpartanOuterRemainderChallenges {
+                tau: &tau,
+                uniskip: Fr::from_i64(-4),
+                remainder: &remainder_challenges,
+            },
+        )
+        .expect("remainder formula derives");
+        let openings = (1..=NUM_R1CS_INPUTS)
+            .map(|value| Fr::from_u64(value as u64))
+            .collect::<Vec<_>>();
+        let expected = formula
+            .expected_output_claim(&openings)
+            .expect("opening length matches");
+
+        let mut reconstructed = Fr::zero();
+        for (public, value) in formula
+            .public_claims(&dimensions)
+            .expect("public coefficients derive")
+        {
+            reconstructed += match public {
+                SpartanOuterPublic::QuadraticCoefficient { left, right } => {
+                    value * openings[left] * openings[right]
+                }
+                SpartanOuterPublic::LinearCoefficient(index) => value * openings[index],
+                SpartanOuterPublic::ConstantCoefficient => value,
+            };
+        }
+
+        assert_eq!(expected, reconstructed);
     }
 
     #[test]

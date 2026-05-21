@@ -110,6 +110,8 @@ pub enum VerificationError<F: FieldCore> {
     VectorOpening(#[from] VectorOpeningError),
     #[error("{name} must be a non-zero power of two, got {value}")]
     InvalidPowerOfTwo { name: &'static str, value: usize },
+    #[error("{name} must have at least one sumcheck round")]
+    DegenerateSumcheck { name: &'static str },
     #[error("folded eval commitment {index} does not match opened value and blinding")]
     EvalCommitmentMismatch { index: usize },
     #[error("folded eval witness {kind} {index} does not match opened witness coordinate")]

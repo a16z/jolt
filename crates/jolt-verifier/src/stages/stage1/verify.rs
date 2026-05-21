@@ -4,7 +4,9 @@ use jolt_claims::protocols::jolt::{
 use jolt_crypto::VectorCommitment;
 use jolt_field::FromPrimitiveInt;
 use jolt_openings::CommitmentScheme;
-use jolt_r1cs::constraints::rv64::Rv64SpartanOuterRemainder;
+use jolt_r1cs::constraints::rv64::{
+    Rv64SpartanOuterRemainder, Rv64SpartanOuterRemainderChallenges,
+};
 use jolt_sumcheck::{
     BatchedSumcheckVerifier, CenteredIntegerDomain, SumcheckClaim, SumcheckStatement,
     UNISKIP_ROUND_TRANSCRIPT_LABEL,
@@ -210,9 +212,11 @@ where
         let remainder_challenges = remainder_reduction.point.as_slice();
         let remainder_formula = Rv64SpartanOuterRemainder::new(
             &dimensions,
-            &tau,
-            uniskip_challenge,
-            remainder_challenges,
+            Rv64SpartanOuterRemainderChallenges {
+                tau: &tau,
+                uniskip: uniskip_challenge,
+                remainder: remainder_challenges,
+            },
         )
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
             stage,

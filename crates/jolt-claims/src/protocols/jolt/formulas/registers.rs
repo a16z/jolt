@@ -254,7 +254,7 @@ mod tests {
         let eq_cycle = Fr::from_u64(31);
         let zero = Fr::from_u64(0);
 
-        let input = claims.input.expression.evaluate(
+        let input = claims.input.expression().evaluate(
             |id| match *id {
                 id if id == rd_write_value_claim() => rd_write_value,
                 id if id == rs1_value_claim() => rs1_value,
@@ -282,7 +282,7 @@ mod tests {
             |_| zero,
         );
 
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == registers_val_read_write() => val,
                 id if id == rs1_ra_read_write() => rs1_ra,
@@ -364,7 +364,7 @@ mod tests {
         let lt_cycle = Fr::from_u64(11);
         let zero = Fr::from_u64(0);
 
-        let input = claims.input.expression.evaluate(
+        let input = claims.input.expression().evaluate(
             |id| match *id {
                 id if id == registers_val_read_write() => val,
                 _ => zero,
@@ -373,7 +373,7 @@ mod tests {
             |_| zero,
         );
 
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == rd_inc_val_evaluation() => inc,
                 id if id == rd_wa_val_evaluation() => wa,

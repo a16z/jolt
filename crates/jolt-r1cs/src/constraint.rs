@@ -50,6 +50,13 @@ pub struct WeightedMatrixColumns<F: Field> {
     pub c: Vec<F>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MatrixColumnContributions<F: Field> {
+    pub a: F,
+    pub b: F,
+    pub c: F,
+}
+
 /// Deserialization helper; never exposed directly.
 #[derive(Deserialize)]
 #[serde(bound = "")]
@@ -161,12 +168,12 @@ impl<F: Field> ConstraintMatrices<F> {
         row_weights: &[F],
         column: usize,
         scalar: F,
-    ) -> Result<(F, F, F), ConstraintMatrixEvalError> {
-        Ok((
-            matrix_column_eval(&self.a, row_weights, column)? * scalar,
-            matrix_column_eval(&self.b, row_weights, column)? * scalar,
-            matrix_column_eval(&self.c, row_weights, column)? * scalar,
-        ))
+    ) -> Result<MatrixColumnContributions<F>, ConstraintMatrixEvalError> {
+        Ok(MatrixColumnContributions {
+            a: matrix_column_eval(&self.a, row_weights, column)? * scalar,
+            b: matrix_column_eval(&self.b, row_weights, column)? * scalar,
+            c: matrix_column_eval(&self.c, row_weights, column)? * scalar,
+        })
     }
 
     pub fn weighted_columns(
@@ -389,7 +396,11 @@ mod tests {
 
         assert_eq!(
             contributions,
-            (Fr::from_u64(237), Fr::from_u64(165), Fr::from_u64(399),)
+            MatrixColumnContributions {
+                a: Fr::from_u64(237),
+                b: Fr::from_u64(165),
+                c: Fr::from_u64(399),
+            }
         );
     }
 

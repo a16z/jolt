@@ -176,7 +176,7 @@ mod tests {
         let final_scale = Fr::from_u64(7);
         let zero = Fr::from_u64(0);
 
-        let input = claims.input.expression.evaluate(
+        let input = claims.input.expression().evaluate(
             |id| match *id {
                 id if id == ram_val_check_advice_opening(JoltAdviceKind::Trusted) => input_advice,
                 _ => zero,
@@ -184,7 +184,7 @@ mod tests {
             |_| zero,
             |_| zero,
         );
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == final_advice_opening(JoltAdviceKind::Trusted) => final_advice_claim,
                 _ => zero,
@@ -211,7 +211,7 @@ mod tests {
         let final_scale = Fr::from_u64(17);
         let zero = Fr::from_u64(0);
 
-        let input = claims.input.expression.evaluate(
+        let input = claims.input.expression().evaluate(
             |id| match *id {
                 id if id == cycle_phase_advice_opening(JoltAdviceKind::Untrusted) => cycle_claim,
                 _ => zero,
@@ -219,7 +219,7 @@ mod tests {
             |_| zero,
             |_| zero,
         );
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == final_advice_opening(JoltAdviceKind::Untrusted) => final_advice_claim,
                 _ => zero,

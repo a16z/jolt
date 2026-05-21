@@ -195,7 +195,7 @@ where
         registers_claim_reduction::claim_reduction_input_openings();
 
     let input_claims = Stage3BatchInputClaims {
-        shift: shift_claims.input.expression.try_evaluate(
+        shift: shift_claims.input.expression().try_evaluate(
             |id| match *id {
                 id if id == next_unexpanded_pc => Ok(stage1.outer.next_unexpanded_pc),
                 id if id == next_pc => Ok(stage1.outer.next_pc),
@@ -210,7 +210,7 @@ where
             },
             |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
         )?,
-        instruction_input: instruction_claims.input.expression.try_evaluate(
+        instruction_input: instruction_claims.input.expression().try_evaluate(
             |id| match *id {
                 id if id == right_instruction_input_product => Ok(product_right),
                 id if id == left_instruction_input_product => Ok(product_left),
@@ -224,7 +224,7 @@ where
             },
             |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
         )?,
-        registers_claim_reduction: registers_claims.input.expression.try_evaluate(
+        registers_claim_reduction: registers_claims.input.expression().try_evaluate(
             |id| match *id {
                 id if id == rd_write_value_spartan => Ok(stage1.outer.rd_write_value),
                 id if id == rs1_value_spartan => Ok(stage1.outer.rs1_value),
@@ -282,7 +282,7 @@ where
             .evaluate(&shift_opening_point);
     let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] =
         shift_output_openings();
-    let shift_output = shift_claims.output.expression.try_evaluate(
+    let shift_output = shift_claims.output.expression().try_evaluate(
         |id| match *id {
             id if id == unexpanded_pc_shift => Ok(claims.shift.unexpanded_pc),
             id if id == pc_shift => Ok(claims.shift.pc),
@@ -321,7 +321,7 @@ where
     })?;
     let [right_operand_is_rs2, rs2_value_input, right_operand_is_imm, imm_input, left_operand_is_rs1, rs1_value_input, left_operand_is_pc, unexpanded_pc_input] =
         instruction::input_virtualization_output_openings();
-    let instruction_output = instruction_claims.output.expression.try_evaluate(
+    let instruction_output = instruction_claims.output.expression().try_evaluate(
         |id| match *id {
             id if id == left_operand_is_rs1 => Ok(claims.instruction_input.left_operand_is_rs1),
             id if id == rs1_value_input => Ok(claims.instruction_input.rs1_value),
@@ -359,7 +359,7 @@ where
         })?;
     let [rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced] =
         registers_claim_reduction::claim_reduction_output_openings();
-    let registers_output = registers_claims.output.expression.try_evaluate(
+    let registers_output = registers_claims.output.expression().try_evaluate(
         |id| match *id {
             id if id == rd_write_value_reduced => {
                 Ok(claims.registers_claim_reduction.rd_write_value)

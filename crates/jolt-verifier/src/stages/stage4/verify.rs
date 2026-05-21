@@ -271,7 +271,7 @@ where
     let [rd_write_value, rs1_value, rs2_value] = registers::read_write_checking_input_openings();
     let [ram_val, ram_val_final] = ram::val_check_input_openings();
     let input_claims = Stage4BatchInputClaims {
-        registers_read_write: registers_claims.input.expression.try_evaluate(
+        registers_read_write: registers_claims.input.expression().try_evaluate(
             |id| match *id {
                 id if id == rd_write_value => Ok(stage3
                     .output_claims
@@ -293,7 +293,7 @@ where
             },
             |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
         )?,
-        ram_val_check: ram_val_check_claims.input.expression.try_evaluate(
+        ram_val_check: ram_val_check_claims.input.expression().try_evaluate(
             |id| match *id {
                 id if id == ram_val => Ok(stage2.output_claims.ram_read_write.val),
                 id if id == ram_val_final => Ok(stage2.output_claims.ram_output_check),
@@ -361,7 +361,7 @@ where
     })?;
     let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] =
         registers::read_write_checking_output_openings();
-    let registers_output = registers_claims.output.expression.try_evaluate(
+    let registers_output = registers_claims.output.expression().try_evaluate(
         |id| match *id {
             id if id == registers_val => Ok(claims.registers_read_write.registers_val),
             id if id == rs1_ra => Ok(claims.registers_read_write.rs1_ra),
@@ -402,7 +402,7 @@ where
     let ram_val_opening_point = [r_address, r_cycle_prime.as_slice()].concat();
     let lt_cycle = LtPolynomial::evaluate(&r_cycle_prime, r_cycle);
     let [ram_ra, ram_inc] = ram::val_check_output_openings();
-    let ram_val_output = ram_val_check_claims.output.expression.try_evaluate(
+    let ram_val_output = ram_val_check_claims.output.expression().try_evaluate(
         |id| match *id {
             id if id == ram_ra => Ok(claims.ram_val_check.ram_ra),
             id if id == ram_inc => Ok(claims.ram_val_check.ram_inc),

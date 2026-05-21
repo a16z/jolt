@@ -695,7 +695,10 @@ impl From<(usize, usize)> for AdviceClaimReductionDimensions {
 }
 
 fn log2_power_of_two(value: usize) -> usize {
-    debug_assert!(value.is_power_of_two());
+    assert!(
+        value.is_power_of_two(),
+        "expected a power-of-two dimension, got {value}"
+    );
     value.trailing_zeros() as usize
 }
 

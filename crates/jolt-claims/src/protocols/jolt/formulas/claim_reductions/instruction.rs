@@ -224,7 +224,7 @@ mod tests {
         let eq_spartan = Fr::from_u64(41);
         let zero = Fr::from_u64(0);
 
-        let input = claims.input.expression.evaluate(
+        let input = claims.input.expression().evaluate(
             |id| match *id {
                 id if id == lookup_output_spartan() => lookup_spartan,
                 id if id == left_lookup_operand_spartan() => left_lookup_spartan,
@@ -258,7 +258,7 @@ mod tests {
             |_| zero,
         );
 
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == lookup_output_reduced() => lookup_reduced,
                 id if id == left_lookup_operand_reduced() => left_lookup_reduced,

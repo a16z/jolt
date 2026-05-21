@@ -6,7 +6,7 @@ use crate::{Expr, Term};
 
 impl<F: RingCore, O, P, C> From<Term<F, O, P, C>> for Expr<F, O, P, C> {
     fn from(term: Term<F, O, P, C>) -> Self {
-        if term.coefficient.is_zero() {
+        if term.coefficient.is_zero() && term.factors.is_empty() {
             Self::zero()
         } else {
             Self { terms: vec![term] }

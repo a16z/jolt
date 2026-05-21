@@ -905,7 +905,7 @@ mod tests {
         let tau_kernel = Fr::from_u64(29);
         let zero = Fr::from_u64(0);
 
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == left_instruction_input_product() => left_input,
                 id if id == lookup_output_product() => lookup_output,
@@ -984,7 +984,7 @@ mod tests {
         let eq_product = Fr::from_u64(43);
         let zero = Fr::from_u64(0);
 
-        let input = claims.input.expression.evaluate(
+        let input = claims.input.expression().evaluate(
             |id| match *id {
                 id if id == next_unexpanded_pc_outer() => next_unexpanded_pc,
                 id if id == next_pc_outer() => next_pc,
@@ -999,7 +999,7 @@ mod tests {
             },
             |_| zero,
         );
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == unexpanded_pc_shift() => unexpanded_pc,
                 id if id == pc_shift() => pc,

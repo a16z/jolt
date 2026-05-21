@@ -1,7 +1,7 @@
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpening};
 use jolt_field::{Field, FieldCore};
 use jolt_poly::{EqPolynomial, Point};
-use jolt_r1cs::ConstraintMatrices;
+use jolt_r1cs::{ConstraintMatrices, MatrixColumnContributions};
 use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 
@@ -151,6 +151,11 @@ where
                 name: "outer sumcheck dimension",
                 value: usize::MAX,
             })?;
+    if num_vars == 0 {
+        return Err(VerificationError::DegenerateSumcheck {
+            name: "outer folded R1CS sumcheck",
+        });
+    }
 
     transcript.append(&Label(b"bf_spartan"));
     let tau = transcript.challenge_vector(num_vars);
@@ -371,9 +376,10 @@ where
     let ra = transcript.challenge();
     let rb = transcript.challenge();
     let rc = transcript.challenge();
-    let (pub_az, pub_bz, pub_cz) = public_contributions(&protocol.r1cs, &outer.point, folded.u)?;
-    let claim =
-        ra * (proof.az_rx - pub_az) + rb * (proof.bz_rx - pub_bz) + rc * (proof.cz_rx - pub_cz);
+    let public = public_contributions(&protocol.r1cs, &outer.point, folded.u)?;
+    let claim = ra * (proof.az_rx - public.a)
+        + rb * (proof.bz_rx - public.b)
+        + rc * (proof.cz_rx - public.c);
 
     let row_vars =
         log2_power_of_two::<F>("witness row count", protocol.dimensions.witness.row_count)?;
@@ -386,6 +392,11 @@ where
                 name: "inner sumcheck dimension",
                 value: usize::MAX,
             })?;
+    if num_vars == 0 {
+        return Err(VerificationError::DegenerateSumcheck {
+            name: "inner folded R1CS sumcheck",
+        });
+    }
     let inner_claim = SumcheckClaim::new(num_vars, INNER_SUMCHECK_DEGREE, claim);
     let inner = proof
         .inner_sumcheck
@@ -458,7 +469,7 @@ fn public_contributions<F>(
     r1cs: &ConstraintMatrices<F>,
     rx: &[F],
     u: F,
-) -> Result<(F, F, F), VerificationError<F>>
+) -> Result<MatrixColumnContributions<F>, VerificationError<F>>
 where
     F: Field,
 {
@@ -539,8 +550,7 @@ mod tests {
         BlindFoldDimensions, RowDimensions, WitnessRowLayout,
     };
     use jolt_crypto::{
-        Bn254, Bn254G1, HomomorphicCommitment, JoltGroup, Pedersen, PedersenSetup,
-        VectorCommitment, VectorOpeningError,
+        Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment, VectorOpeningError,
     };
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_poly::CompressedPoly;
@@ -567,7 +577,7 @@ mod tests {
     }
 
     fn identity() -> Bn254G1 {
-        <Bn254G1 as HomomorphicCommitment<Fr>>::identity()
+        <Bn254G1 as JoltGroup>::identity()
     }
 
     fn protocol(setup: &PedersenSetup<Bn254G1>) -> BlindFoldProtocol<Fr, Bn254G1> {
@@ -659,6 +669,27 @@ mod tests {
             },
             eval_commitments: Vec::new(),
         }
+    }
+
+    fn inner_round_protocol() -> BlindFoldProtocol<Fr, Bn254G1> {
+        let mut protocol = witness_protocol();
+        protocol.dimensions.witness = RowDimensions {
+            row_len: 1,
+            row_count: 2,
+        };
+        protocol.dimensions.error = RowDimensions {
+            row_len: 1,
+            row_count: 2,
+        };
+        protocol.dimensions.witness_rows.auxiliary = 0..2;
+        protocol.dimensions.witness_rows.padding = 2..2;
+        protocol.dimensions.auxiliary_rows = 2;
+        protocol.dimensions.auxiliary_values = 2;
+        protocol
+    }
+
+    fn add_zero_inner_round(proof: &mut BlindFoldProof<Fr, Bn254G1>) {
+        proof.inner_sumcheck.round_polynomials = vec![CompressedPoly::new(vec![f(0)])];
     }
 
     fn outer_round_protocol() -> BlindFoldProtocol<Fr, Bn254G1> {
@@ -790,14 +821,21 @@ mod tests {
     }
 
     #[test]
-    fn verify_accepts_well_shaped_fold_inputs() {
+    fn verify_rejects_degenerate_outer_sumcheck() {
         let setup = setup();
         let protocol = protocol(&setup);
         let proof = proof(&setup, &protocol);
         let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
 
-        verify::<Fr, Pedersen<Bn254G1>, _>(&protocol, &proof, &setup, &mut transcript)
-            .expect("outer folded R1CS inputs are well-shaped");
+        let error = verify::<Fr, Pedersen<Bn254G1>, _>(&protocol, &proof, &setup, &mut transcript)
+            .expect_err("degenerate outer sumcheck is rejected");
+
+        assert!(matches!(
+            error,
+            VerificationError::DegenerateSumcheck {
+                name: "outer folded R1CS sumcheck"
+            }
+        ));
     }
 
     #[test]
@@ -901,8 +939,10 @@ mod tests {
         let protocol = protocol_with_eval(&setup);
         let proof = proof_with_valid_eval_opening(&setup, &protocol);
         let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
+        let folded = folded_instance_from_proof(&protocol, &proof, &mut transcript)
+            .expect("folded instance builds");
 
-        verify::<Fr, Pedersen<Bn254G1>, _>(&protocol, &proof, &setup, &mut transcript)
+        verify_folded_eval_commitments::<Fr, Pedersen<Bn254G1>>(&proof, &setup, &folded)
             .expect("folded eval commitment opens");
     }
 
@@ -965,7 +1005,7 @@ mod tests {
     #[test]
     fn verify_rejects_bad_error_opening() {
         let setup = setup();
-        let protocol = protocol(&setup);
+        let protocol = outer_round_protocol();
         let mut proof = proof(&setup, &protocol);
         proof.error_opening.combined_blinding = f(1);
         let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
@@ -982,7 +1022,7 @@ mod tests {
     #[test]
     fn verify_rejects_outer_final_claim_mismatch() {
         let setup = setup();
-        let protocol = protocol(&setup);
+        let protocol = outer_round_protocol();
         let mut proof = proof(&setup, &protocol);
         proof.az_rx = f(1);
         proof.bz_rx = f(1);
@@ -1000,12 +1040,8 @@ mod tests {
     #[test]
     fn verify_rejects_inner_sumcheck_round_count_mismatch() {
         let setup = setup();
-        let protocol = protocol(&setup);
-        let mut proof = proof(&setup, &protocol);
-        proof
-            .inner_sumcheck
-            .round_polynomials
-            .push(CompressedPoly::new(vec![f(0)]));
+        let protocol = inner_round_protocol();
+        let proof = proof(&setup, &protocol);
         let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
 
         let error = verify::<Fr, Pedersen<Bn254G1>, _>(&protocol, &proof, &setup, &mut transcript)
@@ -1015,8 +1051,8 @@ mod tests {
             error,
             VerificationError::InnerSumcheck {
                 source: jolt_sumcheck::SumcheckError::WrongNumberOfRounds {
-                    expected: 0,
-                    got: 1,
+                    expected: 1,
+                    got: 0,
                 },
             }
         ));
@@ -1025,8 +1061,9 @@ mod tests {
     #[test]
     fn verify_rejects_bad_witness_opening() {
         let setup = setup();
-        let protocol = protocol(&setup);
+        let protocol = inner_round_protocol();
         let mut proof = proof(&setup, &protocol);
+        add_zero_inner_round(&mut proof);
         proof.witness_opening.combined_blinding = f(1);
         let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
 
@@ -1042,9 +1079,13 @@ mod tests {
     #[test]
     fn verify_rejects_inner_final_claim_mismatch() {
         let setup = setup();
-        let protocol = witness_protocol();
+        let protocol = inner_round_protocol();
         let mut proof = proof(&setup, &protocol);
-        proof.auxiliary_row_commitments = vec![commit_value(&setup, f(5), f(50))];
+        add_zero_inner_round(&mut proof);
+        proof.auxiliary_row_commitments = vec![
+            commit_value(&setup, f(5), f(50)),
+            commit_value(&setup, f(5), f(50)),
+        ];
         proof.witness_opening = VectorCommitmentOpening {
             combined_vector: vec![f(5)],
             combined_blinding: f(50),

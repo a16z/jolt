@@ -360,7 +360,7 @@ mod tests {
         let gamma = Fr::from_u64(53);
         let zero = Fr::from_u64(0);
 
-        let input = claims.input.expression.evaluate(
+        let input = claims.input.expression().evaluate(
             |id| match *id {
                 id if id == ram_hamming_weight() => ram_hw,
                 id if id == booleanity_claim(instruction) => bool_instruction,
@@ -380,7 +380,7 @@ mod tests {
             |_| zero,
         );
 
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == reduced_claim(instruction) => reduced_instruction,
                 id if id == reduced_claim(bytecode) => reduced_bytecode,

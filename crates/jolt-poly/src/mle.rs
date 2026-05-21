@@ -1,108 +1,27 @@
-use std::{error::Error, fmt};
-
 use jolt_field::Field;
+use thiserror::Error;
 
-use crate::EqPolynomial;
+use crate::eq_index_msb;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum MleError {
-    EqualityArityMismatch {
-        left: usize,
-        right: usize,
-    },
-    InvalidRange {
-        start: u128,
-        end: u128,
-    },
-    DomainTooLarge {
-        arity: usize,
-    },
-    RangeEndOutOfDomain {
-        end: u128,
-        domain_size: u128,
-    },
-    BlockVariablesExceedArity {
-        block_vars: usize,
-        arity: usize,
-    },
+    #[error("equality polynomial arity mismatch: left {left}, right {right}")]
+    EqualityArityMismatch { left: usize, right: usize },
+    #[error("invalid MLE range [{start}, {end})")]
+    InvalidRange { start: u128, end: u128 },
+    #[error("MLE arity {arity} exceeds u128 capacity")]
+    DomainTooLarge { arity: usize },
+    #[error("MLE range end {end} exceeds domain size {domain_size}")]
+    RangeEndOutOfDomain { end: u128, domain_size: u128 },
+    #[error("MLE block has {block_vars} variables but point has arity {arity}")]
+    BlockVariablesExceedArity { block_vars: usize, arity: usize },
+    #[error("MLE block start {start_index} is not aligned to block size {block_size}")]
     BlockStartUnaligned {
         start_index: usize,
         block_size: u128,
     },
-    BlockEndOutOfDomain {
-        end: u128,
-        domain_size: u128,
-    },
-}
-
-impl fmt::Display for MleError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EqualityArityMismatch { left, right } => {
-                write!(
-                    f,
-                    "equality polynomial arity mismatch: left {left}, right {right}"
-                )
-            }
-            Self::InvalidRange { start, end } => {
-                write!(f, "invalid MLE range [{start}, {end})")
-            }
-            Self::DomainTooLarge { arity } => {
-                write!(f, "MLE arity {arity} exceeds u128 capacity")
-            }
-            Self::RangeEndOutOfDomain { end, domain_size } => {
-                write!(f, "MLE range end {end} exceeds domain size {domain_size}")
-            }
-            Self::BlockVariablesExceedArity { block_vars, arity } => {
-                write!(
-                    f,
-                    "MLE block has {block_vars} variables but point has arity {arity}"
-                )
-            }
-            Self::BlockStartUnaligned {
-                start_index,
-                block_size,
-            } => {
-                write!(
-                    f,
-                    "MLE block start {start_index} is not aligned to block size {block_size}"
-                )
-            }
-            Self::BlockEndOutOfDomain { end, domain_size } => {
-                write!(f, "MLE block end {end} exceeds domain size {domain_size}")
-            }
-        }
-    }
-}
-
-impl Error for MleError {}
-
-pub fn try_eq_mle<F: Field>(left: &[F], right: &[F]) -> Result<F, MleError> {
-    if left.len() != right.len() {
-        return Err(MleError::EqualityArityMismatch {
-            left: left.len(),
-            right: right.len(),
-        });
-    }
-    Ok(EqPolynomial::<F>::mle(left, right))
-}
-
-pub fn eq_index_msb<F: Field>(point: &[F], index: usize) -> F {
-    let mut eq = F::one();
-    for (position, challenge) in point.iter().enumerate() {
-        let shift = point.len() - 1 - position;
-        let bit = if shift < usize::BITS as usize {
-            (index >> shift) & 1
-        } else {
-            0
-        };
-        if bit == 1 {
-            eq *= *challenge;
-        } else {
-            eq *= F::one() - *challenge;
-        }
-    }
-    eq
+    #[error("MLE block end {end} exceeds domain size {domain_size}")]
+    BlockEndOutOfDomain { end: u128, domain_size: u128 },
 }
 
 pub fn sparse_mle_msb<F: Field>(start_index: usize, values: &[u64], point: &[F]) -> F {
@@ -135,6 +54,11 @@ pub fn block_selector_mle_msb<F: Field>(
             arity: point.len(),
         });
     }
+    if block_num_vars >= usize::BITS as usize {
+        return Err(MleError::DomainTooLarge {
+            arity: block_num_vars,
+        });
+    }
 
     let block_size = 1u128
         .checked_shl(block_num_vars as u32)
@@ -159,10 +83,9 @@ pub fn block_selector_mle_msb<F: Field>(
     }
 
     let selector_point_len = point.len() - block_num_vars;
-    Ok(eq_index_msb(
-        &point[..selector_point_len],
-        start_index >> block_num_vars,
-    ))
+    let block_index = usize::try_from(start / block_size)
+        .map_err(|_| MleError::DomainTooLarge { arity: point.len() })?;
+    Ok(eq_index_msb(&point[..selector_point_len], block_index))
 }
 
 pub fn range_mask_mle_msb<F: Field>(
@@ -179,7 +102,7 @@ pub fn range_mask_mle_msb<F: Field>(
     let domain_size = 1u128
         .checked_shl(point.len() as u32)
         .ok_or(MleError::DomainTooLarge { arity: point.len() })?;
-    if range_end >= domain_size {
+    if range_end > domain_size {
         return Err(MleError::RangeEndOutOfDomain {
             end: range_end,
             domain_size,
@@ -190,6 +113,9 @@ pub fn range_mask_mle_msb<F: Field>(
 }
 
 fn less_than_mle_msb<F: Field>(bound: u128, point: &[F]) -> F {
+    if Some(bound) == 1u128.checked_shl(point.len() as u32) {
+        return F::one();
+    }
     let mut lt_bound = F::zero();
     let mut eq_bound = F::one();
     for (index, challenge) in point.iter().enumerate() {
@@ -217,6 +143,7 @@ mod tests {
     #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
 
     use super::*;
+    use crate::{eq_index_msb, try_eq_mle};
     use jolt_field::{Fr, FromPrimitiveInt};
     use num_traits::{One, Zero};
 
@@ -304,6 +231,16 @@ mod tests {
                 domain_size: 4
             })
         );
+        assert_eq!(
+            block_selector_mle_msb::<Fr>(
+                0,
+                usize::BITS as usize,
+                &vec![Fr::zero(); usize::BITS as usize]
+            ),
+            Err(MleError::DomainTooLarge {
+                arity: usize::BITS as usize
+            })
+        );
     }
 
     #[test]
@@ -334,9 +271,14 @@ mod tests {
             Err(MleError::InvalidRange { start: 3, end: 3 })
         );
         assert_eq!(
-            range_mask_mle_msb::<Fr>(0, 4, &[Fr::zero(), Fr::zero()]),
+            range_mask_mle_msb(0, 4, &[Fr::from_u64(7), Fr::from_u64(11)])
+                .unwrap_or_else(|error| panic!("full-domain range should evaluate: {error}")),
+            Fr::one()
+        );
+        assert_eq!(
+            range_mask_mle_msb::<Fr>(0, 5, &[Fr::zero(), Fr::zero()]),
             Err(MleError::RangeEndOutOfDomain {
-                end: 4,
+                end: 5,
                 domain_size: 4
             })
         );

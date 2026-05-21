@@ -273,7 +273,7 @@ where
 }
 
 fn validate_variable(variable: Variable, num_vars: usize) -> Result<(), SumcheckR1csError> {
-    if variable.0 >= num_vars {
+    if variable.index() >= num_vars {
         return Err(SumcheckR1csError::LayoutVariableOutOfBounds { variable, num_vars });
     }
 
@@ -542,7 +542,7 @@ mod tests {
         let mut layout = allocate_sumcheck_r1cs_layout(&mut builder, statement, &rounds)
             .expect("layout should allocate");
         let num_vars = builder.num_vars();
-        layout.rounds[0].coefficients[0] = Variable(num_vars);
+        layout.rounds[0].coefficients[0] = Variable::new(num_vars);
 
         let error = append_sumcheck_r1cs_constraints(&mut builder, statement, &rounds, &layout)
             .expect_err("layout references an unknown variable");
@@ -550,7 +550,7 @@ mod tests {
         assert_eq!(
             error,
             SumcheckR1csError::LayoutVariableOutOfBounds {
-                variable: Variable(num_vars),
+                variable: Variable::new(num_vars),
                 num_vars,
             }
         );

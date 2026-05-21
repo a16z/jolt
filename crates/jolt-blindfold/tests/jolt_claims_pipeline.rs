@@ -108,9 +108,9 @@ fn solve_linear_output_opening(
             }
             let original = values.opening(candidate);
             values.set_opening(*candidate, f(0));
-            let base = values.evaluate(&stage.output.expression);
+            let base = values.evaluate(stage.output.expression());
             values.set_opening(*candidate, f(1));
-            let shifted = values.evaluate(&stage.output.expression);
+            let shifted = values.evaluate(stage.output.expression());
             let delta = shifted - base;
             values.set_opening(*candidate, original);
             if delta != f(0) {
@@ -141,8 +141,8 @@ fn build_jolt_stage_relation(
                 statement.degree + 1,
                 generated.proof.output_claims.clone(),
             ),
-            stage.input.expression.clone(),
-            stage.output.expression.clone(),
+            stage.input.expression().clone(),
+            stage.output.expression().clone(),
         )],
         Vec::new(),
     );
@@ -174,7 +174,7 @@ fn generated_jolt_stage(
     let setup = pedersen_setup(stage.sumcheck.degree + 1);
     let statement = SumcheckStatement::new(stage.sumcheck.rounds, stage.sumcheck.degree);
     let mut values = JoltSourceValues::seeded(stage, seed);
-    let input_claim = values.evaluate(&stage.input.expression);
+    let input_claim = values.evaluate(stage.input.expression());
     let mut prover = SumcheckTestProver::new(ChaCha20Rng::from_seed([seed as u8; 32]));
     let generated = prover.prove_stage_with_fresh_transcript(
         &setup,
@@ -261,8 +261,8 @@ fn jolt_claims_pipeline_lowers_booleanity_relation() {
                 statement.degree + 1,
                 generated.proof.output_claims.clone(),
             ),
-            jolt_stage.input.expression.clone(),
-            jolt_stage.output.expression.clone(),
+            jolt_stage.input.expression().clone(),
+            jolt_stage.output.expression().clone(),
         )],
         Vec::new(),
     );

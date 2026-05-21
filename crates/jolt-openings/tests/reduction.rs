@@ -16,7 +16,8 @@
 use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
 use jolt_openings::mock::MockCommitmentScheme;
 use jolt_openings::{
-    reduce_prover, reduce_verifier, CommitmentScheme, EvaluationClaim, ProverClaim, VerifierClaim,
+    reduce_prover, reduce_verifier, CommitmentScheme, EvaluationClaim, ProverOpeningClaim,
+    VerifierOpeningClaim,
 };
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
@@ -38,12 +39,12 @@ fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
 
     for (poly, point) in polys.iter().zip(points.iter()) {
         let eval = poly.evaluate(point);
-        prover_claims.push(ProverClaim {
+        prover_claims.push(ProverOpeningClaim {
             polynomial: Polynomial::new(poly.evaluations().to_vec()),
             evaluation: EvaluationClaim::new(point.clone(), eval),
         });
         let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
-        verifier_claims.push(VerifierClaim {
+        verifier_claims.push(VerifierOpeningClaim {
             commitment,
             evaluation: EvaluationClaim::new(point.clone(), eval),
         });
@@ -177,11 +178,11 @@ fn tampered_eval_detected() {
     let eval_b = poly_b.evaluate(&point);
 
     let prover_claims = vec![
-        ProverClaim {
+        ProverOpeningClaim {
             polynomial: Polynomial::new(poly_a.evaluations().to_vec()),
             evaluation: EvaluationClaim::new(point.clone(), eval_a),
         },
-        ProverClaim {
+        ProverOpeningClaim {
             polynomial: Polynomial::new(poly_b.evaluations().to_vec()),
             evaluation: EvaluationClaim::new(point.clone(), eval_b),
         },
@@ -190,11 +191,11 @@ fn tampered_eval_detected() {
     let (com_a, ()) = MockPCS::commit(poly_a.evaluations(), &());
     let (com_b, ()) = MockPCS::commit(poly_b.evaluations(), &());
     let verifier_claims = vec![
-        VerifierClaim {
+        VerifierOpeningClaim {
             commitment: com_a,
             evaluation: EvaluationClaim::new(point.clone(), eval_a),
         },
-        VerifierClaim {
+        VerifierOpeningClaim {
             commitment: com_b,
             evaluation: EvaluationClaim::new(point.clone(), eval_b + Fr::from_u64(1)),
         },

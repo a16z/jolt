@@ -182,7 +182,7 @@ mod tests {
         let eq_address_cycle = Fr::from_u64(13);
         let zero = Fr::from_u64(0);
 
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id
                     == JoltOpeningId::committed(

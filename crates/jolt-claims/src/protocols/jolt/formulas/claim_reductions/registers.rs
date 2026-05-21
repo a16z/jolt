@@ -157,7 +157,7 @@ mod tests {
         let eq_spartan = Fr::from_u64(23);
         let zero = Fr::from_u64(0);
 
-        let input = claims.input.expression.evaluate(
+        let input = claims.input.expression().evaluate(
             |id| match *id {
                 id if id == rd_write_value_spartan() => rd_spartan,
                 id if id == rs1_value_spartan() => rs1_spartan,
@@ -189,7 +189,7 @@ mod tests {
             |_| zero,
         );
 
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == rd_write_value_reduced() => rd_reduced,
                 id if id == rs1_value_reduced() => rs1_reduced,

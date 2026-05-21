@@ -24,6 +24,14 @@ pub struct MockCommitment<F: Field> {
     evaluations: Vec<F>,
 }
 
+impl<F: Field> Default for MockCommitment<F> {
+    fn default() -> Self {
+        Self {
+            evaluations: Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct MockProof<F: Field> {
@@ -119,10 +127,8 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
 }
 
 impl<F: Field> HomomorphicCommitment<F> for MockCommitment<F> {
-    fn identity() -> Self {
-        Self {
-            evaluations: Vec::new(),
-        }
+    fn add(c1: &Self, c2: &Self) -> Self {
+        Self::linear_combine(c1, c2, &F::one())
     }
 
     fn linear_combine(c1: &Self, c2: &Self, scalar: &F) -> Self {
@@ -235,7 +241,9 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
 #[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 mod tests {
     use super::*;
-    use crate::{reduce_prover, reduce_verifier, EvaluationClaim, ProverClaim, VerifierClaim};
+    use crate::{
+        reduce_prover, reduce_verifier, EvaluationClaim, ProverOpeningClaim, VerifierOpeningClaim,
+    };
     use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
     use jolt_poly::Polynomial;
     use jolt_transcript::Blake2bTranscript;
@@ -341,14 +349,14 @@ mod tests {
 
         for (i, (poly, point)) in prover_polys.iter().enumerate() {
             let eval = poly.evaluate(point);
-            prover_claims.push(ProverClaim {
+            prover_claims.push(ProverOpeningClaim {
                 polynomial: Polynomial::new(poly.evaluations().to_vec()),
                 evaluation: EvaluationClaim::new(point.clone(), eval),
             });
 
             let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
             let v_eval = verifier_evals.map_or(eval, |overrides| overrides[i]);
-            verifier_claims.push(VerifierClaim {
+            verifier_claims.push(VerifierOpeningClaim {
                 commitment,
                 evaluation: EvaluationClaim::new(point.clone(), v_eval),
             });
@@ -461,15 +469,15 @@ mod tests {
         let s: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
 
         let claims = vec![
-            ProverClaim {
+            ProverOpeningClaim {
                 polynomial: Polynomial::new(p1.evaluations().to_vec()),
                 evaluation: EvaluationClaim::new(r.clone(), p1.evaluate(&r)),
             },
-            ProverClaim {
+            ProverOpeningClaim {
                 polynomial: Polynomial::new(p2.evaluations().to_vec()),
                 evaluation: EvaluationClaim::new(r.clone(), p2.evaluate(&r)),
             },
-            ProverClaim {
+            ProverOpeningClaim {
                 polynomial: Polynomial::new(p3.evaluations().to_vec()),
                 evaluation: EvaluationClaim::new(s.clone(), p3.evaluate(&s)),
             },

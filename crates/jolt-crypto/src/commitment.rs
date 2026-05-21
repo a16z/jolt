@@ -61,7 +61,9 @@ pub trait VectorCommitment:
 
     /// Opens a row-major matrix of committed rows at `(row_point, entry_point)`.
     ///
-    /// Missing entries at the end of `flattened_rows` are treated as zero.
+    /// Missing entries at the end of `flattened_rows` are treated as zero. Row
+    /// commitments passed to verification must be produced with the same
+    /// row count and zero-padding convention.
     fn open_committed_rows(
         flattened_rows: &[Self::Field],
         row_blindings: &[Self::Field],
@@ -222,10 +224,10 @@ impl Error for VectorOpeningError {}
 /// Blanket-implemented for [`JoltGroup`](crate::JoltGroup) over any field
 /// (via `scalar_mul` + addition). Non-group commitment types (e.g., lattice
 /// vectors) can implement this trait directly for their native scalar field.
-pub trait HomomorphicCommitment<F: Field>: Clone {
-    /// Returns the additive identity commitment.
+pub trait HomomorphicCommitment<F: Field>: Clone + Default {
+    /// Computes `c1 + c2`.
     #[must_use]
-    fn identity() -> Self;
+    fn add(c1: &Self, c2: &Self) -> Self;
 
     /// Computes `c1 + scalar * c2`.
     #[must_use]
@@ -362,25 +364,23 @@ where
             return commitments
                 .par_iter()
                 .zip(weights.par_iter())
-                .map(|(commitment, weight)| C::linear_combine(&C::identity(), commitment, weight))
-                .reduce(C::identity, |left, right| {
-                    C::linear_combine(&left, &right, &F::one())
-                });
+                .map(|(commitment, weight)| C::linear_combine(&C::default(), commitment, weight))
+                .reduce(C::default, |left, right| C::add(&left, &right));
         }
     }
 
     commitments
         .iter()
         .zip(weights.iter())
-        .fold(C::identity(), |acc, (commitment, weight)| {
+        .fold(C::default(), |acc, (commitment, weight)| {
             C::linear_combine(&acc, commitment, weight)
         })
 }
 
 impl<G: crate::JoltGroup, F: Field> HomomorphicCommitment<F> for G {
     #[inline]
-    fn identity() -> G {
-        G::identity()
+    fn add(c1: &G, c2: &G) -> G {
+        *c1 + c2
     }
 
     #[inline]

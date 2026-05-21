@@ -77,12 +77,12 @@ use jolt_claims::{
         BytecodeReadRafChallenge, BytecodeReadRafPublic, HammingWeightClaimReductionChallenge,
         HammingWeightClaimReductionPublic, IncClaimReductionChallenge, IncClaimReductionPublic,
         InstructionClaimReductionChallenge, InstructionInputChallenge,
-        InstructionRaVirtualizationChallenge, InstructionReadRafChallenge, JoltAdviceKind,
-        JoltChallengeId, JoltOpeningId, JoltPublicId, JoltStageClaims, JoltStageId,
-        JoltSumcheckDomain, RamHammingBooleanityPublic, RamOutputCheckPublic,
-        RamRaClaimReductionChallenge, RamRaClaimReductionPublic, RamRaVirtualizationPublic,
-        RamRafEvaluationPublic, RamReadWriteChallenge, RamValCheckChallenge,
-        RegistersClaimReductionChallenge, RegistersReadWriteChallenge,
+        InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic,
+        InstructionReadRafChallenge, JoltAdviceKind, JoltChallengeId, JoltOpeningId, JoltPublicId,
+        JoltStageClaims, JoltStageId, JoltSumcheckDomain, RamHammingBooleanityPublic,
+        RamOutputCheckPublic, RamRaClaimReductionChallenge, RamRaClaimReductionPublic,
+        RamRaVirtualizationPublic, RamRafEvaluationPublic, RamReadWriteChallenge,
+        RamValCheckChallenge, RegistersClaimReductionChallenge, RegistersReadWriteChallenge,
         RegistersValEvaluationChallenge, SpartanProductVirtualizationPublic, SpartanShiftChallenge,
         SpartanShiftPublic,
     },
@@ -96,10 +96,12 @@ use jolt_poly::{
     block_selector_mle_msb,
     lagrange::{centered_lagrange_evals_array, centered_lagrange_kernel},
     range_mask_mle_msb, sparse_segments_mle_msb, try_eq_mle, EqPlusOnePolynomial,
-    IdentityPolynomial, LtPolynomial, OperandPolynomial, OperandSide,
+    IdentityPolynomial, LtPolynomial, MultilinearEvaluation, OperandPolynomial, OperandSide,
 };
 use jolt_program::preprocess::PublicIoMemory;
-use jolt_r1cs::constraints::rv64::Rv64SpartanOuterRemainder;
+use jolt_r1cs::constraints::rv64::{
+    Rv64SpartanOuterRemainder, Rv64SpartanOuterRemainderChallenges,
+};
 use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency, SumcheckDomainSpec,
     SumcheckStatement,
@@ -190,9 +192,11 @@ where
     let remainder = spartan::outer_remainder::<PCS::Field>(&dimensions);
     let remainder_formula = Rv64SpartanOuterRemainder::new(
         &dimensions,
-        &input.stage1.public.tau,
-        input.stage1.public.uniskip_challenge,
-        &input.stage1.public.remainder_challenges,
+        Rv64SpartanOuterRemainderChallenges {
+            tau: &input.stage1.public.tau,
+            uniskip: input.stage1.public.uniskip_challenge,
+            remainder: &input.stage1.public.remainder_challenges,
+        },
     )
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
         stage: JoltStageId::SpartanOuter,
@@ -1059,8 +1063,8 @@ where
         values,
         opening_ids,
         aliases,
-        claim.input.expression.clone(),
-        claim.output.expression.clone(),
+        claim.input.expression().clone(),
+        claim.output.expression().clone(),
     )
 }
 
@@ -1165,7 +1169,7 @@ where
         JoltExpr::zero(),
         |acc, (claim, coefficient)| {
             let scale = *coefficient * pow2::<F>(consistency.max_num_vars - claim.sumcheck.rounds);
-            acc + scale_expr(claim.input.expression.clone(), scale)
+            acc + scale_expr(claim.input.expression().clone(), scale)
         },
     )
 }
@@ -1177,12 +1181,12 @@ fn batched_output_expr<F, C>(
 where
     F: Field,
 {
-    claims
-        .iter()
-        .zip(&consistency.batching_coefficients)
-        .fold(JoltExpr::zero(), |acc, (claim, coefficient)| {
-            acc + scale_expr(claim.output.expression.clone(), *coefficient)
-        })
+    claims.iter().zip(&consistency.batching_coefficients).fold(
+        JoltExpr::zero(),
+        |acc, (claim, coefficient)| {
+            acc + scale_expr(claim.output.expression().clone(), *coefficient)
+        },
+    )
 }
 
 fn scale_expr<F: Field>(mut expr: JoltExpr<F>, scale: F) -> JoltExpr<F> {
@@ -1688,8 +1692,8 @@ where
     let instruction_ra_cycle = trace_dimensions
         .cycle_opening_point(&instruction_ra_point)
         .map_err(|error| public_error(JoltStageId::InstructionRaVirtualization, error))?;
-    values.challenge(
-        JoltChallengeId::from(InstructionRaVirtualizationChallenge::EqCycle),
+    values.public(
+        JoltPublicId::from(InstructionRaVirtualizationPublic::EqCycle),
         try_eq_mle(
             &input.stage5.instruction_read_raf.r_cycle,
             &instruction_ra_cycle,

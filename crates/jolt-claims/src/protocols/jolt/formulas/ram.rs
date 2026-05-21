@@ -644,7 +644,7 @@ mod tests {
         let eq = Fr::from_u64(19);
         let zero = Fr::from_u64(0);
 
-        let input = claims.input.expression.evaluate(
+        let input = claims.input.expression().evaluate(
             |id| match *id {
                 id if id == ram_read_value() => read,
                 id if id == ram_write_value() => write,
@@ -671,7 +671,7 @@ mod tests {
             |_| zero,
         );
 
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == ram_ra() => ra,
                 id if id == ram_val() => val,
@@ -759,7 +759,7 @@ mod tests {
         let unmap = Fr::from_u64(13);
         let zero = Fr::from_u64(0);
 
-        let input = claims.input.expression.evaluate(
+        let input = claims.input.expression().evaluate(
             |id| match *id {
                 id if id == ram_address_spartan() => address,
                 _ => zero,
@@ -768,7 +768,7 @@ mod tests {
             |_| zero,
         );
 
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == ram_ra_raf_evaluation() => ram_ra,
                 _ => zero,
@@ -793,7 +793,8 @@ mod tests {
                 | JoltPublicId::AdviceClaimReduction(_)
                 | JoltPublicId::SpartanShift(_)
                 | JoltPublicId::SpartanProductVirtualization(_)
-                | JoltPublicId::SpartanOuter(_) => zero,
+                | JoltPublicId::SpartanOuter(_)
+                | JoltPublicId::InstructionRaVirtualization(_) => zero,
             },
         );
 
@@ -848,9 +849,9 @@ mod tests {
 
         let input = claims
             .input
-            .expression
+            .expression()
             .evaluate(|_| zero, |_| zero, |_| zero);
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == ram_val_final() => val_final,
                 _ => zero,
@@ -878,7 +879,8 @@ mod tests {
                 | JoltPublicId::AdviceClaimReduction(_)
                 | JoltPublicId::SpartanShift(_)
                 | JoltPublicId::SpartanProductVirtualization(_)
-                | JoltPublicId::SpartanOuter(_) => zero,
+                | JoltPublicId::SpartanOuter(_)
+                | JoltPublicId::InstructionRaVirtualization(_) => zero,
             },
         );
 
@@ -950,7 +952,7 @@ mod tests {
         };
         let zero = Fr::from_u64(0);
 
-        let input = claims.input.expression.evaluate(
+        let input = claims.input.expression().evaluate(
             |id| match *id {
                 id if id == ram_ra_raf_evaluation() => raf,
                 id if id == ram_ra() => rw,
@@ -977,7 +979,7 @@ mod tests {
             |_| zero,
         );
 
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == ram_ra_claim_reduction() => reduced,
                 _ => zero,
@@ -1018,7 +1020,8 @@ mod tests {
                 | JoltPublicId::AdviceClaimReduction(_)
                 | JoltPublicId::SpartanShift(_)
                 | JoltPublicId::SpartanProductVirtualization(_)
-                | JoltPublicId::SpartanOuter(_) => zero,
+                | JoltPublicId::SpartanOuter(_)
+                | JoltPublicId::InstructionRaVirtualization(_) => zero,
             },
         );
 
@@ -1078,7 +1081,7 @@ mod tests {
         let eq_cycle = Fr::from_u64(13);
         let zero = Fr::from_u64(0);
 
-        let input = claims.input.expression.evaluate(
+        let input = claims.input.expression().evaluate(
             |id| match *id {
                 id if id == ram_ra_claim_reduction() => reduced,
                 _ => zero,
@@ -1087,7 +1090,7 @@ mod tests {
             |_| zero,
         );
 
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == committed_ram_ra(0) => committed[0],
                 id if id == committed_ram_ra(1) => committed[1],
@@ -1114,7 +1117,8 @@ mod tests {
                 | JoltPublicId::AdviceClaimReduction(_)
                 | JoltPublicId::SpartanShift(_)
                 | JoltPublicId::SpartanProductVirtualization(_)
-                | JoltPublicId::SpartanOuter(_) => zero,
+                | JoltPublicId::SpartanOuter(_)
+                | JoltPublicId::InstructionRaVirtualization(_) => zero,
             },
         );
 
@@ -1158,9 +1162,9 @@ mod tests {
 
         let input = claims
             .input
-            .expression
+            .expression()
             .evaluate(|_| zero, |_| zero, |_| zero);
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == ram_hamming_weight() => h,
                 _ => zero,
@@ -1185,7 +1189,8 @@ mod tests {
                 | JoltPublicId::AdviceClaimReduction(_)
                 | JoltPublicId::SpartanShift(_)
                 | JoltPublicId::SpartanProductVirtualization(_)
-                | JoltPublicId::SpartanOuter(_) => zero,
+                | JoltPublicId::SpartanOuter(_)
+                | JoltPublicId::InstructionRaVirtualization(_) => zero,
             },
         );
 
@@ -1284,7 +1289,7 @@ mod tests {
         let lt_plus_gamma = Fr::from_u64(19);
         let zero = Fr::from_u64(0);
 
-        let input = claims.input.expression.evaluate(
+        let input = claims.input.expression().evaluate(
             |id| match *id {
                 id if id == ram_val() => val_rw,
                 id if id == ram_val_final() => val_final,
@@ -1311,7 +1316,7 @@ mod tests {
             |_| zero,
         );
 
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == ram_inc_val_check() => inc,
                 id if id == ram_ra_val_check() => wa,
@@ -1371,7 +1376,7 @@ mod tests {
             - untrusted_neg_selector * untrusted_advice
             - trusted_neg_selector * trusted_advice;
 
-        let input = claims.input.expression.evaluate(
+        let input = claims.input.expression().evaluate(
             |id| match *id {
                 id if id == ram_val() => val_rw,
                 id if id == ram_val_final() => val_final,

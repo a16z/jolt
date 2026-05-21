@@ -40,15 +40,39 @@ impl<F, O, P, C> ClaimSourceTable<F, O, P, C> {
         }
     }
 
-    pub fn insert_opening(&mut self, id: O, variable: Variable) {
+    pub fn insert_opening(&mut self, id: O, variable: Variable)
+    where
+        O: PartialEq,
+    {
+        assert!(
+            !self.openings.iter().any(|(candidate, _)| candidate == &id),
+            "duplicate opening source"
+        );
         self.openings.push((id, variable));
     }
 
-    pub fn insert_challenge(&mut self, id: C, value: F) {
+    pub fn insert_challenge(&mut self, id: C, value: F)
+    where
+        C: PartialEq,
+    {
+        assert!(
+            !self
+                .challenges
+                .iter()
+                .any(|(candidate, _)| candidate == &id),
+            "duplicate challenge source"
+        );
         self.challenges.push((id, value));
     }
 
-    pub fn insert_public(&mut self, id: P, value: F) {
+    pub fn insert_public(&mut self, id: P, value: F)
+    where
+        P: PartialEq,
+    {
+        assert!(
+            !self.publics.iter().any(|(candidate, _)| candidate == &id),
+            "duplicate public source"
+        );
         self.publics.push((id, value));
     }
 }
@@ -142,8 +166,7 @@ fn lower_product<F: Field>(
 
     let mut product = LinearCombination::variable(first);
     for &factor in rest {
-        let output = builder.multiply(product, factor);
-        product = LinearCombination::variable(output);
+        product = builder.multiply(product, factor);
     }
 
     product.scale(coefficient)
@@ -247,6 +270,41 @@ mod tests {
             .expect_err("challenge is missing");
 
         assert_eq!(error, ClaimLoweringError::MissingChallenge);
+    }
+
+    #[test]
+    fn missing_opening_is_typed_error() {
+        let mut builder = R1csBuilder::<Fr>::new();
+        let mut sources = ClaimSourceTable::<Fr, Opening>::new();
+        let expression: Expr<Fr, Opening> = opening(Opening::A);
+
+        let error = lower_claim_expr(&mut builder, &expression, &mut sources)
+            .expect_err("opening is missing");
+
+        assert_eq!(error, ClaimLoweringError::MissingOpening);
+    }
+
+    #[test]
+    fn missing_public_is_typed_error() {
+        let mut builder = R1csBuilder::<Fr>::new();
+        let mut sources = ClaimSourceTable::<Fr, Opening, Public>::new();
+        let expression: Expr<Fr, Opening, Public> = public(Public::Offset);
+
+        let error = lower_claim_expr(&mut builder, &expression, &mut sources)
+            .expect_err("public is missing");
+
+        assert_eq!(error, ClaimLoweringError::MissingPublic);
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate opening source")]
+    fn duplicate_opening_source_panics() {
+        let mut builder = R1csBuilder::<Fr>::new();
+        let a = builder.alloc(Fr::from_u64(3));
+        let b = builder.alloc(Fr::from_u64(5));
+        let mut sources = ClaimSourceTable::<Fr, Opening>::new();
+        sources.insert_opening(Opening::A, a);
+        sources.insert_opening(Opening::A, b);
     }
 
     #[test]

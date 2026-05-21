@@ -3079,6 +3079,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "serde",
+ "thiserror 2.0.18",
  "tracing",
 ]
 

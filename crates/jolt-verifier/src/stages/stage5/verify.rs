@@ -10,7 +10,10 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
-use jolt_poly::{try_eq_mle, IdentityPolynomial, LtPolynomial, OperandPolynomial, OperandSide};
+use jolt_poly::{
+    try_eq_mle, IdentityPolynomial, LtPolynomial, MultilinearEvaluation, OperandPolynomial,
+    OperandSide,
+};
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
 use num_traits::Zero;
@@ -370,7 +373,7 @@ where
         ram::ra_claim_reduction_input_openings();
     let [registers_val] = registers::val_evaluation_input_openings();
     let input_claims = Stage5BatchInputClaims {
-        instruction_read_raf: instruction_claims.input.expression.try_evaluate(
+        instruction_read_raf: instruction_claims.input.expression().try_evaluate(
             |id| match *id {
                 id if id == lookup_output => Ok(reduced_lookup_output),
                 id if id == left_lookup_operand => Ok(stage2
@@ -391,7 +394,7 @@ where
             },
             |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
         )?,
-        ram_ra_claim_reduction: ram_claims.input.expression.try_evaluate(
+        ram_ra_claim_reduction: ram_claims.input.expression().try_evaluate(
             |id| match *id {
                 id if id == ram_ra_raf => Ok(stage2.output_claims.ram_raf_evaluation),
                 id if id == ram_ra_read_write => Ok(stage2.output_claims.ram_read_write.ra),
@@ -406,7 +409,7 @@ where
             },
             |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
         )?,
-        registers_val_evaluation: registers_claims.input.expression.try_evaluate(
+        registers_val_evaluation: registers_claims.input.expression().try_evaluate(
             |id| match *id {
                 id if id == registers_val => {
                     Ok(stage4.output_claims.registers_read_write.registers_val)
@@ -477,7 +480,7 @@ where
         table_values[table.index()] =
             table.evaluate_mle::<PCS::Field, PCS::Field>(&instruction_opening_point.r_address);
     }
-    let instruction_output = instruction_claims.output.expression.try_evaluate(
+    let instruction_output = instruction_claims.output.expression().try_evaluate(
         |id| {
             if let Some(index) = instruction_output_openings
                 .lookup_table_flags
@@ -623,7 +626,7 @@ where
         })?,
     };
     let [ram_ra_reduced] = ram::ra_claim_reduction_output_openings();
-    let ram_output = ram_claims.output.expression.try_evaluate(
+    let ram_output = ram_claims.output.expression().try_evaluate(
         |id| match *id {
             id if id == ram_ra_reduced => Ok(claims.ram_ra_claim_reduction.ram_ra),
             id => Err(VerifierError::MissingOpeningClaim { id }),
@@ -668,7 +671,7 @@ where
         registers_read_write_opening_point.split_at(REGISTER_ADDRESS_BITS);
     let lt_cycle = LtPolynomial::evaluate(&registers_cycle, registers_read_write_cycle);
     let [rd_inc, rd_wa] = registers::val_evaluation_output_openings();
-    let registers_output = registers_claims.output.expression.try_evaluate(
+    let registers_output = registers_claims.output.expression().try_evaluate(
         |id| match *id {
             id if id == rd_inc => Ok(claims.registers_val_evaluation.rd_inc),
             id if id == rd_wa => Ok(claims.registers_val_evaluation.rd_wa),

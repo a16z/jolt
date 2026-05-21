@@ -180,7 +180,7 @@ mod tests {
         let gamma = Fr::from_u64(37);
         let zero = Fr::from_u64(0);
 
-        let input = claims.input.expression.evaluate(
+        let input = claims.input.expression().evaluate(
             |id| match *id {
                 id if id == ram_inc_read_write() => ram_rw,
                 id if id == ram_inc_val_check() => ram_val,
@@ -195,7 +195,7 @@ mod tests {
             |_| zero,
         );
 
-        let output = claims.output.expression.evaluate(
+        let output = claims.output.expression().evaluate(
             |id| match *id {
                 id if id == ram_inc_reduced() => ram_reduced,
                 id if id == rd_inc_reduced() => rd_reduced,

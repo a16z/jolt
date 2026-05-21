@@ -531,7 +531,7 @@ mod tests {
         assert_eq!(
             builder.witness().expect_err("layout is witness-only"),
             R1csBuilderError::MissingWitnessValue {
-                variable: Variable(1),
+                variable: Variable::new(1),
             },
         );
     }

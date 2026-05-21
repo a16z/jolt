@@ -27,9 +27,18 @@ impl OperandPolynomial {
     pub const fn side(&self) -> OperandSide {
         self.side
     }
+}
 
-    #[inline]
-    pub fn evaluate<F: Field>(&self, point: &[F]) -> F {
+impl<F: Field> crate::MultilinearEvaluation<F> for OperandPolynomial {
+    fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    fn len(&self) -> usize {
+        1 << self.num_vars
+    }
+
+    fn evaluate(&self, point: &[F]) -> F {
         assert_eq!(
             point.len(),
             self.num_vars,
@@ -48,20 +57,6 @@ impl OperandPolynomial {
         (0..bits).fold(F::zero(), |acc, bit_index| {
             acc + point[2 * bit_index + offset].mul_pow_2(bits - 1 - bit_index)
         })
-    }
-}
-
-impl<F: Field> crate::MultilinearEvaluation<F> for OperandPolynomial {
-    fn num_vars(&self) -> usize {
-        self.num_vars
-    }
-
-    fn len(&self) -> usize {
-        1 << self.num_vars
-    }
-
-    fn evaluate(&self, point: &[F]) -> F {
-        OperandPolynomial::evaluate(self, point)
     }
 }
 
@@ -85,12 +80,18 @@ impl IdentityPolynomial {
     pub fn num_vars(&self) -> usize {
         self.num_vars
     }
+}
 
-    /// Evaluates $\widetilde{I}(r) = \sum_{i=1}^{n} r_i \cdot 2^{n-i}$.
-    ///
-    /// Time: $O(n)$. No heap allocation.
-    #[inline]
-    pub fn evaluate<F: Field>(&self, point: &[F]) -> F {
+impl<F: Field> crate::MultilinearEvaluation<F> for IdentityPolynomial {
+    fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    fn len(&self) -> usize {
+        1 << self.num_vars
+    }
+
+    fn evaluate(&self, point: &[F]) -> F {
         assert_eq!(
             point.len(),
             self.num_vars,
@@ -104,23 +105,10 @@ impl IdentityPolynomial {
     }
 }
 
-impl<F: Field> crate::MultilinearEvaluation<F> for IdentityPolynomial {
-    fn num_vars(&self) -> usize {
-        self.num_vars
-    }
-
-    fn len(&self) -> usize {
-        1 << self.num_vars
-    }
-
-    fn evaluate(&self, point: &[F]) -> F {
-        IdentityPolynomial::evaluate(self, point)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::MultilinearEvaluation;
     use jolt_field::Fr;
     use jolt_field::FromPrimitiveInt;
     use num_traits::{One, Zero};
@@ -151,7 +139,9 @@ mod tests {
     #[test]
     fn zero_vars() {
         let id = IdentityPolynomial::new(0);
-        assert!(id.evaluate::<Fr>(&[]).is_zero());
+        assert!(
+            <IdentityPolynomial as crate::MultilinearEvaluation<Fr>>::evaluate(&id, &[]).is_zero()
+        );
     }
 
     #[test]
