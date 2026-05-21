@@ -86,26 +86,7 @@ New `jolt-eval` invariants for committed-program equivalence and Stage 8 opening
 
 ### Testing Strategy
 
-Run the local CI subset that does not require wasm, zk-lean, Ubuntu-only behavior, or installing external tools:
-
-```bash
-cargo fmt --all --check
-cargo clippy --all --all-targets --features allocative,host
-cargo clippy --all --all-targets --features allocative,host,zk
-cargo clippy --all --all-targets --no-default-features
-cargo nextest run --release -p jolt-core
-cargo nextest run --release -p jolt-core --features zk
-
-# Modular crates and inline crates.
-cargo nextest run -p "$pkg" "${features[@]}" --no-tests=pass
-cargo nextest run --features host -p "$inline_pkg" --no-tests=pass
-
-cargo nextest run --release -p tracer --features test-utils
-bash jolt-sdk/tests/gen-fixtures.sh
-cargo nextest run --release -p jolt-sdk --features host
-```
-
-Run targeted standard and ZK e2e coverage when iterating on committed-program behavior:
+Run standard and ZK e2e coverage:
 
 ```bash
 cargo nextest run -p jolt-core muldiv --cargo-quiet --features host
@@ -122,7 +103,13 @@ RUST_MIN_STACK=33554432 cargo nextest run -p jolt-core advice_e2e_dory --cargo-q
 cargo nextest run -p jolt-core final_advice_output_scale --cargo-quiet --features host
 ```
 
-The wasm verifier, zk-lean extractor/model jobs, and external-tool jobs such as `taplo`, `cargo machete`, and `typos` are intentionally outside this local validation set.
+Run strict linting:
+
+```bash
+cargo clippy --all --features host -q --all-targets -- -D warnings
+cargo clippy --all --features host,zk -q --all-targets -- -D warnings
+cargo fmt -q
+```
 
 Targeted tests should cover:
 
