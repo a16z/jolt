@@ -8,7 +8,7 @@
 | PR | TBD |
 
 This recursion architecture is split across four focused specs. Each spec owns
-one protocol axis or the selected-verifier composition layer.
+one protocol axis or the verifier integration layer.
 
 ## Specs
 
@@ -27,13 +27,13 @@ jolt-claims:
   protocol facts, dimensions, IDs, claim formulas, opening specs
 
 jolt-verifier:
-  selected verifier schedule, proof-shape validation, transcript ordering
+  compile-time verifier config, proof-shape validation, transcript ordering
 
 component crates:
   reusable native and R1CS encodings for sumcheck, openings, Hyrax, BlindFold
 
 jolt-wrapper:
-  selected-verifier R1CS assembly and SNARK backend adapters
+  configured-verifier R1CS assembly and SNARK backend adapters
 ```
 
 The protocol axes are orthogonal:
@@ -46,13 +46,14 @@ Dory assist:
   auxiliary proof for expensive Dory verifier work, with Hyrax dense opening
 
 Wrapper:
-  R1CS encoding of the selected verifier computation, proved by
+  R1CS encoding of the configured verifier computation, proved by
   Spartan + HyperKZG first
 ```
 
-The composition layer is `jolt-verifier`: it selects which protocol axes are
-active, validates the proof shape, fixes transcript order, and exports the
-selected verifier computation for wrapper assembly.
+The composition layer is `jolt-verifier`: feature flags fix which protocol axes
+are active, `validate_proof_config` validates the proof shape, the linear
+verifier fixes transcript order, and wrapper assembly encodes that configured
+verifier computation.
 
 ## Related Specs
 

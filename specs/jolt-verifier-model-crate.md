@@ -410,10 +410,10 @@ proceeds in three tracks:
   sources before attempting the full proof.
 - final ZK verification track: once the full BlindFold R1CS instance exists,
   convert the BlindFold proof artifact, wire the vector-commitment verifier,
-  wire the PCS ZK opening path, and call `jolt_blindfold::verify` with a
-  dedicated `BlindFold` transcript. This call is production acceptance only once
-  the modular BlindFold R1CS shape is equivalent to the proof artifact being
-  verified.
+  wire the PCS ZK opening path, append the `BlindFold` domain label to the
+  existing verifier transcript, and call `jolt_blindfold::verify` on that same
+  transcript. This call is production acceptance only once the modular
+  BlindFold R1CS shape is equivalent to the proof artifact being verified.
 
 A full core ZK proof contains one BlindFold proof for the whole Jolt protocol.
 It cannot prove only a Stage 1 or Stage 2 prefix unless the fixture generator
@@ -607,11 +607,12 @@ pub fn verify<PCS, VC, T>(...) -> Result<(), VerifierError> {
             stage7: ...,
             stage8: ...,
         })?;
-        let mut blindfold_transcript = T::new(b"BlindFold");
-        proof.blindfold_proof()?.verify_blindfold::<T>(
+        transcript.append(&Label(b"BlindFold"));
+        jolt_blindfold::verify::<F, VC, T>(
             &blindfold.protocol,
+            proof.blindfold_proof()?,
             vc_setup,
-            &mut blindfold_transcript,
+            &mut transcript,
         )?;
         return Ok(());
     }
@@ -2205,11 +2206,12 @@ Current status:
   committed-stage boundary checks use the resulting capacity to validate
   output-claim commitment chunk counts. `jolt-sumcheck` does not know about this
   Jolt-specific VC sizing.
-- `compat` preserves legacy core BlindFold artifacts. The adapter attempts to
-  convert them into the modular `jolt_blindfold::BlindFoldProof` shape and use
-  the top-level `jolt_blindfold::verify` call when dimensions match. Real core
-  ZK fixtures now verify through this path after aligning core's BlindFold R1CS
-  construction with the modular instance.
+- `compat` converts legacy core BlindFold artifacts into the modular
+  `jolt_blindfold::BlindFoldProof` shape during proof conversion. The
+  production verifier owns only the modular proof type and calls
+  `jolt_blindfold::verify` directly. Real core ZK fixtures now verify through
+  this path after aligning core's BlindFold R1CS construction with the modular
+  instance.
 - The modular crates already provide most generic pieces: committed sumcheck
   proof consistency checks, statement-based BlindFold protocol construction,
   vector-commitment traits, and PCS ZK opening verification hooks.
@@ -2252,8 +2254,9 @@ Stage 8 ZK implementation status:
   `PCS::bind_zk_opening_inputs` with the returned hiding evaluation commitment.
 - It returns the ZK Stage 8 output to the top-level verifier, which consumes it
   as the final-opening binding when constructing the BlindFold protocol. The
-  top-level verifier calls the BlindFold payload verifier with a dedicated
-  `BlindFold` transcript; imported core ZK fixtures now pass this full path.
+  top-level verifier appends the `BlindFold` domain label to the existing
+  Fiat-Shamir transcript and continues that transcript through
+  `jolt_blindfold::verify`; imported core ZK fixtures now pass this full path.
 
 BlindFold public-input preparation status:
 

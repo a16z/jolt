@@ -5,8 +5,6 @@ use crate::compat::{
     claims::{clear_claims_from_legacy, LegacyOpeningClaims},
     ids as verifier_ids,
 };
-#[cfg(feature = "zk")]
-use crate::verifier::BlindFoldProofVerifier;
 use crate::{
     proof::{
         JoltCommitments, JoltProof, JoltProofClaims, JoltRaCommitments, JoltStageProofs,
@@ -31,6 +29,10 @@ use jolt_sumcheck::{
     CompressedSumcheckProof, SumcheckProof,
 };
 
+#[cfg(feature = "zk")]
+use jolt_blindfold::BlindFoldProof as ModularBlindFoldProof;
+#[cfg(not(feature = "zk"))]
+use jolt_core::zkvm::proof_serialization::Claims as CoreClaims;
 use jolt_core::{
     curve::{Bn254Curve as CoreBn254Curve, JoltCurve},
     field::JoltField,
@@ -50,26 +52,15 @@ use jolt_core::{
         proof_serialization::JoltProof as CoreJoltProof,
     },
 };
-#[cfg(not(feature = "zk"))]
-use jolt_core::{
-    poly::opening_proof as core_opening,
-    zkvm::{instruction as core_instruction, witness as core_witness},
-};
-#[cfg(feature = "zk")]
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-#[cfg(feature = "zk")]
-use std::fmt::{Debug, Formatter, Result as FmtResult};
-
-#[cfg(feature = "zk")]
-use jolt_blindfold::{
-    BlindFoldProof as ModularBlindFoldProof, BlindFoldProtocol as ModularBlindFoldProtocol,
-};
-#[cfg(not(feature = "zk"))]
-use jolt_core::zkvm::proof_serialization::Claims as CoreClaims;
 #[cfg(feature = "zk")]
 use jolt_core::{
     poly::commitment::hyrax::HyraxOpeningProof, poly::unipoly::CompressedUniPoly,
     subprotocols::blindfold::BlindFoldProof as CoreBlindFoldProof,
+};
+#[cfg(not(feature = "zk"))]
+use jolt_core::{
+    poly::opening_proof as core_opening,
+    zkvm::{instruction as core_instruction, witness as core_witness},
 };
 
 pub type JoltCoreProof<F, C, PCS, FS> = CoreJoltProof<F, C, PCS, FS>;
@@ -145,14 +136,12 @@ impl CoreCurveBridge<ark_bn254::Fr> for CoreBn254Curve {
 pub type ImportedCoreProof<F, C, PCS> = JoltProof<
     <PCS as CorePcsBridge<F>>::VerifierPcs,
     <C as CoreCurveBridge<F>>::VerifierVectorCommitment,
-    (),
 >;
 
 #[cfg(feature = "zk")]
 pub type ImportedCoreProof<F, C, PCS> = JoltProof<
     <PCS as CorePcsBridge<F>>::VerifierPcs,
     <C as CoreCurveBridge<F>>::VerifierVectorCommitment,
-    LegacyBlindFoldProof<F, C>,
 >;
 
 fn convert_read_write_config(config: CoreReadWriteConfig) -> JoltReadWriteConfig {
@@ -340,7 +329,9 @@ where
                 .untrusted_advice_commitment
                 .map(PCS::commitment_into_verifier),
             claims: JoltProofClaims::Zk {
-                blindfold_proof: LegacyBlindFoldProof(proof.blindfold_proof),
+                blindfold_proof: legacy_blindfold_proof_into_modular::<F, C>(
+                    &proof.blindfold_proof,
+                ),
             },
             trace_length: proof.trace_length,
             ram_K: proof.ram_K,
@@ -467,120 +458,6 @@ fn core_dory_commitment_into_verifier(commitment: &CoreDoryCommitment) -> Bn254G
 }
 
 #[cfg(feature = "zk")]
-#[derive(Clone)]
-pub struct LegacyBlindFoldProof<F: JoltField, C: JoltCurve<F = F>>(pub CoreBlindFoldProof<F, C>);
-
-#[cfg(feature = "zk")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LegacyBlindFoldProofShape {
-    pub auxiliary_rows: usize,
-    pub random_round_commitment_rows: usize,
-    pub random_output_claim_rows: usize,
-    pub random_auxiliary_rows: usize,
-    pub random_error_rows: usize,
-    pub random_eval_commitments: usize,
-    pub cross_term_error_rows: usize,
-    pub folded_eval_output_openings: usize,
-    pub folded_eval_blinding_openings: usize,
-}
-
-#[cfg(feature = "zk")]
-impl<F, C> LegacyBlindFoldProof<F, C>
-where
-    F: JoltField,
-    C: JoltCurve<F = F>,
-{
-    pub fn shape(&self) -> LegacyBlindFoldProofShape {
-        LegacyBlindFoldProofShape {
-            auxiliary_rows: self.0.noncoeff_row_commitments.len(),
-            random_round_commitment_rows: self.0.random_instance.round_commitments.len(),
-            random_output_claim_rows: self.0.random_instance.output_claims_row_commitments.len(),
-            random_auxiliary_rows: self.0.random_instance.noncoeff_row_commitments.len(),
-            random_error_rows: self.0.random_instance.e_row_commitments.len(),
-            random_eval_commitments: self.0.random_instance.eval_commitments.len(),
-            cross_term_error_rows: self.0.cross_term_row_commitments.len(),
-            folded_eval_output_openings: self.0.folded_eval_output_openings.len(),
-            folded_eval_blinding_openings: self.0.folded_eval_blinding_openings.len(),
-        }
-    }
-}
-
-#[cfg(feature = "zk")]
-impl<F, C> Debug for LegacyBlindFoldProof<F, C>
-where
-    F: JoltField,
-    C: JoltCurve<F = F>,
-{
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        f.debug_tuple("LegacyBlindFoldProof")
-            .finish_non_exhaustive()
-    }
-}
-
-#[cfg(feature = "zk")]
-impl<F, C> Serialize for LegacyBlindFoldProof<F, C>
-where
-    F: JoltField,
-    C: JoltCurve<F = F>,
-{
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use ark_serialize::CanonicalSerialize;
-
-        let mut bytes = Vec::new();
-        self.0
-            .serialize_compressed(&mut bytes)
-            .map_err(serde::ser::Error::custom)?;
-        serializer.serialize_bytes(&bytes)
-    }
-}
-
-#[cfg(feature = "zk")]
-impl<'de, F, C> Deserialize<'de> for LegacyBlindFoldProof<F, C>
-where
-    F: JoltField,
-    C: JoltCurve<F = F>,
-{
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use ark_serialize::CanonicalDeserialize;
-
-        let bytes = <Vec<u8> as Deserialize>::deserialize(deserializer)?;
-        CoreBlindFoldProof::deserialize_compressed(&bytes[..])
-            .map(Self)
-            .map_err(serde::de::Error::custom)
-    }
-}
-
-#[cfg(feature = "zk")]
-impl<F, C> BlindFoldProofVerifier<F::VerifierField, C::VerifierVectorCommitment>
-    for LegacyBlindFoldProof<F, C>
-where
-    F: CoreFieldBridge,
-    F::VerifierField: jolt_transcript::AppendToTranscript,
-    C: CoreCurveBridge<F>,
-{
-    fn verify_blindfold<T>(
-        &self,
-        protocol: &ModularBlindFoldProtocol<F::VerifierField, C::VerifierRoundCommitment>,
-        vc_setup: &<C::VerifierVectorCommitment as ModularVectorCommitment>::Setup,
-        transcript: &mut T,
-    ) -> Result<(), VerifierError>
-    where
-        T: jolt_transcript::Transcript<Challenge = F::VerifierField>,
-    {
-        if legacy_blindfold_requires_core_r1cs::<F, C>(&self.0, protocol) {
-            return Err(VerifierError::Unimplemented);
-        }
-        let proof = legacy_blindfold_proof_into_modular::<F, C>(&self.0);
-        jolt_blindfold::verify::<F::VerifierField, C::VerifierVectorCommitment, T>(
-            protocol, &proof, vc_setup, transcript,
-        )
-        .map_err(|error| VerifierError::BlindFoldVerificationFailed {
-            reason: error.to_string(),
-        })
-    }
-}
-
-#[cfg(feature = "zk")]
 fn legacy_blindfold_proof_into_modular<F, C>(
     proof: &CoreBlindFoldProof<F, C>,
 ) -> ModularBlindFoldProof<F::VerifierField, C::VerifierRoundCommitment>
@@ -627,22 +504,6 @@ where
             .map(convert_hyrax_opening::<F>)
             .collect(),
     }
-}
-
-#[cfg(feature = "zk")]
-fn legacy_blindfold_requires_core_r1cs<F, C>(
-    proof: &CoreBlindFoldProof<F, C>,
-    protocol: &ModularBlindFoldProtocol<F::VerifierField, C::VerifierRoundCommitment>,
-) -> bool
-where
-    F: CoreFieldBridge,
-    C: CoreCurveBridge<F>,
-{
-    proof.noncoeff_row_commitments.len() != protocol.dimensions.auxiliary_rows
-        || proof.random_instance.noncoeff_row_commitments.len()
-            != protocol.dimensions.auxiliary_rows
-        || proof.random_instance.e_row_commitments.len() != protocol.dimensions.error.row_count
-        || proof.cross_term_row_commitments.len() != protocol.dimensions.error.row_count
 }
 
 #[cfg(feature = "zk")]

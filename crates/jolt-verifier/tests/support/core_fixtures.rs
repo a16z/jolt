@@ -42,8 +42,6 @@ use jolt_verifier::{
 use jolt_verifier::compat::convert::CoreCurveBridge;
 #[cfg(not(feature = "zk"))]
 use jolt_verifier::compat::convert::CorePcsBridge;
-#[cfg(feature = "zk")]
-use jolt_verifier::compat::convert::LegacyBlindFoldProof;
 
 use jolt_core::{
     curve::{Bn254Curve, JoltCurve},
@@ -211,7 +209,7 @@ pub struct CoreVerifierCase {
 #[cfg(not(feature = "zk"))]
 impl CoreVerifierCase {
     pub fn verify(&self) -> Result<(), VerifierError> {
-        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, ()>(
+        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
             &self.preprocessing,
             &self.public_io,
             &self.proof,
@@ -260,7 +258,7 @@ impl CorePrecompatVerifierCase {
 
     pub fn verify_after_compat(&self) -> Result<(), VerifierError> {
         let proof = self.proof.clone_via_bytes().try_into()?;
-        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, ()>(
+        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
             &self.preprocessing,
             &self.public_io,
             &proof,
@@ -420,13 +418,7 @@ pub struct CoreZkVerifierCase {
 #[cfg(feature = "zk")]
 impl CoreZkVerifierCase {
     pub fn verify(&self) -> Result<(), VerifierError> {
-        verify::<
-            Fr,
-            DoryScheme,
-            Pedersen<Bn254G1>,
-            Blake2bTranscript,
-            LegacyBlindFoldProof<CoreField, Bn254Curve>,
-        >(
+        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
             &self.preprocessing,
             &self.public_io,
             &self.proof,
@@ -667,7 +659,7 @@ impl CoreFixtureKind {
             #[cfg(not(feature = "zk"))]
             Self::AdviceConsumer => "standard-advice-consumer",
             #[cfg(feature = "zk")]
-            Self::ZkMulDivSmall => "zk-muldiv-small",
+            Self::ZkMulDivSmall => "zk-muldiv-small-continued-transcript",
         }
     }
 }

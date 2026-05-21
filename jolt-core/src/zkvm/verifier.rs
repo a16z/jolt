@@ -1392,13 +1392,13 @@ impl<
             PCS::eval_commitment_gens_verifier(&self.preprocessing.generators);
         let verifier =
             BlindFoldVerifier::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
-        let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
+        self.transcript.append_label(b"BlindFold");
 
         verifier
             .verify(
                 &self.proof.blindfold_proof,
                 &verifier_input,
-                &mut blindfold_transcript,
+                &mut self.transcript,
             )
             .map_err(|e| ProofVerifyError::BlindFoldError(format!("{e:?}")))?;
 

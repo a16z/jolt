@@ -11,12 +11,12 @@
 
 Dory assist is the recursion-paper path for replacing expensive ordinary Dory
 stage-8 verifier work with additional verifier stages and an auxiliary proof.
-It extends the selected Jolt protocol after the information-theoretic stages by
+It extends the configured Jolt verifier after the information-theoretic stages by
 proving the expensive Dory verifier computation through a Dory-assist SNARK.
 
 This spec owns the Dory-assist protocol axis and the Hyrax commitment layer used
 by that proof. Composition with field inline, wrapper proving, ZK, and proof
-selection is specified in
+configuration is specified in
 [selected-verifier-integration.md](selected-verifier-integration.md). The
 wrapper R1CS compiler is specified in [wrapper-protocol.md](wrapper-protocol.md).
 
@@ -36,10 +36,10 @@ V1 scope:
 
 ```text
 Dory-assist protocol facts in jolt-claims
-selected verifier stages after base Jolt stages 1-7
+configured verifier stages after base Jolt stages 1-7
 Hyrax dense-trace opening
 multi-Miller-loop work proven inside the assist proof
-final exponentiation checked natively by the selected verifier
+final exponentiation checked natively by the configured verifier
 wrapper-compatible R1CS hooks for sumcheck, claims, packing, and Hyrax
 ```
 
@@ -120,7 +120,7 @@ PCS opening:
   Hyrax opening of the dense trace
 ```
 
-Dory assist proves the multi-Miller-loop work. The selected verifier receives
+Dory assist proves the multi-Miller-loop work. The configured verifier receives
 the resulting public GT value, computes final exponentiation directly, and
 checks the public pairing equality. Final exponentiation is cheap deterministic
 verifier work and stays native in v1.
@@ -288,7 +288,7 @@ untyped opening map.
 `jolt-hyrax` factors Hyrax out as a reusable modular crate. Dory assist uses
 Hyrax to commit to and open the packed dense trace. Wrapper assembly uses
 `jolt-hyrax::r1cs` to prove the same opening verification inside R1CS when the
-selected verifier is wrapped.
+configured verifier is wrapped.
 
 Target layout:
 
@@ -362,15 +362,15 @@ but verifier APIs should be generic over the vector commitment abstraction.
 
 ## `jolt-verifier` Integration
 
-`jolt-verifier` owns the selected stage schedule. Dory assist adds concrete
-stages after the ordinary information-theoretic Jolt stages:
+`jolt-verifier` owns the configured linear verifier flow. Dory assist adds
+concrete stages after the ordinary information-theoretic Jolt stages:
 
 ```text
-ordinary selected Jolt:
+ordinary configured Jolt:
   stages 1-7
   -> ordinary stage-8 PCS/Dory opening verification
 
-selected Jolt with Dory assist:
+configured Jolt with Dory assist:
   stages 1-7
   -> build Dory assist public inputs from stage-8 opening data
   -> dory_assist::stage1::verify
@@ -412,7 +412,7 @@ crates/jolt-verifier/src/
         verify.rs
 ```
 
-The detailed selected-schedule and proof-shape rules live in
+The configured verifier flow and proof-shape rules live in
 [selected-verifier-integration.md](selected-verifier-integration.md).
 
 ## R1CS And Wrapper Hooks
@@ -436,16 +436,16 @@ dense Hyrax opening:
   jolt-hyrax::r1cs
 ```
 
-The wrapper consumes these helpers through the selected verifier computation.
+The wrapper consumes these helpers through the configured verifier computation.
 Dory-specific formulas stay in `jolt-claims`; Hyrax-specific constraints stay
 in `jolt-hyrax`.
 
 ## Interaction With Field Inline
 
 Dory assist is independent of field inline. If field inline is enabled, its
-effects are already reflected in the base Jolt stage outputs and opening data
-consumed by the Dory-opening path. Dory assist does not need a separate
-field-inline mode.
+effects are already reflected in the composed verifier stage outputs and
+opening data consumed by the Dory-opening path. Dory assist does not need a
+separate field-inline mode.
 
 ## Implementation Steps
 
@@ -483,10 +483,10 @@ Each step should be reviewed before continuing to the next.
    - Review gate: proof-shape validation rejects missing, extra, or misordered
      stage payloads.
 
-7. Add selected verifier stages.
+7. Add configured verifier stages.
    - Add concrete `jolt-verifier::stages::dory_assist` modules.
    - Build Dory-assist public inputs from ordinary stage-8 opening data.
-   - Review gate: selected verifier can run synthetic Dory-assist fixtures.
+   - Review gate: configured verifier can run synthetic Dory-assist fixtures.
 
 8. Add multi-Miller-loop verification path.
    - Prove multi-Miller-loop trace constraints in Dory assist.

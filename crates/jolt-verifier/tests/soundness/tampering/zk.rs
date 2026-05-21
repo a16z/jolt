@@ -12,7 +12,7 @@ use crate::support;
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 use crate::support::tamper_manifest;
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
-use jolt_core::field::JoltField as _;
+use jolt_field::FromPrimitiveInt as _;
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 use jolt_verifier::JoltProofClaims;
 
@@ -246,7 +246,7 @@ fn tampered_blindfold_proof_rejects_now() {
         let JoltProofClaims::Zk { blindfold_proof } = &mut case.proof.claims else {
             panic!("ZK fixture must carry a BlindFold proof");
         };
-        blindfold_proof.0.random_instance.u += jolt_core::ark_bn254::Fr::from_u64(1);
+        blindfold_proof.random_u += jolt_field::Fr::from_u64(1);
 
         support::assert_zk_rejects(case.verify());
     });

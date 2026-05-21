@@ -9,9 +9,17 @@
 
 ## Purpose
 
-Selected verifier integration is the composition layer for the recursion
-architecture. It defines how optional protocol axes become one verifier
-schedule, one proof shape, one transcript order, and one wrapper input.
+Selected verifier integration defines how optional protocol axes fit into the
+linear Jolt verifier. The verifier should stay close to today's flow:
+
+```text
+validate proof/config
+initialize transcript
+absorb preamble and commitments
+run stages in order
+verify openings
+return accept/reject
+```
 
 Protocol-axis specs:
 
@@ -22,36 +30,224 @@ Protocol-axis specs:
 This spec owns:
 
 ```text
-ProtocolSelection
-proof-shape validation
-feature support and accepted configurations
-selected stage schedule
-transcript ordering
-selected verifier computation export
-interaction with ZK/BlindFold
+JoltProtocolConfig
+compile-time feature-derived verifier configuration
+linear JoltProof shape with optional payload slots
+validate_proof_config
+stage-local field-inline checks inside ordinary stage folders
+PCS-assist verification in the opening phase
+wrapper verifier entry point
+ZK/BlindFold composition
 ```
 
-## Integration Invariants
+## Core Model
 
-1. Protocol features compose through the selected verifier schedule.
+The verifier config is fixed by compile-time feature flags. Optional proof
+fields are payload slots only; they do not choose verifier behavior.
 
 ```text
-field inline:
-  extends base Jolt stages with FR memory and field-product work
+compile-time features:
+  determine JOLT_VERIFIER_CONFIG
 
-Dory assist:
-  extends the selected Jolt verifier after information-theoretic stages
+JOLT_VERIFIER_CONFIG:
+  authoritative verifier behavior
 
-wrapper:
-  proves the selected verifier computation
+JoltProof::protocol:
+  self-description that must equal JOLT_VERIFIER_CONFIG
 
-ZK:
-  selects transparent or BlindFold proof payloads/checks
+Option<T> fields:
+  payload slots that must be Some or None according to JOLT_VERIFIER_CONFIG
 ```
 
-2. Inactive optional protocol components are skipped, not zero-dummied.
+The verifier never does this:
 
-This follows the existing advice pattern:
+```rust
+if proof.pcs_assist.is_some() {
+    skip_native_pcs_verification();
+}
+```
+
+It always does this:
+
+```rust
+let config = JOLT_VERIFIER_CONFIG;
+validate_proof_config(&config, proof)?;
+run_linear_verifier(&config, proof)?;
+```
+
+This removes runtime Cartesian-product ambiguity. A verifier binary checks one
+configured path. Proof options are accepted or rejected against that path before
+any stage logic runs.
+
+## Protocol Config
+
+`JoltProtocolConfig` records the configured verifier behavior:
+
+```rust
+pub struct JoltProtocolConfig {
+    pub zk: ZkConfig,
+    pub field_inline: FieldInlineConfig,
+    pub pcs_assist: PCSAssistConfig,
+}
+
+pub enum ZkConfig {
+    Transparent,
+    BlindFold,
+}
+
+pub struct FieldInlineConfig {
+    pub enabled: bool,
+    pub field_register_log_k: usize,
+    pub representation: FieldInlineRepresentation,
+}
+
+pub enum FieldInlineRepresentation {
+    NativeFieldElement,
+}
+
+pub enum PCSAssistConfig {
+    None,
+    Dory(DoryAssistConfig),
+}
+```
+
+The crate exposes a config derived from feature flags:
+
+```rust
+pub const JOLT_VERIFIER_CONFIG: JoltProtocolConfig = /* cfg-gated */;
+```
+
+The exact construction can use `#[cfg(...)]` blocks rather than a single
+literal. The important rule is that the verifier's accepted protocol shape is
+not selected by proof contents.
+
+## Linear Proof Shape
+
+The proof should remain a single linear artifact. Do not nest a separate
+`BaseJoltProof`; keep ordinary proof fields where they already live and add
+optional extension payloads.
+
+Sketch:
+
+```rust
+pub struct JoltProof<PCS, VC, ZkProof, FieldInlineProof, PCSAssistProof>
+where
+    PCS: CommitmentScheme,
+{
+    pub protocol: JoltProtocolConfig,
+
+    pub commitments: JoltCommitments<PCS>,
+    pub stages: JoltStageProofs<PCS::Field, VC, ZkProof>,
+    pub joint_opening_proof: PCS::Proof,
+
+    pub field_inline: Option<FieldInlineProof>,
+    pub pcs_assist: Option<PCSAssistProof>,
+}
+```
+
+`joint_opening_proof` stays structurally present. When PCS assist is disabled,
+the verifier checks it with the ordinary PCS verifier. When PCS assist is
+enabled, the assist proof certifies the relevant PCS verifier work over this
+same `joint_opening_proof` and the same opening snapshot.
+
+If ZK/BlindFold data is already nested in `JoltStageProofs`, it does not need a
+separate top-level field. The same validation principle applies: the transparent
+or BlindFold proof payload shape must match `JOLT_VERIFIER_CONFIG.zk`.
+
+## `validate_proof_config`
+
+`validate_proof_config` is the first verifier gate:
+
+```rust
+pub fn validate_proof_config<PCS, VC, ZkProof, FieldInlineProof, PCSAssistProof>(
+    config: &JoltProtocolConfig,
+    proof: &JoltProof<PCS, VC, ZkProof, FieldInlineProof, PCSAssistProof>,
+) -> Result<(), VerifierError>;
+```
+
+It checks:
+
+```text
+proof.protocol == JOLT_VERIFIER_CONFIG
+field_inline payload is present iff config.field_inline.enabled
+pcs_assist payload is present iff config.pcs_assist is Dory(...)
+stage proof payloads match config.zk
+unsupported feature combinations are impossible or rejected
+```
+
+It does not assemble field-inline verifier logic. After this shape check, the
+appropriate `jolt-verifier::stages/*` modules own the field-inline checks they
+batch with their stage.
+
+Shape rule:
+
+```rust
+if config.field_inline.enabled {
+    require_some(&proof.field_inline)?;
+} else {
+    reject_some(&proof.field_inline)?;
+}
+
+match config.pcs_assist {
+    PCSAssistConfig::None => reject_some(&proof.pcs_assist)?,
+    PCSAssistConfig::Dory(_) => require_some(&proof.pcs_assist)?,
+}
+```
+
+There is no fallback. If `config.pcs_assist` requires Dory assist and
+`proof.pcs_assist` is missing, the verifier rejects. If config disables Dory
+assist and `proof.pcs_assist` is present, the verifier rejects.
+
+## Linear Verifier Flow
+
+The verifier remains a linear function:
+
+```rust
+pub fn verify<PCS, VC, ZkProof, FieldInlineProof, PCSAssistProof>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC, ZkProof, FieldInlineProof, PCSAssistProof>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+) -> Result<(), VerifierError> {
+    let config = JOLT_VERIFIER_CONFIG;
+    validate_proof_config(&config, proof)?;
+
+    let mut transcript = Transcript::new(b"Jolt");
+    absorb_protocol_config(&config, &mut transcript);
+    absorb_preamble(preprocessing, public_io, proof, &mut transcript);
+    absorb_commitments(&config, proof, trusted_advice_commitment, &mut transcript);
+
+    let stage1 = verify_stage1(&config, ...)?;
+    let stage2 = verify_stage2(&config, ...)?;
+    let stage3 = verify_stage3(&config, ...)?;
+    let stage4 = verify_stage4(&config, ...)?;
+    let stage5 = verify_stage5(&config, ...)?;
+    let stage6 = verify_stage6(&config, ...)?;
+    let stage7 = verify_stage7(&config, ...)?;
+
+    let openings = build_opening_snapshot(&config, ...)?;
+    verify_opening_phase(&config, proof, openings, &mut transcript)
+}
+```
+
+The config parameter is not a runtime selector supplied by the prover. It is the
+compile-time-derived verifier config passed to stage helpers so each stage
+folder can run the additions it owns.
+
+## Transcript Binding
+
+The verifier absorbs the configured protocol before any challenge that depends
+on optional protocol shape:
+
+```text
+domain separator
+JOLT_VERIFIER_CONFIG / proof.protocol
+field / curve / transcript identifiers
+public IO / preprocessing digest
+commitments selected by the configured proof shape
+```
+
+Optionality follows the advice pattern:
 
 ```text
 component absent:
@@ -66,519 +262,272 @@ component present:
   claims and challenges appear in fixed order
 ```
 
-3. Selection is bound before Fiat-Shamir challenges that depend on the selected
-schedule.
-
-4. One selected verifier computation has one deterministic stage order and one
-deterministic transcript order.
-
-5. Wrapper setup is per selected R1CS shape in v1. Do not require one universal
-selector-gated circuit for every composition.
-
-## Protocol Selection
-
-Protocol selection is explicit verifier input:
-
-```rust
-pub struct ProtocolSelection {
-    pub zk: ZkSelection,
-    pub field_inline: FieldInlineSelection,
-    pub dory_assist: DoryAssistSelection,
-    pub wrapper: Option<WrapperSelection>,
-}
-
-pub enum ZkSelection {
-    Transparent,
-    BlindFold,
-}
-
-pub struct FieldInlineSelection {
-    pub enabled: bool,
-}
-
-pub struct DoryAssistSelection {
-    pub enabled: bool,
-}
-
-pub enum WrapperSelection {
-    SpartanHyperKzg,
-    Gnark,
-}
-```
-
-The field-inline and Dory-assist axis specs define their internal config. This
-integration spec defines when those configs are accepted and how their payloads
-enter the verifier.
-
-Interpretation:
+For field inline:
 
 ```text
-selection.zk:
-  chooses transparent claims or BlindFold/ZK proof payloads
-
-selection.field_inline:
-  enables FR memory-checking payloads and field-op rows
-
-selection.dory_assist:
-  replaces ordinary stage-8 Dory verification with Dory-assist stages
-
-selection.wrapper:
-  asks jolt-wrapper to prove the selected verifier computation
-```
-
-## Feature Support And Runtime Validation
-
-The proof model can carry optional payloads so a proof artifact remains
-parseable across verifier builds:
-
-```rust
-pub struct SelectedJoltProof<PCS, VC, ZkProof, DoryAssistProof, FieldInlineProof> {
-    pub jolt: JoltProof<PCS, VC, ZkProof>,
-    pub field_inline: Option<FieldInlineProof>,
-    pub dory_assist: Option<DoryAssistProof>,
-}
-```
-
-The verifier build determines which selections are accepted:
-
-```text
-feature disabled:
-  reject selection that enables the feature
-
-feature enabled, selection disabled:
-  reject unexpected payloads
-
-feature enabled, selection enabled:
-  require the payload and run the selected stages
-```
-
-This avoids a footgun where runtime proof contents choose protocol semantics.
-The verifier accepts or rejects an explicit `ProtocolSelection`.
-
-Dedicated typed proof aliases can wrap the optional wire model for ergonomic
-entry points:
-
-```text
-OrdinaryJoltProof
-FieldInlineJoltProof
-DoryAssistedJoltProof
-WrappedJoltProof
-```
-
-but the underlying validation rule remains selection-driven.
-
-## Transcript Binding
-
-The selected verifier binds configuration before challenge derivation:
-
-```text
-domain separator
-protocol selection
-field / curve / transcript identifiers
-public IO / preprocessing digest
-commitments selected by the active proof shape
-...
-```
-
-Then each stage absorbs proof data and samples challenges in selected order.
-
-Important optionality rules:
-
-```text
-advice absent:
-  skip advice commitments, claims, reductions, and challenges
-
-field inline disabled:
+config.field_inline.enabled = false:
   skip FR commitments, claims, reductions, and challenges
 
-Dory assist disabled:
-  run ordinary stage-8 PCS verification
-
-Dory assist enabled:
-  skip ordinary stage-8 Dory verification
-  run Dory-assist stages and Hyrax opening
+config.field_inline.enabled = true:
+  require FR payloads and insert FR transcript messages in fixed order
 ```
 
-This answers the FR transcript question: FR-off skips FR rounds entirely. It
-does not run the FR protocol with zero claims.
+For advice, keep the existing advice-driven optionality. For field inline and
+PCS assist, optionality is verifier-config driven.
 
-## Selected Stage Schedule
+## ZK / BlindFold
 
-The schedule builder produces typed stage data:
-
-```rust
-pub struct SelectedVerifierComputation<F> {
-    pub selection: ProtocolSelection,
-    pub stages: Vec<SelectedVerifierStage<F>>,
-}
-
-pub enum SelectedVerifierStage<F> {
-    BaseJolt(BaseJoltStage<F>),
-    FieldInline(FieldInlineStage<F>),
-    DoryAssist(DoryAssistStage<F>),
-    BlindFold(BlindFoldVerifierStage<F>),
-}
-```
-
-Native verification executes the selected stages directly. Wrapper assembly
-iterates the same selected stages and calls their R1CS hooks. This keeps
-composition in `jolt-verifier` while `jolt-wrapper` owns R1CS building and SNARK
-handoff.
-
-## Schedule Examples
-
-Ordinary transparent Jolt:
+ZK stays close to the current pattern:
 
 ```text
-preamble
-commitments
-base stages 1-7
-ordinary stage-8 PCS/Dory verification
+config.zk = Transparent:
+  verifier runs clear sumcheck/opening-claim checks
+  BlindFold payloads are rejected
+
+config.zk = BlindFold:
+  verifier runs committed consistency checks and BlindFold verification
+  clear-only payloads are rejected where applicable
 ```
 
-Field-inline transparent Jolt:
+The ZK choice is part of `JOLT_VERIFIER_CONFIG`. Stage helpers can keep the
+existing `cfg(feature = "zk")` structure while validating the proof payload
+shape up front.
+
+## Field Inline
+
+Field inline is gated inside the appropriate ordinary stage folders. It should
+not require a separate selected-schedule abstraction or top-level field-inline
+router in `jolt-verifier`.
+
+When enabled:
 
 ```text
-preamble
-commitments including FR commitments
-base stages with FR additions:
-  stage 3 field-register claim reductions
-  stage 4 field-register read/write
-  stage 5 field-register val evaluation
-  product layer FieldProduct
-ordinary stage-8 PCS/Dory verification
-```
-
-Dory-assisted Jolt:
-
-```text
-preamble
-commitments
-base stages 1-7
-stage-8 opening snapshot
-Dory-assist stage 1
-Dory-assist stage 2
-Dory-assist stage 3
-Hyrax dense opening
-native final exponentiation / public pairing check
-```
-
-Field-inline plus Dory assist:
-
-```text
-preamble
-commitments including FR commitments
-base stages 1-7 with FR additions
-stage-8 opening snapshot including selected FR effects
-Dory-assist stages
-Hyrax dense opening
-native final exponentiation / public pairing check
-```
-
-Wrapped selected verifier:
-
-```text
-build selected verifier computation
-assemble selected verifier R1CS
-prove R1CS with selected wrapper backend
-verify wrapper proof against wrapper public inputs
-```
-
-## Field Inline Composition
-
-Field inline is a Jolt VM/protocol extension. When enabled:
-
-```text
-proof carries FR memory and field-product payloads
-stages 3/4/5 batch FR memory claims with existing stage work
-Spartan/product checks include FieldProduct
-field conversion rows are active for x-register/FR movement
+validate_proof_config requires proof.field_inline = Some(...)
+commitment absorption includes FR commitments
+stage 3 includes FR claim reductions
+stage 4 batches FR read/write checking
+stage 5 batches FR val evaluation
+product/R1CS logic includes FieldProduct and field rows
 ```
 
 When disabled:
 
 ```text
-selected stage schedule is ordinary Jolt
-FR proof payloads are rejected if present
-FR transcript messages are skipped
+validate_proof_config requires proof.field_inline = None
+ordinary stages run without FR additions
+FR transcript rounds are skipped entirely
 ```
 
 Field-inline arithmetic details are specified in
 [field-inline-protocol.md](field-inline-protocol.md).
 
-## Dory Assist Composition
+## PCS Assist
 
-Dory assist extends the selected verifier after base Jolt's information-
-theoretic work. When enabled:
+PCS assist is the opening-phase extension. V1 assist is Dory assist.
+
+`joint_opening_proof` is always present:
 
 ```text
-base stages 1-7 still run
-ordinary stage-8 Dory verification is replaced
-Dory-assist public inputs are built from selected opening data
-Dory-assist stages verify the auxiliary proof
-final exponentiation remains native public verifier work
+config.pcs_assist = None:
+  proof.pcs_assist must be None
+  verifier checks joint_opening_proof through the ordinary PCS verifier
+
+config.pcs_assist = Dory(...):
+  proof.pcs_assist must be Some(...)
+  verifier calls pcs_assist_verify
+  joint_opening_proof is public input to the assist verification
+  verifier does not also run the expensive native PCS verifier path
 ```
 
-When disabled:
+The assist path must bind to the exact same data as ordinary opening
+verification:
 
 ```text
-ordinary stage-8 PCS/Dory verification runs
-Dory-assist payloads are rejected if present
+joint_opening_proof
+commitments
+opening points
+opening claims
+transcript-derived challenges
+preprocessing/public IO values used by opening verification
+```
+
+The safe implementation pattern is:
+
+```rust
+let opening_snapshot = build_opening_snapshot(&config, stage_outputs)?;
+
+match config.pcs_assist {
+    PCSAssistConfig::None => {
+        verify_joint_opening_proof_natively(
+            &proof.joint_opening_proof,
+            &opening_snapshot,
+            &mut transcript,
+        )
+    }
+    PCSAssistConfig::Dory(ref assist_config) => {
+        let assist = proof.pcs_assist.as_ref().ok_or(MissingPayload)?;
+        pcs_assist_verify(
+            assist_config,
+            &proof.joint_opening_proof,
+            &opening_snapshot,
+            assist,
+            &mut transcript,
+        )
+    }
+}
 ```
 
 Dory-assist details are specified in
 [dory-assist-protocol.md](dory-assist-protocol.md).
 
-## ZK Composition
+## Wrapper
 
-ZK is another protocol axis:
-
-```text
-Transparent:
-  clear sumcheck round polynomials
-  clear opening/evaluation claims
-  verifier checks claim equalities directly
-
-BlindFold:
-  committed sumcheck round polynomials
-  hidden opening/evaluation claims where needed
-  verifier checks BlindFold proof / verifier-equation R1CS
-```
-
-Composition points:
+Wrapper verification is a separate outer entry point. A wrapper verifier checks
+a wrapper proof for a fixed inner verifier config; it does not run the remaining
+native Jolt verifier stages.
 
 ```text
-field inline + ZK:
-  FR claim formulas and openings participate in BlindFold equations when
-  field inline is selected
+native Jolt verifier:
+  validates and runs the configured linear verifier flow
 
-Dory assist + ZK:
-  Dory-assist verifier stages are selected in the verifier schedule; any ZK
-  treatment follows the selected proof shape
+wrapper prover / assembly:
+  encodes the configured linear verifier flow into R1CS
+  proves that R1CS with Spartan + HyperKZG
 
-wrapper + ZK:
-  wrapper proves the selected verifier computation. If BlindFold is selected,
-  wrapper assembly includes the BlindFold verifier checks.
+wrapper verifier:
+  verifies the wrapper proof against wrapper public inputs and verifying key
+  does not re-run inner Jolt stages
 ```
 
-Two wrapper/ZK orderings remain candidates:
-
-```text
-BlindFold first:
-  Jolt proof -> BlindFold -> selected verifier -> wrapper
-
-Wrapper first:
-  transparent Jolt proof -> wrapper -> optional ZK around wrapper
-```
-
-This is a cost-model decision. The selected verifier should support both
-composition paths without baking one into lower-level protocol crates.
-
-## Wrapper Composition
-
-The wrapper consumes the selected verifier computation:
-
-```text
-jolt-verifier:
-  builds selected stage schedule
-  validates selected proof shape
-  exposes typed selected verifier computation
-
-jolt-wrapper:
-  allocates proof data as R1CS variables
-  replays selected transcript inside R1CS
-  lowers selected stage checks
-  hands arbitrary R1CS to Spartan + HyperKZG
-```
-
-Wrapper protocol details are specified in
+The wrapper verifying key or public statement must bind the inner
+`JOLT_VERIFIER_CONFIG` so a proof for one configured verifier cannot be checked
+as another. Wrapper protocol details are specified in
 [wrapper-protocol.md](wrapper-protocol.md).
-
-V1 wrapper circuit shape rule:
-
-```text
-one selected verifier computation -> one fixed R1CS shape -> one SNARK setup
-```
-
-Do not require a universal circuit that handles both FR-on and FR-off via dummy
-rows in v1.
-
-## `jolt-verifier` Architecture
-
-Target responsibilities:
-
-```text
-proof-shape validation:
-  check that selected payloads are present and inactive payloads are absent
-
-stage schedule:
-  construct the ordered list of selected verifier stages
-
-transcript:
-  bind selection/config and replay stage messages in selected order
-
-typed outputs:
-  return stage outputs without untyped opening-map routing
-
-wrapper export:
-  expose selected verifier computation for R1CS assembly
-```
-
-Target module shape:
-
-```text
-crates/jolt-verifier/src/
-  selection.rs
-  proof_shape.rs
-  transcript.rs
-  selected/
-    mod.rs
-    computation.rs
-    schedule.rs
-    r1cs.rs
-  stages/
-    stage1/
-    stage2/
-    ...
-    field_inline/
-    dory_assist/
-    zk/
-```
-
-The exact file names can shift during implementation, but the ownership split
-should remain: `jolt-verifier` composes selected stages; protocol formulas stay
-in `jolt-claims`; R1CS component encodings stay in their owning crates.
 
 ## End-To-End Flows
 
 Ordinary Jolt:
 
 ```text
-trace/prover
-  -> base Jolt proof
-  -> selected verifier validates ordinary schedule
+JOLT_VERIFIER_CONFIG:
+  zk = Transparent or BlindFold
+  field_inline.enabled = false
+  pcs_assist = None
+
+verify:
+  validate_proof_config
+  run ordinary linear verifier
+  verify joint_opening_proof natively
 ```
 
 Field-inline Jolt:
 
 ```text
-trace with field ops
-  -> FR register witness + FieldProduct witness
-  -> base Jolt proof with field-inline payload
-  -> selected verifier validates FR stages and ordinary stages
+JOLT_VERIFIER_CONFIG:
+  field_inline.enabled = true
+
+verify:
+  validate_proof_config requires field_inline payload
+  run ordinary stages with FR additions
+  verify opening phase according to pcs_assist config
 ```
 
-Jolt with Dory assist:
+Dory-assisted Jolt:
 
 ```text
-base Jolt stages 1-7
-  -> Dory opening snapshot
-  -> Dory-assist proof
-  -> selected verifier validates Dory-assist stages instead of ordinary Dory
+JOLT_VERIFIER_CONFIG:
+  pcs_assist = Dory(...)
+
+verify:
+  validate_proof_config requires pcs_assist payload
+  run ordinary stages through opening snapshot
+  call pcs_assist_verify with joint_opening_proof as public input
 ```
 
-Wrapped Dory-assisted Jolt:
+Wrapped Jolt:
 
 ```text
-selected verifier computation
-  -> wrapper R1CS assembly
-  -> Spartan + HyperKZG proof
-```
-
-Field-inline + Dory assist + wrapper:
-
-```text
-FR-active base Jolt
-  -> selected stages include FR effects
-  -> Dory assist consumes selected opening data
-  -> wrapper proves selected verifier computation
+wrapper verifier:
+  verifies wrapper proof for a fixed inner JOLT_VERIFIER_CONFIG
+  skips native inner verifier execution
 ```
 
 ## Testing And Acceptance
 
-Selection/proof-shape tests:
+Config validation tests:
 
 ```text
-ordinary selection rejects field-inline payload
-field-inline selection requires field-inline payload
-Dory-assist selection requires Dory-assist payload
-Dory-assist disabled rejects Dory-assist payload
-unsupported feature selection is rejected by the verifier build
+proof.protocol must equal JOLT_VERIFIER_CONFIG
+FR-off verifier rejects field_inline = Some(...)
+FR-on verifier rejects field_inline = None
+PCS-assist-off verifier rejects pcs_assist = Some(...)
+PCS-assist-on verifier rejects pcs_assist = None
+Transparent verifier rejects BlindFold-only payloads
+BlindFold verifier rejects transparent-only payloads where applicable
 ```
 
 Transcript tests:
 
 ```text
+config is absorbed before config-dependent challenges
 FR-off transcript matches ordinary Jolt transcript
 FR-on transcript inserts FR messages in fixed order
 advice absent follows existing skip behavior
-Dory-assist selected transcript replaces ordinary stage-8 Dory path
-selection/config binding changes challenge stream
+PCS-assist-on binds the same opening snapshot as native PCS verification
 ```
 
-Schedule tests:
-
-```text
-selected schedule is deterministic
-ordinary, FR, Dory-assist, and combined schedules have expected stage IDs
-wrapper assembly iterates the same selected stages as native verification
-```
-
-Compatibility tests:
+Flow tests:
 
 ```text
 muldiv passes in standard and ZK modes
 existing advice fixtures continue to pass
-FR and Dory-assist fixtures are added as their axis specs land
+field-inline fixtures pass when compiled with field-inline config
+PCS-assist fixtures pass when compiled with assist config
+wrapper verifier rejects proofs built for the wrong inner config
 ```
 
 ## Implementation Steps
 
 Each step should be reviewed before continuing to the next.
 
-1. Define `ProtocolSelection`.
-   - Add selection structs/enums and feature-support checks.
-   - Review gate: unsupported selections are rejected deterministically.
+1. Add `JoltProtocolConfig`.
+   - Define ZK, field-inline, and PCS-assist config types.
+   - Derive `JOLT_VERIFIER_CONFIG` from feature flags.
+   - Review gate: config constants match expected feature combinations.
 
-2. Add proof-shape validation.
-   - Validate optional field-inline and Dory-assist payloads.
-   - Validate transparent vs BlindFold payload expectations.
-   - Review gate: missing and extra payload tests cover every optional axis.
+2. Linearize proof optional payloads.
+   - Add `protocol`, `field_inline: Option<_>`, and `pcs_assist: Option<_>` to
+     the linear proof artifact.
+   - Keep `joint_opening_proof: PCS::Proof` structurally present.
+   - Review gate: serialization round trips all payload shapes.
 
-3. Bind selection/config into transcript.
-   - Add stable transcript labels for selection and protocol config.
-   - Review gate: changing selection changes challenge stream.
+3. Add `validate_proof_config`.
+   - Check proof config equality and exact `Option<T>` shape.
+   - Reject extra and missing payloads before stage verification.
+   - Review gate: tests cover every Some/None mismatch.
 
-4. Add selected schedule builder.
-   - Build ordinary, FR-active, Dory-assisted, and combined schedules.
-   - Review gate: schedule tests assert exact stage IDs and ordering.
+4. Bind config into transcript.
+   - Absorb canonical config encoding before config-dependent challenges.
+   - Review gate: changing config changes the challenge stream.
 
-5. Generalize advice optionality pattern.
-   - Reuse the existing advice skip behavior as the model for optional protocol
-     components.
-   - Review gate: advice fixtures are unchanged and FR-off follows the same
-     skip shape.
+5. Wire field-inline additions in the appropriate stage folders.
+   - Add stage 3/4/5 and product/R1CS additions in the modules that batch those
+     checks.
+   - Review gate: FR-off remains byte-for-byte compatible with ordinary stage
+     ordering where expected; FR-on requires payloads.
 
-6. Add field-inline selected stages.
-   - Insert FR stages only when selected.
-   - Review gate: FR-off transcript and proof shape match ordinary Jolt.
+6. Wire PCS assist in the opening phase.
+   - Build a typed opening snapshot once.
+   - Dispatch to ordinary PCS verify or `pcs_assist_verify` based on config.
+   - Review gate: assist proof is bound to the exact `joint_opening_proof` and
+     opening snapshot.
 
-7. Add Dory-assist selected stages.
-   - Replace ordinary stage-8 Dory verification when selected.
-   - Review gate: Dory-assist payload is required and ordinary stage-8 is not
-     run in the selected path.
+7. Keep ZK/BlindFold linear.
+   - Preserve the current cfg-gated ZK flow.
+   - Route proof-shape validation through `validate_proof_config`.
+   - Review gate: standard and ZK `muldiv` pass.
 
-8. Add selected verifier computation export.
-   - Expose typed stage data for wrapper assembly.
-   - Review gate: native verifier and exported selected computation share one
-     schedule source.
-
-9. Add wrapper integration.
-   - Pass selected computation into `jolt-wrapper`.
-   - Review gate: wrapper R1CS stage order matches native selected verifier
-     order.
-
-10. Add ZK selection compatibility.
-   - Validate transparent vs BlindFold payloads under the same selection model.
-   - Review gate: standard and ZK `muldiv` continue to pass, and invalid
-     transparent/BlindFold compositions are rejected.
+8. Add wrapper verifier entry point.
+   - Verify wrapper proofs against a fixed inner `JOLT_VERIFIER_CONFIG`.
+   - Do not run native inner Jolt stages in wrapper verification.
+   - Review gate: wrapper proof for one inner config is rejected under another.

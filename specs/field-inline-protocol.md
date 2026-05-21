@@ -12,11 +12,11 @@
 Field inline adds native field operations to the Jolt VM. From the proof
 machinery perspective, it is a uniform extension of existing Jolt machinery:
 an FR register file is another memory-checking instance, field instructions add
-local guest R1CS rows, and multiplication uses an explicit FR-native product
+`field_rows` constraints, and multiplication uses an explicit FR-native product
 relation.
 
 This spec owns the field-inline protocol axis. Composition with Dory assist,
-wrapping, ZK, and proof-shape selection is specified in
+wrapping, ZK, and proof-shape validation is specified in
 [selected-verifier-integration.md](selected-verifier-integration.md). Prover
 execution and witness construction concerns are tracked by
 [jolt-prover-model-crate.md](jolt-prover-model-crate.md).
@@ -36,7 +36,7 @@ V1 scope:
 native field-inline arithmetic only
 FR register file with K = 16 slots
 explicit FieldProduct relation
-field-op guest R1CS rows
+field_rows constraints
 x-register <-> FR bridge rows
 advice-style optionality when field inline is disabled
 ```
@@ -46,7 +46,7 @@ Out of scope:
 ```text
 non-native field arithmetic q != modulus(F)
 limb modular-reduction gadgets
-one universal wrapper circuit for FR-on and FR-off selections
+one universal wrapper circuit for FR-on and FR-off verifier configs
 multi-width field arithmetic independent of the Jolt field
 ```
 
@@ -119,7 +119,7 @@ FR register Twist:
 field instruction flags:
   select FADD, FSUB, FMUL, FINV, ASSERT_EQ, MOV, bridge ops, etc.
 
-field-op R1CS rows:
+field_rows:
   enforce local field instruction semantics
 
 field-product relation:
@@ -138,7 +138,7 @@ Twist:
 instruction flags/lookups:
   prove which field instruction is active
 
-guest R1CS rows:
+field_rows:
   prove local algebraic instruction semantics
 
 FieldProduct:
@@ -155,10 +155,10 @@ Pure field operations should use pure FR access in v1:
 
 ```text
 pure field op:
-  FR metadata/events + FR Twist + field R1CS
+  FR metadata/events + FR Twist + field_rows
 
 bridge op:
-  x-register Twist + FR Twist + bridge R1CS
+  x-register Twist + FR Twist + bridge field_rows
 ```
 
 Example:
@@ -175,7 +175,7 @@ cycle 11:
   opcode = FMUL
   FR register reads/writes are active
   FieldProduct relation is active
-  field R1CS rows enforce FieldProduct = FieldRdValue
+  field_rows enforce FieldProduct = FieldRdValue
   ordinary x-register accesses are suppressed
 
 cycle 12:
@@ -264,7 +264,7 @@ direct local multiplication constraint, depending on how the surrounding
 product virtualization path is structured. The protocol fact is that the
 inverse relation is over native `F`.
 
-## Guest R1CS Rows
+## Field Rows
 
 Target module:
 
@@ -275,7 +275,8 @@ crates/jolt-r1cs/src/constraints/
   field_inline.rs
 ```
 
-`field_inline.rs` owns field-instruction guest rows:
+`field_inline.rs` owns the R1CS constraints for native field-inline instruction
+semantics:
 
 ```text
 FADD:
@@ -297,8 +298,8 @@ MOV/bridge:
   bridge rows between ordinary x-register values and FR values
 ```
 
-These rows are guest-trace constraints. They are separate from wrapper R1CS,
-which proves a verifier computation.
+These are constraints in Jolt's execution relation. They are separate from
+wrapper R1CS, which proves a verifier computation.
 
 ## Conversion Rows
 
@@ -324,6 +325,15 @@ field arithmetic relation: FR values remain native elements of `F`.
 
 ## `jolt-claims` Layout
 
+Field inline should be its own `jolt-claims` protocol module. Describing the
+FR register-file Twist semantics is protocol logic distinct from base Jolt,
+even though `jolt-verifier` later composes the resulting claims into the same
+linear verifier flow as ordinary Jolt stages.
+
+The module should mirror the organization of `protocols::jolt` instead of
+inventing a separate component hierarchy. The main v1 `jolt-claims` work is to
+describe the FR register-file Twist memory-checking formulas.
+
 Target layout:
 
 ```text
@@ -332,89 +342,156 @@ crates/jolt-claims/src/protocols/field_inline/
   config.rs
   ids.rs
   stage.rs
-  dimensions.rs
-  public_inputs.rs
-  registers/
+  formulas/
     mod.rs
-    claims.rs
-    openings.rs
-  product/
-    mod.rs
-    claims.rs
-    openings.rs
-  conversion/
-    mod.rs
-    claims.rs
-    openings.rs
+    dimensions.rs
+    registers.rs
+    claim_reductions/
+      mod.rs
+      registers.rs
 ```
 
-Initial surface:
+This intentionally mirrors existing ordinary-register ownership in
+`protocols::jolt`:
+
+```text
+ordinary registers:
+  formulas/registers.rs
+  formulas/claim_reductions/registers.rs
+
+field registers:
+  protocols/field_inline/formulas/registers.rs
+  protocols/field_inline/formulas/claim_reductions/registers.rs
+```
+
+Inside `protocols::field_inline`, `registers` means FR registers. The formulas
+should use the same generic claim-expression machinery as `protocols::jolt`,
+but with field-inline-specific stage IDs, challenge IDs, opening IDs, and
+dimension types. `jolt-verifier` owns the composition step that batches these
+field-inline claims into the appropriate verifier stages alongside ordinary
+Jolt claims.
+
+Initial protocol IDs:
 
 ```rust
-pub struct FieldInlineConfig {
-    pub enabled: bool,
-    pub field_register_log_k: usize, // 4 for 16 slots
-    pub representation: FieldInlineRepresentation,
-}
-
-pub enum FieldInlineRepresentation {
-    NativeFieldElement,
-}
-
 pub enum FieldInlineStageId {
-    FieldRegistersClaimReduction,
-    FieldRegistersReadWrite,
-    FieldRegistersValEvaluation,
-    FieldProductVirtualization,
-    FieldConversion,
-}
-
-pub enum FieldInlineOpening {
-    Registers(FieldRegisterOpening),
-    Product(FieldProductOpening),
-    Conversion(FieldConversionOpening),
-}
-
-pub enum FieldInlinePublicId {
-    FieldModulusDigest,
-    FieldRegisterCount,
+    RegistersClaimReduction,
+    RegistersReadWriteChecking,
+    RegistersValEvaluation,
 }
 
 pub enum FieldInlineChallengeId {
-    Registers(FieldRegisterChallenge),
-    Product(FieldProductChallenge),
-    Conversion(FieldConversionChallenge),
+    RegistersClaimReduction(FieldRegistersClaimReductionChallenge),
+    RegistersReadWrite(FieldRegistersReadWriteChallenge),
+    RegistersValEvaluation(FieldRegistersValEvaluationChallenge),
 }
 
-pub struct FieldInlineDimensions {
-    pub field_register_log_k: usize,
-    pub field_element_bits: usize,
+pub enum FieldRegistersClaimReductionChallenge {
+    Gamma,
+    EqSpartan,
 }
 
-pub struct FieldInlineStageClaims<F> {
-    pub id: FieldInlineStageId,
-    pub sumcheck: FieldInlineSumcheckSpec,
-    pub input: FieldInlineInputClaimExpression<F>,
-    pub output: FieldInlineOutputClaimExpression<F>,
-    pub consistency: Vec<FieldInlineConsistencyClaim<F>>,
+pub enum FieldRegistersReadWriteChallenge {
+    Gamma,
+    EqCycle,
+}
+
+pub enum FieldRegistersValEvaluationChallenge {
+    LtCycle,
 }
 ```
 
-Component ownership:
+The opening and polynomial IDs should mirror ordinary registers with
+field-register-specific names:
 
 ```text
-registers:
-  FR memory-checking claims, openings, dimensions
-
-product:
-  explicit field-register-native product relation
-
-conversion:
-  x-register <-> FR movement claims and openings
+FieldRs1Value
+FieldRs2Value
+FieldRdValue
+FieldRegistersVal
+FieldRs1Ra
+FieldRs2Ra
+FieldRdWa
+FieldRdInc
 ```
 
-Concrete stage execution stays in `jolt-verifier`. Concrete guest R1CS rows
-stay in `jolt-r1cs::constraints::field_inline`.
+Exact committed vs virtual polynomial placement should follow the implemented
+FR witness layout. Conceptually, it mirrors ordinary registers:
+
+```text
+ordinary:
+  RdInc committed
+  RegistersVal/Rs1Ra/Rs2Ra/RdWa virtual
+
+field:
+  FieldRdInc committed or otherwise opened from the FR increment witness
+  FieldRegistersVal/FieldRs1Ra/FieldRs2Ra/FieldRdWa virtual
+```
+
+### Field-Register Formulas
+
+The formulas mirror ordinary register Twist memory checking.
+
+Claim reduction:
+
+```text
+input:
+  FieldRdValue@SpartanOuter
+  + gamma * FieldRs1Value@SpartanOuter
+  + gamma^2 * FieldRs2Value@SpartanOuter
+
+output:
+  EqSpartan * (
+    FieldRdValue@FieldRegistersClaimReduction
+    + gamma * FieldRs1Value@FieldRegistersClaimReduction
+    + gamma^2 * FieldRs2Value@FieldRegistersClaimReduction
+  )
+```
+
+Read/write checking:
+
+```text
+input:
+  FieldRdValue@FieldRegistersClaimReduction
+  + gamma * FieldRs1Value@FieldRegistersClaimReduction
+  + gamma^2 * FieldRs2Value@FieldRegistersClaimReduction
+
+output:
+  EqCycle * FieldRdWa * FieldRdInc
+  + EqCycle * FieldRdWa * FieldRegistersVal
+  + EqCycle * gamma * FieldRs1Ra * FieldRegistersVal
+  + EqCycle * gamma^2 * FieldRs2Ra * FieldRegistersVal
+```
+
+Val evaluation:
+
+```text
+input:
+  FieldRegistersVal@FieldRegistersReadWriteChecking
+
+output:
+  LtCycle * FieldRdInc@FieldRegistersValEvaluation
+          * FieldRdWa@FieldRegistersValEvaluation
+```
+
+The module should also expose opening-order helpers matching the current
+`registers.rs` style:
+
+```text
+protocols::field_inline::formulas::registers::read_write_checking_input_openings()
+protocols::field_inline::formulas::registers::read_write_checking_output_openings()
+protocols::field_inline::formulas::registers::val_evaluation_input_openings()
+protocols::field_inline::formulas::registers::val_evaluation_output_openings()
+protocols::field_inline::formulas::claim_reductions::registers::claim_reduction_input_openings()
+protocols::field_inline::formulas::claim_reductions::registers::claim_reduction_output_openings()
+```
+
+`jolt-claims` should stay focused on these claim formulas and opening helpers.
+`field_rows` and bridge constraints live in
+`jolt-r1cs::constraints::field_inline`. FieldProduct may need IDs/opening
+helpers if it is verified through a sumcheck, but the first `jolt-claims`
+surface should stay as close as possible to the ordinary-register formula
+pattern.
 
 ## Transcript And Optionality
 
@@ -430,24 +507,24 @@ FR off:
 
 FR on:
   FR commitments, claims, and challenges appear in fixed order
-  the selected verifier schedule includes FR stages
+  the configured verifier flow includes FR stage additions
 ```
 
-`ProtocolSelection` and verifier feature support determine whether FR payloads
-are accepted. The selected verifier binds the active configuration before
-Fiat-Shamir challenge derivation. Detailed proof-shape validation and transcript
-ordering live in [selected-verifier-integration.md](selected-verifier-integration.md).
+`JOLT_VERIFIER_CONFIG` determines whether FR payloads are accepted. The
+verifier binds the configured protocol before Fiat-Shamir challenge derivation.
+Detailed proof-shape validation and transcript ordering live in
+[selected-verifier-integration.md](selected-verifier-integration.md).
 
 ## Interaction With Dory Assist And Wrapper
 
-Dory assist sees field inline only through the selected base-Jolt verifier
-outputs. If field inline is enabled, the stage outputs already include FR
-claims and openings where relevant. Dory assist consumes those selected outputs
+Dory assist sees field inline only through the configured verifier outputs. If
+field inline is enabled, the composed verifier stages already include FR claims
+and openings where relevant. Dory assist consumes those configured outputs
 without needing separate field-inline awareness.
 
-The wrapper proves the selected verifier computation. If field inline is off,
+The wrapper proves the configured verifier computation. If field inline is off,
 the wrapper R1CS excludes FR checks. If field inline is on, the wrapper includes
-the FR verifier work by lowering the selected verifier stages through the
+the FR verifier work by lowering the configured verifier flow through the
 generic claim, sumcheck, transcript, and opening R1CS helpers.
 
 ## Implementation Steps
@@ -455,10 +532,12 @@ generic claim, sumcheck, transcript, and opening R1CS helpers.
 Each step should be reviewed before continuing to the next.
 
 1. Add `jolt-claims::protocols::field_inline`.
-   - Define config, IDs, dimensions, opening enums, and stage IDs.
-   - Encode the native-field invariant in docs and type names.
-   - Review gate: API shape matches this spec and does not expose non-native
-     modulus configuration.
+   - Add field-register stage IDs, challenge IDs, opening IDs, dimensions, and
+     opening helpers in a layout that mirrors `protocols::jolt`.
+   - Keep the module focused on FR Twist protocol semantics. Composition with
+     base Jolt happens in `jolt-verifier`.
+   - Review gate: API shape mirrors ordinary registers and does not expose
+     non-native modulus configuration.
 
 2. Add field-register claim formulas.
    - Add FR claim reduction, read/write, and val-evaluation formulas.
@@ -466,11 +545,11 @@ Each step should be reviewed before continuing to the next.
    - Review gate: formula tests cover small synthetic FR traces.
 
 3. Add explicit `FieldProduct`.
-   - Add product IDs, openings, and claim formulas.
+   - Add product IDs/opening metadata only if the product check needs it.
    - Keep relation distinct from integer product virtualization.
    - Review gate: tests fail if integer register values are wired as FR values.
 
-4. Add guest R1CS field rows.
+4. Add `field_rows`.
    - Implement `jolt-r1cs::constraints::field_inline`.
    - Cover FADD, FSUB, FMUL, FINV, ASSERT_EQ, and bridge rows.
    - Review gate: constraint tests prove native-field arithmetic and reject bad
@@ -484,8 +563,9 @@ Each step should be reviewed before continuing to the next.
    - Review gate: bridge-row fixtures cover two-limb and four-limb field
      encodings when both field instantiations exist.
 
-6. Wire selected verifier support.
-   - Add FR payload validation and selected stage insertion in `jolt-verifier`.
+6. Wire verifier support in stage folders.
+   - Add FR payload use and config checks in the `jolt-verifier::stages/*`
+     modules that batch the corresponding FR work.
    - Follow advice-style optional transcript skipping when FR is disabled.
    - Review gate: FR-off proofs follow ordinary Jolt transcript shape; FR-on
      proofs require FR payloads and reject missing or extra claims.
@@ -499,5 +579,5 @@ Each step should be reviewed before continuing to the next.
 8. Add end-to-end fixtures.
    - Add a small field-inline guest.
    - Keep existing `muldiv` tests passing in standard and ZK modes.
-   - Review gate: field-inline proof verifies natively and with the selected
+   - Review gate: field-inline proof verifies natively and with the configured
      verifier path.

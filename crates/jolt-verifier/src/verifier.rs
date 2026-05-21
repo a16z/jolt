@@ -1,7 +1,6 @@
 //! Top-level verifier entry point.
 
 use common::jolt_device::JoltDevice;
-use jolt_blindfold::{BlindFoldProof, BlindFoldProtocol};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
@@ -18,68 +17,10 @@ use crate::{
     VerifierError,
 };
 
-pub trait BlindFoldProofVerifier<F, VC>
-where
-    F: Field + AppendToTranscript,
-    VC: VectorCommitment<Field = F>,
-    VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-{
-    fn verify_blindfold<T>(
-        &self,
-        protocol: &BlindFoldProtocol<F, VC::Output>,
-        vc_setup: &VC::Setup,
-        transcript: &mut T,
-    ) -> Result<(), VerifierError>
-    where
-        T: Transcript<Challenge = F>;
-}
-
-impl<F, VC> BlindFoldProofVerifier<F, VC> for BlindFoldProof<F, VC::Output>
-where
-    F: Field + AppendToTranscript,
-    VC: VectorCommitment<Field = F>,
-    VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-{
-    fn verify_blindfold<T>(
-        &self,
-        protocol: &BlindFoldProtocol<F, VC::Output>,
-        vc_setup: &VC::Setup,
-        transcript: &mut T,
-    ) -> Result<(), VerifierError>
-    where
-        T: Transcript<Challenge = F>,
-    {
-        jolt_blindfold::verify::<F, VC, T>(protocol, self, vc_setup, transcript).map_err(|error| {
-            VerifierError::BlindFoldVerificationFailed {
-                reason: error.to_string(),
-            }
-        })
-    }
-}
-
-impl<F, VC> BlindFoldProofVerifier<F, VC> for ()
-where
-    F: Field + AppendToTranscript,
-    VC: VectorCommitment<Field = F>,
-    VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-{
-    fn verify_blindfold<T>(
-        &self,
-        _protocol: &BlindFoldProtocol<F, VC::Output>,
-        _vc_setup: &VC::Setup,
-        _transcript: &mut T,
-    ) -> Result<(), VerifierError>
-    where
-        T: Transcript<Challenge = F>,
-    {
-        Err(VerifierError::MissingBlindFoldProof)
-    }
-}
-
-pub fn verify<F, PCS, VC, T, ZkProof>(
+pub fn verify<F, PCS, VC, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC>,
     trusted_advice_commitment: Option<&PCS::Output>,
     zk: bool,
 ) -> Result<(), VerifierError>
@@ -92,7 +33,6 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
-    ZkProof: BlindFoldProofVerifier<F, VC>,
 {
     let checked = validate_inputs(
         preprocessing,
@@ -180,12 +120,16 @@ where
             .vc_setup
             .as_ref()
             .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
-        let mut blindfold_transcript = T::new(b"BlindFold");
-        proof.blindfold_proof()?.verify_blindfold::<T>(
+        transcript.append(&Label(b"BlindFold"));
+        jolt_blindfold::verify::<F, VC, T>(
             &blindfold.protocol,
+            proof.blindfold_proof()?,
             vc_setup,
-            &mut blindfold_transcript,
-        )?;
+            &mut transcript,
+        )
+        .map_err(|error| VerifierError::BlindFoldVerificationFailed {
+            reason: error.to_string(),
+        })?;
         return Ok(());
     }
 
@@ -520,7 +464,7 @@ mod tests {
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
     use common::jolt_device::{JoltDevice, MemoryLayout};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
-    use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup};
+    use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup, VectorCommitmentOpening};
     use jolt_field::Fr;
     use jolt_openings::{CommitmentScheme, OpeningsError};
     use jolt_poly::{MultilinearPoly, Polynomial};
@@ -598,7 +542,8 @@ mod tests {
         fn append_to_transcript<T: Transcript>(&self, _transcript: &mut T) {}
     }
 
-    type TestProof = JoltProof<TestPcs, Pedersen<Bn254G1>, ()>;
+    type TestProof = JoltProof<TestPcs, Pedersen<Bn254G1>>;
+    type TestClaims = JoltProofClaims<Fr, jolt_blindfold::BlindFoldProof<Fr, Bn254G1>>;
 
     #[test]
     fn proof_wrapper_uses_modular_trait_bounds() {
@@ -748,7 +693,7 @@ mod tests {
         ));
     }
 
-    fn proof_with_zk(is_zk: bool, claims: JoltProofClaims<Fr, ()>) -> TestProof {
+    fn proof_with_zk(is_zk: bool, claims: TestClaims) -> TestProof {
         JoltProof::new(
             crate::proof::JoltCommitments::new(
                 TestCommitment,
@@ -779,7 +724,7 @@ mod tests {
         )
     }
 
-    fn clear_claims() -> JoltProofClaims<Fr, ()> {
+    fn clear_claims() -> TestClaims {
         let zero = Fr::zero();
 
         JoltProofClaims::Clear(ClearProofClaims {
@@ -961,9 +906,39 @@ mod tests {
         }
     }
 
-    fn zk_claims() -> JoltProofClaims<Fr, ()> {
+    fn zk_claims() -> TestClaims {
         JoltProofClaims::Zk {
-            blindfold_proof: (),
+            blindfold_proof: empty_blindfold_proof(),
+        }
+    }
+
+    fn empty_blindfold_proof() -> jolt_blindfold::BlindFoldProof<Fr, Bn254G1> {
+        jolt_blindfold::BlindFoldProof {
+            auxiliary_row_commitments: Vec::new(),
+            random_round_commitments: Vec::new(),
+            random_output_claim_row_commitments: Vec::new(),
+            random_auxiliary_row_commitments: Vec::new(),
+            random_error_row_commitments: Vec::new(),
+            random_eval_commitments: Vec::new(),
+            random_u: Fr::zero(),
+            cross_term_error_row_commitments: Vec::new(),
+            outer_sumcheck: CompressedSumcheckProof::default(),
+            az_rx: Fr::zero(),
+            bz_rx: Fr::zero(),
+            cz_rx: Fr::zero(),
+            inner_sumcheck: CompressedSumcheckProof::default(),
+            witness_opening: VectorCommitmentOpening {
+                combined_vector: Vec::new(),
+                combined_blinding: Fr::zero(),
+            },
+            error_opening: VectorCommitmentOpening {
+                combined_vector: Vec::new(),
+                combined_blinding: Fr::zero(),
+            },
+            folded_eval_outputs: Vec::new(),
+            folded_eval_blindings: Vec::new(),
+            folded_eval_output_openings: Vec::new(),
+            folded_eval_blinding_openings: Vec::new(),
         }
     }
 

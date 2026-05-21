@@ -35,6 +35,11 @@ const CHI2_CRITICAL: f64 = 43.84;
 #[test]
 #[ignore = "run with --release: cargo nextest run -p jolt-verifier --release --features core-fixtures,zk zk_muldiv_jolt_proof_components_are_statistically_independent --run-ignored ignored-only --cargo-quiet"]
 fn zk_muldiv_jolt_proof_components_are_statistically_independent() {
+    with_zk_statistical_stack(run_zk_muldiv_jolt_proof_components_are_statistically_independent);
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+fn run_zk_muldiv_jolt_proof_components_are_statistically_independent() {
     require_release_build();
 
     let samples = statistical_sample_count();
@@ -76,6 +81,17 @@ fn zk_muldiv_jolt_proof_components_are_statistically_independent() {
 }
 
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
+fn with_zk_statistical_stack(test: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new()
+        .name("zk-statistical-independence".to_string())
+        .stack_size(128 * 1024 * 1024)
+        .spawn(test)
+        .expect("spawn ZK statistical-independence test")
+        .join()
+        .expect("ZK statistical-independence test panicked");
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
 fn require_release_build() {
     assert!(
         !(cfg!(debug_assertions)
@@ -108,7 +124,7 @@ struct StableZkProofShape {
     commitment_shape: CommitmentShape,
     stage_shapes: Vec<CommittedStageShape>,
     dory_shape: DoryOpeningProofShape,
-    blindfold_shape: jolt_verifier::compat::convert::LegacyBlindFoldProofShape,
+    blindfold_shape: BlindFoldProofShape,
 }
 
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
@@ -134,7 +150,7 @@ impl StableZkProofShape {
             },
             stage_shapes: committed_stage_shapes(&case.proof.stages),
             dory_shape: DoryOpeningProofShape::from_proof(&case.proof.joint_opening_proof),
-            blindfold_shape: blindfold_proof.shape(),
+            blindfold_shape: BlindFoldProofShape::from_proof(blindfold_proof),
         }
     }
 }
@@ -168,6 +184,37 @@ struct DoryOpeningProofShape {
     has_sigma1: bool,
     has_sigma2: bool,
     has_scalar_product: bool,
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BlindFoldProofShape {
+    auxiliary_rows: usize,
+    random_round_commitment_rows: usize,
+    random_output_claim_rows: usize,
+    random_auxiliary_rows: usize,
+    random_error_rows: usize,
+    random_eval_commitments: usize,
+    cross_term_error_rows: usize,
+    folded_eval_output_openings: usize,
+    folded_eval_blinding_openings: usize,
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+impl BlindFoldProofShape {
+    fn from_proof(proof: &jolt_blindfold::BlindFoldProof<Fr, jolt_crypto::Bn254G1>) -> Self {
+        Self {
+            auxiliary_rows: proof.auxiliary_row_commitments.len(),
+            random_round_commitment_rows: proof.random_round_commitments.len(),
+            random_output_claim_rows: proof.random_output_claim_row_commitments.len(),
+            random_auxiliary_rows: proof.random_auxiliary_row_commitments.len(),
+            random_error_rows: proof.random_error_row_commitments.len(),
+            random_eval_commitments: proof.random_eval_commitments.len(),
+            cross_term_error_rows: proof.cross_term_error_row_commitments.len(),
+            folded_eval_output_openings: proof.folded_eval_output_openings.len(),
+            folded_eval_blinding_openings: proof.folded_eval_blinding_openings.len(),
+        }
+    }
 }
 
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
@@ -289,7 +336,7 @@ fn collect_jolt_proof_statistics(
     );
 
     collect_dory_opening_statistics(&proof.joint_opening_proof, tracker);
-    collect_blindfold_statistics(&blindfold_proof.0, tracker);
+    collect_blindfold_statistics(blindfold_proof, tracker);
 }
 
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
@@ -375,46 +422,43 @@ fn collect_dory_opening_statistics(proof: &jolt_dory::DoryProof, tracker: &mut B
 
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 fn collect_blindfold_statistics(
-    proof: &jolt_core::subprotocols::blindfold::BlindFoldProof<
-        jolt_core::ark_bn254::Fr,
-        jolt_core::curve::Bn254Curve,
-    >,
+    proof: &jolt_blindfold::BlindFoldProof<Fr, jolt_crypto::Bn254G1>,
     tracker: &mut BucketTracker,
 ) {
-    tracker.record_canonical("blindfold.random.u", &proof.random_instance.u);
-    tracker.record_canonical_positions(
+    tracker.record_canonical("blindfold.random.u", &proof.random_u);
+    tracker.record_append_positions(
         "blindfold.random.round_commitment",
-        &proof.random_instance.round_commitments,
+        &proof.random_round_commitments,
     );
-    tracker.record_canonical_positions(
+    tracker.record_append_positions(
         "blindfold.random.output_claim_commitment",
-        &proof.random_instance.output_claims_row_commitments,
+        &proof.random_output_claim_row_commitments,
     );
-    tracker.record_canonical_positions(
+    tracker.record_append_positions(
         "blindfold.random.auxiliary_commitment",
-        &proof.random_instance.noncoeff_row_commitments,
+        &proof.random_auxiliary_row_commitments,
     );
-    tracker.record_canonical_positions(
+    tracker.record_append_positions(
         "blindfold.random.error_commitment",
-        &proof.random_instance.e_row_commitments,
+        &proof.random_error_row_commitments,
     );
-    tracker.record_canonical_positions(
+    tracker.record_append_positions(
         "blindfold.random.eval_commitment",
-        &proof.random_instance.eval_commitments,
+        &proof.random_eval_commitments,
     );
-    tracker.record_canonical_positions(
+    tracker.record_append_positions(
         "blindfold.real.auxiliary_commitment",
-        &proof.noncoeff_row_commitments,
+        &proof.auxiliary_row_commitments,
     );
-    tracker.record_canonical_positions(
+    tracker.record_append_positions(
         "blindfold.cross_term_commitment",
-        &proof.cross_term_row_commitments,
+        &proof.cross_term_error_row_commitments,
     );
-    tracker.record_canonical("blindfold.az_rx", &proof.az_r);
-    tracker.record_canonical("blindfold.bz_rx", &proof.bz_r);
-    tracker.record_canonical("blindfold.cz_rx", &proof.cz_r);
-    tracker.record_core_hyrax_opening("blindfold.witness_opening", &proof.w_opening);
-    tracker.record_core_hyrax_opening("blindfold.error_opening", &proof.e_opening);
+    tracker.record_canonical("blindfold.az_rx", &proof.az_rx);
+    tracker.record_canonical("blindfold.bz_rx", &proof.bz_rx);
+    tracker.record_canonical("blindfold.cz_rx", &proof.cz_rx);
+    tracker.record_vector_opening("blindfold.witness_opening", &proof.witness_opening);
+    tracker.record_vector_opening("blindfold.error_opening", &proof.error_opening);
     tracker.record_canonical_positions("blindfold.folded_eval.output", &proof.folded_eval_outputs);
     tracker.record_canonical_positions(
         "blindfold.folded_eval.blinding",
@@ -424,13 +468,13 @@ fn collect_blindfold_statistics(
     // structural zero slots, so the hiding component to sample is the opening
     // blinding.
     for index in selected_positions(proof.folded_eval_output_openings.len()) {
-        tracker.record_core_hyrax_opening_blinding(
+        tracker.record_vector_opening_blinding(
             &format!("blindfold.folded_eval.output_opening.{index}"),
             &proof.folded_eval_output_openings[index],
         );
     }
     for index in selected_positions(proof.folded_eval_blinding_openings.len()) {
-        tracker.record_core_hyrax_opening_blinding(
+        tracker.record_vector_opening_blinding(
             &format!("blindfold.folded_eval.blinding_opening.{index}"),
             &proof.folded_eval_blinding_openings[index],
         );
@@ -479,23 +523,23 @@ impl BucketTracker {
         }
     }
 
-    fn record_core_hyrax_opening<F>(
+    fn record_vector_opening<F>(
         &mut self,
         prefix: &str,
-        opening: &jolt_core::poly::commitment::hyrax::HyraxOpeningProof<F>,
+        opening: &jolt_crypto::VectorCommitmentOpening<F>,
     ) where
-        F: CanonicalSerialize + jolt_core::field::JoltField,
+        F: CanonicalSerialize,
     {
-        self.record_canonical_positions(&format!("{prefix}.row"), &opening.combined_row);
+        self.record_canonical_positions(&format!("{prefix}.row"), &opening.combined_vector);
         self.record_canonical(format!("{prefix}.blinding"), &opening.combined_blinding);
     }
 
-    fn record_core_hyrax_opening_blinding<F>(
+    fn record_vector_opening_blinding<F>(
         &mut self,
         prefix: &str,
-        opening: &jolt_core::poly::commitment::hyrax::HyraxOpeningProof<F>,
+        opening: &jolt_crypto::VectorCommitmentOpening<F>,
     ) where
-        F: CanonicalSerialize + jolt_core::field::JoltField,
+        F: CanonicalSerialize,
     {
         self.record_canonical(format!("{prefix}.blinding"), &opening.combined_blinding);
     }

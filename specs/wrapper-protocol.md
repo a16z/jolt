@@ -9,22 +9,23 @@
 
 ## Purpose
 
-The wrapper proves an R1CS encoding of a selected Jolt verifier computation.
+The wrapper proves an R1CS encoding of the configured Jolt verifier computation.
 The first backend is Spartan + HyperKZG. The backend consumes arbitrary R1CS;
 Jolt-specific protocol assembly happens before backend proving.
 
 This spec owns the wrapper protocol axis:
 
 ```text
-selected verifier computation
+configured verifier computation
   -> R1CS assembly
   -> Spartan + HyperKZG proof
 ```
 
-Field inline and Dory assist provide selected verifier stages. Their protocol
-details are specified in [field-inline-protocol.md](field-inline-protocol.md)
-and [dory-assist-protocol.md](dory-assist-protocol.md). Proof-shape selection
-and stage scheduling are specified in
+Field inline and Dory assist add checks to the configured linear verifier flow.
+Their protocol details are specified in
+[field-inline-protocol.md](field-inline-protocol.md) and
+[dory-assist-protocol.md](dory-assist-protocol.md). Proof-shape validation,
+compile-time verifier config, and wrapper entry-point rules are specified in
 [selected-verifier-integration.md](selected-verifier-integration.md).
 
 ## Scope
@@ -32,11 +33,11 @@ and stage scheduling are specified in
 V1 scope:
 
 ```text
-generic selected-verifier R1CS builder
+generic configured-verifier R1CS builder
 in-circuit transcript replay
 variable-challenge sumcheck R1CS
 claim lowering over constants and variables
-Hyrax R1CS integration when selected verifier includes Dory assist
+Hyrax R1CS integration when the configured verifier includes Dory assist
 Spartan + HyperKZG backend over arbitrary R1CS
 ```
 
@@ -45,7 +46,7 @@ Out of scope:
 ```text
 making wrapper depend on BlindFold internals
 folding / relaxed R1CS / row hiding
-one universal circuit shape for every ProtocolSelection
+one universal circuit shape for every configured verifier mode
 full gnark adapter
 deleting the existing Groth16 transpiler path
 ```
@@ -56,7 +57,7 @@ The wrapper is a compiler from verifier computation to R1CS plus a SNARK
 backend:
 
 ```text
-selected verifier computation
+configured verifier computation
   -> protocol-R1CS builder
   -> transcript constraints
   -> sumcheck verifier constraints
@@ -97,13 +98,13 @@ The wrapper reuses this pattern, not the BlindFold protocol.
 
 ```text
 BlindFold builder:
-  selected stage semantics
+  configured stage semantics
   + committed sumcheck consistency
   + challenges baked as constants
   -> verifier-equation R1CS for the BlindFold proof
 
 Wrapper builder:
-  selected verifier computation
+  configured verifier computation
   + transparent proof/witness data
   + transcript absorbs inside R1CS
   + challenge variables derived inside R1CS
@@ -163,12 +164,12 @@ crates/jolt-wrapper/
         mod.rs
 ```
 
-`jolt-wrapper::r1cs` owns selected-verifier assembly. Reusable component
+`jolt-wrapper::r1cs` owns configured-verifier assembly. Reusable component
 encodings live in the crates that own those protocols.
 
 ## Protocol Builder
 
-`jolt-wrapper::r1cs` owns a generic protocol builder for the selected verifier
+`jolt-wrapper::r1cs` owns a generic protocol builder for the configured verifier
 computation:
 
 ```rust
@@ -181,7 +182,7 @@ pub struct WrapperProtocolBuilder<F, Tr> {
 
 `R1csAssembly` is a generic `jolt-r1cs` type: a builder plus stable public input
 ordering and final matrix/witness export. `WrapperProtocolBuilder` adds
-wrapper-specific transcript state, selected-verifier source maps, and proof
+wrapper-specific transcript state, verifier source maps, and proof
 artifact allocation.
 
 Helper shape:
@@ -207,7 +208,7 @@ impl<F, Tr> WrapperProtocolBuilder<F, Tr> {
 }
 ```
 
-Each selected verifier stage lowers through an R1CS hook:
+Each configured verifier stage lowers through an R1CS hook:
 
 ```rust
 pub trait WrapperR1csStage<F> {
@@ -261,7 +262,7 @@ protocol.rs:
   claim-output stage lowering
 
 constraints/:
-  guest-trace R1CS rows such as field_inline
+  execution-relation constraints such as field_inline field_rows
 ```
 
 `R1csAssembly` should track public inputs explicitly:
@@ -435,7 +436,7 @@ claim formulas:
 opening consistency:
   jolt-openings + jolt-r1cs helpers
 
-field-inline guest rows:
+field-inline field_rows:
   jolt-r1cs::constraints::field_inline
 
 BlindFold verifier checks:
@@ -448,14 +449,13 @@ Dory-assist prefix packing:
   jolt-claims::protocols::dory_assist::packing R1CS helper
 ```
 
-`jolt-wrapper::r1cs::assembly` sequences these helpers according to the selected
-verifier computation exported by `jolt-verifier`.
+`jolt-wrapper::r1cs::assembly` sequences these helpers according to the
+configured verifier flow exported by `jolt-verifier`.
 
 ## Assembly API
 
 ```rust
 pub struct WrapperAssemblyInputs<F, PCS, VC, ZkProof> {
-    pub selection: ProtocolSelection,
     pub preprocessing: JoltVerifierPreprocessing<PCS, VC>,
     pub public_io: JoltDevice,
     pub proof: JoltProof<PCS, VC, ZkProof>,
@@ -469,10 +469,15 @@ pub struct WrapperR1csInstance<F> {
     pub public_inputs: Vec<F>,
 }
 
-pub fn assemble_selected_verifier_r1cs<F, PCS, VC, ZkProof>(
+pub fn assemble_configured_verifier_r1cs<F, PCS, VC, ZkProof>(
     inputs: WrapperAssemblyInputs<F, PCS, VC, ZkProof>,
 ) -> Result<WrapperR1csInstance<F>, WrapperError>;
 ```
+
+Wrapper assembly uses the same compile-time-derived `JOLT_VERIFIER_CONFIG` as
+the configured inner verifier. `WrapperAssemblyInputs` does not contain a
+runtime protocol selector; it validates `proof.protocol` against the configured
+inner verifier before assembling R1CS.
 
 Backend API:
 
@@ -507,17 +512,17 @@ self-contained path.
 
 ## Wrapper Circuit Shape
 
-V1 should use one wrapper circuit shape per selected verifier computation:
+V1 should use one wrapper circuit shape per configured verifier computation:
 
 ```text
 ordinary Jolt wrapper:
-  setup for ordinary selected verifier R1CS
+  setup for ordinary configured verifier R1CS
 
 field-inline Jolt wrapper:
-  setup for FR-active selected verifier R1CS
+  setup for FR-active configured verifier R1CS
 
 Dory-assist Jolt wrapper:
-  setup for Dory-assist selected verifier R1CS
+  setup for Dory-assist configured verifier R1CS
 ```
 
 Do not force one parameterized circuit with runtime inactive rows in v1. The
@@ -538,7 +543,7 @@ current transpiler:
   jolt-core verifier execution -> MleAst -> gnark
 
 modular wrapper:
-  selected verifier computation -> component R1CS helpers -> generic SNARK backend
+  configured verifier computation -> component R1CS helpers -> generic SNARK backend
 ```
 
 The future `snarks/gnark` adapter may reuse lessons from the transpiler, but
@@ -546,21 +551,22 @@ the wrapper should not use `MleAst` as the main verifier IR.
 
 ## ZK Composition
 
-ZK selection is owned by
+ZK configuration is owned by
 [selected-verifier-integration.md](selected-verifier-integration.md). The
-wrapper should be able to prove whichever verifier computation is selected.
+wrapper should be able to prove whichever verifier computation is configured at
+compile time.
 
 Two orderings remain candidates:
 
 ```text
 BlindFold before wrapper:
   Jolt prover produces BlindFold proof
-  selected verifier checks BlindFold proof
-  wrapper proves that selected verifier computation
+  configured verifier checks BlindFold proof
+  wrapper proves that configured verifier computation
 
 Transparent then wrapper then ZK:
   Jolt proof remains transparent
-  wrapper proves transparent selected verifier
+  wrapper proves transparent configured verifier
   ZK is applied around the wrapper path
 ```
 
@@ -594,24 +600,24 @@ Each step should be reviewed before continuing to the next.
      fixed absorption sequences.
 
 5. Add wrapper protocol builder skeleton.
-   - Implement `WrapperProtocolBuilder`, `WrapperClaimSources`, and selected
+   - Implement `WrapperProtocolBuilder`, `WrapperClaimSources`, and configured
      stage hook traits.
    - Review gate: synthetic stage lowers to satisfied R1CS.
 
-6. Assemble base selected verifier R1CS.
+6. Assemble base configured verifier R1CS.
    - Start with a narrow synthetic verifier computation before full Jolt.
    - Review gate: native verifier and wrapper R1CS agree on accept/reject for
      the same fixture.
 
 7. Add Dory-assist and Hyrax hooks.
    - Call `jolt-hyrax::r1cs` and Dory-assist claim/packing helpers when the
-     selected verifier includes Dory assist.
-   - Review gate: synthetic Dory-assist selected computation produces satisfied
+     configured verifier includes Dory assist.
+   - Review gate: synthetic Dory-assist configured computation produces satisfied
      R1CS.
 
 8. Add field-inline wrapper hooks.
-   - Include FR stages when the selected verifier includes field inline.
-   - Review gate: FR-off and FR-on selections produce distinct deterministic
+   - Include FR stages when the configured verifier includes field inline.
+   - Review gate: FR-off and FR-on configs produce distinct deterministic
      R1CS shapes.
 
 9. Implement `snarks/spartan_hyperkzg`.
@@ -619,7 +625,7 @@ Each step should be reviewed before continuing to the next.
    - Keep the backend independent from Jolt protocol types.
    - Review gate: synthetic arbitrary R1CS proof verifies.
 
-10. Add selected-verifier wrapper fixture.
-   - Prove a small selected verifier computation end to end.
+10. Add configured-verifier wrapper fixture.
+   - Prove a small configured verifier computation end to end.
    - Review gate: mutating transcript challenges, public inputs, sumcheck
      claims, or opening values causes wrapper verification failure.

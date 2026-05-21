@@ -1828,9 +1828,9 @@ impl<
         let eval_commitment_gens = PCS::eval_commitment_gens(&self.preprocessing.generators);
         let prover =
             BlindFoldProver::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
-        let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
+        self.transcript.append_label(b"BlindFold");
 
-        prover.prove(&real_instance, &real_witness, &z, &mut blindfold_transcript)
+        prover.prove(&real_instance, &real_witness, &z, &mut self.transcript)
     }
 
     /// Stage 7: HammingWeight + ClaimReduction sumcheck (only log_k_chunk rounds).

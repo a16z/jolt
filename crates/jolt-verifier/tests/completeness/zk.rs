@@ -43,7 +43,7 @@ fn zk_muldiv_blindfold_shape_audit_matches_modular_protocol() {
     let JoltProofClaims::Zk { blindfold_proof } = &case.proof.claims else {
         panic!("ZK core fixture must carry a BlindFold proof");
     };
-    let legacy = blindfold_proof.shape();
+    let proof_shape = blindfold_proof_shape(blindfold_proof);
     let committed_round_rows =
         committed_round_rows(&case.proof.stages.stage1_uni_skip_first_round_proof)
             + committed_round_rows(&case.proof.stages.stage1_sumcheck_proof)
@@ -67,19 +67,28 @@ fn zk_muldiv_blindfold_shape_audit_matches_modular_protocol() {
 
     assert_eq!(committed_round_rows, modular.coefficient_rows);
     assert_eq!(
-        legacy.random_round_commitment_rows,
+        proof_shape.random_round_commitment_rows,
         modular.coefficient_rows
     );
     assert_eq!(committed_output_claim_rows, modular.output_claim_rows);
-    assert_eq!(legacy.random_output_claim_rows, modular.output_claim_rows);
-    assert_eq!(legacy.random_eval_commitments, modular.eval_commitments);
-    assert_eq!(legacy.auxiliary_rows, modular.auxiliary_rows);
-    assert_eq!(legacy.random_auxiliary_rows, modular.auxiliary_rows);
-    assert_eq!(legacy.random_error_rows, modular.error_row_count);
-    assert_eq!(legacy.cross_term_error_rows, modular.error_row_count);
-    assert_eq!(legacy.folded_eval_output_openings, modular.eval_commitments);
     assert_eq!(
-        legacy.folded_eval_blinding_openings,
+        proof_shape.random_output_claim_rows,
+        modular.output_claim_rows
+    );
+    assert_eq!(
+        proof_shape.random_eval_commitments,
+        modular.eval_commitments
+    );
+    assert_eq!(proof_shape.auxiliary_rows, modular.auxiliary_rows);
+    assert_eq!(proof_shape.random_auxiliary_rows, modular.auxiliary_rows);
+    assert_eq!(proof_shape.random_error_rows, modular.error_row_count);
+    assert_eq!(proof_shape.cross_term_error_rows, modular.error_row_count);
+    assert_eq!(
+        proof_shape.folded_eval_output_openings,
+        modular.eval_commitments
+    );
+    assert_eq!(
+        proof_shape.folded_eval_blinding_openings,
         modular.eval_commitments
     );
 
@@ -88,6 +97,37 @@ fn zk_muldiv_blindfold_shape_audit_matches_modular_protocol() {
     assert_eq!(modular.eval_commitments, 1);
     assert_eq!(modular.auxiliary_rows, 33);
     assert_eq!(modular.error_row_count, 64);
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BlindFoldProofShape {
+    auxiliary_rows: usize,
+    random_round_commitment_rows: usize,
+    random_output_claim_rows: usize,
+    random_auxiliary_rows: usize,
+    random_error_rows: usize,
+    random_eval_commitments: usize,
+    cross_term_error_rows: usize,
+    folded_eval_output_openings: usize,
+    folded_eval_blinding_openings: usize,
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+fn blindfold_proof_shape(
+    proof: &jolt_blindfold::BlindFoldProof<Fr, Bn254G1>,
+) -> BlindFoldProofShape {
+    BlindFoldProofShape {
+        auxiliary_rows: proof.auxiliary_row_commitments.len(),
+        random_round_commitment_rows: proof.random_round_commitments.len(),
+        random_output_claim_rows: proof.random_output_claim_row_commitments.len(),
+        random_auxiliary_rows: proof.random_auxiliary_row_commitments.len(),
+        random_error_rows: proof.random_error_row_commitments.len(),
+        random_eval_commitments: proof.random_eval_commitments.len(),
+        cross_term_error_rows: proof.cross_term_error_row_commitments.len(),
+        folded_eval_output_openings: proof.folded_eval_output_openings.len(),
+        folded_eval_blinding_openings: proof.folded_eval_blinding_openings.len(),
+    }
 }
 
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
