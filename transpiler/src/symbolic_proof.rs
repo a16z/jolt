@@ -355,11 +355,18 @@ pub fn symbolize_proof<OutputTranscript: Transcript>(
             "stage5_sumcheck",
         );
 
-        // === Symbolize stage 6 sumcheck proof ===
-        let stage6_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
-            &real_proof.stage6_sumcheck_proof,
+        // === Symbolize stage 6a sumcheck proof ===
+        let stage6a_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
+            &real_proof.stage6a_sumcheck_proof,
             &mut alloc,
-            "stage6_sumcheck",
+            "stage6a_sumcheck",
+        );
+
+        // === Symbolize stage 6b sumcheck proof ===
+        let stage6b_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
+            &real_proof.stage6b_sumcheck_proof,
+            &mut alloc,
+            "stage6b_sumcheck",
         );
 
         // === Symbolize stage 7 sumcheck proof ===
@@ -390,7 +397,8 @@ pub fn symbolize_proof<OutputTranscript: Transcript>(
             stage3_sumcheck_proof: stage3_sumcheck,
             stage4_sumcheck_proof: stage4_sumcheck,
             stage5_sumcheck_proof: stage5_sumcheck,
-            stage6_sumcheck_proof: stage6_sumcheck,
+            stage6a_sumcheck_proof: stage6a_sumcheck,
+            stage6b_sumcheck_proof: stage6b_sumcheck,
             stage7_sumcheck_proof: stage7_sumcheck,
             joint_opening_proof: AstProof::default(),
             untrusted_advice_commitment,
