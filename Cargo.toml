@@ -35,6 +35,7 @@ members = [
   "crates/jolt-hyperkzg",
   "crates/jolt-riscv",
   "crates/jolt-transcript",
+  "crates/jolt-witness",
   "crates/jolt-profiling",
   "crates/jolt-field",
   "jolt-core",
@@ -382,6 +383,8 @@ jolt-openings = { path = "./crates/jolt-openings" }
 jolt-poly = { path = "./crates/jolt-poly" }
 jolt-transcript = { path = "./crates/jolt-transcript" }
 jolt-sumcheck = { path = "./crates/jolt-sumcheck" }
+jolt-r1cs = { path = "./crates/jolt-r1cs" }
+jolt-witness = { path = "./crates/jolt-witness" }
 jolt-riscv = { path = "./crates/jolt-riscv", default-features = false }
 jolt-program = { path = "./crates/jolt-program", default-features = false }
 jolt-lookup-tables = { path = "./crates/jolt-lookup-tables" }

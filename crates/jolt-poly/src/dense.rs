@@ -360,6 +360,62 @@ impl<F: Field> crate::MultilinearBinding<F> for Polynomial<F> {
     }
 }
 
+/// Fixes the first (MSB) variable in a dense evaluation vector.
+#[inline]
+pub fn bind_high_to_low<F: Field>(evals: &mut Vec<F>, scalar: F) {
+    let half = evals.len() / 2;
+
+    #[cfg(feature = "parallel")]
+    {
+        if half >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            let (lo, hi) = evals.split_at_mut(half);
+            lo.par_iter_mut().zip(hi.par_iter()).for_each(|(a, b)| {
+                *a = *a + scalar * (*b - *a);
+            });
+            evals.truncate(half);
+            return;
+        }
+    }
+
+    for i in 0..half {
+        let lo = evals[i];
+        let hi = evals[i + half];
+        evals[i] = lo + scalar * (hi - lo);
+    }
+    evals.truncate(half);
+}
+
+/// Fixes the last (LSB) variable in a dense evaluation vector.
+#[inline]
+pub fn bind_low_to_high<F: Field>(evals: &mut Vec<F>, scalar: F) {
+    let half = evals.len() / 2;
+
+    #[cfg(feature = "parallel")]
+    {
+        if half >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            let coeffs = &*evals;
+            *evals = (0..half)
+                .into_par_iter()
+                .map(|i| {
+                    let lo = coeffs[2 * i];
+                    let hi = coeffs[2 * i + 1];
+                    lo + scalar * (hi - lo)
+                })
+                .collect();
+            return;
+        }
+    }
+
+    for i in 0..half {
+        let lo = evals[2 * i];
+        let hi = evals[2 * i + 1];
+        evals[i] = lo + scalar * (hi - lo);
+    }
+    evals.truncate(half);
+}
+
 #[inline]
 fn assert_matching_dims<F: Field>(a: &Polynomial<F>, b: &Polynomial<F>) -> (usize, usize) {
     assert_eq!(
