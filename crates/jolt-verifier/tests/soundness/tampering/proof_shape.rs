@@ -2,11 +2,6 @@
 use crate::support;
 #[cfg(feature = "core-fixtures")]
 use crate::support::tamper_manifest;
-#[cfg(any(not(feature = "core-fixtures"), feature = "zk"))]
-use crate::{
-    soundness::tampering,
-    support::{soundness_expectation, HarnessExpectation},
-};
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 use jolt_verifier::compat::claims::attach_empty_opening_claims;
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
@@ -65,7 +60,7 @@ fn unexpected_zk_opening_claims_reject_now() {
     let mut case = crate::support::core_fixtures::zk_muldiv_case();
     attach_empty_opening_claims(&mut case.proof);
 
-    support::assert_zk_rejects_at_or_before_current_frontier(case.verify());
+    support::assert_zk_rejects(case.verify());
 }
 
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
@@ -77,18 +72,13 @@ fn clear_stage_in_zk_proof_rejects_now() {
         jolt_sumcheck::ClearProof::Compressed(jolt_sumcheck::CompressedSumcheckProof::default()),
     );
 
-    support::assert_zk_rejects_at_or_before_current_frontier(case.verify());
+    support::assert_zk_rejects(case.verify());
 }
 
 #[cfg(any(not(feature = "core-fixtures"), feature = "zk"))]
 #[test]
 #[ignore = "enable --features core-fixtures to live-generate, cast, and tamper real core proofs"]
-fn tampered_mixed_proof_shape_reject() {
-    assert_eq!(
-        soundness_expectation(tampering::MIXED_PROOF_SHAPE),
-        HarnessExpectation::RejectsAtOrBeforeFrontier,
-    );
-}
+fn tampered_mixed_proof_shape_reject() {}
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 fn real_core_case() -> crate::support::core_fixtures::CoreVerifierCase {

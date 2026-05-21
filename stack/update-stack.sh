@@ -128,6 +128,44 @@ ensure_after() {
   mv "$tmp" "$file"
 }
 
+pathspec_matches_ref() {
+  local ref="$1"
+  local pathspec="$2"
+
+  [[ -n "$(git ls-tree -r --name-only "$ref" -- "$pathspec")" ]]
+}
+
+pathspec_matches_index() {
+  local pathspec="$1"
+
+  [[ -n "$(git ls-files -- "$pathspec")" ]]
+}
+
+restore_owned_paths() {
+  local ref="$1"
+  shift
+
+  local existing_pathspecs=()
+  local missing_pathspecs=()
+  local pathspec
+
+  for pathspec in "$@"; do
+    if pathspec_matches_ref "$ref" "$pathspec" || pathspec_matches_index "$pathspec"; then
+      existing_pathspecs+=("$pathspec")
+    else
+      missing_pathspecs+=("$pathspec")
+    fi
+  done
+
+  if ((${#existing_pathspecs[@]})); then
+    git restore --source "$ref" -- "${existing_pathspecs[@]}"
+  fi
+
+  for pathspec in "${missing_pathspecs[@]}"; do
+    echo "  skipped missing optional path: $pathspec"
+  done
+}
+
 apply_manifest_rules() {
   local order="$1"
 
@@ -197,8 +235,8 @@ while IFS=$'\t' read -r order branch title pathspecs; do
     git switch -c "$branch" "$previous_branch"
   fi
 
-  # shellcheck disable=SC2086
-  git restore --source "$source_ref" -- $pathspecs
+  read -r -a owned_pathspecs <<< "$pathspecs"
+  restore_owned_paths "$source_ref" "${owned_pathspecs[@]}"
   apply_manifest_rules "$order"
 
   if ((cargo_metadata)); then

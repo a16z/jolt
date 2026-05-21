@@ -149,6 +149,7 @@ pub enum SpartanShiftPublic {
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum SpartanProductVirtualizationPublic {
+    UniskipLagrangeWeight(usize),
     LagrangeWeight(usize),
     TauKernel,
 }

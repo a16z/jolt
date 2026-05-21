@@ -1,6 +1,6 @@
 use crate::support::tamper_manifest::{
-    all_targets, checked_now_without_active_coverage, clear_claim_leaf_paths, manifest_paths,
-    proof_field_paths, target_names_are_unique, TamperCoverage,
+    all_targets, clear_claim_leaf_paths, manifest_paths, proof_field_paths,
+    target_names_are_unique, verifier_owned_targets_without_active_coverage, TamperCoverage,
 };
 
 #[test]
@@ -38,15 +38,15 @@ fn tamper_manifest_covers_top_level_proof_fields() {
 }
 
 #[test]
-fn inactive_unlocked_tamper_targets_are_documented() {
-    let undocumented = checked_now_without_active_coverage()
+fn verifier_owned_inactive_tamper_targets_are_documented() {
+    let undocumented = verifier_owned_targets_without_active_coverage()
         .into_iter()
         .filter(|target| target.reason.is_empty())
         .collect::<Vec<_>>();
 
     assert!(
         undocumented.is_empty(),
-        "unlocked tamper targets without active coverage need a reason: {undocumented:?}"
+        "verifier-owned tamper targets without active coverage need a reason: {undocumented:?}"
     );
 }
 

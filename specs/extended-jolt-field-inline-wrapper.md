@@ -130,7 +130,8 @@ jolt-verifier
   explicit verifier stage flow and protocol composition
 
 jolt-r1cs
-  R1CS builder, matrices, guest constraints, claim-expression lowering
+  R1CS builder, matrices, guest constraints, public-input assembly, and
+  claim-expression lowering over constant or variable sources
 
 jolt-sumcheck
   sumcheck proof models, native verifier, generic sumcheck R1CS constraints
@@ -149,7 +150,7 @@ jolt-dory
   Dory PCS proof artifacts and ordinary native Dory verification
 
 jolt-wrapper
-  selected-verifier R1CS assembly and SNARK backend adapters
+  selected-verifier protocol builder and SNARK backend adapters
 
 jolt-hyperkzg
   HyperKZG PCS used by the first wrapper backend
@@ -186,6 +187,47 @@ jolt-claims
 
 `jolt-wrapper` sequences these modules. It does not own the generic Hyrax,
 sumcheck, BlindFold, or claim-lowering logic.
+
+### Wrapper Builder Pattern
+
+BlindFold already establishes the right R1CS assembly pattern: build a protocol
+statement from verifier-stage semantics, allocate the verifier-equation witness,
+lower claim expressions, append generic sumcheck constraints, and connect each
+stage's output claim to the next protocol component.
+
+The wrapper uses the same pattern with a stricter transcript model:
+
+```text
+BlindFold builder:
+  selected stage semantics
+  + committed sumcheck consistency
+  + challenges baked as constants
+  -> verifier-equation R1CS for the BlindFold proof
+
+Wrapper builder:
+  selected verifier computation
+  + transparent proof/witness data
+  + transcript absorbs inside R1CS
+  + challenge variables derived inside R1CS
+  -> full verifier R1CS for Spartan + HyperKZG
+```
+
+The shared abstraction is not BlindFold itself. It is the generic lowering loop:
+
+```text
+for each selected verifier stage:
+  allocate variables for proof data used by the verifier
+  absorb the same proof/public data as native verification
+  derive challenge variables
+  lower input claim expression to R1CS
+  append sumcheck verifier constraints
+  lower output claim expression to R1CS
+  register produced openings, challenges, and public values for later stages
+```
+
+`jolt-wrapper` owns this selected-verifier protocol builder. `jolt-r1cs`,
+`jolt-sumcheck`, `jolt-transcript`, `jolt-hyrax`, and `jolt-claims` provide the
+component-level lowering APIs that the builder calls.
 
 ## Dory Assist
 
@@ -1042,6 +1084,7 @@ The wrapper is a compiler from verifier computation to R1CS plus a SNARK backend
 
 ```text
 selected verifier computation
+  -> protocol-R1CS builder
   -> transcript constraints
   -> sumcheck verifier constraints
   -> claim equation constraints
@@ -1053,6 +1096,12 @@ selected verifier computation
 This makes field inline and Dory assist regular inputs to wrapper assembly.
 They change the selected verifier schedule while the wrapper SNARK backend
 remains generic over R1CS.
+
+The builder is analogous to the BlindFold builder, but it targets the full
+selected verifier instead of the BlindFold verifier-equation subset. It does not
+need Nova folding, relaxed R1CS, row hiding, or randomized satisfying instances.
+It does need in-circuit Fiat-Shamir, because challenges cannot be trusted as
+baked coefficients in a standalone wrapper.
 
 ### `jolt-wrapper` Layout
 
@@ -1069,6 +1118,9 @@ crates/jolt-wrapper/
     r1cs/
       mod.rs
       assembly.rs
+      builder.rs
+      sources.rs
+      stages.rs
       instance.rs
       public_inputs.rs
       witness.rs
@@ -1088,6 +1140,237 @@ The wrapper uses the generic selected-verifier assembly namespace. Reusable
 Hyrax R1CS helpers live in `jolt-hyrax::r1cs`. During bring-up, a wrapper-local
 Hyrax adapter can bridge to that interface; stable ownership stays in
 `jolt-hyrax`.
+
+### Protocol Builder
+
+`jolt-wrapper::r1cs` owns a generic protocol builder for the selected verifier
+computation:
+
+```rust
+pub struct WrapperProtocolBuilder<F, Tr> {
+    pub assembly: jolt_r1cs::R1csAssembly<F>,
+    pub transcript: Tr,
+    pub sources: WrapperClaimSources<F>,
+}
+```
+
+`R1csAssembly` is a generic `jolt-r1cs` type: a builder plus stable
+public-input ordering and final matrix/witness export. `WrapperProtocolBuilder`
+adds wrapper-specific transcript state, selected-verifier source maps, and proof
+artifact allocation.
+
+The builder provides typed helpers:
+
+```rust
+impl<F, Tr> WrapperProtocolBuilder<F, Tr> {
+    pub fn alloc_public(
+        &mut self,
+        id: WrapperPublicInputId,
+        value: F,
+    ) -> Variable;
+
+    pub fn alloc_witness(
+        &mut self,
+        id: WrapperWitnessId,
+        value: F,
+    ) -> Variable;
+
+    pub fn absorb_public(&mut self, variable: Variable);
+    pub fn absorb_witness(&mut self, variable: Variable);
+
+    pub fn challenge(&mut self, id: WrapperChallengeId) -> Variable;
+}
+```
+
+Each selected verifier stage then lowers through a uniform stage hook:
+
+```rust
+pub trait WrapperR1csStage<F> {
+    type Error;
+
+    fn append_r1cs<Tr>(
+        &self,
+        builder: &mut WrapperProtocolBuilder<F, Tr>,
+    ) -> Result<(), Self::Error>;
+}
+```
+
+The stage hook mirrors the native verifier stage. It allocates exactly the
+proof data the native verifier reads, absorbs it into the in-circuit transcript
+in the same order, derives challenge variables, calls component R1CS helpers,
+and registers openings or claims needed by later stages.
+
+`jolt-verifier` exposes the selected verifier computation as typed stage data,
+using the same stage modules that native verification executes:
+
+```rust
+pub struct SelectedVerifierComputation<F> {
+    pub selection: ProtocolSelection,
+    pub stages: Vec<SelectedVerifierStage<F>>,
+}
+
+pub enum SelectedVerifierStage<F> {
+    BaseJolt(BaseJoltStage<F>),
+    FieldInline(FieldInlineStage<F>),
+    DoryAssist(DoryAssistStage<F>),
+    BlindFold(BlindFoldVerifierStage<F>),
+}
+```
+
+Native verification executes the selected stages directly. Wrapper assembly
+iterates the same selected stages and calls their R1CS hooks. This keeps
+protocol composition in `jolt-verifier` while `jolt-wrapper` owns the R1CS
+builder and SNARK handoff.
+
+### Claim Lowering
+
+`jolt-r1cs::lowering` should remain the one claim-lowering API. It needs to
+generalize source values instead of adding a parallel symbolic-lowering module.
+
+Current lowering treats openings as variables and challenges/publics as
+constants. Wrapper lowering needs challenges and some public values to be R1CS
+variables or linear combinations. The adjusted shape is:
+
+```rust
+pub enum SourceValue<F> {
+    Constant(F),
+    LinearCombination(LinearCombination<F>),
+}
+
+pub trait ClaimSources<F> {
+    type Opening;
+    type Challenge;
+    type Public;
+
+    fn opening(&mut self, id: &Self::Opening)
+        -> Result<SourceValue<F>, ClaimLoweringError>;
+    fn challenge(&mut self, id: &Self::Challenge)
+        -> Result<SourceValue<F>, ClaimLoweringError>;
+    fn public(&mut self, id: &Self::Public)
+        -> Result<SourceValue<F>, ClaimLoweringError>;
+}
+```
+
+`lower_claim_expr` keeps the constant fast path: products involving only one
+non-constant factor stay linear, and products with multiple non-constant factors
+allocate multiplication constraints through `R1csBuilder::multiply`.
+
+This gives both modes through one API:
+
+```text
+BlindFold:
+  ChallengeId -> SourceValue::Constant(F)
+  PublicId    -> SourceValue::Constant(F)
+
+Wrapper:
+  ChallengeId -> SourceValue::LinearCombination(LinearCombination::variable(challenge_variable))
+  PublicId    -> SourceValue::LinearCombination(LinearCombination::variable(public_input_variable))
+```
+
+The existing `ClaimSourceTable` remains useful as the constant-source
+implementation. The wrapper provides a `WrapperClaimSources` implementation
+backed by transcript-derived challenge variables, public-input variables,
+opening variables, and stage-local aliases.
+
+### `jolt-r1cs` Protocol Substrate
+
+`jolt-r1cs` provides generic construction machinery, not Jolt-specific stage
+semantics:
+
+```text
+crates/jolt-r1cs/src/
+  assembly.rs
+  builder.rs
+  constraint.rs
+  lowering.rs
+  matrices.rs
+  protocol.rs
+```
+
+Responsibilities:
+
+```text
+assembly.rs:
+  R1csAssembly, public-input registration, witness/matrix export
+
+lowering.rs:
+  SourceValue, ClaimSources, lower_claim_expr, assert_claim_expr_eq
+
+protocol.rs:
+  small generic helpers for claim-input -> component constraints ->
+  claim-output stage lowering
+
+constraints/:
+  guest-trace R1CS rows such as field_inline
+```
+
+The protocol helper is intentionally generic. It does not know about Jolt
+stages, Dory assist, field inline, or wrapper proof formats. Those are supplied
+by `jolt-claims` and sequenced by `jolt-verifier`/`jolt-wrapper`.
+
+### Sumcheck Lowering
+
+`jolt-sumcheck::r1cs` already owns the generic sumcheck verifier equations.
+The wrapper needs one extension: round challenges may be variables, not only
+field constants.
+
+The constant-challenge API stays for BlindFold and tests:
+
+```text
+round.challenge() -> F
+```
+
+The wrapper path adds variable-challenge round inputs:
+
+```rust
+pub struct SumcheckR1csRoundInput {
+    pub degree: usize,
+    pub challenge: Variable,
+}
+```
+
+For each round, the sum over the verifier domain is still a linear equality.
+The evaluation-at-challenge check uses Horner constraints:
+
+```text
+eval = c_d
+eval = eval * r + c_{d-1}
+...
+assert eval == claim_out
+```
+
+The wrapper builder obtains `r` from `jolt-transcript::r1cs`, so the same
+challenge variable is used by transcript binding, claim expressions, and
+sumcheck verifier equations.
+
+### Transcript R1CS
+
+`jolt-transcript` needs an `r1cs` module for in-circuit Fiat-Shamir:
+
+```text
+crates/jolt-transcript/src/r1cs/
+  mod.rs
+  sponge.rs
+  poseidon.rs
+  absorb.rs
+  challenge.rs
+```
+
+The module exposes a transcript gadget with the same sequencing as native
+verification:
+
+```rust
+pub trait R1csTranscript<F> {
+    fn absorb_scalar(&mut self, builder: &mut R1csBuilder<F>, value: Variable);
+    fn absorb_public_scalar(&mut self, builder: &mut R1csBuilder<F>, value: Variable);
+    fn challenge_scalar(&mut self, builder: &mut R1csBuilder<F>) -> Variable;
+}
+```
+
+The initial wrapper target should use the SNARK-friendly transcript already
+selected for recursion, so transcript constraints are practical for
+Spartan + HyperKZG. Native verifier replay and wrapper assembly must share the
+same transcript order and scalar encoding.
 
 ### Assembly API
 
@@ -1134,16 +1417,16 @@ protocol machinery:
 
 ```text
 R1CS builder/matrices:
-  jolt-r1cs
+  jolt-r1cs::builder, jolt-r1cs::assembly, jolt-r1cs matrices
 
 transcript hashing:
-  jolt-transcript R1CS helpers
+  jolt-transcript::r1cs
 
 sumcheck verifier equations:
-  jolt-sumcheck::r1cs
+  jolt-sumcheck::r1cs, including variable-challenge wrapper checks
 
 claim formulas:
-  jolt-claims formulas lowered through jolt-r1cs
+  jolt-claims formulas lowered through jolt-r1cs::lowering
 
 opening consistency:
   jolt-openings + jolt-r1cs helpers
@@ -1152,7 +1435,7 @@ field-inline guest rows:
   jolt-r1cs::constraints::field_inline
 
 BlindFold verifier checks:
-  jolt-blindfold
+  jolt-blindfold, using the same constant-source claim/sumcheck R1CS helpers
 
 Hyrax verifier checks:
   jolt-hyrax::r1cs
@@ -1332,8 +1615,22 @@ The choice depends on the wrapper/BlindFold cost model.
 - Field-inline row helpers append expected FR rows when enabled.
 - `FieldProduct` tests cover FMUL/FINV and batching with existing product
   checks.
-- Claim-expression lowering tests for Dory-assist prefix-packing and wiring
-  formulas.
+- Claim-expression lowering tests cover constants, variables, and mixed
+  products through one `ClaimSources` API.
+- Public-input registration preserves stable ordering in `R1csAssembly`.
+
+### `jolt-sumcheck`
+
+- Existing constant-challenge R1CS tests continue to pass for BlindFold.
+- Variable-challenge R1CS tests cover Horner evaluation and reject bad
+  transcript challenge assignments.
+
+### `jolt-transcript`
+
+- R1CS transcript tests match native transcript challenge outputs for the same
+  scalar absorption sequence.
+- Mutating absorbed proof data changes derived challenge variables and breaks
+  downstream sumcheck constraints.
 
 ### `jolt-verifier`
 
@@ -1355,6 +1652,10 @@ The choice depends on the wrapper/BlindFold cost model.
 ### `jolt-wrapper`
 
 - Wrapper assembly produces deterministic R1CS for a selected computation.
+- Wrapper protocol builder absorbs proof data in the same order as the native
+  selected verifier.
+- Wrapper claim sources bind openings, publics, and transcript-derived
+  challenges to the same variables consumed by claim and sumcheck lowering.
 - Spartan + HyperKZG proves and verifies synthetic wrapper fixtures.
 - Real fixtures cover base Jolt + Dory assist once typed verifier outputs exist.
 - Mutating transcript challenges, sumcheck claims, prefix-packing values, Hyrax
@@ -1370,6 +1671,11 @@ The choice depends on the wrapper/BlindFold cost model.
 5. Extend `jolt-verifier` proof-shape validation around `ProtocolSelection`.
 6. Wire field-inline payloads into stages 3/4/5.
 7. Wire Dory-assist as selected stages after base Jolt stages 1-7.
-8. Add wrapper R1CS assembly for the selected verifier computation.
-9. Implement `jolt-wrapper::snarks::spartan_hyperkzg`.
-10. Add `snarks/gnark` once the R1CS interface is stable.
+8. Extend `jolt-r1cs::lowering` with constant-or-variable `SourceValue`
+   sources and add `R1csAssembly` public-input ordering.
+9. Add variable-challenge APIs to `jolt-sumcheck::r1cs`.
+10. Add `jolt-transcript::r1cs` for in-circuit Fiat-Shamir.
+11. Add wrapper protocol-builder assembly for the selected verifier
+    computation.
+12. Implement `jolt-wrapper::snarks::spartan_hyperkzg`.
+13. Add `snarks/gnark` once the R1CS interface is stable.

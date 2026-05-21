@@ -1,10 +1,5 @@
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use crate::support::{core_fixtures, tamper_manifest};
-#[cfg(any(not(feature = "core-fixtures"), feature = "zk"))]
-use crate::{
-    soundness::tampering,
-    support::{soundness_expectation, HarnessExpectation},
-};
 
 #[test]
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
@@ -78,9 +73,4 @@ fn tampered_joint_opening_proof_reject() {
 #[test]
 #[cfg(any(not(feature = "core-fixtures"), feature = "zk"))]
 #[ignore = "direct commitment tampering fixtures are not wired yet"]
-fn tampered_commitment_order_reject() {
-    assert_eq!(
-        soundness_expectation(tampering::COMMITMENT_ORDER),
-        HarnessExpectation::RejectsAtOrBeforeFrontier,
-    );
-}
+fn tampered_commitment_order_reject() {}

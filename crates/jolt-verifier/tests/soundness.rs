@@ -1,6 +1,6 @@
 #![expect(
     dead_code,
-    reason = "Incremental verifier harness skeleton registers future stage-gated cases."
+    reason = "Verifier compatibility harness registers fixture metadata used by feature-gated cases."
 )]
 
 #[path = "soundness/mod.rs"]

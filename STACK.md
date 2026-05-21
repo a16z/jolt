@@ -27,12 +27,15 @@ truth.
 | 06 | `stack/06-jolt-r1cs-builder-lowering` | `stack/05-jolt-claims-crate` | `jolt-r1cs` builder/lowering/expression integration |
 | 07 | `stack/07-committed-sumcheck-r1cs` | `stack/06-jolt-r1cs-builder-lowering` | committed sumcheck messages, domains, verifier changes, R1CS feature |
 | 08 | `stack/08-jolt-blindfold-crate` | `stack/07-committed-sumcheck-r1cs` | new generic `jolt-blindfold` crate |
-| 09 | `stack/09-jolt-verifier-crate` | `stack/08-jolt-blindfold-crate` | new `jolt-verifier` crate, verifier spec, boundary checks, fixtures |
+| 08a | `stack/08a-jolt-core-blindfold-hardening` | `stack/08-jolt-blindfold-crate` | `jolt-core` BlindFold construction hardening and ZK fixture config |
+| 09 | `stack/09-jolt-verifier-crate` | `stack/08a-jolt-core-blindfold-hardening` | new `jolt-verifier` crate, verifier spec, boundary checks, fixtures |
 | 10 | `stack/10-jolt-prover-spec` | `stack/09-jolt-verifier-crate` | `specs/jolt-prover-model-crate.md` |
 | 11 | `stack/11-extended-jolt-field-inline-wrapper-spec` | `stack/10-jolt-prover-spec` | extended Jolt / field inline / wrapper spec plus supporting recursion reference doc |
 
-The `jolt-verifier` PR carries the current verifier frontier from
-`refactor/audit-prep`.
+The `jolt-core` BlindFold hardening PR carries the compatibility/security patch
+that makes core BlindFold construction match the modular stack before the
+`jolt-verifier` crate consumes it. The `jolt-verifier` PR carries the current
+verifier frontier from `refactor/audit-prep`.
 
 ## Automatic Updates
 
@@ -87,6 +90,8 @@ crate first appears:
   dependencies if it is not already present.
 - PR 08: add `crates/jolt-blindfold` to workspace members and add
   `jolt-blindfold = { path = "./crates/jolt-blindfold" }`.
+- PR 08a: no root manifest changes; this slice patches existing `jolt-core`
+  BlindFold construction and test fixture config before `jolt-verifier`.
 - PR 09: add `crates/jolt-verifier` and `examples/advice-consumer/guest` to
   workspace members and add `jolt-verifier = { path = "./crates/jolt-verifier" }`.
 

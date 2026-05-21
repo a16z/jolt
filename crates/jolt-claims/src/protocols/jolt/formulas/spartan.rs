@@ -389,9 +389,9 @@ pub fn product_uniskip<F>(dimensions: SpartanProductDimensions) -> JoltStageClai
 where
     F: RingCore,
 {
-    let input = product_weight(0) * opening(product_outer_opening())
-        + product_weight(1) * opening(product_should_branch_outer_opening())
-        + product_weight(2) * opening(product_should_jump_outer_opening());
+    let input = product_uniskip_weight(0) * opening(product_outer_opening())
+        + product_uniskip_weight(1) * opening(product_should_branch_outer_opening())
+        + product_uniskip_weight(2) * opening(product_should_jump_outer_opening());
 
     JoltStageClaims::new(
         JoltStageId::SpartanProductVirtualization,
@@ -521,6 +521,15 @@ where
     ))
 }
 
+fn product_uniskip_weight<F>(index: usize) -> JoltExpr<F>
+where
+    F: RingCore,
+{
+    public(JoltPublicId::from(
+        SpartanProductVirtualizationPublic::UniskipLagrangeWeight(index),
+    ))
+}
+
 fn product_tau_kernel<F>() -> JoltExpr<F>
 where
     F: RingCore,
@@ -539,7 +548,8 @@ pub struct SpartanProductPublicValues<F: Field> {
 impl<F: Field> SpartanProductPublicValues<F> {
     pub fn value(&self, id: SpartanProductVirtualizationPublic) -> Option<F> {
         match id {
-            SpartanProductVirtualizationPublic::LagrangeWeight(index) => {
+            SpartanProductVirtualizationPublic::UniskipLagrangeWeight(index)
+            | SpartanProductVirtualizationPublic::LagrangeWeight(index) => {
                 self.lagrange_weights.get(index).copied()
             }
             SpartanProductVirtualizationPublic::TauKernel => Some(self.tau_kernel),
@@ -864,9 +874,9 @@ mod tests {
         assert_eq!(
             claims.required_publics(),
             vec![
-                JoltPublicId::from(SpartanProductVirtualizationPublic::LagrangeWeight(0)),
-                JoltPublicId::from(SpartanProductVirtualizationPublic::LagrangeWeight(1)),
-                JoltPublicId::from(SpartanProductVirtualizationPublic::LagrangeWeight(2)),
+                JoltPublicId::from(SpartanProductVirtualizationPublic::UniskipLagrangeWeight(0)),
+                JoltPublicId::from(SpartanProductVirtualizationPublic::UniskipLagrangeWeight(1)),
+                JoltPublicId::from(SpartanProductVirtualizationPublic::UniskipLagrangeWeight(2)),
             ]
         );
     }

@@ -273,7 +273,7 @@ where
                 |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
                 |id| match id {
                     JoltPublicId::SpartanProductVirtualization(
-                        SpartanProductVirtualizationPublic::LagrangeWeight(index),
+                        SpartanProductVirtualizationPublic::UniskipLagrangeWeight(index),
                     ) => weights
                         .get(*index)
                         .copied()

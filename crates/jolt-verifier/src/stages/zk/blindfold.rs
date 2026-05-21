@@ -259,7 +259,9 @@ where
     })?;
     for (index, value) in product_weights.into_iter().enumerate() {
         values.public(
-            JoltPublicId::from(SpartanProductVirtualizationPublic::LagrangeWeight(index)),
+            JoltPublicId::from(SpartanProductVirtualizationPublic::UniskipLagrangeWeight(
+                index,
+            )),
             value,
         )?;
     }
@@ -334,6 +336,14 @@ where
             .value(SpartanProductVirtualizationPublic::TauKernel)
             .unwrap_or_else(PCS::Field::zero),
     )?;
+    for index in 0..PRODUCT_UNISKIP_DOMAIN_SIZE {
+        values.public(
+            JoltPublicId::from(SpartanProductVirtualizationPublic::LagrangeWeight(index)),
+            product_publics
+                .value(SpartanProductVirtualizationPublic::LagrangeWeight(index))
+                .unwrap_or_else(PCS::Field::zero),
+        )?;
+    }
 
     let instruction_point = input
         .stage2

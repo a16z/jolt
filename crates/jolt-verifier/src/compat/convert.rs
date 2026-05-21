@@ -5,18 +5,21 @@ use crate::compat::{
     claims::{clear_claims_from_legacy, LegacyOpeningClaims},
     ids as verifier_ids,
 };
+#[cfg(feature = "zk")]
+use crate::verifier::BlindFoldProofVerifier;
 use crate::{
     proof::{
         JoltCommitments, JoltProof, JoltProofClaims, JoltRaCommitments, JoltStageProofs,
         TracePolynomialOrder,
     },
-    verifier::BlindFoldProofVerifier,
     VerifierError,
 };
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
+#[cfg(feature = "zk")]
+use jolt_crypto::VectorCommitmentOpening;
 use jolt_crypto::{
     Bn254G1, Bn254GT, Commitment as ModularCommitment, HomomorphicCommitment, Pedersen,
-    VectorCommitment as ModularVectorCommitment, VectorCommitmentOpening,
+    VectorCommitment as ModularVectorCommitment,
 };
 use jolt_dory::{DoryCommitment, DoryProof, DoryScheme};
 use jolt_field::{Field as ModularField, Fr as ModularFr};
@@ -477,6 +480,8 @@ pub struct LegacyBlindFoldProofShape {
     pub random_error_rows: usize,
     pub random_eval_commitments: usize,
     pub cross_term_error_rows: usize,
+    pub folded_eval_output_openings: usize,
+    pub folded_eval_blinding_openings: usize,
 }
 
 #[cfg(feature = "zk")]
@@ -494,6 +499,8 @@ where
             random_error_rows: self.0.random_instance.e_row_commitments.len(),
             random_eval_commitments: self.0.random_instance.eval_commitments.len(),
             cross_term_error_rows: self.0.cross_term_row_commitments.len(),
+            folded_eval_output_openings: self.0.folded_eval_output_openings.len(),
+            folded_eval_blinding_openings: self.0.folded_eval_blinding_openings.len(),
         }
     }
 }
@@ -560,9 +567,6 @@ where
     where
         T: jolt_transcript::Transcript<Challenge = F::VerifierField>,
     {
-        // Core fixtures were generated against core's BlindFold R1CS layout.
-        // The modular verifier call is wired, but imported proofs should only
-        // enter it once the modular protocol has the same row shape.
         if legacy_blindfold_requires_core_r1cs::<F, C>(&self.0, protocol) {
             return Err(VerifierError::Unimplemented);
         }
@@ -612,8 +616,16 @@ where
         error_opening: convert_hyrax_opening::<F>(&proof.e_opening),
         folded_eval_outputs: convert_field_slice(&proof.folded_eval_outputs),
         folded_eval_blindings: convert_field_slice(&proof.folded_eval_blindings),
-        folded_eval_output_openings: Vec::new(),
-        folded_eval_blinding_openings: Vec::new(),
+        folded_eval_output_openings: proof
+            .folded_eval_output_openings
+            .iter()
+            .map(convert_hyrax_opening::<F>)
+            .collect(),
+        folded_eval_blinding_openings: proof
+            .folded_eval_blinding_openings
+            .iter()
+            .map(convert_hyrax_opening::<F>)
+            .collect(),
     }
 }
 

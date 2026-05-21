@@ -9,10 +9,6 @@
 
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 use crate::support;
-use crate::{
-    completeness::cases,
-    support::{completeness_expectation, HarnessExpectation},
-};
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 use jolt_crypto::{Bn254G1, Pedersen};
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
@@ -28,15 +24,13 @@ use jolt_verifier::JoltProofClaims;
 
 #[test]
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
-fn zk_muldiv_core_proof_reaches_frontier() {
-    support::assert_zk_reaches_current_frontier(
-        crate::support::core_fixtures::zk_muldiv_case().verify(),
-    );
+fn zk_muldiv_core_proof_is_accepted() {
+    support::assert_zk_accepts(crate::support::core_fixtures::zk_muldiv_case().verify());
 }
 
 #[test]
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
-fn zk_muldiv_blindfold_shape_audit_documents_core_modular_gap() {
+fn zk_muldiv_blindfold_shape_audit_matches_modular_protocol() {
     let case = crate::support::core_fixtures::zk_muldiv_case();
     let modular = jolt_verifier::audit_zk_blindfold_protocol_shape::<
         Fr,
@@ -79,15 +73,20 @@ fn zk_muldiv_blindfold_shape_audit_documents_core_modular_gap() {
     assert_eq!(committed_output_claim_rows, modular.output_claim_rows);
     assert_eq!(legacy.random_output_claim_rows, modular.output_claim_rows);
     assert_eq!(legacy.random_eval_commitments, modular.eval_commitments);
+    assert_eq!(legacy.auxiliary_rows, modular.auxiliary_rows);
+    assert_eq!(legacy.random_auxiliary_rows, modular.auxiliary_rows);
+    assert_eq!(legacy.random_error_rows, modular.error_row_count);
+    assert_eq!(legacy.cross_term_error_rows, modular.error_row_count);
+    assert_eq!(legacy.folded_eval_output_openings, modular.eval_commitments);
+    assert_eq!(
+        legacy.folded_eval_blinding_openings,
+        modular.eval_commitments
+    );
 
     assert_eq!(modular.coefficient_rows, 222);
     assert_eq!(modular.output_claim_rows, 14);
     assert_eq!(modular.eval_commitments, 1);
-    assert_eq!(legacy.auxiliary_rows, 79);
-    assert_eq!(legacy.random_auxiliary_rows, 79);
     assert_eq!(modular.auxiliary_rows, 33);
-    assert_eq!(legacy.random_error_rows, 128);
-    assert_eq!(legacy.cross_term_error_rows, 128);
     assert_eq!(modular.error_row_count, 64);
 }
 
@@ -119,18 +118,8 @@ where
 #[test]
 #[cfg(any(not(feature = "core-fixtures"), not(feature = "zk")))]
 #[ignore = "enable --features core-fixtures,zk to live-generate and cast this core ZK fixture"]
-fn zk_muldiv_core_proof_reaches_frontier() {
-    assert_eq!(
-        completeness_expectation(cases::ZK_MULDIV_SMALL),
-        HarnessExpectation::FutureCheckpoint,
-    );
-}
+fn zk_muldiv_core_proof_is_accepted() {}
 
 #[test]
 #[ignore = "prefix BlindFold fixture generation is not wired yet"]
-fn zk_stage1_prefix_reaches_frontier() {
-    assert_eq!(
-        completeness_expectation(cases::ZK_STAGE1_PREFIX),
-        HarnessExpectation::FutureCheckpoint,
-    );
-}
+fn zk_stage1_prefix_is_accepted() {}

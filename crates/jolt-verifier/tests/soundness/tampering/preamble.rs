@@ -1,10 +1,5 @@
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use crate::support::{self, tamper_manifest};
-#[cfg(any(not(feature = "core-fixtures"), feature = "zk"))]
-use crate::{
-    soundness::tampering,
-    support::{soundness_expectation, HarnessExpectation},
-};
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 #[test]
@@ -78,7 +73,7 @@ fn oversized_public_input_rejects_now() {
     case.public_io.inputs =
         vec![0; case.preprocessing.program.memory_layout.max_input_size as usize + 1];
 
-    support::assert_rejects_at_or_before_current_frontier(case.verify());
+    support::assert_rejects(case.verify());
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
@@ -88,7 +83,7 @@ fn oversized_public_output_rejects_now() {
     case.public_io.outputs =
         vec![0; case.preprocessing.program.memory_layout.max_output_size as usize + 1];
 
-    support::assert_rejects_at_or_before_current_frontier(case.verify());
+    support::assert_rejects(case.verify());
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
@@ -107,16 +102,7 @@ fn tampered_public_input_bytes_reject() {
 #[cfg(any(not(feature = "core-fixtures"), feature = "zk"))]
 #[test]
 #[ignore = "enable --features core-fixtures in a non-ZK build to live-generate, cast, and tamper real core proofs"]
-fn preamble_tampering_requires_core_fixtures() {
-    assert_eq!(
-        soundness_expectation(tampering::PUBLIC_INPUT_BYTES),
-        HarnessExpectation::RejectsAtOrBeforeFrontier,
-    );
-    assert_eq!(
-        soundness_expectation(tampering::CONFIG_TRACE_LENGTH),
-        HarnessExpectation::RejectsAtOrBeforeFrontier,
-    );
-}
+fn preamble_tampering_requires_core_fixtures() {}
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 fn real_core_case() -> crate::support::core_fixtures::CoreVerifierCase {

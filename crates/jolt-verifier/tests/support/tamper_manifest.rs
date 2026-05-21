@@ -9,7 +9,7 @@ use jolt_verifier::{
 };
 use serde_json::Value;
 
-use crate::support::{current_verifier_frontier, VerifierCheckpoint};
+use crate::support::VerifierPhase;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TamperMode {
@@ -30,7 +30,7 @@ impl TamperMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TamperDisposition {
     CheckedAtStage,
-    CheckedByLaterStage(VerifierCheckpoint),
+    CheckedByLaterStage(VerifierPhase),
     CheckedByFinalOpenings,
     CheckedByZk,
     NotVerifierOwned,
@@ -66,30 +66,17 @@ pub struct TamperTarget {
     pub name: &'static str,
     pub path: &'static str,
     pub mode: TamperMode,
-    pub first_checkpoint: VerifierCheckpoint,
+    pub checked_at: VerifierPhase,
     pub disposition: TamperDisposition,
     pub strategy: MutationStrategy,
     pub coverage: TamperCoverage,
     pub reason: &'static str,
 }
 
-impl TamperTarget {
-    pub fn is_unlocked(self) -> bool {
-        match self.mode {
-            TamperMode::Both => {
-                self.first_checkpoint <= current_verifier_frontier(false)
-                    || self.first_checkpoint <= current_verifier_frontier(true)
-            }
-            TamperMode::Standard => self.first_checkpoint <= current_verifier_frontier(false),
-            TamperMode::Zk => self.first_checkpoint <= current_verifier_frontier(true),
-        }
-    }
-}
-
 const fn checked_standard(
     name: &'static str,
     path: &'static str,
-    first_checkpoint: VerifierCheckpoint,
+    checked_at: VerifierPhase,
     strategy: MutationStrategy,
     coverage: TamperCoverage,
     reason: &'static str,
@@ -98,7 +85,7 @@ const fn checked_standard(
         name,
         path,
         mode: TamperMode::Standard,
-        first_checkpoint,
+        checked_at,
         disposition: TamperDisposition::CheckedAtStage,
         strategy,
         coverage,
@@ -109,7 +96,7 @@ const fn checked_standard(
 const fn checked_both(
     name: &'static str,
     path: &'static str,
-    first_checkpoint: VerifierCheckpoint,
+    checked_at: VerifierPhase,
     strategy: MutationStrategy,
     coverage: TamperCoverage,
     reason: &'static str,
@@ -118,7 +105,7 @@ const fn checked_both(
         name,
         path,
         mode: TamperMode::Both,
-        first_checkpoint,
+        checked_at,
         disposition: TamperDisposition::CheckedAtStage,
         strategy,
         coverage,
@@ -129,7 +116,7 @@ const fn checked_both(
 const fn later_standard(
     name: &'static str,
     path: &'static str,
-    later_checkpoint: VerifierCheckpoint,
+    later_phase: VerifierPhase,
     strategy: MutationStrategy,
     coverage: TamperCoverage,
     reason: &'static str,
@@ -138,8 +125,8 @@ const fn later_standard(
         name,
         path,
         mode: TamperMode::Standard,
-        first_checkpoint: later_checkpoint,
-        disposition: TamperDisposition::CheckedByLaterStage(later_checkpoint),
+        checked_at: later_phase,
+        disposition: TamperDisposition::CheckedByLaterStage(later_phase),
         strategy,
         coverage,
         reason,
@@ -157,7 +144,7 @@ const fn final_opening_standard(
         name,
         path,
         mode: TamperMode::Standard,
-        first_checkpoint: VerifierCheckpoint::Stage8Openings,
+        checked_at: VerifierPhase::Stage8Openings,
         disposition: TamperDisposition::CheckedByFinalOpenings,
         strategy,
         coverage,
@@ -176,7 +163,7 @@ const fn final_opening_zk(
         name,
         path,
         mode: TamperMode::Zk,
-        first_checkpoint: VerifierCheckpoint::Stage8Openings,
+        checked_at: VerifierPhase::Stage8Openings,
         disposition: TamperDisposition::CheckedByFinalOpenings,
         strategy,
         coverage,
@@ -195,7 +182,7 @@ const fn zk_target(
         name,
         path,
         mode: TamperMode::Zk,
-        first_checkpoint: VerifierCheckpoint::Zk,
+        checked_at: VerifierPhase::Zk,
         disposition: TamperDisposition::CheckedByZk,
         strategy,
         coverage,
@@ -207,7 +194,7 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "public_io.inputs",
         "public_io.inputs",
-        VerifierCheckpoint::Stage1,
+        VerifierPhase::Stage1,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "absorbed into the transcript; the first concrete rejection is a stage sumcheck mismatch",
@@ -215,7 +202,7 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "public_io.outputs",
         "public_io.outputs",
-        VerifierCheckpoint::Stage2,
+        VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
         "value-level output mutation should be run on real core fixtures and rejects at RAM output check",
@@ -223,7 +210,7 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "public_io.panic",
         "public_io.panic",
-        VerifierCheckpoint::Stage2,
+        VerifierPhase::Stage2,
         MutationStrategy::FlipBool,
         TamperCoverage::IgnoredUntilFixture,
         "panic materializes as public memory for the RAM output check",
@@ -231,7 +218,7 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
     checked_both(
         "public_io.memory_layout",
         "public_io.memory_layout",
-        VerifierCheckpoint::Preamble,
+        VerifierPhase::Preamble,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "validate_inputs rejects layout mismatch before transcript use",
@@ -239,7 +226,7 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "proof.trace_length",
         "proof.trace_length",
-        VerifierCheckpoint::Preamble,
+        VerifierPhase::Preamble,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "invalid and excessive trace lengths are checked during input validation",
@@ -247,7 +234,7 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "proof.ram_K",
         "proof.ram_K",
-        VerifierCheckpoint::Preamble,
+        VerifierPhase::Preamble,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "invalid RAM domains are checked during input validation",
@@ -255,7 +242,7 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "proof.rw_config",
         "proof.rw_config",
-        VerifierCheckpoint::Stage2,
+        VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "stage 2 consumes RAM read-write phase lengths when slicing batched points",
@@ -263,7 +250,7 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
     later_standard(
         "proof.one_hot_config",
         "proof.one_hot_config",
-        VerifierCheckpoint::Stage6,
+        VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Deferred,
         "one-hot configuration is transcript-bound now but substantively checked by later RA virtualization stages",
@@ -271,7 +258,7 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "proof.trace_polynomial_order",
         "proof.trace_polynomial_order",
-        VerifierCheckpoint::Stage1,
+        VerifierPhase::Stage1,
         MutationStrategy::ChangeEnumVariant,
         TamperCoverage::IgnoredUntilFixture,
         "layout order is transcript-bound; add a real fixture mutation before relying on it",
@@ -279,7 +266,7 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "preprocessing.preprocessing_digest",
         "preprocessing.preprocessing_digest",
-        VerifierCheckpoint::Stage1,
+        VerifierPhase::Stage1,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
         "digest is transcript-bound; real fixture mutation should reject at the first stage",
@@ -287,7 +274,7 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "preprocessing.program.bytecode.entry_address",
         "preprocessing.program.bytecode.entry_address",
-        VerifierCheckpoint::Stage1,
+        VerifierPhase::Stage1,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Deferred,
         "entry address is transcript-bound but needs a real bytecode fixture mutation",
@@ -298,7 +285,7 @@ pub const COMMITMENT_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "proof.commitments.value",
         "proof.commitments[*]",
-        VerifierCheckpoint::Stage1,
+        VerifierPhase::Stage1,
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
         "real core fixture replaces one commitment with another and rejects before acceptance",
@@ -306,7 +293,7 @@ pub const COMMITMENT_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "proof.commitments.missing",
         "proof.commitments",
-        VerifierCheckpoint::Stage1,
+        VerifierPhase::Stage1,
         MutationStrategy::RemoveItem,
         TamperCoverage::Active,
         "real core fixture removes one commitment and rejects before acceptance",
@@ -314,7 +301,7 @@ pub const COMMITMENT_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "proof.commitments.extra",
         "proof.commitments",
-        VerifierCheckpoint::Stage1,
+        VerifierPhase::Stage1,
         MutationStrategy::DuplicateItem,
         TamperCoverage::Active,
         "real core fixture duplicates one commitment and rejects before acceptance",
@@ -322,7 +309,7 @@ pub const COMMITMENT_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "proof.commitments.order",
         "proof.commitments",
-        VerifierCheckpoint::Stage1,
+        VerifierPhase::Stage1,
         MutationStrategy::SwapOrder,
         TamperCoverage::Active,
         "real core fixture swaps commitments and rejects before acceptance",
@@ -330,7 +317,7 @@ pub const COMMITMENT_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "proof.untrusted_advice_commitment",
         "proof.untrusted_advice_commitment",
-        VerifierCheckpoint::Stage1,
+        VerifierPhase::Stage1,
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Deferred,
         "advice commitment coverage belongs with advice fixtures",
@@ -338,7 +325,7 @@ pub const COMMITMENT_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "trusted_advice_commitment",
         "trusted_advice_commitment",
-        VerifierCheckpoint::Stage1,
+        VerifierPhase::Stage1,
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Deferred,
         "trusted advice commitment coverage belongs with advice fixtures",
@@ -356,7 +343,7 @@ pub const PROOF_SHAPE_TARGETS: &[TamperTarget] = &[
     checked_both(
         "proof.stages.clear_vs_committed",
         "proof.stages.*",
-        VerifierCheckpoint::Preamble,
+        VerifierPhase::Preamble,
         MutationStrategy::ReplaceModePayload,
         TamperCoverage::Active,
         "validate_proof_consistency rejects mixed clear/committed mode",
@@ -364,7 +351,7 @@ pub const PROOF_SHAPE_TARGETS: &[TamperTarget] = &[
     checked_both(
         "proof.claims.mode_payload",
         "proof.claims",
-        VerifierCheckpoint::Preamble,
+        VerifierPhase::Preamble,
         MutationStrategy::ReplaceModePayload,
         TamperCoverage::Active,
         "validate_proof_consistency rejects clear/ZK payload mismatches",
@@ -375,7 +362,7 @@ pub const STAGE1_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage1.uni_skip.round_polynomial",
         "proof.stages.stage1_uni_skip_first_round_proof.round_polynomials[*]",
-        VerifierCheckpoint::Stage1,
+        VerifierPhase::Stage1,
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
         "core-fixture test mutates every full uni-skip round polynomial",
@@ -383,7 +370,7 @@ pub const STAGE1_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage1.uni_skip.round_count.missing",
         "proof.stages.stage1_uni_skip_first_round_proof.round_polynomials",
-        VerifierCheckpoint::Stage1,
+        VerifierPhase::Stage1,
         MutationStrategy::TruncateVector,
         TamperCoverage::Active,
         "core-fixture test removes a uni-skip round",
@@ -391,7 +378,7 @@ pub const STAGE1_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage1.uni_skip.round_count.extra",
         "proof.stages.stage1_uni_skip_first_round_proof.round_polynomials",
-        VerifierCheckpoint::Stage1,
+        VerifierPhase::Stage1,
         MutationStrategy::ExtendVector,
         TamperCoverage::Active,
         "core-fixture test appends a uni-skip round",
@@ -399,7 +386,7 @@ pub const STAGE1_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage1.remainder.round_polynomial",
         "proof.stages.stage1_sumcheck_proof.round_polynomials[*]",
-        VerifierCheckpoint::Stage1,
+        VerifierPhase::Stage1,
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
         "core-fixture test mutates every compressed remainder round polynomial",
@@ -407,7 +394,7 @@ pub const STAGE1_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage1.remainder.round_count.missing",
         "proof.stages.stage1_sumcheck_proof.round_polynomials",
-        VerifierCheckpoint::Stage1,
+        VerifierPhase::Stage1,
         MutationStrategy::TruncateVector,
         TamperCoverage::Active,
         "core-fixture test removes a remainder round",
@@ -415,7 +402,7 @@ pub const STAGE1_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage1.remainder.round_count.extra",
         "proof.stages.stage1_sumcheck_proof.round_polynomials",
-        VerifierCheckpoint::Stage1,
+        VerifierPhase::Stage1,
         MutationStrategy::ExtendVector,
         TamperCoverage::Active,
         "core-fixture test appends a remainder round",
@@ -423,7 +410,7 @@ pub const STAGE1_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage1.claims.uniskip_output_claim",
         "claims.stage1.uniskip_output_claim",
-        VerifierCheckpoint::Stage1,
+        VerifierPhase::Stage1,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets the Spartan outer uni-skip opening claim",
@@ -431,7 +418,7 @@ pub const STAGE1_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage1.claims.outer",
         "claims.stage1.outer.*",
-        VerifierCheckpoint::Stage1,
+        VerifierPhase::Stage1,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets every Spartan outer variable opening claim",
@@ -442,7 +429,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage2.product_uniskip.round_polynomial",
         "proof.stages.stage2_uni_skip_first_round_proof.round_polynomials[*]",
-        VerifierCheckpoint::Stage2,
+        VerifierPhase::Stage2,
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
         "core-fixture test mutates every product uni-skip round polynomial",
@@ -450,7 +437,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage2.product_uniskip.round_count.missing",
         "proof.stages.stage2_uni_skip_first_round_proof.round_polynomials",
-        VerifierCheckpoint::Stage2,
+        VerifierPhase::Stage2,
         MutationStrategy::TruncateVector,
         TamperCoverage::Active,
         "core-fixture test removes a product uni-skip round",
@@ -458,7 +445,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage2.product_uniskip.round_count.extra",
         "proof.stages.stage2_uni_skip_first_round_proof.round_polynomials",
-        VerifierCheckpoint::Stage2,
+        VerifierPhase::Stage2,
         MutationStrategy::ExtendVector,
         TamperCoverage::Active,
         "core-fixture test appends a product uni-skip round",
@@ -466,7 +453,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage2.batch.round_polynomial",
         "proof.stages.stage2_sumcheck_proof.round_polynomials[*]",
-        VerifierCheckpoint::Stage2,
+        VerifierPhase::Stage2,
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
         "core-fixture test mutates every compressed Stage 2 batch round polynomial",
@@ -474,7 +461,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage2.batch.round_count.missing",
         "proof.stages.stage2_sumcheck_proof.round_polynomials",
-        VerifierCheckpoint::Stage2,
+        VerifierPhase::Stage2,
         MutationStrategy::TruncateVector,
         TamperCoverage::Active,
         "core-fixture test removes a Stage 2 batch round",
@@ -482,7 +469,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage2.batch.round_count.extra",
         "proof.stages.stage2_sumcheck_proof.round_polynomials",
-        VerifierCheckpoint::Stage2,
+        VerifierPhase::Stage2,
         MutationStrategy::ExtendVector,
         TamperCoverage::Active,
         "core-fixture test appends a Stage 2 batch round",
@@ -490,7 +477,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage2.claims.product_uniskip_output_claim",
         "claims.stage2.product_uniskip_output_claim",
-        VerifierCheckpoint::Stage2,
+        VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets the product uni-skip opening claim",
@@ -498,7 +485,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage2.claims.batch_outputs.ram_read_write",
         "claims.stage2.batch_outputs.ram_read_write.*",
-        VerifierCheckpoint::Stage2,
+        VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets each RAM read-write output claim",
@@ -506,7 +493,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage2.claims.batch_outputs.product_remainder.checked",
         "claims.stage2.batch_outputs.product_remainder.{left_instruction_input,right_instruction_input,jump_flag,lookup_output,branch_flag,next_is_noop}",
-        VerifierCheckpoint::Stage2,
+        VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets every product remainder output used by the Stage 2 formula",
@@ -514,7 +501,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage2.claims.batch_outputs.product_remainder.write_lookup_output_to_rd",
         "claims.stage2.batch_outputs.product_remainder.write_lookup_output_to_rd",
-        VerifierCheckpoint::Stage6,
+        VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "Stage 6 bytecode read-RAF consumes this Stage 2 pass-through claim",
@@ -522,7 +509,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage2.claims.batch_outputs.product_remainder.virtual_instruction",
         "claims.stage2.batch_outputs.product_remainder.virtual_instruction",
-        VerifierCheckpoint::Stage6,
+        VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "Stage 6 bytecode read-RAF consumes this Stage 2 pass-through claim",
@@ -530,7 +517,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage2.claims.batch_outputs.instruction_claim_reduction",
         "claims.stage2.batch_outputs.instruction_claim_reduction.*",
-        VerifierCheckpoint::Stage2,
+        VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets each instruction claim-reduction output or its product alias",
@@ -538,7 +525,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage2.claims.batch_outputs.ram_raf_evaluation",
         "claims.stage2.batch_outputs.ram_raf_evaluation",
-        VerifierCheckpoint::Stage2,
+        VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets the RAM RAF evaluation output claim",
@@ -546,7 +533,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage2.claims.batch_outputs.ram_output_check",
         "claims.stage2.batch_outputs.ram_output_check",
-        VerifierCheckpoint::Stage2,
+        VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets the RAM output-check claim",
@@ -557,7 +544,7 @@ pub const STAGE3_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage3.batch.round_polynomial",
         "proof.stages.stage3_sumcheck_proof.round_polynomials[*]",
-        VerifierCheckpoint::Stage3,
+        VerifierPhase::Stage3,
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
         "core-fixture test mutates every compressed Stage 3 batch round polynomial",
@@ -565,7 +552,7 @@ pub const STAGE3_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage3.batch.round_count.missing",
         "proof.stages.stage3_sumcheck_proof.round_polynomials",
-        VerifierCheckpoint::Stage3,
+        VerifierPhase::Stage3,
         MutationStrategy::TruncateVector,
         TamperCoverage::Active,
         "core-fixture test removes a Stage 3 batch round",
@@ -573,7 +560,7 @@ pub const STAGE3_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage3.batch.round_count.extra",
         "proof.stages.stage3_sumcheck_proof.round_polynomials",
-        VerifierCheckpoint::Stage3,
+        VerifierPhase::Stage3,
         MutationStrategy::ExtendVector,
         TamperCoverage::Active,
         "core-fixture test appends a Stage 3 batch round",
@@ -581,7 +568,7 @@ pub const STAGE3_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage3.claims.shift",
         "claims.stage3.shift.*",
-        VerifierCheckpoint::Stage3,
+        VerifierPhase::Stage3,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets each Spartan shift output claim",
@@ -589,7 +576,7 @@ pub const STAGE3_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage3.claims.instruction_input",
         "claims.stage3.instruction_input.*",
-        VerifierCheckpoint::Stage3,
+        VerifierPhase::Stage3,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets each instruction-input output claim",
@@ -597,7 +584,7 @@ pub const STAGE3_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage3.claims.registers_claim_reduction",
         "claims.stage3.registers_claim_reduction.*",
-        VerifierCheckpoint::Stage3,
+        VerifierPhase::Stage3,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets each register claim-reduction output claim",
@@ -608,7 +595,7 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage4.batch.round_polynomial",
         "proof.stages.stage4_sumcheck_proof.round_polynomials[*]",
-        VerifierCheckpoint::Stage4,
+        VerifierPhase::Stage4,
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
         "core-fixture test mutates every compressed Stage 4 batch round polynomial",
@@ -616,7 +603,7 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage4.batch.round_count.missing",
         "proof.stages.stage4_sumcheck_proof.round_polynomials",
-        VerifierCheckpoint::Stage4,
+        VerifierPhase::Stage4,
         MutationStrategy::TruncateVector,
         TamperCoverage::Active,
         "core-fixture test removes a Stage 4 batch round",
@@ -624,7 +611,7 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage4.batch.round_count.extra",
         "proof.stages.stage4_sumcheck_proof.round_polynomials",
-        VerifierCheckpoint::Stage4,
+        VerifierPhase::Stage4,
         MutationStrategy::ExtendVector,
         TamperCoverage::Active,
         "core-fixture test appends a Stage 4 batch round",
@@ -632,7 +619,7 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage4.claims.registers_read_write",
         "claims.stage4.registers_read_write.*",
-        VerifierCheckpoint::Stage4,
+        VerifierPhase::Stage4,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets each register read-write output claim",
@@ -640,7 +627,7 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage4.claims.ram_val_check",
         "claims.stage4.ram_val_check.*",
-        VerifierCheckpoint::Stage4,
+        VerifierPhase::Stage4,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets each RAM value-check output claim",
@@ -648,7 +635,7 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage4.claims.advice.untrusted",
         "claims.stage4.advice.untrusted",
-        VerifierCheckpoint::Stage4,
+        VerifierPhase::Stage4,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "advice fixture test offsets the untrusted advice opening consumed by RAM value check",
@@ -656,7 +643,7 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage4.claims.advice.trusted",
         "claims.stage4.advice.trusted",
-        VerifierCheckpoint::Stage4,
+        VerifierPhase::Stage4,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "advice fixture test offsets the trusted advice opening consumed by RAM value check",
@@ -667,7 +654,7 @@ pub const STAGE5_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage5.batch.round_polynomial",
         "proof.stages.stage5_sumcheck_proof.round_polynomials[*]",
-        VerifierCheckpoint::Stage5,
+        VerifierPhase::Stage5,
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
         "core-fixture test mutates every compressed Stage 5 batch round polynomial",
@@ -675,7 +662,7 @@ pub const STAGE5_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage5.batch.round_count.missing",
         "proof.stages.stage5_sumcheck_proof.round_polynomials",
-        VerifierCheckpoint::Stage5,
+        VerifierPhase::Stage5,
         MutationStrategy::TruncateVector,
         TamperCoverage::Active,
         "core-fixture test removes a Stage 5 batch round",
@@ -683,7 +670,7 @@ pub const STAGE5_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage5.batch.round_count.extra",
         "proof.stages.stage5_sumcheck_proof.round_polynomials",
-        VerifierCheckpoint::Stage5,
+        VerifierPhase::Stage5,
         MutationStrategy::ExtendVector,
         TamperCoverage::Active,
         "core-fixture test appends a Stage 5 batch round",
@@ -691,7 +678,7 @@ pub const STAGE5_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage5.claims.instruction_read_raf.lookup_table_flags",
         "claims.stage5.instruction_read_raf.lookup_table_flags",
-        VerifierCheckpoint::Stage5,
+        VerifierPhase::Stage5,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets each instruction read-RAF lookup-table flag claim",
@@ -699,7 +686,7 @@ pub const STAGE5_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage5.claims.instruction_read_raf.instruction_ra",
         "claims.stage5.instruction_read_raf.instruction_ra",
-        VerifierCheckpoint::Stage5,
+        VerifierPhase::Stage5,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets each instruction read-RAF virtual RA claim",
@@ -707,7 +694,7 @@ pub const STAGE5_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage5.claims.instruction_read_raf.instruction_raf_flag",
         "claims.stage5.instruction_read_raf.instruction_raf_flag",
-        VerifierCheckpoint::Stage5,
+        VerifierPhase::Stage5,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets the instruction read-RAF flag claim",
@@ -715,7 +702,7 @@ pub const STAGE5_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage5.claims.ram_ra_claim_reduction",
         "claims.stage5.ram_ra_claim_reduction.ram_ra",
-        VerifierCheckpoint::Stage5,
+        VerifierPhase::Stage5,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets the RAM RA claim-reduction output claim",
@@ -723,7 +710,7 @@ pub const STAGE5_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage5.claims.registers_val_evaluation",
         "claims.stage5.registers_val_evaluation.*",
-        VerifierCheckpoint::Stage5,
+        VerifierPhase::Stage5,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets each register value-evaluation output claim",
@@ -734,7 +721,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage6.batch.round_polynomial",
         "proof.stages.stage6_sumcheck_proof.round_polynomials[*]",
-        VerifierCheckpoint::Stage6,
+        VerifierPhase::Stage6,
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
         "core-fixture test mutates every compressed Stage 6 batch round polynomial",
@@ -742,7 +729,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage6.batch.round_count.missing",
         "proof.stages.stage6_sumcheck_proof.round_polynomials",
-        VerifierCheckpoint::Stage6,
+        VerifierPhase::Stage6,
         MutationStrategy::TruncateVector,
         TamperCoverage::Active,
         "core-fixture test removes a Stage 6 batch round",
@@ -750,7 +737,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage6.batch.round_count.extra",
         "proof.stages.stage6_sumcheck_proof.round_polynomials",
-        VerifierCheckpoint::Stage6,
+        VerifierPhase::Stage6,
         MutationStrategy::ExtendVector,
         TamperCoverage::Active,
         "core-fixture test appends a Stage 6 batch round",
@@ -758,7 +745,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage6.claims.bytecode_read_raf.bytecode_ra",
         "claims.stage6.bytecode_read_raf.bytecode_ra",
-        VerifierCheckpoint::Stage6,
+        VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets every bytecode read-RAF output claim",
@@ -766,7 +753,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage6.claims.booleanity.instruction_ra",
         "claims.stage6.booleanity.instruction_ra",
-        VerifierCheckpoint::Stage6,
+        VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets every Booleanity instruction RA output claim",
@@ -774,7 +761,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage6.claims.booleanity.bytecode_ra",
         "claims.stage6.booleanity.bytecode_ra",
-        VerifierCheckpoint::Stage6,
+        VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets every Booleanity bytecode RA output claim",
@@ -782,7 +769,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage6.claims.booleanity.ram_ra",
         "claims.stage6.booleanity.ram_ra",
-        VerifierCheckpoint::Stage6,
+        VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets every Booleanity RAM RA output claim",
@@ -790,7 +777,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage6.claims.ram_hamming_booleanity.ram_hamming_weight",
         "claims.stage6.ram_hamming_booleanity.ram_hamming_weight",
-        VerifierCheckpoint::Stage6,
+        VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets the RAM hamming Booleanity output claim",
@@ -798,7 +785,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage6.claims.ram_ra_virtualization.ram_ra",
         "claims.stage6.ram_ra_virtualization.ram_ra",
-        VerifierCheckpoint::Stage6,
+        VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets every RAM RA virtualization output claim",
@@ -806,7 +793,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage6.claims.instruction_ra_virtualization.committed_instruction_ra",
         "claims.stage6.instruction_ra_virtualization.committed_instruction_ra",
-        VerifierCheckpoint::Stage6,
+        VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets every instruction RA virtualization output claim",
@@ -814,7 +801,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage6.claims.inc_claim_reduction.ram_inc",
         "claims.stage6.inc_claim_reduction.ram_inc",
-        VerifierCheckpoint::Stage6,
+        VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets the RAM increment reduction output claim",
@@ -822,7 +809,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage6.claims.inc_claim_reduction.rd_inc",
         "claims.stage6.inc_claim_reduction.rd_inc",
-        VerifierCheckpoint::Stage6,
+        VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets the register increment reduction output claim",
@@ -830,7 +817,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage6.claims.advice_cycle_phase.trusted.opening_claim",
         "claims.stage6.advice_cycle_phase.trusted.opening_claim",
-        VerifierCheckpoint::Stage6,
+        VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "advice fixture test offsets the trusted advice cycle-phase output claim",
@@ -838,7 +825,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage6.claims.advice_cycle_phase.untrusted.opening_claim",
         "claims.stage6.advice_cycle_phase.untrusted.opening_claim",
-        VerifierCheckpoint::Stage6,
+        VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "advice fixture test offsets the untrusted advice cycle-phase output claim",
@@ -849,7 +836,7 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage7.batch.round_polynomial",
         "proof.stages.stage7_sumcheck_proof.round_polynomials[*]",
-        VerifierCheckpoint::Stage7,
+        VerifierPhase::Stage7,
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
         "core-fixture test mutates every compressed Stage 7 batch round polynomial",
@@ -857,7 +844,7 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage7.batch.round_count.missing",
         "proof.stages.stage7_sumcheck_proof.round_polynomials",
-        VerifierCheckpoint::Stage7,
+        VerifierPhase::Stage7,
         MutationStrategy::TruncateVector,
         TamperCoverage::Active,
         "core-fixture test removes a Stage 7 batch round",
@@ -865,7 +852,7 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage7.batch.round_count.extra",
         "proof.stages.stage7_sumcheck_proof.round_polynomials",
-        VerifierCheckpoint::Stage7,
+        VerifierPhase::Stage7,
         MutationStrategy::ExtendVector,
         TamperCoverage::Active,
         "core-fixture test appends a Stage 7 batch round",
@@ -873,7 +860,7 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage7.claims.hamming_weight_claim_reduction.instruction_ra",
         "claims.stage7.hamming_weight_claim_reduction.instruction_ra",
-        VerifierCheckpoint::Stage7,
+        VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets every HammingWeight instruction RA output claim",
@@ -881,7 +868,7 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage7.claims.hamming_weight_claim_reduction.bytecode_ra",
         "claims.stage7.hamming_weight_claim_reduction.bytecode_ra",
-        VerifierCheckpoint::Stage7,
+        VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets every HammingWeight bytecode RA output claim",
@@ -889,7 +876,7 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage7.claims.hamming_weight_claim_reduction.ram_ra",
         "claims.stage7.hamming_weight_claim_reduction.ram_ra",
-        VerifierCheckpoint::Stage7,
+        VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets every HammingWeight RAM RA output claim",
@@ -897,7 +884,7 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage7.claims.advice_address_phase.trusted.opening_claim",
         "claims.stage7.advice_address_phase.trusted.opening_claim",
-        VerifierCheckpoint::Stage7,
+        VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "advice fixture test offsets the trusted advice address-phase output claim",
@@ -905,7 +892,7 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "stage7.claims.advice_address_phase.untrusted.opening_claim",
         "claims.stage7.advice_address_phase.untrusted.opening_claim",
-        VerifierCheckpoint::Stage7,
+        VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "advice fixture test offsets the untrusted advice address-phase output claim",
@@ -938,8 +925,8 @@ pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
         "zk.blindfold_proof",
         "proof.claims.Zk.blindfold_proof",
         MutationStrategy::ReplaceProofPayload,
-        TamperCoverage::Deferred,
-        "BlindFold verification is not wired yet",
+        TamperCoverage::Active,
+        "real core ZK fixture mutates the imported BlindFold proof payload after compat conversion",
     ),
     zk_target(
         "zk.vector_commitment_setup",
@@ -1031,12 +1018,11 @@ pub fn proof_field_paths() -> &'static [&'static str] {
     ]
 }
 
-pub fn checked_now_without_active_coverage() -> Vec<TamperTarget> {
+pub fn verifier_owned_targets_without_active_coverage() -> Vec<TamperTarget> {
     all_targets()
         .into_iter()
         .filter(|target| {
-            target.is_unlocked()
-                && target.disposition == TamperDisposition::CheckedAtStage
+            target.disposition == TamperDisposition::CheckedAtStage
                 && target.coverage != TamperCoverage::Active
         })
         .collect()
@@ -1059,7 +1045,7 @@ pub fn assert_core_tamper_rejects(
     assert_manifest_target_is_active(target);
     let mut case = base.clone();
     mutate(&mut case);
-    crate::support::assert_rejects_at_or_before_current_frontier(case.verify());
+    crate::support::assert_rejects(case.verify());
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
@@ -1081,7 +1067,7 @@ pub fn assert_precompat_core_tamper_rejects(
         core_rejected,
         "core verifier accepted pre-compat tampered target {target:?}"
     );
-    crate::support::assert_rejects_at_or_before_current_frontier(case.verify_after_compat());
+    crate::support::assert_rejects(case.verify_after_compat());
 }
 
 fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
