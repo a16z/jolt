@@ -10,10 +10,18 @@ repository = "https://github.com/a16z/jolt"
 [features]
 default = []
 elliptic-curve = []
-host = ["dep:tracer", "dep:inventory", "dep:num-bigint"]
+host = [
+  "dep:tracer",
+  "dep:inventory",
+  "dep:num-bigint",
+  "dep:jolt-program",
+  "dep:jolt-riscv",
+]
 
 [dependencies]
 jolt-platform = { workspace = true }
+jolt-program = { workspace = true, optional = true }
+jolt-riscv = { workspace = true, optional = true }
 tracer = { workspace = true, optional = true, features = ["std"] }
 inventory = { workspace = true, optional = true }
 num-bigint = { workspace = true, optional = true }

@@ -3,37 +3,36 @@ use std::collections::VecDeque;
 use ark_ff::{BigInt, Field};
 use ark_grumpkin::{Fq, Fr};
 use jolt_inlines_sdk::host::{
-    Cpu, FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
-    VirtualRegisterGuard,
+    Cpu, ExpandedInstructionSequence, ExpansionError, FormatInline, InlineBuilderExt,
+    InlineExpansionBuilder, InlineOp, InlineOperands, InlineRegister,
 };
 struct GrumpkinDivAdv {
-    asm: InstrAssembler,
-    vr: VirtualRegisterGuard, // only one register needed
-    operands: FormatInline,
-    is_base_field: bool, // true if base field (Fq), false if scalar field (Fr)
+    asm: InlineExpansionBuilder,
+    vr: InlineRegister, // only one register needed
+    operands: InlineOperands,
 }
 
 impl GrumpkinDivAdv {
-    fn new(asm: InstrAssembler, operands: FormatInline, is_base_field: bool) -> Self {
-        let vr = asm.allocator.allocate_for_inline();
-        GrumpkinDivAdv {
-            asm,
-            vr,
-            operands,
-            is_base_field,
-        }
+    fn new(
+        mut asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+        _is_base_field: bool,
+    ) -> Result<Self, ExpansionError> {
+        let vr = asm.allocate_for_inline()?;
+        Ok(GrumpkinDivAdv { asm, vr, operands })
     }
+
     // Custom advice function
-    fn advice(self, cpu: &mut Cpu) -> VecDeque<u64> {
+    fn advice(operands: FormatInline, is_base_field: bool, cpu: &mut Cpu) -> VecDeque<u64> {
         // read memory directly to get inputs
-        let a_addr = cpu.x[self.operands.rs1 as usize] as u64;
+        let a_addr = cpu.x[operands.rs1 as usize] as u64;
         let a = [
             cpu.mmu.load_doubleword(a_addr).unwrap().0,
             cpu.mmu.load_doubleword(a_addr + 8).unwrap().0,
             cpu.mmu.load_doubleword(a_addr + 16).unwrap().0,
             cpu.mmu.load_doubleword(a_addr + 24).unwrap().0,
         ];
-        let b_addr = cpu.x[self.operands.rs2 as usize] as u64;
+        let b_addr = cpu.x[operands.rs2 as usize] as u64;
         let b = [
             cpu.mmu.load_doubleword(b_addr).unwrap().0,
             cpu.mmu.load_doubleword(b_addr + 8).unwrap().0,
@@ -42,7 +41,7 @@ impl GrumpkinDivAdv {
         ];
         // compute c = a / b and return limbs as VecDeque
         VecDeque::from(
-            if self.is_base_field {
+            if is_base_field {
                 let arr_to_fq = |a: &[u64; 4]| Fq::new_unchecked(BigInt(*a));
                 (arr_to_fq(&b)
                     .inverse()
@@ -62,10 +61,10 @@ impl GrumpkinDivAdv {
         )
     }
     // inline sequence function
-    fn inline_sequence(mut self) -> Vec<Instruction> {
+    fn inline_sequence(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         self.asm.emit_advice_stores(*self.vr, self.operands.rs3, 4);
-        drop(self.vr);
-        self.asm.finalize_inline()
+        self.asm.release(self.vr);
+        self.asm.finalize()
     }
 }
 
@@ -77,16 +76,15 @@ impl InlineOp for GrumpkinDivQAdv {
     const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;
     const NAME: &'static str = crate::GRUMPKIN_DIVQ_ADV_NAME;
 
-    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-        GrumpkinDivAdv::new(asm, operands, true).inline_sequence()
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        GrumpkinDivAdv::new(asm, operands, true)?.inline_sequence()
     }
 
-    fn build_advice(
-        asm: InstrAssembler,
-        operands: FormatInline,
-        cpu: &mut Cpu,
-    ) -> Option<VecDeque<u64>> {
-        Some(GrumpkinDivAdv::new(asm, operands, true).advice(cpu))
+    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
+        Some(GrumpkinDivAdv::advice(operands, true, cpu))
     }
 }
 
@@ -98,15 +96,14 @@ impl InlineOp for GrumpkinDivRAdv {
     const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;
     const NAME: &'static str = crate::GRUMPKIN_DIVR_ADV_NAME;
 
-    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-        GrumpkinDivAdv::new(asm, operands, false).inline_sequence()
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        GrumpkinDivAdv::new(asm, operands, false)?.inline_sequence()
     }
 
-    fn build_advice(
-        asm: InstrAssembler,
-        operands: FormatInline,
-        cpu: &mut Cpu,
-    ) -> Option<VecDeque<u64>> {
-        Some(GrumpkinDivAdv::new(asm, operands, false).advice(cpu))
+    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
+        Some(GrumpkinDivAdv::advice(operands, false, cpu))
     }
 }

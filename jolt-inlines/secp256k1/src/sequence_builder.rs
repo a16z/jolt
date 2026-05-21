@@ -1,4 +1,3 @@
-use std::array;
 use std::collections::VecDeque;
 
 use ark_ff::{BigInt, Field, PrimeField};
@@ -9,24 +8,27 @@ use jolt_inlines_sdk::host::{
         virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
         virtual_assert_lte::VirtualAssertLTE,
     },
-    limbs_to_nbiguint, mulq_advice, Cpu, FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt,
-    Instruction, MulqType, VirtualRegisterGuard,
+    limbs_to_nbiguint, mulq_advice, Cpu, ExpandedInstructionSequence, ExpansionError, FormatInline,
+    InlineBuilderExt, InlineExpansionBuilder, InlineOp, InlineOperands, InlineRegister, MulqType,
 };
 
 /// inline constructor for GLV decomposition in secp256k1 scalar field
 struct GlvrAdvBuilder {
-    asm: InstrAssembler,
-    vr: VirtualRegisterGuard,
-    operands: FormatInline,
+    asm: InlineExpansionBuilder,
+    vr: InlineRegister,
+    operands: InlineOperands,
 }
 
 impl GlvrAdvBuilder {
-    fn new(asm: InstrAssembler, operands: FormatInline) -> Self {
-        let vr = asm.allocator.allocate_for_inline();
-        GlvrAdvBuilder { asm, vr, operands }
+    fn new(
+        mut asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<Self, ExpansionError> {
+        let vr = asm.allocate_for_inline()?;
+        Ok(GlvrAdvBuilder { asm, vr, operands })
     }
-    fn advice(self, cpu: &mut Cpu) -> VecDeque<u64> {
-        let k_addr = cpu.x[self.operands.rs1 as usize] as u64;
+    fn advice(operands: FormatInline, cpu: &mut Cpu) -> VecDeque<u64> {
+        let k_addr = cpu.x[operands.rs1 as usize] as u64;
         let kr = [
             cpu.mmu.load_doubleword(k_addr).unwrap().0,
             cpu.mmu.load_doubleword(k_addr + 8).unwrap().0,
@@ -37,10 +39,10 @@ impl GlvrAdvBuilder {
         let result = crate::glv::decompose_scalar_to_u64s(k);
         VecDeque::from(result.to_vec())
     }
-    fn inline_sequence(mut self) -> Vec<Instruction> {
+    fn inline_sequence(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         self.asm.emit_advice_stores(*self.vr, self.operands.rs3, 6);
-        drop(self.vr);
-        self.asm.finalize_inline()
+        self.asm.release(self.vr);
+        self.asm.finalize()
     }
 }
 
@@ -61,46 +63,46 @@ impl GlvrAdvBuilder {
 // Rather, the implementation considers 2 limbs at a time, one that is the main focus
 // And one that accumulates carries. The algorithm ping-pongs between these two limbs as it computes the LHS.
 struct MulqBuilder {
-    asm: InstrAssembler,
-    a: [VirtualRegisterGuard; 4],
-    b: Option<[VirtualRegisterGuard; 4]>,
-    w: [VirtualRegisterGuard; 4],
-    p: VirtualRegisterGuard,
-    p2: Option<VirtualRegisterGuard>,
-    aux: VirtualRegisterGuard,
-    aux2: Option<VirtualRegisterGuard>,
-    r: [VirtualRegisterGuard; 2],
-    operands: FormatInline,
+    asm: InlineExpansionBuilder,
+    a: [InlineRegister; 4],
+    b: Option<[InlineRegister; 4]>,
+    w: [InlineRegister; 4],
+    p: InlineRegister,
+    p2: Option<InlineRegister>,
+    aux: InlineRegister,
+    aux2: Option<InlineRegister>,
+    r: [InlineRegister; 2],
+    operands: InlineOperands,
     op_type: MulqType,
     is_scalar_field: bool,
 }
 
 impl MulqBuilder {
     fn new(
-        asm: InstrAssembler,
-        operands: FormatInline,
+        mut asm: InlineExpansionBuilder,
+        operands: InlineOperands,
         op_type: MulqType,
         is_scalar_field: bool,
-    ) -> Self {
-        let a = array::from_fn(|_| asm.allocator.allocate_for_inline());
+    ) -> Result<Self, ExpansionError> {
+        let a = asm.allocate_inline_array::<4>()?;
         let b = match op_type {
             MulqType::Square => None,
-            _ => Some(array::from_fn(|_| asm.allocator.allocate_for_inline())),
+            _ => Some(asm.allocate_inline_array::<4>()?),
         };
-        let w = array::from_fn(|_| asm.allocator.allocate_for_inline());
-        let p = asm.allocator.allocate_for_inline();
+        let w = asm.allocate_inline_array::<4>()?;
+        let p = asm.allocate_for_inline()?;
         let p2 = if is_scalar_field {
-            Some(asm.allocator.allocate_for_inline())
+            Some(asm.allocate_for_inline()?)
         } else {
             None
         };
-        let aux = asm.allocator.allocate_for_inline();
+        let aux = asm.allocate_for_inline()?;
         let aux2 = match op_type {
-            MulqType::Square => Some(asm.allocator.allocate_for_inline()),
+            MulqType::Square => Some(asm.allocate_for_inline()?),
             _ => None,
         };
-        let r = array::from_fn(|_| asm.allocator.allocate_for_inline());
-        MulqBuilder {
+        let r = asm.allocate_inline_array::<2>()?;
+        Ok(MulqBuilder {
             asm,
             a,
             b,
@@ -113,14 +115,19 @@ impl MulqBuilder {
             operands,
             op_type,
             is_scalar_field,
-        }
+        })
     }
-    fn advice(self, cpu: &mut Cpu) -> VecDeque<u64> {
+    fn advice(
+        operands: FormatInline,
+        cpu: &mut Cpu,
+        is_scalar_field: bool,
+        op_type: &MulqType,
+    ) -> VecDeque<u64> {
         mulq_advice(
-            &self.operands,
+            &operands,
             cpu,
-            self.is_scalar_field,
-            &self.op_type,
+            is_scalar_field,
+            op_type,
             |is_scalar| {
                 if is_scalar {
                     Fr::MODULUS.into()
@@ -130,7 +137,7 @@ impl MulqBuilder {
             },
             |b, a| {
                 limbs_to_nbiguint(
-                    &if self.is_scalar_field {
+                    &if is_scalar_field {
                         (Fr::new(BigInt(*b))
                             .inverse()
                             .expect("Attempted to invert zero in secp256k1 scalar field")
@@ -148,7 +155,7 @@ impl MulqBuilder {
             },
         )
     }
-    fn inline_sequence(mut self) -> Vec<Instruction> {
+    fn inline_sequence(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         for i in 0..4 {
             match self.op_type {
                 MulqType::Mul => {
@@ -355,24 +362,24 @@ impl MulqBuilder {
             .emit_b::<VirtualAssertEQ>(*self.r[1], *self.w[3], 0);
         self.asm
             .emit_b::<VirtualAssertLTE>(*self.aux, *self.r[1], 0);
-        drop(self.a);
+        self.asm.release_many(self.a);
         match self.op_type {
             MulqType::Square => {}
             _ => {
-                drop(self.b.unwrap());
+                self.asm.release_many(self.b.unwrap());
             }
         }
-        drop(self.w);
-        drop(self.p);
+        self.asm.release_many(self.w);
+        self.asm.release(self.p);
         if self.is_scalar_field {
-            drop(self.p2.unwrap());
+            self.asm.release(self.p2.unwrap());
         }
-        drop(self.aux);
+        self.asm.release(self.aux);
         if let MulqType::Square = self.op_type {
-            drop(self.aux2.unwrap())
+            self.asm.release(self.aux2.unwrap())
         }
-        drop(self.r);
-        self.asm.finalize_inline()
+        self.asm.release_many(self.r);
+        self.asm.finalize()
     }
     fn mac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
         self.asm.emit_r::<MUL>(aux, a, b);
@@ -454,15 +461,14 @@ macro_rules! secp256k1_mulq_op {
             const FUNCT3: u32 = $funct3;
             const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
             const NAME: &'static str = $op_name;
-            fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-                MulqBuilder::new(asm, operands, $mul_type, $is_scalar).inline_sequence()
+            fn build_sequence(
+                asm: InlineExpansionBuilder,
+                operands: InlineOperands,
+            ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+                MulqBuilder::new(asm, operands, $mul_type, $is_scalar)?.inline_sequence()
             }
-            fn build_advice(
-                asm: InstrAssembler,
-                operands: FormatInline,
-                cpu: &mut Cpu,
-            ) -> Option<VecDeque<u64>> {
-                Some(MulqBuilder::new(asm, operands, $mul_type, $is_scalar).advice(cpu))
+            fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
+                Some(MulqBuilder::advice(operands, cpu, $is_scalar, &$mul_type))
             }
         }
     };
@@ -481,14 +487,13 @@ impl InlineOp for Secp256k1GlvrAdv {
     const FUNCT3: u32 = crate::SECP256K1_GLVR_ADV_FUNCT3;
     const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
     const NAME: &'static str = crate::SECP256K1_GLVR_ADV_NAME;
-    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-        GlvrAdvBuilder::new(asm, operands).inline_sequence()
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        GlvrAdvBuilder::new(asm, operands)?.inline_sequence()
     }
-    fn build_advice(
-        asm: InstrAssembler,
-        operands: FormatInline,
-        cpu: &mut Cpu,
-    ) -> Option<VecDeque<u64>> {
-        Some(GlvrAdvBuilder::new(asm, operands).advice(cpu))
+    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
+        Some(GlvrAdvBuilder::advice(operands, cpu))
     }
 }
