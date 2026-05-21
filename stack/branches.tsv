@@ -12,3 +12,7 @@
 09	stack/09-jolt-verifier-crate	feat: add jolt-verifier crate	.semgrep/jolt-verifier-boundaries.yml crates/jolt-verifier specs/jolt-verifier-model-crate.md examples/advice-consumer/guest
 10	stack/10-jolt-prover-spec	docs: add prover model crate spec	specs/jolt-prover-model-crate.md
 11	stack/11-extended-jolt-field-inline-wrapper-spec	docs: add extended Jolt field inline wrapper spec	recursion_references.md specs/extended-jolt-field-inline-wrapper.md
+12	stack/12-selected-verifier-integration-spec	docs: add selected verifier integration spec	specs/selected-verifier-integration.md
+13	stack/13-field-inline-protocol-spec	docs: add field inline protocol spec	specs/field-inline-protocol.md
+14	stack/14-dory-assist-protocol-spec	docs: add Dory assist protocol spec	specs/dory-assist-protocol.md
+15	stack/15-wrapper-protocol-spec	docs: add wrapper protocol spec	specs/wrapper-protocol.md

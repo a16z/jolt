@@ -32,7 +32,7 @@ fn zk_muldiv_core_proof_is_accepted() {
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 fn zk_muldiv_blindfold_shape_audit_matches_modular_protocol() {
     let case = crate::support::core_fixtures::zk_muldiv_case();
-    let modular = jolt_verifier::audit_zk_blindfold_protocol_shape::<
+    let modular = jolt_verifier::compat::audit_zk_blindfold_protocol_shape::<
         Fr,
         DoryScheme,
         Pedersen<Bn254G1>,

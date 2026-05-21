@@ -166,6 +166,53 @@ restore_owned_paths() {
   done
 }
 
+effective_owned_paths() {
+  local order="$1"
+  local pathspecs="$2"
+  local output="$3"
+  local current_paths=()
+  read -r -a current_paths <<< "$pathspecs"
+
+  if ((${#current_paths[@]})); then
+    git diff --name-only "$base_ref...$source_ref" -- "${current_paths[@]}" | sort -u > "$output"
+  else
+    : > "$output"
+  fi
+
+  local after_current=0
+  local later_order
+  local later_branch
+  local later_title
+  local later_pathspecs
+  local later_paths=()
+  local later_file
+  local remaining_file
+
+  while IFS=$'\t' read -r later_order later_branch later_title later_pathspecs; do
+    [[ -z "${later_order:-}" || "$later_order" == \#* ]] && continue
+
+    if [[ "$later_order" == "$order" ]]; then
+      after_current=1
+      continue
+    fi
+    if ((!after_current)); then
+      continue
+    fi
+
+    read -r -a later_paths <<< "$later_pathspecs"
+    if ((${#later_paths[@]} == 0)); then
+      continue
+    fi
+
+    later_file="$(mktemp)"
+    remaining_file="$(mktemp)"
+    git diff --name-only "$base_ref...$source_ref" -- "${later_paths[@]}" | sort -u > "$later_file"
+    comm -23 "$output" "$later_file" > "$remaining_file"
+    mv "$remaining_file" "$output"
+    rm -f "$later_file"
+  done < "$plan_file"
+}
+
 apply_manifest_rules() {
   local order="$1"
 
@@ -213,9 +260,11 @@ while IFS=$'\t' read -r order branch title pathspecs; do
   echo "  title: $title"
   echo "  paths: $pathspecs"
 
+  owned_paths_file="$(mktemp)"
+  effective_owned_paths "$order" "$pathspecs" "$owned_paths_file"
+
   if ((check_coverage)); then
-    # shellcheck disable=SC2086
-    git diff --name-only "$base_ref...$source_ref" -- $pathspecs >> "$coverage_file"
+    cat "$owned_paths_file" >> "$coverage_file"
   fi
 
   if ((!apply)); then
@@ -235,7 +284,7 @@ while IFS=$'\t' read -r order branch title pathspecs; do
     git switch -c "$branch" "$previous_branch"
   fi
 
-  read -r -a owned_pathspecs <<< "$pathspecs"
+  mapfile -t owned_pathspecs < "$owned_paths_file"
   restore_owned_paths "$source_ref" "${owned_pathspecs[@]}"
   apply_manifest_rules "$order"
 

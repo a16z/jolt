@@ -1068,17 +1068,21 @@ The statistical-independence track is a ZK-only regression suite. It is not a
 formal proof of zero knowledge; it catches accidental deterministic proof
 generation or accidental exposure of clear claims in the modular proof shape.
 
-The default flow is:
+The default flow is release-only and uses fresh small-cycle ZK fixtures rather
+than cached artifacts:
 
 ```text
 same guest, same public input, same preprocessing
-  -> generate or load at least two independently randomized ZK core proofs
+  -> generate independently randomized ZK core proofs
   -> compat conversion
-  -> verify both proofs through the full modular ZK verifier
-  -> compare only the fields that should be blinded
+  -> verify every proof through the full modular ZK verifier
+  -> keep public/protocol shape stable
+  -> bucket blinded proof components and run Dory-style distribution checks
 ```
 
-The test should keep deterministic public material stable: public I/O,
+The current fixture is the small `muldiv` guest so the trace is cheap enough for
+manual release-mode sampling. The test should keep deterministic public material
+stable: public I/O,
 preprocessing digest, trace length, configs, entry address, and verifier setup.
 It should require variation in at least one field from every ZK blinding family
 that is present in the fixture:
@@ -1091,8 +1095,12 @@ that is present in the fixture:
   final opening proof.
 
 The track should also assert that ZK proofs do not carry clear opening claim
-payloads. Both proofs must verify successfully before comparing their blinded
-components.
+payloads. Every sampled proof must verify successfully before its blinded
+components are counted. This is a regression test for randomized proof
+generation and accidental leakage in the proof shape; it is not a formal
+zero-knowledge proof. When a cheap same-public-IO private-advice fixture exists,
+extend this track with a Dory-style two-family comparison across distinct
+private witnesses.
 
 ### Tamper Manifest
 
@@ -1179,11 +1187,15 @@ cargo nextest run -p jolt-verifier --cargo-quiet
 cargo nextest run -p jolt-verifier --features core-fixtures --cargo-quiet
 cargo nextest run -p jolt-verifier --features jolt-core-compat,zk --cargo-quiet
 cargo nextest run -p jolt-verifier --features core-fixtures,zk --cargo-quiet
+cargo nextest run -p jolt-verifier --release --features core-fixtures,zk zk_muldiv_jolt_proof_components_are_statistically_independent --run-ignored ignored-only --cargo-quiet
 ```
 
 Use `jolt-core-compat` when only conversion code needs to compile. Use
 `core-fixtures` when tests should live-generate `jolt-core` proofs; it enables
 `jolt-core-compat` plus the `jolt-core/host` fixture-generation path.
+`JOLT_VERIFIER_ZK_STAT_SAMPLES` controls the statistical sample count for the
+ignored ZK independence test. It intentionally rejects debug builds unless
+`JOLT_VERIFIER_ALLOW_DEBUG_STAT_TESTS=1` is set.
 
 Tests should move from ignored to active when they are cheap and stable enough
 for the default package run. Expensive fixture-generation tests can remain

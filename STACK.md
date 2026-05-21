@@ -31,6 +31,10 @@ truth.
 | 09 | `stack/09-jolt-verifier-crate` | `stack/08a-jolt-core-blindfold-hardening` | new `jolt-verifier` crate, verifier spec, boundary checks, fixtures |
 | 10 | `stack/10-jolt-prover-spec` | `stack/09-jolt-verifier-crate` | `specs/jolt-prover-model-crate.md` |
 | 11 | `stack/11-extended-jolt-field-inline-wrapper-spec` | `stack/10-jolt-prover-spec` | extended Jolt / field inline / wrapper spec plus supporting recursion reference doc |
+| 12 | `stack/12-selected-verifier-integration-spec` | `stack/11-extended-jolt-field-inline-wrapper-spec` | selected verifier integration spec |
+| 13 | `stack/13-field-inline-protocol-spec` | `stack/12-selected-verifier-integration-spec` | field inline protocol spec |
+| 14 | `stack/14-dory-assist-protocol-spec` | `stack/13-field-inline-protocol-spec` | Dory assist protocol spec |
+| 15 | `stack/15-wrapper-protocol-spec` | `stack/14-dory-assist-protocol-spec` | wrapper protocol and SNARK backend spec |
 
 The `jolt-core` BlindFold hardening PR carries the compatibility/security patch
 that makes core BlindFold construction match the modular stack before the
@@ -55,6 +59,26 @@ The workflow:
 
 Once the PRs exist, GitHub will update them automatically when the workflow
 force-pushes their branches.
+
+## Growing Spec PRs Into Implementation PRs
+
+The protocol spec PRs after PR 11 are allowed to grow implementation paths for
+their feature area. Keep ownership disjoint by adding the implementation paths
+to the same row as the relevant spec:
+
+- PR 12: selected verifier integration, proof-shape validation, selected stage
+  schedule, and selected computation export.
+- PR 13: field-inline claims, R1CS rows, selected verifier hooks, trace/prover
+  wiring, and field-inline fixtures.
+- PR 14: Dory-assist claims, Hyrax support, selected verifier hooks, and
+  Dory-assist fixtures.
+- PR 15: wrapper assembly, verifier R1CS lowering, transcript R1CS, and SNARK
+  backend integration.
+
+If a later feature row names a path inside a directory owned by an earlier row,
+the later row wins for changed files under that path. This keeps broad crate
+bootstrap PRs stable while letting later implementation PRs own narrower
+submodules in the same crate.
 
 ## Manual Materialization
 
@@ -153,7 +177,7 @@ extension's submit command from the final stack branch.
 4. Compare the stack tip to the source branch:
 
    ```bash
-   git diff --stat refactor/audit-prep..stack/11-extended-jolt-field-inline-wrapper-spec
+   git diff --stat refactor/audit-prep..stack/15-wrapper-protocol-spec
    ```
 
 Only intentional WIP exclusions or branch-order differences should remain.

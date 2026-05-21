@@ -493,6 +493,12 @@ pub fn zk_muldiv_case() -> CoreZkVerifierCase {
     zk_case_from_parts(fixture)
 }
 
+#[cfg(feature = "zk")]
+pub fn fresh_zk_muldiv_case() -> CoreZkVerifierCase {
+    let _guard = core_fixture_lock();
+    zk_case_from_parts(generate_muldiv())
+}
+
 #[cfg(not(feature = "zk"))]
 pub fn standard_advice_consumer_case() -> CoreVerifierCase {
     let _guard = core_fixture_lock();
