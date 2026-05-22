@@ -240,14 +240,14 @@ impl OneHotConfig {
 /// Full one-hot parameters with cached derived values.
 ///
 /// This struct is NOT serialized in the proof. It is constructed by the prover
-/// and verifier from `OneHotConfig`, `bytecode_K` (from preprocessing), and `ram_K` (from proof).
+/// and verifier from `OneHotConfig`, `bytecode_len` (from preprocessing), and `ram_K` (from proof).
 #[derive(Allocative, Clone, Debug, Default)]
 pub struct OneHotParams {
     pub log_k_chunk: usize,
     pub lookups_ra_virtual_log_k_chunk: usize,
     pub k_chunk: usize,
 
-    pub bytecode_k: usize,
+    pub bytecode_len: usize,
     pub ram_k: usize,
 
     pub instruction_d: usize,
@@ -264,12 +264,12 @@ impl OneHotParams {
     ///
     /// This is used by the verifier to reconstruct the full params from
     /// the minimal config stored in the proof.
-    pub fn from_config(config: &OneHotConfig, bytecode_k: usize, ram_k: usize) -> Self {
+    pub fn from_config(config: &OneHotConfig, bytecode_len: usize, ram_k: usize) -> Self {
         let log_k_chunk = config.log_k_chunk as usize;
         let lookups_ra_virtual_log_k_chunk = config.lookups_ra_virtual_log_k_chunk as usize;
 
         let instruction_d = LOG_K.div_ceil(log_k_chunk);
-        let bytecode_d = bytecode_k.log_2().div_ceil(log_k_chunk);
+        let bytecode_d = bytecode_len.log_2().div_ceil(log_k_chunk);
         let ram_d = ram_k.log_2().div_ceil(log_k_chunk);
 
         let instruction_shifts = (0..instruction_d)
@@ -284,7 +284,7 @@ impl OneHotParams {
             log_k_chunk,
             lookups_ra_virtual_log_k_chunk,
             k_chunk: 1 << log_k_chunk,
-            bytecode_k,
+            bytecode_len,
             ram_k,
             instruction_d,
             bytecode_d,
@@ -298,9 +298,9 @@ impl OneHotParams {
     /// Create OneHotParams for the given trace parameters using default config.
     ///
     /// This is a convenience constructor for the prover.
-    pub fn new(log_T: usize, bytecode_k: usize, ram_k: usize) -> Self {
+    pub fn new(log_T: usize, bytecode_len: usize, ram_k: usize) -> Self {
         let config = OneHotConfig::new(log_T);
-        Self::from_config(&config, bytecode_k, ram_k)
+        Self::from_config(&config, bytecode_len, ram_k)
     }
 
     /// Extract the minimal config for serialization in the proof.

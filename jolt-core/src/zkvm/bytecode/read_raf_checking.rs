@@ -1687,7 +1687,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             array::from_fn(|_| MultilinearPolynomial::from(vec![F::zero()]))
         };
 
-        let int_poly = IdentityPolynomial::new(one_hot_params.bytecode_k.log_2());
+        let int_poly = IdentityPolynomial::new(one_hot_params.bytecode_len.log_2());
 
         let (_, raf_claim) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
@@ -1753,8 +1753,8 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             stage5_gammas,
             input_claim,
             one_hot_params: one_hot_params.clone(),
-            K: one_hot_params.bytecode_k,
-            log_K: one_hot_params.bytecode_k.log_2(),
+            K: one_hot_params.bytecode_len,
+            log_K: one_hot_params.bytecode_len.log_2(),
             d: one_hot_params.bytecode_d,
             log_T: n_cycle_vars,
             val_polys,
