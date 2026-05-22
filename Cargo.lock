@@ -3024,6 +3024,7 @@ dependencies = [
 name = "jolt-lookup-tables"
 version = "0.1.0"
 dependencies = [
+ "jolt-core",
  "jolt-field",
  "jolt-riscv",
  "rand 0.8.5",
