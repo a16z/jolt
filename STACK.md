@@ -34,7 +34,7 @@ truth.
 | 12 | `stack/12-selected-verifier-integration-spec` | `stack/11-extended-jolt-field-inline-wrapper-spec` | selected verifier integration spec |
 | 13 | `stack/13-field-inline-protocol-spec` | `stack/12-selected-verifier-integration-spec` | field inline protocol spec, verifier-spec updates, formulas, R1CS hooks, RISC-V flags, and verifier protocol config |
 | 14 | `stack/14-dory-assist-protocol-spec` | `stack/13-field-inline-protocol-spec` | Dory assist protocol spec, `jolt-hyrax`, Dory-assist claim semantics, and Dory-specific PCS-assist hooks |
-| 15 | `stack/15-wrapper-protocol-spec` | `stack/14-dory-assist-protocol-spec` | wrapper protocol spec, variable-challenge sumcheck R1CS, transcript R1CS, and shared wrapper R1CS infrastructure |
+| 15 | `stack/15-wrapper-protocol-spec` | `stack/14-dory-assist-protocol-spec` | wrapper protocol spec, `jolt-wrapper`, variable-challenge sumcheck R1CS, transcript R1CS, and shared wrapper R1CS infrastructure |
 
 The `jolt-core` BlindFold hardening PR carries the compatibility/security patch
 that makes core BlindFold construction match the modular stack before the
@@ -74,8 +74,9 @@ to the same row as the relevant spec:
   `jolt-claims::protocols::dory_assist`, `jolt-hyrax`, the
   Dory-assist verifier crate, Dory-specific PCS-assist verifier hooks, and
   Dory-assist fixtures.
-- PR 15: wrapper assembly, verifier R1CS lowering, variable-challenge
-  `jolt-sumcheck::r1cs`, transcript R1CS, and SNARK backend integration.
+- PR 15: `jolt-wrapper`, wrapper assembly, verifier R1CS lowering,
+  variable-challenge `jolt-sumcheck::r1cs`, transcript R1CS, and SNARK
+  backend integration.
 
 If a later feature row names a path inside a directory owned by an earlier row,
 the later row wins for changed files under that path. This keeps broad crate
@@ -130,6 +131,8 @@ crate first appears:
 - PR 14: when present in the source ref, add `crates/jolt-hyrax` and
   `crates/jolt-dory-assist-verifier` to workspace members and add their
   workspace dependencies.
+- PR 15: when present in the source ref, add `crates/jolt-wrapper` to workspace
+  members and add `jolt-wrapper = { path = "./crates/jolt-wrapper" }`.
 
 With `--cargo-metadata`, the script refreshes `Cargo.lock` after those manifest
 changes.
@@ -145,6 +148,7 @@ cargo check -p jolt-r1cs -q
 cargo check -p jolt-sumcheck -q --features r1cs
 cargo check -p jolt-blindfold -q
 cargo check -p jolt-verifier -q
+cargo check -p jolt-wrapper -q
 ```
 
 For the full stack tip:

@@ -126,7 +126,10 @@ use super::{
     inputs::BlindFoldInputs,
     outputs::{BlindFoldOutput, CommittedOutputClaimOutput},
 };
-use crate::stages::stage1::inputs::{spartan_outer_opening_order, Stage1SpartanOuterOpening};
+use crate::stages::{
+    stage1::inputs::{spartan_outer_opening_order, Stage1SpartanOuterOpening},
+    stage8::outputs::Stage8OpeningId,
+};
 use crate::VerifierError;
 
 mod stage1;
@@ -233,7 +236,7 @@ where
 
     let protocol = builder
         .final_opening(
-            map_jolt_opening_ids(input.stage8.opening_ids.clone()),
+            map_stage8_opening_ids(input.stage8.opening_ids.clone()),
             input.stage8.constraint_coefficients.clone(),
             input.stage8.hiding_evaluation_commitment,
         )
@@ -381,6 +384,17 @@ fn map_jolt_opening_ids(opening_ids: Vec<JoltOpeningId>) -> Vec<VerifierOpeningI
     opening_ids
         .into_iter()
         .map(VerifierOpeningId::from)
+        .collect()
+}
+
+fn map_stage8_opening_ids(opening_ids: Vec<Stage8OpeningId>) -> Vec<VerifierOpeningId> {
+    opening_ids
+        .into_iter()
+        .map(|id| match id {
+            Stage8OpeningId::Jolt(id) => VerifierOpeningId::Jolt(id),
+            #[cfg(feature = "field-inline")]
+            Stage8OpeningId::FieldInline(id) => VerifierOpeningId::FieldInline(id),
+        })
         .collect()
 }
 

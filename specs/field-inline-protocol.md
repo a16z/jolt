@@ -591,6 +591,25 @@ that order. The BlindFold builder uses the same order and the same
 `FieldRegistersIncClaimReduction` claim expression so ZK mode binds the hidden
 field increment claim to the identical Stage 6 equation.
 
+Stage 8 then appends the same reduced `FieldRdInc` opening to the final PCS
+batch. The field-inline final-opening order is:
+
+```text
+RamInc@IncClaimReduction
+RdInc@IncClaimReduction
+FieldRdInc@FieldRegistersIncClaimReduction   // only with field-inline
+InstructionRa(i)@HammingWeightClaimReduction
+BytecodeRa(i)@HammingWeightClaimReduction
+RamRa(i)@HammingWeightClaimReduction
+TrustedAdvice / UntrustedAdvice              // if present
+```
+
+`FieldRdInc` uses the same dense embedding scale as ordinary `RdInc`; the
+stage-6 field reduction has already reduced the stage-4 and stage-5 claims to a
+single trace-domain opening. In ZK mode the Stage 8 output carries mixed final
+opening IDs, so the BlindFold final-opening equation can bind ordinary Jolt
+openings and field-inline openings in one RLC.
+
 ## Field Constraints
 
 Target module:

@@ -186,6 +186,7 @@ overlay_target_order() {
     crates/jolt-r1cs/src/lib.rs|\
     crates/jolt-r1cs/src/lowering.rs|\
     crates/jolt-r1cs/src/builder.rs|\
+    crates/jolt-wrapper/*|\
     crates/jolt-sumcheck/src/r1cs.rs|\
     crates/jolt-transcript/Cargo.toml|\
     crates/jolt-transcript/src/lib.rs|\
@@ -338,6 +339,16 @@ apply_manifest_rules() {
         fi
         ensure_after Cargo.toml "$member_anchor" '  "crates/jolt-dory-assist-verifier",'
         ensure_after Cargo.toml "$dependency_anchor" 'jolt-dory-assist-verifier = { path = "./crates/jolt-dory-assist-verifier" }'
+      fi
+      ;;
+    15)
+      if pathspec_matches_ref "$source_ref" "crates/jolt-wrapper/Cargo.toml"; then
+        ensure_after Cargo.toml '  "crates/jolt-hyperkzg",' '  "crates/jolt-wrapper",'
+        local dependency_anchor='jolt-openings = { path = "./crates/jolt-openings" }'
+        if grep -Fxq 'jolt-hyrax = { path = "./crates/jolt-hyrax" }' Cargo.toml; then
+          dependency_anchor='jolt-hyrax = { path = "./crates/jolt-hyrax" }'
+        fi
+        ensure_after Cargo.toml "$dependency_anchor" 'jolt-wrapper = { path = "./crates/jolt-wrapper" }'
       fi
       ;;
   esac

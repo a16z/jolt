@@ -60,6 +60,8 @@ ready.
 | `jolt-prover` | Prover orchestration, transcript order, proof assembly, scoped prover state |
 | `jolt-witness` | Generic witness traits plus protocol-specific witness providers |
 | `jolt-kernels` | Optimized prover compute and map-reduce kernels |
+| `jolt-program` | Program image, bytecode expansion, profile/extension legality, backend-neutral trace contract |
+| `tracer` / execution backend | Concrete guest execution, advice I/O, normalized trace production |
 | `jolt-claims` | Protocol IDs, formulas, opening/public/challenge metadata |
 | `jolt-sumcheck` | Clear/committed sumcheck proofs, transcript replay, R1CS lowering |
 | `jolt-crypto` | Vector commitments, Pedersen, homomorphic ops, setup derivation |
@@ -72,6 +74,8 @@ ready.
 
 ```text
 inputs
+  -> jolt-program image / expansion / preprocessing
+  -> execution backend trace
   -> witness provider
   -> oracle/advice commitments
   -> stages 1..7
@@ -82,8 +86,11 @@ inputs
   -> wrapper witness handoff when requested
 ```
 
-`jolt-prover` owns this order. Witness providers and kernels answer queries;
-they do not decide stage order or transcript semantics.
+`jolt-prover` owns the proving order after program execution has produced a
+trace. `jolt-program` owns program shape and trace contracts; the execution
+backend owns concrete execution; witness providers and kernels answer
+proof-facing queries. None of those lower layers decide stage order or
+transcript semantics.
 
 ## Public API
 
@@ -169,13 +176,21 @@ pub enum ProofVisibility {
 }
 
 pub struct ProofSelection {
-    pub visibility: ProofVisibility,
+    pub protocol: jolt_verifier::JoltProtocolConfig,
     pub dory_assist: DoryAssistSelection,
     pub wrapper_handoff: WrapperHandoffSelection,
 }
 ```
 
-The final type should align with `jolt-verifier::ProtocolSelection`.
+The Jolt proof protocol is selected as a concrete
+`jolt_verifier::JoltProtocolConfig`. Visibility is derived from `protocol.zk`;
+field-inline behavior is derived from `protocol.field_inline`. The prover writes
+the same config into `JoltProof::protocol`, and the verifier rejects proofs whose
+embedded config does not match its compile-time-selected config before any
+transcript-dependent work runs.
+
+`dory_assist` and `wrapper_handoff` are not changes to the base Jolt proof
+shape. They select auxiliary proving outputs around the configured Jolt proof.
 
 Transparent mode:
 
@@ -195,7 +210,10 @@ ZK PCS evaluation commitment
 BlindFold verifier-equation proof
 ```
 
-Visibility is a protocol selection, not a cargo feature architecture.
+The production verifier can still choose its accepted protocol at compile time.
+The prover API should make the target protocol explicit so tests, diagnostics,
+and future multi-target proving can construct the exact proof shape the target
+verifier accepts.
 
 ## Committed Sumchecks
 
@@ -408,6 +426,10 @@ Example implementations:
 Jolt VM:
   trace rows, advice tapes, final memory, committed oracles, virtual evals
 
+Jolt VM + field inline:
+  base trace rows, field_rows, FR register accesses, FR products, bridge rows,
+  field-register committed oracles, field-inline virtual evals
+
 Dory assist:
   operation traces, packing witnesses, Miller-loop witness, assist public inputs
 
@@ -420,6 +442,52 @@ BlindFold:
 
 Witness code does not own protocol order, transcript labels, stage selection,
 or claim formulas.
+
+## Program And Trace Inputs
+
+`jolt-prover` should consume program and execution artifacts through the modular
+program/trace boundary, not through tracer internals:
+
+```text
+guest Rust / SDK
+  -> jolt-program image, expansion, profile checks, preprocessing
+  -> execution backend
+  -> TraceOutput<TraceSource>
+  -> jolt-witness
+  -> jolt-prover stages
+```
+
+`jolt-program` owns source decoding, expansion into final Jolt rows, bytecode
+preprocessing, RAM/program preprocessing, and the backend-neutral execution
+contract. It should validate that the selected profile supports field-inline
+source rows before tracing begins.
+
+The execution backend, typically `tracer`, owns concrete CPU/memory/device
+execution and advice I/O. It adapts its local cycle representation into the
+normalized trace contract. `jolt-prover` and `jolt-witness` should not consume
+`tracer::Cycle`, `Cpu`, or lazy trace internals directly.
+
+The proof-facing trace row must carry enough data for both ordinary Jolt and
+field inline:
+
+```text
+ordinary row data:
+  final Jolt instruction row
+  x-register reads/writes
+  RAM access
+  bytecode/source metadata needed by witness construction
+
+field-inline row data, when enabled:
+  field op kind / selector flags
+  FR register operands and destination
+  FR register read/write values
+  bridge payloads for x-register <-> FR movement
+```
+
+Pure field operations should not create incidental ordinary x-register effects.
+If an implementation keeps inert ordinary accesses for engineering reasons, it
+must expose them explicitly as inert so the ordinary register witness and the
+field-register witness stay consistent.
 
 ## Kernels
 
@@ -456,6 +524,152 @@ Advice state retains padded words, commitment, opening hint, dimensions,
 address-phase choice, advice openings, stage-8 selector factors, and BlindFold
 claim constraints.
 
+## Field Inline Proving
+
+Field inline should land in `jolt-prover`, not by threading a new prover path
+through `jolt-core`. The prover architecture should treat field inline as a
+configured Jolt VM extension whose protocol semantics live in
+`jolt-claims::protocols::field_inline` and whose verifier composition is owned
+by `jolt-verifier`.
+
+Guest exposure should be SDK-level. On guest builds, field-element helper
+methods or intrinsics emit field-inline source rows such as:
+
+```text
+FIELD_LOAD_FROM_X
+FIELD_LOAD_IMM
+FIELD_ADD
+FIELD_SUB
+FIELD_MUL
+FIELD_INV
+FIELD_ASSERT_EQ
+FIELD_STORE_TO_X
+```
+
+`jolt-program` validates and expands these rows under the selected ISA/profile.
+The execution backend executes their native field semantics and emits normalized
+field-row data. `jolt-witness` is the first layer that turns that data into
+committed and virtual polynomial witnesses.
+
+The Jolt VM witness provider should expose ordinary Jolt witness data and, when
+enabled, field-inline witness data through separate protocol IDs:
+
+```text
+ordinary VM namespace:
+  JoltCommittedPolynomial
+  JoltVirtualPolynomial
+  JoltOpeningId
+
+field-inline namespace:
+  FieldInlineCommittedPolynomial
+  FieldInlineVirtualPolynomial
+  FieldInlineOpeningId
+```
+
+The two namespaces meet only at selected stage composition points. Bridge rows
+reuse ordinary RV64 witness columns for `Rs1Value`, `RdWriteValue`, and `Imm`;
+true field-inline columns are exposed under field-inline IDs.
+
+The field-inline witness provider owns:
+
+- `field_rows`: trace rows where native field instructions or bridge
+  instructions are active;
+- FR register read/write events for `FieldRs1`, `FieldRs2`, and `FieldRd`;
+- `FieldRdInc` and `FieldRegistersRa(i)` committed polynomial material;
+- virtual FR values: `FieldRs1Value`, `FieldRs2Value`, `FieldRdValue`,
+  `FieldRegistersVal`, and write-address helpers;
+- product witnesses for `FieldProduct = FieldRs1Value * FieldRs2Value` and
+  `FieldInvProduct = FieldRs1Value * FieldRdValue`;
+- bridge encodings between ordinary x-register values and native field
+  elements.
+
+Representative trace-to-witness mapping:
+
+```text
+FIELD_MUL fr3, fr1, fr2:
+  field trace:
+    read fr1, read fr2, write fr3
+  witness:
+    FieldRs1Value = fr1
+    FieldRs2Value = fr2
+    FieldRdValue = fr3
+    FieldProduct = fr1 * fr2
+    IsFieldMul = 1
+
+FIELD_LOAD_FROM_X fr4, x10:
+  ordinary trace:
+    read x10
+  field trace:
+    write fr4
+  witness:
+    Rs1Value comes from the ordinary register witness
+    FieldRdValue comes from the FR register witness
+    bridge row enforces FieldRdValue = decode_x_register(Rs1Value, F)
+
+FIELD_STORE_TO_X x11, fr4:
+  field trace:
+    read fr4
+  ordinary trace:
+    write x11
+  witness:
+    FieldRs1Value comes from the FR register witness
+    RdWriteValue comes from the ordinary register witness
+    bridge row enforces RdWriteValue = encode_field_register(FieldRs1Value, F)
+```
+
+Field inline v1 is native-field only: the field used by the Jolt proof and the
+field used by field-inline arithmetic are the same field. Prover code should not
+introduce quotient witnesses or non-native modular reduction for v1. The only
+width-dependent work is trace/bridge encoding for the selected field
+instantiation, such as two-limb or four-limb encodings.
+
+Per-stage obligations:
+
+```text
+preamble:
+  assemble proof.protocol from the selected verifier config
+  commit/absorb FieldInlineCommitments only when field inline is enabled
+
+stage 1:
+  build the selected R1CS row layout: RV64 rows plus field_constraints rows
+  compute selected Spartan outer openings
+  reuse ordinary openings for bridge columns and append only FR-local openings
+  retain committed output-claim rows/blindings in BlindFold mode
+
+stage 2:
+  add explicit field product lanes at the existing product point r_prod
+  add FieldRegistersClaimReduction at the same r_prod
+  keep product output ordering synchronized with jolt-verifier
+
+stage 4:
+  prove FieldRegistersReadWriteChecking in the read/write batch
+  output FieldRegistersVal, FieldRdWa, and FieldRdInc read/write claims
+
+stage 5:
+  prove FieldRegistersValEvaluation in the val-evaluation batch
+  output FieldRdWa and FieldRdInc val-evaluation claims
+
+stage 6:
+  reduce the stage-4/stage-5 FieldRdInc claims to one
+  FieldRdInc@FieldRegistersIncClaimReduction claim
+
+stage 8:
+  include the reduced FieldRdInc opening in the final joint PCS opening plan
+  after ordinary RamInc/RdInc and before RA/advice openings
+```
+
+The same obligations apply in Transparent and BlindFold mode. Transparent mode
+puts clear field-inline opening claims in `JoltProofClaims::Clear`. BlindFold
+mode commits field-inline sumcheck rounds and output-claim rows, keeps the
+private coefficients/blindings for the BlindFold witness, and ensures the final
+hidden PCS evaluation uses the same mixed Stage 8 opening ID order that
+`jolt-verifier` lowers.
+
+The prover should not recover field-inline order from ad hoc accumulators.
+Stage code should use the canonical helpers in `jolt-claims` and the selected
+stage order in `jolt-verifier`, then build a typed opening plan with explicit
+Jolt and field-inline IDs.
+
 ## Stage 8
 
 Stage 8 is typed opening assembly:
@@ -473,6 +687,12 @@ stage outputs
 Transparent mode binds the clear joint claim. BlindFold mode uses
 `ZkOpeningScheme::open_zk` and retains the hidden evaluation output/blinding for
 BlindFold.
+
+When field inline is selected, the opening plan includes
+`FieldRdInc@FieldRegistersIncClaimReduction` in the configured Stage 8 order.
+This is ordinary final-opening work: the PCS backend sees another committed
+polynomial/evaluation pair, while the typed opening plan preserves the protocol
+identity needed by BlindFold, Dory assist, wrapper handoff, and diagnostics.
 
 When Dory assist is selected, stage 8 also returns typed `DoryAssistInputs`:
 opening plan, evaluation claims, commitments, structured Dory proof data, setup
@@ -493,6 +713,10 @@ coefficients/blindings, stage-8 ZK opening data, and `VC::Setup`.
 
 Changing a claim formula without updating its BlindFold metadata is a
 correctness bug.
+
+Field-inline relations follow the same rule: if a field-inline relation changes
+its input/output claim formula or opening order, the prover's committed rows,
+BlindFold witness construction, and final-opening plan must change with it.
 
 ## Dory Assist And Recursion
 
@@ -548,6 +772,14 @@ crates/jolt-prover/src/
   selection.rs
   commitment/
   stages/
+    stage1/
+    stage2/
+    stage3/
+    stage4/
+    stage5/
+    stage6/
+    stage7/
+    stage8/
   openings/
   advice/
   zk/
@@ -568,6 +800,7 @@ crates/jolt-witness/src/
       advice.rs
       committed.rs
       virtuals.rs
+      field_inline.rs
     dory_assist/
       mod.rs
       namespace.rs
@@ -598,8 +831,13 @@ Required coverage:
 - committed sumcheck and BlindFold output shape;
 - witness provider reference checks for committed and virtual polynomial evals;
 - stage-8 opening plan, ZK opening data, and Dory-assist inputs;
+- field-inline witness provider checks for field_rows, bridge rows,
+  FieldRdInc, FieldRegistersRa(i), FR products, and virtual FR evals;
+- field-inline transparent and BlindFold prover frontiers accepted by the
+  matching `jolt-verifier` frontier;
 - tampering of transcript, dependencies, openings, committed claims, advice
-  commitments, BlindFold inputs, and Dory-assist input data.
+  commitments, field-inline commitments/claims, BlindFold inputs, and
+  Dory-assist input data.
 
 Bring-up should be top-down against `jolt-verifier`: implement the next prover
 component, assemble the partial verifier-visible proof/checkpoint object, and
@@ -621,9 +859,12 @@ primary oracle for the modular prover.
 8. Implement stage 8, ZK opening path, and Dory-assist input data.
 9. Prove the BlindFold instance from committed proofs.
 10. Add full transparent/ZK prover-verifier E2E with advice.
-11. Add Dory-assist witness module under `jolt_witness::protocols::dory_assist`
+11. Add field-inline witness support and prover stage slices against the
+    already-selected verifier flow.
+12. Add full transparent/ZK prover-verifier E2E with field inline enabled.
+13. Add Dory-assist witness module under `jolt_witness::protocols::dory_assist`
     and synthetic assist tests.
-12. Add wrapper witness-input export.
+14. Add wrapper witness-input export.
 
 ## Open Questions
 
@@ -631,6 +872,10 @@ primary oracle for the modular prover.
 - What is the minimal `PolynomialHandle` surface needed by PCS openings and
   sumcheck kernels?
 - How generic over PCS should milestone 1 be?
+- Should field-inline witness support be implemented as one
+  `jolt_vm::field_inline` provider extension or split into smaller
+  `registers`, `products`, `bridge`, and `constraints` modules from the first
+  PR?
 - Which Dory-assist pieces belong in `jolt-prover::dory_assist` versus
   `jolt_witness::protocols::dory_assist`?
 
@@ -643,11 +888,14 @@ primary oracle for the modular prover.
 - Committed sumchecks reuse `jolt-sumcheck` / `jolt-crypto`.
 - Heavy compute stays outside stage orchestration.
 - Dory assist and wrapper can provide non-VM witnesses.
+- Field inline is implemented in `jolt-prover`/`jolt-witness`, not by adding a
+  new production proving path through `jolt-core`.
 - No Bolt dependency.
 
 ## References
 
 - [`jolt-verifier` model crate spec](./jolt-verifier-model-crate.md)
+- [Field inline protocol spec](./field-inline-protocol.md)
 - [Field inline, Dory assist, and wrapper pipeline spec](./extended-jolt-field-inline-wrapper.md)
 - [Recursion references](../recursion_references.md)
 - `jolt-core/src/zkvm/prover.rs`

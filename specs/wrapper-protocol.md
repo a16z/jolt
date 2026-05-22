@@ -159,32 +159,32 @@ crates/jolt-wrapper/
   Cargo.toml
   src/
     lib.rs
-    config.rs
+    builder.rs
+    error.rs
     proof.rs
-    public_inputs.rs
-    r1cs/
-      mod.rs
-      assembly.rs
-      builder.rs
-      sources.rs
-      stages.rs
-      instance.rs
-      public_inputs.rs
-      witness.rs
-    snarks/
+    protocol.rs
+    r1cs.rs
+    statements.rs
+    verify.rs
+    witness.rs
+    snark_backends/
       mod.rs
       spartan_hyperkzg/
         mod.rs
-        setup.rs
-        prover.rs
-        verifier.rs
         proof.rs
+        prover.rs
+        setup.rs
+        verifier.rs
       gnark/
         mod.rs
 ```
 
-`jolt-wrapper::r1cs` owns configured-verifier assembly. Reusable component
-encodings live in the crates that own those protocols.
+The crate mirrors the useful `jolt-blindfold` top-level organization:
+`statements` describes the configured verifier object, `builder` assembles typed
+inputs and transcript state, `protocol` owns the built R1CS instance and layout,
+`r1cs` owns constraint appending, and `snark_backends` owns R1CS-to-proof
+orchestration. Reusable component encodings live in the crates that own those
+protocols.
 
 ## Protocol Builder
 
@@ -698,7 +698,8 @@ Each step should be reviewed before continuing to the next.
 4. Add wrapper protocol builder skeleton.
    - Implement `WrapperProtocolBuilder`, `WrapperClaimSources`, and configured
      stage hook traits over `R1csBuilder`.
-   - Review gate: synthetic stage lowers to satisfied R1CS.
+   - Review gate: fixture stage lowers to satisfied R1CS without becoming part
+     of the public wrapper API.
 
 5. Add wrapper instance export.
    - Track stable public-input ordering.
@@ -706,14 +707,14 @@ Each step should be reviewed before continuing to the next.
    - Review gate: deterministic public-input order tests.
 
 6. Assemble base configured verifier R1CS.
-   - Start with a narrow synthetic verifier computation before full Jolt.
+   - Start with a narrow configured verifier computation before full Jolt.
    - Review gate: native verifier and wrapper R1CS agree on accept/reject for
      the same fixture.
 
 7. Add Dory-assist and Hyrax hooks.
    - Call `jolt-hyrax::r1cs` and Dory-assist claim/packing helpers when the
      configured verifier includes Dory assist.
-   - Review gate: synthetic Dory-assist configured computation produces satisfied
+   - Review gate: Dory-assist configured computation produces satisfied
      R1CS.
 
 8. Add field-inline wrapper hooks.
@@ -721,11 +722,11 @@ Each step should be reviewed before continuing to the next.
    - Review gate: FR-off and FR-on configs produce distinct deterministic
      R1CS shapes.
 
-9. Implement ZK `snarks/spartan_hyperkzg`.
+9. Implement ZK `snark_backends/spartan_hyperkzg`.
    - Consume arbitrary `WrapperR1csInstance`.
    - Keep the backend independent from Jolt protocol types.
    - Hide the R1CS witness, including transparent inner proof data.
-   - Review gate: synthetic arbitrary R1CS proof verifies and witness
+   - Review gate: arbitrary R1CS proof verifies and witness
      randomization changes proof bytes for the same public statement.
 
 10. Add configured-verifier wrapper fixture.

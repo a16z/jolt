@@ -3250,6 +3250,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-wrapper"
+version = "0.1.0"
+dependencies = [
+ "jolt-field",
+ "jolt-r1cs",
+ "jolt-transcript",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "js-sys"
 version = "0.3.91"
 source = "registry+https://github.com/rust-lang/crates.io-index"

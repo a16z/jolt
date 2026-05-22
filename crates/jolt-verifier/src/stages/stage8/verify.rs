@@ -1,6 +1,6 @@
 use super::{
     inputs::Deps,
-    outputs::{Stage8ClearOutput, Stage8Output, Stage8ZkOutput},
+    outputs::{Stage8ClearOutput, Stage8OpeningId, Stage8Output, Stage8ZkOutput},
 };
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
@@ -12,6 +12,8 @@ use crate::{
     verifier::CheckedInputs,
     VerifierError,
 };
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::formulas::claim_reductions::increments as field_increments;
 use jolt_claims::protocols::jolt::{
     formulas::{
         claim_reductions::advice, committed_openings::advice_commitment_embedding_scale,
@@ -36,6 +38,16 @@ struct AdviceFinalOpening<F: Field> {
 
 struct AdviceFinalOpeningPoint<F: Field> {
     point: Vec<F>,
+}
+
+#[cfg(feature = "field-inline")]
+const fn field_inline_final_opening_count() -> usize {
+    1
+}
+
+#[cfg(not(feature = "field-inline"))]
+const fn field_inline_final_opening_count() -> usize {
+    0
 }
 
 pub fn verify<F, PCS, VC, T, ZkProof>(
@@ -136,6 +148,7 @@ where
             None
         };
         let final_opening_count = 2
+            + field_inline_final_opening_count()
             + layout.total()
             + usize::from(trusted_advice.is_some())
             + usize::from(untrusted_advice.is_some());
@@ -167,7 +180,7 @@ where
         let mut scaling_factors = Vec::with_capacity(final_opening_count);
         {
             let mut push_opening =
-                |id: JoltOpeningId, commitment: &PCS::Output, scale: PCS::Field| {
+                |id: Stage8OpeningId, commitment: &PCS::Output, scale: PCS::Field| {
                     scaling_factors.push(scale);
                     opening_ids.push(id);
                     commitments.push(commitment.clone());
@@ -178,7 +191,8 @@ where
                 JoltOpeningId::committed(
                     JoltCommittedPolynomial::RamInc,
                     JoltRelationId::IncClaimReduction,
-                ),
+                )
+                .into(),
                 &proof.commitments.ram_inc,
                 dense_embedding_scale,
             );
@@ -186,8 +200,15 @@ where
                 JoltOpeningId::committed(
                     JoltCommittedPolynomial::RdInc,
                     JoltRelationId::IncClaimReduction,
-                ),
+                )
+                .into(),
                 &proof.commitments.rd_inc,
+                dense_embedding_scale,
+            );
+            #[cfg(feature = "field-inline")]
+            push_opening(
+                field_increments::field_rd_inc_reduced_opening().into(),
+                &proof.commitments.field_inline.field_registers.rd_inc,
                 dense_embedding_scale,
             );
             for (index, commitment) in proof.commitments.ra.instruction.iter().enumerate() {
@@ -195,7 +216,8 @@ where
                     JoltOpeningId::committed(
                         JoltCommittedPolynomial::InstructionRa(index),
                         JoltRelationId::HammingWeightClaimReduction,
-                    ),
+                    )
+                    .into(),
                     commitment,
                     PCS::Field::one(),
                 );
@@ -205,7 +227,8 @@ where
                     JoltOpeningId::committed(
                         JoltCommittedPolynomial::BytecodeRa(index),
                         JoltRelationId::HammingWeightClaimReduction,
-                    ),
+                    )
+                    .into(),
                     commitment,
                     PCS::Field::one(),
                 );
@@ -215,7 +238,8 @@ where
                     JoltOpeningId::committed(
                         JoltCommittedPolynomial::RamRa(index),
                         JoltRelationId::HammingWeightClaimReduction,
-                    ),
+                    )
+                    .into(),
                     commitment,
                     PCS::Field::one(),
                 );
@@ -228,7 +252,7 @@ where
                             id: advice::final_advice_opening(JoltAdviceKind::Trusted),
                         })?;
                 push_opening(
-                    advice::final_advice_opening(JoltAdviceKind::Trusted),
+                    advice::final_advice_opening(JoltAdviceKind::Trusted).into(),
                     commitment,
                     advice_commitment_embedding_scale(&opening_point, &final_opening.point),
                 );
@@ -241,7 +265,7 @@ where
                             id: advice::final_advice_opening(JoltAdviceKind::Untrusted),
                         })?;
                 push_opening(
-                    advice::final_advice_opening(JoltAdviceKind::Untrusted),
+                    advice::final_advice_opening(JoltAdviceKind::Untrusted).into(),
                     commitment,
                     advice_commitment_embedding_scale(&opening_point, &final_opening.point),
                 );
@@ -309,6 +333,7 @@ where
     };
 
     let final_opening_count = 2
+        + field_inline_final_opening_count()
         + layout.total()
         + usize::from(trusted_advice.is_some())
         + usize::from(untrusted_advice.is_some());
@@ -339,7 +364,7 @@ where
     let mut scaling_factors = Vec::with_capacity(final_opening_count);
 
     {
-        let mut push_opening = |id: JoltOpeningId,
+        let mut push_opening = |id: Stage8OpeningId,
                                 commitment: &PCS::Output,
                                 opening_claim: PCS::Field,
                                 scale: PCS::Field| {
@@ -356,7 +381,8 @@ where
             JoltOpeningId::committed(
                 JoltCommittedPolynomial::RamInc,
                 JoltRelationId::IncClaimReduction,
-            ),
+            )
+            .into(),
             &proof.commitments.ram_inc,
             stage6.output_claims.inc_claim_reduction.ram_inc,
             dense_embedding_scale,
@@ -365,11 +391,25 @@ where
             JoltOpeningId::committed(
                 JoltCommittedPolynomial::RdInc,
                 JoltRelationId::IncClaimReduction,
-            ),
+            )
+            .into(),
             &proof.commitments.rd_inc,
             stage6.output_claims.inc_claim_reduction.rd_inc,
             dense_embedding_scale,
         );
+        #[cfg(feature = "field-inline")]
+        {
+            push_opening(
+                field_increments::field_rd_inc_reduced_opening().into(),
+                &proof.commitments.field_inline.field_registers.rd_inc,
+                stage6
+                    .output_claims
+                    .field_inline
+                    .field_registers_inc_claim_reduction
+                    .field_rd_inc,
+                dense_embedding_scale,
+            );
+        }
 
         for (index, commitment) in proof.commitments.ra.instruction.iter().enumerate() {
             let id = JoltOpeningId::committed(
@@ -382,7 +422,7 @@ where
                 .instruction_ra
                 .get(index)
                 .ok_or(VerifierError::MissingOpeningClaim { id })?;
-            push_opening(id, commitment, opening_claim, PCS::Field::one());
+            push_opening(id.into(), commitment, opening_claim, PCS::Field::one());
         }
 
         for (index, commitment) in proof.commitments.ra.bytecode.iter().enumerate() {
@@ -396,7 +436,7 @@ where
                 .bytecode_ra
                 .get(index)
                 .ok_or(VerifierError::MissingOpeningClaim { id })?;
-            push_opening(id, commitment, opening_claim, PCS::Field::one());
+            push_opening(id.into(), commitment, opening_claim, PCS::Field::one());
         }
 
         for (index, commitment) in proof.commitments.ra.ram.iter().enumerate() {
@@ -410,7 +450,7 @@ where
                 .ram_ra
                 .get(index)
                 .ok_or(VerifierError::MissingOpeningClaim { id })?;
-            push_opening(id, commitment, opening_claim, PCS::Field::one());
+            push_opening(id.into(), commitment, opening_claim, PCS::Field::one());
         }
 
         if let Some(commitment) = trusted_advice_commitment {
@@ -419,7 +459,7 @@ where
                 .as_ref()
                 .ok_or(VerifierError::MissingOpeningClaim { id })?;
             push_opening(
-                id,
+                id.into(),
                 commitment,
                 final_opening.opening_claim,
                 advice_commitment_embedding_scale(&opening_point, &final_opening.point),
@@ -432,7 +472,7 @@ where
                 .as_ref()
                 .ok_or(VerifierError::MissingOpeningClaim { id })?;
             push_opening(
-                id,
+                id.into(),
                 commitment,
                 final_opening.opening_claim,
                 advice_commitment_embedding_scale(&opening_point, &final_opening.point),
