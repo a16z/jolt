@@ -10,15 +10,15 @@ use jolt_field::FieldCore;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SumcheckError<F: FieldCore> {
-    /// Round check failed: the sum $s_i(0) + s_i(1)$ did not match the
-    /// expected value carried forward from the previous round.
+    /// Round check failed: the domain sum did not match the expected value
+    /// carried forward from the previous round.
     #[error("round {round}: expected sum {expected}, got {actual}")]
     RoundCheckFailed {
         /// Zero-indexed round number where the check failed.
         round: usize,
         /// The expected sum.
         expected: F,
-        /// The computed sum $s_i(0) + s_i(1)$.
+        /// The computed domain sum.
         actual: F,
     },
 
@@ -42,6 +42,25 @@ pub enum SumcheckError<F: FieldCore> {
         got: usize,
     },
 
+    /// The domain-sum coefficient vector must have exactly one scalar per
+    /// round-polynomial coefficient.
+    #[error("round {round}: expected {expected} round-sum coefficients, got {got}")]
+    RoundSumCoefficientCountMismatch {
+        /// Zero-indexed round number where the mismatch appeared.
+        round: usize,
+        /// Expected number of coefficients, equal to `degree + 1`.
+        expected: usize,
+        /// Actual number of coefficients supplied by the domain.
+        got: usize,
+    },
+
+    /// An integer-domain sumcheck round used an invalid domain size.
+    #[error("integer sumcheck domain size must be between 1 and i64::MAX, got {domain_size}")]
+    InvalidIntegerDomain {
+        /// Number of integer points in the domain.
+        domain_size: usize,
+    },
+
     /// The number of round polynomials in the proof does not match
     /// the number of variables in the claim.
     #[error("expected {expected} rounds, proof contains {got}")]
@@ -52,7 +71,43 @@ pub enum SumcheckError<F: FieldCore> {
         got: usize,
     },
 
+    /// A round witness did not contain any coefficients.
+    #[error("round polynomial must contain at least one coefficient")]
+    EmptyRoundCoefficients,
+
+    /// The caller selected a verifier path that is incompatible with the proof
+    /// wire encoding.
+    #[error("wrong sumcheck proof encoding: expected {expected}, got {got}")]
+    WrongProofEncoding {
+        /// Expected proof encoding.
+        expected: &'static str,
+        /// Actual proof encoding.
+        got: &'static str,
+    },
+
     /// Batched verification received an empty claims slice.
     #[error("batched verification requires at least one claim")]
     EmptyClaims,
+
+    /// A batched evaluation claim was asked for an impossible point slice.
+    #[error("batched point range overflow: offset {offset}, num_vars {num_vars}")]
+    BatchedPointRangeOverflow {
+        /// Starting index into the batched challenge vector.
+        offset: usize,
+        /// Number of variables in the requested instance.
+        num_vars: usize,
+    },
+
+    /// A batched evaluation claim did not contain enough challenges for the requested instance.
+    #[error(
+        "batched point out of range: offset {offset}, num_vars {num_vars}, total challenges {total}"
+    )]
+    BatchedPointOutOfRange {
+        /// Starting index into the batched challenge vector.
+        offset: usize,
+        /// Number of variables in the requested instance.
+        num_vars: usize,
+        /// Total number of available batched challenges.
+        total: usize,
+    },
 }
