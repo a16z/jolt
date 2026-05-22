@@ -2746,6 +2746,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-claims"
+version = "0.1.0"
+dependencies = [
+ "derive_more",
+ "jolt-field",
+ "jolt-lookup-tables",
+ "jolt-poly",
+ "jolt-riscv",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jolt-core"
 version = "0.1.0"
 dependencies = [
