@@ -3142,6 +3142,7 @@ dependencies = [
 name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
+ "jolt-claims",
  "jolt-field",
  "jolt-poly",
  "num-traits",
@@ -3149,6 +3150,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "serde",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
