@@ -110,7 +110,7 @@ pub fn compute_witness_layout<'a>(
         for round_in_stage in 0..config.num_rounds {
             steps.push(LayoutStep::CoeffRow {
                 round_idx,
-                num_coeffs: config.poly_degree + 1,
+                num_coeffs: config.round_poly_degree(round_in_stage) + 1,
                 stage_idx,
                 round_in_stage,
             });

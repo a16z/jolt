@@ -1499,16 +1499,43 @@ impl<
                 initial_claims.push(zk_data.initial_claim);
             }
 
-            // For ALL stages, regular rounds start their own chain with batched initial claim
-            // (Even for stages 0-1, because the batched claim differs from uni-skip output)
             if stage_idx < 2 {
                 initial_claims.push(zk_data.initial_claim);
             }
 
             let mut current_claim = zk_data.initial_claim;
             let stage_challenges = &zk_data.challenges;
-            let num_rounds = zk_data.poly_coeffs.len();
+            let mut config = StageConfig::new_chain_with_round_degrees(
+                zk_data
+                    .poly_coeffs
+                    .iter()
+                    .map(|coeffs| coeffs.len() - 1)
+                    .collect(),
+            );
 
+            let batched_constraint = InputClaimConstraint::batch_required(
+                &zk_data.input_constraints,
+                zk_data.batching_coefficients.len(),
+            );
+            let mut challenge_values: Vec<F> = zk_data
+                .batching_coefficients
+                .iter()
+                .zip(&zk_data.input_claim_scaling_exponents)
+                .map(|(alpha, &scale)| alpha.mul_pow_2(scale))
+                .collect();
+            for cv in &zk_data.input_constraint_challenge_values {
+                challenge_values.extend(cv.iter().cloned());
+            }
+            let opening_values: Vec<F> = batched_constraint
+                .required_openings
+                .iter()
+                .map(|id| self.opening_accumulator.get_opening(*id))
+                .collect();
+            let initial_input_witness =
+                FinalOutputWitness::general(challenge_values, opening_values);
+            config = config.with_input_constraint(batched_constraint);
+
+            let mut rounds = Vec::with_capacity(zk_data.poly_coeffs.len());
             for (round_idx, coeffs) in zk_data.poly_coeffs.iter().enumerate() {
                 let challenge: F = stage_challenges[round_idx].into();
                 let poly_degree = coeffs.len() - 1;
@@ -1520,95 +1547,42 @@ impl<
                     next_claim = coeffs[i] + challenge * next_claim;
                 }
 
-                // First regular round ALWAYS starts a new chain (for all stages)
-                // This is because the regular rounds use batched claims which differ from uni-skip output
-                let starts_new_chain = round_idx == 0;
-                let is_last_round = round_idx == num_rounds - 1;
-                let is_first_round = round_idx == 0;
-
-                let config = if starts_new_chain {
-                    StageConfig::new_chain(1, poly_degree)
-                } else {
-                    StageConfig::new(1, poly_degree)
-                };
-
-                // Handle input constraints for first round of ALL stages
-                // Regular rounds use batched claims which need proper input constraints
-                let (config, initial_input_witness) = if is_first_round {
-                    let batched_constraint = InputClaimConstraint::batch_required(
-                        &zk_data.input_constraints,
-                        zk_data.batching_coefficients.len(),
-                    );
-
-                    let mut challenge_values: Vec<F> = zk_data
-                        .batching_coefficients
-                        .iter()
-                        .zip(&zk_data.input_claim_scaling_exponents)
-                        .map(|(alpha, &scale)| alpha.mul_pow_2(scale))
-                        .collect();
-                    for cv in &zk_data.input_constraint_challenge_values {
-                        challenge_values.extend(cv.iter().cloned());
-                    }
-
-                    let opening_values: Vec<F> = batched_constraint
-                        .required_openings
-                        .iter()
-                        .map(|id| self.opening_accumulator.get_opening(*id))
-                        .collect();
-
-                    let initial_input =
-                        FinalOutputWitness::general(challenge_values, opening_values);
-                    let config_with_input = config.with_input_constraint(batched_constraint);
-                    (config_with_input, Some(initial_input))
-                } else {
-                    (config, None)
-                };
-
-                // Handle output constraints for last round
-                let (config, final_output_witness) = if is_last_round {
-                    let batched = OutputClaimConstraint::batch(&zk_data.output_constraints);
-
-                    if let Some(batched_constraint) = batched {
-                        let mut challenge_values: Vec<F> = zk_data.batching_coefficients.clone();
-                        for cv in &zk_data.constraint_challenge_values {
-                            challenge_values.extend(cv.iter().cloned());
-                        }
-
-                        let opening_values: Vec<F> = batched_constraint
-                            .required_openings
-                            .iter()
-                            .map(|id| self.opening_accumulator.get_opening(*id))
-                            .collect();
-
-                        let final_output =
-                            FinalOutputWitness::general(challenge_values, opening_values);
-                        let config_with_fout = config.with_constraint(batched_constraint);
-                        (config_with_fout, Some(final_output))
-                    } else {
-                        (config, None)
-                    }
-                } else {
-                    (config, None)
-                };
-
-                stage_configs.push(config);
+                debug_assert_eq!(poly_degree, config.round_poly_degree(round_idx));
                 let round_witness =
                     RoundWitness::with_claimed_sum(coeffs.clone(), challenge, claimed_sum);
-
-                let stage_witness = match (initial_input_witness, final_output_witness) {
-                    (Some(ii), Some(fout)) => {
-                        StageWitness::with_both(vec![round_witness], ii, fout)
-                    }
-                    (Some(ii), None) => StageWitness::with_initial_input(vec![round_witness], ii),
-                    (None, Some(fout)) => {
-                        StageWitness::with_final_output(vec![round_witness], fout)
-                    }
-                    (None, None) => StageWitness::new(vec![round_witness]),
-                };
-                stage_witnesses.push(stage_witness);
-
+                rounds.push(round_witness);
                 current_claim = next_claim;
             }
+
+            let final_output_witness = if let Some(batched_constraint) =
+                OutputClaimConstraint::batch(&zk_data.output_constraints)
+            {
+                let mut challenge_values: Vec<F> = zk_data.batching_coefficients.clone();
+                for cv in &zk_data.constraint_challenge_values {
+                    challenge_values.extend(cv.iter().cloned());
+                }
+
+                let opening_values: Vec<F> = batched_constraint
+                    .required_openings
+                    .iter()
+                    .map(|id| self.opening_accumulator.get_opening(*id))
+                    .collect();
+
+                config = config.with_constraint(batched_constraint);
+                Some(FinalOutputWitness::general(
+                    challenge_values,
+                    opening_values,
+                ))
+            } else {
+                None
+            };
+
+            stage_configs.push(config);
+            let stage_witness = match final_output_witness {
+                Some(fout) => StageWitness::with_both(rounds, initial_input_witness, fout),
+                None => StageWitness::with_initial_input(rounds, initial_input_witness),
+            };
+            stage_witnesses.push(stage_witness);
         }
 
         let extra_constraint_terms: Vec<(ValueSource, ValueSource)> = stage8_data
@@ -1800,7 +1774,7 @@ impl<
 
         let hyrax = &r1cs.hyrax;
         let hyrax_C = hyrax.C;
-        let R_coeff = hyrax.R_coeff;
+        let coefficient_rows = hyrax.R_coeff;
         let R_prime = hyrax.R_prime;
         let output_claims_rows = hyrax.output_claims_rows;
         let regular_noncoeff_rows = hyrax.regular_noncoeff_rows();
@@ -1811,7 +1785,7 @@ impl<
         let oc_row_blindings = all_output_claims_blindings;
 
         // Regular noncoeff rows: committed fresh by the prover
-        let regular_noncoeff_start = (R_coeff + output_claims_rows) * hyrax_C;
+        let regular_noncoeff_start = (coefficient_rows + output_claims_rows) * hyrax_C;
         let noncoeff_row_blindings: Vec<F> = (0..regular_noncoeff_rows)
             .map(|_| F::random(&mut rng))
             .collect();
@@ -1831,12 +1805,12 @@ impl<
             })
             .collect();
 
-        // w_row_blindings: [round | pad to R_coeff | oc_rows | regular_noncoeff | pad to R']
+        // w_row_blindings: [round | oc_rows | regular_noncoeff | pad to R']
         let mut w_row_blindings = Vec::with_capacity(R_prime);
         w_row_blindings.extend_from_slice(&round_blindings);
-        w_row_blindings.resize(R_coeff, F::zero());
+        w_row_blindings.resize(coefficient_rows, F::zero());
         w_row_blindings.extend_from_slice(&oc_row_blindings);
-        w_row_blindings.resize(R_coeff + output_claims_rows, F::zero());
+        w_row_blindings.resize(coefficient_rows + output_claims_rows, F::zero());
         w_row_blindings.extend_from_slice(&noncoeff_row_blindings);
         w_row_blindings.resize(R_prime, F::zero());
 
@@ -1854,9 +1828,9 @@ impl<
         let eval_commitment_gens = PCS::eval_commitment_gens(&self.preprocessing.generators);
         let prover =
             BlindFoldProver::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
-        let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
+        self.transcript.append_label(b"BlindFold");
 
-        prover.prove(&real_instance, &real_witness, &z, &mut blindfold_transcript)
+        prover.prove(&real_instance, &real_witness, &z, &mut self.transcript)
     }
 
     /// Stage 7: HammingWeight + ClaimReduction sumcheck (only log_k_chunk rounds).

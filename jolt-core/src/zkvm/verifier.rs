@@ -1216,10 +1216,8 @@ impl<
             // Record first regular round index for its input constraint
             regular_first_round_indices.push(stage_configs.len());
 
-            // Add regular sumcheck rounds
-            let num_rounds = proof.num_rounds();
-            for round_idx in 0..num_rounds {
-                let poly_degree = match proof {
+            let round_poly_degrees = (0..proof.num_rounds())
+                .map(|round_idx| match proof {
                     crate::subprotocols::sumcheck::SumcheckInstanceProof::Clear(std_proof) => {
                         std_proof.compressed_polys[round_idx]
                             .coeffs_except_linear_term
@@ -1228,17 +1226,11 @@ impl<
                     crate::subprotocols::sumcheck::SumcheckInstanceProof::Zk(zk_proof) => {
                         zk_proof.poly_degrees[round_idx]
                     }
-                };
-                // First regular round ALWAYS starts a new chain
-                // (batched claims differ from uni-skip output due to batching coefficients)
-                let starts_new_chain = round_idx == 0;
-                let config = if starts_new_chain {
-                    StageConfig::new_chain(1, poly_degree)
-                } else {
-                    StageConfig::new(1, poly_degree)
-                };
-                stage_configs.push(config);
-            }
+                })
+                .collect::<Vec<_>>();
+            stage_configs.push(StageConfig::new_chain_with_round_degrees(
+                round_poly_degrees,
+            ));
 
             // Record the last round index for output constraint
             last_round_indices.push(stage_configs.len() - 1);
@@ -1400,13 +1392,13 @@ impl<
             PCS::eval_commitment_gens_verifier(&self.preprocessing.generators);
         let verifier =
             BlindFoldVerifier::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
-        let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
+        self.transcript.append_label(b"BlindFold");
 
         verifier
             .verify(
                 &self.proof.blindfold_proof,
                 &verifier_input,
-                &mut blindfold_transcript,
+                &mut self.transcript,
             )
             .map_err(|e| ProofVerifyError::BlindFoldError(format!("{e:?}")))?;
 
