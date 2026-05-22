@@ -1,7 +1,7 @@
 //! Integration tests for the opening reduction pipeline.
 //!
-//! These tests exercise the public API only -- no internal imports.
-//! They verify that the full reduce -> open -> verify pipeline works
+//! These tests exercise the public API only — no internal imports.
+//! They verify that the full reduce → open → verify pipeline works
 //! end-to-end with MockCommitmentScheme across both transcript backends.
 //!
 //! Requires: `cargo nextest run -p jolt-openings --features test-utils`
@@ -15,7 +15,10 @@
 
 use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
 use jolt_openings::mock::MockCommitmentScheme;
-use jolt_openings::{reduce_prover, reduce_verifier, CommitmentScheme, ProverClaim, VerifierClaim};
+use jolt_openings::{
+    reduce_prover, reduce_verifier, CommitmentScheme, EvaluationClaim, ProverOpeningClaim,
+    VerifierOpeningClaim,
+};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
@@ -23,6 +26,7 @@ use rand_core::SeedableRng;
 
 type MockPCS = MockCommitmentScheme<Fr>;
 
+/// Full reduce → open → verify pipeline.
 fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
     polys: &[Polynomial<Fr>],
     points: &[Vec<Fr>],
@@ -35,19 +39,18 @@ fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
 
     for (poly, point) in polys.iter().zip(points.iter()) {
         let eval = poly.evaluate(point);
-        prover_claims.push(ProverClaim {
+        prover_claims.push(ProverOpeningClaim {
             polynomial: Polynomial::new(poly.evaluations().to_vec()),
-            point: point.clone(),
-            eval,
+            evaluation: EvaluationClaim::new(point.clone(), eval),
         });
         let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
-        verifier_claims.push(VerifierClaim {
+        verifier_claims.push(VerifierOpeningClaim {
             commitment,
-            point: point.clone(),
-            eval,
+            evaluation: EvaluationClaim::new(point.clone(), eval),
         });
     }
 
+    // Prover side
     let mut transcript_p = T::new(label);
     let reduced_p = reduce_prover(prover_claims, &mut transcript_p);
     let proofs: Vec<_> = reduced_p
@@ -55,8 +58,8 @@ fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
         .map(|c| {
             MockPCS::open(
                 &c.polynomial,
-                &c.point,
-                c.eval,
+                &c.evaluation.point,
+                c.evaluation.value,
                 &(),
                 None,
                 &mut transcript_p,
@@ -64,6 +67,7 @@ fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
         })
         .collect();
 
+    // Verifier side
     let mut transcript_v = T::new(label);
     let reduced_v = reduce_verifier::<MockPCS, _>(verifier_claims, &mut transcript_v)
         .expect("reduction should succeed");
@@ -72,8 +76,8 @@ fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
     for (claim, proof) in reduced_v.iter().zip(proofs.iter()) {
         MockPCS::verify(
             &claim.commitment,
-            &claim.point,
-            claim.eval,
+            &claim.evaluation.point,
+            claim.evaluation.value,
             proof,
             &(),
             &mut transcript_v,
@@ -174,30 +178,26 @@ fn tampered_eval_detected() {
     let eval_b = poly_b.evaluate(&point);
 
     let prover_claims = vec![
-        ProverClaim {
+        ProverOpeningClaim {
             polynomial: Polynomial::new(poly_a.evaluations().to_vec()),
-            point: point.clone(),
-            eval: eval_a,
+            evaluation: EvaluationClaim::new(point.clone(), eval_a),
         },
-        ProverClaim {
+        ProverOpeningClaim {
             polynomial: Polynomial::new(poly_b.evaluations().to_vec()),
-            point: point.clone(),
-            eval: eval_b,
+            evaluation: EvaluationClaim::new(point.clone(), eval_b),
         },
     ];
 
     let (com_a, ()) = MockPCS::commit(poly_a.evaluations(), &());
     let (com_b, ()) = MockPCS::commit(poly_b.evaluations(), &());
     let verifier_claims = vec![
-        VerifierClaim {
+        VerifierOpeningClaim {
             commitment: com_a,
-            point: point.clone(),
-            eval: eval_a,
+            evaluation: EvaluationClaim::new(point.clone(), eval_a),
         },
-        VerifierClaim {
+        VerifierOpeningClaim {
             commitment: com_b,
-            point: point.clone(),
-            eval: eval_b + Fr::from_u64(1),
+            evaluation: EvaluationClaim::new(point.clone(), eval_b + Fr::from_u64(1)),
         },
     ];
 
@@ -208,8 +208,8 @@ fn tampered_eval_detected() {
         .map(|c| {
             MockPCS::open(
                 &c.polynomial,
-                &c.point,
-                c.eval,
+                &c.evaluation.point,
+                c.evaluation.value,
                 &(),
                 None,
                 &mut transcript_p,
@@ -225,8 +225,8 @@ fn tampered_eval_detected() {
     for (claim, proof) in reduced_v.iter().zip(proofs.iter()) {
         if MockPCS::verify(
             &claim.commitment,
-            &claim.point,
-            claim.eval,
+            &claim.evaluation.point,
+            claim.evaluation.value,
             proof,
             &(),
             &mut transcript_v,

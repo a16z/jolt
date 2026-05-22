@@ -2810,6 +2810,7 @@ dependencies = [
  "bincode 2.0.1",
  "criterion",
  "jolt-field",
+ "jolt-poly",
  "jolt-transcript",
  "num-bigint",
  "num-integer",
