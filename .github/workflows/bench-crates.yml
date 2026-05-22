@@ -36,6 +36,7 @@ jobs:
           -p jolt-crypto
           -p jolt-field
           -p jolt-poly
+          -p jolt-sumcheck
           -p jolt-transcript
           --bench '*'
           -- --save-baseline main_run
@@ -66,6 +67,7 @@ jobs:
           -p jolt-crypto
           -p jolt-field
           -p jolt-poly
+          -p jolt-sumcheck
           -p jolt-transcript
           --bench '*'
           -- --save-baseline pr_run
