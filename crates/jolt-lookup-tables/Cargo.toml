@@ -18,6 +18,7 @@ serde = { workspace = true, features = ["derive"] }
 strum = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
+jolt-core = { workspace = true, default-features = false, features = ["minimal"] }
 jolt-riscv = { workspace = true, features = ["serialization", "test-utils"] }
 rand = { workspace = true }
 tracer = { workspace = true, features = ["std", "test-utils"] }
