@@ -29,11 +29,13 @@ bn254 = [
   "dep:num-bigint",
   "dep:num-integer",
   "dep:num-traits",
-  "dep:rayon",
+  "parallel",
 ]
+parallel = ["dep:rayon", "jolt-poly/parallel"]
 
 [dependencies]
 jolt-field = { path = "../jolt-field" }
+jolt-poly = { path = "../jolt-poly", default-features = false }
 jolt-transcript = { path = "../jolt-transcript" }
 serde = { workspace = true, features = ["derive", "alloc"] }
 rand_core = { workspace = true }
