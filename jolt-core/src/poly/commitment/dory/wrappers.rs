@@ -28,11 +28,6 @@ pub use dory::backends::arkworks::{
 };
 
 pub type JoltFieldWrapper = ArkFr;
-type DenseTier1Setup = (
-    Vec<ark_bn254::G1Affine>,
-    usize,
-    Option<Vec<Vec<(usize, Fr)>>>,
-);
 
 #[inline]
 pub fn jolt_to_ark(f: &Fr) -> ArkFr {
@@ -220,7 +215,7 @@ where
         "Main+AddressMajor dense polynomial length exceeds trace T"
     );
 
-    let (dense_affine_bases, dense_chunk_size, dense_sparse_row_terms): DenseTier1Setup =
+    let (dense_affine_bases, dense_chunk_size, dense_sparse_row_terms) =
         if is_trace_dense_addr_major {
             let stride = DoryGlobals::dense_stride();
             let cycles_per_row = row_len / stride;
