@@ -5,6 +5,8 @@ use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsis
 
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
+#[cfg(feature = "field-inline")]
+use super::inputs::FieldInlineStage1Claims;
 use super::inputs::SpartanOuterClaims;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,6 +23,8 @@ pub struct Stage1ClearOutput<F: Field> {
     pub uniskip: VerifiedSpartanOuterSumcheck<F>,
     pub remainder: VerifiedSpartanOuterSumcheck<F>,
     pub outer: SpartanOuterClaims<F>,
+    #[cfg(feature = "field-inline")]
+    pub field_inline: FieldInlineStage1Claims<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

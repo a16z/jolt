@@ -111,6 +111,8 @@ pub(crate) fn clear_claims_from_native<F: Field>(
         stage1: Stage1Claims {
             uniskip_output_claim: claims.require(outer_uniskip_opening())?,
             outer: spartan_outer_claims_from_native(&claims)?,
+            #[cfg(feature = "field-inline")]
+            field_inline: crate::stages::stage1::inputs::FieldInlineStage1Claims::zero(),
         },
         stage2: stage2_claims_from_native(&claims)?,
         stage3: stage3_claims_from_native(&claims)?,
@@ -569,6 +571,8 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
         stage1: Stage1Claims {
             uniskip_output_claim: zero,
             outer: empty_spartan_outer_claims(),
+            #[cfg(feature = "field-inline")]
+            field_inline: crate::stages::stage1::inputs::FieldInlineStage1Claims::zero(),
         },
         stage2: Stage2Claims {
             product_uniskip_output_claim: zero,

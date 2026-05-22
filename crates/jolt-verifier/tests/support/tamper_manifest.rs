@@ -423,6 +423,15 @@ pub const STAGE1_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "core-fixture test offsets every Spartan outer variable opening claim",
     ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage1.claims.field_inline_spartan_outer",
+        "claims.stage1.field_inline.*",
+        VerifierPhase::Stage1,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Deferred,
+        "field-inline Spartan outer claims are checked once the Stage 1 verifier composition lands",
+    ),
 ];
 
 pub const STAGE2_TARGETS: &[TamperTarget] = &[
@@ -1109,6 +1118,22 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage1.outer.flags.is_first_in_sequence",
             "claims.stage1.outer.flags.is_last_in_sequence",
         ],
+        #[cfg(feature = "field-inline")]
+        "claims.stage1.field_inline.*" => vec![
+            "claims.stage1.field_inline.field_rs1_value",
+            "claims.stage1.field_inline.field_rs2_value",
+            "claims.stage1.field_inline.field_rd_value",
+            "claims.stage1.field_inline.field_product",
+            "claims.stage1.field_inline.field_inv_product",
+            "claims.stage1.field_inline.flags.add",
+            "claims.stage1.field_inline.flags.sub",
+            "claims.stage1.field_inline.flags.mul",
+            "claims.stage1.field_inline.flags.inv",
+            "claims.stage1.field_inline.flags.assert_eq",
+            "claims.stage1.field_inline.flags.load_from_x",
+            "claims.stage1.field_inline.flags.store_to_x",
+            "claims.stage1.field_inline.flags.load_imm",
+        ],
         "claims.stage2.batch_outputs.ram_read_write.*" => vec![
             "claims.stage2.batch_outputs.ram_read_write.val",
             "claims.stage2.batch_outputs.ram_read_write.ra",
@@ -1228,6 +1253,8 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     is_last_in_sequence: zero,
                 },
             },
+            #[cfg(feature = "field-inline")]
+            field_inline: stage1::inputs::FieldInlineStage1Claims::zero(),
         },
         stage2: stage2::inputs::Stage2Claims {
             product_uniskip_output_claim: zero,

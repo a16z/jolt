@@ -1,5 +1,9 @@
 //! Typed clear-mode inputs consumed by stage 1.
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::{
+    formulas::spartan as field_spartan, FieldInlineOpFlag, FieldInlineVirtualPolynomial,
+};
 use jolt_claims::protocols::jolt::{
     formulas::spartan::{outer_opening, SpartanOuterDimensions},
     JoltVirtualPolynomial,
@@ -15,6 +19,25 @@ use crate::VerifierError;
 pub struct Stage1Claims<F: Field> {
     pub uniskip_output_claim: F,
     pub outer: SpartanOuterClaims<F>,
+    #[cfg(feature = "field-inline")]
+    pub field_inline: FieldInlineStage1Claims<F>,
+}
+
+impl<F: Field> Stage1Claims<F> {
+    pub fn spartan_outer_claims(
+        &self,
+        dimensions: &SpartanOuterDimensions,
+    ) -> Result<Vec<F>, VerifierError> {
+        let claims = self.outer.r1cs_input_claims(dimensions)?;
+        #[cfg(feature = "field-inline")]
+        {
+            let mut claims = claims;
+            claims.extend(self.field_inline.r1cs_input_claims()?);
+            Ok(claims)
+        }
+        #[cfg(not(feature = "field-inline"))]
+        Ok(claims)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,4 +152,131 @@ impl<F: Field> SpartanOuterFlagClaims<F> {
             CircuitFlags::IsLastInSequence => Some(self.is_last_in_sequence),
         }
     }
+}
+
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct FieldInlineStage1Claims<F: Field> {
+    pub field_rs1_value: F,
+    pub field_rs2_value: F,
+    pub field_rd_value: F,
+    pub field_product: F,
+    pub field_inv_product: F,
+    pub flags: FieldInlineStage1FlagClaims<F>,
+}
+
+#[cfg(feature = "field-inline")]
+impl<F: Field> FieldInlineStage1Claims<F> {
+    pub fn zero() -> Self {
+        let zero = F::zero();
+        Self {
+            field_rs1_value: zero,
+            field_rs2_value: zero,
+            field_rd_value: zero,
+            field_product: zero,
+            field_inv_product: zero,
+            flags: FieldInlineStage1FlagClaims::zero(),
+        }
+    }
+
+    pub fn r1cs_input_claims(&self) -> Result<Vec<F>, VerifierError> {
+        field_spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS
+            .iter()
+            .copied()
+            .map(|variable| {
+                self.claim(variable)
+                    .ok_or_else(|| VerifierError::MissingFieldInlineOpeningClaim {
+                        id: field_spartan::outer_opening(variable),
+                    })
+            })
+            .collect()
+    }
+
+    pub fn claim(&self, variable: FieldInlineVirtualPolynomial) -> Option<F> {
+        match variable {
+            FieldInlineVirtualPolynomial::FieldRs1Value => Some(self.field_rs1_value),
+            FieldInlineVirtualPolynomial::FieldRs2Value => Some(self.field_rs2_value),
+            FieldInlineVirtualPolynomial::FieldRdValue => Some(self.field_rd_value),
+            FieldInlineVirtualPolynomial::FieldProduct => Some(self.field_product),
+            FieldInlineVirtualPolynomial::FieldInvProduct => Some(self.field_inv_product),
+            FieldInlineVirtualPolynomial::FieldOpFlag(flag) => self.flags.claim(flag),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct FieldInlineStage1FlagClaims<F: Field> {
+    pub add: F,
+    pub sub: F,
+    pub mul: F,
+    pub inv: F,
+    pub assert_eq: F,
+    pub load_from_x: F,
+    pub store_to_x: F,
+    pub load_imm: F,
+}
+
+#[cfg(feature = "field-inline")]
+impl<F: Field> FieldInlineStage1FlagClaims<F> {
+    pub fn zero() -> Self {
+        let zero = F::zero();
+        Self {
+            add: zero,
+            sub: zero,
+            mul: zero,
+            inv: zero,
+            assert_eq: zero,
+            load_from_x: zero,
+            store_to_x: zero,
+            load_imm: zero,
+        }
+    }
+
+    fn claim(&self, flag: FieldInlineOpFlag) -> Option<F> {
+        match flag {
+            FieldInlineOpFlag::Add => Some(self.add),
+            FieldInlineOpFlag::Sub => Some(self.sub),
+            FieldInlineOpFlag::Mul => Some(self.mul),
+            FieldInlineOpFlag::Inv => Some(self.inv),
+            FieldInlineOpFlag::AssertEq => Some(self.assert_eq),
+            FieldInlineOpFlag::LoadFromX => Some(self.load_from_x),
+            FieldInlineOpFlag::StoreToX => Some(self.store_to_x),
+            FieldInlineOpFlag::LoadImm => Some(self.load_imm),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stage1SpartanOuterOpening {
+    Jolt(JoltVirtualPolynomial),
+    #[cfg(feature = "field-inline")]
+    FieldInline(FieldInlineVirtualPolynomial),
+}
+
+pub fn spartan_outer_opening_order(
+    dimensions: &SpartanOuterDimensions,
+) -> Vec<Stage1SpartanOuterOpening> {
+    let openings = dimensions
+        .variables()
+        .iter()
+        .copied()
+        .map(Stage1SpartanOuterOpening::Jolt)
+        .collect::<Vec<_>>();
+    #[cfg(feature = "field-inline")]
+    {
+        let mut openings = openings;
+        openings.extend(
+            field_spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS
+                .iter()
+                .copied()
+                .map(Stage1SpartanOuterOpening::FieldInline),
+        );
+        openings
+    }
+    #[cfg(not(feature = "field-inline"))]
+    openings
 }

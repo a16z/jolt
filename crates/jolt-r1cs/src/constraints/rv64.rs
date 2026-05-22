@@ -163,7 +163,7 @@ impl<F: Field> Rv64SpartanOuterRemainder<F> {
             })
             .collect::<Result<_, _>>()?;
 
-        let matrices = rv64_eq_constraints::<F>();
+        let matrices = rv64_spartan_outer_constraints::<F>();
         let weighted = matrices.weighted_columns(&row_weights, &columns)?;
         let constant_contributions =
             matrices.public_column_contributions(&row_weights, const_column(), F::one())?;
@@ -537,7 +537,7 @@ fn append_product_constraints<F: Field>(
 /// standard 38-variable per-cycle witness layout. Product constraints are
 /// intentionally excluded for consumers that handle multiplication checks in
 /// a separate protocol step.
-pub fn rv64_eq_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
+pub fn rv64_spartan_outer_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     let (a_rows, b_rows, c_rows) = rv64_eq_constraint_rows();
     crate::ConstraintMatrices::new(
         NUM_EQ_CONSTRAINTS,
@@ -556,7 +556,7 @@ pub fn rv64_eq_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
 ///
 /// Variable layout matches the constants in this module (V_CONST=0, inputs at 1–35,
 /// product factors at 36–37).
-pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
+pub fn rv64_trace_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     let (mut a_rows, mut b_rows, mut c_rows) = rv64_eq_constraint_rows();
     a_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
     b_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
@@ -595,7 +595,7 @@ mod tests {
 
     #[test]
     fn noop_satisfies_constraints() {
-        let matrices = rv64_constraints::<Fr>();
+        let matrices = rv64_trace_constraints::<Fr>();
         assert_eq!(matrices.num_constraints, NUM_CONSTRAINTS_PER_CYCLE);
         assert_eq!(matrices.num_vars, NUM_VARS_PER_CYCLE);
         matrices
@@ -605,17 +605,17 @@ mod tests {
 
     #[test]
     fn constraint_count() {
-        let matrices = rv64_constraints::<Fr>();
+        let matrices = rv64_trace_constraints::<Fr>();
         assert_eq!(matrices.a.len(), 22);
         assert_eq!(matrices.b.len(), 22);
         assert_eq!(matrices.c.len(), 22);
     }
 
     #[test]
-    fn eq_constraints_plus_product_constraints_match_full_constraints() {
+    fn spartan_outer_constraints_plus_product_constraints_match_full_constraints() {
         let (mut a_rows, mut b_rows, mut c_rows) = rv64_eq_constraint_rows::<Fr>();
         append_product_constraints(&mut a_rows, &mut b_rows, &mut c_rows);
-        let matrices = rv64_constraints::<Fr>();
+        let matrices = rv64_trace_constraints::<Fr>();
 
         assert_eq!(matrices.a, a_rows);
         assert_eq!(matrices.b, b_rows);
@@ -624,7 +624,7 @@ mod tests {
 
     #[test]
     fn eq_constraint_public_column_has_no_c_contribution() {
-        let matrices = rv64_eq_constraints::<Fr>();
+        let matrices = rv64_spartan_outer_constraints::<Fr>();
         let row_weights = vec![Fr::from_u64(1); NUM_EQ_CONSTRAINTS];
         let contributions = matrices
             .public_column_contributions(&row_weights, const_column(), Fr::from_u64(1))

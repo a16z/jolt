@@ -896,6 +896,8 @@ mod tests {
             stage1: stage1::inputs::Stage1Claims {
                 uniskip_output_claim: zero,
                 outer: empty_spartan_outer_claims(),
+                #[cfg(feature = "field-inline")]
+                field_inline: stage1::inputs::FieldInlineStage1Claims::zero(),
             },
             stage2: stage2::inputs::Stage2Claims {
                 product_uniskip_output_claim: zero,

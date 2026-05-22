@@ -8,7 +8,7 @@
 //! - [`R1csColumn`] — names the derived polynomial columns (Az/Bz/Cz/…)
 //! - [`constraints::rv64`] — Jolt RV64IMAC variable layout and dimension constants
 //! - [`constraints::field_constraints`] — native field-inline constraint layout
-//! - [`constraints::jolt`] — compile-time selected composition of Jolt R1CS constraints
+//! - [`constraints::jolt`] — compile-time feature-gated composition of Jolt R1CS constraints
 
 pub mod builder;
 pub mod column;

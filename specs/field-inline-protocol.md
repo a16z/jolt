@@ -523,6 +523,27 @@ but parameterized by the selected equality constraints, selected row weights,
 and selected opening columns. FR-off must reduce exactly to the ordinary RV64
 helper.
 
+This stage-1 change must land for both verifier modes:
+
+```text
+transparent verifier:
+  checks the clear stage-1 remainder output against the composed Spartan outer
+  expected claim
+
+BlindFold verifier:
+  checks committed sumcheck consistency in stage1::verify, then lowers the same
+  composed Spartan outer relation inside stages::zk::blindfold::add_stage1
+```
+
+For ZK, changing only `stage1::verify` is insufficient. The committed
+sumcheck verifier only checks transcript consistency and output-claim
+commitments. The hidden equation tying those committed output claims to the
+Spartan outer formula is built in the BlindFold protocol assembly. When field
+inline is enabled, `add_stage1` must consume the same composed opening order,
+the same public coefficients, and the same expected-claim helper as the
+transparent verifier. Otherwise the verifier would either reject due to output
+claim shape mismatch or fail to bind the extra FR-local stage-1 claims.
+
 ## `jolt-claims` Layout
 
 Field inline should be its own `jolt-claims` protocol module. Describing the
@@ -868,6 +889,10 @@ Each step should be reviewed before continuing to the next.
      openings with field-inline-local Spartan openings in `jolt-verifier`.
      Reused bridge columns use ordinary Jolt openings; only true FR-local
      columns are appended as field-inline openings.
+     This slice must update both transparent verification and the ZK/BlindFold
+     stage-1 relation assembly. The transparent path checks clear output
+     claims directly; the BlindFold path must lower the same composed Spartan
+     outer relation over committed output-claim rows.
    - Stage 2 product virtualization: add `FieldRegistersProduct` as explicit
      product lanes sharing `r_prod`.
    - Stage 2 claim reduction: add `FieldRegistersClaimReduction` at the same
@@ -884,6 +909,9 @@ Each step should be reviewed before continuing to the next.
      opening accumulator entries remain unchanged.
    - Final review gate before prover work: standard and ZK tests pass with
      field inline disabled.
+   - Final review gate once the prover path for a slice exists: field-inline
+     proofs verify in both transparent and ZK/BlindFold modes, or the
+     unsupported mode is explicitly unavailable behind config/feature gating.
 
 7. Add prover/trace wiring.
    - Trace pure field ops through FR accesses.

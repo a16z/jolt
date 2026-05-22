@@ -326,6 +326,27 @@ The ZK choice is part of `JOLT_VERIFIER_CONFIG`. Stage helpers can keep the
 existing `cfg(feature = "zk")` structure while validating the proof payload
 shape up front.
 
+Field-inline verifier changes must preserve this two-mode contract. Every
+field-inline stage slice that changes a verifier relation has two obligations:
+
+```text
+transparent mode:
+  check the clear claims directly in the ordinary stage verifier
+
+BlindFold mode:
+  check committed sumcheck consistency in the ordinary stage verifier and lower
+  the same relation into the BlindFold protocol builder
+```
+
+For stage 1 specifically, field inline changes the Spartan outer relation. The
+transparent path computes the composed expected remainder claim from clear
+RV64-plus-FR openings. The ZK path must also update
+`stages::zk::blindfold::add_stage1` so the committed output-claim rows are
+bound to the same composed Spartan outer formula. Updating only
+`stages::stage1::verify` is not sound for ZK because committed consistency
+does not by itself prove the hidden output claims satisfy the composed Spartan
+outer formula.
+
 ## Field Inline
 
 Field inline is gated inside the appropriate ordinary stage folders. It should
@@ -408,9 +429,22 @@ Each slice has a small review gate and must preserve the FR-off path.
    - Add a selected Spartan outer remainder helper in `jolt-r1cs` that mirrors
      the existing RV64 helper but uses the selected equality constraints,
      selected row weights, and selected opening columns.
+   - Transparent path: `jolt-verifier::stages::stage1::verify` uses the
+     composed opening list, composed output-claim count, and composed expected
+     remainder helper.
+   - ZK path: `jolt-verifier::stages::zk::blindfold::add_stage1` uses the same
+     composed opening list and public coefficients when constructing the
+     BlindFold relation for committed output claims.
+   - The verifier ID layer must be able to name both ordinary Jolt and
+     field-inline openings/publics in ZK relation assembly. This can be a
+     small verifier-local enum or an equivalent adapter; it should not collapse
+     field-inline protocol IDs into ordinary Jolt IDs.
    - Review gate: FR-off expected output claims and public coefficient order
      match RV64 exactly; FR-on has deterministic selected opening order and
-     does not introduce a mixed `jolt-claims` protocol namespace.
+     does not introduce a mixed `jolt-claims` protocol namespace. Both
+     transparent and ZK verifier tests pass for FR-off. Once field-inline prover
+     fixtures exist, both transparent and ZK field-inline proofs must verify, or
+     the unsupported mode must be rejected by config/feature gating.
 
 4. Stage 2 product virtualization.
    - Add `FieldRegistersProduct` as explicit product lanes.
