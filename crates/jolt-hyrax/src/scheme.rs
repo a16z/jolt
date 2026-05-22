@@ -31,15 +31,21 @@ where
         validate_dimensions_for_poly(&setup.dimensions, poly.num_vars())?;
         validate_capacity::<VC>(setup)?;
         let (row_point, col_point) = setup.dimensions.split_point(point)?;
-        let row_blindings = zero_row_blindings::<VC>(&setup.dimensions)?;
+        let row_opening_scalars = zero_row_opening_scalars::<VC>(&setup.dimensions)?;
         let (row_opening, opened_eval) = VC::open_committed_rows(
             poly.evaluations(),
-            &row_blindings,
+            &row_opening_scalars,
             setup.dimensions.row_len()?,
             row_point,
             col_point,
         )?;
-        Ok((HyraxOpeningProof { row_opening }, opened_eval))
+        Ok((
+            HyraxOpeningProof {
+                combined_row: row_opening.combined_vector,
+                combined_row_opening_scalar: row_opening.combined_blinding,
+            },
+            opened_eval,
+        ))
     }
 
     pub fn verify_opening_proof(
@@ -64,7 +70,10 @@ where
             &commitment.rows,
             row_point,
             col_point,
-            &proof.row_opening,
+            &VectorCommitmentOpening {
+                combined_vector: proof.combined_row.clone(),
+                combined_blinding: proof.combined_row_opening_scalar,
+            },
         )?;
         if opened_eval != eval {
             return Err(HyraxError::EvaluationMismatch);
@@ -119,7 +128,7 @@ where
 
         let row_len = setup.dimensions.row_len().unwrap_or_default();
         let row_count = setup.dimensions.row_count().unwrap_or_default();
-        let zero_blinding = VC::Field::default();
+        let zero_opening_scalar = VC::Field::default();
         let mut rows = Vec::with_capacity(row_count);
 
         poly.for_each_row(setup.dimensions.col_vars, &mut |row_index, row| {
@@ -129,7 +138,7 @@ where
                 "Hyrax row iterator produced rows out of order",
             );
             assert_eq!(row.len(), row_len, "Hyrax row length mismatch");
-            rows.push(VC::commit(&setup.vc_setup, row, &zero_blinding));
+            rows.push(VC::commit(&setup.vc_setup, row, &zero_opening_scalar));
         });
 
         assert_eq!(rows.len(), row_count, "Hyrax row count mismatch");
@@ -149,10 +158,8 @@ where
         match result {
             Ok((proof, _)) => proof,
             Err(_) => HyraxOpeningProof {
-                row_opening: VectorCommitmentOpening {
-                    combined_vector: Vec::new(),
-                    combined_blinding: Self::Field::default(),
-                },
+                combined_row: Vec::new(),
+                combined_row_opening_scalar: Self::Field::default(),
             },
         }
     }
@@ -235,7 +242,7 @@ fn validate_verifier_capacity<VC: VectorCommitment>(
     Ok(())
 }
 
-fn zero_row_blindings<VC: VectorCommitment>(
+fn zero_row_opening_scalars<VC: VectorCommitment>(
     dimensions: &HyraxDimensions,
 ) -> Result<Vec<VC::Field>, HyraxError> {
     Ok(vec![VC::Field::default(); dimensions.row_count()?])

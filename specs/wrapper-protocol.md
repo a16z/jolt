@@ -86,6 +86,76 @@ transcript ordering. It must hide the R1CS witness, which includes the inner
 transparent Jolt proof, clear opening claims, verifier intermediate values, and
 any auxiliary variables allocated during wrapper assembly.
 
+## Statement
+
+For a fixed configured verifier, the wrapper proves verifier acceptance:
+
+```text
+Given public wrapper inputs, there exists a private transparent Jolt proof
+witness and verifier auxiliary witness such that the configured Jolt verifier
+accepts when its Fiat-Shamir transcript is replayed inside R1CS.
+```
+
+The public wrapper inputs include the public Jolt instance data and deployment
+bindings:
+
+```text
+public IO
+preprocessing / verifier-key digest
+configured protocol identifier
+selected verifier configuration digest
+any deployment-specific public inputs required by the wrapper verifier
+```
+
+The private wrapper witness includes:
+
+```text
+transparent Jolt proof payload
+clear opening claims and proof commitments
+stage-local verifier intermediate values
+opening snapshot data
+optional selected PCS-assist proof payload
+auxiliary variables needed by transcript, sumcheck, claim, opening, and assist
+constraints
+```
+
+The R1CS acceptance relation is the configured linear verifier:
+
+```text
+1. Bind the public preamble and private proof payload into the Jolt transcript.
+2. Derive verifier challenges inside R1CS.
+3. Verify the transparent Jolt PIOP stages:
+     sumcheck verifier equations
+     stage input/output claim equations
+     public-input and consistency equations
+     final opening snapshot construction
+4. Verify the configured opening phase:
+     ordinary mode: ordinary PCS opening verifier path
+     Dory-assist mode: selected DoryAssistProof verifier path
+5. Enforce that the configured verifier accepts.
+```
+
+For the primary v1 wrapper target, the in-circuit transcript is the algebraic
+Poseidon Jolt transcript. The wrapped inner proof must use the same transcript
+backend, so the wrapper constrains Poseidon absorbs and challenges directly
+over field elements rather than proving a Blake2b/Keccak byte hash circuit.
+
+In Dory-assist mode, step 4 does not encode the ordinary Dory stage-8 verifier.
+It encodes the selected `PcsProofAssist` verifier for the same opening snapshot:
+
+```text
+opening snapshot
+  -> Dory-assist stage 1/2/3 verifier checks
+  -> prefix-packing checks
+  -> Hyrax dense-trace opening check
+  -> Dory-assist final public pairing check / bound acceptance condition
+```
+
+This statement is intentionally about configured verifier acceptance. The VM
+execution semantics enter through the soundness of the configured Jolt verifier
+and the selected PCS-assist verifier, not through a separate execution circuit
+inside the wrapper.
+
 ## Relationship To BlindFold
 
 BlindFold already establishes the useful R1CS assembly pattern:
@@ -518,6 +588,76 @@ Dory-assist prefix packing:
 `jolt-wrapper::r1cs::assembly` sequences these helpers according to the
 configured verifier flow exported by `jolt-verifier`.
 
+## Dory Assist In Wrapper
+
+A Dory-assisted wrapper does not encode the ordinary Dory stage-8 verifier path.
+It encodes the configured verifier flow after the selected `PcsProofAssist`
+implementation has replaced that ordinary PCS opening check. Concretely:
+
+```text
+base Jolt stages
+  -> opening snapshot
+  -> selected DoryAssistProof::verify(...)
+  -> Dory-assist stage 1/2/3 checks
+  -> Hyrax opening check for the packed dense trace
+  -> Dory-assist final public pairing check
+  -> wrapper R1CS proves this configured verifier accepts
+```
+
+The wrapper-facing R1CS hooks follow the Dory-assist ownership split:
+
+```text
+Dory-assist stage sumchecks:
+  jolt-sumcheck::r1cs
+
+Dory-assist operation-family and wiring formulas:
+  jolt-claims::protocols::dory_assist + jolt-r1cs lowering
+
+Dory-assist prefix packing:
+  jolt-claims::protocols::dory_assist::packing
+
+Dory-assist dense-trace opening:
+  jolt-hyrax::r1cs
+
+Dory-assist final public pairing check:
+  dory-assist verifier crate hook
+```
+
+`jolt-hyrax::r1cs` should only lower the Hyrax opening verifier used by the
+assist proof:
+
+```text
+row_point, col_point = split(opening_point)
+combined_commitment = Σ_i eq(row_point, i) * row_commitment_i
+combined_commitment == Pedersen(combined_row, row_combination_randomness)
+claimed_eval == Σ_j eq(col_point, j) * combined_row[j]
+```
+
+It should not know Dory-assist stage IDs, operation families, prefix codes, or
+copy constraints. Those are Dory-assist protocol semantics.
+
+For the BN254/Grumpkin recursion target, Dory assist uses Grumpkin-backed
+Pedersen row commitments. This is not only a wrapper convenience: Grumpkin's
+scalar field is BN254 `Fq`, matching the arithmetic needed by the assisted Dory
+verifier trace. The wrapper benefit is narrower but important: Grumpkin's base
+field is BN254 `Fr`, so when the configured verifier is compiled into a BN254
+`Fr` R1CS, the Hyrax commitment group-law constraints are native-coordinate
+constraints rather than BN254-G1-over-`Fq` non-native group arithmetic.
+
+Any `Fq` scalar arithmetic, range constraints, operation-family semantics, and
+copy/wiring checks remain Dory-assist constraints. The Hyrax R1CS module only
+binds the already-packed dense trace to the assist verifier's claimed dense
+opening.
+
+The Dory-assist spec says final exponentiation and public pairing equality are
+native verifier work in v1. For wrapper purposes, that means "outside the
+Dory-assist auxiliary proof," not "outside the configured verifier." A
+self-contained wrapper must still account for that selected assist-verifier
+acceptance condition: either the Dory-assist verifier crate supplies the R1CS
+hook for the final public check, or the wrapper verifier must recheck and bind
+that public condition outside the wrapper proof. The primary self-contained
+wrapper target should not rely on an unchecked native side condition.
+
 ## Assembly API
 
 ```rust
@@ -712,8 +852,10 @@ Each step should be reviewed before continuing to the next.
      the same fixture.
 
 7. Add Dory-assist and Hyrax hooks.
-   - Call `jolt-hyrax::r1cs` and Dory-assist claim/packing helpers when the
-     configured verifier includes Dory assist.
+   - Compile the selected Dory-assist `PcsProofAssist` verifier path rather
+     than the ordinary Dory stage-8 verifier path.
+   - Call Dory-assist claim, packing, final-check, and `jolt-hyrax::r1cs`
+     helpers when the configured verifier includes Dory assist.
    - Review gate: Dory-assist configured computation produces satisfied
      R1CS.
 

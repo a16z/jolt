@@ -38,6 +38,30 @@ References:
 The modular implementation is new code. The reference branch informs staging
 and formulas; it is not copied as an architectural dependency.
 
+## Curve Choice
+
+Dory assist uses Grumpkin for the auxiliary Hyrax commitment layer in the BN254
+instantiation. This is a semantic requirement from the recursion-paper design,
+not just an implementation preference:
+
+```text
+BN254 Dory verifier:
+  group coordinates and pairing-target arithmetic live over BN254 Fq
+
+ordinary Jolt proof:
+  committed polynomial field is BN254 Fr
+
+Grumpkin:
+  base field is BN254 Fr
+  scalar field is BN254 Fq
+  no pairings
+```
+
+The Dory verifier computation we offload needs `Fq`-native arithmetic. Grumpkin
+forms a 2-cycle with BN254, so a Hyrax/Pedersen assist proof over Grumpkin has
+the right scalar field for the Dory verifier's `Fq` arithmetic while keeping the
+cryptographic opening check to ordinary Grumpkin MSMs rather than pairings.
+
 ## Scope
 
 V1 scope:
@@ -46,7 +70,7 @@ V1 scope:
 Dory-assist protocol facts in jolt-claims
 Dory-assist verifier crate implementing PcsProofAssist for the Dory PCS
 generic PCS-assist payload consumed by jolt-verifier
-Hyrax dense-trace opening
+Hyrax dense-trace opening over Grumpkin-backed Pedersen row commitments
 multi-Miller-loop work proven inside the assist proof
 final exponentiation checked natively by the Dory-assist verifier
 wrapper-compatible R1CS hooks for sumcheck, claims, packing, and Hyrax
@@ -116,7 +140,7 @@ private witness:
     operation outputs and wiring values
 
 commitment:
-  Hyrax commitment to the packed dense trace
+  Grumpkin/Pedersen-backed Hyrax commitment to the packed dense trace
 ```
 
 The proof establishes:
@@ -161,7 +185,7 @@ Jolt opening snapshot:
   claimed evaluations
   transcript-derived scalars
 Dory-assist transcript challenges
-Hyrax dense-trace commitment
+Grumpkin/Pedersen-backed Hyrax dense-trace commitment
 Hyrax opening claim
 final pairing-check input/output values
 ```
@@ -238,7 +262,8 @@ stage 3:
   prefix packing reduction to one dense polynomial opening
 
 PCS opening:
-  Hyrax opening of the dense trace
+  Hyrax opening of the dense trace using Grumpkin-backed Pedersen row
+  commitments
 ```
 
 Dory assist proves the multi-Miller-loop work. The Dory-assist verifier receives
@@ -524,7 +549,8 @@ pub struct HyraxCommitment<C> {
 }
 
 pub struct HyraxOpeningProof<F> {
-    pub row_opening: VectorCommitmentOpening<F>,
+    pub combined_row: Vec<F>,
+    pub combined_row_opening_scalar: F,
 }
 
 pub struct HyraxScheme<VC: VectorCommitment> { ... }
@@ -554,19 +580,28 @@ The default instantiation can be Pedersen-backed:
 PedersenHyrax<G> = Hyrax<Pedersen<G>>
 ```
 
-but verifier APIs should be generic over the vector commitment abstraction.
+Dory assist's production instantiation uses Grumpkin for those Pedersen row
+commitments:
+
+```text
+DoryAssistHyrax = Hyrax<Pedersen<Grumpkin>>
+```
+
+Verifier APIs should still be generic over the vector commitment abstraction.
 
 Hyrax setup should compose with existing `jolt_crypto::DeriveSetup` impls. For
 Dory assist, the intended path is:
 
 ```text
 DoryProverSetup
-  -> PedersenSetup<Bn254G1> via DeriveSetup<DoryProverSetup>
-  -> HyraxProverSetup<Pedersen<Bn254G1>> using HyraxDimensions.row_len()
+  -> PedersenSetup<Grumpkin> via DeriveSetup<DoryProverSetup>
+  -> HyraxProverSetup<Pedersen<Grumpkin>> using HyraxDimensions.row_len()
 ```
 
 `HyraxDimensions` are not derivable from the PCS SRS and must be supplied by the
-Dory-assist dense-trace layout.
+Dory-assist dense-trace layout. If the initial native `jolt-hyrax` tests use a
+different available `JoltGroup` implementation, that is only a test fixture; the
+Dory-assist verifier configuration should select Grumpkin.
 
 ## Generic PCS-Assist Integration
 
@@ -726,7 +761,7 @@ Each step should be reviewed before continuing to the next.
 1. Add `jolt-hyrax` native API.
    - Define setup, commitment, proof, opening claim, and verifier APIs.
    - Use `jolt-crypto` vector commitment and group abstractions.
-   - Review gate: synthetic Hyrax opening tests pass.
+   - Review gate: Hyrax opening fixture tests pass.
 
 2. Add `jolt-hyrax::r1cs`.
    - Encode the verifier equations needed by Dory assist.
@@ -762,7 +797,7 @@ Each step should be reviewed before continuing to the next.
      payload.
    - Build Dory-assist public inputs from the generic opening snapshot and the
      ordinary joint opening proof.
-   - Review gate: `jolt-verifier` can dispatch to synthetic Dory-assist
+   - Review gate: `jolt-verifier` can dispatch to Dory-assist
      fixtures without Dory-specific stage modules.
 
 8. Add multi-Miller-loop verification path.
@@ -774,5 +809,5 @@ Each step should be reviewed before continuing to the next.
 9. Add wrapper R1CS hooks.
    - Lower Dory-assist stages through claim, sumcheck, packing, and Hyrax R1CS
      helpers.
-   - Review gate: wrapper assembly can include synthetic Dory-assist stages in
+   - Review gate: wrapper assembly can include configured Dory-assist stages in
      a satisfied R1CS.
