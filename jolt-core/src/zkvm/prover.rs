@@ -103,7 +103,7 @@ use crate::{
         bytecode::read_raf_checking::{
             BytecodeReadRafAddressSumcheckProver, BytecodeReadRafCycleSumcheckProver,
         },
-        fiat_shamir_preamble,
+        compute_final_opening_point, fiat_shamir_preamble,
         instruction_lookups::{
             ra_virtual::InstructionRaSumcheckProver as LookupsRaSumcheckProver,
             read_raf_checking::InstructionReadRafSumcheckProver,
@@ -312,80 +312,13 @@ impl<
 
     fn stage8_opening_point(&self) -> OpeningPoint<BIG_ENDIAN, F> {
         let native_main_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
-        let mut opening_candidates: Vec<(&str, OpeningPoint<BIG_ENDIAN, F>)> = Vec::new();
-        if let Some((point, _)) = self
-            .opening_accumulator
-            .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReduction)
-        {
-            opening_candidates.push(("trusted_advice", point));
-        }
-        if let Some((point, _)) = self
-            .opening_accumulator
-            .get_advice_opening(AdviceKind::Untrusted, SumcheckId::AdviceClaimReduction)
-        {
-            opening_candidates.push(("untrusted_advice", point));
-        }
-
-        let max_len = opening_candidates
-            .iter()
-            .map(|(_, p)| p.r.len())
-            .max()
-            .unwrap_or(0);
-        if max_len > native_main_vars {
-            let dominant = opening_candidates
-                .iter()
-                .find(|(_, p)| p.r.len() == max_len)
-                .expect("at least one dominant precommitted candidate expected");
-            for (name, point) in opening_candidates
-                .iter()
-                .filter(|(_, p)| p.r.len() == max_len)
-            {
-                assert_eq!(
-                    point.r, dominant.1.r,
-                    "incompatible dominant precommitted anchors: {} and {} have equal dimensionality {} but different opening points",
-                    dominant.0, name, max_len
-                );
-            }
-            OpeningPoint::<BIG_ENDIAN, F>::new(dominant.1.r.clone())
-        } else {
-            let (hamming_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::InstructionRa(0),
-                SumcheckId::HammingWeightClaimReduction,
-            );
-            let r_address_stage7 = hamming_point.r[..self.one_hot_params.log_k_chunk].to_vec();
-            let r_cycle_stage6 = self
-                .opening_accumulator
-                .get_committed_polynomial_opening(
-                    CommittedPolynomial::RamInc,
-                    SumcheckId::IncClaimReduction,
-                )
-                .0
-                .r;
-
-            match DoryGlobals::get_layout() {
-                DoryLayout::AddressMajor => OpeningPoint::<BIG_ENDIAN, F>::new(
-                    [r_cycle_stage6.as_slice(), r_address_stage7.as_slice()].concat(),
-                ),
-                DoryLayout::CycleMajor => {
-                    let native_cycle = &hamming_point.r[self.one_hot_params.log_k_chunk..];
-                    assert!(
-                        r_cycle_stage6.len() >= native_cycle.len(),
-                        "stage6 cycle challenges shorter than native cycle vars"
-                    );
-                    assert!(
-                        r_cycle_stage6[..native_cycle.len()] == *native_cycle,
-                        "cycle-major Stage-8 expects stage6 cycle prefix to equal native cycle vars \
-                         (cycle_full_len={}, native_len={})",
-                        r_cycle_stage6.len(),
-                        native_cycle.len()
-                    );
-                    let cycle_extra = &r_cycle_stage6[native_cycle.len()..];
-                    let cycle_extra_and_anchor =
-                        [cycle_extra, r_address_stage7.as_slice(), native_cycle].concat();
-                    OpeningPoint::<BIG_ENDIAN, F>::new(cycle_extra_and_anchor)
-                }
-            }
-        }
+        compute_final_opening_point(
+            &self.opening_accumulator,
+            native_main_vars,
+            self.one_hot_params.log_k_chunk,
+            DoryGlobals::get_layout(),
+        )
+        .expect("invalid prover Stage-8 opening point")
     }
 
     pub fn gen_from_trace(
