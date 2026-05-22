@@ -11,8 +11,8 @@ use jolt_claims::protocols::jolt::{
         ram::{self, RamValCheckAdviceContribution, RamValCheckInit},
         registers,
     },
-    JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltStageClaims, ReadWriteDimensions,
-    TraceDimensions,
+    JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationClaims,
+    ReadWriteDimensions, TraceDimensions,
 };
 use jolt_r1cs::{ClaimSourceTable, R1csBuilder};
 use jolt_sumcheck::{SumcheckDomainSpec, SumcheckStatement};
@@ -28,7 +28,7 @@ struct JoltSourceValues {
 }
 
 impl JoltSourceValues {
-    fn seeded(stage: &JoltStageClaims<F>, seed: u64) -> Self {
+    fn seeded(stage: &JoltRelationClaims<F>, seed: u64) -> Self {
         let openings = stage
             .required_openings()
             .into_iter()
@@ -94,7 +94,7 @@ impl JoltSourceValues {
 }
 
 fn solve_linear_output_opening(
-    stage: &JoltStageClaims<F>,
+    stage: &JoltRelationClaims<F>,
     values: &mut JoltSourceValues,
     target: F,
 ) -> JoltOpeningId {
@@ -125,7 +125,7 @@ fn solve_linear_output_opening(
 }
 
 fn build_jolt_stage_relation(
-    stage: &JoltStageClaims<F>,
+    stage: &JoltRelationClaims<F>,
     generated: &GeneratedStage,
     values: &JoltSourceValues,
 ) -> Result<(), usize> {
@@ -168,7 +168,7 @@ fn build_jolt_stage_relation(
 }
 
 fn generated_jolt_stage(
-    stage: &JoltStageClaims<F>,
+    stage: &JoltRelationClaims<F>,
     seed: u64,
 ) -> (GeneratedStage, JoltSourceValues, JoltOpeningId) {
     let setup = pedersen_setup(stage.sumcheck.degree + 1);

@@ -6,6 +6,13 @@ use crate::support::tamper_manifest;
 use jolt_verifier::compat::claims::attach_empty_opening_claims;
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use jolt_verifier::proof::JoltProofClaims;
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+use {
+    jolt_blindfold::BlindFoldProof,
+    jolt_crypto::VectorCommitmentOpening,
+    jolt_field::{Fr, FromPrimitiveInt},
+    jolt_sumcheck::CompressedSumcheckProof,
+};
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 #[test]
@@ -47,7 +54,7 @@ fn zk_claim_payload_in_clear_mode_rejects_now() {
         &base,
         |case| {
             case.proof.claims = JoltProofClaims::Zk {
-                blindfold_proof: (),
+                blindfold_proof: empty_blindfold_proof(),
             };
         },
     );
@@ -83,6 +90,36 @@ fn tampered_mixed_proof_shape_reject() {}
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 fn real_core_case() -> crate::support::core_fixtures::CoreVerifierCase {
     crate::support::core_fixtures::standard_muldiv_case()
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn empty_blindfold_proof() -> BlindFoldProof<Fr, jolt_crypto::Bn254G1> {
+    let zero = Fr::from_u64(0);
+    let opening = VectorCommitmentOpening {
+        combined_vector: Vec::new(),
+        combined_blinding: zero,
+    };
+    BlindFoldProof {
+        auxiliary_row_commitments: Vec::new(),
+        random_round_commitments: Vec::new(),
+        random_output_claim_row_commitments: Vec::new(),
+        random_auxiliary_row_commitments: Vec::new(),
+        random_error_row_commitments: Vec::new(),
+        random_eval_commitments: Vec::new(),
+        random_u: zero,
+        cross_term_error_row_commitments: Vec::new(),
+        outer_sumcheck: CompressedSumcheckProof::default(),
+        az_rx: zero,
+        bz_rx: zero,
+        cz_rx: zero,
+        inner_sumcheck: CompressedSumcheckProof::default(),
+        witness_opening: opening.clone(),
+        error_opening: opening.clone(),
+        folded_eval_outputs: Vec::new(),
+        folded_eval_blindings: Vec::new(),
+        folded_eval_output_openings: Vec::new(),
+        folded_eval_blinding_openings: Vec::new(),
+    }
 }
 
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]

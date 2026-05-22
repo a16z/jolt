@@ -1,8 +1,7 @@
-use std::{cmp::min, error::Error, fmt, ops::Range};
-
 use jolt_field::Field;
-use jolt_poly::EqPolynomial;
 use serde::{Deserialize, Serialize};
+
+pub use super::error::{JoltFormulaDimensionsError, JoltFormulaPointError};
 
 use super::{
     bytecode::BytecodeReadRafDimensions,
@@ -143,12 +142,6 @@ impl TraceDimensions {
     }
 }
 
-impl From<usize> for TraceDimensions {
-    fn from(log_t: usize) -> Self {
-        Self::new(log_t)
-    }
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ReadWriteDimensions {
     log_t: usize,
@@ -277,78 +270,12 @@ impl ReadWriteDimensions {
     }
 }
 
-impl From<(usize, usize, usize, usize)> for ReadWriteDimensions {
-    fn from(
-        (log_t, log_k, phase1_num_rounds, phase2_num_rounds): (usize, usize, usize, usize),
-    ) -> Self {
-        Self::new(log_t, log_k, phase1_num_rounds, phase2_num_rounds)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReadWriteOpeningPoint<F: Field> {
     pub r_address: Vec<F>,
     pub r_cycle: Vec<F>,
     pub opening_point: Vec<F>,
 }
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum JoltFormulaPointError {
-    InvalidReadWritePhaseSplit {
-        phase1_num_rounds: usize,
-        log_t: usize,
-        phase2_num_rounds: usize,
-        log_k: usize,
-    },
-    ChallengeLengthMismatch {
-        expected: usize,
-        got: usize,
-    },
-    OpeningPointLengthMismatch {
-        expected: usize,
-        got: usize,
-    },
-    EvaluationDomainLengthMismatch {
-        expected: usize,
-        got: usize,
-    },
-}
-
-impl fmt::Display for JoltFormulaPointError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidReadWritePhaseSplit {
-                phase1_num_rounds,
-                log_t,
-                phase2_num_rounds,
-                log_k,
-            } => write!(
-                f,
-                "invalid read-write phase split: phase1 {phase1_num_rounds}/{log_t}, phase2 {phase2_num_rounds}/{log_k}"
-            ),
-            Self::ChallengeLengthMismatch { expected, got } => {
-                write!(
-                    f,
-                    "challenge length mismatch: expected {expected}, got {got}"
-                )
-            }
-            Self::OpeningPointLengthMismatch { expected, got } => {
-                write!(
-                    f,
-                    "opening point length mismatch: expected {expected}, got {got}"
-                )
-            }
-            Self::EvaluationDomainLengthMismatch { expected, got } => {
-                write!(
-                    f,
-                    "evaluation domain length mismatch: expected {expected}, got {got}"
-                )
-            }
-        }
-    }
-}
-
-impl Error for JoltFormulaPointError {}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JoltReadWriteConfig {
@@ -427,273 +354,6 @@ impl CommitmentMatrixShape {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AdviceClaimReductionLayout {
-    trace_order: TracePolynomialOrder,
-    log_t: usize,
-    log_k_chunk: usize,
-    main_shape: CommitmentMatrixShape,
-    advice_shape: CommitmentMatrixShape,
-    cycle_phase_col_rounds: Range<usize>,
-    cycle_phase_row_rounds: Range<usize>,
-}
-
-impl AdviceClaimReductionLayout {
-    pub fn balanced(
-        trace_order: TracePolynomialOrder,
-        log_t: usize,
-        log_k_chunk: usize,
-        max_advice_size_bytes: usize,
-    ) -> Self {
-        Self::new(
-            trace_order,
-            log_t,
-            log_k_chunk,
-            CommitmentMatrixShape::balanced(log_k_chunk + log_t),
-            CommitmentMatrixShape::advice_from_max_bytes(max_advice_size_bytes),
-        )
-    }
-
-    pub fn new(
-        trace_order: TracePolynomialOrder,
-        log_t: usize,
-        log_k_chunk: usize,
-        main_shape: CommitmentMatrixShape,
-        advice_shape: CommitmentMatrixShape,
-    ) -> Self {
-        let (cycle_phase_col_rounds, cycle_phase_row_rounds) =
-            cycle_phase_round_schedule(trace_order, log_t, log_k_chunk, main_shape, advice_shape);
-        Self {
-            trace_order,
-            log_t,
-            log_k_chunk,
-            main_shape,
-            advice_shape,
-            cycle_phase_col_rounds,
-            cycle_phase_row_rounds,
-        }
-    }
-
-    pub const fn trace_order(&self) -> TracePolynomialOrder {
-        self.trace_order
-    }
-
-    pub const fn log_t(&self) -> usize {
-        self.log_t
-    }
-
-    pub const fn log_k_chunk(&self) -> usize {
-        self.log_k_chunk
-    }
-
-    pub const fn main_shape(&self) -> CommitmentMatrixShape {
-        self.main_shape
-    }
-
-    pub const fn advice_shape(&self) -> CommitmentMatrixShape {
-        self.advice_shape
-    }
-
-    pub fn cycle_phase_col_rounds(&self) -> Range<usize> {
-        self.cycle_phase_col_rounds.clone()
-    }
-
-    pub fn cycle_phase_row_rounds(&self) -> Range<usize> {
-        self.cycle_phase_row_rounds.clone()
-    }
-
-    pub fn active_cycle_phase_rounds(&self) -> usize {
-        self.cycle_phase_col_rounds.len() + self.cycle_phase_row_rounds.len()
-    }
-
-    pub fn cycle_phase_rounds(&self) -> usize {
-        if !self.cycle_phase_row_rounds.is_empty() {
-            self.cycle_phase_row_rounds.end - self.cycle_phase_col_rounds.start
-        } else {
-            self.cycle_phase_col_rounds.len()
-        }
-    }
-
-    pub fn address_phase_rounds(&self) -> usize {
-        self.advice_shape
-            .total_vars()
-            .saturating_sub(self.active_cycle_phase_rounds())
-    }
-
-    pub fn dimensions(&self) -> AdviceClaimReductionDimensions {
-        AdviceClaimReductionDimensions::new(self.cycle_phase_rounds(), self.address_phase_rounds())
-    }
-
-    pub fn cycle_phase_opening_point<F: Field>(
-        &self,
-        challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
-        let mut advice_var_challenges = self.cycle_phase_variable_challenges(challenges)?;
-        advice_var_challenges.reverse();
-        Ok(advice_var_challenges)
-    }
-
-    pub fn cycle_phase_variable_challenges<F: Field>(
-        &self,
-        challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
-        let expected = self.cycle_phase_rounds();
-        if challenges.len() != expected {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
-                expected,
-                got: challenges.len(),
-            });
-        }
-
-        let mut advice_var_challenges = Vec::with_capacity(self.active_cycle_phase_rounds());
-        advice_var_challenges.extend_from_slice(&challenges[self.cycle_phase_col_rounds.clone()]);
-        advice_var_challenges.extend_from_slice(&challenges[self.cycle_phase_row_rounds.clone()]);
-        Ok(advice_var_challenges)
-    }
-
-    pub fn address_phase_opening_point<F: Field>(
-        &self,
-        cycle_var_challenges: &[F],
-        challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
-        let expected_cycle = self.active_cycle_phase_rounds();
-        if cycle_var_challenges.len() != expected_cycle {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
-                expected: expected_cycle,
-                got: cycle_var_challenges.len(),
-            });
-        }
-        let expected_address = self.address_phase_rounds();
-        if challenges.len() != expected_address {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
-                expected: expected_address,
-                got: challenges.len(),
-            });
-        }
-
-        let mut point = match self.trace_order {
-            TracePolynomialOrder::CycleMajor => [cycle_var_challenges, challenges].concat(),
-            TracePolynomialOrder::AddressMajor => [challenges, cycle_var_challenges].concat(),
-        };
-        point.reverse();
-        Ok(point)
-    }
-
-    pub fn cycle_phase_final_output_scale<F: Field>(
-        &self,
-        reference_opening_point: &[F],
-        challenges: &[F],
-    ) -> Result<F, JoltFormulaPointError> {
-        let opening_point = self.cycle_phase_opening_point(challenges)?;
-        self.final_output_scale_at(reference_opening_point, &opening_point)
-    }
-
-    pub fn address_phase_final_output_scale<F: Field>(
-        &self,
-        reference_opening_point: &[F],
-        cycle_var_challenges: &[F],
-        challenges: &[F],
-    ) -> Result<F, JoltFormulaPointError> {
-        let opening_point = self.address_phase_opening_point(cycle_var_challenges, challenges)?;
-        self.final_output_scale_at(reference_opening_point, &opening_point)
-    }
-
-    fn final_output_scale_at<F: Field>(
-        &self,
-        reference_opening_point: &[F],
-        opening_point: &[F],
-    ) -> Result<F, JoltFormulaPointError> {
-        if reference_opening_point.len() != opening_point.len() {
-            return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
-                expected: reference_opening_point.len(),
-                got: opening_point.len(),
-            });
-        }
-
-        Ok(
-            EqPolynomial::<F>::mle(opening_point, reference_opening_point)
-                * self.dummy_cycle_phase_scale::<F>(),
-        )
-    }
-
-    fn dummy_cycle_phase_scale<F: Field>(&self) -> F {
-        let two_inv = F::from_u64(2).inv_or_zero();
-        (0..self.dummy_cycle_phase_rounds()).fold(F::one(), |scale, _| scale * two_inv)
-    }
-
-    pub fn dummy_cycle_phase_rounds(&self) -> usize {
-        self.cycle_phase_rounds()
-            .saturating_sub(self.active_cycle_phase_rounds())
-    }
-}
-
-fn cycle_phase_round_schedule(
-    trace_order: TracePolynomialOrder,
-    log_t: usize,
-    log_k_chunk: usize,
-    main_shape: CommitmentMatrixShape,
-    advice_shape: CommitmentMatrixShape,
-) -> (Range<usize>, Range<usize>) {
-    match trace_order {
-        TracePolynomialOrder::CycleMajor => {
-            let col_binding_rounds = 0..min(log_t, advice_shape.column_vars());
-            let row_binding_rounds = min(log_t, main_shape.column_vars())
-                ..min(log_t, main_shape.column_vars() + advice_shape.row_vars());
-            (col_binding_rounds, row_binding_rounds)
-        }
-        TracePolynomialOrder::AddressMajor => {
-            let col_binding_rounds = 0..advice_shape.column_vars().saturating_sub(log_k_chunk);
-            let row_binding_rounds = main_shape.column_vars().saturating_sub(log_k_chunk)
-                ..min(
-                    log_t,
-                    main_shape.column_vars().saturating_sub(log_k_chunk) + advice_shape.row_vars(),
-                );
-            (col_binding_rounds, row_binding_rounds)
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct AdviceClaimReductionDimensions {
-    cycle_phase_rounds: usize,
-    address_phase_rounds: usize,
-}
-
-impl AdviceClaimReductionDimensions {
-    pub const fn new(cycle_phase_rounds: usize, address_phase_rounds: usize) -> Self {
-        Self {
-            cycle_phase_rounds,
-            address_phase_rounds,
-        }
-    }
-
-    pub const fn cycle_phase_rounds(self) -> usize {
-        self.cycle_phase_rounds
-    }
-
-    pub const fn address_phase_rounds(self) -> usize {
-        self.address_phase_rounds
-    }
-
-    pub const fn has_address_phase(self) -> bool {
-        self.address_phase_rounds > 0
-    }
-
-    pub const fn cycle_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.cycle_phase_rounds, 2)
-    }
-
-    pub const fn address_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.address_phase_rounds, 2)
-    }
-}
-
-impl From<(usize, usize)> for AdviceClaimReductionDimensions {
-    fn from((cycle_phase_rounds, address_phase_rounds): (usize, usize)) -> Self {
-        Self::new(cycle_phase_rounds, address_phase_rounds)
-    }
-}
-
 fn log2_power_of_two(value: usize) -> usize {
     assert!(
         value.is_power_of_two(),
@@ -701,88 +361,6 @@ fn log2_power_of_two(value: usize) -> usize {
     );
     value.trailing_zeros() as usize
 }
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum JoltFormulaDimensionsError {
-    Zero {
-        name: &'static str,
-    },
-    Overflow {
-        name: &'static str,
-    },
-    InvalidChunkOrder {
-        committed_chunk_bits: usize,
-        lookup_virtual_chunk_bits: usize,
-    },
-    NotDivisible {
-        value_name: &'static str,
-        value: usize,
-        divisor_name: &'static str,
-        divisor: usize,
-    },
-    InvalidPhaseRounds {
-        phase1_num_rounds: usize,
-        log_t: usize,
-    },
-}
-
-impl JoltFormulaDimensionsError {
-    pub(crate) const fn zero(name: &'static str) -> Self {
-        Self::Zero { name }
-    }
-
-    pub(crate) const fn overflow(name: &'static str) -> Self {
-        Self::Overflow { name }
-    }
-
-    pub(crate) const fn not_divisible(
-        value_name: &'static str,
-        value: usize,
-        divisor_name: &'static str,
-        divisor: usize,
-    ) -> Self {
-        Self::NotDivisible {
-            value_name,
-            value,
-            divisor_name,
-            divisor,
-        }
-    }
-}
-
-impl fmt::Display for JoltFormulaDimensionsError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Zero { name } => write!(f, "{name} must be nonzero"),
-            Self::Overflow { name } => write!(f, "{name} overflowed"),
-            Self::InvalidChunkOrder {
-                committed_chunk_bits,
-                lookup_virtual_chunk_bits,
-            } => write!(
-                f,
-                "lookup_virtual_chunk_bits ({lookup_virtual_chunk_bits}) must be >= committed_chunk_bits ({committed_chunk_bits})"
-            ),
-            Self::NotDivisible {
-                value_name,
-                value,
-                divisor_name,
-                divisor,
-            } => write!(
-                f,
-                "{value_name} ({value}) must be divisible by {divisor_name} ({divisor})"
-            ),
-            Self::InvalidPhaseRounds {
-                phase1_num_rounds,
-                log_t,
-            } => write!(
-                f,
-                "phase1_num_rounds ({phase1_num_rounds}) must be <= log_t ({log_t})"
-            ),
-        }
-    }
-}
-
-impl Error for JoltFormulaDimensionsError {}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct JoltOneHotDimensions {
@@ -904,7 +482,7 @@ impl TryFrom<JoltOneHotDimensions> for JoltFormulaDimensions {
             dimensions.lookup_virtual_chunk_bits / dimensions.committed_chunk_bits;
 
         Ok(Self {
-            trace: dimensions.log_t.into(),
+            trace: TraceDimensions::new(dimensions.log_t),
             ra_layout: JoltRaPolynomialLayout::try_from((instruction_d, bytecode_d, ram_d))?,
             instruction_read_raf: InstructionReadRafDimensions::try_from((
                 dimensions.log_t,
@@ -916,15 +494,19 @@ impl TryFrom<JoltOneHotDimensions> for JoltFormulaDimensions {
                 virtual_instruction_ra_polys,
                 committed_per_virtual,
             ))?,
-            bytecode_read_raf: (dimensions.log_t, bytecode_log_k, bytecode_d).into(),
-            ram_ra_virtualization: (dimensions.log_t, ram_d).into(),
+            bytecode_read_raf: BytecodeReadRafDimensions::new(
+                dimensions.log_t,
+                bytecode_log_k,
+                bytecode_d,
+            ),
+            ram_ra_virtualization: RamRaVirtualizationDimensions::new(dimensions.log_t, ram_d),
         })
     }
 }
 
 fn require_nonzero(value: usize, name: &'static str) -> Result<(), JoltFormulaDimensionsError> {
     if value == 0 {
-        Err(JoltFormulaDimensionsError::zero(name))
+        Err(JoltFormulaDimensionsError::Zero { name })
     } else {
         Ok(())
     }
@@ -939,12 +521,12 @@ fn require_divisible(
     if value.is_multiple_of(divisor) {
         Ok(())
     } else {
-        Err(JoltFormulaDimensionsError::not_divisible(
+        Err(JoltFormulaDimensionsError::NotDivisible {
             value_name,
             value,
             divisor_name,
             divisor,
-        ))
+        })
     }
 }
 
@@ -960,6 +542,7 @@ fn ceil_log_2(value: usize) -> usize {
 mod tests {
     #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
 
+    use super::super::claim_reductions::advice::AdviceClaimReductionLayout;
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt, Invertible};
 
@@ -1185,14 +768,16 @@ mod tests {
                 instruction_address_bits: 0,
                 ..dimensions()
             }),
-            Err(JoltFormulaDimensionsError::zero("instruction_address_bits"))
+            Err(JoltFormulaDimensionsError::Zero {
+                name: "instruction_address_bits"
+            })
         );
         assert_eq!(
             JoltFormulaDimensions::try_from(JoltOneHotDimensions {
                 bytecode_k: 0,
                 ..dimensions()
             }),
-            Err(JoltFormulaDimensionsError::zero("bytecode_k"))
+            Err(JoltFormulaDimensionsError::Zero { name: "bytecode_k" })
         );
     }
 
@@ -1214,24 +799,24 @@ mod tests {
                 lookup_virtual_chunk_bits: 20,
                 ..dimensions()
             }),
-            Err(JoltFormulaDimensionsError::not_divisible(
-                "lookup_virtual_chunk_bits",
-                20,
-                "committed_chunk_bits",
-                8,
-            ))
+            Err(JoltFormulaDimensionsError::NotDivisible {
+                value_name: "lookup_virtual_chunk_bits",
+                value: 20,
+                divisor_name: "committed_chunk_bits",
+                divisor: 8,
+            })
         );
         assert_eq!(
             JoltFormulaDimensions::try_from(JoltOneHotDimensions {
                 lookup_virtual_chunk_bits: 48,
                 ..dimensions()
             }),
-            Err(JoltFormulaDimensionsError::not_divisible(
-                "instruction_address_bits",
-                128,
-                "lookup_virtual_chunk_bits",
-                48,
-            ))
+            Err(JoltFormulaDimensionsError::NotDivisible {
+                value_name: "instruction_address_bits",
+                value: 128,
+                divisor_name: "lookup_virtual_chunk_bits",
+                divisor: 48,
+            })
         );
     }
 

@@ -1,7 +1,7 @@
 //! Verifier error types.
 
 use jolt_claims::protocols::jolt::{
-    JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPublicId, JoltStageId,
+    JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPublicId, JoltRelationId,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -62,28 +62,37 @@ pub enum VerifierError {
 
     #[error("stage {stage:?} opening inputs {left:?} and {right:?} must have the same evaluation")]
     StageClaimOpeningMismatch {
-        stage: JoltStageId,
+        stage: JoltRelationId,
         left: JoltOpeningId,
         right: JoltOpeningId,
     },
 
     #[error("stage {stage:?} claim expressions must evaluate to the same value")]
-    StageClaimExpressionMismatch { stage: JoltStageId },
+    StageClaimExpressionMismatch { stage: JoltRelationId },
 
     #[error("stage {stage:?} sumcheck degree {degree} is invalid")]
-    InvalidStageSumcheckDegree { stage: JoltStageId, degree: usize },
+    InvalidStageSumcheckDegree {
+        stage: JoltRelationId,
+        degree: usize,
+    },
 
     #[error("stage {stage:?} compressed sumcheck proof requires a Boolean domain")]
-    CompressedStageClaimRequiresBooleanDomain { stage: JoltStageId },
+    CompressedStageClaimRequiresBooleanDomain { stage: JoltRelationId },
 
     #[error("stage {stage:?} sumcheck verification failed: {reason}")]
-    StageClaimSumcheckFailed { stage: JoltStageId, reason: String },
+    StageClaimSumcheckFailed {
+        stage: JoltRelationId,
+        reason: String,
+    },
 
     #[error("stage {stage:?} public claim construction failed: {reason}")]
-    StageClaimPublicInputFailed { stage: JoltStageId, reason: String },
+    StageClaimPublicInputFailed {
+        stage: JoltRelationId,
+        reason: String,
+    },
 
     #[error("stage {stage:?} sumcheck output does not match evaluated output claim")]
-    StageClaimOutputMismatch { stage: JoltStageId },
+    StageClaimOutputMismatch { stage: JoltRelationId },
 
     #[error("invalid final opening commitment count {got}; expected {expected}")]
     InvalidCommitmentCount { expected: usize, got: usize },

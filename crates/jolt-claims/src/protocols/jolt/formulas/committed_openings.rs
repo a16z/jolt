@@ -2,17 +2,11 @@
 
 use jolt_field::Field;
 
-use super::super::{JoltCommittedPolynomial, JoltOpeningId, JoltStageId};
+use super::super::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
 use super::ra::JoltRaPolynomialLayout;
 
 pub fn proof_commitment_order(layout: JoltRaPolynomialLayout) -> Vec<JoltCommittedPolynomial> {
-    let mut polynomials = Vec::with_capacity(2 + layout.total());
-    polynomials.push(JoltCommittedPolynomial::RdInc);
-    polynomials.push(JoltCommittedPolynomial::RamInc);
-    polynomials.extend((0..layout.instruction()).map(JoltCommittedPolynomial::InstructionRa));
-    polynomials.extend((0..layout.ram()).map(JoltCommittedPolynomial::RamRa));
-    polynomials.extend((0..layout.bytecode()).map(JoltCommittedPolynomial::BytecodeRa));
-    polynomials
+    final_opening_polynomial_order(layout, false, false)
 }
 
 pub fn final_opening_polynomial_order(
@@ -44,48 +38,36 @@ pub fn final_opening_ids(
     include_trusted_advice: bool,
     include_untrusted_advice: bool,
 ) -> Vec<JoltOpeningId> {
-    let mut ids = Vec::with_capacity(
-        2 + layout.total()
-            + usize::from(include_trusted_advice)
-            + usize::from(include_untrusted_advice),
-    );
-    ids.push(JoltOpeningId::committed(
-        JoltCommittedPolynomial::RamInc,
-        JoltStageId::IncClaimReduction,
-    ));
-    ids.push(JoltOpeningId::committed(
-        JoltCommittedPolynomial::RdInc,
-        JoltStageId::IncClaimReduction,
-    ));
-    ids.extend((0..layout.instruction()).map(|index| {
-        JoltOpeningId::committed(
-            JoltCommittedPolynomial::InstructionRa(index),
-            JoltStageId::HammingWeightClaimReduction,
-        )
-    }));
-    ids.extend((0..layout.bytecode()).map(|index| {
-        JoltOpeningId::committed(
-            JoltCommittedPolynomial::BytecodeRa(index),
-            JoltStageId::HammingWeightClaimReduction,
-        )
-    }));
-    ids.extend((0..layout.ram()).map(|index| {
-        JoltOpeningId::committed(
-            JoltCommittedPolynomial::RamRa(index),
-            JoltStageId::HammingWeightClaimReduction,
-        )
-    }));
-    if include_trusted_advice {
-        ids.push(JoltOpeningId::trusted_advice(
-            JoltStageId::AdviceClaimReduction,
-        ));
+    final_opening_polynomial_order(layout, include_trusted_advice, include_untrusted_advice)
+        .into_iter()
+        .map(final_opening_id)
+        .collect()
+}
+
+pub fn final_opening_id(polynomial: JoltCommittedPolynomial) -> JoltOpeningId {
+    match polynomial {
+        JoltCommittedPolynomial::TrustedAdvice => {
+            JoltOpeningId::trusted_advice(JoltRelationId::AdviceClaimReduction)
+        }
+        JoltCommittedPolynomial::UntrustedAdvice => {
+            JoltOpeningId::untrusted_advice(JoltRelationId::AdviceClaimReduction)
+        }
+        polynomial => JoltOpeningId::committed(polynomial, final_opening_relation(polynomial)),
     }
-    if include_untrusted_advice {
-        ids.push(JoltOpeningId::untrusted_advice(
-            JoltStageId::AdviceClaimReduction,
-        ));
+}
+
+pub fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelationId {
+    match polynomial {
+        JoltCommittedPolynomial::RdInc | JoltCommittedPolynomial::RamInc => {
+            JoltRelationId::IncClaimReduction
+        }
+        JoltCommittedPolynomial::InstructionRa(_)
+        | JoltCommittedPolynomial::BytecodeRa(_)
+        | JoltCommittedPolynomial::RamRa(_) => JoltRelationId::HammingWeightClaimReduction,
+        JoltCommittedPolynomial::TrustedAdvice | JoltCommittedPolynomial::UntrustedAdvice => {
+            JoltRelationId::AdviceClaimReduction
+        }
     }
-    ids
 }
 
 pub fn advice_commitment_embedding_scale<F: Field>(
@@ -118,17 +100,17 @@ mod tests {
     }
 
     #[test]
-    fn proof_commitment_order_matches_jolt_proof_payload_order() {
+    fn proof_commitment_order_reuses_final_opening_order() {
         assert_eq!(
             proof_commitment_order(layout()),
             vec![
-                JoltCommittedPolynomial::RdInc,
                 JoltCommittedPolynomial::RamInc,
+                JoltCommittedPolynomial::RdInc,
                 JoltCommittedPolynomial::InstructionRa(0),
                 JoltCommittedPolynomial::InstructionRa(1),
+                JoltCommittedPolynomial::BytecodeRa(0),
                 JoltCommittedPolynomial::RamRa(0),
                 JoltCommittedPolynomial::RamRa(1),
-                JoltCommittedPolynomial::BytecodeRa(0),
             ]
         );
     }
@@ -158,33 +140,33 @@ mod tests {
             vec![
                 JoltOpeningId::committed(
                     JoltCommittedPolynomial::RamInc,
-                    JoltStageId::IncClaimReduction,
+                    JoltRelationId::IncClaimReduction,
                 ),
                 JoltOpeningId::committed(
                     JoltCommittedPolynomial::RdInc,
-                    JoltStageId::IncClaimReduction,
+                    JoltRelationId::IncClaimReduction,
                 ),
                 JoltOpeningId::committed(
                     JoltCommittedPolynomial::InstructionRa(0),
-                    JoltStageId::HammingWeightClaimReduction,
+                    JoltRelationId::HammingWeightClaimReduction,
                 ),
                 JoltOpeningId::committed(
                     JoltCommittedPolynomial::InstructionRa(1),
-                    JoltStageId::HammingWeightClaimReduction,
+                    JoltRelationId::HammingWeightClaimReduction,
                 ),
                 JoltOpeningId::committed(
                     JoltCommittedPolynomial::BytecodeRa(0),
-                    JoltStageId::HammingWeightClaimReduction,
+                    JoltRelationId::HammingWeightClaimReduction,
                 ),
                 JoltOpeningId::committed(
                     JoltCommittedPolynomial::RamRa(0),
-                    JoltStageId::HammingWeightClaimReduction,
+                    JoltRelationId::HammingWeightClaimReduction,
                 ),
                 JoltOpeningId::committed(
                     JoltCommittedPolynomial::RamRa(1),
-                    JoltStageId::HammingWeightClaimReduction,
+                    JoltRelationId::HammingWeightClaimReduction,
                 ),
-                JoltOpeningId::trusted_advice(JoltStageId::AdviceClaimReduction),
+                JoltOpeningId::trusted_advice(JoltRelationId::AdviceClaimReduction),
             ]
         );
     }

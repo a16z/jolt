@@ -1,17 +1,17 @@
 use std::num::NonZeroUsize;
 
 use jolt_field::{Field, RingCore};
-use jolt_lookup_tables::LookupTableKind;
+use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_riscv::InstructionFlags;
 
-use crate::{challenge, opening, public, SameEvaluationAs};
+use crate::{challenge, opening, SameEvaluationAs};
 
+use super::super::InstructionRaVirtualizationChallenge;
 use super::super::{
     InstructionInputChallenge, InstructionReadRafChallenge, JoltChallengeId,
-    JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPublicId, JoltStageClaims, JoltStageId,
+    JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltRelationClaims, JoltRelationId,
     JoltVirtualPolynomial,
 };
-use super::super::{InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic};
 use super::dimensions::{
     JoltFormulaDimensionsError, JoltFormulaPointError, JoltSumcheckSpec, TraceDimensions,
 };
@@ -97,13 +97,15 @@ impl TryFrom<(usize, usize, usize)> for InstructionReadRafDimensions {
         (log_t, instruction_address_bits, num_virtual_ra_polys): (usize, usize, usize),
     ) -> Result<Self, Self::Error> {
         if instruction_address_bits == 0 {
-            return Err(JoltFormulaDimensionsError::zero("instruction_address_bits"));
+            return Err(JoltFormulaDimensionsError::Zero {
+                name: "instruction_address_bits",
+            });
         }
         Ok(Self::new(
             log_t,
             instruction_address_bits,
-            NonZeroUsize::new(num_virtual_ra_polys).ok_or_else(|| {
-                JoltFormulaDimensionsError::zero("instruction virtual RA polynomial count")
+            NonZeroUsize::new(num_virtual_ra_polys).ok_or(JoltFormulaDimensionsError::Zero {
+                name: "instruction virtual RA polynomial count",
             })?,
         ))
     }
@@ -126,16 +128,18 @@ impl InstructionRaVirtualizationDimensions {
         let num_committed_ra_polys = num_virtual_ra_polys
             .get()
             .checked_mul(num_committed_per_virtual.get())
-            .ok_or_else(|| {
-                JoltFormulaDimensionsError::overflow("instruction committed RA polynomial count")
+            .ok_or(JoltFormulaDimensionsError::Overflow {
+                name: "instruction committed RA polynomial count",
             })?;
         Ok(Self {
             log_t,
             virtual_ra_polys: num_virtual_ra_polys,
             committed_per_virtual: num_committed_per_virtual,
-            committed_ra_polys: NonZeroUsize::new(num_committed_ra_polys).ok_or_else(|| {
-                JoltFormulaDimensionsError::zero("instruction committed RA polynomial count")
-            })?,
+            committed_ra_polys: NonZeroUsize::new(num_committed_ra_polys).ok_or(
+                JoltFormulaDimensionsError::Zero {
+                    name: "instruction committed RA polynomial count",
+                },
+            )?,
         })
     }
 
@@ -168,17 +172,19 @@ impl TryFrom<(usize, usize, usize)> for InstructionRaVirtualizationDimensions {
     ) -> Result<Self, Self::Error> {
         Self::new(
             log_t,
-            NonZeroUsize::new(num_virtual_ra_polys).ok_or_else(|| {
-                JoltFormulaDimensionsError::zero("instruction virtual RA polynomial count")
+            NonZeroUsize::new(num_virtual_ra_polys).ok_or(JoltFormulaDimensionsError::Zero {
+                name: "instruction virtual RA polynomial count",
             })?,
-            NonZeroUsize::new(num_committed_per_virtual).ok_or_else(|| {
-                JoltFormulaDimensionsError::zero("committed RA polynomials per virtual RA")
-            })?,
+            NonZeroUsize::new(num_committed_per_virtual).ok_or(
+                JoltFormulaDimensionsError::Zero {
+                    name: "committed RA polynomials per virtual RA",
+                },
+            )?,
         )
     }
 }
 
-pub fn input_virtualization<F>(dimensions: TraceDimensions) -> JoltStageClaims<F>
+pub fn input_virtualization<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
@@ -201,8 +207,8 @@ where
             * opening(left_operand_is_pc())
             * opening(unexpanded_pc());
 
-    JoltStageClaims::new(
-        JoltStageId::InstructionInputVirtualization,
+    JoltRelationClaims::new(
+        JoltRelationId::InstructionInputVirtualization,
         dimensions.sumcheck(INPUT_VIRTUALIZATION_DEGREE),
         input,
         output,
@@ -246,9 +252,7 @@ pub fn input_virtualization_consistency_openings() -> [(JoltOpeningId, JoltOpeni
     ]
 }
 
-pub fn read_raf<const XLEN: usize, F>(
-    dimensions: InstructionReadRafDimensions,
-) -> JoltStageClaims<F>
+pub fn read_raf<F>(dimensions: InstructionReadRafDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
@@ -273,8 +277,8 @@ where
             * ra_product
             * opening(instruction_raf_flag());
 
-    JoltStageClaims::new(
-        JoltStageId::InstructionReadRaf,
+    JoltRelationClaims::new(
+        JoltRelationId::InstructionReadRaf,
         dimensions.sumcheck(),
         input,
         output,
@@ -297,7 +301,7 @@ pub fn read_raf_input_openings() -> [JoltOpeningId; 3] {
     ]
 }
 
-pub fn read_raf_output_openings<const XLEN: usize>(
+pub fn read_raf_output_openings(
     dimensions: InstructionReadRafDimensions,
 ) -> InstructionReadRafOutputOpenings {
     InstructionReadRafOutputOpenings {
@@ -315,9 +319,7 @@ pub fn read_raf_consistency_openings() -> [(JoltOpeningId, JoltOpeningId); 1] {
     [(lookup_output_reduced(), lookup_output_product())]
 }
 
-pub fn read_raf_lookup_table_flag_opening<const XLEN: usize>(
-    table: LookupTableKind<XLEN>,
-) -> JoltOpeningId {
+pub fn read_raf_lookup_table_flag_opening(table: LookupTableKind<XLEN>) -> JoltOpeningId {
     lookup_table_flag(table)
 }
 
@@ -329,14 +331,16 @@ pub fn read_raf_instruction_raf_flag_opening() -> JoltOpeningId {
     instruction_raf_flag()
 }
 
-pub fn ra_virtualization<F>(dimensions: InstructionRaVirtualizationDimensions) -> JoltStageClaims<F>
+pub fn ra_virtualization<F>(
+    dimensions: InstructionRaVirtualizationDimensions,
+) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
     let gamma = ra_virtualization_challenge(InstructionRaVirtualizationChallenge::Gamma);
     let input = weighted_instruction_ra_sum(dimensions, gamma.clone());
 
-    let eq_cycle = ra_virtualization_public(InstructionRaVirtualizationPublic::EqCycle);
+    let eq_cycle = ra_virtualization_challenge(InstructionRaVirtualizationChallenge::EqCycle);
     let mut output = JoltExpr::zero();
     for virtual_index in 0..dimensions.num_virtual_ra_polys() {
         output = output
@@ -345,8 +349,8 @@ where
                 * committed_instruction_ra_product(dimensions, virtual_index);
     }
 
-    JoltStageClaims::new(
-        JoltStageId::InstructionRaVirtualization,
+    JoltRelationClaims::new(
+        JoltRelationId::InstructionRaVirtualization,
         dimensions.sumcheck(),
         input,
         output,
@@ -425,14 +429,7 @@ where
     challenge(JoltChallengeId::from(id))
 }
 
-fn ra_virtualization_public<F>(id: InstructionRaVirtualizationPublic) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    public(JoltPublicId::from(id))
-}
-
-fn eq_table_value<const XLEN: usize>(table: LookupTableKind<XLEN>) -> InstructionReadRafChallenge {
+fn eq_table_value(table: LookupTableKind<XLEN>) -> InstructionReadRafChallenge {
     InstructionReadRafChallenge::EqTableValue(table.index())
 }
 
@@ -479,140 +476,140 @@ where
 fn left_instruction_input_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftInstructionInput,
-        JoltStageId::SpartanProductVirtualization,
+        JoltRelationId::SpartanProductVirtualization,
     )
 }
 
 fn right_instruction_input_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RightInstructionInput,
-        JoltStageId::SpartanProductVirtualization,
+        JoltRelationId::SpartanProductVirtualization,
     )
 }
 
 fn left_instruction_input_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftInstructionInput,
-        JoltStageId::InstructionClaimReduction,
+        JoltRelationId::InstructionClaimReduction,
     )
 }
 
 fn right_instruction_input_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RightInstructionInput,
-        JoltStageId::InstructionClaimReduction,
+        JoltRelationId::InstructionClaimReduction,
     )
 }
 
 fn lookup_output_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LookupOutput,
-        JoltStageId::SpartanProductVirtualization,
+        JoltRelationId::SpartanProductVirtualization,
     )
 }
 
 fn lookup_output_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LookupOutput,
-        JoltStageId::InstructionClaimReduction,
+        JoltRelationId::InstructionClaimReduction,
     )
 }
 
 fn left_lookup_operand_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftLookupOperand,
-        JoltStageId::InstructionClaimReduction,
+        JoltRelationId::InstructionClaimReduction,
     )
 }
 
 fn right_lookup_operand_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RightLookupOperand,
-        JoltStageId::InstructionClaimReduction,
+        JoltRelationId::InstructionClaimReduction,
     )
 }
 
 fn instruction_ra(index: usize) -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionRa(index),
-        JoltStageId::InstructionReadRaf,
+        JoltRelationId::InstructionReadRaf,
     )
 }
 
 fn committed_instruction_ra(index: usize) -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::InstructionRa(index),
-        JoltStageId::InstructionRaVirtualization,
+        JoltRelationId::InstructionRaVirtualization,
     )
 }
 
-fn lookup_table_flag<const XLEN: usize>(table: LookupTableKind<XLEN>) -> JoltOpeningId {
+fn lookup_table_flag(table: LookupTableKind<XLEN>) -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LookupTableFlag(table.index()),
-        JoltStageId::InstructionReadRaf,
+        JoltRelationId::InstructionReadRaf,
     )
 }
 
 fn instruction_raf_flag() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionRafFlag,
-        JoltStageId::InstructionReadRaf,
+        JoltRelationId::InstructionReadRaf,
     )
 }
 
 fn left_operand_is_rs1() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
-        JoltStageId::InstructionInputVirtualization,
+        JoltRelationId::InstructionInputVirtualization,
     )
 }
 
 fn rs1_value() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs1Value,
-        JoltStageId::InstructionInputVirtualization,
+        JoltRelationId::InstructionInputVirtualization,
     )
 }
 
 fn left_operand_is_pc() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
-        JoltStageId::InstructionInputVirtualization,
+        JoltRelationId::InstructionInputVirtualization,
     )
 }
 
 fn unexpanded_pc() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::UnexpandedPC,
-        JoltStageId::InstructionInputVirtualization,
+        JoltRelationId::InstructionInputVirtualization,
     )
 }
 
 fn right_operand_is_rs2() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value),
-        JoltStageId::InstructionInputVirtualization,
+        JoltRelationId::InstructionInputVirtualization,
     )
 }
 
 fn rs2_value() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs2Value,
-        JoltStageId::InstructionInputVirtualization,
+        JoltRelationId::InstructionInputVirtualization,
     )
 }
 
 fn right_operand_is_imm() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
-        JoltStageId::InstructionInputVirtualization,
+        JoltRelationId::InstructionInputVirtualization,
     )
 }
 
 fn imm() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Imm,
-        JoltStageId::InstructionInputVirtualization,
+        JoltRelationId::InstructionInputVirtualization,
     )
 }
 
@@ -622,8 +619,6 @@ mod tests {
     use super::*;
     use crate::protocols::jolt::{JoltConsistencyClaim, JoltPolynomialId};
     use jolt_field::{Fr, FromPrimitiveInt};
-
-    const TEST_XLEN: usize = jolt_lookup_tables::XLEN;
 
     fn read_raf_dimensions(num_virtual_ra_polys: usize) -> InstructionReadRafDimensions {
         InstructionReadRafDimensions::try_from((5, 128, num_virtual_ra_polys))
@@ -647,13 +642,13 @@ mod tests {
     }
 
     fn lookup_table_flags() -> Vec<JoltOpeningId> {
-        LookupTableKind::<TEST_XLEN>::iter()
+        LookupTableKind::<XLEN>::iter()
             .map(lookup_table_flag)
             .collect()
     }
 
     fn eq_table_value_challenges() -> Vec<JoltChallengeId> {
-        LookupTableKind::<TEST_XLEN>::iter()
+        LookupTableKind::<XLEN>::iter()
             .map(|table| JoltChallengeId::from(eq_table_value(table)))
             .collect()
     }
@@ -662,7 +657,7 @@ mod tests {
     fn input_virtualization_exposes_expected_dependencies() {
         let claims = input_virtualization::<Fr>(trace_dimensions());
 
-        assert_eq!(claims.id, JoltStageId::InstructionInputVirtualization);
+        assert_eq!(claims.id, JoltRelationId::InstructionInputVirtualization);
         assert_eq!(claims.sumcheck, trace_dimensions().sumcheck(3));
         assert_eq!(
             claims.input.required_openings,
@@ -752,6 +747,8 @@ mod tests {
                 | JoltChallengeId::RamReadWrite(_)
                 | JoltChallengeId::RamValCheck(_)
                 | JoltChallengeId::RamRaClaimReduction(_)
+                | JoltChallengeId::RamRaVirtualization(_)
+                | JoltChallengeId::RamHammingBooleanity(_)
                 | JoltChallengeId::RegistersReadWrite(_)
                 | JoltChallengeId::RegistersValEvaluation(_)
                 | JoltChallengeId::RegistersClaimReduction(_)
@@ -787,6 +784,8 @@ mod tests {
                 JoltChallengeId::RamReadWrite(_)
                 | JoltChallengeId::RamValCheck(_)
                 | JoltChallengeId::RamRaClaimReduction(_)
+                | JoltChallengeId::RamRaVirtualization(_)
+                | JoltChallengeId::RamHammingBooleanity(_)
                 | JoltChallengeId::RegistersReadWrite(_)
                 | JoltChallengeId::RegistersValEvaluation(_)
                 | JoltChallengeId::RegistersClaimReduction(_)
@@ -822,11 +821,11 @@ mod tests {
     #[test]
     fn read_raf_exposes_expected_dependencies() {
         let dimensions = read_raf_dimensions(2);
-        let claims = read_raf::<TEST_XLEN, Fr>(dimensions);
+        let claims = read_raf::<Fr>(dimensions);
         let table_flags = lookup_table_flags();
         let table_value_challenges = eq_table_value_challenges();
 
-        assert_eq!(claims.id, JoltStageId::InstructionReadRaf);
+        assert_eq!(claims.id, JoltRelationId::InstructionReadRaf);
         assert_eq!(claims.sumcheck, JoltSumcheckSpec::boolean(133, 4));
         assert_eq!(
             claims.input.required_openings,
@@ -836,7 +835,7 @@ mod tests {
         expected_output_openings.extend(table_flags.iter().copied());
         expected_output_openings.push(instruction_raf_flag());
         assert_eq!(claims.output.required_openings, expected_output_openings);
-        let output_openings = read_raf_output_openings::<TEST_XLEN>(dimensions);
+        let output_openings = read_raf_output_openings(dimensions);
         assert_eq!(
             output_openings.instruction_ra,
             vec![instruction_ra(0), instruction_ra(1)]
@@ -885,13 +884,10 @@ mod tests {
             claims.challenge_index(JoltChallengeId::from(
                 InstructionReadRafChallenge::EqRafFlag
             )),
-            Some(LookupTableKind::<TEST_XLEN>::COUNT + 2)
+            Some(LookupTableKind::<XLEN>::COUNT + 2)
         );
         assert!(claims.required_publics().is_empty());
-        assert_eq!(
-            claims.num_challenges(),
-            LookupTableKind::<TEST_XLEN>::COUNT + 3
-        );
+        assert_eq!(claims.num_challenges(), LookupTableKind::<XLEN>::COUNT + 3);
     }
 
     #[test]
@@ -934,7 +930,7 @@ mod tests {
     #[test]
     fn read_raf_evaluates_like_core_formula() {
         let dimensions = read_raf_dimensions(2);
-        let claims = read_raf::<TEST_XLEN, Fr>(dimensions);
+        let claims = read_raf::<Fr>(dimensions);
 
         let lookup_output = Fr::from_u64(3);
         let left_lookup_operand = Fr::from_u64(5);
@@ -942,10 +938,10 @@ mod tests {
         let gamma = Fr::from_u64(11);
         let ra_0 = Fr::from_u64(2);
         let ra_1 = Fr::from_u64(3);
-        let table_flags: Vec<_> = (0..LookupTableKind::<TEST_XLEN>::COUNT)
+        let table_flags: Vec<_> = (0..LookupTableKind::<XLEN>::COUNT)
             .map(|i| Fr::from_u64(i as u64 + 5))
             .collect();
-        let table_values: Vec<_> = (0..LookupTableKind::<TEST_XLEN>::COUNT)
+        let table_values: Vec<_> = (0..LookupTableKind::<XLEN>::COUNT)
             .map(|i| Fr::from_u64(2 * i as u64 + 13))
             .collect();
         let raf_constant = Fr::from_u64(23);
@@ -970,6 +966,8 @@ mod tests {
                 | JoltChallengeId::RamReadWrite(_)
                 | JoltChallengeId::RamValCheck(_)
                 | JoltChallengeId::RamRaClaimReduction(_)
+                | JoltChallengeId::RamRaVirtualization(_)
+                | JoltChallengeId::RamHammingBooleanity(_)
                 | JoltChallengeId::RegistersReadWrite(_)
                 | JoltChallengeId::RegistersValEvaluation(_)
                 | JoltChallengeId::RegistersClaimReduction(_)
@@ -992,7 +990,7 @@ mod tests {
                 JoltOpeningId::Polynomial {
                     polynomial:
                         JoltPolynomialId::Virtual(JoltVirtualPolynomial::LookupTableFlag(index)),
-                    stage: JoltStageId::InstructionReadRaf,
+                    relation: JoltRelationId::InstructionReadRaf,
                 } => table_flags[index],
                 id if id == instruction_raf_flag() => raf_flag,
                 _ => zero,
@@ -1011,6 +1009,8 @@ mod tests {
                 | JoltChallengeId::RamReadWrite(_)
                 | JoltChallengeId::RamValCheck(_)
                 | JoltChallengeId::RamRaClaimReduction(_)
+                | JoltChallengeId::RamRaVirtualization(_)
+                | JoltChallengeId::RamHammingBooleanity(_)
                 | JoltChallengeId::RegistersReadWrite(_)
                 | JoltChallengeId::RegistersValEvaluation(_)
                 | JoltChallengeId::RegistersClaimReduction(_)
@@ -1052,7 +1052,7 @@ mod tests {
         let dimensions = ra_virtualization_dimensions(3, 2);
         let claims = ra_virtualization::<Fr>(dimensions);
 
-        assert_eq!(claims.id, JoltStageId::InstructionRaVirtualization);
+        assert_eq!(claims.id, JoltRelationId::InstructionRaVirtualization);
         assert_eq!(claims.sumcheck, JoltSumcheckSpec::boolean(5, 3));
         assert_eq!(
             claims.input.required_openings,
@@ -1093,15 +1093,17 @@ mod tests {
         );
         assert_eq!(
             claims.output.required_challenges,
-            vec![JoltChallengeId::from(
-                InstructionRaVirtualizationChallenge::Gamma
-            )]
+            vec![
+                JoltChallengeId::from(InstructionRaVirtualizationChallenge::EqCycle),
+                JoltChallengeId::from(InstructionRaVirtualizationChallenge::Gamma),
+            ]
         );
         assert_eq!(
             claims.required_challenges(),
-            vec![JoltChallengeId::from(
-                InstructionRaVirtualizationChallenge::Gamma
-            )]
+            vec![
+                JoltChallengeId::from(InstructionRaVirtualizationChallenge::Gamma),
+                JoltChallengeId::from(InstructionRaVirtualizationChallenge::EqCycle),
+            ]
         );
         assert_eq!(
             claims.challenge_index(JoltChallengeId::from(
@@ -1109,13 +1111,8 @@ mod tests {
             )),
             Some(0)
         );
-        assert_eq!(
-            claims.required_publics(),
-            vec![JoltPublicId::from(
-                InstructionRaVirtualizationPublic::EqCycle
-            )]
-        );
-        assert_eq!(claims.num_challenges(), 1);
+        assert!(claims.required_publics().is_empty());
+        assert_eq!(claims.num_challenges(), 2);
     }
 
     #[test]
@@ -1129,12 +1126,18 @@ mod tests {
                 InstructionRaVirtualizationChallenge::Gamma
             )]
         );
-        assert!(claims.output.required_challenges.is_empty());
+        assert_eq!(
+            claims.output.required_challenges,
+            vec![JoltChallengeId::from(
+                InstructionRaVirtualizationChallenge::EqCycle
+            )]
+        );
         assert_eq!(
             claims.required_challenges(),
-            vec![JoltChallengeId::from(
-                InstructionRaVirtualizationChallenge::Gamma
-            )]
+            vec![
+                JoltChallengeId::from(InstructionRaVirtualizationChallenge::Gamma),
+                JoltChallengeId::from(InstructionRaVirtualizationChallenge::EqCycle),
+            ]
         );
     }
 
@@ -1160,7 +1163,7 @@ mod tests {
             |id| match *id {
                 JoltOpeningId::Polynomial {
                     polynomial: JoltPolynomialId::Virtual(JoltVirtualPolynomial::InstructionRa(i)),
-                    stage: JoltStageId::InstructionReadRaf,
+                    relation: JoltRelationId::InstructionReadRaf,
                 } => virtual_ra[i],
                 _ => zero,
             },
@@ -1168,9 +1171,14 @@ mod tests {
                 JoltChallengeId::InstructionRaVirtualization(
                     InstructionRaVirtualizationChallenge::Gamma,
                 ) => gamma,
+                JoltChallengeId::InstructionRaVirtualization(
+                    InstructionRaVirtualizationChallenge::EqCycle,
+                ) => eq_cycle,
                 JoltChallengeId::RamReadWrite(_)
                 | JoltChallengeId::RamValCheck(_)
                 | JoltChallengeId::RamRaClaimReduction(_)
+                | JoltChallengeId::RamRaVirtualization(_)
+                | JoltChallengeId::RamHammingBooleanity(_)
                 | JoltChallengeId::RegistersReadWrite(_)
                 | JoltChallengeId::RegistersValEvaluation(_)
                 | JoltChallengeId::RegistersClaimReduction(_)
@@ -1191,7 +1199,7 @@ mod tests {
                 JoltOpeningId::Polynomial {
                     polynomial:
                         JoltPolynomialId::Committed(JoltCommittedPolynomial::InstructionRa(i)),
-                    stage: JoltStageId::InstructionRaVirtualization,
+                    relation: JoltRelationId::InstructionRaVirtualization,
                 } => committed_ra[i],
                 _ => zero,
             },
@@ -1199,9 +1207,14 @@ mod tests {
                 JoltChallengeId::InstructionRaVirtualization(
                     InstructionRaVirtualizationChallenge::Gamma,
                 ) => gamma,
+                JoltChallengeId::InstructionRaVirtualization(
+                    InstructionRaVirtualizationChallenge::EqCycle,
+                ) => eq_cycle,
                 JoltChallengeId::RamReadWrite(_)
                 | JoltChallengeId::RamValCheck(_)
                 | JoltChallengeId::RamRaClaimReduction(_)
+                | JoltChallengeId::RamRaVirtualization(_)
+                | JoltChallengeId::RamHammingBooleanity(_)
                 | JoltChallengeId::RegistersReadWrite(_)
                 | JoltChallengeId::RegistersValEvaluation(_)
                 | JoltChallengeId::RegistersClaimReduction(_)
@@ -1214,12 +1227,7 @@ mod tests {
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
-            |id| match *id {
-                JoltPublicId::InstructionRaVirtualization(
-                    InstructionRaVirtualizationPublic::EqCycle,
-                ) => eq_cycle,
-                _ => zero,
-            },
+            |_| zero,
         );
 
         assert_eq!(

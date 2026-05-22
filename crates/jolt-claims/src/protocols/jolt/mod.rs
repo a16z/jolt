@@ -1,29 +1,31 @@
 pub mod formulas;
 
 mod ids;
-mod stage;
+mod relation;
 
-pub use formulas::dimensions::{
-    AdviceClaimReductionLayout, CommitmentMatrixShape, JoltFormulaDimensions,
-    JoltFormulaDimensionsError, JoltOneHotConfig, JoltOneHotDimensions, JoltReadWriteConfig,
-    JoltSumcheckDomain, JoltSumcheckSpec, ReadWriteDimensions, TraceDimensions,
-    TracePolynomialOrder,
+pub use formulas::{
+    claim_reductions::advice::{AdviceClaimReductionDimensions, AdviceClaimReductionLayout},
+    dimensions::{
+        CommitmentMatrixShape, JoltFormulaDimensions, JoltOneHotConfig, JoltOneHotDimensions,
+        JoltReadWriteConfig, JoltSumcheckDomain, JoltSumcheckSpec, ReadWriteDimensions,
+        TraceDimensions, TracePolynomialOrder,
+    },
+    error::{JoltFormulaDimensionsError, JoltFormulaPointError},
 };
 pub use ids::{
     AdviceClaimReductionPublic, BooleanityChallenge, BooleanityPublic, BytecodeReadRafChallenge,
     BytecodeReadRafPublic, HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic,
     IncClaimReductionChallenge, IncClaimReductionPublic, InstructionClaimReductionChallenge,
-    InstructionInputChallenge, InstructionRaVirtualizationChallenge,
-    InstructionRaVirtualizationPublic, InstructionReadRafChallenge, JoltAdviceKind,
-    JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltPublicId,
-    JoltStageId, JoltVirtualPolynomial, RamHammingBooleanityPublic, RamOutputCheckPublic,
-    RamRaClaimReductionChallenge, RamRaClaimReductionPublic, RamRaVirtualizationPublic,
-    RamRafEvaluationPublic, RamReadWriteChallenge, RamValCheckChallenge,
-    RegistersClaimReductionChallenge, RegistersReadWriteChallenge, RegistersValEvaluationChallenge,
-    SpartanOuterPublic, SpartanProductVirtualizationPublic, SpartanShiftChallenge,
-    SpartanShiftPublic,
+    InstructionInputChallenge, InstructionRaVirtualizationChallenge, InstructionReadRafChallenge,
+    JoltAdviceKind, JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId,
+    JoltPublicId, JoltRelationId, JoltVirtualPolynomial, RamHammingBooleanityChallenge,
+    RamOutputCheckPublic, RamRaClaimReductionChallenge, RamRaClaimReductionPublic,
+    RamRaVirtualizationChallenge, RamRafEvaluationPublic, RamReadWriteChallenge,
+    RamValCheckChallenge, RegistersClaimReductionChallenge, RegistersReadWriteChallenge,
+    RegistersValEvaluationChallenge, SpartanOuterPublic, SpartanProductVirtualizationPublic,
+    SpartanShiftChallenge, SpartanShiftPublic,
 };
-pub use stage::{
+pub use relation::{
     JoltConsistencyClaim, JoltExpr, JoltInputClaimExpression, JoltOutputClaimExpression,
-    JoltProtocolClaims, JoltStageClaims,
+    JoltProtocolClaims, JoltRelationClaims,
 };

@@ -6,7 +6,7 @@ use jolt_claims::protocols::jolt::{
         ram::{RamValCheckAdviceContribution as FormulaAdviceContribution, RamValCheckInit},
         registers,
     },
-    JoltAdviceKind, JoltChallengeId, JoltStageId, JoltSumcheckDomain, RamValCheckChallenge,
+    JoltAdviceKind, JoltChallengeId, JoltRelationId, JoltSumcheckDomain, RamValCheckChallenge,
     RegistersReadWriteChallenge,
 };
 use jolt_crypto::VectorCommitment;
@@ -93,7 +93,7 @@ where
     };
     if ram_read_write_opening_point.len() != log_k + log_t {
         return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::RamValCheck,
+            stage: JoltRelationId::RamValCheck,
             reason: format!(
                 "RAM read-write opening point length mismatch: expected {}, got {}",
                 log_k + log_t,
@@ -105,7 +105,7 @@ where
     if ram_output_check_opening_point != r_address {
         let [ram_val, ram_val_final] = ram::val_check_input_openings();
         return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltStageId::RamValCheck,
+            stage: JoltRelationId::RamValCheck,
             left: ram_val,
             right: ram_val_final,
         });
@@ -120,7 +120,7 @@ where
     let ram_val_check_sumcheck = ram::val_check_sumcheck(trace_dimensions);
     if ram_val_check_sumcheck.degree == 0 {
         return Err(VerifierError::InvalidStageSumcheckDegree {
-            stage: JoltStageId::RamValCheck,
+            stage: JoltRelationId::RamValCheck,
             degree: ram_val_check_sumcheck.degree,
         });
     }
@@ -129,7 +129,7 @@ where
         JoltSumcheckDomain::BooleanHypercube
     ) {
         return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain {
-            stage: JoltStageId::RamValCheck,
+            stage: JoltRelationId::RamValCheck,
         });
     }
 
@@ -158,7 +158,7 @@ where
             transcript,
         )
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltStageId::RegistersReadWriteChecking,
+            stage: JoltRelationId::RegistersReadWriteChecking,
             reason: error.to_string(),
         })?;
         let batch_output_claims =
@@ -167,31 +167,31 @@ where
                 proof: &proof.stages.stage4_sumcheck_proof,
                 proof_label: "stage4_sumcheck_proof",
                 output_claim_count: stage4_committed_output_claims(checked, proof),
-                stage: JoltStageId::RegistersReadWriteChecking,
+                stage: JoltRelationId::RegistersReadWriteChecking,
             })?;
 
         let registers_point = consistency
             .try_instance_point(registers_claims.sumcheck.rounds)
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltStageId::RegistersReadWriteChecking,
+                stage: JoltRelationId::RegistersReadWriteChecking,
                 reason: error.to_string(),
             })?;
         let registers_opening_point = register_dimensions
             .read_write_opening_point(&registers_point)
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RegistersReadWriteChecking,
+                stage: JoltRelationId::RegistersReadWriteChecking,
                 reason: error.to_string(),
             })?;
         let ram_val_point = consistency
             .try_instance_point(ram_val_check_sumcheck.rounds)
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltStageId::RamValCheck,
+                stage: JoltRelationId::RamValCheck,
                 reason: error.to_string(),
             })?;
         let r_cycle_prime = ram_val_point.iter().rev().copied().collect::<Vec<_>>();
         if r_cycle_prime.len() != r_cycle.len() {
             return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RamValCheck,
+                stage: JoltRelationId::RamValCheck,
                 reason: format!(
                     "RAM value cycle point length mismatch: expected {}, got {}",
                     r_cycle.len(),
@@ -253,7 +253,7 @@ where
         != stage3.output_claims.instruction_input.rs1_value
     {
         return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltStageId::RegistersReadWriteChecking,
+            stage: JoltRelationId::RegistersReadWriteChecking,
             left: rs1_value_reduced,
             right: rs1_value_instruction,
         });
@@ -262,7 +262,7 @@ where
         != stage3.output_claims.instruction_input.rs2_value
     {
         return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltStageId::RegistersReadWriteChecking,
+            stage: JoltRelationId::RegistersReadWriteChecking,
             left: rs2_value_reduced,
             right: rs2_value_instruction,
         });
@@ -335,20 +335,20 @@ where
         transcript,
     )
     .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage: JoltStageId::RegistersReadWriteChecking,
+        stage: JoltRelationId::RegistersReadWriteChecking,
         reason: error.to_string(),
     })?;
 
     let registers_point = batch
         .try_instance_point(registers_claims.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltStageId::RegistersReadWriteChecking,
+            stage: JoltRelationId::RegistersReadWriteChecking,
             reason: error.to_string(),
         })?;
     let registers_opening_point = register_dimensions
         .read_write_opening_point(registers_point)
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::RegistersReadWriteChecking,
+            stage: JoltRelationId::RegistersReadWriteChecking,
             reason: error.to_string(),
         })?;
     let eq_cycle = try_eq_mle(
@@ -356,7 +356,7 @@ where
         &registers_opening_point.r_cycle,
     )
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltStageId::RegistersReadWriteChecking,
+        stage: JoltRelationId::RegistersReadWriteChecking,
         reason: error.to_string(),
     })?;
     let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] =
@@ -385,13 +385,13 @@ where
     let ram_val_point = batch
         .try_instance_point(ram_val_check_claims.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltStageId::RamValCheck,
+            stage: JoltRelationId::RamValCheck,
             reason: error.to_string(),
         })?;
     let r_cycle_prime = ram_val_point.iter().rev().copied().collect::<Vec<_>>();
     if r_cycle_prime.len() != r_cycle.len() {
         return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::RamValCheck,
+            stage: JoltRelationId::RamValCheck,
             reason: format!(
                 "RAM value cycle point length mismatch: expected {}, got {}",
                 r_cycle.len(),
@@ -424,7 +424,7 @@ where
     let [registers_coefficient, ram_val_coefficient] = batch.batching_coefficients.as_slice()
     else {
         return Err(VerifierError::StageClaimSumcheckFailed {
-            stage: JoltStageId::RegistersReadWriteChecking,
+            stage: JoltRelationId::RegistersReadWriteChecking,
             reason: "Stage 4 batch verifier returned the wrong number of coefficients".to_string(),
         });
     };
@@ -432,7 +432,7 @@ where
         + *ram_val_coefficient * expected_outputs.ram_val_check;
     if batch.reduction.value != expected_final_claim {
         return Err(VerifierError::StageClaimOutputMismatch {
-            stage: JoltStageId::RegistersReadWriteChecking,
+            stage: JoltRelationId::RegistersReadWriteChecking,
         });
     }
 
@@ -522,14 +522,14 @@ where
 {
     let public_initial_ram = PublicInitialRam::new(&preprocessing.program.ram, &checked.public_io)
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::RamValCheck,
+            stage: JoltRelationId::RamValCheck,
             reason: error.to_string(),
         })?;
     for segment in &public_initial_ram.segments {
         let end = segment.start_index + segment.words.len();
         if end > checked.ram_K {
             return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RamValCheck,
+                stage: JoltRelationId::RamValCheck,
                 reason: format!(
                     "public initial RAM segment [{}, {}) exceeds RAM domain {}",
                     segment.start_index, end, checked.ram_K
@@ -588,7 +588,7 @@ fn collect_advice_contribution<F: Field>(
     };
     if max_size == 0 {
         return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::RamValCheck,
+            stage: JoltRelationId::RamValCheck,
             reason: format!("{kind:?} advice commitment is present but configured size is zero"),
         });
     }
@@ -596,20 +596,20 @@ fn collect_advice_contribution<F: Field>(
     let start_index = layout
         .remapped_word_address(start_address)
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::RamValCheck,
+            stage: JoltRelationId::RamValCheck,
             reason: error.to_string(),
         })? as usize;
     let advice_num_vars = ((max_size as usize) / 8).next_power_of_two().ilog2() as usize;
     let selector =
         block_selector_mle_msb(start_index, advice_num_vars, r_address).map_err(|error| {
             VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RamValCheck,
+                stage: JoltRelationId::RamValCheck,
                 reason: error.to_string(),
             }
         })?;
     if advice_num_vars > r_address.len() {
         return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::RamValCheck,
+            stage: JoltRelationId::RamValCheck,
             reason: format!(
                 "{kind:?} advice point needs {advice_num_vars} variables but RAM address has {}",
                 r_address.len()

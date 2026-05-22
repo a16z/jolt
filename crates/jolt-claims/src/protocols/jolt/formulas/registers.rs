@@ -3,8 +3,8 @@ use jolt_field::RingCore;
 use crate::{challenge, opening};
 
 use super::super::{
-    JoltChallengeId, JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltStageClaims,
-    JoltStageId, JoltVirtualPolynomial, RegistersReadWriteChallenge,
+    JoltChallengeId, JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltRelationClaims,
+    JoltRelationId, JoltVirtualPolynomial, RegistersReadWriteChallenge,
     RegistersValEvaluationChallenge,
 };
 use super::dimensions::{JoltSumcheckSpec, ReadWriteDimensions, TraceDimensions};
@@ -13,7 +13,7 @@ pub const fn read_write_checking_sumcheck(dimensions: ReadWriteDimensions) -> Jo
     dimensions.read_write_sumcheck()
 }
 
-pub fn read_write_checking<F>(dimensions: ReadWriteDimensions) -> JoltStageClaims<F>
+pub fn read_write_checking<F>(dimensions: ReadWriteDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
@@ -35,15 +35,15 @@ where
             * opening(rs2_ra_read_write())
             * opening(registers_val_read_write());
 
-    JoltStageClaims::new(
-        JoltStageId::RegistersReadWriteChecking,
+    JoltRelationClaims::new(
+        JoltRelationId::RegistersReadWriteChecking,
         read_write_checking_sumcheck(dimensions),
         input,
         output,
     )
 }
 
-pub fn val_evaluation<F>(dimensions: TraceDimensions) -> JoltStageClaims<F>
+pub fn val_evaluation<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
@@ -52,8 +52,8 @@ where
         * opening(rd_inc_val_evaluation())
         * opening(rd_wa_val_evaluation());
 
-    JoltStageClaims::new(
-        JoltStageId::RegistersValEvaluation,
+    JoltRelationClaims::new(
+        JoltRelationId::RegistersValEvaluation,
         dimensions.sumcheck(3),
         input,
         output,
@@ -99,70 +99,70 @@ where
 fn rd_write_value_claim() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RdWriteValue,
-        JoltStageId::RegistersClaimReduction,
+        JoltRelationId::RegistersClaimReduction,
     )
 }
 
 fn rs1_value_claim() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs1Value,
-        JoltStageId::RegistersClaimReduction,
+        JoltRelationId::RegistersClaimReduction,
     )
 }
 
 fn rs2_value_claim() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs2Value,
-        JoltStageId::RegistersClaimReduction,
+        JoltRelationId::RegistersClaimReduction,
     )
 }
 
 fn registers_val_read_write() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RegistersVal,
-        JoltStageId::RegistersReadWriteChecking,
+        JoltRelationId::RegistersReadWriteChecking,
     )
 }
 
 fn rs1_ra_read_write() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs1Ra,
-        JoltStageId::RegistersReadWriteChecking,
+        JoltRelationId::RegistersReadWriteChecking,
     )
 }
 
 fn rs2_ra_read_write() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs2Ra,
-        JoltStageId::RegistersReadWriteChecking,
+        JoltRelationId::RegistersReadWriteChecking,
     )
 }
 
 fn rd_wa_read_write() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RdWa,
-        JoltStageId::RegistersReadWriteChecking,
+        JoltRelationId::RegistersReadWriteChecking,
     )
 }
 
 fn rd_inc_read_write() -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RdInc,
-        JoltStageId::RegistersReadWriteChecking,
+        JoltRelationId::RegistersReadWriteChecking,
     )
 }
 
 fn rd_inc_val_evaluation() -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RdInc,
-        JoltStageId::RegistersValEvaluation,
+        JoltRelationId::RegistersValEvaluation,
     )
 }
 
 fn rd_wa_val_evaluation() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RdWa,
-        JoltStageId::RegistersValEvaluation,
+        JoltRelationId::RegistersValEvaluation,
     )
 }
 
@@ -172,18 +172,18 @@ mod tests {
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn trace_dimensions() -> TraceDimensions {
-        5.into()
+        TraceDimensions::new(5)
     }
 
     fn read_write_dimensions() -> ReadWriteDimensions {
-        (5, 7, 2, 1).into()
+        ReadWriteDimensions::new(5, 7, 2, 1)
     }
 
     #[test]
     fn read_write_claims_expose_expected_dependencies() {
         let claims = read_write_checking::<Fr>(read_write_dimensions());
 
-        assert_eq!(claims.id, JoltStageId::RegistersReadWriteChecking);
+        assert_eq!(claims.id, JoltRelationId::RegistersReadWriteChecking);
         assert_eq!(
             claims.sumcheck,
             read_write_checking_sumcheck(read_write_dimensions())
@@ -267,6 +267,8 @@ mod tests {
                 | JoltChallengeId::RamReadWrite(_)
                 | JoltChallengeId::RamValCheck(_)
                 | JoltChallengeId::RamRaClaimReduction(_)
+                | JoltChallengeId::RamRaVirtualization(_)
+                | JoltChallengeId::RamHammingBooleanity(_)
                 | JoltChallengeId::RegistersValEvaluation(_)
                 | JoltChallengeId::RegistersClaimReduction(_)
                 | JoltChallengeId::InstructionClaimReduction(_)
@@ -299,6 +301,8 @@ mod tests {
                 JoltChallengeId::RamReadWrite(_)
                 | JoltChallengeId::RamValCheck(_)
                 | JoltChallengeId::RamRaClaimReduction(_)
+                | JoltChallengeId::RamRaVirtualization(_)
+                | JoltChallengeId::RamHammingBooleanity(_)
                 | JoltChallengeId::RegistersValEvaluation(_) => zero,
                 JoltChallengeId::RegistersClaimReduction(_)
                 | JoltChallengeId::InstructionClaimReduction(_)
@@ -328,7 +332,7 @@ mod tests {
     fn val_evaluation_claims_expose_expected_dependencies() {
         let claims = val_evaluation::<Fr>(trace_dimensions());
 
-        assert_eq!(claims.id, JoltStageId::RegistersValEvaluation);
+        assert_eq!(claims.id, JoltRelationId::RegistersValEvaluation);
         assert_eq!(claims.sumcheck, trace_dimensions().sumcheck(3));
         assert_eq!(
             claims.input.required_openings,
@@ -386,6 +390,8 @@ mod tests {
                 JoltChallengeId::RamReadWrite(_)
                 | JoltChallengeId::RamValCheck(_)
                 | JoltChallengeId::RamRaClaimReduction(_)
+                | JoltChallengeId::RamRaVirtualization(_)
+                | JoltChallengeId::RamHammingBooleanity(_)
                 | JoltChallengeId::RegistersReadWrite(_)
                 | JoltChallengeId::RegistersClaimReduction(_)
                 | JoltChallengeId::InstructionClaimReduction(_)

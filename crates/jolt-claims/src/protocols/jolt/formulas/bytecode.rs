@@ -1,35 +1,19 @@
 use jolt_field::{Field, RingCore};
-use jolt_lookup_tables::{InstructionLookupTable, LookupTableKind};
+use jolt_lookup_tables::{InstructionLookupTable, LookupTableKind, XLEN};
 use jolt_poly::{EqPolynomial, IdentityPolynomial, MultilinearEvaluation};
 use jolt_riscv::{
     instructions::Noop, CircuitFlags, Flags, InstructionFlags, InterleavedBitsMarker,
-    JoltInstruction, JoltInstructionRow, NUM_CIRCUIT_FLAGS,
+    JoltInstruction, JoltInstructionRow, CIRCUIT_FLAGS, NUM_CIRCUIT_FLAGS,
 };
 
 use crate::{challenge, opening, public, SameEvaluationAs};
 
 use super::super::{
     BytecodeReadRafChallenge, BytecodeReadRafPublic, JoltChallengeId, JoltCommittedPolynomial,
-    JoltExpr, JoltOpeningId, JoltPublicId, JoltStageClaims, JoltStageId, JoltVirtualPolynomial,
+    JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId,
+    JoltVirtualPolynomial,
 };
 use super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
-
-const CIRCUIT_FLAGS: [CircuitFlags; NUM_CIRCUIT_FLAGS] = [
-    CircuitFlags::AddOperands,
-    CircuitFlags::SubtractOperands,
-    CircuitFlags::MultiplyOperands,
-    CircuitFlags::Load,
-    CircuitFlags::Store,
-    CircuitFlags::Jump,
-    CircuitFlags::WriteLookupOutputToRD,
-    CircuitFlags::VirtualInstruction,
-    CircuitFlags::Assert,
-    CircuitFlags::DoNotUpdateUnexpandedPC,
-    CircuitFlags::Advice,
-    CircuitFlags::IsCompressed,
-    CircuitFlags::IsFirstInSequence,
-    CircuitFlags::IsLastInSequence,
-];
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct BytecodeReadRafDimensions {
@@ -88,12 +72,6 @@ impl BytecodeReadRafDimensions {
     }
 }
 
-impl From<(usize, usize, usize)> for BytecodeReadRafDimensions {
-    fn from((log_t, log_k, committed_ra_polys): (usize, usize, usize)) -> Self {
-        Self::new(log_t, log_k, committed_ra_polys)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BytecodeReadRafOpeningPoint<F: Field> {
     pub r_address: Vec<F>,
@@ -101,7 +79,7 @@ pub struct BytecodeReadRafOpeningPoint<F: Field> {
     pub opening_point: Vec<F>,
 }
 
-pub fn read_raf<const XLEN: usize, F>(dimensions: BytecodeReadRafDimensions) -> JoltStageClaims<F>
+pub fn read_raf<F>(dimensions: BytecodeReadRafDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
@@ -112,7 +90,7 @@ where
         + gamma.clone() * stage2_claim()
         + gamma.clone().pow(2) * stage3_claim()
         + gamma.clone().pow(3) * stage4_claim()
-        + gamma.clone().pow(4) * stage5_claim::<XLEN, F>()
+        + gamma.clone().pow(4) * stage5_claim::<F>()
         + gamma.clone().pow(5) * opening(pc_spartan_outer())
         + gamma.pow(6) * opening(pc_spartan_shift());
 
@@ -126,8 +104,8 @@ where
         + gamma.clone().pow(6) * bytecode_public(BytecodeReadRafPublic::SpartanShiftRaf)
         + gamma.pow(7) * bytecode_public(BytecodeReadRafPublic::Entry);
 
-    JoltStageClaims::new(
-        JoltStageId::BytecodeReadRaf,
+    JoltRelationClaims::new(
+        JoltRelationId::BytecodeReadRaf,
         dimensions.sumcheck(),
         input,
         output_coeff * bytecode_ra_product(dimensions),
@@ -146,13 +124,13 @@ where
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BytecodeReadRafInputOpenings<const XLEN: usize> {
+pub struct BytecodeReadRafInputOpenings {
     pub spartan_outer: BytecodeReadRafSpartanOuterOpenings,
     pub spartan_product: BytecodeReadRafSpartanProductOpenings,
     pub instruction_input: BytecodeReadRafInstructionInputOpenings,
     pub spartan_shift: BytecodeReadRafSpartanShiftOpenings,
     pub registers_read_write: BytecodeReadRafRegistersReadWriteOpenings,
-    pub registers_val_evaluation: BytecodeReadRafRegistersValEvaluationOpenings<XLEN>,
+    pub registers_val_evaluation: BytecodeReadRafRegistersValEvaluationOpenings,
     pub spartan_outer_pc: JoltOpeningId,
     pub spartan_shift_pc: JoltOpeningId,
 }
@@ -198,7 +176,7 @@ pub struct BytecodeReadRafRegistersReadWriteOpenings {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BytecodeReadRafRegistersValEvaluationOpenings<const XLEN: usize> {
+pub struct BytecodeReadRafRegistersValEvaluationOpenings {
     pub rd_wa: JoltOpeningId,
     pub instruction_raf_flag: JoltOpeningId,
     pub lookup_table_flags: Vec<(LookupTableKind<XLEN>, JoltOpeningId)>,
@@ -247,7 +225,7 @@ pub struct BytecodeReadRafEvaluationInputs<'a, F> {
     pub stage5_gammas: &'a [F],
 }
 
-pub fn read_raf_public_values<const XLEN: usize, F>(
+pub fn read_raf_public_values<F>(
     inputs: BytecodeReadRafEvaluationInputs<'_, F>,
 ) -> Result<BytecodeReadRafPublicValues<F>, JoltFormulaPointError>
 where
@@ -274,7 +252,7 @@ where
 
     let mut stage_values = [F::zero(); 5];
     for (instruction, eq_address) in inputs.bytecode.iter().zip(address_eq_evals) {
-        let row_values = read_raf_row_values::<XLEN, F>(
+        let row_values = read_raf_row_values::<F>(
             instruction,
             &register_read_write_eq,
             &register_val_evaluation_eq,
@@ -325,7 +303,7 @@ where
     clippy::too_many_arguments,
     reason = "Each gamma slice corresponds to one protocol subexpression."
 )]
-fn read_raf_row_values<const XLEN: usize, F>(
+fn read_raf_row_values<F>(
     instruction: &JoltInstructionRow,
     register_read_write_eq: &[F],
     register_val_evaluation_eq: &[F],
@@ -421,7 +399,7 @@ fn require_len<F>(values: &[F], expected: usize) -> Result<(), JoltFormulaPointE
     Ok(())
 }
 
-pub fn read_raf_input_openings<const XLEN: usize>() -> BytecodeReadRafInputOpenings<XLEN> {
+pub fn read_raf_input_openings() -> BytecodeReadRafInputOpenings {
     BytecodeReadRafInputOpenings {
         spartan_outer: BytecodeReadRafSpartanOuterOpenings {
             unexpanded_pc: unexpanded_pc_spartan_outer(),
@@ -550,7 +528,7 @@ where
         + beta.pow(2) * opening(rs2_ra_read_write())
 }
 
-fn stage5_claim<const XLEN: usize, F>() -> JoltExpr<F>
+fn stage5_claim<F>() -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -593,131 +571,131 @@ where
 fn unexpanded_pc_spartan_outer() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::UnexpandedPC,
-        JoltStageId::SpartanOuter,
+        JoltRelationId::SpartanOuter,
     )
 }
 
 fn imm_spartan_outer() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::Imm, JoltStageId::SpartanOuter)
+    JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::Imm, JoltRelationId::SpartanOuter)
 }
 
 fn op_flag_spartan_outer(flag: CircuitFlags) -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(flag),
-        JoltStageId::SpartanOuter,
+        JoltRelationId::SpartanOuter,
     )
 }
 
 fn op_flag_product(flag: CircuitFlags) -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(flag),
-        JoltStageId::SpartanProductVirtualization,
+        JoltRelationId::SpartanProductVirtualization,
     )
 }
 
 fn instruction_flag_product(flag: InstructionFlags) -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(flag),
-        JoltStageId::SpartanProductVirtualization,
+        JoltRelationId::SpartanProductVirtualization,
     )
 }
 
 fn imm_instruction_input() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Imm,
-        JoltStageId::InstructionInputVirtualization,
+        JoltRelationId::InstructionInputVirtualization,
     )
 }
 
 fn unexpanded_pc_instruction_input() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::UnexpandedPC,
-        JoltStageId::InstructionInputVirtualization,
+        JoltRelationId::InstructionInputVirtualization,
     )
 }
 
 fn unexpanded_pc_spartan_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::UnexpandedPC,
-        JoltStageId::SpartanShift,
+        JoltRelationId::SpartanShift,
     )
 }
 
 fn instruction_flag_input(flag: InstructionFlags) -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(flag),
-        JoltStageId::InstructionInputVirtualization,
+        JoltRelationId::InstructionInputVirtualization,
     )
 }
 
 fn instruction_flag_shift(flag: InstructionFlags) -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(flag),
-        JoltStageId::SpartanShift,
+        JoltRelationId::SpartanShift,
     )
 }
 
 fn op_flag_shift(flag: CircuitFlags) -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(flag),
-        JoltStageId::SpartanShift,
+        JoltRelationId::SpartanShift,
     )
 }
 
 fn rd_wa_read_write() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RdWa,
-        JoltStageId::RegistersReadWriteChecking,
+        JoltRelationId::RegistersReadWriteChecking,
     )
 }
 
 fn rs1_ra_read_write() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs1Ra,
-        JoltStageId::RegistersReadWriteChecking,
+        JoltRelationId::RegistersReadWriteChecking,
     )
 }
 
 fn rs2_ra_read_write() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs2Ra,
-        JoltStageId::RegistersReadWriteChecking,
+        JoltRelationId::RegistersReadWriteChecking,
     )
 }
 
 fn rd_wa_val_evaluation() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RdWa,
-        JoltStageId::RegistersValEvaluation,
+        JoltRelationId::RegistersValEvaluation,
     )
 }
 
 fn instruction_raf_flag() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionRafFlag,
-        JoltStageId::InstructionReadRaf,
+        JoltRelationId::InstructionReadRaf,
     )
 }
 
-fn lookup_table_flag<const XLEN: usize>(table: LookupTableKind<XLEN>) -> JoltOpeningId {
+fn lookup_table_flag(table: LookupTableKind<XLEN>) -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LookupTableFlag(table.index()),
-        JoltStageId::InstructionReadRaf,
+        JoltRelationId::InstructionReadRaf,
     )
 }
 
 fn pc_spartan_outer() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::PC, JoltStageId::SpartanOuter)
+    JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::PC, JoltRelationId::SpartanOuter)
 }
 
 fn pc_spartan_shift() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::PC, JoltStageId::SpartanShift)
+    JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::PC, JoltRelationId::SpartanShift)
 }
 
 fn bytecode_ra(index: usize) -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::BytecodeRa(index),
-        JoltStageId::BytecodeReadRaf,
+        JoltRelationId::BytecodeReadRaf,
     )
 }
 
@@ -729,10 +707,8 @@ mod tests {
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_riscv::{JoltInstructionKind, NormalizedOperands};
 
-    const TEST_XLEN: usize = jolt_lookup_tables::XLEN;
-
     fn dimensions(num_committed_ra_polys: usize) -> BytecodeReadRafDimensions {
-        (5, 10, num_committed_ra_polys).into()
+        BytecodeReadRafDimensions::new(5, 10, num_committed_ra_polys)
     }
 
     fn gamma_power(gamma: Fr, exponent: usize) -> Fr {
@@ -750,7 +726,7 @@ mod tests {
     }
 
     fn stage5_lookup_flags() -> Vec<JoltOpeningId> {
-        LookupTableKind::<TEST_XLEN>::iter()
+        LookupTableKind::<XLEN>::iter()
             .map(lookup_table_flag)
             .collect()
     }
@@ -780,7 +756,7 @@ mod tests {
 
     #[test]
     fn read_raf_helpers_expose_typed_openings() {
-        let input = read_raf_input_openings::<TEST_XLEN>();
+        let input = read_raf_input_openings();
         let output = read_raf_output_openings(dimensions(2));
 
         assert_eq!(
@@ -799,7 +775,7 @@ mod tests {
         );
         assert_eq!(
             input.registers_val_evaluation.lookup_table_flags,
-            LookupTableKind::<TEST_XLEN>::iter()
+            LookupTableKind::<XLEN>::iter()
                 .map(|table| (table, lookup_table_flag(table)))
                 .collect::<Vec<_>>()
         );
@@ -837,23 +813,22 @@ mod tests {
         let r_cycle = [zero];
         let stage_cycle_points = [&r_cycle[..]; 5];
         let stage1_gammas = vec![one; 2 + NUM_CIRCUIT_FLAGS];
-        let stage5_gammas = vec![one; 2 + LookupTableKind::<TEST_XLEN>::COUNT];
-        let public_values =
-            read_raf_public_values::<TEST_XLEN, Fr>(BytecodeReadRafEvaluationInputs {
-                bytecode: &bytecode,
-                r_address: &r_address,
-                r_cycle: &r_cycle,
-                stage_cycle_points,
-                register_read_write_point: &[],
-                register_val_evaluation_point: &[],
-                entry_bytecode_index: 0,
-                stage1_gammas: &stage1_gammas,
-                stage2_gammas: &[one; 4],
-                stage3_gammas: &[one; 9],
-                stage4_gammas: &[one; 3],
-                stage5_gammas: &stage5_gammas,
-            })
-            .unwrap_or_else(|error| panic!("bytecode public values should evaluate: {error}"));
+        let stage5_gammas = vec![one; 2 + LookupTableKind::<XLEN>::COUNT];
+        let public_values = read_raf_public_values::<Fr>(BytecodeReadRafEvaluationInputs {
+            bytecode: &bytecode,
+            r_address: &r_address,
+            r_cycle: &r_cycle,
+            stage_cycle_points,
+            register_read_write_point: &[],
+            register_val_evaluation_point: &[],
+            entry_bytecode_index: 0,
+            stage1_gammas: &stage1_gammas,
+            stage2_gammas: &[one; 4],
+            stage3_gammas: &[one; 9],
+            stage4_gammas: &[one; 3],
+            stage5_gammas: &stage5_gammas,
+        })
+        .unwrap_or_else(|error| panic!("bytecode public values should evaluate: {error}"));
 
         assert_eq!(
             public_values.stage_values,
@@ -872,7 +847,7 @@ mod tests {
 
     #[test]
     fn read_raf_supports_empty_ra_product() {
-        let claims = read_raf::<TEST_XLEN, Fr>(dimensions(0));
+        let claims = read_raf::<Fr>(dimensions(0));
 
         assert!(!claims.output.required_openings.iter().any(|opening_id| {
             matches!(
@@ -888,7 +863,7 @@ mod tests {
     #[test]
     fn read_raf_exposes_expected_dependencies() {
         let dimensions = dimensions(2);
-        let claims = read_raf::<TEST_XLEN, Fr>(dimensions);
+        let claims = read_raf::<Fr>(dimensions);
 
         let mut expected_input = stage1_openings();
         expected_input.extend([
@@ -914,7 +889,7 @@ mod tests {
         expected_input.extend(stage5_lookup_flags());
         expected_input.extend([pc_spartan_outer(), pc_spartan_shift()]);
 
-        assert_eq!(claims.id, JoltStageId::BytecodeReadRaf);
+        assert_eq!(claims.id, JoltRelationId::BytecodeReadRaf);
         assert_eq!(claims.sumcheck, JoltSumcheckSpec::boolean(15, 3));
         assert_eq!(claims.input.required_openings, expected_input);
         assert_eq!(
@@ -958,7 +933,7 @@ mod tests {
     #[test]
     fn read_raf_evaluates_like_core_formula() {
         let dimensions = dimensions(2);
-        let claims = read_raf::<TEST_XLEN, Fr>(dimensions);
+        let claims = read_raf::<Fr>(dimensions);
 
         let gamma = Fr::from_u64(3);
         let stage1_gamma = Fr::from_u64(5);
@@ -1004,12 +979,12 @@ mod tests {
                 id if id == pc_spartan_shift() => Fr::from_u64(109),
                 JoltOpeningId::Polynomial {
                     polynomial: JoltPolynomialId::Virtual(JoltVirtualPolynomial::OpFlags(flag)),
-                    stage: JoltStageId::SpartanOuter,
+                    relation: JoltRelationId::SpartanOuter,
                 } => Fr::from_u64(200 + u64::from(flag as u8)),
                 JoltOpeningId::Polynomial {
                     polynomial:
                         JoltPolynomialId::Virtual(JoltVirtualPolynomial::LookupTableFlag(index)),
-                    stage: JoltStageId::InstructionReadRaf,
+                    relation: JoltRelationId::InstructionReadRaf,
                 } => Fr::from_u64(300 + index as u64),
                 _ => zero,
             },
@@ -1057,7 +1032,7 @@ mod tests {
             + stage4_gamma * Fr::from_u64(89)
             + gamma_power(stage4_gamma, 2) * Fr::from_u64(97);
         let mut stage5 = Fr::from_u64(101) + stage5_gamma * Fr::from_u64(103);
-        for table in LookupTableKind::<TEST_XLEN>::iter() {
+        for table in LookupTableKind::<XLEN>::iter() {
             stage5 += gamma_power(stage5_gamma, table.index() + 2)
                 * Fr::from_u64(300 + table.index() as u64);
         }

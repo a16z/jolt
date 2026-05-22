@@ -3,12 +3,12 @@ use jolt_field::RingCore;
 use crate::{challenge, opening};
 
 use super::super::super::{
-    JoltChallengeId, JoltExpr, JoltOpeningId, JoltStageClaims, JoltStageId, JoltVirtualPolynomial,
-    RegistersClaimReductionChallenge,
+    JoltChallengeId, JoltExpr, JoltOpeningId, JoltRelationClaims, JoltRelationId,
+    JoltVirtualPolynomial, RegistersClaimReductionChallenge,
 };
 use super::super::dimensions::TraceDimensions;
 
-pub fn claim_reduction<F>(dimensions: TraceDimensions) -> JoltStageClaims<F>
+pub fn claim_reduction<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
@@ -23,8 +23,8 @@ where
         + eq_spartan.clone() * gamma.clone() * opening(rs1_value_reduced())
         + eq_spartan * gamma.pow(2) * opening(rs2_value_reduced());
 
-    JoltStageClaims::new(
-        JoltStageId::RegistersClaimReduction,
+    JoltRelationClaims::new(
+        JoltRelationId::RegistersClaimReduction,
         dimensions.sumcheck(2),
         input,
         output,
@@ -57,36 +57,42 @@ where
 fn rd_write_value_spartan() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RdWriteValue,
-        JoltStageId::SpartanOuter,
+        JoltRelationId::SpartanOuter,
     )
 }
 
 fn rs1_value_spartan() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::Rs1Value, JoltStageId::SpartanOuter)
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::Rs1Value,
+        JoltRelationId::SpartanOuter,
+    )
 }
 
 fn rs2_value_spartan() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::Rs2Value, JoltStageId::SpartanOuter)
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::Rs2Value,
+        JoltRelationId::SpartanOuter,
+    )
 }
 
 fn rd_write_value_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RdWriteValue,
-        JoltStageId::RegistersClaimReduction,
+        JoltRelationId::RegistersClaimReduction,
     )
 }
 
 fn rs1_value_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs1Value,
-        JoltStageId::RegistersClaimReduction,
+        JoltRelationId::RegistersClaimReduction,
     )
 }
 
 fn rs2_value_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs2Value,
-        JoltStageId::RegistersClaimReduction,
+        JoltRelationId::RegistersClaimReduction,
     )
 }
 
@@ -103,7 +109,7 @@ mod tests {
     fn claim_reduction_exposes_expected_dependencies() {
         let claims = claim_reduction::<Fr>(dimensions());
 
-        assert_eq!(claims.id, JoltStageId::RegistersClaimReduction);
+        assert_eq!(claims.id, JoltRelationId::RegistersClaimReduction);
         assert_eq!(claims.sumcheck, dimensions().sumcheck(2));
         assert_eq!(
             claims.input.required_openings,
@@ -174,6 +180,8 @@ mod tests {
                 | JoltChallengeId::RamReadWrite(_)
                 | JoltChallengeId::RamValCheck(_)
                 | JoltChallengeId::RamRaClaimReduction(_)
+                | JoltChallengeId::RamRaVirtualization(_)
+                | JoltChallengeId::RamHammingBooleanity(_)
                 | JoltChallengeId::RegistersReadWrite(_)
                 | JoltChallengeId::RegistersValEvaluation(_)
                 | JoltChallengeId::InstructionClaimReduction(_)
@@ -206,6 +214,8 @@ mod tests {
                 JoltChallengeId::RamReadWrite(_)
                 | JoltChallengeId::RamValCheck(_)
                 | JoltChallengeId::RamRaClaimReduction(_)
+                | JoltChallengeId::RamRaVirtualization(_)
+                | JoltChallengeId::RamHammingBooleanity(_)
                 | JoltChallengeId::RegistersReadWrite(_)
                 | JoltChallengeId::RegistersValEvaluation(_)
                 | JoltChallengeId::InstructionClaimReduction(_)

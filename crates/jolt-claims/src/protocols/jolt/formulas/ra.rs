@@ -1,6 +1,4 @@
-use std::num::NonZeroUsize;
-
-use super::super::{JoltCommittedPolynomial, JoltOpeningId, JoltStageId};
+use super::super::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
 use super::dimensions::JoltFormulaDimensionsError;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -19,8 +17,8 @@ impl JoltRaPolynomial {
         }
     }
 
-    pub fn opening(self, stage: JoltStageId) -> JoltOpeningId {
-        JoltOpeningId::committed(self.committed(), stage)
+    pub fn opening(self, relation: JoltRelationId) -> JoltOpeningId {
+        JoltOpeningId::committed(self.committed(), relation)
     }
 }
 
@@ -32,7 +30,6 @@ pub struct JoltRaPolynomialLayout {
     instruction: usize,
     bytecode: usize,
     ram: usize,
-    total: NonZeroUsize,
 }
 
 impl JoltRaPolynomialLayout {
@@ -44,13 +41,18 @@ impl JoltRaPolynomialLayout {
         let total = instruction
             .checked_add(bytecode)
             .and_then(|total| total.checked_add(ram))
-            .ok_or_else(|| JoltFormulaDimensionsError::overflow("Jolt RA polynomial count"))?;
+            .ok_or(JoltFormulaDimensionsError::Overflow {
+                name: "Jolt RA polynomial count",
+            })?;
+        if total == 0 {
+            return Err(JoltFormulaDimensionsError::Zero {
+                name: "Jolt RA polynomial count",
+            });
+        }
         Ok(Self {
             instruction,
             bytecode,
             ram,
-            total: NonZeroUsize::new(total)
-                .ok_or_else(|| JoltFormulaDimensionsError::zero("Jolt RA polynomial count"))?,
         })
     }
 
@@ -67,7 +69,7 @@ impl JoltRaPolynomialLayout {
     }
 
     pub fn total(self) -> usize {
-        self.total.get()
+        self.instruction + self.bytecode + self.ram
     }
 
     pub fn polynomials(self) -> impl Iterator<Item = JoltRaPolynomial> {
@@ -81,9 +83,9 @@ impl JoltRaPolynomialLayout {
         self.polynomials().map(JoltRaPolynomial::committed)
     }
 
-    pub fn openings(self, stage: JoltStageId) -> impl Iterator<Item = JoltOpeningId> {
+    pub fn openings(self, relation: JoltRelationId) -> impl Iterator<Item = JoltOpeningId> {
         self.polynomials()
-            .map(move |polynomial| polynomial.opening(stage))
+            .map(move |polynomial| polynomial.opening(relation))
     }
 }
 
@@ -103,7 +105,9 @@ mod tests {
     fn rejects_empty_layout() {
         assert_eq!(
             JoltRaPolynomialLayout::new(0, 0, 0),
-            Err(JoltFormulaDimensionsError::zero("Jolt RA polynomial count"))
+            Err(JoltFormulaDimensionsError::Zero {
+                name: "Jolt RA polynomial count",
+            })
         );
     }
 
@@ -111,15 +115,15 @@ mod tests {
     fn rejects_overflowing_layout() {
         assert_eq!(
             JoltRaPolynomialLayout::new(usize::MAX, 1, 0),
-            Err(JoltFormulaDimensionsError::overflow(
-                "Jolt RA polynomial count"
-            ))
+            Err(JoltFormulaDimensionsError::Overflow {
+                name: "Jolt RA polynomial count",
+            })
         );
         assert_eq!(
             JoltRaPolynomialLayout::new(usize::MAX - 1, 1, 1),
-            Err(JoltFormulaDimensionsError::overflow(
-                "Jolt RA polynomial count"
-            ))
+            Err(JoltFormulaDimensionsError::Overflow {
+                name: "Jolt RA polynomial count",
+            })
         );
     }
 

@@ -141,8 +141,11 @@ where
         };
         let mut combined = LinearCombination::zero();
         for (opening_id, &coefficient) in binding.opening_ids.iter().zip(&binding.coefficients) {
-            let variable = claim_sources.opening(opening_id)?;
-            combined = combined + LinearCombination::variable(variable).scale(coefficient);
+            combined = combined
+                + claim_sources
+                    .opening(opening_id)?
+                    .into_linear_combination()
+                    .scale(coefficient);
         }
         builder.assert_equal(combined, evaluation);
     }
@@ -322,6 +325,7 @@ fn insert_output_claim_sources<F, O, P, Ch, C>(
     claim_sources: &mut ClaimSourceTable<F, O, P, Ch>,
 ) -> Result<(), Error>
 where
+    F: Field,
     O: Clone + PartialEq,
 {
     let mut inserted = Vec::<(O, Variable)>::new();

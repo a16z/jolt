@@ -1,4 +1,4 @@
-use jolt_claims::protocols::jolt::JoltStageId;
+use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::SumcheckProof;
@@ -19,7 +19,7 @@ pub(crate) struct CommittedOutputClaimInputs<'a, F: Field, C> {
     pub proof: &'a SumcheckProof<F, C>,
     pub proof_label: &'static str,
     pub output_claim_count: usize,
-    pub stage: JoltStageId,
+    pub stage: JoltRelationId,
 }
 
 pub(crate) struct BlindFoldInputs<'a, PCS, VC, ZkProof>

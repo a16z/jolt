@@ -29,6 +29,31 @@ impl<F, O, P, C> Add for Expr<F, O, P, C> {
     }
 }
 
+impl<F: Clone, O: Clone, P: Clone, C: Clone> Add<&Expr<F, O, P, C>> for Expr<F, O, P, C> {
+    type Output = Self;
+
+    fn add(mut self, rhs: &Expr<F, O, P, C>) -> Self::Output {
+        self.terms.extend(rhs.terms.iter().cloned());
+        self
+    }
+}
+
+impl<F: Clone, O: Clone, P: Clone, C: Clone> Add<Expr<F, O, P, C>> for &Expr<F, O, P, C> {
+    type Output = Expr<F, O, P, C>;
+
+    fn add(self, rhs: Expr<F, O, P, C>) -> Self::Output {
+        (*self).clone() + rhs
+    }
+}
+
+impl<F: Clone, O: Clone, P: Clone, C: Clone> Add<&Expr<F, O, P, C>> for &Expr<F, O, P, C> {
+    type Output = Expr<F, O, P, C>;
+
+    fn add(self, rhs: &Expr<F, O, P, C>) -> Self::Output {
+        (*self).clone() + rhs
+    }
+}
+
 impl<F: RingCore + FromPrimitiveInt, O, P, C> Add<i128> for Expr<F, O, P, C> {
     type Output = Self;
 
@@ -50,6 +75,36 @@ impl<F: RingCore, O, P, C> Sub for Expr<F, O, P, C> {
 
     fn sub(self, rhs: Self) -> Self::Output {
         self + -rhs
+    }
+}
+
+impl<F: RingCore + Clone, O: Clone, P: Clone, C: Clone> Sub<&Expr<F, O, P, C>>
+    for Expr<F, O, P, C>
+{
+    type Output = Self;
+
+    fn sub(self, rhs: &Expr<F, O, P, C>) -> Self::Output {
+        self - rhs.clone()
+    }
+}
+
+impl<F: RingCore + Clone, O: Clone, P: Clone, C: Clone> Sub<Expr<F, O, P, C>>
+    for &Expr<F, O, P, C>
+{
+    type Output = Expr<F, O, P, C>;
+
+    fn sub(self, rhs: Expr<F, O, P, C>) -> Self::Output {
+        (*self).clone() - rhs
+    }
+}
+
+impl<F: RingCore + Clone, O: Clone, P: Clone, C: Clone> Sub<&Expr<F, O, P, C>>
+    for &Expr<F, O, P, C>
+{
+    type Output = Expr<F, O, P, C>;
+
+    fn sub(self, rhs: &Expr<F, O, P, C>) -> Self::Output {
+        (*self).clone() - rhs
     }
 }
 
@@ -80,6 +135,14 @@ impl<F: RingCore, O, P, C> Neg for Expr<F, O, P, C> {
     }
 }
 
+impl<F: RingCore + Clone, O: Clone, P: Clone, C: Clone> Neg for &Expr<F, O, P, C> {
+    type Output = Expr<F, O, P, C>;
+
+    fn neg(self) -> Self::Output {
+        -(*self).clone()
+    }
+}
+
 impl<F: RingCore, O: Clone, P: Clone, C: Clone> Mul for Expr<F, O, P, C> {
     type Output = Self;
 
@@ -100,6 +163,30 @@ impl<F: RingCore, O: Clone, P: Clone, C: Clone> Mul for Expr<F, O, P, C> {
             }
         }
         Self { terms }
+    }
+}
+
+impl<F: RingCore, O: Clone, P: Clone, C: Clone> Mul<&Expr<F, O, P, C>> for Expr<F, O, P, C> {
+    type Output = Self;
+
+    fn mul(self, rhs: &Expr<F, O, P, C>) -> Self::Output {
+        self * rhs.clone()
+    }
+}
+
+impl<F: RingCore, O: Clone, P: Clone, C: Clone> Mul<Expr<F, O, P, C>> for &Expr<F, O, P, C> {
+    type Output = Expr<F, O, P, C>;
+
+    fn mul(self, rhs: Expr<F, O, P, C>) -> Self::Output {
+        (*self).clone() * rhs
+    }
+}
+
+impl<F: RingCore, O: Clone, P: Clone, C: Clone> Mul<&Expr<F, O, P, C>> for &Expr<F, O, P, C> {
+    type Output = Expr<F, O, P, C>;
+
+    fn mul(self, rhs: &Expr<F, O, P, C>) -> Self::Output {
+        (*self).clone() * rhs
     }
 }
 

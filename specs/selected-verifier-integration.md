@@ -57,6 +57,10 @@ JoltProof::protocol:
 
 Option<T> fields:
   payload slots that must be Some or None according to JOLT_VERIFIER_CONFIG
+
+PCS assist:
+  generic proof payload implementing PcsProofAssist<PCS>
+  no Dory-specific proof field or verifier stage in jolt-verifier
 ```
 
 The verifier never does this:
@@ -84,10 +88,10 @@ any stage logic runs.
 `JoltProtocolConfig` records the configured verifier behavior:
 
 ```rust
-pub struct JoltProtocolConfig {
+pub struct JoltProtocolConfig<PcsAssistConfig = NoPcsAssistConfig> {
     pub zk: ZkConfig,
     pub field_inline: FieldInlineConfig,
-    pub pcs_assist: PCSAssistConfig,
+    pub pcs_assist: Option<PcsAssistConfig>,
 }
 
 pub enum ZkConfig {
@@ -105,21 +109,22 @@ pub enum FieldInlineRepresentation {
     NativeFieldElement,
 }
 
-pub enum PCSAssistConfig {
-    None,
-    Dory(DoryAssistConfig),
-}
+pub struct NoPcsAssistConfig;
 ```
 
 The crate exposes a config derived from feature flags:
 
 ```rust
-pub const JOLT_VERIFIER_CONFIG: JoltProtocolConfig = /* cfg-gated */;
+pub const JOLT_VERIFIER_CONFIG: JoltProtocolConfig<SelectedPcsAssistConfig> =
+    /* cfg-gated */;
 ```
 
 The exact construction can use `#[cfg(...)]` blocks rather than a single
 literal. The important rule is that the verifier's accepted protocol shape is
-not selected by proof contents.
+not selected by proof contents. A Dory-assisted build selects the Dory PCS,
+`jolt_dory_assist_verifier::DoryAssistConfig` as
+`SelectedPcsAssistConfig`, and the matching Dory-assist proof payload type.
+`jolt-verifier` does not need a Dory-specific PCS-assist enum variant.
 
 ## Linear Proof Shape
 
@@ -130,18 +135,34 @@ optional extension payloads.
 Sketch:
 
 ```rust
-pub struct JoltProof<PCS, VC, ZkProof, FieldInlineProof, PCSAssistProof>
+pub trait PcsProofAssist<PCS: CommitmentScheme>: Sized {
+    type Config;
+    type Error;
+
+    fn verify<T>(
+        &self,
+        config: &Self::Config,
+        joint_opening_proof: &PCS::Proof,
+        opening_snapshot: &PcsOpeningSnapshot<PCS>,
+        transcript: &mut T,
+    ) -> Result<(), Self::Error>
+    where
+        T: Transcript<Challenge = PCS::Field>;
+}
+
+pub struct JoltProof<PCS, VC, ZkProof, FieldInlineProof, PcsAssistProof>
 where
     PCS: CommitmentScheme,
+    PcsAssistProof: PcsProofAssist<PCS>,
 {
-    pub protocol: JoltProtocolConfig,
+    pub protocol: JoltProtocolConfig<PcsAssistProof::Config>,
 
     pub commitments: JoltCommitments<PCS>,
     pub stages: JoltStageProofs<PCS::Field, VC, ZkProof>,
     pub joint_opening_proof: PCS::Proof,
 
     pub field_inline: Option<FieldInlineProof>,
-    pub pcs_assist: Option<PCSAssistProof>,
+    pub pcs_assist: Option<PcsAssistProof>,
 }
 ```
 
@@ -149,6 +170,13 @@ where
 the verifier checks it with the ordinary PCS verifier. When PCS assist is
 enabled, the assist proof certifies the relevant PCS verifier work over this
 same `joint_opening_proof` and the same opening snapshot.
+
+The exact Rust spelling can use an implementation type with an associated
+`Proof` instead of making the proof payload implement the trait directly. The
+API boundary should still be generic over PCS assist, with Dory supplied by the
+Dory-assist verifier crate rather than hard-coded into `jolt-verifier`. A
+no-assist build can use a `NoPcsAssistProof` marker type whose payload slot is
+validated to be `None`.
 
 If ZK/BlindFold data is already nested in `JoltStageProofs`, it does not need a
 separate top-level field. The same validation principle applies: the transparent
@@ -159,10 +187,15 @@ or BlindFold proof payload shape must match `JOLT_VERIFIER_CONFIG.zk`.
 `validate_proof_config` is the first verifier gate:
 
 ```rust
-pub fn validate_proof_config<PCS, VC, ZkProof, FieldInlineProof, PCSAssistProof>(
-    config: &JoltProtocolConfig,
-    proof: &JoltProof<PCS, VC, ZkProof, FieldInlineProof, PCSAssistProof>,
-) -> Result<(), VerifierError>;
+pub fn validate_proof_config<PCS, VC, ZkProof, FieldInlineProof, PcsAssistProof>(
+    config: &JoltProtocolConfig<PcsAssistProof::Config>,
+    proof: &JoltProof<PCS, VC, ZkProof, FieldInlineProof, PcsAssistProof>,
+) -> Result<(), VerifierError>
+where
+    PcsAssistProof: PcsProofAssist<PCS>,
+{
+    /* shape checks only */
+}
 ```
 
 It checks:
@@ -170,7 +203,7 @@ It checks:
 ```text
 proof.protocol == JOLT_VERIFIER_CONFIG
 field_inline payload is present iff config.field_inline.enabled
-pcs_assist payload is present iff config.pcs_assist is Dory(...)
+pcs_assist payload is present iff config.pcs_assist.is_some()
 stage proof payloads match config.zk
 unsupported feature combinations are impossible or rejected
 ```
@@ -189,13 +222,13 @@ if config.field_inline.enabled {
 }
 
 match config.pcs_assist {
-    PCSAssistConfig::None => reject_some(&proof.pcs_assist)?,
-    PCSAssistConfig::Dory(_) => require_some(&proof.pcs_assist)?,
+    None => reject_some(&proof.pcs_assist)?,
+    Some(_) => require_some(&proof.pcs_assist)?,
 }
 ```
 
-There is no fallback. If `config.pcs_assist` requires Dory assist and
-`proof.pcs_assist` is missing, the verifier rejects. If config disables Dory
+There is no fallback. If `config.pcs_assist` requires an assist proof and
+`proof.pcs_assist` is missing, the verifier rejects. If config disables PCS
 assist and `proof.pcs_assist` is present, the verifier rejects.
 
 ## Linear Verifier Flow
@@ -203,12 +236,15 @@ assist and `proof.pcs_assist` is present, the verifier rejects.
 The verifier remains a linear function:
 
 ```rust
-pub fn verify<PCS, VC, ZkProof, FieldInlineProof, PCSAssistProof>(
+pub fn verify<PCS, VC, ZkProof, FieldInlineProof, PcsAssistProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC, ZkProof, FieldInlineProof, PCSAssistProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, FieldInlineProof, PcsAssistProof>,
     trusted_advice_commitment: Option<&PCS::Output>,
-) -> Result<(), VerifierError> {
+) -> Result<(), VerifierError>
+where
+    PcsAssistProof: PcsProofAssist<PCS>,
+{
     let config = JOLT_VERIFIER_CONFIG;
     validate_proof_config(&config, proof)?;
 
@@ -303,11 +339,14 @@ When enabled:
 
 ```text
 validate_proof_config requires proof.field_inline = Some(...)
-commitment absorption includes FR commitments
-stage 3 includes FR claim reductions
+commitment absorption includes FR commitments, currently FieldRdInc
+stage 2 extends product virtualization with a FieldProduct lane
+stage 2 batches field-register claim reduction at the product point
 stage 4 batches FR read/write checking
 stage 5 batches FR val evaluation
-product/R1CS logic includes FieldProduct and field rows
+stage 6 batches FieldRdInc reduction
+stage 8 includes reduced FieldRdInc in the joint opening RLC
+R1CS logic includes field_constraints
 ```
 
 When disabled:
@@ -323,7 +362,9 @@ Field-inline arithmetic details are specified in
 
 ## PCS Assist
 
-PCS assist is the opening-phase extension. V1 assist is Dory assist.
+PCS assist is the opening-phase extension. The `jolt-verifier` boundary is
+generic over a proof payload implementing `PcsProofAssist<PCS>`. V1 concrete
+assist is Dory assist, supplied by the Dory-assist verifier crate.
 
 `joint_opening_proof` is always present:
 
@@ -332,9 +373,9 @@ config.pcs_assist = None:
   proof.pcs_assist must be None
   verifier checks joint_opening_proof through the ordinary PCS verifier
 
-config.pcs_assist = Dory(...):
-  proof.pcs_assist must be Some(...)
-  verifier calls pcs_assist_verify
+config.pcs_assist = Some(...):
+  proof.pcs_assist must be Some(T: PcsProofAssist<PCS>)
+  verifier calls T::verify / proof.pcs_assist.verify
   joint_opening_proof is public input to the assist verification
   verifier does not also run the expensive native PCS verifier path
 ```
@@ -357,27 +398,29 @@ The safe implementation pattern is:
 let opening_snapshot = build_opening_snapshot(&config, stage_outputs)?;
 
 match config.pcs_assist {
-    PCSAssistConfig::None => {
+    None => {
         verify_joint_opening_proof_natively(
             &proof.joint_opening_proof,
             &opening_snapshot,
             &mut transcript,
         )
     }
-    PCSAssistConfig::Dory(ref assist_config) => {
+    Some(ref assist_config) => {
         let assist = proof.pcs_assist.as_ref().ok_or(MissingPayload)?;
-        pcs_assist_verify(
+        assist.verify(
             assist_config,
             &proof.joint_opening_proof,
             &opening_snapshot,
-            assist,
             &mut transcript,
         )
     }
 }
 ```
 
-Dory-assist details are specified in
+For a Dory-assisted build, `PCS = DoryCommitmentScheme` and the selected assist
+payload is `jolt_dory_assist_verifier::DoryAssistProof`, whose implementation
+owns the three Dory-assist stages, Hyrax opening, and native final pairing
+check. Dory-assist details are specified in
 [dory-assist-protocol.md](dory-assist-protocol.md).
 
 ## Wrapper
@@ -392,7 +435,7 @@ native Jolt verifier:
 
 wrapper prover / assembly:
   encodes the configured linear verifier flow into R1CS
-  proves that R1CS with Spartan + HyperKZG
+  proves that R1CS with ZK Spartan + HyperKZG
 
 wrapper verifier:
   verifies the wrapper proof against wrapper public inputs and verifying key
@@ -403,6 +446,11 @@ The wrapper verifying key or public statement must bind the inner
 `JOLT_VERIFIER_CONFIG` so a proof for one configured verifier cannot be checked
 as another. Wrapper protocol details are specified in
 [wrapper-protocol.md](wrapper-protocol.md).
+
+For the primary v1 wrapped-ZK path, the inner configured verifier is the
+transparent verifier and the transparent Jolt proof is private wrapper witness
+data. Base-layer BlindFold is still the standalone Jolt ZK path, but wrapping
+the BlindFold verifier is not the primary wrapper composition.
 
 ## End-To-End Flows
 
@@ -436,17 +484,22 @@ Dory-assisted Jolt:
 
 ```text
 JOLT_VERIFIER_CONFIG:
-  pcs_assist = Dory(...)
+  PCS = DoryCommitmentScheme
+  pcs_assist = Some(DoryAssistConfig)
+  PcsAssistProof = jolt_dory_assist_verifier::DoryAssistProof
 
 verify:
   validate_proof_config requires pcs_assist payload
   run ordinary stages through opening snapshot
-  call pcs_assist_verify with joint_opening_proof as public input
+  call PcsProofAssist::verify with joint_opening_proof as public input
 ```
 
 Wrapped Jolt:
 
 ```text
+inner proof:
+  transparent Jolt proof as private wrapper witness
+
 wrapper verifier:
   verifies wrapper proof for a fixed inner JOLT_VERIFIER_CONFIG
   skips native inner verifier execution
@@ -490,8 +543,10 @@ wrapper verifier rejects proofs built for the wrong inner config
 
 Each step should be reviewed before continuing to the next.
 
-1. Add `JoltProtocolConfig`.
-   - Define ZK, field-inline, and PCS-assist config types.
+1. Add `JoltProtocolConfig` and the PCS-assist boundary.
+   - Define ZK, field-inline, and generic PCS-assist config types.
+   - Define the verifier-facing `PcsProofAssist<PCS>` trait or equivalent
+     abstraction.
    - Derive `JOLT_VERIFIER_CONFIG` from feature flags.
    - Review gate: config constants match expected feature combinations.
 
@@ -511,14 +566,18 @@ Each step should be reviewed before continuing to the next.
    - Review gate: changing config changes the challenge stream.
 
 5. Wire field-inline additions in the appropriate stage folders.
-   - Add stage 3/4/5 and product/R1CS additions in the modules that batch those
-     checks.
+   - Add stage 2 product/claim-reduction additions so field product and field
+     registers share `r_prod`.
+   - Add stage 4/5 FR memory-checking additions.
+   - Add stage 6 `FieldRdInc` reduction and stage 8 joint-opening inclusion.
    - Review gate: FR-off remains byte-for-byte compatible with ordinary stage
      ordering where expected; FR-on requires payloads.
 
 6. Wire PCS assist in the opening phase.
    - Build a typed opening snapshot once.
-   - Dispatch to ordinary PCS verify or `pcs_assist_verify` based on config.
+   - Dispatch to ordinary PCS verify or the selected `PcsProofAssist`
+     implementation based on config.
+   - Keep Dory-specific stage organization outside `jolt-verifier`.
    - Review gate: assist proof is bound to the exact `joint_opening_proof` and
      opening snapshot.
 
@@ -529,5 +588,7 @@ Each step should be reviewed before continuing to the next.
 
 8. Add wrapper verifier entry point.
    - Verify wrapper proofs against a fixed inner `JOLT_VERIFIER_CONFIG`.
+   - Treat the transparent inner Jolt proof as private wrapper witness in the
+     primary v1 wrapped-ZK flow.
    - Do not run native inner Jolt stages in wrapper verification.
    - Review gate: wrapper proof for one inner config is rejected under another.

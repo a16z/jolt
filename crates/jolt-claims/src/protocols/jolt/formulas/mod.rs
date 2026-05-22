@@ -3,6 +3,7 @@ pub mod bytecode;
 pub mod claim_reductions;
 pub mod committed_openings;
 pub mod dimensions;
+pub mod error;
 pub mod instruction;
 pub mod ra;
 pub mod ram;

@@ -24,7 +24,7 @@ use std::{os::fd::AsRawFd, os::raw::c_int};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::{
-    JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltStageId, JoltVirtualPolynomial,
+    JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId, JoltVirtualPolynomial,
 };
 use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
 #[cfg(not(feature = "zk"))]
@@ -938,14 +938,15 @@ where
 #[cfg(not(feature = "zk"))]
 fn core_opening_id(id: JoltOpeningId) -> CoreOpeningId {
     match id {
-        JoltOpeningId::Polynomial { polynomial, stage } => {
-            CoreOpeningId::Polynomial(core_polynomial_id(polynomial), core_sumcheck_id(stage))
+        JoltOpeningId::Polynomial {
+            polynomial,
+            relation,
+        } => CoreOpeningId::Polynomial(core_polynomial_id(polynomial), core_sumcheck_id(relation)),
+        JoltOpeningId::UntrustedAdvice { relation } => {
+            CoreOpeningId::UntrustedAdvice(core_sumcheck_id(relation))
         }
-        JoltOpeningId::UntrustedAdvice { stage } => {
-            CoreOpeningId::UntrustedAdvice(core_sumcheck_id(stage))
-        }
-        JoltOpeningId::TrustedAdvice { stage } => {
-            CoreOpeningId::TrustedAdvice(core_sumcheck_id(stage))
+        JoltOpeningId::TrustedAdvice { relation } => {
+            CoreOpeningId::TrustedAdvice(core_sumcheck_id(relation))
         }
     }
 }
@@ -1031,35 +1032,37 @@ fn core_virtual_polynomial(id: JoltVirtualPolynomial) -> CoreVirtualPolynomial {
 }
 
 #[cfg(not(feature = "zk"))]
-fn core_sumcheck_id(id: JoltStageId) -> CoreSumcheckId {
+fn core_sumcheck_id(id: JoltRelationId) -> CoreSumcheckId {
     match id {
-        JoltStageId::SpartanOuter => CoreSumcheckId::SpartanOuter,
-        JoltStageId::SpartanProductVirtualization => CoreSumcheckId::SpartanProductVirtualization,
-        JoltStageId::SpartanShift => CoreSumcheckId::SpartanShift,
-        JoltStageId::InstructionClaimReduction => CoreSumcheckId::InstructionClaimReduction,
-        JoltStageId::InstructionInputVirtualization => {
+        JoltRelationId::SpartanOuter => CoreSumcheckId::SpartanOuter,
+        JoltRelationId::SpartanProductVirtualization => {
+            CoreSumcheckId::SpartanProductVirtualization
+        }
+        JoltRelationId::SpartanShift => CoreSumcheckId::SpartanShift,
+        JoltRelationId::InstructionClaimReduction => CoreSumcheckId::InstructionClaimReduction,
+        JoltRelationId::InstructionInputVirtualization => {
             CoreSumcheckId::InstructionInputVirtualization
         }
-        JoltStageId::InstructionReadRaf => CoreSumcheckId::InstructionReadRaf,
-        JoltStageId::InstructionRaVirtualization => CoreSumcheckId::InstructionRaVirtualization,
-        JoltStageId::RamReadWriteChecking => CoreSumcheckId::RamReadWriteChecking,
-        JoltStageId::RamRafEvaluation => CoreSumcheckId::RamRafEvaluation,
-        JoltStageId::RamOutputCheck => CoreSumcheckId::RamOutputCheck,
-        JoltStageId::RamValCheck => CoreSumcheckId::RamValCheck,
-        JoltStageId::RamRaClaimReduction => CoreSumcheckId::RamRaClaimReduction,
-        JoltStageId::RamHammingBooleanity => CoreSumcheckId::RamHammingBooleanity,
-        JoltStageId::RamRaVirtualization => CoreSumcheckId::RamRaVirtualization,
-        JoltStageId::RegistersClaimReduction => CoreSumcheckId::RegistersClaimReduction,
-        JoltStageId::RegistersReadWriteChecking => CoreSumcheckId::RegistersReadWriteChecking,
-        JoltStageId::RegistersValEvaluation => CoreSumcheckId::RegistersValEvaluation,
-        JoltStageId::BytecodeReadRaf => CoreSumcheckId::BytecodeReadRaf,
-        JoltStageId::Booleanity => CoreSumcheckId::Booleanity,
-        JoltStageId::AdviceClaimReductionCyclePhase => {
+        JoltRelationId::InstructionReadRaf => CoreSumcheckId::InstructionReadRaf,
+        JoltRelationId::InstructionRaVirtualization => CoreSumcheckId::InstructionRaVirtualization,
+        JoltRelationId::RamReadWriteChecking => CoreSumcheckId::RamReadWriteChecking,
+        JoltRelationId::RamRafEvaluation => CoreSumcheckId::RamRafEvaluation,
+        JoltRelationId::RamOutputCheck => CoreSumcheckId::RamOutputCheck,
+        JoltRelationId::RamValCheck => CoreSumcheckId::RamValCheck,
+        JoltRelationId::RamRaClaimReduction => CoreSumcheckId::RamRaClaimReduction,
+        JoltRelationId::RamHammingBooleanity => CoreSumcheckId::RamHammingBooleanity,
+        JoltRelationId::RamRaVirtualization => CoreSumcheckId::RamRaVirtualization,
+        JoltRelationId::RegistersClaimReduction => CoreSumcheckId::RegistersClaimReduction,
+        JoltRelationId::RegistersReadWriteChecking => CoreSumcheckId::RegistersReadWriteChecking,
+        JoltRelationId::RegistersValEvaluation => CoreSumcheckId::RegistersValEvaluation,
+        JoltRelationId::BytecodeReadRaf => CoreSumcheckId::BytecodeReadRaf,
+        JoltRelationId::Booleanity => CoreSumcheckId::Booleanity,
+        JoltRelationId::AdviceClaimReductionCyclePhase => {
             CoreSumcheckId::AdviceClaimReductionCyclePhase
         }
-        JoltStageId::AdviceClaimReduction => CoreSumcheckId::AdviceClaimReduction,
-        JoltStageId::IncClaimReduction => CoreSumcheckId::IncClaimReduction,
-        JoltStageId::HammingWeightClaimReduction => CoreSumcheckId::HammingWeightClaimReduction,
+        JoltRelationId::AdviceClaimReduction => CoreSumcheckId::AdviceClaimReduction,
+        JoltRelationId::IncClaimReduction => CoreSumcheckId::IncClaimReduction,
+        JoltRelationId::HammingWeightClaimReduction => CoreSumcheckId::HammingWeightClaimReduction,
     }
 }
 

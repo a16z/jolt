@@ -56,15 +56,14 @@
 //! a committed output-claim row or in the final hiding evaluation commitment.
 use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
 use jolt_claims::{
-    pow2,
     protocols::jolt::{
         formulas::{
             booleanity::{self, BooleanityDimensions},
             bytecode::{self, BytecodeReadRafEvaluationInputs},
             claim_reductions::{advice, hamming_weight, increments},
             dimensions::{
-                AdviceClaimReductionLayout, JoltFormulaDimensions, JoltSumcheckSpec,
-                PRODUCT_UNISKIP_DOMAIN_SIZE, REGISTER_ADDRESS_BITS,
+                JoltFormulaDimensions, JoltSumcheckSpec, PRODUCT_UNISKIP_DOMAIN_SIZE,
+                REGISTER_ADDRESS_BITS,
             },
             instruction, ram, registers,
             spartan::{
@@ -73,15 +72,15 @@ use jolt_claims::{
                 SpartanProductDimensions, SpartanProductPublicValues,
             },
         },
-        AdviceClaimReductionPublic, BooleanityChallenge, BooleanityPublic,
-        BytecodeReadRafChallenge, BytecodeReadRafPublic, HammingWeightClaimReductionChallenge,
-        HammingWeightClaimReductionPublic, IncClaimReductionChallenge, IncClaimReductionPublic,
-        InstructionClaimReductionChallenge, InstructionInputChallenge,
-        InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic,
+        AdviceClaimReductionLayout, AdviceClaimReductionPublic, BooleanityChallenge,
+        BooleanityPublic, BytecodeReadRafChallenge, BytecodeReadRafPublic,
+        HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic,
+        IncClaimReductionChallenge, IncClaimReductionPublic, InstructionClaimReductionChallenge,
+        InstructionInputChallenge, InstructionRaVirtualizationChallenge,
         InstructionReadRafChallenge, JoltAdviceKind, JoltChallengeId, JoltOpeningId, JoltPublicId,
-        JoltStageClaims, JoltStageId, JoltSumcheckDomain, RamHammingBooleanityPublic,
+        JoltRelationClaims, JoltRelationId, JoltSumcheckDomain, RamHammingBooleanityChallenge,
         RamOutputCheckPublic, RamRaClaimReductionChallenge, RamRaClaimReductionPublic,
-        RamRaVirtualizationPublic, RamRafEvaluationPublic, RamReadWriteChallenge,
+        RamRaVirtualizationChallenge, RamRafEvaluationPublic, RamReadWriteChallenge,
         RamValCheckChallenge, RegistersClaimReductionChallenge, RegistersReadWriteChallenge,
         RegistersValEvaluationChallenge, SpartanProductVirtualizationPublic, SpartanShiftChallenge,
         SpartanShiftPublic,
@@ -199,13 +198,13 @@ where
         },
     )
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltStageId::SpartanOuter,
+        stage: JoltRelationId::SpartanOuter,
         reason: error.to_string(),
     })?;
     for (id, value) in remainder_formula
         .public_claims(&dimensions)
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::SpartanOuter,
+            stage: JoltRelationId::SpartanOuter,
             reason: error.to_string(),
         })?
     {
@@ -243,11 +242,11 @@ where
     let log_k = input.checked.ram_K.ilog2() as usize;
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
     let read_write_dimensions = input.proof.rw_config.ram_dimensions(log_t, log_k);
-    let product_dimensions = SpartanProductDimensions::from(log_t);
+    let product_dimensions = SpartanProductDimensions::new(log_t);
     let raf_dimensions =
         ram::RamRafEvaluationDimensions::try_from(read_write_dimensions).map_err(|error| {
             VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RamRafEvaluation,
+                stage: JoltRelationId::RamRafEvaluation,
                 reason: error.to_string(),
             }
         })?;
@@ -258,7 +257,7 @@ where
         { PRODUCT_UNISKIP_DOMAIN_SIZE },
     >(input.stage2.public.product_tau_high)
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltStageId::SpartanProductVirtualization,
+        stage: JoltRelationId::SpartanProductVirtualization,
         reason: error.to_string(),
     })?;
     for (index, value) in product_weights.into_iter().enumerate() {
@@ -293,15 +292,15 @@ where
         .stage2
         .batch_consistency
         .try_instance_point(ram_read_write.sumcheck.rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::RamReadWriteChecking, error))?;
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::RamReadWriteChecking, error))?;
     let ram_read_write_opening = read_write_dimensions
         .read_write_opening_point(&ram_read_write_point)
-        .map_err(|error| public_error(JoltStageId::RamReadWriteChecking, error))?;
+        .map_err(|error| public_error(JoltRelationId::RamReadWriteChecking, error))?;
     let eq_cycle = try_eq_mle(
         &input.stage2.public.product_tau_low,
         &ram_read_write_opening.r_cycle,
     )
-    .map_err(|error| public_error(JoltStageId::RamReadWriteChecking, error))?;
+    .map_err(|error| public_error(JoltRelationId::RamReadWriteChecking, error))?;
     values.challenge(
         JoltChallengeId::from(RamReadWriteChallenge::Gamma),
         input.stage2.public.ram_read_write_gamma,
@@ -315,23 +314,25 @@ where
         .stage2
         .batch_consistency
         .try_instance_point(product_remainder.sumcheck.rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::SpartanProductVirtualization, error))?;
+        .map_err(|error| {
+            stage_sumcheck_error(JoltRelationId::SpartanProductVirtualization, error)
+        })?;
     let product_opening_point = product_point.iter().rev().copied().collect::<Vec<_>>();
     let product_tau_high_bound = centered_lagrange_kernel(
         PRODUCT_UNISKIP_DOMAIN_SIZE,
         input.stage2.public.product_tau_high,
         input.stage2.public.product_uniskip_challenge,
     )
-    .map_err(|error| public_error(JoltStageId::SpartanProductVirtualization, error))?;
+    .map_err(|error| public_error(JoltRelationId::SpartanProductVirtualization, error))?;
     let product_tau_low_eq =
         try_eq_mle(&input.stage2.public.product_tau_low, &product_opening_point)
-            .map_err(|error| public_error(JoltStageId::SpartanProductVirtualization, error))?;
+            .map_err(|error| public_error(JoltRelationId::SpartanProductVirtualization, error))?;
     let product_publics = SpartanProductPublicValues {
         lagrange_weights: centered_lagrange_evals_array::<
             PCS::Field,
             { PRODUCT_UNISKIP_DOMAIN_SIZE },
         >(input.stage2.public.product_uniskip_challenge)
-        .map_err(|error| public_error(JoltStageId::SpartanProductVirtualization, error))?,
+        .map_err(|error| public_error(JoltRelationId::SpartanProductVirtualization, error))?,
         tau_kernel: product_tau_high_bound * product_tau_low_eq,
     };
     values.public(
@@ -353,13 +354,13 @@ where
         .stage2
         .batch_consistency
         .try_instance_point(instruction_reduction.sumcheck.rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::InstructionClaimReduction, error))?;
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::InstructionClaimReduction, error))?;
     let instruction_opening_point = instruction_point.iter().rev().copied().collect::<Vec<_>>();
     let eq_spartan = try_eq_mle(
         &instruction_opening_point,
         &input.stage2.public.product_tau_low,
     )
-    .map_err(|error| public_error(JoltStageId::InstructionClaimReduction, error))?;
+    .map_err(|error| public_error(JoltRelationId::InstructionClaimReduction, error))?;
     values.challenge(
         JoltChallengeId::from(InstructionClaimReductionChallenge::Gamma),
         input.stage2.public.instruction_gamma,
@@ -374,16 +375,16 @@ where
         .stage2
         .batch_consistency
         .try_round_offset(active_stage2_rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::RamRafEvaluation, error))?
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::RamRafEvaluation, error))?
         + read_write_dimensions.phase1_num_rounds();
     let ram_raf_point = input
         .stage2
         .batch_consistency
         .try_instance_point_at(phase1_offset, ram_raf.sumcheck.rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::RamRafEvaluation, error))?;
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::RamRafEvaluation, error))?;
     let ram_raf_address = read_write_dimensions
         .address_opening_point(&ram_raf_point)
-        .map_err(|error| public_error(JoltStageId::RamRafEvaluation, error))?;
+        .map_err(|error| public_error(JoltRelationId::RamRafEvaluation, error))?;
     let ram_raf_unmap_address = IdentityPolynomial::new(log_k).evaluate(&ram_raf_address)
         * PCS::Field::from_u64(8)
         + PCS::Field::from_u64(input.checked.public_io.memory_layout.get_lowest_address());
@@ -396,10 +397,10 @@ where
         .stage2
         .batch_consistency
         .try_instance_point_at(phase1_offset, ram_output.sumcheck.rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::RamOutputCheck, error))?;
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::RamOutputCheck, error))?;
     let ram_output_address = read_write_dimensions
         .address_opening_point(&ram_output_point)
-        .map_err(|error| public_error(JoltStageId::RamOutputCheck, error))?;
+        .map_err(|error| public_error(JoltRelationId::RamOutputCheck, error))?;
     let output_publics = ram_output_publics(
         input,
         &input.stage2.public.output_address_challenges,
@@ -491,7 +492,7 @@ where
         .stage3
         .batch_consistency
         .try_instance_point(shift.sumcheck.rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::SpartanShift, error))?;
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::SpartanShift, error))?;
     let shift_opening_point = shift_point.iter().rev().copied().collect::<Vec<_>>();
     let eq_plus_one_outer = EqPlusOnePolynomial::new(input.stage2.public.product_tau_low.clone())
         .evaluate(&shift_opening_point);
@@ -499,11 +500,13 @@ where
         .stage2
         .batch_consistency
         .try_instance_point(
-            SpartanProductDimensions::from(log_t)
+            SpartanProductDimensions::new(log_t)
                 .remainder_sumcheck()
                 .rounds,
         )
-        .map_err(|error| stage_sumcheck_error(JoltStageId::SpartanProductVirtualization, error))?;
+        .map_err(|error| {
+            stage_sumcheck_error(JoltRelationId::SpartanProductVirtualization, error)
+        })?;
     let product_opening_point = product_point.iter().rev().copied().collect::<Vec<_>>();
     let eq_plus_one_product =
         EqPlusOnePolynomial::new(product_opening_point.clone()).evaluate(&shift_opening_point);
@@ -521,20 +524,20 @@ where
         .batch_consistency
         .try_instance_point(instruction_input.sumcheck.rounds)
         .map_err(|error| {
-            stage_sumcheck_error(JoltStageId::InstructionInputVirtualization, error)
+            stage_sumcheck_error(JoltRelationId::InstructionInputVirtualization, error)
         })?;
     let instruction_opening_point = instruction_point.iter().rev().copied().collect::<Vec<_>>();
     values.challenge(
         JoltChallengeId::from(InstructionInputChallenge::EqProduct),
         try_eq_mle(&instruction_opening_point, &product_opening_point)
-            .map_err(|error| public_error(JoltStageId::InstructionInputVirtualization, error))?,
+            .map_err(|error| public_error(JoltRelationId::InstructionInputVirtualization, error))?,
     )?;
 
     let registers_point = input
         .stage3
         .batch_consistency
         .try_instance_point(registers_reduction.sumcheck.rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::RegistersClaimReduction, error))?;
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersClaimReduction, error))?;
     let registers_opening_point = registers_point.iter().rev().copied().collect::<Vec<_>>();
     values.challenge(
         JoltChallengeId::from(RegistersClaimReductionChallenge::EqSpartan),
@@ -542,7 +545,7 @@ where
             &registers_opening_point,
             &input.stage2.public.product_tau_low,
         )
-        .map_err(|error| public_error(JoltStageId::RegistersClaimReduction, error))?,
+        .map_err(|error| public_error(JoltRelationId::RegistersClaimReduction, error))?,
     )?;
 
     let instruction_outputs = instruction::input_virtualization_output_openings();
@@ -609,10 +612,10 @@ where
         .stage4
         .batch_consistency
         .try_instance_point(registers_claims.sumcheck.rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::RegistersReadWriteChecking, error))?;
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersReadWriteChecking, error))?;
     let registers_opening = register_dimensions
         .read_write_opening_point(&registers_point)
-        .map_err(|error| public_error(JoltStageId::RegistersReadWriteChecking, error))?;
+        .map_err(|error| public_error(JoltRelationId::RegistersReadWriteChecking, error))?;
     let registers_reduction_point = input
         .stage3
         .batch_consistency
@@ -621,7 +624,7 @@ where
                 .sumcheck(3)
                 .rounds,
         )
-        .map_err(|error| stage_sumcheck_error(JoltStageId::RegistersClaimReduction, error))?;
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersClaimReduction, error))?;
     let registers_reduction_opening = registers_reduction_point
         .iter()
         .rev()
@@ -630,7 +633,7 @@ where
     values.challenge(
         JoltChallengeId::from(RegistersReadWriteChallenge::EqCycle),
         try_eq_mle(&registers_reduction_opening, &registers_opening.r_cycle)
-            .map_err(|error| public_error(JoltStageId::RegistersReadWriteChecking, error))?,
+            .map_err(|error| public_error(JoltRelationId::RegistersReadWriteChecking, error))?,
     )?;
 
     values.challenge(
@@ -641,7 +644,7 @@ where
         .stage4
         .batch_consistency
         .try_instance_point(ram_val_claims.sumcheck.rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::RamValCheck, error))?;
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::RamValCheck, error))?;
     let ram_val_cycle = ram_val_point.iter().rev().copied().collect::<Vec<_>>();
     let r_cycle = input
         .stage2
@@ -649,7 +652,7 @@ where
         .ram_read_write_opening_point
         .get(log_k..)
         .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::RamValCheck,
+            stage: JoltRelationId::RamValCheck,
             reason: "RAM read-write opening point is shorter than the RAM address".to_string(),
         })?;
     values.challenge(
@@ -693,7 +696,7 @@ where
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
     let formula_dimensions = formula_dimensions(input)?;
     let instruction_claims =
-        instruction::read_raf::<RISCV_XLEN, PCS::Field>(formula_dimensions.instruction_read_raf);
+        instruction::read_raf::<PCS::Field>(formula_dimensions.instruction_read_raf);
     let ram_claims = ram::ra_claim_reduction::<PCS::Field>(trace_dimensions);
     let registers_claims = registers::val_evaluation::<PCS::Field>(trace_dimensions);
 
@@ -701,18 +704,17 @@ where
         JoltChallengeId::from(InstructionReadRafChallenge::Gamma),
         input.stage5.public.instruction_gamma,
     )?;
-    let instruction_output_openings = instruction::read_raf_output_openings::<RISCV_XLEN>(
-        formula_dimensions.instruction_read_raf,
-    );
+    let instruction_output_openings =
+        instruction::read_raf_output_openings(formula_dimensions.instruction_read_raf);
     let instruction_point = input
         .stage5
         .batch_consistency
         .try_instance_point(instruction_claims.sumcheck.rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::InstructionReadRaf, error))?;
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::InstructionReadRaf, error))?;
     let instruction_opening = formula_dimensions
         .instruction_read_raf
         .opening_point(&instruction_point)
-        .map_err(|error| public_error(JoltStageId::InstructionReadRaf, error))?;
+        .map_err(|error| public_error(JoltRelationId::InstructionReadRaf, error))?;
     let stage2_instruction_point = input
         .stage2
         .batch_consistency
@@ -721,14 +723,14 @@ where
                 .sumcheck(2)
                 .rounds,
         )
-        .map_err(|error| stage_sumcheck_error(JoltStageId::InstructionClaimReduction, error))?;
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::InstructionClaimReduction, error))?;
     let stage2_instruction_opening = stage2_instruction_point
         .iter()
         .rev()
         .copied()
         .collect::<Vec<_>>();
     let eq_reduction = try_eq_mle(&stage2_instruction_opening, &instruction_opening.r_cycle)
-        .map_err(|error| public_error(JoltStageId::InstructionReadRaf, error))?;
+        .map_err(|error| public_error(JoltRelationId::InstructionReadRaf, error))?;
     let left_operand_eval = OperandPolynomial::new(2 * RISCV_XLEN, OperandSide::Left)
         .evaluate(&instruction_opening.r_address);
     let right_operand_eval = OperandPolynomial::new(2 * RISCV_XLEN, OperandSide::Right)
@@ -766,10 +768,10 @@ where
         .stage5
         .batch_consistency
         .try_instance_point(ram_claims.sumcheck.rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::RamRaClaimReduction, error))?;
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::RamRaClaimReduction, error))?;
     let ram_cycle = trace_dimensions
         .cycle_opening_point(&ram_point)
-        .map_err(|error| public_error(JoltStageId::RamRaClaimReduction, error))?;
+        .map_err(|error| public_error(JoltRelationId::RamRaClaimReduction, error))?;
     let ram_raf_cycle = &input
         .stage2
         .ram_ra_claim_reduction_inputs
@@ -782,27 +784,27 @@ where
     values.public(
         JoltPublicId::from(RamRaClaimReductionPublic::EqCycleRaf),
         try_eq_mle(&ram_cycle, ram_raf_cycle)
-            .map_err(|error| public_error(JoltStageId::RamRaClaimReduction, error))?,
+            .map_err(|error| public_error(JoltRelationId::RamRaClaimReduction, error))?,
     )?;
     values.public(
         JoltPublicId::from(RamRaClaimReductionPublic::EqCycleReadWrite),
         try_eq_mle(&ram_cycle, ram_read_write_cycle)
-            .map_err(|error| public_error(JoltStageId::RamRaClaimReduction, error))?,
+            .map_err(|error| public_error(JoltRelationId::RamRaClaimReduction, error))?,
     )?;
     values.public(
         JoltPublicId::from(RamRaClaimReductionPublic::EqCycleValCheck),
         try_eq_mle(&ram_cycle, ram_val_cycle)
-            .map_err(|error| public_error(JoltStageId::RamRaClaimReduction, error))?,
+            .map_err(|error| public_error(JoltRelationId::RamRaClaimReduction, error))?,
     )?;
 
     let registers_point = input
         .stage5
         .batch_consistency
         .try_instance_point(registers_claims.sumcheck.rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::RegistersValEvaluation, error))?;
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersValEvaluation, error))?;
     let registers_cycle = trace_dimensions
         .cycle_opening_point(&registers_point)
-        .map_err(|error| public_error(JoltStageId::RegistersValEvaluation, error))?;
+        .map_err(|error| public_error(JoltRelationId::RegistersValEvaluation, error))?;
     let registers_read_write_cycle =
         &input.stage4.registers_read_write_opening_point[REGISTER_ADDRESS_BITS..];
     values.challenge(
@@ -841,13 +843,12 @@ where
     let log_t = input.checked.trace_length.ilog2() as usize;
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
     let formula_dimensions = formula_dimensions(input)?;
-    let bytecode_claims =
-        bytecode::read_raf::<RISCV_XLEN, PCS::Field>(formula_dimensions.bytecode_read_raf);
-    let booleanity_dimensions = BooleanityDimensions::from((
+    let bytecode_claims = bytecode::read_raf::<PCS::Field>(formula_dimensions.bytecode_read_raf);
+    let booleanity_dimensions = BooleanityDimensions::new(
         formula_dimensions.ra_layout,
         log_t,
         input.proof.one_hot_config.committed_chunk_bits(),
-    ));
+    );
     let booleanity_claims = booleanity::booleanity::<PCS::Field>(booleanity_dimensions);
     let ram_hamming_claims = ram::hamming_booleanity::<PCS::Field>(trace_dimensions);
     let ram_ra_claims =
@@ -952,10 +953,10 @@ where
     VC::Output: Clone,
 {
     let formula_dimensions = formula_dimensions(input)?;
-    let hamming_dimensions = hamming_weight::HammingWeightClaimReductionDimensions::from((
+    let hamming_dimensions = hamming_weight::HammingWeightClaimReductionDimensions::new(
         formula_dimensions.ra_layout,
         input.proof.one_hot_config.committed_chunk_bits(),
-    ));
+    );
     let hamming_claims = hamming_weight::claim_reduction::<PCS::Field>(hamming_dimensions);
     let (trusted_layout, trusted_claims) = advice_address_claim(input, JoltAdviceKind::Trusted);
     let (untrusted_layout, untrusted_claims) =
@@ -969,19 +970,22 @@ where
         .stage7
         .batch_consistency
         .try_instance_point(hamming_claims.sumcheck.rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::HammingWeightClaimReduction, error))?;
+        .map_err(|error| {
+            stage_sumcheck_error(JoltRelationId::HammingWeightClaimReduction, error)
+        })?;
     let rho_rev = hamming_point.iter().rev().copied().collect::<Vec<_>>();
     values.public(
         JoltPublicId::from(HammingWeightClaimReductionPublic::EqBooleanity),
         try_eq_mle(&rho_rev, &input.stage6.booleanity.r_address)
-            .map_err(|error| public_error(JoltStageId::HammingWeightClaimReduction, error))?,
+            .map_err(|error| public_error(JoltRelationId::HammingWeightClaimReduction, error))?,
     )?;
     let virtualization_points = stage6_virtualization_points(input, hamming_dimensions)?;
     for (index, point) in virtualization_points.iter().enumerate() {
         values.public(
             JoltPublicId::from(HammingWeightClaimReductionPublic::EqVirtualization(index)),
-            try_eq_mle(&rho_rev, point)
-                .map_err(|error| public_error(JoltStageId::HammingWeightClaimReduction, error))?,
+            try_eq_mle(&rho_rev, point).map_err(|error| {
+                public_error(JoltRelationId::HammingWeightClaimReduction, error)
+            })?,
         )?;
     }
     if let (Some(layout), Some(_claim), Some(public)) = (
@@ -1041,7 +1045,7 @@ where
 fn add_single_stage<F, C>(
     builder: Builder<F, C>,
     name: &'static str,
-    claim: &JoltStageClaims<F>,
+    claim: &JoltRelationClaims<F>,
     consistency: &CommittedSumcheckConsistency<F, C>,
     output_claims: &CommittedOutputClaimOutput<C>,
     values: &SourceValues<F>,
@@ -1075,7 +1079,7 @@ where
 fn add_batched_stage<F, C>(
     builder: Builder<F, C>,
     name: &'static str,
-    claims: &[JoltStageClaims<F>],
+    claims: &[JoltRelationClaims<F>],
     consistency: &BatchedCommittedSumcheckConsistency<F, C>,
     output_claims: &CommittedOutputClaimOutput<C>,
     values: &SourceValues<F>,
@@ -1159,7 +1163,7 @@ where
 }
 
 fn batched_input_expr<F, C>(
-    claims: &[JoltStageClaims<F>],
+    claims: &[JoltRelationClaims<F>],
     consistency: &BatchedCommittedSumcheckConsistency<F, C>,
 ) -> JoltExpr<F>
 where
@@ -1168,14 +1172,14 @@ where
     claims.iter().zip(&consistency.batching_coefficients).fold(
         JoltExpr::zero(),
         |acc, (claim, coefficient)| {
-            let scale = *coefficient * pow2::<F>(consistency.max_num_vars - claim.sumcheck.rounds);
+            let scale = *coefficient * F::pow2(consistency.max_num_vars - claim.sumcheck.rounds);
             acc + scale_expr(claim.input.expression().clone(), scale)
         },
     )
 }
 
 fn batched_output_expr<F, C>(
-    claims: &[JoltStageClaims<F>],
+    claims: &[JoltRelationClaims<F>],
     consistency: &BatchedCommittedSumcheckConsistency<F, C>,
 ) -> JoltExpr<F>
 where
@@ -1246,7 +1250,7 @@ where
         input.checked.ram_K,
     ))
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltStageId::BytecodeReadRaf,
+        stage: JoltRelationId::BytecodeReadRaf,
         reason: error.to_string(),
     })
 }
@@ -1262,25 +1266,25 @@ where
 {
     let public_memory = PublicIoMemory::new(&input.checked.public_io).map_err(|error| {
         VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::RamOutputCheck,
+            stage: JoltRelationId::RamOutputCheck,
             reason: error.to_string(),
         }
     })?;
     let output_eq = try_eq_mle(output_address_challenges, ram_output_address)
-        .map_err(|error| public_error(JoltStageId::RamOutputCheck, error))?;
+        .map_err(|error| public_error(JoltRelationId::RamOutputCheck, error))?;
     let output_mask = range_mask_mle_msb(
         public_memory.io_mask_start,
         public_memory.io_mask_end,
         ram_output_address,
     )
-    .map_err(|error| public_error(JoltStageId::RamOutputCheck, error))?;
+    .map_err(|error| public_error(JoltRelationId::RamOutputCheck, error))?;
     let io_num_vars = public_memory.io_num_vars();
     let (r_hi, r_lo) = ram_output_address.split_at(
         ram_output_address
             .len()
             .checked_sub(io_num_vars)
             .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RamOutputCheck,
+                stage: JoltRelationId::RamOutputCheck,
                 reason: format!(
                     "RAM output address has {} variables but public IO needs {io_num_vars}",
                     ram_output_address.len()
@@ -1340,7 +1344,7 @@ where
         .get(..log_k)
         .map(<[PCS::Field]>::to_vec)
         .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::RamValCheck,
+            stage: JoltRelationId::RamValCheck,
             reason: "RAM read-write opening point is shorter than the RAM address".to_string(),
         })
 }
@@ -1364,15 +1368,15 @@ where
     };
     let start_index = layout
         .remapped_word_address(start_address)
-        .map_err(|error| public_error(JoltStageId::RamValCheck, error))?
+        .map_err(|error| public_error(JoltRelationId::RamValCheck, error))?
         as usize;
     let advice_num_vars = ((max_size as usize) / 8).next_power_of_two().ilog2() as usize;
     let selector = block_selector_mle_msb(start_index, advice_num_vars, r_address)
-        .map_err(|error| public_error(JoltStageId::RamValCheck, error))?;
+        .map_err(|error| public_error(JoltRelationId::RamValCheck, error))?;
     let opening_point = r_address
         .get(r_address.len().checked_sub(advice_num_vars).ok_or_else(|| {
             VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RamValCheck,
+                stage: JoltRelationId::RamValCheck,
                 reason: format!(
                     "{kind:?} advice point needs {advice_num_vars} variables but RAM address has {}",
                     r_address.len()
@@ -1380,7 +1384,7 @@ where
             }
         })?..)
         .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::RamValCheck,
+            stage: JoltRelationId::RamValCheck,
             reason: "advice opening point is out of range".to_string(),
         })?
         .to_vec();
@@ -1404,7 +1408,7 @@ fn advice_cycle_claim<PCS, VC, ZkProof>(
     kind: JoltAdviceKind,
 ) -> (
     Option<AdviceClaimReductionLayout>,
-    Option<JoltStageClaims<PCS::Field>>,
+    Option<JoltRelationClaims<PCS::Field>>,
 )
 where
     PCS: CommitmentScheme,
@@ -1422,7 +1426,7 @@ fn advice_address_claim<PCS, VC, ZkProof>(
     kind: JoltAdviceKind,
 ) -> (
     Option<AdviceClaimReductionLayout>,
-    Option<JoltStageClaims<PCS::Field>>,
+    Option<JoltRelationClaims<PCS::Field>>,
 )
 where
     PCS: CommitmentScheme,
@@ -1484,12 +1488,12 @@ where
 fn add_stage6_publics_and_challenges<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     values: &mut SourceValues<PCS::Field>,
-    bytecode_claims: &JoltStageClaims<PCS::Field>,
-    booleanity_claims: &JoltStageClaims<PCS::Field>,
-    ram_hamming_claims: &JoltStageClaims<PCS::Field>,
-    ram_ra_claims: &JoltStageClaims<PCS::Field>,
-    instruction_ra_claims: &JoltStageClaims<PCS::Field>,
-    inc_claims: &JoltStageClaims<PCS::Field>,
+    bytecode_claims: &JoltRelationClaims<PCS::Field>,
+    booleanity_claims: &JoltRelationClaims<PCS::Field>,
+    ram_hamming_claims: &JoltRelationClaims<PCS::Field>,
+    ram_ra_claims: &JoltRelationClaims<PCS::Field>,
+    instruction_ra_claims: &JoltRelationClaims<PCS::Field>,
+    inc_claims: &JoltRelationClaims<PCS::Field>,
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
@@ -1547,11 +1551,11 @@ where
         .stage6
         .batch_consistency
         .try_instance_point(bytecode_claims.sumcheck.rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::BytecodeReadRaf, error))?;
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::BytecodeReadRaf, error))?;
     let bytecode_opening = formula_dimensions
         .bytecode_read_raf
         .opening_point(&bytecode_point)
-        .map_err(|error| public_error(JoltStageId::BytecodeReadRaf, error))?;
+        .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
     let stage1_cycle = input.stage1.public.remainder_challenges[1..]
         .iter()
         .rev()
@@ -1561,11 +1565,13 @@ where
         .stage2
         .batch_consistency
         .try_instance_point(
-            SpartanProductDimensions::from(log_t)
+            SpartanProductDimensions::new(log_t)
                 .remainder_sumcheck()
                 .rounds,
         )
-        .map_err(|error| stage_sumcheck_error(JoltStageId::SpartanProductVirtualization, error))?;
+        .map_err(|error| {
+            stage_sumcheck_error(JoltRelationId::SpartanProductVirtualization, error)
+        })?;
     let stage2_cycle = stage2_product_point
         .iter()
         .rev()
@@ -1579,7 +1585,7 @@ where
                 .sumcheck(2)
                 .rounds,
         )
-        .map_err(|error| stage_sumcheck_error(JoltStageId::SpartanShift, error))?;
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::SpartanShift, error))?;
     let stage3_cycle = stage3_shift_point.iter().rev().copied().collect::<Vec<_>>();
     let stage4_cycle = &input.stage4.registers_read_write_opening_point[REGISTER_ADDRESS_BITS..];
     let stage5_cycle =
@@ -1590,11 +1596,11 @@ where
         .bytecode
         .entry_bytecode_index()
         .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::BytecodeReadRaf,
+            stage: JoltRelationId::BytecodeReadRaf,
             reason: "entry address was not found in bytecode preprocessing".to_string(),
         })?;
-    let bytecode_public_values = bytecode::read_raf_public_values::<RISCV_XLEN, PCS::Field>(
-        BytecodeReadRafEvaluationInputs {
+    let bytecode_public_values =
+        bytecode::read_raf_public_values::<PCS::Field>(BytecodeReadRafEvaluationInputs {
             bytecode: &input.preprocessing.program.bytecode.bytecode,
             r_address: &bytecode_opening.r_address,
             r_cycle: &bytecode_opening.r_cycle,
@@ -1615,9 +1621,8 @@ where
             stage3_gammas: &input.stage6.public.stage3_gammas,
             stage4_gammas: &input.stage6.public.stage4_gammas,
             stage5_gammas: &input.stage6.public.stage5_gammas,
-        },
-    )
-    .map_err(|error| public_error(JoltStageId::BytecodeReadRaf, error))?;
+        })
+        .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
     for index in 0..5 {
         values.public(
             JoltPublicId::from(BytecodeReadRafPublic::StageValue(index)),
@@ -1641,7 +1646,7 @@ where
         .stage6
         .batch_consistency
         .try_instance_point(booleanity_claims.sumcheck.rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::Booleanity, error))?;
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::Booleanity, error))?;
     let reference_eq_point = input
         .stage6
         .public
@@ -1654,61 +1659,63 @@ where
     values.public(
         JoltPublicId::from(BooleanityPublic::EqAddressCycle),
         try_eq_mle(&booleanity_point, &reference_eq_point)
-            .map_err(|error| public_error(JoltStageId::Booleanity, error))?,
+            .map_err(|error| public_error(JoltRelationId::Booleanity, error))?,
     )?;
 
     let ram_hamming_point = input
         .stage6
         .batch_consistency
         .try_instance_point(ram_hamming_claims.sumcheck.rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::RamHammingBooleanity, error))?;
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::RamHammingBooleanity, error))?;
     let stage1_cycle_binding = &input.stage1.public.remainder_challenges[1..];
-    values.public(
-        JoltPublicId::from(RamHammingBooleanityPublic::EqCycle),
+    values.challenge(
+        JoltChallengeId::from(RamHammingBooleanityChallenge::EqCycle),
         try_eq_mle(&ram_hamming_point, stage1_cycle_binding)
-            .map_err(|error| public_error(JoltStageId::RamHammingBooleanity, error))?,
+            .map_err(|error| public_error(JoltRelationId::RamHammingBooleanity, error))?,
     )?;
 
     let ram_ra_point = input
         .stage6
         .batch_consistency
         .try_instance_point(ram_ra_claims.sumcheck.rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::RamRaVirtualization, error))?;
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::RamRaVirtualization, error))?;
     let ram_ra_cycle = trace_dimensions
         .cycle_opening_point(&ram_ra_point)
-        .map_err(|error| public_error(JoltStageId::RamRaVirtualization, error))?;
+        .map_err(|error| public_error(JoltRelationId::RamRaVirtualization, error))?;
     let ram_reduced_cycle = &input.stage5.ram_ra_claim_reduction.opening_point[log_k..];
-    values.public(
-        JoltPublicId::from(RamRaVirtualizationPublic::EqCycle),
+    values.challenge(
+        JoltChallengeId::from(RamRaVirtualizationChallenge::EqCycle),
         try_eq_mle(ram_reduced_cycle, &ram_ra_cycle)
-            .map_err(|error| public_error(JoltStageId::RamRaVirtualization, error))?,
+            .map_err(|error| public_error(JoltRelationId::RamRaVirtualization, error))?,
     )?;
 
     let instruction_ra_point = input
         .stage6
         .batch_consistency
         .try_instance_point(instruction_ra_claims.sumcheck.rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::InstructionRaVirtualization, error))?;
+        .map_err(|error| {
+            stage_sumcheck_error(JoltRelationId::InstructionRaVirtualization, error)
+        })?;
     let instruction_ra_cycle = trace_dimensions
         .cycle_opening_point(&instruction_ra_point)
-        .map_err(|error| public_error(JoltStageId::InstructionRaVirtualization, error))?;
-    values.public(
-        JoltPublicId::from(InstructionRaVirtualizationPublic::EqCycle),
+        .map_err(|error| public_error(JoltRelationId::InstructionRaVirtualization, error))?;
+    values.challenge(
+        JoltChallengeId::from(InstructionRaVirtualizationChallenge::EqCycle),
         try_eq_mle(
             &input.stage5.instruction_read_raf.r_cycle,
             &instruction_ra_cycle,
         )
-        .map_err(|error| public_error(JoltStageId::InstructionRaVirtualization, error))?,
+        .map_err(|error| public_error(JoltRelationId::InstructionRaVirtualization, error))?,
     )?;
 
     let inc_point = input
         .stage6
         .batch_consistency
         .try_instance_point(inc_claims.sumcheck.rounds)
-        .map_err(|error| stage_sumcheck_error(JoltStageId::IncClaimReduction, error))?;
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::IncClaimReduction, error))?;
     let inc_opening_point = trace_dimensions
         .cycle_opening_point(&inc_point)
-        .map_err(|error| public_error(JoltStageId::IncClaimReduction, error))?;
+        .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?;
     values.public(
         JoltPublicId::from(IncClaimReductionPublic::EqRamReadWrite),
         try_eq_mle(
@@ -1718,7 +1725,7 @@ where
                 .ram_val_check_inputs
                 .ram_read_write_opening_point[log_k..],
         )
-        .map_err(|error| public_error(JoltStageId::IncClaimReduction, error))?,
+        .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?,
     )?;
     values.public(
         JoltPublicId::from(IncClaimReductionPublic::EqRamValCheck),
@@ -1726,7 +1733,7 @@ where
             &inc_opening_point,
             &input.stage4.ram_val_check_opening_point[log_k..],
         )
-        .map_err(|error| public_error(JoltStageId::IncClaimReduction, error))?,
+        .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?,
     )?;
     values.public(
         JoltPublicId::from(IncClaimReductionPublic::EqRegistersReadWrite),
@@ -1734,7 +1741,7 @@ where
             &inc_opening_point,
             &input.stage4.registers_read_write_opening_point[REGISTER_ADDRESS_BITS..],
         )
-        .map_err(|error| public_error(JoltStageId::IncClaimReduction, error))?,
+        .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?,
     )?;
     values.public(
         JoltPublicId::from(IncClaimReductionPublic::EqRegistersValEvaluation),
@@ -1742,7 +1749,7 @@ where
             &inc_opening_point,
             &input.stage5.registers_val_evaluation.opening_point[REGISTER_ADDRESS_BITS..],
         )
-        .map_err(|error| public_error(JoltStageId::IncClaimReduction, error))?,
+        .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?,
     )?;
 
     Ok(())
@@ -1762,7 +1769,7 @@ where
     let source_point = advice_source_point(input, kind)?;
     let scale = layout
         .cycle_phase_final_output_scale(&source_point, &public.sumcheck_point)
-        .map_err(|error| public_error(JoltStageId::AdviceClaimReductionCyclePhase, error))?;
+        .map_err(|error| public_error(JoltRelationId::AdviceClaimReductionCyclePhase, error))?;
     values.public(
         JoltPublicId::from(AdviceClaimReductionPublic::FinalScale(kind)),
         scale,
@@ -1794,7 +1801,7 @@ where
             &cycle_phase.cycle_phase_variables,
             &public.sumcheck_point,
         )
-        .map_err(|error| public_error(JoltStageId::AdviceClaimReduction, error))?;
+        .map_err(|error| public_error(JoltRelationId::AdviceClaimReduction, error))?;
     values.public(
         JoltPublicId::from(AdviceClaimReductionPublic::FinalScale(kind)),
         scale,
@@ -1842,7 +1849,7 @@ fn hamming_virtualization_address_point<F: Field>(
     point.get(..log_k_chunk)
         .map(<[F]>::to_vec)
         .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::HammingWeightClaimReduction,
+            stage: JoltRelationId::HammingWeightClaimReduction,
             reason: format!(
                 "Stage 6 RA opening point is too short for HammingWeight address chunk: expected at least {log_k_chunk}, got {}",
                 point.len()
@@ -1893,7 +1900,7 @@ where
 }
 
 fn stage_sumcheck_error<F: Field>(
-    stage: JoltStageId,
+    stage: JoltRelationId,
     error: jolt_sumcheck::SumcheckError<F>,
 ) -> VerifierError {
     VerifierError::StageClaimSumcheckFailed {
@@ -1902,7 +1909,7 @@ fn stage_sumcheck_error<F: Field>(
     }
 }
 
-fn public_error(stage: JoltStageId, error: impl ToString) -> VerifierError {
+fn public_error(stage: JoltRelationId, error: impl ToString) -> VerifierError {
     VerifierError::StageClaimPublicInputFailed {
         stage,
         reason: error.to_string(),

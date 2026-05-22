@@ -4,7 +4,8 @@ use crate::{challenge, opening, public};
 
 use super::super::super::{
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltChallengeId,
-    JoltExpr, JoltOpeningId, JoltPublicId, JoltStageClaims, JoltStageId, JoltVirtualPolynomial,
+    JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId,
+    JoltVirtualPolynomial,
 };
 use super::super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
 use super::super::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
@@ -16,6 +17,13 @@ pub struct HammingWeightClaimReductionDimensions {
 }
 
 impl HammingWeightClaimReductionDimensions {
+    pub const fn new(layout: JoltRaPolynomialLayout, log_k_chunk: usize) -> Self {
+        Self {
+            layout,
+            log_k_chunk,
+        }
+    }
+
     pub const fn sumcheck(self) -> JoltSumcheckSpec {
         JoltSumcheckSpec::boolean(self.log_k_chunk, 2)
     }
@@ -38,16 +46,9 @@ impl HammingWeightClaimReductionDimensions {
     }
 }
 
-impl From<(JoltRaPolynomialLayout, usize)> for HammingWeightClaimReductionDimensions {
-    fn from((layout, log_k_chunk): (JoltRaPolynomialLayout, usize)) -> Self {
-        Self {
-            layout,
-            log_k_chunk,
-        }
-    }
-}
-
-pub fn claim_reduction<F>(dimensions: HammingWeightClaimReductionDimensions) -> JoltStageClaims<F>
+pub fn claim_reduction<F>(
+    dimensions: HammingWeightClaimReductionDimensions,
+) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
@@ -69,8 +70,8 @@ where
         output = output + output_coeff * opening(reduced_claim(polynomial));
     }
 
-    JoltStageClaims::new(
-        JoltStageId::HammingWeightClaimReduction,
+    JoltRelationClaims::new(
+        JoltRelationId::HammingWeightClaimReduction,
         dimensions.sumcheck(),
         input,
         output,
@@ -167,32 +168,32 @@ where
 }
 
 fn booleanity_claim(polynomial: JoltRaPolynomial) -> JoltOpeningId {
-    polynomial.opening(JoltStageId::Booleanity)
+    polynomial.opening(JoltRelationId::Booleanity)
 }
 
 fn virtualization_claim(polynomial: JoltRaPolynomial) -> JoltOpeningId {
     match polynomial {
         JoltRaPolynomial::Instruction(_) => JoltOpeningId::committed(
             polynomial.committed(),
-            JoltStageId::InstructionRaVirtualization,
+            JoltRelationId::InstructionRaVirtualization,
         ),
         JoltRaPolynomial::Bytecode(_) => {
-            JoltOpeningId::committed(polynomial.committed(), JoltStageId::BytecodeReadRaf)
+            JoltOpeningId::committed(polynomial.committed(), JoltRelationId::BytecodeReadRaf)
         }
         JoltRaPolynomial::Ram(_) => {
-            JoltOpeningId::committed(polynomial.committed(), JoltStageId::RamRaVirtualization)
+            JoltOpeningId::committed(polynomial.committed(), JoltRelationId::RamRaVirtualization)
         }
     }
 }
 
 fn reduced_claim(polynomial: JoltRaPolynomial) -> JoltOpeningId {
-    polynomial.opening(JoltStageId::HammingWeightClaimReduction)
+    polynomial.opening(JoltRelationId::HammingWeightClaimReduction)
 }
 
 fn ram_hamming_weight() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RamHammingWeight,
-        JoltStageId::RamHammingBooleanity,
+        JoltRelationId::RamHammingBooleanity,
     )
 }
 
@@ -219,14 +220,14 @@ mod tests {
     }
 
     fn dimensions(layout: JoltRaPolynomialLayout) -> HammingWeightClaimReductionDimensions {
-        (layout, 8).into()
+        HammingWeightClaimReductionDimensions::new(layout, 8)
     }
 
     fn dimensions_with_log_k_chunk(
         layout: JoltRaPolynomialLayout,
         log_k_chunk: usize,
     ) -> HammingWeightClaimReductionDimensions {
-        (layout, log_k_chunk).into()
+        HammingWeightClaimReductionDimensions::new(layout, log_k_chunk)
     }
 
     #[test]
@@ -238,7 +239,7 @@ mod tests {
         let bytecode = JoltRaPolynomial::Bytecode(0);
         let ram = JoltRaPolynomial::Ram(0);
 
-        assert_eq!(claims.id, JoltStageId::HammingWeightClaimReduction);
+        assert_eq!(claims.id, JoltRelationId::HammingWeightClaimReduction);
         assert_eq!(claims.sumcheck, JoltSumcheckSpec::boolean(8, 2));
         let input_openings = claim_reduction_input_openings(dimensions(layout));
         assert_eq!(input_openings.ram_hamming_weight, ram_hamming_weight());

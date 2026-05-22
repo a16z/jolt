@@ -3,7 +3,7 @@ use jolt_claims::protocols::jolt::{
         dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
         instruction, ram, registers,
     },
-    InstructionReadRafChallenge, JoltChallengeId, JoltPublicId, JoltStageId, JoltSumcheckDomain,
+    InstructionReadRafChallenge, JoltChallengeId, JoltPublicId, JoltRelationId, JoltSumcheckDomain,
     RamRaClaimReductionChallenge, RegistersValEvaluationChallenge,
 };
 use jolt_crypto::VectorCommitment;
@@ -78,12 +78,12 @@ where
         checked.ram_K,
     ))
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltStageId::InstructionReadRaf,
+        stage: JoltRelationId::InstructionReadRaf,
         reason: error.to_string(),
     })?;
 
     let instruction_claims =
-        instruction::read_raf::<RISCV_XLEN, PCS::Field>(formula_dimensions.instruction_read_raf);
+        instruction::read_raf::<PCS::Field>(formula_dimensions.instruction_read_raf);
     let ram_claims = ram::ra_claim_reduction::<PCS::Field>(trace_dimensions);
     let registers_claims = registers::val_evaluation::<PCS::Field>(trace_dimensions);
 
@@ -105,9 +105,8 @@ where
     let instruction_gamma_squared = instruction_gamma * instruction_gamma;
     let ram_gamma = transcript.challenge_scalar();
 
-    let instruction_output_openings = instruction::read_raf_output_openings::<RISCV_XLEN>(
-        formula_dimensions.instruction_read_raf,
-    );
+    let instruction_output_openings =
+        instruction::read_raf_output_openings(formula_dimensions.instruction_read_raf);
     let committed_output_claims = instruction_output_openings.lookup_table_flags.len()
         + instruction_output_openings.instruction_ra.len()
         + 1
@@ -143,7 +142,7 @@ where
             transcript,
         )
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltStageId::InstructionReadRaf,
+            stage: JoltRelationId::InstructionReadRaf,
             reason: error.to_string(),
         })?;
         let batch_output_claims =
@@ -152,20 +151,20 @@ where
                 proof: &proof.stages.stage5_sumcheck_proof,
                 proof_label: "stage5_sumcheck_proof",
                 output_claim_count: committed_output_claims,
-                stage: JoltStageId::InstructionReadRaf,
+                stage: JoltRelationId::InstructionReadRaf,
             })?;
 
         let instruction_point = consistency
             .try_instance_point(instruction_claims.sumcheck.rounds)
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltStageId::InstructionReadRaf,
+                stage: JoltRelationId::InstructionReadRaf,
                 reason: error.to_string(),
             })?;
         let instruction_opening_point = formula_dimensions
             .instruction_read_raf
             .opening_point(&instruction_point)
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::InstructionReadRaf,
+                stage: JoltRelationId::InstructionReadRaf,
                 reason: error.to_string(),
             })?;
         let instruction_ra_count = instruction_output_openings.instruction_ra.len();
@@ -174,14 +173,14 @@ where
             .len()
             .checked_div(instruction_ra_count)
             .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::InstructionReadRaf,
+                stage: JoltRelationId::InstructionReadRaf,
                 reason: "instruction read-RAF proof has no virtual RA claims".to_string(),
             })?;
         if instruction_ra_chunk_size * instruction_ra_count
             != instruction_opening_point.r_address.len()
         {
             return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::InstructionReadRaf,
+                stage: JoltRelationId::InstructionReadRaf,
                 reason: format!(
                     "instruction address point length {} is not divisible by virtual RA count {}",
                     instruction_opening_point.r_address.len(),
@@ -206,13 +205,13 @@ where
         let ram_point = consistency
             .try_instance_point(ram_claims.sumcheck.rounds)
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltStageId::RamRaClaimReduction,
+                stage: JoltRelationId::RamRaClaimReduction,
                 reason: error.to_string(),
             })?;
         let ram_cycle = trace_dimensions
             .cycle_opening_point(&ram_point)
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RamRaClaimReduction,
+                stage: JoltRelationId::RamRaClaimReduction,
                 reason: error.to_string(),
             })?;
         let ram_raf_opening_point = &stage2
@@ -229,7 +228,7 @@ where
         ] {
             if opening_point.len() != log_k + log_t {
                 return Err(VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamRaClaimReduction,
+                    stage: JoltRelationId::RamRaClaimReduction,
                     reason: format!(
                         "{label} opening point length mismatch: expected {}, got {}",
                         log_k + log_t,
@@ -245,14 +244,14 @@ where
             ram_val_check_opening_point.split_at(log_k);
         if ram_raf_address != ram_read_write_address {
             return Err(VerifierError::StageClaimOpeningMismatch {
-                stage: JoltStageId::RamRaClaimReduction,
+                stage: JoltRelationId::RamRaClaimReduction,
                 left: ram_ra_raf,
                 right: ram_ra_read_write,
             });
         }
         if ram_val_check_address != ram_read_write_address {
             return Err(VerifierError::StageClaimOpeningMismatch {
-                stage: JoltStageId::RamRaClaimReduction,
+                stage: JoltRelationId::RamRaClaimReduction,
                 left: ram_ra_val_check,
                 right: ram_ra_read_write,
             });
@@ -262,18 +261,18 @@ where
         let registers_point = consistency
             .try_instance_point(registers_claims.sumcheck.rounds)
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltStageId::RegistersValEvaluation,
+                stage: JoltRelationId::RegistersValEvaluation,
                 reason: error.to_string(),
             })?;
         let registers_cycle = trace_dimensions
             .cycle_opening_point(&registers_point)
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RegistersValEvaluation,
+                stage: JoltRelationId::RegistersValEvaluation,
                 reason: error.to_string(),
             })?;
         if stage4.registers_read_write_opening_point.len() != REGISTER_ADDRESS_BITS + log_t {
             return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RegistersValEvaluation,
+                stage: JoltRelationId::RegistersValEvaluation,
                 reason: format!(
                     "register read-write opening point length mismatch: expected {}, got {}",
                     REGISTER_ADDRESS_BITS + log_t,
@@ -321,7 +320,7 @@ where
         != instruction_output_openings.lookup_table_flags.len()
     {
         return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::InstructionReadRaf,
+            stage: JoltRelationId::InstructionReadRaf,
             reason: format!(
                 "lookup table flag claim count mismatch: expected {}, got {}",
                 instruction_output_openings.lookup_table_flags.len(),
@@ -333,7 +332,7 @@ where
         != instruction_output_openings.instruction_ra.len()
     {
         return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::InstructionReadRaf,
+            stage: JoltRelationId::InstructionReadRaf,
             reason: format!(
                 "instruction RA claim count mismatch: expected {}, got {}",
                 instruction_output_openings.instruction_ra.len(),
@@ -348,7 +347,7 @@ where
         != stage2.batch.instruction_claim_reduction.opening_point
     {
         return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltStageId::InstructionReadRaf,
+            stage: JoltRelationId::InstructionReadRaf,
             left: lookup_output_reduced,
             right: lookup_output_product,
         });
@@ -361,7 +360,7 @@ where
         .unwrap_or(product_lookup_output);
     if reduced_lookup_output != product_lookup_output {
         return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltStageId::InstructionReadRaf,
+            stage: JoltRelationId::InstructionReadRaf,
             left: lookup_output_reduced,
             right: lookup_output_product,
         });
@@ -444,21 +443,21 @@ where
         transcript,
     )
     .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage: JoltStageId::InstructionReadRaf,
+        stage: JoltRelationId::InstructionReadRaf,
         reason: error.to_string(),
     })?;
 
     let instruction_point = batch
         .try_instance_point(instruction_claims.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltStageId::InstructionReadRaf,
+            stage: JoltRelationId::InstructionReadRaf,
             reason: error.to_string(),
         })?;
     let instruction_opening_point = formula_dimensions
         .instruction_read_raf
         .opening_point(instruction_point)
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::InstructionReadRaf,
+            stage: JoltRelationId::InstructionReadRaf,
             reason: error.to_string(),
         })?;
     let eq_reduction = try_eq_mle(
@@ -466,7 +465,7 @@ where
         &instruction_opening_point.r_cycle,
     )
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltStageId::InstructionReadRaf,
+        stage: JoltRelationId::InstructionReadRaf,
         reason: error.to_string(),
     })?;
     let left_operand_eval = OperandPolynomial::new(2 * RISCV_XLEN, OperandSide::Left)
@@ -529,14 +528,14 @@ where
         .len()
         .checked_div(claims.instruction_read_raf.instruction_ra.len())
         .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::InstructionReadRaf,
+            stage: JoltRelationId::InstructionReadRaf,
             reason: "instruction read-RAF proof has no virtual RA claims".to_string(),
         })?;
     if instruction_ra_chunk_size * claims.instruction_read_raf.instruction_ra.len()
         != instruction_opening_point.r_address.len()
     {
         return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::InstructionReadRaf,
+            stage: JoltRelationId::InstructionReadRaf,
             reason: format!(
                 "instruction address point length {} is not divisible by virtual RA count {}",
                 instruction_opening_point.r_address.len(),
@@ -559,13 +558,13 @@ where
     let ram_point = batch
         .try_instance_point(ram_claims.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltStageId::RamRaClaimReduction,
+            stage: JoltRelationId::RamRaClaimReduction,
             reason: error.to_string(),
         })?;
     let ram_cycle = trace_dimensions
         .cycle_opening_point(ram_point)
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::RamRaClaimReduction,
+            stage: JoltRelationId::RamRaClaimReduction,
             reason: error.to_string(),
         })?;
     let ram_raf_opening_point = &stage2.batch.ram_raf_evaluation.opening_point;
@@ -578,7 +577,7 @@ where
     ] {
         if opening_point.len() != log_k + log_t {
             return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RamRaClaimReduction,
+                stage: JoltRelationId::RamRaClaimReduction,
                 reason: format!(
                     "{label} opening point length mismatch: expected {}, got {}",
                     log_k + log_t,
@@ -593,14 +592,14 @@ where
     let (ram_val_check_address, ram_val_check_cycle) = ram_val_check_opening_point.split_at(log_k);
     if ram_raf_address != ram_read_write_address {
         return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltStageId::RamRaClaimReduction,
+            stage: JoltRelationId::RamRaClaimReduction,
             left: ram_ra_raf,
             right: ram_ra_read_write,
         });
     }
     if ram_val_check_address != ram_read_write_address {
         return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltStageId::RamRaClaimReduction,
+            stage: JoltRelationId::RamRaClaimReduction,
             left: ram_ra_val_check,
             right: ram_ra_read_write,
         });
@@ -608,19 +607,19 @@ where
     let ram_public_values = ram::RamRaClaimReductionPublicValues {
         eq_cycle_raf: try_eq_mle(ram_raf_cycle, &ram_cycle).map_err(|error| {
             VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RamRaClaimReduction,
+                stage: JoltRelationId::RamRaClaimReduction,
                 reason: error.to_string(),
             }
         })?,
         eq_cycle_read_write: try_eq_mle(ram_read_write_cycle, &ram_cycle).map_err(|error| {
             VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RamRaClaimReduction,
+                stage: JoltRelationId::RamRaClaimReduction,
                 reason: error.to_string(),
             }
         })?,
         eq_cycle_val_check: try_eq_mle(ram_val_check_cycle, &ram_cycle).map_err(|error| {
             VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RamRaClaimReduction,
+                stage: JoltRelationId::RamRaClaimReduction,
                 reason: error.to_string(),
             }
         })?,
@@ -647,19 +646,19 @@ where
     let registers_point = batch
         .try_instance_point(registers_claims.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltStageId::RegistersValEvaluation,
+            stage: JoltRelationId::RegistersValEvaluation,
             reason: error.to_string(),
         })?;
     let registers_cycle = trace_dimensions
         .cycle_opening_point(registers_point)
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::RegistersValEvaluation,
+            stage: JoltRelationId::RegistersValEvaluation,
             reason: error.to_string(),
         })?;
     let registers_read_write_opening_point = &stage4.batch.registers_read_write.opening_point;
     if registers_read_write_opening_point.len() != REGISTER_ADDRESS_BITS + log_t {
         return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::RegistersValEvaluation,
+            stage: JoltRelationId::RegistersValEvaluation,
             reason: format!(
                 "register read-write opening point length mismatch: expected {}, got {}",
                 REGISTER_ADDRESS_BITS + log_t,
@@ -696,7 +695,7 @@ where
         batch.batching_coefficients.as_slice()
     else {
         return Err(VerifierError::StageClaimSumcheckFailed {
-            stage: JoltStageId::InstructionReadRaf,
+            stage: JoltRelationId::InstructionReadRaf,
             reason: "Stage 5 batch verifier returned the wrong number of coefficients".to_string(),
         });
     };
@@ -705,7 +704,7 @@ where
         + *registers_coefficient * expected_outputs.registers_val_evaluation;
     if batch.reduction.value != expected_final_claim {
         return Err(VerifierError::StageClaimOutputMismatch {
-            stage: JoltStageId::InstructionReadRaf,
+            stage: JoltRelationId::InstructionReadRaf,
         });
     }
 

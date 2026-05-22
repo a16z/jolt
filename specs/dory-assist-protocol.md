@@ -10,13 +10,21 @@
 ## Purpose
 
 Dory assist is the recursion-paper path for replacing expensive ordinary Dory
-stage-8 verifier work with additional verifier stages and an auxiliary proof.
-It extends the configured Jolt verifier after the information-theoretic stages by
-proving the expensive Dory verifier computation through a Dory-assist SNARK.
+stage-8 verifier work with an auxiliary proof. It is the Dory-specific
+implementation of the generic PCS proof-assist boundary exposed by
+`jolt-verifier`.
 
-This spec owns the Dory-assist protocol axis and the Hyrax commitment layer used
-by that proof. Composition with field inline, wrapper proving, ZK, and proof
-configuration is specified in
+From the `jolt-verifier` point of view, the Jolt proof carries a generic
+optional PCS-assist payload, e.g. `Option<T>` where `T: PcsProofAssist<PCS>`.
+The verifier config decides whether such a payload is required and which assist
+implementation is selected. Dory-specific staging does not live in
+`jolt-verifier`; it lives in a Dory-assist verifier crate that implements the
+generic PCS-assist interface for the Dory PCS.
+
+This spec owns the Dory-assist protocol semantics in `jolt-claims`, the
+Dory-assist verifier crate, and the Hyrax commitment layer used by that proof.
+Composition with field inline, wrapper proving, ZK, and proof configuration is
+specified in
 [selected-verifier-integration.md](selected-verifier-integration.md). The
 wrapper R1CS compiler is specified in [wrapper-protocol.md](wrapper-protocol.md).
 
@@ -36,10 +44,11 @@ V1 scope:
 
 ```text
 Dory-assist protocol facts in jolt-claims
-configured verifier stages after base Jolt stages 1-7
+Dory-assist verifier crate implementing PcsProofAssist for the Dory PCS
+generic PCS-assist payload consumed by jolt-verifier
 Hyrax dense-trace opening
 multi-Miller-loop work proven inside the assist proof
-final exponentiation checked natively by the configured verifier
+final exponentiation checked natively by the Dory-assist verifier
 wrapper-compatible R1CS hooks for sumcheck, claims, packing, and Hyrax
 ```
 
@@ -47,10 +56,45 @@ Out of scope:
 
 ```text
 ordinary Dory verifier inside wrapper R1CS
-pairing final exponentiation inside Dory assist
+pairing final exponentiation inside the Dory-assist SNARK
 one-shot port of all recursion branch implementation internals
 making Dory assist depend on field-inline-specific machinery
+Dory-specific stage modules inside jolt-verifier
 ```
+
+## Boundary Model
+
+The ownership split is:
+
+```text
+jolt-verifier:
+  generic configured verifier flow
+  PcsProofAssist trait or equivalent verifier-facing abstraction
+  Option<T: PcsProofAssist<PCS>> proof payload slot
+  proof/config shape validation
+  opening snapshot construction
+  dispatch to the selected assist implementation
+
+jolt-claims:
+  Dory-assist protocol semantics
+  stage IDs, public IDs, opening IDs, dimensions, and claim formulas
+  operation-family and packing constraints
+
+dory-assist-verifier:
+  Dory-specific staged verifier organization
+  proof payload type implementing PcsProofAssist for the Dory PCS
+  transcript ordering for the Dory-assist stages
+  Hyrax dense-trace opening verification
+  native final-exponentiation/public pairing equality check
+
+jolt-hyrax:
+  reusable Hyrax commitment, opening, verifier, and R1CS helpers
+```
+
+`jolt-verifier` should not match on Dory-assist stages directly. A Dory-enabled
+build selects the Dory PCS and a Dory-assist proof type; the generic opening
+phase then validates `proof.pcs_assist` against the configured shape and calls
+the selected `PcsProofAssist` implementation.
 
 ## Protocol Target
 
@@ -59,7 +103,7 @@ trace:
 
 ```text
 public inputs:
-  Dory proof artifact
+  Dory proof artifact / joint PCS opening proof
   Dory verifier setup inputs
   Jolt evaluation claims and commitments from stage 8
   transcript-derived scalars
@@ -120,10 +164,12 @@ PCS opening:
   Hyrax opening of the dense trace
 ```
 
-Dory assist proves the multi-Miller-loop work. The configured verifier receives
+Dory assist proves the multi-Miller-loop work. The Dory-assist verifier receives
 the resulting public GT value, computes final exponentiation directly, and
 checks the public pairing equality. Final exponentiation is cheap deterministic
-verifier work and stays native in v1.
+verifier work and stays native in v1, but it is still Dory-specific verifier
+logic owned by the Dory-assist verifier implementation rather than by
+`jolt-verifier`.
 
 ## Component Model
 
@@ -204,7 +250,6 @@ Initial API shape:
 
 ```rust
 pub struct DoryAssistConfig {
-    pub enabled: bool,
     pub pack_bits: usize,
 }
 
@@ -266,21 +311,10 @@ pub struct DoryAssistPublicInputs<F> {
 }
 ```
 
-The proof shape follows the reference branch's `RecursionProof` structure:
-
-```rust
-pub struct DoryAssistProof<F, T, HyraxProof> {
-    pub stage1_proof: SumcheckInstanceProof<F, T>,
-    pub stage2_proof: SumcheckInstanceProof<F, T>,
-    pub stage3_packed_eval: F,
-    pub opening_proof: HyraxProof,
-    pub opening_claims: DoryAssistOpeningClaims<F>,
-    pub dense_commitment: HyraxCommitment,
-}
-```
-
-Exact proof fields can change during porting, but they should remain typed by
-stage and operation family. Production code should not route claims through an
+`proof_shape.rs` should define the stage ordering, payload kinds, and validation
+facts needed by downstream verifiers. The concrete serializable
+`DoryAssistProof` payload lives in the Dory-assist verifier crate, but it should
+remain typed by stage and operation family rather than routing claims through an
 untyped opening map.
 
 ## Hyrax
@@ -360,36 +394,72 @@ PedersenHyrax<G> = Hyrax<Pedersen<G>>
 
 but verifier APIs should be generic over the vector commitment abstraction.
 
-## `jolt-verifier` Integration
+## Generic PCS-Assist Integration
 
-`jolt-verifier` owns the configured linear verifier flow. Dory assist adds
-concrete stages after the ordinary information-theoretic Jolt stages:
+`jolt-verifier` owns the configured linear verifier flow and the generic
+opening-phase assist boundary. Dory assist is one implementation of that
+boundary, selected only when the configured PCS is Dory and the verifier config
+requires the Dory-assist payload.
+
+Verifier-facing API sketch:
+
+```rust
+pub trait PcsProofAssist<PCS: CommitmentScheme>: Sized {
+    type Config;
+    type Error;
+
+    fn verify<T>(
+        &self,
+        config: &Self::Config,
+        joint_opening_proof: &PCS::Proof,
+        opening_snapshot: &PcsOpeningSnapshot<PCS>,
+        transcript: &mut T,
+    ) -> Result<(), Self::Error>
+    where
+        T: Transcript<Challenge = PCS::Field>;
+}
+```
+
+The exact trait spelling can move during implementation, but the boundary
+should preserve these semantics:
 
 ```text
 ordinary configured Jolt:
   stages 1-7
-  -> ordinary stage-8 PCS/Dory opening verification
+  -> build opening snapshot
+  -> proof.pcs_assist must be None
+  -> verify joint_opening_proof through the ordinary PCS verifier
 
-configured Jolt with Dory assist:
+Dory-assisted configured Jolt:
   stages 1-7
-  -> build Dory assist public inputs from stage-8 opening data
-  -> dory_assist::stage1::verify
-  -> dory_assist::stage2::verify
-  -> dory_assist::stage3::verify
-  -> dory_assist::hyrax_opening::verify through jolt-hyrax
-  -> native final exponentiation/public pairing equality check
+  -> build the same opening snapshot
+  -> proof.pcs_assist must be Some(DoryAssistProof)
+  -> call DoryAssistProof::verify through the PcsProofAssist boundary
+  -> do not also run the expensive ordinary Dory verifier path
 ```
 
-Target verifier layout:
+The configured verifier flow and proof-shape rules live in
+[selected-verifier-integration.md](selected-verifier-integration.md).
+
+## `dory-assist-verifier` Layout
+
+The Dory-assist verifier crate owns the concrete organization of the semantics
+defined in `jolt-claims::protocols::dory_assist`.
+
+Target layout:
 
 ```text
-crates/jolt-verifier/src/
-  proof.rs
-  stages/
-    mod.rs
-    dory_assist/
+crates/jolt-dory-assist-verifier/
+  Cargo.toml
+  src/
+    lib.rs
+    config.rs
+    proof.rs
+    public_inputs.rs
+    transcript.rs
+    opening_snapshot.rs
+    stages/
       mod.rs
-      public_inputs.rs
       stage1/
         mod.rs
         inputs.rs
@@ -405,15 +475,42 @@ crates/jolt-verifier/src/
         inputs.rs
         outputs.rs
         verify.rs
-      hyrax_opening/
-        mod.rs
-        inputs.rs
-        outputs.rs
-        verify.rs
+    hyrax_opening/
+      mod.rs
+      inputs.rs
+      outputs.rs
+      verify.rs
+    final_check.rs
 ```
 
-The configured verifier flow and proof-shape rules live in
-[selected-verifier-integration.md](selected-verifier-integration.md).
+The crate should expose a typed proof payload and implement the generic
+PCS-assist boundary for the Dory PCS:
+
+```rust
+pub struct DoryAssistProof<F, T, HyraxProof> {
+    pub stage1_proof: SumcheckInstanceProof<F, T>,
+    pub stage2_proof: SumcheckInstanceProof<F, T>,
+    pub stage3_packed_eval: F,
+    pub opening_proof: HyraxProof,
+    pub opening_claims: DoryAssistOpeningClaims<F>,
+    pub dense_commitment: HyraxCommitment,
+}
+
+impl PcsProofAssist<DoryCommitmentScheme> for DoryAssistProof<...> {
+    type Config = DoryAssistConfig;
+    type Error = DoryAssistVerifierError;
+
+    fn verify<T>(...) -> Result<(), Self::Error>
+    where
+        T: Transcript<Challenge = <DoryCommitmentScheme as CommitmentScheme>::Field>,
+    {
+        // stage 1, stage 2, stage 3, Hyrax opening, native final check
+    }
+}
+```
+
+The proof fields should remain typed by stage and operation family. Production
+code should not route claims through an untyped opening map.
 
 ## R1CS And Wrapper Hooks
 
@@ -436,9 +533,10 @@ dense Hyrax opening:
   jolt-hyrax::r1cs
 ```
 
-The wrapper consumes these helpers through the configured verifier computation.
-Dory-specific formulas stay in `jolt-claims`; Hyrax-specific constraints stay
-in `jolt-hyrax`.
+The wrapper consumes these helpers through the configured verifier computation
+and the selected `PcsProofAssist` implementation. Dory-specific formulas stay
+in `jolt-claims`; Dory-specific stage organization stays in the Dory-assist
+verifier crate; Hyrax-specific constraints stay in `jolt-hyrax`.
 
 ## Interaction With Field Inline
 
@@ -478,19 +576,24 @@ Each step should be reviewed before continuing to the next.
    - Review gate: packing tests catch incorrect prefix layout and opening-point
      normalization.
 
-6. Add Dory-assist proof shape.
+6. Add the Dory-assist verifier crate and proof shape.
    - Add typed proof payloads for stage 1, stage 2, stage 3, and Hyrax opening.
+   - Organize verification stages around the semantic claims from
+     `jolt-claims::protocols::dory_assist`.
    - Review gate: proof-shape validation rejects missing, extra, or misordered
      stage payloads.
 
-7. Add configured verifier stages.
-   - Add concrete `jolt-verifier::stages::dory_assist` modules.
-   - Build Dory-assist public inputs from ordinary stage-8 opening data.
-   - Review gate: configured verifier can run synthetic Dory-assist fixtures.
+7. Implement the generic PCS-assist boundary for Dory.
+   - Implement `PcsProofAssist<DoryCommitmentScheme>` for the Dory-assist proof
+     payload.
+   - Build Dory-assist public inputs from the generic opening snapshot and the
+     ordinary joint opening proof.
+   - Review gate: `jolt-verifier` can dispatch to synthetic Dory-assist
+     fixtures without Dory-specific stage modules.
 
 8. Add multi-Miller-loop verification path.
    - Prove multi-Miller-loop trace constraints in Dory assist.
-   - Keep final exponentiation as native public verifier work.
+   - Keep final exponentiation as native Dory-assist verifier work.
    - Review gate: fixtures match the Quang reference branch for equivalent
      inputs.
 

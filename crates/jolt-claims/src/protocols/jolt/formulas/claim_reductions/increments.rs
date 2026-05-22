@@ -4,11 +4,11 @@ use crate::{challenge, opening, public};
 
 use super::super::super::{
     IncClaimReductionChallenge, IncClaimReductionPublic, JoltChallengeId, JoltCommittedPolynomial,
-    JoltExpr, JoltOpeningId, JoltPublicId, JoltStageClaims, JoltStageId,
+    JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId,
 };
 use super::super::dimensions::TraceDimensions;
 
-pub fn claim_reduction<F>(dimensions: TraceDimensions) -> JoltStageClaims<F>
+pub fn claim_reduction<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
@@ -26,8 +26,8 @@ where
     let output = ram_output_coeff * opening(ram_inc_reduced())
         + gamma.pow(2) * rd_output_coeff * opening(rd_inc_reduced());
 
-    JoltStageClaims::new(
-        JoltStageId::IncClaimReduction,
+    JoltRelationClaims::new(
+        JoltRelationId::IncClaimReduction,
         dimensions.sumcheck(2),
         input,
         output,
@@ -88,39 +88,39 @@ pub fn rd_inc_reduced_opening() -> JoltOpeningId {
 fn ram_inc_read_write() -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RamInc,
-        JoltStageId::RamReadWriteChecking,
+        JoltRelationId::RamReadWriteChecking,
     )
 }
 
 fn ram_inc_val_check() -> JoltOpeningId {
-    JoltOpeningId::committed(JoltCommittedPolynomial::RamInc, JoltStageId::RamValCheck)
+    JoltOpeningId::committed(JoltCommittedPolynomial::RamInc, JoltRelationId::RamValCheck)
 }
 
 fn rd_inc_read_write() -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RdInc,
-        JoltStageId::RegistersReadWriteChecking,
+        JoltRelationId::RegistersReadWriteChecking,
     )
 }
 
 fn rd_inc_val_evaluation() -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RdInc,
-        JoltStageId::RegistersValEvaluation,
+        JoltRelationId::RegistersValEvaluation,
     )
 }
 
 fn ram_inc_reduced() -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RamInc,
-        JoltStageId::IncClaimReduction,
+        JoltRelationId::IncClaimReduction,
     )
 }
 
 fn rd_inc_reduced() -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RdInc,
-        JoltStageId::IncClaimReduction,
+        JoltRelationId::IncClaimReduction,
     )
 }
 
@@ -137,7 +137,7 @@ mod tests {
     fn claim_reduction_exposes_expected_dependencies() {
         let claims = claim_reduction::<Fr>(dimensions());
 
-        assert_eq!(claims.id, JoltStageId::IncClaimReduction);
+        assert_eq!(claims.id, JoltRelationId::IncClaimReduction);
         assert_eq!(claims.sumcheck, dimensions().sumcheck(2));
         assert_eq!(
             claims.input.required_openings,

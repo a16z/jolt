@@ -4,7 +4,7 @@ use crate::{challenge, opening, public};
 
 use super::super::{
     BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId,
-    JoltStageClaims, JoltStageId,
+    JoltRelationClaims, JoltRelationId,
 };
 use super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
 use super::ra::JoltRaPolynomialLayout;
@@ -17,6 +17,14 @@ pub struct BooleanityDimensions {
 }
 
 impl BooleanityDimensions {
+    pub const fn new(layout: JoltRaPolynomialLayout, log_t: usize, log_k_chunk: usize) -> Self {
+        Self {
+            layout,
+            log_t,
+            log_k_chunk,
+        }
+    }
+
     pub const fn sumcheck(self) -> JoltSumcheckSpec {
         JoltSumcheckSpec::boolean(self.log_t + self.log_k_chunk, 3)
     }
@@ -53,17 +61,7 @@ pub struct BooleanityOpeningPoint<F: Field> {
     pub opening_point: Vec<F>,
 }
 
-impl From<(JoltRaPolynomialLayout, usize, usize)> for BooleanityDimensions {
-    fn from((layout, log_t, log_k_chunk): (JoltRaPolynomialLayout, usize, usize)) -> Self {
-        Self {
-            layout,
-            log_t,
-            log_k_chunk,
-        }
-    }
-}
-
-pub fn booleanity<F>(dimensions: BooleanityDimensions) -> JoltStageClaims<F>
+pub fn booleanity<F>(dimensions: BooleanityDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
@@ -79,8 +77,8 @@ where
         output = output + gamma.clone().pow(2 * i) * (ra.clone() * ra.clone() - ra);
     }
 
-    JoltStageClaims::new(
-        JoltStageId::Booleanity,
+    JoltRelationClaims::new(
+        JoltRelationId::Booleanity,
         dimensions.sumcheck(),
         JoltExpr::zero(),
         eq_address_cycle * output,
@@ -103,7 +101,7 @@ where
 }
 
 pub fn booleanity_output_openings(layout: JoltRaPolynomialLayout) -> Vec<JoltOpeningId> {
-    layout.openings(JoltStageId::Booleanity).collect()
+    layout.openings(JoltRelationId::Booleanity).collect()
 }
 
 #[cfg(test)]
@@ -122,7 +120,7 @@ mod tests {
     }
 
     fn dimensions(layout: JoltRaPolynomialLayout) -> BooleanityDimensions {
-        (layout, 5, 8).into()
+        BooleanityDimensions::new(layout, 5, 8)
     }
 
     #[test]
@@ -130,7 +128,7 @@ mod tests {
         let layout = layout(1, 1, 1)?;
         let claims = booleanity::<Fr>(dimensions(layout));
 
-        assert_eq!(claims.id, JoltStageId::Booleanity);
+        assert_eq!(claims.id, JoltRelationId::Booleanity);
         assert_eq!(claims.sumcheck, JoltSumcheckSpec::boolean(13, 3));
         assert!(claims.input.required_openings.is_empty());
         assert_eq!(
@@ -187,7 +185,7 @@ mod tests {
                 id if id
                     == JoltOpeningId::committed(
                         JoltCommittedPolynomial::InstructionRa(0),
-                        JoltStageId::Booleanity,
+                        JoltRelationId::Booleanity,
                     ) =>
                 {
                     instruction_ra
@@ -195,7 +193,7 @@ mod tests {
                 id if id
                     == JoltOpeningId::committed(
                         JoltCommittedPolynomial::BytecodeRa(0),
-                        JoltStageId::Booleanity,
+                        JoltRelationId::Booleanity,
                     ) =>
                 {
                     bytecode_ra
@@ -203,7 +201,7 @@ mod tests {
                 id if id
                     == JoltOpeningId::committed(
                         JoltCommittedPolynomial::RamRa(0),
-                        JoltStageId::Booleanity,
+                        JoltRelationId::Booleanity,
                     ) =>
                 {
                     ram_ra

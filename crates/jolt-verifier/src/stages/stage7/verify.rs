@@ -1,11 +1,11 @@
 use jolt_claims::protocols::jolt::{
     formulas::{
         claim_reductions::{advice, hamming_weight},
-        dimensions::{AdviceClaimReductionLayout, JoltFormulaDimensions},
+        dimensions::JoltFormulaDimensions,
     },
-    AdviceClaimReductionPublic, HammingWeightClaimReductionChallenge,
+    AdviceClaimReductionLayout, AdviceClaimReductionPublic, HammingWeightClaimReductionChallenge,
     HammingWeightClaimReductionPublic, JoltAdviceKind, JoltChallengeId, JoltOpeningId,
-    JoltPublicId, JoltStageClaims, JoltStageId, JoltSumcheckDomain,
+    JoltPublicId, JoltRelationClaims, JoltRelationId, JoltSumcheckDomain,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -84,13 +84,13 @@ where
         checked.ram_K,
     ))
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltStageId::HammingWeightClaimReduction,
+        stage: JoltRelationId::HammingWeightClaimReduction,
         reason: error.to_string(),
     })?;
-    let hamming_dimensions = hamming_weight::HammingWeightClaimReductionDimensions::from((
+    let hamming_dimensions = hamming_weight::HammingWeightClaimReductionDimensions::new(
         formula_dimensions.ra_layout,
         proof.one_hot_config.committed_chunk_bits(),
-    ));
+    );
     let hamming_claims = hamming_weight::claim_reduction::<PCS::Field>(hamming_dimensions);
 
     let trusted_advice_layout = checked.trusted_advice_commitment_present.then(|| {
@@ -173,7 +173,7 @@ where
             transcript,
         )
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltStageId::HammingWeightClaimReduction,
+            stage: JoltRelationId::HammingWeightClaimReduction,
             reason: error.to_string(),
         })?;
 
@@ -189,19 +189,19 @@ where
                 proof: &proof.stages.stage7_sumcheck_proof,
                 proof_label: "stage7_sumcheck_proof",
                 output_claim_count: committed_output_claims,
-                stage: JoltStageId::HammingWeightClaimReduction,
+                stage: JoltRelationId::HammingWeightClaimReduction,
             })?;
 
         let hamming_point = batch_consistency
             .try_instance_point(hamming_claims.sumcheck.rounds)
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltStageId::HammingWeightClaimReduction,
+                stage: JoltRelationId::HammingWeightClaimReduction,
                 reason: error.to_string(),
             })?;
         let hamming_opening_point = hamming_dimensions
             .opening_point(&hamming_point, &stage6.booleanity.r_cycle)
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::HammingWeightClaimReduction,
+                stage: JoltRelationId::HammingWeightClaimReduction,
                 reason: error.to_string(),
             })?;
         let hamming_opening_points =
@@ -327,20 +327,20 @@ where
         transcript,
     )
     .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage: JoltStageId::HammingWeightClaimReduction,
+        stage: JoltRelationId::HammingWeightClaimReduction,
         reason: error.to_string(),
     })?;
 
     let hamming_point = batch
         .try_instance_point(hamming_claims.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltStageId::HammingWeightClaimReduction,
+            stage: JoltRelationId::HammingWeightClaimReduction,
             reason: error.to_string(),
         })?;
     let hamming_opening_point = hamming_dimensions
         .opening_point(hamming_point, &stage6.batch.booleanity.r_cycle)
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::HammingWeightClaimReduction,
+            stage: JoltRelationId::HammingWeightClaimReduction,
             reason: error.to_string(),
         })?;
     let hamming_output = hamming_output_claim(
@@ -417,7 +417,7 @@ where
     }
     if batch.batching_coefficients.len() != expected_outputs_in_order.len() {
         return Err(VerifierError::StageClaimSumcheckFailed {
-            stage: JoltStageId::HammingWeightClaimReduction,
+            stage: JoltRelationId::HammingWeightClaimReduction,
             reason: format!(
                 "Stage 7 batch verifier returned {} coefficients for {} instances",
                 batch.batching_coefficients.len(),
@@ -433,7 +433,7 @@ where
         .sum();
     if batch.reduction.value != expected_final_claim {
         return Err(VerifierError::StageClaimOutputMismatch {
-            stage: JoltStageId::HammingWeightClaimReduction,
+            stage: JoltRelationId::HammingWeightClaimReduction,
         });
     }
 
@@ -466,7 +466,7 @@ where
 }
 
 fn validate_compressed_stage_claim<F: Field>(
-    claim: &JoltStageClaims<F>,
+    claim: &JoltRelationClaims<F>,
 ) -> Result<(), VerifierError> {
     if claim.sumcheck.degree == 0 {
         return Err(VerifierError::InvalidStageSumcheckDegree {
@@ -511,7 +511,7 @@ fn hamming_input_opening_claim<F: Field>(
 }
 
 fn hamming_output_claim<F: Field>(
-    claim: &JoltStageClaims<F>,
+    claim: &JoltRelationClaims<F>,
     dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
     hamming_point: &[F],
     hamming_gamma: F,
@@ -525,7 +525,7 @@ fn hamming_output_claim<F: Field>(
     let eq_booleanity =
         try_eq_mle(&rho_rev, &stage6.batch.booleanity.r_address).map_err(|error| {
             VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::HammingWeightClaimReduction,
+                stage: JoltRelationId::HammingWeightClaimReduction,
                 reason: error.to_string(),
             }
         })?;
@@ -535,7 +535,7 @@ fn hamming_output_claim<F: Field>(
         .map(|point| {
             try_eq_mle(&rho_rev, point).map_err(|error| {
                 VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::HammingWeightClaimReduction,
+                    stage: JoltRelationId::HammingWeightClaimReduction,
                     reason: error.to_string(),
                 }
             })
@@ -575,7 +575,7 @@ fn hamming_output_claim<F: Field>(
                 HammingWeightClaimReductionPublic::EqVirtualization(index),
             ) => eq_virtualization.get(*index).copied().ok_or_else(|| {
                 VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::HammingWeightClaimReduction,
+                    stage: JoltRelationId::HammingWeightClaimReduction,
                     reason: format!(
                         "missing HammingWeight virtualization EQ public for index {index}"
                     ),
@@ -597,7 +597,7 @@ fn ensure_hamming_output_claim_counts<F: Field>(
         || claims.hamming_weight_claim_reduction.ram_ra.len() != output_openings.ram_ra.len()
     {
         return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::HammingWeightClaimReduction,
+            stage: JoltRelationId::HammingWeightClaimReduction,
             reason: format!(
                 "HammingWeight RA claim count mismatch: expected ({}, {}, {}), got ({}, {}, {})",
                 output_openings.instruction_ra.len(),
@@ -621,7 +621,7 @@ fn hamming_booleanity_inputs<F: Field>(
         || stage6.output_claims.booleanity.ram_ra.len() != dimensions.layout.ram()
     {
         return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::HammingWeightClaimReduction,
+            stage: JoltRelationId::HammingWeightClaimReduction,
             reason: format!(
                 "Stage 6 Booleanity claim count mismatch for Stage 7: expected ({}, {}, {}), got ({}, {}, {})",
                 dimensions.layout.instruction(),
@@ -655,7 +655,7 @@ fn hamming_virtualization_inputs<F: Field>(
         || stage6.output_claims.ram_ra_virtualization.ram_ra.len() != dimensions.layout.ram()
     {
         return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::HammingWeightClaimReduction,
+            stage: JoltRelationId::HammingWeightClaimReduction,
             reason: format!(
                 "Stage 6 RA virtualization claim count mismatch for Stage 7: expected ({}, {}, {}), got ({}, {}, {})",
                 dimensions.layout.instruction(),
@@ -708,7 +708,7 @@ fn hamming_virtualization_address_points<F: Field>(
             != dimensions.layout.ram()
     {
         return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::HammingWeightClaimReduction,
+            stage: JoltRelationId::HammingWeightClaimReduction,
             reason: "Stage 6 RA opening point count mismatch for Stage 7".to_string(),
         });
     }
@@ -745,7 +745,7 @@ fn hamming_virtualization_address_point<F: Field>(
 ) -> Result<Vec<F>, VerifierError> {
     if point.len() < log_k_chunk {
         return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::HammingWeightClaimReduction,
+            stage: JoltRelationId::HammingWeightClaimReduction,
             reason: format!(
                 "Stage 6 RA opening point is too short for HammingWeight address chunk: expected at least {log_k_chunk}, got {}",
                 point.len()
@@ -774,7 +774,7 @@ fn hamming_opening_points<F: Field>(
 }
 
 fn advice_address_phase_input<F: Field>(
-    claim: &JoltStageClaims<F>,
+    claim: &JoltRelationClaims<F>,
     stage6: &Stage6ClearOutput<F>,
     kind: JoltAdviceKind,
 ) -> Result<F, VerifierError> {
@@ -791,7 +791,7 @@ fn advice_address_phase_input<F: Field>(
 
 fn verify_advice_address_phase<F: Field>(
     batch: &jolt_sumcheck::BatchedEvaluationClaim<F>,
-    claim: &JoltStageClaims<F>,
+    claim: &JoltRelationClaims<F>,
     layout: &AdviceClaimReductionLayout,
     kind: JoltAdviceKind,
     opening_claim: &AdviceAddressPhaseOutputClaim<F>,
@@ -801,14 +801,14 @@ fn verify_advice_address_phase<F: Field>(
     let advice_point = batch
         .try_instance_point_at(0, claim.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltStageId::AdviceClaimReduction,
+            stage: JoltRelationId::AdviceClaimReduction,
             reason: error.to_string(),
         })?;
     let cycle_phase = stage6_verified_advice_cycle_phase(stage6, kind)?;
     let opening_point = layout
         .address_phase_opening_point(&cycle_phase.cycle_phase_variables, advice_point)
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::AdviceClaimReduction,
+            stage: JoltRelationId::AdviceClaimReduction,
             reason: error.to_string(),
         })?;
     let contribution = stage4
@@ -836,7 +836,7 @@ fn verify_advice_address_phase<F: Field>(
                     advice_point,
                 )
                 .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::AdviceClaimReduction,
+                    stage: JoltRelationId::AdviceClaimReduction,
                     reason: error.to_string(),
                 }),
             _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
@@ -854,7 +854,7 @@ fn verify_advice_address_phase<F: Field>(
 
 fn advice_address_phase_public<F: Field, C>(
     batch: &BatchedCommittedSumcheckConsistency<F, C>,
-    claim: &JoltStageClaims<F>,
+    claim: &JoltRelationClaims<F>,
     layout: &AdviceClaimReductionLayout,
     kind: JoltAdviceKind,
     stage6: &Stage6ZkOutput<F, C>,
@@ -862,14 +862,14 @@ fn advice_address_phase_public<F: Field, C>(
     let advice_point = batch
         .try_instance_point_at(0, claim.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltStageId::AdviceClaimReduction,
+            stage: JoltRelationId::AdviceClaimReduction,
             reason: error.to_string(),
         })?;
     let cycle_phase = stage6_advice_cycle_phase_public(stage6, kind)?;
     let opening_point = layout
         .address_phase_opening_point(&cycle_phase.cycle_phase_variables, &advice_point)
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::AdviceClaimReduction,
+            stage: JoltRelationId::AdviceClaimReduction,
             reason: error.to_string(),
         })?;
 

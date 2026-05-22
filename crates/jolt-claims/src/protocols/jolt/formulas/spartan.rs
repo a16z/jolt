@@ -10,7 +10,7 @@ use jolt_riscv::{CircuitFlags, InstructionFlags};
 use crate::{challenge, opening, public};
 
 use super::super::{
-    JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltStageClaims, JoltStageId,
+    JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId,
     JoltVirtualPolynomial, SpartanOuterPublic, SpartanProductVirtualizationPublic,
     SpartanShiftChallenge, SpartanShiftPublic,
 };
@@ -159,12 +159,6 @@ impl SpartanOuterDimensions {
             include_linear_terms: true,
             include_constant_term: true,
         }
-    }
-}
-
-impl From<usize> for SpartanOuterDimensions {
-    fn from(log_t: usize) -> Self {
-        Self::rv64(log_t)
     }
 }
 
@@ -319,25 +313,19 @@ impl SpartanProductDimensions {
     }
 }
 
-impl From<usize> for SpartanProductDimensions {
-    fn from(log_t: usize) -> Self {
-        Self::new(log_t)
-    }
-}
-
-pub fn outer_uniskip<F>(dimensions: &SpartanOuterDimensions) -> JoltStageClaims<F>
+pub fn outer_uniskip<F>(dimensions: &SpartanOuterDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
-    JoltStageClaims::new(
-        JoltStageId::SpartanOuter,
+    JoltRelationClaims::new(
+        JoltRelationId::SpartanOuter,
         dimensions.uniskip_sumcheck(),
         JoltExpr::zero(),
         opening(outer_uniskip_opening()),
     )
 }
 
-pub fn outer_remainder<F>(dimensions: &SpartanOuterDimensions) -> JoltStageClaims<F>
+pub fn outer_remainder<F>(dimensions: &SpartanOuterDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
@@ -369,8 +357,8 @@ where
         output = output + public(JoltPublicId::from(SpartanOuterPublic::ConstantCoefficient));
     }
 
-    JoltStageClaims::new(
-        JoltStageId::SpartanOuter,
+    JoltRelationClaims::new(
+        JoltRelationId::SpartanOuter,
         dimensions.remainder_sumcheck(),
         opening(outer_uniskip_opening()),
         output,
@@ -378,14 +366,14 @@ where
 }
 
 pub fn outer_opening(polynomial: JoltVirtualPolynomial) -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(polynomial, JoltStageId::SpartanOuter)
+    JoltOpeningId::virtual_polynomial(polynomial, JoltRelationId::SpartanOuter)
 }
 
 pub fn outer_uniskip_opening() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::UnivariateSkip)
 }
 
-pub fn product_uniskip<F>(dimensions: SpartanProductDimensions) -> JoltStageClaims<F>
+pub fn product_uniskip<F>(dimensions: SpartanProductDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
@@ -393,15 +381,15 @@ where
         + product_uniskip_weight(1) * opening(product_should_branch_outer_opening())
         + product_uniskip_weight(2) * opening(product_should_jump_outer_opening());
 
-    JoltStageClaims::new(
-        JoltStageId::SpartanProductVirtualization,
+    JoltRelationClaims::new(
+        JoltRelationId::SpartanProductVirtualization,
         dimensions.uniskip_sumcheck(),
         input,
         opening(product_uniskip_opening()),
     )
 }
 
-pub fn product_remainder<F>(dimensions: SpartanProductDimensions) -> JoltStageClaims<F>
+pub fn product_remainder<F>(dimensions: SpartanProductDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
@@ -412,8 +400,8 @@ where
         + product_weight(1) * opening(branch_flag_product())
         + product_weight(2) * (JoltExpr::one() - opening(next_is_noop_product()));
 
-    JoltStageClaims::new(
-        JoltStageId::SpartanProductVirtualization,
+    JoltRelationClaims::new(
+        JoltRelationId::SpartanProductVirtualization,
         dimensions.remainder_sumcheck(),
         opening(product_uniskip_opening()),
         product_tau_kernel() * left * right,
@@ -453,7 +441,7 @@ pub fn shift_output_openings() -> [JoltOpeningId; 5] {
     ]
 }
 
-pub fn shift<F>(dimensions: TraceDimensions) -> JoltStageClaims<F>
+pub fn shift<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
@@ -473,8 +461,8 @@ where
             * gamma.pow(4)
             * (JoltExpr::one() - opening(is_noop_shift()));
 
-    JoltStageClaims::new(
-        JoltStageId::SpartanShift,
+    JoltRelationClaims::new(
+        JoltRelationId::SpartanShift,
         dimensions.sumcheck(SHIFT_DEGREE),
         input,
         output,
@@ -560,7 +548,7 @@ impl<F: Field> SpartanProductPublicValues<F> {
 pub fn product_uniskip_opening() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::UnivariateSkip,
-        JoltStageId::SpartanProductVirtualization,
+        JoltRelationId::SpartanProductVirtualization,
     )
 }
 
@@ -579,56 +567,56 @@ pub fn product_should_jump_outer_opening() -> JoltOpeningId {
 fn left_instruction_input_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftInstructionInput,
-        JoltStageId::SpartanProductVirtualization,
+        JoltRelationId::SpartanProductVirtualization,
     )
 }
 
 fn right_instruction_input_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RightInstructionInput,
-        JoltStageId::SpartanProductVirtualization,
+        JoltRelationId::SpartanProductVirtualization,
     )
 }
 
 fn lookup_output_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LookupOutput,
-        JoltStageId::SpartanProductVirtualization,
+        JoltRelationId::SpartanProductVirtualization,
     )
 }
 
 fn jump_flag_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(CircuitFlags::Jump),
-        JoltStageId::SpartanProductVirtualization,
+        JoltRelationId::SpartanProductVirtualization,
     )
 }
 
 fn write_lookup_output_to_rd_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
-        JoltStageId::SpartanProductVirtualization,
+        JoltRelationId::SpartanProductVirtualization,
     )
 }
 
 fn branch_flag_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
-        JoltStageId::SpartanProductVirtualization,
+        JoltRelationId::SpartanProductVirtualization,
     )
 }
 
 fn next_is_noop_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::NextIsNoop,
-        JoltStageId::SpartanProductVirtualization,
+        JoltRelationId::SpartanProductVirtualization,
     )
 }
 
 fn virtual_instruction_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
-        JoltStageId::SpartanProductVirtualization,
+        JoltRelationId::SpartanProductVirtualization,
     )
 }
 
@@ -651,32 +639,32 @@ fn next_is_first_in_sequence_outer() -> JoltOpeningId {
 fn unexpanded_pc_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::UnexpandedPC,
-        JoltStageId::SpartanShift,
+        JoltRelationId::SpartanShift,
     )
 }
 
 fn pc_shift() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::PC, JoltStageId::SpartanShift)
+    JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::PC, JoltRelationId::SpartanShift)
 }
 
 fn is_virtual_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
-        JoltStageId::SpartanShift,
+        JoltRelationId::SpartanShift,
     )
 }
 
 fn is_first_in_sequence_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
-        JoltStageId::SpartanShift,
+        JoltRelationId::SpartanShift,
     )
 }
 
 fn is_noop_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
-        JoltStageId::SpartanShift,
+        JoltRelationId::SpartanShift,
     )
 }
 
@@ -722,7 +710,7 @@ mod tests {
         let dimensions = outer_dimensions();
         let claims = outer_remainder::<Fr>(&dimensions);
 
-        assert_eq!(claims.id, JoltStageId::SpartanOuter);
+        assert_eq!(claims.id, JoltRelationId::SpartanOuter);
         assert_eq!(claims.sumcheck, dimensions.remainder_sumcheck());
         assert_eq!(
             claims.input.required_openings,
@@ -854,10 +842,10 @@ mod tests {
 
     #[test]
     fn product_uniskip_exposes_expected_dependencies() {
-        let dimensions = SpartanProductDimensions::from(7);
+        let dimensions = SpartanProductDimensions::new(7);
         let claims = product_uniskip::<Fr>(dimensions);
 
-        assert_eq!(claims.id, JoltStageId::SpartanProductVirtualization);
+        assert_eq!(claims.id, JoltRelationId::SpartanProductVirtualization);
         assert_eq!(claims.sumcheck, dimensions.uniskip_sumcheck());
         assert_eq!(
             claims.input.required_openings,
@@ -883,7 +871,7 @@ mod tests {
 
     #[test]
     fn product_split_claims_are_connected() {
-        let dimensions = SpartanProductDimensions::from(7);
+        let dimensions = SpartanProductDimensions::new(7);
         let first = product_uniskip::<Fr>(dimensions);
         let remainder = product_remainder::<Fr>(dimensions);
 
@@ -893,7 +881,7 @@ mod tests {
 
     #[test]
     fn product_remainder_evaluates_like_core_formula() {
-        let claims = product_remainder::<Fr>(7.into());
+        let claims = product_remainder::<Fr>(SpartanProductDimensions::new(7));
 
         let left_input = Fr::from_u64(2);
         let lookup_output = Fr::from_u64(3);
@@ -939,10 +927,10 @@ mod tests {
 
     #[test]
     fn shift_exposes_expected_dependencies() {
-        let dimensions = TraceDimensions::from(5);
+        let dimensions = TraceDimensions::new(5);
         let claims = shift::<Fr>(dimensions);
 
-        assert_eq!(claims.id, JoltStageId::SpartanShift);
+        assert_eq!(claims.id, JoltRelationId::SpartanShift);
         assert_eq!(claims.sumcheck, dimensions.sumcheck(SHIFT_DEGREE));
         assert_eq!(
             claims.input.required_openings,
@@ -967,7 +955,7 @@ mod tests {
 
     #[test]
     fn shift_evaluates_like_core_formula() {
-        let claims = shift::<Fr>(5.into());
+        let claims = shift::<Fr>(TraceDimensions::new(5));
 
         let next_unexpanded_pc = Fr::from_u64(3);
         let next_pc = Fr::from_u64(5);

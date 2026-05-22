@@ -1,6 +1,8 @@
 use jolt_field::RingCore;
 use serde::{Deserialize, Serialize};
 
+use crate::util::extend_unique;
+
 /// An atomic value used inside a symbolic claim expression.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Source<O, P = (), C = usize> {
@@ -87,9 +89,9 @@ impl<F: RingCore, O, P, C> Expr<F, O, P, C> {
 
     pub fn evaluate<OpeningValue, ChallengeValue, PublicValue>(
         &self,
-        mut opening_value: OpeningValue,
-        mut challenge_value: ChallengeValue,
-        mut public_value: PublicValue,
+        mut resolve_opening: OpeningValue,
+        mut resolve_challenge: ChallengeValue,
+        mut resolve_public: PublicValue,
     ) -> F
     where
         OpeningValue: FnMut(&O) -> F,
@@ -101,9 +103,9 @@ impl<F: RingCore, O, P, C> Expr<F, O, P, C> {
             let mut value = term.coefficient;
             for factor in &term.factors {
                 value *= match factor {
-                    Source::Opening(id) => opening_value(id),
-                    Source::Challenge(id) => challenge_value(id),
-                    Source::Public(id) => public_value(id),
+                    Source::Opening(id) => resolve_opening(id),
+                    Source::Challenge(id) => resolve_challenge(id),
+                    Source::Public(id) => resolve_public(id),
                 };
             }
             result += value;
@@ -113,9 +115,9 @@ impl<F: RingCore, O, P, C> Expr<F, O, P, C> {
 
     pub fn try_evaluate<OpeningValue, ChallengeValue, PublicValue, Error>(
         &self,
-        mut opening_value: OpeningValue,
-        mut challenge_value: ChallengeValue,
-        mut public_value: PublicValue,
+        mut resolve_opening: OpeningValue,
+        mut resolve_challenge: ChallengeValue,
+        mut resolve_public: PublicValue,
     ) -> Result<F, Error>
     where
         OpeningValue: FnMut(&O) -> Result<F, Error>,
@@ -127,9 +129,9 @@ impl<F: RingCore, O, P, C> Expr<F, O, P, C> {
             let mut value = term.coefficient;
             for factor in &term.factors {
                 value *= match factor {
-                    Source::Opening(id) => opening_value(id)?,
-                    Source::Challenge(id) => challenge_value(id)?,
-                    Source::Public(id) => public_value(id)?,
+                    Source::Opening(id) => resolve_opening(id)?,
+                    Source::Challenge(id) => resolve_challenge(id)?,
+                    Source::Public(id) => resolve_public(id)?,
                 };
             }
             result += value;
@@ -225,24 +227,6 @@ pub fn constant<F: RingCore, O, P, C>(value: F) -> Expr<F, O, P, C> {
     Expr::constant(value)
 }
 
-pub fn pow2<F: RingCore>(exponent: usize) -> F {
-    let mut result = F::one();
-    let mut base = F::one() + F::one();
-    let mut remaining = exponent;
-
-    while remaining > 0 {
-        if remaining % 2 == 1 {
-            result *= base;
-        }
-        remaining /= 2;
-        if remaining > 0 {
-            base = base.square();
-        }
-    }
-
-    result
-}
-
 /// Expression metadata used by claim-check protocols.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimExpression<F, O, P = (), C = usize> {
@@ -250,7 +234,6 @@ pub struct ClaimExpression<F, O, P = (), C = usize> {
     pub required_openings: Vec<O>,
     pub required_publics: Vec<P>,
     pub required_challenges: Vec<C>,
-    pub num_challenges: usize,
 }
 
 impl<F, O, P, C> ClaimExpression<F, O, P, C> {
@@ -266,13 +249,11 @@ impl<F, O: Clone + Eq, P: Clone + Eq, C: Clone + Eq> From<Expr<F, O, P, C>>
         let required_openings = expression.required_openings();
         let required_publics = expression.required_publics();
         let required_challenges = expression.required_challenges();
-        let num_challenges = required_challenges.len();
         Self {
             expression,
             required_openings,
             required_publics,
             required_challenges,
-            num_challenges,
         }
     }
 }
@@ -283,22 +264,25 @@ impl<F, O, P, C: Eq> ClaimExpression<F, O, P, C> {
             .iter()
             .position(|challenge| challenge == id)
     }
+
+    pub fn num_challenges(&self) -> usize {
+        self.required_challenges.len()
+    }
 }
 
 impl<F, O, P, C: Eq> ClaimExpression<F, O, P, C> {
-    pub fn require_challenge(&mut self, id: C) {
+    pub fn pull_challenge_for_transcript_sync(&mut self, id: C) {
         if !self.required_challenges.contains(&id) {
             self.required_challenges.push(id);
-            self.num_challenges = self.required_challenges.len();
         }
     }
 
-    pub fn require_challenges<I>(&mut self, ids: I)
+    pub fn pull_challenges_for_transcript_sync<I>(&mut self, ids: I)
     where
         I: IntoIterator<Item = C>,
     {
         for id in ids {
-            self.require_challenge(id);
+            self.pull_challenge_for_transcript_sync(id);
         }
     }
 }
@@ -334,16 +318,18 @@ impl<O> SameEvaluationAs for O {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConsistencyClaim<F, O, P = (), C = usize> {
-    SameEvaluation(SameEvaluation<O>),
     EqualExpressions {
         left: Expr<F, O, P, C>,
         right: Expr<F, O, P, C>,
     },
 }
 
-impl<F, O, P, C> ConsistencyClaim<F, O, P, C> {
+impl<F: RingCore, O, P, C> ConsistencyClaim<F, O, P, C> {
     pub fn same_evaluation(left: O, right: O) -> Self {
-        Self::SameEvaluation(SameEvaluation::new(left, right))
+        Self::EqualExpressions {
+            left: opening(left),
+            right: opening(right),
+        }
     }
 
     pub fn equal_expressions(left: Expr<F, O, P, C>, right: Expr<F, O, P, C>) -> Self {
@@ -351,22 +337,15 @@ impl<F, O, P, C> ConsistencyClaim<F, O, P, C> {
     }
 }
 
-impl<F, O, P, C> From<SameEvaluation<O>> for ConsistencyClaim<F, O, P, C> {
+impl<F: RingCore, O, P, C> From<SameEvaluation<O>> for ConsistencyClaim<F, O, P, C> {
     fn from(value: SameEvaluation<O>) -> Self {
-        Self::SameEvaluation(value)
+        Self::same_evaluation(value.left, value.right)
     }
 }
 
 impl<F, O: Clone + Eq, P, C> ConsistencyClaim<F, O, P, C> {
     pub fn required_openings(&self) -> Vec<O> {
         match self {
-            Self::SameEvaluation(SameEvaluation { left, right }) => {
-                let mut openings = vec![left.clone()];
-                if left != right {
-                    openings.push(right.clone());
-                }
-                openings
-            }
             Self::EqualExpressions { left, right } => {
                 let mut openings = left.required_openings();
                 extend_unique(&mut openings, &right.required_openings());
@@ -379,7 +358,6 @@ impl<F, O: Clone + Eq, P, C> ConsistencyClaim<F, O, P, C> {
 impl<F, O, P: Clone + Eq, C> ConsistencyClaim<F, O, P, C> {
     pub fn required_publics(&self) -> Vec<P> {
         match self {
-            Self::SameEvaluation(_) => Vec::new(),
             Self::EqualExpressions { left, right } => {
                 let mut publics = left.required_publics();
                 extend_unique(&mut publics, &right.required_publics());
@@ -392,7 +370,6 @@ impl<F, O, P: Clone + Eq, C> ConsistencyClaim<F, O, P, C> {
 impl<F, O, P, C: Clone + Eq> ConsistencyClaim<F, O, P, C> {
     pub fn required_challenges(&self) -> Vec<C> {
         match self {
-            Self::SameEvaluation(_) => Vec::new(),
             Self::EqualExpressions { left, right } => {
                 let mut challenges = left.required_challenges();
                 extend_unique(&mut challenges, &right.required_challenges());
@@ -402,18 +379,10 @@ impl<F, O, P, C: Clone + Eq> ConsistencyClaim<F, O, P, C> {
     }
 }
 
-fn extend_unique<T: Clone + Eq>(target: &mut Vec<T>, values: &[T]) {
-    for value in values {
-        if !target.contains(value) {
-            target.push(value.clone());
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, FromPrimitiveInt, RingCore};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     enum Opening {
@@ -474,9 +443,9 @@ mod tests {
 
     #[test]
     fn pow2_builds_field_native_powers() {
-        assert_eq!(pow2::<Fr>(0), Fr::from_u64(1));
-        assert_eq!(pow2::<Fr>(1), Fr::from_u64(2));
-        assert_eq!(pow2::<Fr>(63), Fr::from_u64(1u64 << 63));
+        assert_eq!(Fr::pow2(0), Fr::from_u64(1));
+        assert_eq!(Fr::pow2(1), Fr::from_u64(2));
+        assert_eq!(Fr::pow2(63), Fr::from_u64(1u64 << 63));
     }
 
     #[test]
@@ -538,7 +507,7 @@ mod tests {
         assert_eq!(claim.required_openings, vec![Opening::B, Opening::A]);
         assert_eq!(claim.required_publics, vec![Public::Offset]);
         assert_eq!(claim.required_challenges, vec![2]);
-        assert_eq!(claim.num_challenges, 1);
+        assert_eq!(claim.num_challenges(), 1);
         assert_eq!(claim.challenge_index(&2), Some(0));
         assert_eq!(claim.challenge_index(&1), None);
     }

@@ -1,5 +1,5 @@
 use jolt_claims::protocols::jolt::{
-    formulas::spartan::SpartanOuterDimensions, JoltStageId, JoltSumcheckDomain,
+    formulas::spartan::SpartanOuterDimensions, JoltRelationId, JoltSumcheckDomain,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::FromPrimitiveInt;
@@ -33,7 +33,7 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let stage = JoltStageId::SpartanOuter;
+    let stage = JoltRelationId::SpartanOuter;
 
     let log_t = checked.trace_length.ilog2() as usize;
     let dimensions = SpartanOuterDimensions::rv64(log_t);

@@ -47,7 +47,7 @@ Dory assist:
 
 Wrapper:
   R1CS encoding of the configured verifier computation, proved by
-  Spartan + HyperKZG first
+  ZK Spartan + HyperKZG first
 ```
 
 The composition layer is `jolt-verifier`: feature flags fix which protocol axes

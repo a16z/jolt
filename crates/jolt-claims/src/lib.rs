@@ -3,8 +3,9 @@
 mod claims;
 mod ops;
 pub mod protocols;
+mod util;
 
 pub use claims::{
-    challenge, constant, opening, pow2, public, ClaimExpression, ConsistencyClaim, Expr,
+    challenge, constant, opening, public, ClaimExpression, ConsistencyClaim, Expr,
     InputClaimExpression, OutputClaimExpression, SameEvaluation, SameEvaluationAs, Source, Term,
 };

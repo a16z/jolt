@@ -12,7 +12,7 @@
 Field inline adds native field operations to the Jolt VM. From the proof
 machinery perspective, it is a uniform extension of existing Jolt machinery:
 an FR register file is another memory-checking instance, field instructions add
-`field_rows` constraints, and multiplication uses an explicit FR-native product
+`field_constraints`, and multiplication uses an explicit FR-native product
 relation.
 
 This spec owns the field-inline protocol axis. Composition with Dory assist,
@@ -36,7 +36,7 @@ V1 scope:
 native field-inline arithmetic only
 FR register file with K = 16 slots
 explicit FieldProduct relation
-field_rows constraints
+field_constraints
 x-register <-> FR bridge rows
 advice-style optionality when field inline is disabled
 ```
@@ -119,7 +119,7 @@ FR register Twist:
 field instruction flags:
   select FADD, FSUB, FMUL, FINV, ASSERT_EQ, MOV, bridge ops, etc.
 
-field_rows:
+field_constraints:
   enforce local field instruction semantics
 
 field-product relation:
@@ -138,7 +138,7 @@ Twist:
 instruction flags/lookups:
   prove which field instruction is active
 
-field_rows:
+field_constraints:
   prove local algebraic instruction semantics
 
 FieldProduct:
@@ -155,10 +155,10 @@ Pure field operations should use pure FR access in v1:
 
 ```text
 pure field op:
-  FR metadata/events + FR Twist + field_rows
+  FR metadata/events + FR Twist + field_constraints
 
 bridge op:
-  x-register Twist + FR Twist + bridge field_rows
+  x-register Twist + FR Twist + bridge field_constraints
 ```
 
 Example:
@@ -175,7 +175,7 @@ cycle 11:
   opcode = FMUL
   FR register reads/writes are active
   FieldProduct relation is active
-  field_rows enforce FieldProduct = FieldRdValue
+  field_constraints enforce FieldProduct = FieldRdValue
   ordinary x-register accesses are suppressed
 
 cycle 12:
@@ -217,8 +217,9 @@ FieldRdInc
 The stage placement mirrors existing memory-checking work:
 
 ```text
-stage 3:
-  field-register claim reductions
+stage 2:
+  field product lane in Spartan product virtualization
+  field-register claim reduction at the product remainder point
 
 stage 4:
   field-register read/write checking over T * 16
@@ -226,8 +227,12 @@ stage 4:
 stage 5:
   field-register val evaluation
 
+stage 6:
+  FieldRdInc claim reduction
+
 Spartan/product layer:
-  explicit field-register-native product relation for FMUL/FINV
+  explicit field-register-native product relation for FMUL
+  optional inverse product relation for FINV
 ```
 
 These relations are batched with the appropriate existing verifier stages in
@@ -248,23 +253,113 @@ Local FMUL rows then use:
 IsFieldMul * (FieldProduct - FieldRdValue) = 0
 ```
 
-This relation may batch with existing product virtualization machinery, but it
-keeps a field-specific name so the witness path remains FR-aware. It should not
-reuse an integer product witness unless that witness path is explicitly
-field-register aware.
+This relation is wired as another lane in Spartan product virtualization. The
+field-specific name remains important so the witness path stays FR-aware. It
+should not reuse an integer product witness unless that witness path is
+explicitly field-register aware.
 
-For FINV-style rows:
+For FINV-style rows, the guarded inverse equation needs a separate product
+witness:
 
 ```text
-IsFieldInv * (FieldRs1Value * FieldRdValue - 1) = 0
+FieldInvProduct = FieldRs1Value * FieldRdValue
+IsFieldInv * (FieldInvProduct - 1) = 0
 ```
 
-The implementation can either use the same explicit product machinery or a
-direct local multiplication constraint, depending on how the surrounding
-product virtualization path is structured. The protocol fact is that the
-inverse relation is over native `F`.
+This second product relation should batch with the same field-product machinery
+if FINV is included in v1. The protocol fact is that the inverse relation is
+over native `F`.
 
-## Field Rows
+## Protocol Composition And Points
+
+Field inline composes with the ordinary verifier by reusing the product
+virtualization point. The field-product relation should not introduce a
+separate field-product point.
+
+Notation:
+
+```text
+tau      = Spartan outer cycle point
+r_prod   = stage-2 product remainder point
+r_rw     = field-register read/write point = [field_addr, rw_cycle]
+r_val    = field-register val-eval point   = [field_addr, val_cycle]
+r_inc    = field increment-reduction cycle point
+r_final  = stage-8 final PCS opening point
+```
+
+With field inline enabled, product virtualization adds a field-product lane:
+
+```text
+existing product lanes:
+  Product = LeftInstructionInput * RightInstructionInput
+  ShouldBranch = LookupOutput * BranchFlag
+  ShouldJump = JumpFlag * (1 - NextIsNoop)
+
+field-inline lane:
+  FieldProduct = FieldRs1Value * FieldRs2Value
+```
+
+The product uniskip relation reduces `FieldProduct(tau)` into the same stage-2
+product remainder relation as the ordinary product lanes. The product
+remainder opens `FieldRs1Value(r_prod)` and `FieldRs2Value(r_prod)`.
+
+The field-register claim reduction is also batched in stage 2 and uses the
+same `r_prod` point:
+
+```text
+FieldRdValue(tau)
+  + gamma * FieldRs1Value(tau)
+  + gamma^2 * FieldRs2Value(tau)
+
+  ->
+
+Eq(tau, r_prod) * (
+  FieldRdValue(r_prod)
+    + gamma * FieldRs1Value(r_prod)
+    + gamma^2 * FieldRs2Value(r_prod)
+)
+```
+
+In the current batched sumcheck verifier, instances with the same number of
+rounds use the same suffix of the batched challenge vector. The field-product
+remainder and field-register claim reduction are both trace-domain claims, so
+placing them in the same stage-2 batch gives both relations the same
+`r_prod`.
+
+This is the important dependency: the `FieldRs1Value(r_prod)` and
+`FieldRs2Value(r_prod)` used by product virtualization are the same values
+that enter FR register memory checking. If field product and field-register
+claim reduction used different points, an extra equality/reduction protocol
+would be needed to connect them.
+
+The downstream memory path is:
+
+```text
+stage 4:
+  consumes FieldRd/Rs1/Rs2 values at r_prod
+  proves FR read/write consistency at r_rw
+  outputs FieldRegistersVal(r_rw), FieldRdWa(r_rw), FieldRdInc(rw_cycle)
+
+stage 5:
+  consumes FieldRegistersVal(r_rw)
+  proves FR val evaluation at r_val
+  outputs FieldRdWa(r_val), FieldRdInc(val_cycle)
+
+stage 6:
+  reduces FieldRdInc(rw_cycle) and FieldRdInc(val_cycle)
+  to one FieldRdInc(r_inc) claim
+
+stage 8:
+  embeds FieldRdInc(r_inc) into the final PCS point
+  RLCs it with the ordinary final committed openings
+```
+
+For v1, the expected new committed field-inline surface is `FieldRdInc`. If a
+future version commits FR RA chunks, those chunks need the same style of
+stage-6/stage-7 reduction to the stage-8 opening point before they enter the
+final RLC.
+
+## Field Constraints
 
 Target module:
 
@@ -272,11 +367,40 @@ Target module:
 crates/jolt-r1cs/src/constraints/
   mod.rs
   rv64.rs
-  field_inline.rs
+  field_constraints.rs
 ```
 
-`field_inline.rs` owns the R1CS constraints for native field-inline instruction
-semantics:
+`field_constraints.rs` owns the R1CS constraints for native field-inline
+instruction semantics. These constraints are flag-gated equalities over the
+field-register witness columns and, where needed, over product witnesses proven
+by the field-inline product protocol.
+
+Core wires:
+
+```text
+selectors:
+  IsFieldAdd
+  IsFieldSub
+  IsFieldMul
+  IsFieldInv
+  IsFieldAssertEq
+  IsFieldLoadFromX
+  IsFieldStoreToX
+  IsFieldLoadImm
+
+field values:
+  FieldRs1Value
+  FieldRs2Value
+  FieldRdValue
+  FieldProduct
+
+ordinary values:
+  Rs1Value
+  RdWriteValue
+  Imm
+```
+
+Constraint sketch:
 
 ```text
 FADD:
@@ -289,16 +413,29 @@ FMUL:
   IsFieldMul * (FieldProduct - FieldRdValue) = 0
 
 FINV:
-  IsFieldInv * (FieldRs1Value * FieldRdValue - 1) = 0
+  FieldInvProduct = FieldRs1Value * FieldRdValue
+  IsFieldInv * (FieldInvProduct - 1) = 0
 
 ASSERT_EQ:
   IsFieldAssertEq * (FieldRs1Value - FieldRs2Value) = 0
 
-MOV/bridge:
-  bridge rows between ordinary x-register values and FR values
+x-register -> field-register:
+  IsFieldLoadFromX * (FieldRdValue - decode_x_register(Rs1Value, F)) = 0
+
+field-register -> x-register:
+  IsFieldStoreToX * (RdWriteValue - encode_field_register(FieldRs1Value, F)) = 0
+
+immediate/constant -> field-register:
+  IsFieldLoadImm * (FieldRdValue - decode_immediate(Imm, F)) = 0
 ```
 
-These are constraints in Jolt's execution relation. They are separate from
+The FINV relation cannot be represented as
+`IsFieldInv * (FieldRs1Value * FieldRdValue - 1) = 0` in one R1CS row because
+that is cubic. The R1CS implementation should either add `FieldInvProduct` as a
+second field-product relation batched with `FieldProduct`, or defer FINV until
+that product witness exists.
+
+These are constraints in Jolt's execution relation. They are separate from the
 wrapper R1CS, which proves a verifier computation.
 
 ## Conversion Rows
@@ -345,9 +482,11 @@ crates/jolt-claims/src/protocols/field_inline/
   formulas/
     mod.rs
     dimensions.rs
+    product.rs
     registers.rs
     claim_reductions/
       mod.rs
+      increments.rs
       registers.rs
 ```
 
@@ -375,15 +514,19 @@ Initial protocol IDs:
 
 ```rust
 pub enum FieldInlineStageId {
-    RegistersClaimReduction,
-    RegistersReadWriteChecking,
-    RegistersValEvaluation,
+    FieldRegistersSpartanOuter,
+    FieldRegistersProduct,
+    FieldRegistersClaimReduction,
+    FieldRegistersReadWriteChecking,
+    FieldRegistersValEvaluation,
+    FieldRegistersIncClaimReduction,
 }
 
 pub enum FieldInlineChallengeId {
-    RegistersClaimReduction(FieldRegistersClaimReductionChallenge),
-    RegistersReadWrite(FieldRegistersReadWriteChallenge),
-    RegistersValEvaluation(FieldRegistersValEvaluationChallenge),
+    FieldRegistersClaimReduction(FieldRegistersClaimReductionChallenge),
+    FieldRegistersReadWrite(FieldRegistersReadWriteChallenge),
+    FieldRegistersValEvaluation(FieldRegistersValEvaluationChallenge),
+    FieldRegistersIncClaimReduction(FieldRegistersIncClaimReductionChallenge),
 }
 
 pub enum FieldRegistersClaimReductionChallenge {
@@ -399,6 +542,19 @@ pub enum FieldRegistersReadWriteChallenge {
 pub enum FieldRegistersValEvaluationChallenge {
     LtCycle,
 }
+
+pub enum FieldRegistersIncClaimReductionChallenge {
+    Gamma,
+}
+
+pub enum FieldInlinePublicId {
+    FieldRegistersIncClaimReduction(FieldRegistersIncClaimReductionPublic),
+}
+
+pub enum FieldRegistersIncClaimReductionPublic {
+    EqReadWrite,
+    EqValEvaluation,
+}
 ```
 
 The opening and polynomial IDs should mirror ordinary registers with
@@ -408,6 +564,7 @@ field-register-specific names:
 FieldRs1Value
 FieldRs2Value
 FieldRdValue
+FieldProduct
 FieldRegistersVal
 FieldRs1Ra
 FieldRs2Ra
@@ -436,9 +593,9 @@ Claim reduction:
 
 ```text
 input:
-  FieldRdValue@SpartanOuter
-  + gamma * FieldRs1Value@SpartanOuter
-  + gamma^2 * FieldRs2Value@SpartanOuter
+  FieldRdValue@FieldRegistersSpartanOuter
+  + gamma * FieldRs1Value@FieldRegistersSpartanOuter
+  + gamma^2 * FieldRs2Value@FieldRegistersSpartanOuter
 
 output:
   EqSpartan * (
@@ -474,24 +631,60 @@ output:
           * FieldRdWa@FieldRegistersValEvaluation
 ```
 
+Increment reduction:
+
+```text
+input:
+  FieldRdInc@FieldRegistersReadWriteChecking
+  + eta * FieldRdInc@FieldRegistersValEvaluation
+
+output:
+  (EqReadWrite + eta * EqValEvaluation)
+    * FieldRdInc@FieldRegistersIncClaimReduction
+```
+
+Here `EqReadWrite = Eq(r_inc, rw_cycle)` and
+`EqValEvaluation = Eq(r_inc, val_cycle)`. This reduces the two semantic
+openings of the committed `FieldRdInc` polynomial to one final
+`FieldRdInc(r_inc)` claim for stage 8.
+
+Field product:
+
+```text
+input:
+  FieldProduct@FieldRegistersProduct
+
+output:
+  FieldRs1Value@FieldRegistersProduct
+  * FieldRs2Value@FieldRegistersProduct
+```
+
+The `FieldRegistersProduct` lane is semantically distinct from the ordinary
+integer product lanes even though the verifier batches it through the same
+product-virtualization machinery. It proves the native-field multiplication
+witness used by field constraints; the later FMUL constraint checks that this
+product is the value written to the destination FR slot.
+
 The module should also expose opening-order helpers matching the current
 `registers.rs` style:
 
 ```text
+protocols::field_inline::formulas::product::field_product_input_openings()
+protocols::field_inline::formulas::product::field_product_output_openings()
 protocols::field_inline::formulas::registers::read_write_checking_input_openings()
 protocols::field_inline::formulas::registers::read_write_checking_output_openings()
 protocols::field_inline::formulas::registers::val_evaluation_input_openings()
 protocols::field_inline::formulas::registers::val_evaluation_output_openings()
 protocols::field_inline::formulas::claim_reductions::registers::claim_reduction_input_openings()
 protocols::field_inline::formulas::claim_reductions::registers::claim_reduction_output_openings()
+protocols::field_inline::formulas::claim_reductions::increments::claim_reduction_input_openings()
+protocols::field_inline::formulas::claim_reductions::increments::claim_reduction_output_openings()
 ```
 
 `jolt-claims` should stay focused on these claim formulas and opening helpers.
-`field_rows` and bridge constraints live in
-`jolt-r1cs::constraints::field_inline`. FieldProduct may need IDs/opening
-helpers if it is verified through a sumcheck, but the first `jolt-claims`
-surface should stay as close as possible to the ordinary-register formula
-pattern.
+`field_constraints` and bridge constraints live in
+`jolt-r1cs::constraints::field_constraints`. The `jolt-claims` surface should
+stay as close as possible to the ordinary-register formula pattern.
 
 ## Transcript And Optionality
 
@@ -535,22 +728,26 @@ Each step should be reviewed before continuing to the next.
    - Add field-register stage IDs, challenge IDs, opening IDs, dimensions, and
      opening helpers in a layout that mirrors `protocols::jolt`.
    - Keep the module focused on FR Twist protocol semantics. Composition with
-     base Jolt happens in `jolt-verifier`.
+     ordinary Jolt happens in `jolt-verifier`.
    - Review gate: API shape mirrors ordinary registers and does not expose
      non-native modulus configuration.
 
 2. Add field-register claim formulas.
-   - Add FR claim reduction, read/write, and val-evaluation formulas.
+   - Add FR claim reduction, read/write, val-evaluation, and increment
+     reduction formulas.
    - Add canonical opening-order helpers.
    - Review gate: formula tests cover small synthetic FR traces.
 
-3. Add explicit `FieldProduct`.
-   - Add product IDs/opening metadata only if the product check needs it.
-   - Keep relation distinct from integer product virtualization.
-   - Review gate: tests fail if integer register values are wired as FR values.
+3. Add explicit `FieldProduct` product-virtualization lane.
+   - Add `FieldRegistersProduct` stage IDs and `FieldProduct` opening metadata.
+   - Add the native-field relation `FieldProduct = FieldRs1Value * FieldRs2Value`.
+   - Compose it with the stage-2 product uniskip/remainder point so it shares
+     `r_prod` with field-register claim reduction.
+   - Review gate: tests cover dependency ordering, point sharing, and formula
+     evaluation.
 
-4. Add `field_rows`.
-   - Implement `jolt-r1cs::constraints::field_inline`.
+4. Add `field_constraints`.
+   - Implement `jolt-r1cs::constraints::field_constraints`.
    - Cover FADD, FSUB, FMUL, FINV, ASSERT_EQ, and bridge rows.
    - Review gate: constraint tests prove native-field arithmetic and reject bad
      FieldProduct witnesses.
@@ -566,6 +763,10 @@ Each step should be reviewed before continuing to the next.
 6. Wire verifier support in stage folders.
    - Add FR payload use and config checks in the `jolt-verifier::stages/*`
      modules that batch the corresponding FR work.
+   - Stage 2 owns field product and field-register claim reduction at `r_prod`.
+   - Stage 6 owns `FieldRdInc` reduction to the final committed claim.
+   - Stage 8 includes the reduced `FieldRdInc` claim in the ordinary joint PCS
+     RLC.
    - Follow advice-style optional transcript skipping when FR is disabled.
    - Review gate: FR-off proofs follow ordinary Jolt transcript shape; FR-on
      proofs require FR payloads and reject missing or extra claims.

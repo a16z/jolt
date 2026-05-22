@@ -10,15 +10,15 @@
 ## Purpose
 
 The wrapper proves an R1CS encoding of the configured Jolt verifier computation.
-The first backend is Spartan + HyperKZG. The backend consumes arbitrary R1CS;
-Jolt-specific protocol assembly happens before backend proving.
+The first backend is zero-knowledge Spartan + HyperKZG. The backend consumes
+arbitrary R1CS; Jolt-specific protocol assembly happens before backend proving.
 
 This spec owns the wrapper protocol axis:
 
 ```text
 configured verifier computation
   -> R1CS assembly
-  -> Spartan + HyperKZG proof
+  -> ZK Spartan + HyperKZG proof
 ```
 
 Field inline and Dory assist add checks to the configured linear verifier flow.
@@ -34,17 +34,19 @@ V1 scope:
 
 ```text
 generic configured-verifier R1CS builder
+transparent Jolt proof as private wrapper witness
 in-circuit transcript replay
 variable-challenge sumcheck R1CS
 claim lowering over constants and variables
 Hyrax R1CS integration when the configured verifier includes Dory assist
-Spartan + HyperKZG backend over arbitrary R1CS
+zero-knowledge Spartan + HyperKZG backend over arbitrary R1CS
 ```
 
 Out of scope:
 
 ```text
 making wrapper depend on BlindFold internals
+wrapping the BlindFold verifier as the primary v1 ZK composition
 folding / relaxed R1CS / row hiding
 one universal circuit shape for every configured verifier mode
 full gnark adapter
@@ -64,10 +66,10 @@ configured verifier computation
   -> claim equation constraints
   -> opening/PCS verifier constraints
   -> R1CS instance and witness
-  -> Spartan + HyperKZG proof
+  -> ZK Spartan + HyperKZG proof
 ```
 
-The backend must remain boring:
+The backend must remain boring and zero-knowledge:
 
 ```text
 input:
@@ -80,7 +82,9 @@ output:
 ```
 
 It should not know about Jolt stages, field inline, Dory assist, BlindFold, or
-transcript ordering.
+transcript ordering. It must hide the R1CS witness, which includes the inner
+transparent Jolt proof, clear opening claims, verifier intermediate values, and
+any auxiliary variables allocated during wrapper assembly.
 
 ## Relationship To BlindFold
 
@@ -94,7 +98,21 @@ append generic sumcheck constraints
 connect each stage's output claim to the next protocol component
 ```
 
-The wrapper reuses this pattern, not the BlindFold protocol.
+The wrapper reuses this pattern, not the BlindFold protocol. The primary v1
+wrapped-ZK composition is:
+
+```text
+transparent Jolt proof
+  -> private wrapper witness
+  -> wrapper R1CS proves the transparent configured verifier accepts
+  -> ZK Spartan + HyperKZG hides the verifier witness
+```
+
+In this composition, the wrapper R1CS does not prove the BlindFold verifier.
+Base-layer BlindFold remains the standalone Jolt ZK path. If a future product
+needs to wrap an already-BlindFolded Jolt proof, then the configured verifier
+R1CS can include BlindFold verification as an optional composition, but that is
+not the primary v1 wrapper target.
 
 ```text
 BlindFold builder:
@@ -105,10 +123,10 @@ BlindFold builder:
 
 Wrapper builder:
   configured verifier computation
-  + transparent proof/witness data
+  + transparent Jolt proof as private witness data
   + transcript absorbs inside R1CS
   + challenge variables derived inside R1CS
-  -> full verifier R1CS for Spartan + HyperKZG
+  -> full verifier R1CS for ZK Spartan + HyperKZG
 ```
 
 The wrapper does not need:
@@ -119,6 +137,7 @@ relaxed R1CS
 random satisfying instance
 BlindFold witness row hiding
 BlindFold-specific committed output claim rows
+in-circuit BlindFold verification for the primary wrapped-ZK path
 ```
 
 The wrapper does need:
@@ -262,7 +281,7 @@ protocol.rs:
   claim-output stage lowering
 
 constraints/:
-  execution-relation constraints such as field_inline field_rows
+  execution-relation constraints such as field-inline field_constraints
 ```
 
 `R1csAssembly` should track public inputs explicitly:
@@ -436,10 +455,10 @@ claim formulas:
 opening consistency:
   jolt-openings + jolt-r1cs helpers
 
-field-inline field_rows:
-  jolt-r1cs::constraints::field_inline
+field-inline field_constraints:
+  jolt-r1cs::constraints::field_constraints
 
-BlindFold verifier checks:
+Future BlindFold verifier checks:
   jolt-blindfold, using the same constant-source claim/sumcheck R1CS helpers
 
 Hyrax verifier checks:
@@ -455,10 +474,13 @@ configured verifier flow exported by `jolt-verifier`.
 ## Assembly API
 
 ```rust
-pub struct WrapperAssemblyInputs<F, PCS, VC, ZkProof> {
+pub struct WrapperAssemblyInputs<F, PCS, VC, ZkProof, FieldInlineProof, PcsAssistProof>
+where
+    PcsAssistProof: PcsProofAssist<PCS>,
+{
     pub preprocessing: JoltVerifierPreprocessing<PCS, VC>,
     pub public_io: JoltDevice,
-    pub proof: JoltProof<PCS, VC, ZkProof>,
+    pub proof: JoltProof<PCS, VC, ZkProof, FieldInlineProof, PcsAssistProof>,
     pub public_inputs: WrapperPublicInputs<F>,
     pub witness_inputs: WrapperWitnessInputs<F>,
 }
@@ -469,9 +491,21 @@ pub struct WrapperR1csInstance<F> {
     pub public_inputs: Vec<F>,
 }
 
-pub fn assemble_configured_verifier_r1cs<F, PCS, VC, ZkProof>(
-    inputs: WrapperAssemblyInputs<F, PCS, VC, ZkProof>,
-) -> Result<WrapperR1csInstance<F>, WrapperError>;
+pub fn assemble_configured_verifier_r1cs<
+    F,
+    PCS,
+    VC,
+    ZkProof,
+    FieldInlineProof,
+    PcsAssistProof,
+>(
+    inputs: WrapperAssemblyInputs<F, PCS, VC, ZkProof, FieldInlineProof, PcsAssistProof>,
+) -> Result<WrapperR1csInstance<F>, WrapperError>
+where
+    PcsAssistProof: PcsProofAssist<PCS>,
+{
+    /* assemble configured verifier R1CS */
+}
 ```
 
 Wrapper assembly uses the same compile-time-derived `JOLT_VERIFIER_CONFIG` as
@@ -552,26 +586,44 @@ the wrapper should not use `MleAst` as the main verifier IR.
 ## ZK Composition
 
 ZK configuration is owned by
-[selected-verifier-integration.md](selected-verifier-integration.md). The
-wrapper should be able to prove whichever verifier computation is configured at
-compile time.
+[selected-verifier-integration.md](selected-verifier-integration.md).
 
-Two orderings remain candidates:
+The primary v1 wrapped-ZK composition is:
+
+```text
+inner proof:
+  transparent Jolt proof, never published as a standalone artifact
+
+wrapper R1CS:
+  proves the transparent configured verifier accepts that proof
+
+wrapper backend:
+  zero-knowledge Spartan + HyperKZG hides the inner proof and all verifier
+  witness data
+
+outer public statement:
+  public IO
+  preprocessing / verifier-key digest
+  configured protocol identifier
+  wrapper public inputs required by the selected deployment
+```
+
+This avoids encoding the BlindFold verifier in the first wrapper circuit. It is
+also the cleanest separation of concerns: transparent Jolt supplies a complete
+information-theoretic verifier relation, while the wrapper SNARK supplies the
+zero-knowledge hiding for the final proof.
+
+The optional future composition remains:
 
 ```text
 BlindFold before wrapper:
-  Jolt prover produces BlindFold proof
-  configured verifier checks BlindFold proof
-  wrapper proves that configured verifier computation
-
-Transparent then wrapper then ZK:
-  Jolt proof remains transparent
-  wrapper proves transparent configured verifier
-  ZK is applied around the wrapper path
+  Jolt prover produces a standalone BlindFold proof
+  configured verifier checks that BlindFold proof
+  wrapper proves that configured BlindFold-mode verifier computation
 ```
 
-The choice depends on the cost model. The wrapper builder should not bake in one
-global ZK policy.
+That path is useful only when the base Jolt proof must itself be a standalone
+ZK artifact before wrapping. It should not drive the v1 wrapper architecture.
 
 ## Implementation Steps
 
@@ -620,12 +672,15 @@ Each step should be reviewed before continuing to the next.
    - Review gate: FR-off and FR-on configs produce distinct deterministic
      R1CS shapes.
 
-9. Implement `snarks/spartan_hyperkzg`.
+9. Implement ZK `snarks/spartan_hyperkzg`.
    - Consume arbitrary `WrapperR1csInstance`.
    - Keep the backend independent from Jolt protocol types.
-   - Review gate: synthetic arbitrary R1CS proof verifies.
+   - Hide the R1CS witness, including transparent inner proof data.
+   - Review gate: synthetic arbitrary R1CS proof verifies and witness
+     randomization changes proof bytes for the same public statement.
 
 10. Add configured-verifier wrapper fixture.
-   - Prove a small configured verifier computation end to end.
+   - Prove a small transparent configured verifier computation end to end with
+     the transparent proof held as private wrapper witness.
    - Review gate: mutating transcript challenges, public inputs, sumcheck
      claims, or opening values causes wrapper verification failure.

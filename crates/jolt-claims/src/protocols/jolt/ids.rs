@@ -1,8 +1,9 @@
+use derive_more::From;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum JoltStageId {
+pub enum JoltRelationId {
     SpartanOuter,
     SpartanProductVirtualization,
     SpartanShift,
@@ -46,6 +47,16 @@ pub enum RamRaClaimReductionChallenge {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum RamRaVirtualizationChallenge {
+    EqCycle,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum RamHammingBooleanityChallenge {
+    EqCycle,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RamRafEvaluationPublic {
     UnmapAddress,
 }
@@ -61,16 +72,6 @@ pub enum RamRaClaimReductionPublic {
     EqCycleRaf,
     EqCycleReadWrite,
     EqCycleValCheck,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum RamRaVirtualizationPublic {
-    EqCycle,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum RamHammingBooleanityPublic {
-    EqCycle,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -201,18 +202,18 @@ pub enum InstructionReadRafChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum InstructionRaVirtualizationChallenge {
     Gamma,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum InstructionRaVirtualizationPublic {
     EqCycle,
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
+)]
 pub enum JoltChallengeId {
     RamReadWrite(RamReadWriteChallenge),
     RamValCheck(RamValCheckChallenge),
     RamRaClaimReduction(RamRaClaimReductionChallenge),
+    RamRaVirtualization(RamRaVirtualizationChallenge),
+    RamHammingBooleanity(RamHammingBooleanityChallenge),
     Booleanity(BooleanityChallenge),
     IncClaimReduction(IncClaimReductionChallenge),
     HammingWeightClaimReduction(HammingWeightClaimReductionChallenge),
@@ -225,96 +226,6 @@ pub enum JoltChallengeId {
     InstructionInput(InstructionInputChallenge),
     InstructionReadRaf(InstructionReadRafChallenge),
     InstructionRaVirtualization(InstructionRaVirtualizationChallenge),
-}
-
-impl From<RamReadWriteChallenge> for JoltChallengeId {
-    fn from(value: RamReadWriteChallenge) -> Self {
-        Self::RamReadWrite(value)
-    }
-}
-
-impl From<RamValCheckChallenge> for JoltChallengeId {
-    fn from(value: RamValCheckChallenge) -> Self {
-        Self::RamValCheck(value)
-    }
-}
-
-impl From<RamRaClaimReductionChallenge> for JoltChallengeId {
-    fn from(value: RamRaClaimReductionChallenge) -> Self {
-        Self::RamRaClaimReduction(value)
-    }
-}
-
-impl From<BooleanityChallenge> for JoltChallengeId {
-    fn from(value: BooleanityChallenge) -> Self {
-        Self::Booleanity(value)
-    }
-}
-
-impl From<IncClaimReductionChallenge> for JoltChallengeId {
-    fn from(value: IncClaimReductionChallenge) -> Self {
-        Self::IncClaimReduction(value)
-    }
-}
-
-impl From<HammingWeightClaimReductionChallenge> for JoltChallengeId {
-    fn from(value: HammingWeightClaimReductionChallenge) -> Self {
-        Self::HammingWeightClaimReduction(value)
-    }
-}
-
-impl From<BytecodeReadRafChallenge> for JoltChallengeId {
-    fn from(value: BytecodeReadRafChallenge) -> Self {
-        Self::BytecodeReadRaf(value)
-    }
-}
-
-impl From<SpartanShiftChallenge> for JoltChallengeId {
-    fn from(value: SpartanShiftChallenge) -> Self {
-        Self::SpartanShift(value)
-    }
-}
-
-impl From<RegistersReadWriteChallenge> for JoltChallengeId {
-    fn from(value: RegistersReadWriteChallenge) -> Self {
-        Self::RegistersReadWrite(value)
-    }
-}
-
-impl From<RegistersValEvaluationChallenge> for JoltChallengeId {
-    fn from(value: RegistersValEvaluationChallenge) -> Self {
-        Self::RegistersValEvaluation(value)
-    }
-}
-
-impl From<RegistersClaimReductionChallenge> for JoltChallengeId {
-    fn from(value: RegistersClaimReductionChallenge) -> Self {
-        Self::RegistersClaimReduction(value)
-    }
-}
-
-impl From<InstructionClaimReductionChallenge> for JoltChallengeId {
-    fn from(value: InstructionClaimReductionChallenge) -> Self {
-        Self::InstructionClaimReduction(value)
-    }
-}
-
-impl From<InstructionInputChallenge> for JoltChallengeId {
-    fn from(value: InstructionInputChallenge) -> Self {
-        Self::InstructionInput(value)
-    }
-}
-
-impl From<InstructionReadRafChallenge> for JoltChallengeId {
-    fn from(value: InstructionReadRafChallenge) -> Self {
-        Self::InstructionReadRaf(value)
-    }
-}
-
-impl From<InstructionRaVirtualizationChallenge> for JoltChallengeId {
-    fn from(value: InstructionRaVirtualizationChallenge) -> Self {
-        Self::InstructionRaVirtualization(value)
-    }
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -371,64 +282,56 @@ pub enum JoltVirtualPolynomial {
     LookupTableFlag(usize),
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
+)]
 pub enum JoltPolynomialId {
     Committed(JoltCommittedPolynomial),
     Virtual(JoltVirtualPolynomial),
-}
-
-impl From<JoltCommittedPolynomial> for JoltPolynomialId {
-    fn from(value: JoltCommittedPolynomial) -> Self {
-        Self::Committed(value)
-    }
-}
-
-impl From<JoltVirtualPolynomial> for JoltPolynomialId {
-    fn from(value: JoltVirtualPolynomial) -> Self {
-        Self::Virtual(value)
-    }
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum JoltOpeningId {
     Polynomial {
         polynomial: JoltPolynomialId,
-        stage: JoltStageId,
+        relation: JoltRelationId,
     },
     UntrustedAdvice {
-        stage: JoltStageId,
+        relation: JoltRelationId,
     },
     TrustedAdvice {
-        stage: JoltStageId,
+        relation: JoltRelationId,
     },
 }
 
 impl JoltOpeningId {
-    pub fn polynomial(polynomial: impl Into<JoltPolynomialId>, stage: JoltStageId) -> Self {
+    pub fn polynomial(polynomial: impl Into<JoltPolynomialId>, relation: JoltRelationId) -> Self {
         Self::Polynomial {
             polynomial: polynomial.into(),
-            stage,
+            relation,
         }
     }
 
-    pub fn committed(polynomial: JoltCommittedPolynomial, stage: JoltStageId) -> Self {
-        Self::polynomial(polynomial, stage)
+    pub fn committed(polynomial: JoltCommittedPolynomial, relation: JoltRelationId) -> Self {
+        Self::polynomial(polynomial, relation)
     }
 
-    pub fn virtual_polynomial(polynomial: JoltVirtualPolynomial, stage: JoltStageId) -> Self {
-        Self::polynomial(polynomial, stage)
+    pub fn virtual_polynomial(polynomial: JoltVirtualPolynomial, relation: JoltRelationId) -> Self {
+        Self::polynomial(polynomial, relation)
     }
 
-    pub fn untrusted_advice(stage: JoltStageId) -> Self {
-        Self::UntrustedAdvice { stage }
+    pub fn untrusted_advice(relation: JoltRelationId) -> Self {
+        Self::UntrustedAdvice { relation }
     }
 
-    pub fn trusted_advice(stage: JoltStageId) -> Self {
-        Self::TrustedAdvice { stage }
+    pub fn trusted_advice(relation: JoltRelationId) -> Self {
+        Self::TrustedAdvice { relation }
     }
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
+)]
 pub enum JoltPublicId {
     TraceLength,
     PaddedTraceLength,
@@ -437,8 +340,6 @@ pub enum JoltPublicId {
     RamRafEvaluation(RamRafEvaluationPublic),
     RamOutputCheck(RamOutputCheckPublic),
     RamRaClaimReduction(RamRaClaimReductionPublic),
-    RamRaVirtualization(RamRaVirtualizationPublic),
-    RamHammingBooleanity(RamHammingBooleanityPublic),
     Booleanity(BooleanityPublic),
     IncClaimReduction(IncClaimReductionPublic),
     HammingWeightClaimReduction(HammingWeightClaimReductionPublic),
@@ -447,93 +348,10 @@ pub enum JoltPublicId {
     SpartanShift(SpartanShiftPublic),
     SpartanProductVirtualization(SpartanProductVirtualizationPublic),
     SpartanOuter(SpartanOuterPublic),
-    InstructionRaVirtualization(InstructionRaVirtualizationPublic),
+    #[from(ignore)]
     PublicInput(usize),
+    #[from(ignore)]
     PublicOutput(usize),
-}
-
-impl From<RamRafEvaluationPublic> for JoltPublicId {
-    fn from(value: RamRafEvaluationPublic) -> Self {
-        Self::RamRafEvaluation(value)
-    }
-}
-
-impl From<RamOutputCheckPublic> for JoltPublicId {
-    fn from(value: RamOutputCheckPublic) -> Self {
-        Self::RamOutputCheck(value)
-    }
-}
-
-impl From<RamRaClaimReductionPublic> for JoltPublicId {
-    fn from(value: RamRaClaimReductionPublic) -> Self {
-        Self::RamRaClaimReduction(value)
-    }
-}
-
-impl From<RamRaVirtualizationPublic> for JoltPublicId {
-    fn from(value: RamRaVirtualizationPublic) -> Self {
-        Self::RamRaVirtualization(value)
-    }
-}
-
-impl From<RamHammingBooleanityPublic> for JoltPublicId {
-    fn from(value: RamHammingBooleanityPublic) -> Self {
-        Self::RamHammingBooleanity(value)
-    }
-}
-
-impl From<BooleanityPublic> for JoltPublicId {
-    fn from(value: BooleanityPublic) -> Self {
-        Self::Booleanity(value)
-    }
-}
-
-impl From<IncClaimReductionPublic> for JoltPublicId {
-    fn from(value: IncClaimReductionPublic) -> Self {
-        Self::IncClaimReduction(value)
-    }
-}
-
-impl From<HammingWeightClaimReductionPublic> for JoltPublicId {
-    fn from(value: HammingWeightClaimReductionPublic) -> Self {
-        Self::HammingWeightClaimReduction(value)
-    }
-}
-
-impl From<BytecodeReadRafPublic> for JoltPublicId {
-    fn from(value: BytecodeReadRafPublic) -> Self {
-        Self::BytecodeReadRaf(value)
-    }
-}
-
-impl From<AdviceClaimReductionPublic> for JoltPublicId {
-    fn from(value: AdviceClaimReductionPublic) -> Self {
-        Self::AdviceClaimReduction(value)
-    }
-}
-
-impl From<SpartanShiftPublic> for JoltPublicId {
-    fn from(value: SpartanShiftPublic) -> Self {
-        Self::SpartanShift(value)
-    }
-}
-
-impl From<SpartanProductVirtualizationPublic> for JoltPublicId {
-    fn from(value: SpartanProductVirtualizationPublic) -> Self {
-        Self::SpartanProductVirtualization(value)
-    }
-}
-
-impl From<SpartanOuterPublic> for JoltPublicId {
-    fn from(value: SpartanOuterPublic) -> Self {
-        Self::SpartanOuter(value)
-    }
-}
-
-impl From<InstructionRaVirtualizationPublic> for JoltPublicId {
-    fn from(value: InstructionRaVirtualizationPublic) -> Self {
-        Self::InstructionRaVirtualization(value)
-    }
 }
 
 #[cfg(test)]
@@ -542,20 +360,20 @@ mod tests {
 
     #[test]
     fn opening_constructors_preserve_stage_context() {
-        let stage = JoltStageId::RamReadWriteChecking;
+        let relation = JoltRelationId::RamReadWriteChecking;
 
         assert_eq!(
-            JoltOpeningId::committed(JoltCommittedPolynomial::RamInc, stage),
+            JoltOpeningId::committed(JoltCommittedPolynomial::RamInc, relation),
             JoltOpeningId::Polynomial {
                 polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::RamInc),
-                stage,
+                relation,
             }
         );
         assert_eq!(
-            JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::RamVal, stage),
+            JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::RamVal, relation),
             JoltOpeningId::Polynomial {
                 polynomial: JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamVal),
-                stage,
+                relation,
             }
         );
     }

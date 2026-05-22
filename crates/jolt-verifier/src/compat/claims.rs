@@ -52,7 +52,7 @@ use jolt_claims::protocols::jolt::{
             product_uniskip_opening, shift_output_openings,
         },
     },
-    JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltStageId, JoltVirtualPolynomial,
+    JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -312,7 +312,7 @@ fn stage6_claims_from_native<F: Field>(
     for index in 0.. {
         let id = JoltOpeningId::committed(
             JoltCommittedPolynomial::BytecodeRa(index),
-            JoltStageId::BytecodeReadRaf,
+            JoltRelationId::BytecodeReadRaf,
         );
         let Some(opening_claim) = claims.get(id) else {
             break;
@@ -323,7 +323,7 @@ fn stage6_claims_from_native<F: Field>(
         return Err(VerifierError::MissingOpeningClaim {
             id: JoltOpeningId::committed(
                 JoltCommittedPolynomial::BytecodeRa(0),
-                JoltStageId::BytecodeReadRaf,
+                JoltRelationId::BytecodeReadRaf,
             ),
         });
     }
@@ -332,7 +332,7 @@ fn stage6_claims_from_native<F: Field>(
     for index in 0.. {
         let id = JoltOpeningId::committed(
             JoltCommittedPolynomial::InstructionRa(index),
-            JoltStageId::Booleanity,
+            JoltRelationId::Booleanity,
         );
         let Some(opening_claim) = claims.get(id) else {
             break;
@@ -343,7 +343,7 @@ fn stage6_claims_from_native<F: Field>(
     for index in 0.. {
         let id = JoltOpeningId::committed(
             JoltCommittedPolynomial::BytecodeRa(index),
-            JoltStageId::Booleanity,
+            JoltRelationId::Booleanity,
         );
         let Some(opening_claim) = claims.get(id) else {
             break;
@@ -354,7 +354,7 @@ fn stage6_claims_from_native<F: Field>(
     for index in 0.. {
         let id = JoltOpeningId::committed(
             JoltCommittedPolynomial::RamRa(index),
-            JoltStageId::Booleanity,
+            JoltRelationId::Booleanity,
         );
         let Some(opening_claim) = claims.get(id) else {
             break;
@@ -368,7 +368,7 @@ fn stage6_claims_from_native<F: Field>(
         return Err(VerifierError::MissingOpeningClaim {
             id: JoltOpeningId::committed(
                 JoltCommittedPolynomial::InstructionRa(0),
-                JoltStageId::Booleanity,
+                JoltRelationId::Booleanity,
             ),
         });
     }
@@ -441,7 +441,7 @@ fn stage7_claims_from_native<F: Field>(
     for index in 0.. {
         let id = JoltOpeningId::committed(
             JoltCommittedPolynomial::InstructionRa(index),
-            JoltStageId::HammingWeightClaimReduction,
+            JoltRelationId::HammingWeightClaimReduction,
         );
         let Some(opening_claim) = claims.get(id) else {
             break;
@@ -452,7 +452,7 @@ fn stage7_claims_from_native<F: Field>(
     for index in 0.. {
         let id = JoltOpeningId::committed(
             JoltCommittedPolynomial::BytecodeRa(index),
-            JoltStageId::HammingWeightClaimReduction,
+            JoltRelationId::HammingWeightClaimReduction,
         );
         let Some(opening_claim) = claims.get(id) else {
             break;
@@ -463,7 +463,7 @@ fn stage7_claims_from_native<F: Field>(
     for index in 0.. {
         let id = JoltOpeningId::committed(
             JoltCommittedPolynomial::RamRa(index),
-            JoltStageId::HammingWeightClaimReduction,
+            JoltRelationId::HammingWeightClaimReduction,
         );
         let Some(opening_claim) = claims.get(id) else {
             break;
@@ -474,7 +474,7 @@ fn stage7_claims_from_native<F: Field>(
         return Err(VerifierError::MissingOpeningClaim {
             id: JoltOpeningId::committed(
                 JoltCommittedPolynomial::InstructionRa(0),
-                JoltStageId::HammingWeightClaimReduction,
+                JoltRelationId::HammingWeightClaimReduction,
             ),
         });
     }
@@ -1332,7 +1332,7 @@ fn claim_from_stage6_outputs<F: Field>(
         if id
             == JoltOpeningId::committed(
                 JoltCommittedPolynomial::BytecodeRa(index),
-                JoltStageId::BytecodeReadRaf,
+                JoltRelationId::BytecodeReadRaf,
             )
         {
             return Some(*opening_claim);
@@ -1342,7 +1342,7 @@ fn claim_from_stage6_outputs<F: Field>(
         if id
             == JoltOpeningId::committed(
                 JoltCommittedPolynomial::InstructionRa(index),
-                JoltStageId::Booleanity,
+                JoltRelationId::Booleanity,
             )
         {
             return Some(*opening_claim);
@@ -1352,7 +1352,7 @@ fn claim_from_stage6_outputs<F: Field>(
         if id
             == JoltOpeningId::committed(
                 JoltCommittedPolynomial::BytecodeRa(index),
-                JoltStageId::Booleanity,
+                JoltRelationId::Booleanity,
             )
         {
             return Some(*opening_claim);
@@ -1362,7 +1362,7 @@ fn claim_from_stage6_outputs<F: Field>(
         if id
             == JoltOpeningId::committed(
                 JoltCommittedPolynomial::RamRa(index),
-                JoltStageId::Booleanity,
+                JoltRelationId::Booleanity,
             )
         {
             return Some(*opening_claim);
@@ -1422,7 +1422,7 @@ fn claim_mut_from_stage6_outputs<F: Field>(
         if id
             == JoltOpeningId::committed(
                 JoltCommittedPolynomial::BytecodeRa(index),
-                JoltStageId::BytecodeReadRaf,
+                JoltRelationId::BytecodeReadRaf,
             )
         {
             return Some(opening_claim);
@@ -1432,7 +1432,7 @@ fn claim_mut_from_stage6_outputs<F: Field>(
         if id
             == JoltOpeningId::committed(
                 JoltCommittedPolynomial::InstructionRa(index),
-                JoltStageId::Booleanity,
+                JoltRelationId::Booleanity,
             )
         {
             return Some(opening_claim);
@@ -1442,7 +1442,7 @@ fn claim_mut_from_stage6_outputs<F: Field>(
         if id
             == JoltOpeningId::committed(
                 JoltCommittedPolynomial::BytecodeRa(index),
-                JoltStageId::Booleanity,
+                JoltRelationId::Booleanity,
             )
         {
             return Some(opening_claim);
@@ -1452,7 +1452,7 @@ fn claim_mut_from_stage6_outputs<F: Field>(
         if id
             == JoltOpeningId::committed(
                 JoltCommittedPolynomial::RamRa(index),
-                JoltStageId::Booleanity,
+                JoltRelationId::Booleanity,
             )
         {
             return Some(opening_claim);
@@ -1517,7 +1517,7 @@ fn claim_from_stage7_outputs<F: Field>(
         if id
             == JoltOpeningId::committed(
                 JoltCommittedPolynomial::InstructionRa(index),
-                JoltStageId::HammingWeightClaimReduction,
+                JoltRelationId::HammingWeightClaimReduction,
             )
         {
             return Some(*opening);
@@ -1532,7 +1532,7 @@ fn claim_from_stage7_outputs<F: Field>(
         if id
             == JoltOpeningId::committed(
                 JoltCommittedPolynomial::BytecodeRa(index),
-                JoltStageId::HammingWeightClaimReduction,
+                JoltRelationId::HammingWeightClaimReduction,
             )
         {
             return Some(*opening);
@@ -1547,7 +1547,7 @@ fn claim_from_stage7_outputs<F: Field>(
         if id
             == JoltOpeningId::committed(
                 JoltCommittedPolynomial::RamRa(index),
-                JoltStageId::HammingWeightClaimReduction,
+                JoltRelationId::HammingWeightClaimReduction,
             )
         {
             return Some(*opening);
@@ -1583,7 +1583,7 @@ fn claim_mut_from_stage7_outputs<F: Field>(
         if id
             == JoltOpeningId::committed(
                 JoltCommittedPolynomial::InstructionRa(index),
-                JoltStageId::HammingWeightClaimReduction,
+                JoltRelationId::HammingWeightClaimReduction,
             )
         {
             return Some(opening);
@@ -1598,7 +1598,7 @@ fn claim_mut_from_stage7_outputs<F: Field>(
         if id
             == JoltOpeningId::committed(
                 JoltCommittedPolynomial::BytecodeRa(index),
-                JoltStageId::HammingWeightClaimReduction,
+                JoltRelationId::HammingWeightClaimReduction,
             )
         {
             return Some(opening);
@@ -1613,7 +1613,7 @@ fn claim_mut_from_stage7_outputs<F: Field>(
         if id
             == JoltOpeningId::committed(
                 JoltCommittedPolynomial::RamRa(index),
-                JoltStageId::HammingWeightClaimReduction,
+                JoltRelationId::HammingWeightClaimReduction,
             )
         {
             return Some(opening);
@@ -1753,44 +1753,48 @@ fn virtual_polynomial(polynomial: legacy::VirtualPolynomial) -> native::JoltVirt
 }
 
 #[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
-fn stage_id(id: legacy::SumcheckId) -> native::JoltStageId {
+fn stage_id(id: legacy::SumcheckId) -> native::JoltRelationId {
     match id {
-        legacy::SumcheckId::SpartanOuter => native::JoltStageId::SpartanOuter,
+        legacy::SumcheckId::SpartanOuter => native::JoltRelationId::SpartanOuter,
         legacy::SumcheckId::SpartanProductVirtualization => {
-            native::JoltStageId::SpartanProductVirtualization
+            native::JoltRelationId::SpartanProductVirtualization
         }
-        legacy::SumcheckId::SpartanShift => native::JoltStageId::SpartanShift,
+        legacy::SumcheckId::SpartanShift => native::JoltRelationId::SpartanShift,
         legacy::SumcheckId::InstructionClaimReduction => {
-            native::JoltStageId::InstructionClaimReduction
+            native::JoltRelationId::InstructionClaimReduction
         }
         legacy::SumcheckId::InstructionInputVirtualization => {
-            native::JoltStageId::InstructionInputVirtualization
+            native::JoltRelationId::InstructionInputVirtualization
         }
-        legacy::SumcheckId::InstructionReadRaf => native::JoltStageId::InstructionReadRaf,
+        legacy::SumcheckId::InstructionReadRaf => native::JoltRelationId::InstructionReadRaf,
         legacy::SumcheckId::InstructionRaVirtualization => {
-            native::JoltStageId::InstructionRaVirtualization
+            native::JoltRelationId::InstructionRaVirtualization
         }
-        legacy::SumcheckId::RamReadWriteChecking => native::JoltStageId::RamReadWriteChecking,
-        legacy::SumcheckId::RamRafEvaluation => native::JoltStageId::RamRafEvaluation,
-        legacy::SumcheckId::RamOutputCheck => native::JoltStageId::RamOutputCheck,
-        legacy::SumcheckId::RamValCheck => native::JoltStageId::RamValCheck,
-        legacy::SumcheckId::RamRaClaimReduction => native::JoltStageId::RamRaClaimReduction,
-        legacy::SumcheckId::RamHammingBooleanity => native::JoltStageId::RamHammingBooleanity,
-        legacy::SumcheckId::RamRaVirtualization => native::JoltStageId::RamRaVirtualization,
-        legacy::SumcheckId::RegistersClaimReduction => native::JoltStageId::RegistersClaimReduction,
+        legacy::SumcheckId::RamReadWriteChecking => native::JoltRelationId::RamReadWriteChecking,
+        legacy::SumcheckId::RamRafEvaluation => native::JoltRelationId::RamRafEvaluation,
+        legacy::SumcheckId::RamOutputCheck => native::JoltRelationId::RamOutputCheck,
+        legacy::SumcheckId::RamValCheck => native::JoltRelationId::RamValCheck,
+        legacy::SumcheckId::RamRaClaimReduction => native::JoltRelationId::RamRaClaimReduction,
+        legacy::SumcheckId::RamHammingBooleanity => native::JoltRelationId::RamHammingBooleanity,
+        legacy::SumcheckId::RamRaVirtualization => native::JoltRelationId::RamRaVirtualization,
+        legacy::SumcheckId::RegistersClaimReduction => {
+            native::JoltRelationId::RegistersClaimReduction
+        }
         legacy::SumcheckId::RegistersReadWriteChecking => {
-            native::JoltStageId::RegistersReadWriteChecking
+            native::JoltRelationId::RegistersReadWriteChecking
         }
-        legacy::SumcheckId::RegistersValEvaluation => native::JoltStageId::RegistersValEvaluation,
-        legacy::SumcheckId::BytecodeReadRaf => native::JoltStageId::BytecodeReadRaf,
-        legacy::SumcheckId::Booleanity => native::JoltStageId::Booleanity,
+        legacy::SumcheckId::RegistersValEvaluation => {
+            native::JoltRelationId::RegistersValEvaluation
+        }
+        legacy::SumcheckId::BytecodeReadRaf => native::JoltRelationId::BytecodeReadRaf,
+        legacy::SumcheckId::Booleanity => native::JoltRelationId::Booleanity,
         legacy::SumcheckId::AdviceClaimReductionCyclePhase => {
-            native::JoltStageId::AdviceClaimReductionCyclePhase
+            native::JoltRelationId::AdviceClaimReductionCyclePhase
         }
-        legacy::SumcheckId::AdviceClaimReduction => native::JoltStageId::AdviceClaimReduction,
-        legacy::SumcheckId::IncClaimReduction => native::JoltStageId::IncClaimReduction,
+        legacy::SumcheckId::AdviceClaimReduction => native::JoltRelationId::AdviceClaimReduction,
+        legacy::SumcheckId::IncClaimReduction => native::JoltRelationId::IncClaimReduction,
         legacy::SumcheckId::HammingWeightClaimReduction => {
-            native::JoltStageId::HammingWeightClaimReduction
+            native::JoltRelationId::HammingWeightClaimReduction
         }
     }
 }
@@ -1834,7 +1838,7 @@ mod tests {
                 &native_claims,
                 native::JoltOpeningId::committed(
                     native::JoltCommittedPolynomial::RamInc,
-                    native::JoltStageId::RamReadWriteChecking,
+                    native::JoltRelationId::RamReadWriteChecking,
                 )
             ),
             Some(Fr::from_u64(3))
@@ -1844,7 +1848,7 @@ mod tests {
                 &native_claims,
                 native::JoltOpeningId::virtual_polynomial(
                     native::JoltVirtualPolynomial::RamVal,
-                    native::JoltStageId::RamReadWriteChecking,
+                    native::JoltRelationId::RamReadWriteChecking,
                 )
             ),
             Some(Fr::from_u64(5))
@@ -1852,14 +1856,16 @@ mod tests {
         assert_eq!(
             opening_claim(
                 &native_claims,
-                native::JoltOpeningId::trusted_advice(native::JoltStageId::AdviceClaimReduction,)
+                native::JoltOpeningId::trusted_advice(native::JoltRelationId::AdviceClaimReduction,)
             ),
             Some(Fr::from_u64(7))
         );
         assert_eq!(
             opening_claim(
                 &native_claims,
-                native::JoltOpeningId::untrusted_advice(native::JoltStageId::AdviceClaimReduction,)
+                native::JoltOpeningId::untrusted_advice(
+                    native::JoltRelationId::AdviceClaimReduction,
+                )
             ),
             Some(Fr::from_u64(11))
         );

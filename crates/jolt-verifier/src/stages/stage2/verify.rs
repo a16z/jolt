@@ -13,7 +13,7 @@ use jolt_claims::protocols::jolt::{
             SpartanProductPublicValues,
         },
     },
-    InstructionClaimReductionChallenge, JoltChallengeId, JoltPublicId, JoltStageId,
+    InstructionClaimReductionChallenge, JoltChallengeId, JoltPublicId, JoltRelationId,
     JoltSumcheckDomain, RamReadWriteChallenge, SpartanProductVirtualizationPublic,
 };
 use jolt_crypto::VectorCommitment;
@@ -140,7 +140,7 @@ where
         ) => {
             let [product_uniskip_challenge] = product_uniskip.sumcheck_point.as_slice() else {
                 return Err(VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::SpartanProductVirtualization,
+                    stage: JoltRelationId::SpartanProductVirtualization,
                     reason: "product uni-skip proof did not reduce to one challenge".to_string(),
                 });
             };
@@ -208,9 +208,9 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let stage = JoltStageId::SpartanProductVirtualization;
+    let stage = JoltRelationId::SpartanProductVirtualization;
     let log_t = checked.trace_length.ilog2() as usize;
-    let dimensions = SpartanProductDimensions::from(log_t);
+    let dimensions = SpartanProductDimensions::new(log_t);
     let stage1_public = match deps {
         Deps::Clear { stage1 } => &stage1.public,
         Deps::Zk { stage1 } => &stage1.public,
@@ -371,11 +371,11 @@ where
     let log_k = checked.ram_K.ilog2() as usize;
     let trace_dimensions = TraceDimensions::new(log_t);
     let read_write_dimensions = proof.rw_config.ram_dimensions(log_t, log_k);
-    let product_dimensions = SpartanProductDimensions::from(log_t);
+    let product_dimensions = SpartanProductDimensions::new(log_t);
     let raf_dimensions =
         RamRafEvaluationDimensions::try_from(read_write_dimensions).map_err(|error| {
             VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RamRafEvaluation,
+                stage: JoltRelationId::RamRafEvaluation,
                 reason: error.to_string(),
             }
         })?;
@@ -419,7 +419,7 @@ where
             let claims = &proof.clear_claims()?.stage2;
             let [product_uniskip_challenge] = product_uniskip.sumcheck_point.as_slice() else {
                 return Err(VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::SpartanProductVirtualization,
+                    stage: JoltRelationId::SpartanProductVirtualization,
                     reason: "product uni-skip proof did not reduce to one challenge".to_string(),
                 });
             };
@@ -536,20 +536,20 @@ where
                 transcript,
             )
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltStageId::RamReadWriteChecking,
+                stage: JoltRelationId::RamReadWriteChecking,
                 reason: error.to_string(),
             })?;
 
             let ram_read_write_point = batch
                 .try_instance_point(ram_read_write_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::RamReadWriteChecking,
+                    stage: JoltRelationId::RamReadWriteChecking,
                     reason: error.to_string(),
                 })?;
             let ram_read_write_opening_point = read_write_dimensions
                 .read_write_opening_point(ram_read_write_point)
                 .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamReadWriteChecking,
+                    stage: JoltRelationId::RamReadWriteChecking,
                     reason: error.to_string(),
                 })?;
             let eq_cycle = try_eq_mle(
@@ -557,7 +557,7 @@ where
                 &ram_read_write_opening_point.r_cycle,
             )
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RamReadWriteChecking,
+                stage: JoltRelationId::RamReadWriteChecking,
                 reason: error.to_string(),
             })?;
             let [ram_val, ram_ra, ram_inc] = ram::read_write_checking_output_openings();
@@ -581,7 +581,7 @@ where
             let product_point = batch
                 .try_instance_point(product_remainder_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::SpartanProductVirtualization,
+                    stage: JoltRelationId::SpartanProductVirtualization,
                     reason: error.to_string(),
                 })?;
             let product_opening_point = product_point.iter().rev().copied().collect::<Vec<_>>();
@@ -590,7 +590,7 @@ where
                 PRODUCT_UNISKIP_DOMAIN_SIZE,
             >(product_uniskip_challenge)
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::SpartanProductVirtualization,
+                stage: JoltRelationId::SpartanProductVirtualization,
                 reason: error.to_string(),
             })?;
             let product_tau_high_bound = centered_lagrange_kernel(
@@ -599,13 +599,13 @@ where
                 product_uniskip_challenge,
             )
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::SpartanProductVirtualization,
+                stage: JoltRelationId::SpartanProductVirtualization,
                 reason: error.to_string(),
             })?;
             let product_tau_low_eq = try_eq_mle(&product_uniskip.tau_low, &product_opening_point)
                 .map_err(|error| {
                 VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::SpartanProductVirtualization,
+                    stage: JoltRelationId::SpartanProductVirtualization,
                     reason: error.to_string(),
                 }
             })?;
@@ -659,14 +659,14 @@ where
             let instruction_point = batch
                 .try_instance_point(instruction_claim_reduction_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::InstructionClaimReduction,
+                    stage: JoltRelationId::InstructionClaimReduction,
                     reason: error.to_string(),
                 })?;
             let instruction_opening_point =
                 instruction_point.iter().rev().copied().collect::<Vec<_>>();
             let eq_spartan = try_eq_mle(&instruction_opening_point, &product_uniskip.tau_low)
                 .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::InstructionClaimReduction,
+                    stage: JoltRelationId::InstructionClaimReduction,
                     reason: error.to_string(),
                 })?;
             let product_and_instruction_points_match =
@@ -743,20 +743,20 @@ where
             let phase1_offset = batch
                 .try_round_offset(active_stage2_rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::RamRafEvaluation,
+                    stage: JoltRelationId::RamRafEvaluation,
                     reason: error.to_string(),
                 })?
                 + read_write_dimensions.phase1_num_rounds();
             let ram_raf_evaluation_point = batch
                 .try_instance_point_at(phase1_offset, ram_raf_evaluation_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::RamRafEvaluation,
+                    stage: JoltRelationId::RamRafEvaluation,
                     reason: error.to_string(),
                 })?;
             let ram_raf_address_point = read_write_dimensions
                 .address_opening_point(ram_raf_evaluation_point)
                 .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamRafEvaluation,
+                    stage: JoltRelationId::RamRafEvaluation,
                     reason: error.to_string(),
                 })?;
             let ram_raf_opening_point = [
@@ -766,7 +766,7 @@ where
             .concat();
             if ram_raf_address_point.len() != log_k {
                 return Err(VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamRafEvaluation,
+                    stage: JoltRelationId::RamRafEvaluation,
                     reason: format!(
                         "RAM RAF address point length mismatch: expected {log_k}, got {}",
                         ram_raf_address_point.len()
@@ -801,24 +801,24 @@ where
             let ram_output_check_point = batch
                 .try_instance_point_at(phase1_offset, ram_output_check_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::RamOutputCheck,
+                    stage: JoltRelationId::RamOutputCheck,
                     reason: error.to_string(),
                 })?;
             let ram_output_address_point = read_write_dimensions
                 .address_opening_point(ram_output_check_point)
                 .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamOutputCheck,
+                    stage: JoltRelationId::RamOutputCheck,
                     reason: error.to_string(),
                 })?;
             let public_memory = PublicIoMemory::new(&checked.public_io).map_err(|error| {
                 VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamOutputCheck,
+                    stage: JoltRelationId::RamOutputCheck,
                     reason: error.to_string(),
                 }
             })?;
             let output_eq = try_eq_mle(&output_address_challenges, &ram_output_address_point)
                 .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamOutputCheck,
+                    stage: JoltRelationId::RamOutputCheck,
                     reason: error.to_string(),
                 })?;
             let output_mask = range_mask_mle_msb(
@@ -827,13 +827,13 @@ where
                 &ram_output_address_point,
             )
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RamOutputCheck,
+                stage: JoltRelationId::RamOutputCheck,
                 reason: error.to_string(),
             })?;
             let io_num_vars = public_memory.io_num_vars();
             if ram_output_address_point.len() < io_num_vars {
                 return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::RamOutputCheck,
+            stage: JoltRelationId::RamOutputCheck,
             reason: format!(
                 "RAM output address point is too short for public IO: address has {} variables, IO needs {io_num_vars}",
                 ram_output_address_point.len()
@@ -887,7 +887,7 @@ where
                 batch.batching_coefficients.as_slice()
             else {
                 return Err(VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::RamReadWriteChecking,
+                    stage: JoltRelationId::RamReadWriteChecking,
                     reason: "Stage 2 batch verifier returned the wrong number of coefficients"
                         .to_string(),
                 });
@@ -900,7 +900,7 @@ where
                 + *ram_output_coefficient * expected_outputs.ram_output_check;
             if batch.reduction.value != expected_final_claim {
                 return Err(VerifierError::StageClaimOutputMismatch {
-                    stage: JoltStageId::RamReadWriteChecking,
+                    stage: JoltRelationId::RamReadWriteChecking,
                 });
             }
 
@@ -1037,7 +1037,7 @@ where
                 transcript,
             )
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltStageId::RamReadWriteChecking,
+                stage: JoltRelationId::RamReadWriteChecking,
                 reason: error.to_string(),
             })?;
             let output_claims = committed::verify_output_claim_commitments(
@@ -1046,19 +1046,19 @@ where
                     proof: &proof.stages.stage2_sumcheck_proof,
                     proof_label: "stage2_sumcheck_proof",
                     output_claim_count: STAGE2_BATCH_OUTPUT_CLAIMS,
-                    stage: JoltStageId::RamReadWriteChecking,
+                    stage: JoltRelationId::RamReadWriteChecking,
                 },
             )?;
             let ram_read_write_point = consistency
                 .try_instance_point(ram_read_write_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::RamReadWriteChecking,
+                    stage: JoltRelationId::RamReadWriteChecking,
                     reason: error.to_string(),
                 })?;
             let ram_read_write_opening_point = read_write_dimensions
                 .read_write_opening_point(&ram_read_write_point)
                 .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamReadWriteChecking,
+                    stage: JoltRelationId::RamReadWriteChecking,
                     reason: error.to_string(),
                 })?;
             let active_stage2_rounds = log_t + log_k;
@@ -1066,25 +1066,25 @@ where
                 consistency
                     .try_round_offset(active_stage2_rounds)
                     .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                        stage: JoltStageId::RamOutputCheck,
+                        stage: JoltRelationId::RamOutputCheck,
                         reason: error.to_string(),
                     })?
                     + read_write_dimensions.phase1_num_rounds();
             let ram_raf_evaluation_point = consistency
                 .try_instance_point_at(phase1_offset, ram_raf_evaluation_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::RamRafEvaluation,
+                    stage: JoltRelationId::RamRafEvaluation,
                     reason: error.to_string(),
                 })?;
             let ram_raf_address_point = read_write_dimensions
                 .address_opening_point(&ram_raf_evaluation_point)
                 .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamRafEvaluation,
+                    stage: JoltRelationId::RamRafEvaluation,
                     reason: error.to_string(),
                 })?;
             if ram_raf_address_point.len() != log_k {
                 return Err(VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamRafEvaluation,
+                    stage: JoltRelationId::RamRafEvaluation,
                     reason: format!(
                         "RAM RAF address point length mismatch: expected {log_k}, got {}",
                         ram_raf_address_point.len()
@@ -1099,13 +1099,13 @@ where
             let ram_output_check_point = consistency
                 .try_instance_point_at(phase1_offset, ram_output_check_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::RamOutputCheck,
+                    stage: JoltRelationId::RamOutputCheck,
                     reason: error.to_string(),
                 })?;
             let ram_output_check_opening_point = read_write_dimensions
                 .address_opening_point(&ram_output_check_point)
                 .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamOutputCheck,
+                    stage: JoltRelationId::RamOutputCheck,
                     reason: error.to_string(),
                 })?;
 

@@ -14,12 +14,11 @@ use crate::{
 };
 use jolt_claims::protocols::jolt::{
     formulas::{
-        claim_reductions::advice,
-        committed_openings::advice_commitment_embedding_scale,
-        dimensions::{AdviceClaimReductionLayout, JoltFormulaDimensions},
-        ra::JoltRaPolynomialLayout,
+        claim_reductions::advice, committed_openings::advice_commitment_embedding_scale,
+        dimensions::JoltFormulaDimensions, ra::JoltRaPolynomialLayout,
     },
-    JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltStageId,
+    AdviceClaimReductionLayout, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
+    JoltRelationId,
 };
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
@@ -178,7 +177,7 @@ where
             push_opening(
                 JoltOpeningId::committed(
                     JoltCommittedPolynomial::RamInc,
-                    JoltStageId::IncClaimReduction,
+                    JoltRelationId::IncClaimReduction,
                 ),
                 &proof.commitments.ram_inc,
                 dense_embedding_scale,
@@ -186,7 +185,7 @@ where
             push_opening(
                 JoltOpeningId::committed(
                     JoltCommittedPolynomial::RdInc,
-                    JoltStageId::IncClaimReduction,
+                    JoltRelationId::IncClaimReduction,
                 ),
                 &proof.commitments.rd_inc,
                 dense_embedding_scale,
@@ -195,7 +194,7 @@ where
                 push_opening(
                     JoltOpeningId::committed(
                         JoltCommittedPolynomial::InstructionRa(index),
-                        JoltStageId::HammingWeightClaimReduction,
+                        JoltRelationId::HammingWeightClaimReduction,
                     ),
                     commitment,
                     PCS::Field::one(),
@@ -205,7 +204,7 @@ where
                 push_opening(
                     JoltOpeningId::committed(
                         JoltCommittedPolynomial::BytecodeRa(index),
-                        JoltStageId::HammingWeightClaimReduction,
+                        JoltRelationId::HammingWeightClaimReduction,
                     ),
                     commitment,
                     PCS::Field::one(),
@@ -215,7 +214,7 @@ where
                 push_opening(
                     JoltOpeningId::committed(
                         JoltCommittedPolynomial::RamRa(index),
-                        JoltStageId::HammingWeightClaimReduction,
+                        JoltRelationId::HammingWeightClaimReduction,
                     ),
                     commitment,
                     PCS::Field::one(),
@@ -356,7 +355,7 @@ where
         push_opening(
             JoltOpeningId::committed(
                 JoltCommittedPolynomial::RamInc,
-                JoltStageId::IncClaimReduction,
+                JoltRelationId::IncClaimReduction,
             ),
             &proof.commitments.ram_inc,
             stage6.output_claims.inc_claim_reduction.ram_inc,
@@ -365,7 +364,7 @@ where
         push_opening(
             JoltOpeningId::committed(
                 JoltCommittedPolynomial::RdInc,
-                JoltStageId::IncClaimReduction,
+                JoltRelationId::IncClaimReduction,
             ),
             &proof.commitments.rd_inc,
             stage6.output_claims.inc_claim_reduction.rd_inc,
@@ -375,7 +374,7 @@ where
         for (index, commitment) in proof.commitments.ra.instruction.iter().enumerate() {
             let id = JoltOpeningId::committed(
                 JoltCommittedPolynomial::InstructionRa(index),
-                JoltStageId::HammingWeightClaimReduction,
+                JoltRelationId::HammingWeightClaimReduction,
             );
             let opening_claim = *stage7
                 .output_claims
@@ -389,7 +388,7 @@ where
         for (index, commitment) in proof.commitments.ra.bytecode.iter().enumerate() {
             let id = JoltOpeningId::committed(
                 JoltCommittedPolynomial::BytecodeRa(index),
-                JoltStageId::HammingWeightClaimReduction,
+                JoltRelationId::HammingWeightClaimReduction,
             );
             let opening_claim = *stage7
                 .output_claims
@@ -403,7 +402,7 @@ where
         for (index, commitment) in proof.commitments.ra.ram.iter().enumerate() {
             let id = JoltOpeningId::committed(
                 JoltCommittedPolynomial::RamRa(index),
-                JoltStageId::HammingWeightClaimReduction,
+                JoltRelationId::HammingWeightClaimReduction,
             );
             let opening_claim = *stage7
                 .output_claims
