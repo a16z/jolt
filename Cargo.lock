@@ -3215,6 +3215,7 @@ dependencies = [
  "criterion",
  "digest 0.11.3",
  "jolt-field",
+ "jolt-r1cs",
  "light-poseidon",
  "num-traits",
  "sha3 0.11.0",

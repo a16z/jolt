@@ -17,7 +17,16 @@ where
         .proof
         .rw_config
         .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
+    #[cfg(feature = "field-inline")]
+    let field_register_dimensions = input
+        .proof
+        .protocol
+        .field_inline
+        .read_write_dimensions(log_t);
     let registers_claims = registers::read_write_checking::<PCS::Field>(register_dimensions);
+    #[cfg(feature = "field-inline")]
+    let field_registers_claims =
+        field_registers::read_write_checking::<PCS::Field>(field_register_dimensions);
     let ram_init = ram_val_check_init(input)?;
     let ram_val_claims = ram::val_check::<PCS::Field>(trace_dimensions, ram_init);
 
@@ -53,6 +62,35 @@ where
             .map_err(|error| public_error(JoltRelationId::RegistersReadWriteChecking, error))?,
     )?;
 
+    #[cfg(feature = "field-inline")]
+    {
+        values.challenge(
+            FieldInlineChallengeId::from(FieldRegistersReadWriteChallenge::Gamma),
+            input.stage4.public.field_registers_gamma,
+        )?;
+        let field_registers_point = input
+            .stage4
+            .batch_consistency
+            .try_instance_point(field_registers_claims.sumcheck.rounds)
+            .map_err(|error| {
+                stage_sumcheck_error(JoltRelationId::RegistersReadWriteChecking, error)
+            })?;
+        let field_registers_opening = field_register_dimensions
+            .read_write_opening_point(&field_registers_point)
+            .map_err(|error| public_error(JoltRelationId::RegistersReadWriteChecking, error))?;
+        values.challenge(
+            FieldInlineChallengeId::from(FieldRegistersReadWriteChallenge::EqCycle),
+            try_eq_mle(
+                &input
+                    .stage2
+                    .field_inline
+                    .field_registers_claim_reduction_opening_point,
+                &field_registers_opening.r_cycle,
+            )
+            .map_err(|error| public_error(JoltRelationId::RegistersReadWriteChecking, error))?,
+        )?;
+    }
+
     values.challenge(
         JoltChallengeId::from(RamValCheckChallenge::Gamma),
         input.stage4.public.ram_val_check_gamma,
@@ -79,21 +117,82 @@ where
 
     let mut output_ids = Vec::new();
     if input.proof.untrusted_advice_commitment.is_some() {
-        output_ids.push(ram::val_check_advice_opening(JoltAdviceKind::Untrusted));
+        output_ids.push(VerifierOpeningId::Jolt(ram::val_check_advice_opening(
+            JoltAdviceKind::Untrusted,
+        )));
     }
     if input.checked.trusted_advice_commitment_present {
-        output_ids.push(ram::val_check_advice_opening(JoltAdviceKind::Trusted));
+        output_ids.push(VerifierOpeningId::Jolt(ram::val_check_advice_opening(
+            JoltAdviceKind::Trusted,
+        )));
     }
-    output_ids.extend(registers::read_write_checking_output_openings());
-    output_ids.extend(ram::val_check_output_openings());
-    add_batched_stage(
+    output_ids.extend(map_jolt_opening_ids(
+        registers::read_write_checking_output_openings().to_vec(),
+    ));
+    #[cfg(feature = "field-inline")]
+    output_ids.extend(map_field_inline_opening_ids(
+        field_registers::read_write_checking_output_openings().to_vec(),
+    ));
+    output_ids.extend(map_jolt_opening_ids(
+        ram::val_check_output_openings().to_vec(),
+    ));
+
+    let mut batch_claims = vec![(
+        registers_claims.sumcheck.rounds,
+        map_jolt_expr(registers_claims.input.expression().clone()),
+        map_jolt_expr(registers_claims.output.expression().clone()),
+    )];
+    #[cfg(feature = "field-inline")]
+    batch_claims.push((
+        field_registers_claims.sumcheck.rounds,
+        map_field_inline_expr(field_registers_claims.input.expression().clone()),
+        map_field_inline_expr(field_registers_claims.output.expression().clone()),
+    ));
+    batch_claims.push((
+        ram_val_claims.sumcheck.rounds,
+        map_jolt_expr(ram_val_claims.input.expression().clone()),
+        map_jolt_expr(ram_val_claims.output.expression().clone()),
+    ));
+
+    let coefficients = &input.stage4.batch_consistency.batching_coefficients;
+    if batch_claims.len() != coefficients.len() {
+        return Err(VerifierError::BlindFoldConstructionFailed {
+            reason: format!(
+                "stage4.batch: expected {} batching coefficients, got {}",
+                batch_claims.len(),
+                coefficients.len()
+            ),
+        });
+    }
+    let input_claim = batch_claims.iter().zip(coefficients).fold(
+        VerifierExpr::zero(),
+        |acc, ((rounds, input_expr, _), coefficient)| {
+            let scale = *coefficient
+                * PCS::Field::pow2(input.stage4.batch_consistency.max_num_vars - *rounds);
+            acc + scale_expr(input_expr.clone(), scale)
+        },
+    );
+    let output_claim = batch_claims.iter().zip(coefficients).fold(
+        VerifierExpr::zero(),
+        |acc, ((_, _, output_expr), coefficient)| {
+            acc + scale_expr(output_expr.clone(), *coefficient)
+        },
+    );
+
+    add_stage(
         builder,
         "stage4.batch",
-        &[registers_claims, ram_val_claims],
-        &input.stage4.batch_consistency,
+        SumcheckStatement::new(
+            input.stage4.batch_consistency.max_num_vars,
+            input.stage4.batch_consistency.max_degree,
+        ),
+        domain_spec(registers_claims.sumcheck),
+        input.stage4.batch_consistency.consistency.clone(),
         &input.stage4.batch_output_claims,
         values,
         output_ids,
         Vec::new(),
+        input_claim,
+        output_claim,
     )
 }

@@ -34,7 +34,7 @@ truth.
 | 12 | `stack/12-selected-verifier-integration-spec` | `stack/11-extended-jolt-field-inline-wrapper-spec` | selected verifier integration spec |
 | 13 | `stack/13-field-inline-protocol-spec` | `stack/12-selected-verifier-integration-spec` | field inline protocol spec, verifier-spec updates, formulas, R1CS hooks, RISC-V flags, and verifier protocol config |
 | 14 | `stack/14-dory-assist-protocol-spec` | `stack/13-field-inline-protocol-spec` | Dory assist protocol spec, `jolt-hyrax`, Dory-assist claim semantics, and Dory-specific PCS-assist hooks |
-| 15 | `stack/15-wrapper-protocol-spec` | `stack/14-dory-assist-protocol-spec` | wrapper protocol spec, variable-challenge sumcheck R1CS, and shared wrapper R1CS infrastructure |
+| 15 | `stack/15-wrapper-protocol-spec` | `stack/14-dory-assist-protocol-spec` | wrapper protocol spec, variable-challenge sumcheck R1CS, transcript R1CS, and shared wrapper R1CS infrastructure |
 
 The `jolt-core` BlindFold hardening PR carries the compatibility/security patch
 that makes core BlindFold construction match the modular stack before the

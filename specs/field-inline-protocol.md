@@ -418,6 +418,68 @@ read/write and instruction claim-reduction gammas, before RAM output address
 challenges. FR-off skips the field challenge and field sumcheck instance
 entirely.
 
+### Stage 4 Composition
+
+Stage 4 batches field-register read/write checking beside the ordinary
+register and RAM value-check work:
+
+```text
+FR off:
+  1. RegistersReadWriteChecking
+  2. RamValCheck
+
+FR on:
+  1. RegistersReadWriteChecking
+  2. FieldRegistersReadWriteChecking
+  3. RamValCheck
+```
+
+`FieldRegistersReadWriteChecking` uses the field-register read/write
+dimensions from `jolt-claims`:
+
+```text
+log_t = trace length log
+log_k = field_register_log_k = 4
+phase1 = log_t
+phase2 = field_register_log_k
+```
+
+The input claim consumes the stage-2 field-register claim-reduction values:
+
+```text
+FieldRdValue(r_prod)
+  + gamma * FieldRs1Value(r_prod)
+  + gamma^2 * FieldRs2Value(r_prod)
+```
+
+The output claim opens the FR register memory relation at `r_field_rw`:
+
+```text
+Eq(r_prod, r_field_rw.cycle) * (
+  FieldRdWa * FieldRdInc
+    + FieldRdWa * FieldRegistersVal
+    + gamma * FieldRs1Ra * FieldRegistersVal
+    + gamma^2 * FieldRs2Ra * FieldRegistersVal
+)
+```
+
+The committed output-claim row order appends the five field-register
+read/write outputs after ordinary register read/write outputs and before RAM
+value-check outputs:
+
+```text
+FieldRegistersVal
+FieldRs1Ra
+FieldRs2Ra
+FieldRdWa
+FieldRdInc
+```
+
+The transparent verifier appends those values to the Fiat-Shamir transcript in
+that order. The BlindFold builder uses the same order and the same
+`FieldRegistersReadWriteChecking` claim expression so ZK mode binds hidden
+outputs to the identical Stage 4 equations.
+
 ## Field Constraints
 
 Target module:

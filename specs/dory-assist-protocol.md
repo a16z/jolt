@@ -248,6 +248,76 @@ verifier work and stays native in v1, but it is still Dory-specific verifier
 logic owned by the Dory-assist verifier implementation rather than by
 `jolt-verifier`.
 
+## Copy Constraints
+
+Dory-assist copy constraints are directed, typed equality edges over a canonical
+copy-edge table. The Dory verifier trace wiring is known from the Dory verifier
+AST, so each consumer slot has a specific producer slot.
+
+The protocol must not use a permutation, grand-product, sorted-table, or
+multiset-equality argument for copy constraints in v1.
+
+Semantic object:
+
+```text
+CopyConstraint:
+  id: CopyId
+  value_type: GT | G1 | G2 | Scalar | Fp2 | ...
+  source: ValueRef
+  target: ValueRef
+
+ValueRef:
+  TraceValue { family, row, column, component }
+  PublicValue { id, component }
+  ChallengeValue { id }
+  Constant
+```
+
+Fanout is represented as multiple copy edges with the same producer and
+different targets. Public-input consistency is represented by the same
+mechanism with `source = PublicValue(...)` and `target = TraceValue(...)`.
+
+Let the copy table have `2^m` rows after padding. Define virtual polynomials
+over copy-index variables:
+
+```text
+Src(i)     = compressed value read from source endpoint of copy edge i
+Dst(i)     = compressed value read from target endpoint of copy edge i
+Enabled(i) = 1 for real copy edges, 0 for padding
+```
+
+For vector-valued objects, component values are compressed with a
+Fiat-Shamir-derived challenge:
+
+```text
+compress_eta(v_0, ..., v_k) = v_0 + eta * v_1 + eta^2 * v_2 + ...
+```
+
+The copy constraint relation is:
+
+```text
+CopyDiff(i) = Enabled(i) * (Src(i) - Dst(i))
+CopyDiff == 0
+```
+
+The verifier samples `r_copy` and the prover reduces the ordered equality
+check to:
+
+```text
+sum_i eq(r_copy, i) * Enabled(i) * (Src(i) - Dst(i)) = 0
+```
+
+`Src` and `Dst` are virtual polynomials. They must be derived from typed
+`ValueRef`s into public inputs, transcript challenges, constants, or
+operation-family trace columns. Stage 2 owns the copy zero-check claim; stage 3
+and prefix packing bind the resulting trace-column claims to the single dense
+Hyrax opening.
+
+The prover may do work linear in the number of copy constraints. The verifier
+should batch copy constraints through the ordered equality check; a simple v1
+may evaluate static copy metadata linearly if needed, but the protocol
+semantics remain ordered equality edges rather than a permutation argument.
+
 ## Component Model
 
 The component split tracks the Dory verifier's algebraic domains:

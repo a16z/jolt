@@ -59,11 +59,11 @@ use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
 use jolt_claims::protocols::field_inline::{
     formulas::{
         claim_reductions::registers as field_registers_claim_reduction, product as field_product,
-        spartan as field_spartan,
+        registers as field_registers, spartan as field_spartan,
     },
     FieldInlineChallengeId, FieldInlineOpeningId, FieldInlinePublicId,
     FieldInlineVirtualPolynomial, FieldRegistersClaimReductionChallenge,
-    FieldRegistersTraceDimensions,
+    FieldRegistersReadWriteChallenge, FieldRegistersTraceDimensions,
 };
 use jolt_claims::{
     opening,

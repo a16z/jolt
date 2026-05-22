@@ -423,11 +423,19 @@ pub trait R1csTranscript<F> {
     fn challenge_scalar(&mut self, builder: &mut R1csBuilder<F>) -> R1csScalar<F>;
 }
 
-pub trait R1csFieldTranscript<F>: R1csTranscript<F> {
+pub trait R1csAlgebraicTranscript<F>: R1csTranscript<F> {
     fn absorb_scalar(&mut self, builder: &mut R1csBuilder<F>, value: R1csScalar<F>);
     fn absorb_constant_scalar(&mut self, builder: &mut R1csBuilder<F>, value: F);
     fn absorb_u64(&mut self, builder: &mut R1csBuilder<F>, value: u64);
     fn absorb_label(&mut self, builder: &mut R1csBuilder<F>, label: &'static [u8]);
+    fn absorb_label_with_len(&mut self, builder: &mut R1csBuilder<F>, label: &'static [u8], len: u64);
+}
+
+pub trait R1csJoltTranscript<F>: R1csAlgebraicTranscript<F> {
+    fn append_label(&mut self, builder: &mut R1csBuilder<F>, label: &'static [u8]);
+    fn append_u64(&mut self, builder: &mut R1csBuilder<F>, label: &'static [u8], value: u64);
+    fn append_scalar(&mut self, builder: &mut R1csBuilder<F>, label: &'static [u8], value: R1csScalar<F>);
+    fn append_scalars(&mut self, builder: &mut R1csBuilder<F>, label: &'static [u8], values: &[R1csScalar<F>]);
 }
 
 pub trait R1csByteTranscript<F>: R1csTranscript<F> {
@@ -436,15 +444,42 @@ pub trait R1csByteTranscript<F>: R1csTranscript<F> {
     fn absorb_bytes(&mut self, builder: &mut R1csBuilder<F>, bytes: &[Self::Byte]);
     fn absorb_constant_bytes(&mut self, builder: &mut R1csBuilder<F>, bytes: &'static [u8]);
 }
+
+pub trait R1csJoltByteTranscript<F>: R1csJoltTranscript<F> + R1csByteTranscript<F> {
+    fn append_bytes(&mut self, builder: &mut R1csBuilder<F>, label: &'static [u8], bytes: &[Self::Byte]);
+    fn append_constant_bytes(&mut self, builder: &mut R1csBuilder<F>, label: &'static [u8], bytes: &'static [u8]);
+}
 ```
 
 The base trait owns transcript initialization and scalar challenge production.
 Absorption is capability-based: algebraic backends implement
-`R1csFieldTranscript`, while byte-oriented backends can later implement
+`R1csAlgebraicTranscript`, while byte-oriented backends can later implement
 `R1csByteTranscript`. The initial wrapper target is the algebraic Poseidon path,
 so wrapper assembly should absorb field elements and domain-separation words
 directly instead of routing through byte decomposition. Native verifier replay
 and wrapper assembly must share the same transcript order and scalar encoding.
+
+The Poseidon R1CS backend must match the Jolt proof transcript used by
+`jolt-core` under `transcript-poseidon`:
+
+```text
+state_0 = Poseidon(label_word, 0, 0)
+raw_absorb(word): state <- Poseidon(state, n_rounds, word); n_rounds += 1
+challenge_scalar(): state <- Poseidon(state, n_rounds, 0); n_rounds += 1; return state
+```
+
+Scalar payloads are absorbed as field elements. `append_label(label)` absorbs a
+32-byte zero-padded label word. `append_u64(label, x)` absorbs the label and
+then a little-endian `u64` word. `append_scalars(label, values)` first absorbs
+the Jolt packed label/count word, where the label occupies bytes `[0..24)` and
+the count is big-endian in bytes `[24..32)`, then absorbs each scalar. This is
+not the byte-oriented `Blake2b`/`Keccak` serialization path.
+
+For Poseidon byte absorbs used by the Jolt preamble, each 32-byte chunk is
+converted to one little-endian scalar. The first chunk uses the current
+`n_rounds` tag; continuation chunks use round tag zero; the transcript round
+increments once for the whole byte payload. Assigned byte values must be range
+constrained by the component that allocated them.
 
 ## R1CS Ownership
 

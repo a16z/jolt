@@ -50,6 +50,10 @@ use crate::{
 use crate::stages::stage2::inputs::{
     FieldInlineProductOutputOpeningClaims, FieldInlineStage2OutputOpeningClaims,
 };
+#[cfg(feature = "field-inline")]
+use crate::stages::stage4::inputs::{
+    FieldInlineStage4Claims, FieldRegistersReadWriteOutputOpeningClaims,
+};
 #[cfg(any(feature = "jolt-core-compat", test))]
 use jolt_claims::protocols::jolt::formulas::spartan::SpartanOuterDimensions;
 use jolt_claims::protocols::jolt::{
@@ -289,6 +293,16 @@ fn stage4_claims_from_native<F: Field>(
             rs2_ra: claims.require(rs2_ra)?,
             rd_wa: claims.require(rd_wa)?,
             rd_inc: claims.require(rd_inc)?,
+        },
+        #[cfg(feature = "field-inline")]
+        field_inline: FieldInlineStage4Claims {
+            field_registers_read_write: FieldRegistersReadWriteOutputOpeningClaims {
+                field_registers_val: F::zero(),
+                field_rs1_ra: F::zero(),
+                field_rs2_ra: F::zero(),
+                field_rd_wa: F::zero(),
+                field_rd_inc: F::zero(),
+            },
         },
         ram_val_check: RamValCheckOutputOpeningClaims {
             ram_ra: claims.require(ram_ra)?,
@@ -659,6 +673,16 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 rs2_ra: zero,
                 rd_wa: zero,
                 rd_inc: zero,
+            },
+            #[cfg(feature = "field-inline")]
+            field_inline: FieldInlineStage4Claims {
+                field_registers_read_write: FieldRegistersReadWriteOutputOpeningClaims {
+                    field_registers_val: zero,
+                    field_rs1_ra: zero,
+                    field_rs2_ra: zero,
+                    field_rd_wa: zero,
+                    field_rd_inc: zero,
+                },
             },
             ram_val_check: RamValCheckOutputOpeningClaims {
                 ram_ra: zero,

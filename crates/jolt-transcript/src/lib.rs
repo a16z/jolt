@@ -53,6 +53,8 @@ pub mod domain;
 mod keccak;
 #[cfg(feature = "poseidon")]
 mod poseidon;
+#[cfg(feature = "r1cs")]
+pub mod r1cs;
 mod transcript;
 
 pub use blake2b::Blake2bTranscript;

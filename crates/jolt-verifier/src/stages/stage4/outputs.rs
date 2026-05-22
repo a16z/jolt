@@ -13,6 +13,8 @@ pub struct Stage4PublicOutput<F: Field> {
     pub challenges: Vec<F>,
     pub batching_coefficients: Vec<F>,
     pub registers_gamma: F,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_gamma: F,
     pub ram_val_check_gamma: F,
 }
 
@@ -31,6 +33,8 @@ pub struct Stage4ZkOutput<F: Field, C> {
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
     pub ram_val_check_public_eval: F,
     pub registers_read_write_opening_point: Vec<F>,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_read_write_opening_point: Vec<F>,
     pub ram_val_check_opening_point: Vec<F>,
 }
 
@@ -47,6 +51,8 @@ pub struct VerifiedStage4Batch<F: Field> {
     pub sumcheck_final_claim: F,
     pub expected_final_claim: F,
     pub registers_read_write: VerifiedStage4Sumcheck<F>,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_read_write: VerifiedStage4Sumcheck<F>,
     pub ram_val_check: VerifiedStage4Sumcheck<F>,
 }
 

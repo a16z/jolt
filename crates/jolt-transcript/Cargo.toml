@@ -20,6 +20,7 @@ ark-ff = { workspace = true, optional = true }
 ark-serialize = { workspace = true, optional = true }
 light-poseidon = { workspace = true, optional = true }
 jolt-field = { path = "../jolt-field", default-features = false }
+jolt-r1cs = { path = "../jolt-r1cs", optional = true }
 
 [features]
 default = ["poseidon"]
@@ -30,6 +31,8 @@ poseidon = [
   "dep:light-poseidon",
   "jolt-field/bn254",
 ]
+r1cs = ["dep:jolt-r1cs"]
+poseidon-r1cs = ["poseidon", "r1cs"]
 
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }

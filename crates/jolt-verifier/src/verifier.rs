@@ -974,6 +974,17 @@ mod tests {
                     rd_wa: zero,
                     rd_inc: zero,
                 },
+                #[cfg(feature = "field-inline")]
+                field_inline: stage4::inputs::FieldInlineStage4Claims {
+                    field_registers_read_write:
+                        stage4::inputs::FieldRegistersReadWriteOutputOpeningClaims {
+                            field_registers_val: zero,
+                            field_rs1_ra: zero,
+                            field_rs2_ra: zero,
+                            field_rd_wa: zero,
+                            field_rd_inc: zero,
+                        },
+                },
                 ram_val_check: stage4::inputs::RamValCheckOutputOpeningClaims {
                     ram_ra: zero,
                     ram_inc: zero,

@@ -642,6 +642,15 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "core-fixture test offsets each register read-write output claim",
     ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage4.claims.field_inline.field_registers_read_write",
+        "claims.stage4.field_inline.field_registers_read_write.*",
+        VerifierPhase::Stage4,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Deferred,
+        "field-inline register read-write claims are checked once field-inline fixtures exist",
+    ),
     checked_standard(
         "stage4.claims.ram_val_check",
         "claims.stage4.ram_val_check.*",
@@ -1198,6 +1207,14 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage4.registers_read_write.rd_wa",
             "claims.stage4.registers_read_write.rd_inc",
         ],
+        #[cfg(feature = "field-inline")]
+        "claims.stage4.field_inline.field_registers_read_write.*" => vec![
+            "claims.stage4.field_inline.field_registers_read_write.field_registers_val",
+            "claims.stage4.field_inline.field_registers_read_write.field_rs1_ra",
+            "claims.stage4.field_inline.field_registers_read_write.field_rs2_ra",
+            "claims.stage4.field_inline.field_registers_read_write.field_rd_wa",
+            "claims.stage4.field_inline.field_registers_read_write.field_rd_inc",
+        ],
         "claims.stage4.ram_val_check.*" => vec![
             "claims.stage4.ram_val_check.ram_ra",
             "claims.stage4.ram_val_check.ram_inc",
@@ -1344,6 +1361,17 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 rs2_ra: zero,
                 rd_wa: zero,
                 rd_inc: zero,
+            },
+            #[cfg(feature = "field-inline")]
+            field_inline: stage4::inputs::FieldInlineStage4Claims {
+                field_registers_read_write:
+                    stage4::inputs::FieldRegistersReadWriteOutputOpeningClaims {
+                        field_registers_val: zero,
+                        field_rs1_ra: zero,
+                        field_rs2_ra: zero,
+                        field_rd_wa: zero,
+                        field_rd_inc: zero,
+                    },
             },
             ram_val_check: stage4::inputs::RamValCheckOutputOpeningClaims {
                 ram_ra: zero,

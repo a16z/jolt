@@ -187,6 +187,10 @@ overlay_target_order() {
     crates/jolt-r1cs/src/lowering.rs|\
     crates/jolt-r1cs/src/builder.rs|\
     crates/jolt-sumcheck/src/r1cs.rs|\
+    crates/jolt-transcript/Cargo.toml|\
+    crates/jolt-transcript/src/lib.rs|\
+    crates/jolt-transcript/src/r1cs|\
+    crates/jolt-transcript/src/r1cs/*|\
     crates/jolt-blindfold/src/r1cs.rs)
       printf '%s\n' 15
       ;;
