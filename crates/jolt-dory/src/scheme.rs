@@ -216,6 +216,15 @@ impl CommitmentScheme for DoryScheme {
         let ark_commitment = jolt_gt_to_ark(&commitment.0);
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
+        if proof.0.e2.is_some()
+            || proof.0.y_com.is_some()
+            || proof.0.sigma1_proof.is_some()
+            || proof.0.sigma2_proof.is_some()
+            || proof.0.scalar_product_proof.is_some()
+        {
+            return Err(OpeningsError::VerificationFailed);
+        }
+
         dory::verify::<ArkFr, InnerBN254, G1Routines, G2Routines, _>(
             ark_commitment,
             ark_eval,
