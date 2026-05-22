@@ -172,14 +172,29 @@ overlay_target_order() {
   local path="$1"
 
   case "$path" in
+    crates/jolt-hyrax/*|\
+    crates/jolt-dory-assist-verifier/*|\
+    crates/jolt-claims/src/protocols/dory_assist/*|\
+    crates/jolt-verifier/src/pcs_assist.rs|\
+    crates/jolt-verifier/src/assist|\
+    crates/jolt-verifier/src/assist/*|\
+    crates/jolt-verifier/src/dory_assist.rs|\
+    crates/jolt-verifier/tests/dory_assist|\
+    crates/jolt-verifier/tests/dory_assist/*)
+      printf '%s\n' 14
+      ;;
     crates/jolt-r1cs/src/lib.rs|\
     crates/jolt-r1cs/src/lowering.rs|\
+    crates/jolt-r1cs/src/builder.rs|\
+    crates/jolt-sumcheck/src/r1cs.rs|\
     crates/jolt-blindfold/src/r1cs.rs)
       printf '%s\n' 15
       ;;
     crates/jolt-claims/*|\
     crates/jolt-field/src/ring_core.rs|\
+    crates/jolt-r1cs/Cargo.toml|\
     crates/jolt-r1cs/src/constraints/field_constraints.rs|\
+    crates/jolt-r1cs/src/constraints/jolt.rs|\
     crates/jolt-r1cs/src/constraints/mod.rs|\
     crates/jolt-riscv/src/flags.rs|\
     crates/jolt-riscv/src/lib.rs|\
@@ -302,6 +317,24 @@ apply_manifest_rules() {
       ensure_after Cargo.toml '  "crates/jolt-openings",' '  "crates/jolt-verifier",'
       ensure_after Cargo.toml '  "examples/advice-demo/guest",' '  "examples/advice-consumer/guest",'
       ensure_after Cargo.toml 'jolt-openings = { path = "./crates/jolt-openings" }' 'jolt-verifier = { path = "./crates/jolt-verifier" }'
+      ;;
+    14)
+      if pathspec_matches_ref "$source_ref" "crates/jolt-hyrax/Cargo.toml"; then
+        ensure_after Cargo.toml '  "crates/jolt-dory",' '  "crates/jolt-hyrax",'
+        ensure_after Cargo.toml 'jolt-openings = { path = "./crates/jolt-openings" }' 'jolt-hyrax = { path = "./crates/jolt-hyrax" }'
+      fi
+      if pathspec_matches_ref "$source_ref" "crates/jolt-dory-assist-verifier/Cargo.toml"; then
+        local member_anchor='  "crates/jolt-dory",'
+        local dependency_anchor='jolt-openings = { path = "./crates/jolt-openings" }'
+        if grep -Fxq '  "crates/jolt-hyrax",' Cargo.toml; then
+          member_anchor='  "crates/jolt-hyrax",'
+        fi
+        if grep -Fxq 'jolt-hyrax = { path = "./crates/jolt-hyrax" }' Cargo.toml; then
+          dependency_anchor='jolt-hyrax = { path = "./crates/jolt-hyrax" }'
+        fi
+        ensure_after Cargo.toml "$member_anchor" '  "crates/jolt-dory-assist-verifier",'
+        ensure_after Cargo.toml "$dependency_anchor" 'jolt-dory-assist-verifier = { path = "./crates/jolt-dory-assist-verifier" }'
+      fi
       ;;
   esac
 }

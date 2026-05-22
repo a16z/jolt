@@ -396,6 +396,7 @@ field values:
   FieldRs2Value
   FieldRdValue
   FieldProduct
+  FieldInvProduct
 
 ordinary values:
   Rs1Value
@@ -434,9 +435,8 @@ immediate/constant -> field-register:
 
 The FINV relation cannot be represented as
 `IsFieldInv * (FieldRs1Value * FieldRdValue - 1) = 0` in one R1CS row because
-that is cubic. The R1CS implementation should either add `FieldInvProduct` as a
-second field-product relation batched with `FieldProduct`, or defer FINV until
-that product witness exists.
+that is cubic. V1 includes `FieldInvProduct` as a second FR-native product
+witness batched with `FieldProduct`.
 
 These are constraints in Jolt's execution relation. They are separate from the
 wrapper R1CS, which proves a verifier computation.
@@ -463,6 +463,66 @@ These rows depend on canonical encoding for the active `F: JoltField`. For a
 advice-tape encoding, and bridge/load/store row shape. It does not change the
 field arithmetic relation: FR values remain native elements of `F`.
 
+## Stage 1 Composition
+
+Field-inline stage-1 composition follows the same ownership rule as the rest
+of the protocol:
+
+```text
+jolt-claims::protocols::jolt:
+  ordinary RV64 Spartan outer opening semantics
+
+jolt-claims::protocols::field_inline:
+  field-inline-local Spartan outer opening semantics
+
+jolt-r1cs::constraints::jolt:
+  selected R1CS column layout and field-inline column remapping
+
+jolt-verifier::stages::stage1:
+  selected composition of openings, public coefficients, and expected claim
+```
+
+`jolt-claims` should not define a mixed selected Spartan protocol. It should
+only expose the protocol-local FR Spartan opening order for field-inline-local
+wires. The selected verifier then appends those FR-local openings after the
+ordinary RV64 openings when field inline is enabled.
+
+The selected R1CS layout reuses ordinary RV64 columns for bridge inputs:
+
+```text
+field local const       -> RV64 const
+field local Rs1Value    -> RV64 Rs1Value
+field local RdWriteValue -> RV64 RdWriteValue
+field local Imm         -> RV64 Imm
+```
+
+Those reused columns do not produce duplicate FR openings. They use the
+ordinary Jolt Spartan openings already present in the RV64 stage-1 list.
+
+The FR-local stage-1 openings are the true appended field-inline columns:
+
+```text
+FieldRs1Value
+FieldRs2Value
+FieldRdValue
+FieldProduct
+FieldInvProduct
+IsFieldAdd
+IsFieldSub
+IsFieldMul
+IsFieldInv
+IsFieldAssertEq
+IsFieldLoadFromX
+IsFieldStoreToX
+IsFieldLoadImm
+```
+
+`jolt-verifier` should compute the selected Spartan outer expected claim using
+a helper in `jolt-r1cs::constraints::jolt`, analogous to the RV64-only helper
+but parameterized by the selected equality constraints, selected row weights,
+and selected opening columns. FR-off must reduce exactly to the ordinary RV64
+helper.
+
 ## `jolt-claims` Layout
 
 Field inline should be its own `jolt-claims` protocol module. Describing the
@@ -472,7 +532,9 @@ linear verifier flow as ordinary Jolt stages.
 
 The module should mirror the organization of `protocols::jolt` instead of
 inventing a separate component hierarchy. The main v1 `jolt-claims` work is to
-describe the FR register-file Twist memory-checking formulas.
+describe the FR register-file Twist memory-checking formulas, FR-native product
+formula, and field-inline-local Spartan opening metadata. Composition with the
+ordinary Jolt Spartan opening list happens later in `jolt-verifier`.
 
 Target layout:
 
@@ -563,16 +625,35 @@ pub enum FieldRegistersIncClaimReductionPublic {
 The opening and polynomial IDs should mirror ordinary registers with
 field-register-specific names:
 
-```text
-FieldRs1Value
-FieldRs2Value
-FieldRdValue
-FieldProduct
-FieldRegistersVal
-FieldRs1Ra
-FieldRs2Ra
-FieldRdWa
-FieldRdInc
+```rust
+pub enum FieldInlineOpFlag {
+    Add,
+    Sub,
+    Mul,
+    Inv,
+    AssertEq,
+    LoadFromX,
+    StoreToX,
+    LoadImm,
+}
+
+pub enum FieldInlineVirtualPolynomial {
+    FieldRs1Value,
+    FieldRs2Value,
+    FieldRdValue,
+    FieldProduct,
+    FieldInvProduct,
+    FieldRegistersVal,
+    FieldRs1Ra,
+    FieldRs2Ra,
+    FieldRdWa,
+    FieldOpFlag(FieldInlineOpFlag),
+}
+
+pub enum FieldInlineCommittedPolynomial {
+    FieldRdInc,
+    FieldRegistersRa(usize),
+}
 ```
 
 Exact committed vs virtual polynomial placement should follow the implemented
@@ -652,22 +733,26 @@ Here `EqReadWrite = Eq(r_inc, rw_cycle)` and
 openings of the committed `FieldRdInc` polynomial to one final
 `FieldRdInc(r_inc)` claim for stage 8.
 
-Field product:
+Field product lanes:
 
 ```text
-input:
-  FieldProduct@FieldRegistersProduct
+lane 0:
+  input  = FieldProduct@FieldRegistersProduct
+  output = FieldRs1Value@FieldRegistersProduct
+         * FieldRs2Value@FieldRegistersProduct
 
-output:
-  FieldRs1Value@FieldRegistersProduct
-  * FieldRs2Value@FieldRegistersProduct
+lane 1:
+  input  = FieldInvProduct@FieldRegistersProduct
+  output = FieldRs1Value@FieldRegistersProduct
+         * FieldRdValue@FieldRegistersProduct
 ```
 
 The `FieldRegistersProduct` lane is semantically distinct from the ordinary
 integer product lanes even though the verifier batches it through the same
 product-virtualization machinery. It proves the native-field multiplication
-witness used by field constraints; the later FMUL constraint checks that this
-product is the value written to the destination FR slot.
+witnesses used by field constraints; the local R1CS rows then check that
+`FieldProduct` is the FMUL destination value and that `FieldInvProduct` equals
+one when FINV is active.
 
 The module should also expose opening-order helpers matching the current
 `registers.rs` style:
@@ -742,9 +827,12 @@ Each step should be reviewed before continuing to the next.
    - Add canonical opening-order helpers.
    - Review gate: formula tests cover small synthetic FR traces.
 
-3. Add explicit `FieldProduct` product-virtualization lane.
-   - Add `FieldRegistersProduct` relation IDs and `FieldProduct` opening metadata.
-   - Add the native-field relation `FieldProduct = FieldRs1Value * FieldRs2Value`.
+3. Add explicit field product-virtualization lanes.
+   - Add `FieldRegistersProduct` relation IDs and `FieldProduct` /
+     `FieldInvProduct` opening metadata.
+   - Add the native-field relations
+     `FieldProduct = FieldRs1Value * FieldRs2Value` and
+     `FieldInvProduct = FieldRs1Value * FieldRdValue`.
    - Compose it with the stage-2 product uniskip/remainder point so it shares
      `r_prod` with field-register claim reduction.
    - Review gate: tests cover dependency ordering, point sharing, and formula
@@ -770,10 +858,18 @@ Each step should be reviewed before continuing to the next.
    - Commitment absorption: absorb the nested FieldRegisters commitments,
      currently `FieldRdInc` and `FieldRegistersRa(i)`, only when field inline
      is enabled.
-   - Stage 1 / Spartan outer metadata: make the Spartan/R1CS key metadata
-     field-constraints-aware when FR is enabled.
-   - Stage 2 product virtualization: add `FieldRegistersProduct` as an
-     explicit product lane sharing `r_prod`.
+   - Selected R1CS composition: add `jolt-r1cs::constraints::jolt` so the
+     compile-time selected R1CS is RV64 alone when FR is off and RV64 plus
+     field-inline rows when FR is on. The composition keeps protocol semantics
+     separate and performs the mixing only in the selected R1CS layout: it
+     reuses the RV64 constant, `Rs1Value`, `RdWriteValue`, and `Imm` columns for
+     bridge rows, then appends true FR-local columns after the RV64 layout.
+   - Stage 1 selected Spartan outer composition: compose ordinary Jolt Spartan
+     openings with field-inline-local Spartan openings in `jolt-verifier`.
+     Reused bridge columns use ordinary Jolt openings; only true FR-local
+     columns are appended as field-inline openings.
+   - Stage 2 product virtualization: add `FieldRegistersProduct` as explicit
+     product lanes sharing `r_prod`.
    - Stage 2 claim reduction: add `FieldRegistersClaimReduction` at the same
      product point and consume its consistency claims explicitly.
    - Stage 4: batch `FieldRegistersReadWriteChecking` with the existing

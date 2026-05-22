@@ -1,0 +1,25 @@
+[package]
+name = "jolt-hyrax"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Hyrax multilinear polynomial commitment adapter for Jolt"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-crypto = { workspace = true }
+jolt-field = { workspace = true }
+jolt-openings = { workspace = true }
+jolt-poly = { workspace = true }
+jolt-transcript = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+jolt-dory = { path = "../jolt-dory" }
+jolt-field = { workspace = true, features = ["bn254"] }
+rand_chacha = { workspace = true }
+rand_core = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }

@@ -33,8 +33,8 @@ truth.
 | 11 | `stack/11-extended-jolt-field-inline-wrapper-spec` | `stack/10-jolt-prover-spec` | extended Jolt / field inline / wrapper spec plus supporting recursion reference doc |
 | 12 | `stack/12-selected-verifier-integration-spec` | `stack/11-extended-jolt-field-inline-wrapper-spec` | selected verifier integration spec |
 | 13 | `stack/13-field-inline-protocol-spec` | `stack/12-selected-verifier-integration-spec` | field inline protocol spec, verifier-spec updates, formulas, R1CS hooks, RISC-V flags, and verifier protocol config |
-| 14 | `stack/14-dory-assist-protocol-spec` | `stack/13-field-inline-protocol-spec` | Dory assist protocol spec |
-| 15 | `stack/15-wrapper-protocol-spec` | `stack/14-dory-assist-protocol-spec` | wrapper protocol spec and shared wrapper R1CS infrastructure |
+| 14 | `stack/14-dory-assist-protocol-spec` | `stack/13-field-inline-protocol-spec` | Dory assist protocol spec, `jolt-hyrax`, Dory-assist claim semantics, and Dory-specific PCS-assist hooks |
+| 15 | `stack/15-wrapper-protocol-spec` | `stack/14-dory-assist-protocol-spec` | wrapper protocol spec, variable-challenge sumcheck R1CS, and shared wrapper R1CS infrastructure |
 
 The `jolt-core` BlindFold hardening PR carries the compatibility/security patch
 that makes core BlindFold construction match the modular stack before the
@@ -70,21 +70,24 @@ to the same row as the relevant spec:
   schedule, and selected computation export.
 - PR 13: field-inline claims, R1CS rows, selected verifier hooks, trace/prover
   wiring, and field-inline fixtures.
-- PR 14: Dory-assist claims, Hyrax support, selected verifier hooks, and
+- PR 14: Dory-assist claims under
+  `jolt-claims::protocols::dory_assist`, `jolt-hyrax`, the
+  Dory-assist verifier crate, Dory-specific PCS-assist verifier hooks, and
   Dory-assist fixtures.
-- PR 15: wrapper assembly, verifier R1CS lowering, transcript R1CS, and SNARK
-  backend integration.
+- PR 15: wrapper assembly, verifier R1CS lowering, variable-challenge
+  `jolt-sumcheck::r1cs`, transcript R1CS, and SNARK backend integration.
 
 If a later feature row names a path inside a directory owned by an earlier row,
 the later row wins for changed files under that path. This keeps broad crate
 bootstrap PRs stable while letting later implementation PRs own narrower
 submodules in the same crate.
 
-PR 13 and PR 15 also own shared files that were introduced before those spec
-rows existed. Earlier broad crate-bootstrap rows restore those files from the
-`09ed244b` verifier-v1 baseline, then the owning feature row restores the
-current source version. This keeps `jolt-verifier` v1 stable while field-inline
-and wrapper work reviews with their respective specs.
+PR 13, PR 14, and PR 15 also own shared files that were introduced before those
+spec rows existed. Earlier broad crate-bootstrap rows restore those files from
+the `09ed244b` verifier-v1 baseline, then the owning feature row restores the
+current source version. This keeps `jolt-verifier` v1 stable while
+field-inline, Dory-assist, and wrapper work reviews with their respective
+specs.
 
 ## Manual Materialization
 
@@ -124,6 +127,9 @@ crate first appears:
   BlindFold construction and test fixture config before `jolt-verifier`.
 - PR 09: add `crates/jolt-verifier` and `examples/advice-consumer/guest` to
   workspace members and add `jolt-verifier = { path = "./crates/jolt-verifier" }`.
+- PR 14: when present in the source ref, add `crates/jolt-hyrax` and
+  `crates/jolt-dory-assist-verifier` to workspace members and add their
+  workspace dependencies.
 
 With `--cargo-metadata`, the script refreshes `Cargo.lock` after those manifest
 changes.

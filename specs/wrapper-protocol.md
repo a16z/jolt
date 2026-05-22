@@ -193,16 +193,18 @@ computation:
 
 ```rust
 pub struct WrapperProtocolBuilder<F, Tr> {
-    pub assembly: jolt_r1cs::R1csAssembly<F>,
+    pub builder: jolt_r1cs::R1csBuilder<F>,
     pub transcript: Tr,
     pub sources: WrapperClaimSources<F>,
 }
 ```
 
-`R1csAssembly` is a generic `jolt-r1cs` type: a builder plus stable public input
-ordering and final matrix/witness export. `WrapperProtocolBuilder` adds
-wrapper-specific transcript state, verifier source maps, and proof
-artifact allocation.
+The first implementation can use `R1csBuilder` directly. A separate assembly
+object is not required to encode verifier equations; it is only useful once the
+wrapper needs stable public-input ordering and a single export point for
+matrices, witness, and public inputs. `WrapperProtocolBuilder` adds
+wrapper-specific transcript state, verifier source maps, and proof artifact
+allocation.
 
 Helper shape:
 
@@ -253,41 +255,34 @@ register openings and claims needed by later stages
 ## `jolt-r1cs` Substrate
 
 `jolt-r1cs` provides generic construction machinery. It should not know Jolt
-stage semantics.
+stage semantics. Component encodings should accept `&mut R1csBuilder<F>` unless
+they specifically need public-input registration or final instance export.
 
-Target additions:
+Possible additions:
 
 ```text
 crates/jolt-r1cs/src/
-  assembly.rs
   builder.rs
   constraint.rs
   lowering.rs
   matrices.rs
-  protocol.rs
 ```
 
 Responsibilities:
 
 ```text
-assembly.rs:
-  R1csAssembly, public-input registration, witness/matrix export
-
 lowering.rs:
   SourceValue, ClaimSources, lower_claim_expr, assert_claim_expr_eq
-
-protocol.rs:
-  small generic helpers for claim-input -> component constraints ->
-  claim-output stage lowering
 
 constraints/:
   execution-relation constraints such as field-inline field_constraints
 ```
 
-`R1csAssembly` should track public inputs explicitly:
+When the wrapper reaches backend handoff, either `jolt-wrapper` or `jolt-r1cs`
+can add a small assembly/export helper:
 
 ```rust
-pub struct R1csAssembly<F> {
+pub struct WrapperR1csAssembly<F> {
     pub builder: R1csBuilder<F>,
     pub public_inputs: Vec<PublicInputBinding>,
 }
@@ -364,23 +359,18 @@ aliases.
 
 ## Sumcheck R1CS
 
-`jolt-sumcheck::r1cs` already owns the generic sumcheck verifier equations.
-The wrapper needs variable challenges.
-
-The constant-challenge API stays for BlindFold and tests:
+`jolt-sumcheck::r1cs` owns the generic sumcheck verifier equations. Its round
+API uses a single challenge abstraction for both baked and in-circuit
+challenges:
 
 ```text
-round.challenge() -> F
+round.challenge() -> LinearCombination<F>
 ```
 
-The wrapper path adds:
-
-```rust
-pub struct SumcheckR1csRoundInput {
-    pub degree: usize,
-    pub challenge: Variable,
-}
-```
+BlindFold and other baked-verifier paths return `LinearCombination::constant(r)`.
+The wrapper returns a variable-backed linear combination for the transcript
+challenge. This keeps one sumcheck R1CS path rather than a constant path plus a
+wrapper-only path.
 
 For each round:
 
@@ -628,32 +618,33 @@ ZK artifact before wrapping. It should not drive the v1 wrapper architecture.
 
 Each step should be reviewed before continuing to the next.
 
-1. Add `jolt-r1cs::R1csAssembly`.
-   - Track stable public-input ordering.
-   - Export matrices, witness, and publics.
-   - Review gate: deterministic public-input order tests.
-
-2. Generalize `jolt-r1cs::lowering`.
+1. Generalize `jolt-r1cs::lowering`.
    - Add `SourceValue::{Constant, LinearCombination}`.
    - Keep existing constant-source tests passing.
    - Review gate: mixed constant/variable claim tests cover products and
      aliases.
 
-3. Add variable-challenge `jolt-sumcheck::r1cs`.
-   - Keep constant-challenge API for BlindFold.
-   - Add Horner evaluation constraints for variable challenges.
+2. Add variable-challenge `jolt-sumcheck::r1cs`.
+   - Use `round.challenge() -> LinearCombination<F>`.
+   - Keep constant challenges as the baked fast path for BlindFold.
+   - Add Horner evaluation constraints for non-constant challenges.
    - Review gate: variable-challenge tests reject bad challenge assignments.
 
-4. Add `jolt-transcript::r1cs`.
+3. Add `jolt-transcript::r1cs`.
    - Implement the selected SNARK-friendly transcript gadget.
    - Match native transcript scalar encoding.
    - Review gate: R1CS challenge outputs match native transcript outputs for
      fixed absorption sequences.
 
-5. Add wrapper protocol builder skeleton.
+4. Add wrapper protocol builder skeleton.
    - Implement `WrapperProtocolBuilder`, `WrapperClaimSources`, and configured
-     stage hook traits.
+     stage hook traits over `R1csBuilder`.
    - Review gate: synthetic stage lowers to satisfied R1CS.
+
+5. Add wrapper instance export.
+   - Track stable public-input ordering.
+   - Export matrices, witness, and publics for the backend.
+   - Review gate: deterministic public-input order tests.
 
 6. Assemble base configured verifier R1CS.
    - Start with a narrow synthetic verifier computation before full Jolt.

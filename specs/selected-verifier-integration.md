@@ -337,8 +337,9 @@ When enabled:
 ```text
 validate_proof_config requires proof.protocol.field_inline to match verifier config
 commitment absorption includes FieldRegisters commitments: FieldRdInc and FieldRegistersRa(i)
-stage 1 / Spartan outer uses the field-constraints-aware R1CS key metadata
-stage 2 extends product virtualization with a FieldProduct lane
+jolt-r1cs selected constraints compose RV64 rows with field-inline rows
+stage 1 composes selected Spartan outer openings and public coefficients
+stage 2 extends product virtualization with field product lanes
 stage 2 batches field-register claim reduction at the product point
 stage 4 batches FR read/write checking
 stage 5 batches FR val evaluation
@@ -379,52 +380,77 @@ Each slice has a small review gate and must preserve the FR-off path.
    - Review gate: FR-off transcript matches ordinary Jolt through the first
      config-dependent challenge.
 
-2. Stage 1 / Spartan outer metadata.
-   - Make the verifier's Spartan/R1CS metadata field-constraints-aware when
-     field inline is enabled.
-   - This covers the local field instruction rows and x-register <-> FR bridge
-     rows at the guest R1CS relation level.
-   - Review gate: FR-off Spartan outer claim formulas and public coefficients
-     are unchanged; FR-on exposes the additional field-constraint metadata.
+2. Compose selected R1CS constraints.
+   - Add `jolt-r1cs::constraints::jolt` as the compile-time selected R1CS
+     composition point.
+   - FR-off selected constraints are exactly the RV64 constraints.
+   - FR-on selected constraints append `field_constraints` rows while keeping
+     protocol semantics separate. The selected layout reuses the RV64 constant,
+     `Rs1Value`, `RdWriteValue`, and `Imm` columns for bridge constraints, then
+     appends true FR-local columns after the RV64 layout.
+   - Review gate: FR-off selected matrices equal RV64 matrices; FR-on exposes
+     deterministic composed row/column layout.
 
-3. Stage 2 product virtualization.
-   - Add `FieldRegistersProduct` as an explicit product lane.
+3. Stage 1 selected Spartan outer composition.
+   - Keep `jolt-claims::protocols::jolt` and
+     `jolt-claims::protocols::field_inline` semantically separate.
+     `jolt-claims` should expose protocol-local opening-order helpers; it
+     should not expose a mixed selected Spartan protocol.
+   - In `jolt-verifier::stages::stage1`, compose the selected opening list at
+     the last point: ordinary RV64 Spartan openings first, then FR-local
+     Spartan openings only when field inline is enabled.
+   - Do not duplicate bridge openings for RV64 columns reused by
+     `jolt-r1cs::constraints::jolt`: `Rs1Value`, `RdWriteValue`, and `Imm`
+     remain ordinary Jolt openings.
+   - FR-local Spartan openings follow the selected appended-column order:
+     field register operand values, field product witnesses, and field-inline
+     selector flags.
+   - Add a selected Spartan outer remainder helper in `jolt-r1cs` that mirrors
+     the existing RV64 helper but uses the selected equality constraints,
+     selected row weights, and selected opening columns.
+   - Review gate: FR-off expected output claims and public coefficient order
+     match RV64 exactly; FR-on has deterministic selected opening order and
+     does not introduce a mixed `jolt-claims` protocol namespace.
+
+4. Stage 2 product virtualization.
+   - Add `FieldRegistersProduct` as explicit product lanes.
    - Use the existing stage-2 product point `r_prod`; do not introduce a
      separate `r_field`.
    - Review gate: FR-off product lane ordering is unchanged; FR-on includes the
-     `FieldProduct = FieldRs1Value * FieldRs2Value` lane.
+     `FieldProduct = FieldRs1Value * FieldRs2Value` and
+     `FieldInvProduct = FieldRs1Value * FieldRdValue` lanes.
 
-4. Stage 2 field-register claim reduction.
+5. Stage 2 field-register claim reduction.
    - Batch `FieldRegistersClaimReduction` into the same stage-2 verifier flow.
    - Share `r_prod` with the product virtualization output where the formulas
      require point agreement.
    - Review gate: required FR openings/challenges are present and consistency
      claims are explicit.
 
-5. Stage 4 field-register read/write checking.
+6. Stage 4 field-register read/write checking.
    - Add the FR Twist read/write instance over `T * 16`.
    - Batch it with the existing stage-4 read/write work.
    - Review gate: FR-off stage 4 transcript and accumulator entries are
      unchanged; FR-on rejects missing FR read/write payload.
 
-6. Stage 5 field-register val evaluation.
+7. Stage 5 field-register val evaluation.
    - Add `FieldRegistersValEvaluation` using the stage-5 batching pattern.
    - Review gate: FR-off stage 5 is unchanged; FR-on produces the expected
      `FieldRegistersVal` and `FieldRdInc` opening claims.
 
-7. Stage 6 `FieldRdInc` reduction.
+8. Stage 6 `FieldRdInc` reduction.
    - Reduce the stage-4 and stage-5 semantic openings of `FieldRdInc` to one
      final committed claim.
    - Review gate: the reduced claim is the only `FieldRdInc` claim handed to
      the final opening planner.
 
-8. Stage 8 joint opening inclusion.
+9. Stage 8 joint opening inclusion.
    - Add the reduced `FieldRdInc` opening to the joint opening RLC with an
      explicit polynomial-to-relation mapping.
    - Review gate: FR-off final opening order is unchanged; FR-on order is
      deterministic and covered by tests.
 
-9. FR-off regression checkpoint.
+10. FR-off regression checkpoint.
    - Run the ordinary standard and ZK verifier tests with field inline disabled.
    - No prover-side field-inline work starts before this checkpoint is green.
 

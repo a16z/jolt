@@ -320,31 +320,37 @@ untyped opening map.
 ## Hyrax
 
 `jolt-hyrax` factors Hyrax out as a reusable modular crate. Dory assist uses
-Hyrax to commit to and open the packed dense trace. Wrapper assembly uses
-`jolt-hyrax::r1cs` to prove the same opening verification inside R1CS when the
-configured verifier is wrapped.
+Hyrax to commit to and open the packed dense trace. The first implementation is
+a native transparent PCS adapter over `jolt_crypto::VectorCommitment`. Wrapper
+assembly later adds `jolt-hyrax::r1cs` to prove the same opening verification
+inside R1CS when the configured verifier is wrapped.
 
-Target layout:
+V1 native layout:
 
 ```text
 crates/jolt-hyrax/
   Cargo.toml
   src/
     lib.rs
+    dimensions.rs
+    error.rs
     commitment.rs
     proof.rs
     setup.rs
-    transcript.rs
-    verifier.rs
-    opening.rs
-    r1cs/
-      mod.rs
-      inputs.rs
-      witness.rs
-      constraints.rs
+    scheme.rs
 ```
 
-Hyrax should use `jolt-crypto` abstractions where practical:
+Future R1CS layout:
+
+```text
+crates/jolt-hyrax/src/r1cs/
+  mod.rs
+  inputs.rs
+  witness.rs
+  constraints.rs
+```
+
+Hyrax should use existing abstractions rather than defining parallel ones:
 
 ```text
 VectorCommitment
@@ -352,39 +358,48 @@ VectorCommitmentOpening
 HomomorphicCommitment
 Pedersen / PedersenSetup
 JoltGroup
-EvaluationClaim
-Point
 AppendToTranscript
+jolt_openings::CommitmentScheme
+jolt_openings::AdditivelyHomomorphic
 ```
 
 Native API sketch:
 
 ```rust
-pub struct HyraxCommitment<G> {
-    pub rows: Vec<G>,
+pub struct HyraxDimensions {
+    pub num_vars: usize,
+    pub row_vars: usize,
+    pub col_vars: usize,
 }
 
-pub struct HyraxOpeningProof<F, G> {
-    pub proof_data: Vec<F>,
-    pub commitment_data: Vec<G>,
+pub struct HyraxCommitment<C> {
+    pub rows: Vec<C>,
 }
 
-pub struct HyraxOpeningClaim<F, G> {
-    pub commitment: HyraxCommitment<G>,
-    pub point: Vec<F>,
-    pub value: F,
+pub struct HyraxOpeningProof<F> {
+    pub row_opening: VectorCommitmentOpening<F>,
 }
 
-pub fn verify_hyrax_opening<F, VC, T>(
-    setup: &HyraxVerifierSetup<VC>,
-    claim: &HyraxOpeningClaim<F, VC::Output>,
-    proof: &HyraxOpeningProof<F, VC::Output>,
-    transcript: &mut T,
-) -> Result<(), HyraxError>
+pub struct HyraxScheme<VC: VectorCommitment> { ... }
+
+impl<VC> CommitmentScheme for HyraxScheme<VC>
 where
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>;
+    VC::Output: HomomorphicCommitment<F>;
 ```
+
+The point split is fixed as:
+
+```text
+num_vars = row_vars + col_vars
+row_point = point[..row_vars]
+col_point = point[row_vars..]
+```
+
+Hyrax combines committed rows using `row_point`, then verifies the combined row
+opening at `col_point`. The implementation should delegate row commitments,
+row-combination openings, and commitment homomorphism to `VectorCommitment`,
+`VectorCommitmentOpening`, and `HomomorphicCommitment`.
 
 The default instantiation can be Pedersen-backed:
 
@@ -393,6 +408,18 @@ PedersenHyrax<G> = Hyrax<Pedersen<G>>
 ```
 
 but verifier APIs should be generic over the vector commitment abstraction.
+
+Hyrax setup should compose with existing `jolt_crypto::DeriveSetup` impls. For
+Dory assist, the intended path is:
+
+```text
+DoryProverSetup
+  -> PedersenSetup<Bn254G1> via DeriveSetup<DoryProverSetup>
+  -> HyraxProverSetup<Pedersen<Bn254G1>> using HyraxDimensions.row_len()
+```
+
+`HyraxDimensions` are not derivable from the PCS SRS and must be supplied by the
+Dory-assist dense-trace layout.
 
 ## Generic PCS-Assist Integration
 
@@ -487,11 +514,11 @@ The crate should expose a typed proof payload and implement the generic
 PCS-assist boundary for the Dory PCS:
 
 ```rust
-pub struct DoryAssistProof<F, T, HyraxProof> {
+pub struct DoryAssistProof<F, T, HyraxOpeningProof> {
     pub stage1_proof: SumcheckInstanceProof<F, T>,
     pub stage2_proof: SumcheckInstanceProof<F, T>,
     pub stage3_packed_eval: F,
-    pub opening_proof: HyraxProof,
+    pub opening_proof: HyraxOpeningProof,
     pub opening_claims: DoryAssistOpeningClaims<F>,
     pub dense_commitment: HyraxCommitment,
 }
