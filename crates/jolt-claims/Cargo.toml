@@ -1,0 +1,18 @@
+[package]
+name = "jolt-claims"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Shared claim and expression types for Jolt protocols"
+
+[lints]
+workspace = true
+
+[dependencies]
+derive_more.workspace = true
+jolt-field.workspace = true
+jolt-lookup-tables.workspace = true
+jolt-poly.workspace = true
+jolt-riscv = { workspace = true, features = ["serialization"] }
+serde = { workspace = true, features = ["alloc", "derive"] }
+thiserror.workspace = true
