@@ -30,4 +30,23 @@ pub trait RingCore:
     fn square(&self) -> Self {
         *self * *self
     }
+
+    #[inline]
+    fn pow2(exponent: usize) -> Self {
+        let mut result = Self::one();
+        let mut base = Self::one() + Self::one();
+        let mut remaining = exponent;
+
+        while remaining > 0 {
+            if remaining % 2 == 1 {
+                result *= base;
+            }
+            remaining /= 2;
+            if remaining > 0 {
+                base = base.square();
+            }
+        }
+
+        result
+    }
 }

@@ -38,8 +38,8 @@
 //!
 //! # Utility Modules
 //!
-//! - [`lagrange`]: Lagrange interpolation, symmetric power sums, polynomial multiplication,
-//!   Newton-form interpolation over integer domains
+//! - [`lagrange`]: Lagrange interpolation, integer-domain power sums, polynomial
+//!   multiplication, Newton-form interpolation over integer domains
 //! - [`math`]: Bit-manipulation utilities on `usize` via the `Math` trait (`pow2`, `log_2`)
 //! - [`thread`]: `drop_in_background_thread` (rayon) and `unsafe_allocate_zero_vec` (zero-init allocation)
 
@@ -52,18 +52,24 @@ mod identity;
 pub mod lagrange;
 mod lt;
 pub mod math;
+mod mle;
 mod multilinear;
 mod one_hot;
+mod point;
 pub mod thread;
 mod univariate;
 
 pub use binding::BindingOrder;
 pub use compressed_univariate::CompressedPoly;
 pub use dense::Polynomial;
-pub use eq::EqPolynomial;
+pub use eq::{eq_index_msb, try_eq_mle, EqPolynomial};
 pub use eq_plus_one::{EqPlusOnePolynomial, EqPlusOnePrefixSuffix};
-pub use identity::IdentityPolynomial;
+pub use identity::{IdentityPolynomial, OperandPolynomial, OperandSide};
 pub use lt::LtPolynomial;
+pub use mle::{
+    block_selector_mle_msb, range_mask_mle_msb, sparse_mle_msb, sparse_segments_mle_msb, MleError,
+};
 pub use multilinear::{MultilinearBinding, MultilinearEvaluation, MultilinearPoly, RlcSource};
 pub use one_hot::OneHotPolynomial;
+pub use point::Point;
 pub use univariate::{UnivariatePoly, UnivariatePolynomial};

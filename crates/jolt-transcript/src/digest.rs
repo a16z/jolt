@@ -19,6 +19,11 @@ struct TestState {
 ///
 /// Generic over the hash function `D` and field type `F`. Challenges are
 /// produced as field elements through `F::from_challenge_bytes`.
+///
+/// The byte layout intentionally matches `jolt-core`'s hash transcripts:
+/// appends hash `state || round || payload`, squeezes hash `state || round`,
+/// and optimized scalar challenges use the same 125-bit Montgomery-friendly
+/// decoding path as `jolt-core`.
 pub struct DigestTranscript<D: Digest<OutputSize = U32> + 'static, F> {
     state: [u8; 32],
     n_rounds: u32,
@@ -97,11 +102,7 @@ where
 
     #[inline]
     fn challenge_bytes32(&mut self, out: &mut [u8; 32]) {
-        let hash: [u8; 32] = self
-            .hasher()
-            .chain_update([0x01]) // squeeze domain tag
-            .finalize()
-            .into();
+        let hash: [u8; 32] = self.hasher().finalize().into();
         out.copy_from_slice(&hash);
         self.update_state(hash);
     }
@@ -155,12 +156,7 @@ where
     }
 
     fn append_bytes(&mut self, bytes: &[u8]) {
-        let hash: [u8; 32] = self
-            .hasher()
-            .chain_update([0x00]) // absorb domain tag
-            .chain_update(bytes)
-            .finalize()
-            .into();
+        let hash: [u8; 32] = self.hasher().chain_update(bytes).finalize().into();
         self.update_state(hash);
     }
 
@@ -168,6 +164,12 @@ where
         let mut buf = [0u8; 16];
         self.challenge_bytes(&mut buf);
         F::from_challenge_bytes(&buf)
+    }
+
+    fn challenge_scalar(&mut self) -> F {
+        let mut buf = [0u8; 16];
+        self.challenge_bytes(&mut buf);
+        F::from_scalar_challenge_bytes(&buf)
     }
 
     #[inline]
