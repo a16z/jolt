@@ -362,6 +362,62 @@ ordinary register Twist commitment surface. Their opening/reduction path should
 follow the same explicit polynomial-to-relation mapping discipline before any
 FR RA claim enters stage 8.
 
+### Stage 2 Composition
+
+The selected product uniskip geometry lives with the selected R1CS constants in
+`jolt-r1cs::constraints::jolt`:
+
+```text
+FR off:
+  product lanes = 3
+  domain size   = 3
+
+FR on:
+  ordinary product lanes = 3
+  field product lanes    = 2
+  domain size            = 5
+```
+
+The two field lanes are:
+
+```text
+FieldProduct    = FieldRs1Value * FieldRs2Value
+FieldInvProduct = FieldRs1Value * FieldRdValue
+```
+
+The stage-2 batch order with field inline enabled is:
+
+```text
+1. RAM read/write
+2. Spartan product remainder
+3. instruction claim reduction
+4. FieldRegistersClaimReduction
+5. RAM RAF evaluation
+6. RAM output check
+```
+
+`FieldRegistersClaimReduction` uses the same `r_prod` suffix point as the
+product remainder. Its output openings are aliases into the field product
+remainder rows:
+
+```text
+FieldRs1Value@FieldRegistersClaimReduction -> FieldRs1Value@FieldRegistersProduct
+FieldRs2Value@FieldRegistersClaimReduction -> FieldRs2Value@FieldRegistersProduct
+FieldRdValue @FieldRegistersClaimReduction -> FieldRdValue @FieldRegistersProduct
+```
+
+The committed output-claim row order appends the three field product outputs
+after the ordinary product-remainder outputs and before the instruction
+claim-reduction non-aliased outputs. The transparent verifier appends those
+three values to the transcript in that order. The BlindFold builder uses the
+same output order and aliases so ZK mode binds the hidden values to the same
+stage-2 equations.
+
+The field-register claim-reduction gamma is pulled after the ordinary RAM
+read/write and instruction claim-reduction gammas, before RAM output address
+challenges. FR-off skips the field challenge and field sumcheck instance
+entirely.
+
 ## Field Constraints
 
 Target module:

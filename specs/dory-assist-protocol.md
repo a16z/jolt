@@ -139,6 +139,83 @@ opening correctness:
   Hyrax opens that dense polynomial at the verifier's required point
 ```
 
+## Statement
+
+Dory assist proves the following statement:
+
+```text
+Given the public Dory opening-verifier inputs, there exists a correctly wired
+execution trace of the expensive Dory verifier work whose final public result
+is the pre-final-exponentiation GT value consumed by the native pairing check,
+and whose packed trace is committed/opened consistently by Hyrax.
+```
+
+Public inputs:
+
+```text
+joint Dory opening proof artifact
+Dory verifier setup inputs / verifier setup digest
+Jolt opening snapshot:
+  commitments
+  opening points
+  claimed evaluations
+  transcript-derived scalars
+Dory-assist transcript challenges
+Hyrax dense-trace commitment
+Hyrax opening claim
+final pairing-check input/output values
+```
+
+Private witness:
+
+```text
+typed Dory verifier trace:
+  GT exponentiation rows
+  GT multiplication rows
+  G1 scalar-mul rows
+  G1 addition rows
+  G2 scalar-mul rows
+  G2 addition rows
+  multi-Miller-loop rows
+  intermediate values
+  wiring values
+packed dense trace evaluations
+```
+
+The proof establishes:
+
+```text
+local correctness:
+  every trace row satisfies its operation-family algebraic relation
+
+wiring correctness:
+  every value consumed by a later operation equals the value produced earlier
+
+public-input consistency:
+  trace inputs equal the public Dory proof fields, verifier setup data, Jolt
+  opening claims, commitments, and transcript challenges
+
+Dory verifier consistency:
+  the trace computes the same pre-final-exponentiation GT value that the
+  ordinary Dory verifier would compute for the public opening proof
+
+packing correctness:
+  all operation-family traces are packed into one dense multilinear polynomial
+  according to the prefix-packing layout
+
+opening correctness:
+  the Hyrax commitment opens that dense packed trace at the claimed verifier
+  point to the claimed packed evaluation
+
+final public check:
+  the Dory-assist verifier uses the public GT output, performs native final
+  exponentiation, and checks the public pairing equality
+```
+
+The SNARK portion proves the expensive Dory verifier computation through the
+multi-Miller-loop / pre-final-exponentiation value. Final exponentiation and
+pairing equality remain native verifier work in v1.
+
 ## Stage Shape
 
 The reference branch has moved toward a three-stage prefix-packing pipeline.

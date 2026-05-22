@@ -57,7 +57,13 @@
 use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{
-    formulas::spartan as field_spartan, FieldInlineOpeningId,
+    formulas::{
+        claim_reductions::registers as field_registers_claim_reduction, product as field_product,
+        spartan as field_spartan,
+    },
+    FieldInlineChallengeId, FieldInlineOpeningId, FieldInlinePublicId,
+    FieldInlineVirtualPolynomial, FieldRegistersClaimReductionChallenge,
+    FieldRegistersTraceDimensions,
 };
 use jolt_claims::{
     opening,
@@ -66,15 +72,13 @@ use jolt_claims::{
             booleanity::{self, BooleanityDimensions},
             bytecode::{self, BytecodeReadRafEvaluationInputs},
             claim_reductions::{advice, hamming_weight, increments},
-            dimensions::{
-                JoltFormulaDimensions, JoltSumcheckSpec, PRODUCT_UNISKIP_DOMAIN_SIZE,
-                REGISTER_ADDRESS_BITS,
-            },
+            dimensions::{JoltFormulaDimensions, JoltSumcheckSpec, REGISTER_ADDRESS_BITS},
             instruction, ram, registers,
             spartan::{
-                self, outer_opening, outer_uniskip_opening, product_remainder_output_openings,
-                product_uniskip_opening, shift_output_openings, SpartanOuterDimensions,
-                SpartanProductDimensions, SpartanProductPublicValues,
+                self, outer_opening, outer_uniskip_opening, product_outer_opening,
+                product_remainder_output_openings, product_should_branch_outer_opening,
+                product_should_jump_outer_opening, product_uniskip_opening, shift_output_openings,
+                SpartanOuterDimensions, SpartanProductDimensions,
             },
         },
         AdviceClaimReductionLayout, AdviceClaimReductionPublic, BooleanityChallenge,
@@ -87,8 +91,7 @@ use jolt_claims::{
         RamOutputCheckPublic, RamRaClaimReductionChallenge, RamRaClaimReductionPublic,
         RamRaVirtualizationChallenge, RamRafEvaluationPublic, RamReadWriteChallenge,
         RamValCheckChallenge, RegistersClaimReductionChallenge, RegistersReadWriteChallenge,
-        RegistersValEvaluationChallenge, SpartanProductVirtualizationPublic, SpartanShiftChallenge,
-        SpartanShiftPublic,
+        RegistersValEvaluationChallenge, SpartanShiftChallenge, SpartanShiftPublic,
     },
     public, Expr, Source, Term,
 };
@@ -98,7 +101,7 @@ use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{
     block_selector_mle_msb,
-    lagrange::{centered_lagrange_evals_array, centered_lagrange_kernel},
+    lagrange::{centered_lagrange_evals, centered_lagrange_kernel},
     range_mask_mle_msb, sparse_segments_mle_msb, try_eq_mle, EqPlusOnePolynomial,
     IdentityPolynomial, LtPolynomial, MultilinearEvaluation, OperandPolynomial, OperandSide,
 };
@@ -106,13 +109,14 @@ use jolt_program::preprocess::PublicIoMemory;
 use jolt_r1cs::constraints::jolt::{
     JoltSpartanOuterPublic, JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges,
     SPARTAN_OUTER_REMAINDER_DEGREE, SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
-    SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+    SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
+    SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
 use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency, SumcheckDomainSpec,
     SumcheckStatement,
 };
-use num_traits::{One, Zero};
+use num_traits::One;
 
 use super::{
     inputs::BlindFoldInputs,
@@ -130,8 +134,8 @@ mod stage6;
 mod stage7;
 
 type Builder<F, C> =
-    BlindFoldProtocolBuilder<F, VerifierOpeningId, C, VerifierPublicId, JoltChallengeId>;
-type VerifierExpr<F> = Expr<F, VerifierOpeningId, VerifierPublicId, JoltChallengeId>;
+    BlindFoldProtocolBuilder<F, VerifierOpeningId, C, VerifierPublicId, VerifierChallengeId>;
+type VerifierExpr<F> = Expr<F, VerifierOpeningId, VerifierPublicId, VerifierChallengeId>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VerifierOpeningId {
@@ -150,6 +154,8 @@ impl From<JoltOpeningId> for VerifierOpeningId {
 enum VerifierPublicId {
     Jolt(JoltPublicId),
     SpartanOuter(JoltSpartanOuterPublic),
+    #[cfg(feature = "field-inline")]
+    FieldInline(FieldInlinePublicId),
 }
 
 impl From<JoltPublicId> for VerifierPublicId {
@@ -158,10 +164,30 @@ impl From<JoltPublicId> for VerifierPublicId {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VerifierChallengeId {
+    Jolt(JoltChallengeId),
+    #[cfg(feature = "field-inline")]
+    FieldInline(FieldInlineChallengeId),
+}
+
+impl From<JoltChallengeId> for VerifierChallengeId {
+    fn from(id: JoltChallengeId) -> Self {
+        Self::Jolt(id)
+    }
+}
+
+#[cfg(feature = "field-inline")]
+impl From<FieldInlineChallengeId> for VerifierChallengeId {
+    fn from(id: FieldInlineChallengeId) -> Self {
+        Self::FieldInline(id)
+    }
+}
+
 #[derive(Default)]
 struct SourceValues<F: Field> {
     publics: Vec<(VerifierPublicId, F)>,
-    challenges: Vec<(JoltChallengeId, F)>,
+    challenges: Vec<(VerifierChallengeId, F)>,
 }
 
 pub(crate) fn build<PCS, VC, ZkProof>(
@@ -176,7 +202,7 @@ where
     let mut builder = BlindFoldProtocol::<PCS::Field, VC::Output>::builder::<
         VerifierOpeningId,
         VerifierPublicId,
-        JoltChallengeId,
+        VerifierChallengeId,
     >();
 
     builder = stage1::add_stage1(&input, builder, &mut values)?;
@@ -204,40 +230,6 @@ where
         .map_err(blindfold_error)?;
 
     Ok(BlindFoldOutput { protocol })
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "BlindFold stages are deliberately explicit."
-)]
-fn add_single_stage<F, C>(
-    builder: Builder<F, C>,
-    name: &'static str,
-    claim: &JoltRelationClaims<F>,
-    consistency: &CommittedSumcheckConsistency<F, C>,
-    output_claims: &CommittedOutputClaimOutput<C>,
-    values: &SourceValues<F>,
-    opening_ids: Vec<JoltOpeningId>,
-    aliases: Vec<OpeningAlias<JoltOpeningId>>,
-) -> Result<Builder<F, C>, VerifierError>
-where
-    F: Field,
-    C: Clone,
-{
-    let statement = SumcheckStatement::new(claim.sumcheck.rounds, claim.sumcheck.degree);
-    add_stage(
-        builder,
-        name,
-        statement,
-        domain_spec(claim.sumcheck),
-        consistency.clone(),
-        output_claims,
-        values,
-        map_jolt_opening_ids(opening_ids),
-        map_jolt_aliases(aliases),
-        map_jolt_expr(claim.input.expression().clone()),
-        map_jolt_expr(claim.output.expression().clone()),
-    )
 }
 
 #[expect(
@@ -390,6 +382,40 @@ fn map_jolt_aliases(
         .collect()
 }
 
+#[cfg(feature = "field-inline")]
+fn map_field_inline_opening_ids(opening_ids: Vec<FieldInlineOpeningId>) -> Vec<VerifierOpeningId> {
+    opening_ids
+        .into_iter()
+        .map(VerifierOpeningId::FieldInline)
+        .collect()
+}
+
+#[cfg(feature = "field-inline")]
+fn map_field_inline_expr<F: Field>(
+    expr: Expr<F, FieldInlineOpeningId, FieldInlinePublicId, FieldInlineChallengeId>,
+) -> VerifierExpr<F> {
+    Expr {
+        terms: expr
+            .terms
+            .into_iter()
+            .map(|term| Term {
+                coefficient: term.coefficient,
+                factors: term
+                    .factors
+                    .into_iter()
+                    .map(|source| match source {
+                        Source::Opening(id) => Source::Opening(VerifierOpeningId::FieldInline(id)),
+                        Source::Public(id) => Source::Public(VerifierPublicId::FieldInline(id)),
+                        Source::Challenge(id) => {
+                            Source::Challenge(VerifierChallengeId::FieldInline(id))
+                        }
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
 fn map_jolt_expr<F: Field>(
     expr: Expr<F, JoltOpeningId, JoltPublicId, JoltChallengeId>,
 ) -> VerifierExpr<F> {
@@ -405,7 +431,7 @@ fn map_jolt_expr<F: Field>(
                     .map(|source| match source {
                         Source::Opening(id) => Source::Opening(id.into()),
                         Source::Public(id) => Source::Public(id.into()),
-                        Source::Challenge(id) => Source::Challenge(id),
+                        Source::Challenge(id) => Source::Challenge(id.into()),
                     })
                     .collect(),
             })
@@ -1072,15 +1098,19 @@ impl<F: Field> SourceValues<F> {
         push_unique(&mut self.publics, id.into(), value, "public")
     }
 
-    fn challenge(&mut self, id: JoltChallengeId, value: F) -> Result<(), VerifierError> {
-        push_unique(&mut self.challenges, id, value, "challenge")
+    fn challenge(
+        &mut self,
+        id: impl Into<VerifierChallengeId>,
+        value: F,
+    ) -> Result<(), VerifierError> {
+        push_unique(&mut self.challenges, id.into(), value, "challenge")
     }
 
     fn has_public(&self, id: VerifierPublicId) -> bool {
         self.publics.iter().any(|(candidate, _)| *candidate == id)
     }
 
-    fn has_challenge(&self, id: JoltChallengeId) -> bool {
+    fn has_challenge(&self, id: VerifierChallengeId) -> bool {
         self.challenges
             .iter()
             .any(|(candidate, _)| *candidate == id)

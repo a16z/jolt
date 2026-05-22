@@ -413,16 +413,38 @@ crates/jolt-transcript/src/r1cs/
 API shape:
 
 ```rust
+pub struct R1csScalar<F> {
+    pub value: F,
+    pub lc: LinearCombination<F>,
+}
+
 pub trait R1csTranscript<F> {
-    fn absorb_scalar(&mut self, builder: &mut R1csBuilder<F>, value: Variable);
-    fn absorb_public_scalar(&mut self, builder: &mut R1csBuilder<F>, value: Variable);
-    fn challenge_scalar(&mut self, builder: &mut R1csBuilder<F>) -> Variable;
+    fn new(builder: &mut R1csBuilder<F>, label: &'static [u8]) -> Self;
+    fn challenge_scalar(&mut self, builder: &mut R1csBuilder<F>) -> R1csScalar<F>;
+}
+
+pub trait R1csFieldTranscript<F>: R1csTranscript<F> {
+    fn absorb_scalar(&mut self, builder: &mut R1csBuilder<F>, value: R1csScalar<F>);
+    fn absorb_constant_scalar(&mut self, builder: &mut R1csBuilder<F>, value: F);
+    fn absorb_u64(&mut self, builder: &mut R1csBuilder<F>, value: u64);
+    fn absorb_label(&mut self, builder: &mut R1csBuilder<F>, label: &'static [u8]);
+}
+
+pub trait R1csByteTranscript<F>: R1csTranscript<F> {
+    type Byte;
+
+    fn absorb_bytes(&mut self, builder: &mut R1csBuilder<F>, bytes: &[Self::Byte]);
+    fn absorb_constant_bytes(&mut self, builder: &mut R1csBuilder<F>, bytes: &'static [u8]);
 }
 ```
 
-The initial wrapper target should use the SNARK-friendly transcript selected for
-recursion. Native verifier replay and wrapper assembly must share the same
-transcript order and scalar encoding.
+The base trait owns transcript initialization and scalar challenge production.
+Absorption is capability-based: algebraic backends implement
+`R1csFieldTranscript`, while byte-oriented backends can later implement
+`R1csByteTranscript`. The initial wrapper target is the algebraic Poseidon path,
+so wrapper assembly should absorb field elements and domain-separation words
+directly instead of routing through byte decomposition. Native verifier replay
+and wrapper assembly must share the same transcript order and scalar encoding.
 
 ## R1CS Ownership
 
@@ -631,8 +653,10 @@ Each step should be reviewed before continuing to the next.
    - Review gate: variable-challenge tests reject bad challenge assignments.
 
 3. Add `jolt-transcript::r1cs`.
-   - Implement the selected SNARK-friendly transcript gadget.
-   - Match native transcript scalar encoding.
+   - Add capability traits for field-oriented and byte-oriented transcript
+     gadgets.
+   - Implement the field-oriented Poseidon transcript gadget first.
+   - Match native Poseidon transcript order and scalar encoding.
    - Review gate: R1CS challenge outputs match native transcript outputs for
      fixed absorption sequences.
 

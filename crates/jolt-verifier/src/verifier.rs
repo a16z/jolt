@@ -917,6 +917,14 @@ mod tests {
                         next_is_noop: zero,
                         virtual_instruction: zero,
                     },
+                    #[cfg(feature = "field-inline")]
+                    field_inline: stage2::inputs::FieldInlineStage2OutputOpeningClaims {
+                        product: stage2::inputs::FieldInlineProductOutputOpeningClaims {
+                            field_rs1_value: zero,
+                            field_rs2_value: zero,
+                            field_rd_value: zero,
+                        },
+                    },
                     instruction_claim_reduction:
                         stage2::inputs::InstructionClaimReductionOutputOpeningClaims {
                             lookup_output: None,

@@ -45,6 +45,11 @@ use crate::{
     },
     VerifierError,
 };
+
+#[cfg(feature = "field-inline")]
+use crate::stages::stage2::inputs::{
+    FieldInlineProductOutputOpeningClaims, FieldInlineStage2OutputOpeningClaims,
+};
 #[cfg(any(feature = "jolt-core-compat", test))]
 use jolt_claims::protocols::jolt::formulas::spartan::SpartanOuterDimensions;
 use jolt_claims::protocols::jolt::{
@@ -198,6 +203,14 @@ fn stage2_claims_from_native<F: Field>(
                 branch_flag: claims.get_or_zero(product_branch_flag),
                 next_is_noop: claims.get_or_zero(product_next_is_noop),
                 virtual_instruction: claims.get_or_zero(product_virtual_instruction),
+            },
+            #[cfg(feature = "field-inline")]
+            field_inline: FieldInlineStage2OutputOpeningClaims {
+                product: FieldInlineProductOutputOpeningClaims {
+                    field_rs1_value: F::zero(),
+                    field_rs2_value: F::zero(),
+                    field_rd_value: F::zero(),
+                },
             },
             instruction_claim_reduction: InstructionClaimReductionOutputOpeningClaims {
                 lookup_output: claims.get(instruction_lookup_output),
@@ -591,6 +604,14 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                     branch_flag: zero,
                     next_is_noop: zero,
                     virtual_instruction: zero,
+                },
+                #[cfg(feature = "field-inline")]
+                field_inline: FieldInlineStage2OutputOpeningClaims {
+                    product: FieldInlineProductOutputOpeningClaims {
+                        field_rs1_value: zero,
+                        field_rs2_value: zero,
+                        field_rd_value: zero,
+                    },
                 },
                 instruction_claim_reduction: InstructionClaimReductionOutputOpeningClaims {
                     lookup_output: None,

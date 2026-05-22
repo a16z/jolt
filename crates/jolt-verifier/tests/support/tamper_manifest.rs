@@ -523,6 +523,15 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "Stage 6 bytecode read-RAF consumes this Stage 2 pass-through claim",
     ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage2.claims.batch_outputs.field_inline.product",
+        "claims.stage2.batch_outputs.field_inline.product.*",
+        VerifierPhase::Stage2,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Deferred,
+        "field-inline product output claims are checked by the selected Stage 2 formulas once field-inline fixtures exist",
+    ),
     checked_standard(
         "stage2.claims.batch_outputs.instruction_claim_reduction",
         "claims.stage2.batch_outputs.instruction_claim_reduction.*",
@@ -1147,6 +1156,12 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage2.batch_outputs.product_remainder.branch_flag",
             "claims.stage2.batch_outputs.product_remainder.next_is_noop",
         ],
+        #[cfg(feature = "field-inline")]
+        "claims.stage2.batch_outputs.field_inline.product.*" => vec![
+            "claims.stage2.batch_outputs.field_inline.product.field_rs1_value",
+            "claims.stage2.batch_outputs.field_inline.product.field_rs2_value",
+            "claims.stage2.batch_outputs.field_inline.product.field_rd_value",
+        ],
         "claims.stage2.batch_outputs.instruction_claim_reduction.*" => vec![
             "claims.stage2.batch_outputs.instruction_claim_reduction.lookup_output",
             "claims.stage2.batch_outputs.instruction_claim_reduction.left_lookup_operand",
@@ -1273,6 +1288,14 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     branch_flag: zero,
                     next_is_noop: zero,
                     virtual_instruction: zero,
+                },
+                #[cfg(feature = "field-inline")]
+                field_inline: stage2::inputs::FieldInlineStage2OutputOpeningClaims {
+                    product: stage2::inputs::FieldInlineProductOutputOpeningClaims {
+                        field_rs1_value: zero,
+                        field_rs2_value: zero,
+                        field_rd_value: zero,
+                    },
                 },
                 instruction_claim_reduction:
                     stage2::inputs::InstructionClaimReductionOutputOpeningClaims {

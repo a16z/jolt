@@ -34,9 +34,28 @@ pub fn field_product_output_openings() -> [FieldInlineOpeningId; 2] {
     [field_rs1_value_product(), field_rs2_value_product()]
 }
 
+pub fn selected_product_uniskip_input_openings() -> [FieldInlineOpeningId; 2] {
+    [field_product_opening(), field_inv_product_opening()]
+}
+
+pub fn selected_product_remainder_output_openings() -> [FieldInlineOpeningId; 3] {
+    [
+        field_rs1_value_product(),
+        field_rs2_value_product(),
+        field_rd_value_product(),
+    ]
+}
+
 fn field_product_opening() -> FieldInlineOpeningId {
     FieldInlineOpeningId::virtual_polynomial(
         FieldInlineVirtualPolynomial::FieldProduct,
+        FieldInlineRelationId::FieldRegistersProduct,
+    )
+}
+
+fn field_inv_product_opening() -> FieldInlineOpeningId {
+    FieldInlineOpeningId::virtual_polynomial(
+        FieldInlineVirtualPolynomial::FieldInvProduct,
         FieldInlineRelationId::FieldRegistersProduct,
     )
 }
@@ -51,6 +70,13 @@ fn field_rs1_value_product() -> FieldInlineOpeningId {
 fn field_rs2_value_product() -> FieldInlineOpeningId {
     FieldInlineOpeningId::virtual_polynomial(
         FieldInlineVirtualPolynomial::FieldRs2Value,
+        FieldInlineRelationId::FieldRegistersProduct,
+    )
+}
+
+fn field_rd_value_product() -> FieldInlineOpeningId {
+    FieldInlineOpeningId::virtual_polynomial(
+        FieldInlineVirtualPolynomial::FieldRdValue,
         FieldInlineRelationId::FieldRegistersProduct,
     )
 }
@@ -81,6 +107,18 @@ mod tests {
         assert!(claims.required_challenges().is_empty());
         assert!(claims.required_publics().is_empty());
         assert_eq!(claims.num_challenges(), 0);
+        assert_eq!(
+            selected_product_uniskip_input_openings(),
+            [field_product_opening(), field_inv_product_opening()]
+        );
+        assert_eq!(
+            selected_product_remainder_output_openings(),
+            [
+                field_rs1_value_product(),
+                field_rs2_value_product(),
+                field_rd_value_product(),
+            ]
+        );
     }
 
     #[test]
