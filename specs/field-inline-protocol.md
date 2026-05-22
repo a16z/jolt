@@ -354,10 +354,13 @@ stage 8:
   RLCs it with the ordinary final committed openings
 ```
 
-For v1, the expected new committed field-inline surface is `FieldRdInc`. If a
-future version commits FR RA chunks, those chunks need the same style of
-stage-6/stage-7 reduction to the stage-8 opening point before they enter the
-final RLC.
+For v1, the new committed field-inline surface is nested under
+`FieldInlineCommitments::field_registers` and includes `FieldRdInc` plus
+`FieldRegistersRa(i)` commitments. `FieldRdInc` enters the stage-6 reduction
+and then the final PCS RLC. `FieldRegistersRa(i)` commitments mirror the
+ordinary register Twist commitment surface. Their opening/reduction path should
+follow the same explicit polynomial-to-relation mapping discipline before any
+FR RA claim enters stage 8.
 
 ## Field Constraints
 
@@ -582,6 +585,7 @@ ordinary:
 
 field:
   FieldRdInc committed or otherwise opened from the FR increment witness
+  FieldRegistersRa(i) committed for FR RA chunks carried in the proof payload
   FieldRegistersVal/FieldRs1Ra/FieldRs2Ra/FieldRdWa virtual
 ```
 
@@ -763,8 +767,9 @@ Each step should be reviewed before continuing to the next.
 6. Wire verifier support one stage slice at a time.
    - Proof/config gate: require `proof.protocol.field_inline` to match the
      compile-time verifier config before any stage logic runs.
-   - Commitment absorption: absorb `FieldRdInc` and any future FR commitments
-     only when field inline is enabled.
+   - Commitment absorption: absorb the nested FieldRegisters commitments,
+     currently `FieldRdInc` and `FieldRegistersRa(i)`, only when field inline
+     is enabled.
    - Stage 1 / Spartan outer metadata: make the Spartan/R1CS key metadata
      field-constraints-aware when FR is enabled.
    - Stage 2 product virtualization: add `FieldRegistersProduct` as an

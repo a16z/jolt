@@ -96,6 +96,8 @@ pub struct JoltCommitments<C> {
     pub rd_inc: C,
     pub ram_inc: C,
     pub ra: JoltRaCommitments<C>,
+    #[cfg(feature = "field-inline")]
+    pub field_inline: FieldInlineCommitments<C>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,12 +117,55 @@ impl<C> JoltRaCommitments<C> {
     }
 }
 
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldInlineCommitments<C> {
+    pub field_registers: FieldRegistersCommitments<C>,
+}
+
+#[cfg(feature = "field-inline")]
+impl<C> FieldInlineCommitments<C> {
+    pub fn new(field_registers: FieldRegistersCommitments<C>) -> Self {
+        Self { field_registers }
+    }
+}
+
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldRegistersCommitments<C> {
+    pub rd_inc: C,
+    pub ra: Vec<C>,
+}
+
+#[cfg(feature = "field-inline")]
+impl<C> FieldRegistersCommitments<C> {
+    pub fn new(rd_inc: C, ra: Vec<C>) -> Self {
+        Self { rd_inc, ra }
+    }
+}
+
 impl<C> JoltCommitments<C> {
+    #[cfg(not(feature = "field-inline"))]
     pub fn new(rd_inc: C, ram_inc: C, ra: JoltRaCommitments<C>) -> Self {
         Self {
             rd_inc,
             ram_inc,
             ra,
+        }
+    }
+
+    #[cfg(feature = "field-inline")]
+    pub fn new(
+        rd_inc: C,
+        ram_inc: C,
+        ra: JoltRaCommitments<C>,
+        field_inline: FieldInlineCommitments<C>,
+    ) -> Self {
+        Self {
+            rd_inc,
+            ram_inc,
+            ra,
+            field_inline,
         }
     }
 }

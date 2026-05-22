@@ -46,6 +46,7 @@ pub enum FieldInlineChallengeId {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum FieldInlineCommittedPolynomial {
     FieldRdInc,
+    FieldRegistersRa(usize),
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]

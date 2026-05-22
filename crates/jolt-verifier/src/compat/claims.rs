@@ -1,9 +1,15 @@
 //! Compatibility opening-claim conversion.
 
-#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
+#[cfg(all(
+    any(test, all(feature = "jolt-core-compat", not(feature = "field-inline"))),
+    not(feature = "zk")
+))]
 use std::collections::BTreeMap;
 
-#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
+#[cfg(all(
+    any(test, all(feature = "jolt-core-compat", not(feature = "field-inline"))),
+    not(feature = "zk")
+))]
 use crate::compat::ids as legacy;
 use crate::{
     proof::{ClearProofClaims, JoltProof, JoltProofClaims},
@@ -60,12 +66,18 @@ use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
 use jolt_riscv::CircuitFlags;
 
-#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
+#[cfg(all(
+    any(test, all(feature = "jolt-core-compat", not(feature = "field-inline"))),
+    not(feature = "zk")
+))]
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(bound = "")]
 pub struct LegacyOpeningClaims<F: Field>(pub BTreeMap<legacy::OpeningId, F>);
 
-#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
+#[cfg(all(
+    any(test, all(feature = "jolt-core-compat", not(feature = "field-inline"))),
+    not(feature = "zk")
+))]
 pub(crate) fn native_opening_claims_from_legacy<F: Field>(
     claims: LegacyOpeningClaims<F>,
 ) -> Vec<(native::JoltOpeningId, F)> {
@@ -76,7 +88,11 @@ pub(crate) fn native_opening_claims_from_legacy<F: Field>(
         .collect()
 }
 
-#[cfg(all(feature = "jolt-core-compat", not(feature = "zk")))]
+#[cfg(all(
+    feature = "jolt-core-compat",
+    not(feature = "field-inline"),
+    not(feature = "zk")
+))]
 pub(crate) fn clear_claims_from_legacy<F: Field>(
     claims: LegacyOpeningClaims<F>,
     trace_length: usize,
@@ -1635,7 +1651,10 @@ fn claim_mut_from_stage7_outputs<F: Field>(
     }
 }
 
-#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
+#[cfg(all(
+    any(test, all(feature = "jolt-core-compat", not(feature = "field-inline"))),
+    not(feature = "zk")
+))]
 fn opening_id(id: legacy::OpeningId) -> native::JoltOpeningId {
     match id {
         legacy::OpeningId::Polynomial(polynomial, stage) => {
@@ -1650,7 +1669,10 @@ fn opening_id(id: legacy::OpeningId) -> native::JoltOpeningId {
     }
 }
 
-#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
+#[cfg(all(
+    any(test, all(feature = "jolt-core-compat", not(feature = "field-inline"))),
+    not(feature = "zk")
+))]
 fn polynomial_id(id: legacy::PolynomialId) -> native::JoltPolynomialId {
     match id {
         legacy::PolynomialId::Committed(polynomial) => {
@@ -1662,7 +1684,10 @@ fn polynomial_id(id: legacy::PolynomialId) -> native::JoltPolynomialId {
     }
 }
 
-#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
+#[cfg(all(
+    any(test, all(feature = "jolt-core-compat", not(feature = "field-inline"))),
+    not(feature = "zk")
+))]
 fn committed_polynomial(
     polynomial: legacy::CommittedPolynomial,
 ) -> native::JoltCommittedPolynomial {
@@ -1685,7 +1710,10 @@ fn committed_polynomial(
     }
 }
 
-#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
+#[cfg(all(
+    any(test, all(feature = "jolt-core-compat", not(feature = "field-inline"))),
+    not(feature = "zk")
+))]
 fn virtual_polynomial(polynomial: legacy::VirtualPolynomial) -> native::JoltVirtualPolynomial {
     match polynomial {
         legacy::VirtualPolynomial::PC => native::JoltVirtualPolynomial::PC,
@@ -1752,7 +1780,10 @@ fn virtual_polynomial(polynomial: legacy::VirtualPolynomial) -> native::JoltVirt
     }
 }
 
-#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
+#[cfg(all(
+    any(test, all(feature = "jolt-core-compat", not(feature = "field-inline"))),
+    not(feature = "zk")
+))]
 fn stage_id(id: legacy::SumcheckId) -> native::JoltRelationId {
     match id {
         legacy::SumcheckId::SpartanOuter => native::JoltRelationId::SpartanOuter,

@@ -344,6 +344,13 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     for commitment in &proof.commitments.ra.bytecode {
         absorb_commitment(commitment);
     }
+    #[cfg(feature = "field-inline")]
+    {
+        absorb_commitment(&proof.commitments.field_inline.field_registers.rd_inc);
+        for commitment in &proof.commitments.field_inline.field_registers.ra {
+            absorb_commitment(commitment);
+        }
+    }
     if let Some(untrusted_advice_commitment) = &proof.untrusted_advice_commitment {
         append_payload_label(transcript, b"untrusted_advice", untrusted_advice_commitment);
         transcript.append(untrusted_advice_commitment);
@@ -466,6 +473,8 @@ where
 mod tests {
     use super::*;
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
+    #[cfg(feature = "field-inline")]
+    use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};
     use common::jolt_device::{JoltDevice, MemoryLayout};
     use jolt_claims::protocols::field_inline::FieldInlineConfig;
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
@@ -479,14 +488,14 @@ mod tests {
     use jolt_sumcheck::{
         ClearProof, ClearSumcheckProof, CommittedSumcheckProof, CompressedSumcheckProof,
     };
-    use jolt_transcript::Transcript;
+    use jolt_transcript::{Transcript, U64Word};
     use num_traits::Zero;
 
     #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     struct TestPcs;
 
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-    struct TestCommitment;
+    struct TestCommitment(u64);
 
     impl Commitment for TestPcs {
         type Output = TestCommitment;
@@ -511,7 +520,7 @@ mod tests {
             _poly: &P,
             _setup: &Self::ProverSetup,
         ) -> (Self::Output, Self::OpeningHint) {
-            (TestCommitment, ())
+            (TestCommitment::default(), ())
         }
 
         fn open(
@@ -544,7 +553,39 @@ mod tests {
     }
 
     impl jolt_transcript::AppendToTranscript for TestCommitment {
-        fn append_to_transcript<T: Transcript>(&self, _transcript: &mut T) {}
+        fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+            transcript.append(&U64Word(self.0));
+        }
+
+        fn transcript_payload_len(&self) -> Option<u64> {
+            Some(32)
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingTranscript {
+        chunks: Vec<Vec<u8>>,
+        state: [u8; 32],
+    }
+
+    impl Transcript for RecordingTranscript {
+        type Challenge = Fr;
+
+        fn new(_label: &'static [u8]) -> Self {
+            Self::default()
+        }
+
+        fn append_bytes(&mut self, bytes: &[u8]) {
+            self.chunks.push(bytes.to_vec());
+        }
+
+        fn challenge(&mut self) -> Self::Challenge {
+            Fr::zero()
+        }
+
+        fn state(&self) -> &[u8; 32] {
+            &self.state
+        }
     }
 
     type TestProof = JoltProof<TestPcs, Pedersen<Bn254G1>>;
@@ -742,11 +783,53 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn absorb_commitments_follows_selected_commitment_order() {
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.commitments = selected_commitments(
+            TestCommitment(1),
+            TestCommitment(2),
+            crate::proof::JoltRaCommitments::new(
+                vec![TestCommitment(3), TestCommitment(4)],
+                vec![TestCommitment(5)],
+                vec![TestCommitment(6)],
+            ),
+        );
+        proof.untrusted_advice_commitment = Some(TestCommitment(10));
+
+        let trusted_advice_commitment = TestCommitment(11);
+        let mut transcript = RecordingTranscript::new(b"commitments");
+        absorb_commitments(&proof, Some(&trusted_advice_commitment), &mut transcript);
+
+        let mut expected = vec![1, 2, 3, 4, 5, 6];
+        #[cfg(feature = "field-inline")]
+        expected.extend([7, 8, 9]);
+        expected.extend([10, 11]);
+        assert_eq!(commitment_payload_values(&transcript), expected);
+    }
+
+    fn commitment_payload_values(transcript: &RecordingTranscript) -> Vec<u64> {
+        transcript
+            .chunks
+            .iter()
+            .filter_map(|chunk| {
+                let (prefix, suffix) = chunk.split_at(24);
+                if prefix.iter().all(|byte| *byte == 0) {
+                    let mut bytes = [0u8; 8];
+                    bytes.copy_from_slice(suffix);
+                    Some(u64::from_be_bytes(bytes))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     fn proof_with_zk(is_zk: bool, claims: TestClaims) -> TestProof {
         JoltProof::new(
-            crate::proof::JoltCommitments::new(
-                TestCommitment,
-                TestCommitment,
+            selected_commitments(
+                TestCommitment::default(),
+                TestCommitment::default(),
                 crate::proof::JoltRaCommitments::new(
                     Vec::<TestCommitment>::new(),
                     Vec::<TestCommitment>::new(),
@@ -770,6 +853,32 @@ mod tests {
                 lookups_ra_virtual_log_k_chunk: 0,
             },
             crate::proof::TracePolynomialOrder::CycleMajor,
+        )
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    fn selected_commitments(
+        rd_inc: TestCommitment,
+        ram_inc: TestCommitment,
+        ra: crate::proof::JoltRaCommitments<TestCommitment>,
+    ) -> crate::proof::JoltCommitments<TestCommitment> {
+        crate::proof::JoltCommitments::new(rd_inc, ram_inc, ra)
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn selected_commitments(
+        rd_inc: TestCommitment,
+        ram_inc: TestCommitment,
+        ra: crate::proof::JoltRaCommitments<TestCommitment>,
+    ) -> crate::proof::JoltCommitments<TestCommitment> {
+        crate::proof::JoltCommitments::new(
+            rd_inc,
+            ram_inc,
+            ra,
+            FieldInlineCommitments::new(FieldRegistersCommitments::new(
+                TestCommitment(7),
+                vec![TestCommitment(8), TestCommitment(9)],
+            )),
         )
     }
 

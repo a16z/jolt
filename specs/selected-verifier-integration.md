@@ -336,7 +336,7 @@ When enabled:
 
 ```text
 validate_proof_config requires proof.protocol.field_inline to match verifier config
-commitment absorption includes FR commitments, currently FieldRdInc
+commitment absorption includes FieldRegisters commitments: FieldRdInc and FieldRegistersRa(i)
 stage 1 / Spartan outer uses the field-constraints-aware R1CS key metadata
 stage 2 extends product virtualization with a FieldProduct lane
 stage 2 batches field-register claim reduction at the product point
@@ -370,7 +370,12 @@ Each slice has a small review gate and must preserve the FR-off path.
 
 1. Commitment and preamble absorption.
    - Absorb FR commitments only when field inline is enabled.
-   - For v1 this is expected to include `FieldRdInc`.
+   - For v1 this includes the nested `FieldInlineCommitments {
+     field_registers: FieldRegistersCommitments { rd_inc, ra } }` payload,
+     where `ra` stores `FieldRegistersRa(i)` commitments.
+   - The `jolt-core` compatibility converter is unavailable for
+     `field-inline` builds until the prover path can supply this nested
+     payload.
    - Review gate: FR-off transcript matches ordinary Jolt through the first
      config-dependent challenge.
 
@@ -538,7 +543,8 @@ JOLT_VERIFIER_CONFIG:
   field_inline.enabled = true
 
 verify:
-  validate_proof_config requires field_inline payload
+  validate_proof_config requires the selected field_inline config
+  absorb nested FieldRegisters commitments
   run ordinary stages with FR additions
   verify opening phase according to pcs_assist config
 ```

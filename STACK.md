@@ -32,7 +32,7 @@ truth.
 | 10 | `stack/10-jolt-prover-spec` | `stack/09-jolt-verifier-crate` | `specs/jolt-prover-model-crate.md` |
 | 11 | `stack/11-extended-jolt-field-inline-wrapper-spec` | `stack/10-jolt-prover-spec` | extended Jolt / field inline / wrapper spec plus supporting recursion reference doc |
 | 12 | `stack/12-selected-verifier-integration-spec` | `stack/11-extended-jolt-field-inline-wrapper-spec` | selected verifier integration spec |
-| 13 | `stack/13-field-inline-protocol-spec` | `stack/12-selected-verifier-integration-spec` | field inline protocol spec |
+| 13 | `stack/13-field-inline-protocol-spec` | `stack/12-selected-verifier-integration-spec` | field inline protocol spec, verifier-spec updates, formulas, R1CS hooks, RISC-V flags, and verifier protocol config |
 | 14 | `stack/14-dory-assist-protocol-spec` | `stack/13-field-inline-protocol-spec` | Dory assist protocol spec |
 | 15 | `stack/15-wrapper-protocol-spec` | `stack/14-dory-assist-protocol-spec` | wrapper protocol spec and shared wrapper R1CS infrastructure |
 
@@ -80,10 +80,11 @@ the later row wins for changed files under that path. This keeps broad crate
 bootstrap PRs stable while letting later implementation PRs own narrower
 submodules in the same crate.
 
-PR 15 also owns a few shared wrapper R1CS files that were introduced before the
-wrapper spec row existed. Earlier crate-bootstrap rows restore those files from
-the pre-wrapper baseline, then PR 15 restores the current source version so the
-wrapper implementation diff reviews with the wrapper spec.
+PR 13 and PR 15 also own shared files that were introduced before those spec
+rows existed. Earlier broad crate-bootstrap rows restore those files from the
+`09ed244b` verifier-v1 baseline, then the owning feature row restores the
+current source version. This keeps `jolt-verifier` v1 stable while field-inline
+and wrapper work reviews with their respective specs.
 
 ## Manual Materialization
 

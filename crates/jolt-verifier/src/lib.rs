@@ -15,4 +15,6 @@ pub use config::{
 pub use error::VerifierError;
 pub use preprocessing::JoltVerifierPreprocessing;
 pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
+#[cfg(feature = "field-inline")]
+pub use proof::{FieldInlineCommitments, FieldRegistersCommitments};
 pub use verifier::{verify, CheckedInputs};

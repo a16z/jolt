@@ -166,24 +166,29 @@ restore_owned_paths() {
   done
 }
 
-overlay_order="15"
 overlay_base_ref="09ed244b373f68152b09cc64fb9ed38ca19d6b61"
-overlay_paths=(
-  "crates/jolt-r1cs/src/lib.rs"
-  "crates/jolt-r1cs/src/lowering.rs"
-  "crates/jolt-blindfold/src/r1cs.rs"
-)
 
-is_overlay_path() {
+overlay_target_order() {
   local path="$1"
-  local overlay_path
 
-  for overlay_path in "${overlay_paths[@]}"; do
-    if [[ "$path" == "$overlay_path" ]]; then
-      return 0
-    fi
-  done
-  return 1
+  case "$path" in
+    crates/jolt-r1cs/src/lib.rs|\
+    crates/jolt-r1cs/src/lowering.rs|\
+    crates/jolt-blindfold/src/r1cs.rs)
+      printf '%s\n' 15
+      ;;
+    crates/jolt-claims/*|\
+    crates/jolt-field/src/ring_core.rs|\
+    crates/jolt-r1cs/src/constraints/field_constraints.rs|\
+    crates/jolt-r1cs/src/constraints/mod.rs|\
+    crates/jolt-riscv/src/flags.rs|\
+    crates/jolt-riscv/src/lib.rs|\
+    crates/jolt-verifier/*|\
+    crates/jolt-blindfold/tests/jolt_claims_pipeline.rs|\
+    specs/jolt-verifier-model-crate.md)
+      printf '%s\n' 13
+      ;;
+  esac
 }
 
 filter_overlay_paths() {
@@ -193,7 +198,7 @@ filter_overlay_paths() {
 
   : > "$output"
   while IFS= read -r path; do
-    if ! is_overlay_path "$path"; then
+    if [[ -z "$(overlay_target_order "$path")" ]]; then
       printf '%s\n' "$path" >> "$output"
     fi
   done < "$input"
@@ -202,23 +207,29 @@ filter_overlay_paths() {
 restore_overlay_base_paths() {
   local order="$1"
   local owned_paths_file="$2"
-  local paths=()
-  local overlay_path
+  local path
+  local target_order
+  local count=0
 
-  if [[ "$order" == "$overlay_order" ]]; then
-    return
-  fi
+  git rev-parse --verify "$overlay_base_ref^{commit}" >/dev/null
 
-  for overlay_path in "${overlay_paths[@]}"; do
-    if grep -Fxq "$overlay_path" "$owned_paths_file"; then
-      paths+=("$overlay_path")
+  while IFS= read -r path; do
+    target_order="$(overlay_target_order "$path")"
+    if [[ -z "$target_order" || "$target_order" == "$order" ]]; then
+      continue
     fi
-  done
 
-  if ((${#paths[@]})); then
-    git rev-parse --verify "$overlay_base_ref^{commit}" >/dev/null
-    git restore --source "$overlay_base_ref" -- "${paths[@]}"
-    echo "  restored overlay base for ${#paths[@]} shared wrapper path(s)"
+    if pathspec_matches_ref "$overlay_base_ref" "$path"; then
+      git restore --source "$overlay_base_ref" -- "$path"
+    else
+      rm -rf "$path"
+      git rm -rf --quiet --ignore-unmatch -- "$path"
+    fi
+    count=$((count + 1))
+  done < "$owned_paths_file"
+
+  if ((count)); then
+    echo "  restored overlay base for $count later-owned path(s)"
   fi
 }
 

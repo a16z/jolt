@@ -164,12 +164,26 @@ pub struct JoltCommitments<C> {
     pub rd_inc: C,
     pub ram_inc: C,
     pub ra: JoltRaCommitments<C>,
+    #[cfg(feature = "field-inline")]
+    pub field_inline: FieldInlineCommitments<C>,
 }
 
 pub struct JoltRaCommitments<C> {
     pub instruction: Vec<C>,
     pub ram: Vec<C>,
     pub bytecode: Vec<C>,
+}
+
+#[cfg(feature = "field-inline")]
+pub struct FieldInlineCommitments<C> {
+    pub field_registers: FieldRegistersCommitments<C>,
+}
+
+#[cfg(feature = "field-inline")]
+pub struct FieldRegistersCommitments<C> {
+    pub rd_inc: C,
+    // FieldRegistersRa(i), in proof/transcript order.
+    pub ra: Vec<C>,
 }
 ```
 
