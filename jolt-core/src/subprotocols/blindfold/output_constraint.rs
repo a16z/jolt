@@ -153,10 +153,16 @@ impl OutputClaimConstraint {
     }
 
     pub fn estimate_aux_var_count(&self) -> usize {
-        let mut visitor = CountVisitor;
-        let mut count = 0usize;
-        self.visit(&mut visitor, &mut count);
-        count
+        self.terms
+            .iter()
+            .map(|term| {
+                std::iter::once(&term.coeff)
+                    .chain(&term.factors)
+                    .filter(|source| matches!(source, ValueSource::Opening(_)))
+                    .count()
+                    .saturating_sub(1)
+            })
+            .sum()
     }
 
     pub fn visit<V: SumOfProductsVisitor>(&self, visitor: &mut V, acc: &mut V::Acc) {
@@ -217,22 +223,31 @@ impl OutputClaimConstraint {
     }
 
     pub fn batch(constraints: &[Option<OutputClaimConstraint>]) -> Option<Self> {
-        if constraints.iter().any(|c| c.is_none()) {
-            return None;
-        }
-
-        let refs: Vec<&OutputClaimConstraint> =
-            constraints.iter().map(|c| c.as_ref().unwrap()).collect();
-        Some(Self::batch_inner(&refs))
+        Some(Self::batch_optional(constraints))
     }
 
     fn batch_inner(constraints: &[&OutputClaimConstraint]) -> Self {
+        let constraints = constraints.iter().map(|constraint| Some(*constraint));
+        Self::batch_optional_refs(constraints)
+    }
+
+    fn batch_optional(constraints: &[Option<OutputClaimConstraint>]) -> Self {
+        Self::batch_optional_refs(constraints.iter().map(|constraint| constraint.as_ref()))
+    }
+
+    fn batch_optional_refs<'a>(
+        constraints: impl IntoIterator<Item = Option<&'a OutputClaimConstraint>>,
+    ) -> Self {
+        let constraints = constraints.into_iter().collect::<Vec<_>>();
         let num_instances = constraints.len();
         let mut combined_terms = Vec::new();
         let mut combined_openings = Vec::new();
         let mut challenge_offset = num_instances;
 
         for (j, constraint) in constraints.iter().enumerate() {
+            let Some(constraint) = constraint else {
+                continue;
+            };
             let alpha_j = ValueSource::Challenge(j);
 
             for term in &constraint.terms {
@@ -284,30 +299,6 @@ pub trait SumOfProductsVisitor {
     fn on_chain_start(&mut self, acc: &mut Self::Acc, f0: Self::Resolved, f1: Self::Resolved);
     fn on_chain_step(&mut self, acc: &mut Self::Acc, factor: Self::Resolved);
     fn on_chain_finalize(&mut self, acc: &mut Self::Acc, coeff: Self::Resolved);
-}
-
-struct CountVisitor;
-
-impl SumOfProductsVisitor for CountVisitor {
-    type Resolved = ();
-    type Acc = usize;
-
-    fn resolve(&self, _vs: &ValueSource) {}
-    fn on_no_factors(&mut self, acc: &mut usize, _coeff: ()) {
-        *acc += 1;
-    }
-    fn on_single_factor(&mut self, acc: &mut usize, _coeff: (), _factor: ()) {
-        *acc += 1;
-    }
-    fn on_chain_start(&mut self, acc: &mut usize, _f0: (), _f1: ()) {
-        *acc += 1;
-    }
-    fn on_chain_step(&mut self, acc: &mut usize, _factor: ()) {
-        *acc += 1;
-    }
-    fn on_chain_finalize(&mut self, acc: &mut usize, _coeff: ()) {
-        *acc += 1;
-    }
 }
 
 pub(crate) struct EvaluateVisitor<'a, F> {
