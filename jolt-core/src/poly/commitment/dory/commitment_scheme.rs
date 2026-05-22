@@ -252,6 +252,16 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         let mut dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
 
+        #[cfg(not(feature = "zk"))]
+        if proof.e2.is_some()
+            || proof.y_com.is_some()
+            || proof.sigma1_proof.is_some()
+            || proof.sigma2_proof.is_some()
+            || proof.scalar_product_proof.is_some()
+        {
+            return Err(ProofVerifyError::InvalidOpeningProof);
+        }
+
         dory::verify::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _>(
             *commitment,
             ark_eval,
