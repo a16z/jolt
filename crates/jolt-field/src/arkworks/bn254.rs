@@ -363,6 +363,7 @@ impl TranscriptChallenge for Fr {
         buf[..len].copy_from_slice(&bytes[..len]);
         let value = u128::from_le_bytes(buf);
         let low = value as u64;
+        // Top 3 bits of high limb are zeroed to ensure value < BN254 modulus.
         let high = ((value >> 64) as u64) & (u64::MAX >> 3);
         let Some(inner) = InnerFr::from_bigint_unchecked(ark_ff::BigInt::new([0, 0, low, high]))
         else {
