@@ -15,6 +15,27 @@ use crate::constants::{
     RAM_START_ADDRESS, STACK_CANARY_SIZE,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryLayoutError {
+    ZeroAddress,
+    AddressBelowLowest { address: u64, lowest_address: u64 },
+}
+
+impl core::fmt::Display for MemoryLayoutError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::ZeroAddress => write!(f, "cannot remap the zero address"),
+            Self::AddressBelowLowest {
+                address,
+                lowest_address,
+            } => write!(
+                f,
+                "address {address} is below lowest mapped address {lowest_address}"
+            ),
+        }
+    }
+}
+
 #[allow(clippy::too_long_first_doc_paragraph)]
 /// Represented as a "peripheral device" in the RISC-V emulator, this captures
 /// all reads from the reserved memory address space for program inputs and all writes
@@ -153,6 +174,27 @@ impl JoltDevice {
     fn convert_write_address(&self, address: u64) -> usize {
         (address - self.memory_layout.output_start) as usize
     }
+
+    pub fn input_words_le(&self) -> Vec<u64> {
+        bytes_to_words_le(&self.inputs)
+    }
+
+    pub fn output_words_le(&self) -> Vec<u64> {
+        bytes_to_words_le(&self.outputs)
+    }
+}
+
+pub fn bytes_to_words_le(bytes: &[u8]) -> Vec<u64> {
+    bytes
+        .chunks(8)
+        .map(|chunk| {
+            let mut value = 0u64;
+            for (index, byte) in chunk.iter().enumerate() {
+                value |= u64::from(*byte) << (8 * index);
+            }
+            value
+        })
+        .collect()
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -399,6 +441,27 @@ impl MemoryLayout {
         self.trusted_advice_start.min(self.untrusted_advice_start)
     }
 
+    pub fn remap_word_address(&self, address: u64) -> Result<Option<u64>, MemoryLayoutError> {
+        if address == 0 {
+            return Ok(None);
+        }
+
+        let lowest_address = self.get_lowest_address();
+        if address >= lowest_address {
+            Ok(Some((address - lowest_address) / 8))
+        } else {
+            Err(MemoryLayoutError::AddressBelowLowest {
+                address,
+                lowest_address,
+            })
+        }
+    }
+
+    pub fn remapped_word_address(&self, address: u64) -> Result<u64, MemoryLayoutError> {
+        self.remap_word_address(address)?
+            .ok_or(MemoryLayoutError::ZeroAddress)
+    }
+
     /// Returns the total emulator memory (program + canary + stack + heap).
     pub fn get_total_memory_size(&self) -> u64 {
         self.heap_end - RAM_START_ADDRESS
@@ -422,5 +485,43 @@ mod tests {
         // but still lands past the output region in convert_write_address
         let overflow_address = device.memory_layout.io_end;
         device.store(overflow_address, 0x42);
+    }
+
+    #[test]
+    fn packs_public_io_bytes_into_little_endian_words() {
+        let mut device = JoltDevice::new(&MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        });
+        device.inputs = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
+        device.outputs = vec![0xaa, 0xbb];
+
+        assert_eq!(device.input_words_le(), vec![0x0807_0605_0403_0201, 9]);
+        assert_eq!(device.output_words_le(), vec![0xbbaa]);
+    }
+
+    #[test]
+    fn remaps_word_addresses_relative_to_lowest_reserved_address() {
+        let device = JoltDevice::new(&MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        });
+        let layout = &device.memory_layout;
+        let lowest = layout.get_lowest_address();
+
+        assert_eq!(layout.remap_word_address(0), Ok(None));
+        assert_eq!(
+            layout.remapped_word_address(0),
+            Err(MemoryLayoutError::ZeroAddress)
+        );
+        assert_eq!(layout.remapped_word_address(lowest), Ok(0));
+        assert_eq!(layout.remapped_word_address(lowest + 16), Ok(2));
+        assert_eq!(
+            layout.remapped_word_address(lowest - 8),
+            Err(MemoryLayoutError::AddressBelowLowest {
+                address: lowest - 8,
+                lowest_address: lowest,
+            })
+        );
     }
 }
