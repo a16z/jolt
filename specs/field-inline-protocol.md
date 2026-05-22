@@ -480,6 +480,55 @@ that order. The BlindFold builder uses the same order and the same
 `FieldRegistersReadWriteChecking` claim expression so ZK mode binds hidden
 outputs to the identical Stage 4 equations.
 
+### Stage 5 Composition
+
+Stage 5 batches field-register value evaluation beside the ordinary
+instruction read-RAF, RAM RA reduction, and register value-evaluation work:
+
+```text
+FR off:
+  1. InstructionReadRaf
+  2. RamRaClaimReduction
+  3. RegistersValEvaluation
+
+FR on:
+  1. InstructionReadRaf
+  2. RamRaClaimReduction
+  3. RegistersValEvaluation
+  4. FieldRegistersValEvaluation
+```
+
+`FieldRegistersValEvaluation` consumes the `FieldRegistersVal` output from
+Stage 4 at the field-register read/write point:
+
+```text
+input:
+  FieldRegistersVal(r_field_rw)
+```
+
+It opens the same field-register address at the Stage 5 value-evaluation
+cycle point and checks the write activation:
+
+```text
+output:
+  Lt(r_field_val.cycle, r_field_rw.cycle)
+    * FieldRdInc(r_field_val)
+    * FieldRdWa(r_field_val)
+```
+
+The committed output-claim row order appends the two field-register
+value-evaluation outputs after the ordinary register value-evaluation outputs:
+
+```text
+FieldRdInc
+FieldRdWa
+```
+
+The transparent verifier appends those values to the Fiat-Shamir transcript in
+that order. The BlindFold builder uses the same order and the same
+`FieldRegistersValEvaluation` claim expression so ZK mode binds hidden outputs
+to the identical Stage 5 equations.
+
 ## Field Constraints
 
 Target module:

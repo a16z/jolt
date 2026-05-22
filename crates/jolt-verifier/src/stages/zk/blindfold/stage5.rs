@@ -18,6 +18,9 @@ where
         instruction::read_raf::<PCS::Field>(formula_dimensions.instruction_read_raf);
     let ram_claims = ram::ra_claim_reduction::<PCS::Field>(trace_dimensions);
     let registers_claims = registers::val_evaluation::<PCS::Field>(trace_dimensions);
+    #[cfg(feature = "field-inline")]
+    let field_registers_claims =
+        field_registers::val_evaluation::<PCS::Field>(FieldRegistersTraceDimensions::new(log_t));
 
     values.challenge(
         JoltChallengeId::from(InstructionReadRafChallenge::Gamma),
@@ -131,20 +134,120 @@ where
         LtPolynomial::evaluate(&registers_cycle, registers_read_write_cycle),
     )?;
 
+    #[cfg(feature = "field-inline")]
+    {
+        let field_registers_point = input
+            .stage5
+            .batch_consistency
+            .try_instance_point(field_registers_claims.sumcheck.rounds)
+            .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersValEvaluation, error))?;
+        let field_registers_cycle = trace_dimensions
+            .cycle_opening_point(&field_registers_point)
+            .map_err(|error| public_error(JoltRelationId::RegistersValEvaluation, error))?;
+        let field_log_k = input.proof.protocol.field_inline.field_register_log_k;
+        let field_registers_read_write_cycle = input
+            .stage4
+            .field_registers_read_write_opening_point
+            .get(field_log_k..)
+            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::RegistersValEvaluation,
+                reason: format!(
+                    "field-register read-write opening point is shorter than the field-register address: expected at least {field_log_k}, got {}",
+                    input.stage4.field_registers_read_write_opening_point.len()
+                ),
+            })?;
+        values.challenge(
+            FieldInlineChallengeId::from(FieldRegistersValEvaluationChallenge::LtCycle),
+            LtPolynomial::evaluate(&field_registers_cycle, field_registers_read_write_cycle),
+        )?;
+    }
+
     let mut output_ids = Vec::new();
-    output_ids.extend(instruction_output_openings.lookup_table_flags);
-    output_ids.extend(instruction_output_openings.instruction_ra);
-    output_ids.push(instruction_output_openings.instruction_raf_flag);
-    output_ids.extend(ram::ra_claim_reduction_output_openings());
-    output_ids.extend(registers::val_evaluation_output_openings());
-    add_batched_stage(
+    output_ids.extend(map_jolt_opening_ids(
+        instruction_output_openings.lookup_table_flags,
+    ));
+    output_ids.extend(map_jolt_opening_ids(
+        instruction_output_openings.instruction_ra,
+    ));
+    output_ids.push(VerifierOpeningId::Jolt(
+        instruction_output_openings.instruction_raf_flag,
+    ));
+    output_ids.extend(map_jolt_opening_ids(
+        ram::ra_claim_reduction_output_openings().to_vec(),
+    ));
+    output_ids.extend(map_jolt_opening_ids(
+        registers::val_evaluation_output_openings().to_vec(),
+    ));
+    #[cfg(feature = "field-inline")]
+    output_ids.extend(map_field_inline_opening_ids(
+        field_registers::val_evaluation_output_openings().to_vec(),
+    ));
+
+    let batch_claims = [
+        (
+            instruction_claims.sumcheck.rounds,
+            map_jolt_expr(instruction_claims.input.expression().clone()),
+            map_jolt_expr(instruction_claims.output.expression().clone()),
+        ),
+        (
+            ram_claims.sumcheck.rounds,
+            map_jolt_expr(ram_claims.input.expression().clone()),
+            map_jolt_expr(ram_claims.output.expression().clone()),
+        ),
+        (
+            registers_claims.sumcheck.rounds,
+            map_jolt_expr(registers_claims.input.expression().clone()),
+            map_jolt_expr(registers_claims.output.expression().clone()),
+        ),
+    ];
+    #[cfg(feature = "field-inline")]
+    let mut batch_claims = batch_claims.to_vec();
+    #[cfg(feature = "field-inline")]
+    batch_claims.push((
+        field_registers_claims.sumcheck.rounds,
+        map_field_inline_expr(field_registers_claims.input.expression().clone()),
+        map_field_inline_expr(field_registers_claims.output.expression().clone()),
+    ));
+
+    let coefficients = &input.stage5.batch_consistency.batching_coefficients;
+    if batch_claims.len() != coefficients.len() {
+        return Err(VerifierError::BlindFoldConstructionFailed {
+            reason: format!(
+                "stage5.batch: expected {} batching coefficients, got {}",
+                batch_claims.len(),
+                coefficients.len()
+            ),
+        });
+    }
+    let input_claim = batch_claims.iter().zip(coefficients).fold(
+        VerifierExpr::zero(),
+        |acc, ((rounds, input_expr, _), coefficient)| {
+            let scale = *coefficient
+                * PCS::Field::pow2(input.stage5.batch_consistency.max_num_vars - *rounds);
+            acc + scale_expr(input_expr.clone(), scale)
+        },
+    );
+    let output_claim = batch_claims.iter().zip(coefficients).fold(
+        VerifierExpr::zero(),
+        |acc, ((_, _, output_expr), coefficient)| {
+            acc + scale_expr(output_expr.clone(), *coefficient)
+        },
+    );
+
+    add_stage(
         builder,
         "stage5.batch",
-        &[instruction_claims, ram_claims, registers_claims],
-        &input.stage5.batch_consistency,
+        SumcheckStatement::new(
+            input.stage5.batch_consistency.max_num_vars,
+            input.stage5.batch_consistency.max_degree,
+        ),
+        domain_spec(instruction_claims.sumcheck),
+        input.stage5.batch_consistency.consistency.clone(),
         &input.stage5.batch_output_claims,
         values,
         output_ids,
         Vec::new(),
+        input_claim,
+        output_claim,
     )
 }

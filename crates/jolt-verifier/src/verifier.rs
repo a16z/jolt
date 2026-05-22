@@ -1004,6 +1004,14 @@ mod tests {
                         rd_inc: zero,
                         rd_wa: zero,
                     },
+                #[cfg(feature = "field-inline")]
+                field_inline: stage5::inputs::FieldInlineStage5Claims {
+                    field_registers_val_evaluation:
+                        stage5::inputs::FieldRegistersValEvaluationOutputOpeningClaims {
+                            field_rd_inc: zero,
+                            field_rd_wa: zero,
+                        },
+                },
             },
             stage6: stage6::inputs::Stage6Claims {
                 bytecode_read_raf: stage6::inputs::BytecodeReadRafOutputOpeningClaims {

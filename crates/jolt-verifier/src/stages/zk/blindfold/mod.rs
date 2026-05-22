@@ -64,6 +64,7 @@ use jolt_claims::protocols::field_inline::{
     FieldInlineChallengeId, FieldInlineOpeningId, FieldInlinePublicId,
     FieldInlineVirtualPolynomial, FieldRegistersClaimReductionChallenge,
     FieldRegistersReadWriteChallenge, FieldRegistersTraceDimensions,
+    FieldRegistersValEvaluationChallenge,
 };
 use jolt_claims::{
     opening,

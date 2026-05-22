@@ -54,6 +54,10 @@ use crate::stages::stage2::inputs::{
 use crate::stages::stage4::inputs::{
     FieldInlineStage4Claims, FieldRegistersReadWriteOutputOpeningClaims,
 };
+#[cfg(feature = "field-inline")]
+use crate::stages::stage5::inputs::{
+    FieldInlineStage5Claims, FieldRegistersValEvaluationOutputOpeningClaims,
+};
 #[cfg(any(feature = "jolt-core-compat", test))]
 use jolt_claims::protocols::jolt::formulas::spartan::SpartanOuterDimensions;
 use jolt_claims::protocols::jolt::{
@@ -346,6 +350,13 @@ fn stage5_claims_from_native<F: Field>(
         registers_val_evaluation: RegistersValEvaluationOutputOpeningClaims {
             rd_inc: claims.require(rd_inc)?,
             rd_wa: claims.require(rd_wa)?,
+        },
+        #[cfg(feature = "field-inline")]
+        field_inline: FieldInlineStage5Claims {
+            field_registers_val_evaluation: FieldRegistersValEvaluationOutputOpeningClaims {
+                field_rd_inc: F::zero(),
+                field_rd_wa: F::zero(),
+            },
         },
     })
 }
@@ -699,6 +710,13 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
             registers_val_evaluation: RegistersValEvaluationOutputOpeningClaims {
                 rd_inc: zero,
                 rd_wa: zero,
+            },
+            #[cfg(feature = "field-inline")]
+            field_inline: FieldInlineStage5Claims {
+                field_registers_val_evaluation: FieldRegistersValEvaluationOutputOpeningClaims {
+                    field_rd_inc: zero,
+                    field_rd_wa: zero,
+                },
             },
         },
         stage6: Stage6Claims {

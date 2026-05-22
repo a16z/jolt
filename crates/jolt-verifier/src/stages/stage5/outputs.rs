@@ -30,6 +30,8 @@ pub struct Stage5ZkOutput<F: Field, C> {
     pub instruction_read_raf: InstructionReadRafPublicOutput<F>,
     pub ram_ra_claim_reduction: Stage5SumcheckPublicOutput<F>,
     pub registers_val_evaluation: Stage5SumcheckPublicOutput<F>,
+    #[cfg(feature = "field-inline")]
+    pub field_inline: FieldInlineStage5ZkOutput<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,6 +49,8 @@ pub struct VerifiedStage5Batch<F: Field> {
     pub instruction_read_raf: VerifiedInstructionReadRafSumcheck<F>,
     pub ram_ra_claim_reduction: VerifiedStage5Sumcheck<F>,
     pub registers_val_evaluation: VerifiedStage5Sumcheck<F>,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_val_evaluation: VerifiedStage5Sumcheck<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,4 +89,10 @@ pub struct VerifiedStage5Sumcheck<F: Field> {
 pub struct Stage5SumcheckPublicOutput<F: Field> {
     pub sumcheck_point: Vec<F>,
     pub opening_point: Vec<F>,
+}
+
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FieldInlineStage5ZkOutput<F: Field> {
+    pub field_registers_val_evaluation: Stage5SumcheckPublicOutput<F>,
 }

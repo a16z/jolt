@@ -742,6 +742,15 @@ pub const STAGE5_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "core-fixture test offsets each register value-evaluation output claim",
     ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage5.claims.field_inline.field_registers_val_evaluation",
+        "claims.stage5.field_inline.field_registers_val_evaluation.*",
+        VerifierPhase::Stage5,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Deferred,
+        "field-inline fixtures will offset each field-register value-evaluation output claim",
+    ),
 ];
 
 pub const STAGE6_TARGETS: &[TamperTarget] = &[
@@ -1223,6 +1232,11 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage5.registers_val_evaluation.rd_inc",
             "claims.stage5.registers_val_evaluation.rd_wa",
         ],
+        #[cfg(feature = "field-inline")]
+        "claims.stage5.field_inline.field_registers_val_evaluation.*" => vec![
+            "claims.stage5.field_inline.field_registers_val_evaluation.field_rd_inc",
+            "claims.stage5.field_inline.field_registers_val_evaluation.field_rd_wa",
+        ],
         path => vec![path],
     }
 }
@@ -1390,6 +1404,14 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
             registers_val_evaluation: stage5::inputs::RegistersValEvaluationOutputOpeningClaims {
                 rd_inc: zero,
                 rd_wa: zero,
+            },
+            #[cfg(feature = "field-inline")]
+            field_inline: stage5::inputs::FieldInlineStage5Claims {
+                field_registers_val_evaluation:
+                    stage5::inputs::FieldRegistersValEvaluationOutputOpeningClaims {
+                        field_rd_inc: zero,
+                        field_rd_wa: zero,
+                    },
             },
         },
         stage6: stage6::inputs::Stage6Claims {
