@@ -19,3 +19,9 @@ thiserror.workspace = true
 [dev-dependencies]
 num-traits = { workspace = true }
 rand_core = { workspace = true }
+rand_chacha = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "sumcheck_verifier"
+harness = false
