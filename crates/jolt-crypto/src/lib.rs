@@ -9,7 +9,10 @@ pub mod ec;
 pub use ec::{JoltGroup, PairingGroup, Pedersen, PedersenSetup};
 
 mod commitment;
-pub use commitment::{Commitment, DeriveSetup, HomomorphicCommitment, VectorCommitment};
+pub use commitment::{
+    Commitment, DeriveSetup, HomomorphicCommitment, VectorCommitment, VectorCommitmentOpening,
+    VectorOpeningError,
+};
 
 #[cfg(feature = "bn254")]
 pub use ec::bn254::{Bn254, Bn254G1, Bn254G2, Bn254GT};

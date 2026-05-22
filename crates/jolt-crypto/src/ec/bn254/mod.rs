@@ -132,11 +132,10 @@ macro_rules! impl_jolt_group_wrapper {
         impl ::jolt_transcript::AppendToTranscript for $wrapper {
             fn append_to_transcript<T: ::jolt_transcript::Transcript>(&self, transcript: &mut T) {
                 use ::ark_serialize::CanonicalSerialize;
-                let mut buf = Vec::with_capacity(self.0.uncompressed_size());
+                let mut buf = Vec::with_capacity(self.0.compressed_size());
                 self.0
-                    .serialize_uncompressed(&mut buf)
+                    .serialize_compressed(&mut buf)
                     .expect(concat!(stringify!($wrapper), " serialization cannot fail"));
-                buf.reverse();
                 transcript.append_bytes(&buf);
             }
         }
@@ -203,7 +202,7 @@ use jolt_field::Field;
 use crate::PairingGroup;
 
 /// BN254 pairing-friendly curve.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Bn254;
 
 impl Bn254 {
@@ -272,4 +271,48 @@ pub(crate) fn field_to_fr<F: Field>(f: &F) -> ark_bn254::Fr {
         );
     }
     ark_bn254::Fr::from_le_bytes_mod_order(&bytes)
+}
+
+#[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests may fail loudly")]
+mod tests {
+    use ark_serialize::CanonicalSerialize;
+    use jolt_field::Fr;
+    use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
+
+    use super::Bn254;
+
+    #[test]
+    fn g1_transcript_encoding_uses_compressed_commitment_bytes() {
+        let point = Bn254::g1_generator();
+        let mut actual = Blake2bTranscript::<Fr>::new(b"test");
+        point.append_to_transcript(&mut actual);
+
+        let mut expected = Blake2bTranscript::<Fr>::new(b"test");
+        let mut bytes = Vec::new();
+        point
+            .0
+            .serialize_compressed(&mut bytes)
+            .expect("serialize G1");
+        expected.append_bytes(&bytes);
+
+        assert_eq!(actual.state(), expected.state());
+    }
+
+    #[test]
+    fn g2_transcript_encoding_uses_compressed_commitment_bytes() {
+        let point = Bn254::g2_generator();
+        let mut actual = Blake2bTranscript::<Fr>::new(b"test");
+        point.append_to_transcript(&mut actual);
+
+        let mut expected = Blake2bTranscript::<Fr>::new(b"test");
+        let mut bytes = Vec::new();
+        point
+            .0
+            .serialize_compressed(&mut bytes)
+            .expect("serialize G2");
+        expected.append_bytes(&bytes);
+
+        assert_eq!(actual.state(), expected.state());
+    }
 }

@@ -78,7 +78,7 @@ pub(crate) fn ark_to_jolt_g1(ark: ArkG1) -> Bn254G1 {
     unsafe { std::mem::transmute(ark) }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DoryScheme;
 
 impl DoryScheme {
@@ -342,13 +342,18 @@ impl ZkOpeningScheme for DoryScheme {
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Result<(), OpeningsError> {
+    ) -> Result<Self::HidingCommitment, OpeningsError> {
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         // In ZK mode dory::verify reads the evaluation commitment from `proof.y_com`,
         // so the caller-side eval is unused here.
         let dummy_eval = <ArkFr as DoryField>::zero();
         let ark_commitment = jolt_gt_to_ark(&commitment.0);
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
+        let hiding_commitment = proof
+            .0
+            .y_com
+            .map(ark_to_jolt_g1)
+            .ok_or(OpeningsError::VerificationFailed)?;
 
         dory::verify::<ArkFr, InnerBN254, G1Routines, G2Routines, _>(
             ark_commitment,
@@ -358,7 +363,22 @@ impl ZkOpeningScheme for DoryScheme {
             setup.0.clone().into_inner(),
             &mut dory_transcript,
         )
-        .map_err(|_| OpeningsError::VerificationFailed)
+        .map_err(|_| OpeningsError::VerificationFailed)?;
+
+        Ok(hiding_commitment)
+    }
+
+    fn bind_zk_opening_inputs(
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        point: &[Self::Field],
+        hiding_commitment: &Self::HidingCommitment,
+    ) {
+        transcript.append(&LabelWithCount(b"dory_opening_point", point.len() as u64));
+        for p in point {
+            p.append_to_transcript(transcript);
+        }
+        transcript.append(&Label(b"dory_eval_commitment"));
+        hiding_commitment.append_to_transcript(transcript);
     }
 }
 
