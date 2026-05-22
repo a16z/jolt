@@ -58,6 +58,10 @@ use crate::stages::stage4::inputs::{
 use crate::stages::stage5::inputs::{
     FieldInlineStage5Claims, FieldRegistersValEvaluationOutputOpeningClaims,
 };
+#[cfg(feature = "field-inline")]
+use crate::stages::stage6::inputs::{
+    FieldInlineStage6Claims, FieldRegistersIncClaimReductionOutputOpeningClaims,
+};
 #[cfg(any(feature = "jolt-core-compat", test))]
 use jolt_claims::protocols::jolt::formulas::spartan::SpartanOuterDimensions;
 use jolt_claims::protocols::jolt::{
@@ -473,6 +477,13 @@ fn stage6_claims_from_native<F: Field>(
             ram_inc: claims.require(ram_inc)?,
             rd_inc: claims.require(rd_inc)?,
         },
+        #[cfg(feature = "field-inline")]
+        field_inline: FieldInlineStage6Claims {
+            field_registers_inc_claim_reduction:
+                FieldRegistersIncClaimReductionOutputOpeningClaims {
+                    field_rd_inc: F::zero(),
+                },
+        },
         advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
             trusted: advice_cycle_phase_claim_from_native(claims, JoltAdviceKind::Trusted),
             untrusted: advice_cycle_phase_claim_from_native(claims, JoltAdviceKind::Untrusted),
@@ -738,6 +749,11 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
             inc_claim_reduction: IncClaimReductionOutputOpeningClaims {
                 ram_inc: zero,
                 rd_inc: zero,
+            },
+            #[cfg(feature = "field-inline")]
+            field_inline: FieldInlineStage6Claims {
+                field_registers_inc_claim_reduction:
+                    FieldRegistersIncClaimReductionOutputOpeningClaims { field_rd_inc: zero },
             },
             advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
                 trusted: None,

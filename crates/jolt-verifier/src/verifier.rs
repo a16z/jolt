@@ -1036,6 +1036,13 @@ mod tests {
                     ram_inc: zero,
                     rd_inc: zero,
                 },
+                #[cfg(feature = "field-inline")]
+                field_inline: stage6::inputs::FieldInlineStage6Claims {
+                    field_registers_inc_claim_reduction:
+                        stage6::inputs::FieldRegistersIncClaimReductionOutputOpeningClaims {
+                            field_rd_inc: zero,
+                        },
+                },
                 advice_cycle_phase: stage6::inputs::Stage6AdviceCyclePhaseClaims {
                     trusted: None,
                     untrusted: None,

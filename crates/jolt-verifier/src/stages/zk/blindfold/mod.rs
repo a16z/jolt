@@ -58,11 +58,14 @@ use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{
     formulas::{
-        claim_reductions::registers as field_registers_claim_reduction, product as field_product,
-        registers as field_registers, spartan as field_spartan,
+        claim_reductions::{
+            increments as field_increments, registers as field_registers_claim_reduction,
+        },
+        product as field_product, registers as field_registers, spartan as field_spartan,
     },
     FieldInlineChallengeId, FieldInlineOpeningId, FieldInlinePublicId,
     FieldInlineVirtualPolynomial, FieldRegistersClaimReductionChallenge,
+    FieldRegistersIncClaimReductionChallenge, FieldRegistersIncClaimReductionPublic,
     FieldRegistersReadWriteChallenge, FieldRegistersTraceDimensions,
     FieldRegistersValEvaluationChallenge,
 };
@@ -162,6 +165,13 @@ enum VerifierPublicId {
 impl From<JoltPublicId> for VerifierPublicId {
     fn from(id: JoltPublicId) -> Self {
         Self::Jolt(id)
+    }
+}
+
+#[cfg(feature = "field-inline")]
+impl From<FieldInlinePublicId> for VerifierPublicId {
+    fn from(id: FieldInlinePublicId) -> Self {
+        Self::FieldInline(id)
     }
 }
 

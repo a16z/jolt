@@ -850,6 +850,15 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "core-fixture test offsets the register increment reduction output claim",
     ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage6.claims.field_inline.field_registers_inc_claim_reduction.field_rd_inc",
+        "claims.stage6.field_inline.field_registers_inc_claim_reduction.field_rd_inc",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Deferred,
+        "field-inline fixtures will offset the field-register increment reduction output claim",
+    ),
     checked_standard(
         "stage6.claims.advice_cycle_phase.trusted.opening_claim",
         "claims.stage6.advice_cycle_phase.trusted.opening_claim",
@@ -1436,6 +1445,13 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
             inc_claim_reduction: stage6::inputs::IncClaimReductionOutputOpeningClaims {
                 ram_inc: zero,
                 rd_inc: zero,
+            },
+            #[cfg(feature = "field-inline")]
+            field_inline: stage6::inputs::FieldInlineStage6Claims {
+                field_registers_inc_claim_reduction:
+                    stage6::inputs::FieldRegistersIncClaimReductionOutputOpeningClaims {
+                        field_rd_inc: zero,
+                    },
             },
             advice_cycle_phase: stage6::inputs::Stage6AdviceCyclePhaseClaims {
                 trusted: Some(stage6::inputs::AdviceCyclePhaseOutputClaim {

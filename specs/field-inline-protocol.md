@@ -529,6 +529,68 @@ that order. The BlindFold builder uses the same order and the same
 `FieldRegistersValEvaluation` claim expression so ZK mode binds hidden outputs
 to the identical Stage 5 equations.
 
+### Stage 6 Composition
+
+Stage 6 batches field-register increment reduction beside the ordinary
+bytecode, Booleanity, RA virtualization, and increment-reduction work:
+
+```text
+FR off:
+  1. BytecodeReadRaf
+  2. Booleanity
+  3. RamHammingBooleanity
+  4. RamRaVirtualization
+  5. InstructionRaVirtualization
+  6. IncClaimReduction
+  7+. optional advice cycle-phase reductions
+
+FR on:
+  1. BytecodeReadRaf
+  2. Booleanity
+  3. RamHammingBooleanity
+  4. RamRaVirtualization
+  5. InstructionRaVirtualization
+  6. IncClaimReduction
+  7. FieldRegistersIncClaimReduction
+  8+. optional advice cycle-phase reductions
+```
+
+`FieldRegistersIncClaimReduction` consumes the two semantic openings of the
+committed `FieldRdInc` polynomial produced by Stage 4 and Stage 5:
+
+```text
+input:
+  FieldRdInc@FieldRegistersReadWriteChecking
+  + eta * FieldRdInc@FieldRegistersValEvaluation
+```
+
+It reduces them to one final `FieldRdInc` claim at the Stage 6 field increment
+point:
+
+```text
+output:
+  (Eq(r_field_inc, r_field_rw.cycle)
+    + eta * Eq(r_field_inc, r_field_val.cycle))
+    * FieldRdInc@FieldRegistersIncClaimReduction
+```
+
+The verifier pulls a separate field-inline increment-reduction challenge
+`eta` when field inline is enabled. FR-off skips this challenge and skips the
+field sumcheck instance entirely.
+
+The committed output-claim row order appends the reduced field `FieldRdInc`
+after ordinary `RamInc`/`RdInc` increment-reduction outputs and before optional
+advice cycle-phase outputs:
+
+```text
+FieldRdInc
+```
+
+The transparent verifier appends this value to the Fiat-Shamir transcript in
+that order. The BlindFold builder uses the same order and the same
+`FieldRegistersIncClaimReduction` claim expression so ZK mode binds the hidden
+field increment claim to the identical Stage 6 equation.
+
 ## Field Constraints
 
 Target module:
