@@ -239,7 +239,7 @@ macro_rules! for_each_jolt_instruction_kind {
 
 pub use flags::{
     CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags,
-    InterleavedBitsMarker, CIRCUIT_FLAGS, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
+    InterleavedBitsMarker, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
 pub use instructions::{JoltInstruction, SourceInstruction};
 pub use kind::{

@@ -7,8 +7,7 @@
 
 use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
 use jolt_poly::{
-    EqPolynomial, IdentityPolynomial, MultilinearEvaluation, MultilinearPoly, Polynomial,
-    RlcSource, UnivariatePoly,
+    EqPolynomial, IdentityPolynomial, MultilinearPoly, Polynomial, RlcSource, UnivariatePoly,
 };
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -180,7 +179,7 @@ fn identity_polynomial_boolean_indexing() {
                 }
             })
             .collect();
-        let eval = id.evaluate(&bits);
+        let eval = id.evaluate::<Fr>(&bits);
         assert_eq!(eval, Fr::from_u64(idx as u64), "identity at index {idx}");
     }
 }
@@ -193,7 +192,7 @@ fn identity_polynomial_random_point() {
     let id = IdentityPolynomial::new(nv);
     let point: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
 
-    let eval = id.evaluate(&point);
+    let eval = id.evaluate::<Fr>(&point);
 
     // Manual: sum_i r_i * 2^(n-1-i)
     let expected: Fr = point

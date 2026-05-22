@@ -6,7 +6,6 @@ use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
 use crate::math::Math;
-use crate::mle::MleError;
 use crate::thread::unsafe_allocate_zero_vec;
 
 /// Equality polynomial $\widetilde{eq}(x, r) = \prod_{i=1}^{n}(r_i x_i + (1-r_i)(1-x_i))$.
@@ -115,34 +114,6 @@ impl<F: Field> EqPolynomial<F> {
                 acc * (r_i * p_i + (F::one() - r_i) * (F::one() - p_i))
             })
     }
-}
-
-pub fn try_eq_mle<F: Field>(left: &[F], right: &[F]) -> Result<F, MleError> {
-    if left.len() != right.len() {
-        return Err(MleError::EqualityArityMismatch {
-            left: left.len(),
-            right: right.len(),
-        });
-    }
-    Ok(EqPolynomial::<F>::mle(left, right))
-}
-
-pub fn eq_index_msb<F: Field>(point: &[F], index: usize) -> F {
-    let mut eq = F::one();
-    for (position, challenge) in point.iter().enumerate() {
-        let shift = point.len() - 1 - position;
-        let bit = if shift < usize::BITS as usize {
-            (index >> shift) & 1
-        } else {
-            0
-        };
-        if bit == 1 {
-            eq *= *challenge;
-        } else {
-            eq *= F::one() - *challenge;
-        }
-    }
-    eq
 }
 
 /// Static (point-free) evaluation methods for eq polynomial tables.
