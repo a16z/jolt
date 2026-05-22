@@ -1,6 +1,9 @@
 #[cfg(feature = "serialization")]
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::BYTES_PER_INSTRUCTION;
+use common::jolt_device::{JoltDevice, MemoryLayoutError};
+
+use super::public_io::PublicMemorySegment;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
@@ -54,9 +57,38 @@ impl RAMPreprocessing {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicInitialRam {
+    pub segments: Vec<PublicMemorySegment>,
+}
+
+impl PublicInitialRam {
+    pub fn new(ram: &RAMPreprocessing, public_io: &JoltDevice) -> Result<Self, MemoryLayoutError> {
+        let layout = &public_io.memory_layout;
+        let mut segments = Vec::new();
+
+        if !ram.bytecode_words.is_empty() {
+            segments.push(PublicMemorySegment {
+                start_index: layout.remapped_word_address(ram.min_bytecode_address)? as usize,
+                words: ram.bytecode_words.clone(),
+            });
+        }
+
+        if !public_io.inputs.is_empty() {
+            segments.push(PublicMemorySegment {
+                start_index: layout.remapped_word_address(layout.input_start)? as usize,
+                words: public_io.input_words_le(),
+            });
+        }
+
+        Ok(Self { segments })
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::RAMPreprocessing;
+    use super::{PublicInitialRam, RAMPreprocessing};
+    use common::jolt_device::{JoltDevice, MemoryConfig};
 
     #[test]
     fn preprocesses_memory_bytes_into_words() {
@@ -69,5 +101,34 @@ mod tests {
         assert_eq!(preprocessing.min_bytecode_address, 0x8000_0000);
         assert_eq!(preprocessing.bytecode_words[0], 0x0201);
         assert_eq!(preprocessing.bytecode_words[1], 0x03);
+    }
+
+    #[test]
+    fn materializes_public_initial_ram_segments() {
+        let mut device = JoltDevice::new(&MemoryConfig {
+            program_size: Some(1024),
+            max_trusted_advice_size: 0,
+            max_untrusted_advice_size: 0,
+            max_input_size: 16,
+            ..Default::default()
+        });
+        device.inputs = vec![0x2a, 0, 0, 0, 0, 0, 0, 0, 0x07];
+        let preprocessing = RAMPreprocessing {
+            min_bytecode_address: 0x8000_0000,
+            bytecode_words: vec![0x0201, 0x03],
+        };
+
+        let initial = PublicInitialRam::new(&preprocessing, &device);
+        assert!(
+            initial.is_ok(),
+            "initial RAM should materialize: {initial:?}"
+        );
+        let Ok(initial) = initial else {
+            return;
+        };
+
+        assert_eq!(initial.segments.len(), 2);
+        assert_eq!(initial.segments[0].words, vec![0x0201, 0x03]);
+        assert_eq!(initial.segments[1].words, vec![0x2a, 0x07]);
     }
 }
