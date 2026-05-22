@@ -1481,8 +1481,8 @@ impl<
         let zk_stages = self.blindfold_accumulator.take_stage_data();
         assert_eq!(
             zk_stages.len(),
-            7,
-            "Expected 7 ZK stages, got {}",
+            8,
+            "Expected 8 ZK stages, got {}",
             zk_stages.len()
         );
 

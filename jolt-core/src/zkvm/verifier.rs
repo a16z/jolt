@@ -465,7 +465,7 @@ impl<
         let stage5_result = self
             .verify_stage5()
             .inspect_err(|e| tracing::error!("Stage 5: {e}"))?;
-        let stage6_result = self
+        let (stage6a_result, stage6b_result) = self
             .verify_stage6()
             .inspect_err(|e| tracing::error!("Stage 6: {e}"))?;
         let stage7_result = self
@@ -484,7 +484,8 @@ impl<
                     stage3_result.challenges.clone(),
                     stage4_result.challenges.clone(),
                     stage5_result.challenges.clone(),
-                    stage6_result.challenges.clone(),
+                    stage6a_result.challenges.clone(),
+                    stage6b_result.challenges.clone(),
                     stage7_result.challenges.clone(),
                 ];
                 let uniskip_challenges = [uniskip_challenge1, uniskip_challenge2];
@@ -495,7 +496,8 @@ impl<
                     stage3_result.batched_output_constraint,
                     stage4_result.batched_output_constraint,
                     stage5_result.batched_output_constraint,
-                    stage6_result.batched_output_constraint,
+                    stage6a_result.batched_output_constraint,
+                    stage6b_result.batched_output_constraint,
                     stage7_result.batched_output_constraint,
                 ];
 
@@ -505,7 +507,8 @@ impl<
                     stage3_result.batched_input_constraint.clone(),
                     stage4_result.batched_input_constraint.clone(),
                     stage5_result.batched_input_constraint.clone(),
-                    stage6_result.batched_input_constraint.clone(),
+                    stage6a_result.batched_input_constraint.clone(),
+                    stage6b_result.batched_input_constraint.clone(),
                     stage7_result.batched_input_constraint.clone(),
                 ];
 
@@ -519,17 +522,19 @@ impl<
                     stage3_result.input_constraint_challenge_values.clone(),
                     stage4_result.input_constraint_challenge_values.clone(),
                     stage5_result.input_constraint_challenge_values.clone(),
-                    stage6_result.input_constraint_challenge_values.clone(),
+                    stage6a_result.input_constraint_challenge_values.clone(),
+                    stage6b_result.input_constraint_challenge_values.clone(),
                     stage7_result.input_constraint_challenge_values.clone(),
                 ];
 
-                let output_constraint_challenge_values: [Vec<F>; 7] = [
+                let output_constraint_challenge_values: [Vec<F>; 8] = [
                     stage1_result.output_constraint_challenge_values.clone(),
                     stage2_result.output_constraint_challenge_values.clone(),
                     stage3_result.output_constraint_challenge_values.clone(),
                     stage4_result.output_constraint_challenge_values.clone(),
                     stage5_result.output_constraint_challenge_values.clone(),
-                    stage6_result.output_constraint_challenge_values.clone(),
+                    stage6a_result.output_constraint_challenge_values.clone(),
+                    stage6b_result.output_constraint_challenge_values.clone(),
                     stage7_result.output_constraint_challenge_values.clone(),
                 ];
 
@@ -539,7 +544,8 @@ impl<
                 oc_blocks.extend(stage3_result.oc_block_ids);
                 oc_blocks.extend(stage4_result.oc_block_ids);
                 oc_blocks.extend(stage5_result.oc_block_ids);
-                oc_blocks.extend(stage6_result.oc_block_ids);
+                oc_blocks.extend(stage6a_result.oc_block_ids);
+                oc_blocks.extend(stage6b_result.oc_block_ids);
                 oc_blocks.extend(stage7_result.oc_block_ids);
 
                 let uniskip_output_constraints = [
@@ -1026,17 +1032,23 @@ impl<
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage6(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
-        let (bytecode_read_raf_params, booleanity_params) = self.verify_stage6a()?;
-        self.verify_stage6b(bytecode_read_raf_params, booleanity_params)
+    fn verify_stage6(
+        &mut self,
+    ) -> Result<(StageVerifyResult<F>, StageVerifyResult<F>), ProofVerifyError> {
+        let (bytecode_read_raf_params, booleanity_params, stage6a_result) =
+            self.verify_stage6a()?;
+        let stage6b_result = self.verify_stage6b(bytecode_read_raf_params, booleanity_params)?;
+        Ok((stage6a_result, stage6b_result))
     }
 
+    #[expect(clippy::type_complexity)]
     fn verify_stage6a(
         &mut self,
     ) -> Result<
         (
             BytecodeReadRafSumcheckParams<F>,
             BooleanitySumcheckParams<F>,
+            StageVerifyResult<F>,
         ),
         ProofVerifyError,
     > {
@@ -1058,20 +1070,60 @@ impl<
         let instances: Vec<
             &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
         > = vec![&bytecode_read_raf, &booleanity];
-        BatchedSumcheck::verify(
+        let (batching_coefficients, r_stage6a) = BatchedSumcheck::verify(
             &self.proof.stage6a_sumcheck_proof,
-            instances,
+            instances.clone(),
             &mut self.opening_accumulator,
             &mut self.transcript,
         )?;
+        #[cfg(not(feature = "zk"))]
+        let _ = &batching_coefficients;
         #[cfg(feature = "zk")]
         {
-            // Stage 6a is proven in clear and excluded from BlindFold stage data.
-            // Drop any pending OC IDs so Stage 6b OC blocks stay aligned.
-            let _ = self.opening_accumulator.take_pending_claim_ids();
+            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
+            let batched_output_constraint = batch_output_constraints(&instances);
+            let batched_input_constraint = batch_input_constraints(&instances);
+            let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
+            let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.clone();
+            let mut input_constraint_challenge_values: Vec<F> =
+                scale_batching_coefficients(&batching_coefficients, &instances);
+            for instance in &instances {
+                let num_rounds = instance.num_rounds();
+                let offset = instance.round_offset(max_num_rounds);
+                let r_slice = &r_stage6a[offset..offset + num_rounds];
+                output_constraint_challenge_values.extend(
+                    instance
+                        .get_params()
+                        .output_constraint_challenge_values(r_slice),
+                );
+                input_constraint_challenge_values.extend(
+                    instance
+                        .get_params()
+                        .input_constraint_challenge_values(&self.opening_accumulator),
+                );
+            }
+            let stage_result = StageVerifyResult::new(
+                r_stage6a,
+                batched_output_constraint,
+                output_constraint_challenge_values,
+                batched_input_constraint,
+                input_constraint_challenge_values,
+                vec![regular_oc_ids],
+            );
+            Ok((
+                bytecode_read_raf.into_params(),
+                booleanity.into_params(),
+                stage_result,
+            ))
         }
-
-        Ok((bytecode_read_raf.into_params(), booleanity.into_params()))
+        #[cfg(not(feature = "zk"))]
+        Ok((
+            bytecode_read_raf.into_params(),
+            booleanity.into_params(),
+            StageVerifyResult {
+                challenges: r_stage6a,
+            },
+        ))
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
@@ -1190,12 +1242,12 @@ impl<
     #[allow(clippy::too_many_arguments)]
     fn verify_blindfold(
         &mut self,
-        sumcheck_challenges: &[Vec<F::Challenge>; 7],
+        sumcheck_challenges: &[Vec<F::Challenge>; 8],
         uniskip_challenges: [F::Challenge; 2],
-        stage_output_constraints: &[Option<OutputClaimConstraint>; 7],
-        output_constraint_challenge_values: &[Vec<F>; 7],
-        stage_input_constraints: &[InputClaimConstraint; 7],
-        input_constraint_challenge_values: &[Vec<F>; 7],
+        stage_output_constraints: &[Option<OutputClaimConstraint>; 8],
+        output_constraint_challenge_values: &[Vec<F>; 8],
+        stage_input_constraints: &[InputClaimConstraint; 8],
+        input_constraint_challenge_values: &[Vec<F>; 8],
         // For stages 0-1: batched input constraint for regular rounds (different from uni-skip)
         stage1_batched_input: &InputClaimConstraint,
         stage2_batched_input: &InputClaimConstraint,
@@ -1214,6 +1266,7 @@ impl<
             &self.proof.stage3_sumcheck_proof,
             &self.proof.stage4_sumcheck_proof,
             &self.proof.stage5_sumcheck_proof,
+            &self.proof.stage6a_sumcheck_proof,
             &self.proof.stage6b_sumcheck_proof,
             &self.proof.stage7_sumcheck_proof,
         ];
@@ -1231,7 +1284,7 @@ impl<
         let mut stage_configs = Vec::new();
         // Track which stage_config index corresponds to uni-skip and regular first rounds
         let mut uniskip_indices: Vec<usize> = Vec::new(); // Only 2 elements for stages 0-1
-        let mut regular_first_round_indices: Vec<usize> = Vec::new(); // 7 elements for all stages
+        let mut regular_first_round_indices: Vec<usize> = Vec::new(); // 8 elements for all stages
         let mut last_round_indices: Vec<usize> = Vec::new();
 
         for (stage_idx, proof) in stage_proofs.iter().enumerate() {
@@ -1322,7 +1375,7 @@ impl<
             }
         }
 
-        // Add initial_input configurations for regular first rounds (all 7 stages)
+        // Add initial_input configurations for regular first rounds (all 8 stages)
         // These use the batched input constraints from the stage results
         let regular_constraints = [
             stage1_batched_input.clone(),       // Stage 0 regular
@@ -1330,8 +1383,9 @@ impl<
             stage_input_constraints[2].clone(), // Stage 2
             stage_input_constraints[3].clone(), // Stage 3
             stage_input_constraints[4].clone(), // Stage 4
-            stage_input_constraints[5].clone(), // Stage 5
-            stage_input_constraints[6].clone(), // Stage 6
+            stage_input_constraints[5].clone(), // Stage 5 (6a)
+            stage_input_constraints[6].clone(), // Stage 6 (6b)
+            stage_input_constraints[7].clone(), // Stage 7
         ];
         for (i, constraint) in regular_constraints.iter().enumerate() {
             let idx = regular_first_round_indices[i];
@@ -1359,7 +1413,7 @@ impl<
             }
         }
 
-        let all_input_challenge_values: [&[F]; 9] = [
+        let all_input_challenge_values: [&[F]; 10] = [
             &input_constraint_challenge_values[0],
             stage1_batched_input_values,
             &input_constraint_challenge_values[1],
@@ -1369,6 +1423,7 @@ impl<
             &input_constraint_challenge_values[4],
             &input_constraint_challenge_values[5],
             &input_constraint_challenge_values[6],
+            &input_constraint_challenge_values[7],
         ];
         let mut baked_input_challenges: Vec<F> = Vec::new();
         for expected_values in all_input_challenge_values.iter() {
