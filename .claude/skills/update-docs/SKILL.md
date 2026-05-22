@@ -1,4 +1,5 @@
 ---
+name: update-docs
 description: Analyze code changes since a base commit and update the Jolt docs (book/) accordingly
 argument-hint: <base-commit-hash>
 allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Task

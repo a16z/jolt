@@ -1,14 +1,8 @@
 ---
 name: implement-spec
-description: Autonomous one-shot implementation from an approved spec (local/cloud only)
+description: "Autonomous spec-to-code implementation: plans changes from an approved spec, executes code modifications (parallel where possible), runs QA cycles (cargo fmt, clippy in host+zk modes, nextest), validates correctness against spec criteria, and posts PR summaries. Runs locally or in Claude Code cloud — needs repo write access. USE FOR: - Implementing features from approved specifications - Executing spec-driven development workflows - Building code changes from design documents or feature plans - Running full plan-execute-validate cycles on feature specs TRIGGERS: - \"implement spec\", \"build from spec\", \"execute spec\" - \"implement feature\", \"code from specification\" - \"implement the plan\", \"build this feature\", \"run implementation\""
 argument-hint: "[spec file path]"
 ---
-
-<Purpose>
-Take an approved spec and autonomously implement it: plan the work, execute in parallel where possible, run QA cycles until tests pass, and validate the result. Produces working, verified code from the spec in a single pass.
-
-This skill runs locally or in Claude Code cloud (claude.ai/code) — NOT in CI. It needs write access to the repo to create commits and push to the PR branch.
-</Purpose>
 
 <Execution_Policy>
 - The spec is the source of truth. Implement what it says, not more.
@@ -113,19 +107,5 @@ Fix any issues found and re-validate.
 ```
 
 </Steps>
-
-<Examples>
-<Good>
-User: `/implement-spec`
-Action: Reads the spec from the PR, creates a plan, implements it, runs QA, validates, pushes commits.
-Why good: Full autonomous execution from spec to working code.
-</Good>
-
-<Bad>
-User: `/implement-spec` on a spec without `claude-spec-approved`
-Action: Should warn that the spec hasn't been analyzed yet, but proceed if the user insists.
-Why bad situation: Implementation from an unanalyzed spec risks rework.
-</Bad>
-</Examples>
 
 Task: Implement the spec in this PR. {{ARGUMENTS}}
