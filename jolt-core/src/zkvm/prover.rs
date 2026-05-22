@@ -1232,7 +1232,7 @@ impl<
     ) -> (
         SumcheckInstanceProof<F, C, ProofTranscript>,
         BytecodeReadRafSumcheckParams<F>,
-        BooleanityCyclePhaseParams<F>,
+        BooleanitySumcheckParams<F>,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 6a baseline");
@@ -1280,38 +1280,17 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage6a_start_flamechart.svg");
         tracing::info!("Stage 6a proving");
 
-        #[cfg(feature = "zk")]
-        let (sumcheck_proof, _r_stage6a, _initial_claim) = {
-            // Stage 6a input claims depend on hidden prior-stage outputs in ZK mode,
-            // so we prove it with a ZK sumcheck proof. We keep a local blindfold
-            // accumulator so this split-internal phase does not add a new global
-            // BlindFold stage.
-            let mut rng = rand::thread_rng();
-            let mut local_blindfold =
-                crate::subprotocols::blindfold::BlindFoldAccumulator::<F, C>::new();
-            BatchedSumcheck::prove_zk::<F, C, _, _>(
-                instances.iter_mut().map(|v| &mut **v as _).collect(),
-                &mut self.opening_accumulator,
-                &mut local_blindfold,
-                &mut self.transcript,
-                &self.pedersen_generators,
-                &mut rng,
-            )
-        };
-        #[cfg(not(feature = "zk"))]
         let (sumcheck_proof, _r_stage6a, _initial_claim) =
             self.prove_batched_sumcheck(instances.iter_mut().map(|v| &mut **v as _).collect());
 
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage6a_end_flamechart.svg");
-
-        let booleanity_cycle_params =
-            BooleanityCyclePhaseParams::new(booleanity.into_params(), &self.opening_accumulator);
+        drop(instances);
 
         (
             sumcheck_proof,
             bytecode_read_raf.into_params(),
-            booleanity_cycle_params,
+            booleanity.into_params(),
         )
     }
 
@@ -1319,7 +1298,7 @@ impl<
     fn prove_stage6b(
         &mut self,
         bytecode_read_raf_params: BytecodeReadRafSumcheckParams<F>,
-        booleanity_params: BooleanityCyclePhaseParams<F>,
+        booleanity_params: BooleanitySumcheckParams<F>,
     ) -> (
         SumcheckInstanceProof<F, C, ProofTranscript>,
         Vec<F::Challenge>,
@@ -1397,8 +1376,10 @@ impl<
             Arc::clone(&self.preprocessing.shared.bytecode),
             &self.opening_accumulator,
         );
+        let booleanity_cycle_params =
+            BooleanityCyclePhaseParams::new(booleanity_params, &self.opening_accumulator);
         let mut booleanity = BooleanityCycleSumcheckProver::initialize(
-            booleanity_params,
+            booleanity_cycle_params,
             &self.trace,
             &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
