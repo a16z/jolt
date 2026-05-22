@@ -9,10 +9,12 @@ description = "R1CS constraint data structures for the Jolt proving system"
 workspace = true
 
 [dependencies]
+jolt-claims.workspace = true
 jolt-field = { path = "../jolt-field" }
 jolt-poly = { path = "../jolt-poly" }
 rayon = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
