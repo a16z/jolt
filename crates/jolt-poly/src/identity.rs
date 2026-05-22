@@ -20,10 +20,6 @@ impl OperandPolynomial {
         Self { num_vars, side }
     }
 
-    pub const fn num_vars(&self) -> usize {
-        self.num_vars
-    }
-
     pub const fn side(&self) -> OperandSide {
         self.side
     }

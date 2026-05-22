@@ -22,8 +22,8 @@ struct TestState {
 ///
 /// The byte layout intentionally matches `jolt-core`'s hash transcripts:
 /// appends hash `state || round || payload`, squeezes hash `state || round`,
-/// and optimized scalar challenges use the same 125-bit Montgomery-friendly
-/// decoding path as `jolt-core`.
+/// and standard challenges use the same 125-bit Montgomery-friendly decoding
+/// path as `jolt-core`.
 pub struct DigestTranscript<D: Digest<OutputSize = U32> + 'static, F> {
     state: [u8; 32],
     n_rounds: u32,
@@ -167,7 +167,7 @@ where
     }
 
     fn challenge_scalar(&mut self) -> F {
-        let mut buf = [0u8; 16];
+        let mut buf = [0u8; 32];
         self.challenge_bytes(&mut buf);
         F::from_scalar_challenge_bytes(&buf)
     }
@@ -180,5 +180,38 @@ where
     #[cfg(test)]
     fn compare_to(&mut self, other: &Self) {
         self.test_state.expected_state_history = Some(other.test_state.state_history.clone());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use blake2::{digest::consts::U32, Blake2b};
+    use jolt_field::TranscriptChallenge;
+
+    use super::DigestTranscript;
+    use crate::Transcript;
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    struct ChallengeByteLen(usize);
+
+    impl TranscriptChallenge for ChallengeByteLen {
+        fn from_challenge_bytes(bytes: &[u8]) -> Self {
+            Self(bytes.len())
+        }
+
+        fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
+            Self(bytes.len())
+        }
+    }
+
+    type TestTranscript = DigestTranscript<Blake2b<U32>, ChallengeByteLen>;
+
+    #[test]
+    fn scalar_challenge_uses_full_digest_width() {
+        let mut transcript = TestTranscript::new(b"challenge-width");
+        assert_eq!(transcript.challenge(), ChallengeByteLen(16));
+
+        let mut transcript = TestTranscript::new(b"challenge-width");
+        assert_eq!(transcript.challenge_scalar(), ChallengeByteLen(32));
     }
 }

@@ -71,5 +71,5 @@ pub use mle::{
 };
 pub use multilinear::{MultilinearBinding, MultilinearEvaluation, MultilinearPoly, RlcSource};
 pub use one_hot::OneHotPolynomial;
-pub use point::Point;
+pub use point::{Endianness, Point, HIGH_TO_LOW, LOW_TO_HIGH};
 pub use univariate::{UnivariatePoly, UnivariatePolynomial};
